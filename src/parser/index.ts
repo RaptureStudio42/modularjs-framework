@@ -72,6 +72,15 @@ const FILL_TAG_NAME = `@${FILL_DIRECTIVE}`
 const VOID_TAGS = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
                    'link', 'meta', 'param', 'source', 'track', 'wbr']
 
+// balises dont la balise de FIN est optionnelle en HTML5 (WHATWG « optional tags ») : leur
+// absence explicite, comblée par la fermeture d'un ANCÊTRE, est un balisage légitime, pas une
+// faute — contrairement à <span>/<div>/etc, qui n'ont pas cette règle. Utilisé par le garde-fou
+// « fermeture mal appariée » (parseDom, cas `close_tag`) pour ne PAS avertir sur ces cas connus.
+// html/head/body/colgroup (fermeture ET/OU ouverture optionnelles, cas structurels à part) restent
+// hors de cette liste : déjà réservés ailleurs dans MJS (AT_RESERVED_NAMES).
+const IMPLICIT_CLOSE_TAGS = new Set(['p', 'li', 'dt', 'dd', 'rt', 'rp', 'optgroup', 'option',
+                                      'caption', 'colgroup', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'])
+
 const RESERVED_TEMPLATE_NAMES = [
   'node', 'el', 'e', 'dirty', 'this', 'arguments',
   '__nodes', '__idx',
@@ -771,7 +780,12 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
     const startLine = currentLine(scanner)
     const node = new Node('expr')
     const content = extractBalanced(scanner, '}')
-    scanner.scan(/\}/)
+    // `{{ expr }}` (HTML brut) exige DEUX accolades fermantes : extractBalanced ne consomme que
+    // la PREMIÈRE. Le retour de ce second `scan` était ignoré — `{{value}` (une seule fermante,
+    // jamais une forme documentée) compilait quand même en HTML brut, sur un contenu tronqué.
+    if (!scanner.scan(/\}/)) {
+      throw new Error(t('parser.html-brut-mal-ferme', { ligne: startLine }))
+    }
     node.expr = content.trim()
     node._is_raw = true
     node.line = startLine
@@ -906,7 +920,20 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
         const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const escapedRaw = escapeRegex(rawName)
         const escapedNew = escapeRegex(node.name)
-        scanner.scan(new RegExp(`<\\/(?:${escapedRaw}|${escapedNew})\\s*>`))
+        const consumed = scanner.scan(new RegExp(`<\\/(?:${escapedRaw}|${escapedNew})\\s*>`))
+        // la fermante rencontrée ne correspond PAS à ce tag (sinon `consumed` ne serait pas
+        // null) : ni consommée ni signalée — elle remonte telle quelle vers l'ancêtre qui,
+        // lui, la refermera peut-être correctement (cas `<div><span></div>` : le </div>
+        // remonte du <span> vers le <div>). AVERTISSEMENT ici (jamais une erreur, cf.
+        // parser.fermeture-mal-appariee), sauf fermeture implicite HTML5 légitime.
+        // `<@slot>` : fermante `</@slot>` facultative (docs/12-snippets.md), sa fermeture par un
+        // ancêtre (`<div><@slot></div>`) est l'idiome documenté, pas une faute
+        if (consumed === null && !IMPLICIT_CLOSE_TAGS.has(node.name.toLowerCase()) && rawName !== '@slot') {
+          const m = scanner.rest().match(/^<\/([a-zA-Z0-9\-@]+)\s*>/)
+          console.warn(t('parser.fermeture-mal-appariee', {
+            attendu: node.name, trouve: m ? m[1] : '?', ligneOuverture: tagLine, ligneFermeture: currentLine(scanner)
+          }))
+        }
       } else {
         // `parseChildren` ne peut rendre que 'close_tag' ou `undefined`
         // (fin de boucle sur `scanner.eos()`, cf. sa propre implémentation dans `parse()`) : ce
@@ -1120,6 +1147,18 @@ export function parse(html: string, tagRefs?: TagRef[]): Node {
     const m = scanner.rest().match(/^<\/([a-zA-Z0-9\-@]+)\s*>/)
     const name = m ? m[1] : '?'
     throw new Error(t('parser.balise-fermante-orpheline', { nom: name, ligne: line }))
+  }
+  // MÊME famille que la fermante HTML orpheline ci-dessus : un jeton de flux en trop à la racine
+  // (aucun {if}/{for}/{await}/{key} ouvrant) fait remonter son statut ('end', 'else', 'elsif',
+  // 'success', 'error') que `parse()` ignorait aussi — tout ce qui suivait disparaissait. Le jeton
+  // est déjà CONSOMMÉ (contrairement à close_tag) : `currentLine` après coup pointe sur sa ligne.
+  // En toute fin de document, rien n'est perdu : avertissement seulement (bloc mal imbriqué, ex.
+  // `{if $x}…{end}{end}`), jamais une erreur qui casserait un composant qui marche.
+  const FLOW_TOKENS: Record<string, string> = { end: '{end}', else: '{else}', elsif: '{elsif …}', success: '{success …}', error: '{error …}' }
+  if (typeof res === 'string' && FLOW_TOKENS[res]) {
+    const vars = { jeton: FLOW_TOKENS[res], ligne: currentLine(scanner) }
+    if (!scanner.eos()) throw new Error(t('parser.jeton-flux-orphelin', vars))
+    console.warn(t('parser.jeton-flux-orphelin-fin', vars))
   }
   hoistFillBlocks(root)
   return root

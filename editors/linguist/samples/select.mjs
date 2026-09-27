@@ -3,12 +3,16 @@
 </script>
 
 <script>
-  $value ?= null
-  $open  ?= false
+  $value = null
+  $open  = false
 
-  $placeholder       ?= 'Choisir…'
-  $searchPlaceholder ?= 'Rechercher…'
-  $emptyLabel        ?= 'Aucun résultat'
+  $placeholder       = 'Choisir…'
+  $searchPlaceholder = 'Rechercher…'
+  $emptyLabel        = 'Aucun résultat'
+  $match             = 'contains'
+
+  $iconChecked   = '✔'
+  $iconUnchecked = ''
 
   $optionsData = []
   $query       = ''
@@ -21,20 +25,36 @@
 
   optionId = (i)-> "#{uid}-opt-#{i}"
 
-  wrapperRef     = null
-  buttonRef      = null
-  searchInputRef = null
-  slotRef        = null
+  wrapperRef      = null
+  buttonRef       = null
+  searchInputRef  = null
+  slotRef         = null
+  optionsObserver = null
 
   multiOf    = (multiple)-> multiple !== undefined and multiple !== false
   searchOnOf = (search)-> search !== undefined and search !== false
   normalize  = (s)-> (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
-  filterFn = (query, search, options)->
+  # sous-suite : chaque lettre de q, dans l'ordre, avec des trous permis
+  subsequence = (label, q)->
+    j = 0
+    for ch in label
+      j++ if j < q.length and ch == q[j]
+    j == q.length
+
+  matchers = {
+    contains:       (label, q)-> label.includes(q)
+    starts:         (label, q)-> label.startsWith(q)
+    fuzzy:          (label, q)-> subsequence(label, q)
+    'starts-fuzzy': (label, q)-> label[0] == q[0] and subsequence(label.slice(1), q.slice(1))
+  }
+
+  filterFn = (query, search, match, options)->
     return options unless searchOnOf(search)
-    q = query.trim()
+    q = normalize(query.trim())
     return options unless q
-    options.filter (o)-> normalize(o.label).includes(normalize(q))
+    test = matchers[match] or matchers.contains
+    options.filter (o)-> test(normalize(o.label), q)
 
   isSelected = (v, value, multiple)->
     if multiOf(multiple) then Array.isArray(value) and value.includes(v) else value == v
@@ -51,23 +71,32 @@
     sel = selectedOf(value, multiple, options)
     if sel.length then sel[0].icon else null
 
-  activeDescendantFn = (open, activeIndex, query, search, options)->
+  activeDescendantFn = (open, activeIndex, query, search, match, options)->
     return undefined unless open
-    opt = filterFn(query, search, options)[activeIndex]
+    opt = filterFn(query, search, match, options)[activeIndex]
     return undefined unless opt
     optionId(activeIndex)
 
   $searchOn         = searchOnOf($search)
   $multi            = multiOf($multiple)
-  $filtered         = filterFn($query, $search, $optionsData)
+  $filtered         = filterFn($query, $search, $match, $optionsData)
   $currentLabel     = labelFn($value, $multiple, $optionsData, $placeholder)
   $currentIcon      = iconFn($value, $multiple, $optionsData)
-  $activeDescendant = activeDescendantFn($open, $activeIndex, $query, $search, $optionsData)
+  $activeDescendant = activeDescendantFn($open, $activeIndex, $query, $search, $match, $optionsData)
 
   refreshOptions = ->
     return unless slotRef
-    els = slotRef.assignedElements().filter (el)-> el.tagName.toLowerCase() == 'mjs-option'
+    assigned = slotRef.assignedElements()
+    # assignedElements() ne rend que les enfants DIRECTS du slot : un wrapper intermédiaire est
+    # lui-même slotté, pas les <mjs-option> qu'il contient → on descend dedans au besoin
+    els = assigned.flatMap (el)-> if el.tagName.toLowerCase() == 'mjs-option' then [el] else Array.from(el.querySelectorAll('mjs-option'))
     $optionsData = els.map (el)-> { value: el.getAttribute('value'), icon: el.getAttribute('icon'), label: (el.textContent or '').trim() }
+    # une option peut être modifiée EN PLACE (liste {for} réactive, même clé, même noeud
+    # <mjs-option> réutilisé) sans jamais déclencher slotchange → on observe le sous-arbre
+    # projeté lui-même, réobservé à chaque passage pour suivre un remplacement de noeuds
+    optionsObserver?.disconnect()
+    for el in assigned
+      optionsObserver?.observe(el, { attributes: true, childList: true, characterData: true, subtree: true })
 
   updatePlacement = ->
     return unless buttonRef
@@ -81,6 +110,7 @@
 
   openPanel = ->
     return if $open
+    refreshOptions()
     $query = ''
     idx = $optionsData.findIndex (o)-> o.value == $value
     $activeIndex = if idx >= 0 then idx else 0
@@ -104,6 +134,9 @@
 
   onButtonClick = ->
     if $open then closePanel() else openPanel()
+
+  onSearchInput = ->
+    $activeIndex = (if filterFn($query, $search, $match, $optionsData).length then 0 else -1)
 
   onKeydown = (e)->
     unless $open
@@ -133,12 +166,12 @@
       buttonRef?.focus()
 
   onWrapperClick = (e)->
-    e._mjsSelectWrappers = e._mjsSelectWrappers or new Set()
-    e._mjsSelectWrappers.add(wrapperRef)
+    e._mjs_mjsSelectWrappers = e._mjs_mjsSelectWrappers or new Set()
+    e._mjs_mjsSelectWrappers.add(wrapperRef)
 
   onDocumentClick = (e)->
     return unless $open
-    return if e._mjsSelectWrappers?.has(wrapperRef)
+    return if e._mjs_mjsSelectWrappers?.has(wrapperRef)
     closePanel()
 
   µeffect ->
@@ -158,10 +191,14 @@
       @appendChild(input)
 
   µmount ->
+    optionsObserver = new MutationObserver(refreshOptions)
     refreshOptions()
     queueMicrotask refreshOptions
     slotRef.addEventListener('slotchange', refreshOptions)
     wrapperRef.addEventListener('click', onWrapperClick)
+
+  µdestroy ->
+    optionsObserver?.disconnect()
 </script>
 
 <div class="select" @this=!{wrapperRef} @keydown={onKeydown(e)}>
@@ -173,14 +210,14 @@
   {if $open}
     <div class="select-panel" part="panel" id={panelId} role="listbox" aria-multiselectable={$multi} @class{$panelUp}="up" --mjs-select-panel-max={$panelMax}>
       {if $searchOn}
-        <input type="text" part="search" class="select-search" aria-label={$searchPlaceholder} placeholder={$searchPlaceholder} value=!{$query} @this=!{searchInputRef}>
+        <input type="text" part="search" class="select-search" aria-label={$searchPlaceholder} placeholder={$searchPlaceholder} value=!{$query} @this=!{searchInputRef} @input={onSearchInput()}>
       {end}
       {if $filtered.length == 0}
         <div class="select-empty">{$emptyLabel}</div>
       {else}
         {for i, opt in $filtered by value}
           <div class="select-option" part="option" role="option" id={optionId(i)} @class{i == $activeIndex}="active" @class{isSelected(opt.value, $value, $multiple)}="selected" aria-selected={isSelected(opt.value, $value, $multiple)} @click={toggleValue(opt.value)} @mouseenter={$activeIndex = i}>
-            {if $multi}<span class="select-check">{if isSelected(opt.value, $value, $multiple)}✔{end}</span>{end}
+            {if $multi}<span class="select-check">{if isSelected(opt.value, $value, $multiple)}{$iconChecked}{else}{$iconUnchecked}{end}</span>{end}
             {if opt.icon}<span class="select-icon">{opt.icon}</span>{end}
             <span class="select-option-label">{opt.label}</span>
           </div>

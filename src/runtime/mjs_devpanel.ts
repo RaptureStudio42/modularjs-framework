@@ -140,7 +140,10 @@ function _dpApercu(v) {
 function _dpEtatKeys(el) {
   var etat = el._state || {};
   var derives = new Set(el._mjs_computedKeys || []);
-  return Object.keys(etat).filter(function(k) { return !derives.has(k) && k.charAt(0) !== '_'; }).sort();
+  // préfixe interne EXPLICITE (`_mjs_`), pas tout ce qui commence par `_` : `$_x` est un nom de
+  // var d'état valide (SIGIL_ID autorise `_` en 1re position, c'est même l'exemple du framework
+  // pour µread/µwrite) — un filtre sur le seul `_` la masquait à tort dans l'onglet État.
+  return Object.keys(etat).filter(function(k) { return !derives.has(k) && k.indexOf('_mjs_') !== 0; }).sort();
 }
 
 function _dpDeriveKeys(el) {

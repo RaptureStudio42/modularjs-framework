@@ -66,6 +66,108 @@ if (µ.Element) {
     return entryNodes;
   };
 
+  // Sous-arbre porteur d'état HORS GABARIT (une clé garantit l'identité — un
+  // nœud du pool ne peut donc être recyclé pour une AUTRE clé que si rien, en
+  // dessous, ne porte un état que le gabarit ne reconstruit pas). Deux
+  // familles bien distinctes :
+  //  - état OPAQUE, jamais réinitialisable de l'extérieur : `[contenteditable]`,
+  //    `<details>` (son `open` REFLÈTE l'attribut dans les deux sens — rien,
+  //    nulle part, ne garde la valeur d'ORIGINE du gabarit une fois basculé,
+  //    contrairement à value/checked/selected ci-dessous ; la capter coûterait
+  //    un DFS de plus À LA CRÉATION de CHAQUE ligne, create1k compris, pour un
+  //    tag rare dans une liste), audio/vidéo (lecture en cours), canvas
+  //    (dessin), iframe (document chargé), élément personnalisé (nom avec
+  //    tiret = composant, état interne possible) : jamais recyclé.
+  //  - champ de FORMULAIRE (INPUT/TEXTAREA/SELECT) : le navigateur préserve
+  //    déjà NATIVEMENT la valeur du gabarit (`defaultValue`/`defaultChecked`/
+  //    `option.defaultSelected` reflètent l'attribut STATIQUE du template,
+  //    jamais modifiés par une écriture `.value =`/`.checked =` ultérieure —
+  //    c'est le « dirty value flag » du DOM). Recyclable SANS blocage — mais
+  //    cette fonction ne fait ICI que le CONSTAT, elle n'écrit rien : les
+  //    nœuds sont encore CONNECTÉS AU DOCUMENT à ce stade (le retrait DOM vient
+  //    après, chez l'appelant), et un `<input type=radio>` encore connecté à
+  //    qui on écrit `checked=true` déclenche NATIVEMENT le décochage de tout
+  //    autre radio du même `name` dans le même arbre — y compris un radio
+  //    totalement étranger à cette ligne, jamais touché par ce `{for}`. Les
+  //    champs de formulaire rencontrés sont donc seulement COLLECTÉS dans
+  //    `formNodesOut` (si fourni par l'appelant) ; c'est `_mjs_mjsResetFormFields`
+  //    plus bas qui remet `value`/`checked`/`selected` au gabarit, appelée par
+  //    l'appelant UNE FOIS le sous-arbre détaché du document vivant. Les
+  //    liaisons de la NOUVELLE clé s'appliquent normalement juste après (PASS 2
+  //    plus bas, inconditionnelle) : une liaison lit toujours l'état RÉEL du
+  //    nœud pour décider d'écrire (`if (node.value !== val)`, jamais une valeur
+  //    mise en cache à part) — remettre le defaultValue avant ne peut donc
+  //    jamais faire sauter l'écriture qui suit, même si la nouvelle valeur
+  //    coïncide avec l'ancienne (couvert par test).
+  // DFS manuelle plutôt que `querySelectorAll` (même choix que le scan de
+  // `_mjs_destroyWithHooks`, mjs_destroy_hooks.ts) : early-exit au 1er match
+  // opaque, aucune allocation dans le cas commun (une row de texte, ex. le
+  // banc officiel — `formNodesOut` est un tableau RÉUTILISÉ posé par
+  // l'appelant, jamais alloué ici). Mesuré réellement (bundler + happy-dom
+  // réels, 300 lignes, remplacement total des clés, plusieurs passes en ordre
+  // alterné, cf. rapport) : une row de texte n'est pas affectée ; une row à
+  // `<input>` (lié ou non) reste autour de 6-8 ms par remplacement (guard
+  // précédente : jamais recyclée, destroy + recreate systématiques, ~10-14 ms)
+  // — net, mais PAS nul : ce n'est pas un recyclage sans aucune vérification.
+  var __mjsOpaqueTags = {DETAILS: 1, AUDIO: 1, VIDEO: 1, CANVAS: 1, IFRAME: 1};
+  var __mjsFormTags = {INPUT: 1, TEXTAREA: 1, SELECT: 1};
+  µ.Element.prototype._mjs_mjsHasOwnState = function(nodes, formNodesOut) {
+    for (let __ni = 0, __nln = nodes.length; __ni < __nln; __ni++) {
+      const __root = nodes[__ni];
+      if (__root.nodeType !== 1) continue;
+      let __n = __root;
+      while (__n) {
+        const __tag = __n.tagName;
+        if (__mjsOpaqueTags[__tag] || __tag.indexOf('-') !== -1) return true;
+        if (__n.hasAttribute && __n.hasAttribute('contenteditable') && __n.getAttribute('contenteditable') !== 'false') return true;
+        if (__mjsFormTags[__tag] && formNodesOut) formNodesOut.push(__n);
+        if (__n.firstElementChild) {
+          __n = __n.firstElementChild;
+          continue;
+        }
+        while (__n && __n !== __root && !__n.nextElementSibling) {
+          __n = __n.parentElement;
+        }
+        if (!__n || __n === __root) break;
+        __n = __n.nextElementSibling;
+      }
+    }
+    return false;
+  };
+
+  // Remise au gabarit d'une liste de champs de formulaire (INPUT/TEXTAREA/
+  // SELECT) COLLECTÉS par `_mjs_mjsHasOwnState` ci-dessus. À appeler
+  // UNIQUEMENT une fois le sous-arbre détaché du document vivant (jamais
+  // avant : cf. commentaire ci-dessus sur le vol de sélection radio) — les
+  // deux appelants de `_mjs_mjsHasOwnState` le font juste après leur
+  // `removeChild`/effacement DOM. Même remise à zéro qu'avant, seulement
+  // déplacée dans le temps.
+  µ.Element.prototype._mjs_mjsResetFormFields = function(nodes) {
+    for (let __fi = 0, __fln = nodes.length; __fi < __fln; __fi++) {
+      const __n = nodes[__fi];
+      const __tag = __n.tagName;
+      if (__tag === 'SELECT') {
+        // pas de `.defaultValue` fiable sur <select> (multi ou pas) :
+        // seule chaque <option> garde son `selected` de gabarit — lu sur
+        // l'attribut (ce que reflète `defaultSelected`), que certains DOM
+        // simulés n'implémentent pas
+        const __opts = __n.options;
+        for (let __oi = 0, __oln = __opts.length; __oi < __oln; __oi++) {
+          const __opt = __opts[__oi];
+          const __def = __opt.hasAttribute('selected');
+          if (__opt.selected !== __def) __opt.selected = __def;
+        }
+      } else {
+        if (__n.value !== __n.defaultValue) __n.value = __n.defaultValue;
+        // `checked`/`defaultChecked` n'existent que sur INPUT (case/radio) —
+        // sans effet sur TEXTAREA, pas besoin de tester le tag ici. Le nœud
+        // est déjà détaché ici : plus aucun risque de mutuelle exclusion
+        // native sur un radio étranger.
+        if (__tag === 'INPUT' && __n.checked !== __n.defaultChecked) __n.checked = __n.defaultChecked;
+      }
+    }
+  };
+
   // _mjs_updFor : tplFn(item, index) retourne {fragment, refs} (plus de
   // HTML+paths). Le runtime n'a plus besoin de cloner/walker.
   // Cache `mjs-childtransition` sur le parentNode : pas de getAttribute
@@ -565,9 +667,30 @@ if (µ.Element) {
       // au lieu de N×delete. Au clear mesuré (pool plein dès les warmups),
       // cette boucle ne fait quasi plus rien.
       var __room = __poolLimit - __pool.length;
+      // Tableau RÉUTILISÉ (comme `_mjs_reusableFragment`/`_mjs_reusableRange`
+      // plus bas) : accumule les champs de formulaire des entries qui partent
+      // au pool, remis au gabarit plus bas UNE FOIS l'effacement DOM fait
+      // (cf. `_mjs_mjsHasOwnState` : jamais avant, sous peine de voler la
+      // sélection d'un radio étranger encore connecté).
+      var __formNodesBulk = µ._mjs_reusableFormNodes;
+      if (!__formNodesBulk) __formNodesBulk = µ._mjs_reusableFormNodes = [];
+      __formNodesBulk.length = 0;
       if (__room > 0) {
         for (const __e of cache.values()) {
           if (__e && __e.__nodes && __e.__nodes._mjs_filterKeys) { __e.__nodes._mjs_filterKeys = null; __e.__nodes._mjs_filterFns = null; }
+          // Même garde que le retrait un-par-un ci-dessous : un sous-arbre à
+          // état propre ne part pas au pool (recyclage cross-clé interdit),
+          // il est simplement abandonné au GC (déjà détaché du DOM par le
+          // clear en masse ci-dessous).
+          if (__e) {
+            const __beforeLen = __formNodesBulk.length;
+            if (this._mjs_mjsHasOwnState(this._mjs_liveEntryNodes(__e.nodes), __formNodesBulk)) {
+              // pas poolable : rejette les champs captés pour CETTE entry
+              // (elle n'ira jamais au pool, donc jamais remise au gabarit).
+              __formNodesBulk.length = __beforeLen;
+              continue;
+            }
+          }
           __pool.push(__e);
           if (--__room <= 0) break;
         }
@@ -597,6 +720,10 @@ if (µ.Element) {
           while (__n2 && __n2 !== endNode) { const __t2 = __n2; __n2 = __n2.nextSibling; parentNode.removeChild(__t2); }
         }
       }
+      // Remise au gabarit des champs de formulaire des lignes poolées —
+      // seulement maintenant que le sous-arbre est détaché du document vivant.
+      if (__formNodesBulk.length) this._mjs_mjsResetFormFields(__formNodesBulk);
+      __formNodesBulk.length = 0;
       // Reset cache state (sera ré-écrit en bas de la fn).
       this._mjs_list_order[cacheId] = newKeys;
       this._mjs_list_cache[cacheId] = cache;
@@ -633,14 +760,31 @@ if (µ.Element) {
         parentNode.appendChild(endNode);
       }
     }
+    // Tableau RÉUTILISÉ (même singleton que le chemin bulk-clear plus haut) :
+    // collecte les champs de formulaire d'UNE entry à la fois, remis au
+    // gabarit juste après son removeChild (jamais avant, cf.
+    // `_mjs_mjsHasOwnState`). Nettoyé au tout début de chaque itération
+    // concernée pour ne jamais faire fuiter les nœuds d'une entry précédente.
+    var __formNodes = µ._mjs_reusableFormNodes;
+    if (!__formNodes) __formNodes = µ._mjs_reusableFormNodes = [];
     for (j = 0, len = oldKeys.length; j < len; j++) {
       oldKey = oldKeys[j];
       if (!newKeySet.has(oldKey)) {
         entry = cache.get(oldKey);
         const __ens = this._mjs_liveEntryNodes(entry.nodes);
-        // Pool des entries au lieu de destroy si pas de hooks destroy
-        // et qu'on n'a pas de cascade outro à jouer.
+        // Pool des entries au lieu de destroy si pas de hooks destroy,
+        // qu'on n'a pas de cascade outro à jouer, ET que le sous-arbre ne
+        // porte aucun état hors gabarit (sinon la ligne recyclée pour une
+        // AUTRE clé emporterait avec elle un input tapé/un composant enfant —
+        // une clé doit garantir l'identité). Détection SEULE (aucune
+        // écriture) : le node est encore CONNECTÉ ici, le removeChild vient
+        // plus bas.
+        let __hasOwnState = true;
         if (__canPool && !__wait) {
+          __formNodes.length = 0;
+          __hasOwnState = this._mjs_mjsHasOwnState(__ens, __formNodes);
+        }
+        if (__canPool && !__wait && !__hasOwnState) {
           // anti-leak {for} imbriqué :
           // le chemin pool fait un `removeChild` DIRECT (jamais
           // `_mjs_destroyNodeAndChildren`), donc la purge du sous-arbre doit se faire
@@ -662,10 +806,15 @@ if (µ.Element) {
               var __nd = __ens[__ei];
               if (__nd.parentNode) __nd.parentNode.removeChild(__nd);
             }
+            // Remise au gabarit — seulement maintenant que le sous-arbre est
+            // détaché du document vivant (plus aucun risque de mutuelle
+            // exclusion native sur un radio étranger).
+            if (__formNodes.length) this._mjs_mjsResetFormFields(__formNodes);
             __pool.push(entry);
           } else {
             // Pool plein : on peut quand même bypass le walk DFS car
             // __canPool implique _mjs_noDestroyHooks (pas de transitions).
+            // Entry jetée au GC juste après : pas la peine de la remettre au gabarit.
             for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
               var __ndr = __ens[__ei];
               if (__ndr.parentNode) __ndr.parentNode.removeChild(__ndr);
@@ -754,11 +903,13 @@ if (µ.Element) {
     // append linéaire dans UN fragment unique, puis UN seul insertBefore.
     // Gain sur create 1k items : ~5-10ms.
     if (isFreshCreate && oldKeys.length === 0 && dyingTail.length === 0) {
-      // Accumule TOUT dans un fragment puis insère.
-      var __freshFrag = µ._mjs_reusableFragment;
-      if (!__freshFrag) {
-        __freshFrag = µ._mjs_reusableFragment = document.createDocumentFragment();
-      }
+      // Accumule TOUT dans un fragment puis insère. Fragment pris en EXCLUSIVITÉ jusqu'à
+      // l'insertion : un rendu réveillé PENDANT `insertBefore` (slotchange synchrone sous
+      // happy-dom, le DOM du module de test) reprenait le même fragment encore plein et
+      // emportait nos lignes dans son propre conteneur — il en crée un autre, et le nôtre
+      // revient au pool une fois vidé par l'insertion.
+      var __freshFrag = µ._mjs_reusableFragment || document.createDocumentFragment();
+      µ._mjs_reusableFragment = null;
       const __ne = newEntries;
       const __neLen = __ne.length;
       for (let __ix = 0; __ix < __neLen; __ix++) {
@@ -770,6 +921,7 @@ if (µ.Element) {
         }
       }
       parentNode.insertBefore(__freshFrag, endNode);
+      µ._mjs_reusableFragment = __freshFrag;
       // Appel des updateFn APRÈS insertion (cohérent avec sémantique).
       // Optim #5 — préférer entry._mjs_updFn (closure refs locales) si présent.
       // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1)
@@ -877,12 +1029,11 @@ if (µ.Element) {
     //
     // Sémantique : après `parentNode.insertBefore(frag, anchor)`, le fragment
     // est automatiquement vidé par le browser (move semantics). On peut donc
-    // le réutiliser immédiatement après chaque flush.
+    // le réutiliser immédiatement après chaque flush. Pris en exclusivité
+    // jusqu'au dernier flush, comme pour la création fraîche ci-dessus.
     var __fragHasChild = false;
-    var __frag = µ._mjs_reusableFragment;
-    if (!__frag) {
-      __frag = µ._mjs_reusableFragment = document.createDocumentFragment();
-    }
+    var __frag = µ._mjs_reusableFragment || document.createDocumentFragment();
+    µ._mjs_reusableFragment = null;
     var __domAnchor = lastNode;
     // PASS 1 — placement DOM : on attache TOUS les nodes au parent réel via
     // l'algo LIS, en accumulant dans __frag puis flush au point d'ancrage.
@@ -925,6 +1076,7 @@ if (µ.Element) {
     if (__fragHasChild) {
       parentNode.insertBefore(__frag, __domAnchor);
     }
+    µ._mjs_reusableFragment = __frag;
     // PASS 2 — bindings : maintenant que tous les nodes sont dans parentNode,
     // updateFn voit isConnected=true et le sampling fonctionne correctement.
     // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1, émis

@@ -1,6 +1,8 @@
 // mjs_store.coffee
-// Mutators set static module-level (1 alloc au lieu de N par store).
-const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes', 'setSeconds', 'setMilliseconds', 'push', 'pop', 'splice', 'shift', 'unshift', 'sort', 'reverse']);
+// Mutators set static module-level (1 alloc au lieu de N par store). `setInt8`…`setBigUint64` :
+// setters NOMMÉS d'une DataView (même famille que les `setX` de Date juste avant, énumérés
+// pareillement plutôt qu'un test de motif) — sans eux, muter par cette voie ne notifiait personne.
+const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes', 'setSeconds', 'setMilliseconds', 'push', 'pop', 'splice', 'shift', 'unshift', 'sort', 'reverse', 'fill', 'copyWithin', 'setInt8', 'setUint8', 'setInt16', 'setUint16', 'setInt32', 'setUint32', 'setFloat32', 'setFloat64', 'setBigInt64', 'setBigUint64']);
 
 µ.Store = class Store {
   constructor(initialState) {
@@ -18,7 +20,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
   }
 
   _mjs_buildProxy(target, rootKey) {
-    var isBuiltIn, mutators, proxy;
+    var byRoot, cached, isBuiltIn, mutators, proxy;
     // reconnaissance des enveloppes : `target` peut être l'enveloppe
     // d'un composant/rune (cf. µ._mjs_RAW) — déballage AVANT tout, même principe
     // que _mjs_wrapDeep (mjs_element.ts) : le carnet (_mjs_proxyCache) reste stable
@@ -27,10 +29,25 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     if (target instanceof Promise || (target != null && µ._mjs_rawSet.has(target))) {
       return target;
     }
-    if (this._mjs_proxyCache.has(target)) {
-      return this._mjs_proxyCache.get(target);
+    // cache à DEUX niveaux (target, rootKey) — même stratégie que _mjs_wrapDeep
+    // (mjs_element.ts) : un objet rangé sous DEUX clés racines (`new µ.Store({a:
+    // shared, b: shared})`) a un proxy PAR clé (identité stable par clé, cf.
+    // tests/store-cache-proxy-cle-racine.test.ts). `byRoot.keys()` sert aussi de
+    // registre « quelles clés ont un jour atteint cet objet » — réutilisé par
+    // `_mjs_notifyMutation`, plus bas, pour la notification croisée entre alias :
+    // pas de structure séparée, ce cache la porte déjà (chaque clé d'accès y crée
+    // forcément une entrée AVANT qu'on puisse muter à travers elle).
+    byRoot = this._mjs_proxyCache.get(target);
+    if (byRoot !== void 0) {
+      cached = byRoot.get(rootKey);
+      if (cached !== void 0) return cached;
     }
-    isBuiltIn = target instanceof Map || target instanceof Set || target instanceof Date || Array.isArray(target);
+    // `ArrayBuffer.isView` couvre TypedArray ET DataView en un seul test — même famille que
+    // Map/Set/Date/Array juste avant : leurs getters/méthodes natifs exigent la vraie instance
+    // en `this` (internal slot), incompatible avec le PROXY reçu comme receiver par défaut.
+    // `instanceof ArrayBuffer` couvre le buffer BRUT (pas une vue) — `isView` rend faux dessus :
+    // `.byteLength` (accesseur) et `.slice()` (méthode) levaient la même erreur, mesuré.
+    isBuiltIn = target instanceof Map || target instanceof Set || target instanceof Date || Array.isArray(target) || ArrayBuffer.isView(target) || target instanceof ArrayBuffer;
     mutators = MJS_STORE_MUTATORS;
     proxy = new Proxy(target, {
       get: (obj, prop, receiver) => {
@@ -40,6 +57,13 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         // valeur issue du store ne la reconnaît jamais comme une enveloppe
         // MJS et la ré-enveloppe (Proxy-de-Proxy, identité neuve).
         if (prop === µ._mjs_RAW) return obj;
+        // pollution de prototype (CWE-1321) : lire __proto__/constructor/prototype HÉRITÉ
+        // (pas une donnée propre de la cible) enveloppait Object.prototype — écrire ensuite
+        // une clé dessus pollue TOUS les objets du realm. Clé PROPRE (donnée métier, ex.
+        // { constructor: 'Ferrari' }) : comportement normal, cf. mutateurs/registre plus bas.
+        if (typeof prop === 'string' && !µ._mjs_safeKey(prop) && !Object.prototype.hasOwnProperty.call(obj, prop)) {
+          return void 0;
+        }
         if (rootKey === null && typeof prop === 'string' && µ._mjs_safeKey(prop)) {
           component = µ.activeComponent;
           if (component) {
@@ -76,7 +100,12 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           // au-dessus. (storeKey + _mjs_var_bits checks aussi supprimés — V2
           // dispatch direct.)
         }
-        val = Reflect.get(obj, prop, receiver);
+        // collections natives : le getter natif (Map.prototype.size, Set.prototype.size…)
+        // exige la vraie instance en `this` — appelé avec receiver = le PROXY, il lève
+        // TypeError (internal slot absent). Receiver = la cible BRUTE pour ces getters ;
+        // inchangé pour un objet plain (receiver = proxy, nécessaire aux getters `this`-sensibles
+        // définis par l'utilisateur, ex. champs privés `#x`).
+        val = Reflect.get(obj, prop, isBuiltIn ? obj : receiver);
         // AVANT : `!isBuiltIn` bloquait le wrap récursif dès que le CONTENEUR (obj) était lui-même
         // une collection native — `store.data.list[0]` rendait donc l'objet BRUT (aucun proxy
         // interposé), et `store.data.list[0].n = 99` mutait en silence (zéro trap, zéro
@@ -97,8 +126,11 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
                 result = originalMethod(...args);
                 // époque de mutation du brut (cf. mjs_element.ts).
                 µ._mjs_bumpEpoch(obj);
-                this._mjs_notify(rootKey || prop);
-                return result;
+                this._mjs_notifyMutation(byRoot, rootKey, prop);
+                // Map.set/… rendent `this` (chaînage natif) : rendre la cible BRUTE cassait
+                // la réactivité de la chaîne (`.set().set()` mutait en silence dès le 2ᵉ
+                // maillon) — rendre le PROXY à la place.
+                return result === obj ? proxy : result;
               };
             }
             // `Map.get(k)` rend la valeur INTERNE brute par un appel natif, HORS du trap `get`
@@ -139,7 +171,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           }
           // époque de mutation du brut (cf. mjs_element.ts).
           µ._mjs_bumpEpoch(obj);
-          this._mjs_notify(rootKey || prop);
+          this._mjs_notifyMutation(byRoot, rootKey, prop);
           // énumération RACINE :
           // un lecteur de `{for k in store.data}` / `Object.keys` dépend de la
           // STRUCTURE (ownKeys) sans lire la clé précise. On le réveille à l'AJOUT
@@ -168,7 +200,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           }
           // époque de mutation du brut (cf. mjs_element.ts).
           µ._mjs_bumpEpoch(obj);
-          this._mjs_notify(rootKey || prop);
+          this._mjs_notifyMutation(byRoot, rootKey, prop);
           // Retrait d'une clé racine → réveiller les lecteurs d'énumération.
           if (rootKey === null) {
             this._mjs_notify(µ._mjs_STRUCT);
@@ -223,8 +255,33 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         return false;
       }
     });
-    this._mjs_proxyCache.set(target, proxy);
+    if (byRoot === void 0) {
+      byRoot = new Map();
+      this._mjs_proxyCache.set(target, byRoot);
+    }
+    byRoot.set(rootKey, proxy);
     return proxy;
+  }
+
+  // notifie la mutation d'un sous-objet atteint par le proxy `rootKey`/`prop` — `byRoot`
+  // (le cache (rootKey → proxy) DE CET OBJET, déjà en main dans la closure de l'appelant,
+  // cf. `_mjs_buildProxy` : pas de second lookup WeakMap ici) donne aussi les clés qui
+  // l'ont un jour atteint. Partagé sous PLUSIEURS clés racines → notifie CHACUNE, pas
+  // seulement celle du proxy qui a muté : `store.data.b.x = 1` doit aussi réveiller un
+  // lecteur de `store.data.a` quand `a` et `b` pointent sur le MÊME objet — sinon la
+  // mutation lui reste invisible. Racine (rootKey null) : un seul propriétaire possible
+  // pour une clé de premier niveau, comportement inchangé (`byRoot` vaut alors `void 0`,
+  // jamais construit pour la racine elle-même).
+  _mjs_notifyMutation(byRoot, rootKey, prop) {
+    if (rootKey === null) {
+      this._mjs_notify(prop);
+      return;
+    }
+    if (byRoot && byRoot.size > 1) {
+      byRoot.forEach((proxy, key) => this._mjs_notify(key));
+    } else {
+      this._mjs_notify(rootKey);
+    }
   }
 
   _mjs_notify(rootKey) {
@@ -239,11 +296,16 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     if (!this._mjs_is_notifying) {
       this._mjs_is_notifying = true;
       return queueMicrotask(() => {
-        var i, key, len, pending, results;
+        var i, key, len, notified, pending, results;
         this._mjs_is_notifying = false;
         pending = Array.from(this._mjs_pendingNotifs);
         this._mjs_pendingNotifs.clear();
         results = [];
+        // un même composant abonné à PLUSIEURS clés de cette passe (fan-out
+        // `_mjs_notifyMutation` sur un objet partagé entre plusieurs clés racines,
+        // cf. plus haut) ne doit être invalidé qu'UNE fois — même garde que
+        // `_notifyRoots` (mjs_runes.ts, µ.state), ensemble tenu le temps du flush.
+        notified = new Set();
         for (i = 0, len = pending.length; i < len; i++) {
           key = pending[i];
           // Les effets lecteurs d'un store universel (`µ.store.<key>` / `$$key`)
@@ -255,6 +317,8 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           // mutations rares → le re-render complet (borné à 1 composant) est
           // acceptable.
           results.push(this._mjs_subscribers.get(key).forEach((comp) => {
+            if (notified.has(comp)) return;
+            notified.add(comp);
             return typeof comp._mjs_invalidate === "function" ? comp._mjs_invalidate('_awaits_') : void 0;
           }));
         }

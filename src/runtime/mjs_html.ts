@@ -21,7 +21,11 @@ if (µ.Element) {
     const __children = [];
     while (__c) { __children.push(__c); __c = __c.nextSibling; }
     for (let __ci = 0, __cln = __children.length; __ci < __cln; __ci++) {
-      this._mjs_destroyNodeAndChildren(__children[__ci]);
+      // `.catch` défensif — même raison que mjs_if.ts/mjs_key.ts : jamais
+      // attendue ici, un rejet resterait sinon non géré.
+      this._mjs_destroyNodeAndChildren(__children[__ci]).catch(function(err) {
+        return µ.error('[ModularJS] destruction de contenu {@html} en erreur :', err);
+      });
     }
     node.innerHTML = strVal;
     node._mjs_h = strVal;

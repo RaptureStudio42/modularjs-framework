@@ -151,16 +151,17 @@ _request = function(options) {
     // en-têtes de navigation (version de build + contenant HTML + politique de
     // cache + demande de rechargement dur), lus une seule fois ici : propagés sur TOUS les retours
     // ci-dessous (204/JSON/texte) jusqu'à `options.success` en 4e argument positionnel, objet
-    // `{ version, target, method, cache, reload }` (champ `null` si l'en-tête HTTP correspondant est
+    // `{ version, target, method, cache, reload, type }` (champ `null` si l'en-tête HTTP correspondant est
     // absent ou vide) — sert à mjs_ujs.ts (garde de version + contenant/mode + politique de cache +
     // rechargement dur côté réponses HTML, miroir des clés `version`/`target`/`method`/`cache`/`reload`
-    // côté JSON).
+    // côté JSON ; `type` = Content-Type, pour ne jamais installer comme une page un PDF, un CSV ou du texte).
     nav = {
       version: response.headers.get('X-MJS-Version') || null,
       target: response.headers.get('X-MJS-Target') || null,
       method: response.headers.get('X-MJS-Method') || null,
       cache: response.headers.get('X-MJS-Cache') || null,
-      reload: response.headers.get('X-MJS-Reload') || null
+      reload: response.headers.get('X-MJS-Reload') || null,
+      type: response.headers.get('content-type') || null
     };
     // µschema-HTTP — réponse binaire attendue (déclaré par l'appelant via options.schema, JAMAIS
     // deviné depuis les en-têtes) : décodage dédié, court-circuite tout le branchement JSON/texte
@@ -249,7 +250,7 @@ _request = function(options) {
     // `undefined` pour toute réponse JSON/texte classique, ignoré sans effet par tout callback existant
     // (2 arguments) — seul µ.ajax.binary le peuple (nom du schéma décodé, utile si l'endpoint peut
     // répondre par plusieurs schémas différents). 4e argument `result.nav` — ADDITIF pareil :
-    // `{ version, target, method, cache }`, chaque champ `null` quand l'en-tête
+    // `{ version, target, method, cache, reload, type }`, chaque champ `null` quand l'en-tête
     // HTTP correspondant est absent/vide (toujours un objet, jamais `null` lui-même) — ignoré sans effet
     // par tout callback existant à 2-3 paramètres, jamais consommé hors mjs_ujs.ts.
     return options.success(result.body, result.url, result.schemaNom, result.nav);

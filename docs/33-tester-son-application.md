@@ -119,8 +119,8 @@ Depuis l'interface `MountedComponent` — ce que rend `app.mount(nom, props?)` :
 | `findAll(selecteur)` | tous les nœuds qui correspondent au sélecteur |
 | `text(selecteur?)` | texte affiché — du composant entier, ou du premier nœud qui correspond |
 | `html()` | markup rendu, pour une assertion de forme ou un message d'échec lisible |
-| `click(selecteur)` | clique, puis attend que le rendu ait eu lieu |
-| `fire(selecteur, type, init?)` | déclenche n'importe quel événement, puis attend le rendu |
+| `click(selecteur)` | active l'élément **nativement** (`el.click()` — coche une case, sélectionne un radio, peut soumettre un formulaire, exactement comme un clic dans un vrai navigateur), puis attend que le rendu ait eu lieu |
+| `fire(selecteur, type, init?)` | déclenche un évènement du `type` demandé, puis attend le rendu — la classe est choisie selon `type` (`KeyboardEvent` pour `key*`, `MouseEvent`/`PointerEvent` pour `click`/`dblclick`/`mouse*`/`pointer*`, `FocusEvent` pour `focus`/`blur`, `InputEvent` pour `input`/`beforeinput`, `CustomEvent` si `init.detail` est fourni, `Event` sinon), avec `init` posé dessus (`key`, `code`, `detail`, `bubbles`…) |
 | `type(selecteur, valeur)` | saisit une valeur dans un champ (valeur posée + événement `input`), puis attend le rendu |
 | `set(props)` | change des props depuis le parent, puis attend le rendu |
 | `tick()` | attend que le rendu en attente ait eu lieu |

@@ -19,6 +19,8 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
+import * as acorn from 'acorn'
+import * as walk from 'acorn-walk'
 import { Bundler } from '../bundler/index.js'
 import type { I18nConfig, resolveBundlerOpts } from '../bundler/config.js'
 // (SSRF) — défense en profondeur : `isBlockedForwardTarget`
@@ -231,90 +233,128 @@ export interface SSRRenderer {
 // Retire la syntaxe ESM pour permettre l'éval dans happy-dom (pas de loader
 // module). Même traitement que le harness de conformance.
 //
-// ("stripEsm sur bundle minifié") — les 2
-// premiers regex étaient ANCRÉS EN DÉBUT/FIN DE LIGNE (`^…$/gm`), un import/
-// export devait être SEUL sur sa ligne pour être reconnu. En prod
-// (`NODE_ENV=production`), `minifyJs` (bundler/minify.ts) MINIFIE aussi le
-// bundle interne du renderer SSR (son PROPRE `Bundler`, indépendant de toute
-// config utilisateur — `minifyJs` regarde `NODE_ENV` directement, cf. son
-// commentaire) : esbuild COMPACTE tout sur une ligne
-// (`import{µ as e}from"./core.js";class o extends e.Element{…}export{o as
-// default};`, vérifié empiriquement) — plus AUCUNE ligne ne fait "juste"
-// `import …` ou "juste" `export {…}`, les 2 regex ne matchent PLUS RIEN, et
-// `import`/`export` (syntaxe module, invalide en script classique) atteignent
-// `window.eval()` tels quels → tout rendu SSR échoue dès que le process hôte
-// tourne avec `NODE_ENV=production` (déploiement standard), qu'importe la
-// config du renderer SSR lui-même.
+// Analyse par un VRAI parseur JS (acorn, déjà une dépendance du paquet — cf.
+// bundler/index.ts, même motif `acorn.parse` + `acorn-walk`) plutôt que des
+// expressions régulières sur le texte brut : une regex ne distingue jamais un
+// mot-clé `import`/`export` RÉEL d'un texte qui lui ressemble — reproduit en
+// pratique par un composant de doc qui AFFICHE un exemple de code
+// (`"export default hello import.meta.url"`, en TEXTE, jamais exécuté) que la
+// regex réécrivait quand même, ou par un `export` mentionné dans un
+// COMMENTAIRE (`// export function clear() {}`) pris pour un vrai export →
+// `ReferenceError` à l'éval pour un nom jamais déclaré. L'AST ne visite QUE
+// les déclarations top-level (`Program.body` — la grammaire ES interdit
+// `import`/`export` ailleurs) et les expressions réelles (`import.meta.url`,
+// cherché par un walk) : une chaîne, un template literal ou un commentaire
+// n'en font jamais partie, donc jamais touchés.
 //
-// PIÈGES trouvés en testant sur le VRAI mjs_core minifié (pas juste un
-// extrait synthétique) avec un 1er essai « générique » (`\bimport\b…[^;]+;?`,
-// n'importe quelle forme, terminée par le PROCHAIN `;` trouvé) :
-//   1. `import(...)` — l'IMPORT DYNAMIQUE (`await import(path)`, une vraie
-//      fonctionnalité RUNTIME de l'Autoloader, PAS une déclaration statique)
-//      matchait AUSSI (parenthèse immédiate, pas un espace) → tout jusqu'au
-//      prochain `;` supprimé, code réel amputé.
-//   2. PIRE : une simple CHAÎNE contenant le MOT "import" (`` `Failed to
-//      import ${r}:` ``, un message d'erreur RÉEL du fichier) matchait tout
-//      autant (rien ne distingue "import" texte libre d'un mot-clé) — le
-//      regex "générique" n'a JAMAIS de moyen fiable de les distinguer.
-// L'ancien regex ANCRÉ EN LIGNE ne tombait dans NI L'UN NI L'AUTRE piège (un
-// import dynamique ou le mot "import" dans une chaîne n'occupent jamais une
-// ligne entière) — ces pièges n'existaient PAS avant que l'ancrage ne saute,
-// et une garde ponctuelle (`(?!\s*\()`) ne suffit pas : il en existe D'AUTRES
-// formes non prévisibles. Fix DÉFINITIF : abandonner le pattern générique
-// pour les 4 formes SPÉCIFIQUES et EXHAUSTIVES de la grammaire d'import ES
-// (chacune exige un token de fermeture propre à l'import — `from '...'` ou
-// une chaîne nue — qu'aucun texte libre ne produit par coïncidence),
-// exactement le même principe que `ssrScopeFile` juste plus bas.
-// ("stripEsm mange une clé manifeste finissant en
-// import") — `\b` n'ancre QUE sur une limite mot/non-mot : `-` n'étant PAS un
-// caractère de mot, `dir-import` en contient une PILE entre `-` et `i`. Sur
-// un manifeste JSON dont une clé de composant finit par "import" (cas réel :
-// `"dir-import":"/…/doc-dir-import-xxxx.js"`), `IMPORT_SIDE_EFFECT_RE`
-// matchait `import` DANS la clé, puis engloutissait le guillemet fermant, le
-// `:` et le guillemet ouvrant du chemin (`['"][^'"]+['"]` colle sur
-// `":"` → capture `":"`), cassant le JSON en `SyntaxError` à l'éval. Fix :
-// lookbehind négatif `(?<![\w$-])` — aucun `import`/`export` RÉEL (mot-clé
-// de déclaration) n'est jamais précédé d'un caractère d'identifiant ou d'un
-// tiret, seul un fragment de texte libre (clé JSON, message) le peut.
-const IMPORT_NAMED_RE = /(?<![\w$-])import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/g
-const IMPORT_NAMESPACE_RE = /(?<![\w$-])import\s*\*\s*as\s+[\w$]+\s*from\s*['"][^'"]+['"];?/g
-const IMPORT_DEFAULT_RE = /(?<![\w$-])import\s+[\w$]+\s*(?:,\s*\{[^}]*\})?\s*from\s*['"][^'"]+['"];?/g
-const IMPORT_SIDE_EFFECT_RE = /(?<![\w$-])import\s*['"][^'"]+['"];?/g
-// ("stripEsm sur bundle minifié", 3e cause
-// distincte) — `coreCode` (mjs_core) exporte `µ` (le seul nom qui compte pour
-// la suite : `globalThis.µ = µ;` juste après, ajouté par ce fichier) via
-// `export { µ }`. En build MINIFIÉ, esbuild renomme aussi la déclaration
-// LOCALE de core (ex. `const i = {...}`) et ré-expose `µ` comme un simple
-// ALIAS d'EXPORT — `export{i as µ}` (vérifié sur le VRAI bundle : la ligne
-// finale contient littéralement `export{At as mu,i as µ};`, deux alias
-// distincts). Le retrait pur et simple du bloc `export {...}` (déjà
-// nécessaire — cette syntaxe module est invalide hors module) supprimait
-// aussi la SEULE ligne qui rattache le nom EXTERNE `µ` à l'implémentation
-// RÉELLE (`i`) — `globalThis.µ = µ;` échouait alors en
-// `ReferenceError: µ is not defined` (`i` existe bien, mais SOUS CE NOM
-// interne, jamais exposé). Fix : avant de retirer le bloc, en extraire le
-// mapping `X as µ` (forme échappée `µ` incluse, cf. commentaire de
-// `ssrScopeFile` plus bas pour le même piège d'échappement) et réémettre
-// `var µ = X;` — `var` (pas `const`) : re-déclarable sans erreur si jamais
-// `µ` apparaît dans plusieurs blocs d'export retirés par ce même passage.
-const EXPORT_BLOCK_RE = /(?<![\w$-])export\b\s*\{([^}]*)\}\s*;?/g
-export const stripEsm = (s: string): string => s
-  .replace(IMPORT_NAMED_RE, '')
-  .replace(IMPORT_NAMESPACE_RE, '')
-  .replace(IMPORT_DEFAULT_RE, '')
-  .replace(IMPORT_SIDE_EFFECT_RE, '')
-  .replace(EXPORT_BLOCK_RE, (_all: string, spec: string) => {
-    const aliases: string[] = []
-    for (const p of spec.split(',').map((x: string) => x.trim()).filter(Boolean)) {
-      const m = p.match(/^([\w$]+)\s+as\s+(?:µ|\\u00b5)$/i)
-      if (m) aliases.push(`var µ = ${m[1]};`)
-    }
-    return aliases.join('')
+// Édition par TRANCHES DE POSITIONS (`node.start`/`node.end`, offsets acorn),
+// jamais de régénération de code (codegen) : le texte hors des nœuds touchés
+// reste identique OCTET POUR OCTET à l'entrée — même garantie que les
+// anciennes regex, mécanisme différent. `stripEsm` et `ssrScopeFile`
+// partagent les petits utilitaires ci-dessous.
+type Edit = { start: number, end: number, text: string }
+
+function applyEdits(src: string, edits: Edit[]): string {
+  edits.sort((a, b) => a.start - b.start)
+  let out = ''
+  let pos = 0
+  for (const e of edits) {
+    out += src.slice(pos, e.start) + e.text
+    pos = e.end
+  }
+  return out + src.slice(pos)
+}
+
+// `import.meta.url` : cherché par un walk COMPLET de l'AST (peut apparaître à
+// n'importe quelle profondeur — `new URL('.', import.meta.url)` dans chaque
+// composant compilé, pas seulement en tête de fichier). Un seul motif AST
+// (MemberExpression dont l'objet est le MetaProperty `import.meta` et la
+// propriété `url`) : par construction, ne matche jamais l'intérieur d'une
+// chaîne/d'un commentaire qui en citerait le texte (absents de l'AST).
+function findImportMetaUrlEdits(ast: any, edits: Edit[]): void {
+  walk.simple(ast, {
+    MemberExpression(node: any) {
+      if (node.computed) return
+      const obj = node.object
+      if (obj?.type !== 'MetaProperty' || obj.meta?.name !== 'import' || obj.property?.name !== 'meta') return
+      if (node.property?.type !== 'Identifier' || node.property.name !== 'url') return
+      edits.push({ start: node.start, end: node.end, text: "'http://localhost/'" })
+    },
   })
-  .replace(/\bexport\s+default\s+/g, '')
-  .replace(/\bexport\s+/g, '')
-  .replace(/import\.meta\.url/g, "'http://localhost/'")
+}
+
+// Fin du préfixe `export` (ou `export default`) d'un nœud DÉJÀ identifié par
+// l'AST — la petite regex ci-dessous mesure juste sa longueur EXACTE dans LA
+// SOURCE (espaces variables) ; elle n'opère que sur la tranche d'un nœud déjà
+// confirmé par le parseur, jamais sur du texte libre.
+function exportPrefixEnd(src: string, node: any, withDefault: boolean): number {
+  const re = withDefault ? /^export\s+default\s+/ : /^export\s+/
+  const m = re.exec(src.slice(node.start, node.end))!
+  return node.start + m[0].length
+}
+
+// Noms liés par une déclaration exportée (`export const/let/var/function/class …`)
+// — walk minimal des formes de déclarateur (identifiant simple, déstructuration).
+function declaredNames(decl: any): string[] {
+  if (decl.type === 'FunctionDeclaration' || decl.type === 'ClassDeclaration') return decl.id ? [decl.id.name] : []
+  if (decl.type !== 'VariableDeclaration') return []
+  const names: string[] = []
+  const collect = (pat: any): void => {
+    if (!pat) return
+    if (pat.type === 'Identifier') names.push(pat.name)
+    else if (pat.type === 'ObjectPattern') for (const p of pat.properties) collect(p.type === 'RestElement' ? p.argument : p.value)
+    else if (pat.type === 'ArrayPattern') for (const el of pat.elements) collect(el)
+    else if (pat.type === 'AssignmentPattern') collect(pat.left)
+    else if (pat.type === 'RestElement') collect(pat.argument)
+  }
+  for (const d of decl.declarations) collect(d.id)
+  return names
+}
+
+export const stripEsm = (s: string): string => {
+  let ast: any
+  try {
+    ast = acorn.parse(s, { ecmaVersion: 'latest', sourceType: 'module' })
+  } catch {
+    // le cœur compilé est TOUJOURS un module ES valide (sortie esbuild) — un
+    // échec de parse ici trahit un AUTRE bug, en amont ; repli sûr : rien
+    // retiré plutôt qu'une regex qui rouvrirait le risque texte/chaîne.
+    return s
+  }
+  const edits: Edit[] = []
+  findImportMetaUrlEdits(ast, edits)
+  for (const node of ast.body) {
+    if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration') {
+      edits.push({ start: node.start, end: node.end, text: '' })
+      continue
+    }
+    if (node.type === 'ExportDefaultDeclaration') {
+      edits.push({ start: node.start, end: exportPrefixEnd(s, node, true), text: '' })
+      continue
+    }
+    if (node.type !== 'ExportNamedDeclaration') continue
+    if (node.declaration) {
+      edits.push({ start: node.start, end: exportPrefixEnd(s, node, false), text: '' })
+      continue
+    }
+    // `export { a, b as µ } [from '...']` — stripEsm n'expose rien lui-même
+    // (pas de `return {}`, contrairement à ssrScopeFile : le cœur tourne en
+    // scope global) ; seul un binding RENOMMÉ vers `µ` (mangler, build
+    // minifié — `export{i as µ}`) a besoin d'un pont, `µ` lui-même étant déjà
+    // global une fois ce bloc retiré (`globalThis.µ = µ;`, posé par
+    // l'appelant juste après). L'AST décode déjà la forme échappée du
+    // mangler (`µ`) comme le VRAI caractère `µ` pour `.name` — aucun
+    // distinguo à coder à la main entre les deux graphies.
+    const reinject: string[] = []
+    if (!node.source) {
+      for (const spec of node.specifiers) {
+        if (spec.exported.name === 'µ' && spec.local.name !== 'µ') reinject.push(`var µ = ${spec.local.name};`)
+      }
+    }
+    edits.push({ start: node.start, end: node.end, text: reinject.join('') })
+  }
+  return applyEdits(s, edits)
+}
 
 // Nom de fichier compilé → identifiant JS unique et valide (portée de fichier SSR).
 // Remplacer tout non-[\w$] par un
@@ -322,8 +362,18 @@ export const stripEsm = (s: string): string => s
 // un fichier écrasait l'autre dans les maps par-id (codeById/idToFile), chargeant
 // le mauvais code. On encode le CODE du caractère (`-`→`_45_`, `.`→`_46_`) :
 // l'id reste un identifiant JS valide, mais devient distinct selon le séparateur.
+// ENCODAGE NON INJECTIF — un underscore LITTÉRAL du nom d'origine est un
+// caractère de mot (`\w`), donc jamais remplacé par le passage ci-dessus : il
+// traverse tel quel, INDISTINGUABLE d'un underscore produit par l'encodage d'un
+// séparateur. `a-b.js` (→ `a` + `_45_` + `b`) et `a_45_b.js` (déjà tout en
+// caractères de mot, rien à remplacer) produisaient tous deux `_mjsF_a_45_b`.
+// Fix : échapper AUSSI le caractère d'échappement lui-même (`_` littéral →
+// `_u_`, jamais confondu avec un code — un code est TOUJOURS une suite de
+// chiffres, jamais la lettre `u`) — l'ensemble des tokens (chars de mot restants
+// en clair, `_u_`, `_<code>_`) redevient uniquement décodable, donc injectif.
 export function fileToId(file: string): string {
-  return '_mjsF_' + file.replace(/\.js$/, '').replace(/[^\w$]/g, (ch) => '_' + ch.charCodeAt(0) + '_')
+  const stem = file.replace(/\.js$/, '')
+  return '_mjsF_' + stem.replace(/[^\w$]|_/g, (ch) => ch === '_' ? '_u_' : '_' + ch.charCodeAt(0) + '_')
 }
 
 // Enveloppe UN fichier compilé (module OU composant) dans sa PROPRE portée au SSR
@@ -342,23 +392,11 @@ export function fileToId(file: string): string {
 //
 // `µ` (core) est un global posé avant l'éval → ses imports sont simplement retirés.
 // Retourne le code enveloppé + les ids des fichiers dont il dépend (pour l'ordre).
-// ("stripEsm sur bundle minifié") — les 4
-// regex ci-dessous étaient ANCRÉES EN DÉBUT/FIN DE LIGNE (`^[ \t]*…[ \t]*$/gm`).
-// En prod (`NODE_ENV=production`), `minifyJs` compacte TOUS les fichiers
-// compilés (composants ET modules, pas seulement le core) sur une poignée de
-// lignes — un import/export n'est alors plus JAMAIS "seul sur sa ligne", ces
-// regex ne matchent PLUS RIEN : ni la destructuration locale (imports
-// perdus → `ReferenceError` sur le nom importé), ni la collecte des exports
-// (le fichier `return {}` un objet VIDE → tout consommateur lit `undefined`),
-// ni le retrait de `export`/`import` (syntaxe module invalide dans l'IIFE
-// générée → `SyntaxError` à l'éval). Fix : ancrage par LIMITE DE MOT (`\b`)
-// au lieu de limite de LIGNE, terminateur `;?` (optionnel, esbuild termine
-// TOUJOURS ses statements par `;`, y compris minifié, vérifié empiriquement ;
-// le `?` couvre juste le cas rare d'un dernier statement sans `;` final).
-// Même contrepartie assumée que `stripEsm` (cf. son commentaire) : risque
-// mineur de faux positif sur une CHAÎNE LITTÉRALE ressemblant à un import,
-// contre la certitude, avant ce fix, qu'AUCUN composant ne fonctionne en SSR
-// dès `NODE_ENV=production`.
+//
+// Détection par un VRAI parseur — même principe et même motivation que
+// `stripEsm` (cf. son en-tête) : seules les déclarations `import`/`export`
+// RÉELLES sont réécrites, jamais une chaîne ou un commentaire qui leur
+// ressemble.
 export function ssrScopeFile(
   raw: string,
   id: string,
@@ -366,199 +404,131 @@ export function ssrScopeFile(
 ): { code: string; deps: string[] } {
   const deps = new Set<string>()
   const preamble: string[] = []
+  const exp = new Map<string, string>()
 
-  // Un "risque mineur"
-  // explicitement ACCEPTÉ plus bas, désormais éliminé — les regex import/
-  // export de cette fonction scannent du TEXTE, pas une vraie grammaire JS :
-  // un composant de DOC qui AFFICHE un exemple de code en tant que contenu
-  // (chaîne/texte visible pour l'utilisateur, ex. un tuto qui explique une
-  // syntaxe d'un AUTRE framework) est scanné IDENTIQUEMENT à du vrai code
-  // source. **Reproduit en pratique** : une page de doc SANS AUCUN `<script>`
-  // affiche dans son template la phrase
-  // « Svelte impose le mot-clé `export function clear()` » — matchée par le
-  // regex d'export ci-dessous comme si `clear` était réellement exporté →
-  // `return { clear };` émis en fin d'IIFE pour un nom JAMAIS déclaré dans le
-  // vrai code → `ReferenceError: clear is not defined` À L'ÉVAL SSR, faisant
-  // échouer TOUT le rendu du bundle concaténé (même les pages n'ayant AUCUN
-  // rapport avec ce fichier — un seul throw dans le `window.eval()` géant
-  // avorte tout). Fix : masquer chaînes/template literals AVANT les passes
-  // import/export (même technique que compile.ts et lintSingletonConsume,
-  // transpiler/index.ts), restaurer le texte original dans le code retourné —
-  // les regex ne peuvent alors plus matcher DANS une chaîne, seulement du VRAI
-  // code. Masquage sûr même pour un template literal : un import/export est
-  // TOUJOURS un statement, ne peut JAMAIS apparaître à l'intérieur d'une
-  // interpolation `${...}` (SyntaxError garantie sinon) — masquer le template
-  // literal EN ENTIER (bornes à bornes) ne risque donc de cacher aucun VRAI
-  // import/export.
-  // EXCEPTION nécessaire : une chaîne immédiatement précédée de `from`
-  // (`from '...'`) OU de `import` (`import '...'`, forme à effet de bord) n'est
-  // PAS masquée — c'est justement l'URL que les regex d'import ci-dessous doivent
-  // lire pour résoudre/retirer la dépendance ; la masquer aurait cassé TOUT import
-  // réel. DURCISSEMENT : sans l'exception
-  // `import`, la chaîne d'un `import '/x.js';` (effet de bord) était masquée AVANT
-  // la passe de retrait → l'`import` orphelin survivait jusqu'à l'éval → SyntaxError.
-  const strStash: string[] = []
-  const maskStrings = (s: string): string => s.replace(
-    /((?:\bfrom|\bimport)\b\s*)(`(?:[^`\\]|\\.)*`|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|`(?:[^`\\]|\\.)*`|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
-    (m: string, kwPrefix: string | undefined) => kwPrefix !== undefined ? m : ` MJSSTR${strStash.push(m) - 1} `
-  )
-  const restoreStrings = (s: string): string => s.replace(/ MJSSTR(\d+) /g, (_m, i) => strStash[Number(i)])
+  let ast: any
+  try {
+    ast = acorn.parse(raw, { ecmaVersion: 'latest', sourceType: 'module' })
+  } catch {
+    // un composant/module compilé est TOUJOURS un module ES valide (sortie
+    // esbuild) — un échec de parse ici trahit un AUTRE bug, en amont : repli
+    // total (aucun import/export retiré) plutôt qu'un throw qui court-
+    // circuiterait le nettoyage du compilateur appelant (`abandon()`, cf.
+    // createSSRRenderer).
+    return { code: `const ${id} = (function(){\n${raw}\n})();`, deps: [] }
+  }
 
-  // 1. Imports NOMMÉS : `import { a, b as c } from "url"` → destructuration locale.
-  // `\bimport\b` (limite de mot des DEUX côtés) — minifié, `import{` n'a AUCUN
-  // espace après le mot-clé ; sans la limite de mot APRÈS, `import` matcherait
-  // aussi comme PRÉFIXE d'un identifiant plus long (ex. hypothétique `importantData`).
-  let body = maskStrings(raw).replace(
-    /\bimport\b\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?/g,
-    (_all: string, spec: string, url: string) => {
-      const targetId = resolve(url)
-      if (!targetId) {
-        // ("stripEsm sur bundle minifié",
-        // 2e cause distincte) — core/externe : l'import est retiré (le nom
-        // GLOBAL `µ`, posé avant l'éval, couvre l'usage normal). Mais en
-        // build MINIFIÉ (prod), esbuild renomme les BINDINGS LOCALEMENT
-        // importés pour économiser des octets (`import { µ as t } from
-        // "core.js"` — `t` un alias interne raccourci propre à CE fichier,
-        // `µ` restant le VRAI nom exporté par core). Retirer l'import SANS
-        // réémettre cet alias laissait tout usage local de `t` dans le
-        // fichier planter en `ReferenceError: t is not defined` — SSR mort
-        // dès `NODE_ENV=production`, symptôme identique à l'ancrage de ligne
-        // déjà corrigé plus haut mais cause TOTALEMENT différente (vérifié
-        // en testant le pipeline complet, pas juste stripEsm isolément).
-        // Fix : pour chaque binding renommé `µ as X` (X ≠ µ), réémettre
-        // `const X = µ;` dans le préambule — X pointe alors vers le MÊME
-        // global que `µ`, quel que soit le nom que le mangler lui a donné.
-        //
-        // PIÈGE (trouvé en testant sur le VRAI bundle minifié) — esbuild
-        // ÉCHAPPE les caractères non-ASCII dans SON TEXTE DE SORTIE : `µ`
-        // (U+00B5) apparaît LITTÉRALEMENT comme la séquence de 6 caractères
-        // `µ` (backslash-u-0-0-B-5), PAS le caractère "µ" lui-même —
-        // vérifié en inspectant le fichier compilé octet par octet. Un match
-        // sur le caractère LITTÉRAL "µ" ne matchait donc JAMAIS ce spec
-        // minifié (silencieusement inopérant, la boucle ne poussait rien).
-        // Les DEUX formes (caractère direct, non-minifié ; séquence échappée,
-        // minifié) doivent être acceptées.
-        for (const p of spec.split(',').map(s => s.trim()).filter(Boolean)) {
-          const asMu = p.match(/^(?:µ|\\u00b5)\s+as\s+([\w$]+)$/i)
-          if (asMu) preamble.push(`const ${asMu[1]} = µ;`)
-        }
-        return ''
+  const edits: Edit[] = []
+  findImportMetaUrlEdits(ast, edits)
+
+  // `imported: local` en destructuration ; nom seul quand identiques.
+  const specText = (s: any): string => s.local.name === s.imported.name ? s.local.name : `${s.imported.name}: ${s.local.name}`
+
+  for (const node of ast.body) {
+    if (node.type === 'ImportDeclaration') {
+      edits.push({ start: node.start, end: node.end, text: '' })
+      const specs = node.specifiers
+      if (specs.length === 0) {
+        // 3. Import à EFFET DE BORD (`import "url"`) — rien à destructurer dans
+        // le préambule, mais la dépendance compte quand même pour le tri
+        // topologique : sans elle, une cible sans binding importé n'était
+        // jamais garantie évaluée AVANT son importateur.
+        const targetId = resolve(node.source.value)
+        if (targetId) deps.add(targetId)
+        continue
       }
-      deps.add(targetId)
-      const parts = spec.split(',').map(s => s.trim()).filter(Boolean).map((p) => {
-        const m = p.match(/^([\w$µ]+)\s+as\s+([\w$µ]+)$/)   // `a as b` → `a: b`
-        return m ? `${m[1]}: ${m[2]}` : p
-      })
-      preamble.push(`const { ${parts.join(', ')} } = ${targetId};`)
-      return ''
-    },
-  )
-  // 2. Imports DÉFAUT : `import def from "url"` (et `import def, { a, b } from "url"`).
-  // ssrScopeFile ne gérait QUE les
-  // imports NOMMÉS et à effet de bord. La forme DÉFAUT — émise par la directive
-  // DOCUMENTÉE `@import default name 'path'` (usage Tippy.js/lodash) — survivait
-  // TELLE QUELLE jusqu'à l'éval → `SyntaxError: Cannot use import statement outside
-  // a module`, faisant échouer TOUT le rendu du bundle concaténé (un seul throw
-  // avorte le window.eval() géant, même les pages sans rapport). On la destructure :
-  // `def` = export défaut de la cible (`.default` si présent, sinon le namespace) ;
-  // cible externe/core non résolue → `def = undefined` (l'usage réel d'une lib
-  // externe est côté client, court-circuité au SSR par `µ._isServer`) — jamais de
-  // statement `import` résiduel.
-  body = body.replace(
-    /\bimport\b\s+([\w$]+)\s*(?:,\s*\{([^}]*)\})?\s*from\s*['"]([^'"]+)['"];?/g,
-    (_all: string, def: string, named: string | undefined, url: string) => {
-      const targetId = resolve(url)
+      if (specs.some((sp: any) => sp.type === 'ImportNamespaceSpecifier')) continue   // forme jamais émise par le compilateur, laissée telle quelle
+      const def = specs.find((sp: any) => sp.type === 'ImportDefaultSpecifier')
+      const named = specs.filter((sp: any) => sp.type === 'ImportSpecifier')
+      const targetId = resolve(node.source.value)
+      if (def) {
+        // 2. Import DÉFAUT (`import def from "url"`, + `, { a, b }` éventuel) —
+        // `.default` si la cible en expose un, sinon son espace de noms entier
+        // (cible externe/core non résolue : `undefined`, l'usage réel d'une lib
+        // externe est côté client, court-circuité au SSR par `µ._isServer`).
+        if (targetId) {
+          deps.add(targetId)
+          preamble.push(`const ${def.local.name} = (${targetId} && ${targetId}.default !== undefined) ? ${targetId}.default : ${targetId};`)
+          if (named.length) preamble.push(`const { ${named.map(specText).join(', ')} } = ${targetId};`)
+        } else {
+          preamble.push(`const ${def.local.name} = undefined;`)
+          if (named.length) preamble.push(`const { ${named.map((sp: any) => sp.local.name).join(', ')} } = {};`)
+        }
+        continue
+      }
+      // 1. Import NOMMÉ (`import { a, b as c } from "url"`).
       if (targetId) {
         deps.add(targetId)
-        preamble.push(`const ${def} = (${targetId} && ${targetId}.default !== undefined) ? ${targetId}.default : ${targetId};`)
-        if (named && named.trim()) {
-          const parts = named.split(',').map(s => s.trim()).filter(Boolean).map((p) => {
-            const m = p.match(/^([\w$µ]+)\s+as\s+([\w$µ]+)$/)
-            return m ? `${m[1]}: ${m[2]}` : p
-          })
-          preamble.push(`const { ${parts.join(', ')} } = ${targetId};`)
-        }
+        preamble.push(`const { ${named.map(specText).join(', ')} } = ${targetId};`)
       } else {
-        // externe/core : rien à résoudre → `undefined` (pas de ReferenceError si
-        // le code le référence dans une branche non exécutée au SSR).
-        preamble.push(`const ${def} = undefined;`)
-        if (named && named.trim()) preamble.push(`const { ${named} } = {};`)
+        // cible core/externe non résolue : seul un renommage DEPUIS `µ` (build
+        // minifié, le mangler raccourcit le binding local) a besoin d'un pont ;
+        // les autres noms sont des globaux ou des usages court-circuités.
+        for (const sp of named) if (sp.imported.name === 'µ' && sp.local.name !== 'µ') preamble.push(`const ${sp.local.name} = µ;`)
       }
-      return ''
-    },
-  )
-  // 3. Imports à effet de bord : `import "url"` → retiré (la cible tourne ailleurs).
-  body = body.replace(/\bimport\b\s*['"][^'"]+['"];?/g, '')
-
-  // 4. Exports : collecte (nom exposé → expression locale), avant de retirer `export`.
-  const exp = new Map<string, string>()
-  // 4a. Ré-exports `export { a, b as c } from 'url'`.
-  // DURCISSEMENT : non gérés, l'ancien code
-  // laissait `from 'url';` en statement NU (SyntaxError) ET collectait `a`/`c`
-  // comme s'ils étaient déclarés localement (le regex d'export-block ci-dessous
-  // s'arrête avant le `from`) → `return { a }` pour un nom inexistant →
-  // ReferenceError. On consomme la forme ENTIÈRE et on expose depuis la CIBLE
-  // résolue (`_mjsF_url.a`). Latent (les composants MJS n'émettent pas de ré-export
-  // à date), mais élimine un tueur silencieux du window.eval() géant concaténé.
-  body = body.replace(
-    /\bexport\b\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?/g,
-    (_all: string, spec: string, url: string) => {
-      const targetId = resolve(url)
-      if (targetId) deps.add(targetId)
-      for (const part of spec.split(',')) {
-        const t = part.trim(); if (!t) continue
-        const as = t.match(/^([\w$µ]+)\s+as\s+([\w$µ]+)$/)
-        const local = as ? as[1] : t
-        const exposed = as ? as[2] : t
-        if (targetId) exp.set(exposed, `${targetId}.${local}`)
-        // cible externe non résolue : rien à ré-exposer (comme un import externe au SSR)
-      }
-      return ''
-    },
-  )
-  for (const m of body.matchAll(
-    /\bexport\s+(?:async\s+)?(?:const|let|var|function\*?|class)\s+([A-Za-z_$][\w$µͰ-Ͽ]*)/g,
-  )) exp.set(m[1], m[1])
-  for (const m of body.matchAll(/\bexport\b\s*\{([^}]*)\}\s*;?/g)) {
-    for (const part of m[1].split(',')) {
-      const t = part.trim(); if (!t) continue
-      const as = t.match(/^([\w$µ]+)\s+as\s+([\w$µ]+)$/)   // `x as y` → expose `y` = `x`
-      if (as) exp.set(as[2], as[1]); else exp.set(t, t)
+      continue
     }
-  }
-  // 4b. `export default <X>` → ré-exposé comme `default`. Le SSR concatène chaque
-  // module dans une IIFE (pas d'ESM natif) : il faut ré-exposer EXPLICITEMENT le
-  // défaut (le bundle client, lui, utilise l'ESM). DURCISSEMENT — sans ceci,
-  // `export default function(){}` (émis
-  // par un module civet/coffee à export défaut, cible typique d'un `@import default`)
-  // laissait, après simple retrait du mot-clé, un `function(){}` ANONYME en statement
-  // → "Function statements require a function name" à l'éval, ET n'exposait jamais le
-  // défaut (`.default` === undefined chez l'importateur).
-  //   - déclaration NOMMÉE (`export default class Foo`/`function foo`) : on la GARDE
-  //     comme déclaration (le nom doit rester en portée — un composant fait
-  //     `customElements.define(tag, MjsFoo)` juste après) et on expose `default: Foo`.
-  //   - défaut ANONYME ou EXPRESSION : on l'assigne à un local synthétique récupérable.
-  body = body.replace(
-    /\bexport\s+default\s+((?:async\s+)?function\b\s*\*?\s*|class\s+)([A-Za-z_$][\w$µͰ-Ͽ]*)/g,
-    (_all: string, kw: string, name: string) => { exp.set('default', name); return `${kw}${name}` },
-  )
-  if (/\bexport\s+default\s+/.test(body)) {
-    body = body.replace(/\bexport\s+default\s+/g, 'const __mjsDefault = ')
-    exp.set('default', '__mjsDefault')
-  }
-  body = body
-    .replace(/\bexport\b\s*\{[^}]*\}\s*;?/g, '')
-    .replace(/\bexport\s+/g, '')
-    .replace(/import\.meta\.url/g, "'http://localhost/'")
 
+    if (node.type === 'ExportAllDeclaration') {
+      edits.push({ start: node.start, end: node.end, text: '' })   // jamais émis par le compilateur
+      continue
+    }
+
+    if (node.type === 'ExportDefaultDeclaration') {
+      // 4b. `export default <X>` → ré-exposé comme `default`. Une déclaration
+      // NOMMÉE (function/class) garde son nom en portée (un composant fait
+      // `customElements.define(tag, MjsFoo)` juste après) ; un défaut ANONYME
+      // ou une expression est assigné à un local synthétique récupérable —
+      // sans ça, `function(){}` nu en statement lève "Function statements
+      // require a function name" à l'éval.
+      const d = node.declaration
+      const named = (d.type === 'FunctionDeclaration' || d.type === 'ClassDeclaration') && d.id
+      const prefixEnd = exportPrefixEnd(raw, node, true)
+      if (named) {
+        edits.push({ start: node.start, end: prefixEnd, text: '' })
+        exp.set('default', d.id.name)
+      } else {
+        edits.push({ start: node.start, end: prefixEnd, text: 'const __mjsDefault = ' })
+        exp.set('default', '__mjsDefault')
+      }
+      continue
+    }
+
+    if (node.type !== 'ExportNamedDeclaration') continue
+
+    if (node.declaration) {
+      // `export const/let/var/function/class …` : la déclaration reste (le
+      // nom doit rester en portée), seul le mot-clé `export` est retiré.
+      edits.push({ start: node.start, end: exportPrefixEnd(raw, node, false), text: '' })
+      for (const name of declaredNames(node.declaration)) exp.set(name, name)
+      continue
+    }
+
+    if (node.source) {
+      // 4a. Ré-export `export { a, b as c } from "url"` — exposé depuis la
+      // cible résolue (`_mjsF_url.a`), jamais collecté comme une déclaration
+      // locale. Latent (aucun composant MJS n'en émet à date), mais élimine un
+      // tueur silencieux du window.eval() géant concaténé.
+      const targetId = resolve(node.source.value)
+      if (targetId) {
+        deps.add(targetId)
+        for (const sp of node.specifiers) exp.set(sp.exported.name, `${targetId}.${sp.local.name}`)
+      }
+      edits.push({ start: node.start, end: node.end, text: '' })
+      continue
+    }
+
+    // `export { a, b as c }` — réexpose chaque binding local tel quel.
+    for (const sp of node.specifiers) exp.set(sp.exported.name, sp.local.name)
+    edits.push({ start: node.start, end: node.end, text: '' })
+  }
+
+  const body = applyEdits(raw, edits)
   const ret = exp.size
     ? `\nreturn { ${Array.from(exp).map(([k, v]) => (k === v ? k : `${k}: ${v}`)).join(', ')} };`
     : ''
   const head = preamble.length ? preamble.join('\n') + '\n' : ''
-  // restoreStrings : remet le texte ORIGINAL des chaînes/doc masquées plus
-  // haut — le masquage ne devait empêcher QUE les regex import/export de s'y
-  // méprendre, pas altérer le contenu réellement affiché par le composant.
-  return { code: `const ${id} = (function(){\n${head}${restoreStrings(body)}${ret}\n})();`, deps: [...deps] }
+  return { code: `const ${id} = (function(){\n${head}${body}${ret}\n})();`, deps: [...deps] }
 }
 
 // Tri topologique : une cible d'import doit être évaluée AVANT son importateur
@@ -994,7 +964,18 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // son nom commençant par `mjs_`, il passerait AVANT le tri par dépendances (runtimeIds ci-dessous)
   // — donc avant les modules qu'il importe, qui n'existent pas encore : erreur d'initialisation
   // fatale à tout le rendu.
-  const files = jsFiles.filter(f => f !== coreFile && f !== 'bundle.js' && !/^mjs_page-[^/]*-[a-f0-9]{8}\.js$/.test(f))
+  // GARDE-FOU — `readdirSync(outputDir)` liste TOUT le dossier, pas seulement ce que CETTE
+  // compilation vient d'émettre : un .js ÉTRANGER qui y traîne (artefact d'un autre outil, d'un
+  // build antérieur, dossier de sortie partagé) était concaténé et évalué comme les autres — un
+  // seul `throw` dedans faisait échouer le rendu de N'IMPORTE QUELLE page du même projet. Seuls
+  // les fichiers du GRAPHE ÉMIS par CETTE compilation sont admis : `stats.manifest` (composants +
+  // modules, cf. bundler/index.ts `manifest[baseName] = hashedPath`) couvre tout sauf le runtime
+  // (`mjs_core`/`mjs_styles`/`mjs_anims`/`mjs_i18n-*`… — jamais une clé `manifest`, déjà repérés
+  // par leur PRÉFIXE `mjs_`, cf. runtimeIds plus bas) : l'un ou l'autre suffit à admettre un fichier.
+  const emittedBasenames = new Set(Object.values(stats.manifest as Record<string, string>).map(p => p.split('/').pop() || ''))
+  const files = jsFiles.filter(f =>
+    f !== coreFile && f !== 'bundle.js' && !/^mjs_page-[^/]*-[a-f0-9]{8}\.js$/.test(f) &&
+    (/^mjs_/.test(f) || emittedBasenames.has(f)))
   const idByFile = new Map(files.map(f => [f, fileToId(f)]))
   // Résout une URL d'import (`/assets/.../x-hash.js`) vers l'id du fichier cible ;
   // null pour le core (µ global) ou tout externe → l'import est retiré.
@@ -1549,6 +1530,10 @@ export async function renderToString(opts: RenderToStringOptions): Promise<Rende
   const renderer = await createSSRRenderer({
     sourceDir: opts.sourceDir,
     outputDir: opts.outputDir,
+    // LISTE BLANCHE écrite à la main : `manifestPath`/`bundlerOpts` en
+    // manquaient, silencieusement perdus pour tout appelant de ce wrapper — contrairement à
+    // l'API interne (createSSRRenderer directement) qui les honore déjà.
+    manifestPath: opts.manifestPath,
     defaultScriptLang: opts.defaultScriptLang,
     templateLang: opts.templateLang,
     sigil: opts.sigil,
@@ -1560,6 +1545,7 @@ export async function renderToString(opts: RenderToStringOptions): Promise<Rende
     a11y: opts.a11y,
     i18n: opts.i18n,
     env: opts.env,
+    bundlerOpts: opts.bundlerOpts,
   })
   try {
     return await renderer.renderToString(opts.tag, {
@@ -1568,6 +1554,12 @@ export async function renderToString(opts: RenderToStringOptions): Promise<Rende
       ssrMode: opts.ssrMode,
       shadowMode: opts.shadowMode,
       settleMs: opts.settleMs,
+      // Même liste blanche incomplète côté RenderOptions : `light:true` rendait encore
+      // `light:false` (+ un Shadow DOM déclaratif complet) sur ce wrapper, `forwardedUrl`/
+      // `forwardedCookie` n'atteignaient jamais happy-dom.
+      forwardedUrl: opts.forwardedUrl,
+      forwardedCookie: opts.forwardedCookie,
+      light: opts.light,
     })
   } finally {
     await renderer.close()

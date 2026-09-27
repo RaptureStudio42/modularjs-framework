@@ -15,7 +15,10 @@
 // `_wrap` : appelées via le proxy d'une collection de store, elles notifient les
 // abonnés (avant, `_wrap` rendait ces collections BRUTES → `$$todos
 // .push()` / `$$m.set()` / `$$s.add()` mutaient en SILENCE, sans re-render).
-const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes', 'setSeconds', 'setMilliseconds', 'push', 'pop', 'splice', 'shift', 'unshift', 'sort', 'reverse', 'fill', 'copyWithin']);
+// `setInt8`…`setBigUint64` : setters NOMMÉS d'une DataView (même famille que les `setX` de Date
+// juste avant, énumérés pareillement plutôt qu'un test de motif) — sans eux, muter par cette
+// voie ne notifiait personne (même défaut que µ.Store, mjs_store.ts).
+const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes', 'setSeconds', 'setMilliseconds', 'push', 'pop', 'splice', 'shift', 'unshift', 'sort', 'reverse', 'fill', 'copyWithin', 'setInt8', 'setUint8', 'setInt16', 'setUint16', 'setInt32', 'setUint32', 'setFloat32', 'setFloat64', 'setBigInt64', 'setBigUint64']);
 
 // CRITIQUE — mutation
 // PROFONDE d'un store universel totalement silencieuse : `$$game.score += 10`
@@ -36,6 +39,53 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     value: initialData
   };
   const _mjs_proxyCache = new WeakMap();
+  // cible BRUTE → ensemble des clés racines par lesquelles elle a été atteinte
+  // (alimentée dans `_wrap`, juste en dessous) : `µ.state({a: shared, b: shared})`
+  // ne construit qu'UN SEUL proxy niché pour `shared` (cache à un niveau, `state.a
+  // === state.b`, cf. tests) — sans ce registre, seule la clé de la toute PREMIÈRE
+  // lecture (celle qui a créé le proxy) recevait la notification ; un lecteur abonné
+  // à L'AUTRE clé, sans jamais descendre dans le sous-objet, ne voyait jamais passer
+  // la mutation. `_notifyRoots`, plus bas, notifie TOUTES les clés enregistrées.
+  const _mjs_rootsByTarget = new WeakMap();
+  // reçoit directement l'ensemble `roots` (déjà en main dans la closure de l'appelant,
+  // capturé une fois par `_wrap` — cf. plus bas) plutôt que de le re-chercher via
+  // `_mjs_rootsByTarget.get(target)` à chaque mutation : `roots` reste le MÊME Set par
+  // référence, mis à jour par tout accès ultérieur via une autre clé, cache hit compris.
+  const _notifyRoots = (roots, rootKey) => {
+    if (!roots || roots.size <= 1) {
+      µ._mjs_notifyUniversalChange(_internal, rootKey);
+      return;
+    }
+    // le cache de `_wrap` est à UN SEUL niveau (`state.a === state.b`, cf. tests
+    // d'identité) : le proxy niché reste le MÊME quelle que soit la clé de lecture,
+    // donc un lecteur qui drille (`.x`) après avoir atteint l'objet par une AUTRE
+    // clé que celle de la création du proxy s'abonne à la fois à la clé RACINE
+    // (lue en premier) et à celle, figée, du proxy niché — sans dédup ici, CE
+    // même composant serait invalidé une fois par clé notifiée, pour UNE seule
+    // mutation logique.
+    const deps = µ._mjs_universalDeps.get(_internal);
+    if (!deps) return;
+    const notified = new Set();
+    roots.forEach((key) => {
+      const subs = deps[key];
+      if (!subs) return;
+      subs.forEach((comp) => {
+        if (notified.has(comp)) return;
+        notified.add(comp);
+        comp._mjs_invalidate('_awaits_');
+      });
+    });
+  };
+  // garde proto-pollution (CWE-1321) PARTAGÉE par la racine (proxy `set`/
+  // `defineProperty`/`deleteProperty` de `µ.state`, plus bas) ET les proxys imbriqués
+  // (`_wrap`, juste après) : __proto__/constructor/prototype refusés en écriture PARTOUT,
+  // avec le même avertissement — avant, seule la racine en était dépourvue
+  // (`state.__proto__ = x` remplaçait le prototype sans le moindre avertissement).
+  const _guardKey = (key) => {
+    if (typeof key !== 'string' || µ._mjs_safeKey(key)) return false;
+    µ.warn('[ModularJS] µ.state : clé refusée (« '+ key +' ») — mutation ignorée.');
+    return true;
+  };
   // `_wrap` : construit (ou retrouve en cache) le proxy réactif d'un
   // sous-objet. `rootKey` = la clé de PREMIER NIVEAU sous laquelle ce
   // sous-objet a été atteint (null au niveau racine ; hérité tel quel à
@@ -52,6 +102,18 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     if (µ._mjs_rawSet.has(target)) return target;
     // Promise en vol : jamais proxifiée (le wrap casserait le brand-check `.then`).
     if (target instanceof Promise) return target;
+    // enregistre CETTE clé racine comme une des voies d'accès à `target` — à
+    // CHAQUE appel (cache hit compris) : `state.b` doit ajouter 'b' à l'ensemble
+    // même si `shared` a déjà un proxy niché créé via 'a'. `roots` (hors du bloc,
+    // pas de `let` scopé) reste capturable par les handlers `coll`/`nested`
+    // ci-dessous, posés UNE fois pour le proxy niché : passé tel quel à
+    // `_notifyRoots`, sans repasser par cette WeakMap à chaque mutation.
+    let roots;
+    if (rootKey != null) {
+      roots = _mjs_rootsByTarget.get(target);
+      if (!roots) { roots = new Set(); _mjs_rootsByTarget.set(target, roots); }
+      roots.add(rootKey);
+    }
     if (_mjs_proxyCache.has(target)) return _mjs_proxyCache.get(target);
     // Collections natives (Array/Map/Set/Date) : proxy à mutateurs NOTIFIANTS.
     // Avant, `_wrap` les rendait BRUTES → `$$todos.push(x)` /
@@ -60,25 +122,24 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     // méthodes mutatrices pour notifier `rootKey` (+ `µ._mjs_STRUCT` pour les lecteurs
     // d'énumération) ; méthodes non-mutatrices et éléments liés à la cible BRUTE
     // (brand-check Map/Set/Date + identité des éléments préservés).
-    // garde proto-pollution PARTAGÉE par `coll`
-    // (Array/Map/Set/Date, juste en dessous) et `nested` (objets plats, juste après) : les
-    // DEUX proxies de `_wrap` acceptaient `__proto__`/`constructor`/`prototype` en écriture/
-    // suppression sans la moindre garde ni avertissement (seul `coll` avait été corrigé,
-    // `nested` gardant la MÊME lacune). Même famille de clés que
-    // `µ._mjs_guardPath` (mjs_init.ts), `_mjs_wrapDeep` (mjs_element.ts) et `µ.Store` (mjs_store.ts),
-    // qui filtrent déjà cette famille. Rend `true` = « clé refusée » (le `set`/`deleteProperty`
-    // appelant retourne alors `true` sans jamais notifier — mutation ignorée en silence, pas
-    // d'exception levée côté appelant).
-    const _guardKey = (key) => {
-      if (typeof key !== 'string' || µ._mjs_safeKey(key)) return false;
-      µ.warn('[ModularJS] µ.state : clé refusée (« '+ key +' ») — mutation ignorée.');
-      return true;
-    };
-    if (target instanceof Map || target instanceof Set ||
-        target instanceof Date || Array.isArray(target)) {
+    // `_guardKey` (même famille de clés que `µ._mjs_guardPath` de mjs_init.ts, `_mjs_wrapDeep`
+    // de mjs_element.ts et `µ.Store` de mjs_store.ts, qui filtrent déjà cette famille) est
+    // désormais HOISÉE au niveau de `µ.state` (cf. plus haut) — PARTAGÉE par `coll` (Array/
+    // Map/Set/Date, juste en dessous), `nested` (objets plats, juste après) ET la racine.
+    // `ArrayBuffer.isView` couvre TypedArray ET DataView, `instanceof ArrayBuffer` le buffer
+    // BRUT (pas une vue) — même famille que Map/Set/Date/Array : leurs méthodes/accesseurs
+    // natifs exigent la vraie instance en `this`, incompatible avec le proxy `nested` (plus
+    // bas), qui ne lie JAMAIS les fonctions qu'il retourne (aligné sur µ.Store, mjs_store.ts).
+    if (target instanceof Map || target instanceof Set || target instanceof Date ||
+        Array.isArray(target) || ArrayBuffer.isView(target) || target instanceof ArrayBuffer) {
       const coll = new Proxy(target, {
         get: (obj, key) => {
           if (key === µ._mjs_RAW) return obj;
+          // pollution de prototype (CWE-1321) : même garde que `set`/`deleteProperty`
+          // ci-dessous (_guardKey), côté LECTURE — __proto__/constructor/prototype HÉRITÉS
+          // (pas une donnée propre) enveloppaient Object.prototype, exposé ensuite en
+          // écriture. Clé PROPRE (donnée métier) : comportement normal.
+          if (typeof key === 'string' && !µ._mjs_safeKey(key) && !Object.prototype.hasOwnProperty.call(obj, key)) return void 0;
           if (µ._mjs_initStack.length > 0) { µ._mjs_registerUniversalDep(_internal, rootKey); }
           const v = obj[key];
           if (typeof v === 'function') {
@@ -91,10 +152,19 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
                 // collection en liaison two-way doit pouvoir distinguer un écho
                 // pur d'une mutation réelle survenue ICI, côté rune.
                 µ._mjs_bumpEpoch(obj);
-                µ._mjs_notifyUniversalChange(_internal, rootKey);
+                _notifyRoots(roots, rootKey);
                 µ._mjs_notifyUniversalChange(_internal, µ._mjs_STRUCT);
-                return r;
+                // Map.set/… rendent `this` (chaînage natif) : rendre la cible BRUTE cassait
+                // la réactivité de la chaîne — rendre le PROXY à la place (même fix que
+                // µ.Store, mjs_store.ts).
+                return r === obj ? coll : r;
               };
+            }
+            // `Map.get(k)` rend la valeur INTERNE brute par un appel natif, HORS de ce
+            // trap (même défaut que µ.Store, mjs_store.ts) : ré-envelopper pour que muter
+            // l'objet obtenu reste réactif.
+            if (key === 'get' && obj instanceof Map) {
+              return (...args) => _wrap(bound(...args), rootKey);
             }
             return bound;
           }
@@ -130,7 +200,7 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           const success = Reflect.set(obj, key, value);
           if (success) {
             µ._mjs_bumpEpoch(obj);
-            µ._mjs_notifyUniversalChange(_internal, rootKey);
+            _notifyRoots(roots, rootKey);
             if (isNew) µ._mjs_notifyUniversalChange(_internal, µ._mjs_STRUCT);
           }
           return success;
@@ -146,7 +216,7 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
           const success = Reflect.deleteProperty(obj, key);
           if (success && had) {
             µ._mjs_bumpEpoch(obj);
-            µ._mjs_notifyUniversalChange(_internal, rootKey);
+            _notifyRoots(roots, rootKey);
             µ._mjs_notifyUniversalChange(_internal, µ._mjs_STRUCT);
           }
           return success;
@@ -158,6 +228,9 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     const nested = new Proxy(target, {
       get: (obj, key) => {
         if (key === µ._mjs_RAW) return obj;
+        // même garde que `coll` ci-dessus (CWE-1321) : __proto__/constructor/prototype
+        // HÉRITÉS (pas une donnée propre) exposaient Object.prototype, enveloppé, en écriture.
+        if (typeof key === 'string' && !µ._mjs_safeKey(key) && !Object.prototype.hasOwnProperty.call(obj, key)) return void 0;
         if (µ._mjs_initStack.length > 0) {
           µ._mjs_registerUniversalDep(_internal, rootKey);
         }
@@ -196,7 +269,7 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         if (success) {
           // époque de mutation du brut `obj` (cf. mjs_element.ts).
           µ._mjs_bumpEpoch(obj);
-          µ._mjs_notifyUniversalChange(_internal, rootKey);
+          _notifyRoots(roots, rootKey);
           if (isNew) µ._mjs_notifyUniversalChange(_internal, µ._mjs_STRUCT);
         }
         return success;
@@ -210,7 +283,7 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         const success = Reflect.deleteProperty(obj, key);
         if (success && had) {
           µ._mjs_bumpEpoch(obj);
-          µ._mjs_notifyUniversalChange(_internal, rootKey);
+          _notifyRoots(roots, rootKey);
           µ._mjs_notifyUniversalChange(_internal, µ._mjs_STRUCT);
         }
         return success;
@@ -228,6 +301,10 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       // Accès à la cible BRUTE — utilisé par l'unwrap du set trap pour
       // ne pas empiler proxy-sur-proxy lors d'une réaffectation entre clés.
       if (key === µ._mjs_RAW) return target;
+      // même garde que les proxys imbriqués (`_wrap`, plus haut) : __proto__/constructor/
+      // prototype HÉRITÉS (pas une donnée propre) exposaient Object.prototype, enveloppé, en
+      // écriture — la racine n'avait AUCUNE garde en lecture.
+      if (typeof key === 'string' && !µ._mjs_safeKey(key) && !Object.prototype.hasOwnProperty.call(target, key)) return void 0;
       // Fast path : skip activeComponent lecture (getter sur stack)
       // si on est hors init. La majorité des reads se font après init.
       // µ._mjs_initStack.length === 0 est O(1), pas de stack traversal.
@@ -263,6 +340,10 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       return _wrap(val, key);
     },
     set: function(target, key, value) {
+      // même garde que les proxys imbriqués (_guardKey, cf. plus haut) : la racine en était
+      // dépourvue — `state.__proto__ = x` remplaçait le prototype de l'état sans le moindre
+      // avertissement (CWE-1321).
+      if (_guardKey(key)) return true;
       // Déballer un proxy µ.state stocké : `store.b = store.a` doit ranger
       // la cible BRUTE, pas le proxy (sinon re-wrap en chaîne à chaque relecture).
       value = µ._mjs_toRaw(value);
@@ -283,6 +364,8 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       return true;
     },
     deleteProperty: function(target, key) {
+      // même garde que `set` ci-dessus (symétrique).
+      if (_guardKey(key)) return true;
       // Sans ce trap, `delete monStore.x` retirait bien la clé mais ne notifiait
       // AUCUN lecteur → pas de re-render. On notifie comme le set trap (uniquement
       // si la clé existait, pour ne pas réveiller les composants sur un no-op).
@@ -294,6 +377,13 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         µ._mjs_notifyUniversalChange(target, µ._mjs_STRUCT);
       }
       return true;
+    },
+    // `Object.defineProperty(state, '__proto__', …)` contournait le trap `set` ci-dessus
+    // (chemin d'écriture DIFFÉRENT du Proxy) — même garde, même message (cf. µ.Store,
+    // mjs_store.ts).
+    defineProperty: function(target, key, desc) {
+      if (_guardKey(key)) return false;
+      return Reflect.defineProperty(target, key, desc);
     },
     ownKeys: function(target) {
       // Énumération = dépendance sur l'ENSEMBLE des clés (cf. µ._mjs_STRUCT ci-dessus).
@@ -314,9 +404,13 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
   if (stack.length === 0) return;
   const comp = stack[stack.length - 1];
   // Réduction des allocations : ne re-set le WeakMap entry que si nouveau.
+  // Object.create(null) — PAS `{}` : une clé nommée toString/constructor/valueOf
+  // (donnée métier légitime) retombait sur la fonction HÉRITÉE d'Object.prototype
+  // (`deps[key] == null` faux car la fonction n'est pas nulle), puis `deps[key].add`
+  // levait TypeError. Un registre sans prototype n'hérite plus rien.
   let deps = µ._mjs_universalDeps.get(target);
   if (!deps) {
-    deps = {};
+    deps = Object.create(null);
     µ._mjs_universalDeps.set(target, deps);
   }
   if (deps[key] == null) {
@@ -352,19 +446,28 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
 // cascade : Set vide → delete entry de deps ; deps {} → delete target de
 // `µ._mjs_universalDeps`. La WeakMap se vide proprement.
 µ._mjs_cleanupUniversalDeps = function(component) {
+  var deps, i, key, keys, len, subscribers;
   if (!component._mjs_univ_targets) return;
   component._mjs_univ_targets.forEach((target) => {
-    var deps, key, subscribers;
     deps = µ._mjs_universalDeps.get(target);
     if (!deps) return;
-    for (key in deps) {
+    // Reflect.ownKeys (PAS for…in/Object.keys) : voit aussi la clé Symbol
+    // µ._mjs_STRUCT (énumération) — sinon, quand elle est la SEULE clé restante
+    // mais encore abonnée par d'AUTRES composants, `Object.keys(deps).length===0`
+    // mentait (les Symbols n'y comptent jamais) et le registre ENTIER était
+    // supprimé (leurs abonnements perdus), tandis que l'abonnement de CE
+    // composant sur cette même clé n'était jamais retiré (fuite : invoqué après
+    // son propre nettoyage).
+    keys = Reflect.ownKeys(deps);
+    for (i = 0, len = keys.length; i < len; i++) {
+      key = keys[i];
       subscribers = deps[key];
       subscribers.delete(component);
       if (subscribers.size === 0) {
         delete deps[key];
       }
     }
-    if (Object.keys(deps).length === 0) {
+    if (Reflect.ownKeys(deps).length === 0) {
       µ._mjs_universalDeps.delete(target);
     }
   });

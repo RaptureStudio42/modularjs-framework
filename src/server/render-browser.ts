@@ -82,7 +82,7 @@ import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, type Rend
 import { isWithinDir, isRealPathWithin, MIME } from './render-server.js'
 import { writeHashedAsset } from './ssr-head.js'
 import { openRenderCompileDir } from './render-compile-dir.js'
-import { t } from '../messages/index.js'
+import { t, type MsgKey } from '../messages/index.js'
 // (SSRF) — même défense en profondeur que renderToString.ts
 // (cf. son commentaire d'import) : un `forwardedUrl` pointant vers une cible
 // réseau interne ne doit JAMAIS armer le proxy `routeHandler`, même passé
@@ -584,6 +584,10 @@ function buildSharedScript(json: string | null, id: string = '__mjs_store'): str
 const PAGE_ERROR_MAX_ENTRIES = 50
 const PAGE_ERROR_MAX_CHARS   = 1000
 
+// plancher de la borne de fermeture : un rendu réglé très bas (renderTimeoutMs 200) abandonnait
+// la fermeture à 400 ms, et des Chromium restaient vivants après `close()`
+export const FERMETURE_PLANCHER_MS = 10000
+
 // ============================================================================
 // 6. RENDERER — pool de pages Chromium
 // ============================================================================
@@ -610,6 +614,10 @@ export interface BrowserRendererOptions {
   /** Environnement du build (`mjs build --prod`). Défaut : développement. Même motif que
    *  `outputDir` ci-dessus — ce renderer recompile dans le VRAI dossier de sortie. */
   env?: 'dev' | 'prod'
+  /** Plancher de la borne de FERMETURE, ms (défaut FERMETURE_PLANCHER_MS). Injectable pour les
+   *  tests seulement, comme `log` : un test qui attend l'abandon d'une fermeture n'a pas à
+   *  patienter 10 s. Jamais lu depuis `mjs.config.json`. */
+  closeFloorMs?: number
 }
 
 export interface BrowserRenderer {
@@ -726,6 +734,54 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   let browserPromise: Promise<PwBrowser> | null = null
   let closed = false
 
+  // Démarrage BORNÉ (lancement du navigateur, puis contexte et page d'un emplacement) : un Chromium
+  // qui ne répond plus ne retient ni la requête ni `close()` — qui attend les emplacements en cours
+  // de démarrage — à vie. Borne = double de `renderTimeoutMs`, soit 30 s par défaut, le délai de
+  // lancement de Playwright lui-même. Un résultat arrivé après l'abandon est libéré aussitôt
+  // (`liberer`, borné ET signalé à son tour, cf. `fermetureBornee`), jamais laissé vivant.
+  const bootTimeoutMs  = 2 * renderTimeoutMs
+  const closeTimeoutMs = Math.max(opts.closeFloorMs ?? FERMETURE_PLANCHER_MS, bootTimeoutMs)
+  function borne<T>(travail: Promise<T>, liberer: (v: T) => Promise<void>): Promise<T> {
+    let timer!: ReturnType<typeof setTimeout>
+    let abandonne = false
+    const delai = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { abandonne = true; reject(new Error(t('server.browser-demarrage-trop-long', { ms: bootTimeoutMs }))) }, bootTimeoutMs)
+    })
+    // `.catch` — une libération d'après-abandon est lancée SANS être attendue par personne (plus
+    // aucun appelant n'est là pour l'await) : sans ce filet, son rejet deviendrait un
+    // unhandledRejection, fatal par défaut sur ce Node ≥ 20.
+    travail.then((v) => { if (abandonne) liberer(v).catch(() => { /* best-effort */ }) }, () => { /* échec propre : rien à libérer */ })
+    return Promise.race([travail, delai]).finally(() => clearTimeout(timer))
+  }
+
+  // Fermeture BORNÉE elle aussi (même délai, jamais sous FERMETURE_PLANCHER_MS) : un Chromium devenu muet APRÈS son lancement — le
+  // navigateur entier OU le seul contexte d'un emplacement — ne retient pas `close()` — ni l'arrêt
+  // de `mjs dev`, ni la fin d'un prérendu — à vie. Passé ce délai on cesse d'attendre (le processus
+  // reste à la charge de Playwright) et l'abandon est SIGNALÉ, jamais muet : une fermeture qui ne se
+  // règle JAMAIS n'est pas une fermeture faite — la taire rendrait le défaut invisible, et un
+  // `teardownSlot` qui l'attendait sans borne figeait `closeBrowserIfIdle()`/`wakeDrainedIfEmpty()`
+  // (donc `close()`) pour de bon. `cle` = id du message au catalogue, qui situe ce qu'on refermait.
+  async function fermetureBornee(fermeture: () => Promise<unknown>, cle: MsgKey): Promise<void> {
+    let timer!: ReturnType<typeof setTimeout>
+    let abandonne = false
+    // `Promise.resolve().then(…)` : une fermeture qui LÈVE synchronement rejoint le même `catch`
+    // qu'un rejet — jamais une levée chez l'appelant (même best-effort que l'ancien `catch {}`).
+    await Promise.race([
+      Promise.resolve().then(fermeture).catch(() => { /* best-effort */ }),
+      new Promise<void>(r => { timer = setTimeout(() => { abandonne = true; r() }, closeTimeoutMs) })
+    ])
+    clearTimeout(timer)
+    if (abandonne) console.warn(t(cle, { ms: closeTimeoutMs }))
+  }
+
+  async function fermerNavigateur(b: PwBrowser): Promise<void> {
+    await fermetureBornee(() => b.close(), 'server.browser-fermeture-navigateur-trop-long')
+  }
+
+  async function fermerContexte(c: PwBrowserContext): Promise<void> {
+    await fermetureBornee(() => c.close(), 'server.browser-fermeture-contexte-trop-long')
+  }
+
   async function getBrowser(): Promise<PwBrowser> {
     if (!browserPromise) {
       browserPromise = (async () => {
@@ -735,7 +791,13 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
         }
         // headless:true — vérifié empiriquement dans CE dépôt (browser-playwright.test.ts,
         // sous xvfb-run) : fonctionne sans réserve, aucune raison de s'en écarter.
-        return playwright.chromium.launch({ headless: true })
+        // handleSIGINT/SIGTERM/SIGHUP à FALSE : par défaut, Playwright installe SES propres
+        // gestionnaires de signaux au lancement du navigateur et termine le process en 130 en
+        // fermant le navigateur sous les rendus en vol — court-circuitant l'arrêt ORDONNÉ de
+        // `mjs dev` (cli/dev-lock.ts : fermeture du RenderHandler puis sortie bornée), et la
+        // réponse HTTP en cours était coupée net dès qu'un moteur navigateur avait servi une
+        // requête. L'arrêt du navigateur reste fait par close(), comme avant.
+        return borne(playwright.chromium.launch({ headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }), (b: PwBrowser) => fermerNavigateur(b))
       })()
       // Un lancement qui ÉCHOUE ne doit pas bricker tous les rendus futurs avec la
       // même promesse rejetée à vie — libère la mémoïsation pour un nouvel essai.
@@ -768,7 +830,11 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       })
       return { context, page, createdAt: Date.now(), forwardBox, activeTag }
     } catch (e) {
-      await context.close().catch(() => { /* best-effort */ })
+      // BORNÉ et signalé, même voie que `teardownSlot` : un `context.close()` qui ne se règle pas
+      // laissait cette promesse — et ce contexte — en vol à vie, sans un mot. `bootSlot()` n'est plus
+      // attendu par personne dès que `createSlot()` a perdu sa course (`borne`), mais un contexte
+      // Playwright laissé vivant est une fuite, et un abandon muet la rendait invisible.
+      await fermerContexte(context)
       throw e
     }
   }
@@ -776,6 +842,11 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   const idle: PoolSlot[] = []
   const all: PoolSlot[] = []
   const waiters: { resolve: (s: PoolSlot) => void; reject: (e: any) => void }[] = []
+  // Réveillés quand PLUS AUCUN emplacement n'est actif NI en cours de DÉMARRAGE (`all` vide ET
+  // `reserved` à 0, cf. plus bas) — lu seulement par `close()` pendant qu'il attend la fin
+  // NATURELLE des rendus en vol (actifs OU tout juste en train d'acquérir leur emplacement) au
+  // lieu de les arracher (cf. son commentaire, section slots actifs/en démarrage).
+  const drainedWaiters: (() => void)[] = []
   // PIÈGE DE CONCURRENCE (trouvé en relisant le pool APRÈS l'avoir écrit — un 1er
   // test « rendus concurrents » axé sur le contenu ne l'avait PAS détecté : chaque
   // emplacement, même en surnombre, reste isolé et produit un résultat correct ;
@@ -793,56 +864,107 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     if (all.length !== 0 || reserved !== 0 || !browserPromise) return
     const p = browserPromise
     browserPromise = null
-    try { const b = await p; await b.close() } catch { /* best-effort */ }
+    // Attente NUE, assumée : la garde ci-dessus la rend inatteignable avec une promesse qui pend
+    // (un démarrage en vol tient `reserved`, un emplacement vivant tient `all`), et la borner ici
+    // faisait parler DEUX bornes pour un seul événement — le message de l'attente, faux dans ce cas
+    // (rien n'est bloqué au lancement, c'est la FERMETURE qui bloque), partait avant celui, juste,
+    // de `fermerNavigateur`. La fermeture, elle, reste bornée et signalée.
+    try { const b = await p; await fermerNavigateur(b) } catch { /* best-effort */ }
+  }
+
+  // Réveille `close()` s'il attend la fin de tout travail en cours (cf. `drainedWaiters`) — no-op
+  // si un emplacement (actif OU en cours de démarrage) subsiste, si une requête reste EN FILE
+  // (`waiters` — cf. `acquireCore`/`release`/`reclaimSlot` : un waiter déjà accepté avant
+  // `close()` continue de recycler `all`/`reserved` tant qu'il n'a pas eu son tour), ou si
+  // personne n'attend.
+  function wakeDrainedIfEmpty(): void {
+    if (all.length === 0 && reserved === 0 && waiters.length === 0) { for (const w of drainedWaiters.splice(0)) w() }
   }
 
   async function teardownSlot(slot: PoolSlot): Promise<void> {
     const i = all.indexOf(slot)
     if (i >= 0) all.splice(i, 1)
-    try { await slot.context.close() } catch { /* best-effort */ }
+    // `fermerContexte` ne rejette JAMAIS (borne + best-effort internes, cf. `fermetureBornee`) : les
+    // deux étapes ci-dessous sont atteintes dans TOUS les cas — un `context.close()` qui ne se règle
+    // pas est abandonné à la borne, jamais attendu à vie — sans quoi `close()` (qui attend le
+    // drainage de `all`/`reserved`) restait figé pour toujours sur ce seul emplacement.
+    await fermerContexte(slot.context)
     await closeBrowserIfIdle()
+    wakeDrainedIfEmpty()
   }
 
   async function createSlot(): Promise<PoolSlot> {
     reserved++
     try {
-      const slot = await bootSlot()
-      // `close()` a pu survenir PENDANT ce `await bootSlot()` (fermeture demandée
-      // alors qu'une création était déjà en vol) — ne pas raccrocher ce slot au
-      // pool déjà fermé : le refermer aussitôt plutôt que le laisser fuir.
-      if (closed) {
-        try { await slot.context.close() } catch { /* best-effort */ }
-        throw new Error(t('server.browser-ferme-pendant-creation'))
-      }
+      // Une requête déjà ACCEPTÉE (ce `createSlot()` a démarré avant tout `close()`, cf. la
+      // garde synchrone `if (closed) throw` de `acquire()`, franchie AVANT d'entrer ici) reste
+      // servie par CE moteur même si `close()` survient PENDANT ce `await bootSlot()` : `close()`
+      // attend désormais aussi les emplacements en cours de démarrage (`reserved`, cf. son
+      // commentaire) avant de toucher au navigateur — ce slot n'est donc jamais démonté ici au nom
+      // d'une fermeture déjà commencée, contrairement à avant (ce qui cassait systématiquement la
+      // requête qui l'attendait avec une erreur de navigateur fermé).
+      const slot = await borne(bootSlot(), (s) => fermerContexte(s.context))
       all.push(slot)
       return slot
     } finally {
       reserved--
+      wakeDrainedIfEmpty()
     }
   }
 
-  async function acquire(): Promise<PoolSlot> {
-    if (closed) throw new Error(t('server.browser-deja-ferme'))
+  // Cœur de l'acquisition, SANS la garde `closed` — un WAITER déjà en file (poussé ci-dessous par
+  // `acquireCore` elle-même, AVANT tout `close()` possible puisque `acquire()` refuse toute
+  // NOUVELLE demande dès `closed`) a été ACCEPTÉ : son réveil interne (`release`/`reclaimSlot`/
+  // l'échec de `createSlot` juste en dessous) doit pouvoir lui trouver un emplacement même APRÈS
+  // `close()` — jamais retomber sur le refus qui bloque, LUI, tout travail NOUVEAU (cf. `acquire`).
+  async function acquireCore(): Promise<PoolSlot> {
     const free = idle.pop()
     if (free) {
       if (Date.now() - free.createdAt > maxAgeMs) {
         await teardownSlot(free)
-        return createSlot()
+        return acquireCore()
       }
       return free
     }
     if (all.length + reserved < poolSize) {
-      return createSlot()
+      try {
+        return await createSlot()
+      } catch (e) {
+        // Garde-fou — un `createSlot()` en défaut (bootSlot en échec) libère `reserved`
+        // (cf. son propre finally) mais ne notifie JAMAIS les `waiters` déjà en file : les deux
+        // seuls réveils existants (`release()`/`reclaimSlot()`) ne tournent que pour un slot qui a
+        // fini par exister. Sans ce filet, un appelant concurrent déjà en file restait bloqué pour
+        // toujours malgré la capacité tout juste libérée. Réveil par NOUVEL ESSAI (la capacité
+        // vient de se libérer, le waiter mérite sa chance) plutôt qu'un rejet direct.
+        const waiter = waiters.shift()
+        if (waiter) acquireCore().then(waiter.resolve, waiter.reject)
+        throw e
+      }
     }
     return new Promise((resolveWait, rejectWait) => waiters.push({ resolve: resolveWait, reject: rejectWait }))
   }
 
+  async function acquire(): Promise<PoolSlot> {
+    if (closed) throw new Error(t('server.browser-deja-ferme'))
+    return acquireCore()
+  }
+
   function release(slot: PoolSlot): void {
-    if (closed) { teardownSlot(slot).catch(() => {}); return }
+    if (closed) {
+      // Une requête déjà EN FILE (`waiters`, poussée avant `close()`) reste prioritaire sur ce
+      // slot qui se libère — mêmes droits qu'un slot idle normal (branche plus bas), CE slot lui
+      // est directement transmis (jamais démonté puis recréé) : `close()` continue de l'attendre
+      // (cf. `wakeDrainedIfEmpty`, tant que `waiters` n'est pas vide). Aucun waiter : démonté comme
+      // avant, rien à servir de plus sur un moteur fermé.
+      const waiter = waiters.shift()
+      if (waiter) { waiter.resolve(slot); return }
+      teardownSlot(slot).catch(() => {})
+      return
+    }
     if (!keepAlive) {
       teardownSlot(slot).then(() => {
         const waiter = waiters.shift()
-        if (waiter) acquire().then(waiter.resolve, waiter.reject)
+        if (waiter) acquireCore().then(waiter.resolve, waiter.reject)
       }).catch(() => {})
       return
     }
@@ -865,7 +987,10 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   async function reclaimSlot(slot: PoolSlot): Promise<void> {
     await teardownSlot(slot)
     const waiter = waiters.shift()
-    if (waiter) acquire().then(waiter.resolve, waiter.reject)
+    // `acquireCore` (pas `acquire`) — cf. son commentaire : un waiter déjà en file reste servi
+    // même après `close()`, ce réveil-ci y compris (un rendu qui atteint `renderTimeoutMs` PENDANT
+    // la fermeture du moteur ne doit pas faire perdre son tour à la requête suivante).
+    if (waiter) acquireCore().then(waiter.resolve, waiter.reject)
   }
 
   async function renderPage(tag: string, options: RenderOptions = {}): Promise<RenderResult> {
@@ -882,11 +1007,22 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     const warnings: string[] = compileWarnings.slice()
     let forwardOrigin: string | null = null
     if (forwardedUrl) {
-      const target = new URL(forwardedUrl).origin
-      if (isBlockedForwardTarget(new URL(forwardedUrl).host)) {
-        warnings.push(t('server.browser-forward-refuse-interne', { tag, host: new URL(forwardedUrl).host }))
-      } else {
-        forwardOrigin = target
+      // Garde-fou — `new URL(forwardedUrl)` levait ICI, AVANT le try/finally qui relâche le
+      // slot (plus bas, `finally { release(slot) }`) : un `forwardedUrl` INVALIDE (jamais validé
+      // avant d'arriver ici, cf. RenderOptions.forwardedUrl) faisait perdre l'emplacement de pool
+      // pour de bon — jamais relâché, jamais réutilisé. Repli SÛR (comme un forwardedUrl absent),
+      // même garde que renderToString.ts pour l'identique scénario (défense en profondeur SSRF).
+      try {
+        const target = new URL(forwardedUrl).origin
+        if (isBlockedForwardTarget(new URL(forwardedUrl).host)) {
+          warnings.push(t('server.browser-forward-refuse-interne', { tag, host: new URL(forwardedUrl).host }))
+        } else {
+          forwardOrigin = target
+        }
+      } catch {
+        // URL invalide : traitée comme forwardedUrl absent, aucun proxy armé — MÊME avertissement
+        // que renderToString.ts (happy-dom) pour l'identique scénario, resté silencieux ici jusqu'ici.
+        warnings.push(t('server.browser-forward-url-invalide', { tag }))
       }
     }
     // Garde-fou — échéance ABSOLUE de CE
@@ -1228,16 +1364,66 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
 
   async function close(): Promise<void> {
     closed = true
-    for (const w of waiters.splice(0)) w.reject(new Error(t('server.browser-ferme-pendant-attente')))
-    for (const slot of [...all]) { try { await slot.context.close() } catch { /* best-effort */ } }
-    all.length = 0
-    idle.length = 0
+    // Les requêtes déjà EN FILE (`waiters`) ne sont PLUS rejetées ici : chacune a été acceptée
+    // AVANT cette fermeture (`acquire()` refuse toute NOUVELLE demande dès `closed`, cf. son
+    // propre garde) — elle mérite le même sort qu'un rendu déjà ACTIF (cf. plus bas) : servie
+    // jusqu'au bout dès qu'un emplacement se libère (`release`/`reclaimSlot`, qui continuent de la
+    // servir même moteur fermé, cf. leur commentaire), jamais arrachée. `close()` l'attend au même
+    // titre (cf. la condition plus bas et `wakeDrainedIfEmpty`).
+    // Slots INACTIFS (personne ne rend dessus, ni personne en file derrière — les deux ne
+    // coexistent jamais, `release()` sert toujours un waiter en priorité) : démontés tout de
+    // suite, même chemin que le recyclage habituel (`teardownSlot`, qui ferme aussi le navigateur
+    // si plus rien ne l'utilise).
+    await Promise.all(idle.splice(0).map(slot => teardownSlot(slot)))
+    // Slots ACTIFS restants (un rendu est en cours dessus, cf. `acquire`/`renderPage`), emplacements
+    // EN COURS DE DÉMARRAGE (`reserved`, cf. `createSlot` — une invalidation en rafale peut fermer
+    // ce moteur pendant que la TOUTE PREMIÈRE requête qui l'utilise est encore en train de lancer
+    // son Chromium), ET requêtes déjà EN FILE (`waiters`, cf. plus haut) — jamais arrachés : ça
+    // romprait une requête pourtant légitime, soit en plein `page.evaluate()` (« Target page,
+    // context or browser has been closed »), soit en lui faisant perdre la course contre un
+    // navigateur refermé sous elle pendant sa création, soit en la rejetant alors qu'elle attendait
+    // juste un emplacement déjà promis (constaté SYSTÉMATIQUE dans les trois cas, pas une simple
+    // fenêtre étroite). `release()`/`reclaimSlot()` démontent les slots ACTIFS proprement (même
+    // `teardownSlot` — `closed` posé ci-dessus les fait bifurquer directement vers ce chemin, sauf
+    // waiter en attente, cf. leur propre garde) dès la fin NATURELLE de leur rendu, bornée par
+    // `renderTimeoutMs` au pire ; `createSlot` fait de même pour un slot en cours de DÉMARRAGE
+    // (jamais démonté au nom d'une fermeture déjà commencée, cf. son propre commentaire) — on
+    // attend cette fin plutôt que de forcer.
+    if (all.length > 0 || reserved > 0 || waiters.length > 0) await new Promise<void>(resolve => { drainedWaiters.push(resolve) })
+    // Filet — un navigateur lancé (`getBrowser()`) dont AUCUN slot n'a fini de s'amorcer (ex.
+    // `newContext()` en échec juste après le lancement, cf. `bootSlot`) n'est raccroché à aucun
+    // slot de `all`/`idle` : `closeBrowserIfIdle()` (déclenché ci-dessus par chaque
+    // `teardownSlot`) ne le voit alors jamais. Fermé ici quand même.
     if (browserPromise) {
       const p = browserPromise
       browserPromise = null
-      try { const b = await p; await b.close() } catch { /* best-effort */ }
+      // `p` peut ne JAMAIS se régler : son lancement EST borné (`borne` plus haut), mais la
+      // résolution du moteur qui le précède (`resolveBrowserEngine`, un `import('playwright')`) ne
+      // l'était pas — `close()` attendait alors à vie, même moteur déjà en cours de fermeture.
+      // Seule l'ATTENTE du navigateur est bornée ici : sa fermeture a déjà sa propre borne
+      // (`fermerNavigateur`). Imbriquées, les deux minuteurs sonnaient pour un seul navigateur muet
+      // — deux avertissements, le premier accusant à tort un lancement bloqué. Un navigateur qui
+      // finit par arriver APRÈS l'abandon est quand même refermé, en tâche de fond — jamais de
+      // Chromium orphelin (même motif que `liberer` dans `borne`).
+      let timer!: ReturnType<typeof setTimeout>
+      const ABANDON = Symbol('abandon')
+      const b       = await Promise.race([
+        p.catch(() => null),
+        new Promise<typeof ABANDON>(r => { timer = setTimeout(() => r(ABANDON), closeTimeoutMs) }),
+      ])
+      clearTimeout(timer)
+      if (b === ABANDON) {
+        console.warn(t('server.browser-fermeture-attente-navigateur-trop-long', { ms: closeTimeoutMs }))
+        p.then((tardif) => fermerNavigateur(tardif)).catch(() => { /* best-effort */ })
+      }
+      else if (b) await fermerNavigateur(b)
     }
-    await bundler.close()
+    // Même famille : `bundler.close()` termine le réservoir de travailleurs PARTAGÉ (cf.
+    // bundler/index.ts) — une terminaison qui ne se règle pas retenait `close()` à vie, donc aussi
+    // l'arrêt de `mjs dev` et la fin d'un prérendu. Bornée et signalée : l'abandon rend la main au
+    // reste de l'arrêt (nettoyage du dossier de compilation ci-dessous), sans prétendre que le
+    // réservoir est éteint.
+    await fermetureBornee(() => bundler.close(), 'server.browser-fermeture-bundler-trop-long')
     // dossier de travail de CETTE compilation (temporaire en `js: 'bundle'`, cf. plus haut)
     atelier.cleanup()
   }

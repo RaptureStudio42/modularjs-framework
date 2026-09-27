@@ -3,7 +3,7 @@
 
 import type { SupportedLang } from '../languages/index.js'
 import { dedent } from '../generator/state.js'
-import { maskInertSameLength } from '../lexer/index.js'
+import { maskInertSameLength, maskHtmlComments } from '../mask.js'
 import { t } from '../messages/index.js'
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { findMacroTagEnd } from './macro-tag.js'
@@ -91,8 +91,11 @@ const DEFAULT_STYLE_LANG: 'css' | 'sass' | 'scss' = 'sass'
 // ----------------------------------------------------------------------------
 // extractLang — repère `lang="…"` dans une chaîne d'attributs
 // ----------------------------------------------------------------------------
+// espaces autour du `=` tolérés — même forme que SECTION_ATTR_RE (checkSectionAttrs, plus bas) :
+// `lang = "js"` validait déjà SANS erreur mais compilait avec le langage par DÉFAUT (Civet),
+// la valeur écrite n'étant jamais lue — panne muette, aucun message
 function extractLang(attrs: string): string | null {
-  const m = attrs.match(/lang=['"]([^'"]+)['"]/)
+  const m = attrs.match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
   return m ? m[1] : null
 }
 
@@ -237,7 +240,14 @@ function countNewlines(src: string): number {
 // masqueur CSS/SASS local — chaînes '…'/"…" + commentaires /*…*/ et //…
 // UNIQUEMENT. PAS de règle `#…` (SASS `#123` = couleur hex, pas un commentaire ;
 // une règle `#` avalerait `}</style>` sur la même ligne).
-const STYLE_INERT_RE = /'(?:\\.|[^\\'\n])*'|"(?:\\.|[^\\"\n])*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g
+//
+// `url(https://…)` (SANS guillemets) sur la même ligne qu'un `</style>` : le `//` de l'URL
+// était lu comme un commentaire SASS, qui masquait alors tout jusqu'à la fin de ligne — `</style>`
+// compris → « balise orpheline » refusée sur un composant valide. Un `//` n'est un commentaire ni
+// dans une chaîne (déjà protégé), ni dans `url( )` : l'alternative `url\(...\)` consomme tout le
+// contenu de l'appel AVANT que le scan n'atteigne son `//` interne (guillemetée ou non, peu
+// importe : blanchir tout l'appel est sans effet ici, cette vue ne sert qu'à repérer les balises).
+const STYLE_INERT_RE = /'(?:\\.|[^\\'\n])*'|"(?:\\.|[^\\"\n])*"|\/\*[\s\S]*?\*\/|url\((?:[^)\\]|\\.)*\)|\/\/[^\n]*/gi
 
 function maskStyleInertSameLength(src: string): string {
   return src.replace(STYLE_INERT_RE, (tok) => tok.replace(/[^\n]/g, ' '))
@@ -246,6 +256,55 @@ function maskStyleInertSameLength(src: string): string {
 // blankRange — neutralise [start,end) en espaces même-longueur (préserve les `\n`)
 function blankRange(src: string, start: number, end: number): string {
   return src.slice(0, start) + src.slice(start, end).replace(/[^\n]/g, ' ') + src.slice(end)
+}
+
+// motifs de reconnaissance des balises de section — constantes PARTAGÉES entre
+// findScriptMatches/findStyleMatches (plus bas) et extractSections, pour qu'il n'existe qu'UN
+// seul endroit où ces regex sont écrites.
+const SCRIPT_MODULE_RE_SRC = String.raw`^[ \t]*<script([^>]*?)\bmodule\b([^>]*)>([\s\S]*?)</script>`
+const SCRIPT_RE_SRC        = String.raw`^[ \t]*<script([^>]*)>([\s\S]*?)</script>`
+const STYLE_RE_SRC         = String.raw`^[ \t]*<style([^>]*)>([\s\S]*?)</style>`
+
+// findScriptMatches — repère les blocs <script module>/<script> sur la vue Civet masquée
+// (littéraux/commentaires Civet puis commentaires HTML) — SEULE recherche de cette borne,
+// partagée avec extractDirectives (transpiler/directives.ts) : avant, celui-ci réimplémentait sa
+// propre recherche, qui pouvait diverger de celle-ci sans que rien ne le signale.
+// `caseInsensitive` : extractDirectives s'en sert AVANT même de savoir si le fichier compilera —
+// une balise mal casée (`<SCRIPT>`) qui deviendra une ERREUR de compilation plus tard (cf.
+// garde-fou orphelin plus bas) doit quand même voir son CONTENU traité comme du script tant que
+// la compilation n'a pas encore tranché ; extractSections, lui, reste strictement en minuscules
+// (défaut `false`, comportement inchangé).
+export function findScriptMatches(scan: string, caseInsensitive = false): { moduleScripts: RegExpMatchArray[], scripts: RegExpMatchArray[] } {
+  const maskedCivet = maskHtmlComments(maskInertSameLength(scan))
+  const flags = caseInsensitive ? 'gmdi' : 'gmd'
+  const moduleScripts = [...maskedCivet.matchAll(new RegExp(SCRIPT_MODULE_RE_SRC, flags))]
+  const moduleRe = caseInsensitive ? /\bmodule\b/i : /\bmodule\b/
+  const scripts = [...maskedCivet.matchAll(new RegExp(SCRIPT_RE_SRC, flags))]
+    .filter(m => !moduleRe.test(m[1]))
+  return { moduleScripts, scripts }
+}
+
+export interface StyleMatchResult {
+  matches: RegExpMatchArray[]
+  /** vue CSS/SASS utilisée pour les trouver (plages de script neutralisées, commentaires HTML
+   *  masqués) — extractSections la réutilise telle quelle pour la suite de la chaîne
+   *  (<theme>, <routes>), jamais recalculée deux fois. */
+  maskedView: string
+}
+
+// findStyleMatches — repère les blocs <style> (base ET `name=`) sur une vue CSS/SASS
+// (maskStyleInertSameLength), plages des scripts déjà trouvés neutralisées, puis commentaires
+// HTML masqués — MÊME vérité que findScriptMatches, partagée avec extractDirectives.
+export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[], caseInsensitive = false): StyleMatchResult {
+  let maskedStyle = maskStyleInertSameLength(scan)
+  for (const m of scriptMatches) {
+    const [start, end] = m.indices![0]
+    maskedStyle = blankRange(maskedStyle, start, end)
+  }
+  maskedStyle = maskHtmlComments(maskedStyle)
+  const flags = caseInsensitive ? 'gmdi' : 'gmd'
+  const matches = [...maskedStyle.matchAll(new RegExp(STYLE_RE_SRC, flags))]
+  return { matches, maskedView: maskedStyle }
 }
 
 // maskHeadFailedBlocks — masque chaque
@@ -325,16 +384,21 @@ export function extractSections(content: string, opts: {
   const restoreMacros = (s: string): string =>
     macroMasks.length ? s.replace(/\x00MJSHF(\d+)\x00/g, (_m, i) => macroMasks[Number(i)]) : s
 
-  // vue masquée pour <script module> et <script> : littéraux/commentaires Civet
-  // (chaînes, heredocs, `#…`/`###…###`/`//…`/`/*…*/`) → espaces même-longueur.
-  const maskedCivet = maskInertSameLength(scan)
-
+  // littéraux/commentaires Civet (chaînes, heredocs, `#…`/`###…###`/`//…`/`/*…*/`) puis
+  // commentaires HTML (`<!-- … -->`) → espaces même-longueur, findScriptMatches (plus haut).
+  // Cet ORDRE est ce qui rend le 2e masquage sûr : un `<!--` littéral écrit DANS une chaîne/un
+  // commentaire Civet est déjà blanchi par `maskInertSameLength`, donc invisible à
+  // `maskHtmlComments` — il ne peut plus amorcer un faux commentaire qui avalerait le vrai
+  // `</script>` qui suit. Sans ce 2e passage, un `<script>…</script>` ENTIER écrit dans
+  // `<!-- … -->` était retrouvé par la regex et devenait LE script réel du composant (mettre un
+  // bloc de côté en le commentant ne le désactivait pas).
+  //
   // 1. <script module>
   // `\bmodule\b` (pas la sous-chaîne `module`) : `<script data-modulex>`
   // ne doit pas être classé « module ». Group 1 non-gourmand pour ne pas avaler
-  // un `module` situé plus loin. Recherche sur `maskedCivet` (offsets alignés
+  // un `module` situé plus loin. Recherche sur la vue Civet masquée (offsets alignés
   // sur `scan`), relecture du texte réel via `m.indices` (drapeau `d`).
-  const allModuleScripts = [...maskedCivet.matchAll(/^[ \t]*<script([^>]*?)\bmodule\b([^>]*)>([\s\S]*?)<\/script>/gmd)]
+  const { moduleScripts: allModuleScripts, scripts: allScripts } = findScriptMatches(scan)
   const moduleMatch = allModuleScripts[0]
   const moduleSection: ScriptSection = { raw: '', lang: defaultScriptLang, startLine: 1 }
   if (moduleMatch) {
@@ -350,9 +414,7 @@ export function extractSections(content: string, opts: {
     throw new Error(t('transpiler.script-module-double', { n: allModuleScripts.length, nAutres: allModuleScripts.length - 1 }))
   }
 
-  // 2. <script> (sans `module`)
-  const allScripts = [...maskedCivet.matchAll(/^[ \t]*<script([^>]*)>([\s\S]*?)<\/script>/gmd)]
-    .filter(m => !/\bmodule\b/.test(m[1]))
+  // 2. <script> (sans `module`) — déjà calculé par findScriptMatches ci-dessus (allScripts)
   const standardScript = allScripts[0]
   const script: ScriptSection = { raw: '', lang: defaultScriptLang, startLine: 1 }
   if (standardScript) {
@@ -368,31 +430,22 @@ export function extractSections(content: string, opts: {
     throw new Error(t('transpiler.script-double', { n: allScripts.length, nAutres: allScripts.length - 1 }))
   }
 
-  // vue masquée pour <style> : chaînes/commentaires CSS/SASS (masqueur LOCAL,
-  // pas INERT_RE) + plages des <script module>/<script> déjà trouvés neutralisées
-  // (un `<style>`/`</style>` littéral DANS un script ne doit pas polluer la
-  // recherche du bloc <style> réel).
-  let maskedStyle = maskStyleInertSameLength(scan)
-  for (const m of [...allModuleScripts, ...allScripts]) {
-    const [start, end] = m.indices![0]
-    maskedStyle = blankRange(maskedStyle, start, end)
-  }
-  // Et les COMMENTAIRES HTML : un bloc mis en commentaire (ancienne version gardée en
-  // référence, exemple documenté) doit rester INERTE. Ce masquage n'existait qu'au niveau de
-  // <routes>, plus bas ; <style name="…"> et <theme>, tous deux NEUFS, ne l'avaient pas — un
-  // `<theme name="dark">` commenté ressortait dans `themes`, et avec la version active à côté le
-  // build échouait sur « deux blocs <theme name="dark"> » ; seul, le commenté REMPLAÇAIT l'actif.
-  // Posé ICI, en amont des trois extractions, pour qu'aucune ne puisse encore l'oublier. Les
-  // scripts sont déjà neutralisés au-dessus : un `<!--` dans du code ne peut pas ouvrir de plage.
-  // Motif LAZY exigeant `-->` : un `<!--` jamais refermé ne masque rien (pas d'emballement).
-  for (const m of [...maskedStyle.matchAll(/<!--[\s\S]*?-->/g)]) {
-    maskedStyle = blankRange(maskedStyle, m.index!, m.index! + m[0].length)
-  }
-
+  // vue masquée pour <style> : chaînes/commentaires CSS/SASS (masqueur LOCAL, pas INERT_RE) +
+  // plages des <script module>/<script> déjà trouvés neutralisées (un `<style>`/`</style>`
+  // littéral DANS un script ne doit pas polluer la recherche du bloc <style> réel) + COMMENTAIRES
+  // HTML : un bloc mis en commentaire (ancienne version gardée en référence, exemple documenté)
+  // doit rester INERTE. Ce masquage n'existait qu'au niveau de <routes>, plus bas ; <style
+  // name="…"> et <theme>, tous deux NEUFS, ne l'avaient pas — un `<theme name="dark">` commenté
+  // ressortait dans `themes`, et avec la version active à côté le build échouait sur « deux blocs
+  // <theme name="dark"> » ; seul, le commenté REMPLAÇAIT l'actif. Posé en amont des trois
+  // extractions (findStyleMatches, plus haut), pour qu'aucune ne puisse encore l'oublier.
+  //
   // 3. <style> — le bloc SANS nom est le style de base du composant (embarqué) ; chaque
   // `<style name="bandeau">` est un VARIANT, sorti dans son propre fichier et chargé
   // seulement quand elle sert. Un seul bloc sans nom, un seul par nom.
-  const allStyles = [...maskedStyle.matchAll(/^[ \t]*<style([^>]*)>([\s\S]*?)<\/style>/gmd)]
+  const styleResult = findStyleMatches(scan, [...allModuleScripts, ...allScripts])
+  const allStyles    = styleResult.matches
+  const maskedStyle  = styleResult.maskedView
   const style: StyleSection = { raw: '', lang: defaultStyleLang, sharedCssNames: [], moduleDisplay: 'block', moduleViewTransition: null, moduleViewTransitionPriority: 1 }
   const layouts: LayoutSection[] = []
   let styleVus = 0
@@ -585,14 +638,16 @@ export function extractSections(content: string, opts: {
   // redevient donc STRICT : tout `</script>`/`</style>` orphelin dans le HTML
   // résiduel throw, y compris à l'intérieur d'un `<pre>`/`<code>`.
   // NUANCE COMMENTAIRE : un bloc mis en COMMENTAIRE HTML est volontairement inerte — l'extraction
-  // l'ignore (masquage posé en amont de `maskedStyle`, cf. §3) — donc sa balise fermante n'est pas
-  // un orphelin. Vaut pour `</style>`, `</theme>` et `</routes>`. Le garde reste STRICT pour
-  // `</script>` : l'extraction des scripts, elle, tourne AVANT le masquage des commentaires (elle
-  // ne peut pas tourner après — un `<!--` dans une chaîne de code masquerait à travers le
-  // `</script>` réel), donc un `</script>` commenté ne peut PAS venir d'un bloc rendu inerte : il
+  // l'ignore (masquage posé en amont de `maskedCivet`/`maskedStyle`, §1 et §3) — donc sa balise
+  // fermante n'est pas un orphelin. Vaut désormais pour `</script>` COMME pour `</style>`/
+  // `</theme>`/`</routes>` : le masquage des commentaires HTML tourne AVANT la recherche des
+  // scripts elle-même (§1), en toute sécurité (il s'applique APRÈS le masquage des littéraux
+  // Civet — un `<!--` écrit dans une chaîne/un commentaire de code est donc déjà blanchi, il ne
+  // peut plus amorcer un faux commentaire qui avalerait un `</script>` réel). Un `</script>`
+  // trouvé ICI, dans le HTML résiduel, ne peut donc jamais venir d'un bloc rendu inerte : il
   // signale toujours la vraie fuite d'extraction que ce garde-fou existe pour attraper.
-  const htmlHorsCommentaires = html.replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, ' '))
-  const orphanTag = html.match(/<\/script>/i) ?? htmlHorsCommentaires.match(/<\/(?:style|theme|routes)>/i)
+  const htmlHorsCommentaires = maskHtmlComments(html)
+  const orphanTag = htmlHorsCommentaires.match(/<\/(?:script|style|theme|routes)>/i)
   if (orphanTag) {
     throw new Error(t('transpiler.balise-orpheline-html', { balise: orphanTag[0] }))
   }

@@ -31,9 +31,9 @@ import { WsTransport } from './transport-ws.js'
 // l'import paresseux + le piège « ws natif invalide après close » ; docs/23-mjs-ws.md « La façade
 // transport » pour le guide (choix 'ws'/'uws'/instance maison, squelette d'adaptateur commenté).
 import { UwsTransport } from './transport-uws.js'
-import { createCore } from './core.js'
+import { createCore, DEFAULT_MAX_QUEUED } from './core.js'
 import type {
-  MjsWsApp, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsLogFn, MjsWsLogLevel, MjsWsResolvedOptions, MjsWsTokenOptions,
+  MjsWsApp, MjsWsBanBy, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsLogFn, MjsWsLogLevel, MjsWsRateBy, MjsWsResolvedBan, MjsWsResolvedOptions, MjsWsTokenOptions,
 } from './core.js'
 import type { MjsWsRemoteInfo, MjsWsTransport } from './transport.js'
 import type { MjsWsRoomsOptions } from './rooms.js'
@@ -72,6 +72,7 @@ export type { UwsTransportOpts, UwsModule, UwsTemplatedApp, UwsWebSocketBehavior
 export type { MjsWsConnection, MjsWsRemoteInfo, MjsWsTransport } from './transport.js'
 export type {
   MjsWsApp, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsBroadcastOpts, MjsWsLogFn, MjsWsLogLevel, MjsWsTokenOptions,
+  MjsWsRateBy, MjsWsBanBy, MjsWsResolvedBan,
 } from './core.js'
 export type { MjsWsRoomsOptions, MjsWsRoomHandle, MjsWsJoinFn } from './rooms.js'
 export type { MjsWsStreamOptions, MjsWsStreamHandle } from './streams.js'
@@ -228,6 +229,14 @@ export interface MjsWsOptions {
    */
   verifyOrigin?: string[] | ((origin: string | undefined, remote: MjsWsRemoteInfo) => boolean)
   /**
+   * Mise au banc — ACTIVE par défaut (cf. DEFAULT_BAN : 3 expulsions pour abus en 1 min → 5 min de
+   * refus, par compte ET par IP). Un client expulsé revenait sinon aussitôt, compteurs neufs.
+   * `false` désactive ; `true` = défauts ; objet = réglages fins (`after`, `within`, `duration` en
+   * ms, `by` : `'account'` | `'ip'` | `'both'`). Cf. MjsWsResolvedOptions.ban (core.ts) pour ce qui
+   * compte comme abus et où le refus s'applique, docs/23-mjs-ws.md « Qui compte pour qui ».
+   */
+  ban?: boolean | MjsWsBanOptions
+  /**
    * Rappelée à la déconnexion DÉFINITIVE d'un client authentifié — immédiate sans reprise
    * (`opts.resume` absent), différée à l'expiration de la grâce sinon (jamais pour une coupure
    * encore en grâce, jamais deux fois pour la même connexion). Miroir du webhook 'disconnect' du
@@ -278,6 +287,18 @@ export interface MjsWsOptions {
    * `bits` non représentables en JSON) — PAS de pendant `mjs.config.json`, cf. docs/23-mjs-ws.md.
    */
   schemas?: MjsWsSchemaOptions['schemas']
+}
+
+/** Forme OBJET de `opts.ban` — chaque clé absente prend sa valeur de DEFAULT_BAN. */
+export interface MjsWsBanOptions {
+  /** expulsions pour abus qui déclenchent la mise au banc (entier ≥ 1) */
+  after?: number
+  /** fenêtre où ces expulsions se comptent, ms (entier ≥ 1) */
+  within?: number
+  /** durée du refus, ms (entier ≥ 1) */
+  duration?: number
+  /** cible : `'account'` (le compte ; sans compte, l'IP), `'ip'`, ou `'both'` (le compte ET son IP) */
+  by?: MjsWsBanBy
 }
 
 /** Forme OBJET de `opts.adapter` — résolue en RedisAdapter par mjsWs() (cf. resolveAdapterOption). */
@@ -331,7 +352,12 @@ export const DEFAULT_HEARTBEAT = 15000
 // MjsWsLimits.maxConnectionsPerIp, core.ts, pour le détail du pourquoi 100 par défaut) /
 // maxRoomsPerClient: 50 (CHANGEMENT DE COMPORTEMENT ASSUMÉ
 // lui aussi, généreux : cf. le commentaire de MjsWsLimits.maxRoomsPerClient, core.ts).
-export const DEFAULT_LIMITS: MjsWsLimits = { rate: 40, burst: 80, kickAfter: 50, maxPayload: 65536, maxBuffered: 1048576, maxConnections: null, maxConnectionsPerIp: 100, maxRoomsPerClient: 50 }
+export const DEFAULT_LIMITS: MjsWsLimits = { rate: 40, burst: 80, kickAfter: 50, maxPayload: 65536, maxBuffered: 1048576, maxConnections: null, maxConnectionsPerIp: 100, maxRoomsPerClient: 50, maxQueued: DEFAULT_MAX_QUEUED, rateBy: 'connection' }
+// mise au banc — ACTIVE par défaut : 3 expulsions pour abus en 1 min → 5 min de refus, par compte
+// ET par IP (cf. MjsWsOptions.ban)
+export const DEFAULT_BAN: MjsWsResolvedBan = { after: 3, within: 60000, duration: 300000, by: 'both' }
+const VALID_BAN_BY: readonly MjsWsBanBy[]   = ['account', 'ip', 'both']
+const VALID_RATE_BY: readonly MjsWsRateBy[] = ['connection', 'account', 'ip', 'both']
 // suivi d'expiration + rafraîchissement du jeton — MÊME patron que DEFAULT_LIMITS
 // ci-dessus (réutilisable par cli/ws.ts pour une bannière future, source unique)
 export const DEFAULT_TOKEN: MjsWsTokenOptions = { sweep: 10000, slack: 5000 }
@@ -380,6 +406,31 @@ export function resolveSessionExclusiveOption(raw: MjsWsOptions['sessionExclusiv
 }
 
 /**
+ * Résout `opts.ban` — absent ou `true` = DEFAULT_BAN (active par défaut), `false` = `null`
+ * (désactivée), objet = DEFAULT_BAN complété. Une valeur fausse lève tout de suite, en clair —
+ * jamais un réglage ignoré en silence (MÊME esprit que resolveSessionExclusiveOption).
+ */
+export function resolveBanOption(raw: MjsWsOptions['ban']): MjsWsResolvedBan | null {
+  if (raw === false) return null
+  if (raw === undefined || raw === true) return { ...DEFAULT_BAN }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(t('ws.index.ban-invalide', { cle: 'ban', raw: JSON.stringify(raw), attendu: 'true, false, { after, within, duration, by }' }))
+  const ban = { ...DEFAULT_BAN, ...raw }
+  for (const cle of ['after', 'within', 'duration'] as const) {
+    const v = ban[cle]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.ban-invalide', { cle: 'ban.' + cle, raw: JSON.stringify(v), attendu: t('ws.index.entier-positif') }))
+  }
+  if (!VALID_BAN_BY.includes(ban.by)) throw new Error(t('ws.index.ban-invalide', { cle: 'ban.by', raw: JSON.stringify(ban.by), attendu: VALID_BAN_BY.map(v => `'${v}'`).join(', ') }))
+  return ban
+}
+
+/** Vérifie `limits.rateBy` (cf. MjsWsLimits.rateBy) — une valeur fausse lève tout de suite, en clair. */
+export function resolveRateByOption(raw: unknown): MjsWsRateBy {
+  if (raw === undefined) return 'connection'
+  if (typeof raw !== 'string' || !(VALID_RATE_BY as readonly string[]).includes(raw)) throw new Error(t('ws.index.rate-by-invalide', { raw: JSON.stringify(raw), valides: VALID_RATE_BY.map(v => `'${v}'`).join(', ') }))
+  return raw as MjsWsRateBy
+}
+
+/**
  * Résout `opts.verifyOrigin` — absent/`undefined` = `null` (désactivé,
  * défaut, aucune connexion refusée pour son origine). Forme TABLEAU : compilée UNE SEULE fois en
  * Set minuscule (comparaison insensible à la casse), jamais recompilée par connexion — prédicat
@@ -399,6 +450,7 @@ export function mjsWs(userOpts: MjsWsOptions = {}): MjsWsApp {
   // de limits.maxPayload DÉJÀ résolue (défauts appliqués) pour construire UwsTransport — un seul
   // calcul, réutilisé aux deux endroits (jamais recalculé, jamais désynchronisé).
   const limits: MjsWsLimits = { ...DEFAULT_LIMITS, ...(userOpts.limits ?? {}) }
+  limits.rateBy   = resolveRateByOption(limits.rateBy)
   const transport = resolveTransport(userOpts.transport, userOpts.port, userOpts.host, limits)
   // adaptateur résolu ICI (pas inline dans `resolved` ci-dessous) : la MÊME instance sert deux
   // champs de `resolved` — `adapter` (core.ts, cluster) ET `rooms._cluster.adapter` (anti-
@@ -447,6 +499,8 @@ export function mjsWs(userOpts: MjsWsOptions = {}): MjsWsApp {
     // vérification d'origine — TOUJOURS résolu (comme sessionExclusive
     // ci-dessus), `null` = jamais appelé par acceptConnection, opt-in strict.
     verifyOrigin: resolveVerifyOriginOption(userOpts.verifyOrigin),
+    // mise au banc — ACTIVE par défaut, cf. DEFAULT_BAN ; résolue ICI (erreur claire avant tout listen)
+    ban: resolveBanOption(userOpts.ban),
   }
   return createCore(transport, resolved)
 }

@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { resolve, join, extname } from 'node:path'
 import { normalizeUrlPrefix, type MjsConfig } from '../bundler/config.js'
 import { HMRServer, hmrClientSnippet, isTrustedDevOrigin, hasTrustedBrowserOrigin } from './hmr.js'
-import { shell, isRealPathWithin, MIME } from './render-server.js'
+import { shell, isRealPathWithin, MIME, readCappedBody } from './render-server.js'
 import { buildSsrHead } from './ssr-head.js'
 import { rewriteThemeValue } from './theme-write.js'
 import { readBuildVersion } from './build-version.js'
@@ -209,6 +209,11 @@ export class StaticServer {
   entry: ServeEntry | null
   recordServer: RecordServerFn
   errorsRateLimit = new Map<string, TokenBucket>()
+  // réponses en cours d'écriture, et rappel posé par stop() pour couper le reste dès qu'il n'y en a plus
+  private inflight = 0
+  private onDrained: (() => void) | null = null
+  // arrêt en cours ou fait, partagé par tous les appels à stop() (double Ctrl+C, SIGINT puis SIGTERM)
+  private arret: Promise<void> | null = null
 
   constructor(opts: ServerOpts) {
     this.rootDir = resolve(opts.rootDir)
@@ -249,6 +254,7 @@ export class StaticServer {
   }
 
   async start(): Promise<void> {
+    this.arret = null
     return new Promise((resolveStart, reject) => {
       // `handle` est désormais async (résolution render.routes, cf. plus bas) —
       // `createServer` ne l'attend pas (fire-and-forget, comme tout serveur HTTP
@@ -257,7 +263,11 @@ export class StaticServer {
       // profondeur seulement (même posture que render-server.ts, son propre
       // handler HTTP). Dernier filet du journal (recordServerError, no-op
       // sans this.journal) : même posture que le catch global de render-server.ts (point 1).
-      this.server = createServer((req, res) => { this.handle(req, res).catch((e) => { this.recordServerError(e, req.url || '/'); try { res.destroy() } catch { /* ignore */ } }) })
+      this.server = createServer((req, res) => {
+        this.inflight++
+        res.once('close', () => { if (--this.inflight === 0) this.onDrained?.() })
+        this.handle(req, res).catch((e) => { this.recordServerError(e, req.url || '/'); try { res.destroy() } catch { /* ignore */ } })
+      })
       this.server.on('error', reject)
       this.server.listen(this.port, this.host, () => {
         if (this.hmrEnabled) {
@@ -272,10 +282,25 @@ export class StaticServer {
     })
   }
 
-  async stop(): Promise<void> {
+  // Arrêt en douceur : les réponses déjà en cours d'écriture vont jusqu'au bout AVANT `close()`,
+  // qui coupe aussi une connexion dont la réponse, terminée côté code (`res.end`), part encore
+  // vers un client lent ; ensuite plus rien n'est accepté et les connexions au repos (keep-alive)
+  // tombent aussitôt au lieu d'attendre leur propre délai d'inactivité. Un second appel rejoint
+  // l'arrêt déjà lancé au lieu d'en commencer un autre.
+  stop(): Promise<void> {
+    if (!this.arret) this.arret = this.arreter()
+    return this.arret
+  }
+
+  private async arreter(): Promise<void> {
     if (this.hmr) this.hmr.close()
     if (!this.server) return
-    return new Promise(r => this.server!.close(() => r()))
+    const server = this.server
+    if (this.inflight > 0) await new Promise<void>(r => { this.onDrained = r })
+    return new Promise(r => {
+      server.close(() => r())
+      server.closeAllConnections()
+    })
   }
 
   /** Notifie tous les clients HMR connectés. */
@@ -647,32 +672,18 @@ export class StaticServer {
   // page du navigateur. Une entrée refusée ne fait pas tomber les autres : elle est comptée et
   // rendue à l'appelant, qui l'affiche — un refus muet ressemblerait à une couleur sans effet.
   /** Corps JSON d'un POST d'atelier : borné à 64 Kio, rendu en objet simple. `undefined` =
-   *  la réponse d'erreur est DÉJÀ partie (413 ou 400), l'appelant n'a plus qu'à sortir. */
+   *  la réponse d'erreur est DÉJÀ partie (413, 400 dépassement/JSON invalide, ou 400 lecture
+   *  interrompue — cf. readCappedBody, render-server.ts), l'appelant n'a plus qu'à sortir.
+   *  Lecture DÉLÉGUÉE à readCappedBody (render-server.ts, PARTAGÉE avec `mjs serve`) plutôt que
+   *  relue ici à la main : une coupure réseau ('error'/'aborted') y répond déjà 400 AVANT tout
+   *  JSON.parse, au lieu de laisser passer un fragment reçu jusque-là (même s'il se trouve être,
+   *  par coïncidence, un JSON syntaxiquement valide). */
   private async readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | undefined> {
-    const chunks: Buffer[] = []
-    let total = 0
-    let rejected = false
-    await new Promise<void>((done) => {
-      req.on('data', (chunk: Buffer) => {
-        if (rejected) return
-        total += chunk.length
-        if (total > 65_536) {
-          rejected = true
-          res.statusCode = 413
-          res.setHeader('Connection', 'close')
-          res.end('Payload Too Large')
-          req.destroy()
-          done(); return
-        }
-        chunks.push(chunk)
-      })
-      req.on('end', () => done())
-      req.on('error', () => done())
-    })
-    if (rejected) return undefined
+    const corps = await readCappedBody(req, res, 65_536)
+    if (corps === null) return undefined
     let payload: unknown
     try {
-      payload = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+      payload = JSON.parse(corps.toString('utf-8'))
     } catch {
       res.statusCode = 400; res.end('Bad Request'); return undefined
     }
@@ -759,7 +770,9 @@ export class StaticServer {
 
   // POST /__mjs/errors (étage 2 du journal) : mêmes plafonds/troncatures que `mjs serve`,
   // cf. render-server.ts pour le commentaire détaillé (seau à jetons PARTAGÉ, cf. token-bucket.ts).
-  // `journal.client` déjà vérifié par l'appelant (`handle`).
+  // `journal.client` déjà vérifié par l'appelant (`handle`). Lecture DÉLÉGUÉE à readCappedBody
+  // (render-server.ts, cf. le commentaire de readJsonBody ci-dessus pour le pourquoi) plutôt que
+  // relue ici à la main : une coupure réseau ne journalise plus jamais un fragment reçu jusque-là.
   private async serveErrorsPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const ip = req.socket.remoteAddress ?? 'inconnue'
     let bucket = this.errorsRateLimit.get(ip)
@@ -768,30 +781,11 @@ export class StaticServer {
       bucket = new TokenBucket(10, 0.5); this.errorsRateLimit.set(ip, bucket)
     }
     if (!bucket.take()) { res.statusCode = 429; res.end('Too Many Requests'); return }
-    const chunks: Buffer[] = []
-    let total = 0
-    let rejected = false
-    await new Promise<void>((done) => {
-      req.on('data', (chunk: Buffer) => {
-        if (rejected) return
-        total += chunk.length
-        if (total > 65_536) {
-          rejected = true
-          res.statusCode = 413
-          res.setHeader('Connection', 'close')
-          res.end('Payload Too Large')
-          req.destroy()
-          done(); return
-        }
-        chunks.push(chunk)
-      })
-      req.on('end', () => done())
-      req.on('error', () => done())
-    })
-    if (rejected) return
+    const corps = await readCappedBody(req, res, 65_536)
+    if (corps === null) return
     let payload: unknown
     try {
-      payload = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+      payload = JSON.parse(corps.toString('utf-8'))
     } catch {
       res.statusCode = 400; res.end('Bad Request'); return
     }
@@ -882,7 +876,11 @@ export class StaticServer {
       req.on('close', onReqClose)
       let r: RenderResponse
       try {
-        r = await this.renderHandle!(pathname, req.headers as any, abortOnClose.signal)
+        // `loadProps` : même chargeur (this.entry.propsFor) que la balise __mjs_res plus bas —
+        // transmis ICI pour que le RENDU SSR lui-même affiche déjà la donnée chargée (cf.
+        // RenderResponse.resProps, réutilisé plus bas SANS rappeler propsFor une 2e fois).
+        const loadProps = this.entry ? () => this.entry!.propsFor(pathname, req) : undefined
+        r = await this.renderHandle!(pathname, req.headers as any, abortOnClose.signal, loadProps)
       } finally {
         req.off('close', onReqClose)
       }
@@ -892,14 +890,12 @@ export class StaticServer {
       // Retombée du plafond de concurrence SSR (render-request.ts, RenderGate) :
       // status 503 seulement, avec le délai suggéré posé par le handler.
       if (r.status === 503 && r.retryAfter) res.setHeader('Retry-After', String(r.retryAfter))
-      // Props du chargeur serve.server.mjs injectées AU 1er chargement HTML, MÊME
-      // mécanique que render-server.ts:368-372 (`resScript` dupliquée plus haut dans ce fichier,
-      // cf. son commentaire) : jamais un 500 pour un chargeur en échec sur une page HTML (rattrapé
-      // ci-dessous), contrairement à la branche JSON juste au-dessus qui laisse remonter au catch.
-      const resProps = (r.component && this.entry) ? await this.entry.propsFor(pathname, req).catch((e: any) => {
-        this.recordServerError(e, pathname)
-        return {}
-      }) : {}
+      // Props du chargeur serve.server.mjs injectées AU 1er chargement HTML — DÉJÀ résolues par
+      // `this.renderHandle` ci-dessus (`loadProps`, même chargeur entry.propsFor, appelé UNE seule
+      // fois pour cette requête ; la fusion dans le rendu SSR lui-même vit dans render-request.ts) :
+      // jamais un 500 pour un chargeur en échec sur une page HTML (déjà rattrapé là-bas),
+      // contrairement à la branche JSON juste au-dessus qui laisse remonter au catch.
+      const resProps = r.resProps ?? {}
       const resTag = resScript(pathname, resProps)
       const body = r.kind === 'csr'
         ? (r.component ? '<' + r.component + '></' + r.component + '>' : '<!-- mjs: csr -->')

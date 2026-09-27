@@ -67,6 +67,15 @@ export interface MjsWsChatOptions {
   maxLength?: number
   /** débit PAR IDENTITÉ ET PAR SALON — seau à jetons (défaut `{ rate: 1, burst: 5 }`) — au-delà : 'chat-rate' */
   rateLimit?: { rate?: number; burst?: number }
+  /**
+   * anti-doublon PAR IDENTITÉ ET PAR SALON — un message dont le texte normalisé (espaces internes
+   * réduits à un seul, casse ignorée) est identique à un message déjà DIFFUSÉ par la même
+   * personne, dans le même salon, depuis moins de `within` ms, est rejeté : 'chat-duplicate'.
+   * Absent ou `false` (défaut) = désactivé, comportement actuel inchangé. `true` = fenêtre de
+   * `DEFAULT_DUPLICATES_WITHIN` (30 000 ms) ; objet = fenêtre `within` personnalisée (même défaut
+   * si absent).
+   */
+  duplicates?: boolean | { within?: number }
   /** messages rejoués au join, `room().history(n)` (défaut 100 ; `<= 0` désactive l'historique) */
   history?: number
   /**
@@ -85,12 +94,13 @@ export interface MjsWsChatOptions {
   onLog?: MjsWsLogFn
 }
 
-const DEFAULT_PREFIX      = 'chat:'
-const DEFAULT_MAX_LENGTH  = 2000
-const DEFAULT_RATE        = 1
-const DEFAULT_BURST       = 5
-const DEFAULT_HISTORY     = 100
-const TYPING_THROTTLE_MS  = 3000
+const DEFAULT_PREFIX             = 'chat:'
+const DEFAULT_MAX_LENGTH         = 2000
+const DEFAULT_RATE               = 1
+const DEFAULT_BURST              = 5
+const DEFAULT_HISTORY            = 100
+const DEFAULT_DUPLICATES_WITHIN  = 30000
+const TYPING_THROTTLE_MS         = 3000
 
 function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
   const line = `[mjs-ws:chat] ${message}`
@@ -124,14 +134,22 @@ function genId(): string {
   return randomBytes(6).toString('hex')
 }
 
+// normalisation anti-doublon — texte déjà trim()é (cf. chat:send) : espaces internes réduits à un
+// seul, casse ignorée — « Salut  à Tous » et « salut à tous » sont donc le MÊME texte.
+function normalizeForDuplicates(text: string): string {
+  return text.replace(/\s+/g, ' ').toLowerCase()
+}
+
 /** paquet CHAT — `app.use(chatPackage(opts))` (cf. tête de fichier pour le protocole complet). */
 export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
-  const prefix     = opts.prefix ?? DEFAULT_PREFIX
-  const maxLength  = opts.maxLength ?? DEFAULT_MAX_LENGTH
-  const rate       = opts.rateLimit?.rate ?? DEFAULT_RATE
-  const burst      = opts.rateLimit?.burst ?? DEFAULT_BURST
-  const history    = opts.history ?? DEFAULT_HISTORY
-  const onLog      = opts.onLog ?? defaultLog
+  const prefix           = opts.prefix ?? DEFAULT_PREFIX
+  const maxLength        = opts.maxLength ?? DEFAULT_MAX_LENGTH
+  const rate             = opts.rateLimit?.rate ?? DEFAULT_RATE
+  const burst            = opts.rateLimit?.burst ?? DEFAULT_BURST
+  const history          = opts.history ?? DEFAULT_HISTORY
+  const duplicatesOn     = !!opts.duplicates
+  const duplicatesWithin = (typeof opts.duplicates === 'object' ? opts.duplicates.within : undefined) ?? DEFAULT_DUPLICATES_WITHIN
+  const onLog            = opts.onLog ?? defaultLog
 
   // débit — 1 seau PAR (salon, identité), PARTAGÉ entre connexions d'une même identité (2 onglets
   // = même quota — compatible sessionExclusive/anti-triche sans rien faire de spécial)
@@ -141,6 +159,10 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   // mute — échéance ms epoch PAR (salon, identité), mémoire PROCESS v1 (cf. tête de fichier —
   // limite multi-processus non couverte, pas répliqué via l'adaptateur cluster)
   const mutedUntil = new Map<string, Map<string, number>>()
+  // anti-doublon — textes NORMALISÉS diffusés PAR (salon, identité), chacun avec son horodatage
+  // de diffusion ; DÉSACTIVÉ par défaut (opts.duplicates absent/false, cf. duplicatesOn ci-dessus) —
+  // comportement actuel STRICTEMENT inchangé tant que l'option n'est pas activée.
+  const duplicates = new Map<string, Map<string, Map<string, number>>>()
 
   function fullNameOf(room: string): string { return prefix + room }
 
@@ -158,6 +180,41 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     if (until == null) return false
     if (Date.now() >= until) { perRoom!.delete(identityId); return false }
     return true
+  }
+
+  // doublon — purge D'ABORD les entrées EXPIRÉES de CETTE personne dans CE salon (même esprit que
+  // isMuted ci-dessus), puis regarde si le texte normalisé y est déjà. N'ÉCRIT rien ici — cf.
+  // reserveText, appelée juste après, dans le MÊME tour synchrone (chat:send plus bas).
+  function isDuplicate(fullName: string, identityId: string, normalized: string): boolean {
+    const perText = duplicates.get(fullName)?.get(identityId)
+    if (!perText) return false
+    const now = Date.now()
+    for (const [text, ts] of perText) if (now - ts >= duplicatesWithin) perText.delete(text)
+    return perText.has(normalized)
+  }
+
+  // texte RETENU dès le contrôle, pas après la diffusion : deux onglets du même compte ne partagent
+  // pas la file d'une connexion, et un onMessage asynchrone laissait l'autre onglet passer le
+  // contrôle avec le même texte. Rend l'horodatage posé — la preuve que la réservation est la sienne
+  function reserveText(fullName: string, identityId: string, normalized: string): number {
+    let perRoom = duplicates.get(fullName)
+    if (!perRoom) { perRoom = new Map(); duplicates.set(fullName, perRoom) }
+    let perText = perRoom.get(identityId)
+    if (!perText) { perText = new Map(); perRoom.set(identityId, perText) }
+    const now = Date.now()
+    perText.set(normalized, now)
+    return now
+  }
+
+  // message finalement refusé (onMessage, longueur après transformation) : la réservation est
+  // rendue — un refus ne retient jamais rien ; jamais celle d'un autre envoi posée entre-temps
+  function releaseText(fullName: string, identityId: string, normalized: string, reservedAt: number): void {
+    const perRoom = duplicates.get(fullName)
+    const perText = perRoom?.get(identityId)
+    if (!perRoom || !perText || perText.get(normalized) !== reservedAt) return
+    perText.delete(normalized)
+    if (perText.size === 0) perRoom.delete(identityId)
+    if (perRoom.size === 0) duplicates.delete(fullName)
   }
 
   // mémoire bornée (durcissement — contrairement au
@@ -191,7 +248,23 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     }
   }
 
-  // point d'entrée UNIQUE des deux purges ci-dessus — jamais de minuterie dédiée (rien à armer ni
+  // anti-doublon — sous-map d'un salon SANS MEMBRE entièrement réclamée (même sort que
+  // buckets/lastTypingAt ci-dessus, aucun enjeu à survivre au vidage) ; ENTRÉES EXPIRÉES balayées
+  // PARTOUT, salon vide ou pas (même esprit que sweepExpiredMutes) — sous-maps devenues vides réclamées.
+  function sweepDuplicates(app: MjsWsApp): void {
+    const now = Date.now()
+    for (const [fullName, perRoom] of duplicates) {
+      const emptyRoom = app.room(fullName).size === 0
+      for (const [identityId, perText] of perRoom) {
+        if (emptyRoom) { perRoom.delete(identityId); continue }
+        for (const [text, ts] of perText) if (now - ts >= duplicatesWithin) perText.delete(text)
+        if (perText.size === 0) perRoom.delete(identityId)
+      }
+      if (perRoom.size === 0) duplicates.delete(fullName)
+    }
+  }
+
+  // point d'entrée UNIQUE des purges ci-dessus — jamais de minuterie dédiée (rien à armer ni
   // fuiter si le paquet ne sert jamais) : un compteur d'actions suffit, cf. tête de fichier.
   function opportunisticSweep(app: MjsWsApp): void {
     actionsSinceSweep++
@@ -199,6 +272,7 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     actionsSinceSweep = 0
     sweepBucketsOfEmptyRooms(app)
     sweepExpiredMutes()
+    sweepDuplicates(app)
   }
 
   // garde composite — membre du salon (µ:join bas niveau déjà accepté) ET canJoin (si fourni,
@@ -248,15 +322,27 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       text = text.trim()
       if (!text || text.length > maxLength) throw new Error('chat-length')
 
+      // anti-doublon — porte sur le texte ENVOYÉ PAR L'UTILISATEUR, AVANT toute transformation par
+      // onMessage (cf. duplicatesOn/isDuplicate ci-dessus) : un doublon ne doit jamais déclencher
+      // onMessage (effet de bord potentiel côté appli hôte).
+      const normalized = duplicatesOn ? normalizeForDuplicates(text) : null
+      if (normalized !== null && isDuplicate(fullName, identityId, normalized)) throw new Error('chat-duplicate')
+      const reservedAt = normalized !== null ? reserveText(fullName, identityId, normalized) : 0
+
       if (opts.onMessage) {
         let result: unknown
-        try { result = await opts.onMessage({ text, room, client, identity: client.identity }) }
-        catch { throw new Error('chat-denied') }
-        if (result === false) throw new Error('chat-denied')
-        if (result && typeof result === 'object' && typeof (result as { text?: unknown }).text === 'string') {
-          text = (result as { text: string }).text.trim()
+        try {
+          try { result = await opts.onMessage({ text, room, client, identity: client.identity }) }
+          catch { throw new Error('chat-denied') }
+          if (result === false) throw new Error('chat-denied')
+          if (result && typeof result === 'object' && typeof (result as { text?: unknown }).text === 'string') {
+            text = (result as { text: string }).text.trim()
+          }
+          if (!text || text.length > maxLength) throw new Error('chat-length')   // filet — même après transformation
+        } catch (err) {
+          if (normalized !== null) releaseText(fullName, identityId, normalized, reservedAt)
+          throw err
         }
-        if (!text || text.length > maxLength) throw new Error('chat-length')   // filet — même après transformation
       }
 
       // armée à CHAQUE envoi (idempotent, cf. rooms.ts::history — jamais une resélection coûteuse) :
@@ -326,10 +412,12 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
 
   // accès à l'état interne à des fins de TEST UNIQUEMENT — même précédent que `(t as any)._opts`
   // (tests/mjs-ws-transport-uws.test.ts) : aucune primitive publique n'expose la taille des seaux
-  // de débit ni les échéances de mute, indispensable pour prouver depuis les tests que la purge
-  // mémoire ci-dessus (sweepBucketsOfEmptyRooms/sweepExpiredMutes) a bien eu lieu.
+  // de débit, les échéances de mute ni les textes anti-doublon enregistrés, indispensable pour
+  // prouver depuis les tests que la purge mémoire ci-dessus (sweepBucketsOfEmptyRooms/
+  // sweepExpiredMutes/sweepDuplicates) a bien eu lieu.
   ;(pkg as any)._buckets      = buckets
   ;(pkg as any)._mutedUntil   = mutedUntil
   ;(pkg as any)._lastTypingAt = lastTypingAt
+  ;(pkg as any)._duplicates   = duplicates
   return pkg
 }

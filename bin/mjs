@@ -16,9 +16,13 @@ if (existsSync(distCli)) {
 } else if (existsSync(srcCli)) {
   // Dev — utilise tsx pour exécuter le TS directement
   const { spawn } = await import('child_process')
+  const { constants } = await import('os')
   const tsxBin = resolve(here, '..', 'node_modules', '.bin', 'tsx')
   const child = spawn(tsxBin, [srcCli, ...process.argv.slice(2)], { stdio: 'inherit' })
-  child.on('exit', (code) => process.exit(code ?? 0))
+  // Ctrl+C ou arrêt du lanceur lui-même → relayé à l'enfant, jamais laissé orphelin
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig))
+  // enfant tué par un signal : jamais un code 0 (succès) — 128+signal, convention Unix
+  child.on('exit', (code, signal) => process.exit(signal ? 128 + (constants.signals[signal] ?? 1) : (code ?? 0)))
 } else {
   console.error('[mjs] aucune entrée trouvée (ni dist/cli.js ni src/cli.ts)')
   process.exit(1)

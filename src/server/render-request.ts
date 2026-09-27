@@ -65,6 +65,12 @@ export interface RenderResponse {
    *  plus bas) : nombre de secondes suggéré avant de réessayer — l'appelant HTTP le pose en
    *  en-tête Retry-After (cf. server/index.ts). */
   retryAfter?: number
+  /** Props résolues par `loadProps` (cf. `handle`, ci-dessous) quand l'URL désigne une page —
+   *  déjà fusionnées dans le RENDU pour le mode `ssr` (props du composant) ; renvoyées ICI pour que
+   *  l'appelant (render-server.ts/server/index.ts) les réutilise TELLES QUELLES pour la balise
+   *  `__mjs_res` (1er chargement client), sans rappeler le chargeur une 2e fois pour la même
+   *  requête. Absent : pas de page résolue, ou `loadProps` non fourni. */
+  resProps?: Record<string, unknown>
 }
 
 export interface RenderHandler {
@@ -72,9 +78,27 @@ export interface RenderHandler {
    *  abandon du DEMANDEUR (socket HTTP fermée côté appelant, ou tout AbortSignal transmis
    *  par un usage « middleware ») — retire la requête de la file d'attente de RenderGate dès
    *  l'abandon plutôt que de garder sa place jusqu'à son tour naturel ; absent = comportement
-   *  HISTORIQUE inchangé (jamais de retrait anticipé). */
-  handle(pathname: string, headers?: Record<string, string | string[] | undefined>, signal?: AbortSignal): Promise<RenderResponse>
-  /** Libère le renderer SSR (à l'arrêt du serveur). */
+   *  HISTORIQUE inchangé (jamais de retrait anticipé). `loadProps` : chargeur de données
+   *  `.server.mjs` (cf. serve-entry.ts) pour CETTE requête — appelé AU PLUS UNE FOIS dès qu'une
+   *  page est résolue (peu importe le mode effectif), son résultat est à la fois fusionné dans
+   *  les props du RENDU (mode `ssr` réel seulement — prerender/csr n'ont rien à rendre ici) et
+   *  renvoyé dans `RenderResponse.resProps` pour la balise `__mjs_res` de l'appelant. Absent :
+   *  comportement HISTORIQUE inchangé (aucune prop de chargeur transmise au rendu). */
+  handle(pathname: string, headers?: Record<string, string | string[] | undefined>, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>): Promise<RenderResponse>
+  /** Invalide le renderer SSR/navigateur mémoïsé (mode DÉVELOPPEMENT) : la PROCHAINE requête
+   *  recompile depuis le disque au lieu de réutiliser l'ancien renderer, dont le code source a
+   *  changé depuis sa création — sans appel, la mémoïsation (pensée pour la PRODUCTION, où le code
+   *  ne change jamais en cours de vie du process) sert indéfiniment la version d'AVANT la dernière
+   *  recompilation du watcher. Ferme l'ancien renderer en tâche de fond (jamais bloquant, jamais
+   *  d'exception) ; sans effet après `close()`, ni si aucun renderer n'a encore été créé. Une
+   *  requête déjà EN VOL sur l'ancien renderer au moment de l'appel se termine NORMALEMENT (le
+   *  moteur navigateur n'arrache plus ses emplacements actifs, cf. BrowserRenderer.close()
+   *  render-browser.ts) ; l'ancien renderer ne libère ses ressources (navigateur, dossier de
+   *  travail) qu'une fois qu'il n'a plus aucune requête en cours. */
+  invalidate(): void
+  /** Libère le renderer SSR (à l'arrêt du serveur) — attend aussi la fin de tout ancien renderer
+   *  encore en train de se fermer suite à un `invalidate()` antérieur (cf. son commentaire) :
+   *  jamais de fuite de processus navigateur si l'arrêt survient juste après une invalidation. */
   close(): Promise<void>
 }
 
@@ -161,6 +185,17 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
   const outputDir = resolve(configDir, config.outputDir || 'dist')
   const sourceDir = resolve(configDir, config.sourceDir || '.')
   const pagesDir = render?.outDir ? resolve(configDir, render.outDir) : join(dirname(outputDir), 'mjs_pages')
+  // Prérendu multi-langue (`render.locales`, ≥ 2 entrées, cf. server/prerender.ts) : chaque page y
+  // est écrite SOUS un dossier de langue (pagesDir/<langue>/…), jamais à plat — sans le même
+  // sous-dossier ICI, le fichier cherché plus bas n'existe jamais et le repli SSR (recompilation à
+  // la volée) s'applique à TOUTE requête, même quand la page voulue est déjà figée sur disque.
+  // Langue retenue : `i18n.default` si elle fait partie de `locales` (même langue que tout le reste
+  // du SSR par requête, aucune sélection par visiteur ici, cf. isProd/shell plus haut), sinon la 1ʳᵉ
+  // déclarée — jamais un crash sur une config incohérente (default absent de locales).
+  const prerenderLocales = render?.locales && render.locales.length >= 2 ? render.locales : null
+  const prerenderLang = prerenderLocales
+    ? (config.i18n?.default && prerenderLocales.includes(config.i18n.default) ? config.i18n.default : prerenderLocales[0])
+    : null
   const headerName = (render?.header || 'X-MJS-Render').toLowerCase()
   // Cf. commentaire détaillé
   // sur `SSRRendererOptions.bundlerOpts` (renderToString.ts) : la liste blanche d'options
@@ -212,6 +247,21 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
   // requête qui en a besoin (résolue vers 'browser', cf. `resolveEngine`), puis
   // réutilisé par TOUTES les requêtes suivantes — c'est LE pool amorti en prod.
   let browserRendererPromise: Promise<BrowserRenderer> | null = null
+  // Fermetures d'anciens renderers encore EN COURS (`invalidate()` les lance en tâche de fond,
+  // cf. plus bas) : `close()` (arrêt du serveur) les attend en plus de l'INSTANCE COURANTE — sans
+  // ça, un arrêt survenant juste après une invalidation pouvait rendre la main AVANT que le
+  // dernier renderer invalidé (potentiellement encore en train d'attendre la fin d'un rendu en
+  // vol, cf. BrowserRenderer.close()) n'ait vraiment fini de se fermer → fuite de processus au
+  // shutdown. Chaque promesse se retire elle-même une fois réglée (session dev longue, des
+  // dizaines de recompilations : jamais de croissance sans borne).
+  const pendingInvalidateCloses: Promise<void>[] = []
+  function trackInvalidateClose(p: Promise<void>): void {
+    pendingInvalidateCloses.push(p)
+    p.finally(() => {
+      const i = pendingInvalidateCloses.indexOf(p)
+      if (i !== -1) pendingInvalidateCloses.splice(i, 1)
+    })
+  }
   async function getBrowserRenderer(): Promise<BrowserRenderer> {
     if (closed) throw new Error(t('server.render-handler-ferme'))
     if (!browserRendererPromise) {
@@ -221,19 +271,30 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
     return browserRendererPromise
   }
 
-  async function handle(pathname: string, headers: Record<string, string | string[] | undefined> = {}, signal?: AbortSignal): Promise<RenderResponse> {
+  async function handle(pathname: string, headers: Record<string, string | string[] | undefined> = {}, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>): Promise<RenderResponse> {
     const raw = headers[headerName]
     const override = Array.isArray(raw) ? raw[0] : raw
     const page = resolvePage(pathname, render, override || null)
 
+    // Props du chargeur `.server.mjs` — résolues UNE fois dès qu'une page existe (csr/prerender/
+    // ssr, peu importe le mode) : l'appelant HTTP en a besoin dans tous les cas pour sa balise
+    // `__mjs_res` (cf. RenderResponse.resProps) ; le RENDU lui-même ne les consomme que plus bas
+    // (mode ssr réel seulement). Un chargeur qui jette ne doit jamais faire échouer le rendu —
+    // même défense que le catch englobant `handle` (mêmes logs, `resProps` reste `undefined`).
+    const resProps = (page && loadProps) ? await loadProps().catch((e: any) => {
+      recordServer?.({ message: e?.message ? e.message : String(e), pile: e?.stack, url: pathname })
+      return undefined
+    }) : undefined
+
     // URL non déclarée, ou page explicitement en CSR → le back sert le shell.
     if (!page || page.mode === 'csr') {
-      return { kind: 'csr', status: 200, body: '', component: page?.component, mode: page?.mode }
+      return { kind: 'csr', status: 200, body: '', component: page?.component, mode: page?.mode, resProps }
     }
 
-    // Prérendu : servir le fichier figé au build s'il existe.
+    // Prérendu : servir le fichier figé au build s'il existe. Sous-dossier de langue (cf.
+    // prerenderLang plus haut) : MÊME emplacement que prerenderPages a réellement écrit.
     if (page.mode === 'prerender') {
-      const file = join(pagesDir, urlToFile(pathname))
+      const file = prerenderLang ? join(pagesDir, prerenderLang, urlToFile(pathname)) : join(pagesDir, urlToFile(pathname))
       // (path traversal) — défense
       // en profondeur : le serveur autonome (`render-server.ts`) rejette déjà
       // les `..` en amont, mais un hôte middleware (Rails/Express) réutilisant
@@ -242,7 +303,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // DANS `pagesDir` ; sinon repli résilient (SSR/CSR), jamais de readFileSync
       // hors dossier.
       if (isWithinDir(pagesDir, file) && existsSync(file) && isRealPathWithin(pagesDir, file)) {
-        return { kind: 'prerender', status: 200, body: readFileSync(file, 'utf-8'), component: page.component, mode: page.mode }
+        return { kind: 'prerender', status: 200, body: readFileSync(file, 'utf-8'), component: page.component, mode: page.mode, resProps }
       }
       // Fichier absent (build pas encore lancé) ou hors pagesDir → repli résilient : on rend à la volée.
     }
@@ -258,11 +319,15 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // 'happy-dom', jamais 'browser' en défaut implicite ici — cf. resolveEngine) :
       // un navigateur n'est lancé QUE si explicitement configuré pour cet axe.
       const engine = await resolveEngine('request', config, page)
+      // Props du chargeur fusionnées AVEC les params de route (résolues plus haut, cf. resProps) —
+      // `page.params` prime en cas de collision de nom : un segment d'URL reste la source de
+      // vérité pour ce nom-là, comportement HISTORIQUE inchangé pour qui n'utilise pas de chargeur.
+      const mergedProps = resProps ? { ...resProps, ...page.params } : page.params
       // Gate AUTOUR du rendu lui-même seulement (pas resolveEngine, pas le prérendu/CSR
       // plus haut, gratuits) : saturé ⇒ null immédiat, jamais un rendu qui patiente indéfiniment.
       const gated = await renderGate.run(async () => engine === 'browser'
-        ? await (await getBrowserRenderer()).renderPage(page.component, { props: page.params, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded })
-        : await (await getRenderer()).renderToString(page.component, { props: page.params, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded }), signal)
+        ? await (await getBrowserRenderer()).renderPage(page.component, { props: mergedProps, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded })
+        : await (await getRenderer()).renderToString(page.component, { props: mergedProps, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded }), signal)
       if (gated === null) {
         return { kind: 'error', status: 503, body: 'Service Unavailable', component: page.component, mode: page.mode, retryAfter: RENDER_RETRY_AFTER_S }
       }
@@ -284,7 +349,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // en ssr:replace (RenderResult.hydrateScript === '' dans ce mode) → zéro
       // changement de body pour le mode par défaut (non-régression).
       const body = (sharedScript ? sharedScript + '\n' : '') + html + (hydrateScript ? '\n' + hydrateScript : '')
-      return { kind: 'ssr', status: 200, body, component: page.component, mode: page.mode }
+      return { kind: 'ssr', status: 200, body, component: page.component, mode: page.mode, resProps }
     } catch (e: any) {
       // En prod, ne pas divulguer au
       // client le message brut (chemins temp/bundle, structure interne exposés
@@ -312,6 +377,27 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
 
   return {
     handle,
+    invalidate() {
+      // `closed` définitif (cf. `close()` plus bas) : un handler déjà fermé ne recrée plus rien,
+      // une invalidation tardive (recompile en toute fin de session dev) ne doit pas le ressusciter.
+      if (closed) return
+      const oldRenderer = rendererPromise
+      const oldBrowser = browserRendererPromise
+      // Démémoïsés AVANT toute fermeture asynchrone : la PROCHAINE requête (même arrivée avant que
+      // l'ancien renderer ait fini de se fermer) recrée aussitôt via `getRenderer()`/
+      // `getBrowserRenderer()`, jamais bloquée par la fermeture de l'ancien.
+      rendererPromise = null
+      browserRendererPromise = null
+      // Fermeture EN TÂCHE DE FOND, best-effort (même posture que `rendererPromise.catch(() => {
+      // rendererPromise = null })` plus haut) : une requête (SSR happy-dom OU navigateur) encore
+      // en vol sur l'ANCIEN renderer au moment de l'invalidation continue son service — cette
+      // fermeture ne l'interrompt jamais de force, elle libère juste les ressources (dossier de
+      // travail/worker pool côté SSR, pool de pages Chromium côté navigateur — cf. son propre
+      // `close()`, qui attend la fin des rendus actifs avant de fermer le navigateur) dès qu'il
+      // n'a plus aucune requête en cours. `trackInvalidateClose` : cf. sa définition plus haut.
+      if (oldRenderer) trackInvalidateClose(oldRenderer.then(r => r.close()).catch(() => {}))
+      if (oldBrowser) trackInvalidateClose(oldBrowser.then(r => r.close()).catch(() => {}))
+    },
     close: async () => {
       closed = true
       if (rendererPromise) {
@@ -328,6 +414,9 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
         browserRendererPromise = null
         if (br) await br.close()
       }
+      // Cf. `pendingInvalidateCloses` ci-dessus : au plus tard ICI, jamais un ancien renderer
+      // encore en train de se fermer (attente d'un rendu en vol) après le retour de `close()`.
+      if (pendingInvalidateCloses.length) await Promise.all(pendingInvalidateCloses.splice(0))
     },
   }
 }

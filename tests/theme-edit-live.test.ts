@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict'
 import { WebSocket } from 'ws'
+import { connect } from 'node:net'
 import { StaticServer } from '../src/server/index.js'
 import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 
@@ -193,6 +194,49 @@ describe('POST /__mjs/theme/edit — aperçu de thème en direct', () => {
       })
       assert.equal(post.status, 404)
     } finally {
+      await server.stop()
+    }
+  })
+})
+
+// `readJsonBody` (StaticServer, mjs dev — POST /__mjs/theme/edit ET /__mjs/theme/write) relisait
+// son corps À LA MAIN — MÊME patron que action-pipeline.ts/render-server.ts AVANT leur correctif
+// (P2) : une coupure réseau en plein envoi n'était pas distinguée d'une fin normale, un fragment de
+// corps (même un JSON syntaxiquement valide, simplement plus court que prévu) pouvait donc être
+// traité comme un aperçu de thème légitime et diffusé aux pages ouvertes.
+describe('POST /__mjs/theme/edit — corps interrompu (aligné sur readCappedBody)', () => {
+  it("une coupure réseau en plein envoi ne diffuse RIEN (même un fragment SYNTAXIQUEMENT valide)", async function () {
+    this.timeout(15000)
+    const server = devServer(mjsTmp('theme-edit-interrompu'))
+    await server.start()
+    const port = portDe(server)
+    const { pret, ws } = await ecouteThemeVars(port)
+    let recuQuandMeme = false
+    ws.on('message', (data) => {
+      const msg = JSON.parse(String(data))
+      if (msg.type === 'theme-vars') recuQuandMeme = true
+    })
+    try {
+      await pret
+      await new Promise<void>((resolve) => {
+        const socket = connect(port, '127.0.0.1', () => {
+          const corps = '{"vars":{"accent":"#ff0000"}}'
+          socket.write(
+            `POST /__mjs/theme/edit HTTP/1.1\r\n` +
+            `Host: 127.0.0.1:${port}\r\n` +
+            `Content-Type: application/json\r\n` +
+            // Content-Length MENSONGER : la socket ferme avant d'avoir atteint ce compte, donc
+            // 'aborted'/'error' côté serveur, jamais 'end'.
+            `Content-Length: 500\r\n\r\n${corps}`,
+          )
+          setTimeout(() => { socket.destroy(); resolve() }, 150)
+        })
+        socket.on('error', () => resolve())
+      })
+      await new Promise(r => setTimeout(r, 300))   // laisse le serveur voir l'abandon et réagir
+      assert.equal(recuQuandMeme, false, 'BUG confirmé si une couleur (pourtant un JSON valide) a quand même été diffusée après coupure')
+    } finally {
+      ws.close()
       await server.stop()
     }
   })

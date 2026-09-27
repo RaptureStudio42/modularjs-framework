@@ -1,6 +1,14 @@
   // mjs_element.coffee
 var MJS_BOOLEAN_PROPS, MJS_NATIVE_ATTRS, MJS_SET_MUTATORS, MJS_MAP_MUTATORS, MJS_DATE_MUTATORS,
+  MJS_RESOLVED_DESTROY,
   hasProp = {}.hasOwnProperty;
+
+// Promesse résolue PARTAGÉE (une seule alloc au chargement du module) : le chemin
+// dominant de `_mjs_destroyNodeAndChildren` (pas de crochet de destruction) est 100 %
+// synchrone — la renvoyer garde le même contrat pour les appelants (`.then`/`.catch`
+// disponibles, `mjs_if.ts`/`mjs_key.ts`/`mjs_html.ts` chaînent un `.catch` dessus) sans
+// allouer une Promise neuve à chaque destruction.
+MJS_RESOLVED_DESTROY = Promise.resolve();
 
 // Static sets module-level : évite N × `new Set([…])` par appel à
 // `_mjs_wrapDeep`. Les Sets sont identiques pour TOUS les Proxy Set/Map/Date,
@@ -107,7 +115,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // pas de shadow où slotter) ; une custom property `--host-x` n'a pas de `:` devant, jamais
 // confondue. Cache par BALISE + texte : une réécriture par composant, jamais par instance.
 µ._lightHostCss = function(css, tag) {
-  var cacheKey, ch, close, consumedAny, contexts, findParenEnd, i, j, len, open, out, quote, suffix;
+  var cacheKey, ch, close, consumedAny, contexts, ctxAncestor, ctxOnHost, findParenEnd, i, j, len, open, out, quote, suffix;
   if (!css) return css;
   if (µ._mjs_lightHostCssCache == null) {
     µ._mjs_lightHostCssCache = new Map();
@@ -183,7 +191,23 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       break;
     }
     if (consumedAny) {
-      out += (contexts.length ? contexts.join(' ')+' ' : '')+tag+suffix;
+      if (contexts.length) {
+        // sémantique CSS réelle de :host-context() : matche l'hôte si l'hôte LUI-MÊME
+        // porte le sélecteur donné, OU si un de ses ANCÊTRES le porte — pas l'ancêtre
+        // seul. `:where(...)` groupe les deux formes avec la MÊME spécificité (pas de
+        // priorité artificielle entre elles). Plusieurs :host-context chaînés (rare) :
+        // seuls les deux cas extrêmes sont couverts (tout ancêtre / tout sur l'hôte),
+        // pas les combinaisons mixtes (limite documentée, cf. docs/09-directives-dom.md).
+        // Le cas « tout ancêtre » suppose en plus des ancêtres DISTINCTS, un par
+        // contexte (`contexts.join(' ')` = chaîne de descendance stricte, ex.
+        // « .a .c tag ») : un SEUL ancêtre qui porte les deux classes à la fois
+        // (`<div class="a c">`) ne correspond PAS à ce sélecteur.
+        ctxAncestor = contexts.join(' ');
+        ctxOnHost = contexts.join('');
+        out += ':where('+ctxAncestor+' '+tag+suffix+','+tag+suffix+ctxOnHost+')';
+      } else {
+        out += tag+suffix;
+      }
       i = j;
     } else {
       out += css[i];
@@ -403,7 +427,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // [[Prototype]] et un `{$role}` lu via proto pollué renvoie la valeur
     // injectée. On aligne `_set` sur le reste du runtime (µ._mjs_deepSet/_mjs_guardPath,
     // socket _mjs_safeKey, vault) qui filtrent déjà ces clés.
-    if (!µ._mjs_safeKey(k)) return true;
+    // Rend `false` (écriture refusée) — le code généré (`µ._set(...)`) ne dépend plus
+    // de cette valeur (l'affectation réactive utilisée comme valeur vaut désormais la
+    // valeur assignée, jamais le retour de `_set`), un appelant DIRECT peut donc
+    // distinguer un refus d'un succès.
+    if (!µ._mjs_safeKey(k)) return false;
     // Hot path bench: 1000× setLabel('string'). Factorise typeof v
     // pour éviter 3 typeof checks séparés. La majorité des sets sont primitive→primitive.
     const old = this._state[k];
@@ -603,10 +631,24 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (this._mjs_proxyCache == null) {
       this._mjs_proxyCache = new WeakMap();
     }
+    // cible BRUTE → ensemble des clés d'état par lesquelles elle a été atteinte
+    // (alimentée juste en dessous, à CHAQUE appel) : `$a = obj ; $b = obj` partagent
+    // le MÊME objet — une mutation faite via l'un doit aussi prévenir un lecteur de
+    // l'autre (cf. `_mjs_notifyMutationAliased`, utilisé par le handler plus bas).
+    if (this._mjs_rootsByTarget == null) {
+      this._mjs_rootsByTarget = new WeakMap();
+    }
+    let __roots = this._mjs_rootsByTarget.get(target);
+    if (!__roots) {
+      __roots = new Set();
+      this._mjs_rootsByTarget.set(target, __roots);
+    }
+    __roots.add(rootKey);
     // Skip double-lookup (has + get = 2 WeakMap traversals).
     // (d) — cache par (target, rootKey) : un même objet partagé entre DEUX vars
-    // d'état (`$a = obj ; $b = obj`) doit avoir un Proxy par rootKey, sinon le 2e
-    // hérite du rootKey du 1er (WeakMap figée sur target) et `$b.x=…` notifie `a`.
+    // d'état (`$a = obj ; $b = obj`) a un Proxy PAR rootKey (identité stable par
+    // clé) ; la notification croisée entre alias est portée par `_mjs_rootsByTarget`
+    // ci-dessus, pas par ce cache.
     let __byRoot = this._mjs_proxyCache.get(target);
     if (__byRoot !== void 0) {
       const __cached = __byRoot.get(rootKey);
@@ -653,6 +695,21 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 
         const val = obj[prop];
 
+        // SÉCURITÉ — pollution de prototype EN LECTURE (CWE-1321) : `__proto__`/
+        // `constructor`/`prototype` HÉRITÉS (pas une donnée propre de l'objet) ne doivent
+        // jamais fuir à travers ce Proxy — les exposer les enveloppe récursivement (branche
+        // plain plus bas), et écrire sur l'enveloppe pollue le PROTOTYPE RÉEL, partagé par
+        // tout le realm. Une clé PROPRE (l'utilisateur a volontairement une donnée nommée
+        // `constructor` etc.) reste lue normalement. Même famille que `µ._mjs_guardPath`
+        // (mjs_init.ts, chemins compilés) et le set trap plus bas (`µ._mjs_safeKey`,
+        // écriture) — ici, c'est la LECTURE qui était sans garde.
+        if (
+          (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') &&
+          !Object.prototype.hasOwnProperty.call(obj, prop)
+        ) {
+          return void 0;
+        }
+
         // Set/Map/Date/RegExp : leurs internal slots ne survivent pas au Proxy.
         // On bind sur target ; les méthodes mutatives notifient la mutation.
         if (isWrapped) {
@@ -671,10 +728,19 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                 // cf. commentaire jumeau du set-trap plus bas : le
                 // mutateur natif (add/delete/clear/set…) EST le côté mutant.
                 (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-                el._mjs_notifyMutation(rootKey, __snap);
+                el._mjs_notifyMutationAliased(obj, rootKey, __snap);
                 return result;
               }
-            : val.bind(obj);
+            // `Map.get(k)` rend la valeur INTERNE brute par un appel natif, HORS
+            // du trap `get` ci-dessus : un élément objet stocké dans un Map en
+            // ressortait donc TOUJOURS brut, échappant à toute réactivité — même
+            // défaut que `list[0]` avant son fix, même remède (ré-envelopper).
+            : (isMap && prop === 'get')
+              ? function(...args) {
+                  const r = val.apply(obj, args);
+                  return (r !== null && typeof r === 'object' && !µ._mjs_rawSet.has(r)) ? el._mjs_wrapDeep(r, rootKey) : r;
+                }
+              : val.bind(obj);
           methodCache.set(prop, bound);
           return bound;
         }
@@ -717,7 +783,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           obj[prop] = value;
           if (!µ._mjs_rawSet.has(obj)) {
             (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-            el._mjs_notifyMutation(rootKey, __snapSet);
+            el._mjs_notifyMutationAliased(obj, rootKey, __snapSet);
           }
           return true;
         }
@@ -734,7 +800,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // distinguerait pas d'une mutation externe, et se re-notifierait
           // lui-même (cf. `_set`, comparaison oldRaw/parsed + époque).
           (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-          el._mjs_notifyMutation(rootKey, __snapSet);
+          el._mjs_notifyMutationAliased(obj, rootKey, __snapSet);
         }
         return true;
       },
@@ -758,7 +824,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         delete obj[prop];
         if (had && !µ._mjs_rawSet.has(obj)) {
           (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-          el._mjs_notifyMutation(rootKey, __snapDel);
+          el._mjs_notifyMutationAliased(obj, rootKey, __snapDel);
         }
         return true;
       },
@@ -862,7 +928,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
             enumerable: true,
             value: newVal
           });
-          return el._mjs_notifyMutation(k, void 0);
+          el._mjs_notifyMutation(k, void 0);
         }
       });
     }
@@ -876,6 +942,22 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // src/runtime/mjs_lifecycle.ts — patch de `µ.Element.prototype` posé APRÈS
   // cette classe, même technique que mjs_on.ts.
 
+  // objet BRUT muté (`obj`, cible du proxy `_mjs_wrapDeep` qui vient de trapper la
+  // mutation) atteint par PLUSIEURS clés d'état (`$a = obj ; $b = obj`, cf.
+  // `_mjs_rootsByTarget` posé par `_mjs_wrapDeep`) : notifie CHACUNE, pas seulement
+  // `rootKey` (la clé du proxy qui a muté) — sinon un lecteur de `$b` ne voit jamais
+  // passer une mutation faite via `$a`, alors que les deux pointent le même objet.
+  // Un seul proxy par (target, rootKey) ici (contrairement à µ.state) : chaque clé
+  // a son propre abonnement, jamais de double invalidation pour un même lecteur.
+  _mjs_notifyMutationAliased(obj, rootKey, oldValue) {
+    var roots = this._mjs_rootsByTarget && this._mjs_rootsByTarget.get(obj);
+    if (roots && roots.size > 1) {
+      roots.forEach((key) => this._mjs_notifyMutation(key, oldValue));
+      return;
+    }
+    this._mjs_notifyMutation(rootKey, oldValue);
+  }
+
   // HUB CENTRAL DES MUTATIONS
   _mjs_notifyMutation(k, oldValue) {
     // Cache local des slots rarement utilisés. Le pattern Coffee
@@ -883,19 +965,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // ternary. V8 ne hoist pas ces locaux entre appels. Cache direct simplifié.
     // 99% des composants n'ont ni `_mjs_inspections` ni `_mjs_binds` → skip total.
     const __ins = this._mjs_inspections;
-    if (__ins && __ins.size > 0 && __ins.has(k)) {
-      // NB: utiliser `console.log` (pas `µ.log`) — µ.inspect est explicitement
-      // demandé par l'utilisateur, doit s'afficher peu importe `µ.debug`.
-      console.group(`🔍 [MJS Inspect] ${k}`);
-      if (oldValue !== void 0) {
-        console.log("%cFrom :", "color: #888", µ._mjs_snap(oldValue));
-      }
-      // `µ._mjs_snap` déproxifie : si la valeur a été wrappée en Proxy (cas
-      // d'escape compile-time), on affiche un objet/array nu lisible et non
-      // un `Proxy { <target>: … }` opaque dans la console.
-      console.log("%cTo   :", "color: #2ecc71; font-weight: bold", µ._mjs_snap(this._state[k]));
-      console.groupEnd();
-    }
+    // affichage de `µinspect` (tout `$x`, ou ses seuls chemins) : dans mjs_rare_runes.ts, le
+    // module qui pose `_mjs_inspections` — un projet qui n'inspecte rien n'en embarque pas une ligne
+    if (__ins && __ins.size > 0 && __ins.has(k)) µ._mjs_inspectAffiche(this, k, oldValue);
     // V2 — invalidation memo computed : marquer dirty TOUS les computeds.
     // Sans bitmask, on ne peut plus filtrer "qui dépend de k" en O(1) côté
     // runtime — mais marker tous les computeds dirty est sûr (chaque getter
@@ -1070,6 +1142,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           continue;
         }
         parsed = parseProp(key, attr.value);
+        // l'attribut n'est que le REFLET texte de la prop courante (le module `option` pose
+        // `value="18"` pour `value={18}`, et cet observateur le relit aussitôt) : le relire
+        // remplaçait le nombre ou le booléen posé par le parent par son texte
+        const __cur = this._state[key];
+        if (__cur !== parsed && (typeof __cur === 'number' || typeof __cur === 'boolean' || typeof __cur === 'bigint') && String(__cur) === attr.value) {
+          results.push(void 0);
+          continue;
+        }
         if (this._state[key] !== parsed) {
           this._set(key, parsed);
           if (key === 'template' || key === 'layout') {
@@ -1413,7 +1493,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                   // mort libère son entrée. Clé par handler quand le couple en
                   // porte plusieurs — un `.once` ne désarme pas son voisin.
                   if (once) {
-                    const onceKey = list ? ids[i] + '#' + k : ids[i];
+                    // le TYPE d'événement fait partie de la clé : deux `.once` distincts sur
+                    // le même nœud (ex. `@click.once` et `@keydown.once`) partagent le même id
+                    // de routage — sans `evt`, le premier type déclenché désarmait aussi l'autre.
+                    const onceKey = evt + ':' + (list ? ids[i] + '#' + k : ids[i]);
                     if (!this._mjs_once_fired) this._mjs_once_fired = new WeakMap();
                     let __fired = this._mjs_once_fired.get(t);
                     if (__fired && __fired.has(onceKey)) continue;
@@ -2238,7 +2321,13 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (this._mjs_awaitMap != null) this._mjs_mjsPurgeAwaitMaps(node);
   }
 
-  async _mjs_destroyNodeAndChildren(node, waitOut = false) {
+  // PAS `async` : le chemin DOMINANT (pas de crochet de destruction) est 100 % synchrone —
+  // une fonction async allouerait une Promise NEUVE à CHAQUE destruction pour rien.
+  // `MJS_RESOLVED_DESTROY` (module-level, une seule alloc) préserve le contrat pour
+  // les appelants (`.then`/`.catch` toujours disponibles) sans ce coût répété. Seul le
+  // chemin AVEC crochets délègue à `_mjs_destroyWithHooks` (mjs_destroy_hooks.ts), qui
+  // reste `async` — sa Promise est renvoyée TELLE QUELLE, jamais ré-enveloppée.
+  _mjs_destroyNodeAndChildren(node, waitOut = false) {
     // la purge des caches de {for}
     // imbriqués (+ Maps {await}) NE doit PLUS se faire ICI, en TÊTE : un nœud
     // seulement marqué `_mjs_dying` (outro en cours) peut être RESSUSCITÉ
@@ -2259,10 +2348,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // `_mjs_dying` : sa mort est toujours DÉFINITIVE, la purge est donc sans risque
       // (cf. commentaire ci-dessus sur les points de mort définitive).
       this._mjs_mjsPurgeSubtreeState(node);
-      return node.remove();
+      node.remove();
+      return MJS_RESOLVED_DESTROY;
     }
     if (node._mjs_dying) {
-      return;
+      return MJS_RESOLVED_DESTROY;
     }
     // Fast path "no destroy hooks" : si le composant entier n'a JAMAIS
     // déclaré de `@transition/@in/@out/@attach/@this=!/@flip` au compile-time
@@ -2281,7 +2371,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // le remplir ne ferait que retenir des nœuds morts.
       if (µ._mjs_recycleTextLeaves) { µ._mjs_recycleTextLeaves(node); }
       node.remove();
-      return;
+      return MJS_RESOLVED_DESTROY;
     }
     // Au-delà de ce point, le composant PEUT porter des hooks de destruction
     // (transitions/@attach/@this=!/@flip) — la suite (marquage `_mjs_dying`, 2e
@@ -2300,6 +2390,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     this._mjs_mjsPurgeSubtreeState(node);
     if (µ._mjs_recycleTextLeaves) { µ._mjs_recycleTextLeaves(node); }   // cf. le chemin rapide ci-dessus
     node.remove();
+    return MJS_RESOLVED_DESTROY;
   }
 
   _mjs_updAttr(id, attrName, val) {

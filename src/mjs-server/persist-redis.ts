@@ -91,14 +91,25 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
   }
 
   /** résout `true` dès que la connexion est prête, `false` si CONNECT_TIMEOUT_MS est dépassé
-   *  avant — ne rejette JAMAIS (cf. commentaire de tête, jamais un blocage de l'appelant). */
+   *  avant — ne rejette JAMAIS (cf. commentaire de tête, jamais un blocage de l'appelant). Le
+   *  callback `wake` posé dans `_ready` est RETIRÉ au timeout (indexOf/splice) — sans ça, une
+   *  attente expirée laissait sa closure dedans pour toujours (retirée seulement par onConnected,
+   *  qui peut ne jamais survenir si Redis reste indisponible longtemps) : N attentes expirées = N
+   *  closures retenues en mémoire pour rien. */
   private _awaitConnection(timeoutMs: number): Promise<boolean> {
     this._amorcer()
     if (this._conn.ready) return Promise.resolve(true)
     return new Promise((resolve) => {
       let settled = false
-      const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false) } }, timeoutMs)
-      this._ready.push(() => { if (!settled) { settled = true; clearTimeout(timer); resolve(true) } })
+      const wake = (): void => { if (!settled) { settled = true; clearTimeout(timer); resolve(true) } }
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        const i = this._ready.indexOf(wake)
+        if (i !== -1) this._ready.splice(i, 1)
+        resolve(false)
+      }, timeoutMs)
+      this._ready.push(wake)
     })
   }
 

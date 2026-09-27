@@ -25,10 +25,11 @@
 
   optionId = (i)-> "#{uid}-opt-#{i}"
 
-  wrapperRef     = null
-  buttonRef      = null
-  searchInputRef = null
-  slotRef        = null
+  wrapperRef      = null
+  buttonRef       = null
+  searchInputRef  = null
+  slotRef         = null
+  optionsObserver = null
 
   multiOf    = (multiple)-> multiple !== undefined and multiple !== false
   searchOnOf = (search)-> search !== undefined and search !== false
@@ -55,15 +56,18 @@
     test = matchers[match] or matchers.contains
     options.filter (o)-> test(normalize(o.label), q)
 
+  # une valeur vide ne choisit rien : null == null cochait toutes les options sans valeur
   isSelected = (v, value, multiple)->
-    if multiOf(multiple) then Array.isArray(value) and value.includes(v) else value == v
+    if multiOf(multiple) then Array.isArray(value) and value.includes(v) else value != null and value == v
 
   selectedOf = (value, multiple, options)->
     options.filter (o)-> isSelected(o.value, value, multiple)
 
+  # choix simple : un seul libellé, même si deux options portent la même valeur
   labelFn = (value, multiple, options, placeholder)->
     sel = selectedOf(value, multiple, options)
-    if sel.length then sel.map((o)-> o.label).join(', ') else placeholder
+    return placeholder unless sel.length
+    if multiOf(multiple) then sel.map((o)-> o.label).join(', ') else sel[0].label
 
   iconFn = (value, multiple, options)->
     return null if multiOf(multiple)
@@ -83,12 +87,27 @@
   $currentIcon      = iconFn($value, $multiple, $optionsData)
   $activeDescendant = activeDescendantFn($open, $activeIndex, $query, $search, $match, $optionsData)
 
+  # la valeur telle que le parent l'a posée, dans son type (`value={m.id}` reste le nombre 18, son
+  # attribut n'en garde que le texte « 18 ») : l'état de l'option, sinon son attribut, sinon son
+  # libellé, comme une <option> native sans value
+  optionData = (el)->
+    label = (el.textContent or '').trim()
+    etat  = el._state
+    { value: etat?.value ?? el.getAttribute('value') ?? label, icon: etat?.icon ?? el.getAttribute('icon'), label: label }
+
   refreshOptions = ->
     return unless slotRef
+    assigned = slotRef.assignedElements()
     # assignedElements() ne rend que les enfants DIRECTS du slot : un wrapper intermédiaire est
     # lui-même slotté, pas les <mjs-option> qu'il contient → on descend dedans au besoin
-    els = slotRef.assignedElements().flatMap (el)-> if el.tagName.toLowerCase() == 'mjs-option' then [el] else Array.from(el.querySelectorAll('mjs-option'))
-    $optionsData = els.map (el)-> { value: el.getAttribute('value'), icon: el.getAttribute('icon'), label: (el.textContent or '').trim() }
+    els = assigned.flatMap (el)-> if el.tagName.toLowerCase() == 'mjs-option' then [el] else Array.from(el.querySelectorAll('mjs-option'))
+    $optionsData = els.map (el)-> optionData(el)
+    # une option peut être modifiée EN PLACE (liste {for} réactive, même clé, même noeud
+    # <mjs-option> réutilisé) sans jamais déclencher slotchange → on observe le sous-arbre
+    # projeté lui-même, réobservé à chaque passage pour suivre un remplacement de noeuds
+    optionsObserver?.disconnect()
+    for el in assigned
+      optionsObserver?.observe(el, { attributes: true, childList: true, characterData: true, subtree: true })
 
   updatePlacement = ->
     return unless buttonRef
@@ -102,6 +121,7 @@
 
   openPanel = ->
     return if $open
+    refreshOptions()
     $query = ''
     idx = $optionsData.findIndex (o)-> o.value == $value
     $activeIndex = if idx >= 0 then idx else 0
@@ -182,10 +202,14 @@
       @appendChild(input)
 
   µmount ->
+    optionsObserver = new MutationObserver(refreshOptions)
     refreshOptions()
     queueMicrotask refreshOptions
     slotRef.addEventListener('slotchange', refreshOptions)
     wrapperRef.addEventListener('click', onWrapperClick)
+
+  µdestroy ->
+    optionsObserver?.disconnect()
 </script>
 
 <div class="select" @this=!{wrapperRef} @keydown={onKeydown(e)}>

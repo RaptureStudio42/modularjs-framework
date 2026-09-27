@@ -43,7 +43,7 @@
     name = null;
   }
   factory = function(opts = {}) {
-    var setup;
+    var setup, modes;
     // setup(node) : retourne la cfg pour ce node. Marqué `_isCfgFactory` →
     // `_mjs_playTransition` route via `_mjs_runTransition` qui s'occupe du cache,
     // de l'abort, et de la continuité.
@@ -55,47 +55,55 @@
       }
     };
     setup._isCfgFactory = true;
+    // mode (asym/managed) PAR NŒUD, pas sur `setup` : cette PAIRE {intro, outro} est déjà
+    // partagée entre tous les nœuds d'une réutilisation manuelle bas niveau (le compilateur, lui,
+    // appelle la fabrique une fois PAR nœud — jamais concerné) ; un `config` fonction dont la
+    // forme dépend du node (ex. `tick`/`css` pour l'un, `intro`/`outro` pour l'autre) verrouillait
+    // sur `setup._mode` le mode du 1er nœud "managed" rencontré, et le `cfg.intro`/`cfg.outro` du
+    // 2e nœud (asym) n'était alors plus jamais appelé.
+    modes = new WeakMap();
     return {
       intro: function(node) {
         var cfg, mergedOpts;
-        // PERF — mémoïse le MODE (asym vs managed) sur `setup` pour
-        // éviter un `setup(node)` de DÉTECTION jeté à CHAQUE lancement : en mode
-        // managed, `µ._mjs_runTransition` rappelle `setup(node)` en interne (capture
-        // fraîche voulue en css), donc le setup de détection était doublé.
-        // Le mode ne dépend pas du node pour un `config` donné → détecté une fois.
-        if (setup._mode === 'managed') {
+        // PERF — mémoïse le MODE (asym vs managed) PAR NŒUD pour éviter un
+        // `setup(node)` de DÉTECTION jeté à CHAQUE lancement : en mode managed,
+        // `µ._mjs_runTransition` rappelle `setup(node)` en interne (capture fraîche
+        // voulue en css), donc le setup de détection était doublé.
+        if (modes.get(node) === 'managed') {
           return µ._mjs_runTransition(node, setup, 'in');
         }
         cfg = setup(node);
         // Mode asymétrique explicite : path legacy direct, sans cache/abort
         // (le user gère son propre lifecycle via WAAPI direct).
         if (cfg && !cfg.tick && !cfg.css && cfg.intro) {
-          setup._mode = 'asym';
-          mergedOpts = Object.assign({}, opts, {
-            duration: cfg.duration,
-            easing: cfg.easing
-          });
+          modes.set(node, 'asym');
+          // seules les valeurs DÉFINIES de cfg l'emportent sur celles de l'appelant : un config
+          // asym pur (cf. le style 3 en tête de fichier, sans duration/easing) rendait cfg.duration/
+          // easing `undefined`, qui écrasaient QUAND MÊME ceux de opts via Object.assign (copie
+          // aussi les clés valant `undefined`).
+          mergedOpts = Object.assign({}, opts);
+          if (cfg.duration !== void 0) { mergedOpts.duration = cfg.duration; }
+          if (cfg.easing !== void 0) { mergedOpts.easing = cfg.easing; }
           return cfg.intro(node, mergedOpts);
         }
         // Mode tick / css → _mjs_runTransition (cache + abort + continuité)
-        setup._mode = 'managed';
+        modes.set(node, 'managed');
         return µ._mjs_runTransition(node, setup, 'in');
       },
       outro: function(node) {
         var cfg, mergedOpts;
-        if (setup._mode === 'managed') {
+        if (modes.get(node) === 'managed') {
           return µ._mjs_runTransition(node, setup, 'out');
         }
         cfg = setup(node);
         if (cfg && !cfg.tick && !cfg.css && cfg.outro) {
-          setup._mode = 'asym';
-          mergedOpts = Object.assign({}, opts, {
-            duration: cfg.duration,
-            easing: cfg.easing
-          });
+          modes.set(node, 'asym');
+          mergedOpts = Object.assign({}, opts);
+          if (cfg.duration !== void 0) { mergedOpts.duration = cfg.duration; }
+          if (cfg.easing !== void 0) { mergedOpts.easing = cfg.easing; }
           return cfg.outro(node, mergedOpts);
         }
-        setup._mode = 'managed';
+        modes.set(node, 'managed');
         return µ._mjs_runTransition(node, setup, 'out');
       }
     };

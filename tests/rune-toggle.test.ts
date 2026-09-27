@@ -91,10 +91,15 @@ describe('µtoggle — bascule et cycle d\'état', function () {
       assert.match(data.jsInitBase, /µ\._set\(_mjsThis, 'layout', \$\.layout === 'banner' \? '' : 'banner'\)/)
     })
 
-    it('dans un <script>, même sortie', async function () {
+    it('dans un <script> (méthode de classe, pas un gestionnaire en ligne) : return devient la valeur affectée', async function () {
+      // `@bascule` n'est pas un élément du tableau `_mjs_inline` (pas un gestionnaire en
+      // ligne) : son `return` implicite (auto-return Civet du dernier statement) suit la
+      // règle générale de l'affectation réactive consommée comme valeur — contrairement au
+      // test précédent (`@click={µtoggle(...)}`), où le routeur d'événements appellerait la
+      // valeur de retour si c'était une fonction.
       const src = "<script>\n  @bascule = ->\n    µtoggle($theme, 'gold', 'dark')\n</script>\n<div>{$theme}</div>\n"
       const { data } = await transpile(src, { moduleName: 'card' })
-      assert.match(data.jsInitBase, /µ\._set\(_mjsThis, 'theme', \$\.theme === 'gold' \? 'dark' : 'gold'\)/)
+      assert.match(data.jsInitBase, /return \(\(_v\) => \(µ\._set\(_mjsThis, 'theme', _v\), _v\)\)\(\$\.theme === 'gold' \? 'dark' : 'gold'\)/)
     })
 
     it('un store `$$x` part par µ._storeSet', async function () {

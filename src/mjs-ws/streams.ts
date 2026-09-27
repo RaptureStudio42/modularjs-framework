@@ -148,7 +148,9 @@ function isSerializableEntry(value: unknown): boolean {
 export interface MjsWsStreamsCluster {
   /** alloue le PROCHAIN seq d'un flux — compteur GLOBAL cross-process (remplace le compteur local) */
   allocateSeq(name: string): Promise<number>
-  /** mutation locale déjà appliquée (op connu, seq déjà alloué) — à publier vers les autres process */
+  /** mutation locale ADMISE (op connu, seq déjà alloué) — publiée aux autres process TOUT DE SUITE,
+   *  que l'application locale soit immédiate ou différée (cf. admitSeq/produceLocal, plus bas) : un
+   *  trou LOCAL ne doit jamais retarder ce que les autres process reçoivent. */
   publish(name: string, seq: number, p: Record<string, unknown>): void
 }
 
@@ -177,9 +179,17 @@ interface ReorderState {
 // l'engine (INCHANGÉ ici, juste l'accroche décrite) : `(client, room) => roomsEngine.room(room).has(client)`.
 export type MjsWsStreamRoomMembership = (client: MjsWsClient, room: string) => boolean
 
+// Faille comblée — vivacité de la connexion, consultée par handleSubStream/handleResync APRÈS la
+// garde canSubscribe async (MÊME course, MÊME contrat que MjsWsRoomsHooks.isAlive de rooms.ts) :
+// absente = toujours vivante (comportement historique). Fournie par core.ts (`client.state !==
+// 'closed'`) : une déconnexion PENDANT cette garde a déjà tout purgé (onDisconnect) — sans ce
+// contrôle, l'abonnement serait quand même enregistré pour une connexion qui n'existe déjà plus
+// nulle part (cf. le commentaire de rooms.ts pour le détail du symptôme).
+export type MjsWsStreamIsAlive = (client: MjsWsClient) => boolean
+
 export function createStreamsEngine(
   rawSend: MjsWsRawSend, log: MjsWsLogFn, cluster?: MjsWsStreamsCluster, stats?: MjsWsStatsRegistry,
-  fanSend?: MjsWsFanSend, hasRoomMember?: MjsWsStreamRoomMembership,
+  fanSend?: MjsWsFanSend, hasRoomMember?: MjsWsStreamRoomMembership, isAlive?: MjsWsStreamIsAlive,
 ) {
   const streams = new Map<string, StreamState>()
   const reorderByStream = new Map<string, ReorderState>()   // réordonnancement des deltas DISTANTS, par flux (cf. receiveRemote)
@@ -237,31 +247,67 @@ export function createStreamsEngine(
     } catch { return false }
   }
 
-  // applique un descripteur d'opération à st.values — retourne le delta `p` À DIFFUSER/JOURNALISER
-  // (spread : sûr même si `patch`/`values` contient __proto__, CreateDataProperty, pas le setter).
-  // PARTAGÉE par le producteur LOCAL (mutation d'origine) ET le rejeu d'un delta DISTANT
-  // (applyRemoteOne, ci-dessous) : un delta reçu du réseau a EXACTEMENT la forme d'un StreamOp
-  // (add/remove : verbatim ; update : {key,patch} ; reset : {values: instantané}) — le rejouer
-  // avec applyOp() produit donc, sur chaque process, EXACTEMENT le même état.
-  function applyOp(st: StreamState, op: StreamOp): Record<string, unknown> {
-    if (op.op === 'add')    { st.values.set(op.key, op.value); return { op: 'add', key: op.key, value: op.value } }
+  // décrit un descripteur d'opération SANS muter st.values — c'est CE delta qui voyage sur le
+  // réseau (journal local ET publication cluster), calculé AVANT de savoir si l'admission locale
+  // sera immédiate ou différée (cf. admitSeq, plus bas) : un 'update' reste TOUJOURS le patch brut
+  // (jamais la valeur fusionnée), un 'add'/'remove' la charge verbatim, un 'reset' l'instantané
+  // filtré des clés dangereuses (spread : sûr même si `patch`/`values` contient __proto__,
+  // CreateDataProperty, pas le setter). PARTAGÉ par le producteur LOCAL (produceLocal) — un delta
+  // REÇU du réseau EST DÉJÀ dans cette forme (receiveRemote), rien à décrire pour lui.
+  function describeOp(op: StreamOp): Record<string, unknown> {
+    if (op.op === 'add')    return { op: 'add', key: op.key, value: op.value }
+    if (op.op === 'update') return { op: 'update', key: op.key, patch: op.patch }
+    if (op.op === 'remove') return { op: 'remove', key: op.key }
+    const out: Record<string, unknown> = {}
+    for (const k in op.values) if (safeKey(k)) out[k] = op.values[k]
+    return { op: 'reset', values: out }
+  }
+
+  // applique un delta DÉJÀ DÉCRIT (forme StreamOp, cf. describeOp) à st.values — MÊME fonction pour
+  // un delta LOCAL admis (cf. admitSeq) et un delta DISTANT rejoué (receiveRemote) : les deux ont
+  // rigoureusement la même forme à ce stade, rejouer avec mutateOp() produit donc, sur chaque
+  // process, EXACTEMENT le même état.
+  function mutateOp(st: StreamState, op: StreamOp): void {
+    if (op.op === 'add')    { st.values.set(op.key, op.value); return }
     if (op.op === 'update') {
       const cur  = st.values.get(op.key)
       const base = (cur && typeof cur === 'object') ? cur as Record<string, unknown> : {}
       st.values.set(op.key, { ...base, ...op.patch })
-      return { op: 'update', key: op.key, patch: op.patch }
+      return
     }
-    if (op.op === 'remove') { st.values.delete(op.key); return { op: 'remove', key: op.key } }
+    if (op.op === 'remove') { st.values.delete(op.key); return }
     // 'reset' — nouvelle époque : journal vidé, un rejeu ne doit JAMAIS le traverser
     st.values = new Map(Object.entries(op.values))
     st.journal.length = 0
-    return { op: 'reset', values: snapshotOf(st) }
+  }
+
+  // combine describeOp+mutateOp — SEUL besoin de la voie NON clusterisée (produceLocal), qui
+  // applique toujours tout de suite (pas d'arbitrage de contiguïté hors cluster, cf. plus bas)
+  function applyOp(st: StreamState, op: StreamOp): Record<string, unknown> {
+    const p = describeOp(op)
+    mutateOp(st, op)
+    return p
+  }
+
+  // Faille HAUTE comblée — admet un seq (LOCAL déjà alloué OU DISTANT reçu) dans st, par LE MÊME
+  // arbitre de contiguïté des deux côtés : AVANT ce correctif, une production LOCALE s'appliquait
+  // tout de suite quel que soit le compteur GLOBAL, « sautant » un trou qu'un AUTRE producteur
+  // n'avait pas encore comblé — le delta distant plus ancien, arrivé ensuite, était alors rejeté
+  // comme périmé (seq ≤ st.seq) au lieu d'être réordonné (cf. receiveRemote plus bas). Contigu (seq
+  // = st.seq+1, cas courant — y compris toute production strictement séquentielle) → appliqué +
+  // journal + diffusion tout de suite, comme avant ; un trou → mis de côté (bufferReorder, MÊME
+  // tampon qu'un delta distant) jusqu'à ce qu'il se comble (drainReorder) ou que le délai/la taille
+  // limite force l'application quand même (forceFlush, avertissement — cf. leurs commentaires).
+  function admitSeq(name: string, st: StreamState, seq: number, p: Record<string, unknown>): void {
+    if (seq <= st.seq) return   // déjà admis — dédup (robustesse : ne devrait plus arriver en pratique, compteur global)
+    if (seq === st.seq + 1) { applyAccepted(name, st, seq, p); drainReorder(name, st); return }
+    bufferReorder(name, st, seq, p)
   }
 
   // --- production LOCALE (add/update/remove/reset applicatifs) ---------------------------------
   function produceLocal(name: string, st: StreamState, op: StreamOp): void {
     if (!cluster) {
-      // comportement HISTORIQUE, inchangé octet pour octet — compteur local synchrone
+      // comportement HISTORIQUE, inchangé octet pour octet — compteur local synchrone, jamais de trou possible
       const p = applyOp(st, op)
       st.seq++
       if (op.op !== 'reset') pushJournal(st, { seq: st.seq, p })
@@ -270,17 +316,14 @@ export function createStreamsEngine(
       return
     }
     // clusterisé — FIFO PAR FLUX (même idée que client.chain, core.ts) : sérialise les
-    // incr/apply/publish LOCAUX de CE flux, pour que deux appels d'affilée (add(); add();)
+    // incr/publish/admission LOCAUX de CE flux, pour que deux appels d'affilée (add(); add();)
     // restent dans l'ordre d'APPEL même si allocateSeq() est asynchrone (réseau, cas Redis).
     st.chain = st.chain
       .then(async () => {
         const seq = await cluster.allocateSeq(name)
-        const p   = applyOp(st, op)
-        st.seq    = seq
-        if (op.op !== 'reset') pushJournal(st, { seq, p })
-        fan(st.subscribers, { t: name, seq, p })
-        if (stats) stats.fluxCompteurs.deltasEmis++
-        cluster.publish(name, seq, p)
+        const p   = describeOp(op)      // calculé SANS muter — l'admission locale peut différer (cf. admitSeq)
+        cluster.publish(name, seq, p)   // aux AUTRES process tout de suite, jamais retardé par un trou local
+        admitSeq(name, st, seq, p)
       })
       .catch(err => log('error', t('ws.streams.mutation-clusterisee-echec', { name }), { err }))
   }
@@ -338,7 +381,13 @@ export function createStreamsEngine(
     const allowed = checkAccess(st, client, name)
     if (allowed === true) { grantSubStream(client, st, name); return }
     if (allowed === false) { denyStreamAccess(client, name, 'µ:sub-stream'); return }
-    allowed.then(ok => { if (ok) grantSubStream(client, st, name); else denyStreamAccess(client, name, 'µ:sub-stream') })
+    allowed.then(ok => {
+      // Faille comblée — cf. le commentaire de MjsWsStreamIsAlive : abandon silencieux si la
+      // connexion est tombée PENDANT cette garde async (onDisconnect a déjà tout purgé), SANS ça
+      // l'abonnement était quand même enregistré pour une connexion qui n'existe déjà plus nulle part.
+      if (isAlive && !isAlive(client)) return
+      if (ok) grantSubStream(client, st, name); else denyStreamAccess(client, name, 'µ:sub-stream')
+    })
   }
 
   // rejeu incrémental ou reset complet — SÉPARÉ de handleResync pour n'exécuter qu'APRÈS la garde
@@ -366,7 +415,11 @@ export function createStreamsEngine(
     const allowed = checkAccess(st, client, name)
     if (allowed === true) { doResync(client, st, name, from); return }
     if (allowed === false) { denyStreamAccess(client, name, 'µ:resync'); return }
-    allowed.then(ok => { if (ok) doResync(client, st, name, from); else denyStreamAccess(client, name, 'µ:resync') })
+    allowed.then(ok => {
+      // même correctif que handleSubStream ci-dessus — cf. MjsWsStreamIsAlive
+      if (isAlive && !isAlive(client)) return
+      if (ok) doResync(client, st, name, from); else denyStreamAccess(client, name, 'µ:resync')
+    })
   }
 
   function onDisconnect(client: MjsWsClient): void {
@@ -374,17 +427,21 @@ export function createStreamsEngine(
   }
 
   // --- réception d'un delta DISTANT (cluster, core.ts) — réordonnancement par flux -------------
-  // le producteur (un AUTRE process) a déjà alloué `seq` (INCR global) et appliqué chez lui ; ici
-  // on REJOUE la même opération (applyOp) pour arriver au MÊME état, dans l'ORDRE des seq — deux
-  // publications concurrentes peuvent arriver dans le désordre (pas de garantie d'ordre du
-  // transport pub/sub), d'où le petit tampon ci-dessous (cf. docs/23-mjs-ws.md « flux multi-
-  // processus » pour la version vulgarisée).
+  // le producteur (un AUTRE process) a déjà alloué `seq` (INCR global) et publié chez lui ; ici on
+  // admet ce seq via admitSeq, LE MÊME arbitre que la production LOCALE (cf. son commentaire) — deux
+  // publications concurrentes (locales ou distantes) peuvent arriver dans le désordre (pas de
+  // garantie d'ordre du transport pub/sub, et une production locale peut ELLE-MÊME laisser un trou
+  // le temps qu'un delta distant plus ancien arrive), d'où le tampon commun ci-dessous (cf.
+  // docs/23-mjs-ws.md « flux multi-processus » pour la version vulgarisée).
 
-  function applyRemoteOne(name: string, st: StreamState, seq: number, p: Record<string, unknown>): void {
-    applyOp(st, p as StreamOp)   // rejoue l'opération — même fonction que le producteur, même résultat
+  // applique un seq ADMIS (cf. admitSeq) — LOCAL ou DISTANT, même fonction (cf. mutateOp) : nom
+  // générique (avant : applyRemoteOne, réservé au distant) depuis que la production LOCALE passe
+  // elle aussi par l'arbitre de contiguïté.
+  function applyAccepted(name: string, st: StreamState, seq: number, p: Record<string, unknown>): void {
+    mutateOp(st, p as StreamOp)
     st.seq = seq
     if (p.op !== 'reset') pushJournal(st, { seq, p })
-    for (const c of st.subscribers) rawSend(c, { t: name, seq, p })
+    fan(st.subscribers, { t: name, seq, p })
     if (stats) stats.fluxCompteurs.deltasEmis++
   }
 
@@ -395,7 +452,7 @@ export function createStreamsEngine(
       const next = st.seq + 1
       const p = rs.pending.get(next)!
       rs.pending.delete(next)
-      applyRemoteOne(name, st, next, p)
+      applyAccepted(name, st, next, p)
     }
     if (rs.pending.size === 0) { if (rs.timer) clearTimeout(rs.timer); reorderByStream.delete(name) }
   }
@@ -411,7 +468,7 @@ export function createStreamsEngine(
     for (const seq of seqs) {
       const p = rs.pending.get(seq)!
       rs.pending.delete(seq)
-      if (seq > st.seq) applyRemoteOne(name, st, seq, p)
+      if (seq > st.seq) applyAccepted(name, st, seq, p)
     }
     if (rs.timer) clearTimeout(rs.timer)
     reorderByStream.delete(name)
@@ -421,8 +478,9 @@ export function createStreamsEngine(
     let rs = reorderByStream.get(name)
     if (!rs) { rs = { pending: new Map(), timer: null }; reorderByStream.set(name, rs) }
     rs.pending.set(seq, p)
-    // statistiques (stats.ts) — un delta DISTANT mis de côté faute d'ordre = « réordonnancé » (famille
-    // adaptateur, pas flux : c'est le pub/sub cluster qui n'a pas garanti l'ordre, pas le flux lui-même)
+    // statistiques (stats.ts) — un delta (LOCAL ou DISTANT) mis de côté faute d'ordre = « réordonnancé »
+    // (famille adaptateur, pas flux : c'est le compteur PARTAGÉ/pub-sub cluster qui n'a pas garanti
+    // l'ordre, pas le flux lui-même — cf. admitSeq)
     if (stats) stats.adaptateur.reordonnances++
     if (rs.pending.size > REORDER_MAX_PENDING) { forceFlush(name, st, t('ws.streams.tampon-reordonnancement-plein', { max: REORDER_MAX_PENDING })); return }
     if (!rs.timer) rs.timer = setTimeout(() => forceFlush(name, st, t('ws.streams.delai-reordonnancement-depasse', { ms: REORDER_TIMEOUT_MS })), REORDER_TIMEOUT_MS)
@@ -430,9 +488,7 @@ export function createStreamsEngine(
 
   function receiveRemote(name: string, seq: number, p: Record<string, unknown>): void {
     const st = getOrCreateStream(name)
-    if (seq <= st.seq) return   // déjà appliqué / obsolète — dédup, même politique que le journal local
-    if (seq === st.seq + 1) { applyRemoteOne(name, st, seq, p); drainReorder(name, st); return }
-    bufferReorder(name, st, seq, p)
+    admitSeq(name, st, seq, p)
   }
 
   // état/métriques (stats.ts) — GAUGE lue EN DIRECT à la demande (app.stats(), core.ts) ;

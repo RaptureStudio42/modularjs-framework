@@ -28,6 +28,22 @@ function _mjsZeroLike(v) {
   return 0;
 }
 
+// nature d'une composante — nombre / tableau / objet / autre (string, etc.) — sert au garde-fou
+// de changement de forme À TOUTE PROFONDEUR dans `_mjsSpringStep` (le setter `value` plus bas ne
+// voit, lui, que la racine).
+function _mjsNature(v) {
+  if (_mjsIsNum(v)) {
+    return 'num';
+  }
+  if (Array.isArray(v)) {
+    return 'array';
+  }
+  if (v && typeof v === 'object') {
+    return 'object';
+  }
+  return 'other';
+}
+
 // Avance une valeur (récursive) d'un pas de ressort. Retourne {value, velocity}
 // de la même forme. `ctx.settled` passe à false dès qu'une composante bouge
 // encore (façon `tick_spring` de Svelte).
@@ -39,7 +55,23 @@ function _mjsZeroLike(v) {
 // courante (figée, ne bloque pas les autres axes) ; absente de current →
 // apparaît directement à la valeur cible (sans animer CET axe).
 function _mjsSpringStep(cur, tgt, vel, stiffness, damping, precision, ctx) {
-  var delta, force, next, i, k, vals, vels, r, len, curHas, tgtHas, allKeys;
+  var delta, force, next, i, k, vals, vels, r, len, curHas, tgtHas, allKeys, curNat, tgtNat;
+  // changement de NATURE (nombre/tableau/objet) entre current et la cible, à CETTE profondeur —
+  // pas seulement à la racine (cf. le setter `value` plus bas, qui ne compare QUE le sommet) :
+  // `{a:{x:1}} -> {a:[1,2]}` prenait la branche objet ci-dessous, qui fusionnait les index du
+  // tableau comme des clés (`for...in` sur un Array) → hybride `{0:1,1:2,x:1}`, jamais un vrai
+  // tableau, figé sans le moindre avertissement. Saut direct à la cible pour CETTE branche (même
+  // filet que la valeur non numérique tout en bas), 1 seul avertissement par appel de `_mjs_step`
+  // (la forme redevient cohérente dès la frame suivante, plus rien à signaler ensuite).
+  curNat = _mjsNature(cur);
+  tgtNat = _mjsNature(tgt);
+  if (curNat !== tgtNat && curNat !== 'other' && tgtNat !== 'other') {
+    if (!ctx.warned) {
+      ctx.warned = true;
+      µ.warn('[µspring] une valeur imbriquée change de forme (objet/tableau/nombre) — cette branche saute directement à la nouvelle valeur.');
+    }
+    return { value: tgt, velocity: _mjsZeroLike(tgt) };
+  }
   if (_mjsIsNum(cur)) {
     delta = tgt - cur;
     force = (delta * stiffness) - (vel * damping);
@@ -334,7 +366,7 @@ MjsPhysicsSpring = (function() {
         µ.warn('[µspring] la cible n\'a pas la même forme que la valeur courante (clés ou longueur différentes) — chaque axe est traité indépendamment : absent de la cible => figé à sa valeur courante, absent de current => apparaît sans animer.');
       }
       this.target = newTarget;
-      return µ.Ticker.add(this);
+      µ.Ticker.add(this);
     }
   });
 
@@ -351,7 +383,6 @@ MjsPhysicsSpring = (function() {
       // ressort → jamais settled → boucle rAF infinie.
       this._mjs_stiffness = _mjsClampStiffness(v, this._mjs_damping);
       this._mjs_notifyInvalidators();
-      return v;
     }
   });
 
@@ -365,7 +396,6 @@ MjsPhysicsSpring = (function() {
       // on re-clampe stiffness pour rester dans la zone stable.
       this._mjs_stiffness = _mjsClampStiffness(this._mjs_stiffness, this._mjs_damping);
       this._mjs_notifyInvalidators();
-      return v;
     }
   });
 
@@ -378,7 +408,6 @@ MjsPhysicsSpring = (function() {
     },
     set: function(v) {
       this._mjs_precision = _mjsClampPrecision(v);
-      return v;
     }
   });
 

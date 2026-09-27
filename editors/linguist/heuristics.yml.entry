@@ -1,19 +1,48 @@
 # À coller dans lib/linguist/heuristics.yml, à sa place ALPHABÉTIQUE par extension.
 #
 # `.mjs` est disputée : le catalogue l'attribue déjà à JavaScript (modules ES de Node).
-# Les deux formats n'ont heureusement rien en commun — un composant ModularJS s'ouvre par
-# un bloc de premier niveau (`<script>`, `<style>`, `<theme>`) ou par une directive de
-# racine (`@css`, `@import`, `@routes`, `@persist`, `@preload`), toutes choses qu'un
-# module Node ne contient jamais. La règle sans motif à la fin (`language: JavaScript`)
-# est le repli : elle matche toujours, donc rien ne devient « indéterminé ».
+# Les deux formats n'ont heureusement rien en commun — un composant ModularJS OUVRE par
+# un bloc de premier niveau (`<script>`, `<style>`, `<theme>`) ou par une directive
+# (`@routes`, `@import`, `@persist`, `@preload`, `@i18n`), toutes choses qu'un module Node
+# ne contient jamais EN TÊTE DE FICHIER. `@css` et `@display` n'y figurent pas : ce sont des
+# attributs du `<style>` (`<style @css="…">`), le compilateur REFUSE leur forme de racine —
+# un fichier qui en porterait une ligne n'est donc pas un composant valide. La règle sans
+# motif à la fin (`language: JavaScript`) est le repli : elle matche toujours, donc rien
+# ne devient « indéterminé ».
 #
 # Le PREMIER motif (`\A\s*<`) est le plus large et le plus sûr : un composant qui n'a
-# QUE du gabarit — c'est la majorité, mesurée à 422 fichiers sur 648 dans nos deux dépôts
-# — commence par un chevron, et un module JavaScript ne le peut PAS (`<` en tête est une
-# erreur de syntaxe). Les suivants rattrapent les fichiers qui ouvrent par un bloc ou une
-# directive. Ils sont ancrés en début de LIGNE (`^`), en mode multiligne comme le reste du
-# fichier : un `<script>` cité dans une chaîne de caractères au milieu d'une ligne ne
-# déclenche donc rien.
+# QUE du gabarit — le cas majoritaire — commence par un chevron, et un module JavaScript
+# ne le peut PAS (`<` en tête est une erreur de syntaxe). `\A` ancre en tête du FICHIER
+# ENTIER (jamais en tête de ligne) : vérifié sur les composants réels des deux dépôts
+# (samples/ + src/core-modules/, et le corpus applicatif plus large qui les a inspirés) —
+# TOUS ouvrent par `<script>`/`<script module>` sans rien avant, pas même une ligne vide.
+# Un composant qui ouvrirait par `<style>` ou `<theme>` seul serait AUSSI couvert par ce
+# même motif (peu importe la balise, seul le chevron de tête compte).
+#
+# Les motifs suivants rattrapent les fichiers qui ouvrent par une directive de racine
+# SANS balise `<script>` du tout (entrées serveur sans gabarit, sections i18n déclarées
+# avant le script) — mesuré sur le corpus applicatif : plus d'un tiers des composants
+# réels commencent ainsi. Chacun exige la forme COMPLÈTE de sa directive (cible entre
+# guillemets pour @import/@i18n, `$nom`/`$$nom` pour @persist, valeur reconnue pour
+# @preload, `=`/`[` pour @routes) — jamais le seul
+# mot-clé. Un `<script>`/`<style>`/`<theme>` cité au milieu d'une ligne (gabarit HTML
+# injecté depuis une chaîne JS) NE déclenche donc plus rien : ces trois motifs par ligne
+# ont été RETIRÉS (ils faisaient déjà partie du repli via `\A\s*<` pour tout composant
+# réel, un `<script>` étant toujours son tout premier bloc — jamais recollés mi-fichier),
+# et un commentaire JavaScript qui MENTIONNE une directive sans en avoir la forme ne
+# matche plus non plus.
+#
+# Portabilité Oniguruma (Ruby, moteur réel de Linguist) / JavaScript (moteur du test qui
+# accompagne ces motifs) : uniquement des backreferences NUMÉROTÉES (`\1`, communes aux
+# deux moteurs), aucune backreference NOMMÉE, aucun lookbehind. Piège distinct, à
+# connaître avant de toucher au premier motif : `\A` (tête de FICHIER) n'existe pas en
+# JavaScript — le moteur JS le lit comme la lettre littérale « A », SANS erreur
+# (`/\A/.test('A')` vaut `true`) plutôt que de refuser l'expression. `^`/`$`, eux,
+# diffèrent aussi : TOUJOURS ancrés par LIGNE en Oniguruma (aucun réglage ne change ce
+# comportement), ancrés par CHAÎNE ENTIÈRE en JavaScript sauf flag `m` explicite. Le test
+# Node qui vérifie ces motifs compense les deux (traduit `\A` en `^` sans le flag `m`,
+# ajoute le flag `m` partout ailleurs) — au lieu de laisser JavaScript évaluer `\A` tel
+# quel, ce qui validerait silencieusement un motif qui ne veut plus dire la même chose.
 
 - extensions: ['.mjs']
   rules:
@@ -25,7 +54,8 @@
 
   modularjs:
   - '\A\s*<'
-  - '^\s*<script(?:\s+module)?(?:\s+lang=["''][a-z]+["''])?\s*>'
-  - '^\s*<style(?:\s+name=["''][^"'']*["''])?(?:\s+lang=["''][a-z]+["''])?\s*>'
-  - '^\s*<theme\s*>'
-  - '^\s*@(?:css|routes|import|persist|preload|display|i18n)\s'
+  - '^[ \t]*@i18n[ \t]+([''"])[^''"\n]+\1[ \t]*$'
+  - '^[ \t]*@persist[ \t]+(?:(?:session|local):[ \t]+)?\$\$?[a-zA-Z_][\w$]*'
+  - '^[ \t]*@import[ \t]+[^''"\n]+[ \t]([''"])[^''"\n]*\1[ \t]*$'
+  - '^[ \t]*@routes[ \t]*(?:=|\[)'
+  - '^[ \t]*@preload(?:[ \t]*=)?[ \t]*[''"]?(?:on|off|hover)[''"]?[ \t]*$'

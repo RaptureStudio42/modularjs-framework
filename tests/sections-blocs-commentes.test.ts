@@ -5,6 +5,11 @@
 // nom, la compilation échouait sur « deux blocs <theme name="dark"> » ; seule, la version commentée
 // REMPLAÇAIT silencieusement l'active. Le bloc `<routes>`, juste en dessous dans le même fichier,
 // recevait déjà ce masquage (avec le commentaire qui l'explique), et `directives.ts` aussi.
+//
+// `<script>` recevait ENCORE moins que `<theme>`/`<style>` : la vue utilisée pour le repérer
+// (`maskedCivet`) neutralise les littéraux Civet mais jamais les commentaires HTML — un
+// `<script>…</script>` COMPLET écrit dans `<!-- … -->` était donc extrait comme LE script réel
+// du composant (marqueur du script commenté retrouvé dans la sortie compilée).
 
 import assert from 'node:assert/strict'
 import { extractSections } from '../src/transpiler/sections.js'
@@ -44,6 +49,31 @@ describe('sections : un bloc en commentaire HTML est INERTE', () => {
     assert.doesNotMatch(r.style.raw, /color:red/)
   })
 
+  it('<script> COMPLET (ouverture ET fermeture) commenté : aucun script extrait, pas le composant réel', () => {
+    const src = '<div>x</div>\n<!-- désactivé temporairement :\n<script>\nwindow.__marqueur_script_commente = true\n</script>\n-->\n<p>reste visible</p>\n'
+    const r = extractSections(src)
+    assert.equal(r.script.raw.includes('__marqueur_script_commente'), false, r.script.raw)
+    assert.match(r.html, /reste visible/)
+  })
+
+  it('<script> commenté + <script> ACTIF : c\'est l\'actif qui devient le script du composant', () => {
+    const src = '<div>x</div>\n<!--\n<script>\n$x = 0\nwindow.__ancien = true\n</script>\n-->\n<script>\n$x = 1\n</script>\n<p>{$x}</p>\n'
+    const r = extractSections(src)
+    assert.equal(r.script.raw.includes('__ancien'), false, r.script.raw)
+    assert.match(r.script.raw, /\$x = 1/)
+  })
+
+  it('<script module> commenté : aucun module extrait', () => {
+    const src = '<div>x</div>\n<!--\n<script module>\nexport salut = -> 1\n</script>\n-->\n<script>\n$n = 0\n</script>\n<p>{$n}</p>\n'
+    const r = extractSections(src)
+    assert.equal(r.module.raw, '')
+  })
+
+  it('contre-cas : le même <script> HORS commentaire est bien extrait', () => {
+    const src = '<div>x</div>\n<script>\nwindow.__marqueur = true\n</script>\n<p>x</p>\n'
+    assert.match(extractSections(src).script.raw, /__marqueur/)
+  })
+
   it('non-régression — <routes> commenté reste inerte (masquage déjà en place)', () => {
     const src = '<div>x</div>\n<!--\n<routes target="#vue">\n/a → page-a\n</routes>\n-->\n'
     assert.deepEqual(extractSections(src).routes, [])
@@ -67,11 +97,13 @@ describe('sections : un bloc en commentaire HTML est INERTE', () => {
     assert.deepEqual(extractSections(src).themes.map(t => t.name), ['dark'])
   })
 
-  // le garde-fou « balise orpheline » reste STRICT sur `</script>` (l'extraction des scripts tourne
-  // AVANT le masquage : un `</script>` commenté ne peut pas venir d'un bloc rendu inerte)
-  it('garde orpheline : `</script>` reste refusé même en commentaire, `</style>` ne l\'est plus', () => {
-    assert.throws(() => extractSections('<div>x</div>\n<!-- </script> -->\n'), /orphelin/)
+  // le garde-fou « balise orpheline » traite désormais `</script>` comme `</style>`/`</theme>`/
+  // `</routes>` : commenté, il est inerte (le masquage des commentaires HTML tourne maintenant
+  // AVANT la recherche de `<script>`, cf. maskHtmlComments) ; HORS commentaire, il reste refusé.
+  it('garde orpheline : une balise fermante COMMENTÉE (`</script>`, `</style>`) reste inerte', () => {
+    assert.doesNotThrow(() => extractSections('<div>x</div>\n<!-- </script> -->\n'))
     assert.doesNotThrow(() => extractSections('<div>x</div>\n<!-- </style> -->\n'))
+    assert.throws(() => extractSections('<div>x</div>\n</script>\n'), /orphelin/)
     assert.throws(() => extractSections('<div>x</div>\n</style>\n'), /orphelin/)
   })
 })

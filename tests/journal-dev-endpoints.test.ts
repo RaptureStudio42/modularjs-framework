@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { connect } from 'node:net'
 import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler, type RenderHandler } from '../src/server/render-request.js'
 import { createJournal, type RecordServerFn } from '../src/server/journal.js'
@@ -540,6 +541,45 @@ describe('sans option `journal` (StaticServer) — comportement HISTORIQUE incha
       assert.equal(json.status, 404)
     } finally {
       await server.stop()
+    }
+  })
+})
+
+// `serveErrorsPost` (StaticServer, mjs dev) relisait son corps À LA MAIN — MÊME patron que
+// action-pipeline.ts/render-server.ts AVANT leur correctif (P2) : une coupure réseau en plein
+// envoi n'était vue comme distincte d'une fin normale, un fragment de corps pouvait donc être
+// journalisé — y compris un fragment qui se trouve être un JSON SYNTAXIQUEMENT VALIDE (donc pas
+// intercepté par le JSON.parse qui suit), simplement plus court que ce que le client comptait
+// envoyer (Content-Length annoncé bien plus grand). Corps envoyé par une socket BRUTE (détruite en
+// cours de route) : seule façon de forcer Node à voir une VRAIE coupure, un simple fetch() ne le
+// permet pas.
+describe('POST /__mjs/errors (mjs dev) — corps interrompu (aligné sur readCappedBody)', () => {
+  it("une coupure réseau en plein envoi ne journalise RIEN (même un fragment SYNTAXIQUEMENT valide)", async function () {
+    this.timeout(15000)
+    const { root, config } = setup()
+    config.journal = { client: true }
+    const dev = await startDev(config, root)
+    try {
+      await new Promise<void>((resolve) => {
+        const socket = connect(dev.port, '127.0.0.1', () => {
+          const corps = '{"message":"fragment-valide-mais-incomplet"}'
+          socket.write(
+            `POST /__mjs/errors HTTP/1.1\r\n` +
+            `Host: 127.0.0.1:${dev.port}\r\n` +
+            `Content-Type: application/json\r\n` +
+            // Content-Length MENSONGER (bien plus grand que `corps`) : Node ne voit `end` que
+            // lorsqu'il a reçu AUTANT d'octets qu'annoncé — la socket ferme AVANT, sans jamais
+            // atteindre ce compte, donc 'aborted'/'error', jamais 'end'.
+            `Content-Length: 500\r\n\r\n${corps}`,
+          )
+          setTimeout(() => { socket.destroy(); resolve() }, 150)
+        })
+        socket.on('error', () => resolve())
+      })
+      await new Promise(r => setTimeout(r, 300))   // laisse le serveur voir l'abandon et réagir
+      assert.equal(dev.journalStore.list().length, 0, 'BUG confirmé si un fragment de corps (pourtant un JSON valide) a quand même été journalisé')
+    } finally {
+      await dev.close()
     }
   })
 })

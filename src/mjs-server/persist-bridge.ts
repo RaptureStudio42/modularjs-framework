@@ -47,7 +47,15 @@ import type { MjsServerGameSnapshot } from './game.js'
 import { t } from '../messages/index.js'
 
 const RETRY_DELAYS_MS    = [2000, 10000]   // délai AVANT chaque retentative — essai initial sans délai (0/2/10 s, cf. commentaire de tête)
-const DEFAULT_TIMEOUT_MS = 5000            // même défaut que wh.timeoutMs (webhooks sortants, bridge.ts)
+const DEFAULT_TIMEOUT_MS = 5000            // même défaut que wh.timeoutMs (webhooks sortants, bridge.ts) — PAR TENTATIVE
+// bornes AU-DELÀ du contrat minimal (aucune des deux n'existait avant) — un back qui répond très
+// lentement ou qui streame une réponse sans fin ne doit ni bloquer indéfiniment (delai GLOBAL,
+// distinct de timeoutMs qui ne borne qu'UNE tentative) ni gonfler la mémoire du process (taille MAX
+// de réponse acceptée, vérifiée AU FIL de la réception — pas après coup). Valeurs par défaut
+// conservatrices mais réglables (opts.totalTimeoutMs/opts.maxResponseBytes) — cf. rapport, section
+// « choix visibles ».
+const DEFAULT_TOTAL_TIMEOUT_MS   = 30000          // ms — délai GLOBAL (tous essais + délais de retry compris)
+const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024   // 10 Mio — large pour un load() de nombreuses parties
 
 export interface BridgePersistAdapterOpts {
   /** URL du back qui reçoit save/remove (POST) et sert load (GET) */
@@ -55,8 +63,12 @@ export interface BridgePersistAdapterOpts {
   /** secret de signature HMAC — MÊME algorithme que le pont MJS-WS, secret INDÉPENDANT (pas forcément le même) */
   secret: string
   onLog?: MjsWsLogFn
-  /** ms — défaut 5000 */
+  /** ms — PAR tentative, défaut 5000 */
   timeoutMs?: number
+  /** ms — délai GLOBAL, tous essais + délais de retry compris (distinct de timeoutMs) — défaut 30000 */
+  totalTimeoutMs?: number
+  /** octets max acceptés en réponse (protège la mémoire face à un back qui streame sans fin) — défaut 10 Mio */
+  maxResponseBytes?: number
   /** échappatoire EXPLICITE à la garde TLS du constructeur — autorise `url` en
    *  http:// même hors loopback (127.0.0.1/localhost/::1/[::1]). Défaut false : à n'activer qu'en
    *  connaissance de cause (réseau interne de confiance, tunnel déjà chiffré en amont…), jamais par défaut. */
@@ -85,9 +97,18 @@ function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r
 interface HttpResponse { status: number; body: string }
 
 /** une requête signée — MÊME enveloppe que postJson (bridge.ts), généralisée GET/POST ici (`load`
- *  est un GET à corps vide, canonicalString() reste le MÊME format quelle que soit la méthode). */
-function signedRequest(target: URL, method: string, secret: string, body: string, timeoutMs: number): Promise<HttpResponse> {
+ *  est un GET à corps vide, canonicalString() reste le MÊME format quelle que soit la méthode).
+ *  `maxResponseBytes` est vérifié AU FIL de la réception (chaque chunk), pas seulement à la fin —
+ *  une réponse qui le dépasse coupe la requête tout de suite (req.destroy) plutôt que d'accumuler
+ *  des chunks sans borne en mémoire jusqu'à 'end'. */
+function signedRequest(target: URL, method: string, secret: string, body: string, timeoutMs: number, maxResponseBytes: number): Promise<HttpResponse> {
   return new Promise((resolvePromise, reject) => {
+    // `settled` — couper le flux en plein 'data' (taille dépassée) peut faire émettre 'error' à LA
+    // FOIS sur `req` et sur `res` (la réponse en cours de lecture voit sa connexion coupée sous
+    // elle) : sans écouter les DEUX, celui qui n'a pas de listener devient un événement 'error' non
+    // géré (uncaughtException) — le garde évite un double resolve/reject, jamais un souci en soi.
+    let settled = false
+    const finirErreur = (err: Error): void => { if (!settled) { settled = true; reject(err) } }
     const ts  = Math.floor(Date.now() / 1000)
     const sig = signCanonical(secret, canonicalString(ts, method, target.pathname + target.search, body))
     const requester = target.protocol === 'https:' ? httpsRequest : httpRequest
@@ -102,27 +123,49 @@ function signedRequest(target: URL, method: string, secret: string, body: string
       timeout: timeoutMs,
     }, (res) => {
       const chunks: Buffer[] = []
-      res.on('data', (c: Buffer) => chunks.push(c))
-      res.on('end', () => resolvePromise({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+      let total = 0
+      res.on('error', finirErreur)
+      res.on('data', (c: Buffer) => {
+        total += c.byteLength
+        if (total > maxResponseBytes) {
+          req.destroy()   // coupe le flux — PAS d'erreur passée ici : le rejet part par finirErreur, pas par l'event 'error' de req/res
+          finirErreur(new Error(t('serveur.persist-bridge-reponse-trop-grande', { max: maxResponseBytes })))
+          return
+        }
+        chunks.push(c)
+      })
+      res.on('end', () => { if (!settled) { settled = true; resolvePromise({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }) } })
     })
     req.on('timeout', () => req.destroy(new Error(t('serveur.persist-bridge-delai-depasse'))))
-    req.on('error', reject)
+    req.on('error', finirErreur)
     if (body) req.write(body)
     req.end()
   })
 }
 
-/** 1 essai + jusqu'à RETRY_DELAYS_MS.length retentatives — `null` = abandon (tous les essais épuisés) */
-async function withRetries(run: () => Promise<HttpResponse>, onFailure: (err: unknown, attempt: number) => void): Promise<HttpResponse | null> {
+/** 1 essai + jusqu'à RETRY_DELAYS_MS.length retentatives — `null` = abandon (tous les essais
+ *  épuisés OU `deadline` — échéance ABSOLUE en ms epoch, cf. commentaire de tête — dépassée). Sans
+ *  `deadline`, un back qui échoue systématiquement mais vite pourrait quand même immobiliser
+ *  l'appelant pendant la somme COMPLÈTE de RETRY_DELAYS_MS (jusqu'à ~27 s, essais compris) : la
+ *  deadline coupe court dès qu'il ne reste plus le temps d'une retentative utile. `timeoutMs` — délai
+ *  PAR tentative — est aussi PLAFONNÉ par le temps restant avant `deadline` (`run` reçoit ce plafond
+ *  déjà calculé) : sans ça, une deadline PLUS COURTE que timeoutMs ne bornait que l'INTERVALLE entre
+ *  deux essais, jamais l'essai EN COURS — un essai plus long que le budget global épuisait alors tout
+ *  son propre timeoutMs avant que la deadline n'ait la moindre chance d'agir. */
+async function withRetries(run: (attemptTimeoutMs: number) => Promise<HttpResponse>, onFailure: (err: unknown, attempt: number) => void, deadline: number, timeoutMs: number): Promise<HttpResponse | null> {
   for (let attempt = 0; ; attempt++) {
+    const restant = deadline - Date.now()
+    if (restant <= 0) { onFailure(new Error(t('serveur.persist-bridge-delai-global-depasse')), attempt); return null }
     try {
-      const rep = await run()
+      const rep = await run(Math.min(timeoutMs, restant))
       if (rep.status >= 200 && rep.status < 300) return rep
       throw new Error(t('serveur.persist-bridge-reponse-http', { status: rep.status }))
     } catch (err) {
       onFailure(err, attempt)
       if (attempt >= RETRY_DELAYS_MS.length) return null
-      await sleep(RETRY_DELAYS_MS[attempt])
+      const restantApres = deadline - Date.now()
+      if (restantApres <= 0) return null
+      await sleep(Math.min(RETRY_DELAYS_MS[attempt], restantApres))
     }
   }
 }
@@ -132,6 +175,8 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   private _secret: string
   private _onLog: MjsWsLogFn
   private _timeoutMs: number
+  private _totalTimeoutMs: number
+  private _maxResponseBytes: number
   private _enVol = new Set<Promise<void>>()
 
   constructor(opts: BridgePersistAdapterOpts) {
@@ -151,12 +196,16 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
     this._secret    = opts.secret
     this._onLog     = opts.onLog ?? defaultLog
     this._timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this._totalTimeoutMs   = opts.totalTimeoutMs   ?? DEFAULT_TOTAL_TIMEOUT_MS
+    this._maxResponseBytes = opts.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   }
 
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
     const rep = await withRetries(
-      () => signedRequest(this._target, 'GET', this._secret, '', this._timeoutMs),
+      (attemptTimeoutMs) => signedRequest(this._target, 'GET', this._secret, '', attemptTimeoutMs, this._maxResponseBytes),
       (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-load-tentative-echouee', { tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
+      Date.now() + this._totalTimeoutMs,
+      this._timeoutMs,
     )
     if (!rep) { this._onLog('warn', t('serveur.persist-bridge-load-abandonne')); return [] }
     try {
@@ -194,8 +243,10 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   private _pousser(payload: unknown, label: string): void {
     const body = JSON.stringify(payload)
     const p = withRetries(
-      () => signedRequest(this._target, 'POST', this._secret, body, this._timeoutMs),
+      (attemptTimeoutMs) => signedRequest(this._target, 'POST', this._secret, body, attemptTimeoutMs, this._maxResponseBytes),
       (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-tentative-echouee', { label: label, tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
+      Date.now() + this._totalTimeoutMs,
+      this._timeoutMs,
     ).then((rep) => {
       if (!rep) this._onLog('warn', t('serveur.persist-bridge-abandonne-apres-tentatives', { label: label, tentatives: RETRY_DELAYS_MS.length + 1 }))
     })

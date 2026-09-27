@@ -110,6 +110,22 @@ function pickMode(route: RenderRoute, render: RenderConfig, headerMode?: string 
   return configured
 }
 
+// Tri par spécificité de `render.routes` : ne dépend QUE de `render.routes`, jamais de l'URL de la
+// requête ni du header — recalculé à CHAQUE appel (donc à CHAQUE requête HTTP), pure perte sur une
+// route qui ne change qu'au rechargement de la config. Mémoïsé par RÉFÉRENCE d'objet (WeakMap) :
+// une config reconstruite (recompile/reload) est un NOUVEL objet, jamais celui-ci muté en place —
+// le cache s'invalide donc tout seul au prochain appel, sans clé à purger à la main.
+const sortedPatternsCache = new WeakMap<RenderConfig, string[]>()
+function sortedPatterns(render: RenderConfig): string[] {
+  const cached = sortedPatternsCache.get(render)
+  if (cached) return cached
+  const patterns = Object.keys(render.routes ?? {}).sort(
+    (a, b) => staticSegs(b) - staticSegs(a) || b.length - a.length,
+  )
+  sortedPatternsCache.set(render, patterns)
+  return patterns
+}
+
 /**
  * Résout la PAGE pour une URL : quel composant, quel mode, quels params.
  * Retourne `null` si l'URL n'est PAS une page déclarée → le back sert alors le
@@ -123,9 +139,7 @@ export function resolvePage(
   headerMode?: string | null,
 ): ResolvedPage | null {
   if (!render || !render.routes) return null
-  const patterns = Object.keys(render.routes).sort(
-    (a, b) => staticSegs(b) - staticSegs(a) || b.length - a.length,
-  )
+  const patterns = sortedPatterns(render)
   for (const pattern of patterns) {
     const params = matchPattern(pattern, path)
     if (params) {

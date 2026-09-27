@@ -89,6 +89,13 @@ Le rendu piloté par la config (`render`, SSR, prérendu) est détaillé au chap
 - **`mjs ws`** — lance le serveur temps réel (MJS-WS). Détail complet : [23 · MJS-WS](23-mjs-ws.md).
 - **`mjs serveur`** — lance le serveur de jeu (MJS-Server, composé par-dessus MJS-WS). Détail complet : [24 · MJS-Server](24-mjs-server.md).
 
+### Arrêter un serveur (Ctrl+C)
+
+`mjs dev`, `mjs serve`, `mjs ws` et `mjs serveur` s'arrêtent proprement sur **Ctrl+C** (ou un `SIGTERM`) : la page ou la réponse en cours se termine d'abord, **20 s** au plus, puis le programme sort en code 0. Sans rien en cours, l'arrêt est immédiat.
+
+- **Forcer l'arrêt** : un **2ᵉ Ctrl+C**, plus d'une seconde après le premier, coupe tout de suite sans attendre les réponses en cours. Quand l'arrêt dure, le terminal le rappelle : `arrêt en cours — Ctrl+C à nouveau pour couper tout de suite`.
+- Un 2ᵉ Ctrl+C **dans la même seconde** est ignoré : c'est souvent le même Ctrl+C reçu deux fois (`npm run` le relaie à son programme, `tsx` aussi quand on lance depuis les sources). Sans cette seconde de tolérance, un seul Ctrl+C couperait les pages en cours.
+
 `mjs ws` et `mjs serveur` acceptent en plus `--host <adresse>` (ou `ws.host`/`serveur.host` dans `mjs.config.json` selon la commande, `--host` prioritaire) — sans l'un ni l'autre, le transport écoute en local (`127.0.0.1`, MÊME défaut que le pont). Qui veut exposer le serveur le dit explicitement avec `--host ::`. `--port` (comme `ws.port`/`serveur.port`) est validé **entier 1-65535** : hors bornes, la commande sort en erreur avant même de tenter d'ouvrir le port.
 
 ### Drapeaux communs

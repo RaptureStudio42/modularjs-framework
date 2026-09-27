@@ -19,9 +19,16 @@
 //
 //   node scripts/migrate-games-fr-to-en.mjs <dossier>            # migre
 //   node scripts/migrate-games-fr-to-en.mjs <dossier> --dry-run  # montre, n'écrit rien
+//   node scripts/migrate-games-fr-to-en.mjs <dossier> --force    # reprend un verrou vivant
 //
 // Idempotent : un instantané déjà migré est laissé tel quel (compté « déjà à jour »).
 // Écriture atomique (fichier temporaire + rename), même geste que l'adaptateur lui-même.
+//
+// Verrou EXCLUSIF (.mjs-migration.lock, PID du run) contre un SECOND run de CE script sur le même
+// dossier (deux migrations lancées par erreur, ou une reprise après crash) — jamais posé en
+// --dry-run, rien n'y est écrit. Ne protège PAS un serveur (mjs-server FilePersistAdapter) déjà
+// vivant sur ce dossier : il n'expose aujourd'hui aucun fichier de verrou à lire — ARRÊTE-le avant
+// de migrer.
 //
 // ⚠ ENCODAGE — ce script est un `.mjs` autonome (node direct, aucun build) : il ne peut pas importer
 // encodeSnapshot/decodeSnapshot de `src/mjs-server/persist.ts`, il refait donc le même
@@ -54,13 +61,44 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 const TIMERS_RESERVES = { 'µtour': 'µturn', 'µappariement': 'µmatch', 'µvide': 'µempty' }
+const LOCK_NAME        = '.mjs-migration.lock'
+
+// vivant ? — EPERM = vivant mais pas signalable (autre utilisateur), ESRCH/autre = mort
+function isAlive(pid) {
+  try { process.kill(pid, 0); return true }
+  catch (err) { return err.code === 'EPERM' }
+}
+
+// écriture EXCLUSIVE ('wx') : élimine la fenêtre de course pour le cas dominant (aucun verrou
+// existant) ; un verrou orphelin repris garde une fenêtre résiduelle entre l'unlink et le
+// ré-essai, assumée pour un outil lancé à la main (même limite que cli/dev-lock.ts)
+async function acquireLock(dir, force) {
+  const lockPath = join(dir, LOCK_NAME)
+  try {
+    await writeFile(lockPath, String(process.pid), { flag: 'wx' })
+    return lockPath
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err
+  }
+  const pid = Number((await readFile(lockPath, 'utf8')).trim())
+  if (Number.isFinite(pid) && isAlive(pid) && !force) {
+    console.error(`refus : verrou déjà posé par le process ${pid} (encore vivant) — ${lockPath}`)
+    console.error(`si ce n'est pas un autre run de cette migration en cours : relance avec --force`)
+    process.exit(1)
+  }
+  console.warn(`⚠️  verrou orphelin repris (ancien pid ${Number.isFinite(pid) ? pid : '?'}${force ? ', --force' : ''})`)
+  await unlink(lockPath).catch(() => {})
+  await writeFile(lockPath, String(process.pid), { flag: 'wx' })
+  return lockPath
+}
 
 const args   = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
+const force  = args.includes('--force')
 const dir    = args.find(a => !a.startsWith('--'))
 
 if (!dir) {
-  console.error('usage : node scripts/migrate-games-fr-to-en.mjs <dossier> [--dry-run]')
+  console.error('usage : node scripts/migrate-games-fr-to-en.mjs <dossier> [--dry-run] [--force]')
   process.exit(1)
 }
 
@@ -113,50 +151,56 @@ let fichiers
 try { fichiers = await readdir(dir) }
 catch (err) { console.error(`dossier illisible : ${dir} — ${err.message}`); process.exit(1) }
 
+const lockPath = dryRun ? null : await acquireLock(dir, force)
+
 let migres = 0, aJour = 0, ignores = 0
 
 // noms DÉJÀ pris dans le dossier — un id renommé change le nom du fichier (`<id>.json`), jamais
 // au prix d'un écrasement ; tenu à jour au fil des renommages de ce run
 const occupes = new Set(fichiers)
 
-for (const fichier of fichiers) {
-  if (!fichier.endsWith('.json') || fichier.endsWith('.tmp.json')) continue
-  const chemin = join(dir, fichier)
+try {
+  for (const fichier of fichiers) {
+    if (!fichier.endsWith('.json') || fichier.endsWith('.tmp.json')) continue
+    const chemin = join(dir, fichier)
 
-  let snap
-  try { snap = JSON.parse(await readFile(chemin, 'utf8')) }
-  catch (err) { console.warn(`⚠️  illisible, ignoré : ${fichier} — ${err.message}`); ignores++; continue }
+    let snap
+    try { snap = JSON.parse(await readFile(chemin, 'utf8')) }
+    catch (err) { console.warn(`⚠️  illisible, ignoré : ${fichier} — ${err.message}`); ignores++; continue }
 
-  const ancienId = snap.id
-  const faits    = migrer(snap)
-  if (faits.length === 0) { aJour++; continue }
+    const ancienId = snap.id
+    const faits    = migrer(snap)
+    if (faits.length === 0) { aJour++; continue }
 
-  // le fichier porte le nom de l'id (FilePersistAdapter::_chemin) : si l'id bouge, le fichier
-  // suit — sinon l'ancien reste sur le disque et la partie serait restaurée DEUX FOIS au boot
-  const suitLId    = snap.id !== ancienId && fichier === ancienId +'.json'
-  const nouveauNom = suitLId ? snap.id +'.json' : fichier
-  const cible      = suitLId ? join(dir, nouveauNom) : chemin
+    // le fichier porte le nom de l'id (FilePersistAdapter::_chemin) : si l'id bouge, le fichier
+    // suit — sinon l'ancien reste sur le disque et la partie serait restaurée DEUX FOIS au boot
+    const suitLId    = snap.id !== ancienId && fichier === ancienId +'.json'
+    const nouveauNom = suitLId ? snap.id +'.json' : fichier
+    const cible      = suitLId ? join(dir, nouveauNom) : chemin
 
-  if (snap.id !== ancienId && !suitLId) console.warn(`⚠️  ${fichier} : id ${ancienId} → ${snap.id}, mais le fichier ne porte pas l'ancien id — renomme-le à la main en '${snap.id}.json'`)
-  if (suitLId && occupes.has(nouveauNom)) { console.warn(`⚠️  ${fichier} → ${nouveauNom} : la cible existe déjà, ignoré (tranche à la main)`); ignores++; continue }
+    if (snap.id !== ancienId && !suitLId) console.warn(`⚠️  ${fichier} : id ${ancienId} → ${snap.id}, mais le fichier ne porte pas l'ancien id — renomme-le à la main en '${snap.id}.json'`)
+    if (suitLId && occupes.has(nouveauNom)) { console.warn(`⚠️  ${fichier} → ${nouveauNom} : la cible existe déjà, ignoré (tranche à la main)`); ignores++; continue }
 
-  if (dryRun) { console.log(`→ ${fichier}${suitLId ? ` → ${nouveauNom}` : ''} : ${faits.join(', ')}`); migres++; if(suitLId) occupes.add(nouveauNom); continue }
+    if (dryRun) { console.log(`→ ${fichier}${suitLId ? ` → ${nouveauNom}` : ''} : ${faits.join(', ')}`); migres++; if(suitLId) occupes.add(nouveauNom); continue }
 
-  const tmp = join(dir, fichier.replace(/\.json$/, '') + '.' + randomBytes(4).toString('hex') + '.tmp.json')
-  try {
-    await writeFile(tmp, JSON.stringify(snap))
-    await rename(tmp, cible)
-    if (suitLId) {
-      await unlink(chemin)
-      occupes.delete(fichier)
-      occupes.add(nouveauNom)
+    const tmp = join(dir, fichier.replace(/\.json$/, '') + '.' + randomBytes(4).toString('hex') + '.tmp.json')
+    try {
+      await writeFile(tmp, JSON.stringify(snap))
+      await rename(tmp, cible)
+      if (suitLId) {
+        await unlink(chemin)
+        occupes.delete(fichier)
+        occupes.add(nouveauNom)
+      }
+      migres++
+    } catch (err) {
+      console.error(`❌ échec sur ${fichier} — ${err.message}`)
+      await unlink(tmp).catch(() => {})
+      process.exitCode = 1
     }
-    migres++
-  } catch (err) {
-    console.error(`❌ échec sur ${fichier} — ${err.message}`)
-    await unlink(tmp).catch(() => {})
-    process.exitCode = 1
   }
+} finally {
+  if (lockPath) await unlink(lockPath).catch(() => {})
 }
 
 console.log(dryRun

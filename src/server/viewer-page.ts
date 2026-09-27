@@ -43,11 +43,17 @@ function locateViewerSource(fileName: string): string {
 
 const CORE_IMPORT_RE = /const µCore = '([^']+)';/
 
-// (mode `csp`) — même littéral que `writeManifest()` (bundler/index.ts:4397, `this.csp ?
-// 'µ._csp = true;' : ''`) : le manifeste porte déjà l'information, pas besoin de la faire
-// voyager par un paramètre neuf (les 3 call-sites de `getViewerScript`/`viewerScriptElement`,
-// `render-server.ts`, sont hors zone ici).
-const CSP_FLAG_RE = /µ\._csp = true;/
+// (mode `csp`) — même littéral que `manifestBodyLines()` (bundler/index.ts, `this.csp ?
+// 'µ._csp = true;' : ''`), partagé par writeManifest() ('split') ET emitSingleFile() ('bundle') :
+// le manifeste porte déjà l'information, pas besoin de la faire voyager par un paramètre neuf (les
+// 3 call-sites de `getViewerScript`/`viewerScriptElement`, `render-server.ts`, sont hors zone ici).
+// Le manifeste 'bundle' passe par une VRAIE minification esbuild en prod (contrairement à
+// 'split', jamais minifié) : espaces retirés autour du `=`, `true` compacté en `!0` — un littéral
+// figé (`µ._csp = true;`) ne matchait alors plus rien, la visionneuse repartant en mode NON
+// strict (script inline) sur un projet qui l'interdit. Le récepteur `µ` lui-même y est en plus
+// RENOMMÉ par le mangler (variable locale, pas une propriété) : `.propName` (sans exiger `µ`)
+// retrouve la valeur quel que soit le nom que porte son récepteur.
+const CSP_FLAG_RE = /\._csp\s*=\s*(?:true|!0)\b/
 
 // (mode `csp`) — marqueur interne (jamais un vrai chemin d'URL, `\0` ne peut pas y
 // apparaître) : `getViewerScript` le préfixe à l'URL du fichier hashé quand `csp` est actif,

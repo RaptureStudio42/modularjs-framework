@@ -82,11 +82,13 @@ helper = () => $.e
     assert.match(out, /,\s*\["e"\]\)/, `deps attendues ["e"]. got:\n${out}`)
   })
 
-  it('$$ (store) lu dans un helper : exclu, même comportement qu\'aujourd\'hui pour une lecture directe', () => {
+  // la clé du store était exclue des dépendances, lue en direct comme dans un helper : un effet qui
+  // lisait aussi un `$x` local ne se relançait jamais sur elle (cf. effect-store-deps.test.ts)
+  it('$$ (store) lu dans un helper : dépendance "$$x", comme une lecture directe', () => {
     const src = `let helper = function() { return µ.store.x }
 µ.effect(function() { return helper() })`
     const out = annotateEffectDeps(src)
-    assert.match(out, /,\s*\[\]\)/, `deps attendues [] ($$ exclu). got:\n${out}`)
+    assert.match(out, /,\s*\["\$\$x"\]\)/, `deps attendues ["$$x"]. got:\n${out}`)
   })
 
   it('bout en bout via transpile : composant avec helper plate → µ.effect(..., ["a", "b"])', async () => {

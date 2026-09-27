@@ -85,7 +85,8 @@ describe('`let x` puis `x = 5`', () => {
 describe('réassignation d\'une var de <script module>', () => {
   it('e2e : `current` déclarée dans <script module>, réassignée top-level dans <script>', async function () {
     this.timeout(8000)
-    const src = ['<script module>', 'current := null', '</script>', '<script>', 'current = 42', '</script>', '<p>{current}</p>'].join('\n')
+    // `.=` (mutable) : une constante `:=` du module réaffectée par le <script> refuse de compiler
+    const src = ['<script module>', 'current .= null', '</script>', '<script>', 'current = 42', '</script>', '<p>{current}</p>'].join('\n')
     await assert.doesNotReject(() => transpile(src, { moduleName: 'mjs-rune-mv', defaultScriptLang: 'civet' }))
   })
 })

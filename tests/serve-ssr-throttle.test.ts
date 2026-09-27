@@ -8,6 +8,14 @@
 // PARTAGÉ par `mjs dev` ET `mjs serve` — testé ici via `mjs serve` (startRenderServer) pour la
 // preuve principale (mêmes défauts que la sonde), et via `mjs dev` (StaticServer) pour l'en-tête
 // Retry-After (posé par server/index.ts, avec un plafond serré pour une saturation déterministe).
+//
+// Composant DÉLIBÉRÉMENT LENT (même patron que serve-retry-after.test.ts, {await} + setTimeout
+// 300ms) : un rendu de composant TRIVIAL se termine parfois AVANT que la rafale entière n'ait eu
+// la chance d'être envoyée (créer/planifier N promesses fetch coûte du temps CPU, d'autant plus
+// sous charge machine) — la file (RenderGate) ne se remplissait alors jamais vraiment, la preuve
+// devenait dépendante de la vitesse de la machine (parfois 0 503 sur 400 requêtes, sans qu'aucune
+// régression n'ait eu lieu). Un rendu qui reste « en vol » 300ms, LUI, garantit que la rafale
+// entière (aussi lente soit-elle à s'envoyer) trouve encore les premiers rendus non résolus.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -20,23 +28,29 @@ import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 
 after(async () => { await terminateSharedWorkerPool() })
 
-const PRODUIT_SRC = `
+const LENT_SRC = `
 <script lang="coffee">
-@id = ''
+$p = new Promise (resolve) -> setTimeout((-> resolve('fini')), 300)
 </script>
-<h1>{@id}</h1>
+<div class="wrap">
+{await $p}
+  <p class="pending">chargement…</p>
+{success val}
+  <p class="ok">{val}</p>
+{end}
+</div>
 `
 
 describe('plafond de concurrence SSR — 400 requêtes simultanées, défauts', () => {
   it('aucune requête ne bloque le serveur ; certaines 503 ; aucune exception ; réutilisable après la rafale', async function () {
     this.timeout(30000)
-    // 400 et non 40 : un rendu de composant trivial se termine avant que 36 requêtes ne s'accumulent
-    // (transpilation dans le processus principal sous le seuil de fichiers) — la rafale doit dépasser le plafond
+    // 400 et non 40 : même avec un rendu LENT (300ms), la rafale doit dépasser largement le
+    // plafond par défaut (4 + 32 = 36) pour prouver le refus, marge large.
     const N = 400
     const root   = mjsTmp('ssr-throttle')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'produit.mjs'), PRODUIT_SRC)
+    writeFileSync(join(srcDir, 'produit.mjs'), LENT_SRC)
     const config: any = {
       sourceDir: 'src', outputDir: 'out',
       render: { routes: { '/produit/:id': { component: 'mjs-produit', mode: 'ssr' } } },
@@ -50,7 +64,7 @@ describe('plafond de concurrence SSR — 400 requêtes simultanées, défauts', 
       const busy  = results.filter(s => s === 503)
       const autre = results.filter(s => s !== 200 && s !== 503)
       assert.deepEqual(autre, [], 'aucune requête ne doit répondre autre chose que 200/503 (aucune exception serveur)')
-      assert.ok(busy.length > 0, 'au moins une requête doit être refusée (503) — preuve du plafond, ' + N + ' requêtes > défauts 4+32')
+      assert.ok(busy.length > 0, 'au moins une requête doit être refusée (503) — preuve du plafond, ' + N + ' requêtes > défauts 4+32, composant volontairement lent (jamais dépendant de la vitesse de la machine)')
       assert.ok(ok.length > 0, 'au moins une requête doit aboutir (200) — le serveur ne bloque jamais tout')
 
       // le serveur reste utilisable APRÈS la rafale (pas de crash, pas de blocage durable)
@@ -70,7 +84,11 @@ describe('en-tête Retry-After sur mjs dev (StaticServer) — plafond serré pou
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     mkdirSync(outDir, { recursive: true })
-    writeFileSync(join(srcDir, 'produit.mjs'), PRODUIT_SRC)
+    // même composant volontairement LENT que le test précédent : 6 requêtes sur un plafond
+    // 1+1=2 serait déjà probablement suffisant avec un rendu rapide, mais reste soumis au même
+    // risque de fond (event loop trop lent à émettre les 6 fetch() sous charge machine) —
+    // même remède, même garantie.
+    writeFileSync(join(srcDir, 'produit.mjs'), LENT_SRC)
     writeFileSync(join(outDir, 'manifest.js'), 'µ.paths = {};\nµ.version = "abcd1234";\n')
     const config: any = {
       sourceDir: 'src', outputDir: 'out', manifestPath: 'out/manifest.js',

@@ -64,6 +64,8 @@ La forme générale est :
 
 > ⚠️ Muter `$liste[i].champ` re-rend le `{for}` — la mutation profonde est suivie, **d'où qu'elle vienne** : handler `@event` ou méthode ordinaire du `<script>` (voir [Réactivité](03-reactivite.md) → état profond).
 
+> 🛑 **Dans un gestionnaire, `item` et `index` se lisent, ils ne se réaffectent pas.** Le gestionnaire en reçoit une copie : `@click={color = 'noir'}` n'écrirait que cette copie, perdue aussitôt — le build le refuse et dit quoi écrire à la place. Pour changer l'élément, écris dans la liste (`$liste[index] = …`) ou modifie une de ses propriétés (`item.champ = …`). Même règle pour une liaison deux sens : `value=!{item}` est refusé, `value=!{$liste[index]}` écrit vraiment dans la liste. Et même règle pour un `{const}` et pour la valeur d'une branche `{await}` (plus bas).
+
 ### Suivi keyé — `by <clé>`
 
 ```html
@@ -127,7 +129,7 @@ Trois branches, dans cet ordre :
 
 Les mots-clés sont bien **`success`** et **`error`** — pas `then`/`catch`. Les noms liés (`number`, `err` ci-dessus) sont libres mais ne peuvent pas être des mots réservés. Réaffecter `$promise` (ici via le bouton) relance le cycle : on repasse par la branche d'attente. Une promesse remplacée pendant l'attente est ignorée quand elle se résout ou échoue : seule la dernière assignée peut encore faire basculer l'affichage.
 
-> ⚠️ La branche d'attente (`{await …}` → `{success …}`) et les noms liés sont positionnels : `{success}` vient avant `{error}`, et chacun introduit *sa* variable, visible uniquement dans sa branche.
+> ⚠️ La branche d'attente (`{await …}` → `{success …}`) et les noms liés sont positionnels : `{success}` vient avant `{error}`, et chacun introduit *sa* variable, visible uniquement dans sa branche — **gestionnaires et liaisons compris** : `{success fiche}<button @click={enregistrer(fiche)}>` et `<input value=!{fiche.nom}>` lisent la valeur chargée, et un `{for x in fiche.lignes}` de la branche aussi. La variable elle-même ne se réaffecte pas dans un gestionnaire (le build le refuse : l'écriture serait perdue) ; ses propriétés, si.
 
 > 💡 **Le contenu d'une branche `{await}` est un instantané, pas réactif.** Une interpolation `{expr}` à l'intérieur de `{await}`/`{success}`/`{error}` est calculée **une fois**, au moment où MJS bascule sur cette branche — elle ne se remet **pas** à jour si un `$x` qu'elle lit change ensuite tant que la branche reste affichée. C'est cohérent avec le rôle du bloc (afficher un état figé d'une promesse à un instant donné) ; pour du contenu qui doit rester réactif à l'intérieur, passe par un sous-composant.
 
@@ -163,6 +165,8 @@ Usage typique : rejouer une animation d'entrée à chaque changement de valeur, 
 ```
 
 `prixTTC` est recalculé à chaque item, et re-recalculé si un `$` qu'il lit change (le `{for}` parent se reconcilie). Comme `{const}` ne produit aucun DOM, ce n'est pas un bloc à fermer par `{end}` — c'est une ligne, au même titre qu'un `{if}`/`{for}` dans le corps du bloc qui le contient.
+
+Un gestionnaire situé **après** le `{const}`, dans le même bloc, le lit aussi : `<button @click={ajouter(prixTTC)}>` reçoit la valeur de sa ligne, recalculée au moment du clic (comme la variable de boucle, relue dans la liste). Le réaffecter (`@click={prixTTC = 0}`) est refusé au build : c'est une constante.
 
 > ⚠️ **`{const}` n'est supporté qu'à l'intérieur d'un `{for}` (ou d'une branche `{await}`)** — au **niveau racine** du template, il n'est **pas** supporté (V1) et lève une erreur de compilation explicite. Pour une constante au niveau racine, déclare plutôt une **dérivée réactive** dans le `<script>` : `$nom = expression` (auto-derived, cf. [Réactivité](03-reactivite.md)), puis lis `{$nom}`.
 

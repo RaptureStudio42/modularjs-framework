@@ -21,6 +21,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import { transpile, cssTrapWarnings } from '../transpiler/index.js'
+import { findConstReassignment } from '../transpiler/const-reassign.js'
 import { INCLUDE_RE, resolvePartial } from '../transpiler/macros.js'
 import { scanImgTags, isResolvableSrc, parseWidths, rewriteImgTag, type ImgTag } from '../transpiler/img-tag.js'
 import { getAdapter } from '../languages/index.js'
@@ -43,6 +44,7 @@ import { RUNTIME_LABELS } from '../runtime-labels.js'
 import { AT_RESERVED_NAMES, type TagRef, type TagRefKind } from '../parser/index.js'
 import { scanCompiledFeatures } from './features.js'
 import { collectCoreCalls, missingCoreSymbols } from './core-contract.js'
+import { maskInertSameLength } from '../lexer/index.js'
 
 // Pool global partagé entre tous les Bundlers du process (process-wide).
 // Évite de créer/terminer un pool par instance — coût d'init non négligeable
@@ -178,6 +180,9 @@ export interface BundlerOpts {
   /** Lint d'accessibilité (a11y) au build — cf. transpiler/a11y.ts. Défaut `true`
    *  (activé) appliqué côté transpiler, pas ici ; `false` désactive tout le contrôle. */
   a11y?: boolean
+  /** Lint « <form> sans action ni méthode » (ujsForm) — cf. transpiler/ujs-form.ts. Défaut
+   *  `true` (activé) appliqué côté transpiler, pas ici ; `false` désactive tout le contrôle. */
+  ujsForm?: boolean
   /** Un composant qui échoue à compiler garde-t-il son ANCIENNE sortie référencée au manifeste ?
    *  `true` (défaut) en dev/serve : le site reste utilisable pendant qu'on corrige. `false` en
    *  build : la version repêchée peut importer un `mjs_core-<hash>` supprimé depuis — page morte
@@ -632,6 +637,137 @@ interface CacheEntry {
   mangleGen?: number
 }
 
+// Fin (exclue) de la parenthèse/du crochet/de l'accolade ouvert en `s[openIdx]` — profondeur
+// consciente de `(`/`[`/`{` mêlés (un appel dans une valeur par défaut compte), guillemets et
+// gabarits traversés sans s'y arrêter. -1 si jamais refermé (motif abandonné proprement plutôt
+// que de boucler dans le vide).
+function matchingBracket(s: string, openIdx: number): number {
+  const close = s[openIdx] === '{' ? '}' : ']'
+  let depth = 0
+  for (let i = openIdx; i < s.length; i++) {
+    const c = s[i]
+    if (c === '\'' || c === '"' || c === '`') { const e = skipQuotedOrTemplate(s, i, c); if (e < 0) return -1; i = e - 1; continue }
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if (c === ')' || c === ']' || c === '}') { depth--; if (depth === 0 && c === close) return i }
+  }
+  return -1
+}
+
+/** Fin (exclue) d'une chaîne/d'un gabarit ouvert en `start` avec le délimiteur `quote` —
+ *  un gabarit n'est PAS traversé caractère à caractère pour ses `${…}` (inutile ici : seule la
+ *  position de la fermeture compte, jamais son contenu). */
+function skipQuotedOrTemplate(s: string, start: number, quote: string): number {
+  let i = start + 1
+  let depthAccolade = 0   // à l'intérieur d'un ${…} de gabarit
+  while (i < s.length) {
+    const c = s[i]
+    if (c === '\\') { i += 2; continue }
+    if (quote === '`') {
+      if (depthAccolade === 0 && c === '`') return i + 1
+      if (c === '{') depthAccolade++
+      else if (c === '}' && depthAccolade > 0) depthAccolade--
+    } else if (c === quote) return i + 1
+    i++
+  }
+  return -1
+}
+
+/** Position du premier `ch` de `s` à PROFONDEUR ZÉRO (jamais dans une chaîne/un gabarit, ni
+ *  dans une paire `()`/`[]`/`{}` imbriquée) — -1 si absent. */
+function topLevelIndexOf(s: string, ch: string): number {
+  let depth = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '\'' || c === '"' || c === '`') { const e = skipQuotedOrTemplate(s, i, c); if (e < 0) return -1; i = e - 1; continue }
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if (c === ')' || c === ']' || c === '}') depth--
+    else if (depth === 0 && c === ch) return i
+  }
+  return -1
+}
+
+/** Éléments de `s` séparés par une virgule à PROFONDEUR ZÉRO. */
+function splitTopLevelComma(s: string): string[] {
+  const parts: string[] = []
+  let depth = 0, start = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '\'' || c === '"' || c === '`') { const e = skipQuotedOrTemplate(s, i, c); if (e < 0) { i = s.length; break }; i = e - 1; continue }
+    if (c === '(' || c === '[' || c === '{') depth++
+    else if (c === ')' || c === ']' || c === '}') depth--
+    else if (depth === 0 && c === ',') { parts.push(s.slice(start, i)); start = i + 1 }
+  }
+  parts.push(s.slice(start))
+  return parts
+}
+
+/** Retire les espaces de tête/fin de `masked`/`raw` (même longueur, même intervalle appliqué
+ *  aux deux) — décision prise sur `raw` : un espace introduit par le masquage (guillemet blanchi
+ *  en tête d'élément, ex. `'a-b': x`) n'est pas un espace RÉEL, seul `raw` sait faire la
+ *  différence ; trimmer sur `masked` mangerait ce guillemet sans retour possible. */
+function trimAligned(masked: string, raw: string): [string, string] {
+  let start = 0
+  let end = raw.length
+  while (start < end && /\s/.test(raw[start])) start++
+  while (end > start && /\s/.test(raw[end - 1])) end--
+  return [masked.slice(start, end), raw.slice(start, end)]
+}
+
+/**
+ * Identifiants LIÉS par un motif de déstructuration (`pattern` commence par `{` ou `[`, ou est
+ * un identifiant nu avec valeur par défaut facultative) — récursif pour l'imbrication. N'est
+ * PAS un vrai parseur JS (une valeur par défaut avec ternaire imbriquant un `:` peut abuser la
+ * détection de la clé d'un objet, cf. le garde-fou `cleValide` ci-dessous) : suffisant pour
+ * reconnaître ce que Civet compile réellement pour `{...} := expr`/`[...] := expr`.
+ * `pattern` (masqué, chaînes/gabarits/commentaires blanchis, même longueur) porte tout le
+ * découpage structurel (accolades, virgules, `:` de tête) — un commentaire de fin de ligne avec
+ * un `{`/`,`/`:` littéral ne doit pas fausser le comptage. `patternRaw` (texte réel, toujours
+ * même longueur que `pattern`) ne sert qu'à relire un caractère que le masquage efface : une clé
+ * littérale ENTRE GUILLEMETS, cf. `cleValide` ci-dessous.
+ */
+function bindingIdentifiers(pattern: string, patternRaw: string): string[] {
+  const [trimmed, trimmedRaw] = trimAligned(pattern, patternRaw)
+  if (trimmed === '') return []                                 // trou d'un tableau : [a, , b]
+  if (trimmed.startsWith('...')) return bindingIdentifiers(trimmed.slice(3), trimmedRaw.slice(3))
+  if (trimmed[0] === '{' || trimmed[0] === '[') {
+    const close = matchingBracket(trimmed, 0)
+    if (close < 0) return []
+    const inner    = trimmed.slice(1, close)
+    const innerRaw = trimmedRaw.slice(1, close)
+    const isObjet  = trimmed[0] === '{'
+    const idents: string[] = []
+    let offset = 0
+    for (const element of splitTopLevelComma(inner)) {
+      // même intervalle que `element` reporté sur `innerRaw` (longueurs alignées) ; +1 pour la
+      // virgule consommée par splitTopLevelComma entre deux éléments
+      const elementRaw = innerRaw.slice(offset, offset + element.length)
+      offset += element.length + 1
+      const [el, elRaw] = trimAligned(element, elementRaw)
+      if (el === '') continue
+      if (!isObjet) { idents.push(...bindingIdentifiers(el, elRaw)); continue }
+      // objet : `clé: cible` (renommage/nid) ou raccourci `clé` (+ défaut) — un `:` trouvé
+      // n'est un vrai séparateur clé/cible QUE si ce qui le précède ressemble à une clé
+      // (identifiant, chaîne, nombre, `[calculée]`) ; sinon (ex. un `?:` ternaire dans une
+      // valeur par défaut) l'élément entier reste un raccourci. `cle` se lit sur `elRaw` (texte
+      // réel) : sur la vue masquée, une clé entre guillemets (`'a-b'`) est blanchie guillemets
+      // compris et ne matche plus jamais `(['"]).*\1`.
+      const colon = topLevelIndexOf(el, ':')
+      const cle = colon >= 0 ? elRaw.slice(0, colon).trim() : ''
+      const cleValide = /^(?:[A-Za-z_$][\w$]*|(['"]).*\1|\d+|\[[\s\S]*\])$/.test(cle)
+      idents.push(...bindingIdentifiers(
+        colon >= 0 && cleValide ? el.slice(colon + 1) : el,
+        colon >= 0 && cleValide ? elRaw.slice(colon + 1) : elRaw
+      ))
+    }
+    return idents
+  }
+  // IDENT ou IDENT = défaut — seule la partie AVANT le `=` top-level est une cible de liaison,
+  // le reste (valeur par défaut) n'est jamais une déclaration.
+  const eq    = topLevelIndexOf(trimmed, '=')
+  const ident = (eq >= 0 ? trimmed.slice(0, eq) : trimmed).trim()
+  return /^[A-Za-z_$][\w$]*$/.test(ident) ? [ident] : []
+}
+
 // Civet préserve les assignations top-level bares (`foo = 1`) telles quelles.
 // En module ESM (strict mode), c'est illégal — CoffeeScript en mode `bare`
 // les déclare automatiquement avec `var`. On reproduit ce comportement.
@@ -648,13 +784,26 @@ interface CacheEntry {
 // compilateur Civet infère très bien la portée dans la plupart des cas
 // simples, le bug ne se manifeste que sur un agencement précis de son
 // SORTIE déjà compilée).
-export function autoDeclareTopLevelBareAssignments(js: string): string {
+export function autoDeclareTopLevelBareAssignments(js: string, fileName = 'inline.civet'): string {
   const lines = js.split('\n')
+  // décision sur une vue MASQUÉE (chaînes/gabarits/commentaires blanchis, même longueur,
+  // `\n` gardés) : une ligne DE TEXTE (doc exportée en gabarit) qui ressemble à une
+  // déclaration ou une affectation bare ne doit jamais en être une — sans ce masquage, un
+  // `total = 0` cité en exemple DANS un template literal recevait un `var` en plein milieu de
+  // la chaîne (texte affiché corrompu, aucune erreur de build). Le TEXTE réécrit reste
+  // toujours celui de `lines` (jamais la vue masquée) : seul le CHOIX de réécrire se décide dessus.
+  const maskedLines = maskInertSameLength(js).split('\n')
   const declared = new Set<string>()
   // Patterns prouvant qu'un identifiant a déjà une déclaration côté Civet :
   // `var x`, `let x`, `const x`, `export var x`, `export let x`, `export const x`,
   // `export function x`, `function x()`, `for (let|var|const x ...`, etc.
   const declRe = /\b(?:var|let|const|function)\s+([a-zA-Z_$µ][\w$]*)/g
+  // `var|let|const` suivi directement d'un `{`/`[` : déclaration par DÉSTRUCTURATION —
+  // invisible à `declRe` ci-dessus, qui n'admet qu'un identifiant nu juste après le mot-clé.
+  // Sans elle, chaque identifiant LIÉ (ex. `width` de `const {width, height} = getSize()`)
+  // restait absent de `declared` : sa réaffectation plus bas recevait un `var` EN TROP — double
+  // déclaration du même identifiant, `SyntaxError`, build en échec.
+  const destructureRe = /\b(?:var|let|const)\s*(?=[{[])/g
   // ce scan portait sur TOUTES les
   // lignes, y compris celles INDENTÉES (corps de fonction/bloc). Une
   // déclaration LOCALE à une fonction imbriquée (`let count = 5` dans
@@ -670,29 +819,44 @@ export function autoDeclareTopLevelBareAssignments(js: string): string {
   // les assignations bare elles-mêmes ; une déclaration DANS une fonction ne
   // peut de toute façon jamais satisfaire le besoin d'un `var` top-level
   // (portées distinctes).
-  for (const line of lines) {
+  for (let li = 0; li < maskedLines.length; li++) {
+    const line = maskedLines[li]
     if (/^\s/.test(line)) continue
+    const rawLine = lines[li]
     let m: RegExpExecArray | null
     while ((m = declRe.exec(line)) !== null) declared.add(m[1])
+    while ((m = destructureRe.exec(line)) !== null) {
+      const start = m.index + m[0].length
+      for (const ident of bindingIdentifiers(line.slice(start), rawLine.slice(start))) declared.add(ident)
+    }
   }
   // Heuristique simple : on ne préfixe que les lignes top-level (indentation 0).
   // Une ligne `IDENT = expr` (sans var/let/const/return/throw/await/etc devant)
   // est une assignation bare → ajout de `var `.
   const bareAssignRe = /^([a-zA-Z_$µ][\w$]*)\s*=(?!=|>)/
-  return lines.map(line => {
+  const result = lines.map((line, i) => {
+    const maskedLine = maskedLines[i]
     // Ignore les lignes indentées (intérieur de fonction/bloc) : elles ne
     // posent pas le problème ESM strict (la fonction englobante crée son
     // scope ; bare assignment dedans est `implicit global` mais ne crashe
     // pas tant que le module ne tourne pas en strict — en pratique, Civet
     // émet des `var` automatiquement à l'intérieur des fonctions).
-    if (/^\s/.test(line)) return line
-    const m = line.match(bareAssignRe)
+    if (/^\s/.test(maskedLine)) return line
+    const m = maskedLine.match(bareAssignRe)
     if (!m) return line
     const ident = m[1]
     if (declared.has(ident)) return line
     declared.add(ident)
     return 'var ' + line
   }).join('\n')
+  // réaffectation d'un identifiant lié par `:=` (const, simple ou déstructuré, réaffectation
+  // simple/composée/++/--, depuis n'importe quelle portée) : contrôle UNIQUE par résolution de
+  // portée exacte sur le JS ci-dessus, une fois tous les `var` top-level posés — cf.
+  // const-reassign.ts pour ce qu'une détection ligne à ligne comme celle au-dessus ne peut pas
+  // voir (réaffectation dans un bloc indenté, depuis une fonction imbriquée sans homonyme local).
+  const violation = findConstReassignment(result)
+  if (violation) throw new Error(t('bundler.index.civet-reaffectation-constante', { fichier: fileName, nom: violation.name, ligne: violation.line }))
+  return result
 }
 
 // Extraction des directives `@import` :
@@ -745,6 +909,21 @@ function maskCodeBlocks(html: string): string {
   return html
     .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, blank)
     .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, blank)
+}
+
+/** Comme `maskCodeBlocks`, PLUS `<script>`/`<style>`/commentaires HTML — nécessaire avant de
+ *  chercher des balises `<@img>` (scanImgTags, transpiler/img-tag.ts) : une balise `<@img>`
+ *  n'existe que dans le TEMPLATE, jamais dans du code ou un commentaire, contrairement à
+ *  `µasset(...)`/`@import`/`µimage(...)`, qui vivent eux DANS `<script>` et restent scannés là
+ *  (maskCodeBlocks seul, sans cette couche en plus). Sans ce masquage, un `<@img src="…">` cité
+ *  dans une chaîne de `<script>`, dans un `<style>` ou dans un commentaire HTML était traité
+ *  comme une vraie balise (résolution tentée, échec de build si le fichier n'existe pas). */
+function maskImgTagScanZones(html: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, ' ')
+  return maskCodeBlocks(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, blank)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, blank)
+    .replace(/<!--[\s\S]*?-->/g, blank)
 }
 
 /** Extrait les paths cités par `@import name 'path'`, en ignorant ceux
@@ -1048,6 +1227,7 @@ export class Bundler {
   sourceMapMode: NonNullable<BundlerOpts['sourceMap']>
   maxStateVars: BundlerOpts['maxStateVars']
   a11y: BundlerOpts['a11y']
+  ujsForm: BundlerOpts['ujsForm']
   keepFailedComponents: boolean
   /** Environnement RÉSOLU du build — cf. isProd() */
   envMode: NonNullable<BundlerOpts['env']>
@@ -1277,6 +1457,13 @@ export class Bundler {
    *  flushPendingHashCleanup), jamais avant — sinon le manifeste ENCORE PUBLIÉ sur disque peut
    *  nommer un fichier déjà supprimé, le temps du reste du build. */
   private pendingHashCleanup: string[] = []
+  /** liste courante de `outputDir`, mémoïsée le temps d'UN compile() — `cleanupOldHashes()` y
+   *  puise plutôt que de relister le dossier en entier à CHAQUE fichier écrit (des centaines
+   *  d'appels sur un gros projet). Tenue à jour par `writeFileAtomic()` (ajoute le nouveau nom
+   *  dès l'écriture) ; `null` = pas encore lue ce tour (lecture paresseuse, un compile() qui
+   *  n'écrit rien ne relit jamais). Reset à `null` en tête de chaque compile() : un changement
+   *  externe au dossier entre deux compiles doit être revu. */
+  private outputDirListingCache: string[] | null = null
   /** pruneOrphans() — nombre d'erreurs du DERNIER compile(), `-1`
    * tant qu'aucun n'a encore tourné. Sert de garde : un build qui n'a jamais tourné, ou qui a
    * échoué (build partiel, cf. `recoverFailedComponentManifest`), ne doit jamais purger — sur un
@@ -1328,6 +1515,7 @@ export class Bundler {
     this.sourceMapMode = opts.sourceMap ?? 'dev'    // défaut : la carte sert au développement, pas en prod où elle publie le source
     this.maxStateVars = opts.maxStateVars  // défaut (40) appliqué dans transpile() — source unique
     this.a11y = opts.a11y  // défaut (true) appliqué dans transpile() — source unique
+    this.ujsForm = opts.ujsForm  // défaut (true) appliqué dans transpile() — source unique
     this.keepFailedComponents = opts.keepFailedComponents ?? true
     this.preload = opts.preload
     this.viewTransition = opts.viewTransition
@@ -1629,9 +1817,9 @@ export class Bundler {
     const imageMatches = [...maskCodeBlocks(content).matchAll(IMAGE_CALL_RE)]
     // `<@img src="…">` littéral : MÊME file que
     // les µimage(...) ci-dessus (contenu + partials <@include>), texte masqué par
-    // maskCodeBlocks pour ignorer un exemple affiché dans <pre>/<code> (scanImgTags,
-    // transpiler/img-tag.ts — pas d'accès disque là-bas, tout ici).
-    const imgTagMatches: ImgTag[] = scanImgTags(maskCodeBlocks(content))
+    // maskImgTagScanZones pour ignorer un exemple affiché dans <pre>/<code>/<script>/<style>/un
+    // commentaire HTML (scanImgTags, transpiler/img-tag.ts — pas d'accès disque là-bas, tout ici).
+    const imgTagMatches: ImgTag[] = scanImgTags(maskImgTagScanZones(content))
     if (baseDir) {
       const visited = new Set<string>()
       const queue: Array<{ text: string; dir: string }> = [{ text: content, dir: baseDir }]
@@ -1644,7 +1832,7 @@ export class Bundler {
           let partialContent: string
           try { partialContent = readFileSync(resolved.path, 'utf-8') } catch { continue }
           for (const pm of maskCodeBlocks(partialContent).matchAll(IMAGE_CALL_RE)) imageMatches.push(pm)
-          imgTagMatches.push(...scanImgTags(maskCodeBlocks(partialContent)))
+          imgTagMatches.push(...scanImgTags(maskImgTagScanZones(partialContent)))
           queue.push({ text: partialContent, dir: dirname(resolved.path) })
         }
       }
@@ -1782,6 +1970,10 @@ export class Bundler {
     const warnings: string[] = []
     let written = 0
     const start = Date.now()
+    // référence de fraîcheur pour depDigest (cf. son bandeau) : figée UNE fois ici, jamais
+    // recalculée pendant le tour — un fichier édité avant CET instant reste fiable pour
+    // toute la durée du compile(), aussi longue soit-elle.
+    this.compileStartMs = start
     // Reset à chaque compile pour détecter les collisions sur ce run, sans
     // garder l'état d'un build précédent (cas du watcher).
     this.manifestSources = new Map()
@@ -1794,6 +1986,26 @@ export class Bundler {
     // touch reposé) resservirait un contenu périmé — même bug déjà rencontré une fois,
     // reproduit pour de vrai.
     this.depDigestCache = new Map()
+    // idem pour la liste mémoïsée de outputDir (cf. son bandeau) : un compile() qui commence
+    // ne doit jamais partir sur l'instantané du tour précédent.
+    this.outputDirListingCache = null
+    // `cache` et `partialDependents`, EUX, survivent d'un compile() à l'autre PAR CONSTRUCTION
+    // (c'est tout l'intérêt du cache incrémental d'une session `mjs dev`/`watch()` — UNE SEULE
+    // instance de Bundler tourne toute la session, contrairement à `mjs build` qui repart d'un
+    // process neuf à chaque fois) : sans purge, l'entrée d'un fichier renommé ou supprimé y
+    // restait POUR TOUJOURS — une fuite qui grossit à chaque renommage/suppression sur une
+    // session longue. Un simple stat() par entrée existante, négligeable devant le reste d'un
+    // compile().
+    for (const key of this.cache.keys()) {
+      if (!existsSync(key)) this.cache.delete(key)
+    }
+    for (const [partial, parents] of this.partialDependents) {
+      if (!existsSync(partial)) { this.partialDependents.delete(partial); continue }
+      for (const parent of parents) {
+        if (!existsSync(parent)) parents.delete(parent)
+      }
+      if (parents.size === 0) this.partialDependents.delete(partial)
+    }
     // Reset AVANT l'étape 1 (runtime), pas au rythme de
     // `this.manifest` (repartait plus bas, ligne ~1040, APRÈS l'appel à
     // bundleRuntime()) : writeHashed('mjs_core', …) appelé PAR bundleRuntime
@@ -2328,6 +2540,102 @@ export class Bundler {
   }
 
   // --------------------------------------------------------------------------
+  // planColdEmissionOrder(coldQueue, finalPaths) : ordre d'émission topologique d'un pool
+  // d'unités 'cold', PARTAGÉ par emitPendingUnits() et emitSingleFile() (miroirs, même
+  // dépendance sur `.deps`/`finalPaths`).
+  //
+  // Remplace une boucle de Kahn qui rebalayait TOUTE la file à chaque ronde tant qu'au
+  // moins une unité progressait (`while (coldQueue.size > 0 && progress)`) — O(n²) sur une
+  // longue chaîne de dépendances (chaque ronde ne résout qu'une seule unité de plus dans le
+  // pire cas, ex. u0→u1→u2→…→un). Ici : un numéro de « ronde » par unité, calculé UNE fois
+  // par parcours en profondeur MÉMOÏSÉ ET ITÉRATIF — une pile EXPLICITE de frames simule
+  // l'appel récursif `visit(stem)` (un frame par appel, `idx` pointant le prochain dep à
+  // examiner de CE frame) plutôt que de recourir à la pile d'appels JS elle-même : sur une
+  // longue chaîne dont l'ordre d'insertion s'oppose à l'ordre de dépendance (le pire cas
+  // ci-dessus, justement — le tri par stem visite d'abord celle qui plonge le plus profond),
+  // une version récursive descend à une profondeur proportionnelle au nombre d'unités et finit
+  // par lever `RangeError: Maximum call stack size exceeded` — le tour ENTIER échoue alors,
+  // avec un message qui ne nomme aucune unité, sur un volume que l'ancienne boucle O(n²)
+  // traitait sans aucune limite de profondeur (juste plus lentement).
+  //
+  // Sémantique de round/blocked/visiting INCHANGÉE par ce passage à l'itératif — chaque frame
+  // reproduit exactement les 3 vérifications de mémoïsation faites en tête de l'ancien
+  // `visit(stem)` récursif, mais appliquées à CHAQUE dépendance avant de pousser un nouveau
+  // frame plutôt que par un appel qui les referait lui-même : deps déjà en `finalPaths` →
+  // aucune ronde requise ; dep 'cold' dont la POSITION dans `coldQueue` précède la nôtre →
+  // même ronde que lui, la boucle d'origine le voyait déjà résolu en le croisant plus tôt dans
+  // SON propre balayage ; dep 'cold' dont la position nous précède → une ronde de plus que lui,
+  // la boucle d'origine ne le redécouvrait qu'au balayage SUIVANT. Un cycle (dep encore
+  // `visiting`, sur la pile) ou une dépendance qui ne correspond à aucune unité ni à aucune
+  // entrée de `finalPaths` rend l'unité — et tout ce qui en dépend, par propagation le long de
+  // la pile — à jamais sans ronde : reportées en fin de liste, elles échoueront de toute façon
+  // leur propre vérification `deps.every(...)` chez l'appelant. Trie enfin par (ronde,
+  // position) : EXACTEMENT l'ordre observable de l'ancienne boucle (vérifié par
+  // tests/bundler-emit-topological-order.test.ts, qui compare aussi l'itératif à l'ancienne
+  // boucle O(n²) sur des centaines de graphes générés).
+  // --------------------------------------------------------------------------
+  private planColdEmissionOrder(
+    coldQueue: Map<string, Extract<PendingUnit, { kind: 'cold' }>>,
+    finalPaths: Map<string, string>
+  ): string[] {
+    const posOf = new Map<string, number>()
+    let i = 0
+    for (const stem of coldQueue.keys()) posOf.set(stem, i++)
+
+    const round = new Map<string, number>()
+    const blocked = new Set<string>()
+    const visiting = new Set<string>()
+
+    // un frame = un appel de l'ancien `visit(stem)` récursif : `idx` reprend au dep suivant à
+    // chaque tour de la boucle `while`, `r`/isBlocked` sont les accumulateurs LOCAUX à cet appel
+    // (équivalent des variables locales `r`/`isBlocked` de la version récursive).
+    type Frame = { stem: string; deps: readonly string[]; idx: number; r: number; isBlocked: boolean }
+
+    const visit = (start: string): void => {
+      if (blocked.has(start) || round.has(start) || visiting.has(start)) return
+      const stack: Frame[] = [{ stem: start, deps: coldQueue.get(start)!.deps, idx: 0, r: 1, isBlocked: false }]
+      visiting.add(start)
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]
+        if (frame.idx >= frame.deps.length) {
+          // tous les deps de CE frame examinés : finalise, comme la fin de l'ancienne boucle for
+          stack.pop()
+          visiting.delete(frame.stem)
+          if (frame.isBlocked) blocked.add(frame.stem)
+          else round.set(frame.stem, frame.r)
+          continue
+        }
+        // PEEK (pas de ++ ici) : un dep encore non résolu pousse un nouveau frame plus bas SANS
+        // avancer `idx` — ce même dep est réexaminé une fois ce frame de retour en haut de pile
+        // (round/blocked alors renseigné), exactement comme le retour d'un appel `visit(d)`
+        // récursif AVANT que la ligne appelante ne calcule sa contribution. Chaque AUTRE branche
+        // résout `d` sur-le-champ (aucun frame poussé) : `idx` y avance immédiatement.
+        const d = frame.deps[frame.idx]
+        if (finalPaths.has(d)) { frame.idx++; continue }                              // déjà résolu avant ce tour
+        if (!coldQueue.has(d)) { frame.isBlocked = true; frame.idx++; continue }       // dep jamais résolue
+        if (blocked.has(d)) { frame.isBlocked = true; frame.idx++; continue }
+        if (round.has(d)) {
+          const contrib = posOf.get(d)! < posOf.get(frame.stem)! ? round.get(d)! : round.get(d)! + 1
+          if (contrib > frame.r) frame.r = contrib
+          frame.idx++
+          continue
+        }
+        if (visiting.has(d)) { blocked.add(d); frame.isBlocked = true; frame.idx++; continue }   // cycle : reboucle sur un stem en cours
+        visiting.add(d)
+        stack.push({ stem: d, deps: coldQueue.get(d)!.deps, idx: 0, r: 1, isBlocked: false })
+      }
+    }
+
+    for (const stem of coldQueue.keys()) visit(stem)
+
+    return [...coldQueue.keys()].sort((a, b) => {
+      const ra = blocked.has(a) ? Infinity : round.get(a)!
+      const rb = blocked.has(b) ? Infinity : round.get(b)!
+      return ra !== rb ? ra - rb : posOf.get(a)! - posOf.get(b)!
+    })
+  }
+
+  // --------------------------------------------------------------------------
   // emitPendingUnits() : phase C, étapes § 3.13-3.14 de la conception. `this.
   // pendingUnits` contient TOUTES les unités de ce tour (composants .mjs, modules .civet/
   // .coffee, manifeste externe), chacune 'cold' (code prêt, repères non résolus) ou
@@ -2340,11 +2648,11 @@ export class Bundler {
   //    recompilée ICI par le chemin froid (`compileMjsCold`/`compileScriptModuleCold`,
   //    `silent: true` — ne repousse pas les métadonnées déjà hydratées en phase A),
   //    rejoint le pool 'cold'.
-  // 2. Boucle de Kahn : une unité 'cold' s'émet (`writeHashed`) dès que tous ses `deps`
-  //    (stems dont son code contient le repère) ont un chemin final connu. Une unité dont
-  //    un dep n'est JAMAIS résolu (dep en échec, cycle qui aurait échappé à
-  //    `compileWithDedup`) → erreur nommant l'unité et le dep manquant, et
-  //    `recoverFailedComponentManifest` pour un composant — même sort qu'un échec de
+  // 2. Tri topologique (planColdEmissionOrder ci-dessus) : une unité 'cold' s'émet
+  //    (`writeHashed`) dès que tous ses `deps` (stems dont son code contient le repère) ont
+  //    un chemin final connu. Une unité dont un dep n'est JAMAIS résolu (dep en échec, cycle
+  //    qui aurait échappé à `compileWithDedup`) → erreur nommant l'unité et le dep manquant,
+  //    et `recoverFailedComponentManifest` pour un composant — même sort qu'un échec de
   //    compilation classique.
   // --------------------------------------------------------------------------
   private async emitPendingUnits(errors: Error[], warnings: string[]): Promise<{ written: number }> {
@@ -2425,35 +2733,39 @@ export class Bundler {
       }
     }
 
-    // Boucle de Kahn : émet chaque unité 'cold' dès que TOUS ses deps ont un chemin final.
-    let progress = true
-    while (coldQueue.size > 0 && progress) {
-      progress = false
-      for (const [stem, unit] of [...coldQueue]) {
-        if (!unit.deps.every(d => finalPaths.has(d))) continue
-        const finalCode = this.resolvePlaceholders(unit.code, finalPaths)
-        // garde-fou : un repère qui survivrait au remplacement (dep résolu mais mal formé,
-        // défaut de cette méthode elle-même) ne doit JAMAIS partir sur disque.
-        if (finalCode.includes('-ZZZZZZZZ.')) {
-          errors.push(new Error(t('bundler.index.repere-non-resolu-emission', { unite: stem })))
-          coldQueue.delete(stem)
-          progress = true
-          if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
-          continue
-        }
-        const hashedPath = this.writeHashed(unit.stem, unit.ext, finalCode, unit.map)
-        finalPaths.set(stem, hashedPath)
-        if (unit.cacheFields) {
-          this.cache.set(unit.file, { ...unit.cacheFields, hashedPath, embeds: embedsNow, features: unit.features, gen: this.compileGeneration })
-        }
-        written++
-        coldQueue.delete(stem)
-        progress = true
+    // Tri topologique (cf. planColdEmissionOrder) : chaque unité est tentée dans CET ordre.
+    // Un repère résiduel amont (dep qui a lui-même échoué juste en dessous) fait échouer en
+    // cascade tous ses dépendants — ils ne rejoignent jamais `finalPaths`, donc échouent au
+    // même test `deps.every(...)` sans qu'il faille les redétecter explicitement : l'ordre
+    // calculé place TOUJOURS un dep avant son dépendant (cf. bandeau de la méthode).
+    const reportedDirectly = new Set<string>()
+    for (const stem of this.planColdEmissionOrder(coldQueue, finalPaths)) {
+      const unit = coldQueue.get(stem)!
+      if (!unit.deps.every(d => finalPaths.has(d))) continue
+      const finalCode = this.resolvePlaceholders(unit.code, finalPaths)
+      // garde-fou : un repère qui survivrait au remplacement (dep résolu mais mal formé,
+      // défaut de cette méthode elle-même) ne doit JAMAIS partir sur disque.
+      if (finalCode.includes('-ZZZZZZZZ.')) {
+        errors.push(new Error(t('bundler.index.repere-non-resolu-emission', { unite: stem })))
+        reportedDirectly.add(stem)
+        if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
+        continue
       }
+      const hashedPath = this.writeHashed(unit.stem, unit.ext, finalCode, unit.map)
+      finalPaths.set(stem, hashedPath)
+      if (unit.cacheFields) {
+        this.cache.set(unit.file, { ...unit.cacheFields, hashedPath, embeds: embedsNow, features: unit.features, gen: this.compileGeneration })
+      }
+      written++
     }
-    // dep jamais résolu (cycle échappé, unité dont la dépendance a échoué ailleurs) —
-    // erreur nommant l'unité ET le dep manquant, jamais un composant silencieusement omis.
+    // dep jamais résolu (cycle échappé, unité dont la dépendance a échoué ailleurs) — erreur
+    // nommant l'unité ET le dep manquant, jamais un composant silencieusement omis. Exclut les
+    // unités déjà signalées ci-dessus (leur propre repère résiduel, pas une dépendance
+    // manquante) — même distinction que l'ancienne file, qui les retirait de coldQueue au lieu
+    // de les laisser retomber ici. Ordre de POSITION (celui de coldQueue), comme l'ancienne file
+    // qui ne réordonnait jamais ses entrées restantes.
     for (const [stem, unit] of coldQueue) {
+      if (finalPaths.has(stem) || reportedDirectly.has(stem)) continue
       const missing = unit.deps.filter(d => !finalPaths.has(d))
       errors.push(new Error(t('bundler.index.dep-jamais-resolue', { unite: stem, deps: missing.join(', ') })))
       if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
@@ -2542,36 +2854,35 @@ export class Bundler {
       }
     }
 
-    // Boucle de Kahn : identique à emitPendingUnits() dans son principe (émet dès que tous les
-    // deps ont un chemin final), la SORTIE seule diffère (spécificateur virtuel en mémoire,
-    // jamais writeHashed).
-    let progress = true
-    while (coldQueue.size > 0 && progress) {
-      progress = false
-      for (const [stem, unit] of [...coldQueue]) {
-        if (!unit.deps.every(d => finalPaths.has(d))) continue
-        let finalCode = this.resolvePlaceholders(unit.code, finalPaths)
-        if (finalCode.includes('-ZZZZZZZZ.')) {
-          errors.push(new Error(t('bundler.index.repere-non-resolu-emission', { unite: stem })))
-          coldQueue.delete(stem)
-          progress = true
-          if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
-          continue
-        }
-        // `_dir_<Classe>` (cf. bandeau de replaceDirLiteral) : seuls les composants .mjs
-        // émettent cette forme — un module .civet/.coffee/le manifeste externe n'est jamais concerné.
-        if (unit.file.endsWith('.mjs')) finalCode = this.replaceDirLiteral(finalCode)
-        this.bundleVirtualSources.set(stem, this.withInlineSourceMap(finalCode, unit.map))
-        finalPaths.set(stem, `mjs:unit/${stem}`)
-        if (unit.cacheFields) {
-          this.cache.set(unit.file, { ...unit.cacheFields, hashedPath: `mjs:unit/${stem}`, embeds: [], features: unit.features, gen: this.compileGeneration, code: finalCode, map: unit.map })
-        }
-        written++
-        coldQueue.delete(stem)
-        progress = true
+    // Tri topologique (cf. planColdEmissionOrder, PARTAGÉE avec emitPendingUnits()) : identique
+    // à emitPendingUnits() dans son principe (émet dès que tous les deps ont un chemin final,
+    // dans l'ordre calculé), la SORTIE seule diffère (spécificateur virtuel en mémoire, jamais
+    // writeHashed).
+    const reportedDirectly = new Set<string>()
+    for (const stem of this.planColdEmissionOrder(coldQueue, finalPaths)) {
+      const unit = coldQueue.get(stem)!
+      if (!unit.deps.every(d => finalPaths.has(d))) continue
+      let finalCode = this.resolvePlaceholders(unit.code, finalPaths)
+      if (finalCode.includes('-ZZZZZZZZ.')) {
+        errors.push(new Error(t('bundler.index.repere-non-resolu-emission', { unite: stem })))
+        reportedDirectly.add(stem)
+        if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
+        continue
       }
+      // `_dir_<Classe>` (cf. bandeau de replaceDirLiteral) : seuls les composants .mjs
+      // émettent cette forme — un module .civet/.coffee/le manifeste externe n'est jamais concerné.
+      if (unit.file.endsWith('.mjs')) finalCode = this.replaceDirLiteral(finalCode)
+      this.bundleVirtualSources.set(stem, this.withInlineSourceMap(finalCode, unit.map))
+      finalPaths.set(stem, `mjs:unit/${stem}`)
+      if (unit.cacheFields) {
+        this.cache.set(unit.file, { ...unit.cacheFields, hashedPath: `mjs:unit/${stem}`, embeds: [], features: unit.features, gen: this.compileGeneration, code: finalCode, map: unit.map })
+      }
+      written++
     }
+    // même distinction qu'emitPendingUnits() : exclut les unités déjà signalées ci-dessus (leur
+    // propre repère résiduel, pas une dépendance manquante).
     for (const [stem, unit] of coldQueue) {
+      if (finalPaths.has(stem) || reportedDirectly.has(stem)) continue
       const missing = unit.deps.filter(d => !finalPaths.has(d))
       errors.push(new Error(t('bundler.index.dep-jamais-resolue', { unite: stem, deps: missing.join(', ') })))
       if (unit.file.endsWith('.mjs')) this.recoverFailedComponentManifest(unit.file, warnings)
@@ -2699,15 +3010,18 @@ export class Bundler {
       }
     }
     if (!existsSync(this.outputDir)) return out
-    for (const f of readdirSync(this.outputDir)) {
+    // Itère `emittedThisCompile` (ce que CE tour a réellement écrit) plutôt que de relister
+    // outputDir en entier pour ne garder ensuite QUE les noms qui y figurent déjà — sur un
+    // rebuild incrémental (watch), outputDir accumule des centaines de fichiers (variantes
+    // d'image, cœur, CSS…) quand un seul composant vient de changer : lire tout le dossier pour
+    // n'en retenir qu'UN seul est un balayage inutile, répété à chaque compile().
+    for (const f of this.emittedThisCompile) {
       if (!f.endsWith('.js')) continue
-      // Seulement les fichiers ÉMIS PENDANT ce compile() : sinon un
-      // composant en échec ce tour (jamais réécrit) réapparaît dans le tableau
-      // via son ANCIEN fichier hashé, toujours présent sur disque (survivant,
-      // cf. recoverFailedComponentManifest) mais pas une émission de ce tour.
-      if (!this.emittedThisCompile.has(f)) continue
       const full = join(this.outputDir, f)
-      const stat = statSync(full)
+      // best-effort : un nom marqué émis mais absent du disque (théorique) ne doit pas faire
+      // planter le rapport de tailles, simple filet.
+      let stat: ReturnType<typeof statSync>
+      try { stat = statSync(full) } catch { continue }
       if (!stat.isFile()) continue
       const name = f.replace(/-[a-f0-9]{8}\.js$/, '').replace(/\.js$/, '')
       out.push({
@@ -4043,6 +4357,7 @@ export class Bundler {
       varPrefix: this.varPrefix,
       maxStateVars: this.maxStateVars,
       a11y: this.a11y,
+      ujsForm: this.ujsForm,
       baseDir: dirname(filePath),
       sourceDir: this.sourceDir,
       aliasTag: shortName !== moduleName && !aliasReserved ? `mjs-${shortName}` : undefined,
@@ -4313,21 +4628,30 @@ export class Bundler {
   }
 
   // --------------------------------------------------------------------------
-  // depDigest : SHA-256 du CONTENU d'une dépendance, mémoïsé par chemin et
-  // validé par (mtimeNs, size). La fraîcheur reste décidée par le CONTENU — le
-  // mtime ne tranche JAMAIS seul : au moindre écart de date ou de taille on
-  // relit le fichier et on re-hache, exactement comme avant. Ce qui disparaît,
-  // c'est la relecture redondante : un partial partagé par 30 composants était
-  // relu 30 fois par tour, et re-relu à chaque tick du watcher même immobile.
-  // Précision nanoseconde (stat bigint) — deux écritures dans la même
-  // milliseconde restent distinguées.
+  // depDigest : SHA-256 du CONTENU d'une dépendance, mémoïsé par chemin et validé par
+  // (mtimeNs, size) — PLUS la position par rapport à `compileStartMs` (l'instant où CE
+  // compile() a commencé, figé une fois pour tout le tour, cf. son affectation) : un fichier
+  // dont le mtime tombe À ou APRÈS cet instant n'est JAMAIS servi depuis le mémo, quels que
+  // soient (mtimeNs, size). Sans cette garde, (mtimeNs, size) SEULS peuvent mentir : deux
+  // écritures RÉELLES survenant PENDANT le même tour (un fichier resauvegardé alors que le
+  // build tourne encore) peuvent tomber sur la même paire — `touch -d`, ou simplement la
+  // granularité grossière de certains systèmes de fichiers (FAT32, deux secondes) — et le
+  // mémo rendrait alors le digest de l'ANCIEN contenu (mécanisme cassé, prouvé par collision
+  // forcée). Un fichier édité AVANT le début du tour, lui, n'a aucune raison de changer une
+  // fois le tour lancé : rien dans compile() ne réécrit les sources qu'il lit. C'est
+  // exactement le cas le plus courant en `mjs dev`/watch (le fichier qui vient de déclencher
+  // CE tour a été écrit avant que `compile()` ne soit invoqué) — la mémoïsation y reste donc
+  // pleinement active : un partial partagé par 30 composants est relu une seule fois par tour,
+  // pas 30, même s'il vient d'être modifié à l'instant.
   // --------------------------------------------------------------------------
+  private compileStartMs = Date.now()
   private depDigestCache = new Map<string, { mtimeNs: bigint; size: bigint; digest: Buffer }>()
 
   private depDigest(dep: string): Buffer {
-    const st     = statSync(dep, { bigint: true })
-    const cached = this.depDigestCache.get(dep)
-    if(cached && cached.mtimeNs === st.mtimeNs && cached.size === st.size) return cached.digest
+    const st       = statSync(dep, { bigint: true })
+    const mtimeMs  = Number(st.mtimeNs / 1_000_000n)
+    const cached   = this.depDigestCache.get(dep)
+    if(cached && cached.mtimeNs === st.mtimeNs && cached.size === st.size && mtimeMs < this.compileStartMs) return cached.digest
     const digest = createHash('sha256').update(readFileSync(dep)).digest()
     this.depDigestCache.set(dep, { mtimeNs: st.mtimeNs, size: st.size, digest })
     return digest
@@ -4508,6 +4832,53 @@ export class Bundler {
     })
 
     return [...defined]
+  }
+
+  // --------------------------------------------------------------------------
+  // extractAnimationsFromAstCombined : UNE SEULE passe acorn pour usage (µ.anim.X) ET
+  // définition (µ.anim.create/crossfade('X')) sur le MÊME texte — jumeau fusionné des deux
+  // méthodes ci-dessus, réservé aux appelants qui lisent les deux sur un texte IDENTIQUE (un
+  // module .civet/.coffee autonome, cf. son call-site). Le composant .mjs, lui, les appelle sur
+  // DEUX TEXTES DIFFÉRENTS (`output` puis `resolved`, cf. le bandeau de _compileMjsInner) et
+  // garde donc ses deux parses séparés — `output` y échoue quasi systématiquement au parse
+  // (marqueur µasset non résolu, mesuré), retombe sur le repli regex ci-dessus (bon marché) ;
+  // fusionner exigerait de faire tourner `resolveMagicAssets` plus tôt, hors périmètre ici.
+  // --------------------------------------------------------------------------
+  private extractAnimationsFromAstCombined(js: string): { used: string[]; defined: string[] } {
+    const used = new Set<string>()
+    const defined = new Set<string>()
+    let ast: acorn.Node
+    try {
+      ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' })
+    } catch {
+      // même repli qu'extractAnimationsFromAst (usage) ; extractDefinedAnimationsFromAst ne
+      // tente rien de plus sur un parse échoué (cf. son commentaire) — la combinée fait pareil.
+      const matches = js.match(/(?:window\.)?µ\??\.anim\??\.([a-zA-Z0-9_]+)/g) ?? []
+      for (const m of matches) {
+        const name = m.match(/anim\??\.([a-zA-Z0-9_]+)/)?.[1]
+        if (name) used.add(name)
+      }
+      return { used: [...used], defined: [] }
+    }
+    walk.simple(ast, {
+      MemberExpression(node: any) {
+        if (node.property?.type !== 'Identifier') return
+        if (isAnimNode(node.object)) used.add(node.property.name)
+      },
+      CallExpression(node: any) {
+        const callee = node.callee
+        if (!callee || callee.type !== 'MemberExpression') return
+        if (callee.property?.type !== 'Identifier') return
+        const method = callee.property.name
+        if (method !== 'create' && method !== 'crossfade') return
+        if (!isAnimNode(callee.object)) return
+        const arg = node.arguments?.[0]
+        if (!arg || arg.type !== 'Literal' || typeof arg.value !== 'string') return
+        if (method === 'create') defined.add(arg.value)
+        else { defined.add(`${arg.value}Send`); defined.add(`${arg.value}Receive`) }
+      },
+    })
+    return { used: [...used], defined: [...defined] }
   }
 
   // --------------------------------------------------------------------------
@@ -4702,7 +5073,7 @@ export class Bundler {
     // quelles. En ESM strict mode c'est illégal. CoffeeScript en mode `bare`
     // injecte des `var` automatiquement ; on reproduit ce comportement pour
     // Civet en post-process.
-    if (langName === 'civet') js = autoDeclareTopLevelBareAssignments(js)
+    if (langName === 'civet') js = autoDeclareTopLevelBareAssignments(js, basename(filePath))
     // Lève limite 2 (cf. ssr-topo-sort-cycle-detection.test.ts, commentaire en
     // tête) : un `import {x} from './y.module.civet'` NATIF compilait tel quel
     // SANS réécriture vers le nom haché → `x` undefined en prod, silencieusement,
@@ -4728,12 +5099,12 @@ export class Bundler {
     // compilée des .mjs. `compileUsedAnimations` n'émettait donc jamais
     // `µ.anim.crossfade`, laissé `undefined` → `µ.anim.crossfade is not a
     // function` au premier appel côté composant.
-    const fileAnims = this.extractAnimationsFromAst(js)
+    // usage ET définition en UNE SEULE passe acorn : ce module autonome n'a
+    // qu'un seul texte à lire pour les deux (contrairement au composant .mjs, cf. le bandeau de
+    // extractAnimationsFromAstCombined) — deux parses séparés du même texte n'auraient rien
+    // trouvé de plus.
+    const { used: fileAnims, defined: fileDefinedAnims } = this.extractAnimationsFromAstCombined(js)
     for (const a of fileAnims) this.usedAnimations.add(a)
-    // Jumeau du bloc ci-dessus pour les
-    // anims DÉFINIES dynamiquement (µanim.create/crossfade, nom en littéral),
-    // même raisonnement que dans _compileMjsInner.
-    const fileDefinedAnims = this.extractDefinedAnimationsFromAst(js)
     for (const a of fileDefinedAnims) this.definedAnimations.add(a)
     // ORDRE CRITIQUE (bug trouvé en écrivant les tests de la levée limite 1) :
     // `resolveMagicAssets` DOIT tourner AVANT `autoImportMu`. Un `@import`
@@ -5534,6 +5905,20 @@ export class Bundler {
       try { unlinkSync(tmp) } catch {}
       throw e
     }
+    // tient la liste mémoïsée de outputDir à jour (cf. son bandeau) : un fichier qui vient
+    // d'apparaître doit être visible du PROCHAIN cleanupOldHashes() de CE tour, sans reforcer
+    // une lecture disque. `dirname(target) === this.outputDir` : cette méthode sert aussi à
+    // d'autres dossiers (aucun cas réel actuellement, filet).
+    if (this.outputDirListingCache && dirname(target) === this.outputDir) {
+      this.outputDirListingCache.push(basename(target))
+    }
+  }
+
+  // currentOutputDirListing() : jumeau lazy de outputDirListingCache (cf. son bandeau) — lit
+  // outputDir UNE fois par compile(), au premier besoin, jamais plus.
+  private currentOutputDirListing(): string[] {
+    if (this.outputDirListingCache === null) this.outputDirListingCache = readdirSync(this.outputDir)
+    return this.outputDirListingCache
   }
 
   // writeIfChanged() : jumeau de la garde déjà en place dans writeManifest() (même motif
@@ -5567,7 +5952,10 @@ export class Bundler {
   // ENCORE PUBLIÉ (celui qu'un navigateur/CDN a déjà chargé) nommait un fichier déjà disparu.
   private cleanupOldHashes(baseName: string, ext: string, keepFilenames: string[]): void {
     const re = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[a-f0-9]{8}${ext.replace('.', '\\.')}(\\.map)?$`)
-    for (const f of readdirSync(this.outputDir)) {
+    // mémoïsée le temps du compile() (cf. currentOutputDirListing) plutôt que relue à CHAQUE
+    // appel : un projet de plusieurs centaines d'unités relisait sinon outputDir en entier une
+    // fois PAR fichier écrit.
+    for (const f of this.currentOutputDirListing()) {
       if (re.test(f) && !keepFilenames.includes(f)) {
         this.pendingHashCleanup.push(join(this.outputDir, f))
       }
@@ -5981,13 +6369,33 @@ export class Bundler {
       .sort((a, b) => a - b)
     if (voulues.length === 0) return base
 
-    const variantes = await generateVariants({
-      bytes,
-      baseName: basename(source, extname(source)),
-      widths:   voulues,
-      formats:  this.imageConfig.formats,
-      quality:  this.imageConfig.quality,
-    })
+    // sharp refuse une largeur non finie avec un message INTERNE brut (anglais, sans nommer
+    // l'image) : un format non reconnu par `readImageSize` (`taille` = null) laisse passer
+    // N'IMPORTE QUELLE largeur au filtre ci-dessus, `Infinity` compris (un `widths="…"` de
+    // centaines de chiffres convertit en `Infinity` via `Number(...)`). Refus clair ICI, qui
+    // NOMME l'image et la largeur, indépendant de toute garde faite ailleurs (`<@img
+    // widths="…">` a la sienne, côté transpiler — celle-ci tient seule).
+    const infinie = voulues.find(w => !Number.isFinite(w))
+    if (infinie !== undefined) {
+      throw new Error(t('bundler.index.img-largeur-infinie', { chemin: logicalPath, valeur: String(infinie) }))
+    }
+
+    let variantes: Awaited<ReturnType<typeof generateVariants>>
+    try {
+      variantes = await generateVariants({
+        bytes,
+        baseName: basename(source, extname(source)),
+        widths:   voulues,
+        formats:  this.imageConfig.formats,
+        quality:  this.imageConfig.quality,
+      })
+    } catch (e: any) {
+      // sharp peut échouer pour d'autres raisons qu'une largeur infinie (fichier corrompu,
+      // combinaison largeur/format refusée) : jamais son message brut tout seul, toujours
+      // nommer l'image concernée (cf. le message jumeau de generateVariants, qui nomme lui
+      // largeur et format).
+      throw new Error(t('bundler.index.img-variante-echec', { chemin: logicalPath, erreur: e?.message ?? String(e) }))
+    }
     if (!variantes) {
       if (!this.sharpWarned) {
         this.sharpWarned = true
@@ -6081,32 +6489,45 @@ export class Bundler {
   // preResolveAssets (cf. son commentaire) : reconnaît désormais aussi la
   // forme `mjs.asset(...)` (sigil alternatif), pas seulement `µ`.
   async resolveMagicAssets(content: string): Promise<string> {
-    const matches = [...content.matchAll(ASSET_RE)]
+    // un `µasset(...)` cité en simple EXEMPLE dans un gabarit compilé en chaîne
+    // (`export helpText = \`...µasset('x')...\``, doc/tuto d'un module) ne doit jamais être
+    // résolu : sur la vue masquée (chaînes/gabarits/commentaires blanchis, même longueur), seul
+    // le jeton de tête d'un VRAI appel reste visible tel quel — celui d'un exemple, avalé par le
+    // gabarit qui l'entoure, disparaît avec le reste (blanchi). La forme à guillemet EXTÉRIEUR
+    // (`"µasset('…')"`, émise par le compilateur lui-même pour `@import`) reste TOUJOURS résolue
+    // sans cette garde : ce motif n'est jamais un texte d'exemple, et ses propres guillemets se
+    // font eux aussi blanchir en bloc (rien à distinguer dessus).
+    const masked  = maskInertSameLength(content)
+    const matches = [...content.matchAll(ASSET_RE)].filter(m => m[1] !== '' || masked[m.index!] === content[m.index!])
     let result = content
     if (matches.length > 0) {
       // PERF — dédup par logicalPath :
       // resolveOneAsset (I/O disque + copie hashée) UNE seule fois par chemin,
-      // pas une fois par occurrence. Puis UN SEUL passage `replace(RE, fn)` au
-      // lieu de N × `result.replace(from,…)` — l'ancienne boucle était O(n²)
-      // ET ré-écrivait la MÊME (première) occurrence quand 2 matches avaient un
-      // texte identique (2e occurrence jamais remplacée).
+      // pas une fois par occurrence.
       const uniquePaths = [...new Set(matches.map((m) => m[4]))]
       const webPaths = new Map<string, string>()
       await Promise.all(uniquePaths.map(async (lp) => {
         webPaths.set(lp, await this.resolveOneAsset(lp))
       }))
-      // Replacer FONCTION : sa valeur de retour est utilisée TELLE QUELLE, sans
-      // interprétation des patterns de remplacement (`$&`, `$1`, `` $` ``, `$'`,
-      // `$$`) — un `webPath` contenant `$` (urlPrefix/outputDir inhabituel) ne
-      // peut plus corrompre le texte injecté.
-      result = content.replace(ASSET_RE, (_full, outerQuote, bs, innerQuote, logicalPath) => {
+      // Remplacement par POSITION (jamais un `.replace(ASSET_RE, fn)` global sur tout
+      // `content` : il retrouverait aussi les occurrences filtrées ci-dessus) — un seul
+      // passage, la valeur est CONCATÉNÉE (jamais passée à `.replace()`) : aucune
+      // interprétation des patterns spéciaux (`$&`, `$1`, `` $` ``, `$'`, `$$`) qu'un
+      // `webPath` contenant `$` (urlPrefix/outputDir inhabituel) pourrait sinon injecter.
+      let out    = ''
+      let cursor = 0
+      for (const m of matches) {
+        const [outerQuote, bs, innerQuote, logicalPath] = [m[1], m[2], m[3], m[4]]
         const webPath = webPaths.get(logicalPath)!
+        out    += content.slice(cursor, m.index)
         // Guillemet EXTÉRIEUR présent (`"µasset('…')"` entier) → remplace TOUT
         // (guillemets externes inclus), comme avant. Sinon → ré-échappe le
         // webPath avec le MÊME guillemet/backslash que la source (cf.
         // commentaire de ASSET_RE ci-dessus).
-        return outerQuote ? `${outerQuote}${webPath}${outerQuote}` : `${bs}${innerQuote}${webPath}${bs}${innerQuote}`
-      })
+        out    += outerQuote ? `${outerQuote}${webPath}${outerQuote}` : `${bs}${innerQuote}${webPath}${bs}${innerQuote}`
+        cursor  = m.index! + m[0].length
+      }
+      result = out + content.slice(cursor)
     }
     // Motif dominant de ce genre de bogue :
     // « erreur avalée → build vert ». Un placeholder `/MISSING_MJS_ASSET:xxx`
@@ -6118,14 +6539,11 @@ export class Bundler {
     // utilisateur qui clique dessus. Une compilation ne doit JAMAIS réussir
     // avec un asset non résolu — on throw pour que l'appelant (_compileMjsInner
     // / _compileScriptModuleInner) le remonte dans stats.errors.
-    // Un
-    // `µasset('chemin')` AFFICHÉ en EXEMPLE dans un `<pre>`/`<code>` de doc/tuto
-    // (pas une vraie référence) était résolu → placeholder → puis, au scan fatal
-    // ci-dessous, cassait TOUT le build. On masque les blocs de code avant le
-    // scan : un placeholder qui ne survit QUE dans un `<pre>`/`<code>` ne fait
-    // plus échouer le build (il reste dans la sortie comme texte d'exemple, non
-    // fatal). NB : afficher l'exemple VERBATIM (au lieu du placeholder) exigerait
-    // aussi le masquage côté transpiler `replaceMagicAssets` — hors périmètre ici.
+    // Un `µasset('chemin')` AFFICHÉ en EXEMPLE dans un `<pre>`/`<code>` de doc/tuto reste
+    // maintenant verbatim (filtré ci-dessus par le masquage, jamais résolu ni transformé en
+    // placeholder) : le masquage `<pre>`/`<code>` ci-dessous protège désormais surtout le
+    // jumeau côté transpiler (`replaceMagicAssets`, hors périmètre ici), qui peut encore
+    // laisser fuir un `MISSING_MJS_ASSET` dans un bloc de doc à un stade antérieur du pipeline.
     // Un vrai asset manquant HORS `<pre>` reste, lui, fatal.
     const stillMissing = maskCodeBlocks(result).match(/\/MISSING_MJS_ASSET:([^\s'"]+)/)
     if (stillMissing) {
@@ -6244,6 +6662,9 @@ export class Bundler {
     } else if (ext === '.civet') {
       const adapter = getAdapter('civet')
       js = (await adapter.compileToJs(code, { fileName: real })).code
+      // constante `:=` réaffectée : même refus que pour un module `.civet` autonome
+      const constante = findConstReassignment(js)
+      if (constante) throw new Error(t('bundler.index.civet-reaffectation-constante', { fichier: real, nom: constante.name, ligne: constante.line }))
     } else if (ext === '.ts') {
       const adapter = getAdapter('ts')
       js = (await adapter.compileToJs(code, { fileName: real })).code
@@ -7292,6 +7713,7 @@ export class Bundler {
       varPrefix: this.varPrefix,
       maxStateVars: this.maxStateVars,
       a11y: this.a11y,
+      ujsForm: this.ujsForm,
     })
     return output
   }

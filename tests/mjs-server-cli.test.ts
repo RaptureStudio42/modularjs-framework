@@ -71,6 +71,14 @@ describe('mjs.config.json — section `serveur` (validation stricte, patron `ws`
     assert.deepEqual(found!.config.serveur?.antiCheat?.movesPerIdentity, [40, 1000])
   })
 
+  it('serveur.ban et serveur.limits.rateBy : mêmes formes que ws.*, valeurs fausses refusées', () => {
+    const cfg = findConfig(writeConfig({ serveur: { ban: { by: 'account', duration: 60000 }, limits: { rateBy: 'account' } } }))!.config
+    assert.deepEqual(cfg.serveur?.ban, { by: 'account', duration: 60000 })
+    assert.equal((cfg.serveur?.limits as any)?.rateBy, 'account')
+    assert.throws(() => findConfig(writeConfig({ serveur: { ban: { within: -1 } } })), /serveur\.ban\.within doit être un entier > 0/)
+    assert.throws(() => findConfig(writeConfig({ serveur: { limits: { rateBy: 'tout' } } })), /serveur\.limits\.rateBy invalide/)
+  })
+
   it("throw sur serveur.X inconnu, avec suggestion orthographique ('entrry' → 'entry')", () => {
     const root = writeConfig({ serveur: { entrry: 'serveur.js' } })
     assert.throws(() => findConfig(root), /serveur\.entrry : clé inconnue.*tu voulais dire 'entry'/)
@@ -287,6 +295,11 @@ describe('cli/server — buildServeurRunPlan (priorités port/host/heartbeat/lim
     const plan = buildServeurRunPlan({ options: { antiCheat: { movesPerIdentity: [5, 500] } } }, { antiCheat: { movesPerIdentity: [99, 99] } }, undefined, m => warns.push(m))
     assert.deepEqual((plan.options as any).antiCheat, { movesPerIdentity: [5, 500] })
     assert.ok(warns.some(w => /antiCheat.*entry prime/.test(w)))
+  })
+
+  it('ban : défini SEULEMENT dans la config → utilisé sans warn', () => {
+    const plan = buildServeurRunPlan({ options: {} }, { ban: { by: 'ip' } }, undefined, noWarn)
+    assert.deepEqual((plan.options as any).ban, { by: 'ip' })
   })
 
   it('antiTriche : absent des deux → undefined (aucun quota, comportement mjsServer() par défaut)', () => {

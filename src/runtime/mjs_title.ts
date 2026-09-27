@@ -392,11 +392,19 @@ function __titleTouchClearPress() {
   __titleTouchEl = null;
 }
 function __titleOnTouchStart(e) {
+  // même garde anti double-passage shadow → document que __titleOnEnter/
+  // __titleOnLeave (cf. bandeau plus haut) : un `touchstart` composé traverse
+  // la racine shadow PUIS document, chacune écoutée séparément — sans garde,
+  // la 2e passe (root = document) écrasait `root` et le minuteur programmé
+  // par la 1re passe (root = shadow), faisant naître la bulle en repli
+  // document.body même quand Popover est disponible dans le shadow.
+  if (e._mjs_mjsTitleHandled) { return; }
   __titleLastTouchAt = Date.now();
   var touch = e.touches && e.touches[0];
   if (!touch) { return; }
   var el = __titleAncestor(e.target);
   if (!el) { return; }
+  e._mjs_mjsTitleHandled = true;
   __titleTouchClearPress();
   __titleTouchEl     = el;
   __titleTouchStartX = touch.clientX;
@@ -421,6 +429,11 @@ function __titleOnTouchMove(e) {
   if (dist > TITLE_TOUCH_DRIFT_PX) { __titleTouchClearPress(); }
 }
 function __titleOnTouchEnd(e) {
+  // même garde double-passage que __titleOnTouchStart (pendant local à
+  // `touchstart`, cf. son commentaire) — posée ici aussi pour l'analogue
+  // « leave » de l'appui tactile, par symétrie avec __titleOnEnter/__titleOnLeave.
+  if (e._mjs_mjsTitleHandled) { return; }
+  e._mjs_mjsTitleHandled = true;
   __titleTouchClearPress();
   if (!__titleTouchShown || !__titleCurrent) { return; }
   if (__titleTouchHideTimer != null) { clearTimeout(__titleTouchHideTimer); }

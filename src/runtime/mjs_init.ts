@@ -117,20 +117,15 @@ try {
 // ----------------------------------------------------------------------------
 µ._mjs_initStack = [];
 
-µ._mjs_pushComponent = function(c) {
-  µ._mjs_initStack.push(c);
-};
-
-µ._mjs_popComponent = function() {
-  return µ._mjs_initStack.pop();
-};
-
+// Push/pop de la pile : jamais exposés en fonctions à part — `µ.activeComponent`
+// (juste en dessous) EST le point d'entrée, `= obj` pousse et `= null` dépile.
+// Un ancien couple `_mjs_pushComponent`/`_mjs_popComponent` faisait doublon,
+// jamais appelé nulle part dans src/ (aucun compilateur ne les émet), retiré.
 Object.defineProperty(µ, 'activeComponent', {
   get: function() {
     return µ._mjs_initStack.length > 0 ? µ._mjs_initStack[µ._mjs_initStack.length - 1] : null;
   },
   set: function(c) {
-    // Compat backward : un setter `µ.activeComponent = X` continue à marcher.
     // `= null` est interprété comme pop, `= obj` comme push.
     if (c === null || c === void 0) {
       µ._mjs_initStack.pop();
@@ -665,8 +660,8 @@ var mjsLogLevel = function() {
       // template cache. cloneNode(true) conservera le namespace à chaque clone.
       var wrap = document.createElement('template');
       wrap.innerHTML = '<svg>' + html + '</svg>';
-      var svg = wrap.content.firstChild;
-      while (svg && svg.firstChild) { tpl.content.appendChild(svg.firstChild); }
+      var svg = wrap.content.firstChild, child;
+      if (svg) { while ((child = svg.firstChild)) { tpl.content.appendChild(child); } }
     } else {
       tpl.innerHTML = html;
     }

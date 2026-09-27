@@ -65,12 +65,14 @@ Le nerf de MJS : chaque symbole encode une **portée de réactivité** différen
 | `µderived $x = expr, $a, $b` | dérivé à dépendances déclarées | [3](03-reactivite.md) |
 | `µtoggle($x, 'a', 'b')` | bascule / cycle — la liste des valeurs EST le cycle (0 valeur = booléen, 1 valeur = présent/absent) ; cible = tout chemin assignable (`$x`, `$$x`, `§x`, `µtheme`, `@prop`, variable nue, `$o.a.b`) | [3](03-reactivite.md) |
 | `µminmax $x, min, max` | borne une valeur réactive | [3](03-reactivite.md) |
+| `µminmax $x.volume, min, max` | borne une propriété d'un objet réactif (chemin fixe) | [3](03-reactivite.md) |
 | `µevery 2500, ->` | répète le corps toutes les N ms, **en tirant tout de suite** ; coupé au démontage ; rend une main d'arrêt | [16](16-cycle-de-vie.md) |
 | `µraw` | état brut, non réactif | [11](11-etat-brut.md) |
 | `µread $x` — ou `µread($x)` | lit un slot d'état **sans s'y abonner** (≈ `untrack`) ; parenthèses optionnelles | [11](11-etat-brut.md) |
 | `µwrite $x, v` — ou `µwrite($x, v)` | écrit un slot d'état **sans notifier** (pas de re-rendu) | [11](11-etat-brut.md) |
 | `µdebug $x` | point d'arrêt réactif (log + `debugger`, à chaque changement) | [18](18-pieges.md) |
 | `µinspect $x` | log console From/To à chaque mutation (sans pause) | [18](18-pieges.md) |
+| `µinspect $x.foo` | même suivi, mais n'affiche que les changements de ce chemin | [18](18-pieges.md) |
 | `µasset(chemin)` | résout un chemin d'asset (marche aussi en CSS) ; idiome polices : `<@head><style>@font-face{src:url(µasset('…'))}</style></@head>` | — |
 | `µimport(chemin)` | chargement paresseux d'un module `.js` (littéral, hashé au build ; retourne la promesse du module) — alias `mjsimport` | [2](02-composant.md) |
 | `µtheme` | thème actif du document, lecture/écriture | [31](31-themes.md) |

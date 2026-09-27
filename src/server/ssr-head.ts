@@ -68,48 +68,83 @@ export function writeHashedAsset(outputDir: string, urlPrefix: string, baseName:
 // apostrophes des sélecteurs d'attribut (`[data-mjs-theme='light']`), déjà présentes telles quelles.
 export const FRAMEWORK_THEME_CSS = ":where(:root),:where([data-mjs-theme='light']),:where([theme='light']){--mjs-surface:#fff;--mjs-fg:#222;--mjs-fg-muted:#666;--mjs-border:#d0d0d0;--mjs-hover:#f2f2f2;--mjs-selected:#e6f0ff;--mjs-accent:#3b82f6;--mjs-shadow:rgba(0,0,0,.18)}\n:where([data-mjs-theme='dark']),:where([theme='dark']){--mjs-surface:#232936;--mjs-fg:#e8eaed;--mjs-fg-muted:#9aa3af;--mjs-border:#3a4150;--mjs-hover:#2c3442;--mjs-selected:#2c3e5d;--mjs-accent:#3b82f6;--mjs-shadow:rgba(0,0,0,.55)}"
 
-// extrait un littéral JSON (objet `{...}` ou chaîne `"..."`) qui suit `marker` dans `src` — PAS une
+// scanne un littéral JS (objet `{...}` ou chaîne `"..."`/`'...'`) démarrant en `start` — PAS une
 // regex gloutonne/paresseuse : les valeurs sont du CSS, plein d'accolades et de guillemets, qui
 // casseraient un simple `match`. Balayage caractère par caractère avec suivi de profondeur/état de
 // chaîne (échappements compris) — ROBUSTE même si du code suit sur la MÊME ligne après le littéral
-// (cas réel de `µ._themeCss = "…"; if (…) { … }`, cf. bundler/index.ts writeManifest()).
-function extractJsonAfter(src: string, marker: string): unknown {
-  const at = src.indexOf(marker)
-  if (at === -1) return undefined
-  let i = at + marker.length
-  while (i < src.length && /\s/.test(src[i])) i++
-  const start = i
+// (cas réel de `µ._themeCss = "…"; if (…) { … }`, cf. bundler/index.ts manifestBodyLines()).
+// `new Function(...)` plutôt que `JSON.parse` : un manifeste MINIFIÉ (mode 'bundle', vrai esbuild
+// en prod) déquote les clés d'objet valides comme identifiants JS (`{"light":…}` → `{light:…}`) —
+// un objet JS valide, mais plus du JSON strict. Le manifeste est TOUJOURS notre propre sortie de
+// build (jamais une entrée réseau) — même niveau de confiance que le `window.eval()` du bundle
+// entier ailleurs dans le SSR (renderToString.ts), pas une frontière de confiance nouvelle.
+function scanJsLiteral(src: string, start: number): unknown {
+  let i = start
   if (src[i] === '{') {
-    let depth = 0, inStr = false, esc = false
+    let depth = 0, inStr = false, quote = '', esc = false
     for (; i < src.length; i++) {
       const c = src[i]
       if (inStr) {
         if (esc) esc = false
         else if (c === '\\') esc = true
-        else if (c === '"') inStr = false
+        else if (c === quote) inStr = false
       } else {
-        if (c === '"') inStr = true
+        if (c === '"' || c === "'") { inStr = true; quote = c }
         else if (c === '{') depth++
         else if (c === '}') { depth--; if (depth === 0) { i++; break } }
       }
     }
-    return JSON.parse(src.slice(start, i))
-  }
-  if (src[i] === '"') {
+  } else if (src[i] === '"' || src[i] === "'") {
+    const quote = src[i]
     let esc = false
     for (i++; i < src.length; i++) {
       const c = src[i]
       if (esc) esc = false
       else if (c === '\\') esc = true
-      else if (c === '"') { i++; break }
+      else if (c === quote) { i++; break }
     }
-    return JSON.parse(src.slice(start, i))
+  } else {
+    return undefined
   }
-  return undefined
+  // littéral présent mais illisible = PANNE, jamais un « absent » : l'erreur remonte jusqu'à
+  // buildSsrHead, qui la journalise une seule fois et omet toute la tête
+  return new Function(`"use strict";return (${src.slice(start, i)});`)()
+}
+
+// Position juste après `<sigil><suffix>` (`µ._themeCssByName`, `µ._themeCss`…) suivie d'un `=` —
+// espaces optionnels des deux côtés, absents sur un manifeste minifié — puis du littéral JS. La
+// recherche porte sur `.<suffix>` SEUL (récepteur ignoré, pas figé sur `µ`) : en mode 'bundle',
+// une vraie minification esbuild renomme `µ` (variable locale du manifeste assemblé) en un
+// identifiant court QUELCONQUE — jamais les noms de PROPRIÉTÉ (`_themeCssByName`…, hors du motif
+// `_mjs_*` que `mangleProps` cible, cf. bundler/minify.ts), qui restent le seul repère fiable.
+// `suffix` (`_themeCss`) est un PRÉFIXE de `_themeCssByName` : le caractère qui suit le nom doit
+// être un espace ou un `=`, jamais la suite d'un identifiant, sinon la recherche continue plus loin.
+function extractJsonAfter(src: string, suffix: string): unknown {
+  const marker = '.' + suffix
+  let searchFrom = 0
+  for (;;) {
+    const at = src.indexOf(marker, searchFrom)
+    if (at === -1) return undefined
+    const afterChar = src[at + marker.length]
+    if (afterChar !== undefined && afterChar !== '=' && !/\s/.test(afterChar)) {
+      searchFrom = at + marker.length
+      continue
+    }
+    let i = at + marker.length
+    while (i < src.length && /\s/.test(src[i])) i++
+    if (src[i] === '=') { i++; while (i < src.length && /\s/.test(src[i])) i++ }
+    const value = scanJsLiteral(src, i)
+    if (value !== undefined) return value
+    searchFrom = at + marker.length
+  }
 }
 
 // caches par mtimeMs (même patron que readBuildVersion, render-server.ts:69-78) : relecture/
 // recompilation SEULEMENT si le fichier source a changé.
+// clé de themeCssCache : manifestPath + defaultThemeName (séparateur de contrôle, jamais présent
+// dans un chemin) — un SEUL thème par manifeste était mis en cache, un défaut différent sur le
+// MÊME manifeste (clair puis sombre) rendait encore le premier, silencieusement.
+const THEME_CACHE_KEY_SEP = String.fromCharCode(1)
 const themeCssCache = new Map<string, { mtimeMs: number, css: string }>()
 const rootCssCache  = new Map<string, { mtimeMs: number, css: string }>()
 
@@ -131,19 +166,20 @@ function logHeadExtraFailureOnce(e: any): void {
 // d'attribut. Manifeste absent/introuvable = section normalement omise, jamais une panne.
 function readAppThemeCss(manifestPath: string | null, defaultThemeName: string): string {
   if (!manifestPath || !existsSync(manifestPath)) return ''
-  const mtimeMs = statSync(manifestPath).mtimeMs
-  const cached = themeCssCache.get(manifestPath)
+  const mtimeMs  = statSync(manifestPath).mtimeMs
+  const cacheKey = manifestPath + THEME_CACHE_KEY_SEP + defaultThemeName
+  const cached   = themeCssCache.get(cacheKey)
   if (cached && cached.mtimeMs === mtimeMs) return cached.css
   const src = readFileSync(manifestPath, 'utf-8')
-  const byName = extractJsonAfter(src, 'µ._themeCssByName = ') as Record<string, string> | undefined
+  const byName = extractJsonAfter(src, '_themeCssByName') as Record<string, string> | undefined
   let css = ''
   if (byName && typeof byName[defaultThemeName] === 'string') {
     css = byName[defaultThemeName]
   } else {
-    const whole = extractJsonAfter(src, 'µ._themeCss = ')
+    const whole = extractJsonAfter(src, '_themeCss')
     if (typeof whole === 'string') css = whole
   }
-  themeCssCache.set(manifestPath, { mtimeMs, css })
+  themeCssCache.set(cacheKey, { mtimeMs, css })
   return css
 }
 

@@ -80,7 +80,7 @@ function compileCssBlock(source: string, lang: StyleLang): string {
     })
     // sass pose une marque d'ordre d'octets (U+FEFF) en tête dès que la feuille contient un
     // caractère non-ASCII ; le navigateur la lit comme un sélecteur et JETTE la première règle
-    return result.css.replace(/\uFEFF/g, '')
+    return result.css.replace(/^\uFEFF/, '')
   }
   // CSS pur : compaction whitespace
   return compactCss(source)
@@ -96,6 +96,12 @@ function compileCssBlock(source: string, lang: StyleLang): string {
 // derrière, et pire, la vraie chaîne suivante perdait sa protection (son guillemet ouvrant
 // servant de fermeture à la fantôme). Fix : /* … */ recopié VERBATIM avant le test des
 // guillemets ; jamais refermé → recopié jusqu'à la fin.
+//
+// blancs CSS reconnus — jamais `\s` (générique JS), qui inclut l'espace insécable (U+00A0) et
+// d'autres blancs Unicode : `.a<NBSP>b` devenait `.a b`, sélecteur CHANGÉ (le HTML, lui, ne coupe
+// jamais une classe sur un NBSP). Espace, tabulation, LF, CR, form feed — les seuls blancs CSS.
+const CSS_BLANC_RE = /[ \t\n\r\f]/
+
 function compactCss(source: string): string {
   let out = ''
   let i = 0
@@ -123,9 +129,15 @@ function compactCss(source: string): string {
         out += source[i]
         i++
       }
-    } else if (/\s/.test(c)) {
+    } else if (c === '\\') {
+      // `\` + caractère suivant = une UNITÉ, jamais séparés : un espace ÉCHAPPÉ (`.a\ .b`, le `.a `
+      // final fait partie de l'identifiant) ne doit ni fusionner avec le VRAI espace qui suit (le
+      // combinateur descendant) ni être compacté lui-même — sinon le combinateur disparaissait.
+      out += c + (source[i + 1] ?? '')
+      i += 2
+    } else if (CSS_BLANC_RE.test(c)) {
       out += ' '
-      while (i < source.length && /\s/.test(source[i])) i++
+      while (i < source.length && CSS_BLANC_RE.test(source[i])) i++
     } else {
       out += c
       i++

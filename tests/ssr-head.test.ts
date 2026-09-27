@@ -149,13 +149,15 @@ describe('buildSsrHead() — cas normaux (sections "absentes", jamais une panne)
   })
 })
 
-describe('buildSsrHead() — pannes réelles (JSON invalide) : chaîne vide POUR L\'ENSEMBLE, log une seule fois', () => {
+describe('buildSsrHead() — pannes réelles (littéral illisible) : chaîne vide POUR L\'ENSEMBLE, log une seule fois', () => {
   it('2 manifestes cassés successifs : \'\' à chaque fois, mais un SEUL console.error pour le process', () => {
     const root1 = mjsTmp('ssr-head-panne-a')
     const out1 = join(root1, 'out')
     mkdirSync(out1, { recursive: true })
-    // JSON invalide (quotes simples) : _themeCssByName parse échoue → défaillance, pas un « absent ».
-    writeFileSync(join(out1, 'manifest.js'), "µ._themeCssByName = {'light':'x'};\n")
+    // littéral illisible (virgule manquante) : _themeCssByName ne se lit pas → défaillance, pas un
+    // « absent ». Des guillemets simples ou des clés nues, eux, sont lus : c'est la forme d'un
+    // manifeste minifié
+    writeFileSync(join(out1, 'manifest.js'), "µ._themeCssByName = {'light':'x' 'dark':'y'};\n")
 
     const root2 = mjsTmp('ssr-head-panne-b')
     const out2 = join(root2, 'out')

@@ -29,6 +29,8 @@ import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { t } from '../messages/index.js'
+import { maskInertSameLength } from '../lexer/index.js'
+import { maskHtmlComments } from '../mask.js'
 
 export interface AnalyzeSnippetResult {
   deps: string[]
@@ -60,7 +62,7 @@ function isStoreRootMember(node: any): boolean {
 
 /** Marque le node `µ.store.x`/`µ.store` dans `deps` (ancestor-aware — sert à
  * distinguer un accès PROPRIÉTÉ (`.x` dessus) d'une référence BRUTE). */
-function collectStoreMemberDep(node: any, ancestors: any[], deps: Set<string>): void {
+export function collectStoreMemberDep(node: any, ancestors: any[], deps: Set<string>): void {
   // `µ.store.x` (nested) → '$$x'
   if (!node.computed && isStoreRootMember(node.object) && node.property?.type === 'Identifier') {
     deps.add(`$$${node.property.name}`)
@@ -691,7 +693,10 @@ export function analyze(jsCode: string): AnalyzerOutput {
   // zéro-artefact + ReferenceError runtime, la méthode n'existe pas côté
   // runtime). Filet en dernier ressort : refuse la compilation avec un
   // message explicite plutôt que de laisser passer un crash cryptique.
-  if (modifiedCode.includes('_mjs_forceDeps(')) {
+  // Test sur le code MASQUÉ (chaînes/commentaires neutralisés) : un simple texte
+  // mentionnant "_mjs_forceDeps(" dans une chaîne littérale n'est PAS le marqueur — sans ce
+  // masquage, il faisait échouer tout le build avec ce même message trompeur.
+  if (maskInertSameLength(modifiedCode).includes('_mjs_forceDeps(')) {
     throw new Error(t('analyzer.derived-hors-racine'))
   }
 
@@ -832,13 +837,45 @@ export class Analyzer {
   // ------------------------------------------------------------------------
   autoDeclareFromTemplate(htmlRaw: string): void {
     const found = new Set<string>()
-    // retire les commentaires HTML AVANT le scan : un
+    // retire commentaires HTML ET blocs <pre>/<code> AVANT le scan : un
     // `$xxx` mentionné dans `<!-- ... -->` n'est jamais lu par un vrai binding,
     // mais la regex tournait sur le HTML BRUT et l'auto-déclarait quand même
-    // (state var fantôme, jamais dans aucun effect). Se combine avec le fait que les
-    // commentaires ne sont de toute façon pas inertes ailleurs — ce nettoyage
-    // reste nécessaire ICI : cette méthode reçoit toujours du texte brut.
-    const withoutComments = htmlRaw.replace(/<!--[\s\S]*?-->/g, '')
+    // (state var fantôme, jamais dans aucun effect). Même chose pour <pre>/<code> — un exemple
+    // de documentation qui AFFICHE `$__proto__` en texte (nom réservé, cf. RESERVED_STATE_NAMES
+    // juste en dessous) faisait échouer la compilation de la page qui l'explique, alors qu'aucun
+    // vrai binding n'existe. Même politique que preprocessHtml (transpiler/index.ts, qui masque
+    // ces mêmes zones avant de réécrire les directives) : <pre>/<code> = verbatim, jamais du code.
+    // Seul le TEXTE y est verbatim : une interpolation `{…}` dans un <pre>/<code> reste compilée
+    // comme partout (le gabarit la rend vivante), ses `$x` sont de vrais liens — gardée, pour que
+    // la variable soit déclarée et suivie. Dans l'interpolation, une accolade écrite DANS une chaîne
+    // ne compte pas (même règle que maskInterpolations, transpiler/index.ts) ; dans le texte, une
+    // apostrophe reste du texte.
+    const blank = (s: string): string => {
+      let out        = ''
+      let profondeur = 0
+      let chaine     = ''
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i]
+        if (profondeur === 0) {
+          if (c === '{') profondeur = 1
+          out += c === '{' || c === '\n' ? c : ' '
+          continue
+        }
+        if (chaine) {
+          if (c === '\\') { out += c + (s[i + 1] ?? ''); i++; continue }
+          if (c === chaine) chaine = ''
+        }
+        else if (c === '"' || c === "'" || c === '`') chaine = c
+        else if (c === '{') profondeur++
+        else if (c === '}') profondeur--
+        out += c
+      }
+      return out
+    }
+    const withoutPreCode = htmlRaw
+      .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, blank)
+      .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, blank)
+    const withoutComments = maskHtmlComments(withoutPreCode)
     const regex = /(?<![\w.\$])\$([a-zA-Z_][a-zA-Z0-9_]*)/g
     let m: RegExpExecArray | null
     while ((m = regex.exec(withoutComments)) !== null) found.add(m[1])

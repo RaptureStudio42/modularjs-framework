@@ -8,7 +8,8 @@
   $fieldId  = ''
   $errorMsg = ''
 
-  seen = false
+  seen         = false
+  nameObserver = null
 
   µmount ->
     els = slotRef?.assignedElements() ?? []
@@ -20,8 +21,17 @@
         native.id = 'mjs-field-' + Math.random().toString(36).slice(2, 9)
       $fieldId = native.id
       # name FACULTATIF sur l'enveloppe : le champ porte DÉJÀ le sien, sans quoi aucun formulaire ne le ramasse
-      $name = native.getAttribute?('name') or '' unless $name
+      explicite = !!$name
+      $name     = native.getAttribute?('name') or '' unless explicite
+      # un name déduit suit le champ enveloppé si son attribut change plus tard ; un name
+      # explicite sur l'enveloppe, lui, reste prioritaire à vie (jamais réévalué)
+      unless explicite
+        nameObserver = new MutationObserver -> $name = native.getAttribute?('name') or ''
+        nameObserver.observe(native, { attributes: true, attributeFilter: ['name'] })
     µ.error('[mjs-field] aucun « name » : ni sur <@field>, ni sur le champ enveloppé.') unless $name
+
+  µdestroy ->
+    nameObserver?.disconnect()
 
   µeffect ->
     err = µres.errors?.[$name]

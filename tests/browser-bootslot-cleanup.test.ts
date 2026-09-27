@@ -72,6 +72,7 @@ describe('render-browser — bootSlot() referme le contexte si une étape suivan
     // autres slots) repassent par l'original, jamais affectés.
     ContextProto.addInitScript = function (...args: any[]) {
       if (!failingInstance) {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias -- le test capture le contexte Playwright qui a échoué
         failingInstance = this
         throw new Error('échec simulé (addInitScript)')
       }

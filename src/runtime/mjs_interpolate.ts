@@ -137,7 +137,7 @@ MjsInterpolator = (function() {
       this.target = newTarget;
       this._mjs_startValue = this.current;
       this._mjs_startTime = performance.now();
-      return µ.Ticker.add(this);
+      µ.Ticker.add(this);
     }
   });
 

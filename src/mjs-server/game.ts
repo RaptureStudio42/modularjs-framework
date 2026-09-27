@@ -1,15 +1,15 @@
-// mjs-server/partie — l'instance de partie : état applicatif (`state`, librement muté par les
+// mjs-server/game — l'instance de partie : état applicatif (`state`, librement muté par les
 // coups), sièges, phase, tour, minuteries NOMMÉES (sérialisables, jamais de fermeture stockée),
 // journal borné, diffusion groupée par microtâche (mode événementiel, tick=0) OU par tick (mode
 // action, tick>0). Tout ce qui est marqué `_` en tête n'est PAS un contrat public MjsServerApp —
 // usage interne exclusif de matchmaking.ts (sœur de confiance, pas une app hôte : aucun besoin des
 // gardes `(x as any)` que core.ts réserve à ses accroches de test, cf. son commentaire de tête).
 //
-// MODE ACTION (def.tick > 0, 1-60 Hz, cf. game.ts) — 3 pièces :
+// MODE ACTION (def.tick > 0, 1-60 Hz, cf. game-def.ts) — 3 pièces :
 //  - intentions (def.intents) — reçues par _onMove comme un move, mais mises en FILE par
 //    joueur (_intentQueue, dernière valeur gagne par nom) au lieu d'être exécutées ; la boucle
 //    (setInterval, _startTickLoop/_runTick) déroule à chaque tick : intentions en file
-//    (ordre des SIÈGES) → def.simulate(partie, dt RÉEL mesuré) → UNE diffusion (_broadcastTick).
+//    (ordre des SIÈGES) → def.simulate(game, dt RÉEL mesuré) → UNE diffusion (_broadcastTick).
 //    `_markDirty` (microtâche) devient un NO-OP tant que tick>0 : la cadence de diffusion
 //    appartient exclusivement à la boucle dans ce mode (jamais les deux à la fois). Les moves
 //    classiques restent exécutés IMMÉDIATEMENT, hors boucle (ex. chat) — cf. _onMove.
@@ -65,7 +65,7 @@ export function peerIdOf(client: MjsWsClient): string {
 }
 
 // noms de minuterie RÉSERVÉS (internes à MJS-Server) — jamais un nom d'auteur valide dans
-// `def.timers` (game.ts le refuse à la déclaration) NI en argument direct de `partie.timer()`
+// `def.timers` (game-def.ts le refuse à la déclaration) NI en argument direct de `game.timer()`
 // (refusé aussi, cf. plus bas) : même politique que le préfixe 'µgame:' des trames (index.ts).
 export const RESERVED_TIMER_NAMES = new Set(['µturn', 'µmatch', 'µempty'])
 
@@ -76,7 +76,7 @@ const JOURNAL_MAX = 200
 const TICK_PERSIST_THROTTLE_MS = 100
 // anti-triche (µgame:hash, cf. _consumeHashToken plus bas) — budget FIXE, PAS de clé
 // def.limits dédiée (garde volontairement SIMPLE) : même chiffre que
-// DEFAULT_MOVES_LIMIT (game.ts, 30/1000ms) — largement au-dessus d'un usage légitime (µ.lockstep
+// DEFAULT_MOVES_LIMIT (game-def.ts, 30/1000ms) — largement au-dessus d'un usage légitime (µ.lockstep
 // hache par défaut toutes les 60 ticks, cf. mjs_lockstep.ts), bloque un flood de hash par ailleurs
 // VALIDES mais coûteux à traiter (Map par tick, cf. lockstep.ts) ; canal DISTINCT de `_buckets`
 // (coups) — jamais mélangé, cf. _bucketsHash.
@@ -84,7 +84,7 @@ const HASH_LIMIT: [number, number] = [30, 1000]
 // anti-triche (détection par coup) — anneau borné DÉDIÉ (JAMAIS mélangé à `journal`, le
 // journal COURT v1 des coups CLASSIQUEMENT appliqués ci-dessus, cf. commentaire de tête du fichier)
 const ANTICHEAT_LOG_MAX = 100
-// anti-triche (def.antiRejeu) — fenêtre MAXIMALE d'avance de séquence acceptée en 1 coup :
+// anti-triche (def.antiReplay) — fenêtre MAXIMALE d'avance de séquence acceptée en 1 coup :
 // protège contre un `_n`/`_s` empoisonné à une valeur énorme, qui ferait paraître tout coup FUTUR
 // légitime « en retard » pour toujours (dernier resterait bloqué à cette valeur aberrante) — budget
 // FIXE, garde volontairement SIMPLE (MÊME esprit que HASH_LIMIT ci-dessus, pas de clé def dédiée)
@@ -145,14 +145,14 @@ interface JournalEntry {
 }
 
 // --- anti-triche (détection par coup, TOUT opt-in via def, cf. _antiCheatGuard
-// plus bas) — 3 mesures indépendantes (def.suspect métier / def.antiRejeu séquence / def.limits.
+// plus bas) — 3 mesures indépendantes (def.suspect métier / def.antiReplay séquence / def.limits.
 // moveIntervalMs cadence) qui partagent le MÊME journal borné + les MÊMES compteurs agrégés ---------
 
-/** contexte transmis à def.suspect EN PLUS de `coup` (1er argument) — SURFACE MINIMALE, jamais le
- *  MjsServerSeat complet (`.clients` resterait une fuite d'état interne) : `siege` est
- *  l'INDEX numérique (même convention que _broadcastSeats()), `partie` est l'instance ENTIÈRE (MÊME
- *  accès que def.moves/intents/simulate/view, cf. game.ts) ; `type`/`tour`/`phase` = raccourcis vers
- *  partie.type/tour/phase (évite un détour par `partie.xxx` pour les 3 lectures les plus courantes).
+/** contexte transmis à def.suspect EN PLUS de `move` (1er argument) — SURFACE MINIMALE, jamais le
+ *  MjsServerSeat complet (`.clients` resterait une fuite d'état interne) : `seat` est
+ *  l'INDEX numérique (même convention que _broadcastSeats()), `game` est l'instance ENTIÈRE (MÊME
+ *  accès que def.moves/intents/simulate/view, cf. game-def.ts) ; `type`/`turn`/`phase` = raccourcis vers
+ *  game.type/turn/phase (évite un détour par `game.xxx` pour les 3 lectures les plus courantes).
  *  `p` (anti-triche) — charge BRUTE du coup, TELLE QUE REÇUE (jamais consommée
  *  ni mutée avant cet appel, cf. _onMove) : permet au hook d'inspecter le CONTENU du coup,
  *  pas seulement son nom — ajout PUREMENT ADDITIF, rétro-compatible (un def.suspect existant qui
@@ -168,7 +168,7 @@ export interface MjsServerSuspectContext {
 
 /** retour de def.suspect — falsy (false/undefined/void) = RAS ; `true` = suspect journalisé SEUL,
  *  JAMAIS rejeté tout seul (politique de rejet PAR DÉFAUT : explicite uniquement, cf. tests) ;
- *  `{ raison?, rejeter? }` = suspect journalisé + REJETÉ si `rejeter:true` (raison par défaut
+ *  `{ reason?, reject? }` = suspect journalisé + REJETÉ si `reject:true` (reason par défaut
  *  'suspect' si omise) — cf. _antiCheatGuard. */
 export type MjsServerSuspectResult = boolean | { reason?: string; reject?: boolean } | void
 
@@ -191,7 +191,7 @@ export interface MjsServerSuspicionEvent {
  *  ailleurs ne perd rien), matchmaking.ts pour le rattachement à CHAQUE partie (MÊME patron que
  *  `_onMutate`/persist.ts::armGame). */
 export interface MjsServerGameStats {
-  /** def.suspect véridique (rejeté ou non) + violations antiRejeu/moveIntervalMs (TOUJOURS rejetées) */
+  /** def.suspect véridique (rejeté ou non) + violations antiReplay/moveIntervalMs (TOUJOURS rejetées) */
   suspectMoves: number
   /** sous-ensemble de coupsSuspects RÉELLEMENT rejeté (coup non appliqué) */
   rejectedMoves: number
@@ -203,7 +203,7 @@ interface SeatSnapshot {
   id: string
   connected: boolean
   // anti-triche par joueur — `undefined` si le joueur n'a
-  // encore envoyé aucun coup à antiRejeu/cadence, jamais 0 par défaut (0 serait une SÉQUENCE valide)
+  // encore envoyé aucun coup à antiReplay/cadence, jamais 0 par défaut (0 serait une SÉQUENCE valide)
   lastAntiReplaySeq?: number
   lastMoveAt?: number
 }
@@ -220,6 +220,19 @@ export interface MjsServerGameSnapshot {
   journal: JournalEntry[]
   seats: Array<SeatSnapshot | null>
   timers: TimerSnapshot[]
+  /** cf. .end()/`_ended` — absent d'un instantané ANTÉRIEUR à ce champ (rétro-compat : traité comme
+   *  `false`, une partie qu'on ne SAIT pas terminée reste jouable, comportement HISTORIQUE inchangé
+   *  côté restoreGame). Sans lui, une partie terminée puis rechargée acceptait de nouveau des coups. */
+  ended?: boolean
+  /** résultat transmis à .end() (cf. `_endResult`) — absent si `ended` est absent/false. UNIQUEMENT
+   *  pour la persistance : jamais relu ailleurs, jamais retransmis à hooks.onEnd (idempotence de
+   *  .end(), cf. `_ended` — restaurer une partie finie ne rejoue JAMAIS le hook). */
+  result?: unknown
+  /** cf. `_started` (matchmaking.ts::markStartedIfFull) — absent = traité comme `false` (rétro-compat) */
+  started?: boolean
+  /** cf. `_unconfirmedSeats`/_armConfirmWindow — sièges (id) qui n'ont pas encore confirmé leur
+   *  place lors d'une complétion par file ; absent/`null` = aucune fenêtre de confirmation en cours */
+  unconfirmedSeats?: string[] | null
   /** mode lockstep — µpersist = JOURNAL D'ORDRES (cf. lockstep.ts) — `undefined` pour
    *  une partie 'authoritative' (absent après un aller-retour JSON, rétro-compat totale des anciens
    *  instantanés). Pas de `seed` : ré-dérivée de `id` à la restauration, cf. deterministicSeed. */
@@ -248,12 +261,16 @@ export class Game {
   /** `true` dès le PREMIER .end() réussi (cf. .end() plus bas) — SÉPARÉE de `_destroyed` : une partie
    *  finie mais encore dans sa fenêtre de grâce `emptyTtl` est `_ended=true, _destroyed=false` (toujours
    *  interrogeable, cf. commentaire de tête). Rend .end() IDEMPOTENT — sans elle, un move métier
-   *  qui rappelle partie.end() (pattern resign/gameOver, avant que
+   *  qui rappelle game.end() (pattern resign/gameOver, avant que
    *  la grâce ne rende `_destroyed` vrai) rejouait hooks.onEnd + µgame:end + réarmait `µempty` à
-   *  volonté (double récompense, resultat spoofé, partie maintenue en vie indéfiniment). Jamais
+   *  volonté (double récompense, result spoofé, partie maintenue en vie indéfiniment). Jamais
    *  réinitialisée (aucun « re-end » possible, MÊME esprit que `_started` ci-dessus). */
   _ended = false
-  /** `true` dès que `places` a été atteint une 1re fois (cf. matchmaking.ts µgame:start) — jamais réinitialisé */
+  /** résultat transmis au .end() qui a posé `_ended` — cf. commentaire de `_ended` juste au-dessus ;
+   *  UNIQUEMENT pour la persistance (serialize()/restoreGame, cf. leurs commentaires) : jamais relu
+   *  ailleurs, jamais retransmis à hooks.onEnd (idempotence de .end(), cf. `_ended`). */
+  _endResult: unknown = undefined
+  /** `true` dès que `seats` a été atteint une 1re fois (cf. matchmaking.ts µgame:start) — jamais réinitialisé */
   _started = false
   _buckets: Array<TokenBucket | null> = []
   /** anti-triche (µgame:hash) — seau à jetons DÉDIÉ par siège, canal DISTINCT de `_buckets`
@@ -269,7 +286,7 @@ export class Game {
   // --- mode action (cf. commentaire de tête) ----------------------------------------
   /** zone d'intérêt OPTIONNELLE (def.space) — `null` si non déclarée, cf. space.ts */
   space: MjsServerSpace | null = null
-  /** tampon circulaire de positions (def.histo) — `null` si non déclaré, cf. history.ts */
+  /** tampon circulaire de positions (def.history) — `null` si non déclaré, cf. history.ts */
   _history: MjsServerHistory | null = null
   /** mode lockstep (def.mode:'lockstep') — `null` hors lockstep, cf. lockstep.ts */
   _lockstep: MjsServerLockstep | null = null
@@ -277,25 +294,37 @@ export class Game {
   _slowTickHandle: ReturnType<typeof setInterval> | null = null
   /** Date.now() du tick précédent — sert à mesurer `dt` RÉEL (cf. _runTick) */
   _lastTick = 0
-  /** compteur de tick MONOTONE (def.histo) — jamais réinitialisé, sert de méta à rewind() */
+  /** compteur de tick MONOTONE (def.history) — jamais réinitialisé, sert de méta à rewind() */
   _tickCount = 0
-  /** intentions en attente — joueur.id → (nom → dernier payload reçu), vidée à chaque tick */
+  /** intentions en attente — player.id → (nom → dernier payload reçu), vidée à chaque tick */
   _intentQueue = new Map<string, Map<string, unknown>>()
-  /** deltas (def.deltas) — joueur.id → dernière vue NORMALISÉE (JSON round-trip) envoyée */
-  _lastViews = new Map<string, unknown>()
-  /** couture _ack (netcode) — joueur.id → dernier `_n` APPLIQUÉ (jamais en arrière) ;
+  /** deltas (def.deltas) — CONNEXION (jamais l'identité du joueur) → dernière vue NORMALISÉE
+   *  (JSON round-trip) ENVOYÉE À CETTE connexion précise. Par CONNEXION et non par joueur : deux
+   *  onglets d'une même identité ont chacun leur PROPRE baseline — sans ça, le `µgame:resync` de
+   *  l'un avance la baseline PARTAGÉE, et l'autre ne reçoit alors plus jamais rien (son prochain
+   *  delta se calcule contre une vue qu'IL n'a jamais reçue lui-même, souvent déjà vide). Nettoyée
+   *  à la déconnexion/au départ de CETTE connexion (cf. _onDisconnect/_leave) — sinon une entrée
+   *  gardée pour un client mort (voire réutilisée si la MÊME connexion rejoint à nouveau) fausserait
+   *  la 1re diffusion suivante. */
+  _lastViews = new Map<MjsWsClient, unknown>()
+  /** deltas (def.deltas) — CONNEXION → {phase, turn, _ack} DERNIÈREMENT ENVOYÉS à cette connexion
+   *  (cf. _buildFrame) : sans ce suivi, un changement de phase/tour/_ack SANS changement de vue ne
+   *  produirait AUCUNE trame (deltas vides ⇒ frame `null`) — la méta serait perdue pour ce round.
+   *  MÊME politique de clé et de nettoyage que `_lastViews` juste au-dessus. */
+  _lastMeta = new Map<MjsWsClient, { phase: string | null; turn: string | null; ack: number | undefined }>()
+  /** couture _ack (netcode) — player.id → dernier `_n` APPLIQUÉ (jamais en arrière) ;
    *  `_n` est un numéro d'ordre OPTIONNEL posé par le CLIENT (µ.predict, cf.
    *  src/runtime/mjs_predict.ts) aux côtés du payload d'une intention — absent chez un jeu qui ne
    *  l'utilise pas, `_ack` n'apparaît alors JAMAIS sur la trame (cf. _buildFrame). */
   _lastAppliedN = new Map<string, number>()
   _lastPersistMark = 0
   // --- anti-triche (détection par coup, cf. section dédiée plus bas) -----------------
-  /** def.antiRejeu — joueur.id → dernier seq ACCEPTÉ (`_n` s'il existe déjà côté predict, SINON `_s`
+  /** def.antiReplay — player.id → dernier seq ACCEPTÉ (`_n` s'il existe déjà côté predict, SINON `_s`
    *  dédié, cf. _extractAntiReplaySeq) — INDÉPENDANTE de `_lastAppliedN` ci-dessus (celle-ci sert
    *  SEULEMENT l'`_ack` de réconciliation predict, jamais un rejet) : lire `_n` ici ne consomme rien,
    *  ne mute rien côté predict — les deux Maps avancent en parallèle, sans jamais s'influencer. */
   _lastAntiReplaySeq = new Map<string, number>()
-  /** def.limits.moveIntervalMs — joueur.id → Date.now() du dernier coup ACCEPTÉ (horloge SERVEUR,
+  /** def.limits.moveIntervalMs — player.id → Date.now() du dernier coup ACCEPTÉ (horloge SERVEUR,
    *  jamais côté client) — canal DISTINCT de `_buckets` (débit MOYEN, cf. plus bas) : borne la
    *  RAFALE/cadence instantanée, pas le débit sur la fenêtre. */
   _lastMoveAt = new Map<string, number>()
@@ -312,13 +341,13 @@ export class Game {
   // --- anti-triche (spectateurs + quota inter-parties, TOUT opt-in,
   // anti-triche poussé au maximum) -------------------------------------------------------------------
   /** connexions SPECTATRICES (lecture seule) — jamais dans `this.players`, jamais comptées dans
-   *  `places` (cf. _addSpectator) ; nettoyé au départ volontaire (_leave) ET à la
+   *  `seats` (cf. _addSpectator) ; nettoyé au départ volontaire (_leave) ET à la
    *  déconnexion (_onDisconnect), cf. leurs commentaires respectifs. */
   _spectators = new Set<MjsWsClient>()
   /** avertissement « spectateur sans vue sûre » émis AU PLUS UNE FOIS par partie (jamais par
    *  diffusion — un mode action jusqu'à 60Hz spammerait sinon), cf. _spectatorView. */
   _warnedSpectatorNoView = false
-  /** quota de coups PAR IDENTITÉ agrégé APP-ENTIÈRE (cf. MjsServerAntiTricheOptions.movesPerIdentity,
+  /** quota de coups PAR IDENTITÉ agrégé APP-ENTIÈRE (cf. MjsServerAntiCheatOptions.movesPerIdentity,
    *  index.ts) — posé par matchmaking.ts::create() APRÈS construction (MÊME patron que `_gameStats`
    *  ci-dessus) ; `null` = option absente (AUCUN contrôle) OU Game construite HORS mjsServer()
    *  (harnais direct des tests). Le registre RÉEL (Map identité→TokenBucket) vit ENTIÈREMENT dans
@@ -334,7 +363,7 @@ export class Game {
     this.id         = id
     this.players    = new Array(def.seats).fill(null)
     this.phase      = def.phases ? (Object.keys(def.phases)[0] ?? null) : null
-    this.space      = def.space ? createSpace(def.space.cell) : null
+    this.space      = def.space ? createSpace(def.space.cell, msg => def.log('warn', msg)) : null
     this._history     = def.history ? createHistory(def.history.ticks) : null
     this._lockstep  = def.mode === 'lockstep' ? createLockstep(id, def.lockstepJournal?.maxTicks ?? null) : null
   }
@@ -360,8 +389,8 @@ export class Game {
     this._markDirty()
   }
 
-  /** arme/réarme une minuterie NOMMÉE — à l'échéance, appelle `def.timers[nom](partie)`.
-   *  Sérialisable ({nom, à}, cf. serialize()) : jamais de fermeture stockée. */
+  /** arme/réarme une minuterie NOMMÉE — à l'échéance, appelle `def.timers[name](game)`.
+   *  Sérialisable ({name, at}, cf. serialize()) : jamais de fermeture stockée. */
   timer(name: string, ms: number): void {
     if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('serveur.partie-timer-nom-reserve', { nom: name }))
     this._armByName(name, ms)
@@ -373,7 +402,7 @@ export class Game {
   }
 
   /** vue filtrée par joueur (`def.view`, défaut = état entier) — jamais accédée à `def` en dehors de
-   *  ce fichier. Throw en mode 'lockstep' (def.view est `null`, cf. game.ts) — ne devrait jamais être
+   *  ce fichier. Throw en mode 'lockstep' (def.view est `null`, cf. game-def.ts) — ne devrait jamais être
    *  appelée pour une partie lockstep (aucun état serveur), cf. _infoMode/_broadcastTickOrders. */
   viewFor(player: MjsServerSeat | null): unknown {
     if (!this.def.view) throw new Error(t('serveur.partie-vuede-lockstep'))
@@ -390,25 +419,25 @@ export class Game {
     return { view: this.viewFor(player) }
   }
 
-  /** compensation de lag serveur (def.histo) — rembobine le tampon d'historique à l'instant
+  /** compensation de lag serveur (def.history) — rembobine le tampon d'historique à l'instant
    *  `instantMs` (ms epoch, Date.now()-like ; borné : plus vieille entrée dispo si `instantMs` est
    *  trop ancien, entrée du tick COURANT si `instantMs` est dans le futur, cf. history.ts) : appelle
    *  `fn(positionsFigées, méta)` et RETOURNE tel quel son résultat. `positionsFigées` = COPIE gelée
    *  (Object.freeze, l'objet ET chaque {x,y}) de l'instantané retenu — jamais l'original de l'anneau,
-   *  jamais mutable (cf. history.ts pour la justification). Throw si `def.histo` n'est pas déclaré, ou
+   *  jamais mutable (cf. history.ts pour la justification). Throw si `def.history` n'est pas déclaré, ou
    *  si le tampon est vide (aucun tick encore écoulé, ou partie détruite). */
   rewind<T>(instantMs: number, fn: (positions: MjsServerHistoryPositions, meta: MjsServerHistoryMeta) => T): T {
     if (!this._history) throw new Error(t('serveur.partie-rembobiner-sans-histo'))
     return this._history.rewind(instantMs, fn)
   }
 
-  /** compensation de lag serveur (def.histo) — instant (ms epoch) que CE joueur voyait au
+  /** compensation de lag serveur (def.history) — instant (ms epoch) que CE joueur voyait au
    *  moment où il a agi = maintenant − (latence aller estimée de SA connexion + retard
-   *  d'interpolation déclaré, def.histo.interp) ; latence lue sur `client.latency` (MJS-WS, déjà
+   *  d'interpolation déclaré, def.history.interp) ; latence lue sur `client.latency` (MJS-WS, déjà
    *  mesurée par le réservoir ping/pong, cf. mjs-ws/core.ts handlePing) de la 1re connexion LIVE de
    *  ce siège — déconnecté ou latence pas-encore-mesurée (`null`) replient sur 0 (aucune
    *  compensation par défaut, jamais un throw pour une mesure simplement absente). Throw si
-   *  `def.histo` n'est pas déclaré (pas de `interp` par défaut sans lui). */
+   *  `def.history` n'est pas déclaré (pas de `interp` par défaut sans lui). */
   timeSeenBy(player: MjsServerSeat): number {
     if (!this.def.history) throw new Error(t('serveur.partie-instantvupar-sans-histo'))
     let latency = 0
@@ -420,17 +449,31 @@ export class Game {
    *  (laisse un dernier resync voir l'issue avant que la partie ne disparaisse du registre).
    *  IDEMPOTENT (cf. `_ended`) : un 2e appel (avant OU après la grâce) est un NO-OP total — pas de
    *  2e diffusion µgame:end, pas de 2e hooks.onEnd, pas de réarmement de `µempty` (sinon la partie
-   *  resterait vivante indéfiniment tant qu'un move rejoue .end() sous le quota limits.moves). */
+   *  resterait vivante indéfiniment tant qu'un move rejoue .end() sous le quota limits.moves).
+   *  hooks.onEnd est protégé par un `finally` — même s'il LÈVE, `µempty` est TOUJOURS armée
+   *  ensuite (sinon une partie dont le hook casse ne serait plus jamais détruite, cf. _checkEmpty/
+   *  _onEmptyExpired) ; le throw, lui, continue de remonter normalement à l'appelant de .end().
+   *  Relayée aux spectateurs (cf. _broadcastToSpectatorsRaw) — anti-triche, amélioration : une
+   *  partie finie restait visuellement active côté spectateur (aucun signal de fin). */
   end(result: unknown): void {
     if (this._destroyed || this._ended) return
     this._ended = true
+    this._endResult = result
     this._stopTickLoop()
     this._broadcastTo('µgame:end', { result })
-    this.def.hooks.onEnd?.(this, result)
-    this._armByName('µempty', this.def.emptyTtl)
+    this._broadcastToSpectatorsRaw('µgame:end', { result })
+    try {
+      this.def.hooks.onEnd?.(this, result)
+    } finally {
+      this._armByName('µempty', this.def.emptyTtl)
+    }
   }
 
-  /** état+phase+sièges+minuteries+journal → objet JSON-able — couture de la persistance.
+  /** état+phase+sièges+minuteries+journal → objet JSON-able — couture de la persistance. Porte
+   *  aussi `ended`/`result` (cf. `_ended`/`_endResult`), `started` et `unconfirmedSeats` (cf.
+   *  restoreGame, qui les restaure symétriquement) — sans eux, une partie TERMINÉE puis rechargée
+   *  oubliait qu'elle l'était (coups de nouveau acceptés) et la fenêtre de confirmation d'une
+   *  partie issue de la file perdait toute portée après un redémarrage.
    *  Mode lockstep : `lockstep: { journal }` REMPLACE `state` conceptuellement (µpersist =
    *  journal d'ordres, cf. lockstep.ts) — `state` reste présent mais vaut `undefined` (jamais assigné,
    *  cf. le constructeur matchmaking.ts::create()), élidé par JSON.stringify. */
@@ -448,6 +491,10 @@ export class Game {
       // par design (TokenBucket non sérialisable proprement, risque moindre qu'un rejeu accepté)
       seats: this.players.map(j => j ? { seat: j.seat, id: j.id, connected: j.connected, lastAntiReplaySeq: this._lastAntiReplaySeq.get(j.id), lastMoveAt: this._lastMoveAt.get(j.id) } : null),
       timers: Array.from(this._timers.entries()).map(([name, t]) => ({ name, at: t.at })),
+      ended: this._ended,
+      result: this._endResult,
+      started: this._started,
+      unconfirmedSeats: this._unconfirmedSeats ? Array.from(this._unconfirmedSeats) : null,
       lockstep: this._lockstep ? { journal: this._lockstep.journal() } : undefined,
     }
   }
@@ -468,7 +515,7 @@ export class Game {
    *  RÉATTACHE cette connexion au siège EXISTANT (MÊME logique que _reattachSeat — une
    *  reconnexion/2e onglet, réutilisée telle quelle) plutôt que d'en créer un 2e : sans ça, une
    *  identité pourrait voir SES DEUX mains cachées à la fois et casser le tour par tour (2 sièges
-   *  = 2 `joueur.id` identiques dans `this.players`, cf. game.ts:321-331). Choix
+   *  = 2 `player.id` identiques dans `this.players`). Choix
    *  assumé : RÉATTACHER (jamais refuser) — symétrique de _resync, qui fait déjà exactement ça
    *  pour reconnecter un onglet après coupure ; refuser aurait cassé le cas légitime « 2 onglets
    *  ouverts par erreur, l'utilisateur ferme le premier » (le 2e doit continuer à fonctionner).
@@ -513,18 +560,23 @@ export class Game {
     this._broadcastSeats()
     const info = this._infoMode(player)
     // resync = TOUJOURS une vue complète (jamais un delta) ; en mode deltas
-    // (authoritative SEUL — lockstep n'a pas de `vue`, cf. _infoMode), ce qui vient d'être envoyé
+    // (authoritative SEUL — lockstep n'a pas de `view`, cf. _infoMode), ce qui vient d'être envoyé
     // DEVIENT la baseline — le prochain _buildFrame() pourra delta-er dessus au lieu de
-    // re-considérer ce joueur comme « jamais vu » (repli inutile)
-    if (this.def.deltas) this._lastViews.set(player.id, JSON.parse(JSON.stringify(info.view)))
+    // re-considérer cette CONNEXION comme « jamais vue » (repli inutile). PAR CONNEXION (`client`),
+    // jamais par identité (`player.id`) — cf. _lastViews : sinon le resync d'un 2e onglet avance
+    // la baseline PARTAGÉE et le 1er onglet ne reçoit alors plus jamais de trame.
+    if (this.def.deltas) {
+      this._lastViews.set(client, JSON.parse(JSON.stringify(info.view)))
+      this._lastMeta.set(client, { phase: this.phase, turn: this.turn, ack: this._lastAppliedN.get(player.id) })
+    }
     return { seat: player.seat, info }
   }
 
   // --- spectateurs (anti-triche, lecture seule) ------------------------------------
 
   /** rejoint comme SPECTATEUR — n'occupe AUCUN siège (jamais dans `this.players`, jamais compté
-   *  dans `places`) : ajoute la connexion à `_spectators` et renvoie une info fraîche COMPLÈTE
-   *  (MÊME enveloppe `{view}` que seatResponse/_resync côté matchmaking.ts, cf. _infoSpectateur)
+   *  dans `seats`) : ajoute la connexion à `_spectators` et renvoie une info fraîche COMPLÈTE
+   *  (MÊME enveloppe `{view}` que seatResponse/_resync côté matchmaking.ts, cf. _spectatorInfo)
    *  pour l'ack de la requête. Tout µgame:move ultérieur de cette connexion est rejeté PAR
    *  CONSTRUCTION (_findSeatOf ne cherche que dans `this.players`, cf. _onMove plus
    *  bas — message précisé « spectateur : lecture seule »). Idempotent (Set) : rejouer la même
@@ -534,7 +586,7 @@ export class Game {
     return this._spectatorInfo()
   }
 
-  /** vue SÛRE d'un spectateur — cf. def.spectatorView (game.ts::resolveGameDef, RÉSOUT DÉJÀ le
+  /** vue SÛRE d'un spectateur — cf. def.spectatorView (game-def.ts::resolveGameDef, RÉSOUT DÉJÀ le
    *  repli sur le `view` AUTEUR le cas échéant, jamais le défaut état-complet) : `null` = aucune
    *  vue sûre disponible pour CE jeu → repli `{}` STRICT (JAMAIS l'état brut à un spectateur par
    *  défaut), avec un avertissement émis UNE SEULE FOIS par partie (guard
@@ -551,21 +603,28 @@ export class Game {
   /** enveloppe `{view}` d'un spectateur — MÊME point unique que _infoMode(player) pour les sièges,
    *  mais SANS branche lockstep (seed/journal) : un spectateur ne rejoue rien localement, une
    *  simple vue lui suffit quel que soit `def.mode` (def.spectatorView reste mode-agnostique,
-   *  cf. game.ts). */
+   *  cf. game-def.ts). */
   _spectatorInfo(): { view: unknown } {
     return { view: this._spectatorView() }
   }
 
   /** µgame:leave volontaire — vide le siège (contrairement à une déconnexion, qui le garde). Gère
-   *  aussi un spectateur (anti-triche) : retrait silencieux de `_spectators`, AUCUNE
-   *  diffusion µgame:left (réservée aux sièges, cf. _broadcastSeats) — permet à sock.leave() côté
-   *  client de fonctionner SANS changement, qu'il s'agisse d'une poignée siège OU spectateur. */
+   *  aussi un spectateur (anti-triche) : retrait silencieux de `_spectators`, AUCUNE trame en
+   *  retour pour lui (permet à sock.leave() côté client de fonctionner SANS changement, qu'il
+   *  s'agisse d'une poignée siège OU spectateur) — le départ D'UN SIÈGE, lui, diffuse µgame:left
+   *  aux AUTRES sièges ET, désormais, aux spectateurs (cf. _broadcastToSpectatorsRaw). */
   _leave(client: MjsWsClient): void {
     const player = this._findSeatOf(client)
     if (player) {
       this.players[player.seat] = null
+      // deltas (def.deltas) — le siège ENTIER se vide (toutes ses connexions perdent leur place) :
+      // purge _lastViews/_lastMeta pour CHACUNE (cf. leurs commentaires) — sinon une connexion qui
+      // quitte puis rejoint (même objet client, ex. leave/play sans coupure réseau) retrouverait une
+      // baseline PÉRIMÉE de son passage précédent et sauterait la 1re diffusion « vue complète »
+      for (const c of player.clients) { this._lastViews.delete(c); this._lastMeta.delete(c) }
       this.def.hooks.onLeave?.(this, player)
       this._broadcastTo('µgame:left', { seat: player.seat })
+      this._broadcastToSpectatorsRaw('µgame:left', { seat: player.seat })
       if (this.def.turns && this.turn === player.id) this.next()
       this._broadcastSeats()
       this._markDirty()
@@ -586,6 +645,11 @@ export class Game {
     const player = this.players.find((j): j is MjsServerSeat => j !== null && j.clients.has(client)) ?? null
     if (player) {
       player.clients.delete(client)
+      // deltas (def.deltas) — CETTE connexion précise disparaît : purge sa baseline (cf.
+      // _lastViews/_lastMeta) — jamais celle des AUTRES connexions du même siège (multi-onglets),
+      // qui restent valides tant qu'elles restent live
+      this._lastViews.delete(client)
+      this._lastMeta.delete(client)
       if (player.clients.size === 0) player.connected = false
       this._broadcastSeats()
       this._markDirty()
@@ -595,7 +659,7 @@ export class Game {
     return this._spectators.delete(client)
   }
 
-  /** coup reçu — vérifs (assis, phase, tour, anti-abus) puis `def.moves[coup](partie, joueur, p)` ;
+  /** coup reçu — vérifs (assis, phase, tour, anti-abus) puis `def.moves[move](game, player, p)` ;
    *  un throw (garde ICI ou dans le move lui-même) remonte tel quel — matchmaking.ts le laisse
    *  filer jusqu'à app.serve (µ:ack{e:true}, comme tout serve() normal). */
   _onMove(client: MjsWsClient, move: string, p: unknown): unknown {
@@ -619,7 +683,7 @@ export class Game {
     // fois — la garde ne parle qu'une fois un VRAI tour en cours
     if (this.def.turns && this.turn !== null && this.turn !== player.id) throw new Error(t('serveur.partie-pas-votre-tour'))
 
-    // anti-triche (détection par coup, TOUT opt-in — def.suspect/antiRejeu/limits.
+    // anti-triche (détection par coup, TOUT opt-in — def.suspect/antiReplay/limits.
     // moveIntervalMs) — cf. _antiCheatGuard : s'applique UNIFORMÉMENT aux 3 branches
     // ci-dessous (lockstep compris — un ORDRE est un coup pour ces gardes génériques, cf. sa
     // propre doc), AVANT toute exécution/mise en file/ordre ; no-op quasi total si rien n'est déclaré.
@@ -628,9 +692,9 @@ export class Game {
     // mode lockstep — AUCUNE exécution serveur : chaque µgame:move devient un ORDRE en
     // file pour le tick COURANT (cf. lockstep.ts addOrder), diffusé GROUPÉ par _broadcastTickOrders
     // au tick suivant — jamais de résultat (l'ack matchmaking.ts::handlerMove reste {ok:true,
-    // resultat:undefined}, INCHANGÉ), jamais `this.journal` (celui-ci reste le journal COURT v1 du
+    // result:undefined}, INCHANGÉ), jamais `this.journal` (celui-ci reste le journal COURT v1 du
     // mode authoritative, cf. commentaire de tête — le VRAI journal lockstep vit dans `this._lockstep`,
-    // illimité, cf. son fichier). `coup` n'est PAS validé contre `def.moves` — n'importe quel nom
+    // illimité, cf. son fichier). `move` n'est PAS validé contre `def.moves` — n'importe quel nom
     // devient un ordre valide (aucune whitelist demandée : chaque µgame:move reçu devient
     // un ORDRE, sans condition).
     if (this.def.mode === 'lockstep') {
@@ -648,8 +712,12 @@ export class Game {
     // JAMAIS exécutée ici : la DERNIÈRE valeur gagne par nom (un spam de 'bouger' ne garde que la
     // dernière direction) ; appliquée par la boucle au tick suivant
     // (_applyIntents) — ni journal (débit trop élevé pour les 200 entrées bornées, cf.
-    // commentaire de tête du fichier) ni _markDirty (l'état n'a pas encore changé)
-    const intentFn = this.def.intents[move]
+    // commentaire de tête du fichier) ni _markDirty (l'état n'a pas encore changé).
+    // Object.hasOwn (propriété PROPRE uniquement) — `def.intents`/`def.moves` sont des objets
+    // LITTÉRAUX (prototype Object.prototype) : un `[move]` en lecture directe laisserait un nom
+    // HÉRITÉ ('toString', 'valueOf'…) passer pour une intention/un coup déclaré, sans qu'AUCUN
+    // gestionnaire ne soit réellement enregistré sous ce nom.
+    const intentFn = Object.hasOwn(this.def.intents, move) ? this.def.intents[move] : undefined
     if (intentFn) {
       this._confirmSeat(player.id)
       let queue = this._intentQueue.get(player.id)
@@ -658,10 +726,19 @@ export class Game {
       return undefined
     }
 
-    const fn = this.def.moves[move]
+    const fn = Object.hasOwn(this.def.moves, move) ? this.def.moves[move] : undefined
     if (!fn) throw new Error(t('serveur.partie-coup-inconnu', { coup: move }))
     this._confirmSeat(player.id)
     const result = fn(this, player, p)
+    // coup ASYNCHRONE — `fn` peut renvoyer une Promise dont la RÉSOLUTION mute `state` (ex. un
+    // appel réseau/BDD avant d'appliquer le coup) : le _markDirty() ci-dessous diffuse l'état
+    // D'AVANT tout de suite (avant que la Promise ne se résolve) — sans un 2e _markDirty() À LA
+    // RÉSOLUTION, aucune trame ne reflète JAMAIS le nouvel état pour ce coup. Chaîne SÉPARÉE de
+    // `result` (jamais `.then()` en remplacement) : la valeur renvoyée à l'appelant (cf.
+    // matchmaking.ts::handlerMove, qui `await`) reste EXACTEMENT celle de `fn`, inchangée.
+    if (result && typeof (result as any).then === 'function') {
+      (result as Promise<unknown>).then(() => this._markDirty()).catch(() => {})
+    }
     this.journal.push({ move, player: player.id, p, at: Date.now() })
     if (this.journal.length > JOURNAL_MAX) this.journal.shift()
     this._markDirty()
@@ -673,7 +750,7 @@ export class Game {
    *  auto-contradiction + fenêtre) — SILENCIEUX en fonctionnement normal (hashs concordants, ou
    *  quorum pas encore atteint) ; une divergence identifiée (auto-contradiction OU minorité face au
    *  hash majoritaire, JAMAIS la majorité elle-même) → µgame:event 'divergence' à TOUS +
-   *  def.onDivergence (le jeu décide). `sieges` = TOUS les sièges OCCUPÉS de cette
+   *  def.onDivergence (le jeu décide). `seats` = TOUS les sièges OCCUPÉS de cette
    *  partie, connectés ou non (MÊME politique que le tour par tour roundrobin, cf. commentaire de
    *  tête) — relu à CET appel (jamais figé), sert de base à la majorité absolue côté lockstep.ts.
    *  Anti-abus dédié AVANT tout traitement (_consumeHashToken, cf. HASH_LIMIT) : au-delà du
@@ -741,49 +818,75 @@ export class Game {
     this._broadcastTo('µgame:seat', { seatCount: this.def.seats, seats })
   }
 
-  /** construit la trame µgame:state POUR CE JOUEUR — vue complète (défaut, ou repli deltas) ou
-   *  delta (def.deltas actif) ; `null` = rien à envoyer (deltas actif, AUCUN changement pour lui
-   *  depuis la dernière fois — zéro trame). Chemin non-delta byte-identique
+  /** construit la trame µgame:state POUR CETTE CONNEXION — vue complète (défaut, ou repli deltas)
+   *  ou delta (def.deltas actif) ; `null` = rien à envoyer (deltas actif, NI la vue NI la méta
+   *  n'ont changé depuis la dernière fois — zéro trame). Chemin non-delta byte-identique
    *  au v1 (MÊME ordre de clés) — compatibilité stricte, cf. tests/socket-game.test.ts.
-   *  `_ack` (netcode) : MÉTA de trame (jamais dans `vue`/`delta`, jamais dans le JEU) —
+   *  `_ack` (netcode) : MÉTA de trame (jamais dans `view`/`delta`, jamais dans le JEU) —
    *  posé UNIQUEMENT si CE joueur a déjà fait appliquer au moins un `_n` (cf. `_lastAppliedN` /
    *  `_extractN`) ; absent sinon, `meta` est alors un objet VIDE dont le spread ne change RIEN à la
-   *  forme historique de la trame — rétro-compat totale pour un jeu qui n'utilise jamais `_n`. */
-  _buildFrame(player: MjsServerSeat): Record<string, unknown> | null {
+   *  forme historique de la trame — rétro-compat totale pour un jeu qui n'utilise jamais `_n`.
+   *  PAR CONNEXION (`client`), jamais par siège seul (cf. `_lastViews`/`_lastMeta`) : appelée UNE
+   *  fois par connexion live du siège (cf. _broadcastToPlayers), pas une fois par siège.
+   *  Garde-fou (def.view/def.view+JSON) — un throw QUELCONQUE pendant la construction (vue auteur
+   *  cassée, valeur non JSON-able…) est capturé : log error + `null` (aucune trame pour CETTE
+   *  connexion ce round, la partie continue) plutôt qu'un throw NU dans un setInterval/microtâche
+   *  SANS requête à qui répondre — cf. _armByName pour le même principe côté minuteries. */
+  _buildFrame(player: MjsServerSeat, client: MjsWsClient): Record<string, unknown> | null {
     const ack = this._lastAppliedN.get(player.id)
     const meta = ack != null ? { _ack: ack } : {}
-    if (!this.def.deltas) return { game: this.id, view: this.viewFor(player), phase: this.phase, turn: this.turn, seq: this.seq, ...meta }
+    try {
+      if (!this.def.deltas) return { game: this.id, view: this.viewFor(player), phase: this.phase, turn: this.turn, seq: this.seq, ...meta }
 
-    const base = { game: this.id, phase: this.phase, turn: this.turn, seq: this.seq, ...meta }
-    // normalisation JSON — MÊME forme que ce qui voyage réellement sur le fil (le transport
-    // JSON.stringify la trame de toute façon) : clone STABLE, jamais aliasé à partie.state (une vue
-    // qui réutilise des objets internes mutés en place casserait le diff)
-    const viewNorm = JSON.parse(JSON.stringify(this.viewFor(player))) as unknown
-    if (!this._lastViews.has(player.id)) {
-      this._lastViews.set(player.id, viewNorm)
-      return { ...base, view: viewNorm }   // repli : 1re diffusion à CE joueur
+      const base = { game: this.id, phase: this.phase, turn: this.turn, seq: this.seq, ...meta }
+      // normalisation JSON — MÊME forme que ce qui voyage réellement sur le fil (le transport
+      // JSON.stringify la trame de toute façon) : clone STABLE, jamais aliasé à game.state (une vue
+      // qui réutilise des objets internes mutés en place casserait le diff)
+      const viewNorm = JSON.parse(JSON.stringify(this.viewFor(player))) as unknown
+      if (!this._lastViews.has(client)) {
+        this._lastViews.set(client, viewNorm)
+        this._lastMeta.set(client, { phase: this.phase, turn: this.turn, ack })
+        return { ...base, view: viewNorm }   // repli : 1re diffusion à CETTE connexion
+      }
+      const ops: MjsServerDeltaOp[] = []
+      deepDiff('', this._lastViews.get(client), viewNorm, ops)
+      this._lastViews.set(client, viewNorm)
+
+      // méta seule — un changement de phase/tour/_ack SANS changement de vue doit quand même
+      // partir : sinon `ops.length === 0` rendrait `null` et la méta serait perdue pour cette
+      // connexion (cf. `_lastMeta`, comparaison PAR CHAMP — `seq`, lui, change à CHAQUE round,
+      // jamais un signal utile ici)
+      const previousMeta = this._lastMeta.get(client)
+      const metaChanged = !previousMeta || previousMeta.phase !== this.phase || previousMeta.turn !== this.turn || previousMeta.ack !== ack
+      if (ops.length === 0 && !metaChanged) return null   // ni vue ni méta n'ont changé POUR ELLE — aucune trame
+      this._lastMeta.set(client, { phase: this.phase, turn: this.turn, ack })
+      if (ops.length === 0) return { ...base }   // méta seule — la vue, elle, n'a pas bougé
+
+      const viewSize   = JSON.stringify(viewNorm).length
+      const deltaSize = JSON.stringify(ops).length
+      if (deltaSize > viewSize * 0.6) return { ...base, view: viewNorm }   // repli : delta trop gros
+      return { ...base, delta: ops }
+    } catch (err) {
+      this.def.log('error', t('serveur.partie-vue-leve', { msg: errMessage(err) }))
+      return null
     }
-    const ops: MjsServerDeltaOp[] = []
-    deepDiff('', this._lastViews.get(player.id), viewNorm, ops)
-    this._lastViews.set(player.id, viewNorm)
-    if (ops.length === 0) return null   // rien n'a changé POUR LUI — aucune trame
-
-    const viewSize   = JSON.stringify(viewNorm).length
-    const deltaSize = JSON.stringify(ops).length
-    if (deltaSize > viewSize * 0.6) return { ...base, view: viewNorm }   // repli : delta trop gros
-    return { ...base, delta: ops }
   }
 
-  /** diffuse à CHAQUE siège SA trame (ou rien, cf. _buildFrame) — `seq` incrémenté UNE fois
-   *  par APPEL (round de diffusion, pas par joueur ni par mutation brute) ; partagée par
-   *  _broadcastState (microtâche, tick=0) et _broadcastTick (1×/tick, tick>0) — seule la CADENCE change. */
+  /** diffuse à CHAQUE connexion (siège) SA trame (ou rien, cf. _buildFrame) — `seq` incrémenté
+   *  UNE fois par APPEL (round de diffusion, pas par joueur ni par mutation brute) ; partagée par
+   *  _broadcastState (microtâche, tick=0) et _broadcastTick (1×/tick, tick>0) — seule la CADENCE
+   *  change. Une trame PAR CONNEXION (jamais une trame calculée UNE fois par siège puis recopiée à
+   *  chaque connexion, cf. _buildFrame) : deux onglets d'un même siège ont chacun leur PROPRE
+   *  baseline de delta (cf. `_lastViews`/`_lastMeta`), donc potentiellement leur propre trame. */
   _broadcastToPlayers(): void {
     this.seq++
     for (const player of this.players) {
       if (!player) continue
-      const frame = this._buildFrame(player)
-      if (!frame) continue
-      for (const client of player.clients) this.app.send(client, 'µgame:state', frame)
+      for (const client of player.clients) {
+        const frame = this._buildFrame(player, client)
+        if (!frame) continue
+        this.app.send(client, 'µgame:state', frame)
+      }
     }
     this._broadcastToSpectators()
   }
@@ -800,6 +903,23 @@ export class Game {
     for (const client of this._spectators) this.app.send(client, 'µgame:state', frame)
   }
 
+  /** anti-triche, amélioration — relaie µgame:end/left à TOUS les spectateurs, MÊME charge `p`
+   *  que celle déjà envoyée aux sièges (cf. .end()/_leave()) : contrairement à µgame:state
+   *  (_broadcastToSpectators, filtrée par def.spectatorView), AUCUN filtrage supplémentaire ICI —
+   *  `result`/`seat` ne sont PAS des vues à filtrer, ce sont déjà des données PUBLIQUES à TOUTE la
+   *  table (`_broadcastTo` les diffuse identiquement à CHAQUE siège, aucune redaction par joueur
+   *  n'existe pour elles) : les relayer telles quelles à un spectateur n'expose donc rien de plus
+   *  qu'un siège ne voit déjà. Un auteur qui glisserait malgré tout une donnée sensible dans
+   *  `result` (result d'un .end() n'est pas structurellement une vue, def.spectatorView ne sait pas
+   *  le filtrer) reste responsable de son propre contenu, comme il l'est déjà pour les sièges.
+   *  `µgame:seat` (roster), lui, N'EST PAS concerné — reste réservé aux sièges (cf. _broadcastSeats,
+   *  scope volontairement inchangé). No-op si aucun spectateur (Set vide, coût nul). */
+  _broadcastToSpectatorsRaw(type: string, p: Record<string, unknown>): void {
+    if (this._spectators.size === 0) return
+    const frame = { game: this.id, ...p }
+    for (const client of this._spectators) this.app.send(client, type, frame)
+  }
+
   /** mode événementiel (tick=0) — groupe les mutations d'une même microtâche en UNE diffusion */
   _broadcastState(): void {
     this._dirty = false
@@ -810,18 +930,28 @@ export class Game {
 
   /** mode action (tick>0) — UNE diffusion PAR TICK, après def.simulate (cf. _runTick) ;
    *  jamais additionnée à _broadcastState (_markDirty est un no-op tant que tick>0, cf. plus bas).
-   *  Pousse aussi l'instantané d'historique (def.histo, cf. history.ts) — MÊME emplacement
+   *  Pousse aussi l'instantané d'historique (def.history, cf. history.ts) — MÊME emplacement
    *  « après simulate, 1×/tick » que la diffusion, avant elle (l'ordre entre les deux n'a pas
-   *  d'importance, aucune dépendance croisée) : compensation de lag serveur, cf. game.rewind. */
+   *  d'importance, aucune dépendance croisée) : compensation de lag serveur, cf. game.rewind.
+   *  `def.history.extract` (code JEU) est capturé — un throw n'annule QUE cet instantané
+   *  d'historique (log error, tick suivant réessaiera), jamais tout le round de diffusion, jamais
+   *  un throw nu dans le setInterval de la boucle de tick. */
   _broadcastTick(): void {
     if (this._destroyed) return
-    if (this._history) { this._tickCount++; this._history.pousser(this._tickCount, Date.now(), this.def.history!.extract(this)) }
+    if (this._history) {
+      this._tickCount++
+      try {
+        this._history.pousser(this._tickCount, Date.now(), this.def.history!.extract(this))
+      } catch (err) {
+        this.def.log('error', t('serveur.partie-histo-extraire-leve', { msg: errMessage(err) }))
+      }
+    }
     this._broadcastToPlayers()
     this._markDirtyTick()
   }
 
   /** mode lockstep — clôt le tick courant (lockstep.ts : ordres accumulés + journal) et
-   *  DIFFUSE la MÊME trame à TOUS les sièges connectés (µgame:orders {tick, ordres}) — même frame pour
+   *  DIFFUSE la MÊME trame à TOUS les sièges connectés (µgame:orders {tick, orders}) — même frame pour
    *  tous, l'égalité d'entrée est le cœur du déterminisme (cf. commentaire de tête de lockstep.ts).
    *  TOUJOURS diffusé, MÊME sans ordre (tick vide) : le tick lui-même est l'horloge commune que les
    *  clients doivent avancer (jamais de trame sautée faute d'ordre). `seq` réutilisé
@@ -858,8 +988,14 @@ export class Game {
 
   /** aucun siège CONNECTÉ → arme la destruction après `emptyTtl` (+ coupe la boucle de tick) ; un
    *  retour désarme ET (re)démarre la boucle (mode action) — couvre aussi bien un 1er siège frais
-   *  (cf. _createSeat) qu'un resync après coupure (cf. _reattachSeat) */
+   *  (cf. _createSeat) qu'un resync après coupure (cf. _reattachSeat).
+   *  Garde `_ended` EN PREMIER — une partie FINIE ne doit jamais voir son compte à rebours de
+   *  fermeture (`µempty`, armé par .end()) annulé, ni sa boucle de tick relancée : un resync d'un
+   *  siège encore connecté au moment du .end() (ou qui se reconnecte pendant la grâce) appelle
+   *  _reattachSeat → _checkEmpty comme n'importe quel resync normal — sans cette garde, il
+   *  ranimerait une partie censée n'être plus qu'interrogeable (cf. .end()/_ended). */
   _checkEmpty(): void {
+    if (this._ended) return
     if (this.players.some(j => j && j.connected)) { this._disarm('µempty'); this._startTickLoop(); return }
     this._armByName('µempty', this.def.emptyTtl)
     this._stopTickLoop()
@@ -867,10 +1003,12 @@ export class Game {
 
   // --- mode action — boucle de tick (def.tick Hz) + slowTick (def.slowTick) -------------------
 
-  /** démarre la boucle — no-op si déjà tournante/tick=0/partie détruite (cf. _checkEmpty, .end(),
-   *  ._destroy() pour les points d'arrêt : AUCUN setInterval ne doit jamais rester résiduel) */
+  /** démarre la boucle — no-op si déjà tournante/tick=0/partie détruite/partie TERMINÉE (cf.
+   *  `_ended` — même raison que _checkEmpty juste au-dessus, filet redondant si un futur appel
+   *  direct contournait _checkEmpty) — cf. _checkEmpty, .end(), ._destroy() pour les points
+   *  d'arrêt : AUCUN setInterval ne doit jamais rester résiduel */
   _startTickLoop(): void {
-    if (this.def.tick <= 0 || this._tickHandle || this._destroyed) return
+    if (this.def.tick <= 0 || this._tickHandle || this._destroyed || this._ended) return
     const period = 1000 / this.def.tick
     this._lastTick = Date.now()
     this._tickHandle = setInterval(() => this._runTick(), period)
@@ -905,7 +1043,7 @@ export class Game {
   /** intentions en file → def.simulate → UNE diffusion. `dt` = écart RÉEL mesuré depuis le tick
    *  précédent (Date.now(), jamais la période nominale figée) — correction de dérive SIMPLE : le
    *  `setInterval` peut driver légèrement, la simulation reçoit quand même le temps VRAIMENT écoulé.
-   *  Mode lockstep : AUCUNE intention/simulation serveur (interdites, cf. game.ts) —
+   *  Mode lockstep : AUCUNE intention/simulation serveur (interdites, cf. game-def.ts) —
    *  clôture du tick d'ordres SEULE (_broadcastTickOrders), cf. commentaire de tête du fichier. */
   _runTick(): void {
     if (this._destroyed) return
@@ -936,7 +1074,7 @@ export class Game {
 
   /** détache `_n` (numéro d'ordre CLIENT optionnel, cf. commentaire de `_lastAppliedN`) d'un
    *  payload d'intention — `p` inchangé si absent/non-numérique (rétro-compat totale). Avance
-   *  `_lastAppliedN[joueurId]` au PLUS GRAND `_n` vu (jamais en arrière — l'ordre des sièges
+   *  `_lastAppliedN[playerId]` au PLUS GRAND `_n` vu (jamais en arrière — l'ordre des sièges
    *  n'est pas forcément l'ordre d'émission), renvoie un CLONE superficiel de `p` sans `_n`. */
   _extractN(playerId: string, p: unknown): unknown {
     if (!p || typeof p !== 'object' || !('_n' in (p as object))) return p
@@ -953,11 +1091,37 @@ export class Game {
     this._destroy()
   }
 
-  // --- minuteries — {nom, à} sérialisable, jamais de fermeture stockée (cf. .timer() public) ---
+  // --- minuteries — {name, at} sérialisable, jamais de fermeture stockée (cf. .timer() public) ---
 
+  /** réservée (µturn/µmatch/µempty) → code FRAMEWORK, laissé remonter tel quel (un throw ici est
+   *  un bug interne, pas à masquer) ; APPLICATIVE (def.timers) → code JEU, protégé (cf.
+   *  _guardApplicativeTimer) : un `setTimeout` nu n'a AUCUNE requête à qui répondre, un throw non
+   *  capturé y ferait planter le PROCESS entier. */
   _armByName(name: string, ms: number): void {
-    const onExpire = RESERVED_TIMER_NAMES.has(name) ? () => this._onReservedTimer(name) : () => { const fn = this.def.timers[name]; if (fn) fn(this) }
+    const onExpire = RESERVED_TIMER_NAMES.has(name)
+      ? () => this._onReservedTimer(name)
+      : () => this._guardApplicativeTimer(name)
     this._arm(name, ms, onExpire)
+  }
+
+  /** garde-fou minuterie APPLICATIVE (def.timers[name], cf. _armByName) — capture SYNC (throw) ET
+   *  ASYNC (rejet, si l'auteur renvoie malgré tout une Promise) : log error par le canal déjà
+   *  utilisé par le serveur (def.log), AUCUN changement de gameplay — même esprit que _guardTick
+   *  pour la boucle de tick, adapté à un appel HORS tick (arme/réarme n'importe quand). */
+  _guardApplicativeTimer(name: string): void {
+    const fn = this.def.timers[name]
+    if (!fn) return
+    try {
+      // `fn` est typée `(game) => void` (def.timers) — un auteur peut malgré tout renvoyer une
+      // Promise À L'EXÉCUTION (le type ne l'empêche pas) : cast large pour rester capable de la
+      // détecter, MÊME idiome que _guardTick (fn: () => unknown) pour la boucle de tick.
+      const r = fn(this) as unknown
+      if (r && typeof (r as any).then === 'function') {
+        (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('serveur.partie-timer-applicatif-rejete', { nom: name, msg: errMessage(err) })))
+      }
+    } catch (err) {
+      this.def.log('error', t('serveur.partie-timer-applicatif-leve', { nom: name, msg: errMessage(err) }))
+    }
   }
 
   _arm(name: string, ms: number, onExpire: () => void): void {
@@ -1024,7 +1188,7 @@ export class Game {
   // PROPRE clé `def` : un jeu qui n'en déclare AUCUNE ne paie que 3 lectures de propriété `undefined`
   // par coup (zéro Map peuplée, zéro entrée de journal, zéro appel à def.onSuspicion) --------------
 
-  /** garde composite — def.suspect (métier) → def.antiRejeu (séquence) → def.limits.moveIntervalMs
+  /** garde composite — def.suspect (métier) → def.antiReplay (séquence) → def.limits.moveIntervalMs
    *  (cadence serveur), DANS CET ORDRE. Chaque sous-garde qui REJETTE journalise+compte D'ABORD
    *  (_reportSuspicion) PUIS throw — même convention que _consumeToken ci-dessus : un refus ICI
    *  redevient une ack d'erreur classique côté client (cf. commentaire de tête de _onMove),
@@ -1034,7 +1198,7 @@ export class Game {
       const r = this.def.suspect(move, { seat: player.seat, game: this, type: this.type, turn: this.turn, phase: this.phase, p })
       if (r) {
         // `true` littéral (typeof !== 'object') = journalisé SEUL, JAMAIS rejeté tout seul — seule
-        // la forme objet `{rejeter:true}` déclenche un rejet (politique par défaut EXPLICITE
+        // la forme objet `{reject:true}` déclenche un rejet (politique par défaut EXPLICITE
         // uniquement, cf. MjsServerSuspectResult/tests : « true sans rejet → appliqué mais journalisé »)
         const reject = typeof r === 'object' && r.reject === true
         const reason  = (typeof r === 'object' && r.reason) || 'suspect'
@@ -1072,7 +1236,7 @@ export class Game {
     }
 
     // anti-triche (opt-in, anti-triche poussé au maximum) — quota de coups PAR
-    // IDENTITÉ agrégé sur TOUTES les parties vivantes de l'app (cf. MjsServerAntiTricheOptions.
+    // IDENTITÉ agrégé sur TOUTES les parties vivantes de l'app (cf. MjsServerAntiCheatOptions.
     // movesPerIdentity, index.ts) : borne un bot qui farme plusieurs parties EN PARALLÈLE, aveugle
     // à limits.moves/moveIntervalMs ci-dessus (PAR SIÈGE, PAR PARTIE). `_identityQuota` est un
     // simple PONT vers le registre RÉEL (Map identité→TokenBucket), tenu ENTIÈREMENT par
@@ -1086,7 +1250,7 @@ export class Game {
     }
   }
 
-  /** lit un numéro de séquence CLIENT depuis `p` pour def.antiRejeu — réutilise `_n` s'il est
+  /** lit un numéro de séquence CLIENT depuis `p` pour def.antiReplay — réutilise `_n` s'il est
    *  présent (MÊME champ que µ.predict, cf. _extractN/_lastAppliedN un peu plus haut) SANS le
    *  consommer ni y toucher : simple LECTURE, la réconciliation predict (_ack) continue EXACTEMENT
    *  comme avant, cette méthode ne mute jamais `p` ni `_lastAppliedN`. Sinon replie sur `_s`, un
@@ -1132,14 +1296,45 @@ export class Game {
   }
 }
 
+/** valide la FORME minimale d'un instantané avant restauration (cf. restoreGame) — un fichier
+ *  corrompu/tronqué/d'un format inconnu ne doit JAMAIS produire une partie À MOITIÉ construite
+ *  (état incohérent, pire qu'une absence de restauration) : throw AVANT tout `new Game()`, capté
+ *  par le try/catch PAR ENTRÉE de persist.ts::loadAtBoot (une seule partie orpheline n'empêche
+ *  jamais le boot des autres, cf. son commentaire — aucun besoin de recapturer ici). Ne valide PAS
+ *  le CONTENU métier (state/journal libres, propre à chaque def.state) — seulement la forme
+ *  STRUCTURELLE que ce fichier lit directement (.slice()/.map()/for…of un peu plus bas), sinon
+ *  c'est une TypeError bien plus cryptique qui surviendrait à leur place. */
+function validateSnapshot(data: MjsServerGameSnapshot): void {
+  if (!data || typeof data !== 'object') throw new Error(t('serveur.restore-invalide', { champ: 'racine', attendu: 'un objet' }))
+  if (typeof data.id !== 'string' || data.id === '') throw new Error(t('serveur.restore-invalide', { champ: 'id', attendu: 'une chaîne non vide' }))
+  if (typeof data.type !== 'string' || data.type === '') throw new Error(t('serveur.restore-invalide', { champ: 'type', attendu: 'une chaîne non vide' }))
+  if (!Array.isArray(data.journal)) throw new Error(t('serveur.restore-invalide', { champ: 'journal', attendu: 'un tableau' }))
+  if (!Array.isArray(data.seats)) throw new Error(t('serveur.restore-invalide', { champ: 'seats', attendu: 'un tableau' }))
+  if (!Array.isArray(data.timers)) throw new Error(t('serveur.restore-invalide', { champ: 'timers', attendu: 'un tableau' }))
+  for (const s of data.seats) {
+    if (s === null) continue
+    if (typeof s !== 'object' || typeof s.seat !== 'number' || typeof s.id !== 'string') {
+      throw new Error(t('serveur.restore-invalide', { champ: 'seats[]', attendu: "{seat:number, id:string} ou null" }))
+    }
+  }
+  for (const timer of data.timers) {
+    if (!timer || typeof timer.name !== 'string' || typeof timer.at !== 'number') {
+      throw new Error(t('serveur.restore-invalide', { champ: 'timers[]', attendu: '{name:string, at:number}' }))
+    }
+  }
+}
+
 /** Restaure une partie depuis un instantané `serialize()` — sièges reconstruits SANS connexion
  *  live (`clients` vide, `connected: false` : personne n'est encore rattaché après un redémarrage,
  *  cf. µgame:resync pour le rattachement). Minuteries réarmées au DÉLAI RESTANT (à - maintenant,
  *  jamais négatif). Ni `def.state()` ni `hooks.onCreate` ne re-tournent (restaurer ≠ créer). Mode
- *  lockstep : `data.lockstep.journal` repeuple `partie._lockstep` (déjà construit avec
+ *  lockstep : `data.lockstep.journal` repeuple `game._lockstep` (déjà construit avec
  *  la MÊME graine, ré-dérivée de `data.id`, cf. lockstep.ts deterministicSeed) — no-op si absent
- *  (partie authoritative, ou lockstep restaurée depuis un instantané antérieur). */
+ *  (partie authoritative, ou lockstep restaurée depuis un instantané antérieur).
+ *  `data` VALIDÉE en premier (cf. validateSnapshot) : forme inattendue → throw, AUCUNE partie
+ *  n'est construite (jamais un objet à moitié restauré posé dans le registre). */
 export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, data: MjsServerGameSnapshot): Game {
+  validateSnapshot(data)
   const game = new Game(app, def, onDestroy, data.id)
   game.code    = data.code
   game.state   = data.state
@@ -1148,6 +1343,13 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
   game.seq     = data.seq
   game.journal = data.journal.slice()
   game.players = data.seats.map(s => s ? { seat: s.seat, id: s.id, clients: new Set<MjsWsClient>(), connected: false } : null)
+  // cf. `_ended`/`_endResult`/`_started`/`_unconfirmedSeats` (game.ts) — absents d'un instantané
+  // ANTÉRIEUR à ces champs : `??` retombe sur le comportement HISTORIQUE (jouable, pas encore
+  // pleine, aucune fenêtre de confirmation en cours), jamais un throw pour leur seule absence
+  game._ended            = data.ended ?? false
+  game._endResult         = data.result
+  game._started           = data.started ?? false
+  game._unconfirmedSeats = data.unconfirmedSeats ? new Set(data.unconfirmedSeats) : null
   // anti-triche par joueur — repeuple _lastAntiReplaySeq/_lastMoveAt AVANT tout rattachement,
   // sinon un rejeu bloqué avant l'arrêt repasserait après restauration (_buckets repart plein, par design)
   for (const s of data.seats) {
@@ -1156,14 +1358,23 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
     if (s.lastMoveAt != null) game._lastMoveAt.set(s.id, s.lastMoveAt)
   }
   if (game._lockstep && data.lockstep) game._lockstep._restoreJournal(data.lockstep.journal)
+  // AVANT le ré-armement des minuteries SAUVÉES juste en dessous — si la partie était DÉJÀ vide
+  // avant le redémarrage, `µempty` fait partie de `data.timers` et sera réarmée au délai RESTANT
+  // juste après (_arm remplace toujours l'existant, le plus précis des deux gagne) ; si elle était
+  // PLEINEMENT connectée (donc `µempty` absente de `data.timers`, désarmée à l'époque), CET appel
+  // l'arme fraîche au TTL complet — sans lui, une partie restaurée sans AUCUN siège connecté (le
+  // cas normal juste après un redémarrage, cf. `connected: false` ci-dessus) n'aurait NI boucle de
+  // tick NI garde de grâce : des sièges déconnectés gardés indéfiniment en mémoire. Respecte
+  // `_ended` (cf. _checkEmpty) : une partie restaurée déjà terminée ne relance ni tick ni grâce.
+  game._checkEmpty()
   for (const { name, at } of data.timers) game._armByName(name, Math.max(0, at - Date.now()))
   return game
 }
 
-/** Crée une partie FRAÎCHE — `def.state(partie)` puis `hooks.onCreate` (dans cet ordre : l'état
+/** Crée une partie FRAÎCHE — `def.state(game)` puis `hooks.onCreate` (dans cet ordre : l'état
  *  existe déjà quand onCreate le lit). Seul point d'entrée normal — jamais `new Game()` direct
  *  hors de ce fichier (le state ne serait pas initialisé). Mode lockstep : `def.state`
- *  est `null` (interdit, cf. game.ts) — `partie.state` reste `undefined`, jamais assigné. */
+ *  est `null` (interdit, cf. game-def.ts) — `game.state` reste `undefined`, jamais assigné. */
 export function createGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, id: string): Game {
   const game = new Game(app, def, onDestroy, id)
   if (def.state) game.state = def.state(game)

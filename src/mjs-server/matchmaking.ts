@@ -3,7 +3,7 @@
 // par id, codes → id de partie) — game.ts ne connaît RIEN de ça, il ne gère qu'UNE instance.
 //
 // µgame:play { type, code? } — discrimination par TYPE de `code`, jamais par sa seule présence :
-//   - absent                → file d'attente publique (`places` atteintes → partie créée)
+//   - absent                → file d'attente publique (`seats` atteintes → partie créée)
 //   - `true` (booléen)      → crée une partie privée NEUVE, code généré (réponse le porte)
 //   - "XXXXX" (chaîne)      → rejoint la partie privée existant à ce code (inconnu → erreur)
 // `code` sous quelque forme que ce soit exige `def.code === true`, sinon erreur claire.
@@ -12,7 +12,7 @@ import type { MjsWsApp, MjsWsClient } from '../mjs-ws/index.js'
 import type { MjsServerResolvedDef } from './game-def.js'
 import { Game, createGame, restoreGame, peerIdOf } from './game.js'
 import type { MjsServerSeat, MjsServerGameSnapshot, MjsServerGameStats } from './game.js'
-// anti-triche — quota de coups PAR IDENTITÉ agrégé (cf. quotasIdentite plus bas), MÊME
+// anti-triche — quota de coups PAR IDENTITÉ agrégé (cf. identityQuotas plus bas), MÊME
 // primitive que game.ts::_consumeToken/_consumeHashToken (guard.ts, déjà composée là-bas)
 import { TokenBucket } from '../mjs-ws/guard.js'
 // anti-brute-force sur le CODE de partie privée — MÊME classe/patron que
@@ -62,7 +62,7 @@ export interface MjsServerMatchmaking {
  *  `gameStats` (anti-triche) — compteurs APP-ENTIÈRE créés par index.ts::mjsServer(), rattachés
  *  à CHAQUE partie ci-dessous (MÊME patron que `persist?.armGame`) : jamais `null` en usage réel
  *  (seul le défaut sert les tests qui appellent createMatchmaking directement sans passer par mjsServer()).
- *  `movesPerIdentity` (anti-triche) — cf. MjsServerAntiTricheOptions.movesPerIdentity
+ *  `movesPerIdentity` (anti-triche) — cf. MjsServerAntiCheatOptions.movesPerIdentity
  *  (index.ts, déjà validée [n, fenêtreMs] à cet appel) : `null` = option absente, AUCUN contrôle
  *  (défaut, MÊME politique que persist/gameStats ci-dessus pour les tests directs).
  *  `codePerIp` — [capacité, fenêtreMs] pour le verrou anti-brute-force sur les
@@ -71,7 +71,12 @@ export interface MjsServerMatchmaking {
  *  désactiver. index.ts n'expose PAS encore d'option publique pour le repasser (hors périmètre). */
 export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServerResolvedDef>, baseServe: MjsWsApp['serve'], baseOn: MjsWsApp['on'], persist: MjsServerPersistEngine | null = null, gameStats: MjsServerGameStats | null = null, movesPerIdentity: [number, number] | null = null, codePerIp: [number, number] | null = [DEFAULT_CODE_PAR_IP_CAPACITY, DEFAULT_CODE_PAR_IP_WINDOW_MS], queueCap: number | null = DEFAULT_QUEUE_CAP): MjsServerMatchmaking {
   const queues     = new Map<string, MjsWsClient[]>()     // type → tickets FIFO
-  const queuedType = new Map<MjsWsClient, string>()        // reverse index — retrait O(1) sur déconnexion
+  // reverse index — retrait O(1) sur déconnexion ; SINGULIER par construction (une connexion n'est
+  // JAMAIS dans deux files à la fois, cf. playQueued) — s'inscrire pour un NOUVEAU type retire
+  // d'abord le ticket d'un type précédent, sinon la déconnexion (onClientDisconnect plus bas) ne
+  // nettoierait QUE la DERNIÈRE file : le ticket de la première resterait indéfiniment, prêt à
+  // apparier un futur joueur avec une connexion déjà morte (siège fantôme signalé `connected: true`)
+  const queuedType = new Map<MjsWsClient, string>()
   // idempotence de file (anti-triche) — type → Set des IDENTITÉS (peerIdOf) déjà
   // en file pour ce type : empêche un spam de µgame:play (même connexion qui rejoue, OU 2e onglet
   // de la MÊME identité) de pousser plusieurs tickets — cf. matchmaking.ts:130-152
@@ -86,7 +91,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // movesPerIdentity plus haut) : SEUL endroit qui voit toutes les parties (cf. tête de fichier) —
   // un seau à jetons (TokenBucket) PAR IDENTITÉ, jamais par partie : TOUTES les parties d'une même
   // identité PARTAGENT LE MÊME bucket (Map keyée SEULEMENT par id), c'est précisément ce qui borne
-  // le farm multi-parties. Attaché à CHAQUE partie via `partie._identityQuota` (MÊME patron que
+  // le farm multi-parties. Attaché à CHAQUE partie via `game._identityQuota` (MÊME patron que
   // `_gameStats`, cf. create()/restoreGameFromSnapshot plus bas) ; vide et jamais consultée si
   // `movesPerIdentity` est `null` (coût nul, cf. identityQuotaOk).
   // RÉTENTION (corrigé) — le bucket d'une identité NE SE RÉINITIALISE JAMAIS sur
@@ -97,7 +102,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // façon GARANTI plein, purger et recréer à la demande est donc STRICTEMENT équivalent à le garder).
   // `lastSeen` = date du dernier take(), Map ré-insérée en fin d'accès (ordre = ancienneté) — MÊME
   // patron que accounts.ts::FailureBucket::_touch, réutilisé en esprit ici (structure interne différente,
-  // le bucket doit rester attaché à `partie._identityQuota` via la closure identityQuotaOk).
+  // le bucket doit rester attaché à `game._identityQuota` via la closure identityQuotaOk).
   const identityQuotas = new Map<string, { bucket: TokenBucket; lastSeen: number }>()
   // anti-brute-force code de partie privée (cf. tête de fichier) — PAR IP,
   // FailureBucket (accounts.ts) réutilisée telle quelle : `isBlocked` AVANT toute résolution de code
@@ -143,13 +148,13 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // SANS jamais les effacer du stockage persistant, seule une VRAIE fin de partie le fait
     if (!stopping) persist?.forgetGame(game.id)
     // anti-triche — la destruction d'une partie est un point d'activité naturel pour
-    // borner `quotasIdentite` (cf. purgeExpiredIdentityQuotas plus bas) ; PLUS d'occupation de
+    // borner `identityQuotas` (cf. purgeExpiredIdentityQuotas plus bas) ; PLUS d'occupation de
     // siège consultée ici (cf. tête de fichier « RÉTENTION ») — un bucket
     // ne dépend plus de la présence en siège, seulement du TTL.
     if (movesPerIdentity) purgeExpiredIdentityQuotas(Date.now())
   }
 
-  // --- anti-triche (quota de coups par identité, cf. quotasIdentite/movesPerIdentity
+  // --- anti-triche (quota de coups par identité, cf. identityQuotas/movesPerIdentity
   // plus haut) — seau à jetons PAR IDENTITÉ, PARTAGÉ entre toutes ses parties vivantes -----------
 
   const QUOTA_IDENTITY_SWEEP_MAX = 8   // borne le coût d'un passage — MÊME patron que accounts.ts::ECHEC_SWEEP_MAX
@@ -173,7 +178,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
    *  quota, zéro fuite mémoire (une identité qui ne rejoue plus jamais finit purgée). PLUS aucune
    *  dépendance à l'occupation de siège (contrairement à l'ancien nettoyerQuotaIdentiteSiVide,
    *  remplacé) : un leave/rejoin, quelle que soit la partie visée, ne touche
-   *  JAMAIS `lastSeen`. Balayage borné (`QUOTA_IDENTITE_SWEEP_MAX`) sur une Map ordonnée par
+   *  JAMAIS `lastSeen`. Balayage borné (`QUOTA_IDENTITY_SWEEP_MAX`) sur une Map ordonnée par
    *  ancienneté d'accès (ré-insertion dans identityQuotaOk) — s'arrête au premier bucket encore
    *  valide, MÊME patron que accounts.ts::FailureBucket::_touch. No-op si l'option est absente. */
   function purgeExpiredIdentityQuotas(now: number): void {
@@ -203,7 +208,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     queuedIdentities.get(type)?.delete(id)
   }
 
-  /** cherche, parmi les parties VIVANTES (encore dans le registre `parties` — cf.
+  /** cherche, parmi les parties VIVANTES (encore dans le registre `games` — cf.
    *  onGameDestroyed, jamais de fenêtre où une partie détruite y traînerait encore : la
    *  suppression est SYNCHRONE dans le même appel que _destroy()) de CE type, celle où cette
    *  IDENTITÉ (peerIdOf) occupe déjà un siège — balayage O(n) sur les parties vivantes, MÊME
@@ -234,7 +239,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     for (const client of player.clients) app.send(client, 'µgame:start', frame)
   }
 
-  /** 1re fois que `places` est atteint → µgame:start à tous les AUTRES sièges déjà occupés (jamais deux fois) */
+  /** 1re fois que `seats` est atteint → µgame:start à tous les AUTRES sièges déjà occupés (jamais deux fois) */
   function markStartedIfFull(game: Game, directPlayer: MjsServerSeat | null): void {
     if (game._started) return
     const full = game.players.filter((j): j is MjsServerSeat => j !== null).length === game.def.seats
@@ -287,7 +292,11 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     checkCodeLockout(client)
     const gameId = codes.get(code)
     const game = gameId !== undefined ? games.get(gameId) : undefined
-    if (!game) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    // le TYPE demandé doit correspondre à celui de la partie visée par ce code — sinon une requête
+    // { type: 'B', code: codeDeA } rejoindrait intégralement la partie A (vue/état RÉELS de A
+    // renvoyés à une requête B). MÊME message que 'code inconnu' (pas une forme d'erreur à part) :
+    // ne révèle jamais qu'un code existe pour un AUTRE type
+    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
     const alreadySeated = game._findSeatOf(client)
     if (alreadySeated) return seatResponse(game, alreadySeated)   // même connexion qui rejoue play : idempotent
     const player = game._createSeat(client)   // throw 'partie complète' si déjà pleine — PAS un échec de code, non comptabilisé
@@ -307,7 +316,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // déjà en file OU déjà assise dans une partie VIVANTE de ce type : ignore/réattache plutôt que
     // de pousser un 2e ticket (cf. matchmaking.ts:130-152 — un spam de µgame:play
     // prenait autant de tickets que d'appels, jusqu'à des sièges fantômes qui ne vident jamais la
-    // partie). Déjà en file → réponse IDENTIQUE à celle du 1er ticket (même {attente}, aucun 2e
+    // partie). Déjà en file → réponse IDENTIQUE à celle du 1er ticket (même {queue}, aucun 2e
     // push) ; déjà assise → réattache CETTE connexion au siège existant (_createSeat dédup en
     // interne, cf. game.ts) et renvoie sa réponse de siège, comme si elle rejouait play() après
     // coup — jamais un 2e siège, jamais une 2e partie.
@@ -317,6 +326,15 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (existingGame) {
       const player = existingGame._createSeat(client)
       return seatResponse(existingGame, player)
+    }
+
+    // queuedType est SINGULIER par conception (cf. sa déclaration) — s'inscrire dans une NOUVELLE
+    // file retire d'abord le ticket d'une file PRÉCÉDENTE pour cette MÊME connexion
+    const previousType = queuedType.get(client)
+    if (previousType !== undefined && previousType !== def.type) {
+      dequeue(previousType, id)
+      const previousQueue = queues.get(previousType)
+      if (previousQueue) { const i = previousQueue.indexOf(client); if (i !== -1) previousQueue.splice(i, 1) }
     }
 
     let queue = queues.get(def.type)
@@ -351,14 +369,16 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   /** rejoint une partie EXISTANTE comme spectateur — adressée PAR CODE, MÊME registre `codes` que
    *  joinWithCode : aucune ambiguïté possible (contrairement à la file publique, où plusieurs
    *  parties du MÊME type peuvent être vivantes en parallèle — rien n'identifierait LAQUELLE
-   *  regarder). N'occupe AUCUN siège (cf. partie._addSpectator) — jamais de _createSeat,
-   *  jamais de marquerDemarreeSiComplete. `siege: null` EXPLICITE (jamais `undefined`) — MÊME
-   *  invariant que côté client (store.siege = null tant que jamais assis, cf. mjs_game.ts). */
-  function joinAsSpectator(client: MjsWsClient, code: string): unknown {
+   *  regarder). N'occupe AUCUN siège (cf. game._addSpectator) — jamais de _createSeat,
+   *  jamais de markStartedIfFull. `seat: null` EXPLICITE (jamais `undefined`) — MÊME
+   *  invariant que côté client (store.seat = null tant que jamais assis, cf. mjs_game.ts).
+   *  MÊME garde de TYPE que joinWithCode (cf. son commentaire) : `def` (résolu depuis `p.type` par
+   *  handlerPlay) doit correspondre au type RÉEL de la partie visée par ce code. */
+  function joinAsSpectator(def: MjsServerResolvedDef, client: MjsWsClient, code: string): unknown {
     checkCodeLockout(client)   // MÊME verrou anti-brute-force que joinWithCode — même registre `codes`, même risque de devinette
     const gameId = codes.get(code)
     const game = gameId !== undefined ? games.get(gameId) : undefined
-    if (!game) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
     const info = game._addSpectator(client)
     return { game: game.id, seat: null, spectator: true, phase: game.phase, turn: game.turn, seq: game.seq, code: game.code, ...info }
   }
@@ -377,7 +397,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (p.spectator === true) {
       if (!def.code) throw new Error(t('serveur.matchmaking-spectateur-sans-code-prive', { type: p.type }))
       if (typeof p.code !== 'string' || p.code === '') throw new Error(t('serveur.matchmaking-spectateur-code-requis'))
-      return joinAsSpectator(client, p.code)
+      return joinAsSpectator(def, client, p.code)
     }
     if (p.code === true) {
       if (!def.code) throw new Error(t('serveur.matchmaking-jeu-sans-parties-privees', { type: p.type }))
@@ -413,7 +433,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     game._leave(client)   // gère aussi bien un siège qu'un spectateur, cf. son commentaire
     // anti-triche — le quota de CETTE identité n'est JAMAIS réinitialisé par ce leave (cf.
     // « RÉTENTION » en tête de fichier) : simple point d'activité pour borner
-    // `quotasIdentite` par TTL, rien de plus.
+    // `identityQuotas` par TTL, rien de plus.
     if (movesPerIdentity) purgeExpiredIdentityQuotas(Date.now())
     return { ok: true }
   }
@@ -430,7 +450,10 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // trame malformée ou partie/joueur introuvable → silencieusement ignorée (best-effort, jamais un
   // throw qui n'aurait de toute façon personne à qui le remonter).
   function handlerHash(p: any, client: MjsWsClient): void {
-    if (typeof p?.game !== 'string' || typeof p?.tick !== 'number' || typeof p?.h !== 'string') return
+    // tick NON ENTIER rejeté ICI aussi (garde redondante avec lockstep.ts::receiveHash — défense
+    // en profondeur) : sans elle, des ticks fractionnaires (i*0.001…) contourneraient le plafond
+    // d'entrées retenues par tick
+    if (typeof p?.game !== 'string' || typeof p?.tick !== 'number' || !Number.isInteger(p.tick) || typeof p?.h !== 'string') return
     const game = games.get(p.game)
     game?._receiveHash(client, p.tick, p.h)
   }

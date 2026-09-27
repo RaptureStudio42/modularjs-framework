@@ -137,7 +137,7 @@ Ces défauts ne recoupent **jamais** ceux de `mjs ws` (`ws.server.mjs`/`ws.js`/�
 }
 ```
 
-Port : priorité `--port` > `serveur.port` > `4001` (**distinct** du `4000` de `mjs ws`). Hôte d'écoute : `127.0.0.1` par défaut, `--host ::` pour exposer sur toutes les interfaces. Chaque clé partagée avec `ws` (transport/codec/heartbeat/limits/token/bridge/resume/adapter/stats/sessionExclusive/verifyOrigin), ainsi qu'`antiCheat`, est définissable **ici** **ou** dans l'entry — en cas de doublon, l'**entry prime EN bloc**, avec un avertissement (**même** règle que §6.4 doc 23). `persist` ([§8](#persistance)) reste **entry-only** : ses adaptateurs exposent des fonctions (`load`/`save`/`remove`), non représentables en JSON.
+Port : priorité `--port` > `serveur.port` > `4001` (**distinct** du `4000` de `mjs ws`). Hôte d'écoute : `127.0.0.1` par défaut, `--host ::` pour exposer sur toutes les interfaces. Chaque clé partagée avec `ws` (transport/codec/heartbeat/limits/token/bridge/resume/adapter/stats/sessionExclusive/verifyOrigin/ban), ainsi qu'`antiCheat`, est définissable **ici** **ou** dans l'entry — en cas de doublon, l'**entry prime EN bloc**, avec un avertissement (**même** règle que §6.4 doc 23). `persist` ([§8](#persistance)) reste **entry-only** : ses adaptateurs exposent des fonctions (`load`/`save`/`remove`), non représentables en JSON.
 
 Rechargement à chaud et arrêt propre : **même** comportement que `mjs ws` ([23 · MJS-WS §6.5-§6.6](23-mjs-ws.md#mjs-ws)).
 
@@ -300,9 +300,11 @@ X et O voient tous les deux `grille`/`lettres` (publics), mais `monSecret` diff�
 
 Chaque type a sa propre file FIFO. Un ticket s'ajoute à chaque `µgame:play` sans code ; tant que `seats` n'est pas atteint, le client reçoit `{ queue: n }` (sa position) — pas encore assis. Dès que `seats` est atteint, une partie **naît complète** : tous les tickets prennent siège d'un coup. Le siège de la connexion dont la requête a complété le groupe est confirmé immédiatement (c'est sa propre réponse) ; les autres sièges — déjà en file, prévenus par une poussée `µgame:start` — ont `seatTtl` pour se manifester (un coup ou un `µgame:resync` suffit à confirmer). **Personne ne se manifeste ? La partie entière est annulée** (pas de re-complétion partielle depuis la file) : `µgame:end { result: { cancelled: true, reason: 'seat-expired' } }` à qui restait connecté, partie détruite. C'est le choix le plus simple des deux envisagés au départ — documenté ici, pas de configuration plus fine en v1.
 
+Une **même connexion n'est jamais en file que pour un SEUL type à la fois** : retenter `µgame:play` sans code pour un **autre** type retire d'abord son ticket du premier (choix conservateur — une connexion ne peut viser qu'une file, jamais deux en parallèle).
+
 ### Les parties privées — `code: true`
 
-`def.code: true` autorise deux usages : `opts.code: true` crée une partie **neuve** avec un code court généré (5 caractères, alphabet sans `0`/`O`/`1`/`I` — ambiguïté typographique — porté par la réponse) ; `opts.code: "ABCDE"` rejoint cette partie. Le fondateur d'une partie par code est confirmé par SA **propre** requête (rien à surveiller via `seatTtl` tant qu'il reste connecté) — `emptyTtl` suffit à purger un fondateur qui repart sans jamais recevoir personne. Rejouer `µgame:play` avec le même code depuis la **même** connexion déjà assise est **idempotent** (renvoie le siège existant, ne throw pas).
+`def.code: true` autorise deux usages : `opts.code: true` crée une partie **neuve** avec un code court généré (5 caractères, alphabet sans `0`/`O`/`1`/`I` — ambiguïté typographique — porté par la réponse) ; `opts.code: "ABCDE"` rejoint cette partie. Le fondateur d'une partie par code est confirmé par SA **propre** requête (rien à surveiller via `seatTtl` tant qu'il reste connecté) — `emptyTtl` suffit à purger un fondateur qui repart sans jamais recevoir personne. Rejouer `µgame:play` avec le même code depuis la **même** connexion déjà assise est **idempotent** (renvoie le siège existant, ne throw pas). Le **type** demandé doit correspondre à celui de la partie visée par ce code — un code valide pour un AUTRE type rend la même erreur `code inconnu` (jamais de confirmation qu'un code existe pour un type différent).
 
 ### La grâce des parties vides — `emptyTtl`
 
@@ -473,6 +475,8 @@ app = mjsServer({ persist: { adapter: new MemoryPersistAdapter(), debounce: 150,
 
 Au démarrage, `app.listen()` **charge avant d'écouter** — aucun client ne peut arriver sur une partie pas encore restaurée. À l'arrêt, `app.stop()` sauve une dernière fois les parties encore sales **puis** `flush()` l'adaptateur, **puis** coupe les minuteries — un ordre inversé perdrait les minuteries en cours au prochain redémarrage. Détruire une partie pour un **arrêt serveur** ne l'efface **jamais** du stockage (elle revit au prochain boot via `load()`) — seule une **vraie** fin (`.end()`, `emptyTtl`, annulation de sièges) appelle `remove()`.
 
+Une entrée restaurée dont la **forme** est inattendue (champ manquant, type inattendu — au-delà de la simple corruption JSON déjà couverte par chaque adaptateur, cf. tableau ci-dessous) est elle aussi **ignorée avec un avertissement** plutôt que de bloquer le boot des autres parties : `id`/`type` non vides, `journal`/`seats`/`timers` tableaux, chaque siège/minuterie de la forme attendue.
+
 ### Les adaptateurs fournis
 
 | Adaptateur | Fichier | Stockage |
@@ -578,16 +582,16 @@ app = mjsServer({ persist: new SqlPersistAdapter({ query, dialect: '$' }) })
 
 ### Migrer un stockage écrit par une version antérieure
 
-L'instantané a changé de vocabulaire en même temps que le reste de MJS-Server (cf. CHANGELOG). Quatre endroits parlaient encore français :
+Une sauvegarde écrite par une version française de MJS-Server porte quatre noms français (cf. CHANGELOG) ; le script de migration les convertit ainsi :
 
-| Avant | Maintenant |
+| Dans une ancienne sauvegarde | Lu par le serveur |
 |---|---|
 | `minuteries: [{ nom, à }]` | `timers: [{ name, at }]` |
 | `journal: [{ coup, joueur, p, à }]` | `journal: [{ move, player, p, at }]` |
 | `lockstep.journal[].ordres: [{ joueur, coup, p }]` | `lockstep.journal[].orders: [{ player, move, p }]` |
 | `id: 'partie<n>'` — **et le fichier**, nommé `<id>.json` | `id: 'game<n>'` |
 
-`type`, `code`, `state`, `phase`, `turn`, `seq` et `seats` sont **inchangés**. Les trois minuteries réservées ont aussi changé de nom (`'µtour'`/`'µappariement'`/`'µvide'` → `'µturn'`/`'µmatch'`/`'µempty'`) : une partie restaurée sans traduction ne réarmerait plus son tour.
+`type`, `code`, `state`, `phase`, `turn`, `seq` et `seats` restent tels quels. Les trois minuteries réservées sont converties aussi (`'µtour'`/`'µappariement'`/`'µvide'` → `'µturn'`/`'µmatch'`/`'µempty'`) : une partie restaurée sans traduction ne réarmerait pas son tour.
 
 L'**identifiant** est le seul de ces quatre à circuler aussi **sur le fil** (`µgame:*.game`) : `app.game()` le fabrique en `game1`, `game2`… Ne pas migrer ne casse rien — les deux formes ne se croisent jamais, le compteur ne réattribue qu'un `game<n>` — mais la base continue de parler français. Le script renomme le **fichier** en même temps que l'id ; il refuse d'écraser une cible déjà présente (avertissement, les deux fichiers restent) et laisse intact tout id d'une autre forme.
 
@@ -718,11 +722,20 @@ Le client (`sock.game`, §7) n'a **rien à faire de spécial** : `game.state` re
 | `deltas: false` (défaut) | `{ game, view, phase, turn, seq }` — inchangé depuis le socle v1 |
 | `deltas: true`, changement normal | `{ game, phase, turn, seq, delta: [{p:'chemin.a.b', v}, {p:'chemin.c', x:1}, …] }` — `v` pose/remplace la valeur au chemin `p` (à points), `x: 1` supprime la clé finale du chemin |
 | `deltas: true`, repli (cf. ci-dessous) | `{ ..., view }` — vue complète, comme si `deltas` était `false` pour cette trame |
-| `deltas: true`, rien n'a changé pour CE joueur | **aucune trame** — zéro octet, pas même une trame vide |
+| `deltas: true`, phase/tour/`_ack` changent mais PAS la vue | `{ game, phase, turn, seq }` (+ `_ack` s'il y a lieu) — **méta seule**, sans `view` ni `delta` |
+| `deltas: true`, rien n'a changé pour CE joueur (ni la vue NI la méta) | **aucune trame** — zéro octet, pas même une trame vide |
 
 ### Repli vue complète
 
 Trois situations retombent sur une vue **complète** plutôt qu'un delta, **jamais** un delta partiel : la **1ʳᵉ diffusion** pour un joueur donné (rien à comparer) ; **`µgame:resync`**, **toujours** une vue complète — ce qui vient d'être envoyé devient la nouvelle baseline pour le prochain delta ; et un **delta trop gros** — si son JSON dépasse 60 % du JSON de la vue complète, MJS-Server envoie la vue complète à la place (un état qui a presque tout changé ne gagne rien à être décrit champ par champ).
+
+### Méta seule — un changement de phase/tour sans changement de vue part quand même
+
+`phase`/`turn`/`_ack` (netcode) sont suivis **indépendamment** de la vue : un `game.to(...)`/`game.next()` qui ne touche **aucun** champ de `game.state` déclenche quand même une trame `{ game, phase, turn, seq }` (sans `view` ni `delta`) — sinon un changement de phase ou de tour resterait **invisible** côté client tant que la vue elle-même ne bouge pas. Suivi **par connexion**, comme la vue (cf. ci-dessous) — un `µgame:resync` pose aussi la nouvelle baseline **méta**.
+
+### Deux onglets, une identité — baseline par CONNEXION
+
+`def.deltas` suit la dernière vue (et la dernière méta) envoyée **par connexion**, jamais par identité de joueur : si le **même** compte est ouvert dans deux onglets sur le **même** siège, chacun a sa propre baseline de delta. Un `µgame:resync` de l'un (au retour d'un onglet en arrière-plan, par exemple) ne fait donc **jamais** sauter de trame à l'autre — chacun continue de recevoir ses propres deltas, indépendamment de ce que l'autre onglet vient de resynchroniser.
 
 ### Limite — pas de point littéral dans une clé
 
@@ -763,6 +776,8 @@ app.game('arene', {
 ```
 
 `game.space` (`null` si `def.space` absent) expose trois méthodes : `.set(id, x, y)` pose ou déplace une entité (retire de son ancienne cellule si besoin, no-op si elle reste dans la **même** cellule), `.remove(id)` la retire, `.query(x, y, rayon)` renvoie les ids dans le carré de cellules couvrant ce rayon — filtré finement à la distance de Tchebychev (`max(|dx|,|dy|)`, pas un cercle euclidien, cohérent avec le balayage grossier en cellules carrées). Coût de `.query()` proportionnel aux **cellules** couvertes, jamais au nombre total d'entités.
+
+> ⚠️ **`.query()` face à une entrée invalide.** Des coordonnées/un rayon **non finis** (`Infinity`, `NaN` — typiquement un rayon venu tel quel d'un client sans validation applicative) rendent un tableau **vide** + un avertissement (au plus une fois par partie), jamais une exception ni un blocage. Un rayon **fini** mais démesuré est en plus **plafonné** en interne (nombre de cellules parcourues borné) — résultat potentiellement partiel plutôt qu'un balayage sans fin.
 
 > ⚠️ **Limite — non repeuplé après restauration.** `game.space` est un index **dérivé**, jamais sérialisé par la persistance (§8) : une partie restaurée depuis `load()` repart avec un `game.space` **vide**, même si `game.state` contient déjà des positions. À ton jeu de le repeupler lui-même (typiquement au premier `simulate`/`view` qui suit une reprise, en rappelant `.set()` pour chaque entité de `game.state`) — aucune magie de repopulation automatique ici.
 
@@ -939,7 +954,7 @@ Le mouvement distant devient ~4× plus lisse (saut divisé), et le tir passe de 
 - **Appli anonyme = pas de reprise.** Sans `opts.auth` posant une identité **stable** côté MJS-WS, chaque reconnexion change d'`id` (repli sur l'id de connexion) — `µgame:resync` ne retrouve alors **jamais** un siège après coupure. Une identité stable est le prix de la reprise.
 - **`µgame:*` n'est jamais binaire.** Deltas ([§11](#deltas)) et zones d'intérêt ([§12](#zones-interet)) réduisent le volume, mais restent 100 % JSON — le protocole interne de MJS-Server ne passe jamais par `µschema` ([23 · MJS-WS §3.1](23-mjs-ws.md#µschema)) : ses trames (`view`/`delta` en particulier) ont une forme **dynamique**, propre à chaque jeu, que le registre à champs **fixes** de `µschema` ne sait pas décrire. Un état qui doit vraiment voyager en binaire se pousse en messages **custom**, à côté de `µgame:*`, via `app.schema(...)` — cf. le banc mesuré ci-dessous.
 - **`ws.codec: 'binary'` strict casse tout `sock.request()` — donc tout MJS-Server.** L'API cliente de MJS-Server n'envoie **que** des requêtes id-bearing (`µgame:play`/`move`/`leave`/`resync`, [§15](#protocole)) — or l'enveloppe binaire de `µschema` ne porte **aucun** id de corrélation (une requête reste **toujours** en JSON côté client, cf. [20 · Temps réel](20-temps-reel.md) §7.4 « pub/sub seulement »), et le mode **strict** rejette en retour toute trame **texte** applicative hors `µ:`, id ou pas. Constat vérifié directement : en `codec: 'binary'`, `sock.request('µgame:move', …)` expire systématiquement (jamais de `µ:ack`) — `ws.codec: 'binary'` est donc **incompatible** avec MJS-Server en l'état ; réserve-le à une app MJS-WS pure, entièrement pub/sub.
-- **Mode spectateur (ajouté par la couche anti-triche).** `µgame:play { spectator: true }` (par code de partie) rejoint sans occuper de siège ; le spectateur reçoit `µgame:state` avec une vue **sûre** (`def.spectatorView(game)`, sinon `view(game, null)`, sinon `{}` + avertissement — jamais l'état brut), tout coup de sa part est rejeté. Limite v1 : seul `µgame:state` lui est relayé (pas `end`/`left`), et l'entrée se fait par code (pas via la file publique).
+- **Mode spectateur (ajouté par la couche anti-triche).** `µgame:play { spectator: true }` (par code de partie, le type demandé doit correspondre à celui de la partie visée par ce code) rejoint sans occuper de siège ; le spectateur reçoit `µgame:state` avec une vue **sûre** (`def.spectatorView(game)`, sinon `view(game, null)`, sinon `{}` + avertissement — jamais l'état brut), tout coup de sa part est rejeté. `µgame:end` et `µgame:left` lui sont **aussi** relayés (même charge que celle des sièges — `result`/`seat` ne sont pas des vues, aucun filtrage `spectatorView` dessus) ; `µgame:seat` (roster), lui, reste réservé aux sièges. Limite v1 : l'entrée se fait par code (pas via la file publique).
 - **Le banc mesuré.** Mini-monde réaliste (30 entités dont 4 mobiles, 15 Hz, 2 clients) : ≈ 63 000 octets/s en JSON vue complète, ≈ 19 200 en messages `µschema` binaires par entité (≈ 0,30×), ≈ 8 100 en deltas JSON (`def.deltas: true`, **même** monde, ≈ 0,13×). Sur CE monde, ne transmettre que ce qui a changé bat l'encodage binaire de l'état entier — le rapport dépend directement de la part d'entités qui bougent réellement à chaque tick.
 
 ---

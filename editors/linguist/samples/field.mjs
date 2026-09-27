@@ -1,23 +1,37 @@
 <script>
-  $name    ?= ''
-  $label   ?= ''
-  $help    ?= ''
-  $okLabel ?= ''
+  $name    = ''
+  $label   = ''
+  $help    = ''
+  $okLabel = ''
 
   $status   = 'neutral'
   $fieldId  = ''
   $errorMsg = ''
 
-  seen = false
+  seen         = false
+  nameObserver = null
 
   µmount ->
-    µ.error('[mjs-field] l\'attribut « name » est requis.') unless $name
     els = slotRef?.assignedElements() ?? []
     target = els[0]
     if target
-      if not target.id
-        target.id = 'mjs-field-' + Math.random().toString(36).slice(2, 9)
-      $fieldId = target.id
+      # target peut envelopper le vrai champ (icône/affixe) : id/for doivent viser le champ natif, pas l'enveloppe
+      native = if target.matches?('input, select, textarea') then target else target.querySelector?('input, select, textarea') or target.querySelector?('[name]') or target
+      if not native.id
+        native.id = 'mjs-field-' + Math.random().toString(36).slice(2, 9)
+      $fieldId = native.id
+      # name FACULTATIF sur l'enveloppe : le champ porte DÉJÀ le sien, sans quoi aucun formulaire ne le ramasse
+      explicite = !!$name
+      $name     = native.getAttribute?('name') or '' unless explicite
+      # un name déduit suit le champ enveloppé si son attribut change plus tard ; un name
+      # explicite sur l'enveloppe, lui, reste prioritaire à vie (jamais réévalué)
+      unless explicite
+        nameObserver = new MutationObserver -> $name = native.getAttribute?('name') or ''
+        nameObserver.observe(native, { attributes: true, attributeFilter: ['name'] })
+    µ.error('[mjs-field] aucun « name » : ni sur <@field>, ni sur le champ enveloppé.') unless $name
+
+  µdestroy ->
+    nameObserver?.disconnect()
 
   µeffect ->
     err = µres.errors?.[$name]

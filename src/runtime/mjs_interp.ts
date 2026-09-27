@@ -8,15 +8,15 @@
 // avertissement bundler dans src/bundler/index.ts::resolveRuntimeFiles).
 //
 //   partie  = sock.game('monjeu')
-//   $vue    = µ.interp(partie, { champs: ['entites'], retard: 2 })   # store MIROIR réactif
+//   $vue    = µ.interp(partie, { fields: ['entites'], delay: 2 })   # store MIROIR réactif
 //   {for id, e in $vue.entites}<mjs-entity {...e} />{/for}           # positions LISSÉES
 //   …
 //   $vue.stop()   # coupe la boucle de rendu + les abonnements — le vrai partie.state, LUI, continue
 //
-// `champs` — noms de clés de `partie.state` qui sont des DICTS {id → entité} (forme de `def.view`
+// `fields` — noms de clés de `partie.state` qui sont des DICTS {id → entité} (forme de `def.view`
 // côté jeu, cf. mjs-server/game.ts) : SEULES ces clés apparaissent sur le store miroir renvoyé (les
 // clés méta de partie.state — statut/phase/tour… — restent lues DIRECTEMENT sur `partie.state`, le
-// jeu choisit ce qu'il branche sur le miroir). `retard` (périodes, défaut 2) : on
+// jeu choisit ce qu'il branche sur le miroir). `delay` (périodes, défaut 2) : on
 // affiche l'état à T − retard×période — la période est la moyenne glissante des N derniers écarts
 // d'arrivée réseau (0 tant que 2 arrivées n'ont pas encore été vues → aucun retard, on montre le
 // plus récent connu). Lerp linéaire de TOUTES les valeurs NUMÉRIQUES des sous-objets (par clé

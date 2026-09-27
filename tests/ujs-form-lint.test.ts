@@ -39,6 +39,10 @@ describe('checkUjsForm — contrôles unitaires (fonction pure)', () => {
     assert.equal(checkUjsForm('<form action=""></form>', 'mod').length, 1)
   })
 
+  it('action = "" (espaces autour du =) compte AUSSI comme ABSENTE : même avertissement', () => {
+    assert.equal(checkUjsForm('<form action = ""></form>', 'mod').length, 1)
+  })
+
   it('(c) <form @method="post"> : silence', () => {
     assert.deepEqual(checkUjsForm('<form @method="post"></form>', 'mod'), [])
   })

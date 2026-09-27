@@ -160,7 +160,7 @@ describe('µminmax : bornes inversées avertissent', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('min > max sur 2 variables → exactement 1 avertissement (dédup par COUPLE min/max)', async () => {
+  it('min > max sur 2 variables du MÊME composant → 2 avertissements distincts (dédup par composant ET variable, pas par couple min/max)', async () => {
     const src = [
       '<script>',
       '$a = 50',
@@ -172,8 +172,9 @@ describe('µminmax : bornes inversées avertissent', function () {
       '<p class="b">{$b}</p>',
     ].join('\n')
     const { warnCalls } = await mountCapturingWarn('minmaxinv', src)
-    assert.equal(warnCalls.length, 1, `attendu exactement 1 avertissement, reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
-    assert.equal(warnCalls[0], '[ModularJS] µminmax : bornes inversées (min 100 > max 0)')
+    assert.equal(warnCalls.length, 2, `attendu 2 avertissements distincts (a et b), reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
+    assert.equal(warnCalls[0], '[ModularJS] µminmax : bornes inversées (min 100 > max 0) sur `a`')
+    assert.equal(warnCalls[1], '[ModularJS] µminmax : bornes inversées (min 100 > max 0) sur `b`')
   })
 
   it('bornes normales (min < max) → aucun avertissement', async () => {

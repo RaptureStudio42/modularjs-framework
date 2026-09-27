@@ -37,6 +37,7 @@ import {
 } from './ws.js'
 import type { CliLogger } from './ws.js'
 import { t } from '../messages/index.js'
+import { gardeArret, SHUTDOWN_GRACE_MS } from './dev-lock.js'
 
 // --- squelette imprimé quand aucune entry n'est trouvée ---------------------
 
@@ -190,6 +191,10 @@ export function buildServeurRunPlan(
     if (options.verifyOrigin !== undefined) warn(t('cli.entry-config-doublon', { champ: 'verifyOrigin', chemin: 'serveur.verifyOrigin' }))
     else options.verifyOrigin = serveurConfig.verifyOrigin
   }
+  if (serveurConfig?.ban !== undefined) {
+    if (options.ban !== undefined) warn(t('cli.entry-config-doublon', { champ: 'ban', chemin: 'serveur.ban' }))
+    else options.ban = serveurConfig.ban
+  }
   // antiTriche (propre à MJS-Server) — MÊME règle que les clés héritées ci-dessus :
   // pas de fusion clé à clé, l'entry prime EN BLOC si les deux sont posés, avec un warn.
   if (serveurConfig?.antiCheat !== undefined) {
@@ -322,8 +327,17 @@ export async function runServeurCommand(
   let reloadGeneration = 0
   let reloadRunning    = false
   let reloadPending    = false
+  // MÊME garde que cli/ws.ts (cf. son commentaire détaillé) : posé par shutdown(), un
+  // rechargement qui le voit APRÈS avoir démarré son NOUVEAU serveur le referme aussitôt sans
+  // jamais l'exposer — sans lui, un import lent encore en vol au moment d'un Ctrl-C finissait par
+  // (re)brancher un serveur sur le port/transport APRÈS que l'arrêt se soit déjà annoncé terminé.
+  let shuttingDown     = false
+  // Rechargement EN VOL — attendu par shutdown() avant de fermer `currentApp` (même raison que
+  // cli/ws.ts).
+  let reloadInFlight: Promise<void> | null = null
 
   function scheduleReload(): void {
+    if (shuttingDown) return   // arrêt déjà demandé : aucun nouveau cycle de rechargement
     reloadGeneration++
     if (reloadRunning) { reloadPending = true; return }
     runReloadLoop()
@@ -332,9 +346,9 @@ export async function runServeurCommand(
   function runReloadLoop(): void {
     reloadRunning = true
     const myGeneration = reloadGeneration
-    void reload(myGeneration).finally(() => {
+    reloadInFlight = reload(myGeneration).finally(() => {
       reloadRunning = false
-      if (reloadPending) { reloadPending = false; runReloadLoop() }
+      if (reloadPending && !shuttingDown) { reloadPending = false; runReloadLoop() }
     })
   }
 
@@ -362,6 +376,9 @@ export async function runServeurCommand(
       const app = mjsServer({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
       if (plan.setup) await plan.setup(app)
       await app.listen()
+      // Un arrêt a été demandé PENDANT cet import/listen : ce nouveau serveur ne doit JAMAIS
+      // devenir `currentApp` ni rester en écoute — refermé aussitôt, sans le moindre message.
+      if (shuttingDown) { await app.stop().catch(() => {}); return }
       currentApp = app
       logger.info(t('cli.redemarre', { chemin: relative(args.root, entryPath) || entryPath }))
     } catch (err) {
@@ -381,13 +398,24 @@ export async function runServeurCommand(
   }
 
   async function shutdown(): Promise<void> {
-    process.off('SIGINT', onSignal)
-    process.off('SIGTERM', onSignal)
+    shuttingDown = true
     if (watcher) { watcher.close(); watcher = null }
     if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null }
+    // Un rechargement EN VOL doit finir de décider du sort de SON serveur (cf. `if (shuttingDown)`
+    // dans reload() ci-dessus) avant qu'on ferme `currentApp`.
+    if (reloadInFlight) await reloadInFlight.catch(() => {})
     await currentApp.stop()
+    // écouteurs retirés APRÈS la fermeture, jamais avant (même raison que cli/ws.ts : tsx sortait
+    // aussitôt en 130 quand il ne voyait plus aucun écouteur)
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
   }
-  const onSignal = (): void => { void shutdown().then(() => process.exit(0)) }
+  // un seul arrêt ordonné (le même Ctrl+C reçu deux fois attend le premier), sortie bornée par
+  // SHUTDOWN_GRACE_MS ; un 2e Ctrl+C plus d'une seconde après sort aussitôt (cf. gardeArret)
+  const onSignal = gardeArret((): void => {
+    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
+    void shutdown().then(() => process.exit(0))
+  }, () => process.exit(0))
   process.on('SIGINT', onSignal)
   process.on('SIGTERM', onSignal)
 

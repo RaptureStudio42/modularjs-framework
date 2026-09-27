@@ -245,19 +245,23 @@ function interpolateSigils(str: string, marker: string, opts: TokenizeOpts): str
     if (str[j] === marker && str[j + 1] === '{' && str[j - 1] !== '\\') {
       let depth = 1
       let k = j + 2
-      // comptage des `{}` CONSCIENT des chaînes : sans ça, un `}`
-      // littéral dans une chaîne de l'interpolation (`#{ fn('}') + $y }`)
-      // décrémentait `depth` et fermait trop tôt → la fin réelle (`+ $y }`)
-      // copiée VERBATIM hors zone tokenisée → `$y` restait littéral.
-      let inStr = false
-      let strCh = ''
+      // comptage des `{}` CONSCIENT des zones inertes (chaînes, commentaires,
+      // regex) : sans ça, un `}` littéral dans l'une d'elles (`#{ fn('}') + $y }`,
+      // `${ /* } */ $y }`, `${ /}/.test(x) ? $y : 1 }`) décrémentait `depth` et
+      // fermait trop tôt → la fin réelle copiée VERBATIM hors zone tokenisée →
+      // `$y` restait littéral (ReferenceError au runtime). Même lecteur que
+      // `scanInertAt` (ci-dessus, même fichier) : une zone jamais refermée
+      // (`e === -1`) retombe sur le caractère courant, sans avancer. Jamais sur `#` :
+      // DANS une interpolation, `#` est un champ privé ou un `#longueur` Civet, pas un
+      // commentaire (même règle que skipInertFrom de sigils.ts) — le lire comme un
+      // commentaire avalait jusqu'à la fin de ligne le `}` qui ferme l'interpolation.
       while (k < str.length && depth > 0) {
         const ch = str[k]
-        if (inStr) {
-          if (ch === '\\') { k += 2; continue }
-          if (ch === strCh) inStr = false
-        } else if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch }
-        else if (ch === '{') depth++
+        if (ch === '/' || ch === '"' || ch === "'" || ch === '`') {
+          const e = scanInertAt(str, k)
+          if (e > k) { k = e; continue }
+        }
+        if (ch === '{') depth++
         else if (ch === '}') { depth--; if (depth === 0) break }
         k++
       }

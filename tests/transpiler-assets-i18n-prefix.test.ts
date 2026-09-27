@@ -92,10 +92,12 @@ describe("moduleVars lu sur l'AST du JS ÉMIS, plus sur un scan textuel colonne 
     assert.ok(output.includes('compteur = compteur + 1'), 'le <script> réassigne la var du module telle quelle, sans la redéclarer')
   })
 
-  it('non-régression — <script module> `export x := 1` + <script> `x = 2` : pas de re-déclaration locale', async function () {
+  // `.=` (mutable) : une constante `:=` du module réaffectée par le <script> refuse de compiler
+  // (cf. tests/const-reassign-autres-chemins.test.ts)
+  it('non-régression — <script module> `export x .= 1` + <script> `x = 2` : pas de re-déclaration locale', async function () {
     const src = [
       '<script module>',
-      'export x := 1',
+      'export x .= 1',
       '</script>',
       '<script>',
       'x = 2',
@@ -103,7 +105,7 @@ describe("moduleVars lu sur l'AST du JS ÉMIS, plus sur un scan textuel colonne 
       '<p>hi</p>',
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'a3-7-t6-nonreg-export-const' })
-    assert.equal((output.match(/\b(?:let|const) x\b/g) ?? []).length, 1, 'une seule déclaration de x, posée dans le module (export const)')
+    assert.equal((output.match(/\b(?:let|const) x\b/g) ?? []).length, 1, 'une seule déclaration de x, posée dans le module (export let)')
     assert.ok(output.includes('x = 2'), 'le <script> réassigne x tel quel, sans le redéclarer')
   })
 })
@@ -124,17 +126,20 @@ describe("collectTopLevelDeclarations voit aussi les déclarations EXPORTÉES du
     assert.doesNotMatch(output.slice(idx), /\blet compteur\b/, 'le handler ne pose pas de `let compteur` local : compteur vient du module, exporté ou pas')
   })
 
-  it("idem export const — <script module> `export TOTAL := 10` : le handler ne se heurte plus à « jamais déclaré »", async function () {
+  it("idem export const — <script module> `export TOTAL := 10` : le nom est collecté, et sa réaffectation refusée", async function () {
     const src = [
       '<script module>',
       'export TOTAL := 10',
       '</script>',
       '<button @click={TOTAL = TOTAL + 1}>+</button>',
     ].join('\n')
-    const { output } = await transpile(src, { moduleName: 'a3-7-t6b-handler-export-const' })
-    const idx = output.indexOf('_mjs_inline')
-    assert.ok(idx !== -1, '_mjs_inline doit être émis (le handler existe bien dans la sortie)')
-    assert.doesNotMatch(output.slice(idx), /\b(?:let|const) TOTAL\b/, 'le handler ne pose pas de re-déclaration locale : TOTAL vient du module, exporté ou pas')
+    // collecté (plus de « jamais déclaré », plus de redéclaration locale dans le handler) et
+    // donc reconnu pour ce qu'il est : une CONSTANTE — le refus tombe au build, nommément,
+    // au lieu d'un « Assignment to constant variable » au premier clic
+    await assert.rejects(
+      () => transpile(src, { moduleName: 'a3-7-t6b-handler-export-const' }),
+      /réaffecte « TOTAL », déclaré CONSTANT/,
+    )
   })
 })
 

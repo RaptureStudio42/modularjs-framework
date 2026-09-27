@@ -25,11 +25,22 @@ function loadFactory(µMock: any) {
 
 describe('animations/typewriter.ts — contrat "unique nœud texte"', function () {
   let win: any
+  // µ posé par le test d'intégration ci-dessous (ligne ~119) : capturé/rendu à chaque test, jamais
+  // simplement supprimé — même patron que csp-runtime.test.ts (mjs_easing.ts/mjs_router.ts), pour
+  // qu'un `globalThis.µ` posé par un fichier de test précédent ne disparaisse pas à tort.
+  let __µAvant: { present: boolean; valeur: any }
   beforeEach(() => {
+    const g: any = globalThis
+    __µAvant = { present: 'µ' in g, valeur: g.µ }
     win = new Window({ url: 'http://localhost/' })
     ;(globalThis as any).document = win.document
     ;(globalThis as any).window = win
     ;(globalThis as any).Node = win.Node
+  })
+  afterEach(() => {
+    const g: any = globalThis
+    if(__µAvant.present) g.µ = __µAvant.valeur
+    else delete g.µ
   })
 
   it('markup imbriqué (<b>) : setup() lève une Error explicite, le message exact de la doc', function () {

@@ -4,6 +4,7 @@
   $copied      = false
   $offset      = '0px'
   $block       = false
+  $frameless   = false
   slotRef      = null
   watcher      = null
   timer        = null
@@ -82,8 +83,12 @@
 
 
   µmount ->
-    $block = bare()
-    dedent() if $block
+    # `frameless` force le régime nu même sur du texte brut : dédenté et mis en forme (police, espaces)
+    # comme le mode cadre, mais sans cadre ni fond ni retrait — pour un bloc déjà dans son propre
+    # habillage (l'éditeur du tuto par exemple), qui n'a pas besoin d'un second cadre par-dessus
+    brut   = bare()
+    dedent() if brut
+    $block = brut and not $frameless
     align()
     host = hostOf()
     return unless host and window.ResizeObserver
@@ -95,7 +100,7 @@
     clearTimeout(timer) if timer
 </script>
 
-<pre class="box" @class{$block}="block" part="box"><span class="anchor" --mjs-code-offset={$offset}><button type="button" class="copy" part="button" @class{$copied}="ok" aria-label={$copied ? $copiedLabel : $label} title={$label} @click={copy()}>{if $copied}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>{else}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>{end}</button></span><code class="src" part="code"><slot @this=!{slotRef}></slot></code></pre>
+<pre class="box" @class{$block}="block" @class{$frameless}="frameless" part="box"><span class="anchor" --mjs-code-offset={$offset}><button type="button" class="copy" part="button" @class{$copied}="ok" aria-label={$copied ? $copiedLabel : $label} title={$label} @click={copy()}>{if $copied}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>{else}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>{end}</button></span><code class="src" part="code"><slot @this=!{slotRef}></slot></code></pre>
 
 <style>
   :host
@@ -145,6 +150,15 @@
   .box.block .src
     overflow-x: auto
     padding: var(--mjs-code-pad, 14px 16px)
+
+  // texte nu, dédenté, mis en police de code — mais SANS cadre ni fond ni retrait (`.box` neutre
+  // les tient déjà à 0/none) : pour un bloc déjà posé dans son propre habillage
+  .box.frameless
+    font-family: var(--mjs-code-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)
+    font-size: var(--mjs-code-size, .92em)
+    line-height: var(--mjs-code-line, 1.55)
+    white-space: pre
+    tab-size: 2
 
   .box.block .anchor
     margin-top: 0

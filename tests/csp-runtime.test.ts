@@ -191,7 +191,24 @@ describe('csp runtime — mjs_router.ts (panneau 404)', function () {
 // mjs_ujs.ts — panneau « route introuvable » (second site, µ._mjs_navShowNotFound)
 // ──────────────────────────────────────────────────────────────────────────
 describe('csp runtime — mjs_ujs.ts (panneau 404, _mjs_navShowNotFound)', function () {
-  afterEach(() => { delete (globalThis as any).CSSStyleSheet })
+  // même patron que mjs_easing.ts/mjs_router.ts ci-dessus : capturé puis RENDU, jamais un delete en
+  // aveugle — un fichier de test chargé avant celui-ci (mocha importe tout avant d'exécuter) peut
+  // avoir posé CSSStyleSheet en dehors de ce fichier ; le supprimer sans le restaurer le fait
+  // disparaître pour de bon du relevé final de ce fichier (cf. csp-runtime.test.ts, assertion de fin).
+  const GLOBAUX_UJS = ['CSSStyleSheet']
+  const __avantUjs   = new Map<string, { present: boolean; valeur: any }>()
+  before(() => {
+    const g: any = globalThis
+    for(const nom of GLOBAUX_UJS) __avantUjs.set(nom, { present: nom in g, valeur: g[nom] })
+  })
+  afterEach(() => {
+    const g: any = globalThis
+    for(const nom of GLOBAUX_UJS) {
+      const avant = __avantUjs.get(nom)
+      if(avant?.present) g[nom] = avant.valeur
+      else delete g[nom]
+    }
+  })
 
   function scene(csp: boolean, src: string = UJS_SRC) {
     const win: any = new Window({ url: 'http://localhost/' })

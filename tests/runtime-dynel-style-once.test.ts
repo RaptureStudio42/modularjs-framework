@@ -108,7 +108,7 @@ $hits = 0
 `
     const { window, el } = await mountComponent('a3r2jt3', src)
 
-    let p: any = el._shadow.querySelector('p')
+    const p: any = el._shadow.querySelector('p')
     assert.ok(p, 'le <p> doit avoir remplacé le placeholder <div> dès le 1er rendu')
     p.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 50))

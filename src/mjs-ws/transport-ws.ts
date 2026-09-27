@@ -67,6 +67,10 @@ const STOP_TIMEOUT_MS = 2500
 class WsConnection implements MjsWsConnection {
   onMessage: ((data: string | Uint8Array) => void) | null = null
   onClose: ((code: number, reason: string) => void) | null = null
+  // trame coupée par maxPayload : `ws` ferme en 1009 mais rapporte 1006 dans son 'close' (le pair
+  // n'a pas renvoyé la trame de fermeture) — l'erreur qui précède donne la vraie raison, transmise
+  // au cœur (la mise au banc la compte comme un abus)
+  private _codeCoupure: number | null = null
 
   constructor(private _ws: WsSocket, public readonly remoteInfo: MjsWsRemoteInfo) {
     this._ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -78,12 +82,14 @@ class WsConnection implements MjsWsConnection {
       if (this.onMessage) this.onMessage(data.toString('utf8'))
     })
     this._ws.on('close', (code: number, reason: Buffer) => {
-      if (this.onClose) this.onClose(code, reason ? reason.toString('utf8') : '')
+      if (this.onClose) this.onClose(this._codeCoupure ?? code, reason ? reason.toString('utf8') : '')
     })
     // une erreur socket sans 'close' associé laisserait une connexion fantôme
     // côté core (jamais nettoyée) — `ws` émet TOUJOURS 'close' après 'error',
-    // ce listener vide évite juste un crash process sur 'error' sans écouteur.
-    this._ws.on('error', () => {})
+    // ce listener évite aussi un crash process sur 'error' sans écouteur.
+    this._ws.on('error', (err: { code?: string }) => {
+      if (err && err.code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') this._codeCoupure = 1009
+    })
   }
 
   get bufferedAmount(): number { return this._ws.bufferedAmount }

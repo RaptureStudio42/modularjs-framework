@@ -8,7 +8,7 @@ volontairement les quatre formes qu'un composant peut prendre :
 | --- | --- |
 | `select.mjs` | un composant complet : `<script>` Civet, gabarit à blocs `{if}`/`{for}`, `<style>` SASS, `::part()` |
 | `field.mjs` | un composant à props et à `<slot>` |
-| `image.mjs` | un composant court, avec un bloc `<theme>` et des variables de thème `$$` |
+| `img.mjs` | un composant court, avec un bloc `<theme>` et des variables de thème `$$` |
 | `theme-viewer.mjs` | une page entière : état, dérivés, `µ.ajax`, listes filtrées |
 
 **Licence** : MIT, comme tout ModularJS — voir [`LICENSE`](../../../LICENSE) à la racine du
@@ -16,5 +16,5 @@ dépôt. Auteur : Matrix (RaptureStudio). Ils peuvent être redistribués dans l
 autre formalité ; c'est ce que demande le gabarit de demande de fusion.
 
 Ils sont **copiés**, pas liés : si le framework évolue, rafraîchis-les avant d'envoyer la
-demande (`cp ../../src/core-modules/*.mjs .`), pour que les échantillons montrent la
-syntaxe réellement en vigueur.
+demande, depuis ce dossier (`cp ../../../src/core-modules/{select,field,img}.mjs ../../../src/server/theme-viewer.mjs .`),
+pour que les échantillons montrent la syntaxe réellement en vigueur.

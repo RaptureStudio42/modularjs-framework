@@ -2,9 +2,11 @@
 // jusqu'ici sur le PARENT (feuille adoptée par le document ou l'ancêtre le plus proche) — il n'y
 // a pas de vrai host, la règle ne matchait rien, le composant léger restait `display: inline`.
 // Correctif : réécriture AU RUNTIME de `:host`/`:host(X)`/`:host-context(X)` en nom de balise
-// (`mjs-big-red-button`/`mjs-big-red-button.large`/`.dark mjs-big-red-button`), UNE fois par
-// composant (cache par balise + texte), sur les 4 sites d'injection légers de mjs_element.ts
-// (baseCss imbriqué, baseCss document, variant, µ._hotCss) + le SSR (renderToString.ts).
+// (`mjs-big-red-button`/`mjs-big-red-button.large`/un groupe qui couvre l'ancêtre PORTEUR
+// (`.dark mjs-big-red-button`) ET la balise elle-même porteuse (`mjs-big-red-button.dark`),
+// comme la sémantique CSS de :host-context()), UNE fois par composant (cache par balise +
+// texte), sur les 4 sites d'injection légers de mjs_element.ts (baseCss imbriqué, baseCss
+// document, variant, µ._hotCss) + le SSR (renderToString.ts).
 // Harnais Bundler réel repris de tests/csp-runtime.test.ts (describe « mjs_element.ts (mode
 // mjs-light) »), enrichi du stub fetch de tests/mjs-layout-runtime.test.ts (variants) et du
 // patron µ._hotCss de tests/runtime-hotcss.test.ts. Chemin OMBRE (pas de mjs-light) : jamais
@@ -129,7 +131,7 @@ describe('mode mjs-light, réécriture :host en nom de balise', function () {
       assert.notEqual(css.indexOf('mjs-hostlight{display:block}'), -1, 'display:block réécrit — bug corrigé (composant léger restait display:inline)')
       assert.notEqual(css.indexOf('mjs-hostlight{padding:20px}'), -1, ':host nu → balise')
       assert.notEqual(css.indexOf('mjs-hostlight.large{padding:40px}'), -1, ':host(.large) → balise.large')
-      assert.notEqual(css.indexOf('.dark mjs-hostlight .t{'), -1, ':host-context(.dark) .t → .dark balise .t')
+      assert.notEqual(css.indexOf(':where(.dark mjs-hostlight,mjs-hostlight.dark) .t{'), -1, ':host-context(.dark) .t → couvre ancêtre ET hôte lui-même porteur de la classe')
       assert.notEqual(css.indexOf('mjs-hostlight:not(.a) .b{'), -1, ':host(:not(.a)) .b → balise:not(.a) .b, parenthèses imbriquées')
       assert.notEqual(css.indexOf('mjs-hostlight,.x{'), -1, ':host, .x → balise,.x (compressé par sass, sans espace)')
       assert.notEqual(css.indexOf('.ghost{opacity:0}'), -1, 'sélecteur sans rapport intact')
@@ -316,9 +318,9 @@ describe('mode mjs-light, réécriture :host en nom de balise', function () {
       const { window } = await loadHarness()
       const clientFn: (css: string, tag: string) => string = window.µ._lightHostCss
       const pinned: [string, string, string][] = [
-        [':host-context(.a):host(.b){}', 'mjs-x', '.a mjs-x.b{}'],
-        [':host(.b):host-context(.a){}', 'mjs-x', '.a mjs-x.b{}'],
-        [':host-context(.a):host-context(.c) .t{}', 'mjs-x', '.a .c mjs-x .t{}'],
+        [':host-context(.a):host(.b){}', 'mjs-x', ':where(.a mjs-x.b,mjs-x.b.a){}'],
+        [':host(.b):host-context(.a){}', 'mjs-x', ':where(.a mjs-x.b,mjs-x.b.a){}'],
+        [':host-context(.a):host-context(.c) .t{}', 'mjs-x', ':where(.a .c mjs-x,mjs-x.a.c) .t{}'],
         [':host(.b):host(.c){}', 'mjs-x', 'mjs-x.b.c{}'],
         [':host:hover{}', 'mjs-x', 'mjs-x:hover{}'],
         [':host(.b):hover{}', 'mjs-x', 'mjs-x.b:hover{}'],
@@ -330,6 +332,45 @@ describe('mode mjs-light, réécriture :host en nom de balise', function () {
         assert.equal(clientFn(css, tag), expected, `client : ${css}`)
         assert.equal(lightHostCss(css, tag), expected, `serveur : ${css}`)
       }
+    })
+  })
+
+  describe('sémantique complète de :host-context() — couvre l\'ancêtre ET l\'hôte lui-même', function () {
+    it('un sélecteur simple : le groupe généré porte les DEUX formes, ancêtre porteur et hôte porteur', async () => {
+      const { window } = await loadHarness()
+      const clientFn: (css: string, tag: string) => string = window.µ._lightHostCss
+      const out = clientFn(':host-context(.dark){color:red}', 'mjs-x')
+      assert.equal(out, ':where(.dark mjs-x,mjs-x.dark){color:red}')
+      // preuve sémantique directe (sans dépendre du moteur de sélecteur du DOM de test,
+      // limité sur :where() combiné à un descendant) : chaque branche du groupe est un
+      // sélecteur CSS valide et complet à elle seule.
+      const [ancetre, hote] = out.slice(out.indexOf('(') + 1, out.indexOf(')')).split(',')
+      assert.equal(ancetre, '.dark mjs-x', 'branche ancêtre : .dark DESCENDANT de mjs-x')
+      assert.equal(hote, 'mjs-x.dark', 'branche hôte : mjs-x QUI PORTE .dark lui-même')
+    })
+
+    it('plusieurs classes dans l\'argument (:host-context(.dark.compact)) : les deux restent groupées, jamais séparées', async () => {
+      const { window } = await loadHarness()
+      const clientFn: (css: string, tag: string) => string = window.µ._lightHostCss
+      const out = clientFn(':host-context(.dark.compact){}', 'mjs-x')
+      assert.equal(out, ':where(.dark.compact mjs-x,mjs-x.dark.compact){}')
+    })
+
+    it(':host-context(.dark):hover — le pseudo-état porte sur le SUJET final (l\'hôte), pas sur le groupe entier', async () => {
+      const { window } = await loadHarness()
+      const clientFn: (css: string, tag: string) => string = window.µ._lightHostCss
+      const out = clientFn(':host-context(.dark):hover{}', 'mjs-x')
+      assert.equal(out, ':where(.dark mjs-x,mjs-x.dark):hover{}')
+    })
+
+    it('un sélecteur simple, vérifié par matching RÉEL dans le DOM (hôte porteur — cas non ambigu pour ce moteur)', async () => {
+      const { window } = await loadHarness()
+      const clientFn: (css: string, tag: string) => string = window.µ._lightHostCss
+      const selector = clientFn(':host-context(.dark){}', 'mjs-x').replace('{}', '')
+      const doc = window.document
+      doc.body.innerHTML = '<mjs-x id="viaHote" class="dark"></mjs-x><mjs-x id="aucun"></mjs-x>'
+      assert.equal(doc.getElementById('viaHote')!.matches(selector), true, 'hôte lui-même porteur de .dark : doit matcher, sémantique CSS de :host-context')
+      assert.equal(doc.getElementById('aucun')!.matches(selector), false, 'ni ancêtre ni hôte porteur : ne doit pas matcher')
     })
   })
 })

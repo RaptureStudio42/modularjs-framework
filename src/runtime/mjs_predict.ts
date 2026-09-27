@@ -92,11 +92,26 @@ function _mjpredictPublier(st) {
 }
 
 // recalcule le fragment ENTIER depuis l'état serveur connu + rejeu de TOUTE la file restante —
-// SOURCE UNIQUE (appelée aussi bien après un `move()` local qu'après une réconciliation serveur) :
-// aucune divergence possible entre les deux chemins, cf. tête de fichier.
+// SOURCE pour une réconciliation SERVEUR (`st.server` vient de changer, cf. onServer plus bas) :
+// aucune divergence possible avec le chemin local (_mjpredictRejouerUn juste en dessous), les deux
+// partent du MÊME `st.apply`.
 function _mjpredictRejouer(st) {
   var fragment = _mjpredictDeepClone(st.server), i, e;
   for (i = 0; i < st.pending.length; i++) { e = st.pending[i]; st.apply(fragment, e.name, e.p); }
+  st.fragment = fragment;
+  _mjpredictPublier(st);
+}
+
+// application LOCALE d'un SEUL coup, PAR-DESSUS le fragment déjà à jour (`st.server` inchangé) —
+// évite de recloner `st.server` et de rejouer TOUTE la file à chaque move() (coût qui grandissait
+// avec le nombre de coups non confirmés, cf. tête de fichier) : le fragment courant contient déjà
+// l'effet des entrées précédentes, il ne manque QUE la nouvelle. Clone quand même `st.fragment`
+// (jamais une mutation en place) : `_mjpredictPublier` compare par CONTENU une référence FRAÎCHE à
+// chaque appel — muter en place réutiliserait la MÊME référence déjà posée sur `st.mirror` et
+// court-circuiterait sa réassignation réactive (`_mjpredictEq` sort tout de suite sur `a === b`).
+function _mjpredictRejouerUn(st, entry) {
+  var fragment = _mjpredictDeepClone(st.fragment);
+  st.apply(fragment, entry.name, entry.p);
   st.fragment = fragment;
   _mjpredictPublier(st);
 }
@@ -116,8 +131,9 @@ function _mjpredictRejouer(st) {
 
   game.move = function(name, p) {
     var n = ++st.n;
-    st.pending.push({ name: name, p: p, n: n });
-    _mjpredictRejouer(st);   // (b) application locale IMMÉDIATE, avant tout aller-retour réseau
+    var entry = { name: name, p: p, n: n };
+    st.pending.push(entry);
+    _mjpredictRejouerUn(st, entry);   // (b) application locale IMMÉDIATE, avant tout aller-retour réseau
     return moveOriginal.call(game, name, _mjpredictConNumero(p, n));
   };
 

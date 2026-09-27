@@ -233,6 +233,33 @@ function stackKeepsWhitespace(stack: { tag: string }[]): boolean {
   return false
 }
 
+// repère les spans DÉJÀ quotés (valeur d'un AUTRE attribut) dans un `tagInner` — les
+// guillemets ne délimitent QUE des valeurs d'attribut dans cette grammaire (apostrophe
+// littérale toujours encodée `&#39;`, cf. `staticAttr`, attributes/index.ts) : un scan naïf
+// caractère par caractère suffit, sans échappement à gérer. Sert à distinguer un VRAI
+// marqueur `mjs-id=`/`mjs-l-id=` d'une occurrence citée EN PROSE dans la valeur d'un autre
+// attribut (`title='exemple mjs-id="demo" ici'`), que la regex seule ne peut pas voir.
+function quotedSpans(s: string): [number, number][] {
+  const spans: [number, number][] = []
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === '"' || ch === "'") {
+      const close = s.indexOf(ch, i + 1)
+      const end   = close === -1 ? s.length : close + 1
+      spans.push([i, end])
+      i = end
+    } else {
+      i++
+    }
+  }
+  return spans
+}
+
+function isInsideQuotedSpan(pos: number, spans: [number, number][]): boolean {
+  return spans.some(([start, end]) => pos > start && pos < end)
+}
+
 // ============================================================================
 // extractPaths — LEGACY. Conservé pour rétrocompat des tests
 // qui vérifient `data.surgicalHtml` et `data.pathsStr`. Toujours utilisé par le
@@ -400,12 +427,18 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
       const elIdRegex = /\s+mjs-(l-)?id\s*=\s*['"]([^'"]+)['"]/g
       let cleanedTagInner = tagInner
       const foundIds: string[] = []
+      // un `mjs-id=`/`mjs-l-id=` cité EN PROSE dans la valeur d'un AUTRE attribut
+      // (`title='exemple mjs-id="demo" ici'`) n'est pas un vrai marqueur — la regex seule ne
+      // distingue pas le nom d'un attribut du texte de sa valeur, `quotedSpans` si.
+      const elIdSpans = quotedSpans(tagInner)
       let elIdMatch: RegExpExecArray | null
       while ((elIdMatch = elIdRegex.exec(tagInner)) !== null) {
-        foundIds.push(elIdMatch[2])
+        if (!isInsideQuotedSpan(elIdMatch.index, elIdSpans)) foundIds.push(elIdMatch[2])
       }
       if (foundIds.length > 0) {
-        cleanedTagInner = tagInner.replace(elIdRegex, '')
+        cleanedTagInner = tagInner.replace(elIdRegex, (match, _lid, _id, offset) =>
+          isInsideQuotedSpan(offset, elIdSpans) ? match : ''
+        )
       }
 
       const rebuilt = selfClosing
@@ -513,8 +546,23 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
   }
 }
 
+// cherche la balise fermante `</tag` en exigeant un délimiteur juste après le
+// nom (fin de chaîne, espace, `>` ou `/`) — un `indexOf` littéral seul
+// confondait `</textarea` avec le PRÉFIXE d'une balise plus longue présente
+// dans le texte brut (`</textareaBoom>`) : le contenu raw-text se refermait
+// au milieu du mot, et le build échouait plus loin avec un message indirect
+// au lieu de fermer proprement sur la VRAIE balise fermante.
 function findCloseRawText(html: string, start: number, closeTag: string): number {
-  return html.toLowerCase().indexOf(closeTag.toLowerCase(), start)
+  const lower  = html.toLowerCase()
+  const needle = closeTag.toLowerCase()
+  let from = start
+  for (;;) {
+    const idx = lower.indexOf(needle, from)
+    if (idx === -1) return -1
+    const after = html[idx + needle.length]
+    if (after === undefined || after === '>' || after === '/' || /\s/.test(after)) return idx
+    from = idx + 1
+  }
 }
 
 /**
@@ -1041,10 +1089,17 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       // 1. Repérer mjs-id / mjs-l-id pour ref.
       const elIdRegex = /\s+mjs-(l-)?id\s*=\s*['"]([^'"]+)['"]/g
       const foundIds: string[] = []
+      // même garde qu'extractPaths ci-dessus : un marqueur cité en prose dans la valeur
+      // d'un AUTRE attribut n'est pas un vrai `mjs-id`.
+      const elIdSpans = quotedSpans(tagInner)
       let m: RegExpExecArray | null
-      while ((m = elIdRegex.exec(tagInner)) !== null) foundIds.push(m[2])
+      while ((m = elIdRegex.exec(tagInner)) !== null) {
+        if (!isInsideQuotedSpan(m.index, elIdSpans)) foundIds.push(m[2])
+      }
       const cleanedTagInner = foundIds.length > 0
-        ? tagInner.replace(elIdRegex, '')
+        ? tagInner.replace(elIdRegex, (match, _lid, _id, offset) =>
+            isInsideQuotedSpan(offset, elIdSpans) ? match : ''
+          )
         : tagInner
 
       // 2. Cas spécial : <span mjs-(l-)?id='X'></span> SANS autre attribut SANS
@@ -1108,7 +1163,13 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       // `createElement` ne construit rien tout de suite — l'upgrade réel n'a
       // lieu qu'à la connexion, `hasAttribute` y suffit déjà, ce drapeau n'y
       // intervient jamais.
-      const isLightDomInstance = primaryNs === null && /(^|\s)mjs-light(\s|$)/.test(cleanedTagInner)
+      // masque les valeurs QUOTÉES (guillemets gardés, contenu blanchi, même recette que
+      // maskAttrQuotes en amont, transpiler/index.ts) avant le test : un attribut SANS RAPPORT
+      // (`title="... mjs-light ..."`) qui mentionne ce mot en PROSE (plausible pour la propre
+      // doc de MJS sur SA fonctionnalité `@lightDom`) ne doit jamais forcer le mode léger — seul
+      // un VRAI attribut `mjs-light` (déjà réécrit depuis `@lightDom` en amont) compte.
+      const maskedForLightCheck = cleanedTagInner.replace(/"[^"]*"|'[^']*'/g, (q) => q[0] + q.slice(1, -1).replace(/[^\n]/g, ' ') + q[0])
+      const isLightDomInstance = primaryNs === null && /(^|\s)mjs-light(\s|$)/.test(maskedForLightCheck)
       if (isLightDomInstance) lines.push(`µ._mjs_lightNext = ${JSON.stringify(tagName)};`)
       lines.push(primaryNs
         ? `const ${primaryVar} = document.createElementNS(${JSON.stringify(primaryNs)}, ${JSON.stringify(tagName)});`
@@ -1495,17 +1556,27 @@ function emitAttrSet(
 
 /**
  * Échappe une chaîne pour qu'elle puisse être collée dans un template literal.
- * Les `${...}` sont PRESERVÉS (c'est tout l'intérêt). Les `\``, `\\` doivent
- * être escapés, mais l'input vient déjà d'un HTML qui a transité par escapeTpl
- * (qui escape `\``, `\\`, `\$\{`). On retire UNIQUEMENT le double-escape pour
- * obtenir un template literal valide.
- *
- * En pratique, dans le HTML brut généré par compileHtml, les `${expr}` sont
- * littéraux (non escapés), donc on les laisse passer. Les `\`` éventuels (rares
- * dans du HTML) doivent être escapés.
+ * Les `${...}` sont PRESERVÉS (c'est tout l'intérêt) — et surtout jamais rééchappés : le
+ * CODE JS qui y vit (ex. `d.replace(/\s/, "_")`) doit ressortir VERBATIM, un antislash de
+ * regexp doublé (`/\\s/`) transformant silencieusement l'expression utilisateur. Seul le
+ * texte STATIQUE autour des fenêtres `${...}` (qui vient déjà d'un HTML transité par
+ * escapeTpl, `\``/`\\`/`\$\{` échappés) a besoin du retrait de double-escape ci-dessous.
  */
 function escapeForTpl(s: string): string {
-  // Escape `\` → `\\` puis `\`` → `\\\``.
-  // ATTENTION : on ne touche PAS aux `${...}`.
-  return s.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+  let out = ''
+  let i = 0
+  const n = s.length
+  while (i < n) {
+    if (s[i] === '$' && s[i + 1] === '{') {
+      const close = scanInterpWindow(s, i)
+      const end   = close === -1 ? n : close + 1
+      out += s.slice(i, end)  // fenêtre ${...} VERBATIM : jamais rééchappée
+      i = end
+      continue
+    }
+    const ch = s[i]
+    out += ch === '\\' ? '\\\\' : ch === '`' ? '\\`' : ch
+    i++
+  }
+  return out
 }

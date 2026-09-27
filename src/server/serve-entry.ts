@@ -78,11 +78,17 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
   let props: RouteTable   = {}
   let actions: RouteTable = {}
   let active = false
+  // Posé par close() (cf. plus bas) — un chargement déjà EN VOL (import lent) au moment de la
+  // fermeture ne doit plus JAMAIS écrire `props`/`actions`/`active` ni logger quoi que ce soit à
+  // sa résolution : sans ce garde-fou, l'appelant (ex. render-server.ts, fermé pendant l'arrêt du
+  // serveur HTTP) pouvait voir l'état changer sous ses pieds APRÈS avoir considéré l'entry fermée.
+  let closed = false
 
   async function load(): Promise<void> {
     const wasActive = active
     try {
       const mod  = await importEntryModule(entryPath!, configDir)
+      if (closed) return
       const dflt = mod ? mod.default : undefined
       if (!isPlainObject(dflt)) {
         const recu = dflt === undefined ? t('cli.aucun-export-defaut') : (Array.isArray(dflt) ? t('cli.un-tableau') : typeof dflt)
@@ -97,6 +103,7 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
       active  = true
       console.log(t('server.entry-charge', { fichier: entryPath }))
     } catch (err) {
+      if (closed) return
       const erreur = err instanceof Error ? err.message : String(err)
       console.error(t('server.entry-echec', { fichier: entryPath, erreur, actif: wasActive }))
       // (point 4/5 de capture) — chargement/rechargement de l'entry : AUCUN appelant en aval
@@ -118,6 +125,7 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
   // Retiré plutôt que branché : `running`/`pending` sérialisent déjà, à eux seuls et pour de bon.
   let running = false, pending = false
   function schedule(): void {
+    if (closed) return   // fermé : aucun nouveau cycle de rechargement
     if (running) { pending = true; return }
     runLoop()
   }
@@ -125,7 +133,7 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
     running = true
     void load().finally(() => {
       running = false
-      if (pending) { pending = false; runLoop() }
+      if (pending && !closed) { pending = false; runLoop() }
     })
   }
 
@@ -160,6 +168,7 @@ export async function createServeEntry(config: MjsConfig, configDir: string, rec
       return findMatch(actions, pathname)
     },
     close() {
+      closed = true
       watcher.close()
       if (debounceTimer) clearTimeout(debounceTimer)
     },

@@ -183,29 +183,64 @@ export class MemoryPersistAdapter implements MjsServerPersistAdapter {
 export interface MjsServerPersistEngine {
   /** posée sur CHAQUE partie vivante (fraîche OU restaurée) — arme le hook `_onMutate` */
   armGame(game: Game): void
-  /** miroir — annule le débounce en attente puis adaptateur.remove(id) (JAMAIS l'inverse : une
-   *  sauvegarde tardive qui ressusciterait une entrée tout juste supprimée, cf. commentaire de tête) */
+  /** miroir — annule le débounce en attente puis adaptateur.remove(id), APRÈS toute sauvegarde déjà
+   *  en vol (JAMAIS l'inverse : une sauvegarde tardive qui ressusciterait une entrée tout juste
+   *  supprimée, cf. commentaire de tête ET « sérialisation par id » ci-dessous) */
   forgetGame(id: string): void
   /** AU BOOT (index.ts, app.listen(), AVANT le vrai listen) — `restore` = fourni par
    *  matchmaking.ts, construit la Game et retourne `false` si le type est inconnu (log ici) */
   loadAtBoot(restore: (data: MjsServerGameSnapshot) => boolean): Promise<void>
-  /** app.stop() — rafale finale des débounces en attente PUIS flush() de l'adaptateur */
+  /** app.stop() — rafale finale des débounces en attente, PUIS attend aussi toute sauvegarde déjà en
+   *  vol (cf. « sérialisation par id »), PUIS flush() de l'adaptateur */
   stop(): Promise<void>
 }
 
-interface Entry { game: Game; handle: ReturnType<typeof setTimeout> | null; dirty: boolean }
+// SÉRIALISATION PAR ID — `chain` accroche CHAQUE save/remove d'UNE partie à la suite du précédent,
+// pour TOUS les adaptateurs (le souci n'est pas propre à un backend : un pool SQL, un fichier ou un
+// pont HTTP peuvent tous finir deux écritures dans le désordre) : sans elle, deux runSave() du MÊME
+// id peuvent partir en parallèle et compléter dans l'ordre INVERSE de leur lancement — l'état FINAL
+// écrit devient alors l'ANCIEN, pas le dernier connu. `saveQueued` COALESCE : au plus UNE sauvegarde
+// en attente derrière celle en vol (jamais un maillon par mutation), et comme runSave() relit
+// `game.serialize()` PARESSEUSEMENT (au moment où le maillon s'exécute, pas à sa programmation), ce
+// maillon unique porte toujours le DERNIER état connu. `forgetGame` remet `saveQueued` à `false`
+// (annule la sauvegarde coalescée en attente, s'il y en a une) puis s'accroche lui-même en bout de
+// chaîne — un remove ne part donc jamais AVANT une sauvegarde déjà en vol, et rien de sauvegardé
+// APRÈS lui ne peut plus ressusciter l'entrée supprimée. Cet invariant tenait seulement PAR CHAÎNE,
+// pas PAR ID : un armGame() du MÊME id juste après un forgetGame() (partie détruite puis recréée
+// avant que son ancien remove/save en vol n'ait fini) repartait d'une chaîne NEUVE
+// (Promise.resolve()), sans lien avec l'ancienne — le nouveau save pouvait alors terminer AVANT le
+// vieux remove hérité de la vie précédente, qui effaçait ensuite la partie pourtant vivante.
+// `tailChains` porte la chaîne résiduelle d'un id tout juste OUBLIÉ, tant qu'elle n'est pas éteinte :
+// armGame() s'y raccroche si elle existe, pour que ses propres save/remove restent TOUJOURS après
+// ceux de la vie précédente du même id.
+interface Entry { game: Game; handle: ReturnType<typeof setTimeout> | null; dirty: boolean; chain: Promise<void>; saveQueued: boolean }
 
 /** `resolved === null` (opts.persist absent) → retourne `null` tout de suite, AUCUNE Map ni timer
  *  créés — zéro coût, cf. commentaire de tête. */
 export function createPersistEngine(resolved: MjsServerResolvedPersist | null, onLog: MjsWsLogFn): MjsServerPersistEngine | null {
   if (!resolved) return null
   const entries = new Map<string, Entry>()
+  // chaîne résiduelle d'un id tout juste OUBLIÉ (forgetGame), tant que son save/remove hérité n'est
+  // pas éteint — cf. commentaire de tête « SÉRIALISATION PAR ID ». Peuplée par forgetGame(),
+  // consommée (et retirée) par armGame() ; nettoyée toute seule si jamais réclamée (pas de fuite).
+  const tailChains = new Map<string, Promise<void>>()
   let snapshotTimer: ReturnType<typeof setInterval> | null = null
 
+  // `Promise.resolve().then(...)` — PAS `Promise.resolve(adapter.save(...))` : ce dernier évalue
+  // adapter.save() pour CONSTRUIRE l'argument, AVANT que le .catch() ne soit posé — un throw
+  // SYNCHRONE de l'adaptateur traverse alors le filet tel quel (stop() rejette ; un appel par timer
+  // devient un uncaughtException, process tué). Ici le throw se produit DANS le callback .then(),
+  // donc DEVIENT un rejet de la promesse retournée, capté par le .catch() qui suit.
   function runSave(e: Entry): Promise<void> {
     e.dirty = false
-    return Promise.resolve(resolved.adapter.save(e.game.id, e.game.serialize()))
-      .catch(err => { onLog('warn', t('serveur.persist-save-echoue', { id: e.game.id }), { err: err instanceof Error ? err.message : String(err) }) })
+    e.saveQueued = true
+    e.chain = e.chain.then(() => {
+      if (!e.saveQueued) return undefined   // coalescé/annulé entre-temps (maillon déjà consommé, ou remove passé devant)
+      e.saveQueued = false
+      return Promise.resolve().then(() => resolved.adapter.save(e.game.id, e.game.serialize()))
+        .catch(err => { onLog('warn', t('serveur.persist-save-echoue', { id: e.game.id }), { err: err instanceof Error ? err.message : String(err) }) })
+    })
+    return e.chain
   }
 
   function scheduleSave(game: Game): void {
@@ -228,7 +263,11 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
 
   return {
     armGame(game: Game): void {
-      entries.set(game.id, { game, handle: null, dirty: false })
+      // hérite la chaîne résiduelle d'une vie précédente du MÊME id, s'il en reste une en vol
+      // (cf. tailChains ci-dessus) — sinon repart d'une chaîne neuve (id inédit ou vie précédente déjà éteinte)
+      const inherited = tailChains.get(game.id)
+      if (inherited !== undefined) tailChains.delete(game.id)
+      entries.set(game.id, { game, handle: null, dirty: false, chain: inherited ?? Promise.resolve(), saveQueued: false })
       game._onMutate = () => scheduleSave(game)
     },
 
@@ -236,8 +275,20 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
       const e = entries.get(id)
       if (e?.handle) clearTimeout(e.handle)
       entries.delete(id)
-      Promise.resolve(resolved.adapter.remove(id))
+      const runRemove = (): Promise<void> => Promise.resolve().then(() => resolved.adapter.remove(id))
         .catch(err => onLog('warn', t('serveur.persist-remove-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) }))
+      if (e) {
+        e.saveQueued = false   // annule la sauvegarde coalescée en attente — le remove doit gagner
+        e.chain = e.chain.then(runRemove)
+        // publie la suite de la chaîne pour un armGame() du MÊME id qui suivrait avant qu'elle ne
+        // s'éteigne (partie recréée) — auto-nettoyage une fois éteinte, SAUF si un armGame() l'a
+        // déjà consommée entre-temps (elle n'est alors plus la valeur courante de tailChains)
+        const suite = e.chain
+        tailChains.set(id, suite)
+        void suite.finally(() => { if (tailChains.get(id) === suite) tailChains.delete(id) })
+      } else {
+        void runRemove()   // aucune entry (jamais armée / déjà oubliée) — MÊME comportement qu'avant
+      }
     },
 
     async loadAtBoot(restore: (data: MjsServerGameSnapshot) => boolean): Promise<void> {
@@ -265,7 +316,8 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
       const pending: Array<Promise<void>> = []
       for (const e of entries.values()) {
         if (e.handle) { clearTimeout(e.handle); e.handle = null }
-        if (e.dirty) pending.push(runSave(e))
+        if (e.dirty) runSave(e)
+        pending.push(e.chain)   // TOUJOURS — attend aussi une sauvegarde déjà EN VOL (dirty déjà remis à false par runSave), pas seulement celles encore en attente
       }
       await Promise.allSettled(pending)
       await resolved.adapter.flush?.()

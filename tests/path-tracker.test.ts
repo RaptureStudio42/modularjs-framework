@@ -290,21 +290,21 @@ describe('applyPathTracking', () => {
       assert.match(out, /µ\._storeSet\("flag", µ\.store\.flag \|\| \(true\)\)/)
     })
 
-    it('`µ.store.x++`/`--µ.store.x` top-level → µ._storeSet, fidélité pré/postfixe', () => {
+    it('`µ.store.x++`/`--µ.store.x` top-level → µ._storeSet, fidélité pré/postfixe, conversion numérique', () => {
       const outPost = applyPathTracking(`y = µ.store.x++;`)
-      assert.match(outPost, /\(\(_v\) => \(µ\._storeSet\("x", _v \+ 1\), _v\)\)\(µ\.store\.x\)/)
+      assert.match(outPost, /\(\(_v\) => \(µ\._storeSet\("x", \(\+_v\) \+ 1\), \+_v\)\)\(µ\.store\.x\)/)
       const outPre = applyPathTracking(`y = --µ.store.x;`)
-      assert.match(outPre, /\(µ\._storeSet\("x", µ\.store\.x - 1\), µ\.store\.x\)/)
+      assert.match(outPre, /\(µ\._storeSet\("x", \(\+µ\.store\.x\) - 1\), µ\.store\.x\)/)
     })
 
-    it('µ.store.obj.a++ (postfix, depth 2) → _mjs_storeDeepSet + valeur ANCIENNE retournée', () => {
+    it('µ.store.obj.a++ (postfix, depth 2) → _mjs_storeDeepSet + valeur ANCIENNE retournée, conversion numérique', () => {
       const out = applyPathTracking(`x = µ.store.obj.a++;`)
-      assert.match(out, /\(_v\) => \(µ\._mjs_storeDeepSet\("obj", \["a"\], _v \+ 1\), _v\)/)
+      assert.match(out, /\(_v\) => \(µ\._mjs_storeDeepSet\("obj", \["a"\], \(\+_v\) \+ 1\), \+_v\)/)
     })
 
-    it('++µ.store.obj.a (prefix, depth 2) → _mjs_storeDeepSet + valeur NOUVELLE retournée', () => {
+    it('++µ.store.obj.a (prefix, depth 2) → _mjs_storeDeepSet + valeur NOUVELLE retournée, conversion numérique', () => {
       const out = applyPathTracking(`y = ++µ.store.obj.a;`)
-      assert.match(out, /µ\._mjs_storeDeepSet\("obj", \["a"\], µ\.store\.obj\.a \+ 1\), µ\.store\.obj\.a\)/)
+      assert.match(out, /µ\._mjs_storeDeepSet\("obj", \["a"\], \(\+µ\.store\.obj\.a\) \+ 1\), µ\.store\.obj\.a\)/)
     })
 
     it('compound sur alias LOCAL profond ($.box.width += 1) : toujours SKIP (filet Proxy _mjs_wrapDeep suffisant, non-régression)', () => {

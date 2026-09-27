@@ -632,45 +632,50 @@ export function createBridgeRateLimiter(config: MjsWsResolvedRateLimit): MjsWsBr
   }
 }
 
-// --- nonce anti-rejeu (optionnel — ws.bridge.nonce) — store PARTAGÉ, éviction PARESSEUSE
-// même patron que createBridgeRateLimiter ci-dessus ---------------------------------------------
+// --- nonce anti-rejeu (optionnel — ws.bridge.nonce) — store PARTAGÉ -----------------------------
 // un nonce, une fois VU, n'est plus jamais retouché (contrairement à un seau de débit qui se
 // rafraîchit à chaque accès) : le revoir EST la fraude détectée, pas un événement à prolonger.
-// L'ordre d'INSERTION de la Map suffit donc déjà (jamais besoin de ré-insérer en fin comme
-// touch() ci-dessus) — un passage de purge regarde seulement le FRONT (borné à NONCE_SWEEP_MAX),
-// jamais un scan complet. Fenêtre d'éviction = REPLAY_WINDOW_S, LA MÊME que l'horodatage lui-même
-// (§7.2) : un nonce plus vieux que ça correspondrait de toute façon à un ts déjà rejeté par
-// verifyIncomingSignature avant d'atteindre ce store — inutile de le garder plus longtemps.
-
-const NONCE_SWEEP_MAX = 16
+//
+// Faille HAUTE comblée — la fenêtre de rétention SUIT L'HORODATAGE SIGNÉ de la requête (+
+// REPLAY_WINDOW_S), PAS l'instant de RÉCEPTION : verifyIncomingSignature accepte un ts jusqu'à
+// REPLAY_WINDOW_S dans le FUTUR (§7.2, horloge émetteur en avance) — un nonce reçu à t0 pour un tel
+// ts peut donc encore être « valide » (signature acceptée) jusqu'à `ts + REPLAY_WINDOW_S`, soit
+// jusqu'à PRESQUE 2×REPLAY_WINDOW_S après t0. Une éviction comptée depuis t0 seul (ancien
+// comportement) pouvait donc oublier le nonce AVANT que son propre ts cesse d'être jugé valide —
+// le rejeu redevenait possible dans cette fenêtre. `checkAndRecord` reçoit maintenant l'horodatage
+// SIGNÉ (ms) et retient le nonce jusqu'à CETTE échéance à lui, pas une fenêtre uniforme depuis la
+// réception. La correction ne dépend PLUS de l'ordre de la Map (l'échéance n'est plus monotone avec
+// l'ordre d'insertion, contrairement à avant) : chaque `checkAndRecord` compare directement
+// l'échéance du nonce concerné ; un balayage complet, opportuniste, reste au passage pour ne pas
+// garder indéfiniment les entrées déjà expirées (coût négligeable — trafic admin, jamais un flux de
+// données).
 
 export interface MjsWsBridgeNonceStore {
-  /** true = nonce inédit dans la fenêtre (ACCEPTÉ, désormais enregistré) ; false = déjà vu (REJETÉ, rien ré-enregistré). */
-  checkAndRecord(nonce: string, now?: number): boolean
+  /** true = nonce inédit DANS SA FENÊTRE (ACCEPTÉ, désormais enregistré jusqu'à `signedTsMs +
+   *  REPLAY_WINDOW_S`) ; false = déjà vu, encore dans cette fenêtre (REJETÉ, rien ré-enregistré). */
+  checkAndRecord(nonce: string, signedTsMs: number, now?: number): boolean
   /** nombre de nonces actuellement suivis — tests d'éviction uniquement. */
   readonly size: number
 }
 
 export function createBridgeNonceStore(): MjsWsBridgeNonceStore {
-  const seenAt = new Map<string, number>()
+  const expiresAt = new Map<string, number>()   // nonce → échéance (ms epoch) = horodatage SIGNÉ + fenêtre
 
+  // purge OPPORTUNISTE, complète — cf. commentaire de tête : l'échéance suit le ts signé de CHAQUE
+  // requête, plus l'ordre d'insertion de la Map (ne serait plus fiable pour un arrêt anticipé).
   function sweep(now: number): void {
-    let evicted = 0
-    for (const [nonce, at] of seenAt) {
-      if (now - at <= REPLAY_WINDOW_S * 1000) break   // Map ordonnée par ancienneté d'INSERTION — le reste est plus récent
-      seenAt.delete(nonce)
-      if (++evicted >= NONCE_SWEEP_MAX) break
-    }
+    for (const [nonce, exp] of expiresAt) if (exp < now) expiresAt.delete(nonce)
   }
 
   return {
-    checkAndRecord(nonce, now = Date.now()) {
+    checkAndRecord(nonce, signedTsMs, now = Date.now()) {
+      const exp = expiresAt.get(nonce)
+      if (exp !== undefined && exp >= now) return false   // encore dans SA fenêtre — rejeu détecté
+      expiresAt.set(nonce, signedTsMs + REPLAY_WINDOW_S * 1000)   // neuf, ou fenêtre expirée — (ré)enregistré
       sweep(now)
-      if (seenAt.has(nonce)) return false
-      seenAt.set(nonce, now)
       return true
     },
-    get size() { return seenAt.size },
+    get size() { return expiresAt.size },
   }
 }
 
@@ -771,11 +776,16 @@ async function handleRequest(
     )
     if (sigError) { rejectUnauthorized(ctx, limiter, ip, now, res, sigError, method, url.pathname); return }
     // signature (et gabarit du nonce) valides — reste à vérifier que ce nonce PRÉCIS n'a jamais
-    // été vu dans la fenêtre ±300 s (cf. createBridgeNonceStore) : un rejeu de la MÊME requête
-    // (même ts, même sig, même nonce) est désormais détecté même DANS la fenêtre de §7.2.
-    if (nonceStore && !nonceStore.checkAndRecord(nonceHeader!, now)) {
-      rejectUnauthorized(ctx, limiter, ip, now, res, 'nonce-rejoué', method, url.pathname)
-      return
+    // été vu DANS SA FENÊTRE (cf. createBridgeNonceStore, alignée sur l'horodatage SIGNÉ, pas
+    // seulement ±300 s depuis la réception) : un rejeu de la MÊME requête (même ts, même sig, même
+    // nonce) est désormais détecté même DANS la fenêtre de §7.2. `x-mjs-ws-timestamp` déjà validé
+    // fini par verifyIncomingSignature ci-dessus (sinon `sigError` aurait déjà fait sortir).
+    if (nonceStore) {
+      const signedTsMs = Number(firstHeader(req.headers['x-mjs-ws-timestamp'])) * 1000
+      if (!nonceStore.checkAndRecord(nonceHeader!, signedTsMs, now)) {
+        rejectUnauthorized(ctx, limiter, ip, now, res, 'nonce-rejoué', method, url.pathname)
+        return
+      }
     }
   }
 

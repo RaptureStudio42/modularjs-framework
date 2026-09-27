@@ -80,6 +80,12 @@ retablirTout = ->
   $edits = {}
   $etats = {}
 
+resetFermeture = ->
+  return unless $live and Object.keys($edits).length > 0
+  vars := {}
+  Object.keys($edits).forEach((name) -> vars[name] = '')
+  navigator.sendBeacon('/__mjs/theme/edit', new Blob([JSON.stringify({ vars })], { type: 'application/json' }))
+
 refresh = ->
   fetch('/__mjs/theme.json').then((r) -> r.json()).then((data) -> $vars = Object.keys(data ?? {}).sort().map((name) -> ({ name, declarations: data[name].declarations, readBy: data[name].readBy }))).catch((err) -> µ.error(err))
 
@@ -106,6 +112,8 @@ $nbEdits = Object.keys($edits).length
   refresh()
   etatDirect()
 </script>
+
+<@window @pagehide={resetFermeture()}>
 
 <div class="atelier">
   <div class="barre">

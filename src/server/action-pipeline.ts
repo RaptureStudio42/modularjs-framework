@@ -51,6 +51,22 @@ function isUnsafeFieldName(champ: string): boolean {
   return champ === '__proto__' || champ === 'constructor' || champ === 'prototype'
 }
 
+// une occurrence brute de `delimAfterCrlf` (CRLF + --boundary) peut être FORTUITE en plein
+// milieu de la valeur d'un champ, quand le boundary n'est qu'un PRÉFIXE de ce qui suit dans
+// cette valeur (`hello\r\n--BOUNDsuffix` avec boundary `BOUND`) : les octets qui suivent
+// TRANCHENT — une vraie frontière est toujours suivie d'un CRLF (partie suivante) ou de `--`
+// (délimiteur terminal), jamais d'autre chose. Occurrence rejetée → on reprend la recherche
+// après elle, jamais un indexOf brut qui s'arrêterait à la première coïncidence.
+function findDelimAfterCrlf(buffer: Buffer, delimAfterCrlf: Buffer, from: number): number {
+  let idx = buffer.indexOf(delimAfterCrlf, from)
+  while (idx !== -1) {
+    const after = buffer.toString('latin1', idx + delimAfterCrlf.length, idx + delimAfterCrlf.length + 2)
+    if (after === '\r\n' || after === '--') return idx
+    idx = buffer.indexOf(delimAfterCrlf, idx + 1)
+  }
+  return -1
+}
+
 function parseMultipart(buffer: Buffer, boundary: string, pathname: string): Record<string, string> | null {
   const delim = Buffer.from('--' + boundary)
   const delimAfterCrlf = Buffer.from('\r\n--' + boundary)
@@ -61,7 +77,7 @@ function parseMultipart(buffer: Buffer, boundary: string, pathname: string): Rec
   while (true) {
     pos += delim.length
     if (buffer.toString('latin1', pos, pos + 2) === '--') break   // --boundary-- : délimiteur terminal
-    const nextCrlf = buffer.indexOf(delimAfterCrlf, pos)
+    const nextCrlf = findDelimAfterCrlf(buffer, delimAfterCrlf, pos)
     const next = nextCrlf === -1 ? -1 : nextCrlf + 2   // +2 : repositionne sur le '--' (comme avant), après le CRLF
     const fin = next === -1 ? buffer.length : next
     const headerEnd = buffer.indexOf('\r\n\r\n', pos)
@@ -177,6 +193,7 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
   const chunks: Buffer[] = []
   let total = 0
   let rejected = false
+  let interrompu = false
   await new Promise<void>((done) => {
     req.on('data', (chunk: Buffer) => {
       if (rejected) return
@@ -192,9 +209,16 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
       chunks.push(chunk)
     })
     req.on('end', () => done())
-    req.on('error', () => done())
+    // corps interrompu en route (panne réseau, client qui abandonne) : ni 'error' ni 'aborted'
+    // ne garantit un corps complet — un done() muet ici laissait l'action s'exécuter avec des
+    // données partielles (cf. la garde juste après la Promise)
+    req.on('error', () => { interrompu = true; done() })
+    req.on('aborted', () => { interrompu = true; done() })
   })
   if (rejected) return true
+  // corps incomplet : refusé avant toute mutation, l'action n'est jamais appelée avec un
+  // fragment — symétrique au plafond ci-dessus (413 = trop, 400 = pas assez)
+  if (interrompu) { res.statusCode = 400; res.end('Bad Request'); return true }
 
   // d. parse — multipart (champs texte seulement) ou urlencoded ; dernière valeur gagne
   // (URLSearchParams itère dans l'ordre d'insertion, parseMultipart dans l'ordre d'apparition).

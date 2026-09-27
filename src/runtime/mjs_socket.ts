@@ -57,6 +57,8 @@ function MjsSocket(url, opts) {
   this._mjs_queueOverflowWarned = false;   // débordement de _mjs_queue déjà signalé — remis à false au prochain welcome (file vidée)
   this._mjs_pendingOpenReqs = [];   // [{id, type, payload}] request({waitForOpen:true}) en attente d'ouverture
   this._mjs_attempt = 0;
+  this._mjs_abandoned     = false;  // true après close() volontaire ou reconnexion épuisée/désactivée — cf. close()/_mjs_scheduleReconnect/_mjs_ensure
+  this._mjs_abandonWarned = false;  // un seul avertissement par épisode d'abandon (send() pendant l'abandon)
   this._mjs_stableTimer = null;     // minuteur MJSOCKET_STABLE_MS posé par _mjs_onWelcome, annulé par _mjs_teardown
   this._mjs_reconnectTimer = null;
   this._mjs_hbTimer = null;
@@ -90,7 +92,12 @@ MjsSocket.prototype._mjs_setState = function(s) { this._mjs_st.state = s; };
 // --- ouverture / handshake ---
 MjsSocket.prototype.connect = function() {
   if (this._mjs_destroyed || this._mjs_ws || this.state === 'open') { return this; }
-  this._mjs_wantOpen = true;
+  // reconnexion explicite : sort d'un abandon éventuel (cf. _mjs_scheduleReconnect/_mjs_ensure),
+  // compteur d'essais remis à zéro — un appel PUBLIC repart toujours à froid.
+  this._mjs_abandoned     = false;
+  this._mjs_abandonWarned = false;
+  this._mjs_attempt       = 0;
+  this._mjs_wantOpen      = true;
   this._mjs_open();
   return this;
 };
@@ -104,6 +111,12 @@ MjsSocket.prototype._mjs_ensure = function() {
   // transformerait alors le backoff [500,1000,2000,5000] en ~20 tentatives/s
   // vers un serveur déjà en difficulté. On respecte la reconnexion programmée ;
   // les messages émis entre-temps alimentent `_mjs_queue` et repartent au welcome.
+  // connexion ABANDONNÉE (close() volontaire, essais épuisés ou reconnect.enabled:false, cf.
+  // close()/_mjs_scheduleReconnect) : plus aucune réouverture implicite tant qu'un connect() explicite
+  // n'a pas repris la main — sinon CHAQUE send()/on()/request()/stream() ultérieur rouvrait une
+  // connexion brute, hors de tout backoff/plafond (un client qu'on a voulu arrêter pouvait marteler
+  // le serveur).
+  if (this._mjs_abandoned) { return; }
   if (!this._mjs_ws && this.state !== 'open' && !this._mjs_destroyed && !this._mjs_reconnectTimer) { this.connect(); }
 };
 
@@ -122,8 +135,10 @@ MjsSocket.prototype._mjs_open = function() {
     // URL syntaxiquement invalide : erreur DÉTERMINISTE, jamais un aléa réseau.
     // L'ancien `_mjs_onClose({code:1006})` enclenchait le cycle de reconnexion
     // standard → boucle INFINIE (plafond 5 s) sur une opération qui ne peut
-    // JAMAIS réussir. On abandonne (bug de dev, signalé) au lieu de réessayer.
+    // JAMAIS réussir. On abandonne (bug de dev, signalé) au lieu de réessayer — verrou d'abandon
+    // compris, sinon le prochain send()/on() retenterait la même adresse via _mjs_ensure().
     this._mjs_wantOpen = false;
+    this._mjs_abandoned = true;
     this._mjs_st.lastError = { code: 'badurl', message: String((e && e.message) || e) };
     µ.error('[µ.socket] URL invalide, connexion abandonnée : ' + this.url, e);
     this._mjs_setState('closed');
@@ -267,6 +282,11 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
 MjsSocket.prototype._mjs_onDenied = function(msg) {
   this._mjs_st.lastError = (msg.p) || { message: 'denied' };
   this._mjs_wantOpen = false;          // auth invalide → inutile de réessayer
+  // même garde que close() volontaire (cf. son commentaire) : _mjs_ensure() ne teste que ce
+  // drapeau, un send()/on()/request()/stream() après ce refus rouvrirait sinon une connexion brute
+  // alors que `_mjs_wantOpen = false` ci-dessus dit déjà « fin définitive ». Seul un connect()
+  // explicite (qui le remet à false) reprend la main.
+  this._mjs_abandoned = true;
   this._mjs_session = null;            // fin définitive — une session ne survit jamais à un refus
   // Annule un reconnect éventuellement programmé : on abandonne définitivement.
   if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
@@ -339,7 +359,7 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
     // CLIENT, cf. µ._mjs_mjschemaOnPush (absent si le module 'schema' n'est pas chargé → no-op, trame
     // ignorée comme n'importe quel autre type µ: inconnu l'aurait été avant l'ajout de µschema).
     case 'µ:schema':  if (µ._mjs_mjschemaOnPush) { µ._mjs_mjschemaOnPush(this, msg); } return;
-    case 'µ:bye':     this._mjs_st.lastError = msg.p || null; this._mjs_wantOpen = false; this._mjs_session = null; if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; } this._mjs_teardown(true); this._mjs_pendingOpenReqs = []; this._mjs_setState('closed'); return;
+    case 'µ:bye':     this._mjs_st.lastError = msg.p || null; this._mjs_wantOpen = false; this._mjs_abandoned = true; this._mjs_session = null; if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; } this._mjs_teardown(true); this._mjs_pendingOpenReqs = []; this._mjs_setState('closed'); return;
   }
   // delta de stream ? (ne tombe PAS aussi dans les handlers pub/sub)
   if (this._mjs_streams[msg.t]) { return this._mjs_onStreamDelta(msg.t, msg); }
@@ -360,7 +380,10 @@ MjsSocket.prototype._mjs_onClose = function(ev) {
   // ping-pong infini entre les deux onglets. `lastError` : préserve la charge de la trame
   // applicative si déjà reçue, sinon repli DISTINCT par code (replaced/refused).
   if (ev && (ev.code === 4003 || ev.code === 4004)) {
+    // abandon, pas seulement fin de reconnexion : un send()/on() rouvrirait sinon via _mjs_ensure()
+    // et remplacerait à son tour l'autre onglet — même ping-pong, au rythme de l'application
     this._mjs_wantOpen = false;
+    this._mjs_abandoned = true;
     this._mjs_session = null;
     if (!this._mjs_st.lastError) { this._mjs_st.lastError = { code: ev.code === 4003 ? 'replaced' : 'refused' }; }
   }
@@ -414,9 +437,11 @@ MjsSocket.prototype._mjs_teardown = function(final) {
 
 MjsSocket.prototype._mjs_scheduleReconnect = function() {
   var rc = this.opts.reconnect || {};
-  if (rc.enabled === false) { this._mjs_setState('closed'); return; }
+  // reconnexion désactivée ou essais épuisés = ABANDON (cf. _mjs_ensure/send()) : `_mjs_wantOpen`
+  // redescend, on ne veut plus être connecté tant que personne ne le redemande explicitement.
+  if (rc.enabled === false) { this._mjs_wantOpen = false; this._mjs_abandoned = true; this._mjs_setState('closed'); return; }
   var max = (rc.retries != null) ? rc.retries : Infinity;
-  if (this._mjs_attempt >= max) { this._mjs_setState('closed'); return; }
+  if (this._mjs_attempt >= max) { this._mjs_wantOpen = false; this._mjs_abandoned = true; this._mjs_setState('closed'); return; }
   var backoff = rc.backoff || [500, 1000, 2000, 5000];
   var base = backoff[Math.min(this._mjs_attempt, backoff.length - 1)];
   var jitter = (rc.jitter != null) ? rc.jitter : 0.3;
@@ -470,6 +495,11 @@ MjsSocket.prototype.off = function(type, handler) {
 };
 
 MjsSocket.prototype._mjs_dispatch = function(type, msg) {
+  // un delta de flux (sock.stream(type)) peut arriver ICI par un chemin qui ignore le test déjà
+  // fait dans _mjs_onMessage côté TEXTE (ex. µschema binaire, cf. mjs_schema.ts::_mjs_mjschemaOnBinary,
+  // qui appelle _mjs_dispatch directement, sans jamais passer par _mjs_onMessage) — même contrat que
+  // le texte : un type abonné en stream() n'est JAMAIS un message pub/sub ordinaire.
+  if (this._mjs_streams[type]) { this._mjs_onStreamDelta(type, msg); return; }
   var hs = this._mjs_handlers[type];
   if (!hs) { return; }
   var copy = hs.slice();
@@ -499,6 +529,18 @@ MjsSocket.prototype._mjs_normWait = function(value, defaultMs, name) {
 };
 
 MjsSocket.prototype.send = function(type, payload, opts) {
+  // connexion abandonnée (close() volontaire ou reconnexion épuisée/désactivée, cf.
+  // close()/_mjs_scheduleReconnect) : message écarté plutôt qu'empilé dans une file hors-ligne qui
+  // ne sera plus jamais rejouée tant que connect() n'a pas repris la main — un seul avertissement
+  // par socket, pas un par message (choix conservateur ; alternative envisagée : file d'attente
+  // bornée, rejouée à la prochaine reconnexion explicite).
+  if (this._mjs_abandoned) {
+    if (!this._mjs_abandonWarned) {
+      this._mjs_abandonWarned = true;
+      µ.warn('[µ.socket] envoi ignoré : connexion abandonnée (close() volontaire, essais épuisés ou reconnect.enabled:false) — appelez connect() pour reprendre : ' + this.url);
+    }
+    return false;
+  }
   this._mjs_ensure();
   // même normalisation que debounce/coalesce (_mjs_normWait) — AVANT ce correctif, une valeur
   // non numérique ('abc') comparait (now-last) < NaN, TOUJOURS faux : le cooldown se désactivait
@@ -596,18 +638,26 @@ MjsSocket.prototype._mjs_debounceSend = function(type, payload, wait) {
   // ou du curseur qu'on relâche. `true` retombe sur le défaut opts.debounceMs (200 ms). Même
   // contre-pression que coalesce : bufferedAmount > maxBuf → réessai après `ms`, sans reset
   // de charge.
-  var ms   = (typeof wait === 'number') ? wait : (this.opts.debounceMs || 200);
-  var slot = this._mjs_debounce[type] || (this._mjs_debounce[type] = { payload: null, timer: null });
+  // fermeture RÉUTILISÉE (même idée que _mjs_coalesceSend juste au-dessus) : un debounce doit de
+  // toute façon relancer setTimeout à CHAQUE appel (c'est le sens même du debounce), mais la
+  // FONCTION `tick` elle-même n'a pas besoin d'être réallouée à chaque fois — posée UNE FOIS sur le
+  // slot, elle relit `ms`/`maxBuf` DEPUIS le slot (dernier appel gagne), donc un comportement
+  // identique à la fermeture recréée à chaque appel, sans son coût d'allocation.
+  var self = this;
+  var slot = this._mjs_debounce[type];
+  if (!slot) {
+    slot = this._mjs_debounce[type] = { payload: null, timer: null, ms: 0, maxBuf: 0 };
+    slot.tick = function() {
+      if (self._mjs_ws && self._mjs_ws.bufferedAmount > slot.maxBuf) { slot.timer = setTimeout(slot.tick, slot.ms); return; }
+      slot.timer = null;
+      self._mjs_sendNow(type, slot.payload);
+    };
+  }
+  slot.ms      = (typeof wait === 'number') ? wait : (this.opts.debounceMs || 200);
+  slot.maxBuf  = this.opts.maxBuffered || 65536;
   slot.payload = payload;
   if (slot.timer) { clearTimeout(slot.timer); }   // chaque envoi remet le silence à zéro
-  var self = this;
-  var maxBuf = this.opts.maxBuffered || 65536;
-  var tick = function() {
-    if (self._mjs_ws && self._mjs_ws.bufferedAmount > maxBuf) { slot.timer = setTimeout(tick, ms); return; }
-    slot.timer = null;
-    self._mjs_sendNow(type, slot.payload);
-  };
-  slot.timer = setTimeout(tick, ms);
+  slot.timer = setTimeout(slot.tick, slot.ms);
   return true;
 };
 
@@ -981,6 +1031,11 @@ MjsSocket.prototype._mjs_cancelPending = function() {
 
 MjsSocket.prototype.close = function(code, reason) {
   this._mjs_wantOpen = false;
+  // même garde que la reconnexion abandonnée (essais épuisés/reconnect.enabled:false, cf.
+  // _mjs_scheduleReconnect) : sans elle, _mjs_ensure() ne testait que ce 2e cas — un send()/on()/
+  // request()/stream() après ce close() explicite rouvrait quand même une connexion brute. Seul un
+  // connect() explicite (qui remet ce flag à false) reprend la main.
+  this._mjs_abandoned = true;
   if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
   this._mjs_teardown(true);           // fermeture volontaire = fin définitive → rejette les waitForOpen
   this._mjs_cancelPending();          // idem — un debounce/coalesce en vol ne doit pas ressusciter dans _mjs_queue après coup

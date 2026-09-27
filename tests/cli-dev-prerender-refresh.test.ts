@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
-import { prerenderOnDevRecompile } from '../src/cli/dev-prerender.js'
+import { prerenderOnDevRecompile, createDevPrerenderScheduler } from '../src/cli/dev-prerender.js'
 import { prerenderPages } from '../src/server/prerender.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 
@@ -120,5 +120,60 @@ $titre = "Accueil"
     // testée exhaustivement par prerender.test.ts — pas une réimplémentation
     // parallèle qui pourrait diverger silencieusement.
     assert.equal(typeof prerenderPages, 'function')
+  })
+})
+
+// Test de régression : `mjs dev` notifiait le rechargement du navigateur (HMR) AVANT la fin du
+// prérendu (fire-and-forget), et deux recompiles rapprochés pouvaient lancer deux passes de
+// prérendu EN PARALLÈLE vers le même dossier de sortie. `createDevPrerenderScheduler` sérialise
+// les passes (jamais deux en vol) et rend, pour chaque `schedule()`, une promesse que l'appelant
+// (cli.ts) attend AVANT de notifier le reload.
+describe('cli/dev-prerender — createDevPrerenderScheduler (sérialisation des passes)', () => {
+  it('deux schedule() rapprochés : jamais deux passes de prérendu EN VOL en même temps', async () => {
+    let enVol = 0
+    let maxEnVol = 0
+    const appels: number[] = []
+    const scheduler = createDevPrerenderScheduler({ render: { routes: { '/': { component: 'mjs-home' } } } } as any, '/proj', {
+      prerenderFn: (async () => {
+        enVol++
+        maxEnVol = Math.max(maxEnVol, enVol)
+        appels.push(Date.now())
+        await new Promise(r => setTimeout(r, 60))
+        enVol--
+        return { outDir: '/out', generated: [], skipped: [] }
+      }) as any,
+    })
+    const p1 = scheduler.schedule()
+    const p2 = scheduler.schedule()   // déclenché PENDANT que la 1ʳᵉ passe tourne encore
+    await Promise.all([p1, p2])
+    assert.equal(maxEnVol, 1, 'BUG confirmé si deux passes ont tourné EN PARALLÈLE (chevauchement)')
+    assert.equal(appels.length, 2, 'chaque schedule() déclenche sa PROPRE passe (aucune coalescence)')
+  })
+
+  it("schedule() ne se résout qu'APRÈS la fin RÉELLE de la passe (jamais avant, même si prerenderFn est lent)", async () => {
+    let termine = false
+    const scheduler = createDevPrerenderScheduler({ render: { routes: { '/': { component: 'mjs-home' } } } } as any, '/proj', {
+      prerenderFn: (async () => {
+        await new Promise(r => setTimeout(r, 80))
+        termine = true
+        return { outDir: '/out', generated: [], skipped: [] }
+      }) as any,
+    })
+    await scheduler.schedule()
+    assert.equal(termine, true, 'BUG confirmé si schedule() se résout avant la fin de prerenderFn')
+  })
+
+  it('une passe dont prerenderFn JETTE (absorbée par prerenderOnDevRecompile) ne bloque pas les schedule() suivants', async () => {
+    let compteur = 0
+    const config: any = { render: { routes: { '/': { component: 'mjs-home' } } } }
+    const scheduler = createDevPrerenderScheduler(config, '/proj', {
+      warn: () => {},   // le warn attendu de prerenderOnDevRecompile, silencé pour ce test
+      prerenderFn: (async () => { compteur++; throw new Error('happy-dom absent') }) as any,
+    })
+    // `schedule()` ne doit JAMAIS rejeter : prerenderOnDevRecompile absorbe déjà l'erreur (son
+    // propre try/catch) — un rejet ici casserait la CHAÎNE pour tous les schedule() suivants.
+    await assert.doesNotReject(scheduler.schedule())
+    await assert.doesNotReject(scheduler.schedule())
+    assert.equal(compteur, 2, 'les DEUX passes doivent avoir tourné malgré l\'échec de la 1ʳᵉ')
   })
 })

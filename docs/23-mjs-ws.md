@@ -71,6 +71,7 @@ C'est **tout** ce qu'il faut pour un serveur `µsocket` complet et protégé, co
 | `onLog(niveau, message, meta?)` | `console` (format sobre) | `niveau` : `'debug' \| 'info' \| 'warn' \| 'error'`. |
 | `resume` | désactivé | Reprise de session après micro-coupure — `true` (défauts : grâce 30 s, 500 trames, 256 Ko) ou `{ grace?, maxBuffered?, maxBytes? }`. Cf. §8. |
 | `sessionExclusive` | `false` | Session exclusive par identité, **deux** modes — `true`/`'replace'` : un 2e `µ:hello` **frais** de la **même** identité éjecte proprement l'ancienne connexion (`µ:bye {reason:'replace'}` + fermeture code **4003**). `'refuse'` (inverse) : ce 2e `µ:hello` est **refusé** si une connexion vivante existe déjà (`µ:denied` + fermeture code **4004**). Cf. §8.5. |
+| `ban` | active : 3 expulsions pour abus en 1 min → 5 min de refus, par compte **et** par IP | Mise au banc — `false` la désactive, un objet `{ after?, within?, duration?, by? }` la règle (`by` : `'account'` \| `'ip'` \| `'both'`). Cf. §3.4 « Qui compte pour qui ». |
 | `onDisconnect(client, reason?)` | — | Rappelée à la déconnexion **définitive** d'un client (immédiate sans `resume`, différée à la fin de la grâce sinon) — **toujours** disponible, sans `opts.bridge`. Cf. §8.2 point 5. |
 | `stats` | désactivé | Expose GET /stats, /metrics, /state sur le pont (`bridge` requis pour les servir en HTTP). Le registre de compteurs (`app.stats()`) tourne **toujours**, quelle que soit cette valeur. Cf. §10. |
 | `codec` | `'auto'` | `'auto'` (type schématisé → binaire, reste JSON) / `'binary'` (**strict**, refuse tout texte applicatif sans schéma) / `'json'` (coupe-circuit débogage, tout en JSON). Cf. §3.1 « µschema ». |
@@ -107,16 +108,20 @@ Actives par défaut, aucune configuration requise :
 
 | Limite | Défaut | Effet au dépassement |
 |---|---|---|
-| `limits.rate` / `limits.burst` | 40 msg/s / 80 | Seau à jetons par connexion. Trame en trop **ignorée** + `µ:error` (throttlé — un seul message, pas un par trame jetée) ; expulsion après `limits.kickAfter` violations. |
+| `limits.rate` / `limits.burst` | 40 msg/s / 80 | Seau à jetons par connexion, consulté **à la réception de chaque trame** (avant même sa mise en file de traitement) : trame en trop **ignorée** + `µ:error` (throttlé — un seul message, pas un par trame jetée) ; expulsion après `limits.kickAfter` violations. |
+| `limits.maxQueued` | 200 trames en attente par connexion | Protège la mémoire même quand le débit ci-dessus resterait sous son seau (une étape lente en tête de file — `auth()` asynchrone, par exemple — ne laisse jamais un arriéré s'accumuler sans borne) : au-delà, expulsion immédiate. Chaque connexion (chaque onglet) a sa propre file. `null` explicite = illimité. |
+| `limits.rateBy` | `'connection'` | Qui partage le seau de débit ci-dessus : chaque connexion (défaut), tous les onglets d'un compte (`'account'`), toutes les connexions d'une IP (`'ip'`), ou le compte **et** son IP (`'both'`). Cf. §3.4. |
 | `limits.maxPayload` | 65536 octets | Trame surdimensionnée → fermeture immédiate, code **1009**. |
 | `limits.maxBuffered` | 1048576 octets | Contre-pression à l'émission : un envoi est jeté si le buffer du transport déborde déjà ; expulsion après 50 rejets **consécutifs**. |
 | `limits.kickAfter` | 50 | Aussi réutilisé pour le JSON invalide (1 `warn` + compteur dédié par connexion). |
 | `limits.maxConnections` | `null` (illimité, opt-in) | Plafond GLOBAL de connexions simultanées. Une connexion entrante au-delà est refusée avant authentification : fermeture immédiate, code **1013**. |
 | `limits.maxConnectionsPerIp` | 100 | Plafond de connexions simultanées PAR IP. Même refus (code **1013**) ; une IP inconnue (transport sans `remoteInfo.address`) n'est jamais comptée par ce plafond. |
 | `limits.maxRoomsPerClient` | 50 | Plafond de salons qu'un même client a rejoints en même temps. Au-delà, `µ:join` est refusé (`µ:error`, throttlé) — la connexion, elle, reste ouverte. |
+| `limits.maxPresencePerClient` | = `limits.maxRoomsPerClient` | Plafond d'abonnements de présence DE SALON (`µ:sub-presence`) qu'un même client a actifs en même temps — distinct de `maxRoomsPerClient` (celui-ci ne borne que les adhésions, `µ:join`). Au-delà, refusé (`µ:error`, throttlé). `null` explicite = illimité. |
 | `heartbeat × 2.5` | 37,5 s par défaut | Watchdog serveur : une connexion muette (aucune trame reçue, `µ:ping` compris) au-delà de ce délai est expulsée. `heartbeat: 0` le désactive. |
 | — | — | **Tout** handler applicatif (`auth`/`welcome`/`serve`/`on`) tourne sous garde : une exception ne fait jamais planter le process ni geler la connexion. |
 | `guardProcess: true` | désactivé | Filet process entier (`uncaughtException`/`unhandledRejection`) — défense en profondeur au-delà des handlers connus. |
+| `ban` | 3 expulsions en 1 min → 5 min | Mise au banc : un client expulsé pour abus à répétition est refusé un moment, par compte et par IP. Cf. §3.4. |
 
 Nuance importante : une expulsion de **protection** (débit, taille, contre-pression, watchdog) ferme la connexion **sans `µ:bye`** — le client peut reconnecter normalement, utile si la coupure était transitoire. Seuls `.stop()` et `client.close()` sont des départs **définitifs et annoncés** (`µ:bye`, aucune reconnexion cliente).
 
@@ -245,6 +250,8 @@ Aucune gem : juste `Array#pack`/`String#unpack1` en little-endian, miroir exact 
 ```ruby
 # app/lib/mj_schema_http.rb — recette : les 11 types scalaires sont couverts, list()/bits() restent
 # à écrire à la main sur le MÊME principe (cf. src/schema/core.ts) si tu en as besoin
+require 'json'
+
 module MjSchemaHttp
   # id u8 = position dans SCHEMAS, DANS L'ORDRE — miroir de la déclaration cliente
   # (µ.schema('demandeProfil', ...) PUIS µ.schema('profil', ...))
@@ -255,7 +262,7 @@ module MjSchemaHttp
 
   def self.decrire_type(t)
     return t if t.is_a?(String)
-    t[:kind] == 'list' ? "list(#{t[:of]})" : "bits(#{t[:noms].join('+')})"
+    t[:kind] == 'list' ? "list(#{t[:of]})" : "bits(#{JSON.generate(t[:noms])})"
   end
 
   def self.fnv1a(chaine)
@@ -265,7 +272,8 @@ module MjSchemaHttp
   end
 
   def self.hash_registre(schemas = SCHEMAS)
-    parties = schemas.map { |nom, champs| "#{nom}:#{champs.map { |c, t| "#{c}=#{decrire_type(t)}" }.join(',')}" }
+    # une partie JSON par schéma, jamais une concaténation brute : un nom peut contenir n'importe quel séparateur
+    parties = schemas.map { |nom, champs| JSON.generate([nom, champs.map { |c, t| [c.to_s, decrire_type(t)] }]) }
     fnv1a(parties.join('|'))
   end
 
@@ -372,6 +380,48 @@ const app = mjsWs({
 Avec `mjs ws` (§6), se configure aussi dans `mjs.config.json` (`ws.verifyOrigin`, **seule** la forme tableau y est représentable) ou dans l'entry (`verifyOrigin`, tableau OU fonction) — même règle que `heartbeat`/`limits` : si les **deux** sont posés, l'entry prime EN **bloc** (cf. §6.4).
 
 > ⚠️ **Obligatoire avec l'authentification par cookie.** Si `opts.auth` rejoue le cookie de la requête d'upgrade (patron « `mjsWs` rejoue le cookie lui-même », §7.12) — le navigateur le joint tout seul, page tierce comprise — `verifyOrigin` n'est plus une option. Avec un jeton explicite (`hello.auth.token`, §7.6), il reste facultatif : une page tierce ne peut pas lire ce jeton.
+
+<a id="qui-compte"></a>
+### 3.4 Qui compte pour qui — connexion, compte, IP
+
+Chaque onglet ouvre **sa** connexion. Ces réglages disent qui est compté ensemble :
+
+| Question | Réglage | Défaut |
+|---|---|---|
+| Un compte peut-il ouvrir plusieurs connexions (onglets) ? | `sessionExclusive` : `false` = oui ; `'replace'` = une seule, la nouvelle remplace l'ancienne ; `'refuse'` = une seule, la nouvelle est refusée (§8.5) | plusieurs |
+| Combien de connexions par IP ? | `limits.maxConnectionsPerIp` (§3) | 100 |
+| Le débit se compte par… | `limits.rateBy` : `'connection'`, `'account'`, `'ip'` ou `'both'` | `'connection'` |
+| Un abuseur expulsé est refusé par… | `ban.by` : `'account'`, `'ip'` ou `'both'` | `'both'` (mise au banc **active**) |
+| Chat : le même message répété | `chatPackage({ duplicates })`, cf. [26 · Chat](26-chat.md) | désactivé |
+
+**Compte ou IP ?** Le compte, c'est `identity.id` (le retour de `auth`). Un visiteur **sans compte** est compté par son **IP** ; sans IP connue non plus (transport qui ne l'expose pas), par sa connexion. `'both'` compte le compte **et** son IP : utile contre le multi-compte, au prix des IP partagées (réseau d'entreprise, école, opérateur mobile), où un abuseur pénalise ses voisins.
+
+#### Débit partagé — `limits.rateBy`
+
+Par défaut, chaque connexion a son propre seau (`limits.rate`/`burst`) : un compte ouvert dans 10 onglets a 10 fois le débit. Avec `'account'`, tous les onglets d'un compte puisent dans **un seul** seau ; avec `'ip'`, toutes les connexions d'une IP ; avec `'both'`, chaque message prend un jeton dans le seau du compte **et** dans celui de l'IP. En `'account'`, une connexion garde son propre seau tant que son `µ:hello` n'est pas accepté : des comptes différents derrière une même IP ne se gênent jamais ; en `'ip'` et `'both'`, elle est comptée par IP dès l'arrivée. Les seaux sont propres à chaque processus et disparaissent avec la dernière connexion qui s'en sert.
+
+#### Mise au banc — `ban`
+
+Sans elle, une connexion expulsée pour **abus** revenait aussitôt, compteurs neufs. Abus = débit dépassé, messages invalides en série, file pleine, trame trop lourde (même coupée par le transport `ws` lui-même, avant d'arriver au serveur). Un silence (watchdog) ou un réseau lent (contre-pression) ne comptent jamais. Par défaut : **3 expulsions en 1 minute** valent **5 minutes** de refus.
+
+```js
+mjsWs({ ban: { after: 3, within: 60_000, duration: 300_000, by: 'both' } })   // les défauts
+mjsWs({ ban: false })                                                          // désactivée
+```
+
+| `ban.by` | Qui est refusé | Où |
+|---|---|---|
+| `'account'` | le compte ; un visiteur sans compte, par son IP — un **compte** de la même IP reste bienvenu | au `µ:hello` : `µ:denied` « mis au banc pour abus répétés — réessaie dans N min » |
+| `'ip'` | toute l'IP | dès l'arrivée, avant le hello : fermeture **1008** |
+| `'both'` | le compte **et** son IP | l'IP dès l'arrivée (1008), le compte au hello (`µ:denied`) |
+
+- Les connexions **déjà ouvertes** ne sont pas coupées : seules les nouvelles sont refusées.
+- La reprise de session (§8) ne contourne pas le banc : le refus passe avant elle.
+- Le client µ.socket refusé à l'arrivée réessaie à son rythme habituel (environ 5 s entre deux essais) et revient seul à la fin du banc ; refusé au hello (`µ:denied`), il s'arrête, comme pour tout `µ:denied` : l'application le reconnecte (`connect()`) quand elle le souhaite.
+- Plusieurs processus (§9) : chaque processus compte ses expulsions ; un refus prononcé est publié aux autres.
+- Compteurs (§10) : `garde.misesAuBanc` (refus prononcés), `connexions.refuseesBan` (connexions refusées) ; chaque mise au banc est aussi journalisée (`warn`).
+
+Dans `mjs.config.json` : `ws.ban` et `ws.limits.rateBy` (§6.3).
 
 ---
 
@@ -593,12 +643,13 @@ Les chemins sont relatifs à `--root` (défaut : le répertoire courant). Le pre
 | `host` | chaîne | host du transport `ws` — défaut `127.0.0.1` (loopback, MÊME défaut que le pont §7) ; `--host ::` (ou `ws.host: "::"`) pour exposer sur toutes les interfaces |
 | `codec` | `'auto'` \| `'binary'` \| `'json'` | cf. §3.1 « µschema » — définissable **ici** **ou** dans l'entry (cf. §6.4). **Pas** de pendant pour `schemas` : `list()`/`bits()` ne sont pas représentables en JSON, réservé à l'entry. |
 | `heartbeat` | entier > 0 (ms) | cf. §1 — définissable **ici** **ou** dans l'entry (cf. §6.4) |
-| `limits` | objet `{ rate?, burst?, kickAfter?, maxPayload?, maxBuffered? }` (entiers > 0) | cf. §3 — définissable **ici** **ou** dans l'entry (cf. §6.4) |
+| `limits` | objet `{ rate?, burst?, kickAfter?, maxPayload?, maxBuffered?, … }` (entiers > 0 ; `rateBy` : `'connection'` \| `'account'` \| `'ip'` \| `'both'`) | cf. §3 — définissable **ici** **ou** dans l'entry (cf. §6.4) |
 | `resume` | `true`, `false` ou objet `{ grace?, maxBuffered?, maxBytes? }` (entiers > 0) | reprise de session, cf. §8 — définissable **ici** **ou** dans l'entry (cf. §6.4). Actif : la bannière de `mjs ws` affiche « reprise de session : 30 s ». |
 | `sessionExclusive` | booléen \| `'replace'` \| `'refuse'` | session exclusive par identité, **deux** modes, cf. §8.5 — définissable **ici** **ou** dans l'entry (cf. §6.4). |
 | `verifyOrigin` | tableau de chaînes non vide | allowlist stricte d'origines exactes, cf. §1/§3.3 « Vérification d'origine » — **seule** la forme tableau est représentable en JSON (la forme fonction reste réservée à l'entry) — définissable **ici** **ou** dans l'entry (cf. §6.4). |
+| `ban` | `true`, `false` ou objet `{ after?, within?, duration?, by? }` (entiers > 0 ; `by` : `'account'` \| `'ip'` \| `'both'`) | mise au banc, cf. §3.4 — active par défaut ; définissable **ici** **ou** dans l'entry (cf. §6.4). |
 
-Validation stricte, comme le reste de `mjs.config.json` : une clé inconnue (dans `ws`, `ws.limits` ou `ws.resume`) lève une erreur avec une suggestion orthographique sur les fautes de frappe ; un type ou une plage invalide lève immédiatement, sans jamais démarrer sur une valeur bancale.
+Validation stricte, comme le reste de `mjs.config.json` : une clé inconnue (dans `ws`, `ws.limits`, `ws.resume` ou `ws.ban`) lève une erreur avec une suggestion orthographique sur les fautes de frappe ; un type ou une plage invalide lève immédiatement, sans jamais démarrer sur une valeur bancale.
 
 ### 6.4 Qui décide, en cas de doublon ?
 
@@ -620,7 +671,7 @@ Dès qu'un fichier `.js`/`.mjs`/`.cjs`/`.json` change dans le **dossier** de l'e
 
 ### 6.6 Arrêt propre
 
-`Ctrl-C` (**sigint**) ou un **sigterm** envoyé au process : le serveur prévient tous ses clients (`µ:bye`), ferme proprement ses connexions puis son transport, et quitte.
+`Ctrl-C` (**sigint**) ou un **sigterm** envoyé au process : le serveur prévient tous ses clients (`µ:bye`), ferme proprement ses connexions puis son transport, et quitte — 20 s au plus. Un 2ᵉ `Ctrl-C` plus d'une seconde après le premier coupe tout de suite (détail : [32 · CLI](32-cli-et-configuration.md#arrêter-un-serveur-ctrlc)).
 
 ### 6.7 Flags
 
@@ -1034,7 +1085,7 @@ Même règle que le reste de `ws.bridge` en config (`mjs.config.json` `ws.bridge
 
 ### 7.9 Expiration et rafraîchissement du jeton
 
-Un jeton (§7.6) porte une échéance (`exp`) — mais elle n'était vérifiée **qu'au** `µ:hello`. Sans rien de plus, un jeton qui expire **après** la connexion ne ferme jamais la socket : le client reste connecté indéfiniment avec une identité qui n'est plus censée être valide. `mjsWs` suit cette échéance en continu, dès que `opts.auth` (donc `jwtAuth`, ou toute fonction maison qui pose un `exp` numérique sur l'identity retournée) l'expose.
+Un jeton (§7.6) porte une échéance (`exp`). Vérifiée **seulement** au `µ:hello`, elle ne fermerait jamais la socket d'un jeton qui expire **après** la connexion : le client resterait connecté indéfiniment avec une identité qui n'est plus censée être valide. `mjsWs` suit donc cette échéance en continu, dès que `opts.auth` (donc `jwtAuth`, ou toute fonction maison qui pose un `exp` numérique sur l'identity retournée) l'expose.
 
 **Suivi automatique — rien à activer.** Dès qu'UN client authentifié porte une échéance, un balayage périodique **global** (jamais un minuteur par connexion) la surveille : passé l'échéance (+ une tolérance d'horloge), le client reçoit `µ:error { code: 'token-expired' }` puis sa connexion est fermée — **sans** `µ:bye` (le client peut reconnecter avec un jeton neuf, exactement comme un kick des protections de série, §3). Tant qu'**aucune** auth n'expose jamais d'échéance, ce balayage n'est jamais armé : zéro minuteur, zéro coût.
 
@@ -1502,6 +1553,8 @@ Un `µ:resync` couvre aussi bien les deltas produits localement que ceux venus d
 ### 9.4 La présence fusionnée — qui est là, sur **toute** la flotte
 
 Chaque process connaît la présence de **ses** propres clients (§4). Pour savoir qui est là sur **toute** la flotte, chaque process publie ses propres arrivées/départs (`join`/`leave`, globaux et par salon) et écoute ceux des autres — il tient alors une vue **fusionnée** : la sienne (réelle, liée à ses connexions) plus celle des autres (un miroir, alimenté par ce qu'ils publient). `GET /presence` (pont) et les abonnements `µ:presence` lisent cette vue fusionnée — un client connecté au process A voit apparaître/disparaître les utilisateurs connectés au process B exactement comme s'ils étaient sur A.
+
+**Même identité sur plusieurs process à la fois** (deux onglets, chacun routé vers un process différent par le répartiteur de charge) : même garantie que l'agrégation multi-onglets d'un seul process (§4) — un `join`/`leave` n'est publié qu'à la transition **0↔1** de la présence FUSIONNÉE de cette identité, jamais à chaque source individuelle. Le départ de l'onglet connecté à B ne fait donc jamais « clignoter » quelqu'un qui reste connecté sur A.
 
 **Et si un process meurt brutalement** (crash, kill -9, machine coupée) — sans prévenir personne ? Ses pairs resteraient « fantômes » indéfiniment dans la vue des autres. Le **bail de vie** règle ça : chaque process pose une petite clé dans Redis avec une durée de vie de 10 secondes (`SET ... EX 10`), et la renouvelle toutes les ~3 secondes tant qu'il est vivant. Les autres process vérifient périodiquement (même cadence, ~3 s) que les process dont ils connaissent des pairs distants ont **toujours** un bail vivant. Dès qu'un bail a expiré (le process n'a pas renouvelé — mort, ou réseau coupé), ses pairs distants sont purgés **partout** ailleurs, avec les `leave` correspondants envoyés aux abonnés locaux — exactement comme une vraie déconnexion.
 

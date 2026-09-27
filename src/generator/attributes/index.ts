@@ -15,6 +15,7 @@ import { cleanJs, cleanJsExpr, parseMixedString } from '../utils.js'
 import { transformReactiveWrites } from '../transform-reactive.js'
 import { applyPathTracking } from '../path-tracker.js'
 import type { Node, Attr } from '../../parser/index.js'
+import type { PorteeEntree } from '../compile.js'
 import { t } from '../../messages/index.js'
 import { suggestKey } from '../../bundler/config.js'
 
@@ -24,7 +25,7 @@ export interface AttrCtx {
   attr: Attr
   attrName: string | null | undefined
   rawVal: string
-  ctx: { type: string; updates: string[]; loops: any[] }
+  ctx: { type: string; updates: string[]; loops: any[]; locals?: Set<string>; portee?: PorteeEntree[] }
   id: string | null
   lid: string | null
   attrStr: string  // mutable via retour de la fonction
@@ -33,6 +34,79 @@ export interface AttrCtx {
 export interface AttrResult {
   id?: string | null
   attrStr?: string
+}
+
+/** Émet un gestionnaire inline en gardant trace des noms que le GABARIT lui met en
+ * portée (variable/index des `{for}` englobants, argument de branche `{await}`,
+ * `{const}` du bloc courant). Ces noms doivent rester locaux au handler — mais pour CE
+ * handler seulement : le transpileur ne les retire de la liste prédéclarée que là, un
+ * gestionnaire situé ailleurs garde la variable du `<script>` qu'il écrit vraiment. */
+function pushInline(env: AttrCtx, code: string): void {
+  state.inlines.push(code)
+  state.inlineLocals.push(env.ctx.locals ? Array.from(env.ctx.locals).sort() : [])
+}
+
+/** Squelette qui recrée, en tête d'un gestionnaire ou d'une liaison, les noms que le gabarit met
+ * en portée ICI, dans l'ordre du gabarit (cf. PorteeEntree, compile.ts) : chaque `{for}` par la
+ * ligne propre au site (`ligneBoucle`, inchangée), puis chaque `{const}` et la valeur de la
+ * branche `{success}`/`{error}` — ceux-là seulement s'ils sont lus, par `code` ou par une entrée
+ * recréée après eux (itérable d'une boucle, expression d'un autre `{const}`). Sans eux, un
+ * `{const}` ou la valeur chargée levait « … is not defined » au clic, et une boucle sur cette
+ * valeur aussi. Chacun passe par un temporaire (`__cst_N`, `__aw_N`), comme les boucles par
+ * `__arr_N`/`__idx_N` : le contrôle des constantes reconnaît ainsi le squelette et refuse toute
+ * AUTRE écriture de ces noms, qui ne toucherait qu'une copie locale (cf. const-reassign.ts). */
+function squelettePortee(env: AttrCtx, code: string, ligneBoucle: (l: any) => string, grammaire: 'civet' | 'js' = 'civet'): string {
+  const portee: PorteeEntree[] = env.ctx.portee ?? env.ctx.loops.map((loop: any) => ({ kind: 'for' as const, loop }))
+  const lu      = (texte: string, nom: string): boolean => new RegExp(`(?<![\\w$.])${nom}(?![\\w$])`).test(texte)
+  const retenue = portee.map(() => false)
+  let aLire     = code
+  for (let i = portee.length - 1; i >= 0; i--) {
+    const e = portee[i]
+    if (e.kind === 'for') {
+      retenue[i] = true
+      aLire     += '\n' + e.loop.iterable
+    }
+    else if (lu(aLire, e.name)) {
+      retenue[i] = true
+      if (e.kind === 'const') aLire += '\n' + e.raw
+    }
+  }
+  let sortie = ''
+  for (let i = 0; i < portee.length; i++) {
+    const e = portee[i]
+    if (!retenue[i]) continue
+    if (e.kind === 'for') {
+      sortie += ligneBoucle(e.loop)
+      continue
+    }
+    const temp   = e.kind === 'const' ? `__cst_${i}` : `__aw_${i}`
+    const valeur = e.kind === 'const'
+      ? (grammaire === 'js' ? e.js : cleanJs(e.raw, env.compiler.externalVars))
+      : `_mjsThis._mjs_awaitStates?.get('${e.id}')?.${e.champ}`
+    sortie += grammaire === 'js' ? `const ${temp} = ${valeur}; let ${e.name} = ${temp}; ` : `  ${temp} = ${valeur}\n  ${e.name} = ${temp}\n`
+  }
+  return sortie
+}
+
+/** Squelette d'une boucle pour la réécriture DOM→modèle d'une liaison deux sens (cf.
+ * squelettePortee). Optim #8 — lit la prop JS `_mjs_idx_N` si présente, sinon l'attribut.
+ * Harmonisation Civet — seul point de divergence Coffee/Civet du squelette : l'existentiel
+ * binaire Coffee `a ? b` (sans `:`) n'existe pas en Civet (« Failed to parse ») ; Civet exprime le
+ * même repli via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »). */
+function ligneBoucleLiaison(l: any): string {
+  const d = l.depth
+  return `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
+    `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n` +
+    `  ${l.item} = __arr_${d}[__idx_${d}]\n` +
+    `  ${l.index} = __idx_${d}\n`
+}
+
+/** Effet posé à la RACINE pour une liaison située dans une branche `{await}` (hors de la fonction
+ * de la branche) : la valeur `{success}`/`{error}` et les `{const}` de la branche y sont recréés,
+ * sans quoi son premier passage levait « … is not defined » et le composant entier tombait.
+ * Aucune boucle ici : un `{for}` a son propre chemin, et un `{await}` n'est jamais dans un `{for}`. */
+function effetRacineLiaison(env: AttrCtx, id: string, expr: string, updateLogic: string): string {
+  return `{ const node = this._mjs_nodes.${id}; if(node) { ${squelettePortee(env, expr, () => '', 'js')}${updateLogic} } }`
 }
 
 /** Helper : enregistre un code d'update au root (effectsByVar + ctx.updates),
@@ -140,6 +214,23 @@ function spread(env: AttrCtx): AttrResult {
     // var externe partagée lue par la row (`{...$pkg}`) : sans
     // `structVars`, `_mjs_renderStruct` est sauté → spread figé à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await} ; un {if}/{key} imbriqué
+    // DEDANS hérite ce ctx.type, transparent pour lui) : AUCUNE branche
+    // n'existait ici — `{...$pkg}` sur un composant DANS un `{success}` ne
+    // produisait STRICTEMENT rien (0 occurrence de `_mjs_spd` dans le JS
+    // émis). Même remède que bindingStandard : (a) pose INITIALE via
+    // `__nodes[id]` — ce code tourne DANS la createFn de la branche, AVANT
+    // que `_mjs_updAwait` (mjs_element.ts) ne fusionne les refs dans
+    // `this._mjs_nodes` (encore vide à cet instant). (b) réactivité
+    // ULTÉRIEURE via `registerEffect` + `this._mjs_nodes[id]` (`_mjs_updAwait`
+    // idempotent, ne rejoue jamais son contenu tout seul).
+    const initCode = `{ const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = __nodes['${id}']; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`
+    env.ctx.updates.push(initCode)
+    // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés avant d'être lus
+    // (cf. effetRacineLiaison) — sans eux, « … is not defined » dès le premier passage
+    const reactiveCode = `{ ${squelettePortee(env, jsVar, () => '', 'js')}const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = this._mjs_nodes.${id}; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`
+    registerEffect(reactiveCode, vars)
   }
 
   return { id }
@@ -264,7 +355,21 @@ function dynamic(env: AttrCtx): AttrResult {
       // runtime/mjs_element.ts) reproduit EXACTEMENT la sémantique du root
       // (props booléennes dédiées, retrait sur false/null/undefined, filtre
       // XSS) — root et `{for}` partagent maintenant le même code.
-      env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${jsVar}); } }`)
+      // Exception : une expression CONSTANTE `true` (le parseur réécrit ainsi
+      // un attribut booléen HTML5 nu — `<input checked>` — en `dynamic`, cf.
+      // parser/index.ts ; un `checked={true}` explicite tombe dans le même
+      // cas) n'a RIEN de réactif à suivre. La `{for}` est "always-run" (voir
+      // en-tête du fichier) : cette ligne rejouerait alors `checked = true`
+      // à CHAQUE réconciliation de la boucle, y compris quand seule une
+      // AUTRE ligne change — écrasant une case décochée par l'utilisateur
+      // sur CETTE ligne (et, pour un radio, décochant par ricochet un radio
+      // homonyme situé hors de la boucle). `attrStr` pose déjà la valeur
+      // initiale dans le gabarit cloné de chaque ligne (`${attrName}=''`,
+      // juste plus bas) : une constante `true` n'a donc besoin d'AUCUN
+      // updateFn, exactement comme un attribut HTML statique.
+      if (env.attr.expr?.trim() !== 'true') {
+        env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${jsVar}); } }`)
+      }
     }
     // WC (`<mjs-x foo=!{$shared}>`) et attribut dynamique NON
     // filtré (`data-active={$mode}`) : var externe partagée → `structVars` sinon
@@ -287,13 +392,75 @@ function dynamic(env: AttrCtx): AttrResult {
   return { id, attrStr }
 }
 
+// segmente `val` en alternance texte/expression, chaque `{...}` repéré par un scan
+// ÉQUILIBRÉ (accolades + guillemets, même mécanique que `parseMixedString` juste à côté) —
+// remplace le découpage naïf par regex (`/\{([^}]+)\}/g`) qui refermait sur le PREMIER `}`
+// rencontré : un objet littéral imbriqué (`{clic({a:1})}`) ou un `}` LITTÉRAL dans une chaîne
+// de l'expression (`{clic({a:'}'})}`) tronquait l'expression avant sa vraie fin — échec de
+// compilation sur du code utilisateur pourtant valide. Un `{` jamais refermé reste inerte
+// (texte tel quel), même tolérance que le reste du compilateur sur un bloc non fermé.
+function splitBraceSegments(val: string): { text: string; expr: string | null }[] {
+  const segments: { text: string; expr: string | null }[] = []
+  const n = val.length
+  let i = 0
+  let textStart = 0
+  while (i < n) {
+    if (val[i] !== '{') { i++; continue }
+    const start = i
+    i++
+    let expr = ''
+    let balance = 1
+    let inString = false
+    let stringChar: string | null = null
+    while (i < n && !(balance === 0 && !inString)) {
+      const ch = val[i]
+      if (inString && ch === '\\') { expr += ch + (val[i + 1] ?? ''); i += 2; continue }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        if (!inString) { inString = true; stringChar = ch }
+        else if (stringChar === ch) inString = false
+      }
+      if (!inString) {
+        if (ch === '{') balance++
+        if (ch === '}') balance--
+      }
+      if (balance > 0 || inString) expr += ch
+      i++
+    }
+    if (balance !== 0) break  // jamais refermé : le reste (dès `{`) reste texte tel quel
+    segments.push({ text: val.slice(textStart, start), expr })
+    textStart = i
+  }
+  segments.push({ text: val.slice(textStart), expr: null })
+  return segments
+}
+
+// reconstruit un gabarit JS (`\`...\``) depuis des `segments` déjà scannés en équilibré
+// (`splitBraceSegments`) — remplace un appel à `parseMixedString` (utils.ts) qui n'a AUCUNE
+// garde sur un `{` jamais refermé : sa boucle sort simplement quand `i>=n` puis émet quand
+// même `${cleanJsExpr(...)}` sur ce qui reste, un texte pourtant censé demeurer littéral
+// (comme le fait déjà le chemin clone juste plus bas, via ces mêmes `segments`) — plantait le
+// composant au montage (ReferenceError), sans la moindre erreur de compilation.
+function buildTemplateFromSegments(
+  segments: { text: string; expr: string | null }[],
+  externalVars: string[],
+  templateLang: 'civet' | 'js',
+  moduleName: string | undefined
+): string {
+  let tpl = ''
+  for (const s of segments) {
+    tpl += s.text.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+    if (s.expr !== null) tpl += `\${${cleanJsExpr(s.expr, externalVars, templateLang, moduleName)}}`
+  }
+  return `\`${tpl}\``
+}
+
 // ============================================================================
 // Interpolation : attr="prefix-{$expr}-suffix"
 // ============================================================================
 function interpolation(env: AttrCtx): AttrResult {
   const val = env.attr.val ?? ''
-  const expressions: string[] = []
-  val.replace(/\{([^}]+)\}/g, (_m, e) => { expressions.push(e); return '' })
+  const segments = splitBraceSegments(val)
+  const expressions = segments.filter(s => s.expr !== null).map(s => s.expr!)
 
   const varSet = new Set<string>()
   for (const e of expressions) {
@@ -301,9 +468,15 @@ function interpolation(env: AttrCtx): AttrResult {
   }
   const vars = Array.from(varSet)
 
-  // Site EXPR (interpolation attr="pre-{$e}-post").
-  const jsVal = val.replace(/\{([^}]+)\}/g, (_m, e) => `\${${cleanJsExpr(e, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`)
-  const jsTemplateStr = `\`${jsVal}\``
+  // Site EXPR (interpolation attr="pre-{$e}-post") — gabarit reconstruit depuis `segments`
+  // (cf. `buildTemplateFromSegments`), PAS `parseMixedString` (utils.ts, sans garde sur une
+  // accolade non fermée). Cas PUR (`{expr}` seul, rien autour) gardé en expression BRUTE,
+  // jamais en gabarit : un attribut booléen (`disabled={$flag}`) doit rester un vrai booléen
+  // pour `_mjs_updAttrNode`/`_mjs_updAttr`, pas la chaîne "true"/"false".
+  const isPureExpr = expressions.length === 1 && segments.every(s => s.text === '')
+  const jsTemplateStr = isPureExpr
+    ? cleanJsExpr(expressions[0], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    : buildTemplateFromSegments(segments, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
 
   const id = env.id ?? `a${++state.counter}`
   const attrName = env.attrName ?? ''
@@ -332,14 +505,13 @@ function interpolation(env: AttrCtx): AttrResult {
     // le quote) SANS toucher aux `${expr}` (JS injecté, dont les string literals
     // contiennent des apostrophes légitimes qu'un escape global corromprait).
     let jsValClone = ''
-    let last = 0
-    // Site EXPR (interpolation, chemin clone/innerHTML).
-    val.replace(/\{([^}]+)\}/g, (m: string, e: string, off: number) => {
-      jsValClone += val.slice(last, off).replace(/'/g, '&#39;') + `\${${cleanJsExpr(e, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`
-      last = off + m.length
-      return ''
-    })
-    jsValClone += val.slice(last).replace(/'/g, '&#39;')
+    // Site EXPR (interpolation, chemin clone/innerHTML) — mêmes `segments` que ci-dessus
+    // (scan équilibré), plus le remplacement naïf par regex qui tronquait sur un `}`
+    // littéral DANS la chaîne de l'expression.
+    for (const s of segments) {
+      jsValClone += s.text.replace(/'/g, '&#39;')
+      if (s.expr !== null) jsValClone += `\${${cleanJsExpr(s.expr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`
+    }
     attrStr += ` ${attrName}='${jsValClone}'`
   }
 
@@ -462,20 +634,27 @@ function eventListener(env: AttrCtx): AttrResult {
   if (parts.includes('stop'))    modCoffee += '  e.stopPropagation()\n'
   if (parts.includes('self'))    modCoffee += '  return if e.target != el\n'
 
+  // `dedent()` AVANT `.trim()`, jamais l'inverse — un corps multi-lignes (`@click={\n  a\n  b\n}`)
+  // dont on tronquerait le `\n` de tête par un `.trim()` NU perd le retrait commun : la 1re
+  // ligne retombe seule à la colonne 0 (le `\n` qui portait SON indentation part avec), les
+  // suivantes gardent la leur — Civet/Coffee (sensible à l'indentation) lit alors une ligne
+  // sœur comme un ARGUMENT de la précédente (`a\nb` à 0/2 devient `a(b)`). `dedent()` sur le
+  // corps BRUT calcule le retrait commun sur TOUTES les lignes avant qu'aucun trim ne les
+  // déséquilibre ; le `.trim()` final ne retire plus que les lignes vides de tête/fin.
   let rawContent: string
   if (emitName !== null) {
     // La valeur d'attribut est la CHARGE UTILE — une expression, comme partout
     // ailleurs dans le framework ; le nom, lui, est porté par l'attribut.
     const payload = env.attr.expr != null
-      ? env.attr.expr.toString().trim()
+      ? dedent(env.attr.expr.toString()).trim()
       : (env.attr.val != null && env.attr.val !== '')
-        ? env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '').trim()
+        ? dedent(env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '')).trim()
         : ''
     rawContent = payload ? `µemit '${emitName}', ${payload}` : `µemit '${emitName}'`
   } else if (env.attr.expr != null) {
-    rawContent = env.attr.expr.toString().trim()
+    rawContent = dedent(env.attr.expr.toString()).trim()
   } else if (env.attr.val != null && env.attr.val !== '') {
-    rawContent = env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '').trim()
+    rawContent = dedent(env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '')).trim()
   } else {
     // forme ABRÉGÉE refusée sur un nom d'événement
     // À DEUX-POINTS (`<div @mjs:done>`) : elle synthétise ici un appel à la
@@ -493,30 +672,28 @@ function eventListener(env: AttrCtx): AttrResult {
   const cleanedJs = cleanJs(rawContent, env.compiler.externalVars)
   const idx = state.inlines.length
 
-  let reconstructCoffee = ''
-  if (env.ctx.loops && env.ctx.loops.length > 0) {
-    for (const l of env.ctx.loops) {
-      const d = l.depth
-      const item = l.item
-      const idxVar = l.index
-      const iterable = l.iterable
-      // Optim #8 — Lit la prop JS `_mjs_idx_N` (posée par compile.ts) au lieu
-      // de `getAttribute('data-mjs-idx-N')`. Évite la traversée du DOM attrs.
-      // Fallback `?` au cas où la prop n'est pas encore posée (cloneNode initial).
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${iterable}) then ${iterable} else Object.values(${iterable})\n`
-      reconstructCoffee += `  __idx_${d} = +__idx_${d} if Array.isArray(${iterable})\n`
-      reconstructCoffee += `  ${item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${idxVar} = __idx_${d}\n`
-    }
-  }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, cleanedJs, (l) => {
+    const d = l.depth
+    const item = l.item
+    const idxVar = l.index
+    const iterable = l.iterable
+    // Optim #8 — Lit la prop JS `_mjs_idx_N` (posée par compile.ts) au lieu
+    // de `getAttribute('data-mjs-idx-N')`. Évite la traversée du DOM attrs.
+    // Fallback `?` au cas où la prop n'est pas encore posée (cloneNode initial).
+    // Harmonisation Civet — seul point de divergence Coffee/Civet du
+    // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
+    // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
+    // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
+    return `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
+      `  __arr_${d} = if Array.isArray(${iterable}) then ${iterable} else Object.values(${iterable})\n` +
+      `  __idx_${d} = +__idx_${d} if Array.isArray(${iterable})\n` +
+      `  ${item} = __arr_${d}[__idx_${d}]\n` +
+      `  ${idxVar} = __idx_${d}\n`
+  })
 
   const userCode = dedent(cleanedJs).split('\n').map(l => `  ${l}`).join('\n')
-  state.inlines.push(`(e, el) =>\n${modCoffee}${reconstructCoffee}${userCode}`)
+  pushInline(env, `(e, el) =>\n${modCoffee}${reconstructCoffee}${userCode}`)
 
   // Auto-passive : pour touchstart/touchmove/wheel, le listener délégué est
   // enregistré `passive` par défaut (scroll fluide). On note ici si un handler
@@ -675,7 +852,7 @@ function bindingStandard(env: AttrCtx): AttrResult {
     // `branchUpdates`+`postUpdates`, jamais dupliquée.
     const isSelectValue = baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'select'
     env.ctx.updates.push(isSelectValue ? SELECT_VALUE_DEFER_PREFIX + initCode : initCode)
-    const reactiveCode = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
     registerEffect(reactiveCode, vars)
   }
 
@@ -708,7 +885,6 @@ function bindingStandard(env: AttrCtx): AttrResult {
     valExtractor = castExpr(`el.getAttribute('${baseAttr}')`)
   }
 
-  let reconstructCoffee = ''
   let attrStr = env.attrStr
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     // props posées par l'updateFn (toutes les loops, plus seulement la
@@ -722,24 +898,16 @@ function bindingStandard(env: AttrCtx): AttrResult {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-
-      // Optim #8 — Lit la prop JS si présente, sinon fallback getAttribute.
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n`
-      reconstructCoffee += `  ${l.item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${l.index} = __idx_${d}\n`
     }
   }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
   const idx = state.inlines.length
   let inlineBody = `  return if el and el != e.target\n`
   inlineBody += reconstructCoffee
   inlineBody += `  ${jsVar} = ${valExtractor}\n`
-  state.inlines.push(`(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(e, el) =>\n${inlineBody}`)
 
   registerEventRoute(evtType, id, idx, 0, 'binding')
 
@@ -819,6 +987,16 @@ function bindingDimensions(env: AttrCtx): AttrResult {
     pushUpdate(env, `{ const node = this._mjs_nodes.${id}; if (node) { ${buildSetup('this')} } }`, [])
   } else if (env.ctx.type === 'for') {
     env.ctx.updates.push(`{ const node = __nodes['${env.lid}']; if (node) { ${buildSetup(simpleVar ? '_mjsThis' : null)} } }`)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await}) : le ResizeObserver
+    // n'était jamais installé pour un `clientWidth=!{...}` DANS cette
+    // branche. Setup-only comme au root (pas de dépendance réactive à
+    // réenregistrer : l'observer, une fois posé, persiste tant que le nœud
+    // vit) — on rejoue le même code une fois, DANS la createFn de la
+    // branche (avant que `_mjs_updAwait` ne fusionne les refs dans
+    // `this._mjs_nodes` : `this` reste valide ici, l'arrow function de la
+    // branche le capture depuis son appel `.call(this, …)`).
+    env.ctx.updates.push(`{ const node = __nodes['${id}']; if (node) { ${buildSetup('this')} } }`)
   }
   return { id, attrStr }
 }
@@ -868,11 +1046,21 @@ function bindingMedia(env: AttrCtx): AttrResult {
       // média two-way lié à une var externe en row
       // (`paused=!{$playing}`) : sans `structVars`, figé à vie sur mutation.
       for (const v of vars) state.structVars.add(v)
+    } else {
+      // ctx.type ni 'root' ni 'for' (branche {await}) : `currentTime=!{$t}`
+      // (et les autres liaisons média sauf `duration`) ne pilotaient jamais
+      // le `<audio>`/`<video>` dans cette branche — seul l'event DOM→modèle
+      // (plus bas) était câblé. Même remède que bindingStandard : pose
+      // initiale via `__nodes[id]`, réactivité ultérieure via
+      // `registerEffect` + `this._mjs_nodes[id]`.
+      const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+      env.ctx.updates.push(initCode)
+      const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
+      registerEffect(reactiveCode, vars)
     }
   }
 
   let attrStr = env.attrStr
-  let reconstructCoffee = ''
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     const propPosed = pushIdxPropUpdates(env)
     for (const l of env.ctx.loops) {
@@ -881,23 +1069,16 @@ function bindingMedia(env: AttrCtx): AttrResult {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-      // Optim #8 — Read direct prop JS, fallback getAttribute.
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n`
-      reconstructCoffee += `  ${l.item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${l.index} = __idx_${d}\n`
     }
   }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
   const idx = state.inlines.length
   let inlineBody = `  return if el and el != e.target\n`
   inlineBody += reconstructCoffee
   inlineBody += `  ${jsVar} = el.${prop}\n`
-  state.inlines.push(`(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(e, el) =>\n${inlineBody}`)
 
   for (const evt of evts) registerEventRoute(evt, id, idx, 0, 'binding')
 
@@ -925,7 +1106,6 @@ function bindingContent(env: AttrCtx): AttrResult {
   // reconstruction que `bindingStandard`/`bindingGroup` (ré-hydrate
   // `item`/`index` depuis `data-mjs-idx-N` avant d'écrire).
   let attrStr = env.attrStr
-  let reconstructCoffee = ''
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     const propPosed = pushIdxPropUpdates(env)
     for (const l of env.ctx.loops) {
@@ -934,22 +1114,16 @@ function bindingContent(env: AttrCtx): AttrResult {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n`
-      reconstructCoffee += `  ${l.item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${l.index} = __idx_${d}\n`
     }
   }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, varName, ligneBoucleLiaison)
 
   const idx = state.inlines.length
   let inlineBody = `  return if el and el != e.target\n`
   inlineBody += reconstructCoffee
   inlineBody += `  ${varName} = el.${prop}\n`
-  state.inlines.push(`(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(e, el) =>\n${inlineBody}`)
 
   registerEventRoute('input', id, idx, 0, 'binding')
 
@@ -989,10 +1163,15 @@ function bindingContent(env: AttrCtx): AttrResult {
       `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
       `}`
     env.ctx.updates.push(initCode)
-    const reactiveCode = `{ ` +
-      `const node = ${ptr}._mjs_nodes['${id}']; ` +
-      `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
-      `}`
+    // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus
+    // (cf. effetRacineLiaison)
+    const prelude = squelettePortee(env, jsVar, () => '', 'js')
+    const reactiveCode = prelude
+      ? `{ const node = ${ptr}._mjs_nodes['${id}']; if (node) { ${prelude}if (node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); } }`
+      : `{ ` +
+        `const node = ${ptr}._mjs_nodes['${id}']; ` +
+        `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
+        `}`
     registerEffect(reactiveCode, vars)
   }
   return { id, attrStr }
@@ -1072,12 +1251,11 @@ function bindingGroup(env: AttrCtx): AttrResult {
     // ci-dessus) : une branche {await} ne clone pas de rows.
     const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
     env.ctx.updates.push(initCode)
-    const reactiveCode = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
     registerEffect(reactiveCode, vars)
   }
 
   let attrStr = env.attrStr
-  let reconstructCoffee = ''
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     const propPosed = pushIdxPropUpdates(env)
     for (const l of env.ctx.loops) {
@@ -1086,41 +1264,36 @@ function bindingGroup(env: AttrCtx): AttrResult {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-      // Optim #8 — Read direct prop JS, fallback getAttribute.
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n`
-      reconstructCoffee += `  ${l.item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${l.index} = __idx_${d}\n`
     }
   }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
+  // temporaires `__grp_*` : un `v`/`arr` nu écrasait la variable de boucle ou la valeur `{await}`
+  // homonyme de l'utilisateur, relue juste après dans l'expression liée
   const idx = state.inlines.length
   let inlineBody = `  return if el and el != e.target\n`
   inlineBody += reconstructCoffee
-  inlineBody += `  v = el.value\n`
+  inlineBody += `  __grp_v = el.value\n`
   switch (cast) {
-    case 'number': inlineBody += `  v = Number(v)\n`; break
-    case 'int':    inlineBody += `  v = parseInt(v, 10)\n`; break
-    case 'float':  inlineBody += `  v = parseFloat(v)\n`; break
-    case 'string': inlineBody += `  v = String(v)\n`; break
+    case 'number': inlineBody += `  __grp_v = Number(__grp_v)\n`; break
+    case 'int':    inlineBody += `  __grp_v = parseInt(__grp_v, 10)\n`; break
+    case 'float':  inlineBody += `  __grp_v = parseFloat(__grp_v)\n`; break
+    case 'string': inlineBody += `  __grp_v = String(__grp_v)\n`; break
     case 'bool':
-    case 'boolean': inlineBody += `  v = (v is true or v is 'true' or v is '1' or v is 1)\n`; break
+    case 'boolean': inlineBody += `  __grp_v = (__grp_v is true or __grp_v is 'true' or __grp_v is '1' or __grp_v is 1)\n`; break
   }
   inlineBody += `  if el.type == 'radio'\n`
-  inlineBody += `    ${jsVar} = v\n`
+  inlineBody += `    ${jsVar} = __grp_v\n`
   inlineBody += `  else if el.type == 'checkbox'\n`
-  inlineBody += `    arr = if Array.isArray(${jsVar}) then [...${jsVar}] else []\n`
+  inlineBody += `    __grp_arr = if Array.isArray(${jsVar}) then [...${jsVar}] else []\n`
   inlineBody += `    if el.checked\n`
-  inlineBody += `      arr.push(v) if not arr.includes(v)\n`
+  inlineBody += `      __grp_arr.push(__grp_v) if not __grp_arr.includes(__grp_v)\n`
   inlineBody += `    else\n`
-  inlineBody += `      arr = arr.filter((i) => String(i) != String(v))\n`
-  inlineBody += `    ${jsVar} = arr\n`
+  inlineBody += `      __grp_arr = __grp_arr.filter((i) => String(i) != String(__grp_v))\n`
+  inlineBody += `    ${jsVar} = __grp_arr\n`
 
-  state.inlines.push(`(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(e, el) =>\n${inlineBody}`)
 
   registerEventRoute('change', id, idx, 0, 'binding')
 
@@ -1179,6 +1352,13 @@ function bindingThis(env: AttrCtx): AttrResult {
     pushUpdate(env, `{ const node = this._mjs_nodes.${id}; if (node) { ${cleanLogic} } }`, [])
   } else if (env.ctx.type === 'for') {
     env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if (n${env.lid}) { let node = n${env.lid}; ${cleanLogic} } }`)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await}) : `@this=!{ref}` ne
+    // posait jamais la référence DOM dans cette branche. Setup-only comme au
+    // root (l'assignation est idempotente, pas de dépendance réactive à
+    // réenregistrer) — on rejoue le même code une fois, DANS la createFn de
+    // la branche (`this` y reste valide, capturé depuis `.call(this, …)`).
+    env.ctx.updates.push(`{ const node = __nodes['${id}']; if (node) { ${cleanLogic} } }`)
   }
   return { id }
 }
@@ -1204,7 +1384,6 @@ function bindingComponent(env: AttrCtx): AttrResult {
   const id = env.id ?? `c${++state.counter}`
 
   let attrStr = env.attrStr
-  let reconstructCoffee = ''
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     const propPosed = pushIdxPropUpdates(env)
     for (const l of env.ctx.loops) {
@@ -1213,17 +1392,10 @@ function bindingComponent(env: AttrCtx): AttrResult {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-      // Optim #8 — Read direct prop JS, fallback getAttribute.
-      // Harmonisation Civet — seul point de divergence Coffee/Civet du
-      // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
-      // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
-      // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-      reconstructCoffee += `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n`
-      reconstructCoffee += `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n`
-      reconstructCoffee += `  ${l.item} = __arr_${d}[__idx_${d}]\n`
-      reconstructCoffee += `  ${l.index} = __idx_${d}\n`
     }
   }
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
   const updateLogic = `(node._mjs_binds ??= new Set()).add('${attrName}'); ` +
     `if (node._set) { ` +
@@ -1250,6 +1422,22 @@ function bindingComponent(env: AttrCtx): AttrResult {
     // prop de composant liée à une var externe en row
     // (`<mjs-x foo={$shared}>`) : sans `structVars`, figée à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await}) : `value=!{$x}` vers un
+    // composant ne posait JAMAIS la prop enfant dans cette branche — seul le
+    // sens enfant→parent (event `mjs-bind:x`, plus bas) était câblé. Même
+    // remède que bindingStandard : (a) pose INITIALE via `__nodes[id]` dans
+    // la createFn de la branche, AVANT que `_mjs_updAwait` (mjs_element.ts)
+    // ne fusionne les refs dans `this._mjs_nodes`. (b) réactivité ULTÉRIEURE
+    // via `registerEffect` + `this._mjs_nodes[id]` (`_mjs_updAwait`
+    // idempotent, ne rejoue jamais son contenu tout seul). Pas
+    // d'`initialPropBinds` ici : ce volet ne concerne QUE les props du ROOT
+    // rejouées synchrone dans `init()` (SSR) — un composant qui n'existe pas
+    // encore avant que la branche ne se règle n'a rien à y rejouer.
+    const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+    env.ctx.updates.push(initCode)
+    const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
+    registerEffect(reactiveCode, vars)
   }
 
   const idx = state.inlines.length
@@ -1263,7 +1451,7 @@ function bindingComponent(env: AttrCtx): AttrResult {
   } else {
     inlineBody += `  ${jsVar} = e.data if ${jsVar} != e.data\n`
   }
-  state.inlines.push(`(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(e, el) =>\n${inlineBody}`)
 
   registerEventRoute(`mjs-bind:${attrName}`, id, idx, 0, 'binding')
 
@@ -1276,6 +1464,51 @@ function bindingComponent(env: AttrCtx): AttrResult {
 // La fonction est appelée pour chaque attr lié, mais ne doit produire le code
 // qu'une seule fois par node (cf. transitionsProcessed Set).
 // ============================================================================
+// aplatit `s` en une seule ligne SANS altérer le code utilisateur qu'elle embarque : un
+// `.replace(/\s+/g, ' ')` naïf touchait aussi bien les espaces INTERNES d'une chaîne
+// littérale (`'a   b'` → `'a b'`) qu'un commentaire `//` (dont le saut de ligne terminal,
+// aplati, laisse le commentaire avaler tout ce qui suit — sortie refusée par acorn). Scan
+// conscient chaînes (`'`/`"`/`` ` ``, échappement inclus) et commentaires (`//`, `/* */`) :
+// copiés VERBATIM, seul le reste (le gabarit statique) est compacté.
+function flattenPreservingLiterals(s: string): string {
+  let out = ''
+  let i = 0
+  const n = s.length
+  while (i < n) {
+    const ch = s[i]
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const start = i
+      i++
+      while (i < n && s[i] !== ch) { i += s[i] === '\\' ? 2 : 1 }
+      i = Math.min(i + 1, n)
+      out += s.slice(start, i)
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '/') {
+      const end = s.indexOf('\n', i)
+      const stop = end === -1 ? n : end + 1
+      out += s.slice(i, stop)
+      i = stop
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '*') {
+      const end = s.indexOf('*/', i + 2)
+      const stop = end === -1 ? n : end + 2
+      out += s.slice(i, stop)
+      i = stop
+      continue
+    }
+    if (/\s/.test(ch)) {
+      while (i < n && /\s/.test(s[i])) i++
+      out += ' '
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 function bindingTransition(env: AttrCtx): AttrResult {
   const id = env.id ?? `t${++state.counter}`
   const trackingKey = `${id}::${env.lid ?? ''}`
@@ -1333,7 +1566,12 @@ function bindingTransition(env: AttrCtx): AttrResult {
       // qu'une ref n'est pas bindée. On laisse `µ._mjs_deepSet` (réactif, correct) ;
       // le hot-path (refresh dans le script principal) est optimisé en ligne 966.
       const body = applyPathTracking(transformReactiveWrites(cleanJs(getVal(a), env.compiler.externalVars)))
-      return `node._mjs_cb_${key} = () => { ${body}; };`
+      // `\n` explicite avant `; };` (pas juste un espace) : `getVal`/`cleanJs` ont déjà
+      // consommé le saut de ligne d'origine (`.trim()`) — sans un VRAI `\n` ici, un `body`
+      // se terminant par un commentaire `//` (Civet/Coffee) avalerait la fermeture du
+      // callback. `flattenPreservingLiterals` (plus bas) préserve ensuite ce saut de ligne
+      // PRÉCISÉMENT parce qu'il termine potentiellement un tel commentaire.
+      return `node._mjs_cb_${key} = () => { ${body}\n; };`
     })
     .join(' ')
 
@@ -1350,7 +1588,9 @@ function bindingTransition(env: AttrCtx): AttrResult {
       const cleaned = cleanJs(argsRaw, env.compiler.externalVars).trim()
       args = cleaned.startsWith('{') ? cleaned : `{${cleaned}}`
     }
-    return `µ?.anim?.${animName}(${args})`
+    // `\n` avant `)` — même raison que `cbAssignments` juste au-dessus : un `args` se
+    // terminant par un commentaire `//` ne doit pas avaler la fermeture de l'appel.
+    return `µ?.anim?.${animName}(${args}\n)`
   }
 
   let setupCode = ''
@@ -1403,8 +1643,6 @@ function bindingTransition(env: AttrCtx): AttrResult {
   // avant la vraie pour ne pas interférer avec la capture (getComputedStyle
   // ignore les styles posés par WAAPI une fois cancellée).
   //
-  // NOTE: pas de commentaires `//` dans le template ci-dessous — le code est
-  // aplati par `.replace(/\s+/g, ' ')` et un `//` mangerait tout le `catch`.
   const jsCode = `
     {
       const node = ${nodeLookup};
@@ -1426,9 +1664,10 @@ function bindingTransition(env: AttrCtx): AttrResult {
         }
       }
     }
-  `.trim().replace(/\s+/g, ' ')
+  `.trim()
+  const flatJsCode = flattenPreservingLiterals(jsCode)
 
-  env.ctx.updates.push(jsCode)
+  env.ctx.updates.push(flatJsCode)
   return { id }
 }
 
@@ -1623,7 +1862,7 @@ function bindingClass(env: AttrCtx): AttrResult {
   // `(.+)` gourmand (le nom d'attribut se termine au
   // DERNIER `}`), pas `[^}]+` qui tronquait la condition au 1er `}` :
   // `@class{$a && f({x:1})}` était coupé à `$a && f({x:1`. Aligné sur
-  // bindingStyle{cond} et @flip{cond}.
+  // bindingStyle{cond}.
   const m = (env.attrName ?? '').match(/@class\{(.+)\}/)
   if (!m) return { id: env.id }
   const conditionExpr = m[1]
@@ -1818,15 +2057,19 @@ function bindingStyle(env: AttrCtx): AttrResult {
     // deps via `getEffectVars(rawVal)` (blocs équilibrés
     // + tentative expression entière), PAS la regex naïve `/\{([^}]+)\}/` qui
     // tronquait au 1er `}` : `@style.width="{f({k: $w})}px"` perdait `$w` de ses
-    // deps → style figé au mount, jamais réactif. Le CODE généré (tpl ci-dessous)
-    // reste correct par arithmétique d'accolades (`{X}` → `${X}` préserve la
-    // structure globale) — seule l'extraction des deps était fautive.
-    for (const v of getEffectVars(rawVal)) varSet.add(v)
+    // deps → style figé au mount, jamais réactif.
+    // `isRawText: true` — `rawVal` reste du texte d'attribut (mélange statique/`{expr}`,
+    // ex. `"pre-{$e}-post"`), pas une expression de code : masquer comme du Civet blanchirait
+    // à tort une apostrophe de prose ordinaire (« l'exemple ») jusqu'à la fin de la valeur.
+    for (const v of getEffectVars(rawVal, true)) varSet.add(v)
     const fullMatch = rawVal.match(/^\{([\s\S]+)\}$/)
     if (fullMatch) fullExprRaw = cleanJsExpr(fullMatch[1], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
-    // Site EXPR (interpolation @style.X="pre-{$e}-post").
-    const tpl = rawVal.replace(/\{([^}]+)\}/g, (_m, e) => `\${${cleanJsExpr(e, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`)
-    jsVal = `\`${tpl}\``
+    // Site EXPR (interpolation @style.X="pre-{$e}-post") — scan ÉQUILIBRÉ
+    // (`buildTemplateFromSegments`/`splitBraceSegments`, cf. `interpolation()` ci-dessus),
+    // PAS la regex naïve `/\{([^}]+)\}/` qui refermait sur le PREMIER `}` : un objet littéral
+    // imbriqué (`{f({k: $w})}`) tronquait l'expression avant sa vraie fin → échec de
+    // compilation sur du CSS pourtant valide.
+    jsVal = buildTemplateFromSegments(splitBraceSegments(rawVal), env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
   } else {
     // `JSON.stringify` (gère quotes ET backslashes),
     // PAS `'${rawVal}'` : `@style.grid-template-areas="'hd' 'main'"` produisait
@@ -1964,41 +2207,6 @@ function bindingStyle(env: AttrCtx): AttrResult {
 }
 
 // ============================================================================
-// BindingFlip — @flip{$cond}="200ms"
-// ============================================================================
-function bindingFlip(env: AttrCtx): AttrResult {
-  const m = (env.attrName ?? '').match(/^@flip\{(.+)\}$/)
-  if (!m) return { id: env.id }
-  const condition = m[1]
-
-  let duration = env.rawVal.toString()
-  if (duration === '->' || duration === '' || duration === 'true') duration = '200'
-
-  // Site EXPR (condition @flip{cond}, même nature qu'un {if}).
-  const jsCond = cleanJsExpr(condition, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
-
-  const vars = getEffectVars(condition)
-
-  const id = env.id ?? `f${++state.counter}`
-  state.hasFlip = true
-  // `@flip` peut interagir avec le système de transitions.
-  state.hasDestroyHooks = true
-
-  const updateLogic = `if (${jsCond}) { if (node.getAttribute('mjs-flip') !== '${duration}') node.setAttribute('mjs-flip', '${duration}'); } else { if (node.hasAttribute('mjs-flip')) node.removeAttribute('mjs-flip'); }`
-
-  if (env.ctx.type === 'root') {
-    const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
-    pushUpdate(env, code, vars)
-  } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} } }`)
-    // `@flip{$cond}` lisant une var externe : sans `structVars`,
-    // `_mjs_renderStruct` sauté → l'attribut mjs-flip figé à vie sur mutation.
-    for (const v of vars) state.structVars.add(v)
-  }
-  return { id }
-}
-
-// ============================================================================
 // BindingAttach — @attach={tooltip($msg)} ou @attach={(node) -> setup}
 // Mode détecté via AST : DIRECT vs FACTORY (cf. ast_daemon analyze_attach_mode)
 // ============================================================================
@@ -2042,6 +2250,20 @@ function bindingAttach(env: AttrCtx): AttrResult {
     // `@attach={tooltip($m)}` en row lisant une var externe : sans
     // `structVars`, `_mjs_renderStruct` sauté → l'attach reste figé sur $m initial.
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await}) : `@attach={...}` ne
+    // s'exécutait jamais dans cette branche. Même remède que bindingStandard :
+    // pose initiale via `__nodes[id]` (le teardown éventuel s'installe dès la
+    // création du fragment), réactivité ultérieure via `registerEffect` +
+    // `this._mjs_nodes[id]` si l'expression dépend d'une var réactive (même
+    // garde `vars.length > 0` qu'au root).
+    const initCode = `{ const _node = __nodes['${id}']; if(_node) { ${attachLogic} } }`
+    env.ctx.updates.push(initCode)
+    if (vars.length > 0) {
+      // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus
+      const reactiveCode = `{ const _node = this._mjs_nodes.${id}; if(_node) { ${squelettePortee(env, jsFunc, () => '', 'js')}${attachLogic} } }`
+      registerEffect(reactiveCode, vars)
+    }
   }
   return { id }
 }
@@ -2100,6 +2322,41 @@ function bindingEmit(env: AttrCtx): AttrResult {
   } else if (env.ctx.type === 'for') {
     env.ctx.updates.push(code)
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await}) : `@emit.x={...}` ne
+    // s'exécutait jamais dans cette branche — ni au montage (`.once`) ni en
+    // réaction à une mutation ultérieure. Le code ne référence aucun nœud
+    // (`this._mjs_emit` direct, pas de `__nodes`) : safe à exécuter n'importe
+    // quand après la création du composant.
+    //
+    // Forme RÉACTIVE (`vars.length > 0`) — `registerEffect` SEUL, jamais
+    // `ctx.updates` en plus : le règlement de CETTE promesse invalide déjà
+    // `'_awaits_'`, qui déclenche un rendu COMPLET (`_mjs_effectsAll`, cf.
+    // mjs_element.ts `_mjs_invalidate`) — `_mjs_effectsAll` EST la liste de
+    // tous les effects enregistrés via `registerEffect` (toutes vars
+    // confondues, transpiler/index.ts `_mjs_eff`), donc le code y est déjà
+    // rejoué une fois pile à ce règlement. L'empiler AUSSI dans
+    // `ctx.updates` (créé la branche) le faisait tirer une 2e fois au MÊME
+    // règlement — mesuré : root + un {await} sans rapport ailleurs n'émet
+    // qu'UNE fois (comportement correct, déjà `registerEffect` seul là-bas
+    // aussi, cf. `pushUpdate`) ; la mutation ultérieure d'une var suivie
+    // continue de tirer une fois via le dispatch ciblé `_mjs_effectsByVar`.
+    //
+    // Forme `.once` (`vars` vide) — `registerEffect` route vers le bucket
+    // "mount only" (jamais réindexé par var) : seul `ctx.updates` (exécuté à
+    // la création de CETTE branche précise) déclenche l'émission voulue.
+    //
+    // L'effet de la forme réactive court à la RACINE, hors de la fonction de la branche : la
+    // valeur `{await}` et les `{const}` de la branche y sont recréés s'ils sont lus (sans eux,
+    // « … is not defined » dès le montage) — et seulement branche AFFICHÉE : avant le règlement,
+    // la valeur n'existe pas encore (`null`), l'élément qui émet non plus.
+    const prelude  = squelettePortee(env, jsVal, () => '', 'js')
+    const affichee = (env.ctx.portee ?? [])
+      .filter((e) => e.kind === 'await')
+      .map((e: any) => `_mjsThis._mjs_awaitLastRender?.get('${e.id}') === '${e.champ === 'data' ? 'success' : 'error'}'`)
+      .join(' && ')
+    if (vars.length > 0) registerEffect(prelude ? `if (${affichee || 'true'}) { ${prelude}${code} }` : code, vars)
+    else env.ctx.updates.push(code)
   }
   return { id: env.id }
 }
@@ -2258,9 +2515,6 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // @class{cond}
   if (attrName.startsWith('@class{')) return bindingClass(env)
 
-  // @flip{cond}
-  if (attrName.startsWith('@flip{')) return bindingFlip(env)
-
   // @flip simple — `@flip`, `@flip=300`, ou `@flip={duration: 300, delay: 600, easing: '...'}`.
   if (attrName === '@flip') {
     let duration = '200'
@@ -2391,7 +2645,11 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
 
   // raw_val avec $xxx et pas mjs-* → interpolation type "if dirty"
   if (/(?<![\w.])\$[a-zA-Z_]/.test(rawVal) && !attrName.startsWith('mjs-')) {
-    const vars = getEffectVars(rawVal)
+    // `isRawText: true` — `rawVal` est la valeur BRUTE de l'attribut (raccourci `$var` nu
+    // hors accolades, ex. `href="#$ancre"`) : le `#` y est un caractère littéral, pas un
+    // commentaire Civet — masquer comme du code perdrait la dépendance (`#$ancre` blanchi
+    // en entier par maskNonCode, qui traite `#` suivi d'un non-identifiant comme un commentaire).
+    const vars = getEffectVars(rawVal, true)
     const needsAlias = rawVal.includes('@@') || rawVal.includes('$store') ||
                        rawVal.includes('$$') || rawVal.includes('$__')
     const ptr = needsAlias ? '_mjsThis' : 'this'

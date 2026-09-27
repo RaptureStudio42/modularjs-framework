@@ -106,7 +106,15 @@ describe('parser — sucre booléens de props (attribut HTML5 nu → liaison dyn
     assert.equal(codegenSig(nu.code!), codegenSig(explicite.code!))
   })
 
-  it('dans un {for} : la liaison est bien reportée par nœud (_mjs_updAttrNode), pas perdue', async () => {
+  it('dans un {for} : la valeur est posée UNE FOIS dans le gabarit cloné de chaque ligne, sans updateFn répété', async () => {
+    // une constante (`true`, sans var) n'a rien à suivre : contrairement à un
+    // attribut dynamique RÉEL (`disabled={item.locked}`), elle ne doit PAS
+    // repasser par un updateFn rejoué à chaque réconciliation de la boucle
+    // (la boucle est "always-run", elle rejoue TOUT son code sur un simple
+    // changement ailleurs dans la liste) — sinon un `checked`/`selected`
+    // ainsi reposé écraserait la sélection faite par l'utilisateur sur cette
+    // ligne. Le gabarit cloné porte déjà la valeur (présence HTML = vrai),
+    // exactement comme un attribut booléen HTML statique.
     const { errors, code } = await compileComp(`
 <script lang="coffee">
 $items = [1, 2]
@@ -114,8 +122,10 @@ $items = [1, 2]
 <ul>{for it in $items}<li><input disabled></li>{end}</ul>
 `)
     assert.deepEqual(errors, [])
-    assert.match(code!, /µ\._mjs_updAttrNode\(\w+,\s*'disabled',\s*true\)/,
-      'le chemin {for} passe par _mjs_updAttrNode — même sémantique que la racine (cf. runtime/mjs_element.ts)')
+    assert.match(code!, /_mjs_cloneTpl\("<li><input disabled=''><\/li>"\)/,
+      'la valeur initiale est posée dans le HTML du gabarit cloné à chaque ligne')
+    assert.doesNotMatch(code!, /µ\._mjs_updAttrNode\(\w+,\s*'disabled'/,
+      'AVANT ce fix : un updateFn rejouait la constante à chaque réconciliation de la boucle')
   })
 
   it('GARDE @ — <details @open> compile EXACTEMENT comme avant (chemin dédié intact)', async () => {

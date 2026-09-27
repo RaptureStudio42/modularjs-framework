@@ -10,13 +10,18 @@
     self = @
     $checked = true
     $group   = $value
+    form     = @closest('form')
     # closest('form') ne sort jamais d'un shadow root : repli sur sa racine (shadow root si présent, document sinon)
-    scope = @closest('form') ?? @getRootNode() ?? document
+    scope = form ?? @getRootNode() ?? document
     # sécurité : un name à guillemet cassait le sélecteur (SyntaxError sur querySelectorAll)
     safeName = if typeof CSS != 'undefined' and CSS.escape then CSS.escape($name) else String($name).replace(/["\\]/g, '\\$&')
     sel = 'mjs-radio[name="' + safeName + '"]'
     scope.querySelectorAll(sel).forEach (el)->
-      el._set('checked', false) unless el == self
+      return if el == self
+      # hors <form>, le scope élargi (racine/document) peut ramasser un groupe DANS un <form> :
+      # sémantique native, un radio sans formulaire ne coordonne qu'avec ceux sans formulaire
+      return unless el.closest('form') == form
+      el._set('checked', false)
 
   µeffect ->
     if $group != undefined

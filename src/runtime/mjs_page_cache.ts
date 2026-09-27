@@ -41,20 +41,26 @@
 µ._mjs_destroyEvictedTree = function(root) {
   if (!root) return;
   root._mjs_page_cached = false;
-  var walk = function(node, depth) {
-    if (!node || depth > 50) return;
+  // Parcours ITÉRATIF (pile explicite) plutôt que récursif : un DFS
+  // récursif bornait la profondeur par garde-fou anti-boucle (JS n'a pas de
+  // TCO fiable) et sautait le nettoyage des composants imbriqués au-delà —
+  // une pile n'a pas cette limite, et rien ici ne peut boucler (chaque nœud
+  // n'est empilé qu'une fois, via children/shadow, jamais un cycle DOM).
+  var stack = [root], node, kids, i;
+  while (stack.length > 0) {
+    node = stack.pop();
+    if (!node) continue;
     if (!node.isConnected && typeof node._mjs_runDestroyCallbacks === 'function') {
       node._mjs_runDestroyCallbacks();
     }
-    var kids = node.children, i;
+    kids = node.children;
     if (kids) {
-      for (i = 0; i < kids.length; i++) walk(kids[i], depth + 1);
+      for (i = 0; i < kids.length; i++) stack.push(kids[i]);
     }
     if (node._shadow && node._shadow.children) {
-      for (i = 0; i < node._shadow.children.length; i++) walk(node._shadow.children[i], depth + 1);
+      for (i = 0; i < node._shadow.children.length; i++) stack.push(node._shadow.children[i]);
     }
-  };
-  walk(root, 0);
+  }
 };
 
 // libellés du runtime (src/runtime-labels.ts) posés par le manifest en TOUTES langues

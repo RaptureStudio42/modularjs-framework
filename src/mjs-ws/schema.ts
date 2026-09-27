@@ -98,12 +98,13 @@ export function createSchemaEngine(resolved: MjsWsResolvedSchema, rawSend: MjsWs
   // lui-même spamme). RÉUTILISÉ tel quel pour le log interne de décodage (decodeInbound, cf. son
   // catch) via throttleActif ci-dessous — même fenêtre PARTAGÉE : un flood de trames invalides ne
   // doit jamais produire un travail de log non borné, y compris hors mode 'binary' (le log tourne
-  // dans TOUS les codecs, contrairement au µ:error envoyé au client, réservé au mode strict). État
-  // LOCAL au moteur (jamais un champ sur MjsWsClientImpl, cf. le même précédent que
-  // rooms.ts::lastJoinErrorAt) — purgé implicitement (WeakMap-like via Map + GC du client une fois
-  // déconnecté n'est pas garanti ici, mais l'entrée reste minuscule et bornée par le nombre de
-  // connexions ACTUELLEMENT authentifiées, jamais une fuite non bornée dans le temps).
-  const lastErrorAt = new Map<MjsWsClient, number>()
+  // dans TOUS les codecs, contrairement au µ:error envoyé au client, réservé au mode strict). Faille
+  // comblée — WeakMap (pas Map) : ce moteur n'a AUCUNE accroche onDisconnect (jamais appelé par
+  // core.ts, cf. son contrat retourné), rien ne purgeait donc explicitement une entrée à la
+  // déconnexion — une Map FORTE grossissait alors avec le nombre CUMULÉ de clients ayant un jour
+  // déclenché une erreur throttlée, jamais avec le nombre de connexions ACTIVES. Une WeakMap laisse
+  // le ramasse-miettes reprendre l'entrée dès que plus rien (que ce moteur) ne référence le client.
+  const lastErrorAt = new WeakMap<MjsWsClient, number>()
 
   // vrai = fenêtre ENCORE active pour ce client (rien à faire, ni log ni envoi) ; faux = fenêtre
   // consommée — lastErrorAt mis à jour AVANT de rendre la main, porte UNIQUE partagée par

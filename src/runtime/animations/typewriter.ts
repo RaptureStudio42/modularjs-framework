@@ -14,7 +14,7 @@
   // pas muter la config partagée entre nœuds / directions.
   speed = opts.speed != null ? opts.speed : 30;
   setup = function(node) {
-    var child, duration, fullText, hasElement, i, ref, textNode, textNodes, totalChars;
+    var child, duration, fullText, hasElement, i, realCount, ref, textNode, textNodes, totalChars;
     // Contrat de docs/10-transitions.md (exemple customTyper) —
     // AVANT : `node.textContent` aplatissait tout le sous-arbre, un markup imbriqué
     // (`<b>`) disparaissait au 1er tick sans un mot. Le built-in doit lever, comme
@@ -44,17 +44,27 @@
     // Que des blancs (aucun contenu réel) : on retombe sur le 1er, comportement
     // sain par défaut plutôt qu'un crash.
     textNode = textNodes[0];
+    realCount = 0;
     for (i = 0; i < textNodes.length; i++) {
       if (textNodes[i].textContent.trim() !== '') {
-        textNode = textNodes[i];
-        break;
+        if (realCount === 0) { textNode = textNodes[i]; }
+        realCount++;
       }
     }
-    // Sauvegarde immuable du texte d'origine : l'outro doit savoir quoi effacer
-    // même après que l'intro a tronqué le nœud texte réel. Capturé une seule fois
-    // (le cfg est lui-même mémoïsé par `_mjs_runTransition` via `_mjs_tick_cfgs`).
+    // PLUSIEURS nœuds à contenu RÉEL (ex. « Bonjour {$nom} ! » : l'interpolation crée son
+    // propre nœud texte, distinct du texte statique voisin) : au moins un des autres appartient
+    // à une liaison réactive du compilateur — l'animer casserait cette liaison (le tick ré-écrit
+    // le nœud à chaque frame, la liaison le ré-écrit à son tour dès que sa valeur change).
+    // Refusé, comme le markup imbriqué ci-dessus : structure que ce tick ne sait pas restituer.
+    if (realCount > 1) {
+      throw new Error('@transition.typewriter exige un unique nœud texte');
+    }
+    // Sauvegarde immuable du texte d'origine (ESPACES de début/fin compris — une mise en page
+    // peut en dépendre) : l'outro doit savoir quoi effacer même après que l'intro a tronqué le
+    // nœud texte réel. Capturé une seule fois (le cfg est lui-même mémoïsé par
+    // `_mjs_runTransition` via `_mjs_tick_cfgs`).
     if (node._mjs_text_cache == null) {
-      node._mjs_text_cache = textNode.textContent.trim();
+      node._mjs_text_cache = textNode.textContent;
     }
     fullText = node._mjs_text_cache;
     totalChars = fullText.length;

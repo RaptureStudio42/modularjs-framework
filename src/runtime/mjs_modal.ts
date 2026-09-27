@@ -940,7 +940,12 @@ function __modalDismissResult(result) {
         preConfirm = typeof options.preConfirm === 'function' ? options.preConfirm : null;
         validationEl.hidden = true;
         setButtonsDisabled(true);
-        Promise.resolve(validator ? validator(value) : null).then(function(err) {
+        // `.then(() => …)` PLUTÔT QUE `Promise.resolve(validator(value))` : ce dernier appelle
+        // validator/preConfirm AVANT même de créer la promesse — un throw synchrone en sortait
+        // directement (hors de tout .then), donc jamais rattrapé par le second argument
+        // ci-dessous. Boutons bloqués à vie, promesse de fire() jamais résolue. Différer l'appel
+        // DANS le .then() ramène un throw synchrone au même chemin qu'un rejet de promesse.
+        Promise.resolve().then(function() { return validator ? validator(value) : null; }).then(function(err) {
           if (err) {
             setButtonsDisabled(false);
             showValidationError(err);
@@ -951,7 +956,7 @@ function __modalDismissResult(result) {
             close({ isConfirmed: true, isDenied: false, isDismissed: false, value: value, dismiss: void 0 });
             return;
           }
-          Promise.resolve(preConfirm(value)).then(function(preResult) {
+          Promise.resolve().then(function() { return preConfirm(value); }).then(function(preResult) {
             setButtonsDisabled(false);
             if (preResult === false) { return; } // annulé par preConfirm : reste ouverte, aucun message imposé
             close({ isConfirmed: true, isDenied: false, isDismissed: false, value: preResult !== void 0 ? preResult : value, dismiss: void 0 });

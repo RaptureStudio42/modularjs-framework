@@ -13,9 +13,15 @@ formatDate = (ms) ->
 $entries = []
 $filter = 'all'
 $expanded = {}
+$echec = false
+
+marquerEchec = (err) ->
+  $echec = true
+  µ.error(err)
 
 refresh = ->
-  fetch(withToken('/__mjs/errors.json')).then((r) -> r.json()).then((data) -> $entries = data ?? []).catch((err) -> µ.error(err))
+  $echec = false
+  fetch(withToken('/__mjs/errors.json')).then((r) -> r.json()).then((data) -> $entries = data ?? []).catch(marquerEchec)
 
 toggle = (sig) ->
   $expanded[sig] = not $expanded[sig]
@@ -53,7 +59,9 @@ $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
     </div>
   </div>
 
-  {if $filtered.length == 0}
+  {if $echec}
+    <p class="vide echec">Chargement impossible — réessaie avec « Rafraîchir ».</p>
+  {elsif $filtered.length == 0}
     <p class="vide">Aucune erreur — tout va bien.</p>
   {else}
     <div class="liste">
@@ -121,6 +129,8 @@ $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
       background: #3a1f24
   .vide
     color: #8a8f9c
+  .vide.echec
+    color: #ff8a8a
   .liste
     display: flex
     flex-direction: column

@@ -180,11 +180,20 @@ export async function generateVariants(req: VariantRequest): Promise<GeneratedVa
   const vues = new Set<string>()
   for (const largeur of req.widths) {
     for (const format of req.formats) {
-      const pipeline = sharp(req.bytes).resize({ width: largeur, withoutEnlargement: true })
-      const sortie: any = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
-                               : format === 'webp' ? pipeline.webp({ quality: req.quality })
-                               : format === 'png'  ? pipeline.png()
-                               : pipeline.jpeg({ quality: req.quality })).toBuffer({ resolveWithObject: true })
+      // try/catch PAR VARIANTE (largeur × format) : sharp peut refuser une combinaison précise
+      // (largeur invalide, format non supporté pour ce contenu…) sans que les AUTRES variantes
+      // de la même image en pâtissent — le message NOMME l'image, la largeur et le format
+      // demandés, jamais le seul message interne brut de sharp.
+      let sortie: any
+      try {
+        const pipeline = sharp(req.bytes).resize({ width: largeur, withoutEnlargement: true })
+        sortie = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
+                     : format === 'webp' ? pipeline.webp({ quality: req.quality })
+                     : format === 'png'  ? pipeline.png()
+                     : pipeline.jpeg({ quality: req.quality })).toBuffer({ resolveWithObject: true })
+      } catch (e: any) {
+        throw new Error(`${req.baseName} (${largeur}px, .${format}) : ${e?.message ?? String(e)}`)
+      }
       const bytes: Buffer = sortie.data
       // LARGEUR RÉELLE, jamais la largeur DEMANDÉE — `withoutEnlargement` PLAFONNE au
       // natif : une largeur demandée au-dessus rend un fichier plus petit que promis. On indexait

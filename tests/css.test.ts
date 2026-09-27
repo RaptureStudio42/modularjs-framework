@@ -114,6 +114,36 @@ describe('compactCss — les chaînes du CSS pur sont intactes', () => {
     const out = compileCss('p { content: "/*";  color:  red; }', 'css')
     assert.equal(out, 'p { content: "/*"; color: red; }')
   })
+
+  // compactCss testait un blanc avec /\s/, qui inclut l'espace insécable (U+00A0) : `.a<NBSP>b`
+  // devenait `.a b` — sélecteur CHANGÉ (le HTML, lui, ne coupe jamais une classe sur un NBSP).
+  it('espace insécable (NBSP) dans un sélecteur : jamais compactée en espace normal', () => {
+    const out = compileCss('.a b { color: red; }', 'css')
+    assert.ok(out.includes('.a b'), `NBSP perdue : ${JSON.stringify(out)}`)
+  })
+
+  // `\` + caractère suivant = une unité : un espace ÉCHAPPÉ (`.a\ `) ne doit ni fusionner avec
+  // le VRAI espace qui suit (le combinateur descendant) ni être compacté lui-même.
+  it('espace ÉCHAPPÉE puis combinateur descendant : les deux survivent, distinctes', () => {
+    const out = compileCss('.a\\  .b { color: blue; }', 'css')
+    assert.equal(out, '.a\\  .b { color: blue; }', `combinateur perdu : ${JSON.stringify(out)}`)
+  })
+
+  it('témoin — un caractère échappé ordinaire (pas un espace) traverse intact', () => {
+    const out = compileCss('.a\\.b {   color:   red;   }', 'css')
+    assert.equal(out, '.a\\.b { color: red; }')
+  })
+})
+
+describe('compileCssBlock (SCSS) — U+FEFF retiré seulement en tête', () => {
+  // sass pose un U+FEFF de tête dès qu'un caractère non-ASCII apparaît (déjà couvert plus haut) ;
+  // AVANT ce fix, le retrait était GLOBAL (/﻿/g) et emportait aussi un U+FEFF VOULU au
+  // milieu d'une chaîne (`content: "…"`), jamais seulement celui de tête.
+  it('U+FEFF au milieu d\'un content:"…" survit, seul celui de tête est retiré', () => {
+    const out = compileCss('p::before { content: "x\u{FEFF}y"; }', 'scss')
+    assert.equal(out.startsWith('﻿'), false, 'aucun U+FEFF ne doit rester en tête')
+    assert.ok(out.includes('x\u{FEFF}y'), `U+FEFF voulu perdu dans la chaîne : ${JSON.stringify(out)}`)
+  })
 })
 
 describe('transpile() + Sass integration', () => {

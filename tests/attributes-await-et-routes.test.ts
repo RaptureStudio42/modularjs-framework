@@ -274,4 +274,160 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
       assert.equal(span.getAttribute('title'), 'valeur : Ada', 'le titre statique portant un $var nu doit être posé après résolution de la branche {await}')
     })
   })
+
+  // ==========================================================================
+  // {await} : liaisons non couvertes par le trio bindingStandard/bindingContent/
+  // bindingGroup (déjà réparé ci-dessus) — bindingComponent (two-way vers un
+  // composant), spread, bindingMedia, bindingDimensions, bindingThis,
+  // bindingAttach, bindingEmit n'avaient pas de 3e branche
+  // (ctx.type ni 'root' ni 'for') : inertes en silence dans un {success}/
+  // {then}/{catch}, sans le moindre message à la compilation ni à l'exécution.
+  // ==========================================================================
+
+  describe('{await} : liaison two-way vers un COMPOSANT (value=!{...}) perdue', () => {
+    it('happy-dom : la valeur initiale ET une mutation ultérieure de la var liée atteignent l\'enfant', async () => {
+      const child = '<span class="v">{$compte}</span>'
+      const parent = [
+        '<script>',
+        '$p = Promise.resolve(1)',
+        '$n = 7',
+        '</script>',
+        '{await $p}{success d}<mjs-bc-enfant compte=!{$n}></mjs-bc-enfant>{end}',
+        '<button class="mut" @click={$n = 99}>mut</button>',
+      ].join('\n')
+      const { el } = await mountFiles({ 'bc-enfant.mjs': child, 'bc-parent.mjs': parent }, 'mjs-bc-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      const childEl = el._shadow.querySelector('mjs-bc-enfant')
+      assert.ok(childEl, 'le composant enfant doit être monté')
+      assert.equal(childEl._shadow.querySelector('.v').textContent, '7', 'AVANT le fix : value=!{$n} ne posait jamais la prop initiale sur un composant en branche {await}')
+      el._shadow.querySelector('.mut').click()
+      await new Promise((r) => setTimeout(r, 80))
+      assert.equal(childEl._shadow.querySelector('.v').textContent, '99', 'AVANT le fix : une mutation ultérieure de $n ne se propageait jamais à l\'enfant')
+    })
+  })
+
+  describe('{await} : spread {...$pkg} sur un composant ne produit rien', () => {
+    it('happy-dom : les props initiales ET une mutation ultérieure du paquet atteignent l\'enfant', async () => {
+      const child = '<span class="nom">{$nom}</span><span class="ver">{$ver}</span>'
+      const parent = [
+        '<script>',
+        '$p = Promise.resolve(1)',
+        "$pkg = { nom: 'mjs', ver: '2.4' }",
+        '</script>',
+        '{await $p}{success d}<mjs-sp-enfant {...$pkg}></mjs-sp-enfant>{end}',
+        "<button class=\"mut\" @click={$pkg = { nom: 'civet', ver: '9.9' }}>mut</button>",
+      ].join('\n')
+      const { el } = await mountFiles({ 'sp-enfant.mjs': child, 'sp-parent.mjs': parent }, 'mjs-sp-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      const childEl = el._shadow.querySelector('mjs-sp-enfant')
+      assert.ok(childEl, 'le composant enfant doit être monté')
+      assert.equal(childEl._shadow.querySelector('.nom').textContent, 'mjs', 'AVANT le fix : {...$pkg} ne posait rien sur un composant en branche {await}')
+      assert.equal(childEl._shadow.querySelector('.ver').textContent, '2.4')
+      el._shadow.querySelector('.mut').click()
+      await new Promise((r) => setTimeout(r, 80))
+      assert.equal(childEl._shadow.querySelector('.nom').textContent, 'civet', 'AVANT le fix : une mutation ultérieure du paquet étalé ne se propageait jamais')
+      assert.equal(childEl._shadow.querySelector('.ver').textContent, '9.9')
+    })
+  })
+
+  describe('{await} : currentTime=!{$t} sur <audio> ne pilote jamais le média', () => {
+    it('happy-dom : la valeur initiale ET une mutation ultérieure pilotent audio.currentTime', async () => {
+      const src = [
+        '<script>',
+        '$p = Promise.resolve(1)',
+        '$t = 42',
+        '</script>',
+        '{await $p}{success d}<audio class="a" src="x.mp3" currentTime=!{$t}></audio>{end}',
+        '<button class="mut" @click={$t = 10}>mut</button>',
+      ].join('\n')
+      const { el } = await mountFiles({ 'md-parent.mjs': src }, 'mjs-md-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      const audio: any = el._shadow.querySelector('.a')
+      assert.ok(audio, 'l\'audio doit être monté')
+      assert.equal(audio.currentTime, 42, 'AVANT le fix : currentTime=!{$t} ne posait jamais la valeur initiale en branche {await}')
+      el._shadow.querySelector('.mut').click()
+      await new Promise((r) => setTimeout(r, 80))
+      assert.equal(audio.currentTime, 10, 'AVANT le fix : une mutation ultérieure de $t ne pilotait jamais le média')
+    })
+  })
+
+  describe('{await} : clientWidth=!{...} n\'installait jamais son ResizeObserver', () => {
+    it('happy-dom : la pose initiale (this._set) s\'exécute au règlement de la branche', async () => {
+      const src = [
+        '<script>',
+        '$p = Promise.resolve(1)',
+        '$w = -1',
+        '</script>',
+        '{await $p}{success d}<div class="dim" clientWidth=!{$w}></div>{end}',
+        '<span class="out">{$w}</span>',
+      ].join('\n')
+      const { el } = await mountFiles({ 'dim-parent.mjs': src }, 'mjs-dim-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      const div: any = el._shadow.querySelector('.dim')
+      assert.ok(div, 'le div doit être monté')
+      assert.equal(div._mjs_ro_clientWidth, true, 'AVANT le fix : le ResizeObserver n\'était jamais installé en branche {await}')
+      assert.equal(el._shadow.querySelector('.out').textContent, '0', 'AVANT le fix : $w restait à -1, jamais posé depuis clientWidth')
+    })
+  })
+
+  describe('{await} : @this=!{ref} ne posait jamais la référence DOM', () => {
+    it('happy-dom : le nœud reçoit son teardown de ref (@this exécuté) dans la branche', async () => {
+      const src = [
+        '<script>',
+        'elRef = null',
+        '$p = Promise.resolve(1)',
+        '</script>',
+        '{await $p}{success d}<div class="cible" @this=!{elRef}>x</div>{end}',
+      ].join('\n')
+      const { el } = await mountFiles({ 'th-parent.mjs': src }, 'mjs-th-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      const cible: any = el._shadow.querySelector('.cible')
+      assert.ok(cible, 'le nœud cible doit être monté')
+      assert.equal(typeof cible._mjs_ref_td, 'function', 'AVANT le fix : @this=!{elRef} n\'assignait jamais la référence (aucun teardown posé) en branche {await}')
+    })
+  })
+
+  describe('{await} : @attach={...} ne s\'exécutait jamais', () => {
+    it('happy-dom : l\'action tourne au règlement de la branche', async () => {
+      const src = [
+        '<script lang="coffee">',
+        '$touche = false',
+        'toucher = -> $touche = true',
+        '$p = Promise.resolve(1)',
+        '</script>',
+        '{await $p}{success d}<div class="cible" @attach={toucher}>x</div>{end}',
+        '<p class="sonde">{$touche ? "oui" : "non"}</p>',
+      ].join('\n')
+      const { el } = await mountFiles({ 'at-parent.mjs': src }, 'mjs-at-parent')
+      await new Promise((r) => setTimeout(r, 150))
+      assert.equal(el._shadow.querySelector('.sonde').textContent, 'oui', 'AVANT le fix : @attach={...} ne s\'exécutait jamais en branche {await}')
+    })
+  })
+
+  describe('{await} : @emit.NOM={...} ne se déclenchait jamais', () => {
+    it('happy-dom : l\'event part au règlement de la branche ET à chaque mutation ultérieure', async () => {
+      const src = [
+        '<script>',
+        '$p = Promise.resolve(1)',
+        '$count = 5',
+        '</script>',
+        '{await $p}{success d}<span class="tgt" @emit.saved={$count}>x</span>{end}',
+        '<button class="mut" @click={$count = 9}>mut</button>',
+      ].join('\n')
+      const { el } = await mountFiles({ 'em-parent.mjs': src }, 'mjs-em-parent')
+      const received: any[] = []
+      el.addEventListener('saved', (e: any) => received.push(e.data))
+      await new Promise((r) => setTimeout(r, 150))
+      // au ROOT (avec un {await} SANS rapport ailleurs), une seule émission au
+      // règlement — vérifié à part. La branche
+      // {await} elle-même doit se comporter PAREIL : une seule émission à son
+      // propre règlement, pas deux.
+      assert.equal(received.length, 1, `une seule émission attendue au règlement de la branche {await}, reçu ${JSON.stringify(received)}`)
+      assert.equal(received[0], 5)
+      el._shadow.querySelector('.mut').click()
+      await new Promise((r) => setTimeout(r, 80))
+      assert.equal(received.length, 2, `une seule émission de PLUS après la mutation, reçu ${JSON.stringify(received)}`)
+      assert.equal(received[1], 9)
+    })
+  })
 })

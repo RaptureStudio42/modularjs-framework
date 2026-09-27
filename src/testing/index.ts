@@ -99,6 +99,18 @@ function nextTick(): Promise<void> {
 }
 
 /**
+ * Classe d'évènement DOM adaptée au `type` demandé par `fire()` — un `Event` générique n'a
+ * ni `key`, ni `code`, ni `detail` : un gestionnaire qui les lit les verrait toujours `undefined`.
+ */
+function eventCtorFor(window: any, type: string, hasDetail: boolean): any {
+  if (/^key(down|up|press)$/.test(type)) return window.KeyboardEvent
+  if (/^(click|dblclick|mouse|pointer|contextmenu|auxclick)/.test(type)) return window.PointerEvent
+  if (/^(focus|blur)/.test(type)) return window.FocusEvent
+  if (/^(input|beforeinput)$/.test(type)) return window.InputEvent
+  return hasDetail ? window.CustomEvent : window.Event
+}
+
+/**
  * Prépare un projet pour les tests : compile une fois, charge le résultat dans un DOM
  * simulé, et rend de quoi monter des composants. Un harnais par fichier de test suffit
  * — la compilation est le gros du coût, le montage est instantané.
@@ -194,11 +206,20 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       findAll: (sel) => Array.from(racine().querySelectorAll(sel)),
       text: (sel) => (sel ? (trouve(sel)?.textContent ?? '') : (racine().textContent ?? '')).trim(),
       html: () => racine().innerHTML ?? '',
-      click: (sel) => api.fire(sel, 'click'),
+      async click(sel) {
+        const cible = trouve(sel)
+        if (!cible) throw new Error(t('testing.selecteur-sans-noeud', { selecteur: sel, tag: el.tagName.toLowerCase() }))
+        // activation NATIVE (comme un vrai navigateur) : seule .click() coche une case, active
+        // un radio ou déclenche la soumission d'un formulaire — un Event('click') synthétique se
+        // propage sans rien activer
+        cible.click()
+        await nextTick()
+      },
       async fire(sel, type, init = {}) {
         const cible = trouve(sel)
         if (!cible) throw new Error(t('testing.selecteur-sans-noeud', { selecteur: sel, tag: el.tagName.toLowerCase() }))
-        cible.dispatchEvent(new window.Event(type, { bubbles: true, composed: true, ...init }))
+        const Ctor = eventCtorFor(window, type, init.detail !== undefined)
+        cible.dispatchEvent(new Ctor(type, { bubbles: true, composed: true, ...init }))
         await nextTick()
       },
       async type(sel, valeur) {

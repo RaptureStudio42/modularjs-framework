@@ -73,10 +73,12 @@ describe('µ.effect — un effet enregistré TARDIVEMENT entre bien dans l\'inde
 
     // 2. Enregistrer un effet TARDIF lisant $b (précomputedVars ['b']). Les
     //    effets sont appelés `fn()` sans `this` → on ferme sur `el` (comme le
-    //    code compilé qui capture le composant dans sa closure).
-    µ._mjs_pushComponent(el)
+    //    code compilé qui capture le composant dans sa closure). Pousse/dépile
+    //    via le setter compat de µ.activeComponent (µ._mjs_pushComponent/
+    //    _mjs_popComponent n'existent plus, code mort retiré).
+    µ.activeComponent = el
     µ.effect(function () { el.__lateRuns = (el.__lateRuns || 0) + 1 }, ['b'])
-    µ._mjs_popComponent()
+    µ.activeComponent = null
 
     // Le fix invalide l'index à l'enregistrement.
     assert.equal(el._mjs_userEffectVars, undefined,

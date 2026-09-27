@@ -69,6 +69,7 @@ import type { MjsWsApp, MjsWsLimits, MjsWsLogFn, MjsWsOptions, MjsWsTokenOptions
 import type { MjsConfig, WsConfig } from '../bundler/config.js'
 import { compileServerFile, compileRawCivetFile } from './server-entry.js'
 import { t } from '../messages/index.js'
+import { gardeArret, SHUTDOWN_GRACE_MS } from './dev-lock.js'
 
 // --- squelette imprimé quand aucune entry n'est trouvée ---------------------
 
@@ -246,6 +247,11 @@ export function buildRunPlan(
   if (wsConfig?.verifyOrigin !== undefined) {
     if (options.verifyOrigin !== undefined) warn(t('cli.entry-config-doublon', { champ: 'verifyOrigin', chemin: 'ws.verifyOrigin' }))
     else options.verifyOrigin = wsConfig.verifyOrigin
+  }
+  // mise au banc — MÊME règle : l'entry prime EN BLOC (y compris un `ban: false` explicite)
+  if (wsConfig?.ban !== undefined) {
+    if (options.ban !== undefined) warn(t('cli.entry-config-doublon', { champ: 'ban', chemin: 'ws.ban' }))
+    else options.ban = wsConfig.ban
   }
 
   // résolus AVANT l'appel à mjsWs() : l'app applique les MÊMES défauts, donc
@@ -485,8 +491,20 @@ export async function runWsCommand(
   let reloadGeneration = 0
   let reloadRunning    = false
   let reloadPending    = false
+  // Posé par shutdown() (cf. plus bas) — un rechargement qui voit ce
+  // drapeau APRÈS avoir démarré son NOUVEAU serveur (`app.listen()` déjà réussi) le referme
+  // aussitôt SANS jamais l'exposer (ni `currentApp`, ni le message « redémarré ») : sans ce
+  // garde-fou, un import lent encore en vol au moment d'un Ctrl-C finissait par (re)brancher un
+  // serveur sur le port/transport APRÈS que l'arrêt se soit déjà annoncé terminé.
+  let shuttingDown     = false
+  // Rechargement EN VOL (import/contrat/stop/listen asynchrones) — attendu par shutdown() avant
+  // de fermer `currentApp` : sans lui, l'arrêt pouvait fermer une app sur le point d'être
+  // remplacée (ou l'inverse), et surtout rendait AVANT que ce rechargement n'ait fini de décider
+  // du sort de son propre serveur.
+  let reloadInFlight: Promise<void> | null = null
 
   function scheduleReload(): void {
+    if (shuttingDown) return   // arrêt déjà demandé : aucun nouveau cycle de rechargement
     reloadGeneration++
     if (reloadRunning) { reloadPending = true; return }
     runReloadLoop()
@@ -495,9 +513,9 @@ export async function runWsCommand(
   function runReloadLoop(): void {
     reloadRunning = true
     const myGeneration = reloadGeneration
-    void reload(myGeneration).finally(() => {
+    reloadInFlight = reload(myGeneration).finally(() => {
       reloadRunning = false
-      if (reloadPending) { reloadPending = false; runReloadLoop() }
+      if (reloadPending && !shuttingDown) { reloadPending = false; runReloadLoop() }
     })
   }
 
@@ -528,6 +546,10 @@ export async function runWsCommand(
       const app = mjsWs({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
       if (plan.setup) await plan.setup(app)
       await app.listen()
+      // Un arrêt a été demandé PENDANT cet import/listen : ce nouveau serveur ne doit JAMAIS
+      // devenir `currentApp` ni rester en écoute — refermé aussitôt (l'ancien est déjà arrêté par
+      // le `currentApp.stop()` ci-dessus ou par shutdown() lui-même), sans le moindre message.
+      if (shuttingDown) { await app.stop().catch(() => {}); return }
       currentApp = app
       logger.info(t('cli.redemarre', { chemin: relative(args.root, entryPath) || entryPath }))
     } catch (err) {
@@ -549,13 +571,27 @@ export async function runWsCommand(
   }
 
   async function shutdown(): Promise<void> {
-    process.off('SIGINT', onSignal)
-    process.off('SIGTERM', onSignal)
+    shuttingDown = true
     if (watcher) { watcher.close(); watcher = null }
     if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null }
+    // Un rechargement EN VOL (import/listen asynchrones) doit finir de décider du sort de SON
+    // serveur (cf. `if (shuttingDown)` dans reload() ci-dessus) avant qu'on ferme `currentApp` —
+    // sinon celui-ci pourrait encore désigner l'ANCIEN serveur pendant que le nouveau, lui,
+    // continue de s'installer en tâche de fond.
+    if (reloadInFlight) await reloadInFlight.catch(() => {})
     await currentApp.stop()
+    // écouteurs retirés APRÈS la fermeture, jamais avant : retirés dès l'entrée, le gestionnaire
+    // de signaux de tsx (lancement depuis les sources) ne voyait plus aucun écouteur et sortait
+    // aussitôt en 130, serveur jamais refermé
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
   }
-  const onSignal = (): void => { void shutdown().then(() => process.exit(0)) }
+  // un seul arrêt ordonné (le même Ctrl+C reçu deux fois attend le premier), sortie bornée par
+  // SHUTDOWN_GRACE_MS ; un 2e Ctrl+C plus d'une seconde après sort aussitôt (cf. gardeArret)
+  const onSignal = gardeArret((): void => {
+    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
+    void shutdown().then(() => process.exit(0))
+  }, () => process.exit(0))
   process.on('SIGINT', onSignal)
   process.on('SIGTERM', onSignal)
 

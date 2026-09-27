@@ -425,6 +425,22 @@ var _confirmCfgWarned = false;
   return v !== '0' && v !== 'false';
 };
 
+// RÉPONSE À INSTALLER ? (chemins réseau du clic et du popstate) — DOMParser fabrique TOUJOURS un <body>
+// exploitable, même depuis `null` ou du texte brut : sans tri préalable, un 204, un PDF, un CSV ou un
+// message d'erreur en texte s'installaient tels quels dans la zone de navigation.
+// µ._mjs_navBodyKind(html, nav) → 'empty' (204, corps vide ou blanc : rien à afficher, comme un
+// navigateur), 'html' (page complète OU fragment, cf. docs/21-navigation.md « le fragment reçu ») ou
+// 'other' (tout le reste : le navigateur doit traiter la réponse lui-même). Le Content-Type annoncé
+// par le serveur tranche (`nav.type`, lu par mjs_ajax.ts) ; sans en-tête, un corps qui commence par
+// une balise passe pour du HTML — jamais un test « <html » : il écarterait les fragments.
+µ._mjs_navBodyKind = function(html, nav) {
+  var type;
+  if (html == null || typeof html !== 'string' || html.trim() === '') { return 'empty'; }
+  type = (nav && typeof nav.type === 'string') ? nav.type.toLowerCase() : '';
+  if (type) { return (type.indexOf('text/html') !== -1 || type.indexOf('application/xhtml+xml') !== -1) ? 'html' : 'other'; }
+  return /^\s*</.test(html) ? 'html' : 'other';
+};
+
 // µ._mjs_navHardReload(dest) — POURQUOI la distinction assign/reload : `window.location.assign` sur
 // l'adresse COURANTE ne garantit RIEN — une URL identique à un fragment près (même pathname+search
 // que celle déjà affichée, SEUL le hash change) est une navigation SAME-DOCUMENT PAR SPÉCIFICATION
@@ -957,14 +973,17 @@ var _confirmCfgWarned = false;
 // (`'#'+id`) — un `id` peut porter des caractères qui casseraient un tel sélecteur (espace, `:`…), un
 // simple parcours d'arbre n'a besoin d'aucun échappement.
 // >>> extrait-test _mjs_navFindByIdIn
-µ._mjs_navFindByIdIn = function(node, id) {
+µ._mjs_navFindByIdIn = function(node, id, depth) {
   var kids, i, found;
-  if (!node || node.nodeType !== 1) { return null; }
+  // plafond de profondeur (même valeur que µ._mjs_deepFind, plus haut dans ce fichier) : un arbre
+  // pathologique au-delà d'une dizaine de milliers de niveaux plantait la récursion (RangeError) —
+  // repli id non trouvé, comme n'importe quelle recherche qui échoue.
+  if (!node || node.nodeType !== 1 || depth > 50) { return null; }
   if (node.id === id) { return node; }
   kids = node.children;
   if (!kids) { return null; }
   for (i = 0; i < kids.length; i++) {
-    found = µ._mjs_navFindByIdIn(kids[i], id);
+    found = µ._mjs_navFindByIdIn(kids[i], id, depth + 1);
     if (found) { return found; }
   }
   return null;
@@ -974,7 +993,7 @@ var _confirmCfgWarned = false;
 µ._mjs_navFindById = function(nodes, id) {
   var i, found;
   for (i = 0; i < nodes.length; i++) {
-    found = µ._mjs_navFindByIdIn(nodes[i], id);
+    found = µ._mjs_navFindByIdIn(nodes[i], id, 0);
     if (found) { return found; }
   }
   return null;
@@ -1640,8 +1659,18 @@ var _navFlashModalWarned = false;
   if (!rt || typeof rt._mjs_vtEnabled !== 'function' || !rt._mjs_vtEnabled()) { return swap(); }
   var resolved = µ._mjs_vtResolvePage(link);
   if (!resolved) { return swap(); }
+  // DRAPEAU DE RÉENTRANCE, partagé avec mjs_router.ts (µ._mjs_vtPageSwapping) : levé le temps EXACT
+  // de l'exécution de `swap` — que document.startViewTransition rappelle de façon ASYNCHRONE
+  // (spécification CSS View Transitions, vérifié dans Chromium), jamais pendant l'appel lui-même, et
+  // que les rideaux rappellent plus tard encore. `swap` peut appeler Router.navigate() (les 6 sites
+  // d'échange de page finissent par lui), qui ouvrirait SINON sa PROPRE transition depuis l'intérieur
+  // de celle-ci. `finally` : baissé même si `swap` lève.
+  var swapGuarded = function() {
+    µ._mjs_vtPageSwapping = true;
+    try { return swap(); } finally { µ._mjs_vtPageSwapping = false; }
+  };
   // rideaux « à travers le noir » : mêmes règles que le routeur
-  if (typeof µ._mjs_vtCurtainRun === 'function' && typeof resolved === 'string' && µ._mjs_vtCurtainRun(resolved, swap)) { return; }
+  if (typeof µ._mjs_vtCurtainRun === 'function' && typeof resolved === 'string' && µ._mjs_vtCurtainRun(resolved, swapGuarded)) { return; }
   if (typeof µ._mjs_vtApplyPreset === 'function') { µ._mjs_vtApplyPreset(resolved); }
   // couche de lévitation : mêmes hooks que le routeur (cf. mjs_vt_presets.ts)
   var hoist = (typeof µ._mjs_vtHoistStart === 'function') ? µ._mjs_vtHoistStart() : null;
@@ -1658,7 +1687,7 @@ var _navFlashModalWarned = false;
   if (document.documentElement) { document.documentElement.dataset.mjsVt = (typeof resolved === 'string' && typeof µ._mjs_vtParse === 'function') ? µ._mjs_vtParse(resolved).base : 'on'; }
   var t;
   try {
-    t = document.startViewTransition(hoist ? function() { swap(); return µ._mjs_vtHoistSwapSettled(hoist); } : swap);
+    t = document.startViewTransition(hoist ? function() { swapGuarded(); return µ._mjs_vtHoistSwapSettled(hoist); } : swapGuarded);
   } catch (e) {
     // startViewTransition peut lever (état invalide) : l'attribut ne reste pas collé
     if (document.documentElement) { delete document.documentElement.dataset.mjsVt; }
@@ -1861,6 +1890,16 @@ window.addEventListener('popstate', function(e) {
       // navigation (les nœuds affichés restent affichés, pas hibernés pour rien).
       if (µ._mjs_navMethodOf(nav && nav.method) === 'none') {
         µ._mjs_navDropHibernation();
+        return;
+      }
+      // réponse qui n'est pas du HTML (204, corps vide, texte/CSV/PDF renvoyé tel quel par la
+      // couche réseau) : jamais installée, cf. µ._mjs_navBodyKind. Texte/CSV/PDF : même repli
+      // qu'une réponse HTML sans zone exploitable (juste plus bas), reload() vers l'URL déjà posée
+      // par le popstate NATIF, le navigateur traite alors lui-même la réponse.
+      var _bodyKind = µ._mjs_navBodyKind(html, nav);
+      if (_bodyKind !== 'html') {
+        if (_bodyKind === 'other') { return window.location.reload(); }
+        µ._mjs_navDropHibernation(); // 204/corps vide : rien à afficher, comme un navigateur
         return;
       }
       // target/method voyagent désormais aussi sur le chemin HTML (en-têtes X-MJS-Target/
@@ -2280,7 +2319,17 @@ window.addEventListener('hashchange', function() {
     if (!µ._mjs_navEmit('before-visit', { path: evPaths.path, url: evPaths.url, via: 'link' }, true)) { return; }
     // pushState AU CLIC : l'URL reflète l'intention immédiatement et l'ordre
     // d'historique ne dépend plus de l'ordre d'arrivée des réponses réseau.
+    var _navFromUrl = window.location.pathname + window.location.search + window.location.hash;
     window.history.pushState({}, '', fullDest);
+    // « rien à installer » (204, corps vide, X-MJS-Method: none) : l'adresse poussée ci-dessus revient sur
+    // la page RÉELLEMENT affichée — son URL complète (hash compris) quand elle concorde avec `currentPath`,
+    // sinon `currentPath` seul (double clic rapide, cf. bandeau plus haut). replaceState et non
+    // history.back() : aucun popstate déclenché, aucune course avec un clic suivant.
+    var _revertClickUrl = function() {
+      var back = (_navFromUrl.split('#')[0] === currentPath) ? _navFromUrl : currentPath;
+      if (typeof back !== 'string' || !back) { return; }
+      try { window.history.replaceState({}, '', back); } catch (e) { /* adresse laissée telle quelle */ }
+    };
     seq = ++µ._mjs_navSeq;
     // Abandon réel du fetch de navigation précédent (cf. `_mjs_abortStaleNav`,
     // haut de fichier) — inconditionnel, comme au popstate : un clic tue tout
@@ -2419,9 +2468,20 @@ window.addEventListener('hashchange', function() {
       }
       // X-MJS-Method: none : le back répond « ne bouge pas » — corps ignoré (AVANT tout parse),
       // rien d'installé. µ._mjs_navDropHibernation annule l'hibernation posée au clic pour CETTE navigation
-      // (les nœuds affichés restent affichés, pas hibernés pour rien).
+      // (les nœuds affichés restent affichés, pas hibernés pour rien) ; l'adresse poussée AU CLIC revient
+      // sur la page affichée (docs/21-navigation.md : « pas de changement d'adresse »).
       if (µ._mjs_navMethodOf(nav && nav.method) === 'none') {
         µ._mjs_navDropHibernation();
+        _revertClickUrl();
+        return;
+      }
+      // réponse qui n'est pas du HTML (204, corps vide, texte/CSV/PDF renvoyé tel quel par la
+      // couche réseau) : jamais installée, cf. µ._mjs_navBodyKind.
+      var _bodyKind = µ._mjs_navBodyKind(html, nav);
+      if (_bodyKind !== 'html') {
+        if (_bodyKind === 'other') { µ._mjs_hardNav(destination); return; } // texte/CSV/PDF… : le navigateur le traite lui-même
+        µ._mjs_navDropHibernation(); // 204/corps vide : rien à afficher, adresse inchangée, comme un navigateur
+        _revertClickUrl();
         return;
       }
       // target/method voyagent désormais aussi sur le chemin HTML (en-têtes X-MJS-Target/
@@ -3395,6 +3455,15 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     // DÉFINITIVEMENT un essai futur (même raisonnement que le fix onEvict voisin).
     µ._mjs_preloaded.add(key);
     µ._mjs_navRequest('GET', link.href, void 0, function(html, finalUrl, _schemaNom, nav) {
+      // no-cache : jamais archivée, même garde que µ._mjs_navHibernate — une page qui refuse
+      // explicitement d'être mise en cache ne doit pas non plus être resservie SANS requête depuis
+      // le préchargement au survol (jeton one-shot, CSRF frais…). Les TROIS canaux de la politique
+      // (docs/21-navigation.md) : en-tête X-MJS-Cache, clé `cache` de la fiche (mode JSON, qu'un
+      // préchargement reçoit d'un serveur qui parle le protocole) et <meta name="mjs-cache"> d'une
+      // page HTML (lue seulement si la réponse la mentionne : pas de parse inutile).
+      if (µ._mjs_navCachePolicyOf(nav && nav.cache) === 'no-cache') { return; }
+      if (html && typeof html === 'object' && µ._mjs_navCachePolicyOf(html.cache) === 'no-cache') { return; }
+      if (typeof html === 'string' && html.indexOf('mjs-cache') !== -1 && typeof DOMParser !== 'undefined' && µ._mjs_navCacheOf(new DOMParser().parseFromString(html, 'text/html'), null) === 'no-cache') { return; }
       // On mémorise (html, url FINALE) : le clic pourra réconcilier une
       // redirection serveur même sur un lien servi depuis le cache de préchargement.
       µ._mjs_preloadCache.set(link.href, { html: html, url: finalUrl, nav: nav });

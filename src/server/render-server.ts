@@ -5,7 +5,7 @@
 // (prerender / ssr / csr). Pensé pour un projet MJS autonome ; pour un back existant
 // (Rails…), on réutilise plutôt `createRenderHandler` en sidecar/middleware.
 
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs'
 import { join, resolve, relative, isAbsolute, extname, sep } from 'node:path'
 import type { MjsConfig } from '../bundler/config.js'
@@ -120,6 +120,52 @@ function resScript(pathname: string, props: Record<string, unknown>): string {
 // (étage 2, POST /__mjs/errors) — seau à jetons par IP — CLASSE PARTAGÉE,
 // cf. token-bucket.ts (portait ici une copie locale, comme server/index.ts) : ~10 jetons, recharge
 // 30/min (0.5/s) — cf. le patron d'appel dans startRenderServer.
+
+/** Lit un corps borné à `maxBytes` et répond ELLE-MÊME dès qu'elle refuse : dépassement (413) ou
+ *  lecture interrompue en route ('error'/'aborted' — panne réseau, client qui abandonne, 400,
+ *  AVANT toute mutation) ; rend `null` dans les deux cas, le corps complet sinon (`Buffer.concat`
+ *  déjà fait). Exportée pour test direct (faux req/res), même motif que listenOrReject. */
+export function readCappedBody(req: IncomingMessage, res: ServerResponse, maxBytes: number): Promise<Buffer | null> {
+  const chunks: Buffer[] = []
+  let total = 0
+  // posé AVANT tout effet de bord (jamais dans un `finish()` appelé en dernier) : req.destroy()
+  // plus bas redéclenche 'error' DANS LE MÊME TOUR — un drapeau posé trop tard laissait passer
+  // une 2e écriture sur `res` déjà terminée (write after end)
+  let settled = false
+  return new Promise<Buffer | null>((resolve) => {
+    req.on('data', (chunk: Buffer) => {
+      if (settled) return
+      total += chunk.length
+      if (total > maxBytes) {
+        settled = true
+        res.statusCode = 413
+        res.setHeader('Connection', 'close')
+        res.end('Payload Too Large')
+        req.destroy()
+        resolve(null); return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => { if (settled) return; settled = true; resolve(Buffer.concat(chunks)) })
+    // corps interrompu en route : un JSON déjà complet dans les chunks reçus (coupure juste
+    // après, avant le 'end' propre) passerait quand même le JSON.parse de l'appelant et
+    // journaliserait une entrée sur un corps que le client n'a jamais fini d'envoyer
+    req.on('error', () => { if (settled) return; settled = true; res.statusCode = 400; res.end('Bad Request'); resolve(null) })
+    req.on('aborted', () => { if (settled) return; settled = true; res.statusCode = 400; res.end('Bad Request'); resolve(null) })
+  })
+}
+
+/** Attend qu'un serveur commence à écouter, ou rejette proprement (port déjà pris, permission
+ *  refusée…) — même patron que StaticServer.start (server/index.ts) : écouteur 'error' posé
+ *  AVANT listen(), sinon l'exception échappe au process entier au lieu de rejeter cette promesse.
+ *  Exportée pour test direct (faux serveur), même motif que isWithinDir/isRealPathWithin. */
+export function listenOrReject(server: Pick<Server, 'listen' | 'on'>, port: number, host: string): Promise<void> {
+  return new Promise<void>((ok, reject) => {
+    server.on('error', reject)
+    server.listen(port, host, ok)
+  })
+}
+
 export async function startRenderServer(
   config: MjsConfig, configDir: string, opts: RenderServerOptions = {},
 ): Promise<RunningServer> {
@@ -219,33 +265,15 @@ export async function startRenderServer(
           }
           if (!bucket.take()) { res.statusCode = 429; res.end('Too Many Requests'); return }
           // b. corps plafonné à 64 Ko (même patron que le plafond 1 Mo du bloc MUTANTS plus bas,
-          // fenêtre bien plus étroite — ce n'est qu'un rapport d'erreur, jamais un formulaire).
-          const chunks: Buffer[] = []
-          let total = 0
-          let rejected = false
-          await new Promise<void>((done) => {
-            req.on('data', (chunk: Buffer) => {
-              if (rejected) return
-              total += chunk.length
-              if (total > 65_536) {
-                rejected = true
-                res.statusCode = 413
-                res.setHeader('Connection', 'close')
-                res.end('Payload Too Large')
-                req.destroy()
-                done(); return
-              }
-              chunks.push(chunk)
-            })
-            req.on('end', () => done())
-            req.on('error', () => done())
-          })
-          if (rejected) return
+          // fenêtre bien plus étroite — ce n'est qu'un rapport d'erreur, jamais un formulaire) ;
+          // refuse aussi une lecture interrompue en route, cf. readCappedBody.
+          const corps = await readCappedBody(req, res, 65_536)
+          if (corps === null) return
           // c. JSON strict (sinon 400) — AUCUNE interprétation/évaluation du contenu, juste des
           // champs copiés un à un, chacun plafonné et retypé défensivement.
           let payload: unknown
           try {
-            payload = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+            payload = JSON.parse(corps.toString('utf-8'))
           } catch {
             res.statusCode = 400; res.end('Bad Request'); return
           }
@@ -335,7 +363,14 @@ export async function startRenderServer(
       // Assets compilés (imports du manifeste) : outputDir, en retirant l'éventuel urlPrefix.
       const rel = (urlPrefix && pathname.startsWith(urlPrefix) ? pathname.slice(urlPrefix.length) : pathname).replace(/^\/+/, '')
       const asset = join(outputDir, rel)
-      if (rel && isWithinDir(outputDir, asset) && existsSync(asset) && statSync(asset).isFile() && isRealPathWithin(outputDir, asset)) {
+      // aucun SEGMENT caché (`.mjs-theme-vars.json`, `.mangle-cache.json`… cf. bundler/index.ts,
+      // pruneOrphans) : ces artefacts vivent parfois À LA RACINE d'outputDir sans jamais être prévus
+      // pour être SERVIS tels quels — `.mjs-theme-vars.json` a sa propre route dédiée
+      // (/__mjs/theme.json, fermée en production) ; cet accès direct-ci, lui, ne refusait rien,
+      // même donnée disponible sans aucune garde de production — même politique que server/index.ts
+      // (serveProjectRoot, dotfile jamais servi)
+      const hidden = rel.split('/').some((s) => s.startsWith('.'))
+      if (rel && !hidden && isWithinDir(outputDir, asset) && existsSync(asset) && statSync(asset).isFile() && isRealPathWithin(outputDir, asset)) {
         res.setHeader('Content-Type', MIME[extname(asset)] || 'application/octet-stream')
         res.end(readFileSync(asset)); return
       }
@@ -390,7 +425,10 @@ export async function startRenderServer(
       req.on('close', onReqClose)
       let r: RenderResponse
       try {
-        r = await handler.handle(pathname, req.headers as any, abortOnClose.signal)
+        // `loadProps` : même chargeur (entry.propsFor) que la balise __mjs_res plus bas — transmis
+        // ICI pour que le RENDU SSR lui-même affiche déjà la donnée chargée (cf. RenderResponse.
+        // resProps, réutilisé plus bas SANS rappeler propsFor une 2e fois pour la même requête).
+        r = await handler.handle(pathname, req.headers as any, abortOnClose.signal, () => entry.propsFor(pathname, req))
       } finally {
         req.off('close', onReqClose)
       }
@@ -412,17 +450,12 @@ export async function startRenderServer(
       if (extras.target) res.setHeader('X-MJS-Target', extras.target)
       if (extras.method) res.setHeader('X-MJS-Method', extras.method)
       if (extras.cache) res.setHeader('X-MJS-Cache', extras.cache)
-      // µres plein dès le 1er chargement HTML : même chargeur (entry.propsFor) que la
-      // branche JSON plus haut, mais rattrapé ICI (jamais de 500 pour un chargeur en échec sur une
-      // page HTML — la branche JSON, elle, laisse remonter au catch global).
-      // (point 5 de capture) — auparavant, l'échec était avalé en SILENCE TOTAL (props
-      // vides, aucune trace nulle part : serve-entry.ts logue déjà 'server.entry-props-echec' puis
-      // RELANCE, cf. son commentaire — mais rien ICI ne recueillait ce 2e passage). Comportement
-      // HTTP INCHANGÉ (props vides, jamais un 500 pour un chargeur en échec sur une page HTML).
-      const resProps = r.component ? await entry.propsFor(pathname, req).catch((e: any) => {
-        recordServer({ message: e && e.message ? e.message : String(e), pile: e && e.stack, url: pathname })
-        return {}
-      }) : {}
+      // µres plein dès le 1er chargement HTML : DÉJÀ résolu par `handler.handle` ci-dessus
+      // (`loadProps`, même chargeur entry.propsFor, appelé UNE seule fois pour cette requête — la
+      // fusion dans le rendu SSR lui-même vit dans render-request.ts) — jamais de 500 pour un
+      // chargeur en échec sur une page HTML (déjà rattrapé là-bas ; la branche JSON plus haut,
+      // elle, laisse toujours remonter au catch global).
+      const resProps = r.resProps ?? {}
       const resTag = resScript(pathname, resProps)
       const body = r.kind === 'csr'
         ? (r.component ? '<' + r.component + '></' + r.component + '>' : '<!-- mjs: csr -->')
@@ -437,11 +470,14 @@ export async function startRenderServer(
     }
   })
 
-  await new Promise<void>((ok) => server.listen(port, host, ok))
+  await listenOrReject(server, port, host)
   const addr = server.address()
   const actualPort = (addr && typeof addr === 'object') ? addr.port : port
   return {
     server, port: actualPort,
-    close: async () => { entry.close(); await handler.close(); journalStore.flush(); await new Promise<void>((ok) => server.close(() => ok())) },
+    // journalStore.close() (jamais flush() seul) : solde ET se retire du hook de sortie
+    // process-level — flush() seul laissait ce serveur enregistré dans pendingFlushes (journal.ts)
+    // après sa propre fermeture, référence qui n'appartient plus à personne.
+    close: async () => { entry.close(); await handler.close(); journalStore.close(); await new Promise<void>((ok) => server.close(() => ok())) },
   }
 }

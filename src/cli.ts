@@ -9,10 +9,10 @@ import { findConfig, resolveBundlerOpts } from './bundler/config.js'
 import { runInit } from './cli/init.js'
 import { runWsCommand } from './cli/ws.js'
 import { runServeurCommand } from './cli/server.js'
-import { acquireDevLock } from './cli/dev-lock.js'
+import { acquireDevLock, gardeArret, SHUTDOWN_GRACE_MS } from './cli/dev-lock.js'
 import { prerenderPages } from './server/prerender.js'
 import { emitStartup } from './bundler/startup.js'
-import { prerenderOnDevRecompile } from './cli/dev-prerender.js'
+import { createDevPrerenderScheduler } from './cli/dev-prerender.js'
 import { startRenderServer } from './server/render-server.js'
 import { createRenderHandler } from './server/render-request.js'
 import { createJournal, type RecordServerFn } from './server/journal.js'
@@ -294,7 +294,11 @@ async function run(argv: string[]): Promise<void> {
     process.exit(0)
   }
 
-  if (args.root) process.chdir(args.root)
+  // Résolu en ABSOLU AVANT le chdir : `mjs ws`/`mjs serveur` repassent `args.root` tel quel à
+  // resolveEntryPath (cli/ws.ts, cli/server.ts) — un `--root child` RELATIF, encore relatif après
+  // ce chdir, se voit alors ré-ancré depuis le cwd DÉJÀ déplacé (<root>/child/child/…, introuvable).
+  // Un chemin déjà absolu traverse `resolve()` inchangé, aucune régression pour l'usage courant.
+  if (args.root) { args.root = resolve(args.root); process.chdir(args.root) }
 
   // `mjs init` : scaffolding — n'a pas besoin de config.
   if (args.command === 'init') {
@@ -395,6 +399,12 @@ async function run(argv: string[]): Promise<void> {
     // transmettre ici : resolveBundlerOpts() la résout mais serait sinon MORTE.
     templateLang:      cfgOpts.templateLang,
     sigil:             cfgOpts.sigil,
+    // varPrefix/defaultTheme (mjs.config.json) : même piège que contextAlias ci-dessous —
+    // résolus par resolveBundlerOpts() mais jamais transmis ici, un build gardait toujours le
+    // préfixe de variables --mjs-* et le thème par défaut sans sa règle :where(:root), alors
+    // que le rendu serveur, lui, les transmettait déjà (build et SSR divergeaient).
+    varPrefix:         cfgOpts.varPrefix,
+    defaultTheme:      cfgOpts.defaultTheme,
     // contextAlias était validé par
     // resolveBundlerOpts() (mjs.config.json → cfgOpts.contextAlias) mais
     // jamais transmis ICI au Bundler — option totalement MORTE en CLI : un
@@ -416,6 +426,9 @@ async function run(argv: string[]): Promise<void> {
     // ci-dessus si non transmis ici : resolveBundlerOpts() la résout mais
     // resterait MORTE en CLI.
     a11y:              cfgOpts.a11y,
+    // lint.ujsForm (mjs.config.json, défaut true) → même piège que lint.a11y ci-dessus :
+    // résolu par resolveBundlerOpts() mais resterait MORTE en CLI sans cette ligne.
+    ujsForm:           cfgOpts.ujsForm,
     // Un composant en échec ne garde son ANCIENNE sortie
     // référencée qu'en dev/serve, où le site doit rester utilisable le temps de corriger ; en
     // build, la version repêchée peut importer un cœur supprimé depuis (page morte, build vert)
@@ -467,6 +480,14 @@ async function run(argv: string[]): Promise<void> {
     checkWritablePath(bundler.outputDir, 'outputDir', true)
     checkWritablePath(bundler.manifestPath, 'manifestPath', false, true)
   }
+
+  // Config transmise au RENDU (`mjs dev`/`mjs serve`) : `bundler.outputDir`/`manifestPath` sont
+  // déjà résolus en ABSOLU, overrides --output/--manifest compris (cf. `new Bundler({...})`
+  // ci-dessus) — createRenderHandler/startRenderServer recalculaient depuis `found.config` SEUL,
+  // ignorant ces overrides (le prérendu de `mjs build`, lui, les reçoit déjà). Sans override, ces
+  // deux valeurs sont IDENTIQUES à ce que `found.config` aurait donné (même résolution, cf.
+  // Bundler.outputDir/manifestPath) : aucun changement pour l'usage courant.
+  const renderConfig = found ? { ...found.config, outputDir: bundler.outputDir, manifestPath: bundler.manifestPath } : undefined
 
   switch (args.command) {
     case 'build': {
@@ -597,7 +618,7 @@ async function run(argv: string[]): Promise<void> {
       // createRenderHandler, cf. render-request.ts:120/isProd) : sans lui, le corps d'erreur SSR
       // d'un `mjs dev --prod` restait celui du dev (message brut) faute de NODE_ENV positionné.
       const renderHandler = found?.config.render
-        ? await createRenderHandler(found.config, found.configDir, recordServer, envBuild)
+        ? await createRenderHandler(renderConfig!, found.configDir, recordServer, envBuild)
         : null
 
       // Chargeur d'actions `.server.mjs` (cf. serve-entry.ts), MÊME appareillage que `mjs
@@ -617,7 +638,15 @@ async function run(argv: string[]): Promise<void> {
       // renderer, donc son dossier de travail — cf. server/render-compile-dir.ts). Un rappel
       // synchrone la jetait, `dev-lock.ts` n'attendait rien et sortait aussitôt : un dossier de
       // travail restait derrière chaque session de développement.
-      acquireDevLock(undefined, (renderHandler || serveEntry) ? async () => { await renderHandler?.close(); serveEntry?.close() } : undefined)
+      // Le serveur HTTP (`server`, créé juste en dessous, avant tout signal possible) cesse d'abord
+      // d'accepter des connexions ; ses réponses en cours d'écriture (gros fichier, client lent)
+      // vont jusqu'au bout avant la sortie au lieu d'être coupées net par `process.exit()`.
+      acquireDevLock(undefined, async () => {
+        const arret = server.stop()
+        await renderHandler?.close()
+        serveEntry?.close()
+        await arret
+      })
 
       // Priorité port : --port flag > mjs.config.json dev.port > défaut 3939
       const server = new StaticServer({
@@ -680,31 +709,45 @@ async function run(argv: string[]): Promise<void> {
         return stats
       }
 
+      // Sérialise les passes de prérendu déclenchées par le watcher (cf. son commentaire détaillé)
+      // — UNE instance pour toute la session `mjs dev`, créée AVANT `watch()` pour couvrir aussi
+      // le premier recompile.
+      const devPrerenderScheduler = createDevPrerenderScheduler(found?.config, found?.configDir ?? '', {
+        log: console.log,
+        warn: console.warn,
+        bundler,
+      })
+
       await bundler.watch({
         onRecompile: (_changed, stats) => {
           if (lastErrors.length > 0) {
             const msg = lastErrors.map(e => e.message).join('\n\n')
             server.hmr?.notifyError(msg)
           } else {
-            // Changement 100 % CSS (stats.cssOnly non nul, cf. bundler) :
-            // hot-swap sans reload ni perte d'état (µ._hotCss côté page). Tout le
-            // reste (JS/template touché, fichier ajouté/supprimé, moindre doute) →
-            // reload complet, comportement historique. Une erreur SASS remonte via
-            // stats.errors → branche notifyError ci-dessus (overlay), jamais css-only.
-            if (stats?.cssOnly) {
-              server.hmr?.notifyCssUpdate(stats.cssOnly)
-              console.log(t('cli.css-seul-recharge'))
-            } else {
-              server.notifyReload()
-            }
-            // Cf.
-            // cli/dev-prerender.ts pour le pourquoi. Fire-and-forget : ne
-            // bloque pas le reload HMR du cas commun. Tourne AUSSI sur un
-            // css-only (le HTML prérendu embarque le CSS des composants).
-            void prerenderOnDevRecompile(found?.config, found?.configDir ?? '', {
-              log: console.log,
-              warn: console.warn,
-              bundler,
+            // Renderer SSR/navigateur mémoïsé (createRenderHandler) : invalidé à CHAQUE recompile
+            // RÉUSSI (y compris css-only, coût négligeable en dev — le SSR peut inliner du style)
+            // — sans cet appel, un `mjs dev` avec bloc `render` servait indéfiniment le rendu
+            // compilé AVANT la modification, la mémoïsation étant pensée pour la PRODUCTION (code
+            // figé pour la vie du process), jamais pour un watcher qui recompile en continu.
+            renderHandler?.invalidate()
+            // Attend la fin de LA PASSE de prérendu couvrant CE changement (sérialisée, jamais deux
+            // passes en vol, cf. createDevPrerenderScheduler) AVANT de notifier le navigateur — un
+            // reload signalé avant la fin de l'écriture du fichier prérendu pouvait recharger sur le
+            // HTML FIGÉ d'AVANT cette modification. Fire-and-forget au niveau du dev loop lui-même
+            // (onRecompile reste synchrone pour le bundler, la RECOMPILATION suivante n'attend pas) :
+            // seule la notification HMR de CE changement patiente.
+            void devPrerenderScheduler.schedule().finally(() => {
+              // Changement 100 % CSS (stats.cssOnly non nul, cf. bundler) :
+              // hot-swap sans reload ni perte d'état (µ._hotCss côté page). Tout le
+              // reste (JS/template touché, fichier ajouté/supprimé, moindre doute) →
+              // reload complet, comportement historique. Une erreur SASS remonte via
+              // stats.errors → branche notifyError ci-dessus (overlay), jamais css-only.
+              if (stats?.cssOnly) {
+                server.hmr?.notifyCssUpdate(stats.cssOnly)
+                console.log(t('cli.css-seul-recharge'))
+              } else {
+                server.notifyReload()
+              }
             })
           }
         },
@@ -724,18 +767,18 @@ async function run(argv: string[]): Promise<void> {
       if (stats.errors.length > 0) { await bundler.close(); process.exit(1) }
       const port = args.port ?? cfgOpts.devPort ?? 3000
       const host = cfgOpts.devHost ?? '127.0.0.1'
-      const running = await startRenderServer(found.config, found.configDir, { port, host, env: envBuild })
+      const running = await startRenderServer(renderConfig!, found.configDir, { port, host, env: envBuild })
       // ARRÊT PROPRE (Ctrl-C) — sans ces écouteurs, le process mourait sur le signal par défaut :
       // `running.close()` n'était jamais atteint, donc ni le renderer de rendu par requête ni son
       // dossier de travail (`mjs-render-*`, cf. server/render-compile-dir.ts) — un dossier laissé
-      // derrière PAR SESSION. Même patron que `mjs ws`/`mjs serveur` : une seule passe (`arret`),
-      // écouteurs retirés dès l'entrée, sortie au code adéquat une fois tout refermé.
-      let arret = false
-      const onSignal = (): void => {
-        if (arret) return
-        arret = true
-        process.off('SIGINT', onSignal)
-        process.off('SIGTERM', onSignal)
+      // derrière PAR SESSION. Même patron que `mjs ws`/`mjs serveur` : une seule passe (gardeArret :
+      // le même Ctrl+C reçu deux fois attend le premier, un 2e Ctrl+C plus d'une seconde après sort
+      // aussitôt), sortie au code adéquat une fois tout refermé, bornée par SHUTDOWN_GRACE_MS. Les
+      // écouteurs RESTENT posés pendant la fermeture asynchrone : retirés, le gestionnaire de
+      // signaux de tsx (lancement depuis les sources) ne voyait plus aucun écouteur et sortait
+      // aussitôt en 130, coupant les requêtes en vol.
+      const onSignal = gardeArret((): void => {
+        setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
         void (async () => {
           let code = 0
           try {
@@ -749,7 +792,7 @@ async function run(argv: string[]): Promise<void> {
           // n'est pas un échec. Seule une fermeture EN ERREUR sort en 1.
           process.exit(code)
         })()
-      }
+      }, () => process.exit(0))
       process.on('SIGINT', onSignal)
       process.on('SIGTERM', onSignal)
       console.log(t('cli.serve-demarre', { hote: host, port: running.port }))

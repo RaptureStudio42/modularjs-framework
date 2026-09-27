@@ -10,3 +10,6 @@ public/
 app/
 
 .sass-cache/
+
+# paquet produit par npm pack : publié sur npm, jamais versionné
+*.tgz

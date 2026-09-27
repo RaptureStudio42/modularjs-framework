@@ -34,7 +34,13 @@ if (µ.Element) {
       t = n;
       n = n.nextSibling;
       if (!t._mjs_dying) {
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        // `.catch` défensif : jamais attendue ici (asynchrone, fire-and-
+        // forget par design), un rejet resterait sinon non géré et la
+        // structure sortante ne serait jamais retirée (doublon avec la
+        // nouvelle clé, cf. mjs_if.ts _mjs_updIf pour le même choix).
+        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
+          return µ.error('[ModularJS] destruction de l\'ancienne clé {key} en erreur :', err);
+        });
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }
     }

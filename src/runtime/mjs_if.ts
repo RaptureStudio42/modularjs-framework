@@ -146,7 +146,14 @@ if (µ.Element) {
         dyingCount++;
       } else {
         destroyCount++;
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        // `.catch` défensif : `_mjs_destroyNodeAndChildren` est asynchrone et
+        // jamais attendue ici (l'ancienne branche ne doit pas retarder la
+        // nouvelle) — un rejet resterait sinon non géré (mjs_destroy_hooks.ts
+        // ne devrait plus en produire, mais {if} ne doit dépendre de rien côté
+        // appelant pour rester sans fuite).
+        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
+          return µ.error('[ModularJS] destruction de branche {if} en erreur :', err);
+        });
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }
     }
@@ -203,7 +210,10 @@ if (µ.Element) {
       t = n;
       n = n.nextSibling;
       if (!t._mjs_dying) {
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        // `.catch` défensif — même raison que `_mjs_updIf` ci-dessus.
+        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
+          return µ.error('[ModularJS] destruction de branche {if}/{key} imbriquée en erreur :', err);
+        });
       }
     }
     if (!createFn) {

@@ -134,6 +134,21 @@ export function findMacroTagEnd(html: string, from: number): number {
         }
         strDelim = delim; i += delim.length; continue
       }
+      // commentaires DANS l'expression d'attribut : `//`/`/* … */` ignorés au même titre qu'une
+      // chaîne — leurs `{`/`}`/`>` internes ne doivent PAS compter dans la profondeur de la balise.
+      // AVANT : `/* } > */` refermait l'accolade PUIS la balise elle-même au mauvais endroit — un
+      // résidu de texte fuyait dans le HTML rendu, et <@img> y perdait carrément son `src`.
+      if (c === '/' && html[i + 1] === '/') {
+        const nl = html.indexOf('\n', i)
+        i = nl === -1 ? html.length : nl
+        continue
+      }
+      if (c === '/' && html[i + 1] === '*') {
+        const end = html.indexOf('*/', i + 2)
+        if (end === -1) return -1   // commentaire jamais refermé : même repli que le gabarit plus haut
+        i = end + 2
+        continue
+      }
     }
     // balise ouverte détectée EN PROFONDEUR (accolade d'attribut jamais refermée) : signal de
     // fin de scan, l'appelant lève déjà `macro-balise-non-fermee` sur un -1.

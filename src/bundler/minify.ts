@@ -17,6 +17,7 @@
 
 import { transform } from 'esbuild'
 import { t } from '../messages/index.js'
+import { maskInertSameLength } from '../lexer/index.js'
 import type { LogLevelName } from './config.js'
 
 export interface MinifyResult {
@@ -558,8 +559,21 @@ export async function minifyJs(
   // LECTURES (→ false → DCE) sont déléguées au `define`. `pure:` (plus bas)
   // remplace par ailleurs l'ancienne regex `µ.log(...) → void 0` (qui
   // cassait les appels imbriqués `µ.log(fn(g(y)))`).
-  const cleaned = source
-    .replace(/^[ \t;]*µ\.debug\s*=\s*[^;\n]+;?[ \t]*$/gm, '')
+  //
+  // Le motif est cherché sur une vue MASQUÉE (chaînes/gabarits/commentaires blanchis, même
+  // longueur) et retiré du texte RÉEL aux MÊMES positions : sans ce masquage, une ligne de
+  // DOCUMENTATION montrant « µ.debug = true » à l'intérieur d'un template literal (guide de
+  // débogage exporté par un module) matchait pareil et disparaissait en silence du texte affiché.
+  const debugLineRe  = /^[ \t;]*µ\.debug\s*=\s*[^;\n]+;?[ \t]*$/gm
+  const maskedSource = maskInertSameLength(source)
+  let cleaned = ''
+  let cursor  = 0
+  let dm: RegExpExecArray | null
+  while ((dm = debugLineRe.exec(maskedSource)) !== null) {
+    cleaned += source.slice(cursor, dm.index)
+    cursor   = dm.index + dm[0].length
+  }
+  cleaned += source.slice(cursor)
 
   // le transform() + merge ci-dessous
   // touche `opts.mangleCache`, un objet PARTAGÉ MUTABLE entre tous les appels

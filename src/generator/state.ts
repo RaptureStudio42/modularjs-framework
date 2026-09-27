@@ -28,6 +28,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import * as acorn from 'acorn'
 import { analyzeSnippetOrNull } from '../analyzer/index.js'
 import { t } from '../messages/index.js'
+import { maskNonCode } from '../mask.js'
 
 export interface ResetOpts {
   analyzer?: any
@@ -77,6 +78,13 @@ export class CompilerState {
    * Sert à décider si le listener délégué de ce type peut être `passive`. */
   eventsWithPrevent: Set<string> = new Set()
   inlines: string[] = []
+  /** Locaux de gabarit EN PORTÉE de chaque gestionnaire de `inlines` (même index) :
+   * variable et index des `{for}` englobants, argument de branche `{await}`/`{then}`,
+   * nom d'un `{const}` du bloc courant. Liste vide pour un gestionnaire hors de tout
+   * bloc. Le transpileur ne retire ces noms de la liste prédéclarée que du gestionnaire
+   * qui les voit VRAIMENT (cf. CompilerState.templateLocals, l'union globale) — un
+   * gestionnaire situé ailleurs garde la variable du `<script>`. */
+  inlineLocals: string[][] = []
   analyzer: any | null = null
   externalVars: string[] = []
   isPrePass: boolean = false
@@ -88,6 +96,13 @@ export class CompilerState {
    * il dépend. Le runtime expose ça via `_mjs_effectsByVar[k]` et n'invoque que
    * les effects abonnés à la var muée. */
   effectsByVar: Map<string, string[]> = new Map()
+  /** dédup O(1) de `registerEffect` : un Set PAR LISTE de `effectsByVar` (WeakMap clé =
+   * la liste elle-même) — l'`Array.includes` par var devenait quadratique sur un composant
+   * à beaucoup d'effects pour la MÊME var (~480 ms → 4 ms à 20 000 effects/var). Attaché à
+   * la liste et non à la var : quand `effectsByVar` est remplacé (reset, fin de pré-passe
+   * dans compile.ts), les listes neuves repartent avec un Set neuf — un miroir indexé par
+   * var restait peuplé et faisait sauter tous les effects du vrai passage. */
+  effectsSeen: WeakMap<string[], Set<string>> = new WeakMap()
   /** Effects sans dépendance réactive (ex: `{name}` où `name` est une const
    * locale `:=` non-réactive). Exécutés UNE FOIS au mount initial via
    * `_mjs_effectsAll`, jamais re-fired. */
@@ -164,6 +179,7 @@ export class CompilerState {
     this.eventBindCount = {}
     this.eventsWithPrevent = new Set()
     this.inlines = []
+    this.inlineLocals = []
     this.analyzer = opts.analyzer ?? null
     this.externalVars = opts.externalVars ?? []
     this.templateLang = opts.templateLang ?? 'civet'
@@ -173,6 +189,7 @@ export class CompilerState {
     this.hasFlip = false
     this.hasDynamicSlots = false
     this.effectsByVar = new Map()
+    this.effectsSeen = new WeakMap()
     this.mountOnlyEffects = []
     this.mountOnlyEffectsSet = new Set()
     this.initialPropBinds = []
@@ -192,8 +209,15 @@ export class CompilerState {
 
   /** Récupère la closure transitive des state vars dont dépend une expression.
    * Utilise le cache `batchVarsCache` de l'analyzer (rempli durant la pre-pass).
-   * Retourne [] si l'expression ne dépend d'aucune state var (constante pure). */
-  getEffectVars(expr: string | null | undefined): string[] {
+   * Retourne [] si l'expression ne dépend d'aucune state var (constante pure).
+   * `isRawText` : `expr` est du texte d'attribut BRUT (le raccourci `$var` nu hors
+   * accolades, ex. `href="#$ancre"`), jamais de la vraie expression Civet/JS — un `#`/une
+   * apostrophe y est un caractère LITTÉRAL, pas un commentaire/délimiteur de chaîne, donc
+   * PAS masqué. Par défaut false (vraie expression de code : `{if}`/`{for}`/`!{...}`/
+   * `{...}`) : un `$var` mentionné dans un commentaire Civet `#…` ou une chaîne littérale
+   * ('texte #$exemple') y est neutralisé (maskNonCode) avant extraction — sinon fausse
+   * dépendance silencieuse (effet réabonné à une var jamais lue). */
+  getEffectVars(expr: string | null | undefined, isRawText = false): string[] {
     const raw = (expr ?? '').toString().trim()
     if (raw === '') return []
     // même conversion Coffee `"...#{X}..."` →
@@ -313,12 +337,21 @@ export class CompilerState {
             ci++
           }
         }
-        const matches = leftover.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g)
+        // `leftover` peut être du texte d'attribut PUR (sucre `$var` nu, `isRawText`) ou un
+        // reste de CODE Civet (préfixe d'un appel sans parenthèses, ex. `µt 'clé', { … }` →
+        // leftover = `µt 'clé', `) : dans ce 2e cas, un `$var` DANS la chaîne `'clé'` devient
+        // une fausse dépendance si on scanne le texte brut — masqué (maskNonCode) sauf en mode texte.
+        const matches = (isRawText ? leftover : maskNonCode(leftover)).match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g)
         if (matches) blocks.push(...matches)
         codeToAnalyze = `[${blocks.join(', ')}]`
       }
     } else if (str.includes('#') && str.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/)) {
-      const matches = str.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g) ?? []
+      // repli du sucre `#` (commentaire Civet SANS accolades, ex. `$x > 0 # note`, cf.
+      // isUnambiguousSingleBlock/whole-parse plus haut qui échouent tous deux sur un `#` nu) :
+      // scan sur la vue MASQUÉE, sinon un `$var` dans CE commentaire ou dans une chaîne de code
+      // (`'texte #$fake'`) devient une fausse dépendance (effet réabonné à une var jamais lue).
+      const scanned = isRawText ? str : maskNonCode(str)
+      const matches = scanned.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g) ?? []
       codeToAnalyze = `[${matches.join(', ')}]`
     } else {
       codeToAnalyze = `[${str}]`
@@ -404,7 +437,9 @@ export class CompilerState {
     for (const v of vars) {
       let list = this.effectsByVar.get(v)
       if (!list) { list = []; this.effectsByVar.set(v, list) }
-      if (!list.includes(guarded)) list.push(guarded)
+      let seen = this.effectsSeen.get(list)
+      if (!seen) { seen = new Set(list); this.effectsSeen.set(list, seen) }
+      if (!seen.has(guarded)) { seen.add(guarded); list.push(guarded) }
     }
   }
 }
@@ -462,8 +497,8 @@ export function genId(prefix: string): string {
 }
 
 /** Récupère la closure des state vars dont dépend une expression (V2). */
-export function getEffectVars(expr: string | null | undefined): string[] {
-  return currentState().getEffectVars(expr)
+export function getEffectVars(expr: string | null | undefined, isRawText = false): string[] {
+  return currentState().getEffectVars(expr, isRawText)
 }
 
 /** Enregistre un code dans le dispatch direct (V2). */

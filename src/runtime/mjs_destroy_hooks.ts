@@ -109,15 +109,31 @@ if (µ.Element) {
     const __ats = this._mjs_attachments;
     for (let __ei = 0, __eln = elements.length; __ei < __eln; __ei++) {
       const el = elements[__ei];
+      // Nettoyage utilisateur (@attach/@this=!) dans son PROPRE try/catch : un
+      // teardown qui lève ne doit ni sauter celui du descendant suivant, ni
+      // empêcher le retrait/la purge du nœud plus bas — sinon un {if}/{key}
+      // affiche l'ancienne branche EN PLUS de la neuve (nœud fantôme) et la
+      // rejection part non gérée (personne n'attend cette promesse côté
+      // appelant). Même canal d'erreur que le reste du fichier (µ.error).
       if (el._mjs_td) {
-        el._mjs_td();
-        if (__ats) __ats.delete(el._mjs_td);
+        const __td = el._mjs_td;
         el._mjs_td = null;
+        if (__ats) __ats.delete(__td);
+        try {
+          __td();
+        } catch (err) {
+          µ.error('[ModularJS] nettoyage (@attach/@this=!) en erreur :', err);
+        }
       }
       if (el._mjs_ref_td) {
-        el._mjs_ref_td();
-        if (__ats) __ats.delete(el._mjs_ref_td);
+        const __refTd = el._mjs_ref_td;
         el._mjs_ref_td = null;
+        if (__ats) __ats.delete(__refTd);
+        try {
+          __refTd();
+        } catch (err) {
+          µ.error('[ModularJS] nettoyage (ref) en erreur :', err);
+        }
       }
     }
     for (let __ei = 0, __eln = elements.length; __ei < __eln; __ei++) {
@@ -145,16 +161,25 @@ if (µ.Element) {
       timeoutId = setTimeout(function() {
         return µ.warn("⏱️ Warning: Transition exceeds 2000ms.");
       }, 2000);
-      await Promise.all(transitions);
+      // allSettled (pas all) : une transition qui rejette ne doit pas faire
+      // rejeter CETTE fonction (le node ne serait alors jamais retiré/purgé
+      // plus bas) — chaque rejet est rapporté individuellement, les autres
+      // transitions du groupe sont attendues jusqu'au bout quand même.
+      const __results = await Promise.allSettled(transitions);
       clearTimeout(timeoutId);
+      for (let __ri = 0, __rln = __results.length; __ri < __rln; __ri++) {
+        if (__results[__ri].status === 'rejected') {
+          µ.error('[ModularJS] transition de sortie en erreur :', __results[__ri].reason);
+        }
+      }
     }
     // flash-zombie : `µ._mjs_runTransition` (mode css)
     // DIFFÈRE désormais le `anim.cancel()` (libération du `fill:'forwards'`)
     // d'un membre de CE groupe qui finit son outro individuel AVANT les autres
     // (cf. mjs_easing.ts, `_mjs_pendingFillRelease`), pour ne pas le voir
     // "rebondir" à son état naturel pendant que le reste du groupe est encore
-    // visible. Ici, TOUT le groupe vient de se résoudre (`Promise.all` ci-
-    // dessus) — plus aucun risque de flash — on consomme le hook pour chaque
+    // visible. Ici, TOUT le groupe vient de se résoudre (`Promise.allSettled`
+    // ci-dessus, un rejet compris) — plus aucun risque de flash — on consomme le hook pour chaque
     // membre, AVANT le check revive/destroy juste en dessous : que le node
     // soit ressuscité ou réellement détruit, son fill doit être libéré dans
     // les 2 cas (sinon un node ressuscité resterait visuellement figé dans

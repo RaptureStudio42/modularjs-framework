@@ -39,9 +39,11 @@ function lineAt(text: string, index: number): number {
 }
 
 // action="…" (littérale non vide) ou action={…} (dynamique) — action="" compte comme
-// ABSENTE : c'est exactement le piège, le navigateur y remet l'URL courante
+// ABSENTE : c'est exactement le piège, le navigateur y remet l'URL courante. Espaces tolérés
+// autour du `=` (`action = ""`) : sans eux, cette forme ratait ce 1er test et retombait sur le
+// 2e (repli « jeton présent »), qui la comptait à tort comme une action VALIDE — avertissement manqué.
 function hasAction(attrs: string): boolean {
-  const m = attrs.match(/(?:^|\s)@?action=["']([^"']*)["']/i)
+  const m = attrs.match(/(?:^|\s)@?action[ \t]*=[ \t]*["']([^"']*)["']/i)
   if (m) return m[1] !== ''
   return /(?:^|\s)@?action(?=[\s=/>]|$)/i.test(attrs)
 }

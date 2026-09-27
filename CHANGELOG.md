@@ -2,6 +2,160 @@
 
 Toutes les évolutions notables de `modularjs-framework` sont consignées ici. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/), versionnage [SemVer](https://semver.org/lang/fr/).
 
+## [2.5.0] — 2026-09-27
+
+### Serveur de jeu
+
+- **Corrigé — une partie terminée pouvait être ranimée** par une resynchronisation, ou redevenir jouable après un redémarrage (l'instantané ne portait ni l'état terminé ni le résultat). Fix : garde sur la fin de partie, `ended`/`result` sauvegardés et restaurés.
+- **Corrigé — un coup asynchrone n'était jamais rediffusé après sa résolution** ; un changement de phase ou de tour seul (mode deltas) ne produisait aucune trame. Fix : rediffusion à la résolution, trame de méta seule quand la vue ne change pas.
+- **Corrigé — muter l'objet de positions après l'avoir enregistré dans l'historique réécrivait le passé.** Fix : copie indépendante à l'écriture.
+- **Corrigé — des numéros de tick non entiers contournaient le plafond de la détection de divergence.** Fix : entier exigé, côté moteur et côté réseau.
+- **Corrigé — une connexion pouvait rester inscrite dans deux files d'attente**, et rejoindre par code une partie d'un autre type de jeu fonctionnait. Fix : une seule file à la fois ; le type doit correspondre (même message « code inconnu »).
+- **Corrigé — un nom hérité (`toString`…) était accepté comme coup ou intention.** Fix : seules les propriétés propres de la définition comptent.
+- **Changé — les spectateurs reçoivent la fin de partie et les départs** (`µgame:end`, `µgame:left`) ; `µgame:seat` reste réservé aux sièges.
+- **Corrigé — un même joueur ouvert dans deux onglets figeait le premier** après la resynchronisation du second. Fix : dernière vue suivie par connexion.
+- **Corrigé — une requête spatiale avec un rayon infini bloquait le serveur.** Fix : coordonnées ou rayon non finis → résultat vide et un seul avertissement ; rayon démesuré plafonné à 256 cellules par côté.
+- **Corrigé — une erreur dans une minuterie, une vue ou l'extraction d'historique pouvait faire planter le serveur.** Fix : protégées et journalisées ; un `onEnd` qui lève arme quand même le délai de grâce.
+- **Corrigé — la reprise d'une partie sauvegardée ne validait rien et perdait la fenêtre de confirmation des sièges.** Fix : forme validée avant restauration, `started` et fenêtre restaurés, garde de grâce réarmée.
+
+### Sauvegarde des parties et schéma binaire
+
+- **Corrigé — l'arrêt du serveur plantait sur un adaptateur de sauvegarde qui échoue en direct, et n'attendait pas une sauvegarde déjà en cours.**
+- **Corrigé — deux sauvegardes rapprochées d'une même partie pouvaient s'écrire dans le désordre, une partie supprimée être ressuscitée par une sauvegarde tardive, et une partie recréée sous le même identifiant être effacée par la suppression de sa vie précédente.** Fix : opérations chaînées par identifiant, d'une vie à l'autre.
+- **Corrigé — une indisponibilité prolongée de Redis accumulait des fermetures en mémoire.**
+- **Corrigé — un identifiant de partie malformé pouvait désigner un fichier hors du dossier de sauvegarde, et un lien symbolique déposé dans ce dossier était suivi au chargement.** Fix : séparateurs, `..` et octet nul refusés, confinement vérifié ; seuls les fichiers réguliers sont chargés.
+- **Corrigé — le pont de persistance HTTP n'avait ni taille de réponse maximale ni délai global.** Fix : 10 Mio et 30 s par défaut, réglables ; le délai global borne aussi l'essai en cours.
+- **Corrigé — modifier la définition d'un schéma après sa déclaration changeait le format encodé.** Fix : copie profonde gelée, serveur et navigateur.
+- **Corrigé — un champ de schéma nommé `__proto__` était perdu en silence** (décodage décalé), y compris quand la définition arrivait par le réseau. Fix : définition refusée avec une erreur claire, le registre local reste inchangé.
+- **Corrigé — deux schémas différents (noms de champs ou `bits(...)`) pouvaient produire la même empreinte** et être jugés compatibles. Fix : empreinte calculée sur une sérialisation JSON non ambiguë, identique serveur et navigateur (la recette Ruby de la documentation est alignée).
+
+### Serveur temps réel (mjs-ws)
+
+- **Corrigé — la création de compte pouvait dupliquer un pseudo après une panne de chargement** (`account-load-failed` tant que le chargement n'a pas réussi), un échec d'écriture disque des comptes passait inaperçu (`account-persist-failed`), et `maxAccounts` pouvait être dépassé par deux créations simultanées.
+- **Corrigé — Redis : un mot de passe faisait échouer le démarrage, une AUTH refusée bloquait les commandes pour toujours, `rediss://` se connectait en clair, une reconnexion pouvait corrompre la réponse suivante, chaque abonnement laissait une entrée en attente.**
+- **Corrigé — un flux partagé entre plusieurs serveurs perdait une modification distante arrivée après une écriture locale.** Fix : même tampon de réordonnancement pour la production locale et la réception.
+- **Corrigé — un client déconnecté pendant l'autorisation d'un flux pouvait être réabonné après coup.**
+- **Corrigé — la présence multi-serveurs annonçait de faux départs et de fausses arrivées.** Fix : `join`/`leave` seulement aux transitions 0 ↔ 1 de la présence fusionnée (locale et distante).
+- **Corrigé — les messages entrants pouvaient s'empiler sans limite avant le contrôle de débit.** Fix : file plafonnée à 200 messages par connexion (chaque onglet a la sienne), puis débit. Plafond réglable par `limits.maxQueued` (`null` = illimité) ; `limits.maxPresencePerClient`, déjà documenté, est lui aussi accepté par `mjs.config.json` au lieu d'être refusé comme clé inconnue.
+- **Corrigé — `client.send()` contournait le mode binaire strict, `app.use()` d'un paquet asynchrone pouvait l'installer deux fois, et une table interne du codec gardait chaque client en mémoire.**
+- **Corrigé — une invitation, une annonce ou un retrait de salon restait accepté après expiration** jusqu'au ménage périodique.
+- **Corrigé — les identifiants de connexion se répétaient d'un serveur à l'autre.** Fix : préfixe d'instance en multi-serveurs (serveur unique inchangé).
+- **Ajouté — `maxPresencePerClient`** : plafond d'abonnements de présence par connexion (défaut = `maxRoomsPerClient` ; `0` refuse dès le premier).
+- **Corrigé — un nonce du pont signé pouvait être oublié avant la fin de validité de son horodatage.**
+- **Ajouté — mise au banc des clients qui abusent, active par défaut.** Un client expulsé revenait aussitôt, compteurs neufs. Désormais, 3 expulsions pour abus (débit, messages invalides, file pleine, trame trop lourde — jamais un silence ni un réseau lent) en 1 minute valent 5 minutes de refus, par compte et par IP. Réglable (`ban: { after, within, duration, by }`, `by` : `'account'`, `'ip'` ou `'both'`) ou désactivable (`ban: false`), aussi dans `mjs.config.json`. Une IP au banc est refusée dès l'arrivée (code 1008), un compte au hello (`µ:denied`) ; les connexions déjà ouvertes restent ; le refus est transmis aux autres processus. Nouveaux compteurs `connexions.refuseesBan` et `garde.misesAuBanc`.
+- **Ajouté — `limits.rateBy`** : le débit peut se compter par compte (tous les onglets ensemble), par IP, ou les deux. Défaut inchangé : chaque connexion a le sien.
+- **Ajouté — chat : option `duplicates`**, qui refuse le même message répété par la même personne dans le même salon (30 s par défaut, casse et espaces ignorés, code `chat-duplicate`). Désactivée par défaut.
+
+### Temps réel dans le navigateur
+
+- **Corrigé — une connexion terminée pour de bon pouvait se rouvrir en douce** au premier `send()`, `on()`, `request()` ou `stream()`. Fix : après un `close()`, un refus (`µ:denied`), un adieu (`µ:bye`), une session exclusive perdue (4003/4004), une adresse invalide, des essais épuisés ou une reconnexion désactivée, seul un `connect()` explicite rouvre.
+- **Corrigé — l'état d'un compte pouvait mentir** : accueil tardif du serveur, refus arrivé après le délai d'élévation, `logout()` pendant une élévation, refus d'une reconnexion automatique après une élévation réussie. Fix : l'identité d'origine est restaurée, `account.state` redescend à « non connecté » et `account.error` porte la raison.
+- **Corrigé — `sock.lobby()` ne rafraîchissait pas ses listes après une reconnexion ; un delta de flux reçu en binaire ne mettait pas le store à jour ; `µ.lockstep` gardait des clés disparues.**
+- **Optimisé — `µ.predict` applique chaque coup local sans rejouer toute la file.**
+
+### Navigation et routeur
+
+- **Corrigé — un lien ou un retour arrière vers une réponse qui n'est pas une page (204, corps vide, texte, PDF…) affichait cette réponse brute.** Fix : tri sur le type annoncé ; 204 ou corps vide = rien ne bouge, autre type = navigation native.
+- **Corrigé — une réponse `X-MJS-Method: none` laissait l'adresse modifiée ; le préchargement au survol pouvait resservir une page « ne pas mettre en cache » ; une transition de page et une transition de vue routée pouvaient s'imbriquer ; la recherche d'un élément permanent pouvait planter sur un arbre démesurément profond.**
+
+### Animations, modale, transitions, panneau de développement
+
+- **Corrigé — une modale dont la validation lève restait bloquée pour toujours ; une fonction de repli du fondu enchaîné qui lève bloquait la transition.**
+- **Corrigé — `µspring` : une valeur imbriquée qui changeait de forme se figeait en objet hybride.** `µ.easing.bezier()` appelé directement hors de [0, 1] rendait une courbe fausse.
+- **Corrigé — la « machine à écrire » effaçait les espaces de bord et n'animait qu'un segment d'un texte à plusieurs segments.**
+- **Corrigé — `µ.createAnimation` écrasait durée et easing de l'appelant et imposait le mode du premier élément aux suivants.**
+- **Corrigé — une variable d'état commençant par `_` était invisible dans le panneau de développement ; l'inspecteur affichait « Objet » au lieu du nom de classe (ou du type exact d'un tableau binaire) pour une valeur rangée dans un store.**
+- **Optimisé — transition de page : les éléments nommés sont recopiés au-dessus de la page plus vite** (styles calculés écrits en une fois par élément, 8 à 16 % de gain mesuré en Chromium, rendu identique) et repérés en un seul parcours.
+
+### Stores et réactivité
+
+- **Corrigé — un même objet rangé sous plusieurs clés (`µ.Store`, `µ.state`, état d'un composant) ne prévenait que les lecteurs de la clé utilisée pour le modifier.** Fix : toutes les clés d'accès sont prévenues, un seul rafraîchissement par composant.
+- **Corrigé — `µ.Store` : lire `.size` d'une Map ou d'un Set levait ; `fill()`/`copyWithin()` ne prévenaient pas l'écran ; `.set(...).set(...)` échappait à la réactivité ; détruire un composant pouvait couper les mises à jour de liste d'un autre.**
+- **Corrigé — les tableaux binaires (`TypedArray`, `DataView`, `ArrayBuffer`) plantaient dans un store** (lecture de `length`, appels de méthodes). Fix : utilisables dans `µ.Store` et `µ.state` ; les méthodes qui les modifient préviennent les lecteurs.
+- **Corrigé — `µ.state` : muter l'objet rendu par `map.get(k)` n'était pas réactif ; une donnée nommée `toString`/`constructor` faisait planter l'affichage.**
+- **Corrigé (sécurité) — lire `__proto__` à travers un store ou un état réactif exposait `Object.prototype`, modifiable pour toute la page** ; `state.__proto__ = x` remplaçait le prototype sans avertissement. Les clés héritées `__proto__`, `constructor` et `prototype` rendent désormais `undefined` à travers un objet réactif.
+- **Corrigé — état d'un composant** : un enfant lié en two-way qui modifie une propriété profonde ne redessinait pas le parent ; deux `.once` de types différents sur le même élément se désarmaient ; un objet lu via `Map.get()` n'était pas réactif ; une affectation réactive utilisée comme valeur rendait `true` au lieu de la valeur ; `$n++` sur une chaîne concaténait ; `$[k] = v` écrivait une variable nommée « k ».
+- **Corrigé — un `µeffect` qui lit une clé du store (`$$x`) ne repartait pas quand elle changeait** dès qu'il lisait aussi un `$x` local (la clé n'entrait jamais dans ses dépendances) ; seul, il repartait à chaque mutation, y compris les siennes — `$$n += 1 if $$actif` bouclait jusqu'au garde-fou. Fix : un `$$x` lu dans le corps, dans une fonction du `<script>` ou dans une méthode appelée est une dépendance ; une clé que l'effet écrit lui-même n'en est jamais une.
+- **Corrigé — une prop typée que le composant reflète en attribut perdait son type** : `value={18}` reflété `value="18"` était relu en texte « 18 » par l'observateur d'attributs du composant. Fix : un attribut qui n'est que le reflet texte de la valeur courante ne la remplace plus ; un attribut vraiment changé se relit comme avant.
+- **Ajouté — `µminmax` sur une propriété** : `µminmax($x.volume, 0, 10)` borne une propriété d'un objet réactif (chemin fixe : `$x.son.volume`, `$x['cle']`, `$x.pistes[0].volume`). Toute écriture faite par le composant est bornée sur place — bouton, clé calculée, fonction qui reçoit l'objet, remplacement entier, champ lié — ainsi que celle d'un enfant lié en deux sens (`=!{}`) ; un enfant en liaison simple ne l'est pas. Un composant sans règle ne paie rien. Un chemin avec appel, index calculé ou espace reste refusé, avec un message clair. `µminmax`/`µinspect` sur un store (`$$x`) sont refusés à la compilation, avec un message clair : ils ne faisaient rien, en silence.
+
+### Listes et blocs
+
+- **Corrigé — une liste `{for … by clé}` pouvait faire passer ce qui était tapé dans une ligne supprimée à une nouvelle ligne de clé différente.** Fix : une ligne recyclée voit ses champs remis aux valeurs du gabarit (sans toucher au reste de la page) ; un sous-arbre à état opaque (composant enfant, média, `<details>`, zone éditable) n'est jamais recyclé.
+- **Corrigé — dans une liste, un attribut booléen écrit tel quel (`checked`, `disabled`…) était réappliqué à chaque mise à jour** : une case décochée par l'utilisateur se recochait, un radio extérieur du même groupe se décochait.
+- **Corrigé — un nettoyage `@attach` qui lève laissait un nœud fantôme ; `µ.play()` pouvait ne jamais se terminer ; l'infobulle `@title` au doigt s'ouvrait hors du composant ; sortir du cache une page très profonde pouvait sauter des nettoyages.**
+- **Corrigé — sous happy-dom (l'outil de test), un `{for}` posé dans le contenu projeté d'un composant ne gardait que sa première ligne** quand l'insertion réveillait le rendu d'une autre liste (`slotchange` y est synchrone) : le fragment partagé passait d'une liste à l'autre. Fix : fragment pris en exclusivité le temps de l'insertion.
+- **Changé — `µminmax` avertit une fois par composant et par variable.**
+
+### Modules cœur et outil de test
+
+- **Corrigé — `<@select>` gardait l'ancien libellé d'une option modifiée ; un `<@radio>` hors formulaire pouvait décocher un radio d'un autre formulaire ; `<@field>` suit le `name` du champ enveloppé.**
+- **Corrigé — `<@select>` alimenté par un `{for}` : la valeur remontait en texte (« 18 » pour `value={18}`), une valeur vide cochait toutes les options sans valeur, deux options de même valeur s'affichaient ensemble en choix simple.** Fix : la valeur garde son type, `null` ne choisit rien, un seul libellé en choix simple. Le libellé d'une valeur posée avant l'arrivée des options s'affiche dès qu'elles arrivent.
+- **Changé — une `<@option>` sans `value` prend son libellé pour valeur**, comme une `<option>` native.
+- **Corrigé — l'outil de test public perdait `key`/`code`/`detail` sur `fire()`, et `click()` ne cochait pas une case comme un navigateur.**
+
+### Compilateur
+
+- **Corrigé — un `{end}`, `{else}`, `{elsif}`, `{success}` ou `{error}` en trop effaçait tout le contenu qui suivait**, une fermante mal appariée passait sans diagnostic, `{{value}` compilait un contenu tronqué.
+- **Corrigé — dans un bloc `{await}`, huit liaisons restaient inertes sans message** (`value=!{…}` vers un composant, `{...spread}`, `currentTime`, `clientWidth`, `@this`, `@attach`, `@emit`…) ; `@emit` y est émis une seule fois.
+- **Corrigé — de nombreuses réécritures agissaient aussi dans les chaînes, gabarits et commentaires** : un exemple de code cité (directive, `µ$x = 5`, `µasset(...)`, `§nom = …`, marqueur interne, `</script>`, `<@img>`…) pouvait être appliqué, disparaître ou casser la compilation. Fix : un masqueur commun ; les bornes des blocs `<script>`/`<style>` viennent d'une seule recherche fiable (une couleur `#123` ou un `url(https://…)` ne la trompent plus).
+- **Corrigé — un `$nom` cité dans le texte d'un `<pre>` ou d'un `<code>` (exemple de documentation) devenait une variable d'état fantôme, et un nom réservé (`$__proto__`) y faisait échouer la compilation.** Une interpolation `{$nom}` écrite dans ces balises reste un vrai lien, suivi comme ailleurs.
+- **Corrigé — un gestionnaire d'événement sur plusieurs lignes pouvait fusionner deux instructions** (`y = 1` puis `z = 2` devenait `1(z = 2)`).
+- **Corrigé — un attribut interpolé avec un objet imbriqué ou un `}` dans une chaîne faisait échouer la compilation ; une accolade jamais refermée fait de nouveau un texte littéral ; un rappel de transition gardait mal les espaces d'une chaîne et un commentaire `//` pouvait avaler la suite ; les antislashs d'une expression étaient doublés dans un attribut mixte.**
+- **Corrigé — `µinspect(...)`/`µminmax(...)` sur autre chose qu'une variable (appel, index calculé, gabarit collé ; chemin pour `µminmax`) produisaient un code faux sans erreur.** Fix : erreur de compilation claire ; un commentaire qui cite la forme reste permis.
+- **Ajouté — `µinspect($x.chemin)` : suit `$x` entier mais n'affiche que ce chemin** (`$x.a.b`, `$x.items[0]`, `$x['cle']`), dans le gabarit comme dans le `<script>` ; changement affiché seulement quand la valeur au chemin change vraiment. L'affichage de `µinspect` quitte le cœur : il n'est chargé qu'avec `µinspect`.
+- **Changé — réaffecter un nom déclaré avec `:=` (constante Civet) refuse de compiler**, où que ce soit (bloc, boucle, fonction imbriquée, `++`/`+=`, déstructuration ; `<script>`, `<script module>`, module `.civet`, fichier serveur, manifeste externe), avec un message qui nomme le nom, la ligne et la solution (`.=`) — au lieu d'un build vert suivi d'un plantage au chargement. Un homonyme local (paramètre de fonction ou de méthode, variable de `catch` ou de boucle, redéclaration) n'est jamais visé.
+- **Corrigé — la réaffectation d'une constante depuis un gestionnaire d'événement est jugée par résolution de portée, comme partout ailleurs** : un gestionnaire qui déclare sa propre liaison homonyme (`@click={() => { let compteur = 1; compteur = 5 }}`, ou un paramètre du même nom) n'est plus refusé à tort ; et la constante d'un `<script module>` réaffectée depuis un gestionnaire — qui compilait puis levait « Assignment to constant variable » au premier clic — est refusée au build.
+- **Corrigé — `x=5` (sans espace) était refusé à tort ; une déstructuration (sur une ou plusieurs lignes) suivie d'une réaffectation faisait échouer le build.**
+- **Corrigé — un composant équilibré pouvait être rejeté pour « déséquilibre structurel »** (fermeture citée dans un attribut ou une interpolation).
+- **Corrigé — une entité HTML numérique hors plage faisait planter la compilation ; un `}` dans une chaîne pouvait inverser un booléen ; `<script lang = "js">` compilait en Civet ; un `<script>` mis en commentaire devenait le vrai script ; CSS : espace insécable ou échappée mal gérées.**
+- **Changé — `attr="{expr}"` (expression seule entre guillemets) suit la même règle que `attr={expr}`** : `false`, `null` et `undefined` retirent l'attribut.
+- **Retiré — la forme `@flip{cond}`, jamais acceptée par l'analyseur** (code mort).
+- **Corrigé — un nom du gabarit (`{for}` ou son index, `{const}`, `{await}`, `{success}`…) qui recouvre un nom du `<script>` faisait perdre en silence l'écriture d'un gestionnaire d'événement** : l'affectation partait dans une copie locale, la variable du `<script>` ne bougeait pas, aucune erreur. Fix : les noms du gabarit sont calculés par gestionnaire, à l'endroit exact où il est écrit, chaque branche d'un `{if}` ou d'un `{await}` gardant son propre ensemble ; sans homonyme, le code produit est inchangé (1 184 composants réels : sortie identique).
+- **Corrigé — un gestionnaire ou une liaison deux sens ne voyait ni les `{const}` de son bloc ni la valeur de sa branche `{await}` (`{success v}`, `{error e}`)** : « … is not defined » au clic ; une boucle sur la valeur chargée (`{success items}{for x in items}<button @click=…>`) plantait de même ; `value=!{fiche.nom}` dans `{success fiche}` — comme une liaison média, `@group`, vers un composant ou `{...v}` — faisait tomber tout le composant ; et un homonyme du `<script>` pouvait être lu à la place, sans erreur. Fix : ces noms sont recréés en tête du gestionnaire, dans l'ordre du gabarit ; un `{const}` de branche `{await}` est déclaré avant les éléments qui le lisent (il y levait aussi « … is not defined » à l'affichage). Un cas réel réparé : les boutons de durée d'une appli en production ne faisaient rien au clic.
+- **Changé — réaffecter dans un gestionnaire (ou par une liaison deux sens, `value=!{item}`) une variable ou un index de boucle, un `{const}` ou la valeur d'une branche `{await}` refuse de compiler** : le gestionnaire n'en a qu'une copie, l'écriture était perdue sans un mot (et un `{const}` homonyme d'une constante `:=` contournait le refus des constantes). Le message dit quoi écrire à la place : dans la liste (`$liste[index] = …`, `value=!{$liste[index]}`), dans une propriété (`item.champ = …`) ou dans un état.
+- **Corrigé — `@group=!{…}` écrasait une variable de boucle ou une valeur `{await}` nommée `v` ou `arr`** (noms de travail internes, désormais réservés).
+- **Corrigé — un `var` homonyme d'une constante, déclaré dans un bloc `static { }` de classe, était refusé à tort.**
+
+### Assembleur (bundler)
+
+- **Corrigé — un build ignorait `varPrefix` et `defaultTheme`, et `lint.ujsForm: false` ne coupait pas l'avertissement.**
+- **Corrigé — le cache de hachage des dépendances se fiait à la seule date de modification.** Fix : un fichier modifié pendant le tour de compilation n'est jamais servi depuis le cache (sans perdre le cache juste après une édition).
+- **Corrigé — une image citée en exemple dans un `<script>`, un `<style>` ou un commentaire était traitée comme une vraie image ; une largeur démesurée donnait un message technique de sharp.**
+- **Corrigé — une session `mjs dev` longue accumulait en mémoire les fichiers renommés ou supprimés.**
+- **Optimisé — tri des fichiers à émettre en temps quasi linéaire (sans limite de profondeur), liste du dossier de sortie gardée en cache, une seule analyse par module pour les animations, contrôle du cœur en une passe.**
+
+### Rendu serveur
+
+- **Corrigé — `renderToString()` ignorait `light`, `bundlerOpts`, `manifestPath`, `forwardedUrl` et `forwardedCookie`.**
+- **Corrigé — un `.js` étranger au dossier de sortie pouvait faire échouer le rendu ; deux fichiers pouvaient produire le même identifiant interne ; les réécritures `import`/`export` pouvaient prendre une chaîne pour du code** (analyse par un vrai parseur).
+- **Corrigé — le CSS de thème du rendu serveur ignorait le thème demandé et pouvait rester vide sur un manifeste minifié ; la détection du mode CSP strict de la visionneuse échouait aussi sur un manifeste minifié.**
+- **Corrigé — `:host-context(.x)` en mode léger ne couvrait que l'ancêtre, jamais l'élément lui-même** (serveur et navigateur à l'identique).
+- **Corrigé — un moteur de prérendu pouvait fuir ; une URL de renvoi invalide faisait perdre un emplacement du pool navigateur (et est désormais signalée) ; une création d'emplacement en échec bloquait les requêtes en attente.**
+- **Corrigé — en `mjs dev` (moteur navigateur), une rafale de recompilations pouvait faire échouer une requête en vol, et une requête en file d'attente à l'arrêt d'un moteur était rejetée.** Fix : l'arrêt attend aussi les emplacements en cours de démarrage et sert les requêtes déjà acceptées ; aucune requête nouvelle après l'arrêt. Le démarrage et la fermeture du navigateur sont bornés (deux fois `renderTimeoutMs`, soit 30 s par défaut) : un Chromium qui ne répond plus ne bloque plus rien. La fermeture ne descend jamais sous 10 s : un rendu réglé très bas ne coupe plus court un Chromium en train de se refermer.
+- **Optimisé — tri des routes mémorisé par configuration.**
+- **Corrigé — la fermeture du moteur de rendu pouvait rester pendante à vie quand le navigateur n'arrivait jamais, quand le réservoir de travailleurs partagé ne se terminait pas, ou quand la fermeture de rattrapage d'un emplacement de rendu en échec ne se réglait pas.** Fix : ces attentes passent par la même borne (deux fois `render.browserPool.renderTimeoutMs`, jamais moins de 10 s) que le reste de la fermeture, un navigateur qui arrive après l'abandon est refermé quand même, et chaque abandon est signalé par un avertissement au lieu de passer en silence — un seul par navigateur muet, qui en nomme la vraie cause.
+
+### Serveur HTTP, mode développement et ligne de commande
+
+- **Corrigé — un envoi interrompu déclenchait l'action ou l'atelier de thème avec des données partielles** (réponse 400, avant toute mutation), y compris en `mjs dev`.
+- **Corrigé — une valeur multipart contenant la frontière était tronquée ; une valeur de thème avec « ; » était mal réécrite ; un port occupé faisait planter `mjs serve` ; un fichier caché du dossier de sortie restait lisible.**
+- **Corrigé — `mjs dev` servait en rendu serveur la version d'avant la dernière modification.** Fix : moteur renouvelé à chaque recompilation, sans couper une page en cours de rendu.
+- **Corrigé — `mjs ws` / `mjs serveur --root <relatif>` cherchaient leur entrée au mauvais endroit ; `mjs dev`/`serve` ignoraient `--output`/`--manifest` pour le rendu ; arrêter un serveur pendant un rechargement pouvait le voir redémarrer.**
+- **Corrigé — le navigateur de `mjs dev` se rechargeait avant la fin du prérendu, et deux prérendus pouvaient se chevaucher.**
+- **Corrigé — arrêter `mjs dev` (Ctrl+C) coupait net une réponse en cours d'envoi — y compris un rendu serveur, le navigateur étant fermé sous lui dès qu'il avait servi une page —, et pouvait rester bloqué si une fermeture interne ne finissait jamais.** Fix : le serveur finit ses envois en cours puis sort ; l'arrêt est borné à 20 s. Un 2ᵉ Ctrl+C plus d'une seconde après le premier coupe tout de suite (le terminal le rappelle quand l'arrêt dure) ; dans la même seconde, il est ignoré — c'est souvent le même Ctrl+C relayé une 2ᵉ fois par `npm run` ou `tsx`.
+- **Corrigé — lancés depuis les sources (tsx), `mjs serve`, `mjs ws` et `mjs serveur` sortaient en 130 dès le Ctrl+C, coupant les requêtes en vol sans rien refermer.** Fix : les écouteurs de signal restent posés jusqu'à la fin de la fermeture ; même arrêt ordonné et borné (20 s) que `mjs dev`, même 2ᵉ Ctrl+C pour forcer.
+- **Corrigé — plusieurs langues prérendues : chaque requête recompilait au lieu de servir la page figée ; les données chargées côté serveur (`µres`) manquaient au premier affichage.**
+- **Amélioré — l'atelier de thème remet les couleurs d'aperçu à la fermeture ; la visionneuse d'erreurs distingue « aucune erreur » de « chargement impossible ».**
+
+### Outillage et éditeurs
+
+- **Corrigé — un build tué (mémoire, Ctrl+C, signal) était rapporté comme un succès par le lanceur `mjs`, et l'arrêter laissait le compilateur tourner.**
+- **Changé — la CI construit et vérifie le paquet, plafonne la mémoire des tests, annule les exécutions obsolètes et lance les tests navigateur, seulement quand les tests de base passent ; `npm run lint` couvre le code livré au navigateur, sans erreur.**
+- **Ajouté — `modularjs-framework/package.json` est exporté.**
+- **Corrigé — `publier.sh` affiche la taille avec un point décimal quelle que soit la langue du poste ; les scripts de migration fr→en refusent un second lancement simultané.**
+- **Corrigé — l'heuristique Linguist proposée pour `.mjs` prenait du JavaScript ordinaire pour du ModularJS ; les échantillons et leur commande de rafraîchissement sont alignés sur les vrais composants.**
+
 ## [2.4.5] — 2026-09-23
 
 - **Corrigé — l'atelier de thème laissait passer une adresse réseau nichée dans une fonction couleur.** Le crible de valeur (`THEME_VALUE_RE`) bloquait un `url(...)` en TÊTE, mais la classe de caractères qu'il autorise admet déjà lettres et parenthèses — pour composer légitimement `color-mix(...)`, `var(...)` — donc n'importe quel nom de fonction s'y niche aussi : `var(--x,url(//evil/a))`, `color-mix(in srgb, url(//evil/a) 50%, red)` passaient intacts. Sur `/write`, la valeur part dans le fichier SOURCE du projet, exécutée ensuite chez chaque visiteur de production — la faille touchait `modularjs-framework@2.4.4`, en ligne. Fix : second crible `THEME_VALUE_FORBIDDEN_RE` (insensible à la casse) passé sur la valeur ENTIÈRE, factorisé dans `isTrustedThemeValue()`, appliqué aux deux routes (`/write` ET `/edit` — l'aperçu en direct avait le même trou, diffusé aux fenêtres de développement ouvertes plutôt qu'écrit au disque).

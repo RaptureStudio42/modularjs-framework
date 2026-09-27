@@ -175,6 +175,7 @@ Options:
   'cli.banniere-multi-processus-redis': ({ redis, prefixe }: MsgVars) => `multi-processus : ${redis} (préfixe ${prefixe})`,
   'cli.banniere-multi-processus-custom': ({ prefixe }: MsgVars) => `multi-processus : adaptateur personnalisé fourni (préfixe ${prefixe})`,
   'cli.ctrl-c-arreter': 'Ctrl-C pour arrêter',
+  'cli.arret-forcer-indice': '[mjs] arrêt en cours — Ctrl+C à nouveau pour couper tout de suite',
   'cli.ws.erreur-compilation-civet': ({ entryPath, erreur }: MsgVars) => `[mjs ws] erreur de compilation Civet dans '${entryPath}' : ${erreur}`,
   'cli.ws.entry-markup-composant': ({ entryPath, indice }: MsgVars) => `[mjs ws] '${entryPath}' contient du markup de composant (${indice}) — un fichier serveur '*.server.mjs' n'est pas un composant .mjs : pas de <template>/<style>/HTML, seulement du Civet/JS ('export default { setup(app) { … } }').`,
   'cli.ws.erreur-compilation': ({ entryPath, erreur }: MsgVars) => `[mjs ws] erreur de compilation dans '${entryPath}' : ${erreur}`,
@@ -272,6 +273,9 @@ Options:
   'bundler.config.entier-ou-false-invalide': ({ cle, valeur, type }: MsgVars) => `[mjs.config.json] ${cle} doit être un entier > 0 (ms) ou false, reçu : ${valeur} (${type})`,
   'bundler.config.token-doit-etre-objet': ({ cle, valeur, type, chemin }: MsgVars) => `[mjs.config.json] '${cle}' doit être un objet { sweep?, slack? }, reçu : ${valeur} (${type}) (${chemin})`,
   'bundler.config.entier-positif-invalide': ({ cle, valeur, type }: MsgVars) => `[mjs.config.json] ${cle} doit être un entier > 0, reçu : ${valeur} (${type})`,
+  'bundler.config.rate-by-invalide': ({ cle, valeur, hint, valides }: MsgVars) => `[mjs.config.json] ${cle} invalide : ${valeur}${hint}\n  Valeurs valides : ${valides}`,
+  'bundler.config.ban-doit-etre': ({ cle, valeur, type }: MsgVars) => `[mjs.config.json] ${cle} doit être true, false ou un objet { after?, within?, duration?, by? }, reçu : ${valeur} (${type})`,
+  'bundler.config.ban-by-invalide': ({ cle, valeur, hint, valides }: MsgVars) => `[mjs.config.json] ${cle} invalide : ${valeur}${hint}\n  Valeurs valides : ${valides}`,
   'bundler.config.resume-doit-etre-objet': ({ cle, valeur, type, chemin }: MsgVars) => `[mjs.config.json] ${cle} doit être true, false ou un objet { grace?, maxBuffered?, maxBytes? }, reçu : ${valeur} (${type}) (${chemin})`,
   'bundler.config.bridge-doit-etre-objet': ({ cle, chemin }: MsgVars) => `[mjs.config.json] '${cle}' doit être un objet { port?, host?, secret?, webhooks?, rateLimit?, nonce? } (${chemin})`,
   'bundler.config.webhooks-doit-etre-objet': ({ cle, chemin }: MsgVars) => `[mjs.config.json] ${cle} doit être un objet { url, secret?, events, timeoutMs? } (${chemin})`,
@@ -374,12 +378,15 @@ Options:
   'bundler.index.erreur-fichier-detail': ({ fichier, detail }: MsgVars) => `[bundler] ${fichier} : ${detail}`,
   'bundler.index.singleton-import-module-ligne': ({ fichier, ligne }: MsgVars) => `[ModularJS] ${fichier} : « ${ligne} » — un singleton réactif exporté (µ$$, anciennement §§) est un mécanisme de COMPOSANT (.mjs), pas de module autonome (.civet/.coffee) — remplace par \`@import nom 'chemin'\` (valeur simple, non réactive).`,
   'bundler.index.singleton-import-module-dollar': ({ fichier, noms }: MsgVars) => `[ModularJS] ${fichier} : @import d'un singleton réactif (« ${noms} ») — réservé aux composants .mjs, pas à un module autonome (.civet/.coffee) — remplace par \`@import nom 'chemin'\` (valeur simple, non réactive).`,
+  'bundler.index.civet-reaffectation-constante': ({ fichier, nom, ligne }: MsgVars) => `[bundler] ${fichier} : réaffectation de '${nom}' (ligne ${ligne}) refusée — déclaré avec ':=' (constante) : utilise '.=' pour pouvoir le réaffecter.`,
   'bundler.index.css-sass-erreurs': ({ erreurs }: MsgVars) => `[bundler] erreur(s) de compilation CSS/SASS dans stylesheetsDir :\n${erreurs}`,
   // vocabulaire des thèmes — `@css nom` désigne une FEUILLE PARTAGÉE de stylesheetsDir ;
   // le mot « thème » est désormais pris par le vrai bloc <theme>, il ne doit plus servir ici
   'bundler.index.feuille-partagee-manquante': ({ themes, dossier }: MsgVars) => `[bundler] @css : feuille(s) partagée(s) introuvable(s) dans ${dossier} : ${themes} (aucun fichier .sass/.scss/.css correspondant). Vérifie le nom, ou ajoute le fichier manquant.`,
   'bundler.index.precache-echec': ({ raison }: MsgVars) => `[bundler] mjs-precache.json n'a pas pu être écrit : ${raison}. Le build reste valide — seule la liste de pré-cache manque.`,
   'bundler.index.image-sharp-absent': `[bundler] µimage : 'sharp' n'est pas installé — les images passent telles quelles, sans variantes de largeur. Les dimensions natives, elles, sont bien écrites (pas de saut de mise en page). Pour produire les variantes : npm i -D sharp`,
+  'bundler.index.img-largeur-infinie': ({ chemin, valeur }: MsgVars) => `[bundler] µimage('${chemin}') : largeur invalide (${valeur}) — attendu un nombre fini et positif.`,
+  'bundler.index.img-variante-echec': ({ chemin, erreur }: MsgVars) => `[bundler] µimage('${chemin}') : échec de génération d'une variante — ${erreur}`,
   'bundler.index.img-src-introuvable': ({ chemin, extrait }: MsgVars) => `[bundler] <@img src="${chemin}"> : fichier introuvable dans sourceDir — ${extrait}`,
   'bundler.index.img-widths-invalide': ({ valeur, extrait }: MsgVars) => `[bundler] <@img widths="${valeur}"> : largeurs invalides — des entiers ≥ 1 séparés par des espaces ou des virgules — ${extrait}`,
   'bundler.index.img-attribut-duplique': ({ attribut, extrait }: MsgVars) => `[bundler] <@img> : l'attribut « ${attribut} » est écrit deux fois — garde-en un seul — ${extrait}`,
@@ -555,6 +562,19 @@ Extrait incriminé : ${extrait}
 👉 Supprimez cette fermante en trop, ou ajoutez la balise ouvrante manquante.
 
 `,
+  // symétrique de balise-fermante-orpheline, pour un JETON DE FLUX ({end}, {else}, {elsif …},
+  // {success …}, {error …}) en trop à la racine, plutôt qu'une balise HTML — même risque
+  // (contenu suivant perdu en silence).
+  'parser.jeton-flux-orphelin': ({ jeton, ligne }: MsgVars) => `
+
+🚨 [JETON ORPHELIN] \`${jeton}\` ligne ${ligne} : aucun bloc ouvrant ({if}/{for}/{await}/{key}) à refermer.
+   Sans erreur, tout le template qui suit ce jeton serait ignoré en silence.
+👉 Supprimez ce ${jeton} en trop, ou ajoutez le bloc ouvrant manquant.
+
+`,
+  // même jeton en toute fin de gabarit : rien n'est perdu, avertissement seulement (souvent un
+  // bloc refermé deux fois)
+  'parser.jeton-flux-orphelin-fin': ({ jeton, ligne }: MsgVars) => `[ModularJS] ⚠️  \`${jeton}\` ligne ${ligne} : aucun bloc ouvrant ({if}/{for}/{await}/{key}) à refermer — jeton en trop en fin de gabarit, sans effet. Vérifiez l'imbrication de vos blocs.`,
   'parser.view-auto-fermeture-interdite': ({ nom, ligne }: MsgVars) => `🚨 [parser] <@view${nom ? ' ' + nom : ''}/> (ligne ${ligne}) : auto-fermeture interdite — <@view> reçoit son contenu du routeur à l'exécution, écris <@view${nom ? ' ' + nom : ''}></@view>.`,
   // Bloc de slot <@fill nom>…</@fill> (nom tenu par FILL_DIRECTIVE) : les 6 messages
   // suivants prennent tous `directive` (jamais « fill » en dur) et la `ligne` du nœud fautif.
@@ -566,6 +586,21 @@ Extrait incriminé : ${extrait}
   'parser.fill-texte-nu': ({ directive, nom, ligne }: MsgVars) => `🚨 [parser] texte nu dans <@${directive} ${nom}> (ligne ${ligne}) : un texte ne peut pas viser un slot nommé — enveloppe-le dans un élément (ex. <span slot="${nom}">…</span>).`,
   'parser.fill-slot-deja-pose': ({ directive, nom, tag, ligne }: MsgVars) => `🚨 [parser] <${tag} slot="…"> (ligne ${ligne}) : cet enfant de <@${directive} ${nom}> porte déjà son propre slot= — retire l'un des deux.`,
   'parser.fill-imbrique': ({ directive, ligne }: MsgVars) => `🚨 [parser] <@${directive}> imbriqué (ligne ${ligne}) : un bloc <@${directive}> ne peut pas en contenir un autre — sépare-les en enfants directs du composant appelé.`,
+  // Balise fermante qui NE CORRESPOND PAS à la balise ouverte la plus récente — AVERTISSEMENT
+  // seul (pas d'erreur, pour ne casser aucun site existant) : respecte les fermetures implicites
+  // légitimes du HTML (cf. IMPLICIT_CLOSE_TAGS, parser/index.ts), sinon la balise attendue est
+  // vraiment restée ouverte à tort.
+  'parser.fermeture-mal-appariee': ({ attendu, trouve, ligneOuverture, ligneFermeture }: MsgVars) => `[ModularJS] ⚠️  <${attendu}> ouverte ligne ${ligneOuverture} n'est pas refermée par </${attendu}> : </${trouve}> rencontrée ligne ${ligneFermeture} à la place. Vérifiez l'imbrication des balises.`,
+  // `{{expr}}` (HTML brut, docs/07-bindings.md) exige DEUX accolades fermantes. Une seule
+  // (`{{value}`) n'est PAS une forme documentée : ERREUR plutôt qu'un HTML brut tronqué accepté
+  // en silence.
+  'parser.html-brut-mal-ferme': ({ ligne }: MsgVars) => `
+
+🚨 [DOUBLE ACCOLADE INCOMPLÈTE] \`{{…}\` ligne ${ligne} : une seule accolade fermante trouvée.
+   L'interpolation HTML brut \`{{ expr }}\` exige DEUX accolades fermantes.
+👉 Ajoutez l'accolade manquante (\`{{expr}}\`), ou si un \`{\` littéral était voulu, écrivez \`&#123;\`.
+
+`,
 
   // — src/generator/compile.ts —
   'generator.await-imbrique-non-supporte': `Await imbriqué non supporté`,
@@ -725,6 +760,11 @@ Extrait incriminé : ${extrait}
   'transpiler.import-dynamique-interdit': ({ section }: MsgVars) => `[ModularJS] import('…') d'un chemin littéral interdit dans ${section} — fichier connu au build : « @import nom 'chemin' » (bundle principal) ou « await µimport('chemin.js') » (chargement paresseux, empreinte résolue au build) ; URL calculée à l'exécution : import(variable) est autorisé tel quel.`,
   'transpiler.rune-import-litteral-requis': ({ section }: MsgVars) => `[ModularJS] µimport exige un chemin littéral dans ${section} (fichier connu au build, empreinte résolue pour toi) — pour une URL calculée à l'exécution, écris import(variable) directement.`,
   'transpiler.rune-import-extension-js': ({ chemin, section }: MsgVars) => `[ModularJS] µimport ne charge que des modules ES « .js » — chemin reçu dans ${section} : ${chemin}.`,
+  // µinspect suit une variable ou un CHEMIN FIXE (`$x.a.b`) ; µminmax vise une VARIABLE
+  // entière, jamais un chemin — un appel ou un index calculé n'a de sens pour aucun des deux
+  'transpiler.rune-inspect-chemin': ({ nom, chemin }: MsgVars) => `[ModularJS] µinspect suit une variable ou un chemin fixe ($x.a.b) : un appel ou un index calculé n'est pas accepté (reçu « $${nom}${chemin} »).`,
+  'transpiler.rune-minmax-chemin': ({ nom, chemin }: MsgVars) => `[ModularJS] µminmax borne une variable ou un chemin fixe ($x.volume, $x.son.volume, $x['cle']) : un appel, un index calculé ou un espace n'est pas accepté (reçu « $${nom}${chemin} »).`,
+  'transpiler.rune-store': ({ rune, nom }: MsgVars) => `[ModularJS] µ${rune} s'applique à l'état d'un composant ($x), pas à un store : « $$${nom} » n'est pas accepté. Pour un store, borne ou affiche la valeur là où elle est écrite.`,
   'transpiler.rune-toggle-cible': ({ section, recu }: MsgVars) => `[ModularJS] µtoggle attend un chemin assignable en premier argument dans ${section} (« $x », « $$x », « §x », « µtheme », « @prop », un nom de variable, éventuellement suivi de « .clé » ou « [0] »), reçu « ${recu} » — c'est lui qui est réaffecté : ni appel, ni « ++ », ni index calculé, car la bascule le relit une fois par test.`,
   'transpiler.rune-toggle-valeur': ({ section, recu }: MsgVars) => `[ModularJS] µtoggle n'accepte que des valeurs littérales dans ${section} (chaîne, nombre, true/false, null), reçu « ${recu} » — une expression serait évaluée deux fois par la bascule.`,
   'transpiler.rune-toggle-doublon': ({ section, recu }: MsgVars) => `[ModularJS] µtoggle : la valeur ${recu} apparaît deux fois dans le cycle (${section}) — le cycle s'y arrêterait pour de bon.`,
@@ -733,6 +773,14 @@ Extrait incriminé : ${extrait}
   'transpiler.rune-toggle-appel': ({ section }: MsgVars) => `[ModularJS] µtoggle s'écrit toujours en appel parenthésé dans ${section} : « µtoggle($x, 'a', 'b') » — jamais nu ni sans parenthèses.`,
   'transpiler.handler-var-jamais-declaree': ({ moduleName, nom }: MsgVars) => `[ModularJS] '${moduleName}.mjs' : dans un gestionnaire d'événement, « ${nom} » se relit dans sa propre déclaration — ce nom n'existe nulle part (ni <script>, ni <script module>, ni variable de boucle). Il serait recréé à chaque appel et lèverait « Cannot access '${nom}' before initialization » au premier clic. Déclare-le en tête de ton <script> (« ${nom} = … »), ou écris « $${nom} » si tu veux un état réactif.`,
   'transpiler.handler-const-reaffectee': ({ moduleName, nom }: MsgVars) => `[ModularJS] '${moduleName}.mjs' : un gestionnaire d'événement réaffecte « ${nom} », déclaré CONSTANT dans le <script> (« ${nom} := … »). JavaScript lèverait « Assignment to constant variable » au premier clic. Déclare-le avec « = » si tu veux pouvoir le changer, ou écris « $${nom} » pour un état réactif.`,
+  'transpiler.handler-local-gabarit-reaffecte': ({ moduleName, nom }: MsgVars) => `[ModularJS] '${moduleName}.mjs' : un gestionnaire d'événement ou une liaison deux sens réaffecte « ${nom} », posé par le gabarit ({for}, {const} ou {success}/{error}). Il n'en a qu'une copie : l'écriture serait perdue sans un mot. Pour changer un élément de liste, écris dans la liste (« $liste[index] = … », ou « value=!{$liste[index]} » pour une liaison) ou modifie une de ses propriétés (« ${nom}.champ = … ») ; pour une valeur à garder, passe par un état (« $${nom} = … »).`,
+  'transpiler.handler-js-invalide': ({ moduleName, ligne, extrait }: MsgVars) => `[ModularJS] '${moduleName}.mjs' : les gestionnaires d'événement de ce composant compilent en JavaScript invalide — le fichier entier serait refusé au chargement (page morte) alors que le build était vert. Forme fautive la plus courante : un corps de flèche à accolades dont la SEULE instruction est un « if » (« @click={() => { if (…) { … } }} ») — Civet referme alors ce bloc sur une expression bancale. Écris le corps en Civet, indenté et sans accolades englobantes. Ligne ${ligne} produite : ${extrait}`,
+  // auto-déclaration scope-aware d'un <script> (ou d'un module .civet autonome) : `nom := …`
+  // lie une CONSTANTE Civet — la réaffecter nu (`nom = …`, `nom += …`) compilerait sans erreur
+  // puis planterait au chargement (« Assignment to constant variable »). `code` (optionnel) :
+  // la ligne citée vient du contrôle par résolution de portée (const-reassign.ts), sur le JS déjà
+  // compilé — jamais garanti identique à la ligne de la source Civet, le dire plutôt que mentir.
+  'transpiler.civet-reaffectation-constante': ({ nom, ligne, code }: MsgVars) => `[ModularJS] réaffectation de « ${nom} » (ligne ${ligne}${code ? ' du code compilé' : ''}) refusée — déclaré avec « := » (constante) : utilise « .= » pour pouvoir le réaffecter.`,
   // — src/generator/reserved-symbols.ts —
   'transpiler.symbole-reserve-declare': ({ moduleName, section, nom, extrait }: MsgVars) => `[ModularJS] '${moduleName}.mjs' (${section}) : « ${nom} » est un symbole du framework — $ (état), $$ (store), µ (runtime) — il ne peut pas servir de nom de variable, de paramètre ni d'import : « ${extrait} ». Renomme-le (par exemple « el » pour un élément du DOM).`,
   'transpiler.symbole-reserve-nu': ({ nom }: MsgVars) => `[ModularJS] « ${nom} » seul n'est pas un nom : c'est un symbole du framework (§ contexte figé, §§ contexte réactif) — il s'écrit toujours suivi d'un nom (« §theme », « §§count ») et ne peut pas servir de variable, de paramètre ni de valeur.`,
@@ -812,6 +860,7 @@ Extrait incriminé : ${extrait}
   'schema.bits-trop-de-noms': ({ schema, champ, nb }: MsgVars) => `[µschema] schéma '${schema}', champ '${champ}' : bits() accepte au plus 8 booléens dans son octet (reçu ${nb})`,
   'schema.bits-noms-double': ({ schema, champ }: MsgVars) => `[µschema] schéma '${schema}', champ '${champ}' : bits() — noms en double`,
   'schema.type-champ-invalide': ({ schema, champ }: MsgVars) => `[µschema] schéma '${schema}', champ '${champ}' : type de champ invalide (ni chaîne scalaire, ni list(), ni bits())`,
+  'schema.nom-champ-invalide': ({ schema, champ }: MsgVars) => `[µschema] schéma '${schema}' : nom de champ invalide '${champ}' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. '__proto__'`,
   'schema.forme-differente': ({ nom, ancien, nouveau }: MsgVars) => `[µschema] schéma '${nom}' déjà déclaré avec une forme différente — garde AJOUT-SEUL : un schéma existant est IMMUABLE (jamais de champ ajouté/retiré/retypé/réordonné). Déclare un schéma à un NOM neuf pour faire évoluer le protocole.
   ancien   : ${ancien}
   nouveau  : ${nouveau}`,
@@ -854,17 +903,21 @@ Extrait incriminé : ${extrait}
   'server.browser-erreurs-compilation': ({ errors }: MsgVars) => `[mjs-ssr-browser] erreurs de compilation :\n${errors}`,
   'server.browser-core-introuvable': '[mjs-ssr-browser] mjs_core introuvable après compilation',
   'server.browser-playwright-manquant': "[mjs-ssr-browser] le moteur navigateur requiert Playwright — installe-le : npm i -D playwright (ou configure render.engine.prerender / render.engine.request: 'happy-dom').",
-  'server.browser-ferme-pendant-creation': "[mjs-ssr-browser] renderer fermé pendant la création d'une page",
   'server.browser-deja-ferme': '[mjs-ssr-browser] renderer déjà fermé',
   'server.browser-forward-refuse-interne': ({ tag, host }: MsgVars) => `[mjs-ssr-browser] render.forwardOrigin refusé pour <${tag}> : cible réseau interne bloquée (${host}) — proxy désactivé.`,
+  'server.browser-forward-url-invalide': ({ tag }: MsgVars) => `[mjs-ssr-browser] render.forwardOrigin refusé pour <${tag}> : forwardedUrl invalide — proxy désactivé.`,
   'server.browser-prop-invalide': ({ keyJson }: MsgVars) => `[mjs-ssr-browser] nom de prop invalide ignoré : ${keyJson}`,
   'server.browser-composant-non-enregistre': ({ tag }: MsgVars) => `[mjs-ssr-browser] composant <${tag}> non enregistré (vérifiez le nom de fichier en kebab-case minuscule)`,
   'server.browser-non-stabilise': ({ tag, settleMs }: MsgVars) => `[mjs-ssr-browser] rendu de <${tag}> non stabilisé en ${settleMs}ms (scheduler occupé ou {await} encore pending) — HTML potentiellement incomplet, divergence possible à l'hydratation.`,
   'server.browser-erreur-page': ({ tag, err }: MsgVars) => `[mjs-ssr-browser] erreur non interceptée dans la page pour <${tag}> : ${err}`,
   'server.browser-erreur-non-geree': ({ tag }: MsgVars) => `[mjs-ssr-browser] erreur non gérée pendant le rendu de <${tag}> (crash intercepté par le framework sans frontière <@failed> pour l'absorber) — ce rendu est en échec.`,
   'server.browser-shadow-closed': ({ tag }: MsgVars) => `[mjs-ssr-browser] shadowMode:'closed' pour <${tag}> : le client ne peut PAS reprendre la main sur ce rendu (Shadow DOM closed non détectable/adoptable) — le composant échouera à s'hydrater. Utilisez shadowMode:'open' (défaut) si ce composant doit rester interactif côté client.`,
+  'server.browser-demarrage-trop-long': ({ ms }: MsgVars) => `[mjs-ssr-browser] le navigateur n'a pas démarré en ${ms}ms (lancement ou ouverture de page bloqués) — rendu abandonné (borne : deux fois render.browserPool.renderTimeoutMs).`,
+  'server.browser-fermeture-navigateur-trop-long': ({ ms }: MsgVars) => `[mjs-ssr-browser] la fermeture du navigateur n'a pas abouti en ${ms}ms (borne : deux fois render.browserPool.renderTimeoutMs, jamais moins de 10 s) — abandonnée, le processus Chromium reste à la charge de Playwright.`,
+  'server.browser-fermeture-contexte-trop-long': ({ ms }: MsgVars) => `[mjs-ssr-browser] la fermeture d'un contexte d'emplacement n'a pas abouti en ${ms}ms (borne : deux fois render.browserPool.renderTimeoutMs, jamais moins de 10 s) — abandonnée, ce contexte peut rester vivant dans Playwright.`,
+  'server.browser-fermeture-attente-navigateur-trop-long': ({ ms }: MsgVars) => `[mjs-ssr-browser] l'attente du navigateur n'a pas abouti en ${ms}ms (résolution du moteur ou lancement bloqués, borne : deux fois render.browserPool.renderTimeoutMs, jamais moins de 10 s) — abandonnée, le navigateur sera refermé s'il finit par arriver.`,
+  'server.browser-fermeture-bundler-trop-long': ({ ms }: MsgVars) => `[mjs-ssr-browser] la fermeture du bundler n'a pas abouti en ${ms}ms (borne : deux fois render.browserPool.renderTimeoutMs, jamais moins de 10 s) — abandonnée, le réservoir de travailleurs partagé peut retenir le processus vivant.`,
   'server.browser-render-timeout': ({ tag, renderTimeoutMs }: MsgVars) => `[mjs-ssr-browser] rendu de <${tag}> abandonné après ${renderTimeoutMs}ms (timeout de rendu — montage/fetch proxifié probablement bloqué).`,
-  'server.browser-ferme-pendant-attente': '[mjs-ssr-browser] renderer fermé pendant une attente de page',
   'server.browser-prerender-happydom-fallback': '[mjs] prérendu happy-dom : installe playwright pour le moteur navigateur (npm i -D playwright).',
   'server.browser-plusieurs-core': ({ files, first }: MsgVars) => `[mjs-ssr-browser] plusieurs mjs_core-*.js présents (${files}) — chargement déterministe de ${first}.`,
   'server.browser-popup-fermee': ({ tag }: MsgVars) => `[mjs-ssr-browser] popup fermée (window.open non suivi, jamais fermé par Playwright) pour <${tag}>`,
@@ -938,6 +991,7 @@ Extrait incriminé : ${extrait}
 
   // --- src/mjs-server/space.ts ---
   'serveur.space-cell-invalide': ({ received }: MsgVars) => `[MJS-Server] space.cell doit être un nombre > 0, reçu : ${received}`,
+  'serveur.space-query-invalide': ({ x, y, radius }: MsgVars) => `[MJS-Server] space.query(${x}, ${y}, ${radius}) : coordonnées/rayon non finis — résultat vide`,
 
   // --- src/mjs-server/matchmaking.ts ---
   // file d'attente publique pleine (plafond DEFAULT_QUEUE_CAP)
@@ -981,9 +1035,13 @@ Extrait incriminé : ${extrait}
   'serveur.persist-bridge-secret-manquant': '[MJS-Server] persist-bridge : opts.secret manquant',
   'serveur.persist-bridge-http-non-loopback': ({ url }: MsgVars) => `[MJS-Server] persist-bridge (${url}) : http:// non-loopback = risque de falsification de l'état restauré par MITM — utilise https:// ou, en connaissance de cause, { allowInsecure: true }`,
   'serveur.persist-bridge-reponse-http': ({ status }: MsgVars) => `réponse HTTP ${status}`,
+  'serveur.persist-bridge-reponse-trop-grande': ({ max }: MsgVars) => `[MJS-Server] persist-bridge : réponse trop grande (> ${max} octets), abandon`,
+  'serveur.persist-bridge-delai-global-depasse': '[MJS-Server] persist-bridge : délai global dépassé',
 
   // --- src/mjs-server/persist-file.ts ---
   'serveur.persist-file-dir-manquant': '[MJS-Server] persist-file : opts.dir manquant',
+  'serveur.persist-file-id-invalide': ({ id }: MsgVars) => `[MJS-Server] persist-file : identifiant de partie invalide : '${id}'`,
+  'serveur.persist-file-id-hors-dossier': ({ id }: MsgVars) => `[MJS-Server] persist-file : identifiant de partie invalide : '${id}' (chemin résolu hors du dossier de stockage)`,
 
   // --- src/mjs-server/game.ts ---
   'serveur.game-def-invalide': ({ prefix }: MsgVars) => `${prefix} : la définition doit être un objet { seats, state, moves, ... }`,
@@ -1072,6 +1130,11 @@ Extrait incriminé : ${extrait}
   'serveur.partie-coup-rejete-sequence-avance': ({ coup, seq, dernier }: MsgVars) => `[MJS-Server] coup '${coup}' rejeté — séquence trop en avance (seq ${seq}, dernier ${dernier})`,
   'serveur.partie-coup-rejete-cadence': ({ coup }: MsgVars) => `[MJS-Server] coup '${coup}' rejeté — cadence trop rapide`,
   'serveur.partie-coup-rejete-quota-identite': ({ coup }: MsgVars) => `[MJS-Server] coup '${coup}' rejeté — quota de coups par identité dépassé`,
+  'serveur.partie-timer-applicatif-rejete': ({ nom, msg }: MsgVars) => `[MJS-Server] timer('${nom}') a rejeté : ${msg}`,
+  'serveur.partie-timer-applicatif-leve': ({ nom, msg }: MsgVars) => `[MJS-Server] timer('${nom}') a levé : ${msg}`,
+  'serveur.partie-vue-leve': ({ msg }: MsgVars) => `[MJS-Server] def.view a levé — trame ignorée pour ce siège : ${msg}`,
+  'serveur.partie-histo-extraire-leve': ({ msg }: MsgVars) => `[MJS-Server] def.history.extract a levé — tick ignoré pour l'historique : ${msg}`,
+  'serveur.restore-invalide': ({ champ, attendu }: MsgVars) => `[MJS-Server] restoreGame() : champ '${champ}' invalide (attendu ${attendu})`,
 
   // --- src/mjs-server/persist-redis.ts + persist-bridge.ts + persist-sql.ts + persist-file.ts (mutualisées) ---
   'serveur.persist-backend-rejet-non-intercepte': ({ backend, label }: MsgVars) => `persist-${backend} : ${label} — rejet non intercepté`,
@@ -1214,6 +1277,10 @@ Extrait incriminé : ${extrait}
   'ws.core.auth-exception-interne': ({ clientId, err }: MsgVars) => `opts.auth a levé une exception interne pour ${clientId} — message masqué au client : ${err}`,
   'ws.core.close-authentification-refusee': 'authentification refusée',
   'ws.core.close-session-deja-active': 'session déjà active pour cette identité',
+  'ws.core.close-banni': 'banni temporairement',
+  'ws.core.close-au-banc': ({ minutes }: MsgVars) => `mis au banc pour abus répétés — réessaie dans ${minutes} min`,
+  'ws.core.mise-au-banc-ip': ({ ip, fautes, minutes }: MsgVars) => `IP ${ip} mise au banc ${minutes} min (${fautes} expulsions pour abus)`,
+  'ws.core.mise-au-banc-compte': ({ compte, fautes, minutes }: MsgVars) => `compte ${compte} mis au banc ${minutes} min (${fautes} expulsions pour abus)`,
   'ws.core.welcome-a-leve': 'welcome() a levé — µ:welcome envoyé quand même (charge {})',
   'ws.core.client-repris': ({ clientId, sessionId, count }: MsgVars) => `client ${clientId} repris (session ${sessionId}, ${count} trame(s) rejouée(s))`,
   'ws.core.serve-a-leve': ({ type }: MsgVars) => `serve('${type}') a levé`,
@@ -1230,6 +1297,9 @@ Extrait incriminé : ${extrait}
   'ws.index.adapter-redis-manquant': "[MJS-WS] opts.adapter.redis manquant — attendu une URL 'redis://...' (ou une instance MjsWsAdapter déjà construite)",
   'ws.index.transport-invalide': ({ raw }: MsgVars) => `[MJS-WS] transport invalide : '${raw}' — valeurs valides : 'ws', 'uws', ou une instance MjsWsTransport`,
   'ws.index.session-exclusive-invalide': ({ raw }: MsgVars) => `[MJS-WS] sessionExclusive invalide : ${raw} — valeurs valides : true, false, 'replace', 'refuse'`,
+  'ws.index.ban-invalide': ({ cle, raw, attendu }: MsgVars) => `[MJS-WS] ${cle} invalide : ${raw} — attendu : ${attendu}`,
+  'ws.index.entier-positif': 'un entier ≥ 1',
+  'ws.index.rate-by-invalide': ({ raw, valides }: MsgVars) => `[MJS-WS] limits.rateBy invalide : ${raw} — valeurs valides : ${valides}`,
 
   // — lobby.ts
   // clé HISTORIQUE inchangée (lobby.ts la référence telle quelle) —
@@ -1332,6 +1402,7 @@ Extrait incriminé : ${extrait}
   'ws.stats.champ-refusees': 'refusées',
   'ws.stats.champ-refusees-plafond': 'refusées (plafond)',
   'ws.stats.champ-refusees-origine': 'refusées (origine)',
+  'ws.stats.champ-refusees-ban': 'refusées (au banc)',
   'ws.stats.champ-fermees': 'fermées',
   'ws.stats.champ-nombre': 'nombre',
   'ws.stats.champ-membres-total': 'membres au total',
@@ -1350,6 +1421,7 @@ Extrait incriminé : ${extrait}
   'ws.stats.champ-kicks-silence': 'silence',
   'ws.stats.champ-kicks-engorgement': 'engorgement',
   'ws.stats.champ-kicks-charge-utile': 'charge utile',
+  'ws.stats.champ-mises-au-banc': 'mises au banc',
   'ws.stats.champ-expirations-jeton': 'jeton expiré',
   'ws.stats.champ-rate-limited': 'limitées (429)',
   'ws.stats.champ-webhooks-envoyes': 'webhooks envoyés',

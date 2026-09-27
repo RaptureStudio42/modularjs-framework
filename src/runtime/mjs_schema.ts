@@ -19,7 +19,9 @@
 // miroir (mêmes noms/types/ORDRE), sinon le serveur croit à un désaccord et pousse µ:schema à CHAQUE
 // hello. Simplification volontaire vs core.ts : pas de suggestion Levenshtein sur un type de champ
 // inconnu (poids mort pour un module client, message d'erreur simple à la place) — tout le reste
-// (garde AJOUT-SEUL, tolérance champ manquant → zéro, throw structurel sur schéma/id inconnu) identique.
+// (garde AJOUT-SEUL, tolérance champ manquant → zéro, throw structurel sur schéma/id inconnu,
+// définition copiée profondément et gelée à la déclaration, nom de champ refusé s'il ne survit pas à
+// un objet ordinaire) identique.
 //
 //   µ.schema('pos', { x: 'i16', y: 'i16' })        # déclare/complète le registre CLIENT — UN SEUL
 //                                                     par appli, jamais par socket (µ._mjs_mjschemaRegistre)
@@ -51,11 +53,33 @@
 
 var MJSCHEMA_SCALAIRES = ['u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'f32', 'f64', 'bool', 'str8', 'str16'];
 
-// garde anti-pollution locale (réutilisable indépendamment de mjs_socket.ts, cf. tête de fichier —
-// 'schema' peut être sélectionné SANS 'socket') : un segment de chemin issu du réseau (µ:schema) ne
-// doit jamais devenir __proto__/constructor/prototype, même reconstruit à la volée ci-dessous.
-function _mjschemaSafeKey(k) {
-  return k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+// un nom de champ doit survivre à `{}[nom] = valeur` (objet ORDINAIRE) — sinon il serait perdu en
+// silence quelque part en aval (décalage d'offset au décodage, jamais signalé) : '__proto__'
+// déclenche le setter hérité d'Object.prototype (qui tente de changer le PROTOTYPE de l'objet
+// plutôt que d'y créer une propriété) au lieu de survivre comme un nom normal. Sonde générique (pas
+// une liste figée de noms interdits) — DOIT rester en accord avec validerNomChamp
+// (src/schema/core.ts, MÊME principe).
+function _mjschemaNomChampValide(nom) {
+  var sonde = {};
+  sonde[nom] = 1;
+  return Object.prototype.hasOwnProperty.call(sonde, nom);
+}
+
+// copie PROFONDE + gel — `champs` (et les objets list()/bits() qu'il contient) est fourni par
+// l'appelant, qui peut le muter APRÈS coup (objet littéral réutilisé, partagé, relu ailleurs) : sans
+// clone, mjschemaDefSchema stockait la RÉFÉRENCE telle quelle, une mutation externe changeait le
+// format encodé/le hash EN SILENCE, sans jamais repasser par la garde ajout-seul. MÊME principe que
+// clonerChamps (src/schema/core.ts).
+function _mjschemaClonerType(type) {
+  if (typeof type === 'string') { return type; }
+  if (type.kind === 'list') { return Object.freeze({ kind: 'list', of: type.of }); }
+  return Object.freeze({ kind: 'bits', noms: Object.freeze(type.noms.slice()) });
+}
+
+function _mjschemaClonerChamps(champs) {
+  var copie = Object.create(null), cles = Object.keys(champs), i;
+  for (i = 0; i < cles.length; i++) { copie[cles[i]] = _mjschemaClonerType(champs[cles[i]]); }
+  return Object.freeze(copie);
 }
 
 function _mjschemaValiderType(nomSchema, nomChamp, type) {
@@ -94,9 +118,14 @@ function _mjschemaMemeForme(a, b) {
   return true;
 }
 
+// bits(noms) DOIT lui aussi passer par JSON.stringify (jamais une jointure '+' brute) — MÊME raison
+// que le hash des noms de champs plus bas : bits(['a+b','c']) (2 sous-champs), bits(['a','b','c'])
+// (3 sous-champs) et bits(['a','b+c']) donnaient AUPARAVANT le MÊME texte joint ('a+b+c') malgré des
+// découpages/sémantiques différents — DOIT rester caractère pour caractère identique à
+// src/schema/core.ts::decrireType.
 function _mjschemaDecrireType(t) {
   if (typeof t === 'string') { return t; }
-  return t.kind === 'list' ? ('list(' + t.of + ')') : ('bits(' + t.noms.join('+') + ')');
+  return t.kind === 'list' ? ('list(' + t.of + ')') : ('bits(' + JSON.stringify(t.noms) + ')');
 }
 
 function mjschemaCreerRegistre() {
@@ -105,10 +134,15 @@ function mjschemaCreerRegistre() {
 
 /** cf. defSchema (src/schema/core.ts) — même garde AJOUT-SEUL, mêmes ids u8 attribués dans l'ORDRE
  *  de déclaration ; ré-affirmation IDENTIQUE = no-op silencieux (composant remonté/HMR), forme
- *  DIFFÉRENTE = throw clair. */
-function mjschemaDefSchema(registre, nom, champs) {
-  var ordre = Object.keys(champs), i, existant, def;
-  for (i = 0; i < ordre.length; i++) { _mjschemaValiderType(nom, ordre[i], champs[ordre[i]]); }
+ *  DIFFÉRENTE = throw clair. `champsEntree` est copié PROFONDÉMENT et gelé AVANT toute validation/
+ *  stockage (cf. _mjschemaClonerChamps) — la définition retenue est désormais IMMUABLE, indépendante
+ *  de l'objet appelant. */
+function mjschemaDefSchema(registre, nom, champsEntree) {
+  var champs = _mjschemaClonerChamps(champsEntree), ordre = Object.freeze(Object.keys(champs)), i, existant, def;
+  for (i = 0; i < ordre.length; i++) {
+    if (!_mjschemaNomChampValide(ordre[i])) { throw new Error('[µ.schema] schéma \'' + nom + '\' : nom de champ invalide \'' + ordre[i] + '\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\''); }
+    _mjschemaValiderType(nom, ordre[i], champs[ordre[i]]);
+  }
 
   existant = registre.parNom.get(nom);
   if (existant) {
@@ -301,13 +335,21 @@ function _mjschemaFnv1a(s) {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
+// hashé sur une sérialisation JSON (jamais une concaténation brute par ':'/'='/','/'|') — un nom de
+// SCHÉMA ou de CHAMP peut contenir n'importe quel caractère, y compris ceux utilisés comme
+// séparateurs : { 'b=u8,c': 'u8' } (1 champ) et { b: 'u8', c: 'u8' } (2 champs) donnaient AUPARAVANT
+// le MÊME texte concaténé malgré des trames de 2 et 3 octets — collision structurelle qui trompait
+// la vérification de compatibilité client/serveur. JSON.stringify échappe nativement guillemets/
+// antislashs DANS chaque chaîne — DOIT rester caractère pour caractère identique à
+// src/schema/core.ts::hashRegistre (MÊME structure imbriquée [nom, [[champ, type], ...]] passée à
+// JSON.stringify), cf. commentaire de tête de fichier.
 function mjschemaHashRegistre(registre) {
-  var parts = [], i, def, ordreDecrit, j;
+  var parts = [], i, def, paires, j;
   for (i = 0; i < registre.parId.length; i++) {
     def = registre.parId[i];
-    ordreDecrit = [];
-    for (j = 0; j < def.ordre.length; j++) { ordreDecrit.push(def.ordre[j] + '=' + _mjschemaDecrireType(def.champs[def.ordre[j]])); }
-    parts.push(def.nom + ':' + ordreDecrit.join(','));
+    paires = [];
+    for (j = 0; j < def.ordre.length; j++) { paires.push([def.ordre[j], _mjschemaDecrireType(def.champs[def.ordre[j]])]); }
+    parts.push(JSON.stringify([def.nom, paires]));
   }
   return _mjschemaFnv1a(parts.join('|'));
 }
@@ -315,17 +357,25 @@ function mjschemaHashRegistre(registre) {
 // --- réception d'un µ:schema — reconstruit un registre COMPLET depuis des définitions JSON-safe (cf.
 // mjs-ws/schema.ts::serialiserDefinitions côté serveur) : `champs` voyage en tableau de paires
 // [nom, type] (pas un objet — les clés d'un message réseau ne sont jamais indexées aveuglément sur un
-// objet PLAT, cf. _mjschemaSafeKey ci-dessous), rechargé via mjschemaDefSchema (mêmes gardes, mêmes
-// ids puisque `schemas` est déjà dans l'ordre d'origine). ------------------------------------------
+// objet PLAT), rechargé via mjschemaDefSchema (mêmes gardes, mêmes ids puisque `schemas` est déjà
+// dans l'ordre d'origine). Un nom de champ fautif (__proto__) est refusé par mjschemaDefSchema —
+// _mjs_mjschemaOnPush (plus bas) capte alors l'erreur et laisse le registre local INCHANGÉ, jamais
+// remplacé par une définition amputée du champ fautif. ---------------------------------------------
 
 function mjschemaChargerDefinitions(json) {
+  // Object.create(null) (pas `{}`) — l'affectation `champs[...] = ...` juste en dessous ne doit
+  // jamais activer le setter '__proto__' hérité d'Object.prototype : une clé '__proto__' reçue du
+  // réseau doit survivre TELLE QUELLE jusqu'à mjschemaDefSchema (qui la refusera avec une erreur
+  // claire, cf. _mjschemaNomChampValide) — la filtrer ICI en silence (ancien _mjschemaSafeKey)
+  // installait un registre AMPUTÉ du champ fautif au lieu de refuser la définition entière, MÊME
+  // principe que chargerDefinitions, src/schema/core.ts.
   var registre = mjschemaCreerRegistre(), i, s, champs, j, paire;
   for (i = 0; i < json.schemas.length; i++) {
     s = json.schemas[i];
-    champs = {};
+    champs = Object.create(null);
     for (j = 0; j < s.champs.length; j++) {
       paire = s.champs[j];
-      if (_mjschemaSafeKey(paire[0])) { champs[paire[0]] = paire[1]; }
+      champs[paire[0]] = paire[1];
     }
     mjschemaDefSchema(registre, s.nom, champs);
   }

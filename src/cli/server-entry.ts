@@ -38,6 +38,7 @@ import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { t } from '../messages/index.js'
+import { findConstReassignment } from '../transpiler/const-reassign.js'
 import type { CompileResult } from '../languages/index.js'
 
 // traces d'erreur sur les lignes SOURCE (Civet), pas sur le JS généré dans le cache — une
@@ -296,6 +297,14 @@ async function extractServerImports(src: string, absPath: string, root: string, 
 
 // --- compilation --------------------------------------------------------------
 
+// constante Civet (`:=` → `const`) réaffectée, même depuis une fonction imbriquée ou une boucle :
+// refusée à la compilation, comme pour un composant, plutôt qu'un TypeError au chargement du
+// serveur (portées exactes, cf. transpiler/const-reassign.ts)
+function refuserConstanteReaffectee(js: string): void {
+  const constante = findConstReassignment(js)
+  if (constante) throw new Error(t('transpiler.civet-reaffectation-constante', { nom: constante.name, ligne: constante.line, code: true }))
+}
+
 // compile un fichier `.server.mjs`/`.mjs` — MÊME dialecte Civet que le <script> des composants
 // (applyCivetDialectSugar, SOURCE UNIQUE) + grammaire @import ci-dessus. Appelée pour l'entry ET
 // récursivement pour chaque dépendance `.civet`/`.mjs` qu'elle @import (AUCUNE transformation de
@@ -321,6 +330,7 @@ export async function compileServerFile(absPath: string, root: string, ctx: Serv
     let result: CompileResult
     try {
       result = await getAdapter('civet').compileToJs(applyCivetDialectSugar(withImports, 'civet'), { fileName: absPath })
+      refuserConstanteReaffectee(result.code)
     } catch (err) {
       throw new Error(t('cli.ws.erreur-compilation', { entryPath: absPath, erreur: errText(err) }))
     }
@@ -356,6 +366,7 @@ export async function compileRawCivetFile(absPath: string, root: string): Promis
   let result: CompileResult
   try {
     result = await getAdapter('civet').compileToJs(source, { fileName: absPath })
+    refuserConstanteReaffectee(result.code)
   } catch (err) {
     throw new Error(t('cli.ws.erreur-compilation-civet', { entryPath: absPath, erreur: errText(err) }))
   }

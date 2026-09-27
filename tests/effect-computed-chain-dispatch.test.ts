@@ -87,9 +87,11 @@ describe('µ.effect — expansion `_mjs_computedDeps` (unitaire, precomputedVars
     const win = await loadCore()
     const µ: any = win.eval('µ')
     const comp: any = { _mjs_computedDeps: { c: ['b', 'a'], b: ['a'] } }
-    µ._mjs_pushComponent(comp)
+    // pousse/dépile directement via le setter compat de µ.activeComponent
+    // (µ._mjs_pushComponent/_mjs_popComponent n'existent plus, code mort retiré)
+    µ.activeComponent = comp
     µ.effect(function () {}, ['c'])
-    µ._mjs_popComponent()
+    µ.activeComponent = null
     const entry = comp._mjs_effects[0]
     assert.ok(entry.staticVars.includes('c'), 'staticVars doit contenir c (var lue)')
     assert.ok(entry.staticVars.includes('b'), 'staticVars doit contenir b (racine intermédiaire)')
@@ -101,9 +103,9 @@ describe('µ.effect — expansion `_mjs_computedDeps` (unitaire, precomputedVars
     const win = await loadCore()
     const µ: any = win.eval('µ')
     const comp: any = {}
-    µ._mjs_pushComponent(comp)
+    µ.activeComponent = comp
     assert.doesNotThrow(() => µ.effect(function () {}, ['x']))
-    µ._mjs_popComponent()
+    µ.activeComponent = null
     const entry = comp._mjs_effects[0]
     assert.deepEqual(entry.staticVars, ['x'])
     win.close?.()

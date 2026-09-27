@@ -77,7 +77,7 @@ Tout champ lu via `µ$$feed.x` enregistre le composant comme abonné à la clé 
 
 ### Méthodes et collections
 
-`.data` enveloppe récursivement les objets imbriqués, et intercepte les **mutateurs** des collections natives (`push`, `pop`, `splice`, `shift`, `unshift`, `sort`, `reverse` sur les tableaux ; `set`, `add`, `delete`, `clear` sur `Map`/`Set` ; les `setX` des `Date`). Muter une collection du store via ces méthodes notifie donc les abonnés, sans réaffectation.
+`.data` enveloppe récursivement les objets imbriqués, et intercepte les **mutateurs** des collections natives (`push`, `pop`, `splice`, `shift`, `unshift`, `sort`, `reverse` sur les tableaux ; `set`, `add`, `delete`, `clear` sur `Map`/`Set` ; les `setX` des `Date`). Muter une collection du store via ces méthodes notifie donc les abonnés, sans réaffectation. Les vues binaires (`Int32Array`, `Uint8Array`… et les autres `TypedArray`, `DataView`, `ArrayBuffer`) se lisent et s'appellent normalement, y compris leurs méthodes (`.map()`, `.subarray()`, `.at()`, `.getInt32()`…) : tout s'exécute sur la vraie instance, jamais sur le proxy. Muter un **index** d'une `TypedArray` (`store.data.v[0] = x`) notifie comme un élément de tableau ; il en va de même pour ses méthodes qui modifient la vue en place (`set`, `fill`, `copyWithin`, `sort`, `reverse`) et pour les setters nommés d'une `DataView` (`setInt32`, `setUint8`…) — les méthodes de lecture, elles, ne notifient jamais personne.
 
 ```html
 # layout.mjs — état de session chargé au montage, lisible par toutes les pages
@@ -135,6 +135,10 @@ lire ponctuellement sans provoquer de re-rendu.
 > sous-objet du store à une fonction qui le mute de son côté.
 
 > ⚠️ **Ne jamais `Object.assign` un JSON externe dans un store.** `Object.assign($$cfg, JSON.parse(texte))` échappe à toute garde : une clé `__proto__` dans le JSON remplace le prototype de `$$cfg` lui-même. Écris les clés une par une, ou filtre-les avant de les copier.
+
+> ⚠️ **Lire `__proto__`/`constructor`/`prototype` sur un `µStore`/`µ.state` rend `undefined` sauf si cette clé a été posée explicitement dans les données** (ex. `{ constructor: 'Ferrari' }`, qui reste lisible et réactive normalement) — une clé HÉRITÉE de ce nom ne fuite jamais telle quelle hors du store. Cette même garde masque `.constructor` à travers un objet réactif : pour connaître le nom de la CLASSE réelle d'une instance rangée dans un store, utilise `instanceof` ou `Object.getPrototypeOf(...)`, jamais `.constructor.name` directement sur la valeur lue.
+
+> ⚠️ **Un même objet rangé sous deux clés racines** (`new µStore({a: partage, b: partage})`, `µ.state({a: partage, b: partage})`) : muter via une clé notifie aussi les lecteurs de l'AUTRE clé — les deux pointent le même objet, la mutation les concerne toutes les deux. Ce qui NE change pas d'un mécanisme à l'autre : l'**identité** des proxys rendus. `µStore` construit un proxy **distinct par clé** (`store.data.a !== store.data.b`, même s'ils enveloppent le même objet brut) ; `µ.state` construit un proxy **unique par objet**, partagé (`state.a === state.b`). Un objet qui n'est atteint que par une seule clé ne reçoit toujours qu'une notification par mutation, dans les deux cas. Un **même composant** abonné aux DEUX clés à la fois n'est, lui non plus, invalidé qu'**une seule fois** par mutation — jamais une fois par clé partagée — dans les deux mécanismes.
 
 ## Ne pas exporter de `$foo` réactif
 

@@ -24,7 +24,7 @@ Un module cœur s'invoque avec la **même notation** qu'un composant du projet, 
 | Attribut | Rôle |
 |---|---|
 | `name` | nom de champ posé sur le(s) `<input type="hidden">` internes, un par valeur sélectionnée |
-| `value=!{$x}` | valeur sélectionnée, two-way — une chaîne, ou un tableau de chaînes en mode `multiple` |
+| `value=!{$x}` | valeur sélectionnée, two-way — celle de l'option choisie, dans son type (`value={m.id}` remonte le nombre), ou un tableau de ces valeurs en mode `multiple` |
 | `search` | bascule la recherche : un champ de filtre apparaît en tête du panneau |
 | `match` | mode de la recherche — `contains` (défaut), `starts`, `fuzzy` ou `starts-fuzzy` ; cf. « Les quatre modes de recherche » ci-dessous |
 | `multiple` | sélection multiple (coche plusieurs options, `value` devient un tableau) |
@@ -34,7 +34,7 @@ Un module cœur s'invoque avec la **même notation** qu'un composant du projet, 
 | `search-placeholder` | placeholder du champ de recherche — défaut « Rechercher… » |
 | `empty-label` | message quand le filtre ne trouve rien — défaut « Aucun résultat » |
 
-Chaque `<@option value={…} icon={…}>` déclare une entrée ; `icon` est un texte affiché tel quel (emoji, caractère, petit mot) — la valeur est lue par `getAttribute` puis rendue par une interpolation ÉCHAPPÉE, jamais du HTML (`<svg>`…). La recherche filtre insensible aux accents et à la casse ; le clavier répond aux flèches Haut/Bas, `Enter` (choisir), `Escape` (fermer), `Home`/`End` (première/dernière option) ; le bouton porte `role="combobox"` et les attributs ARIA associés (`aria-expanded`, `aria-controls`, `aria-activedescendant`) se tiennent à jour tout seuls.
+Chaque `<@option value={…} icon={…}>` déclare une entrée ; `icon` est un texte affiché tel quel (emoji, caractère, petit mot) — rendu par une interpolation ÉCHAPPÉE, jamais du HTML (`<svg>`…). La valeur d'une option garde le type que lui donne la page : `<@option value={m.id}>` fait remonter le nombre `18`, pas le texte « 18 » ; une option sans `value` prend son libellé pour valeur, comme une `<option>` native. Les options peuvent venir d'un `{for}` et arriver après coup (une liste chargée plus tard) : le bouton affiche alors le libellé de la valeur déjà posée dès qu'elles sont là, sans ouvrir le panneau. En choix simple, le bouton ne montre jamais qu'un libellé, et une valeur vide (`null`) n'en choisit aucun. La recherche filtre insensible aux accents et à la casse ; le clavier répond aux flèches Haut/Bas, `Enter` (choisir), `Escape` (fermer), `Home`/`End` (première/dernière option) ; le bouton porte `role="combobox"` et les attributs ARIA associés (`aria-expanded`, `aria-controls`, `aria-activedescendant`) se tiennent à jour tout seuls.
 
 **Les quatre modes de recherche (`match`).** Accents et casse ne comptent jamais (« ALLEMA » trouve « Allemagne », « etats » trouve « États-Unis »). `contains` — le défaut — : les lettres tapées, collées et dans l'ordre, n'importe où dans l'étiquette (« lema » trouve « Allemagne », « lgq » ne trouve rien). `starts` : l'étiquette doit commencer par ce qui est tapé (« bel » trouve « Belgique », « elg » ne trouve rien). `fuzzy` : chaque lettre tapée doit se retrouver dans l'étiquette, dans l'ordre, des trous permis entre elles (« bgq » trouve « Belgique » — B·el·G·i·Q·ue ; « eqb » ne trouve rien, l'ordre est faux). `starts-fuzzy` : la première lettre tapée doit être la première de l'étiquette, le reste suit la règle `fuzzy` (« bgq » trouve « Belgique », « gq » ne trouve rien). Une valeur inconnue retombe sur `contains`.
 

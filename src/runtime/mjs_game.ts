@@ -7,13 +7,13 @@
 //   partie = sock.game('morpion')                    # file publique
 //   partie = sock.game('morpion', { code: true })     # crée une partie privée (code généré)
 //   partie = sock.game('morpion', { code: 'ABCDE' })  # rejoint ce code (inconnu → statut 'error')
-//   regard = sock.game('morpion', { code: 'ABCDE', spectateur: true })  # REGARDE ce code, lecture
-//                                                      seule (aucun siège, cf. partie.state.spectateur
+//   regard = sock.game('morpion', { code: 'ABCDE', spectator: true })  # REGARDE ce code, lecture
+//                                                      seule (aucun siège, cf. partie.state.spectator
 //                                                      côté serveur — vue via def.spectatorView)
 //
-//   {if partie.state.statut === 'waiting'}en file, position {partie.state.attente}{/if}
-//   {if partie.state.statut === 'playing'}{partie.state.grille[0]}…{/if}   # vue APLATIE, réactif
-//   await partie.move('jouer', { i: 4 })     # Promise — résout au `resultat` de l'ack, ou rejette
+//   {if partie.state.status === 'waiting'}en file, position {partie.state.queue}{/if}
+//   {if partie.state.status === 'playing'}{partie.state.grille[0]}…{/if}   # vue APLATIE, réactif
+//   await partie.move('jouer', { i: 4 })     # Promise — résout au `result` de l'ack, ou rejette
 //   off = partie.on('end', (p) -> …)         # 'event'|'state'|'seat'|'start'|'end'|'left'|'error'
 //   partie.leave()                           # µgame:leave (best-effort) + statut 'left' immédiat
 //
@@ -25,43 +25,43 @@
 // chaque jeu) sont fusionnées TELLES QUELLES à la racine du store, à côté des méta-clés RÉSERVÉES
 // ci-dessous. Un jeu dont la vue utiliserait l'un de ces noms se ferait écraser (même compromis
 // assumé que le 'reset' de _mjs_applyDelta en face) — à connaître avant de nommer ses champs de vue :
-//   partieId  — id de partie (string), null tant que jamais assis
-//   siege     — numéro de siège (number), null tant que jamais assis
+//   gameId    — id de partie (string), null tant que jamais assis
+//   seat      — numéro de siège (number), null tant que jamais assis
 //   phase     — partie.phase côté serveur (string|null)
-//   tour      — à qui le tour, identité stable (string|null)
+//   turn      — à qui le tour, identité stable (string|null)
 //   seq       — dernier numéro de séquence appliqué (number|null)
 //   code      — code de partie privée si `def.code`, sinon null
-//   attente   — position dans la file publique (number) tant que non assis, sinon null
-//   statut    — 'waiting' (file, ou refus/coupure en cours de récupération) | 'playing' | 'finished' |
+//   queue     — position dans la file publique (number) tant que non assis, sinon null
+//   status    — 'waiting' (file, ou refus/coupure en cours de récupération) | 'playing' | 'finished' |
 //               'left' | 'error'
-//   sieges    — dernier roster µgame:seat, tableau [{siege,connecte}|null], null avant le 1er
-//   resultat  — resultat de µgame:end, null avant la fin
-//   erreur    — message du dernier refus SERVEUR (string), posé avec statut 'error'
-//   spectateur — true si cette poignée REGARDE en lecture seule (opts.spectateur:true, aucun siège
+//   seats     — dernier roster µgame:seat, tableau [{seat,connected}|null], null avant le 1er
+//   result    — resultat de µgame:end, null avant la fin
+//   error     — message du dernier refus SERVEUR (string), posé avec statut 'error'
+//   spectator — true si cette poignée REGARDE en lecture seule (opts.spectator:true, aucun siège
 //               — `.move()` sera TOUJOURS rejeté serveur, cf. mjs-server/game.ts), false sinon
 //
-// Spectateur (anti-triche, mjs-server/game.ts) — `sock.game(type, {code, spectateur:
+// Spectateur (anti-triche, mjs-server/game.ts) — `sock.game(type, {code, spectator:
 // true})` rejoint EN LECTURE SEULE une partie EXISTANTE adressée PAR CODE (jamais la file
 // publique, ambiguë entre plusieurs parties du même type) : même poignée/store que d'habitude
-// (siege reste `null`), `.move()` renvoie une Promise TOUJOURS rejetée (« spectateur : lecture
+// (seat reste `null`), `.move()` renvoie une Promise TOUJOURS rejetée (« spectateur : lecture
 // seule », refus SERVEUR classique — aucun garde-fou client dédié, MÊME mécanisme que « hors
 // tour »). `.leave()` fonctionne SANS changement (µgame:leave, géré côté serveur pour les deux
 // cas). Reconnexion : un spectateur n'est PAS resynchronisé (aucune identité de siège à
 // retrouver, cf. mjs-server/game.ts) — après une coupure, il redevient simple spectateur du
 // dernier état connu tant qu'il ne rappelle pas sock.game() lui-même.
 //
-// `.move(nom, p)` → Promise résolue par le `resultat` de l'ack µgame:move ; rejetée avec le motif
+// `.move(nom, p)` → Promise résolue par le `result` de l'ack µgame:move ; rejetée avec le motif
 // de refus tel que sock.request() le donne (chaîne = refus SERVEUR — coup interdit, hors tour… ;
 // objet {code,message} = refus TRANSPORT, cf. sock.request). Rejette aussi {code:'not-seated'} si
 // appelée avant tout siège connu (statut encore 'waiting', ou déjà 'left'/'error'/'finished').
 //
 // `.on(évt, fn)` → désabonnement retourné (comme sock.on). `fn` reçoit le PAYLOAD BRUT de la trame
 // µgame:* sous-jacente (mêmes clés que le protocole, cf. tête de src/mjs-server/index.ts) :
-// 'state'→{partie,vue|delta,phase,tour,seq} (delta : jeu def.deltas:true, cf. plus bas), 'seat'→
-// {partie,places,sieges}, 'event'→{partie,type,p},
+// 'state'→{game,view|delta,phase,turn,seq} (delta : jeu def.deltas:true, cf. plus bas), 'seat'→
+// {game,seatCount,seats}, 'event'→{game,type,p},
 // 'start'→forme complète de play (émis aussi bien pour le siège dont l'ack complète la partie que
-// pour ceux qui reçoivent la poussée serveur — un seul handler à écrire), 'end'→{partie,resultat},
-// 'left'→{partie,siege}. 'error'→{message} est un AJOUT au-delà des 6 trames serveur : seul moyen
+// pour ceux qui reçoivent la poussée serveur — un seul handler à écrire), 'end'→{game,result},
+// 'left'→{game,seat}. 'error'→{message} est un AJOUT au-delà des 6 trames serveur : seul moyen
 // d'observer un refus de play/resync côté appli, puisque sock.game() ne renvoie pas de Promise.
 //
 // `.leave()` — OPTIMISTE : statut 'left' + retrait des registres locaux IMMÉDIAT (synchrone),
@@ -72,8 +72,8 @@
 // Dédup : un µgame:state dont seq ≤ dernier vu est IGNORÉ (retransmission, désordre).
 //
 // Deltas (def.deltas:true côté jeu, cf. mjs-server/game.ts) — le serveur peut envoyer µgame:state
-// SOUS FORME DELTA : { partie, delta: [{p:'chemin.a.2.b', v} | {p, x:1}], phase, tour, seq } au lieu
-// de { vue }. Chaque op s'applique sur la dernière vue connue (chemin À POINTS, v = pose/remplace,
+// SOUS FORME DELTA : { game, delta: [{p:'chemin.a.2.b', v} | {p, x:1}], phase, turn, seq } au lieu
+// de { view }. Chaque op s'applique sur la dernière vue connue (chemin À POINTS, v = pose/remplace,
 // x:1 = supprime la clé finale, cf. _applyDeltaOps) — TRANSPARENT pour l'appli, `.state` converge
 // IDENTIQUEMENT qu'un jeu envoie des vues complètes ou des deltas (cf. tests/socket-game.test.ts).
 // Les vues complètes (compat v1) continuent de marcher INCHANGÉES ; le dédup par seq ci-dessus vaut
@@ -102,7 +102,7 @@
 if (typeof MjsSocket !== 'undefined') {
 
   // --- store réactif : reconstruction COMPLÈTE depuis l'état canonique de la poignée -----------
-  // (vue = snapshot PLEIN à chaque trame serveur, jamais un delta — cf. partie.vueDe() : une clé
+  // (vue = snapshot PLEIN à chaque trame serveur, jamais un delta — cf. game.viewFor() côté serveur : une clé
   // absente de la vue COURANTE ne doit pas s'attarder, d'où le delete-tout puis re-remplissage,
   // même stratégie que le 'reset' de MjsSocket.prototype._mjs_applyDelta en face)
   function _syncGameStore(h) {
@@ -125,7 +125,7 @@ if (typeof MjsSocket !== 'undefined') {
     store.spectator = h._mjs_spectator;
   }
 
-  // trame COMPLÈTE (partie/siege/vue/phase/tour/seq/code) — réponse à µgame:play (assis d'office),
+  // trame COMPLÈTE (game/seat/view/phase/turn/seq/code) — réponse à µgame:play (assis d'office),
   // µgame:start et µgame:resync : toujours le contrat le plus riche du protocole. `<=` (pas
   // seulement `<`) : réappliquer un seq déjà vu est un no-op inoffensif (mêmes valeurs), ignorer
   // évite juste une reconstruction de store superflue.
@@ -140,7 +140,7 @@ if (typeof MjsSocket !== 'undefined') {
     h._mjs_code     = frame.code;
     h._mjs_queue  = null;
     h._mjs_status   = 'playing';
-    // anti-triche — `frame.spectateur` n'existe QUE sur l'ack de watch (serveur, cf.
+    // anti-triche — `frame.spectator` n'existe QUE sur l'ack de watch (serveur, cf.
     // mjs-server/matchmaking.ts::joinAsSpectator) ; absent (undefined) sur toute frame
     // joueur normale → `false`, jamais `undefined` (cohérent avec l'init du handle ci-dessous).
     h._mjs_spectator = frame.spectator === true;
@@ -182,9 +182,9 @@ if (typeof MjsSocket !== 'undefined') {
     return racine;
   }
 
-  // trame µgame:state — `frame.vue` (vue COMPLÈTE, compat v1 inchangée) OU `frame.delta` (liste
+  // trame µgame:state — `frame.view` (vue COMPLÈTE, compat v1 inchangée) OU `frame.delta` (liste
   // d'ops chemin à points, cf. _applyDeltaOps juste au-dessus — jeu déclaré avec def.deltas:true,
-  // cf. mjs-server/game.ts) — JAMAIS siege/code dans les deux cas, cf. _diffuserEtat côté serveur.
+  // cf. mjs-server/game.ts) — JAMAIS seat/code dans les deux cas, cf. _buildFrame côté serveur.
   // Dédup EXPLICITE valable pour LES DEUX formes : seq <= dernier vu est ignoré, ni store
   // ni événement. Un delta s'applique EN PLACE sur `h._vue` déjà reconstruit — jamais null ici, un
   // jeu def.deltas:true envoie TOUJOURS une vue complète en 1re diffusion/resync (cf. test h de
@@ -296,7 +296,7 @@ if (typeof MjsSocket !== 'undefined') {
   // `_mjs_onGameWelcome` retrouvait la poignée encore dans `_mjs_gamesPending` (sa toute 1re réponse pas
   // encore arrivée) et renvoyait un 2e µgame:play EN DOUBLE pour la MÊME intention, avant même
   // d'avoir vu la 1re réponse (un joueur SEUL se retrouvait apparié avec
-  // son propre doublon, `def.places` atteint tout seul).
+  // son propre doublon, `def.seats` atteint tout seul).
   MjsSocket.prototype._mjs_sendPlay = function(h) {
     var self = this;
     var payload = { type: h._mjs_type };
@@ -397,7 +397,7 @@ if (typeof MjsSocket !== 'undefined') {
   };
 
   // mode lockstep —forward BRUT (pas de dédup/reconstruction de store, contrairement
-  // aux autres poussées ci-dessus) : {partie, tick, ordres} tel quel, cf. commentaire de _mjs_ensureGameWiring
+  // aux autres poussées ci-dessus) : {game, tick, orders} tel quel, cf. commentaire de _mjs_ensureGameWiring
   MjsSocket.prototype._mjs_onGameOrdersPush = function(frame) {
     var h = this._mjs_games[frame.game];
     if (!h) { return; }

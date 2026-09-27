@@ -294,7 +294,7 @@ Le rendu HTML tourne sur un **moteur d'exécution**, choisi par `render.engine`,
 
 **Défauts** (non appliqués dans la config, résolus à l'usage) : `request` → toujours `'happy-dom'` (jamais de navigateur implicite par requête, trop coûteux à lancer à la volée sans configuration explicite) ; `prerender` → `'browser'` **si Playwright est installé** (`npm i -D playwright`), sinon repli `'happy-dom'` (message informatif, une fois par process). Priorité de résolution : `route.engine` (par route, cf. table `render.routes` — `engine`/`settleMs` s'y règlent **par page**) > `render.engine.<axe>` (config globale) > défaut.
 
-**Le pool de navigateurs** (`browserPool`, moteur `'browser'` seulement) réutilise des emplacements (contexte + page) entre rendus plutôt que de relancer un processus Chromium à chaque fois (~200-500&nbsp;ms de lancement). Options — défauts résolus à l'usage : `size` (2, nombre d'emplacements maintenus), `keepAlive` (`true`, processus navigateur réutilisé entre rendus), `maxAgeMs` (300000 = 5&nbsp;min, recyclage d'un emplacement trop ancien). Chaque rendu ré-navigue sur son emplacement (nouveau Realm JS, `localStorage`/`sessionStorage` vidés) : l'isolation entre deux rendus du même emplacement est garantie sans relancer le processus.
+**Le pool de navigateurs** (`browserPool`, moteur `'browser'` seulement) réutilise des emplacements (contexte + page) entre rendus plutôt que de relancer un processus Chromium à chaque fois (~200-500&nbsp;ms de lancement). Options — défauts résolus à l'usage : `size` (2, nombre d'emplacements maintenus), `keepAlive` (`true`, processus navigateur réutilisé entre rendus), `maxAgeMs` (300000 = 5&nbsp;min, recyclage d'un emplacement trop ancien), `renderTimeoutMs` (15000 = 15&nbsp;s, durée maximale d'un rendu ; le lancement et la fermeture du navigateur sont bornés au double, la fermeture jamais sous 10&nbsp;s — un rendu réglé très bas n'abandonne pas un Chromium en train de se refermer). Chaque rendu ré-navigue sur son emplacement (nouveau Realm JS, `localStorage`/`sessionStorage` vidés) : l'isolation entre deux rendus du même emplacement est garantie sans relancer le processus.
 
 ### `render.forwardOrigin` — ⚠️ ne fais **jamais** confiance au `Host` du client
 
@@ -433,7 +433,7 @@ Les quatre routes, les cinq clés de config et les trois étages sont **identiqu
 | Racine sans Shadow DOM | `light: true` — option de rendu, ou clé de route `render.routes[url].light` |
 | Plafond d'attente du rendu | `settleMs` (défaut 1000 ms ; s'arrête dès que c'est stable) — surchargeable **par route** dans `render.routes` |
 | Moteur de rendu | `render.engine.prerender` / `.request` : `'browser'` (Playwright) ou `'happy-dom'` — surchargeable **par route** |
-| Pool de navigateurs (moteur `'browser'`) | `render.browserPool` : `size`, `keepAlive`, `maxAgeMs` |
+| Pool de navigateurs (moteur `'browser'`) | `render.browserPool` : `size`, `keepAlive`, `maxAgeMs`, `renderTimeoutMs` |
 | Origine + cookies transmis au SSR par requête | `render.forwardOrigin` : `false` / origine fixe (chaîne) / `{trustedHosts}` — défaut **sûr** (jamais dérivé du `Host` client) |
 | Savoir si on rend côté serveur | `µserver` — vrai sur les deux moteurs, non réactif |
 

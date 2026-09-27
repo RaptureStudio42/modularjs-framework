@@ -78,9 +78,16 @@ export interface MjsWsRoomsOptions {
  * (MjsWsLimits, core.ts), JAMAIS par l'espace utilisateur via `rooms:` (c'est un NOMBRE, même
  * famille que maxConnections/maxConnectionsPerIp, configuré via `limits:` — cf. MjsWsLimits pour
  * le détail). `null`/absent = illimité.
+ *
+ * `maxPresencePerClient` — Faille comblée, MÊME famille que `maxRoomsPerClient` juste au-dessus,
+ * mais pour les abonnements de présence (µ:sub-presence DE SALON, jamais la présence globale) :
+ * SANS lui, un client pouvait s'abonner à la présence d'un nombre ILLIMITÉ de salons à noms
+ * arbitraires, MÊME sans jamais les avoir rejoints — fuite mémoire (`presenceSubsByRoom` ci-dessous,
+ * jamais bornée). `undefined` (absent, défaut) = MÊME valeur que `maxRoomsPerClient` (conservateur) ;
+ * `null` EXPLICITE = illimité, comme les autres plafonds de cette famille.
  */
 export type MjsWsRoomsEngineOptions =
-  Omit<MjsWsRoomsOptions, 'join'> & { join?: MjsWsJoinFn; maxRoomsPerClient?: number | null }
+  Omit<MjsWsRoomsOptions, 'join'> & { join?: MjsWsJoinFn; maxRoomsPerClient?: number | null; maxPresencePerClient?: number | null }
 
 export interface MjsWsRoomsClusterOptions {
   /** MÊME instance que core.ts opts.adapter — référence PARTAGÉE, jamais une 2e résolution (cf. index.ts) */
@@ -178,6 +185,13 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
   const clientRooms  = new Map<MjsWsClient, Set<string>>()    // connexion → salons rejoints
   const presenceSubsGlobal = new Set<MjsWsClient>()
   const presenceSubsByRoom = new Map<string, Set<MjsWsClient>>()
+  // Faille comblée — connexion → salons dont elle a la présence en abonnement (µ:sub-presence DE
+  // SALON SEULEMENT, jamais la présence globale) : PERMET de compter les abonnements DISTINCTS d'un
+  // client pour maxPresencePerClient (ci-dessous), MÊME principe que clientRooms/maxRoomsPerClient.
+  const clientPresenceSubs = new Map<MjsWsClient, Set<string>>()
+  // `undefined` (option absente) → MÊME valeur que maxRoomsPerClient (conservateur) ; `null`
+  // EXPLICITE → illimité, résolu ICI une seule fois (jamais relu depuis opts ensuite)
+  const maxPresencePerClient = opts.maxPresencePerClient !== undefined ? opts.maxPresencePerClient : opts.maxRoomsPerClient
   const globalPeers = new Map<string, PeerAgg>()               // présence globale — liée au cycle de vie de la connexion
   const roomPeers   = new Map<string, Map<string, PeerAgg>>()  // présence par salon — liée à µ:join/µ:leave/kick
   const lastJoinErrorAt = new Map<MjsWsClient, number>()
@@ -220,27 +234,37 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     return out
   }
 
-  // +1 connexion pour ce peer — 1er arrivant seulement → onFirst (delta 'join')
-  function addPeer(agg: Map<string, PeerAgg>, client: MjsWsClient, onFirst: (id: string, meta: unknown) => void): void {
+  // +1 connexion pour ce peer — délivre onFirst (delta 'join') SEULEMENT si l'identité n'était visible
+  // NULLE PART ailleurs avant cette connexion (fusion locale+distante via presentAnywhere, pas la
+  // seule agrégation locale de `agg`) : sinon une connexion LOCALE qui arrive alors que l'identité
+  // est déjà connue via un autre process (ou une autre connexion locale) rejouerait un second 'join'
+  // — MIROIR de la garde déjà posée sur applyRemotePresence, jusqu'ici absente de ce côté-ci.
+  function addPeer(agg: Map<string, PeerAgg>, client: MjsWsClient, onFirst: (id: string, meta: unknown) => void, room: string | undefined): void {
     const id   = peerIdOf(client)
     const meta = metaOf(client)
+    const wasPresent = presentAnywhere(room, id)
     let p = agg.get(id)
     if (!p) { p = { meta, members: new Set() }; agg.set(id, p) }
-    const wasEmpty = p.members.size === 0
     p.members.add(client)
     p.meta = meta   // toujours la connexion la plus récente
-    if (wasEmpty) onFirst(id, meta)
+    if (!wasPresent) onFirst(id, meta)
   }
 
-  // -1 connexion pour ce peer — dernier partant seulement → onLast (delta 'leave'). `meta`
+  // -1 connexion pour ce peer — délivre onLast (delta 'leave') SEULEMENT si l'identité ne reste
+  // visible NULLE PART ailleurs après ce départ (fusion locale+distante via presentAnywhere, MIROIR
+  // d'addPeer ci-dessus) : sinon le départ d'UNE connexion locale publierait un faux départ alors que
+  // l'identité reste connectée ailleurs (autre process, ou une autre connexion locale). `meta`
   // transmise à onLast (bridge.ts, webhook 'leave') — `p` reste un objet valide après
   // agg.delete(id) (delete ne touche que la Map, pas l'objet PeerAgg pointé par `p`).
-  function removePeer(agg: Map<string, PeerAgg>, client: MjsWsClient, onLast: (id: string, meta: unknown) => void): void {
+  function removePeer(agg: Map<string, PeerAgg>, client: MjsWsClient, onLast: (id: string, meta: unknown) => void, room: string | undefined): void {
     const id = peerIdOf(client)
     const p  = agg.get(id)
     if (!p || !p.members.has(client)) return
     p.members.delete(client)
-    if (p.members.size === 0) { agg.delete(id); onLast(id, p.meta) }
+    if (p.members.size === 0) {
+      agg.delete(id)
+      if (!presentAnywhere(room, id)) onLast(id, p.meta)
+    }
   }
 
   function broadcastPresence(subs: Set<MjsWsClient> | undefined, p: Record<string, unknown>): void {
@@ -253,7 +277,7 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     addPeer(globalPeers, client, (id, meta) => {
       broadcastPresence(presenceSubsGlobal, { room: undefined, op: 'join', id, meta })
       hooks.onGlobalJoin?.(id, meta)
-    })
+    }, undefined)
   }
 
   function onDisconnect(client: MjsWsClient): void {
@@ -262,10 +286,11 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     removePeer(globalPeers, client, (id) => {
       broadcastPresence(presenceSubsGlobal, { room: undefined, op: 'leave', id })
       hooks.onGlobalLeave?.(id)
-    })
+    }, undefined)
     presenceSubsGlobal.delete(client)
     for (const [room, subs] of presenceSubsByRoom) { subs.delete(client); if (subs.size === 0) presenceSubsByRoom.delete(room) }
     lastJoinErrorAt.delete(client)
+    clientPresenceSubs.delete(client)
   }
 
   // --- µ:join — garde async, dédup silencieuse, delta 'join' ssi 1re connexion du peer ---
@@ -310,7 +335,7 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     addPeer(agg, client, (id, meta) => {
       broadcastPresence(presenceSubsByRoom.get(room), { room, op: 'join', id, meta })
       hooks.onJoin?.(room, id, meta)
-    })
+    }, room)
 
     replayHistory(client, room)
   }
@@ -362,7 +387,7 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
       removePeer(agg, client, (id, meta) => {
         broadcastPresence(presenceSubsByRoom.get(room), { room, op: 'leave', id })
         hooks.onLeave?.(room, id, meta)
-      })
+      }, room)
       if (agg.size === 0) roomPeers.delete(room)
     }
 
@@ -382,6 +407,21 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
       return
     }
 
+    // Faille comblée — plafond d'abonnements de présence par client (cf. MjsWsRoomsEngineOptions.
+    // maxPresencePerClient) : SANS lui, un client pouvait s'abonner à la présence d'un nombre
+    // ILLIMITÉ de salons à noms arbitraires, MÊME jamais rejoints. Vérifié ICI, AVANT même la garde
+    // canSeePresence (potentiellement async/HTTP) — MÊME raison que maxRoomsPerClient (handleJoin) :
+    // un client déjà au plafond n'a pas à déclencher un aller-retour réseau pour un abonnement de
+    // toute façon refusé. Ré-abonnement à un salon DÉJÀ suivi : jamais compté deux fois, jamais refusé.
+    // 0 doit refuser DÈS le premier abonnement — `dejaSuivis` vaut `undefined` à ce moment-là, un
+    // court-circuit sur son existence (`dejaSuivis && …`) sauterait la comparaison numérique avant
+    // même de l'atteindre, MÊME piège que maxRoomsPerClient évite déjà via `already?.size ?? 0`.
+    const dejaSuivis = clientPresenceSubs.get(client)
+    if (maxPresencePerClient != null && !dejaSuivis?.has(room) && (dejaSuivis?.size ?? 0) >= maxPresencePerClient) {
+      refuseJoin(client, t('ws.rooms.trop-de-salons'))
+      return
+    }
+
     if (opts.canSeePresence) {
       let allowed: boolean
       // canSeePresence qui LÈVE — MÊME garde que opts.join ci-dessus
@@ -397,6 +437,9 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     let subs = presenceSubsByRoom.get(room)
     if (!subs) { subs = new Set(); presenceSubsByRoom.set(room, subs) }
     subs.add(client)
+    let mine = clientPresenceSubs.get(client)
+    if (!mine) { mine = new Set(); clientPresenceSubs.set(client, mine) }
+    mine.add(room)
     rawSend(client, { t: 'µ:presence', p: { room, op: 'reset', peers: mergedSnapshot(room) } })
   }
 
@@ -466,36 +509,56 @@ export function createRoomsEngine(opts: MjsWsRoomsEngineOptions, rawSend: MjsWsR
     return m
   }
 
+  // Faille HAUTE comblée — présence de CE peer ailleurs que dans le registre qu'on est en train de
+  // muter : LOCAL (globalPeers/roomPeers) OU un AUTRE process (remoteGlobalPeers/remoteRoomPeers,
+  // TOUS process confondus). Sert à détecter les vraies transitions 0↔1 de la présence FUSIONNÉE
+  // (cf. applyRemotePresence/purgeRemoteProcess ci-dessous) — un départ sur UNE seule source ne doit
+  // JAMAIS publier un delta si l'identité reste présente par une autre voie.
+  function presentAnywhere(room: string | undefined, id: string): boolean {
+    const local = room === undefined ? globalPeers : roomPeers.get(room)
+    if (local && local.has(id)) return true
+    const remoteByProcess = room === undefined ? remoteGlobalPeers : remoteRoomPeers.get(room)
+    if (remoteByProcess) for (const peers of remoteByProcess.values()) if (peers.has(id)) return true
+    return false
+  }
+
   function applyRemotePresence(room: string | undefined, processId: string, op: 'join' | 'leave', id: string, meta?: unknown): void {
     const byProcess = room === undefined ? remoteGlobalPeers : remoteRoomBucket(room)
     const subs = room === undefined ? presenceSubsGlobal : presenceSubsByRoom.get(room)
+    // Faille HAUTE comblée — état AVANT/APRÈS la mutation de CETTE SEULE source (processId) :
+    // n'émet join/leave qu'à la transition RÉELLE 0↔1 de la présence FUSIONNÉE (local + tous les
+    // process), jamais à chaque source individuelle — sinon le départ de CE process publie un faux
+    // « parti » alors que l'identité reste là ailleurs (autre process, ou même localement).
+    const wasPresent = presentAnywhere(room, id)
     if (op === 'join') {
       let peers = byProcess.get(processId)
       if (!peers) { peers = new Map(); byProcess.set(processId, peers) }
       peers.set(id, meta)
-      broadcastPresence(subs, { room, op: 'join', id, meta })
     } else {
       const peers = byProcess.get(processId)
       peers?.delete(id)
       if (peers && peers.size === 0) byProcess.delete(processId)
-      broadcastPresence(subs, { room, op: 'leave', id })
     }
+    const isPresent = presentAnywhere(room, id)
+    if (!wasPresent && isPresent) broadcastPresence(subs, { room, op: 'join', id, meta })
+    else if (wasPresent && !isPresent) broadcastPresence(subs, { room, op: 'leave', id })
   }
 
   // bail expiré (cluster, core.ts) — purge TOUS les pairs distants de ce process (global + tous
-  // les salons) et émet le `leave` correspondant à chacun, aux abonnés locaux concernés
+  // les salons) et émet le `leave` correspondant à chacun, SEULEMENT si l'identité ne reste PAS
+  // présente ailleurs (local ou un AUTRE process encore vivant) — même garantie qu'applyRemotePresence.
   function purgeRemoteProcess(processId: string): void {
     const globalOfProc = remoteGlobalPeers.get(processId)
     if (globalOfProc) {
       remoteGlobalPeers.delete(processId)
-      for (const id of globalOfProc.keys()) broadcastPresence(presenceSubsGlobal, { room: undefined, op: 'leave', id })
+      for (const id of globalOfProc.keys()) if (!presentAnywhere(undefined, id)) broadcastPresence(presenceSubsGlobal, { room: undefined, op: 'leave', id })
     }
     for (const [room, byProcess] of remoteRoomPeers) {
       const peers = byProcess.get(processId)
       if (!peers) continue
       byProcess.delete(processId)
       if (byProcess.size === 0) remoteRoomPeers.delete(room)
-      for (const id of peers.keys()) broadcastPresence(presenceSubsByRoom.get(room), { room, op: 'leave', id })
+      for (const id of peers.keys()) if (!presentAnywhere(room, id)) broadcastPresence(presenceSubsByRoom.get(room), { room, op: 'leave', id })
     }
   }
 

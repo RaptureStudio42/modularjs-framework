@@ -2,7 +2,7 @@
 // générique ajoutée à sa demande, cf. plus bas) : couche « salle de partie » COMPOSÉE par-dessus
 // l'API PUBLIQUE MJS-WS (app.serve/on/send/sendUser/clients/stop…), jamais par réimplémentation.
 // API magique : la couche de trames µgame: est INVISIBLE pour l'appli hôte, qui ne voit que
-// `app.game(type, def)` + les objets `partie` passés à ses moves/vues/hooks. Tour par tour
+// `app.game(type, def)` + les objets `game` passés à ses moves/vues/hooks. Tour par tour
 // événementiel par défaut (tick=0) ; mode ACTION à boucle de tick (tick 1-60 Hz, intentions,
 // deltas par joueur, zones d'intérêt) — cf. game.ts (validation) et game.ts (commentaire de tête).
 // def.mode : 'authoritative' (défaut, décrit ci-dessus, INCHANGÉ) | 'lockstep' — la
@@ -13,9 +13,9 @@
 //   import { mjsServer } from 'modularjs-framework/mjs-server'
 //   app = mjsServer({ auth: (hello) => ({ id: hello.auth.uid }) })   // MÊMES options que mjsWs()
 //   app.game('morpion', {
-//     places: 2, code: true,
-//     state: (partie) => ({ grille: Array(9).fill(null) }),
-//     moves: { jouer: (partie, joueur, p) => { partie.state.grille[p.i] = joueur.id; partie.next() } },
+//     seats: 2, code: true,
+//     state: (game) => ({ grille: Array(9).fill(null) }),
+//     moves: { jouer: (game, player, p) => { game.state.grille[p.i] = player.id; game.next() } },
 //     turns: { order: 'roundrobin', timeout: 30000 },
 //   })
 //   await app.listen()
@@ -24,15 +24,15 @@
 // l'appli hôte → erreur claire immédiate) :
 //
 // Requêtes CLIENT → SERVEUR (app.serve, µ:ack en retour — succès = valeur, throw = ack d'erreur) :
-//   µgame:play   { type, code?, spectateur? } → { attente: n } (file, pas encore complet)
-//                                         | { partie, siege, phase, tour, seq, code, ...info } (assis)
+//   µgame:play   { type, code?, spectator? } → { queue: n } (file, pas encore complet)
+//                                         | { game, seat, phase, turn, seq, code, ...info } (assis)
 //                                       `code` discriminé par TYPE, jamais par sa seule présence :
 //                                         absent = file publique ; `true` = crée une partie privée
 //                                         NEUVE (code généré, porté par la réponse) ; chaîne =
 //                                         rejoint la partie privée à ce code (inconnu → erreur).
 //                                       `code` sous quelque forme exige `def.code === true`.
-//                                       `spectateur: true` (anti-triche, opt-in) — rejoint
-//                                         EN LECTURE SEULE (`siege: null`, `places` inchangé) une
+//                                       `spectator: true` (anti-triche, opt-in) — rejoint
+//                                         EN LECTURE SEULE (`seat: null`, `seats` inchangé) une
 //                                         partie EXISTANTE adressée PAR CODE UNIQUEMENT (exige
 //                                         `def.code === true` + un `code` chaîne — jamais la file
 //                                         publique, ambiguë entre plusieurs parties du même type) ;
@@ -44,50 +44,50 @@
 //                                       `...info` (game.ts::_infoMode) = `{ view }` (authoritative)
 //                                         | `{ seed, journal }` (lockstep — journal
 //                                         COMPLET des ordres à ce jour, cf. mjs-server/lockstep.ts).
-//   µgame:move   { partie, coup, p? }  → { ok: true, resultat } — throw (garde interne OU le move
+//   µgame:move   { game, move, p? }    → { ok: true, result } — throw (garde interne OU le move
 //                                       lui-même) → ack d'erreur, comme tout app.serve() normal.
-//                                       Mode lockstep : `resultat` toujours `undefined`
+//                                       Mode lockstep : `result` toujours `undefined`
 //                                       — le coup n'est PAS exécuté, il devient un ORDRE mis en file
 //                                       pour le tick courant (diffusé à tous, cf. µgame:orders).
-//   µgame:leave  { partie }            → { ok: true } — vide le siège (≠ déconnexion, qui le garde)
-//   µgame:resync { partie }            → { partie, siege, phase, tour, seq, code, ...info } (cf.
+//   µgame:leave  { game }              → { ok: true } — vide le siège (≠ déconnexion, qui le garde)
+//   µgame:resync { game }              → { game, seat, phase, turn, seq, code, ...info } (cf.
 //                                       µgame:play ci-dessus pour `...info`) — rattache CETTE
 //                                       connexion à son siège (identité stable requise, cf.
 //                                       peerIdOf/game.ts) et renvoie une info fraîche COMPLÈTE ;
 //                                       en lockstep, le client REJOUE le journal reçu (cf. µ.lockstep).
 //
 // Requête CLIENT → SERVEUR fire-and-forget (app.on, PAS d'ack — mode lockstep) :
-//   µgame:hash { partie, tick, h }     — hash FNV périodique de l'état local (cf. µ.lockstep,
+//   µgame:hash { game, tick, h }       — hash FNV périodique de l'état local (cf. µ.lockstep,
 //                                       src/runtime/mjs_lockstep.ts) ; le serveur compare les hashs
 //                                       reçus au MÊME tick (cf. mjs-server/lockstep.ts receiveHash) —
 //                                       concordants = silence, différents = µgame:event 'divergence'.
 //
 // Poussées SERVEUR → CLIENT (app.send, sans ack) :
-//   µgame:state { partie, vue, phase, tour, seq }         — à CHAQUE mutation, SA vue par joueur,
+//   µgame:state { game, view, phase, turn, seq }           — à CHAQUE mutation, SA vue par joueur,
 //                                                          groupée par microtâche (tick=0) ou 1×/tick
 //                                                          (mode action, tick>0) ; def.deltas: true
-//                                                          remplace `vue` par `delta` (opérations
+//                                                          remplace `view` par `delta` (opérations
 //                                                          {p,v}/{p,x:1}, cf. game.ts) SAUF repli
 //                                                          vue complète (1re fois/resync/trop gros)
 //                                                          — zéro trame si rien n'a changé. ABSENTE
 //                                                          en mode lockstep (cf. µgame:orders).
-//   µgame:orders { partie, tick, ordres: [{joueur,coup,p}] } — mode lockstep SEUL : 1×
+//   µgame:orders { game, tick, orders: [{player,move,p}] } — mode lockstep SEUL : 1×
 //                                                          PAR TICK (boucle def.tick, MÊME cadence
 //                                                          que le mode action), TOUJOURS diffusée
-//                                                          (même `ordres: []`) — MÊME trame pour TOUS
+//                                                          (même `orders: []`) — MÊME trame pour TOUS
 //                                                          les sièges (l'égalité d'entrée est le cœur
 //                                                          du déterminisme), cf. mjs-server/lockstep.ts.
-//   µgame:event { partie, type, p }                       — partie.send(type, p), libre ; `type:
+//   µgame:event { game, type, p }                          — game.send(type, p), libre ; `type:
 //                                                          'divergence'` {tick} réservé au mode
 //                                                          lockstep (cf. def.onDivergence)
-//   µgame:seat  { partie, places, sieges: [{siege,connecte}|null] } — roster, à chaque changement
-//   µgame:start { partie, siege, phase, tour, seq, code, ...info } — 1re fois `places` atteint, aux
+//   µgame:seat  { game, seatCount, seats: [{seat,connected}|null] } — roster, à chaque changement
+//   µgame:start { game, seat, phase, turn, seq, code, ...info } — 1re fois `seats` atteint, aux
 //                                                          sièges qui n'ont PAS eux-mêmes déclenché
 //                                                          la complétion (qui l'ont via leur ack) ;
 //                                                          `...info` cf. µgame:play ci-dessus
-//   µgame:end   { partie, resultat }                      — partie.end(resultat), ou annulation
-//                                                          (resultat: {annulee:true, raison})
-//   µgame:left  { partie, siege }                         — départ volontaire d'un AUTRE joueur
+//   µgame:end   { game, result }                           — game.end(result), ou annulation
+//                                                          (result: {cancelled:true, reason})
+//   µgame:left  { game, seat }                             — départ volontaire d'un AUTRE joueur
 //
 // Accroche MJS-WS ajoutée (accroche PUBLIQUE, minimale, générique,
 // testée côté MJS-WS) : `opts.onDisconnect(client, reason)`, cf. src/mjs-ws/index.ts + core.ts +
@@ -119,7 +119,7 @@ export type { MjsServerGameDef, MjsServerTurnsDef, MjsServerLimitsDef, MjsServer
 export { Game, createGame, restoreGame, peerIdOf } from './game.js'
 export type { MjsServerSeat, MjsServerGameSnapshot, MjsServerDeltaOp } from './game.js'
 // anti-triche (détection par coup, cf. game.ts::_antiCheatGuard) — types du
-// contrat def.suspect/antiRejeu/onSuspicion + compteurs app.stats().game, cf. plus bas dans ce fichier
+// contrat def.suspect/antiReplay/onSuspicion + compteurs app.stats().game, cf. plus bas dans ce fichier
 export type { MjsServerSuspectContext, MjsServerSuspectResult, MjsServerSuspicionEvent, MjsServerGameStats } from './game.js'
 // zone d'intérêt optionnelle — cf. space.ts pour le contrat complet
 export { createSpace } from './space.js'
@@ -160,12 +160,12 @@ export type { MjsPackage } from '../mjs-ws/index.js'
 
 const RESERVED_PREFIX = 'µgame:'
 
-/** app.stats() d'une MjsServerApp — instantané MJS-WS (mjs-ws/stats.ts, INCHANGÉ) + `jeu` : compteurs
+/** app.stats() d'une MjsServerApp — instantané MJS-WS (mjs-ws/stats.ts, INCHANGÉ) + `game` : compteurs
  *  anti-triche agrégés (cf. MjsServerGameStats, game.ts) — extension PUREMENT ADDITIVE,
  *  greffée au moment du snapshot (cf. mjsServer() ci-dessous), jamais dans mjs-ws/stats.ts lui-même :
  *  MJS-Server COMPOSE sur l'API PUBLIQUE MJS-WS (cf. commentaire de tête du fichier), il ne modifie
  *  jamais son registre interne — un app.stats() consommé côté HTTP (bridge.ts GET /stats, /metrics
- *  JSON, /state) voit `jeu` automatiquement, la recomposition passe par LA MÊME clé `stats` de l'app. */
+ *  JSON, /state) voit `game` automatiquement, la recomposition passe par LA MÊME clé `stats` de l'app. */
 export interface MjsServerStatsSnapshot extends MjsWsStatsSnapshot {
   game: MjsServerGameStats
 }
@@ -174,13 +174,13 @@ export interface MjsServerApp extends MjsWsApp {
   /** déclare un type de jeu — throw si `type` déjà déclaré, ou si `def` est invalide (game.ts, validation stricte) */
   game(type: string, def: MjsServerGameDef): void
   /** cf. MjsServerStatsSnapshot — TOUJOURS disponible, indépendant de opts.stats (comme app.stats()
-   *  MJS-WS, cf. son commentaire) ; `jeu` reste à {0,0} tant qu'aucun jeu déclaré ne journalise quoi
+   *  MJS-WS, cf. son commentaire) ; `game` reste à {0,0} tant qu'aucun jeu déclaré ne journalise quoi
    *  que ce soit (cf. game.ts::_reportSuspicion). */
   stats(): MjsServerStatsSnapshot
 }
 
 /** anti-triche (opt-in, anti-triche poussé au maximum) — options APP-ENTIÈRE
- *  (par opposition aux options PAR JEU de MjsServerGameDef.suspect/antiRejeu/limits.moveIntervalMs) :
+ *  (par opposition aux options PAR JEU de MjsServerGameDef.suspect/antiReplay/limits.moveIntervalMs) :
  *  seul matchmaking.ts voit TOUTES les parties vivantes à la fois, cf. mjs-server/matchmaking.ts. */
 export interface MjsServerAntiCheatOptions {
   /** quota de coups PAR IDENTITÉ agrégé sur TOUTES les parties vivantes de l'app (borne un bot qui
@@ -202,7 +202,7 @@ export interface MjsServerOptions extends MjsWsOptions {
   /** persistance optionnelle (persist.ts) — absent = AUCUN hook armé, zéro coût. Adaptateur NU ou
    *  `{ adaptateur, debounce?, snapshotEvery? }`, cf. persist.ts pour le contrat complet. */
   persist?: MjsServerPersistOption
-  /** anti-triche — cf. MjsServerAntiTricheOptions. Nom DÉLIBÉRÉMENT distinct de `limits`
+  /** anti-triche — cf. MjsServerAntiCheatOptions. Nom DÉLIBÉRÉMENT distinct de `limits`
    *  (héritée de MjsWsOptions — transport : rate/burst/maxPayload/maxConnections… — jamais
    *  réutilisée ici : MJS-WS reste intouché, cf. tête de fichier, et une interface ne peut de toute
    *  façon pas redéfinir `limits` avec une forme incompatible de celle héritée). */
@@ -232,9 +232,9 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   // négligible, MÊME politique « toujours actif » que mjs-ws/stats.ts) : rattachés à CHAQUE partie
   // par matchmaking.ts (armés comme `_onMutate`/persist.ts::armGame), greffés sur app.stats()
   // plus bas (cf. MjsServerStatsSnapshot) — restent à {0,0} tant qu'aucun jeu déclaré n'utilise
-  // def.suspect/antiRejeu/limits.moveIntervalMs (cf. game.ts::_reportSuspicion).
+  // def.suspect/antiReplay/limits.moveIntervalMs (cf. game.ts::_reportSuspicion).
   const gameStats: MjsServerGameStats = { suspectMoves: 0, rejectedMoves: 0 }
-  // anti-triche — cf. MjsServerAntiTricheOptions.movesPerIdentity ; validé ICI (throw
+  // anti-triche — cf. MjsServerAntiCheatOptions.movesPerIdentity ; validé ICI (throw
   // immédiat, MÊME philosophie « pas de valeur par défaut silencieuse sur une clé mal typée » que
   // resolveGameDef, cf. game.ts) — matchmaking.ts fait confiance à cette forme déjà normalisée,
   // jamais de revalidation côté registre lui-même. `undefined`/`null` (option absente OU désactivée
@@ -249,7 +249,7 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
       throw new Error(t('serveur.index-movesperidentity-invalide', { received: JSON.stringify(movesPerIdentity) }))
     }
   }
-  // cf. MjsServerAntiTricheOptions.codePerIp ; `undefined` (option absente)
+  // cf. MjsServerAntiCheatOptions.codePerIp ; `undefined` (option absente)
   // reste `undefined` et LAISSE createMatchmaking appliquer son propre défaut (verrou toujours
   // actif) — seul un `null` EXPLICITE désactive, seul un tableau est validé (MÊME philosophie que
   // movesPerIdentity ci-dessus, résolution différente puisque le défaut n'est pas « aucun contrôle »)
@@ -291,8 +291,8 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   const baseSchema = app.schema
   const baseStop   = app.stop
   const baseListen = app.listen
-  // capturé AVANT le greffage `jeu` plus bas (cf. app.stats =) — MÊME patron que baseServe/baseOn
-  // ci-dessus : `app.stats` ici est ENCORE la version MJS-WS nue (mjs-ws/stats.ts, aucun `jeu`).
+  // capturé AVANT le greffage `game` plus bas (cf. app.stats =) — MÊME patron que baseServe/baseOn
+  // ci-dessus : `app.stats` ici est ENCORE la version MJS-WS nue (mjs-ws/stats.ts, aucun `game`).
   const baseStats  = app.stats
 
   matchmaking = createMatchmaking(app, gameDefs, baseServe, baseOn, persistEngine, gameStats, movesPerIdentity, codePerIp)
@@ -310,10 +310,10 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
     if (nom.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-schema-prefixe-reserve', { type: nom, prefix: RESERVED_PREFIX }))
     baseSchema(nom, champs)
   }
-  // anti-triche — greffe ADDITIVE de `jeu` sur l'instantané MJS-WS (cf. MjsServerStatsSnapshot
+  // anti-triche — greffe ADDITIVE de `game` sur l'instantané MJS-WS (cf. MjsServerStatsSnapshot
   // en tête de fichier) : COPIE défensive (jamais `gameStats` lui-même, MÊME politique que
   // mjs-ws/stats.ts::snapshot() pour ses propres familles de compteurs) — bridge.ts (GET /stats,
-  // /metrics, /state) lit `ctx.app.stats()` en LIVE à chaque requête, donc voit `jeu` automatiquement.
+  // /metrics, /state) lit `ctx.app.stats()` en LIVE à chaque requête, donc voit `game` automatiquement.
   app.stats = (): MjsServerStatsSnapshot => ({ ...baseStats(), game: { ...gameStats } })
   app.listen = async () => {
     // restauration (persist.ts) AVANT que le serveur n'accepte la moindre connexion — un client

@@ -25,10 +25,15 @@ describe('macro globale — handler multi-lignes préserve l\'indentation', func
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'mjs-macro-if-nested' })
     // La mutation de $open doit apparaître DANS le bloc `{ }` du if, pas
-    // juste après (au même niveau que le if lui-même).
+    // juste après (au même niveau que le if lui-même). `$open = false` est le
+    // dernier statement du if (auto-return Civet) : sa valeur est consommée
+    // par le `return` englobant, d'où la forme fidèle plutôt que directe —
+    // la macro globale est attachée à `window.addEventListener` en direct
+    // (pas le routeur délégué `_mjs_bindEvents`), donc la valeur de retour
+    // n'est de toute façon jamais lue ni appelée.
     assert.match(
       output,
-      /if\s*\(e\.key\s*===\s*'Escape'\)\s*\{\s*return µ\._set\(_mjsThis,\s*'open',\s*false\)\s*\}/,
+      /if\s*\(e\.key\s*===\s*'Escape'\)\s*\{\s*return \(\(_v\) => \(µ\._set\(_mjsThis,\s*'open',\s*_v\),\s*_v\)\)\(false\)\s*\}/,
       'la mutation $open=false doit être nichée dans le corps du if, pas exécutée inconditionnellement à chaque keydown'
     )
   })
@@ -41,7 +46,9 @@ describe('macro globale — handler multi-lignes préserve l\'indentation', func
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'mjs-macro-siblings' })
     assert.match(output, /µ\._set\(_mjsThis,\s*'a',\s*10\)/, 'première instruction sœur présente')
-    assert.match(output, /µ\._set\(_mjsThis,\s*'b',\s*20\)/, 'deuxième instruction sœur présente (ne doit pas être avalée par un if fantôme)')
+    // deuxième (et dernière) instruction du bloc : auto-return Civet → forme fidèle,
+    // valeur consommée par le `return` implicite du handler (jamais lue : addEventListener natif).
+    assert.match(output, /µ\._set\(_mjsThis,\s*'b',\s*_v\),\s*_v\)\)\(20\)/, 'deuxième instruction sœur présente (ne doit pas être avalée par un if fantôme)')
   })
 
   it('handler mono-ligne (cas nominal) reste inchangé', async () => {

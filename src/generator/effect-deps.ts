@@ -59,20 +59,49 @@
 // lectures) est consulté à chaque `this.<nom>()`/`_mjsThis.<nom>()` rencontré
 // DANS le callback. Noms d'état/computed SIMPLES : toujours inclus (le
 // runtime étend les computeds via comp._mjs_computedDeps à l'enregistrement, cf.
-// mjs_runes.ts ~162-172). Lectures PRÉFIXÉES '$$' (store) : EXCLUES ICI —
-// vérifié (mjs_element.ts _mjs_runEffectsV2/_mjs_invalidate) que la comparaison
-// staticVars↔mutedVars fonctionnerait bien pour un '$$x' littéral, MAIS la
-// souscription qui déclenche `_mjs_invalidate('$$x')` en premier lieu
-// (`_mjs_storeKeys`, storeKeysLine — transpiler/index.ts) ne scanne QUE les
-// deps template (effectsByVar/structVars) : un `$$x` lu SEULEMENT via une
-// méthode appelée ici ne fait jamais souscrire ce composant à la clé, la
-// mutation n'atteindrait donc jamais cet effet — inclure la dep serait un
-// mort-né silencieux plutôt qu'un vrai câblage.
+// mjs_runes.ts ~162-172).
+//
+// STORE — une lecture `µ.store.x` (`$$x`) devient la dépendance '$$x' (`µ.store` parcouru
+// en entier : '$$*'), qu'elle soit dans le callback, dans une fonction plate ou dans une
+// méthode appelée. Le store appelle `_mjs_invalidate('$$x')` sur les composants abonnés à la
+// clé (`_mjs_storeKeys`, qui relève aussi les `$$x` LUS dans le <script>, cf. collectStoreReads)
+// et `_mjs_runEffectsV2` compare cette clé aux dépendances : sans elle, un effet qui lisait
+// aussi un `$x` local ne se relançait JAMAIS sur l'écriture de la clé (liste non vide, filet
+// « aucune dépendance connue » désactivé) ; seul, il se relançait à CHAQUE mutation, y
+// compris celles qu'il provoquait — `$$n += 1 if $$actif` bouclait jusqu'au garde-fou.
+// Une clé que l'effet ÉCRIT lui-même (`µ._storeSet('x', …)`, écritures profondes,
+// suppression — formes posées par path-tracker.ts, dans le callback, une fonction plate ou une
+// méthode) n'est jamais une dépendance : il ne se relance pas sur sa propre écriture. Les
+// lectures du store d'une méthode viennent de SON CORPS déjà réécrit, jamais de `methodReads`,
+// qui range aussi les cibles d'écriture en lecture (`$$panier = null` y vaut '$$panier').
 
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { passResult, type PassResult } from './pass-map.js'
+import { collectStoreMemberDep } from '../analyzer/index.js'
+
+// écritures du store telles que path-tracker.ts les réécrit : la clé est le 1er argument
+const STORE_WRITERS = new Set([ '_storeSet', '_mjs_storeDeepSet', '_mjs_storeDeepCall', '_mjs_storeDeepDelete', '_mjs_storeDelete' ])
+
+function isStoreRoot(node: any): boolean {
+  return node?.type === 'MemberExpression' && !node.computed && node.object?.type === 'Identifier' && node.object.name === 'µ' &&
+    node.property?.type === 'Identifier' && node.property.name === 'store'
+}
+
+// '$$x' si `node` écrit la clé x du store (appel réécrit, ou cible `µ.store.x` restée nue), sinon null
+function storeWriteKey(node: any): string | null {
+  if (node.type === 'CallExpression') {
+    const c = node.callee
+    if (c?.type !== 'MemberExpression' || c.computed || c.object?.type !== 'Identifier' || c.object.name !== 'µ') return null
+    if (!STORE_WRITERS.has(c.property?.name)) return null
+    const k = node.arguments?.[0]
+    return k?.type === 'Literal' && typeof k.value === 'string' ? `$$${k.value}` : null
+  }
+  const cible = node.type === 'AssignmentExpression' ? node.left : node.argument
+  if (cible?.type === 'MemberExpression' && !cible.computed && isStoreRoot(cible.object) && cible.property?.type === 'Identifier') return `$$${cible.property.name}`
+  return null
+}
 
 function extractComputedStaticKey(node: any): string | null {
   if (node?.type === 'Literal' && typeof node.value === 'string') return node.value
@@ -128,36 +157,68 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
     }
   }
 
-  // Parcourt `fn` et ajoute à `deps` les `$.xxx` lus — DIRECTEMENT, via une
-  // méthode `this.m()`/`_mjsThis.m()` (methodReads) ou via un APPEL à une
-  // fonction plate du module (fnByName, TRANSITIF — `seen` coupe les cycles).
-  function collectReads(fn: any, deps: Set<string>, seen: Set<string>): void {
+  // Méthodes du composant posées au premier niveau (`this.lit = function() {…}`, forme émise pour
+  // `@lit = -> …`) : parcourues pour leurs lectures et écritures du STORE seulement (en-tête).
+  const methodByName = new Map<string, any>()
+  for (const stmt of (ast as any).body) {
+    const a = stmt.type === 'ExpressionStatement' ? stmt.expression : null
+    if (a?.type === 'AssignmentExpression' && a.operator === '=' && a.left?.type === 'MemberExpression' && !a.left.computed &&
+        a.left.object?.type === 'ThisExpression' && a.left.property?.type === 'Identifier' &&
+        (a.right?.type === 'FunctionExpression' || a.right?.type === 'ArrowFunctionExpression')) {
+      methodByName.set(a.left.property.name, a.right)
+    }
+  }
+
+  // Parcourt `fn` : les `$.xxx` lus vont dans `deps` — DIRECTEMENT, via une méthode
+  // `this.m()`/`_mjsThis.m()` (methodReads) ou via un APPEL à une fonction plate du module
+  // (fnByName, TRANSITIF — `seen` coupe les cycles) ; les lectures et les écritures du STORE vont
+  // dans `store`, corps des méthodes compris. `storeOnly` : dans le corps d'une méthode, les
+  // `$.xxx` restent ceux de methodReads (filtrés des variables externes par l'analyseur).
+  function collectReads(fn: any, deps: Set<string>, seen: Set<string>, store: { reads: Set<string>, writes: Set<string> }, storeOnly = false): void {
     walk.ancestor(fn, {
-      MemberExpression(n: any) {
-        if (n.object?.type !== 'Identifier' || n.object.name !== '$') return
+      MemberExpression(n: any, _s: any, anc: any[]) {
+        if (n.object?.type !== 'Identifier' || n.object.name !== '$') {
+          collectStoreMemberDep(n, anc, store.reads)
+          return
+        }
+        if (storeOnly) return
         const key = n.computed ? extractComputedStaticKey(n.property) : (n.property?.name ?? null)
         if (key) deps.add(key)
       },
-      // `this.fmt()`/`_mjsThis.fmt()` : méthode connue → ses lectures
-      // (déjà point-fixées, '@' résolus) s'ajoutent aux deps de CET effet.
-      // '$$' exclues, cf. commentaire en tête de fichier.
+      AssignmentExpression(n: any) {
+        const k = storeWriteKey(n)
+        if (k) store.writes.add(k)
+      },
+      UpdateExpression(n: any) {
+        const k = storeWriteKey(n)
+        if (k) store.writes.add(k)
+      },
+      // `this.fmt()`/`_mjsThis.fmt()` : méthode connue → ses lectures d'état
+      // (déjà point-fixées, '@' résolus) s'ajoutent aux deps de CET effet ;
+      // son corps donne celles du store (en-tête).
       CallExpression(n: any) {
-        if (!methodReads) return
+        const k = storeWriteKey(n)
+        if (k) store.writes.add(k)
         const cc = n.callee
-        if (cc?.type === 'MemberExpression' && !cc.computed &&
-            (cc.object?.type === 'ThisExpression' || (cc.object?.type === 'Identifier' && cc.object.name === '_mjsThis')) &&
-            cc.property?.type === 'Identifier') {
-          const sub = methodReads[cc.property.name]
-          if (sub) for (const r of sub) { if (!r.startsWith('$$')) deps.add(r) }
-        }
+        if (cc?.type !== 'MemberExpression' || cc.computed || cc.property?.type !== 'Identifier') return
+        if (cc.object?.type !== 'ThisExpression' && !(cc.object?.type === 'Identifier' && cc.object.name === '_mjsThis')) return
+        const nom = cc.property.name
+        const sub = storeOnly ? null : methodReads?.[nom]
+        if (sub) for (const r of sub) { if (!r.startsWith('$$')) deps.add(r) }
+        const corps = methodByName.get(nom)
+        if (!corps || seen.has(`@${nom}`)) return
+        seen.add(`@${nom}`)
+        collectReads(corps, deps, seen, store, true)
       },
       // fonction plate du module référencée — position appel (`helper()`) OU
       // position valeur (`list.forEach(helper)`) : héritage transitif de SES
-      // lectures (en-tête).
+      // lectures (en-tête). Clé de `seen` distincte en mode store seul : un
+      // passage depuis une méthode ne doit pas masquer le parcours complet.
       Identifier(n: any) {
-        if (!fnByName.has(n.name) || seen.has(n.name)) return
-        seen.add(n.name)
-        collectReads(fnByName.get(n.name), deps, seen)
+        const cle = storeOnly ? `~${n.name}` : n.name
+        if (!fnByName.has(n.name) || seen.has(cle)) return
+        seen.add(cle)
+        collectReads(fnByName.get(n.name), deps, seen, store, storeOnly)
       },
     })
   }
@@ -175,8 +236,11 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
       const cb = args[0]
       if (cb.type !== 'FunctionExpression' && cb.type !== 'ArrowFunctionExpression') return
 
-      const deps = new Set<string>()
-      collectReads(cb, deps, new Set<string>())
+      const deps  = new Set<string>()
+      const store = { reads: new Set<string>(), writes: new Set<string>() }
+      collectReads(cb, deps, new Set<string>(), store)
+      // une clé que l'effet écrit lui-même ne le relance jamais (en-tête)
+      for (const k of store.reads) { if (!store.writes.has(k)) deps.add(k) }
 
       const depsLit = `[${[...deps].map(d => JSON.stringify(d)).join(', ')}]`
       ms.appendLeft(cb.end, `, ${depsLit}`)

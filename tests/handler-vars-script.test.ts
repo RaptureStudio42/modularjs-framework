@@ -93,16 +93,27 @@ describe('handlers — les variables ordinaires du <script>', function () {
       assert.match(batch, /let label/)
     })
 
+    // AVANT : le clic écrivait dans le `label` du <script> — muet, aucune erreur. Le nom reste local
+    // au gestionnaire (sa copie, recréée depuis le {const}) ; le réaffecter est refusé au build,
+    // puisque cette écriture-là serait perdue
     it('le nom d\'un {const} reste LOCAL au handler, même si le <script> a un homonyme', async function () {
-      const batch = await batchInline("<script>\n  label = 'du script'\n  $items = [{ nom: 'premier' }]\n</script>\n{for i, item in $items}\n  {const label = item.nom}\n  <button @click={label = 'ECRASE'}>{label}</button>\n{end}\n")
-      assert.match(batch, /let label/, 'AVANT : le clic écrivait dans le `label` du <script> — muet, aucune erreur')
+      const batch = await batchInline("<script>\n  label = 'du script'\n  $items = [{ nom: 'premier' }]\n</script>\n{for i, item in $items}\n  {const label = item.nom}\n  <button @click={console.log(label)}>{label}</button>\n{end}\n")
+      assert.match(batch, /let label = __cst_\d+/, 'la copie locale est recréée depuis le {const}')
+      await assert.rejects(
+        batchInline("<script>\n  label = 'du script'\n  $items = [{ nom: 'premier' }]\n</script>\n{for i, item in $items}\n  {const label = item.nom}\n  <button @click={label = 'ECRASE'}>{label}</button>\n{end}\n"),
+        /réaffecte « label », posé par le gabarit/,
+      )
     })
 
     it('… de même pour l\'argument d\'un {success} / {error}', async function () {
-      const succes = await batchInline("<script>\n  data = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{success data}\n  <button @click={data = 'x'}>y</button>\n{end}\n")
-      assert.match(succes, /let data/)
-      const erreur = await batchInline("<script>\n  err = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{error err}\n  <button @click={err = 'x'}>y</button>\n{end}\n")
-      assert.match(erreur, /let err/)
+      const succes = await batchInline("<script>\n  data = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{success data}\n  <button @click={console.log(data)}>y</button>\n{end}\n")
+      assert.match(succes, /let data = __aw_\d+/)
+      const erreur = await batchInline("<script>\n  err = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{error err}\n  <button @click={console.log(err)}>y</button>\n{end}\n")
+      assert.match(erreur, /let err = __aw_\d+/)
+      await assert.rejects(
+        batchInline("<script>\n  data = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{success data}\n  <button @click={data = 'x'}>y</button>\n{end}\n"),
+        /réaffecte « data », posé par le gabarit/,
+      )
     })
 
     it('une CONSTANTE du <script> réaffectée dans un handler est refusée au build', async function () {

@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
 
+# un push qui en rattrape un autre annule la CI encore en vol de la même branche —
+# jamais deux runs concurrents à consommer des minutes pour un état déjà dépassé
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     name: Tests (Node ${{ matrix.node }})
@@ -20,6 +26,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          MJS_TEST_MEM: 4G
 
   windows:
     name: Windows (Node 22)
@@ -35,6 +43,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          MJS_TEST_MEM: 4G
 
   lint:
     name: Lint
@@ -47,3 +57,37 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+
+  build:
+    name: Build (build:self + fumée des points d'entrée publiés)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:self
+      - name: import de fumée de chaque point d'entrée publié (dist/)
+        # './dist/cli.js' exécute le CLI dès l'import (pas de garde main-module) : argv factice
+        # ('x' comble node/script, '--help' répond et sort en 0 sans toucher au disque)
+        run: |
+          node -e "for (const m of ['./dist/index.js', './dist/testing.js', './dist/mjs-ws.js', './dist/mjs-server.js']) { await import(m); console.log('ok', m) }"
+          node -e "await import('./dist/cli.js')" -- x --help
+
+  browser:
+    name: Tests navigateur (Chromium)
+    runs-on: ubuntu-latest
+    # lancé seulement si les tests de base passent (les trois versions de Node) : inutile de
+    # démarrer Chromium sur un code déjà rouge
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

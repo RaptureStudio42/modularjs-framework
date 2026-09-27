@@ -27,8 +27,8 @@
 // mjs-ws/chat.ts) — CHOIX délibéré, absent de l'énoncé littéral du store : sans lui un pseudo
 // resterait « en train d'écrire » indéfiniment dès la moindre pause.
 // `.send(text)`/`.typing()` — FIRE-AND-FORGET (aucun ack, aucune Promise) : un refus serveur
-// arrive en `µ:error {message: 'chat-length'|'chat-rate'|'chat-denied'|'chat-muted'}`, exposé
-// via `sock.lastError` — MÊME mécanique que le reste de MJS-WS (cf. mjs_socket.ts), PAS un rejet
+// arrive en `µ:error {message: 'chat-length'|'chat-rate'|'chat-denied'|'chat-muted'|'chat-duplicate'}`,
+// exposé via `sock.lastError` — MÊME mécanique que le reste de MJS-WS (cf. mjs_socket.ts), PAS un rejet
 // de promesse dédié comme `partie.move()` de mjs_game.ts (le protocole chat n'a pas d'ack ici).
 // `.remove(id)`/`.mute(identityId, durationMs)` — AJOUTS au-delà de l'énoncé
 // littéral du store (`{ messages, send, typing, typingUsers, me, close }`) : sans eux, la

@@ -162,10 +162,13 @@ describe('régressions — fix nuit V2.0', function () {
       assert.doesNotMatch(out, /^\s+previous \.= value/m, "ne doit PAS être promu en `.=` (shadow)")
     })
 
-    it("`IDENT := value` au top-level enregistre IDENT comme déclaré (pas re-promu en nested)", async () => {
+    it("`IDENT .= value` au top-level enregistre IDENT comme déclaré (pas re-promu en nested)", async () => {
+      // `.=` (mutable) plutôt que `:=` (constante) : le sujet ICI est la non-re-promotion en
+      // nested, pas la réaffectation d'une constante (couverte séparément ci-dessous) — `x .=`
+      // découple les deux sujets, `x = 20` imbriqué reste une réaffectation légitime.
       const { applyMjsSugarToScript } = await import('../src/transpiler/index.js')
       const src = [
-        'x := 10',
+        'x .= 10',
         'foo .= ->',
         '  x = 20',
         '  x',
@@ -173,6 +176,15 @@ describe('régressions — fix nuit V2.0', function () {
       const out = applyMjsSugarToScript(src)
       assert.match(out, /^\s+x = 20/m, 'nested x = 20 doit rester tel quel')
       assert.doesNotMatch(out, /^\s+x \.= 20/m, "ne doit PAS être promu en `.=`")
+    })
+
+    it("`IDENT := value` (constante) au top-level puis réaffectation imbriquée SANS homonyme local — refusé", async () => {
+      // Même source que le test précédent mais liée par `:=` (constante) : `x = 20` dans `foo`
+      // ne déclare aucun homonyme local (pas de `x .=`/`x :=` propre à `foo`) — une réaffectation
+      // bien réelle de la constante externe, refusée à la compilation plutôt que de planter
+      // au chargement.
+      const src = '<script>\nx := 10\nfoo = ->\n  x = 20\n  x\n</script>\n<p>{foo()}</p>'
+      await assert.rejects(transpile(src, { moduleName: 'regression-const-reaffectee-imbriquee' }), /« x »[\s\S]*ligne \d+[\s\S]*:=.*constante.*\.=/)
     })
   })
 

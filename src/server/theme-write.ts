@@ -61,6 +61,19 @@ function finDeValeur(rest: string): number {
   let paren = 0
   for (let i = 0; i < rest.length; i++) {
     const c = rest[i]
+    // chaîne CSS ('…'/"…") : contenu recopié tel quel, un `;` dedans ne referme jamais la
+    // déclaration ($$accent: "red;blue") — même garde que light-host-css.ts (mêmes guillemets)
+    if (c === '"' || c === '\'') {
+      const quote = c
+      let j = i + 1
+      while (j < rest.length) {
+        if (rest[j] === '\\') { j += 2; continue }
+        if (rest[j] === quote) { j++; break }
+        j++
+      }
+      i = j - 1
+      continue
+    }
     if (c === '(') paren++
     else if (c === ')' && paren > 0) paren--
     else if (c === ';' && paren === 0) return trimFin(rest, i)

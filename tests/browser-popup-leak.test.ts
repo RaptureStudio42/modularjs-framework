@@ -74,6 +74,7 @@ describe('render-browser — window.open() pendant @mount ne doit pas fuir de Pa
     // espion : n'altère RIEN (délègue toujours à l'original), capture juste le PREMIER contexte
     // dont `route('**/*', …)` est appelé — exactement l'appel unique posé par bootSlot().
     ContextProto.route = function (...args: any[]) {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias -- le test capture le contexte Playwright dont route() est appelé
       if (!captured) captured = this
       return originalRoute.apply(this, args)
     }

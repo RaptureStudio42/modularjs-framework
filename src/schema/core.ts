@@ -27,6 +27,12 @@
 // re-déclarer le MÊME nom avec une forme DIFFÉRENTE (champ ajouté/retiré/retypé/réordonné) lève
 // clair (cf. defSchema) ; re-déclarer à l'IDENTIQUE est un no-op silencieux (idempotent — un
 // fichier serveur rechargé à chaud, cf. cli/ws.ts, ré-exécute son `app.schema(...)` sans planter).
+// La définition retenue (`champs`) est une COPIE gelée de l'objet fourni à defSchema, prise au
+// moment de la déclaration (cf. clonerChamps) — muter l'objet appelant APRÈS coup ne change plus
+// jamais le format encodé ni le hash. Un nom de champ qui ne survit pas à un objet ordinaire
+// (ex. '__proto__') est refusé À LA DÉCLARATION (cf. validerNomChamp), des deux côtés (ici et
+// src/runtime/mjs_schema.ts) — accepté puis perdu au rechargement, il décalait silencieusement le
+// décodage de tous les champs suivants.
 
 import { t } from '../messages/index.js'
 
@@ -116,6 +122,20 @@ function validerType(nomSchema: string, nomChamp: string, type: MjschemaFieldTyp
   throw new Error(t('schema.type-champ-invalide', { schema: nomSchema, champ: nomChamp }))
 }
 
+// un nom de champ doit survivre à `{}[nom] = valeur` (objet ORDINAIRE) — sinon chargerDefinitions
+// (qui reconstruit `champs` avant de rappeler defSchema, cf. plus bas) le PERD en silence :
+// `__proto__` déclenche le setter hérité d'Object.prototype (qui tente de changer le PROTOTYPE de
+// l'objet plutôt que d'y créer une propriété) au lieu de survivre comme un nom normal — décalage
+// d'offset au décodage, jamais signalé. Sonde générique (pas une liste figée de noms interdits) :
+// n'importe quel nom qui échouerait à ce test serait perdu de la même façon.
+function validerNomChamp(nomSchema: string, nomChamp: string): void {
+  const sonde: Record<string, unknown> = {}
+  sonde[nomChamp] = 1
+  if (!Object.prototype.hasOwnProperty.call(sonde, nomChamp)) {
+    throw new Error(t('schema.nom-champ-invalide', { schema: nomSchema, champ: nomChamp }))
+  }
+}
+
 // --- garde AJOUT-SEUL — forme = noms + types + ORDRE, comparaison stricte ----------------------
 
 function memeType(a: MjschemaFieldType, b: MjschemaFieldType): boolean {
@@ -133,13 +153,38 @@ function memeForme(a: MjschemaFields, b: MjschemaFields): boolean {
   return true
 }
 
+// bits(noms) DOIT lui aussi passer par JSON.stringify (jamais une jointure '+' brute) — MÊME raison
+// que le hash des noms de champs ci-dessous : bits(['a+b','c']) (2 sous-champs), bits(['a','b','c'])
+// (3 sous-champs) et bits(['a','b+c']) donnaient AUPARAVANT le MÊME texte joint ('a+b+c') malgré des
+// découpages/sémantiques différents — collision structurelle, MÊME famille de bug que les noms de
+// champs (cf. hashRegistre).
 function decrireType(t: MjschemaFieldType): string {
   if (typeof t === 'string') return t
-  return t.kind === 'list' ? `list(${t.of})` : `bits(${t.noms.join('+')})`
+  return t.kind === 'list' ? `list(${t.of})` : `bits(${JSON.stringify(t.noms)})`
 }
 
 function decrireChamps(champs: MjschemaFields): string {
   return '{ ' + Object.keys(champs).map(c => c + ': ' + decrireType(champs[c])).join(', ') + ' }'
+}
+
+// copie PROFONDE + gel — `champs` (et les objets list()/bits() qu'il contient) est fourni par
+// l'appelant, qui peut le muter APRÈS coup (objet littéral réutilisé, partagé, relu ailleurs) : sans
+// clone, defSchema stockait la RÉFÉRENCE telle quelle, une mutation externe changeait le format
+// encodé/le hash EN SILENCE, sans jamais repasser par la garde ajout-seul ci-dessus. Base
+// `Object.create(null)` (pas `{}`) : une clé nommée '__proto__' doit survivre TELLE QUELLE jusqu'à
+// validerNomChamp (qui la refusera avec une erreur claire) — un objet littéral normal la perdrait
+// en silence PENDANT le clonage lui-même, avant même d'atteindre la garde.
+function clonerType(type: MjschemaFieldType): MjschemaFieldType {
+  if (typeof type === 'string') return type
+  if (type.kind === 'list') return Object.freeze({ kind: 'list' as const, of: type.of })
+  const noms = Object.freeze([...type.noms]) as string[]
+  return Object.freeze({ kind: 'bits' as const, noms })
+}
+
+function clonerChamps(champs: MjschemaFields): MjschemaFields {
+  const copie: MjschemaFields = Object.create(null)
+  for (const c of Object.keys(champs)) copie[c] = clonerType(champs[c])
+  return Object.freeze(copie)
 }
 
 /**
@@ -148,10 +193,16 @@ function decrireChamps(champs: MjschemaFields): string {
  * (idempotent — un entry rechargé à chaud ré-exécute ses `app.schema(...)` sans planter, cf.
  * cli/ws.ts). Ré-affirmation DIFFÉRENTE = throw clair (garde AJOUT-SEUL, cf. tête de fichier) :
  * fais évoluer le protocole en déclarant un NOUVEAU nom, jamais en mutant un schéma existant.
+ * `champs` est copié PROFONDÉMENT et gelé AVANT toute validation/stockage (cf. clonerChamps) — la
+ * définition retenue dans le registre est désormais IMMUABLE, indépendante de l'objet appelant.
  */
-export function defSchema(registre: MjschemaRegistre, nom: string, champs: MjschemaFields): MjschemaDef {
-  const ordre = Object.keys(champs)
-  for (const c of ordre) validerType(nom, c, champs[c])
+export function defSchema(registre: MjschemaRegistre, nom: string, champsEntree: MjschemaFields): MjschemaDef {
+  const champs = clonerChamps(champsEntree)
+  const ordre  = Object.freeze(Object.keys(champs)) as string[]
+  for (const c of ordre) {
+    validerNomChamp(nom, c)
+    validerType(nom, c, champs[c])
+  }
 
   const existant = registre.parNom.get(nom)
   if (existant) {
@@ -340,8 +391,18 @@ function fnv1a(s: string): string {
   return (h >>> 0).toString(16).padStart(8, '0')
 }
 
+// FNV-1a hashé sur une sérialisation JSON (jamais une concaténation brute par ':'/'='/','/'|') — un
+// nom de SCHÉMA ou de CHAMP peut contenir N'IMPORTE QUEL caractère, y compris ceux utilisés comme
+// séparateurs ci-dessous : { 'b=u8,c': 'u8' } (1 champ) et { b: 'u8', c: 'u8' } (2 champs) donnaient
+// AUPARAVANT le MÊME texte concaténé ('b=u8,c=u8') malgré des trames de 2 et 3 octets — collision
+// structurelle qui trompait la vérification de compatibilité client/serveur (deux schémas
+// DIFFÉRENTS jugés identiques). JSON.stringify échappe nativement guillemets/antislashs DANS chaque
+// chaîne, ce qui rend deux structures différentes TOUJOURS distinguables dans le texte haché — DOIT
+// rester caractère pour caractère identique à src/runtime/mjs_schema.ts::mjschemaHashRegistre (cf.
+// son propre commentaire), sous peine de hash divergents entre client et serveur pour des schémas
+// pourtant identiques (le serveur pousserait alors µ:schema à CHAQUE hello, sans raison réelle).
 export function hashRegistre(registre: MjschemaRegistre): string {
-  const parts = registre.parId.map(def => def.nom + ':' + def.ordre.map(c => c + '=' + decrireType(def.champs[c])).join(','))
+  const parts = registre.parId.map(def => JSON.stringify([def.nom, def.ordre.map(c => [c, decrireType(def.champs[c])])]))
   return fnv1a(parts.join('|'))
 }
 
@@ -365,7 +426,13 @@ export function serialiserDefinitions(registre: MjschemaRegistre): MjschemaDefin
 export function chargerDefinitions(json: MjschemaDefinitionsJSON): MjschemaRegistre {
   const registre = creerRegistre()
   for (const s of json.schemas) {
-    const champs: MjschemaFields = {}
+    // Object.create(null) (pas `{}`) — l'affectation `champs[c] = t` juste en dessous ne doit
+    // JAMAIS activer le setter '__proto__' hérité d'Object.prototype : sur un objet littéral
+    // normal, un champ nommé '__proto__' reçu du réseau serait perdu ICI même, en silence, AVANT
+    // d'atteindre la garde de defSchema (validerNomChamp, cf. son commentaire) — `t` (une string
+    // comme 'u8') n'est pas un prototype valide, le setter magique ignore alors l'affectation sans
+    // lever la moindre erreur.
+    const champs: MjschemaFields = Object.create(null)
     for (const [c, t] of s.champs) champs[c] = t
     defSchema(registre, s.nom, champs)
   }

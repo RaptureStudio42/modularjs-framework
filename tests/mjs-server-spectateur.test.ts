@@ -7,7 +7,8 @@
 //     l'autre → {} + avertissement UNE SEULE FOIS par partie (JAMAIS l'état brut par défaut).
 //  2. sièges — un spectateur n'occupe AUCUN siège (places préservées) ; un coup de spectateur est
 //     rejeté « spectateur : lecture seule » ; départ volontaire/déconnexion nettoyés ; idempotence.
-//  3. diffusion — µgame:state relayé aux spectateurs à chaque round (jamais µgame:end/left/seat).
+//  3. diffusion — µgame:state relayé aux spectateurs à chaque round ; µgame:end/left AUSSI relayés
+//     (même charge que celle des sièges) ; µgame:seat, lui, reste NON relayé (roster réservé aux sièges).
 //  4. protocole µgame:play { spectateur:true } sur socket brut (validation, places, vue, rejet de coup).
 //  5. client réactif sock.game (mjs_game.ts) — store.spectateur/store.siege, .move() rejeté,
 //     .leave(), et le garde-fou de reconnexion (jamais de resync spectateur, cf. mjs_game.ts).
@@ -205,14 +206,34 @@ describe('MJS-Server — anti-triche (spectateurs, lecture seule)', () => {
       game._destroy()
     })
 
-    it('µgame:end/left/seat NE SONT PAS relayés aux spectateurs — scope volontairement restreint à µgame:state (à signaler si besoin élargi)', () => {
+    it('µgame:end EST relayé aux spectateurs — même charge {result} que celle envoyée aux sièges (result n’est pas une vue : aucun filtrage def.spectatorView, publique à toute la table comme pour un siège)', () => {
       const app = fakeAppCapture()
       const def = resolveGameDef('spec-end', { seats: 1, state: () => ({}), moves: {} })
       const game = createGame(app, def, () => {}, 'df2')
-      game._addSpectator(fakeClient('regardeur'))
+      const regardeur = fakeClient('regardeur')
+      game._addSpectator(regardeur)
       app._envoyes.length = 0
       game.end({ ok: true })
-      assert.equal(app._envoyes.filter((e: any) => e.type === 'µgame:end').length, 0)
+      const versSpectateur = app._envoyes.filter((e: any) => e.client === regardeur && e.type === 'µgame:end')
+      assert.equal(versSpectateur.length, 1)
+      assert.deepEqual(versSpectateur[0].p, { game: 'df2', result: { ok: true } })
+      game._destroy()
+    })
+
+    it('µgame:left EST relayé aux spectateurs — même charge {seat} que celle envoyée aux sièges ; µgame:seat, lui, reste NON relayé', () => {
+      const app = fakeAppCapture()
+      const def = resolveGameDef('spec-left', { seats: 1, state: () => ({}), moves: {} })
+      const game = createGame(app, def, () => {}, 'df3')
+      const regardeur = fakeClient('regardeur')
+      game._addSpectator(regardeur)
+      const joueur = fakeClient('joueur')
+      game._createSeat(joueur)
+      app._envoyes.length = 0
+      game._leave(joueur)
+      const versSpectateurLeft = app._envoyes.filter((e: any) => e.client === regardeur && e.type === 'µgame:left')
+      assert.equal(versSpectateurLeft.length, 1)
+      assert.deepEqual(versSpectateurLeft[0].p, { game: 'df3', seat: 0 })
+      assert.equal(app._envoyes.filter((e: any) => e.client === regardeur && e.type === 'µgame:seat').length, 0, 'µgame:seat reste NON relayé aux spectateurs')
       game._destroy()
     })
   })

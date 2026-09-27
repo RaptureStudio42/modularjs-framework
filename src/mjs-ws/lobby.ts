@@ -585,7 +585,10 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
       if (typeof id !== 'string' || !id) throw new Error('lobby-invitation-unknown')
       const invs = invitations.get(fullName)
       const inv = invs?.get(id)
-      if (!inv || inv.aId !== identityId) throw new Error('lobby-invitation-unknown')
+      // Faille comblée — expiration vérifiée ICI, pas seulement au balayage opportuniste (jusqu'à
+      // 50 actions de délai, cf. tête de fichier) : une invitation dont expireAt est déjà dépassé
+      // reste inconnue au même titre qu'un id inexistant (MÊME code, anti-énumération inchangée).
+      if (!inv || inv.aId !== identityId || Date.now() >= inv.expireAt) throw new Error('lobby-invitation-unknown')
 
       entry.name = nameOf(client)
       touchAndReturn(app, fullName, hall, identityId, entry)
@@ -666,7 +669,10 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
       const idDemande = p?.id
       const cibleId = typeof idDemande === 'string' && idDemande ? idDemande : listingByIdentity.get(fullName)?.get(identityId)
       const record = cibleId ? listings.get(fullName)?.get(cibleId) : undefined
-      if (!record) throw new Error('lobby-listing-unknown')
+      // Faille comblée — MÊME correctif que lobby:reply/lobby:join ci-dessus : une annonce déjà
+      // expirée reste « inconnue », pas seulement au prochain balayage opportuniste (le commentaire
+      // au-dessus l'annonçait déjà, le code ne le faisait pas).
+      if (!record || Date.now() >= record.expireAt) throw new Error('lobby-listing-unknown')
 
       const estProprietaire = record.fromId === identityId
       if (!estProprietaire && !(await estModerateur(client))) throw new Error('lobby-denied')
@@ -696,7 +702,9 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
       const id = p?.id
       if (typeof id !== 'string' || !id) throw new Error('lobby-listing-unknown')
       const record = listings.get(fullName)?.get(id)
-      if (!record) throw new Error('lobby-listing-unknown')
+      // Faille comblée — MÊME correctif que lobby:reply ci-dessus : une annonce déjà expirée reste
+      // « inconnue », pas seulement au prochain balayage opportuniste.
+      if (!record || Date.now() >= record.expireAt) throw new Error('lobby-listing-unknown')
 
       entry.name = nameOf(client)
       touchAndReturn(app, fullName, hall, identityId, entry)

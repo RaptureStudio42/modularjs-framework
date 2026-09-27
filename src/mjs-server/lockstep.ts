@@ -1,5 +1,5 @@
 // mjs-server/lockstep — moteur du mode salle 'lockstep' (def.mode) : la salle NE SIMULE
-// RIEN (cf. game.ts pour la liste FERMÉE d'interdits state/view/deltas/intents/simulate/space/histo) —
+// RIEN (cf. game.ts pour la liste FERMÉE d'interdits state/view/deltas/intents/simulate/space/history) —
 // SEULS les ORDRES (µgame:move reçus, jamais exécutés côté serveur) circulent, groupés PAR TICK et
 // diffusés à l'IDENTIQUE à tous les joueurs (µgame:orders, cf. game.ts::_broadcastTickOrders) :
 // l'égalité stricte d'entrée entre clients est le cœur du déterminisme (tous simulent le MÊME modèle
@@ -7,7 +7,7 @@
 //
 // GRAINE (seed, µgame:start) — PAS de Math.random en dur : `deterministicSeed(id)` hache
 // l'id de partie (FNV-1a 32 bits, PURE) — l'id embarque déjà le COMPTEUR monotone de création
-// ('partieN', cf. matchmaking.ts generateGameId), donc CE hash dérive bien « d'un compteur + de
+// ('gameN', cf. matchmaking.ts generateGameId), donc CE hash dérive bien « d'un compteur + de
 // l'id ». Conséquence utile : la graine est TOUJOURS ré-dérivable depuis `id` seul —
 // aucun besoin de la persister séparément (cf. `_restoreJournal`, appelé SANS graine explicite).
 //
@@ -78,7 +78,7 @@ export interface MjsServerLockstep {
   addOrder(player: string, move: string, p: unknown): void
   /** clôt le tick courant (ordres accumulés + avance le compteur), journalise (append), évince les
    *  entrées de divergence sorties de la fenêtre (cf. tête de fichier « FENÊTRE ») et retourne le
-   *  groupe à diffuser — TOUJOURS renvoyé, même `ordres: []` (le tick lui-même est l'horloge commune
+   *  groupe à diffuser — TOUJOURS renvoyé, même `orders: []` (le tick lui-même est l'horloge commune
    *  que les clients doivent avancer — jamais de trame sautée faute d'ordre) */
   closeTick(): MjsServerLockstepTick
   /** journal COMPLET depuis la genèse (rejouabilité, µgame:play/start/resync — cf. game.ts _infoMode) */
@@ -86,7 +86,7 @@ export interface MjsServerLockstep {
   /** reçoit un hash annoncé par un joueur pour `tick` (cf. tête de fichier pour le modèle quorum +
    *  auto-contradiction + fenêtre) — `null` si rien à signaler (hash hors fenêtre REJETÉ, quorum pas
    *  encore atteint, ou hash concordant — hashs concordants = rien à signaler).
-   *  `sieges` = nombre de sièges OCCUPÉS courants (connectés ou non, MÊME politique que le tour par
+   *  `seats` = nombre de sièges OCCUPÉS courants (connectés ou non, MÊME politique que le tour par
    *  tour roundrobin — cf. game.ts commentaire de tête) : relu à CET appel, jamais figé à la
    *  création (cf. game.ts::_receiveHash pour le calcul). */
   receiveHash(player: string, tick: number, h: string, seats: number): MjsServerLockstepDivergence | null
@@ -160,7 +160,7 @@ export function createLockstep(id: string, maxTicks: number | null = null): MjsS
       currentOrders = []
       fullJournal.push(group)
       // journal borné (opt-in, def.lockstepJournal.maxTicks, cf. game.ts) — MÊME idiome que
-      // l'éviction hashesParTick juste en dessous : anneau, purge les plus VIEUX ticks au-delà de
+      // l'éviction hashesPerTick juste en dessous : anneau, purge les plus VIEUX ticks au-delà de
       // `maxTicks` ; `maxTicks` null (défaut, absent de la déclaration) = illimité, comportement
       // HISTORIQUE inchangé (cf. commentaire de tête « JOURNAL »)
       if (maxTicks != null && fullJournal.length > maxTicks) fullJournal.splice(0, fullJournal.length - maxTicks)
@@ -176,6 +176,10 @@ export function createLockstep(id: string, maxTicks: number | null = null): MjsS
     journal() { return fullJournal },
 
     receiveHash(player, tick, h, seats) {
+      // tick NON ENTIER — REJETÉ d'emblée : `tick * 0.001` &c. contourneraient sinon le plafond
+      // d'entrées retenues (une infinité de valeurs fractionnaires distinctes tiennent dans la
+      // MÊME fenêtre entière ci-dessous, cf. hashesPerTick/_hashSize)
+      if (!Number.isInteger(tick)) return null
       // hors fenêtre — REJETÉ d'emblée, jamais stocké (ferme le pré-empoisonnement d'un tick
       // lointain ET la fuite mémoire par ticks inventés, cf. tête de fichier)
       if (tick < tickCount - TICKS_WINDOW || tick > tickCount + DELAY_BEFORE_TICKS) return null
@@ -207,7 +211,7 @@ export function createLockstep(id: string, maxTicks: number | null = null): MjsS
         return { tick, suspects: [player], reason: 'quorum' }
       }
 
-      // pas encore de référence — CE hash vient-il de franchir la majorité ABSOLUE de `sieges` ?
+      // pas encore de référence — CE hash vient-il de franchir la majorité ABSOLUE de `seats` ?
       if ((state.comptes.get(h) ?? 0) < absoluteMajority(seats)) return null   // quorum pas encore atteint — silence, on attend d'autres rapports
 
       state.reference = h

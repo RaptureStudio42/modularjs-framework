@@ -171,6 +171,36 @@ describe('mjs.config.json — section `ws` (validation stricte, patron `runtime`
     assert.throws(() => findConfig(root), /ws\.limits\.maxPayload doit être un entier > 0/)
   })
 
+  // plafond de file et plafond de présence : documentés comme réglages `limits.*`, donc acceptés
+  // par la config (entier > 0, ou null = illimité) — sinon « clé inconnue » sur un réglage annoncé
+  it('ws.limits.maxQueued et ws.limits.maxPresencePerClient : entier > 0 ou null accepté, 0 refusé', () => {
+    const cfg = findConfig(writeConfig({ ws: { limits: { maxQueued: 1000, maxPresencePerClient: 10 } } }))!.config
+    assert.equal((cfg.ws?.limits as any)?.maxQueued, 1000)
+    assert.equal((cfg.ws?.limits as any)?.maxPresencePerClient, 10)
+    assert.equal((findConfig(writeConfig({ ws: { limits: { maxQueued: null, maxPresencePerClient: null } } }))!.config.ws?.limits as any)?.maxQueued, null)
+    assert.throws(() => findConfig(writeConfig({ ws: { limits: { maxQueued: 0 } } })), /ws\.limits\.maxQueued doit être un entier > 0 \(ou null = illimité\)/)
+    assert.throws(() => findConfig(writeConfig({ ws: { limits: { maxPresencePerClient: 2.5 } } })), /ws\.limits\.maxPresencePerClient doit être un entier > 0 \(ou null = illimité\)/)
+  })
+
+  // débit partagé et mise au banc : réglables depuis mjs.config.json comme depuis l'entry
+  it("ws.limits.rateBy : 'connection'/'account'/'ip'/'both' acceptés, toute autre valeur refusée", () => {
+    for (const v of ['connection', 'account', 'ip', 'both']) {
+      assert.equal((findConfig(writeConfig({ ws: { limits: { rateBy: v } } }))!.config.ws?.limits as any)?.rateBy, v)
+    }
+    assert.throws(() => findConfig(writeConfig({ ws: { limits: { rateBy: 'compte' } } })), /ws\.limits\.rateBy invalide : "compte"[\s\S]*connection, account, ip, both/)
+    assert.throws(() => findConfig(writeConfig({ ws: { limits: { rateBy: 3 } } })), /ws\.limits\.rateBy invalide/)
+  })
+
+  it('ws.ban : true/false ou objet { after, within, duration, by } ; clé inconnue ou valeur fausse refusées', () => {
+    assert.equal(findConfig(writeConfig({ ws: { ban: false } }))!.config.ws?.ban, false)
+    assert.equal(findConfig(writeConfig({ ws: { ban: true } }))!.config.ws?.ban, true)
+    assert.deepEqual(findConfig(writeConfig({ ws: { ban: { after: 5, within: 30000, duration: 600000, by: 'ip' } } }))!.config.ws?.ban, { after: 5, within: 30000, duration: 600000, by: 'ip' })
+    assert.throws(() => findConfig(writeConfig({ ws: { ban: 'oui' } })), /ws\.ban doit être/)
+    assert.throws(() => findConfig(writeConfig({ ws: { ban: { apres: 3 } } })), /ws\.ban\.apres : clé inconnue/)
+    assert.throws(() => findConfig(writeConfig({ ws: { ban: { after: 0 } } })), /ws\.ban\.after doit être un entier > 0/)
+    assert.throws(() => findConfig(writeConfig({ ws: { ban: { by: 'compte' } } })), /ws\.ban\.by invalide : "compte"[\s\S]*account, ip, both/)
+  })
+
   // Régression MAJEUR potentielle : `ws` DOIT être déclaré dans KNOWN_KEYS
   // top-level, sinon toute section `ws` ferait échouer la validation racine
   // AVANT même d'atteindre validateWsConfig.
@@ -295,6 +325,14 @@ describe('cli/ws — buildRunPlan (priorités port/host/heartbeat/limits)', () =
   it('verifyOrigin : défini SEULEMENT dans mjs.config.json (ws.verifyOrigin) → le tableau traverse sans warn', () => {
     const plan = buildRunPlan({ options: {} }, { verifyOrigin: ['https://exemple.com'] }, undefined, noWarn)
     assert.deepEqual(plan.options.verifyOrigin, ['https://exemple.com'])
+  })
+
+  it('ban : défini SEULEMENT dans mjs.config.json (ws.ban) → traverse sans warn ; dans les deux → l’entry prime + warn', () => {
+    assert.deepEqual(buildRunPlan({ options: {} }, { ban: { by: 'ip' } }, undefined, noWarn).options.ban, { by: 'ip' })
+    const warns: string[] = []
+    const plan = buildRunPlan({ options: { ban: false } }, { ban: { by: 'ip' } }, undefined, m => warns.push(m))
+    assert.equal(plan.options.ban, false)
+    assert.ok(warns.some(w => /ban.*entry prime/.test(w)))
   })
 
   it("transport : défini dans l'entry (instance) ET dans mjs.config.json (chaîne) → l'entry prime + warn explicite", () => {

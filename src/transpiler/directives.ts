@@ -3,6 +3,8 @@
 
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { t } from '../messages/index.js'
+import { maskNonCode, maskHtmlComments } from '../mask.js'
+import { findScriptMatches, findStyleMatches } from './sections.js'
 
 export interface PersistEntry {
   var: string
@@ -43,10 +45,12 @@ export function extractDirectives(content: string): DirectivesResult {
   const externalReactives = new Set<string>()
 
   // Les directives racines (`@css`, `@display`, `@persist`, `@import`) peuvent
-  // apparaître n'importe où dans le fichier (avant ou après `<style>`/`<script>`/HTML).
-  // Pour éviter les faux positifs sur les exemples `@persist $foo` à l'intérieur
-  // de `<pre><code>` dans les docs/tutos, on masque ces blocs pendant le scan,
-  // puis on les restaure à la fin.
+  // apparaître n'importe où dans le fichier : avant/après `<style>`/`<script>`/HTML au niveau
+  // racine, ET au niveau du CODE dans un `<script>` (`@import µ$$draft '…'`, `@preload on` —
+  // cf. docs/21-navigation.md, docs/17-router.md, échantillons Linguist : `@persist` idem).
+  // JAMAIS dans `<style>` (une directive MJS n'y vit pas, `@import` y est une RÈGLE CSS). Pour
+  // éviter les faux positifs sur les exemples `@persist $foo` à l'intérieur de `<pre><code>`
+  // dans les docs/tutos, on masque ces blocs pendant le scan, puis on les restaure à la fin.
   const masks: string[] = []
   // NONCE — le jeton portait un compteur LITTÉRAL (`\x00MASK0\x00`) :
   // un source qui contenait cette suite exacte se faisait remplacer par le contenu d'un <pre>/<code>/
@@ -65,15 +69,209 @@ export function extractDirectives(content: string): DirectivesResult {
   // pourtant neutralisée). Traité ICI, en amont et une seule fois, plutôt que directive par
   // directive : le même remède que <routes> (sections.ts § 3-ter) et que les macros <@…>
   // (macros.ts, processGlobalMacros).
-  let cleaned = content
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, mask)
-    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, mask)
-    .replace(/<!--[\s\S]*?-->/g, mask)
+  //
+  // `<style>` REJOINT aussi ce masquage EN BLOC : une directive MJS n'y vit JAMAIS. `<script>`,
+  // LUI, N'EST PAS masqué ici — il accueille légitimement des directives au niveau du CODE (voir
+  // le bandeau ci-dessus). Le masquer en bloc cacherait aussi bien les vraies directives que les
+  // fausses (régression constatée : `@import '../dehors/x.civet'` DANS un <script> devenait
+  // invisible, le confinement sourceDir qui doit le refuser ne le voyait plus DU TOUT). Voir
+  // `scriptInertMask`/`activeDirective` plus bas : un filtre de POSITION, jamais une mutation du
+  // texte réel du script (mutation impossible ici : l'argument quoté d'un `@import`/`@i18n`
+  // légitime EST une chaîne, exactement comme celle qu'on veut neutraliser ailleurs — seule la
+  // POSITION du mot-clé `@directive` lui-même permet de trancher, jamais un masquage aveugle).
+  // findScriptStyleMatches — bornes des <script module>/<script>/<style> du texte COURANT
+  // (recalculées à chaque appel : le texte raccourcit à mesure que les blocs déjà traités sont
+  // masqués). MÊME logique que sections.ts (findScriptMatches/findStyleMatches, transpiler/
+  // sections.ts) — SEULE recherche de ces bornes, plus de regex paresseuse propre à ce fichier :
+  // avant, une recherche DIFFÉRENTE (vue Civet pour <style> aussi) prenait un `#123` CSS pour un
+  // commentaire Civet et avalait tout jusqu'au `</style>` SUIVANT (couleur hexadécimale sur la
+  // ligne de fermeture). `caseInsensitive` TOUJOURS vrai ICI (`true` en 3e argument), contrairement
+  // à extractSections : une balise mal casée (`<SCRIPT>`) qui deviendra une ERREUR DE COMPILATION
+  // plus tard (garde-fou orphelin, sections.ts) doit quand même voir son CONTENU traité comme un
+  // script/style tant que la compilation n'a pas encore tranché — sinon un exemple documenté à
+  // l'intérieur de cette fausse casse (chaîne, gabarit) fuit comme texte actif avant même
+  // d'atteindre l'erreur. `allScripts` triée : `findScriptMatches` rend module et non-module en
+  // deux tableaux séparés, un `<script>` pouvant précéder textuellement un `<script module>`.
+  const findScriptStyleMatches = (text: string): { scripts: RegExpMatchArray[], styles: RegExpMatchArray[] } => {
+    const { moduleScripts, scripts } = findScriptMatches(text, true)
+    const allScripts = [...moduleScripts, ...scripts].sort((a, b) => a.indices![0][0] - b.indices![0][0])
+    const { matches: styles } = findStyleMatches(text, allScripts, true)
+    return { scripts: allScripts, styles }
+  }
+
+  // maskStyleBlocks — remplace chaque <style>…</style> RÉEL par le même jeton opaque que
+  // <pre>/<code>/commentaires ; la borne de fermeture vient de findScriptStyleMatches (ci-dessus),
+  // jamais d'une regex paresseuse sur le texte réel — qui se laissait tromper par un `</style>`
+  // littéral dans une chaîne CSS (`content: "</style>"`), fermant la zone trop tôt et laissant
+  // fuir la suite du fichier hors masque. Le texte poussé dans `masks[]` reste le texte RÉEL,
+  // jamais altéré — la vue ne sert QU'à trouver l'étendue du bloc.
+  const maskStyleBlocks = (text: string): string => {
+    const { styles } = findScriptStyleMatches(text)
+    let out    = ''
+    let cursor = 0
+    for (const m of styles) {
+      const [start, end] = m.indices![0]
+      out += text.slice(cursor, start) + mask(text.slice(start, end))
+      cursor = end
+    }
+    out += text.slice(cursor)
+    return out
+  }
+
+  // blankRange — neutralise [start,end) en espaces même-longueur (préserve les `\n`) — même
+  // utilitaire qu'en interne à sections.ts (non exporté là-bas, dupliqué ici : un remplacement
+  // d'un `[^\n]` par un espace, rien de plus lourd à partager).
+  const blankRange = (src: string, start: number, end: number): string =>
+    src.slice(0, start) + src.slice(start, end).replace(/[^\n]/g, ' ') + src.slice(end)
+
+  // blankScriptStyleRanges — neutralise, sur une COPIE de `text`, les plages <script>/<style>
+  // RÉELLES (findScriptStyleMatches) — sert de base à la vue de recherche de borne des blocs
+  // <pre>/<code>/commentaires HTML plus bas ; le texte réel (celui poussé dans `masks[]`) ressort
+  // intact, cette copie ne sert QU'à repérer où couper.
+  const blankScriptStyleRanges = (text: string): string => {
+    const { scripts, styles } = findScriptStyleMatches(text)
+    let view = text
+    for (const m of [...scripts, ...styles]) {
+      const [start, end] = m.indices![0]
+      view = blankRange(view, start, end)
+    }
+    return view
+  }
+
+  // maskInterpolationContent — blanchit (même longueur) le CONTENU de chaque interpolation `{…}`
+  // de PREMIER NIVEAU du texte HTML (accolades imbriquées comptées en profondeur, chaînes internes
+  // `'…'`/`"…"`/`` `…` `` traversées sans compter leurs accolades) — sert UNIQUEMENT à construire
+  // une vue de recherche de borne : un `</pre>`/`</code>`/`-->` LITTÉRAL écrit comme DONNÉE dans
+  // une chaîne passée à une interpolation (`<pre>{ f("</pre>") }`) n'est pas du balisage ; le
+  // laisser visible referme la recherche trop tôt et laisse fuir la suite (directive comprise)
+  // hors masque.
+  const maskInterpolationContent = (text: string): string => {
+    const chars = text.split('')
+    const n     = text.length
+    let i = 0
+    while (i < n) {
+      if (text[i] !== '{') { i++; continue }
+      const open = i
+      let depth  = 1
+      i++
+      while (i < n && depth > 0) {
+        const c = text[i]
+        if (c === '\'' || c === '"' || c === '`') {
+          const quote = c
+          i++
+          while (i < n && text[i] !== quote) i += text[i] === '\\' ? 2 : 1
+          i++
+          continue
+        }
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        i++
+      }
+      const contentEnd = Math.min(depth === 0 ? i - 1 : i, n)
+      for (let k = open + 1; k < contentEnd; k++) if (chars[k] !== '\n') chars[k] = ' '
+    }
+    return chars.join('')
+  }
+
+  // maskDocBlock — remplace chaque bloc `<pre>…</pre>`/`<code>…</code>` RÉEL trouvé par `re` par
+  // le même jeton opaque que <style>/commentaires. La borne de fermeture est cherchée sur une vue
+  // où les plages <script>/<style> et le contenu des interpolations `{…}` (et leurs chaînes) sont
+  // neutralisés, PUIS les commentaires HTML (maskHtmlComments) — jamais sur le texte réel : un
+  // `</pre>` littéral, DONNÉE de code dans une interpolation (`<pre>{ f("</pre>") }`), referme
+  // sinon la zone trop tôt et laisse fuir la suite (une directive citée juste après redevient active).
+  const maskDocBlock = (text: string, re: RegExp): string => {
+    const view = maskHtmlComments(maskInterpolationContent(blankScriptStyleRanges(text)))
+    let out    = ''
+    let cursor = 0
+    for (const m of view.matchAll(re)) {
+      const start = m.index!
+      const end   = start + m[0].length
+      out += text.slice(cursor, start) + mask(text.slice(start, end))
+      cursor = end
+    }
+    out += text.slice(cursor)
+    return out
+  }
+
+  // maskCommentBlocks — même principe que maskDocBlock pour `<!-- … -->`, sur une vue où les
+  // plages <script>/<style> et le contenu des interpolations `{…}` sont neutralisés (PAS les
+  // commentaires eux-mêmes : c'est ce qu'on cherche). La fermeture `-->` reste celle de
+  // maskHtmlComments (mask.ts, motif LAZY, même tolérance que le HTML natif) : un `<!--` jamais
+  // refermé ne masque toujours rien (limite assumée, cf. directives-commentaires-html.test.ts).
+  const maskCommentBlocks = (text: string): string => {
+    const view = maskInterpolationContent(blankScriptStyleRanges(text))
+    let out    = ''
+    let cursor = 0
+    for (const m of view.matchAll(/<!--[\s\S]*?-->/g)) {
+      const start = m.index!
+      const end   = start + m[0].length
+      out += text.slice(cursor, start) + mask(text.slice(start, end))
+      cursor = end
+    }
+    out += text.slice(cursor)
+    return out
+  }
+
+  let cleaned = maskStyleBlocks(content)
+  cleaned = maskDocBlock(cleaned, /<pre\b[^>]*>[\s\S]*?<\/pre>/gi)
+  cleaned = maskDocBlock(cleaned, /<code\b[^>]*>[\s\S]*?<\/code>/gi)
+  cleaned = maskCommentBlocks(cleaned)
+
+  // scriptInertMask — même longueur que le texte reçu, blancs UNIQUEMENT dans les zones INERTES
+  // (chaînes, gabarits, commentaires, regex — maskNonCode, src/mask.ts) des `<script>` restés en
+  // clair ci-dessus ; identique au texte reçu partout ailleurs (racine, et `<style>`/`<pre>`/
+  // `<code>`/commentaires déjà remplacés par un jeton opaque, donc hors-jeu ici). RECALCULÉE à
+  // chaque appel d'`activeDirective` (le texte raccourcit à mesure que les directives reconnues
+  // sont retirées : ses offsets doivent rester alignés sur le texte COURANT, jamais figés). Même
+  // remède que `maskStyleBlocks` pour la BORNE de fermeture : trouvée par findScriptStyleMatches,
+  // jamais sur `text` directement — un `</script>` littéral dans une chaîne ou un gabarit DU
+  // script referme sinon la zone trop tôt, et tout ce qui suit (code réel compris) ressort non
+  // masqué, ce qui rallumait une directive citée en exemple plus loin dans le même script.
+  const scriptInertMask = (text: string): string => {
+    const { scripts } = findScriptStyleMatches(text)
+    let out    = ''
+    let cursor = 0
+    for (const m of scripts) {
+      const [start, end] = m.indices![0]
+      if (start < cursor) continue
+      const real        = text.slice(start, end)
+      const openEnd     = real.indexOf('>') + 1
+      const closeStart  = real.length - '</script>'.length
+      const openTag     = real.slice(0, openEnd)
+      const closeTag    = real.slice(closeStart)
+      const langMatch   = openTag.match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
+      out += text.slice(cursor, start) + openTag + maskNonCode(real.slice(openEnd, closeStart), langMatch ? langMatch[1] : 'civet') + closeTag
+      cursor = end
+    }
+    out += text.slice(cursor)
+    return out
+  }
+
+  // activeDirective — exécute `re` (globale) sur LE TEXTE RÉEL `text` (captures/arguments
+  // INTACTS, y compris une chaîne quotée qui EST l'argument d'un `@import`/`@i18n` légitime —
+  // `maskNonCode` la verrait sinon comme une chaîne de code ordinaire et l'effacerait). Un match
+  // dont le mot-clé `@directive` tombe sur une position blanchie de `scriptInertMask` (DANS un
+  // <script>, en chaîne/gabarit/commentaire) est ignoré : texte laissé TEL QUEL, comme au niveau
+  // racine un exemple caché dans `<pre>`/`<code>`/un commentaire HTML. Un match hors zone inerte
+  // (racine, ou CODE réel dans un <script>) est passé à `replacer`, comme un `String.replace` ordinaire.
+  const activeDirective = (text: string, re: RegExp, replacer: (...args: any[]) => string): string => {
+    const mask = scriptInertMask(text)
+    let out    = ''
+    let cursor = 0
+    for (const m of text.matchAll(re)) {
+      const at = m.index! + Math.max(m[0].indexOf('@'), 0)
+      if (mask[at] !== text[at]) continue
+      out += text.slice(cursor, m.index!) + replacer(...(m as unknown as string[]), m.index!, text)
+      cursor = m.index! + m[0].length
+    }
+    out += text.slice(cursor)
+    return out
+  }
 
   // ----- @css ----- RELOGÉ : `@css` quitte la racine du fichier,
   // c'est désormais un attribut du `<style>` de base (`<style @css="nom1 nom2">`,
   // cf. sections.ts). La forme racine est une ERREUR DE COMPILATION explicite.
-  cleaned = cleaned.replace(/^[ \t]*@css[ \t]+([a-zA-Z0-9_ \t-]+?)[ \t]*$/gm, (_m, names) => {
+  cleaned = activeDirective(cleaned, /^[ \t]*@css[ \t]+([a-zA-Z0-9_ \t-]+?)[ \t]*$/gm, (_m, names) => {
     const clean = (names as string).trim()
     throw new Error(t('transpiler.css-racine-interdite', { ligne: `@css ${clean}`, remplacement: `<style @css="${clean}">` }))
   })
@@ -81,7 +279,7 @@ export function extractDirectives(content: string): DirectivesResult {
   // ----- @display ----- RELOGÉ : attribut du `<style>` de
   // base (`<style @display="inline-block">`, cf. sections.ts). Forme racine =
   // erreur de compilation explicite.
-  cleaned = cleaned.replace(/^[ \t]*@display[ \t]+([a-zA-Z-]+)[ \t]*$/gm, (_m, val) => {
+  cleaned = activeDirective(cleaned, /^[ \t]*@display[ \t]+([a-zA-Z-]+)[ \t]*$/gm, (_m, val) => {
     throw new Error(t('transpiler.display-racine-interdite', { ligne: `@display ${val}`, remplacement: `<style @display="${val}">` }))
   })
 
@@ -91,7 +289,8 @@ export function extractDirectives(content: string): DirectivesResult {
   // 2 directives @i18n dans le même module écrasaient la
   // 1ère en silence (`moduleI18nSection` réassigné sans vérif) : erreur de
   // compilation EXPLICITE dès la 2e occurrence.
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@i18n[ \t]+['"]([^'"]+)['"][ \t]*$/gm,
     (_m, section) => {
       if (moduleI18nSection !== null) {
@@ -109,7 +308,8 @@ export function extractDirectives(content: string): DirectivesResult {
   // `@i18nPlaceholder <mode>` nu, mode ∈ auto|key|wait. `wait` exige une
   // section `@i18n` à attendre (validé après extraction, une fois les deux
   // directives lues quel que soit leur ordre d'écriture dans le fichier).
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@i18nPlaceholder[ \t]+([a-zA-Z-]+)[ \t]*$/gm,
     (_m, mode) => {
       if (!['auto', 'key', 'wait'].includes(mode)) {
@@ -123,11 +323,13 @@ export function extractDirectives(content: string): DirectivesResult {
   // ----- @preload ----- (défaut de préchargement des liens du module ; niveau 2)
   // Formes acceptées : `@preload on`, `@preload = "hover"`, `@preload="off"`.
   // `eager` n'est plus une valeur : refus explicite qui donne le nom retenu
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@preload(?:[ \t]*=)?[ \t]*["']?eager["']?[ \t]*$/gm,
     () => { throw new Error(t('transpiler.preload-eager-renomme', { ou: 'directive racine @preload' })) },
   )
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@preload(?:[ \t]*=)?[ \t]*["']?(on|hover|off)["']?[ \t]*$/gm,
     (_m, val) => { modulePreload = val; return '' },
   )
@@ -144,7 +346,8 @@ export function extractDirectives(content: string): DirectivesResult {
   // précis même sur une valeur fautive. Les erreurs `off`/`on` explicites et
   // l'ancienne écriture ESPACE restent signalées telles quelles (indépendantes
   // du lieu d'écriture).
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@(viewTransition|vt)\b(.*)$/gm,
     (_m: string, directive: string, restRaw: string) => {
       const label = `@${directive}`
@@ -200,7 +403,8 @@ export function extractDirectives(content: string): DirectivesResult {
   )
 
   // ----- @persist avec suffixe `by:` (matché en premier) -----
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@persist(?:[ \t]+(session|local):)?[ \t]+(\$[a-zA-Z0-9_]+)[ \t]+by:[ \t]+(.+?)[ \t]*$/gm,
     (_m, scope, varName, suffix) => {
       const target = scope === 'session' ? persistSessionVars : persistLocalVars
@@ -218,7 +422,8 @@ export function extractDirectives(content: string): DirectivesResult {
   // (`$a,`) et échoue déjà le garde-fou de validation existant
   // (`^[a-zA-Z_]\w*$`, cf. buildPersistCode plus bas) — message à jour vers
   // l'espace (messages/fr.ts « persist-nom-invalide »).
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@persist(?:[ \t]+(session|local):)?[ \t]+([\$a-zA-Z0-9_,\s]+?)[ \t]*$/gm,
     (_m, scope, vars) => {
       const target = scope === 'session' ? persistSessionVars : persistLocalVars
@@ -261,7 +466,8 @@ export function extractDirectives(content: string): DirectivesResult {
   // littéral jamais résolu par Node), et une charge à effet de bord
   // (`#{globalThis.__PWNED__=1337}`) ne rejetait que par accident (ParseError Civet illisible,
   // jamais ce message).
-  cleaned = cleaned.replace(
+  cleaned = activeDirective(
+    cleaned,
     /^[ \t]*@import\s+(?:(default)\s+)?([a-zA-Z0-9_$,\s]+?)\s+(['"])(.*?)\3[ \t]*$/gm,
     (_m, isDefault, rawVars, _quote, targetPath) => {
       if ((rawVars as string).includes(',')) {

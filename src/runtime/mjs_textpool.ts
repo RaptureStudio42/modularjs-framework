@@ -1,6 +1,6 @@
 // mjs_textpool — pool global de nœuds texte vides : `µ._mjs_getTextNode` sert les placeholders du
 // mode IMPÉRATIF du générateur, `µ._mjs_recycleTextLeaves` (appelée par `_mjs_destroyNodeAndChildren`,
-// mjs_element.ts, sous garde) et `µ._mjs_releaseTextNode` les lui rendent. DÉTACHÉ de mjs_init.ts :
+// mjs_element.ts, sous garde) les lui rend. DÉTACHÉ de mjs_init.ts :
 // le générateur émet `µ._mjs_getTextNode(` LITTÉRALEMENT, et lui seul (generator/paths.ts) — sans cet
 // appel, personne ne puise dans le pool et le remplir ne servirait à rien (bundler/features.ts,
 // clé `textpool`). Servir ET rendre partent donc ENSEMBLE : un pool qu'on remplit sans jamais y
@@ -29,21 +29,6 @@
     return n;
   }
   return document.createTextNode(txt || '');
-};
-
-µ._mjs_releaseTextNode = function(n) {
-  // On évite de stocker un node qui pourrait porter des références externes
-  // (event listeners, mais text nodes n'en ont quasi jamais). Reset les data
-  // pour ne pas tenir mémoire de l'ancienne string.
-  if (µ._mjs_textPool.length < µ._mjs_textPoolMax) {
-    n.data = '';
-    // Marqueur anti-écriture périmée : un {if} refermé laisse ses ids dans
-    // `_mjs_nodes` et ses effects abonnés — un `_mjs_updText` tardif écrivait sur un
-    // nœud du pool potentiellement RÉATTRIBUÉ à un autre rendu (corruption
-    // de texte inter-arbres). `_mjs_updText`/`_mjs_updHtml` testent ce flag.
-    n._mjs_pooled = true;
-    µ._mjs_textPool.push(n);
-  }
 };
 
 // Walk DOM léger qui collecte les text nodes feuilles d'un sous-arbre
@@ -78,10 +63,9 @@
           // purgés, cf. plus bas) écrivait sur ce nœud pendant qu'il dormait
           // dans le pool, PUIS la réattribution par `µ._mjs_getTextNode` (qui
           // pose `_mjs_pooled = false`) livrait un texte pollué à un tout
-          // AUTRE composant — corruption de texte inter-composants. Seul
-          // `µ._mjs_releaseTextNode` (mort : aucun appelant dans tout src/)
-          // posait ce flag ; ce chemin-ci (le SEUL réellement emprunté) ne le
-          // posait pas.
+          // AUTRE composant — corruption de texte inter-composants. Ce chemin-ci
+          // est le SEUL réellement emprunté au destroy (cf. tête de fichier) :
+          // c'est ici, et seulement ici, que le flag doit être posé.
           c._mjs_pooled = true;
           µ._mjs_textPool.push(c);
         }

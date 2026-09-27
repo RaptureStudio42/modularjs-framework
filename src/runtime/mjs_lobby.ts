@@ -132,6 +132,18 @@ if (typeof MjsSocket !== 'undefined') {
     h.state.applicants = h.state.applicants.concat([{ id: frame.id, from: frame.from }]);
   }
 
+  // entrée dans le hall — appelée au 1er accès ET à chaque reconnexion (cf.
+  // _mjs_ensureLobbyWiring plus bas) : le serveur traite déjà lobby:enter comme un rafraîchissement
+  // idempotent en cas de reconnexion (« crée ou rafraîchit la présence », cf. mjs-ws/lobby.ts,
+  // app.serve('lobby:enter', …)) — SANS ce rejeu, .members/.me restaient figés depuis le tout
+  // premier accès, jamais mis à jour après une coupure.
+  function _lobbyEnter(self, h) {
+    self.request('lobby:enter', { hall: h._mjs_hall }, { waitForOpen: true }).then(
+      function(res) { h._mjs_entered = true; h.state.me = res.me; h.state.members = res.members || []; },
+      function() {}   // hors-ligne/refus — le store reste sur sa dernière valeur connue, jamais de crash
+    );
+  }
+
   // une trame lobby:* est diffusée à TOUTES les poignées ouvertes sur ce socket (filtrage PAR
   // PAYLOAD, `frame.hall` — MÊME patron que mjs_chat.ts::_mjs_chatDispatch/`frame.salon`).
   MjsSocket.prototype._mjs_lobbyDispatch = function(frame, apply) {
@@ -151,6 +163,14 @@ if (typeof MjsSocket !== 'undefined') {
     this.on('lobby:listing',    function(p) { self._mjs_lobbyDispatch(p, _lobbyOnListing); });
     this.on('lobby:withdrawn',    function(p) { self._mjs_lobbyDispatch(p, _lobbyOnWithdrawn); });
     this.on('lobby:applicant',   function(p) { self._mjs_lobbyDispatch(p, _lobbyOnApplicant); });
+    // reconnexion — rejoue lobby:enter pour chaque poignée déjà entrée UNE 1re fois, à CHAQUE
+    // nouveau welcome (cf. _lobbyEnter juste au-dessus) : `_mjs_entered` évite un double appel sur
+    // le tout premier welcome (déjà couvert par l'appel initial de lobby(), en vol via
+    // waitForOpen), une poignée qui n'a jamais fini d'entrer n'a rien à rafraîchir.
+    this.on('welcome', function() {
+      var i, lobbies = self._mjs_lobbies;
+      for (i = 0; i < lobbies.length; i++) { if (lobbies[i]._mjs_entered) { _lobbyEnter(self, lobbies[i]); } }
+    });
   };
 
   MjsSocket.prototype.lobby = function(hall) {
@@ -162,6 +182,7 @@ if (typeof MjsSocket !== 'undefined') {
     var h = {
       state: state,
       _mjs_hall: hallName,
+      _mjs_entered: false,   // passe à true dès la 1re réponse de lobby:enter — cf. _lobbyEnter
       _mjs_inviteTimers: {},
       _mjs_listingTimers: {},
       _mjs_room: this.room('lobby:' + hallName)
@@ -192,12 +213,9 @@ if (typeof MjsSocket !== 'undefined') {
       h._mjs_room.leave();
     };
 
-    // `waitForOpen` : sock.lobby() est typiquement appelé avant même que la connexion ne soit
-    // ouverte (montage de composant) — MÊME raison que mjs_chat.ts::chat:me.
-    this.request('lobby:enter', { hall: hallName }, { waitForOpen: true }).then(
-      function(res) { state.me = res.me; state.members = res.members || []; },
-      function() {}   // hors-ligne/refus — le store reste vide, jamais de crash
-    );
+    // `waitForOpen` (dans _lobbyEnter) : sock.lobby() est typiquement appelé avant même que la
+    // connexion ne soit ouverte (montage de composant) — MÊME raison que mjs_chat.ts::chat:me.
+    _lobbyEnter(self, h);
 
     return state;
   };

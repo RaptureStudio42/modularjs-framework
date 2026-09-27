@@ -90,9 +90,13 @@ function _mjlockstepOnOrders(st, frame) {
 // republie l'état sur le store réactif — réassignation PAR CLÉ RACINE (même stratégie que
 // mjs_predict.ts::_mjpredictPublier) : `appliquer` mute `st.etat` EN PLACE, republier RECOPIE ses
 // clés vers le store, où µ.state() observe chaque écriture (jamais un remplacement de RÉFÉRENCE de
-// `st.etat` lui-même — le jeu garde la même identité d'objet d'un tick à l'autre).
+// `st.etat` lui-même — le jeu garde la même identité d'objet d'un tick à l'autre). Retire D'ABORD
+// les clés du store qui ne sont PLUS dans l'état (même garde que mjs_game.ts::_syncGameStore et
+// mjs_optimistic.ts::_mjoptPublier) : sans ça, une clé racine supprimée par `appliquer` restait
+// fantôme dans la vue publique, jamais effacée puisque la boucle ne visite QUE les clés présentes.
 function _mjlockstepPublish(st) {
   var k;
+  for (k in st.store) { if (!(k in st.state)) { delete st.store[k]; } }
   for (k in st.state) { st.store[k] = st.state[k]; }
 }
 

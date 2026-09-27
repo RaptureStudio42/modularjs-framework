@@ -47,8 +47,13 @@ describe('sock.chat — .messages/._mjs_seenIds/._mjs_retired bornés (client)',
     const salon = sA.chat('general')
     await tick()
 
+    // par paquets de 50 : le serveur coupe une connexion qui a plus de 200 trames en attente,
+    // quel que soit le débit autorisé (plafond de file) — ce test ne vise que le client
     const N = 250
-    for (let i = 0; i < N; i++) sA.send('chat:send', { room: 'general', text: 'm' + i })
+    for (let i = 0; i < N; i++) {
+      sA.send('chat:send', { room: 'general', text: 'm' + i })
+      if (i % 50 === 49) await tick(5)
+    }
     await tick(50)
 
     assert.equal(salon.messages.length, 100, 'plafonné à MJS_CHAT_HISTORY_MAX (aligné sur DEFAULT_HISTORY serveur)')
@@ -64,8 +69,13 @@ describe('sock.chat — .messages/._mjs_seenIds/._mjs_retired bornés (client)',
     sA.chat('general')
     await tick()
 
+    // par paquets de 50 : le serveur coupe une connexion qui a plus de 200 trames en attente,
+    // quel que soit le débit autorisé (plafond de file) — ce test ne vise que le client
     const N = 250
-    for (let i = 0; i < N; i++) sA.send('chat:send', { room: 'general', text: 'm' + i })
+    for (let i = 0; i < N; i++) {
+      sA.send('chat:send', { room: 'general', text: 'm' + i })
+      if (i % 50 === 49) await tick(5)
+    }
     await tick(50)
 
     const h = sA._mjs_chats[sA._mjs_chats.length - 1]

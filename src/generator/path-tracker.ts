@@ -504,9 +504,14 @@ export function applyPathTrackingMapped(js: string): PassResult {
       const setCall = tp.path.length === 1
         ? (v: string) => `µ._storeSet(${JSON.stringify(rootKey)}, ${v} ${opSign} 1)`
         : (v: string) => `µ._mjs_storeDeepSet(${JSON.stringify(rootKey)}, ${pathToJsLiteral(tp.path.slice(1))}, ${v} ${opSign} 1)`
+      // `(+…)` : même sémantique JS que le state local (transform-reactive.ts) — `++`/`--`
+      // convertissent TOUJOURS l'opérande en nombre. Prefix : `origText` relu APRÈS
+      // l'écriture porte déjà la valeur numérique (pas de reconversion nécessaire) ;
+      // postfix : `_v` (valeur AVANT écriture, capturée une seule fois) doit être
+      // convertie à la fois pour le calcul et pour l'ancienne valeur rendue.
       const replacement = node.prefix
-        ? `(${setCall(origText)}, ${origText})`
-        : `((_v) => (${setCall('_v')}, _v))(${origText})`
+        ? `(${setCall(`(+${origText})`)}, ${origText})`
+        : `((_v) => (${setCall('(+_v)')}, +_v))(${origText})`
       ms.overwrite(node.start, node.end, replacement)
       changed = true
     },

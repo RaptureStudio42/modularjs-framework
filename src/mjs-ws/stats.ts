@@ -64,6 +64,9 @@ export interface MjsWsStatsConnexions {
    *  opts.verifyOrigin (core.ts::refuseForOrigin), DISTINCTE de `refusees`/`refuseesPlafond` :
    *  même famille « refus pré-hello », pas une décision applicative. */
   refuseesOrigine: number
+  /** mise au banc — connexions refusées parce que leur IP (à l'arrivée) ou leur compte (au hello,
+   *  µ:denied, compté AUSSI dans `refusees`) est au banc, cf. core.ts::refuseForBan/handleHello */
+  refuseesBan: number
 }
 
 export interface MjsWsStatsMessages {
@@ -94,6 +97,8 @@ export interface MjsWsStatsGuard {
    *  l'union MjsWsGuardCause : cette fermeture ne passe jamais par kickClient (µ:error{code}
    *  spécifique, code de fermeture 4002, jamais de µ:bye — cf. son commentaire de tête core.ts). */
   expirationsJeton: number
+  /** mises au banc prononcées par CE process (une par clé : compte ou IP), cf. core.ts::noterFaute */
+  misesAuBanc: number
 }
 
 /** gauges — lues EN DIRECT depuis rooms.ts à la demande (jamais accumulées ici, jamais de drift) */
@@ -191,9 +196,9 @@ export function createStatsRegistry(): MjsWsStatsRegistry {
 
   const registry: MjsWsStatsRegistry = {
     processId,
-    connexions:    { actives: 0, parquees: 0, accueillies: 0, refusees: 0, fermees: 0, refuseesPlafond: 0, refuseesOrigine: 0 },
+    connexions:    { actives: 0, parquees: 0, accueillies: 0, refusees: 0, fermees: 0, refuseesPlafond: 0, refuseesOrigine: 0, refuseesBan: 0 },
     messages:      { recus: 0, envoyes: 0, tamponnes: 0, rejoues: 0, rejetes: 0, binaireRecues: 0, binaireIgnorees: 0, texteRejete: 0 },
-    garde:         { kicksDebit: 0, kicksSilence: 0, kicksEngorgement: 0, kicksChargeUtile: 0, expirationsJeton: 0 },
+    garde:         { kicksDebit: 0, kicksSilence: 0, kicksEngorgement: 0, kicksChargeUtile: 0, expirationsJeton: 0, misesAuBanc: 0 },
     pont:          { requetesParEndpoint: {}, http401: 0, rateLimited: 0, webhooksEnvoyes: 0, webhooksEchoues: 0, webhooksAbandonnes: 0 },
     adaptateur:    { publies: 0, recus: 0, ignoresOrigin: 0, reordonnances: 0, reconnexions: 0 },
     sessions:      { emises: 0, reprises: 0, expirees: 0, debordees: 0 },
@@ -245,6 +250,7 @@ export function toPrometheusText(snapshot: MjsWsStatsSnapshot): string {
   counter('connections_refused_total', snapshot.connexions.refusees)
   counter('connections_refused_cap_total', snapshot.connexions.refuseesPlafond)
   counter('connections_refused_origin_total', snapshot.connexions.refuseesOrigine)
+  counter('connections_refused_ban_total', snapshot.connexions.refuseesBan)
   counter('connections_closed_total', snapshot.connexions.fermees)
 
   counter('messages_received_total', snapshot.messages.recus)
@@ -261,6 +267,7 @@ export function toPrometheusText(snapshot: MjsWsStatsSnapshot): string {
   counter('guard_kicks_backpressure_total', snapshot.garde.kicksEngorgement)
   counter('guard_kicks_payload_total', snapshot.garde.kicksChargeUtile)
   counter('guard_token_expired_total', snapshot.garde.expirationsJeton)
+  counter('guard_bans_total', snapshot.garde.misesAuBanc)
 
   gauge('rooms_total', snapshot.salons.nombre)
   gauge('rooms_members_total', snapshot.salons.membresTotal)

@@ -19,7 +19,8 @@
 //                       'account-throttled' (seau anti-DoS PAR IP épuisé juste avant le hachage scrypt,
 //                       cf. « Anti-DoS création » plus bas — durci : accessible en hello
 //                       ANONYME + scrypt coûteux, aucune limite jusque-là), 'account-limit-reached'
-//                       (opts.maxComptes atteint).
+//                       (opts.maxComptes atteint), 'account-load-failed' (chargement initial des
+//                       comptes déjà persistés en échec — rien créé, retenté au prochain appel).
 //   account:login   CLIENT→SERVEUR (requête, µ:ack)  { pseudo, secret }  → { ok, jeton } ; refus
 //                       'account-denied' (message IDENTIQUE pseudo inexistant OU secret faux — jamais
 //                       d'énumération de comptes) ; 'account-throttled' (seau d'échecs épuisé).
@@ -214,9 +215,15 @@ export class FileAccountsPersistAdapter implements MjsWsAccountsPersistAdapter {
     return résultats
   }
 
-  save(id: string, account: MjsWsAccountRecord): void {
+  // rend la promesse d'écriture — AVANT, `void` strict : un échec (disque plein, dossier
+  // interdit…) était avalé par _ecrireAtomique et invisible du caller direct, `account-persist-
+  // failed` (cf. accounts.ts, account:create) ne pouvait donc jamais se déclencher avec cet
+  // adaptateur. `_suivre` reste le filet de sécurité (cf. son commentaire) pour un appelant qui
+  // n'attendrait pas ce retour (usage admin direct de l'adaptateur, hors protocole).
+  save(id: string, account: MjsWsAccountRecord): Promise<void> {
     const p = this._ecrireAtomique(id, account)
     this._suivre(p, `save('${id}')`)
+    return p
   }
 
   remove(id: string): void {
@@ -246,6 +253,7 @@ export class FileAccountsPersistAdapter implements MjsWsAccountsPersistAdapter {
     } catch (err) {
       this._onLog('warn', t('ws.accounts.save-echoue', { id }), { err: err instanceof Error ? err.message : String(err) })
       await unlink(tmp).catch(() => {})
+      throw err   // propage — cf. save() ci-dessus, sans ce throw l'échec restait invisible du caller
     }
   }
 }
@@ -471,12 +479,17 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
   // elle, deux créations concurrentes du MÊME pseudo passent TOUTES LES DEUX le contrôle synchrone
   // (race TOCTOU) et persistent chacune un compte distinct sous le même nom.
   const pendingNames = new Set<string>()
-  let charge: Promise<void> | null = null
+  let charge: Promise<boolean> | null = null
 
-  function assurerCharge(): Promise<void> {
+  // rend `true` une fois les comptes déjà persistés chargés en mémoire, `false` si CET appel a
+  // échoué (jamais un throw ici — account:login doit continuer à traiter le compte comme
+  // introuvable, MÊME message qu'un pseudo absent, cf. tête de fichier « anti-énumération » ;
+  // account:create, lui, lit ce retour et refuse explicitement, cf. plus bas).
+  function assurerCharge(): Promise<boolean> {
     if (!charge) {
       charge = Promise.resolve(persist.load()).then(rows => {
         for (const c of rows) { byName.set(c.name.toLowerCase(), c); byId.set(c.id, c) }
+        return true
       }).catch(err => {
         onLog('warn', t('ws.accounts.persist-load-echoue'), { err: err instanceof Error ? err.message : String(err) })
         // garde muette — SANS ça, `charge` restait posé (promesse
@@ -484,6 +497,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
         // comptes déjà persistés invisibles à vie et autorisait des doublons de pseudo silencieux.
         // Retenté au PROCHAIN appel — jamais de retentative dans la foulée (pas de boucle serrée).
         charge = null
+        return false
       })
     }
     return charge
@@ -511,8 +525,15 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
   const pkg = definePackage('accounts', app => {
 
     app.serve('account:create', async (p, client) => {
-      await assurerCharge()
-      if (opts.maxAccounts != null && byName.size >= opts.maxAccounts) throw new Error('account-limit-reached')
+      // le chargement initial DOIT avoir réussi avant toute création — sans ce refus, un load()
+      // en échec laisse byName vide et la création se poursuit dessus : doublon de pseudo silencieux
+      // dès que la panne se résorbe (cf. assurerCharge, `false` = CET appel a échoué). Rien n'est
+      // créé, aucun index touché ; un appel ultérieur retente automatiquement le chargement.
+      if (!(await assurerCharge())) throw new Error('account-load-failed')
+      // le plafond compte aussi les réservations EN COURS (pendingNames) — sinon deux créations
+      // concurrentes de pseudos DIFFÉRENTS passent toutes les DEUX ce contrôle synchrone avant que
+      // l'une des deux n'ait eu le temps d'écrire dans byName (await scrypt derrière, cf. plus bas).
+      if (opts.maxAccounts != null && (byName.size + pendingNames.size) >= opts.maxAccounts) throw new Error('account-limit-reached')
       const name = p?.name
       const secret = p?.secret
       if (!isValidName(name)) throw new Error('account-name-invalid')

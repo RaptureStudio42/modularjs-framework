@@ -135,6 +135,16 @@ interface Ctx {
   type: 'root' | 'for' | 'await' | string
   updates: string[]
   loops: LoopInfo[]
+  /** Locaux de gabarit EN PORTÉE à ce point du walk : variable et index des `{for}`
+   * englobants, argument de la branche `{await}` courante, noms des `{const}` déjà
+   * rencontrés dans le bloc courant. Copié dans `state.inlineLocals` à l'émission de
+   * chaque gestionnaire — c'est ce qui rend le retrait des noms de la liste prédéclarée
+   * PAR GESTIONNAIRE (cf. CompilerState.templateLocals, l'union globale). */
+  locals: Set<string>
+  /** Les mêmes noms, DANS L'ORDRE où le gabarit les introduit (cf. PorteeEntree) : c'est ce
+   * qu'un gestionnaire ou une liaison recrée en tête de son code. Copié là où `locals` l'est —
+   * un `{const}` d'un bloc ne fuit jamais dans le bloc voisin. */
+  portee: PorteeEntree[]
   /** namespace SVG/MathML ambiant, posé par
    * `compileTag` en entrant dans `<svg>`/`<math>`, hérité par tout le
    * sous-arbre (relais nécessaire à `compileAwait` : le contenu d'une branche
@@ -143,7 +153,18 @@ interface Ctx {
   svgNs?: string | null
 }
 
-interface LoopInfo {
+/** Nom que le gabarit met en portée, dans l'ordre du gabarit : un `{for}` (variable et index), un
+ * `{const}` déjà rencontré (expression du gabarit `raw`, et sa forme JavaScript `js`), la valeur de
+ * la branche `{success}`/`{error}` courante (relue dans l'état du bloc `{await}` `id`, que le
+ * runtime garde : `_mjs_awaitStates`). Un gestionnaire ou une liaison n'est pas compilé dans la
+ * fonction de rendu de son bloc : il recrée ces noms en tête de son code (cf. squelettePortee,
+ * attributes/index.ts). */
+export type PorteeEntree =
+  | { kind: 'for'; loop: LoopInfo }
+  | { kind: 'const'; name: string; raw: string; js: string }
+  | { kind: 'await'; name: string; id: string; champ: 'data' | 'error' }
+
+export interface LoopInfo {
   item: string
   index: string
   internalIndex: string
@@ -446,7 +467,10 @@ export function compileIf(node: Node, ctx: Ctx): string {
     for (let i = 0; i < node.branches.length; i++) {
       const branch = node.branches[i]
       const preSize = ctx.updates.length
-      const innerHtmlRaw = branch.children.map((c) => walk(c, ctx)).join('')
+      // un `{const}` de CETTE branche ne vit que dans son corps : ensemble isolé par
+      // branche, sur l'axe `ctx.locals` hérité (cf. Ctx.locals)
+      const branchCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+      const innerHtmlRaw = branch.children.map((c) => walk(c, branchCtx)).join('')
       const branchUpdatesRaw = ctx.updates.splice(preSize, ctx.updates.length - preSize)
       // cf. commentaire jumeau plus haut (`splitDeferredUpdates`) :
       // un two-way `<select value=!{...}>` de CETTE branche doit attendre les
@@ -539,7 +563,9 @@ export function compileIf(node: Node, ctx: Ctx): string {
     state.effectGuardStack.push(`this._mjs_old?.${id} === ${i}`)
     let innerHtmlRaw: string
     try {
-      innerHtmlRaw = b.children.map((c) => walk(c, ctx)).join('')
+      // idem branche non-root : ensemble de locaux isolé par branche (cf. Ctx.locals)
+      const branchCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+      innerHtmlRaw = b.children.map((c) => walk(c, branchCtx)).join('')
     } finally {
       // try/finally : une branche fautive (walk qui lève) ne doit pas laisser
       // la pile de gardes désynchronisée pour les branches/if suivants.
@@ -615,6 +641,10 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // donc y rester LOCAUX même si le `<script>` porte un homonyme (cf. state.templateLocals)
   if (loopInfo.item) state.templateLocals.add(loopInfo.item)
   state.templateLocals.add(indexVar)
+  // … et ils ne sont locaux que pour les handlers de CE corps, jamais pour ceux d'à côté
+  const locals = new Set(ctx.locals)
+  if (loopInfo.item) locals.add(loopInfo.item)
+  locals.add(indexVar)
   const newLoops = ctx.loops.concat([loopInfo])
 
   const keyExpr = node.key ? `${node.item}.${node.key}` : 'null'
@@ -625,7 +655,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // ~3-5ms.
   const keyAttrLit = node.key ? `'${node.key}'` : 'null'
 
-  const loopCtx: Ctx = { type: 'for', loops: newLoops, updates: [] }
+  const loopCtx: Ctx = { type: 'for', loops: newLoops, updates: [], locals, portee: ctx.portee.concat([{ kind: 'for', loop: loopInfo }]) }
   const bodyRaw = node.children.map((c) => walk(c, loopCtx)).join('')
   // Les déclarations `{const}` (marquées CONST_DECL_PREFIX) sont émises TELLES
   // QUELLES et HISSÉES en tête — sans wrapper `{ … }`, sinon `NOM` serait
@@ -859,6 +889,17 @@ export function compileAwait(node: Node, ctx: Ctx): string {
   for (const branch of node.branches) if (branch.arg) state.templateLocals.add(branch.arg)
 
   for (const branch of node.branches) {
+    // l'argument de CETTE branche n'est en portée que dans SON corps — chaque branche a
+    // donc son propre ensemble (un `{const}` d'une branche ne doit pas fuir dans la
+    // suivante), posé sur l'axe `ctx.locals` hérité (cf. Ctx.locals)
+    const branchLocals = new Set(awaitCtx.locals)
+    if (branch.arg) branchLocals.add(branch.arg)
+    // la valeur de la branche, relue par ses gestionnaires dans l'état que le runtime garde
+    // pour ce bloc (`_mjs_awaitStates`, clé `id`) : `data` pour `{success}`, `error` pour `{error}`
+    const valeur: PorteeEntree[] = branch.arg && (branch.type === 'success' || branch.type === 'error')
+      ? [{ kind: 'await', name: branch.arg, id, champ: branch.type === 'success' ? 'data' : 'error' }]
+      : []
+    const branchCtx: Ctx = { ...awaitCtx, locals: branchLocals, portee: awaitCtx.portee.concat(valeur) }
     // Les branches `{await}` peuvent contenir des blocs structurels ({for},
     // {if}, {key}) qui poussent des updates dans `ctx.updates` référençant des
     // markers locaux (`s-forN`/`e-forN` via `__nodes`). On capture ces updates
@@ -866,15 +907,20 @@ export function compileAwait(node: Node, ctx: Ctx): string {
     // exécutées juste après la construction du fragment (où le param `success`
     // est en scope et `__nodes` pointe les refs locales fraîches).
     const preBranch = ctx.updates.length
-    const bodyRaw = branch.children.map((c) => walk(c, awaitCtx)).join('')
+    const bodyRaw = branch.children.map((c) => walk(c, branchCtx)).join('')
     const branchUpdatesRaw = ctx.updates.splice(
       preBranch,
       ctx.updates.length - preBranch
     )
+    // les `{const}` de CETTE branche (CONST_DECL_PREFIX) sont HISSÉS en tête de sa fonction,
+    // comme dans un `{for}` : laissés parmi les updates, ils n'étaient déclarés qu'APRÈS la
+    // création des éléments, dans un bloc intérieur — une interpolation ou un attribut qui les
+    // lisait levait « … is not defined » à l'affichage de la branche
+    const constPrefix = branchUpdatesRaw.filter((u) => u.startsWith(CONST_DECL_PREFIX)).map((u) => u + ' ').join('')
     // cf. commentaire jumeau dans la branche non-root de
     // compileIf : un two-way `<select value=!{...}>` de CETTE branche doit
     // attendre les <option> d'un {for} imbriqué, comme `postUpdates` juste en dessous.
-    const { updates: branchUpdates, deferred } = splitDeferredUpdates(branchUpdatesRaw)
+    const { updates: branchUpdates, deferred } = splitDeferredUpdates(branchUpdatesRaw.filter((u) => !u.startsWith(CONST_DECL_PREFIX)))
     // Chaque branche émet une createFn qui produit {fragment, refs}.
     // Si la branche a des updates structurelles, on force le mode impératif :
     // le body se termine par `return { fragment: _f, refs: <obj> };`. On
@@ -920,6 +966,7 @@ export function compileAwait(node: Node, ctx: Ctx): string {
     } else {
       fnBody = createBody.body
     }
+    fnBody = constPrefix + fnBody
     switch (branch.type) {
       case 'pending':
         tplPending = `() => { ${fnBody} }`
@@ -981,7 +1028,9 @@ export function compileKey(node: Node, ctx: Ctx): string {
 
   if (ctx.type !== 'root') {
     const preSize = ctx.updates.length
-    const innerHtmlRaw = node.children.map((c) => walk(c, ctx)).join('')
+    // un `{const}` de CE bloc `{key}` ne vit que dans son corps (cf. Ctx.locals)
+    const blocCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+    const innerHtmlRaw = node.children.map((c) => walk(c, blocCtx)).join('')
     const branchUpdatesRaw = ctx.updates.splice(preSize, ctx.updates.length - preSize)
     // cf. commentaire jumeau dans la branche non-root de
     // compileIf : un two-way `<select value=!{...}>` de CETTE branche doit
@@ -1013,7 +1062,9 @@ export function compileKey(node: Node, ctx: Ctx): string {
   }
 
   const preSize = ctx.updates.length
-  const innerHtmlRaw = node.children.map((c) => walk(c, ctx)).join('')
+  // idem branche non-root : ensemble de locaux isolé par bloc (cf. Ctx.locals)
+  const blocCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+  const innerHtmlRaw = node.children.map((c) => walk(c, blocCtx)).join('')
   // Idem au root : createFn() → {fragment, refs}.
   // `compactPaths` : cf. compileIf — forme compacte hors boucle seulement.
   const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0 })
@@ -1074,6 +1125,13 @@ export function compileConst(node: Node, ctx: Ctx): string {
     // Dans un `{for}` (ou une branche `{await}` : corps construit puis updates
     // inlinées en mode `__nodes` local) → déclaration hissée en tête de corps.
     ctx.updates.push(`${CONST_DECL_PREFIX}const ${name} = ${jsExpr};`)
+    // … et le nom n'est en portée que dans ce corps-là : les gestionnaires qui suivent
+    // DANS ce bloc le voient (recalculé en tête de leur code, cf. PorteeEntree), ceux d'à
+    // côté gardent leur var du `<script>` (cf. Ctx.locals)
+    if (name) {
+      ctx.locals.add(name)
+      ctx.portee.push({ kind: 'const', name, raw: rawExpr, js: jsExpr })
+    }
     return ''
   }
 
@@ -1134,6 +1192,13 @@ export type CompileResult = [
    * PAS les noms contre le manifeste (un nom qui ne compile jamais reste ici,
    * filtré côté bundler, seul point qui connaît tous les composants). */
   componentDeps: string[],
+  /** Locaux de gabarit EN PORTÉE de chaque gestionnaire de `inlines` (même index) :
+   *  variable/index des `{for}` englobants, argument de branche `{await}`, `{const}` du
+   *  bloc courant. Cf. CompilerState.inlineLocals.
+   *  EN FIN de tuple, jamais au milieu : ce résultat se lit PAR POSITION (`out[4]`, les
+   *  destructurations à trous, l'export public `compileHtml`), un élément inséré au
+   *  milieu décale tous ceux d'après — les lecteurs positionnels cassent en silence. */
+  inlineLocals: string[][],
 ]
 
 // avertissement compile-time (jamais bloquant) : `#{…}` (interpolation
@@ -1231,7 +1296,7 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   // Pre-pass : collecte les snippets pour batchCalculateVars
   state.isPrePass = true
   state.snippetRegistry = []
-  walk(ast, { type: 'root', updates: [], loops: [] })
+  walk(ast, { type: 'root', updates: [], loops: [], locals: new Set(), portee: [] })
 
   if (state.analyzer && state.snippetRegistry.length > 0) {
     state.analyzer.batchCalculateVars?.(state.snippetRegistry)
@@ -1251,6 +1316,8 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   state.structVars = new Set()
   // idem : la pre-pass a déjà walké les `{for}`, le real pass les revisite
   state.templateLocals = new Set()
+  // idem : les locaux par gestionnaire de la pre-pass ne valent que pour elle
+  state.inlineLocals = []
   // Reset mountOnlyEffects : pendant le pre-pass, `getEffectVars` retourne
   // toujours `[]` (uniquement pour peupler `snippetRegistry`), donc tous les
   // effects sont à tort classés `mountOnly`. Sans ce reset, ils tireraient
@@ -1273,7 +1340,7 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   state.eventBindCount = {}
   state.eventsWithPrevent = new Set()
 
-  const ctx: Ctx = { type: 'root', updates: [], loops: [] }
+  const ctx: Ctx = { type: 'root', updates: [], loops: [], locals: new Set(), portee: [] }
   const surgicalHtml = walk(ast, ctx)
 
   // dédupe des updates
@@ -1297,5 +1364,5 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   // le real pass, sur les inlines FINALES (cf. warnRawEventEmit plus haut).
   warnRawEventEmit(state.inlines, opts.moduleName)
 
-  return [surgicalHtml, uniqueUpdates, state.events, state.inlines, state.effectsByVar, state.structVars, state.mountOnlyEffects, passiveEvents, tagRefs, state.templateLocals, state.initialPropBinds, componentDeps]
+  return [surgicalHtml, uniqueUpdates, state.events, state.inlines, state.effectsByVar, state.structVars, state.mountOnlyEffects, passiveEvents, tagRefs, state.templateLocals, state.initialPropBinds, componentDeps, state.inlineLocals]
 }

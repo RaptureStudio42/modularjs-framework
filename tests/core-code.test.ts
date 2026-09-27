@@ -77,6 +77,10 @@ y = 2
   </@code>
 </div>
 
+<div id="code-frameless">
+  <@code frameless>npm install modularjs-framework</@code>
+</div>
+
 <div id="code-lines">
   <@code><code data-file="app.mjs">
       <div>ligne un</div>
@@ -157,6 +161,13 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
       const box = code('code-basic')._shadow.querySelector('pre.box')
       assert.ok(box, 'le shadow porte son enveloppe pre.box')
       assert.equal(box.classList.contains('block'), false, 'un <pre> projeté laisse l\'enveloppe NEUTRE (pas de classe block)')
+    })
+
+    it('attribut frameless : texte nu quand même dédenté, mais enveloppe SANS cadre (pas de classe block, classe frameless posée)', () => {
+      const box = code('code-frameless')._shadow.querySelector('pre.box')
+      assert.ok(box, 'le shadow porte son enveloppe pre.box')
+      assert.equal(box.classList.contains('block'), false, 'frameless annule le mode cadre même sur du texte brut')
+      assert.equal(box.classList.contains('frameless'), true, 'la classe frameless est posée')
     })
   })
 

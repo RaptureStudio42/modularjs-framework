@@ -23,6 +23,18 @@ On déclare un état en l'affectant ; pas besoin de le pré-déclarer. La mutati
 
 > ⚠️ **Ne pas** initialiser un `$x` à vide « pour le déclarer » par réflexe hérité d'autres frameworks : un `$x` lu dans le template est auto-déclaré. `$nom = ''` inutile ne fait qu'ajouter de la confusion.
 
+Dans un `<pre>` ou un `<code>`, le **texte** est affiché tel quel : un `$x` écrit en clair — un exemple de code montré à l'utilisateur — n'est ni lu ni déclaré. Une interpolation `{$x}` y reste en revanche un vrai lien, mis à jour comme partout ailleurs :
+
+```html
+<!-- affiché tel quel : $compteur n'est pas déclaré -->
+<pre><code>$compteur = 0</code></pre>
+
+<!-- vrai lien : l'affichage suit $nom -->
+<p>Le paquet <code>{$nom}</code> est prêt.</p>
+```
+
+Une affectation réactive **vaut ce qu'elle affecte**, exactement comme en JavaScript — utilisée comme valeur (`return $x = 5`, `$a = $b = v`, un argument d'appel, `$n++`/`--$n`…), elle donne la valeur assignée (ou l'ancienne valeur pour le suffixe `++`/`--`), jamais un signal interne. `$n++`/`--$n` convertissent aussi `$n` en nombre avant d'incrémenter, comme le ferait JavaScript sur une chaîne (`$n = "2"` puis `$n++` donne `3`, pas `"21"`).
+
 <details>
 <summary>🎓 <b>Pour débutants</b> — « réactif », ça veut dire quoi&nbsp;?</summary>
 
@@ -49,6 +61,49 @@ En MJS, le `$` change tout : la variable et l'affichage sont **liés**. Tu écri
 `$volume` vaut `100` dès le premier rendu (`150` était hors bornes), et le curseur ne peut plus la faire sortir de `[0, 100]`.
 
 > ⚠️ `µminmax` s'appelle **une seule fois**, au niveau racine du `<script>`, après avoir donné sa valeur initiale à la variable.
+
+#### Borner une propriété d'un objet
+
+`µminmax` borne aussi **une propriété** d'un objet réactif. Le chemin doit être **fixe** : `$x.volume`, `$x.son.volume`, `$x['cle']`, `$x.pistes[0].volume`.
+
+```html
+<script>
+  $reglages = { volume: 150, basses: 3 }
+  µminmax $reglages.volume, 0, 100
+
+  monter = (r) -> r.volume += 30
+</script>
+
+<input type="range" value.number=!{$reglages.volume} min="0" max="100" />
+<button @click={monter($reglages)}>+30</button>
+<p>{$reglages.volume}</p>
+```
+
+`$reglages.volume` vaut `100` dès le premier rendu, et reste dans `[0, 100]` quoi qu'il arrive dans **ce composant** :
+
+| Écriture | Bornée ? |
+|---|---|
+| `$reglages.volume = 500`, `+=`, `++`, le curseur lié `=!{$reglages.volume}` | oui |
+| clé calculée : `$reglages[cle] = 500` (quand `cle` vaut `'volume'`) | oui |
+| dans une fonction qui reçoit l'objet : `monter($reglages)` | oui |
+| remplacement entier : `$reglages = { volume: 500 }` | oui — l'objet reçu est borné **sur place** |
+| par un composant enfant lié en deux sens : `<@panneau data=!{$reglages}>` | oui — le parent est prévenu et reborne aussitôt |
+| par un composant enfant qui reçoit l'objet en liaison simple : `<@panneau data={$reglages}>` | **non** |
+
+Le dernier cas : l'enfant surveille l'objet de son côté, la règle du parent ne le suit pas. L'objet, partagé, garde alors `500` jusqu'à la prochaine écriture du parent sur `$reglages` (n'importe quelle propriété), qui le ramène à `100`.
+
+```html
+<!-- panneau.mjs — reçoit l'objet et le modifie -->
+<button @click={$data.volume = 500}>À fond</button>
+
+<!-- parent -->
+<@panneau data={$reglages}></@panneau>     <!-- volume passe à 500 : pas borné -->
+<@panneau data=!{$reglages}></@panneau>    <!-- volume revient à 100 : borné -->
+```
+
+Pour qu'il le soit, lie l'objet en deux sens (`data=!{$reglages}`), ou pose la règle dans l'enfant lui-même : `µminmax $data.volume, 0, 100`.
+
+Seuls les **nombres** sont bornés : une autre valeur (texte, absence de la propriété) est laissée telle quelle. Un appel (`$x.volume()`), un index calculé (`$x[i]`) ou un espace (`$x . volume`) dans le chemin sont refusés à la compilation, comme un store (`µminmax $$x, 0, 10` : borne la valeur là où elle est écrite). Un composant qui n'utilise pas `µminmax` sur une propriété ne paie rien.
 
 ## Valeurs dérivées
 
@@ -151,7 +206,7 @@ Les trois dernières lignes du ✅ sont utiles pour de la **logique interne** �
 
 `$activeTab` part de la valeur du premier onglet au moment de l'affectation, et n'y **revient plus** ensuite quand `$tabs` change — à l'inverse d'un `$y = $tabs[0]` ordinaire, qui resuivrait `$tabs` comme un dérivé.
 
-> ⚠️ À l'exécution, `µ.snap` ne fait **aucune** copie : c'est l'identité, la même référence est assignée telle quelle — pas un instantané profond. Son seul rôle est de marquer l'affectation pour le compilateur, qui saute alors la mise en dérivé. Ne pas confondre avec `:=`, réservé par Civet au `const` : le symbole MJS pour figer une valeur est `=:`, jamais l'inverse.
+> ⚠️ À l'exécution, `µ.snap` ne fait **aucune** copie : c'est l'identité, la même référence est assignée telle quelle — pas un instantané profond. Son seul rôle est de marquer l'affectation pour le compilateur, qui saute alors la mise en dérivé. Ne pas confondre avec `:=`, réservé par Civet au `const` : le symbole MJS pour figer une valeur est `=:`, jamais l'inverse. Réaffecter nu un nom lié par `:=` (simple, déstructuré, ou depuis une fonction imbriquée) refuse de compiler, avec un message qui nomme l'identifiant et la solution : `.=` (au lieu de `:=`) donne un `let`, réaffectable.
 
 ## Effets — `µeffect`
 
@@ -170,7 +225,17 @@ En Civet, la **dernière instruction est retournée** : si c'est une fonction, M
 
 > ⚠️ Ne mets **pas** un `setInterval`/listener directement à la racine du `<script>` : ce code tourne dans le *constructeur* du composant, **avant** son attachement au DOM → aucun nettoyage au démontage (fuite mémoire), et il démarre même sur un composant jamais affiché. Toujours passer par `µeffect` pour ce qui a besoin d'un cycle de vie.
 
-> ⚠️ Un `µeffect` qui lit `$$x` ne se re-déclenche pas quand la clé store change — que la lecture soit directe ou passe par une méthode. L'abonnement au store se décide sur le **HTML** seul : c'est une mention de `$$x` dans le template qui l'ouvre, jamais une lecture dans le `<script>`.
+Un `$$x` lu par l'effet — dans son corps, dans une fonction du `<script>` ou dans une méthode qu'il appelle — est une dépendance comme un `$x` : l'effet repart à chaque écriture de la clé, d'où qu'elle vienne. C'est le cas typique d'une bibliothèque tenue hors du gabarit (canvas, scène 3D, carte) qui doit suivre une donnée partagée :
+
+```html
+<script>
+  $zoom = 1
+  µeffect ->
+    scene?.afficher($$papiers, $zoom)    # repart quand $$papiers OU $zoom change
+</script>
+```
+
+Une clé que l'effet **écrit** lui-même n'en est jamais une : `$$vus += 1 if $$actif` repart quand `$$actif` change, pas sur sa propre écriture de `$$vus` — sinon il tournerait en boucle.
 
 ### `@@x` — l'instance depuis une fonction appelée nue
 
@@ -244,6 +309,14 @@ Muter une propriété imbriquée d'un `$` est réactif, **d'où qu'elle vienne**
 ```
 
 Pour les cas que la compilation ne peut pas résoudre statiquement (l'objet **s'échappe** — passé à une fonction externe, stocké dans une structure tierce, alias réassigné…), MJS bascule automatiquement sur un **Proxy ciblé** à la frontière d'échappement : la réactivité reste préservée sans action de ta part. Le suivi statique couvre ~95&nbsp;% du code réel ; le Proxy comble le reste — jamais de trou silencieux.
+
+Une mutation profonde sur un objet **partagé** avec un composant enfant (liaison `=!{}`, voir [Bindings two-way](07-bindings.md)) prévient aussi ce parent, à n'importe quelle profondeur : `$obj.x = v` comme `$obj.a.b = v`, dans l'enfant, redessinent le parent dès que celui-ci lit `$obj` dans son gabarit.
+
+Deux variables d'état qui pointent le **même objet** (`shared := {…} ; $a = shared ; $b = shared`) se comportent pareil : une mutation faite via l'une, à la frontière d'échappement (Proxy), prévient aussi un lecteur de l'autre — les deux désignent la même donnée, la mutation les concerne toutes les deux.
+
+> ⚠️ **La clé de `$x.y`/`$[clé]` reste sous garde.** `__proto__`, `constructor` et `prototype` sont refusés en ÉCRITURE quel que soit le chemin (compilé ou Proxy) ; en LECTURE à travers le Proxy (l'objet a échappé au suivi statique), ils rendent `undefined` sauf si l'état porte VRAIMENT une donnée sous ce nom (propriété propre) — jamais le prototype hérité du realm.
+
+Une clé **calculée** est acceptée aussi bien en profondeur (`$obj[cle] = v`, `cle` une variable) qu'au premier niveau de l'état (`$[cle] = v`) — les deux écritures, les formes composées (`+=`…), `++`/`--` et `delete` compris.
 
 > ⚠️ **La seule vraie exception : `µraw`.** Une donnée explicitement marquée `µraw(...)` ([État brut](11-etat-brut.md)) n'est **volontairement** suivie par aucun mécanisme (ni compile-time, ni Proxy) : muter son intérieur ne re-rend rien, il faut **réaffecter** une nouvelle référence. C'est un choix de perf pour les données remplacées en bloc — un `$` ordinaire n'a jamais besoin de ce contournement.
 

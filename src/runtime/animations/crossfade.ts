@@ -104,23 +104,35 @@
           var __defer = function(cb) { return requestAnimationFrame(function() { return requestAnimationFrame(cb); }); };
           return __defer(function() {
             var cfg, other;
-            if (counterparts.has(key)) {
-              other = counterparts.get(key);
-              counterparts.delete(key);
-              return buildAnim(other, node, params, isIntro).then(resolve, reject);
-            } else {
-              items.delete(key);
-              if (defaults.fallback) {
-                cfg = defaults.fallback(node, params, isIntro);
-                if (cfg != null ? cfg.css : void 0) {
-                  // fallback en mode css(t,u) : sample
-                  return sampleAndRun(node, cfg, isIntro).then(resolve, reject);
+            // `defaults.fallback` (ou son `cfg.css`, dans `sampleAndRun`) est du code
+            // UTILISATEUR — un throw synchrone ICI sort du double rAF SANS jamais passer par
+            // `resolve`/`reject` (un callback rAF qui lève est juste avalé par le navigateur) :
+            // la promesse de ce handler @in/@out restait EN ATTENTE À VIE, ce qui gelait le
+            // Promise.all d'un groupe d'outro entier (nœuds fantômes, jamais retirés du DOM).
+            // `buildAnim` n'appelle lui aucun code utilisateur synchrone risqué — protégé par
+            // construction — mais ce filet ne lui nuit pas.
+            try {
+              if (counterparts.has(key)) {
+                other = counterparts.get(key);
+                counterparts.delete(key);
+                return buildAnim(other, node, params, isIntro).then(resolve, reject);
+              } else {
+                items.delete(key);
+                if (defaults.fallback) {
+                  cfg = defaults.fallback(node, params, isIntro);
+                  if (cfg != null ? cfg.css : void 0) {
+                    // fallback en mode css(t,u) : sample
+                    return sampleAndRun(node, cfg, isIntro).then(resolve, reject);
+                  } else {
+                    return resolve();
+                  }
                 } else {
                   return resolve();
                 }
-              } else {
-                return resolve();
               }
+            } catch (e) {
+              µ.warn('[mjs-crossfade] fonction de repli en échec — transition close proprement :', e);
+              return resolve();
             }
           });
         });

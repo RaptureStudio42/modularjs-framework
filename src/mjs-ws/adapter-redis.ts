@@ -1,13 +1,13 @@
 // mjs-ws/adapter-redis — implémentation RÉELLE de MjsWsAdapter sur un mini-client
-// Redis RESP écrit À LA MAIN, node:net + node:crypto SEULS (ZÉRO dépendance npm — pas de
-// paquet `redis`/`ioredis`). Deux connexions séparées, comme Redis l'exige : `_sub` (dédiée
+// Redis RESP écrit À LA MAIN, node:net + node:tls + node:crypto SEULS (ZÉRO dépendance npm —
+// pas de paquet `redis`/`ioredis`). Deux connexions séparées, comme Redis l'exige : `_sub` (dédiée
 // SUBSCRIBE + réception des push `message`), `_cmd` (PING/PUBLISH/INCR/DEL/SET EX/GET/KEYS —
 // une connexion en mode abonné ne peut plus parler qu'un sous-ensemble de commandes). Chacune
 // reconnecte seule, à backoff (1/2/5/10 s), et re-déclare ses abonnements après une reconnexion
 // (Redis oublie l'état d'abonnement d'une connexion qui tombe). AUCUN import dynamique ici —
-// node:net/node:crypto sont des builtins Node, jamais « absents » comme le paquet optionnel
-// `ws` (cf. transport-ws.ts) : la paresse porte sur la CONNEXION (aucun socket ouvert avant
-// `.start()`), pas sur le chargement du module.
+// node:net/node:tls/node:crypto sont des builtins Node, jamais « absents » comme le paquet
+// optionnel `ws` (cf. transport-ws.ts) : la paresse porte sur la CONNEXION (aucun socket ouvert
+// avant `.start()`), pas sur le chargement du module.
 //
 // PROTOCOLE RESP (Redis Serialization Protocol) — lignes CRLF, encodage des commandes en
 // tableau de chaînes « bulk » (`*N\r\n$len\r\n texte \r\n …`), réponses en 5 types : simple
@@ -18,6 +18,7 @@
 // milieu sur `data` (TCP ne connaît pas les limites de message), jamais supposé complet d'un coup.
 
 import { connect as netConnect, type Socket } from 'node:net'
+import { connect as tlsConnect, type TLSSocket, type ConnectionOptions as TlsConnectionOptions } from 'node:tls'
 import { randomBytes } from 'node:crypto'
 import { errMessage } from './guard.js'
 import type { MjsWsAdapter, MjsWsAdapterHandler } from './adapter.js'
@@ -122,9 +123,11 @@ export interface ParsedRedisUrl {
   port: number
   password?: string
   db?: number
+  /** `true` pour `rediss://` (TLS), `false` pour `redis://` — cf. `planConnect` pour le câblage réel */
+  tls: boolean
 }
 
-/** parse `redis://[[:motDePasse]@]hôte[:port][/base]` (`rediss://` accepté, TLS non câblé ici) */
+/** parse `redis://[[:motDePasse]@]hôte[:port][/base]` — `rediss://` distingué (`tls: true`, cf. `planConnect`) */
 export function parseRedisUrl(raw: string): ParsedRedisUrl {
   let u: URL
   try { u = new URL(raw) }
@@ -142,7 +145,7 @@ export function parseRedisUrl(raw: string): ParsedRedisUrl {
     if (!Number.isFinite(n) || String(n) !== path) throw new Error(t('ws.adapter-redis.url-base-invalide', { raw, path }))
     db = n
   }
-  return { host, port, password, db }
+  return { host, port, password, db, tls: u.protocol === 'rediss:' }
 }
 
 // --- une connexion Redis (rôle 'command' OU 'subscriber') — reconnecte seule, à backoff -----
@@ -155,6 +158,26 @@ export function backoffDelayMs(attempt: number): number {
   return RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]
 }
 
+// --- rediss:// — TLS réel (node:tls), jamais du texte en clair sous ce schéma ---------------
+
+/** plan de connexion — PUR (aucun I/O), testé en unité comme `parseRedisUrl`/`backoffDelayMs` ci-
+ *  dessus : décide QUOI ouvrir (`net` ou `tls`) et avec quels réglages, sans jamais toucher au
+ *  réseau. `servername` est TOUJOURS l'hôte demandé, placé APRÈS le spread des options — jamais
+ *  écrasable par `tlsOptions` (l'identité vérifiée par le certificat DOIT rester celle de l'URL). */
+export interface RedisConnectPlan { secure: boolean; options: Record<string, unknown> }
+
+export function planConnect(host: string, port: number, tls: boolean | Record<string, unknown> | undefined): RedisConnectPlan {
+  if (!tls) return { secure: false, options: { host, port } }
+  const extra = tls === true ? {} : tls
+  return { secure: true, options: { ...extra, host, port, servername: host } }
+}
+
+/** ouvre RÉELLEMENT le socket (net ou tls) — jamais appelée par les tests, cf. `RedisConnOpts.dial`
+ *  (même patron que accounts.ts::genId : paramètre d'injection réservé aux tests). */
+function dialSocket(plan: RedisConnectPlan): Socket | TLSSocket {
+  return plan.secure ? tlsConnect(plan.options as TlsConnectionOptions) : netConnect(plan.options as unknown as { host: string; port: number })
+}
+
 type RedisConnRole = 'command' | 'subscriber'
 
 interface RedisConnOpts {
@@ -162,12 +185,18 @@ interface RedisConnOpts {
   port: number
   password?: string
   db?: number
+  /** `true`/objet d'options TLS transmissibles (ca/rejectUnauthorized/cert/key…), ou absent — cf.
+   *  `planConnect`. Posé par `RedisAdapter` depuis `parseRedisUrl(url).tls` + `opts.tlsOptions`. */
+  tls?: boolean | Record<string, unknown>
   role: RedisConnRole
   onLog: MjsWsLogFn
   /** rappelée à CHAQUE connexion réussie (post AUTH/SELECT) — sert à re-PING/re-SUBSCRIBE */
   onConnected: () => void
   /** rôle 'subscriber' SEULEMENT — un push `message {canal, corps}` reçu */
   onMessage?: (channel: string, body: string) => void
+  /** injecté par les tests SEULEMENT (même patron que accounts.ts::genId) — remplace `dialSocket`,
+   *  capture le plan SANS ouvrir de socket réel. Tout appelant réel garde `dialSocket`. */
+  dial?: (plan: RedisConnectPlan) => Socket | TLSSocket
 }
 
 interface PendingReply { resolve: (v: RespValue) => void; reject: (err: Error) => void }
@@ -179,6 +208,12 @@ export class RedisConnection {
   private _socket: Socket | null = null
   private _parser = new RespParser()
   private _pending: PendingReply[] = []
+  // commandes PUBLIQUES (send()) en attente d'AUTH/SELECT — cf. send() ci-dessous : sans cette
+  // file, une commande écrivait dès que `_socket` existait, MÊME avant AUTH (le PING de start()
+  // partait alors physiquement AVANT AUTH/SELECT — ordre FIFO respecté côté Redis, donc c'est LUI
+  // qui essuyait le NOAUTH). AUTH/SELECT eux-mêmes passent par _raw() DIRECTEMENT (_onSocketConnected),
+  // jamais mis en file — ce sont eux qui FONT passer _ready à true.
+  private _readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = []
   private _backoffAttempt = 0
   private _stopped = false
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -198,12 +233,24 @@ export class RedisConnection {
 
   private _open(): void {
     if (this._stopped) return
-    const socket = netConnect({ host: this._opts.host, port: this._opts.port })
+    const plan = planConnect(this._opts.host, this._opts.port, this._opts.tls)
+    const dial = this._opts.dial ?? dialSocket
+    const socket = dial(plan)
     this._socket = socket
-    socket.on('connect', () => { void this._onSocketConnected() })
+    // TLS : le socket est utilisable en clair dès 'connect' (poignée de main PAS terminée) — écrire
+    // AUTH à ce moment enverrait le mot de passe EN CLAIR avant chiffrement. 'secureConnect' seul
+    // marque la poignée de main TLS terminée (cf. node:tls) ; en clair, 'connect' suffit (MÊME
+    // signal que l'ancien comportement, aucune régression hors TLS).
+    socket.on(plan.secure ? 'secureConnect' : 'connect', () => { void this._onSocketConnected() })
     socket.on('data', (chunk: Buffer) => this._onData(chunk))
     socket.on('error', (err) => this._opts.onLog('warn', `[mjs-ws/adapter-redis] erreur socket (${this._opts.role}) : ${errMessage(err)}`))
     socket.on('close', () => this._onClose())
+  }
+
+  /** résout dès que AUTH/SELECT (s'il y en a) ont réussi — immédiat si déjà `_ready`. */
+  private _waitReady(): Promise<void> {
+    if (this._ready) return Promise.resolve()
+    return new Promise((resolve, reject) => { this._readyWaiters.push({ resolve, reject }) })
   }
 
   private async _onSocketConnected(): Promise<void> {
@@ -216,9 +263,21 @@ export class RedisConnection {
       if (this._everConnected) this._reconnectCount++
       this._everConnected = true
       this._ready = true
+      for (const w of this._readyWaiters.splice(0)) w.resolve()   // débloque les send() en attente — dans l'ORDRE d'appel
       this._opts.onConnected()
     } catch (err) {
-      this._opts.onLog('error', t('ws.adapter-redis.auth-echec', { role: this._opts.role, err: errMessage(err) }))
+      const message = t('ws.adapter-redis.auth-echec', { role: this._opts.role, err: errMessage(err) })
+      this._opts.onLog('error', message)
+      // AUTH/SELECT refusé (mot de passe faux, base inexistante…) — un Redis réel NE COUPE PAS la
+      // connexion pour autant (contrairement à une erreur réseau) : sans ce rejet explicite ni ce
+      // destroy(), _onClose() n'est JAMAIS appelé et les send() déjà en attente (dont le PING de
+      // RedisAdapter.start()) restent bloqués POUR TOUJOURS. Rejet AVANT destroy() — message CLAIR,
+      // pas le générique « connexion perdue » que poserait _onClose ; destroy() ensuite pour que le
+      // cycle de reconnexion à backoff habituel reprenne la main (MÊME traitement qu'un flux RESP
+      // corrompu, cf. _onData).
+      const authErr = new Error(message)
+      for (const w of this._readyWaiters.splice(0)) w.reject(authErr)
+      this._socket?.destroy()
     }
   }
 
@@ -246,7 +305,14 @@ export class RedisConnection {
     // ignorées (subscribe() de l'adaptateur est synchrone, cf. adapter.ts — rien ne les attend).
     if (this._opts.role === 'subscriber' && Array.isArray(v)) {
       if (v[0] === 'message') { this._opts.onMessage?.(String(v[1]), String(v[2])); return }
-      if (v[0] === 'subscribe' || v[0] === 'unsubscribe') return
+      if (v[0] === 'subscribe' || v[0] === 'unsubscribe') {
+        // accusé de la commande SUBSCRIBE/UNSUBSCRIBE envoyée par send() — DOIT dépiler _pending
+        // (FIFO, même commande) : sans ce shift(), la PendingReply posée par send() restait à
+        // jamais non réglée — _pending grossissait d'une entrée à CHAQUE abonnement, pour la vie
+        // entière de la connexion (rejetée seulement à la fermeture, cf. _onClose).
+        this._pending.shift()?.resolve(v)
+        return
+      }
     }
     const pending = this._pending.shift()
     if (!pending) return
@@ -257,8 +323,12 @@ export class RedisConnection {
   private _onClose(): void {
     this._socket = null
     this._ready  = false
+    // parseur neuf à CHAQUE nouvelle connexion — un fragment retenu de l'ancienne (trame RESP
+    // coupée en plein milieu) ne doit JAMAIS se recoller à la première réponse de la SUIVANTE.
+    this._parser = new RespParser()
     const err = new Error(t('ws.adapter-redis.connexion-perdue', { role: this._opts.role }))
     for (const p of this._pending.splice(0)) p.reject(err)
+    for (const w of this._readyWaiters.splice(0)) w.reject(err)
     if (this._stopped) return
     const delay = backoffDelayMs(this._backoffAttempt)
     this._backoffAttempt++
@@ -275,7 +345,14 @@ export class RedisConnection {
     })
   }
 
-  send(args: Array<string | number>): Promise<RespValue> { return this._raw(args) }
+  // attend AUTH/SELECT AVANT d'écrire quoi que ce soit — AVANT, une commande partait dès que
+  // `_socket` existait, MÊME avant AUTH : le PING de RedisAdapter.start() s'écrivait alors
+  // physiquement en PREMIER sur le fil, la 1re réponse Redis (NOAUTH) lui revenait à LUI plutôt
+  // qu'à AUTH (FIFO), et start() rejetait sur un serveur pourtant correctement configuré.
+  send(args: Array<string | number>): Promise<RespValue> {
+    if (this._ready) return this._raw(args)
+    return this._waitReady().then(() => this._raw(args))
+  }
 
   stop(): void {
     this._stopped = true
@@ -283,17 +360,22 @@ export class RedisConnection {
     if (this._socket) { this._socket.destroy(); this._socket = null }
     const err = new Error(t('ws.adapter-redis.adaptateur-arrete', { role: this._opts.role }))
     for (const p of this._pending.splice(0)) p.reject(err)
+    for (const w of this._readyWaiters.splice(0)) w.reject(err)
   }
 }
 
 // --- RedisAdapter — MjsWsAdapter sur les deux connexions ci-dessus --------------------------
 
 export interface RedisAdapterOpts {
-  /** redis://[[:motDePasse]@]hôte[:port][/base] */
+  /** redis://[[:motDePasse]@]hôte[:port][/base] — `rediss://` chiffre la connexion (node:tls) */
   url: string
   /** espace de noms des canaux/clés — défaut 'mjs-ws' */
   prefix?: string
   onLog?: MjsWsLogFn
+  /** options transmises telles quelles à `tls.connect` (ca/rejectUnauthorized/cert/key…) — actives
+   *  SEULEMENT si `url` est `rediss://`. `servername` reste TOUJOURS l'hôte de `url`, jamais
+   *  écrasable par cette option (cf. `planConnect`). */
+  tlsOptions?: Record<string, unknown>
 }
 
 export class RedisAdapter implements MjsWsAdapter {
@@ -310,7 +392,8 @@ export class RedisAdapter implements MjsWsAdapter {
     this.prefix    = opts.prefix ?? 'mjs-ws'
     this._onLog    = opts.onLog ?? (() => {})
     const parsed   = parseRedisUrl(opts.url)
-    const shared   = { host: parsed.host, port: parsed.port, password: parsed.password, db: parsed.db, onLog: this._onLog }
+    const tls      = parsed.tls ? (opts.tlsOptions ?? true) : undefined
+    const shared   = { host: parsed.host, port: parsed.port, password: parsed.password, db: parsed.db, tls, onLog: this._onLog }
     this._cmd = new RedisConnection({ ...shared, role: 'command', onConnected: () => {} })
     this._sub = new RedisConnection({
       ...shared, role: 'subscriber',

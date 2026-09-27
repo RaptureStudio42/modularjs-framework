@@ -102,10 +102,13 @@ C'est tout ce qu'il faut pour un salon complet — historique rejoué au join, d
 | `prefix` | `'chat:'` | Préfixe des noms de salon MJS-WS — `app.room(prefix + room)`. |
 | `maxLength` | `2000` | Longueur maximale d'un message (caractères). Au-delà, ou texte vide/non-chaîne : rejet `chat-length`. |
 | `rateLimit` | `{ rate: 1, burst: 5 }` | Seau à jetons **par identité ET par salon** (cf. `MjsWsLimits.rate`/`burst`, même vocabulaire) — au-delà : `chat-rate`. |
+| `duplicates` | `false` (désactivé) | Anti-doublon **par identité ET par salon** — `true` = fenêtre de 30 s, `{ within }` = fenêtre personnalisée (ms) — au-delà : `chat-duplicate`. |
 | `history` | `100` | Messages rejoués au join (`room().history(n)`, [23 · MJS-WS §4.1](23-mjs-ws.md#salons-presence)). `<= 0` désactive le rattrapage. |
 | `canJoin` | absent | Garde d'accès à un salon, **réévaluée à chaque action chat** (send/typing/modération) — même contrat que `MjsWsRoomsOptions.join` (rooms.ts), cf. encart ci-dessous. |
 | `onMessage` | absent | `(ctx) => …` — transforme (retour `{ text }`) ou rejette (retour `false`/throw → `chat-denied`) un message déjà validé, juste avant diffusion. |
 | `moderators` | absent | `(identity) => bool` — réservé aux actions de modération ([§5](#moderation)). |
+
+`duplicates` compare la **même** clé d'identité que `rateLimit` et le muet ([§5](#moderation)) — le compte si l'identité en a un, sinon la connexion — dans le même salon ; le texte comparé est normalisé (espaces réduits à un seul, casse ignorée), donc « Salut  à tous » et « salut à tous » comptent comme un seul et même message. Désactivé par défaut ; `true` arme une fenêtre de 30 secondes.
 
 > ⚠️ **`canJoin` n'est pas un filtre sur `µ:join`.** Un paquet installé via `app.use()` est composé **après** la construction de l'app (`mjsWs()`) — il ne peut pas s'y raccrocher : l'adhésion au salon MJS-WS bas niveau (présence, `.has(client)`, rejeu d'historique) reste **seule** gouvernée par `mjsWs({ rooms: { join } })`, cf. [23 · MJS-WS §4](23-mjs-ws.md#salons-presence). `canJoin` ici est un filet **supplémentaire**, au niveau message : si tu veux réellement empêcher l'adhésion à un salon `chat:*`, configure `rooms.join` sur `mjsWs()` — chatPackage délègue à cette garde existante plutôt que d'en réinventer une (même contrat `MjsWsJoinFn`, réutilisable tel quel aux deux endroits).
 
@@ -141,7 +144,7 @@ room = sock.chat('general', { prefix: 'room:' })  # préfixe personnalisé — D
 
 ### Erreurs — `sock.lastError`
 
-`send()`/`typing()` ne renvoient rien (pas de Promise, contrairement à `game.move()` de [24 · MJS-Server](24-mjs-server.md#le-client)) : un refus serveur arrive en `µ:error {message: 'chat-length'|'chat-rate'|'chat-denied'|'chat-muted'}`, exposé via `sock.lastError` — même mécanique que le reste de MJS-WS (cf. [20 · Temps réel](20-temps-reel.md)). Cf. [§8](#annexe) pour le détail de chaque code.
+`send()`/`typing()` ne renvoient rien (pas de Promise, contrairement à `game.move()` de [24 · MJS-Server](24-mjs-server.md#le-client)) : un refus serveur arrive en `µ:error {message: 'chat-length'|'chat-rate'|'chat-denied'|'chat-muted'|'chat-duplicate'}`, exposé via `sock.lastError` — même mécanique que le reste de MJS-WS (cf. [20 · Temps réel](20-temps-reel.md)). Cf. [§8](#annexe) pour le détail de chaque code.
 
 ### Reconnexion — resync **automatique**
 
@@ -209,6 +212,7 @@ Côté client, `typingUsers` expire après ~5 secondes sans nouvelle frappe reç
 | `chat-rate` | Seau à jetons épuisé pour cette identité, dans ce salon (`opts.rateLimit`). |
 | `chat-denied` | Pas membre du salon, `canJoin` refuse, `onMessage` rejette (retour `false`/throw), ou action de modération par une identité non-`moderators`. |
 | `chat-muted` | Identité mutée dans ce salon (`mute(...)`), pendant sa durée. |
+| `chat-duplicate` | Texte normalisé identique à un message déjà diffusé par la même identité, dans ce salon, depuis moins de `within` ms (`opts.duplicates`). |
 
 ### Le protocole `chat:*` — préfixe de convention, pas une réservation
 

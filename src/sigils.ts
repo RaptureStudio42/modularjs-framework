@@ -656,25 +656,130 @@ function rewriteMuToggleWindows(contenu: string, marqueur: string, sectionLabel:
 // main (cf. bandeau de tête de ce fichier).
 export const MU_UNIVERSAL_BODY = `µ(?!(?:${MU_SCRIPT_RUNES})\\b)([a-zA-Z]\\w*)`
 
+// argTermineOuChemin — fragment de gabarit PARTAGÉ entre µinspect et µminmax : après `$nom`, soit
+// le prochain caractère utile (espaces ignorés) EST un des `terminateurs` attendus (fin réelle de
+// l'argument — rien à capturer), soit tout ce qui suit jusqu'au PROCHAIN terminateur est un chemin
+// REFUSÉ (capturé pour le message d'erreur). LISTE BLANCHE plutôt que liste noire de suffixes
+// interdits (point, appel, indexation…) énumérés un par un : une énumération manuelle rate
+// toujours la variante suivante — une parenthèse ou un crochet IMBRIQUÉ (`µminmax($o(bar()), …)`,
+// `µminmax($o[a[0]], …)`) contournait ainsi chaque nouvelle entrée ajoutée à l'ancienne liste
+// (`[^()]*`/`[^[\]]*` ne comptent pas la profondeur, un `)`/`]` interne refermait le groupe trop
+// tôt et laissait le reste échapper). Ici, tout ce qui n'est PAS exactement le terminateur attendu
+// est un chemin — nul besoin de nommer chaque forme, la capture non-gourmande s'arrête d'elle-même
+// au premier terminateur rencontré (imparfait sur un cas pathologique à virgule imbriquée, ex.
+// `$o(bar(1,2))` : ne capture que jusqu'à cette virgule interne — accepté, le message cite alors le
+// DÉBUT du chemin fautif plutôt que sa fin exacte, ce qui suffit à localiser la faute).
+function argTermineOuChemin(terminateurs: string): string {
+  return `(?:(?=[ \\t]*(?:${terminateurs}))|([\\s\\S]*?)(?=[ \\t]*(?:${terminateurs})))`
+}
+
+// cheminInspectPlat — filtre le chemin capturé par argTermineOuChemin (groupes 2/4 de
+// MU_INSPECT_ARG_BODY juste en dessous, texte entre `$nom` et le terminateur) : liste blanche
+// d'accès FIXES uniquement, `.prop` (identifiant) ou `[littéral]` (entier `[0]` ou chaîne
+// `['clé']`/`["clé"]` — jamais un IDENTIFIANT nu entre crochets, ce serait un index CALCULÉ),
+// enchaînés SANS rien entre deux (espace compris — `$x . foo`/`$x [0]` restent hors de cette
+// liste blanche, donc refusés comme avant). Un appel (`.foo()`), un index calculé (`[i]`) ou un
+// gabarit collé (`` $x`t` ``) n'en couvrent jamais la totalité : le premier caractère qui ne
+// matche aucun segment arrête la boucle avant la fin du texte → `undefined`, chemin REFUSÉ.
+// Segments valides → chemin PLAT joint par des points (`.a.b` → 'a.b', `[0]` → '0',
+// `.items[0]` → 'items.0', `['clé']` → 'clé') : c'est ce plat que le runtime (µ.inspect,
+// mjs_rare_runes.ts/mjs_element.ts) navigue tel quel via un simple split('.').
+const RE_CHEMIN_INSPECT_SEGMENT = /\.([a-zA-Z_][a-zA-Z0-9_]*)|\[\s*(\d+)\s*\]|\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]/g
+export function cheminInspectPlat(chemin: string): string | undefined {
+  const segments = cheminSegments(chemin)
+  return segments === undefined ? undefined : segments.join('.')
+}
+
+// cheminSegments — même liste blanche que cheminInspectPlat, segments gardés SÉPARÉS : µminmax
+// les transmet en tableau (une clé en chaîne peut contenir un point, `$x['a.b']`, qu'un plat
+// joint par des points confondrait avec un sous-chemin)
+export function cheminSegments(chemin: string): string[] | undefined {
+  const segments: string[] = []
+  let pos = 0
+  for (const m of chemin.matchAll(RE_CHEMIN_INSPECT_SEGMENT)) {
+    if (m.index !== pos) return undefined
+    segments.push(m[1] ?? m[2] ?? m[3] ?? m[4])
+    pos += m[0].length
+  }
+  return pos === chemin.length && segments.length > 0 ? segments : undefined
+}
+
+// clé de µminmax sur un chemin, en tableau de chaînes à guillemets simples — jamais doubles : le
+// <script> passe ensuite par Civet, qui interpolerait un `#{…}` logé dans une clé en chaîne
+export function cleMinmaxChemin(nom: string, segments: string[]): string {
+  return '[' + [nom, ...segments].map(seg => `'${seg.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ') + ']'
+}
+
 // µ.inspect($x) → µ.inspect('x') — le runtime (mjs_rare_runes.ts) attend la CLÉ
-// d'état en chaîne, jamais la valeur courante. Parenthèses OPTIONNELLES en ENTRÉE
-// (`\(?…\)?`, accepte `µ.inspect($x)` ET la forme nue Coffee `µ.inspect $x`),
-// TOUJOURS parenthésées en SORTIE — appel JS valide par construction, aussi bien
-// recompilé par Civet ensuite (script) que laissé tel quel (cleanJs/cleanJsExpr,
-// sortie JS FINALE jamais recompilée sur ce chemin).
-export const MU_INSPECT_ARG_BODY = 'µ\\.\\s*inspect[ \\t]*\\(?[ \\t]*\\$([a-zA-Z0-9_]+)[ \\t]*\\)?'
-export const MU_INSPECT_ARG_OUT  = "µ.inspect('$1')"
+// d'état en chaîne, jamais la valeur courante. Deux formes DISJOINTES en ENTRÉE —
+// parenthésée `µ.inspect($x)` (fermante EXIGÉE tout de suite après le nom, jamais
+// ajoutée seule côté sortie ; terminateur = `)`) et nue Coffee `µ.inspect $x` (terminateur =
+// virgule, parenthèse fermante, point-virgule, fin de ligne ou fin d'expression — tout ce qui
+// clôt légitimement un appel Coffee nu) — TOUJOURS parenthésée en SORTIE, appel JS valide par
+// construction. Un CHEMIN FIXE derrière le symbole (`$x.foo`, `$x.items[0]`, `$x['clé']`,
+// imbriqués) est SUIVI (µinspect($x.foo) reste abonné à toute la variable `x`) mais FILTRE la
+// SORTIE console à ce seul chemin (simple portée d'affichage, pas un
+// changement de ce que la rune observe) : `µ.inspect('x', 'foo')`. Un APPEL ou une INDEXATION
+// CALCULÉE derrière le symbole (`$x.foo()`, `$x[i]`, imbriqués ou non, espaces tolérés) n'a
+// toujours aucun sens documenté (cf. docs/18-pieges.md §8) — capturé par argTermineOuChemin
+// (groupes 2 et 4) puis rejeté par cheminInspectPlat ci-dessus pour lever une erreur de
+// compilation claire, plutôt qu'un réécrit à moitié (parenthèse orpheline qui cassait aussi le
+// code voisin) ou un résidu qui n'échouait qu'à l'exécution. Fonction plutôt que gabarit `$1` :
+// les deux groupes de nom sont MUTUELLEMENT EXCLUSIFS (un seul se remplit selon la forme
+// reconnue). `µ\.?` (point OPTIONNEL, calqué sur MU_MINMAX_ARG_PAREN_BODY) : les deux
+// consommateurs existants (generator/utils.ts, transpiler/index.ts) n'appellent ce corps
+// qu'APRÈS leur propre sucre universel (`µinspect` déjà pointé en `µ.inspect`), le point y est
+// donc toujours présent — le rendre optionnel ne change rien pour eux. Nécessaire pour un
+// TROISIÈME usage (generator/utils.ts, garde AVANT mapCodeSegments) qui scanne le texte BRUT,
+// point pas encore posé.
+export const MU_INSPECT_ARG_BODY = `µ\\.?\\s*inspect(?:\\([ \\t]*\\$([a-zA-Z0-9_]+)${argTermineOuChemin('\\)')}[ \\t]*\\)|[ \\t]*\\$([a-zA-Z0-9_]+)${argTermineOuChemin('[,);]|\\n|$')})`
+export const MU_INSPECT_ARG_OUT = (_m: string, nomParen: string | undefined, cheminParen: string | undefined, nomNu: string | undefined, cheminNu: string | undefined): string => {
+  const nom    = nomParen ?? nomNu
+  const chemin = cheminParen || cheminNu
+  if (!chemin) return `µ.inspect('${nom}')`
+  const plat = cheminInspectPlat(chemin)
+  if (plat === undefined) throw new Error(t('transpiler.rune-inspect-chemin', { nom, chemin }))
+  return `µ.inspect('${nom}', '${plat}')`
+}
 
 // µ.minmax($x, min, max) → µ.minmax(_mjsThis, 'x', min, max) — le runtime clampe
-// `_mjsThis._mjs_limits[key]`, jamais `$x` lui-même. SEULE la forme PARENTHÉSÉE est
+// `_mjsThis._mjs_limits[key]`, jamais `$x` lui-même. Un CHEMIN FIXE derrière le symbole
+// (`$x.volume`, `$x.son.volume`, `$x['cle']`, `$x.pistes[0].volume` — même liste blanche que
+// µinspect, cheminSegments) borne une PROPRIÉTÉ : `µ.minmax(_mjsThis, ['x', 'volume'], min, max)`,
+// clé en tableau (mjs_rare_runes.ts, µ._mjs_minmaxChemin). SEULE la forme PARENTHÉSÉE est
 // partagée : elle produit un appel COMPLET valide en JS direct (la parenthèse
 // fermante d'ORIGINE, non capturée, referme l'appel — même trick que
 // RAW_WRITE_PAREN_BODY plus haut). La forme SANS parenthèses (`µminmax $x, 0, 10`,
 // sucre Coffee) reste SCRIPT-ONLY (transpiler/index.ts) : sa sortie nue n'est valide
 // qu'une fois recompilée par Civet — chemin que cleanJs (repli templateLang:'js',
-// sites FRAGMENT) ne garantit pas.
-export const MU_MINMAX_ARG_PAREN_BODY = "(?<!µ\\.)µ\\.?minmax\\s*\\(\\s*\\$([a-zA-Z_$][\\w$]*)"
-export const MU_MINMAX_ARG_PAREN_OUT  = "µ.minmax(_mjsThis, '$1'"
+// sites FRAGMENT) ne garantit pas. Terminateur = virgule (le premier argument s'arrête
+// TOUJOURS là, les deux suivants sont min/max) : tout ce qui suit le nom avant cette virgule est
+// capturé par argTermineOuChemin — un chemin FIXE est réécrit, un appel, un index calculé ou un
+// espace (`$config.volume()`, `$config[i]`, `$config . volume`) lèvent une erreur de compilation
+// claire (docs/03-reactivite.md). Nom `[a-zA-Z0-9_]+` (jamais de `$` dedans, même classe
+// qu'inspect ci-dessus) : un second `$` fait échouer tout le motif — `$$x` (store) est refusé en
+// amont, avec un message clair (MU_RUNE_STORE_BODY plus bas, reecritOuRejetteRuneChemin).
+export const MU_MINMAX_ARG_PAREN_BODY = `(?<!µ\\.)µ\\.?minmax\\s*\\(\\s*\\$([a-zA-Z0-9_]+)${argTermineOuChemin(',')}`
+// forme SANS parenthèses (`µminmax $x.volume, 0, 10`, sucre Civet du <script>) — même
+// terminateur que la forme parenthésée : scannée sur le texte ENTIER par
+// reecritOuRejetteRuneChemin (generator/utils.ts), jamais morceau par morceau — une clé en chaîne
+// (`$x['cle']`) coupait sinon l'appel en deux et la réécriture ne se faisait jamais
+export const MU_MINMAX_ARG_NU_BODY = `(?<!µ\\.)µ\\.?minmax[ \\t]+\\$([a-zA-Z0-9_]+)${argTermineOuChemin(',')}`
+
+// µminmax/µinspect sur un STORE (`$$x`) : ces runes visent l'état d'UN composant — sur un store,
+// le sucre général passait la VALEUR du store (`µ.minmax(µ.store.x, …)`) là où le runtime attend
+// une clé : plantage à la construction du composant pour µminmax, suivi muet pour µinspect
+// Entre parenthèses, l'argument peut passer à la ligne (`µminmax(\n  $$x, …)`) : même tolérance
+// que MU_MINMAX_ARG_PAREN_BODY — sans parenthèse, espaces seulement (une ligne suivante serait une
+// autre instruction)
+export const MU_RUNE_STORE_BODY = `(?<!µ\\.)µ\\.?(minmax|inspect)(?:\\s*\\(\\s*|[ \\t]+)\\$\\$([a-zA-Z_][a-zA-Z0-9_]*)`
+
+export const MU_MINMAX_ARG_PAREN_OUT  = (_m: string, nom: string, chemin: string | undefined): string => {
+  if (!chemin) return `µ.minmax(_mjsThis, '${nom}'`
+  const segments = cheminSegments(chemin)
+  if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
+  return `µ.minmax(_mjsThis, ${cleMinmaxChemin(nom, segments)}`
+}
 
 // ============================================================================
 // littéraux regex `/…/` — PARTAGÉS entre les TROIS moteurs de sucre (parser,

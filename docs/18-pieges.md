@@ -209,6 +209,14 @@ Trois outils, tous **dev-only** (aucun ne doit rester dans du code livré tel qu
 </script>
 ```
 
+**`µinspect $x.chemin`** — variante avec un chemin **fixe** (`.a.b`, `[0]`, `['clé']`, imbriqués) : suit toujours `$x` **entier** (même abonnement que `µinspect $x`), mais n'affiche que les changements de **ce chemin précis** — une portée d'affichage, pas un changement de ce qui est observé. Un appel (`.f()`) ou un index calculé (`[i]`) n'ont pas de sens ici et sont refusés à la compilation, comme un store (`µinspect $$x`) : `µinspect` suit l'état d'un composant.
+
+```html
+<script>
+  µinspect $utilisateur.profil.avatar   # loggé seulement quand .profil.avatar change, le reste de $utilisateur est ignoré
+</script>
+```
+
 **`µ.debugMode`** (booléen, `false` par défaut — se met à `true` depuis la console du navigateur) active une **télémétrie visuelle** : chaque composant qui se re-rend est brièvement entouré (outline vert, ~300&nbsp;ms) — utile pour repérer à l'œil les re-rendus superflus. `µ.instances` (un `Set`) recense, en mode introspection, toutes les instances de composants MJS actuellement montées dans la page.
 
 > 💡 Dans les DevTools du navigateur, les instances de composants (`<mjs-…>`) s'affichent avec un **formatter personnalisé** : `console.log(el)` sur un élément MJS déplie directement son état réactif (`_state`), ses nœuds DOM référencés et ses props/masques — sans avoir à naviguer `el._state` à la main.

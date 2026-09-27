@@ -63,3 +63,39 @@ export async function prerenderOnDevRecompile(
     return undefined
   }
 }
+
+/** Programme une passe de `prerenderOnDevRecompile`, SÉRIALISÉE avec toute passe déjà en vol —
+ *  jamais deux prérendus simultanés vers le MÊME dossier de sortie (deux recompiles rapprochés,
+ *  le 2e plus rapide que le rendu HTML du 1er, sinon se chevauchaient). `schedule()` rend une
+ *  promesse résolue quand LA PASSE couvrant cet appel est terminée (jamais rejetée :
+ *  `prerenderOnDevRecompile` absorbe déjà ses propres échecs, cf. son commentaire) — l'appelant
+ *  (cli.ts) attend cette promesse AVANT de notifier le rechargement du navigateur : un reload
+ *  déclenché avant la fin de la passe pouvait faire recharger le navigateur sur le HTML FIGÉ
+ *  d'AVANT ce changement (fichier pas encore réécrit sur disque). */
+export interface DevPrerenderScheduler {
+  schedule(): Promise<void>
+}
+
+export function createDevPrerenderScheduler(
+  config: MjsConfig | null | undefined,
+  configDir: string,
+  opts: PrerenderOnDevRecompileOpts = {},
+): DevPrerenderScheduler {
+  // Chaîne de promesses : chaque `schedule()` s'attache à la fin de la précédente — AUCUNE
+  // coalescence (une rafale de N changements produit N passes en série, jamais en parallèle) :
+  // choix le plus simple et le plus sûr, le debounce du bundler (chokidar) amortit déjà la
+  // fréquence des recompiles réels avant qu'ils n'atteignent ce planificateur.
+  let chain: Promise<void> = Promise.resolve()
+  return {
+    schedule(): Promise<void> {
+      const run = chain
+        // Une passe précédente qui rejetterait (jamais censé arriver, cf. commentaire ci-dessus)
+        // ne doit pas bloquer la CHAÎNE pour de bon — chaque `schedule()` reste indépendant.
+        .catch(() => {})
+        .then(() => prerenderOnDevRecompile(config, configDir, opts))
+        .then(() => undefined)
+      chain = run
+      return run
+    },
+  }
+}

@@ -245,6 +245,14 @@ var KF_REGISTRY, KF_ROOT_SHEETS, KF_SHEET, _hashStr, _log, _registryFor, _runSha
 // pas), y évalué au paramètre trouvé. P0 = (0,0) et P3 = (1,1) fixes (contrat CSS).
 µ.easing.bezier = function(x1, y1, x2, y2) {
   var bez;
+  // contrat CSS : x1/x2 hors [0,1] rend la courbe non monotone en x (la dichotomie ci-dessous
+  // suppose x croissant avec s) — même repli que la chaîne CSS ('cubic-bezier(...)' via
+  // resolve(), qui filtre AVANT d'appeler bezier()) : un appel DIRECT doit voir le même garde-fou,
+  // pas seulement le chemin par chaîne (docs/10-transitions.md : « dans les deux cas »).
+  if (x1 < 0 || x1 > 1 || x2 < 0 || x2 > 1) {
+    if (µ.debug) µ.warn(`[mjs-tx] cubic-bezier(${x1}, ${y1}, ${x2}, ${y2}) : x1/x2 hors de [0, 1] — repli cubicOut`);
+    return µ.easing.cubicOut;
+  }
   bez = function(a, b, s) {
     return 3 * (1 - s) * (1 - s) * s * a + 3 * (1 - s) * s * s * b + s * s * s;
   };

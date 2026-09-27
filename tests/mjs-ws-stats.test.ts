@@ -177,7 +177,7 @@ describe('mjs-ws/stats — app.stats() : forme complète + uptime/processId', ()
     for (const famille of ['connexions', 'messages', 'garde', 'salons', 'flux', 'pont', 'adaptateur', 'sessions', 'latences', 'erreurs']) {
       assert.ok(famille in snap, `famille '${famille}' manquante dans l'instantané`)
     }
-    assert.deepEqual(Object.keys(snap.connexions).sort(), ['accueillies', 'actives', 'fermees', 'parquees', 'refusees', 'refuseesOrigine', 'refuseesPlafond'].sort())
+    assert.deepEqual(Object.keys(snap.connexions).sort(), ['accueillies', 'actives', 'fermees', 'parquees', 'refusees', 'refuseesBan', 'refuseesOrigine', 'refuseesPlafond'].sort())
     assert.deepEqual(snap.latences, { p50: null, p95: null, echantillon: 0 }, 'aucun ping encore mesuré')
     await app.stop()
   })

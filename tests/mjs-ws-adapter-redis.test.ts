@@ -132,12 +132,12 @@ describe('mjs-ws/adapter-redis — RespParser (parseur incrémental)', () => {
 })
 
 describe('mjs-ws/adapter-redis — parseRedisUrl', () => {
-  it('hôte seul → port 6379 par défaut, ni mot de passe ni base', () => {
-    assert.deepEqual(parseRedisUrl('redis://localhost'), { host: 'localhost', port: 6379, password: undefined, db: undefined })
+  it('hôte seul → port 6379 par défaut, ni mot de passe ni base, tls:false (redis: en clair)', () => {
+    assert.deepEqual(parseRedisUrl('redis://localhost'), { host: 'localhost', port: 6379, password: undefined, db: undefined, tls: false })
   })
 
   it('hôte + port + mot de passe + base', () => {
-    assert.deepEqual(parseRedisUrl('redis://:mysecret@localhost:6380/2'), { host: 'localhost', port: 6380, password: 'mysecret', db: 2 })
+    assert.deepEqual(parseRedisUrl('redis://:mysecret@localhost:6380/2'), { host: 'localhost', port: 6380, password: 'mysecret', db: 2, tls: false })
   })
 
   it('mot de passe avec caractères spéciaux → décodé (%40 → @)', () => {
@@ -145,8 +145,10 @@ describe('mjs-ws/adapter-redis — parseRedisUrl', () => {
     assert.equal(parsed.password, 'p@ss')
   })
 
-  it('rediss:// (TLS) accepté au parsing (le câblage TLS lui-même est hors périmètre)', () => {
-    assert.equal(parseRedisUrl('rediss://host').host, 'host')
+  it('rediss:// (TLS) accepté au parsing, distingué de redis:// (tls:true) — câblage réel : cf. adapter-redis-tls.test.ts', () => {
+    const parsed = parseRedisUrl('rediss://host')
+    assert.equal(parsed.host, 'host')
+    assert.equal(parsed.tls, true)
   })
 
   it('schéma invalide → erreur claire', () => {

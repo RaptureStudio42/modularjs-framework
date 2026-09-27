@@ -19,6 +19,17 @@ import { resolvePage, isBuildPrerenderable } from './render-routes.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
 import { t } from '../messages/index.js'
 
+// Ferme une liste de ressources ASYNCHRONES de façon INDÉPENDANTE et BEST-EFFORT — chacune dans
+// son propre try/catch, jamais un `if (a) await a.close(); if (b) await b.close();` où l'échec du
+// premier saute le second. `null`/`undefined` simplement ignorés. Ne lève jamais : une fermeture en
+// défaut ne doit jamais masquer le résultat/l'erreur du travail qui vient de se terminer.
+export async function closeQuietly(...resources: (null | undefined | { close(): Promise<void> })[]): Promise<void> {
+  for (const r of resources) {
+    if (!r) continue
+    try { await r.close() } catch { /* best-effort */ }
+  }
+}
+
 export interface PrerenderReport {
   /** Dossier où les pages ont été écrites. */
   outDir: string
@@ -315,12 +326,17 @@ export async function prerenderPages(
   // réduirait à un simple `skipped` de la première page venue, silencieuse pour
   // toutes les suivantes du même moteur. Seul le RENDU (par page) est capturable.
   // outputDir réel → les URLs d'assets compilés correspondent à ce que sert le back.
-  const happyRenderer: SSRRenderer | null = needsHappy
-    ? await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env })
-    : null
-  const browserRenderer: BrowserRenderer | null = needsBrowser
-    ? await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env })
-    : null
+  let happyRenderer: SSRRenderer | null = null
+  let browserRenderer: BrowserRenderer | null = null
+  try {
+    if (needsHappy) happyRenderer = await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env })
+    if (needsBrowser) browserRenderer = await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env })
+  } catch (e) {
+    // Le moteur DÉJÀ construit (happy-dom, créé en premier) ne doit jamais fuir si le second
+    // (navigateur) échoue à se construire — sans ce filet, il restait ouvert pour toujours.
+    await closeQuietly(happyRenderer, browserRenderer)
+    throw e
+  }
 
   // Prérendu multi-langue OPT-IN : `render.locales` avec ≥ 2 entrées déclenche
   // une passe par langue (store.__mjsLang), écrite dans un sous-dossier
@@ -380,8 +396,7 @@ export async function prerenderPages(
       }
     }
   } finally {
-    if (happyRenderer) await happyRenderer.close()
-    if (browserRenderer) await browserRenderer.close()
+    await closeQuietly(happyRenderer, browserRenderer)
   }
 
   // FRAGMENTS SANS ROUTE : un fragment du dossier de sortie qui ne correspond à aucune page de CETTE

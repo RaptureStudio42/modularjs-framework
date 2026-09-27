@@ -40,6 +40,49 @@ function extractQuotedValue(attrRaw: string, name: string): { value: string; quo
   return { quote: m[1], value: m[2] }
 }
 
+// stringDelimAt/scanTemplateLiteral — PORT LOCAL du même algorithme que findMacroTagEnd
+// (macro-tag.ts, non exportées là-bas — guillemets triples et gabarit à interpolations imbriquées
+// gardés internes à ce module) : dupliquer ces deux petites fonctions évite d'alourdir la
+// dépendance de ce fichier, déjà limitée à `findMacroTagEnd` lui-même.
+function stringDelimAt(raw: string, i: number): string | null {
+  const three = raw.slice(i, i + 3)
+  if (three === "'''" || three === '"""') return three
+  const c = raw[i]
+  return c === '\'' || c === '"' || c === '`' ? c : null
+}
+
+function scanTemplateLiteral(raw: string, openIdx: number): number {
+  let j = openIdx + 1
+  while (j < raw.length) {
+    const c = raw[j]
+    if (c === '\\') { j += 2; continue }
+    if (c === '`') return j + 1
+    if (c === '$' && raw[j + 1] === '{') {
+      let d = 1
+      j += 2
+      while (j < raw.length && d > 0) {
+        const e = raw[j]
+        if (e === '\\') { j += 2; continue }
+        if (e === '{') { d++; j++; continue }
+        if (e === '}') { d--; j++; continue }
+        if (e === '`') { const end = scanTemplateLiteral(raw, j); if (end < 0) return -1; j = end; continue }
+        if (e === '"' || e === "'") {
+          const q = e
+          j++
+          while (j < raw.length && raw[j] !== q) { if (raw[j] === '\\') j++; j++ }
+          j++
+          continue
+        }
+        j++
+      }
+      if (d > 0) return -1
+      continue
+    }
+    j++
+  }
+  return -1
+}
+
 // parseAttrs — découpe le texte ENTRE `<@img` et le `>`/`/>` fermant en attributs.
 // Profondeur `{`/`}` suivie pour les valeurs accolades (`name={ {a:1} }`), guillemet
 // respecté pour les valeurs `"…"`/`'…'` — même esprit que `findMacroTagEnd`, à l'échelle
@@ -65,9 +108,46 @@ function parseAttrs(raw: string): ImgTagAttr[] {
         while (i < n && raw[i] !== quote) i++
         if (i < n) i++   // consomme le guillemet fermant
       } else if (raw[i] === '{') {
+        // profondeur `{`/`}` CONSCIENTE des chaînes/gabarits/commentaires — même grammaire que
+        // findMacroTagEnd (macro-tag.ts) à profondeur > 0 : une accolade/un guillemet LITTÉRAL
+        // dans une chaîne, un gabarit ou un commentaire `//`/`/* */` ne compte plus dans la
+        // profondeur. AVANT : une accolade LITTÉRALE dans une chaîne (`title={"{"}`) comptait
+        // comme une vraie ouverture/fermeture (corrigé une première fois), et un commentaire
+        // `/* { */` (accolade OUVRANTE non appariée) ne se refermait JAMAIS — dans les deux cas,
+        // tout le reste de la balise (dont `src`) était avalé dans la valeur de l'attribut.
         let depth = 0
+        let strDelim: string | null = null
         while (i < n) {
           const c = raw[i]
+          if (strDelim !== null) {
+            if (c === '\\') { i += 2; continue }
+            if (raw.slice(i, i + strDelim.length) === strDelim) { i += strDelim.length; strDelim = null; continue }
+            i++
+            continue
+          }
+          const delim = stringDelimAt(raw, i)
+          if (delim !== null) {
+            if (delim === '`') {
+              const end = scanTemplateLiteral(raw, i)
+              if (end < 0) { i = n; break }   // gabarit jamais refermé : on avale le reste (même repli que ci-dessous)
+              i = end
+              continue
+            }
+            strDelim = delim
+            i += delim.length
+            continue
+          }
+          if (c === '/' && raw[i + 1] === '/') {
+            const nl = raw.indexOf('\n', i)
+            i = nl === -1 ? n : nl
+            continue
+          }
+          if (c === '/' && raw[i + 1] === '*') {
+            const end = raw.indexOf('*/', i + 2)
+            if (end === -1) { i = n; break }   // commentaire jamais refermé : idem
+            i = end + 2
+            continue
+          }
           if (c === '{') depth++
           else if (c === '}') depth--
           i++
@@ -137,7 +217,9 @@ export function isResolvableSrc(src: string | null): src is string {
 }
 
 // parseWidths — entiers ≥ 1 séparés par espaces ou virgules (`"320 640"`, `"320, 640"`) ;
-// toute autre forme (vide, décimal, négatif, texte) rend null — l'appelant décide de lever.
+// toute autre forme (vide, décimal, négatif, texte, ou un nombre si long qu'il dépasse la
+// précision d'un double — `Number("4".repeat(400))` vaut `Infinity`, jamais rattrapé par
+// `n < 1` : la largeur démesurée passait alors en silence) rend null — l'appelant décide de lever.
 export function parseWidths(raw: string): number[] | null {
   const parts = raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
   if (parts.length === 0) return null
@@ -145,7 +227,7 @@ export function parseWidths(raw: string): number[] | null {
   for (const part of parts) {
     if (!/^\d+$/.test(part)) return null
     const n = Number(part)
-    if (n < 1) return null
+    if (!Number.isFinite(n) || n < 1) return null
     widths.push(n)
   }
   return widths

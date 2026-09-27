@@ -405,7 +405,7 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * mutations PROFONDES d'un état) : DÉTECTÉ PAR SCAN des quatre appels littéraux que le suiveur de
  * chemins (`$o.x = v`, `$liste.push(v)`, `delete $o.x`) émet lui-même.
  *
- * `textpool` (`µ._mjs_getTextNode`/`µ._mjs_releaseTextNode`/`µ._mjs_recycleTextLeaves`, mjs_textpool.ts —
+ * `textpool` (`µ._mjs_getTextNode`/`µ._mjs_recycleTextLeaves`, mjs_textpool.ts —
  * pool de nœuds texte) : DÉTECTÉ PAR SCAN de `µ._mjs_getTextNode(`, émis par le seul mode IMPÉRATIF
  * du générateur. Servir et rendre vont ensemble : sans consommateur, remplir le pool ne ferait
  * que retenir des nœuds morts (l'appel du cœur à la libération est gardé).
@@ -850,6 +850,15 @@ export interface WsConfig {
      *  (défaut : 50, CHANGEMENT DE COMPORTEMENT ASSUMÉ, généreux — cf. src/mjs-ws/index.ts
      *  DEFAULT_LIMITS). */
     maxRoomsPerClient?: number | null
+    /** plafond d'abonnements de présence de salon par client (src/mjs-ws/core.ts MjsWsLimits) —
+     *  entier > 0, ou `null` = illimité (défaut : la valeur de `maxRoomsPerClient`). */
+    maxPresencePerClient?: number | null
+    /** plafond de trames en attente par connexion (src/mjs-ws/core.ts MjsWsLimits) — entier > 0,
+     *  ou `null` = illimité (défaut : 200). */
+    maxQueued?: number | null
+    /** qui partage un même seau de débit (src/mjs-ws/core.ts MjsWsLimits) — `'connection'`
+     *  (défaut), `'account'`, `'ip'` ou `'both'`. */
+    rateBy?: 'connection' | 'account' | 'ip' | 'both'
   }
   /**
    * Pont universel (src/mjs-ws/bridge.ts) — API HTTP signée pour pousser du temps
@@ -966,6 +975,19 @@ export interface WsConfig {
    * avec un warn. Cf. docs/23-mjs-ws.md « Vérification d'origine ».
    */
   verifyOrigin?: string[]
+  /**
+   * Mise au banc (src/mjs-ws/core.ts) — ACTIVE par défaut : 3 expulsions pour abus en 1 min → 5 min
+   * de refus, par compte ET par IP. `false` désactive, `true` = défauts, objet = réglages fins
+   * (`after`, `within`/`duration` en ms, `by` : `'account'` | `'ip'` | `'both'`). MÊME règle que
+   * sessionExclusive/verifyOrigin : définissable ICI ou dans l'entry (`ban`), l'ENTRY prime EN BLOC
+   * en cas de doublon (cf. cli/ws.ts buildRunPlan). Cf. docs/23-mjs-ws.md « Qui compte pour qui ».
+   */
+  ban?: boolean | {
+    after?: number
+    within?: number
+    duration?: number
+    by?: 'account' | 'ip' | 'both'
+  }
 }
 
 /**
@@ -1261,7 +1283,7 @@ const VALID_TEMPLATE_LANGS = new Set(['civet', 'js'])
 const KNOWN_I18N_KEYS = new Set(['default', 'placeholder', 'hash', 'persist', 'detect', 'urlParam', 'source'])
 const VALID_I18N_PLACEHOLDERS = new Set(['auto', 'key', 'wait'])
 const KNOWN_JOURNAL_KEYS = new Set(['server', 'client', 'viewer', 'maxEntries', 'maxBytes'])
-const KNOWN_WS_KEYS = new Set(['entry', 'transport', 'port', 'host', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin'])
+const KNOWN_WS_KEYS = new Set(['entry', 'transport', 'port', 'host', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'])
 // section `serveur` (mjs serveur, cli/server.ts) — MÊMES clés que KNOWN_WS_KEYS (mjsServer()
 // accepte exactement les mêmes options que mjsWs()) + `antiCheat` (entièrement propre
 // à MJS-Server, cf. `ServeurConfig`). `persist` volontairement ABSENT (adaptateurs à fonctions,
@@ -1274,11 +1296,16 @@ const VALID_WS_CODECS = new Set(['auto', 'binary', 'json'])
 // valides ; le booléen `true`/`false` reste valide EN PLUS (cf. validateWsConfig plus bas), pas
 // représenté ici (ce Set ne sert qu'à la branche chaîne + la suggestion orthographique).
 const VALID_SESSION_EXCLUSIVE = new Set(['replace', 'refuse'])
-const KNOWN_WS_LIMITS_KEYS = new Set(['rate', 'burst', 'kickAfter', 'maxPayload', 'maxBuffered', 'maxConnections', 'maxConnectionsPerIp', 'maxRoomsPerClient'])
-// plafonds de connexions/salons — SEULES clés de ws.limits qui acceptent
+const KNOWN_WS_LIMITS_KEYS = new Set(['rate', 'burst', 'kickAfter', 'maxPayload', 'maxBuffered', 'maxConnections', 'maxConnectionsPerIp', 'maxRoomsPerClient', 'maxPresencePerClient', 'maxQueued', 'rateBy'])
+// débit partagé (ws.limits.rateBy) — SEULE clé de ws.limits qui n'est pas un nombre, validée à part
+const VALID_WS_RATE_BY = new Set(['connection', 'account', 'ip', 'both'])
+// mise au banc (ws.ban)
+const KNOWN_WS_BAN_KEYS = new Set(['after', 'within', 'duration', 'by'])
+const VALID_WS_BAN_BY = new Set(['account', 'ip', 'both'])
+// plafonds de connexions/salons/présence/file — SEULES clés de ws.limits qui acceptent
 // `null` (illimité) EN PLUS d'un entier > 0 ; toutes les autres (rate/burst/kickAfter/maxPayload/
 // maxBuffered) restent strictement des entiers > 0, jamais null — cf. la boucle de validation plus bas.
-const NULLABLE_WS_LIMITS_KEYS = new Set(['maxConnections', 'maxConnectionsPerIp', 'maxRoomsPerClient'])
+const NULLABLE_WS_LIMITS_KEYS = new Set(['maxConnections', 'maxConnectionsPerIp', 'maxRoomsPerClient', 'maxPresencePerClient', 'maxQueued'])
 const KNOWN_WS_TOKEN_KEYS = new Set(['sweep', 'slack'])
 const KNOWN_WS_BRIDGE_KEYS = new Set(['port', 'host', 'secret', 'webhooks', 'rateLimit', 'nonce'])
 const KNOWN_WS_BRIDGE_WEBHOOKS_KEYS = new Set(['url', 'secret', 'events', 'timeoutMs'])
@@ -1777,8 +1804,9 @@ function validateWsConfig(ws: any, path: string): void {
     }
     for (const k of KNOWN_WS_LIMITS_KEYS) {
       const v = (ws.limits as any)[k]
+      if (k === 'rateBy') { validateRateBy(v, 'ws.limits.rateBy'); continue }
       // plafonds de connexions/salons — `null` EXPLICITE = illimité, valide
-      // SEULEMENT pour ces 3 clés (cf. NULLABLE_WS_LIMITS_KEYS) ; toutes les autres n'acceptent
+      // SEULEMENT pour les clés de NULLABLE_WS_LIMITS_KEYS ; toutes les autres n'acceptent
       // jamais null (même règle qu'avant).
       if (v === null && NULLABLE_WS_LIMITS_KEYS.has(k)) continue
       if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
@@ -1822,6 +1850,45 @@ function validateWsConfig(ws: any, path: string): void {
     if (!Array.isArray(vo) || vo.length === 0 || vo.some((o: unknown) => typeof o !== 'string' || o.length === 0)) {
       throw new Error(t('bundler.config.verify-origin-invalide', { cle: 'ws.verifyOrigin', valeur: JSON.stringify(vo) }))
     }
+  }
+  if (ws.ban !== undefined) validateBanConfig(ws.ban, 'ws.ban')
+}
+
+// débit partagé — `ws.limits.rateBy` / `serveur.limits.rateBy` : une des 4 chaînes, sinon échec
+// immédiat avec suggestion (MÊME ton que ws.codec)
+function validateRateBy(v: unknown, cle: string): void {
+  if (v === undefined) return
+  if (typeof v !== 'string' || !VALID_WS_RATE_BY.has(v)) {
+    const suggestion = typeof v === 'string' ? suggestKey(v, VALID_WS_RATE_BY) : null
+    const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
+    throw new Error(t('bundler.config.rate-by-invalide', { cle, valeur: JSON.stringify(v), hint, valides: Array.from(VALID_WS_RATE_BY).join(', ') }))
+  }
+}
+
+// mise au banc — `ws.ban` / `serveur.ban` : booléen, ou objet { after?, within?, duration?, by? }
+// (entiers > 0, `by` parmi VALID_WS_BAN_BY) ; clé inconnue = échec immédiat avec suggestion
+function validateBanConfig(ban: any, cle: string): void {
+  if (typeof ban === 'boolean') return
+  if (typeof ban !== 'object' || ban === null || Array.isArray(ban)) {
+    throw new Error(t('bundler.config.ban-doit-etre', { cle, valeur: JSON.stringify(ban), type: typeof ban }))
+  }
+  for (const k of Object.keys(ban)) {
+    if (!KNOWN_WS_BAN_KEYS.has(k)) {
+      const suggestion = suggestKey(k, KNOWN_WS_BAN_KEYS)
+      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${cle}.${k}`, hint, valides: Array.from(KNOWN_WS_BAN_KEYS).join(', ') }))
+    }
+  }
+  for (const k of ['after', 'within', 'duration']) {
+    const v = ban[k]
+    if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
+      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${cle}.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+    }
+  }
+  if (ban.by !== undefined && (typeof ban.by !== 'string' || !VALID_WS_BAN_BY.has(ban.by))) {
+    const suggestion = typeof ban.by === 'string' ? suggestKey(ban.by, VALID_WS_BAN_BY) : null
+    const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
+    throw new Error(t('bundler.config.ban-by-invalide', { cle: `${cle}.by`, valeur: JSON.stringify(ban.by), hint, valides: Array.from(VALID_WS_BAN_BY).join(', ') }))
   }
 }
 
@@ -2075,6 +2142,7 @@ function validateServeurConfig(serveur: any, path: string): void {
     }
     for (const k of KNOWN_WS_LIMITS_KEYS) {
       const v = (serveur.limits as any)[k]
+      if (k === 'rateBy') { validateRateBy(v, 'serveur.limits.rateBy'); continue }
       if (v === null && NULLABLE_WS_LIMITS_KEYS.has(k)) continue
       if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
         const suffix = NULLABLE_WS_LIMITS_KEYS.has(k) ? t('bundler.config.limite-nullable-suffixe') : ''
@@ -2114,6 +2182,7 @@ function validateServeurConfig(serveur: any, path: string): void {
   if (serveur.antiCheat !== undefined) {
     validateServeurAntiCheatConfig(serveur.antiCheat, path)
   }
+  if (serveur.ban !== undefined) validateBanConfig(serveur.ban, 'serveur.ban')
 }
 
 /**

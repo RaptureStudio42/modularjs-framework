@@ -2,7 +2,8 @@
 // couvre la validation de config (booléen ET nom de préréglage), la compilation des 3 niveaux
 // (config → module → <@view>/balise, valeurs on/off ET nom), et la résolution runtime du
 // routeur : cascade false|true|'nom', dégradé gracieux (API absente) + reduced-motion,
-// résolution ACTIVE (_vtResolveActive) + application du préréglage avant startViewTransition.
+// résolution par navigate() (_mjs_vtResolveNavigation) + application du préréglage avant
+// startViewTransition.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
@@ -586,7 +587,7 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   })
 })
 
-describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _mjs_vtEnabled / _vtResolveActive)', function () {
+describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _mjs_vtEnabled / navigate())', function () {
   // Globals posés/restaurés PAR TEST (même précaution que router-navigate-reentrance.test.ts :
   // Node fournit un CustomEvent natif incompatible avec les instances happy-dom, et un autre
   // fichier de test du même process Mocha peut avoir déjà posé sa propre Window avant celui-ci).
@@ -737,29 +738,6 @@ describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _m
     comp.routes = { main: { '/x': 'page-x' } }
     return comp
   }
-
-  it('_vtResolveActive() : true si au moins une vue routée résout "on" (document.startViewTransition stubbé)', () => {
-    const win: any = new Window({ url: 'http://localhost/' })
-    win.document.startViewTransition = function (cb: any) { cb() }
-    const µ = loadRouter(win)
-    µ.Router._mjs_awareComponents.add(makeRoutedComponent(win, 'on'))
-    assert.equal(µ.Router._vtResolveActive(), true)
-  })
-
-  it('_vtResolveActive() : résout le NOM du préréglage (pas juste true) quand la vue en porte un', () => {
-    const win: any = new Window({ url: 'http://localhost/' })
-    win.document.startViewTransition = function (cb: any) { cb() }
-    const µ = loadRouter(win)
-    µ.Router._mjs_awareComponents.add(makeRoutedComponent(win, 'zoom'))
-    assert.equal(µ.Router._vtResolveActive(), 'zoom')
-  })
-
-  it('_vtResolveActive() : false si aucune vue routée n\'est enregistrée', () => {
-    const win: any = new Window({ url: 'http://localhost/' })
-    win.document.startViewTransition = function (cb: any) { cb() }
-    const µ = loadRouter(win)
-    assert.equal(µ.Router._vtResolveActive(), false)
-  })
 
   it('navigate() : résolution en CHAÎNE (préréglage) → µ._mjs_vtApplyPreset appelé AVANT document.startViewTransition (ordre vérifié)', () => {
     const win: any = new Window({ url: 'http://localhost/#/x' })

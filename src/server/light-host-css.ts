@@ -86,7 +86,23 @@ export function lightHostCss(css: string, tag: string): string {
       break
     }
     if (consumedAny) {
-      out += (contexts.length ? contexts.join(' ')+' ' : '')+tag+suffix
+      if (contexts.length) {
+        // sémantique CSS réelle de :host-context() : matche l'hôte si l'hôte LUI-MÊME
+        // porte le sélecteur donné, OU si un de ses ANCÊTRES le porte — pas l'ancêtre
+        // seul. `:where(...)` groupe les deux formes avec la MÊME spécificité (pas de
+        // priorité artificielle entre elles). Plusieurs :host-context chaînés (rare) :
+        // seuls les deux cas extrêmes sont couverts (tout ancêtre / tout sur l'hôte),
+        // pas les combinaisons mixtes (limite documentée, cf. docs/09-directives-dom.md).
+        // Le cas « tout ancêtre » suppose en plus des ancêtres DISTINCTS, un par
+        // contexte (`contexts.join(' ')` = chaîne de descendance stricte, ex.
+        // « .a .c tag ») : un SEUL ancêtre qui porte les deux classes à la fois
+        // (`<div class="a c">`) ne correspond PAS à ce sélecteur.
+        const ctxAncestor = contexts.join(' ')
+        const ctxOnHost   = contexts.join('')
+        out += ':where('+ctxAncestor+' '+tag+suffix+','+tag+suffix+ctxOnHost+')'
+      } else {
+        out += tag+suffix
+      }
       i = j
     } else {
       out += css[i]

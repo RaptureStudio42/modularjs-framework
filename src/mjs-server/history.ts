@@ -13,6 +13,12 @@
 // en place plus fragile (un `extraire` maison pourrait garder une référence à son objet `positions`
 // au-delà d'un tick) pour un gain non mesuré. SIMPLICITÉ retenue.
 //
+// COPIE DÉFENSIVE À L'ÉCRITURE — `pousser` clone `positions` (le dict ET chaque `{x,y}`), jamais la
+// référence reçue : un extracteur (def.histo.extract) qui réutilise son PROPRE objet d'un tick à
+// l'autre (au lieu d'en allouer un frais à chaque appel) ne doit JAMAIS pouvoir réécrire un
+// instantané déjà poussé en mutant après coup — le passé reste le passé, quelle que soit la
+// discipline de l'extracteur appelant.
+//
 // BORNES DE rewind() — recherche par plus proche voisin sur `à` (timestamp) : les entrées sont
 // TOUJOURS poussées dans l'ordre chronologique (monotone croissant), donc la plus proche voisine d'un
 // instant plus ancien que la plus vieille entrée dispo EST cette plus vieille entrée (repli borne
@@ -45,7 +51,8 @@ export interface MjsServerHistoryMeta {
 }
 
 export interface MjsServerHistory {
-  /** pousse l'instantané du tick courant — écrase circulairement la plus ancienne entrée au-delà de `ticks` */
+  /** pousse l'instantané du tick courant — écrase circulairement la plus ancienne entrée au-delà de
+   *  `ticks`, copie DÉFENSIVE de `positions` (jamais la référence reçue, cf. tête de fichier) */
   pousser(tick: number, at: number, positions: MjsServerHistoryPositions): void
   /** rembobine à l'instant `instantMs` (ms epoch, borné — cf. commentaire de tête) et RETOURNE le résultat de `fn` */
   rewind<T>(instantMs: number, fn: (positions: MjsServerHistoryPositions, meta: MjsServerHistoryMeta) => T): T
@@ -64,7 +71,12 @@ export function createHistory(size: number): MjsServerHistory {
 
   return {
     pousser(tick, at, positions) {
-      ring[cursor] = { tick, at, positions }
+      // copie INDÉPENDANTE (dict + chaque {x,y}) — cf. « COPIE DÉFENSIVE À L'ÉCRITURE » en tête de
+      // fichier : sans elle, un extracteur qui réutilise son objet `positions` réécrirait le passé
+      // en le mutant APRÈS ce `pousser` (même mécanique que le gel en lecture de rewind() plus bas)
+      const copy: MjsServerHistoryPositions = {}
+      for (const id of Object.keys(positions)) copy[id] = { x: positions[id].x, y: positions[id].y }
+      ring[cursor] = { tick, at, positions: copy }
       cursor = (cursor + 1) % size
       if (filled < size) filled++
     },

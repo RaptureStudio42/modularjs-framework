@@ -27,6 +27,10 @@ export interface TranspileMsg {
    *  resterait mort sur le chemin le plus courant : `mjs build` d'un projet
    *  multi-fichiers passe par ce pool de workers */
   a11y?: boolean
+  /** Lint « <form> sans action ni méthode » (`lint.ujsForm`) — même remarque qu'`a11y`
+   *  ci-dessus : sans cette transmission, `false` explicite resterait mort sur le chemin
+   *  le plus courant (le pool de workers, `mjs build` d'un projet multi-fichiers). */
+  ujsForm?: boolean
   baseDir?: string
   sourceDir?: string
   aliasTag?: string
@@ -64,6 +68,7 @@ export async function transpileFromMsg(msg: TranspileMsg): Promise<TranspileMsgR
     varPrefix: msg.varPrefix,
     maxStateVars: msg.maxStateVars,
     a11y: msg.a11y,
+    ujsForm: msg.ujsForm,
     baseDir: msg.baseDir,
     sourceDir: msg.sourceDir,
     aliasTag: msg.aliasTag,

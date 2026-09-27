@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 
-import { MU_HOOKS, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, rewriteMuImportAst, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { MU_HOOKS, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, cheminSegments, cleMinmaxChemin, rewriteMuImportAst, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
 import { parseVtValue } from '../bundler/config.js'
 import { extractDirectives, buildPersistCode } from './directives.js'
 import { extractSections } from './sections.js'
@@ -29,13 +29,15 @@ import { jsTemplate } from './template.js'
 import { compileCss } from './css.js'
 import { rewriteStyleVars, wrapThemeBlock, type ThemeVar } from './style-vars.js'
 import { processIncludes, processGlobalMacros, newIncludeAccumulator } from './macros.js'
-import { lintSplitRune } from './split-rune.js'
+import { lintSplitRune, maskNonCode } from './split-rune.js'
+import { analyserConstReassign, findConstReassignment } from './const-reassign.js'
 import { tokenize } from '../lexer/index.js'
 import { compile as compileHtml } from '../generator/index.js'
 import type { EventRoute } from '../generator/state.js'
 import type { TagRef } from '../parser/index.js'
 import { Scanner, extractBalanced } from '../parser/index.js'
 import { generateCreateFnBody } from '../generator/paths.js'
+import { reecritOuRejetteRuneChemin } from '../generator/utils.js'
 import { Analyzer, collectStoreReads } from '../analyzer/index.js'
 import { getAdapter, type SupportedLang } from '../languages/index.js'
 import { transformReactiveWritesMapped } from '../generator/transform-reactive.js'
@@ -83,6 +85,26 @@ function remapAdapterErrorLine(err: unknown, fileName: string, startLine: number
   return new Error(message, { cause: original })
 }
 
+// parseScriptAst — parse PARTAGÉ par detectRouterAware/detectRoutesReassignment/
+// detectDuplicateHook ci-dessous (`sourceType: 'script'` accepte top-level `this`, return, etc. —
+// adapté au body de classe/fonction qu'est jsInitBase) : PERF, mesuré — les 3 détections tournaient
+// chacune leur PROPRE acorn.parse() sur EXACTEMENT le même texte dans le cas courant (aucun bloc
+// <routes>, jsInitBase inchangé entre les trois appels, cf. leurs appelants plus bas) — jusqu'à 55 %
+// du temps des 3 détections gagnés en microbenchmark (petit script) en ne parsant qu'une fois. `null`
+// → parse déjà tenté et a échoué (repli regex direct, aucune re-tentative) ; `undefined` (le
+// paramètre `preAst` de chaque fonction, pas ici) → la fonction parse elle-même.
+function parseScriptAst(js: string): acorn.Node | null {
+  try {
+    return acorn.parse(js, {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      allowReturnOutsideFunction: true,
+    })
+  } catch {
+    return null
+  }
+}
+
 // ============================================================================
 // detectRouterAware : walk AST (insensible aux strings, commentaires, template
 // literals) sur `jsInitBase` (script compilé en JS) qui cherche soit :
@@ -98,18 +120,12 @@ function remapAdapterErrorLine(err: unknown, fileName: string, startLine: number
 // dev l'écrivant encore vers la rune.
 //
 // Si le parse échoue (rare — code post-Coffee bien formé), fallback regex.
+// `preAst` (optionnel, cf. parseScriptAst) : AST déjà parsé à réutiliser — `undefined` → parse ici,
+// `null` → parse déjà tenté et échoué en amont (repli regex direct, mêmes sémantiques qu'avant).
 // ============================================================================
-function detectRouterAware(jsInitBase: string): boolean {
-  let ast: acorn.Node
-  try {
-    // `sourceType: 'script'` accepte top-level `this`, return, etc. — adapté
-    // au body de classe/fonction qu'est jsInitBase.
-    ast = acorn.parse(jsInitBase, {
-      ecmaVersion: 'latest',
-      sourceType: 'script',
-      allowReturnOutsideFunction: true,
-    })
-  } catch {
+function detectRouterAware(jsInitBase: string, preAst?: acorn.Node | null): boolean {
+  const ast = preAst !== undefined ? preAst : parseScriptAst(jsInitBase)
+  if (!ast) {
     return /\bthis\.routes\b/.test(jsInitBase) || /this\._mjs_hook\(\s*['"]urlChange['"]/.test(jsInitBase)
   }
   let found = false
@@ -149,17 +165,12 @@ function detectRouterAware(jsInitBase: string): boolean {
 // AVANT injection du bloc <routes>) RÉASSIGNE `this.routes` (`@routes = …`) —
 // une AssignmentExpression dont le membre gauche EST `this.routes` (pas
 // `this.routes['x'] = …`/`this.routes.x = …`, mutation légitime de la table posée
-// par le bloc <routes>). Même parse acorn, même repli regex que detectRouterAware.
+// par le bloc <routes>). Même parse acorn (parseScriptAst), même repli regex que
+// detectRouterAware. `preAst` : mêmes sémantiques que detectRouterAware ci-dessus.
 // ============================================================================
-function detectRoutesReassignment(jsInitBase: string): boolean {
-  let ast: acorn.Node
-  try {
-    ast = acorn.parse(jsInitBase, {
-      ecmaVersion: 'latest',
-      sourceType: 'script',
-      allowReturnOutsideFunction: true,
-    })
-  } catch {
+function detectRoutesReassignment(jsInitBase: string, preAst?: acorn.Node | null): boolean {
+  const ast = preAst !== undefined ? preAst : parseScriptAst(jsInitBase)
+  if (!ast) {
     return /\bthis\.routes\s*=[^=]/.test(jsInitBase)
   }
   let found = false
@@ -193,24 +204,19 @@ function detectRoutesReassignment(jsInitBase: string): boolean {
 // (MemberExpression, propriété `_mjs_hook` — forme réellement émise : `this._mjs_hook('mount', fn)`,
 // cf. detectRouterAware plus haut) avec un 1er argument Literal chaîne parmi MU_HOOKS. Mêmes
 // `sourceType`/`allowReturnOutsideFunction` que detectRouterAware/detectRoutesReassignment
-// ci-dessus, sur le MÊME jsInitBase (repli regex identique à l'ancien comportement si le parse
-// échoue, rare — jamais de silence total).
+// ci-dessus (parseScriptAst), sur le MÊME jsInitBase (repli regex identique à l'ancien
+// comportement si le parse échoue, rare — jamais de silence total). `preAst` : mêmes
+// sémantiques que detectRouterAware ci-dessus.
 // ============================================================================
-function detectDuplicateHook(jsInitBase: string): string | null {
+function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): string | null {
   const countFromText = (): string | null => {
     const counts = new Map<string, number>()
     for (const m of jsInitBase.matchAll(new RegExp(`_mjs_hook\\(\\s*'(${MU_HOOKS})'`, 'g'))) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1)
     for (const [name, n] of counts) if (n > 1) return name
     return null
   }
-  let ast: acorn.Node
-  try {
-    ast = acorn.parse(jsInitBase, {
-      ecmaVersion: 'latest',
-      sourceType: 'script',
-      allowReturnOutsideFunction: true,
-    })
-  } catch {
+  const ast = preAst !== undefined ? preAst : parseScriptAst(jsInitBase)
+  if (!ast) {
     return countFromText()
   }
   const hookNames = new Set(MU_HOOKS.split('|'))
@@ -489,14 +495,25 @@ export interface TranspileData {
 // replaceMagicAssets — remplace `µasset('X')` / `µ.asset('X')` par un string
 // literal du path web résolu, AVANT compilation langage. Le compilateur ne
 // voit donc qu'un literal, pas un appel de fonction inconnu.
+// `lang` fourni (<script>/<script module>) : ne résout la forme NUE (sans guillemet collé) que si
+// elle tombe sur du texte encore VISIBLE sur la vue masquée (maskNonCode, MÊME longueur) — un
+// `µasset(...)` simplement CITÉ dans une chaîne/un commentaire (exemple de log affiché) est, lui,
+// blanchi avec le reste de sa chaîne englobante, donc jamais retrouvé. La forme AUTO-QUOTÉE
+// (guillemet collé des deux côtés, `"µasset('x')"`) reste résolue SANS cette garde — c'est la
+// forme émise par le compilateur lui-même pour `@import` (spécificateur ES, forcément une chaîne),
+// une vraie chaîne de bout en bout, jamais autrement retrouvable sur la vue masquée (le guillemet
+// adjacent, lui aussi, y est blanchi). `lang` absent (HTML) : un exemple de doc `<pre>/<code>`
+// montrant `µasset('...')` en TEXTE n'est pas un vrai appel — masqué en BLOC (maskDocBlocks,
+// stash+restore, même outil que preprocessHtml), le reste du HTML (attribut direct compris, ex.
+// `<img src="µasset('x.png')">`) continue de tourner normalement.
 // ----------------------------------------------------------------------------
-async function replaceMagicAssets(
+const ASSET_CALL_RE = /(['"]?)(?:µasset|µ\.asset)\(['"](.+?)['"]\)\1/g
+
+async function applyAssetReplacements(
   text: string,
+  matches: RegExpMatchArray[],
   resolveAsset: (path: string) => Promise<string>
 ): Promise<string> {
-  const matches = [...text.matchAll(
-    /(['"]?)(?:µasset|µ\.asset)\(['"](.+?)['"]\)\1/g
-  )]
   if (matches.length === 0) return text
   const replacements = await Promise.all(matches.map(async (m) => {
     const [full, quote, logicalPath] = m
@@ -512,6 +529,32 @@ async function replaceMagicAssets(
   //    injectTemplate). La forme FONCTION neutralise ces motifs : `to` est réinjecté littéral.
   for (const { from, to } of replacements) out = out.replace(from, () => to)
   return out
+}
+
+async function replaceMagicAssets(
+  text: string,
+  resolveAsset: (path: string) => Promise<string>,
+  lang?: string
+): Promise<string> {
+  if (lang === undefined) {
+    const { masked, restore } = maskDocBlocks(text)
+    return restore(await applyAssetReplacements(masked, [...masked.matchAll(ASSET_CALL_RE)], resolveAsset))
+  }
+
+  // Forme AUTO-QUOTÉE (guillemet COLLÉ des deux côtés, `"µasset('x')"`, `group1` non vide) :
+  // TOUJOURS résolue, sans garde — c'est la forme émise par le compilateur lui-même pour
+  // `@import` (spécificateur ES obligatoirement une chaîne, cf. dir.pendingAutoImports plus
+  // bas) : une vraie chaîne de A à Z, indiscernable d'un exemple de doc SAUF par cette adjacence
+  // stricte, et de toute façon jamais retrouvable sur la vue masquée (maskNonCode blanchit le
+  // guillemet adjacent tout autant que le reste d'une chaîne). Forme NUE (`group1` vide) : ne
+  // résoudre que si sa position tombe sur du texte encore VISIBLE sur la vue masquée — sinon
+  // c'est une simple mention à l'intérieur d'une AUTRE chaîne/un commentaire.
+  const masked = maskNonCode(text, lang)
+  const matches: RegExpMatchArray[] = []
+  for (const m of text.matchAll(ASSET_CALL_RE)) {
+    if (m[1] || masked.slice(m.index!, m.index! + m[0].length).trim() !== '') matches.push(m)
+  }
+  return applyAssetReplacements(text, matches, resolveAsset)
 }
 
 // ----------------------------------------------------------------------------
@@ -978,23 +1021,28 @@ function dropRedundantVarDeclarations(js: string, connus: string[]): string {
 }
 
 // ----------------------------------------------------------------------------
-// lintHandlerConstAssignment — refuse un handler qui réaffecte une CONSTANTE du `<script>`
-// (`compteur := 0` en Civet, donc `const compteur` en JS). Ces noms sont prédéclarés comme
-// les autres — sans quoi l'écriture partirait dans un `let` local, silencieusement perdue —
-// mais leur réaffectation lèverait un « Assignment to constant variable » au premier clic.
-// Autant le dire au build, en nommant l'opérateur à changer.
+// controlerGestionnairesInline — refuse le lot de gestionnaires inline qui ne peut pas être émis
+// tel quel. Deux refus, dans cet ordre :
+//   — un gestionnaire qui réaffecte une CONSTANTE visible par closure (`compteur := 0` en Civet,
+//     donc `const compteur` en JS), du `<script>` comme du `<script module>` : ces noms sont
+//     prédéclarés comme les autres — sans quoi l'écriture partirait dans un `let` local,
+//     silencieusement perdue — mais leur réaffectation lèverait « Assignment to constant
+//     variable » au premier clic. Autant le dire au build, en nommant l'opérateur à changer ;
+//   — un gestionnaire qui réaffecte un nom que le GABARIT lui met en portée (variable ou index
+//     d'un `{for}`, `{const}`, valeur `{success}`/`{error}`, `locauxDuGabarit`) : le gestionnaire
+//     n'en a qu'une copie, recréée en tête de son code — l'écriture serait perdue sans un mot ;
+//   — un lot dont le JavaScript compilé ne s'analyse pas : émis d'un bloc, il ferait refuser le
+//     fichier ENTIER au chargement (SyntaxError, page morte) alors que le build était vert.
+// Contrôle sur le JavaScript COMPILÉ, par résolution de portée : la recherche du nom dans le texte
+// brut refusait à tort un gestionnaire qui déclarait sa propre liaison homonyme (`let compteur` ou
+// un paramètre), laissait passer la constante du `<script module>`, absente de sa liste, et
+// ratait une cible déstructurée (`[compteur] = …`).
 // ----------------------------------------------------------------------------
-function lintHandlerConstAssignment(src: string, consts: string[], moduleName: string | undefined): void {
-  if (consts.length === 0) return
-  const { masked } = maskStringsAndComments(src)
-  for (const nom of consts) {
-    // une AFFECTATION, jamais une comparaison ni une flèche : `=` simple (ni `==`, `!=`, `<=`, `>=`, `=>`), opérateur composé
-    // (`+=` … `??=`, `**=`, `<<=`, `>>>=`) ou incrément/décrément (`nom++`, `--nom`) : `compteur += 1` sur une
-    // constante passait le build et plantait au premier clic
-    const re = new RegExp(`(?<![\\w.$])${nom}\\s*(?:\\+\\+|--|(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])=|(?<![!<>=])=(?![=>]))|(?:\\+\\+|--)\\s*${nom}(?![\\w$])`)
-    if (!re.test(masked)) continue
-    throw new Error(t('transpiler.handler-const-reaffectee', { moduleName: moduleName ?? '?', nom }))
-  }
+function controlerGestionnairesInline(js: string, consts: string[], moduleName: string | undefined, locauxDuGabarit: Iterable<string> = []): void {
+  const { violation, analysable, erreur } = analyserConstReassign(js, consts, locauxDuGabarit)
+  if (violation?.gabarit) throw new Error(t('transpiler.handler-local-gabarit-reaffecte', { moduleName: moduleName ?? '?', nom: violation.name }))
+  if (violation) throw new Error(t('transpiler.handler-const-reaffectee', { moduleName: moduleName ?? '?', nom: violation.name }))
+  if (!analysable) throw new Error(t('transpiler.handler-js-invalide', { moduleName: moduleName ?? '?', ligne: erreur?.ligne ?? 0, extrait: erreur?.extrait ?? '' }))
 }
 
 // ----------------------------------------------------------------------------
@@ -1381,7 +1429,16 @@ function scanPatternHead(line: string): { lead: string; pattern: string; sp: str
   if (end === -1) return null
   const pattern = line.slice(leadLen, end)
   if (hasBareEquals(pattern)) return null
-  const rest = line.slice(end).match(/^(\s*)=(\s+(?:=>|[^=]).*)$/)
+  // `\s*` après le `=` (pas `\s+`) : un motif COLLÉ au signe (`[a,b]=x`) est une
+  // affectation tout aussi valide qu'espacée (`[a, b] = x`) — exiger un espace
+  // rejetait la forme collée avec un message trompeur (sans rapport avec l'espace).
+  // `[^=>]` (pas `[^=]`) dans le repli : sans l'exclusion du `>`, un `=` DÉJÀ consommé comme
+  // signe d'affectation suivi d'un `>` COLLÉ (`[a,b]=>expr`, flèche Civet, AUCUNE affectation
+  // réelle — sucre d'appel « pattern => corps ») retombait dans ce repli (`>` accepté comme
+  // « n'importe quel caractère sauf = ») : la flèche perdait son second caractère (`.=>`),
+  // Civet refusait de parser. `=>` reste capturable EXPLICITEMENT via l'alternative de gauche
+  // (cf. `nom = => expr`, plus bas) quand un ESPACE sépare vraiment le signe de la flèche.
+  const rest = line.slice(end).match(/^(\s*)=(\s*(?:=>|[^=>]).*)$/)
   if (!rest) return null
   return { lead, pattern, sp: rest[1], rest2: rest[2] }
 }
@@ -1441,6 +1498,23 @@ function rewriteCallRoots(str: string): string {
     i++
   }
   return result
+}
+
+// extractDestructuredNames — noms SIMPLES liés par un motif de déstructuration DÉJÀ déclaré
+// (`{w, h} := f()` / `[a, b] := t` / clé renommée `{x: w}` / défaut `{w = 1}` / reste `{...r}` /
+// clé chaîne `{'a-b': w}`) : mêmes règles que la promotion d'un motif NU plus bas dans la Pass 4
+// (bandeau détaillé sur memberRe/dottedRe/rewriteIndexTargets/rewriteCallRoots juste avant son
+// utilisation) — clés, `...`, accès indexé et toute cible MEMBRE (sigil $/$$/§/§§/@, chemin
+// pointé) exclus. Sert à ENREGISTRER (jamais réécrire) les noms qu'un `:=`/`.=` vient de lier,
+// pour qu'une réaffectation PLUS BAS (`w = 10`) les voie déjà déclarés au lieu de les repromouvoir
+// en `.=` — sinon Civet émet `const {w,h} = f()` PUIS `let w = 10` dans le MÊME scope :
+// « Identifier 'w' has already been declared ».
+function extractDestructuredNames(pattern: string, reserved: Set<string>): string[] {
+  const keyless  = rewriteIndexTargets(rewriteCallRoots(pattern.replace(/\[[^\[\]]*\]\s*:/g, '').replace(/[a-zA-Z_]\w*\s*:/g, '').replace(/\.\.\./g, ' ')))
+  const memberRe = /(?<![\w$§@])(\$\$?|§§?|@)\.?([a-zA-Z_]\w*)/g
+  const dottedRe = /(?<![\w$§@.])[a-zA-Z_µ][\w$]*(?:\s*\.\s*[a-zA-Z_]\w*)+/g
+  return [...keyless.replace(dottedRe, '').replace(memberRe, '').matchAll(/(?<![\w$§@.])[a-zA-Z_]\w*/g)]
+    .map(mm => mm[0]).filter(nm => !reserved.has(nm))
 }
 
 // Helpers PARAMÈTRES de fonction : la Pass 4
@@ -1984,8 +2058,23 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     // plus profonde que ce corps est HISSÉE (`pendingHoists`) plutôt que
     // déclarée sur place — if/else/for/switch/when ne poussent pas de portée
     // (cf. plus bas), donc « plus profond que le corps » ⇔ « dans une branche ».
-    const scopes: { indent: number; declared: Set<string>; bodyIndent: number | null; insertAt: number | null }[] = [{ indent: -1, declared: new Set(predeclared ?? []), bodyIndent: null, insertAt: null }]
+    // `constDeclared` (sous-ensemble de `declared`) : les noms liés par `:=` (constante Civet),
+    // jamais ceux liés par `.=` (mutable) — sert plus bas à refuser À LA COMPILATION la
+    // réaffectation nue d'un nom const, plutôt que de laisser Civet produire un « TypeError:
+    // Assignment to constant variable » seulement à l'exécution. Racine vide : un nom prédéclaré
+    // (vars du `<script module>` partagé, d'un handler) n'est jamais connu comme const ICI —
+    // le contrôle des gestionnaires (plus haut dans ce fichier) couvre déjà ce cas, sur sa
+    // propre liste : les constantes du `<script>` et celles du `<script module>`.
+    const scopes: { indent: number; declared: Set<string>; constDeclared: Set<string>; bodyIndent: number | null; insertAt: number | null }[] = [{ indent: -1, declared: new Set(predeclared ?? []), constDeclared: new Set(), bodyIndent: null, insertAt: null }]
     const pendingHoists: { insertAt: number; indent: number; name: string }[] = []
+    // Refus IMMÉDIAT d'une constante réaffectée (avec la ligne de la source) seulement quand c'est
+    // SÛR : au niveau du corps de la portée, sur une ligne qui n'ouvre à elle seule ni fonction ni
+    // bloc. Plus profond (branche, `catch e`, corps d'une méthode `nom(x)` ou d'une `function`, que
+    // cette passe ne sait pas reconnaître comme portées) ou à côté d'une fonction écrite en ligne,
+    // un homonyme local est possible : le contrôle fait APRÈS compilation sur le JavaScript
+    // (const-reassign.ts, portées exactes) tranche alors, sans faux refus.
+    let niveauSur = false
+    const constanteSure = (nom: string): boolean => niveauSur && scopes[scopes.length - 1].constDeclared.has(nom)
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li]
       // `codeLine` (blanchi, hissé ici EN TÊTE de boucle) sert à TOUTE
@@ -2011,6 +2100,22 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         topScope.bodyIndent = indent
         topScope.insertAt = li
       }
+      niveauSur = indent <= topScope.bodyIndent && !/->|=>|\b(?:function|class|catch)\b|\)\s*\{/.test(codeLine)
+      // affectation COMPOSÉE ou incrément/décrément (`w += 1`, `w++`, `--w`) : jamais reconnue
+      // par le motif d'affectation SIMPLE plus bas (son `=` n'y est jamais collé directement au
+      // nom) — une réaffectation quand même, soumise à la MÊME garde de constance, restreinte à
+      // CETTE portée (pas une ancêtre, cf. bandeau plus bas). Lookbehind qui exclut un `.`/`$`
+      // immédiatement avant le nom : une PROPRIÉTÉ (`w.x += 1`) ou un état réactif (`$w += 1`,
+      // mécanisme distinct) n'est jamais concerné.
+      const compoundRe = /(?<![\w.$])([a-zA-Z_]\w*)\s*(?:\+\+|--|(?:\*\*|<<|>>>?|&&|\|\||\?\?|[-+*/%&|^])=)|(?:\+\+|--)\s*([a-zA-Z_]\w*)(?![\w$])/g
+      let cm: RegExpExecArray | null
+      while ((cm = compoundRe.exec(codeLine)) !== null) {
+        const nomCompose = cm[1] ?? cm[2]
+        if (RESERVED.has(nomCompose)) continue
+        if (constanteSure(nomCompose)) {
+          throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nomCompose, ligne: li + 1 }))
+        }
+      }
       // "bonus mémoire" — `[^=]`
       // juste après le `\s+` visait à exclure un faux positif du style
       // `nom = = 5` (double `=` espacé) — mais `[^=]` exclut AUSSI le premier
@@ -2025,7 +2130,22 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // qui plante à l'init, pas juste "silencieusement inerte". Fix :
       // `(?:=>|[^=])` — autorise explicitement `=>` en plus de tout caractère
       // qui n'est pas `=`, en gardant l'exclusion originale d'un `=` nu.
-      const m = codeLine.match(/^(\s*)([a-zA-Z_]\w*)(\s*)=(\s+(?:=>|[^=]).*)$/)
+      // `\s*` (pas `\s+`) avant ce groupe : `x=5`/`x =5` (collé au signe, espacé
+      // avant seulement) sont des affectations tout aussi valides que `x = 5` —
+      // exiger un espace les laissait NUES, avec un message trompeur en aval
+      // (« nom jamais déclaré », qui ne dit jamais que l'espace en est la cause).
+      // Toujours sans capturer `==`/`===`/`>=`/`<=`/`!=` : la position DEVANT ce
+      // groupe exige déjà un `=` littéral juste après `(\s*)`, donc `>=`/`<=`/`!=`
+      // ne matchent jamais ici (le caractère avant le `=` n'est pas un blanc), et
+      // `[^=]` exclut toujours un second `=` nu juste après (`==`/`===`).
+      // `[^=>]` (pas `[^=]`) : sans l'exclusion du `>`, une flèche Civet COLLÉE au nom
+      // (`queueMicrotask =>`/`x=>y`, sucre d'appel « nom => corps », AUCUNE affectation) voyait
+      // son `=` déjà consommé comme signe d'affectation, puis le `>` restant accepté par ce repli
+      // (« n'importe quel caractère sauf = ») — la flèche perdait son second caractère (`.=>`),
+      // Civet refusait de parser (cas réel : `queueMicrotask =>` suivi d'un bloc indenté).
+      // `=>` reste capturable EXPLICITEMENT via l'alternative de gauche quand un ESPACE sépare
+      // vraiment le signe d'affectation de la flèche (`nom = => expr`, cf. plus haut).
+      const m = codeLine.match(/^(\s*)([a-zA-Z_]\w*)(\s*)=(\s*(?:=>|[^=>]).*)$/)
       if (m) {
         const [, lead, name, sp, rest2] = m
         if (!RESERVED.has(name) && !line.includes(':=') && !line.includes('.=')) {
@@ -2050,6 +2170,15 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
               const posEq = lead.length + name.length + sp.length
               lines[li] = line.slice(0, posEq) + '.=' + line.slice(posEq + 1)
             }
+          } else if (constanteSure(name)) {
+            // `name` lié par `:=` (constante) DANS CETTE MÊME portée (pas une ancêtre — même
+            // politique que le bundler, « au même niveau » : une fonction imbriquée qui REÇOIT
+            // juste une variable externe n'est pas suivie, seul le niveau qui a posé le `:=`
+            // l'est). Civet compile `:=` en `const` : réaffecter planterait PROPREMENT mais
+            // SEULEMENT à l'exécution (« Assignment to constant variable »), le build restant
+            // vert. Refus À LA COMPILATION, message qui nomme l'identifiant, la ligne fautive et
+            // la solution.
+            throw new Error(t('transpiler.civet-reaffectation-constante', { nom: name, ligne: li + 1 }))
           }
         }
       } else {
@@ -2103,6 +2232,16 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
           // `ReferenceError` au clic) : on ne regarde plus « au moins une cible connue » mais CHAQUE nom individuellement —
           // seuls les noms neufs sont déclarés et, au besoin, hissés ; les noms déjà connus ne sont plus jamais retouchés.
           const undeclared = names.filter(nm => !scopes.some(s => s.declared.has(nm)))
+          // chaque nom du motif déjà connu DANS CETTE MÊME portée (donc absent d'`undeclared`,
+          // et sans passer par un ancêtre — même politique « au même niveau » que la cible
+          // simple ci-dessus) est une RÉAFFECTATION : `{w, h} := f()` puis `{w, x} = g()` lié par
+          // `:=` refuse de compiler plutôt que de planter au chargement.
+          for (const nm of names) {
+            if (undeclared.includes(nm)) continue
+            if (constanteSure(nm)) {
+              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + 1 }))
+            }
+          }
           if (undeclared.length > 0) {
             for (const nm of undeclared) topScope.declared.add(nm)
             // branche plus profonde que le corps OU motif mixte membre + variable OU motif mixte déclaré/neuf
@@ -2129,9 +2268,14 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
           let im: RegExpExecArray | null
           while ((im = inlineRe.exec(codeLine)) !== null) {
             const nm = im[1]
-            if (!RESERVED.has(nm) && !scopes.some(s => s.declared.has(nm))) {
+            if (RESERVED.has(nm)) continue
+            if (!scopes.some(s => s.declared.has(nm))) {
               topScope.declared.add(nm)
               pendingHoists.push({ insertAt: topScope.insertAt, indent: topScope.bodyIndent, name: nm })
+            } else if (constanteSure(nm)) {
+              // même garde que l'affectation simple, restreinte à CETTE portée : `if a then x = 1`
+              // reste une réaffectation, même écrite en ligne après `then`/`else`
+              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + 1 }))
             }
           }
         }
@@ -2141,9 +2285,46 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // bare (`IDENT = expr`) dans un scope enfant croit que la var n'est
       // pas déclarée et se promeut à tort en `.=`, créant un shadow qui
       // casse la closure (régression `tuto#etat-brut`).
-      const declMatch = codeLine.match(/^(\s*)([a-zA-Z_]\w*)\s*[.:]=/)
+      const declMatch = codeLine.match(/^(\s*)([a-zA-Z_]\w*)\s*([.:])=/)
       if (declMatch && !RESERVED.has(declMatch[2])) {
-        scopes[scopes.length - 1].declared.add(declMatch[2])
+        const scopeDecl = scopes[scopes.length - 1]
+        scopeDecl.declared.add(declMatch[2])
+        // `:=` lie une CONSTANTE (Civet → `const`), `.=` une mutable (`let`) — mémorisé pour
+        // refuser plus haut la réaffectation nue d'un nom const (cf. bandeau `constDeclared`)
+        if (declMatch[3] === ':') scopeDecl.constDeclared.add(declMatch[2])
+        else scopeDecl.constDeclared.delete(declMatch[2])
+      }
+      // Même chose pour un motif de déstructuration DÉJÀ déclaré (`{w, h} := f()`,
+      // `[a, b] := t`, clé renommée, défaut, reste `...`, clé chaîne — cf. bandeau
+      // extractDestructuredNames plus haut) : invisible à declMatch ci-dessus (qui n'admet
+      // qu'un IDENT nu juste après l'indentation). Sans cet enregistrement, `w`/`a`/`r` du
+      // motif restent absents du scope — la même régression que declMatch corrige pour un
+      // IDENT simple. Le motif peut s'ouvrir sur SA PROPRE ligne et ne se refermer que plus
+      // bas (mise en forme multi-lignes, ex. `{\n  w,\n  h\n} := f()`) : balancedSpan sur la
+      // seule `codeLine` ne referme alors jamais rien (fin hors de cette chaîne), le motif
+      // entier échappait à l'enregistrement — même bogue que declMatch, non détecté par lui
+      // (aucun IDENT nu en tête). On étend la recherche du point d'équilibre aux lignes
+      // BLANCHIES suivantes, comme la pré-passe `multiLineParams` plus haut pour une liste de
+      // paramètres ; le cas mono-ligne (immédiatement équilibré) n'entre jamais dans la boucle.
+      if (codeLine[indent] === '[' || codeLine[indent] === '{') {
+        let motif  = codeLine.slice(indent)
+        let patEnd = balancedSpan(motif, 0)
+        for (let lj = li + 1; patEnd === -1 && lj < lignesCode.length; lj++) {
+          motif  += '\n' + lignesCode[lj]
+          patEnd  = balancedSpan(motif, 0)
+        }
+        const opMatch = patEnd !== -1 ? motif.slice(patEnd).match(/^\s*([.:])=/) : null
+        if (opMatch) {
+          const scopeDecl = scopes[scopes.length - 1]
+          // même distinction que declMatch ci-dessus pour un IDENT nu : `:=` lie une constante,
+          // même déstructurée — `w`/`h` de `{w, h} := f()` refusent une réaffectation nue plus bas
+          const estConst = opMatch[1] === ':'
+          for (const nm of extractDestructuredNames(motif.slice(0, patEnd), RESERVED)) {
+            scopeDecl.declared.add(nm)
+            if (estConst) scopeDecl.constDeclared.add(nm)
+            else scopeDecl.constDeclared.delete(nm)
+          }
+        }
       }
       // Déclarations EXPLICITES `let/const/var IDENT[, {…}, […]]` : sans
       // ça, un `let x` PUIS un `x = 5` plus bas voyait `x` comme non déclaré et
@@ -2176,7 +2357,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         // ligne D'OUVERTURE (`multi.openIndent`), jamais de celle de la ligne de fermeture `) ->` —
         // sinon une fermeture indentée au niveau du corps ferait sauter la portée dès sa 1re ligne.
         const multi = multiLineParams.get(li)
-        const child = { indent: multi ? multi.openIndent : indent, declared: new Set<string>(), bodyIndent: null as number | null, insertAt: null as number | null }
+        const child = { indent: multi ? multi.openIndent : indent, declared: new Set<string>(), constDeclared: new Set<string>(), bodyIndent: null as number | null, insertAt: null as number | null }
         scopes.push(child)
         if (multi) {
           for (const nm of extractParamNames(multi.params, RESERVED)) child.declared.add(nm)
@@ -2273,23 +2454,29 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // ci-dessus, SOURCE UNIQUE partagée avec `mjs ws` (fichiers *.server.mjs).
   out = applyCivetDialectSugar(out, lang, predeclared)
 
-  // ─── Runes µ$ ASSIGNEMENT (statement-level) — AVANT le masque code-only ───
+  // ─── Runes µ$ ASSIGNEMENT (statement-level) — chaînes/commentaires masqués D'ABORD ───
   // Ces deux regex line-anchored réécrivent une LIGNE COMPLÈTE `µ$X = expr` (ou
   // `export µ$X = …`) dont la rhs peut CONTENIR une chaîne : transformCodeOnly
-  // isolerait cette chaîne dans un chunk distinct (rhs tronquée). On les applique
-  // donc sur le texte entier — sûr car le motif exige une ligne ENTIÈRE
-  // `^…µ$X = …$`, jamais un fragment interne à une string.
+  // isolerait cette chaîne dans un chunk distinct (rhs tronquée), d'où l'application sur le texte
+  // entier plutôt que via transformCodeOnly. Mais SANS masquage, une ligne `µ$x = 5` simplement
+  // CITÉE dans une chaîne (gabarit multi-ligne affiché en exemple de doc) est une ligne comme une
+  // autre pour un motif `^…$` : elle était réécrite en code réel, build vert, texte affiché
+  // corrompu. Même remède que la passe sœur µ$$X plus haut (maskStringsAndComments) : une chaîne,
+  // MÊME multi-ligne, s'efface en UN placeholder compact avant les deux regex — restauré à
+  // l'identique en sortie, y compris quand il finit dans le rhs du code généré (`µ$X = 'texte'`).
+  const { masked: maskedForDollar, restore: restoreDollar } = maskStringsAndComments(out)
   //   `export µ$X = expr` → `µ_state.X ?= µ.state(expr)` + `export $X = µ_state.X`
-  out = out.replace(
+  let maskedDollarOut = maskedForDollar.replace(
     /^([ \t]*)export[ \t]+µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
     (_m, indent, name, rhs) =>
       `${indent}µ_state.${name} ?= µ.state(${rhs})\n${indent}export $${name} = µ_state.${name}`
   )
   //   `µ$X = expr` (sans export) → `µ_state.X ?= µ.state(expr)`
-  out = out.replace(
+  maskedDollarOut = maskedDollarOut.replace(
     /^([ \t]*)µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
     (_m, indent, name, rhs) => `${indent}µ_state.${name} ?= µ.state(${rhs})`
   )
+  out = restoreDollar(maskedDollarOut)
 
   // ─── Réécritures µ SENSIBLES aux chaînes/commentaires ─────────────
   // µfoo→µ.foo, routage API (µ.on/emit/…), runes µ$ en LECTURE, µdebug,
@@ -2301,6 +2488,10 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // les commentaires sont déjà en `//`/`/* */` (Pass 1, hors Coffee — que
   // transformCodeOnly sait quand même sauter via son handler `#`). Les runes en
   // ASSIGNEMENT ont déjà tourné ci-dessus (rhs préservée).
+  // `µinspect($x.chemin)` d'abord, sur le texte ENTIER : une clé en chaîne (`$x['cle']`) coupait
+  // l'appel en morceaux dans transformCodeOnly, qui ne le reconnaissait plus — même réécriture
+  // (et même refus d'un chemin invalide) que dans le gabarit, chaînes et commentaires masqués
+  if (out.includes('inspect') || out.includes('minmax')) out = reecritOuRejetteRuneChemin(out, true)
   out = transformCodeOnly(out, (code) => {
     let c = code
     // µfoo → µ.foo (sucre universel) — SAUF les runes à compilation LEXER
@@ -2324,7 +2515,29 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // partagée — sa sortie nue n'est valide qu'une fois recompilée par Civet, ce que
     // ce moteur garantit (applyMjsSugarToScript tourne toujours avant tokenize) mais
     // pas cleanJs/cleanJsExpr (sortie JS FINALE, cf. bandeau de tête generator/utils.ts).
-    c = c.replace(/(?<!µ\.)µ\.?minmax\s+\$([a-zA-Z_$][\w$]*)/g, "µ.minmax _mjsThis, '$1'")
+    // Terminateur = virgule (le premier argument s'arrête TOUJOURS là) : LISTE BLANCHE, comme
+    // la forme parenthésée ci-dessus (sigils.ts, `argTermineOuChemin`, fonction interne non
+    // exportée — reproduite ici) plutôt qu'une énumération de suffixes interdits point par
+    // point. Une énumération manuelle rate toujours la variante suivante : elle couvrait déjà
+    // le point espacé, l'appel et l'index, mais une parenthèse ou un crochet IMBRIQUÉS
+    // (`µminmax $o(bar()), 0, 10`, `µminmax $o[a[0]], 0, 10`) refermaient le groupe répétable
+    // trop tôt et laissaient le reste échapper hors quotes (`µ.minmax _mjsThis, 'o'(bar()), 0,
+    // 10`), sans la moindre erreur — même signature que le défaut d'origine. Ici, après `$nom`
+    // (espaces tolérés), seule une virgule termine légitimement l'argument ; tout le reste
+    // jusqu'à la PROCHAINE virgule est un chemin, réécrit s'il est FIXE (cheminSegments), sinon
+    // refusé avec le MÊME message que la forme parenthésée (`transpiler.rune-minmax-chemin`). Nom `[a-zA-Z0-9_]+`
+    // (jamais de `$` dedans, même classe qu'inspect/minmax parenthésés) : `$$x` (store, non
+    // documenté pour cette rune) fait échouer tout le motif, retombe sur les règles générales.
+    c = c.replace(
+      /(?<!µ\.)µ\.?minmax\s+\$([a-zA-Z0-9_]+)(?:(?=[ \t]*(?:,))|([\s\S]*?)(?=[ \t]*(?:,)))/g,
+      (_m, nom, chemin) => {
+        if (!chemin) return `µ.minmax _mjsThis, '${nom}'`
+        // chemin FIXE (`µminmax $x.volume, 0, 10`) : même liste blanche que la forme parenthésée
+        const segments = cheminSegments(chemin)
+        if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
+        return `µ.minmax _mjsThis, ${cleMinmaxChemin(nom, segments)}`
+      }
+    )
 
     // µproxy $.path → µ._mjs_makeDeepProxy(_mjsThis, ['path'])
     // Escape hatch manuel pour les cas où le compile-time path
@@ -2683,20 +2896,102 @@ function maskHtmlComments(html: string, mask: (m: string) => string): string {
   return out
 }
 
+// maskAttrQuotes — même principe que maskHtmlComments juste au-dessus (scanTagClose, guillemets
+// respectés) : neutralise le CONTENU des valeurs d'attribut de chaque VRAIE balise (délimiteurs
+// gardés, longueur inchangée). Sert à la vérification d'isométrie mjs-* juste en dessous — sans
+// ça, un texte `</mjs-carte>` posé DANS un attribut (`title="voir </mjs-carte> pour plus"`)
+// comptait comme une VRAIE fermeture au même titre qu'un `</mjs-carte>` réel : un composant
+// pourtant équilibré se faisait rejeter (message mensonger, « Fermetures » gonflées).
+function maskAttrQuotes(html: string): string {
+  let out = ''
+  let i = 0
+  while (i < html.length) {
+    if (html[i] === '<' && /[a-zA-Z/]/.test(html[i + 1] ?? '')) {
+      const close = scanTagClose(html, i + 1)
+      const end = close === -1 ? html.length : close + 1
+      out += html.slice(i, end).replace(/"[^"]*"|'[^']*'/g, (m) => m[0] + m.slice(1, -1).replace(/[^\n]/g, ' ') + m[0])
+      i = end
+      continue
+    }
+    out += html[i]
+    i++
+  }
+  return out
+}
+
+// maskInterpolations — empile chaque bloc `{…}` d'interpolation de TEXTE (jamais une balise
+// entière, cf. le branchement scanTagClose ci-dessous) dans codeMasks, AVANT les réécritures de
+// directives plus bas : un exemple de doc affiché EN TOUTES LETTRES dans une chaîne de texte —
+// `{'…@preload="hover"…'}` — n'est pas un VRAI attribut du balisage. Sans ce masquage, les regex
+// `\B@xxx=…` plus bas le réécrivaient quand même (texte affiché corrompu) ou le REFUSAIENT à tort
+// (`{'…@callback={foo}…'}`, forme montrée en contre-exemple). Une VRAIE balise est copiée
+// VERBATIM (jamais masquée ICI) : la valeur d'une directive à accolades (`@confirm={ text: … }`,
+// `@viewTransition.cube={ dir: left }`) est elle-même un `{…}`, mais À L'INTÉRIEUR d'une balise —
+// la masquer aurait caché la directive à la regex censée la traiter, pas seulement la prose.
+// Comptage de `{}` conscient des chaînes imbriquées (mêmes gardes que maskStaticHtmlText plus
+// haut, même famille de bogue) : un `}` littéral dans l'une d'elles (`{'a}'}`) ne referme jamais
+// l'interpolation trop tôt.
+function maskInterpolations(html: string, mask: (m: string) => string): string {
+  let out = ''
+  let i = 0
+  const n = html.length
+  while (i < n) {
+    // `@` en plus de `[a-zA-Z/]` (contrairement à maskHtmlComments/maskAttrQuotes plus haut) :
+    // une balise-macro <@view .../<@include …> porte elle aussi des directives à accolades
+    // (`<@view main @viewTransition.cube={ dir: left }>`) — l'exclure aurait masqué CETTE
+    // accolade-là comme du texte, cachant la directive à la regex censée la traiter.
+    if (html[i] === '<' && /[a-zA-Z/@]/.test(html[i + 1] ?? '')) {
+      const close = scanTagClose(html, i + 1)
+      const end = close === -1 ? n : close + 1
+      out += html.slice(i, end)
+      i = end
+      continue
+    }
+    if (html[i] === '{') {
+      let depth = 1
+      let j = i + 1
+      let inStr = false
+      let strCh = ''
+      while (j < n && depth > 0) {
+        const ch = html[j]
+        if (inStr) {
+          if (ch === '\\') { j += 2; continue }
+          if (ch === strCh) inStr = false
+        } else if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch }
+        else if (ch === '{') depth++
+        else if (ch === '}') depth--
+        j++
+      }
+      out += mask(html.slice(i, j))
+      i = j
+      continue
+    }
+    out += html[i]
+    i++
+  }
+  return out
+}
+
 function preprocessHtml(html: string, moduleName: string): string {
   let out = html
 
   // Auto-fermeture mjs-* : <mjs-foo /> → <mjs-foo></mjs-foo>
   out = out.replace(/<(mjs-[a-zA-Z0-9_-]+)([^>]*?)\/>/gm, '<$1$2></$1>')
 
-  // Vérification d'isométrie (open vs close)
+  // Vérification d'isométrie (open vs close) — comptée sur une vue où les valeurs d'attribut
+  // (maskAttrQuotes) ET les interpolations de TEXTE (maskInterpolations, définie plus bas) sont
+  // neutralisées : un texte `</mjs-carte>` DANS un attribut OU cité dans une interpolation
+  // (`{'exemple : </mjs-carte> en trop'}`, prose affichée) n'est jamais une vraie fermeture. Une
+  // VRAIE balise reste copiée verbatim par maskInterpolations (jamais masquée) : un vrai
+  // déséquilibre continue d'être détecté.
+  const isoView = maskInterpolations(maskAttrQuotes(out), (m) => m.replace(/[^\n]/g, ' '))
   const tags = new Set<string>()
-  out.replace(/<(mjs-[a-zA-Z0-9_-]+)[^>]*>/g, (_m, t) => { tags.add(t); return _m })
+  isoView.replace(/<(mjs-[a-zA-Z0-9_-]+)[^>]*>/g, (_m, t) => { tags.add(t); return _m })
   for (const tag of tags) {
     const openRe = new RegExp(`<${tag}(?:\\s+[^>]*?)?>`, 'g')
     const closeRe = new RegExp(`</${tag}>`, 'g')
-    const opens = (out.match(openRe) ?? []).length
-    const closes = (out.match(closeRe) ?? []).length
+    const opens = (isoView.match(openRe) ?? []).length
+    const closes = (isoView.match(closeRe) ?? []).length
     if (opens !== closes) {
       throw new Error(t('transpiler.desequilibre-structurel', { moduleName, tag, opens, closes }))
     }
@@ -2706,11 +3001,15 @@ function preprocessHtml(html: string, moduleName: string): string {
   // d'abord les blocs <pre>/<code> ET les commentaires HTML <!-- --> : un tuto/doc
   // qui AFFICHE `@preload="on"` dans un exemple de code, ou une forme refusée dans un commentaire
   // purement documentaire, ne doit pas faire échouer la compilation du reste.
+  // On masque AUSSI les expressions `{…}` (texte ou attribut) : les directives ci-dessous ne
+  // sont réécrites QUE dans du vrai balisage, jamais dans une chaîne de code (maskInterpolations,
+  // même raison que <pre>/<code>/commentaires juste au-dessus).
   const codeMasks: string[] = []
   out = out
     .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, (m) => (codeMasks.push(m), `\x00CM${codeMasks.length - 1}\x00`))
     .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, (m) => (codeMasks.push(m), `\x00CM${codeMasks.length - 1}\x00`))
   out = maskHtmlComments(out, (m) => (codeMasks.push(m), `\x00CM${codeMasks.length - 1}\x00`))
+  out = maskInterpolations(out, (m) => (codeMasks.push(m), `\x00CM${codeMasks.length - 1}\x00`))
 
   // @noUJS="valeur" → REFUSÉ, même politique que @permanent juste plus bas : la
   // directive est NUE par nature (elle désactive l'interception pour la balise entière, rien à
@@ -3659,8 +3958,8 @@ async function transpileImpl(
   //     dépendent désormais aussi) et AVANT compilation langage. Coffee/
   //     Civet/TS verront juste un string literal, pas un appel inconnu.
   if (opts.resolveAsset) {
-    script.raw         = await replaceMagicAssets(script.raw, opts.resolveAsset)
-    moduleSection.raw  = await replaceMagicAssets(moduleSection.raw, opts.resolveAsset)
+    script.raw         = await replaceMagicAssets(script.raw, opts.resolveAsset, script.lang)
+    moduleSection.raw  = await replaceMagicAssets(moduleSection.raw, opts.resolveAsset, moduleSection.lang)
     html               = await replaceMagicAssets(html, opts.resolveAsset)
     script.raw         = replaceMagicImages(script.raw, opts.preResolvedImages)
     moduleSection.raw  = replaceMagicImages(moduleSection.raw, opts.preResolvedImages)
@@ -3720,6 +4019,12 @@ async function transpileImpl(
   }
   let moduleJs = moduleCompiled.code
   const moduleAst = parseModuleAst(moduleJs)
+  // même contrôle des constantes `:=` que pour le `<script>` (cf. plus bas), sur le JS du bloc
+  // `<script module>` juste compilé : une constante réaffectée dans le bloc lui-même
+  const moduleConstReassign = findConstReassignment(moduleJs)
+  if (moduleConstReassign) {
+    throw new Error(t('transpiler.civet-reaffectation-constante', { nom: moduleConstReassign.name, ligne: moduleConstReassign.line, code: true }))
+  }
   // Vars top-level du `<script module>` partagé : le `<script>` composant peut les
   // lire/réassigner sans qu'elles soient re-déclarées localement (sinon TDZ). Repli
   // textuel (ancien comportement) SEULEMENT si l'AST ne parse pas (sortie langage
@@ -3768,6 +4073,20 @@ async function transpileImpl(
     scriptCompiled = { code: '' }
   }
   const scriptJs = scriptCompiled.code
+  // réaffectation d'un identifiant lié par `:=` (const) : contrôle par résolution de portée
+  // EXACTE sur le JS que Civet vient de produire, juste avant toute réécriture propre à
+  // ModularJS ($x/µ/path-tracking/this-rebinding — jamais vues ici, donc jamais de faux positif
+  // sur du code généré par le framework). applyMjsSugarToScript (plus haut, sur la source Civet)
+  // a déjà refusé ce qu'il peut voir À LA MÊME PORTÉE avec la ligne SOURCE réelle — gardé tel
+  // quel, meilleur numéro de ligne pour ce qu'il couvre. Ce contrôle-ci ferme ce qui lui échappe
+  // (bloc indenté, fonction imbriquée sans homonyme local) : la ligne citée est alors celle du
+  // JS compilé, jamais de la source Civet — dit explicitement dans le message (`code: true`).
+  // Les constantes du `<script module>` sont visibles du `<script>` (qui s'exécute dans leur
+  // portée) : les réaffecter depuis le `<script>` plante de même, sauf homonyme local.
+  const constReassign = findConstReassignment(scriptJs, collectTopLevelDeclarations(moduleAst, 'const'))
+  if (constReassign) {
+    throw new Error(t('transpiler.civet-reaffectation-constante', { nom: constReassign.name, ligne: constReassign.line, code: true }))
+  }
   // garde symboles réservés, cf. generator/reserved-symbols.ts
   lintReservedSymbolNames(moduleJs, moduleName, '<script module>')
   const scriptSourceMap  = scriptCompiled.map  ? shiftSourceMapLines(scriptCompiled.map, script.startLine - 1) : undefined
@@ -3784,11 +4103,13 @@ async function transpileImpl(
   // par closure. Une collecte textuelle (ligne à ligne, indentation zéro) ramassait un
   // `docVar = …` posé DANS un commentaire `###…###` ou une chaîne multi-ligne : le nom
   // n'existait nulle part dans le JS émis, et le handler qui l'écrivait partait en
-  // « ReferenceError » au premier clic. Les `const` sont collectés À PART : les prédéclarer aussi évite l'écriture
-  // silencieusement perdue, mais leur réaffectation depuis un handler est refusée au build
-  // (lintHandlerConstAssignment) plutôt que laissée exploser en « Assignment to constant ».
+  // « ReferenceError » au premier clic. Les `const` sont collectés À PART, du `<script>` comme du
+  // `<script module>` : les prédéclarer aussi évite l'écriture silencieusement perdue, mais leur
+  // réaffectation depuis un handler est refusée au build (contrôle du JavaScript compilé des
+  // gestionnaires) plutôt que laissée exploser en « Assignment to constant ».
   const scriptVars   = collectTopLevelDeclarations(scriptAst, 'binding')
   const scriptConsts = collectTopLevelDeclarations(scriptAst, 'const')
+  const moduleConsts = collectTopLevelDeclarations(moduleAst, 'const')
   const moduleTopVars = [...collectTopLevelDeclarations(moduleAst, 'binding'), ...collectTopLevelDeclarations(moduleAst, 'const')]
 
   // cf. lintImportDollarName et lintUndeclaredTopLevelAssignment.
@@ -3899,7 +4220,7 @@ async function transpileImpl(
   // 10. Generator HTML — V2 retourne aussi `effectsByVar` (Map varName → codes).
   // `structVars` permet au runtime de skip `_mjs_renderStruct` quand
   // une mutation ne touche pas un bloc structurel.
-  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps] = compileHtml(html, {
+  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps, inlineLocals] = compileHtml(html, {
     analyzer,
     externalVars,
     templateLang,
@@ -4034,7 +4355,14 @@ async function transpileImpl(
   // `_mjs_hook`) — le second écrase le premier, SANS la moindre erreur ni avertissement. Détecté
   // ICI, sur le script déjà compilé (jsInitBase), AVANT tout ajout de bloc <routes>/router-aware
   // (qui n'émettent jamais `_mjs_hook`, sans incidence sur le compte).
-  const dupHook = detectDuplicateHook(jsInitBase)
+  //
+  // PERF (mesuré) : `sharedInitAst` parse jsInitBase UNE fois, réutilisé par detectDuplicateHook
+  // ET detectRoutesReassignment juste en dessous — les deux lisent EXACTEMENT le même texte (rien
+  // ne le modifie entre les deux appels). Pas réutilisable pour detectRouterAware, plus bas : si un
+  // bloc <routes> existe, jsInitBase est PRÉFIXÉ avant cet appel-là (`this.routes = {...}` posé en
+  // tête) — cet AST-ci serait alors périmé pour lui (repassé `undefined`, il re-parse).
+  const sharedInitAst = parseScriptAst(jsInitBase)
+  const dupHook = detectDuplicateHook(jsInitBase, sharedInitAst)
   if (dupHook) throw new Error(t('transpiler.hook-duplique', { moduleName, hook: dupHook }))
 
   // Bloc(s) <routes target="…"> — table de routes FIXES, POSÉE en tête du JS d'init,
@@ -4052,7 +4380,7 @@ async function transpileImpl(
   // jamais polluée par l'injection du bloc juste en dessous (elle-même une affectation
   // `this.routes`, qui ferait sinon passer TOUT bloc <routes> pour une directive @routes).
   // Réutilisé par la garde .page.mjs, plus bas après detectRouterAware.
-  const hasRoutesDirective = detectRoutesReassignment(jsInitBase)
+  const hasRoutesDirective = detectRoutesReassignment(jsInitBase, sharedInitAst)
   if (routesSections.length > 0) {
     if (hasRoutesDirective) sections.warnings.push(t('transpiler.routes-script-reassigne'))
     const routesObjParts = routesSections.map(rs => {
@@ -4096,7 +4424,9 @@ async function transpileImpl(
   // Analyse AST sur le JS post-compile (jsInitBase) plutôt que regex sur le
   // source Coffee/Civet : insensible aux strings, commentaires, template
   // literals. Cf. detectRouterAware pour le détail des deux motifs cherchés.
-  if (detectRouterAware(jsInitBase)) {
+  // `sharedInitAst` réutilisable SEULEMENT si aucun bloc <routes> n'a préfixé jsInitBase
+  // juste au-dessus (sinon perimé, cf. son bandeau) : `undefined` dans ce cas → re-parse.
+  if (detectRouterAware(jsInitBase, routesSections.length > 0 ? undefined : sharedInitAst)) {
     jsInitBase += '\nthis._mjs_is_router_aware = true;'
     // Préchargement des composants de route (compile-time). Les composants montés
     // par le routeur sont des VALEURS du map `@routes` (ex. '/': 'home-page'), pas
@@ -4165,75 +4495,132 @@ async function transpileImpl(
     // `const _mjsThis = this` accessible par closure. Une déclaration ici
     // créerait un `var _mjsThis` qui shadow le const outer (hoisted),
     // rendant undefined tous les µ._set(_mjsThis, ...) plus haut.
-    const inlinesSrc = '@_mjs_inline = [\n' +
-      inlines.map(c => {
-        const code = c.toString().trim()
-        if (!code) return '  (e, _) -> null'
-        return code.split('\n').map(l => `  ${l}`).join('\n')
-      }).join('\n') + '\n]\n'
+    const chunksInline = inlines.map(c => {
+      const code = c.toString().trim()
+      if (!code) return '  (e, _) -> null'
+      return code.split('\n').map(l => `  ${l}`).join('\n')
+    })
+    const inlinesSrc = '@_mjs_inline = [\n' + chunksInline.join('\n') + '\n]\n'
 
-    let inlinesJs: string
-    // les noms du `<script module>` et du `<script>` que le batch peut voir par closure,
-    // MOINS ceux que le template introduit lui-même ici (variable et index d'un `{for}`,
-    // nom d'un `{const}`, argument d'un `{success}`/`{error}`) — ceux-là DOIVENT rester locaux
-    const inlinePredeclared = [...moduleTopVars, ...scriptVars, ...scriptConsts].filter(nom => !templateLocals.has(nom))
-
-    if (templateLang === 'js') {
-      const coffeeAdapter = getAdapter('coffee')
-      const inlinesProcessed = tokenize(applyMjsSugarToScript(inlinesSrc, 'coffee', undefined, '<script> (handlers)'), { externalVars })
-      lintHandlerConstAssignment(inlinesProcessed, scriptConsts.filter(nom => !templateLocals.has(nom)), moduleName)
-      inlinesJs = (await coffeeAdapter.compileToJs(inlinesProcessed, {
-        fileName: `${moduleName}.inlines`,
-      })).code
-      // Coffee auto-déclare NATIVEMENT : il n'a pas de `predeclared`, et pose un `var n;` en
-      // tête de chaque handler qui écrit un nom qu'il ne connaît pas — même écriture perdue,
-      // même zone morte que sur le chemin Civet. On retire donc APRÈS COUP, sur l'AST du JS
-      // qu'il vient de produire, les `var` sans valeur portant un nom qui vit déjà dans le
-      // corps de fonction du composant. Même résultat que le `predeclared` de Civet, par
-      // l'autre bout.
-      inlinesJs = dropRedundantVarDeclarations(inlinesJs, inlinePredeclared)
+    // les noms du `<script module>` et du `<script>` que le batch peut voir par closure, et les
+    // constantes de ces deux scripts — retirés des listes PAR GESTIONNAIRE, à hauteur des seuls
+    // noms que le gabarit met VRAIMENT en portée de ce gestionnaire (variable et index d'un
+    // `{for}` englobant, argument de branche `{await}`, `{const}` du bloc courant, cf.
+    // `inlineLocals`). Ceux-là DOIVENT rester locaux : le squelette de reconstruction les
+    // réassigne en tête de handler, et le `{const}` comme l'argument de branche n'existent pas
+    // du tout dans son corps. Le retrait était GLOBAL au composant : un gestionnaire situé
+    // AILLEURS subissait le même sort, Civet y déclarait une copie locale (`let number = 5`) et
+    // l'écriture était silencieusement perdue — sans un mot, ni au build ni au clic. Même fuite
+    // pour le contrôle de constance : un nom de gabarit sortait de la liste contrôlée, une `:=`
+    // homonyme n'était plus refusée.
+    const basePredeclared = [...moduleTopVars, ...scriptVars, ...scriptConsts]
+    const baseConsts = [...scriptConsts, ...moduleConsts]
+    // les groupes se bâtissent sur les listes EFFECTIVES, pas sur les noms de gabarit : deux
+    // gestionnaires qui ne divergent pas (aucun homonyme du `<script>`) ne compilent qu'une
+    // fois — un composant sans collision garde donc UN groupe, et une sortie identique
+    // `gabarit` : union des noms du gabarit en portée des gestionnaires du groupe — leur copie,
+    // recréée en tête de gestionnaire, ne se réaffecte pas (cf. controlerGestionnairesInline)
+    const groupes = new Map<string, { predeclared: string[]; consts: string[]; indices: number[]; gabarit: Set<string> }>()
+    for (let i = 0; i < inlines.length; i++) {
+      // filet : un gestionnaire sans locaux enregistrés retombe sur l'union globale
+      // (l'ancien filtre), jamais sur « aucun local » — cela prédéclarerait la variable d'un
+      // `{for}` et lui ferait écrire la var du `<script>` au lieu de l'item reconstruit
+      const locaux = new Set(i < inlineLocals.length ? inlineLocals[i] : templateLocals)
+      const predeclared = basePredeclared.filter(nom => !locaux.has(nom))
+      const consts = baseConsts.filter(nom => !locaux.has(nom))
+      const cle = JSON.stringify([predeclared, consts])
+      let groupe = groupes.get(cle)
+      if (!groupe) {
+        groupe = { predeclared, consts, indices: [], gabarit: new Set() }
+        groupes.set(cle, groupe)
+      }
+      groupe.indices.push(i)
+      for (const nom of locaux) groupe.gabarit.add(nom)
     }
-    else {
-      // `applyMjsSugarToScript(…, 'civet')` sait déjà déclarer les vars nues
-      // (`nom = expr` → `nom .= expr`, Pass 4 plus haut) pour une cible
-      // non-Coffee, exactement comme pour un `<script>` civet classique — le
-      // squelette du generator (assignations brutes `__idx_0 = …`, `item = …`)
-      // n'a donc rien de spécifique à faire pour se déclarer proprement ici.
-      const civetAdapter = getAdapter('civet')
-      const inlinesProcessed = tokenize(applyMjsSugarToScript(inlinesSrc, 'civet', inlinePredeclared, '<script> (handlers)'), { externalVars })
-      lintHandlerSelfRefDeclaration(inlinesProcessed, moduleName)
-      lintHandlerConstAssignment(inlinesProcessed, scriptConsts.filter(nom => !templateLocals.has(nom)), moduleName)
-      try {
-        inlinesJs = (await civetAdapter.compileToJs(inlinesProcessed, {
+    const listeGroupes = Array.from(groupes.values())
+
+    /** source d'un groupe — un seul groupe : le batch d'origine, inchangé. Plusieurs groupes
+     * (un nom du gabarit recouvre un nom du `<script>`, donc des listes divergentes) : une
+     * compilation par groupe et une écriture par INDEX dans `_mjs_inline` — l'index reste la
+     * clé d'événement du tableau global, l'ordre de `inlines` est conservé. */
+    const sourceGroupe = (groupe: { predeclared: string[]; consts: string[]; indices: number[] }, premier: boolean): string => {
+      if (listeGroupes.length === 1) return inlinesSrc
+      const reset = premier ? 'this._mjs_inline = []\n' : ''
+      return reset + groupe.indices.map(i => {
+        const lignes = chunksInline[i].split('\n')
+        // corps dé-indenté de 2 : la ligne d'affectation porte la flèche, le corps reste
+        // strictement plus indenté qu'elle (Civet/Coffee lisent l'indentation)
+        const corps = lignes.slice(1).map(l => l.slice(2)).join('\n')
+        return `this._mjs_inline[${i}] = ${lignes[0].trim()}\n${corps}\n`
+      }).join('')
+    }
+
+    const sorties: string[] = []
+    for (let k = 0; k < listeGroupes.length; k++) {
+      const groupe = listeGroupes[k]
+      const inlinesSrcGroupe = sourceGroupe(groupe, k === 0)
+      let inlinesJsGroupe: string
+      if (templateLang === 'js') {
+        const coffeeAdapter = getAdapter('coffee')
+        const inlinesProcessed = tokenize(applyMjsSugarToScript(inlinesSrcGroupe, 'coffee', undefined, '<script> (handlers)'), { externalVars })
+        inlinesJsGroupe = (await coffeeAdapter.compileToJs(inlinesProcessed, {
           fileName: `${moduleName}.inlines`,
         })).code
+        // Coffee auto-déclare NATIVEMENT : il n'a pas de `predeclared`, et pose un `var n;` en
+        // tête de chaque handler qui écrit un nom qu'il ne connaît pas — même écriture perdue,
+        // même zone morte que sur le chemin Civet. On retire donc APRÈS COUP, sur l'AST du JS
+        // qu'il vient de produire, les `var` sans valeur portant un nom qui vit déjà dans le
+        // corps de fonction du composant. Même résultat que le `predeclared` de Civet, par
+        // l'autre bout.
+        inlinesJsGroupe = dropRedundantVarDeclarations(inlinesJsGroupe, groupe.predeclared)
+        controlerGestionnairesInline(inlinesJsGroupe, groupe.consts, moduleName, groupe.gabarit)
       }
-      catch (err: any) {
-        // Erreur orientante : le civet ParseError expose `.line` (1-indexé,
-        // relatif à `inlinesProcessed` — exactement le texte qu'on vient de lui
-        // soumettre, donc AUCUNE conversion d'offset nécessaire) — best-effort
-        // seulement (le parser peut caler plus loin que la vraie faute quand il
-        // tente de récupérer). On ajoute un indice ciblé quand un ternaire
-        // COLLÉ (`a?b:c`, hors chaînes) traîne dans le batch : signature du
-        // piège le plus fréquent (Coffee l'acceptait — silencieusement FAUX,
-        // cf. tests — Civet le rejette).
-        const civetMsg = err?.message ?? String(err)
-        const lineNo = typeof err?.line === 'number' ? err.line : null
-        const faultyLine = lineNo != null ? inlinesProcessed.split('\n')[lineNo - 1] : null
-        const lineHint = faultyLine != null
-          ? t('transpiler.hint-ligne-civet', { ligne: lineNo, ligneFautive: faultyLine.trim() })
-          : ''
-        // Filler NON-blanc (pas des espaces) : les branches d'un ternaire collé
-        // sont typiquement des chaînes (`a?'x':'y'`) — un masquage espace-à-espace
-        // ferait disparaître le caractère juste après le `?` (le guillemet),
-        // rendant le motif `\?[^\s?.:]` aveugle à sa propre cible.
-        const codeOnly = inlinesProcessed.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
-        const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly)
-          ? t('generator.hint-ternaire-colle')
-          : ''
-        throw new Error(t('transpiler.handler-inline-echec-civet', { moduleName, lineHint, civetMsg, gluedTernaryHint }))
+      else {
+        // `applyMjsSugarToScript(…, 'civet')` sait déjà déclarer les vars nues
+        // (`nom = expr` → `nom .= expr`, Pass 4 plus haut) pour une cible
+        // non-Coffee, exactement comme pour un `<script>` civet classique — le
+        // squelette du generator (assignations brutes `__idx_0 = …`, `item = …`)
+        // n'a donc rien de spécifique à faire pour se déclarer proprement ici.
+        const civetAdapter = getAdapter('civet')
+        const inlinesProcessed = tokenize(applyMjsSugarToScript(inlinesSrcGroupe, 'civet', groupe.predeclared, '<script> (handlers)'), { externalVars })
+        lintHandlerSelfRefDeclaration(inlinesProcessed, moduleName)
+        try {
+          inlinesJsGroupe = (await civetAdapter.compileToJs(inlinesProcessed, {
+            fileName: `${moduleName}.inlines`,
+          })).code
+        }
+        catch (err: any) {
+          // Erreur orientante : le civet ParseError expose `.line` (1-indexé,
+          // relatif à `inlinesProcessed` — exactement le texte qu'on vient de lui
+          // soumettre, donc AUCUNE conversion d'offset nécessaire) — best-effort
+          // seulement (le parser peut caler plus loin que la vraie faute quand il
+          // tente de récupérer). On ajoute un indice ciblé quand un ternaire
+          // COLLÉ (`a?b:c`, hors chaînes) traîne dans le batch : signature du
+          // piège le plus fréquent (Coffee l'acceptait — silencieusement FAUX,
+          // cf. tests — Civet le rejette).
+          const civetMsg = err?.message ?? String(err)
+          const lineNo = typeof err?.line === 'number' ? err.line : null
+          const faultyLine = lineNo != null ? inlinesProcessed.split('\n')[lineNo - 1] : null
+          const lineHint = faultyLine != null
+            ? t('transpiler.hint-ligne-civet', { ligne: lineNo, ligneFautive: faultyLine.trim() })
+            : ''
+          // Filler NON-blanc (pas des espaces) : les branches d'un ternaire collé
+          // sont typiquement des chaînes (`a?'x':'y'`) — un masquage espace-à-espace
+          // ferait disparaître le caractère juste après le `?` (le guillemet),
+          // rendant le motif `\?[^\s?.:]` aveugle à sa propre cible.
+          const codeOnly = inlinesProcessed.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
+          const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly)
+            ? t('generator.hint-ternaire-colle')
+            : ''
+          throw new Error(t('transpiler.handler-inline-echec-civet', { moduleName, lineHint, civetMsg, gluedTernaryHint }))
+        }
+        controlerGestionnairesInline(inlinesJsGroupe, groupe.consts, moduleName, groupe.gabarit)
       }
+      sorties.push(inlinesJsGroupe)
     }
+    // un seul groupe : le texte du batch d'origine, tel quel ; plusieurs : les blocs compilés
+    // à part, recollés dans l'ordre des index (cf. sourceGroupe)
+    const inlinesJs = sorties.join('\n')
     // même pipeline que le <script>, rebindDetachedThis COMPRISE — ferme
     // l'écart : la passe n'était câblée que sur jsInitBase, jamais sur les
     // handlers inline (assemblés à part ici) — une `function(){…}` explicite

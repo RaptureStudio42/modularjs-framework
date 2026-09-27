@@ -113,7 +113,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     }
   })
 
-  it("l'en-tête de réponse X-MJS-Version est transmis au callback success en 4e argument, objet { version, target, method, cache }", async function () {
+  it("l'en-tête de réponse X-MJS-Version est transmis au callback success en 4e argument, objet { version, target, method, cache, reload, type }", async function () {
     const µ: any = { log() {}, warn() {}, error() {} }
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async (_url: string, _opts: any) =>
@@ -124,7 +124,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     await new Promise<void>((resolve) => {
       µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
     })
-    assert.deepEqual(receivedNav, { version: 'v7', target: null, method: null, cache: null, reload: null }, 'target/method/cache/reload à null : aucun en-tête X-MJS-Target/X-MJS-Method/X-MJS-Cache/X-MJS-Reload sur cette réponse')
+    assert.deepEqual(receivedNav, { version: 'v7', target: null, method: null, cache: null, reload: null, type: 'text/html' }, 'target/method/cache/reload à null : aucun en-tête X-MJS-Target/X-MJS-Method/X-MJS-Cache/X-MJS-Reload sur cette réponse ; type = Content-Type reçu')
   })
 
   it('en-têtes absents (serveur tiers muet) : le callback reçoit TOUJOURS un objet, chaque champ à null (jamais `null` lui-même), rétrocompatible', async function () {
@@ -137,7 +137,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     await new Promise<void>((resolve) => {
       µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
     })
-    assert.deepEqual(receivedNav, { version: null, target: null, method: null, cache: null, reload: null })
+    assert.deepEqual(receivedNav, { version: null, target: null, method: null, cache: null, reload: null, type: 'text/html' })
   })
 
   it('appelant à 2 paramètres (body, url) : aucune différence, rétrocompatible', async function () {

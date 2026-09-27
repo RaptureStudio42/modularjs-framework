@@ -48,7 +48,9 @@ function _mjs_diKind(v) {
   if (v instanceof Promise) return 'promise';
   if (v instanceof Map) return 'map';
   if (v instanceof Set) return 'set';
-  if (ArrayBuffer.isView(v)) return 'typedarray';
+  // ArrayBuffer.isView ne traverse pas un proxy réactif (contrairement à instanceof) : test sur
+  // la valeur brute, sinon une vue lue depuis un store ou un état passe pour un objet ordinaire
+  if (ArrayBuffer.isView(µ._mjs_toRaw ? µ._mjs_toRaw(v) : v)) return 'typedarray';
   if (Array.isArray(v)) return 'array';
   return 'object';
 }
@@ -82,9 +84,28 @@ function _mjs_diApercu(v, kind) {
     case 'promise': return 'Promise';
     case 'map': return 'Map(' + v.size + ')';
     case 'set': return 'Set(' + v.size + ')';
-    case 'typedarray': return (v.constructor ? v.constructor.name : 'TypedArray') + '(' + v.length + ')';
+    case 'typedarray': {
+      // `v.constructor` lu à travers un proxy réactif rend TOUJOURS `undefined` (garde
+      // anti-pollution CWE-1321, voulue — cf. cas `default` juste en dessous, même contournement) :
+      // nom lu via le PROTOTYPE de la cible BRUTE, jamais par le get trap.
+      var brutTA = µ._mjs_toRaw(v);
+      var protoTA = brutTA ? Object.getPrototypeOf(brutTA) : null;
+      var nomTA = protoTA && protoTA.constructor && protoTA.constructor.name;
+      return (nomTA || 'TypedArray') + '(' + v.length + ')';
+    }
     case 'array': return 'Array(' + v.length + ')';
-    default: return 'Objet' + (v && v.constructor && v.constructor.name && v.constructor.name !== 'Object' ? ' ' + v.constructor.name : '');
+    default: {
+      // `v.constructor` lu à travers un proxy réactif (valeur rangée dans un store/état)
+      // rend TOUJOURS `undefined` : la garde anti-pollution de prototype (CWE-1321) bloque
+      // `constructor` HÉRITÉ, à raison — ce n'est PAS à rouvrir ici. `Object.getPrototypeOf`
+      // sur la cible BRUTE (µ._mjs_toRaw déballe un éventuel proxy) contourne juste l'AFFICHAGE,
+      // sans jamais passer par le get trap : une instance de classe garde son nom visible
+      // (« Objet Vehicule »), pas juste « Objet ».
+      var brut = µ._mjs_toRaw(v);
+      var proto = brut ? Object.getPrototypeOf(brut) : null;
+      var nomClasse = proto && proto.constructor && proto.constructor.name;
+      return 'Objet' + (nomClasse && nomClasse !== 'Object' ? ' ' + nomClasse : '');
+    }
   }
 }
 µ._mjs_diApercu = _mjs_diApercu;

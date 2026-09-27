@@ -65,14 +65,16 @@ export function collectCoreCalls(js: string): Set<string> {
  * `_updList`, qui ne survivait que dans deux commentaires.
  */
 export function missingCoreSymbols(coreJs: string, appels: Iterable<string>): string[] {
-  const code      = blankNonCode(coreJs)
-  const manquants = [] as string[]
-  for (const nom of appels) {
-    // `(?![\w$])` seul en queue : un nom du contrat est toujours précédé d'un `.` ou d'un début de
-    // déclaration, jamais collé à un identifiant plus long par la GAUCHE (`_p` ne doit pas se
-    // reconnaître dans `x._pause`, mais `_mjs_upd` ne doit pas non plus se reconnaître dans
-    // `_mjs_updFor`) — la borne de gauche est donc posée elle aussi.
-    if (!new RegExp(`(?<![\\w$])${nom}(?![\\w$])`).test(code)) manquants.push(nom)
-  }
+  const code = blankNonCode(coreJs)
+  const noms = [...appels]
+  if (noms.length === 0) return []
+  // UN SEUL passage sur le texte du cœur (jusqu'au Mo) plutôt qu'une expression régulière PAR
+  // symbole relancée sur le texte ENTIER (jusqu'à ~150 fois sur un gros projet, mesuré ~80ms
+  // pour 42 noms sur un cœur de 1,2 Mo) : une alternance couvre tous les noms d'un coup, chacun
+  // gardant sa PROPRE frontière (`(?<![\w$])`/`(?![\w$])`, cf. le commentaire ci-dessus).
+  const alternance = noms.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const trouves    = new Set<string>()
+  for (const m of code.matchAll(new RegExp(`(?<![\\w$])(?:${alternance})(?![\\w$])`, 'g'))) trouves.add(m[0])
+  const manquants = noms.filter(nom => !trouves.has(nom))
   return manquants.sort()
 }

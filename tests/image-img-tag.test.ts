@@ -143,6 +143,51 @@ describe('<@img src="…"> — résolution au build', function () {
     await bundler.close()
   })
 
+  it('la même balise dans un <script> (fichier absent, cité dans une chaîne) — aucune résolution tentée, build OK', async () => {
+    const p = projet('imgtag-script')
+    writeFileSync(join(p.srcDir, 'page.mjs'), [
+      '<script>',
+      '  $doc = \'<@img src="nexistepas.png" alt="x"></@img>\'',
+      '</script>',
+      '',
+      '<div>{$doc}</div>',
+    ].join('\n'))
+    const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
+    const stats = await bundler.compile()
+    assert.equal(stats.errors.length, 0,
+      `un <@img> cité dans une chaîne de <script> ne doit jamais être résolu :\n${stats.errors.map(e => e.message).join('\n')}`)
+    await bundler.close()
+  })
+
+  it('la même balise dans un <style> (fichier absent, cité dans un commentaire CSS) — aucune résolution tentée, build OK', async () => {
+    const p = projet('imgtag-style')
+    writeFileSync(join(p.srcDir, 'page.mjs'), [
+      '<style>',
+      '/* <@img src="nexistepas.png" alt="x"></@img> */',
+      '</style>',
+      '',
+      '<div>x</div>',
+    ].join('\n'))
+    const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
+    const stats = await bundler.compile()
+    assert.equal(stats.errors.length, 0,
+      `un <@img> cité dans un <style> ne doit jamais être résolu :\n${stats.errors.map(e => e.message).join('\n')}`)
+    await bundler.close()
+  })
+
+  it('la même balise dans un commentaire HTML (fichier absent) — aucune résolution tentée, build OK', async () => {
+    const p = projet('imgtag-commentaire')
+    writeFileSync(join(p.srcDir, 'page.mjs'), [
+      '<!-- <@img src="nexistepas.png" alt="x"></@img> -->',
+      '<div>x</div>',
+    ].join('\n'))
+    const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
+    const stats = await bundler.compile()
+    assert.equal(stats.errors.length, 0,
+      `un <@img> cité dans un commentaire HTML ne doit jamais être résolu :\n${stats.errors.map(e => e.message).join('\n')}`)
+    await bundler.close()
+  })
+
   it('balise vivant SEULEMENT dans un partial <@include> est résolue', async () => {
     const p = projet('imgtag-partial')
     writeFileSync(join(p.srcDir, 'hero.png'), pngDe(1600, 900))

@@ -65,7 +65,7 @@ function extractFromSpace(game: Game): Record<string, { x: number; y: number }> 
 export interface MjsServerTurnsDef {
   /** 'roundrobin' = ordre des sièges (ordre d'arrivée) ; fn = calcule le prochain joueur soi-même */
   order?: 'roundrobin' | ((game: Game) => MjsServerSeat | string | null)
-  /** ms — minuterie de tour auto-réarmée à chaque changement de `partie.turn` */
+  /** ms — minuterie de tour auto-réarmée à chaque changement de `game.turn` */
   timeout?: number
 }
 
@@ -132,7 +132,7 @@ export interface MjsServerGameDef {
   /** phase → coups permis (moves ET intents, même registre) — absent = aucune restriction de phase */
   phases?: Record<string, string[]>
   turns?: MjsServerTurnsDef
-  /** minuteries NOMMÉES — l'échéance appelle timers[nom](partie), cf. partie.timer() */
+  /** minuteries NOMMÉES — l'échéance appelle timers[name](game), cf. game.timer() */
   timers?: Record<string, (game: Game) => void>
   limits?: MjsServerLimitsDef
   /** ms — partie sans plus aucun joueur CONNECTÉ → détruite après ce délai, défaut 60000 */
@@ -142,7 +142,7 @@ export interface MjsServerGameDef {
    *  quorum, cf. mjs-server/lockstep.ts receiveHash) : `info.suspects` = sièges identifiés (auto-
    *  contradiction OU minoritaires face au hash majoritaire), JAMAIS la majorité honnête — le jeu
    *  DÉCIDE de la suite (rien/log/fin, aucun comportement automatique imposé), en plus de la
-   *  diffusion µgame:event 'divergence' {tick, suspects, raison} à tous les joueurs (cf.
+   *  diffusion µgame:event 'divergence' {tick, suspects, reason} à tous les joueurs (cf.
    *  game.ts::_receiveHash). */
   onDivergence?: (game: Game, info: MjsServerLockstepDivergence) => void
   /** mode 'lockstep' SEULEMENT (erreur si déclaré hors lockstep) — plafonne le journal d'ordres
@@ -170,7 +170,7 @@ export interface MjsServerGameDef {
    *  Orthogonal à `tick` (utilisable en mode événementiel classique aussi). */
   deltas?: boolean
   /** zone d'intérêt OPTIONNELLE — grille de cellules carrées de taille `cell`, exposée en
-   *  `partie.space` (src/mjs-server/space.ts : .set/.remove/.query). UTILITAIRE nu, aucun filtrage
+   *  `game.space` (src/mjs-server/space.ts : .set/.remove/.query). UTILITAIRE nu, aucun filtrage
    *  imposé — le jeu s'en sert où il veut (typiquement dans `view` ou `simulate`). */
   space?: { cell: number }
   /** mode ACTION (tick > 0 requis) — compensation de lag serveur, cf. MjsServerHistoryDef */
@@ -184,22 +184,22 @@ export interface MjsServerGameDef {
   /** anti-triche (détection par coup, OPT-IN) — active la vérification de séquence
    *  ANTI-REJEU : chaque coup peut porter un numéro croissant (`_n` s'il existe déjà côté µ.predict,
    *  SINON `_s` dédié) que le serveur compare au dernier accepté PAR SIÈGE — rejette tout coup à seq
-   *  ≤ dernier (rejeu/doublon) ou trop en avance (fenêtre fixe, cf. game.ts ANTIREJEU_FENETRE).
+   *  ≤ dernier (rejeu/doublon) ou trop en avance (fenêtre fixe, cf. game.ts ANTIREPLAY_WINDOW).
    *  Cohabite SANS CONFLIT avec `_n`/`_ack` de µ.predict (réconciliation, cf. game.ts::
    *  _extractAntiReplaySeq) : lecture SEULE de `_n`, jamais consommé/muté — un coup SANS _n ni _s
    *  n'est jamais bloqué par cette garde (rétro-compat totale). Littéralement `true` ou absent —
    *  aucune autre valeur. */
   antiReplay?: true
   /** anti-triche (détection par coup) — appelé à CHAQUE événement journalisé (def.suspect
-   *  véridique, violation antiRejeu, violation limits.moveIntervalMs), REJETÉ ou log-seul — MÊME
+   *  véridique, violation antiReplay, violation limits.moveIntervalMs), REJETÉ ou log-seul — MÊME
    *  forme que l'entrée du journal (cf. MjsServerSuspicionEvent, game.ts::_antiCheatLog() pour
    *  la relecture a posteriori). L'appli hôte décide de la suite (bannir/logguer/rien), aucun
    *  comportement automatique imposé — MÊME philosophie que def.onDivergence ci-dessus. */
   onSuspicion?: (event: MjsServerSuspicionEvent) => void
   /** anti-triche (spectateurs, OPT-IN, anti-triche poussé au maximum) — vue
-   *  SÛRE dédiée aux clients SPECTATEURS (cf. partie._addSpectator/_spectatorView) : appelée à
-   *  la place de `view` pour ces clients-là (jamais de siège, jamais dans `partie.players`).
-   *  Absent → repli sur `view` SEULEMENT si l'auteur l'a lui-même déclaré (appelée avec `joueur:
+   *  SÛRE dédiée aux clients SPECTATEURS (cf. game._addSpectator/_spectatorView) : appelée à
+   *  la place de `view` pour ces clients-là (jamais de siège, jamais dans `game.players`).
+   *  Absent → repli sur `view` SEULEMENT si l'auteur l'a lui-même déclaré (appelée avec `player:
    *  null` en 2e argument — marqueur clair, cf. sa signature déjà nullable) ; si NI l'un NI l'autre
    *  n'est déclaré, un spectateur ne reçoit JAMAIS l'état par défaut (repli `{}` + avertissement,
    *  cf. game.ts::_spectatorView — anti-fuite, symétrique du repli par défaut mais volontairement
@@ -241,7 +241,7 @@ export interface MjsServerResolvedDef {
   readonly history: { ticks: number; extract: (game: Game) => Record<string, { x: number; y: number }>; interp: number } | null
   /** anti-triche — cf. MjsServerGameDef.suspect */
   readonly suspect: ((move: string, context: MjsServerSuspectContext) => MjsServerSuspectResult) | null
-  /** anti-triche — cf. MjsServerGameDef.antiRejeu ; TOUJOURS résolu (false par défaut), jamais absent */
+  /** anti-triche — cf. MjsServerGameDef.antiReplay ; TOUJOURS résolu (false par défaut), jamais absent */
   readonly antiReplay: boolean
   /** anti-triche — cf. MjsServerGameDef.onSuspicion */
   readonly onSuspicion: ((event: MjsServerSuspicionEvent) => void) | null
@@ -479,7 +479,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
 
   // --- anti-triche (détection par coup, TOUT opt-in) — MODE-AGNOSTIQUE (autorisé aussi
   // bien en 'authoritative' qu'en 'lockstep', contrairement à state/view/deltas/intents/simulate/
-  // space/histo ci-dessus : un ORDRE lockstep reste un coup pour ces 3 gardes génériques, cf.
+  // space/history ci-dessus : un ORDRE lockstep reste un coup pour ces 3 gardes génériques, cf.
   // game.ts::_antiCheatGuard) — AUCUNE restriction de mode ici, volontairement.
   if (raw.suspect !== undefined && typeof raw.suspect !== 'function') {
     throw new Error(t('serveur.game-suspect-invalide', { prefix: prefix, received: JSON.stringify(raw.suspect) }))
@@ -490,7 +490,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
   if (raw.onSuspicion !== undefined && typeof raw.onSuspicion !== 'function') {
     throw new Error(t('serveur.game-onsuspicion-invalide', { prefix: prefix, received: JSON.stringify(raw.onSuspicion) }))
   }
-  // anti-triche (spectateurs) — mode-agnostique, MÊME esprit que suspect/antiRejeu/
+  // anti-triche (spectateurs) — mode-agnostique, MÊME esprit que suspect/antiReplay/
   // onSuspicion ci-dessus (aucune restriction de mode ici, volontairement).
   if (raw.spectatorView !== undefined && typeof raw.spectatorView !== 'function') {
     throw new Error(t('serveur.game-spectatorview-invalide', { prefix: prefix, received: JSON.stringify(raw.spectatorView) }))
@@ -498,7 +498,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
 
   // vue sûre par défaut (anti-triche, AVERTISSEMENT SEUL — jamais un throw, rétro-compat
   // solo/plateau public assumée) — def.view ABSENTE sur un jeu à PLUSIEURS sièges : le défaut de
-  // `view` juste en dessous (raw.view ?? état ENTIER) diffuse alors partie.state COMPLET à TOUS
+  // `view` juste en dessous (raw.view ?? état ENTIER) diffuse alors game.state COMPLET à TOUS
   // les sièges, secrets par joueur compris — fuite SILENCIEUSE si l'auteur ne le sait pas. Exclu
   // en 'lockstep' : `view` y est INTERDIT (aucun état serveur à filtrer, cf. le check plus haut,
   // `raw.view` y est donc TOUJOURS `undefined`) — avertir serait un faux positif systématique,
@@ -539,7 +539,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     deltas:   raw.deltas ?? false,
     space:    raw.space ? { cell: raw.space.cell } : null,
     history:    raw.history ? { ticks: raw.history.ticks, extract: raw.history.extract ?? extractFromSpace, interp: raw.history.interp ?? (2 * (1000 / tickHz)) } : null,
-    // anti-triche — cf. def.suspect/antiRejeu/onSuspicion plus haut
+    // anti-triche — cf. def.suspect/antiReplay/onSuspicion plus haut
     suspect:     raw.suspect ?? null,
     antiReplay:   raw.antiReplay ?? false,
     onSuspicion: raw.onSuspicion ?? null,

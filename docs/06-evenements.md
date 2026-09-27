@@ -6,6 +6,8 @@ On écoute un événement avec un attribut **`@<événement>`** : `@click`, `@in
 
 > 🔤 Les corps de handlers (`@click={ … }`) sont compilés en **Civet** par défaut (comme le `<script>` du composant, cf. [Anatomie d'un composant](02-composant.md)) : le ternaire **espacé** `cond ? a : b` est accepté, `??` (opérateur existentiel) fonctionne, et un ternaire **collé** (`cond?a:b`) lève une erreur de compilation orientante plutôt qu'un comportement surprenant (`?` collé est l'opérateur d'existence Civet). Un projet en `languages: { template: "js" }` (repli explicite) retrouve le comportement historique par regex, plus permissif mais moins idiomatique.
 
+> ⚠️ **Pas de commentaire `#` dans une expression en ligne.** Un gestionnaire (`@click={ … }`), un callback de transition ou une interpolation `{ … }` sont chacun une expression isolée, pas un vrai fichier Civet/Coffee compilé dans son ensemble : un commentaire `#` écrit à l'intérieur n'est pas retiré et casse l'expression (erreur au runtime, ou pire, un JS silencieusement mal formé). Pour commenter à l'intérieur d'une de ces expressions, utilise un commentaire JS `/* … */` (ou `// …` en toute fin d'expression) — celui-là est du JS valide, exécuté sans traitement particulier : `@click={$count += 1 /* incrément */}`.
+
 ## Les trois formes
 
 ### Corps de handler — `@click={ … }`
@@ -25,7 +27,7 @@ Entre accolades, on écrit **directement le corps** du handler — pas une fonct
 
 On peut aussi mettre directement une expression : `@click={$count += 1}` ou `@click={$selected = color}`. Pas de currying ni de wrapping : c'est exécuté tel quel quand l'événement survient.
 
-> ⚠️ **Piège fréquent** : n'enveloppe **pas** le corps dans une fonction (`@pointermove={(event)-> …}`) — l'accolade attend le **corps exécuté**, pas une fonction à appeler. `@click={(e)-> $count += 1}` ne fait *rien* au clic : ça construit une fonction et la jette (jamais invoquée), sans erreur ni avertissement. Écris le corps directement (`@click={$count += 1}`), et utilise `e`/`el` — déjà en scope — plutôt que de redéclarer un paramètre.
+> ℹ️ **Inutile d'envelopper le corps dans une fonction** (`@pointermove={(event)-> …}`) : l'accolade attend le **corps exécuté**. Une fonction que le gestionnaire **renvoie** est appelée avec `(e, el)` — c'est ce qui fait marcher la référence ci-dessous —, donc `@click={(e)-> $count += 1}` fonctionne, mais c'est un détour. Écris le corps directement (`@click={$count += 1}`), et utilise `e`/`el` — déjà en scope — plutôt que de redéclarer un paramètre. Une fonction **rangée** dans l'état (`@click={$rappel = -> …}`) est rangée, jamais appelée au passage.
 
 ### Référence de fonction — `@click={maMethode}`
 

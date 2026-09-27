@@ -526,7 +526,13 @@
     // @viewTransition : cascade DÉPART vs ARRIVÉE, la plus grosse priorité gagne (égalité →
     // le départ gagne), cf. `_mjs_vtResolveNavigation`/`_mjs_vtWinner`. Garde d'environnement
     // (_mjs_vtEnabled) ET résolution — deux conditions SÉPARÉES (cf. leurs commentaires respectifs).
-    var vtWinner = this._mjs_vtEnabled() ? this._mjs_vtResolveNavigation(matchPath) : null;
+    // `!µ._mjs_vtPageSwapping` : ce navigate() peut être appelé SYNCHRONEMENT depuis l'intérieur
+    // du updateCallback d'une transition de PAGE déjà démarrée (mjs_ujs.ts, µ._mjs_vtWrapSwap, cf.
+    // son bandeau — les 6 sites d'échange de page finissent par ce navigate()) : sans cette garde,
+    // document.startViewTransition() était rappelé DEPUIS L'INTÉRIEUR du 1er, avant même que celui-ci
+    // n'ait rendu son objet ViewTransition à SON appelant (réentrance prouvée par sonde). Drapeau
+    // PARTAGÉ, même mécanique que µ._mjs_vtAttrSeq (posé/levé par µ._mjs_vtWrapSwap).
+    var vtWinner = (this._mjs_vtEnabled() && !µ._mjs_vtPageSwapping) ? this._mjs_vtResolveNavigation(matchPath) : null;
     if (vtWinner && vtWinner.value) {
       // RIDEAUX « à travers le noir » (vrai DOM, µ._mjs_vtCurtainRun) : pris en
       // charge AVANT l'API View Transitions — pas de pseudo, pas de lévitation
@@ -603,34 +609,16 @@
     return (cfg && cfg !== 'none') ? cfg : false;
   },
   // Garde D'ENVIRONNEMENT pure (API du navigateur présente + accessibilité) — SANS
-  // rapport avec la résolution de cascade (_mjs_vtResolve/_vtResolveActive, juste en
-  // dessous). PARTAGÉE : mjs_ujs.ts l'appelle telle quelle (`µ.Router._mjs_vtEnabled()`)
-  // pour ses propres transitions de PAGE (swap de #app-root, cascade lien/config
-  // distincte de celle-ci) — mjs_router.ts est chargé AVANT mjs_ujs.ts (ordre
-  // CANONICAL, bundler/index.ts), donc atteignable sans dupliquer cette garde.
+  // rapport avec la résolution de cascade (_mjs_vtResolve, cf. _mjs_vtResolveNavigation plus bas,
+  // seule consommatrice réelle de cette cascade pour navigate()). PARTAGÉE : mjs_ujs.ts l'appelle
+  // telle quelle (`µ.Router._mjs_vtEnabled()`) pour ses propres transitions de PAGE (swap de
+  // #app-root, cascade lien/config distincte de celle-ci) — mjs_router.ts est chargé AVANT
+  // mjs_ujs.ts (ordre CANONICAL, bundler/index.ts), donc atteignable sans dupliquer cette garde.
   _mjs_vtEnabled: function() {
     if (typeof document === 'undefined' || typeof document.startViewTransition !== 'function') { return false; }
     // accessibilité : « réduire les animations » ⇒ permutation directe, jamais de transition
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { return false; }
     return true;
-  },
-  // Parcourt les vues routées des composants ENREGISTRÉS et retourne la première
-  // résolution ACTIVE trouvée (true, ou un nom de préréglage) — false si aucune.
-  // Spécifique au routeur (a besoin de _mjs_awareComponents/leurs <@view>) : contrairement
-  // à _mjs_vtEnabled (gate pure), CETTE boucle n'a pas d'équivalent côté UJS (une
-  // transition de PAGE n'a pas de "vue routée", cf. _mjs_vtResolvePage dans mjs_ujs.ts).
-  _vtResolveActive: function() {
-    var comp, node, ref, targetId, resolved;
-    ref = this._mjs_awareComponents;
-    for (comp of ref) {
-      if (!comp.routes) { continue; }
-      for (targetId in comp.routes) {
-        node = (comp._shadow && comp._shadow.querySelector(`metamjs-view#${targetId}`)) || (comp.querySelector && comp.querySelector(`metamjs-view#${targetId}`));
-        resolved = this._mjs_vtResolve(comp, node);
-        if (resolved) { return resolved; }
-      }
-    }
-    return false;
   },
   // ──────────────────────────────────────────────────────────────────────────
   // PRIORITÉ DÉPART/ARRIVÉE (@viewTransition <nom> [priorité]) — un 2ᵉ argument
@@ -639,9 +627,8 @@
   // gagne (qu'elle soit posée sur la page de DÉPART ou celle d'ARRIVÉE) ; à
   // égalité (le cas le plus courant : 1 partout par défaut), c'est TOUJOURS la
   // page de DÉPART qui gagne. Résolution en {value, priority} plutôt qu'une
-  // simple valeur — DISTINCTE de `_mjs_vtResolve` (gardé tel quel, testé, utilisé
-  // par `_vtResolveActive` ci-dessus) : celle-ci ne sait pas dire « rien de
-  // configuré » (false) d'un « off » explicite (les deux valent `false`) — ici
+  // simple valeur — DISTINCTE de `_mjs_vtResolve` (gardé tel quel, testé) : celle-ci ne sait
+  // pas dire « rien de configuré » (false) d'un « off » explicite (les deux valent `false`) — ici
   // les deux cas doivent se comporter différemment (rien configuré ⇒ ce côté
   // NE PARTICIPE PAS au départage, cf. `_mjs_vtSideResolve`/`_mjs_vtWinner`).
   //

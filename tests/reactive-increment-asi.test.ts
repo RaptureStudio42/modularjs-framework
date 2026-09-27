@@ -33,34 +33,34 @@ const METHODE = (corps: string) => `_mjsThis.ouvrir = function() {\n${corps}\n}`
 
 describe('$x++ — pas d\'instruction ouverte par une parenthèse (ASI)', () => {
 
-  it('en STATEMENT après une autre ligne : forme directe, aucune parenthèse ouvrante', () => {
+  it('en STATEMENT après une autre ligne : forme directe, aucune parenthèse ouvrante, conversion numérique', () => {
     const out = transformReactiveWrites(METHODE(
       `  µ._set(_mjsThis, 'edite', null)\n  $.compteur++\n  µ._set(_mjsThis, 'ouvert', true)`,
     ))
     const lignes = out.split('\n').map(l => l.trim()).filter(Boolean)
     assert.ok(lignes.every(l => !l.startsWith('(')), 'aucune ligne n\'ouvre sur `(` :\n' + out)
-    assert.match(out, /µ\._set\(_mjsThis, 'compteur', \$\.compteur \+ 1\)/)
+    assert.match(out, /µ\._set\(_mjsThis, 'compteur', \(\+\$\.compteur\) \+ 1\)/)
   })
 
-  it('`--` et la forme préfixe suivent la même règle', () => {
+  it('`--` et la forme préfixe suivent la même règle, conversion numérique', () => {
     const dec = transformReactiveWrites(METHODE(`  µ._set(_mjsThis, 'a', 1)\n  $.compteur--`))
     const pre = transformReactiveWrites(METHODE(`  µ._set(_mjsThis, 'a', 1)\n  ++$.compteur`))
-    assert.match(dec, /µ\._set\(_mjsThis, 'compteur', \$\.compteur - 1\)/)
-    assert.match(pre, /µ\._set\(_mjsThis, 'compteur', \$\.compteur \+ 1\)/)
+    assert.match(dec, /µ\._set\(_mjsThis, 'compteur', \(\+\$\.compteur\) - 1\)/)
+    assert.match(pre, /µ\._set\(_mjsThis, 'compteur', \(\+\$\.compteur\) \+ 1\)/)
     for (const out of [dec, pre]) {
       assert.ok(out.split('\n').every(l => !l.trim().startsWith('(')), out)
     }
   })
 
-  it('valeur CONSOMMÉE — la forme fidèle est conservée (post-fixe rend l\'ancienne valeur)', () => {
+  it('valeur CONSOMMÉE — la forme fidèle est conservée (post-fixe rend l\'ancienne valeur, convertie en nombre)', () => {
     // `return $.x++` (dernière ligne d'une méthode), argument d'appel, condition :
     // le nœud n'ouvre jamais une instruction, la sémantique prime.
     assert.match(transformReactiveWrites(METHODE(`  return $.compteur++`)),
-      /return \(\(_v => \(µ\._set\(_mjsThis, 'compteur', _v \+ 1\), _v\)\)\(\$\.compteur\)\)/)
+      /return \(\(_v => \(µ\._set\(_mjsThis, 'compteur', \(\+_v\) \+ 1\), \+_v\)\)\(\$\.compteur\)\)/)
     assert.match(transformReactiveWrites(`notify($.compteur++)`),
       /notify\(\(\(_v => /)
     assert.match(transformReactiveWrites(`const y = ++$.compteur`),
-      /const y = \(µ\._set\(_mjsThis, 'compteur', \$\.compteur \+ 1\), \$\.compteur\)/)
+      /const y = \(µ\._set\(_mjsThis, 'compteur', \(\+\$\.compteur\) \+ 1\), \$\.compteur\)/)
   })
 
   it('le JS émis s\'EXÉCUTE — c\'est ce que ni le build ni acorn ne voyaient', () => {

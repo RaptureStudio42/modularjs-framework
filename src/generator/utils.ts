@@ -42,7 +42,8 @@
 // en SYNCHRONE (des centaines de fois depuis des callbacks de `.replace()`),
 // aucun point d'`await` possible dans leur pile d'appel.
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, MU_MINMAX_ARG_NU_BODY, MU_RUNE_STORE_BODY, cheminInspectPlat, cheminSegments, cleMinmaxChemin, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { maskInertSameLength } from '../lexer/index.js'
 import { createRequire } from 'node:module'
 import { t } from '../messages/index.js'
 
@@ -153,19 +154,50 @@ function mapCodeSegments(src: string, fn: (code: string) => string): string {
   return res
 }
 
-// Setters de contexte `§x = …`/`§§x = …` — AVANT le découpage des chaînes
-// (mapCodeSegments) et communs aux DEUX moteurs (passe SYMBOLES, toujours
-// appliquée) : sinon un RHS chaîne littérale (`§§lang = 'fr'`) est
-// isolé par mapCodeSegments et le setter capture vide → `_mjs_setRCtx('lang',
-// )'fr'` (SyntaxError). On les traite ici sur la source ENTIÈRE (comme le
-// lexer pour les scripts) ; le RHS reste brut, ses sigils sont convertis
-// ensuite par `applySymbolRegex`/la passe grammaire.
+// rewriteMasked — applique `build(name, rhs)` à CHAQUE occurrence de `re` (groupe 1 =
+// nom, groupe 2 = RHS) trouvée sur une VUE MASQUÉE de `raw` (chaînes/gabarits/
+// commentaires neutralisés en espaces MÊME LONGUEUR, `maskInertSameLength`) — jamais à
+// l'intérieur d'un littéral. Les offsets restant alignés sur `raw`, `name`/`rhs` sont
+// relus dans `raw` via `m.indices` (drapeau `d`) : toujours le texte RÉEL, y compris
+// quand le RHS EST une chaîne littérale (`'fr'`), qui n'apparaît qu'en espaces dans la
+// vue masquée. Même technique que transpiler/sections.ts (maskInertSameLength + `d`).
+function rewriteMasked(raw: string, re: RegExp, build: (name: string, rhs: string) => string): string {
+  const masked = maskInertSameLength(raw)
+  let out    = ''
+  let cursor = 0
+  for (const m of masked.matchAll(re)) {
+    const idx = m.indices!
+    const [start, end] = idx[0]
+    out += raw.slice(cursor, start) + build(raw.slice(...idx[1]), raw.slice(...idx[2]))
+    cursor = end
+  }
+  return out + raw.slice(cursor)
+}
+
+// Setters de contexte `§x = …`/`§§x = …` — communs aux DEUX moteurs (passe SYMBOLES,
+// TOUJOURS appliquée), traités AVANT le découpage des chaînes (mapCodeSegments) pour
+// la même raison qu'avant : le RHS peut ÊTRE une chaîne littérale (`§§lang = 'fr'`) —
+// une fois isolé par mapCodeSegments, le setter capturerait un RHS vide →
+// `_mjs_setRCtx('lang', )'fr'` (SyntaxError). Recherche sur une VUE MASQUÉE
+// (rewriteMasked, ci-dessus) plutôt que sur `raw` tel quel : un texte de PROSE dans un
+// gestionnaire (`@click={$msg = 'Exemple : §theme = "sombre" définit un contexte
+// partagé'}`) contient la SOUS-CHAÎNE « §theme = … » — le scan naïf la prenait pour un
+// VRAI setter et injectait `this._mjs_setContext(...)` EN PLEIN MILIEU de la chaîne
+// littérale (échec Civet explicite en aval). Le masquage neutralise chaînes/gabarits/
+// commentaires ; les offsets restant alignés, le RHS relu dans `raw` reste verbatim
+// (chaîne comprise) — le RHS reste brut, ses sigils sont convertis ensuite par
+// `applySymbolRegex`/la passe grammaire.
+// `\s*` n'est PAS repris devant le groupe RHS (contrairement à l'ancien scan sur `raw`
+// nu) : gourmand, il mangerait tout un RHS masqué en espaces (une chaîne littérale) avant
+// même que `(.+?)` ne démarre — le groupe ne capturait plus que son DERNIER caractère
+// (`'theme', ')` au lieu de `'theme', 'dark')`). Le RHS est donc capturé DEPUIS le `=`,
+// espace de séparation compris, puis `.trim()` ôte cet unique espace de tête — les
+// espaces internes d'une chaîne (`'  fr  '`) restent, eux, intacts.
 function applyContextSetters(raw: string, _externalVars: string[]): string {
-  return raw
-    .replace(/(?<![\w.§])§§([a-zA-Z_][a-zA-Z0-9_$]*)\s*=(?!=|>)\s*(.+?)(?=\n|;|$)/g,
-      (_m: string, name: string, expr2: string) => `this._mjs_setRCtx('${name}', ${expr2})`)
-    .replace(/(?<![\w.§])§([a-zA-Z_]\w*)\s*=(?!=|>)\s*(.+?)(?=\n|;|$)/g,
-      (_m: string, name: string, expr2: string) => `this._mjs_setContext('${name}', ${expr2})`)
+  const avecRCtx = rewriteMasked(raw, /(?<![\w.§])§§([a-zA-Z_][a-zA-Z0-9_$]*)\s*=(?!=|>)(.+?)(?=\n|;|$)/gd,
+    (name, rhs) => `this._mjs_setRCtx('${name}', ${rhs.trim()})`)
+  return rewriteMasked(avecRCtx, /(?<![\w.§])§([a-zA-Z_]\w*)\s*=(?!=|>)(.+?)(?=\n|;|$)/gd,
+    (name, rhs) => `this._mjs_setContext('${name}', ${rhs.trim()})`)
 }
 
 // Passe GRAMMAIRE — idiomes Coffee/Civet historiques, traduits par regex.
@@ -275,6 +307,120 @@ function sansCommentaires(code: string): string {
     out.push(lignes[i])
   }
   return out.join('\n')
+}
+
+// inspectArgHorsCommentaire/minmaxArgHorsCommentaire — enveloppent MU_INSPECT_ARG_OUT/
+// MU_MINMAX_ARG_PAREN_OUT (sigils.ts, corps PARTAGÉ avec le script) : un match qui COMMENCE
+// dans un commentaire est laissé EXACTEMENT tel quel, jamais l'occasion de lever une erreur
+// pour une forme simplement CITÉE en prose (`// µinspect($x.foo) est refusé`). `offset`/
+// `chaine` : les DEUX arguments supplémentaires que `.replace(regex, fn)` passe déjà à `fn`
+// (position du match, texte COMPLET en cours de réécriture) — jamais utilisés jusqu'ici par ces
+// deux fonctions. RÉUTILISE le masqueur du lexer (maskInertSameLength, source unique) pour
+// savoir si `offset` tombe dans une zone inerte : ni chaîne ni gabarit n'y survit à ce stade
+// (mapCodeSegments les a déjà isolés), le SEUL écart possible entre `chaine` et sa vue masquée
+// est donc un commentaire `//`/`/* */`/`#` Civet. Portée VOLONTAIREMENT limitée à ces deux
+// fonctions (pas à toute la passe symboles) : les autres gardes de cette même fonction
+// (µevery/hooks/µderived/…) continuent de considérer un commentaire de FIN de ligne comme
+// refusé — comportement voulu ailleurs (cf. gardes-hors-script-commentaires.test.ts, « le bon
+// côté de l'erreur »), pas un défaut à corriger ici. Le script (transpiler/index.ts,
+// transformCodeOnly) ne voit lui-même plus aucun commentaire à ce stade : cette enveloppe y est
+// un no-op garanti, elle n'y change donc rien (ces fonctions restent utilisées BRUTES là-bas).
+function inspectArgHorsCommentaire(m: string, nomParen: string | undefined, cheminParen: string | undefined, nomNu: string | undefined, cheminNu: string | undefined, offset: number, chaine: string): string {
+  const masque = maskInertSameLength(chaine)
+  if (masque[offset] !== chaine[offset]) return m
+  return MU_INSPECT_ARG_OUT(m, nomParen, cheminReel(cheminParen), nomNu, cheminReel(cheminNu))
+}
+function minmaxArgHorsCommentaire(m: string, nom: string, chemin: string | undefined, offset: number, chaine: string): string {
+  const masque = maskInertSameLength(chaine)
+  if (masque[offset] !== chaine[offset]) return m
+  return MU_MINMAX_ARG_PAREN_OUT(m, nom, cheminReel(chemin))
+}
+// un « chemin » fait seulement de commentaires (`µinspect($x /* suivi */)`) n'en est pas un :
+// rien n'y est exécuté, l'argument reste la variable entière
+function cheminReel(chemin: string | undefined): string | undefined {
+  return chemin && maskInertSameLength(chemin).trim() !== '' ? chemin : undefined
+}
+
+// reecritOuRejetteRuneChemin — µinspect(...)/µminmax(...) : un chemin/appel/indexation dont la
+// clé est une chaîne littérale (`$x['a']`, `$x.foo('a')`) échappe encore à
+// inspectArgHorsCommentaire/minmaxArgHorsCommentaire plus bas : ceux-ci tournent PAR SEGMENT
+// (mapCodeSegments a déjà isolé la chaîne comme littéral INERTE avant d'appeler applySymbolRegex),
+// coupant l'appel en morceaux disjoints (`µinspect($x[` / `'a'` / `])`) — aucun des deux ne
+// correspond plus au corps ENTIER de MU_INSPECT_ARG_BODY/MU_MINMAX_ARG_PAREN_BODY (sigils.ts,
+// gabarit LISTE BLANCHE argTermineOuChemin) : une forme INVALIDE ressortirait intacte, une forme
+// VALIDE (chemin FIXE, cf. cheminInspectPlat) ne serait jamais réécrite. Scan donc AVANT ce
+// découpage, sur le texte ENTIER (`pre`, juste avant mapCodeSegments) — vue MASQUÉE
+// (maskInertSameLength, même technique que rewriteMasked/applyContextSetters plus haut) : la
+// chaîne à l'intérieur devient des espaces MÊME LONGUEUR, invisibles au motif mais le reste de la
+// forme (point, parenthèses, crochets) reste visible — et un commentaire qui CITE une forme
+// (valide ou refusée) est masqué de la même façon (le `µ` lui-même disparaît en espace) :
+// comment-safe PAR CONSTRUCTION, aucun besoin du détour offset/chaine des deux fonctions
+// ci-dessus. Le nom et le chemin RÉELS (guillemets compris) sont relus dans `raw` via
+// `m.indices` — pour un message d'erreur fidèle (chemin invalide) OU pour la réécriture (chemin
+// valide : µinspect filtre son affichage, µminmax borne une propriété, cf. sigils.ts). Rend le
+// texte reconstruit segment par segment (identique à `raw` sauf aux positions réécrites) ; lève à
+// la PREMIÈRE forme invalide
+// rencontrée (l'exception interrompt tout le reste, aucun risque de double message avec
+// applySymbolRegex/inspectArgHorsCommentaire plus loin — ceux-ci ne revoient plus jamais un
+// µinspect(...) à chemin, déjà tranché ici).
+export function reecritOuRejetteRuneChemin(raw: string, formeNue = false): string {
+  const masque = maskInertSameLength(raw)
+  // un store (`$$x`) n'est pas l'état d'un composant : refus clair, jamais un appel à la valeur
+  for (const m of masque.matchAll(new RegExp(MU_RUNE_STORE_BODY, 'g'))) {
+    throw new Error(t('transpiler.rune-store', { rune: m[1], nom: m[2] }))
+  }
+  // positions relevées sur `raw` par les passes, appliquées ensuite en une seule fois : une
+  // réécriture de l'une ne décale jamais les positions d'une autre
+  const remplacements: Array<[number, number, string]> = []
+  for (const m of masque.matchAll(new RegExp(MU_INSPECT_ARG_BODY, 'gd'))) {
+    const idx    = m.indices!
+    const nomIdx = (idx[1] ?? idx[3])!
+    const chemin = cheminApresNom(raw, masque, nomIdx[1], idx[2] ?? idx[4])
+    if (!chemin) continue
+    const plat = cheminInspectPlat(chemin)
+    if (plat === undefined) throw new Error(t('transpiler.rune-inspect-chemin', { nom: raw.slice(...nomIdx), chemin }))
+    remplacements.push([idx[0][0], idx[0][1], `µ.inspect('${raw.slice(...nomIdx)}', '${plat}')`])
+  }
+  for (const m of masque.matchAll(new RegExp(MU_MINMAX_ARG_PAREN_BODY, 'gd'))) {
+    const idx    = m.indices!
+    const nom    = raw.slice(...idx[1])
+    const chemin = cheminApresNom(raw, masque, idx[1][1], idx[2])
+    if (!chemin) continue
+    const segments = cheminSegments(chemin)
+    if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
+    remplacements.push([idx[0][0], idx[0][1], `µ.minmax(_mjsThis, ${cleMinmaxChemin(nom, segments)}`])
+  }
+  // forme sans parenthèses (`µminmax $x['cle'], 0, 10`) : <script> seulement — sa sortie nue n'est
+  // valide qu'une fois recompilée par Civet (cf. transpiler/index.ts, forme sans chemin)
+  if (formeNue) {
+    for (const m of masque.matchAll(new RegExp(MU_MINMAX_ARG_NU_BODY, 'gd'))) {
+      const idx    = m.indices!
+      const nom    = raw.slice(...idx[1])
+      const chemin = cheminApresNom(raw, masque, idx[1][1], idx[2])
+      if (!chemin) continue
+      const segments = cheminSegments(chemin)
+      if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
+      remplacements.push([idx[0][0], idx[0][1], `µ.minmax _mjsThis, ${cleMinmaxChemin(nom, segments)}`])
+    }
+  }
+  remplacements.sort((a, b) => a[0] - b[0])
+  let out     = ''
+  let curseur = 0
+  for (const [debut, fin, texte] of remplacements) {
+    out += raw.slice(curseur, debut) + texte
+    curseur = fin
+  }
+  return out + raw.slice(curseur)
+}
+// chemin refusé derrière `$nom`, relu dans le texte RÉEL : celui capturé sur la vue masquée, ou
+// sinon un gabarit collé au nom (`` $x`t` ``, appel étiqueté) que la vue masquée réduit à des
+// espaces et fait passer pour un simple espacement
+function cheminApresNom(raw: string, masque: string, finNom: number, cheminIdx: [number, number] | undefined): string {
+  if (cheminIdx && cheminIdx[0] !== cheminIdx[1]) return raw.slice(...cheminIdx)
+  let fin = finNom
+  while (masque[fin] === ' ' || masque[fin] === '\t') fin++
+  const entre = raw.slice(finNom, fin)
+  return entre.includes('`') ? entre.trim() : ''
 }
 
 function applySymbolRegex(seg: string, externalVars: string[]): string {
@@ -396,8 +542,8 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     // (transpiler/index.ts), sans quoi le préfixe pointé ci-dessus suffirait à éviter
     // le ReferenceError mais appellerait le runtime avec un typage difforme (clé
     // manquante, instance absente).
-    .replace(RE_MU_INSPECT_ARG_G, MU_INSPECT_ARG_OUT)
-    .replace(RE_MU_MINMAX_ARG_PAREN_G, MU_MINMAX_ARG_PAREN_OUT)
+    .replace(RE_MU_INSPECT_ARG_G, inspectArgHorsCommentaire)
+    .replace(RE_MU_MINMAX_ARG_PAREN_G, minmaxArgHorsCommentaire)
 
   // $x → $.x sauf si ∈ externalVars (singleton importé : garde `$x`, sa forme
   // compilée). La FAUTE de consommation `$x` au lieu de `µ$$x` est détectée en
@@ -487,7 +633,7 @@ export function cleanJs(expr: string | null | undefined, externalVars: string[] 
   // AFFECTATION en syntaxe MJS (`$x = (…)`) — ce sont les passes qui suivent qui
   // la transforment en setter réactif. Sa place est donc avant elles, pas après.
   const raw = rewriteMuToggle((expr ?? '').toString().trim(), 'interpolation {…}/handler')
-  const pre = applyContextSetters(raw, externalVars)
+  const pre = reecritOuRejetteRuneChemin(applyContextSetters(raw, externalVars))
   const out = mapCodeSegments(pre, (seg) => applySymbolRegex(applyGrammarRegex(seg), externalVars))
   // µimport('chemin.js') / mjsimport('chemin.js') → µ._mjs_import(µasset('chemin.js'))
   // passe FINALE, sur `out` COMPLET : `mapCodeSegments` isole déjà les
@@ -507,7 +653,7 @@ export function cleanJs(expr: string | null | undefined, externalVars: string[] 
 function cleanJsSymbolsOnly(expr: string | null | undefined, externalVars: string[]): string {
   // µtoggle(…) en tête — même raison qu'au-dessus (cleanJs)
   const raw = rewriteMuToggle((expr ?? '').toString().trim(), 'interpolation {…}/handler')
-  const pre = applyContextSetters(raw, externalVars)
+  const pre = reecritOuRejetteRuneChemin(applyContextSetters(raw, externalVars))
   const out = mapCodeSegments(pre, (seg) => applySymbolRegex(seg, externalVars))
   // µimport(...) — même passe finale que cleanJs ci-dessus, AVANT la
   // compilation Civet de la grammaire (compileGrammarViaCivet, appelant) :
@@ -743,14 +889,27 @@ export function parseMixedString(
   templateLang: 'civet' | 'js' = 'civet',
   moduleName?: string
 ): string {
-  // Cas pur : si tout est dans des braces équilibrées { ... } sans rien autour
+  // Cas pur : si tout est dans des braces équilibrées { ... } sans rien autour.
+  // Comptage CONSCIENT des chaînes (comme le scanner voisin juste en dessous et
+  // mapCodeSegments plus haut) : un `}` littéral DANS une chaîne de l'expression
+  // (`{$flag != '}'}`) fermait sinon le comptage AVANT la vraie fin — la valeur
+  // repartait « mixte » (template literal, coercion en chaîne) et un booléen
+  // s'inversait en silence au rendu. Trouvé en testant.
   if (rawVal.startsWith('{') && rawVal.endsWith('}')) {
-    let balance = 0
-    let isPure = true
+    let balance    = 0
+    let isPure     = true
+    let inString   = false
+    let stringChar = ''
     for (let i = 0; i < rawVal.length; i++) {
       const c = rawVal[i]
-      if (c === '{') balance += 1
-      if (c === '}') balance -= 1
+      if (inString && c === '\\') { i += 1; continue }
+      if (c === '"' || c === "'" || c === '`') {
+        if (!inString) { inString = true; stringChar = c }
+        else if (stringChar === c) inString = false
+      } else if (!inString) {
+        if (c === '{') balance += 1
+        if (c === '}') balance -= 1
+      }
       if (balance === 0 && i < rawVal.length - 1) {
         isPure = false
         break
@@ -850,7 +1009,12 @@ export function decodeHtmlEntities(s: string): string {
     if (body[0] === '#') {
       const isHex = body[1] === 'x' || body[1] === 'X'
       const code = isHex ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
-      return Number.isNaN(code) ? match : String.fromCodePoint(code)
+      if (Number.isNaN(code)) return match
+      // hors plage Unicode (> U+10FFFF) : String.fromCodePoint lève un RangeError qui
+      // plantait toute la compilation, sans composant ni ligne — le HTML remplace ces
+      // entités par U+FFFD plutôt que de refuser le document, même remède ici.
+      if (code < 0 || code > 0x10FFFF) return String.fromCharCode(0xFFFD)
+      return String.fromCodePoint(code)
     }
     const named = NAMED_HTML_ENTITIES[body]
     return named !== undefined ? named : match

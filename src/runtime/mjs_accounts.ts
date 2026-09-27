@@ -127,6 +127,7 @@ if (typeof MjsSocket !== 'undefined') {
   // reconnexion future ressusciterait le compte via la closure encore vivante du jeton révoqué).
   function _accountForget(h) {
     h._mjs_jeton = null;
+    h._mjs_authToken = null;
     h.state.loggedIn = false;
     h.state.name   = null;
     h.state.roles    = [];
@@ -141,15 +142,21 @@ if (typeof MjsSocket !== 'undefined') {
   // un socket jamais encore connecté — `_mjs_ws` est déjà `null`), puis `connect()` : le welcome SUIVANT
   // porte la nouvelle identité (mjs_socket.ts réabonne salons/flux automatiquement, cf. hello()).
   // Résolue au PROCHAIN 'welcome'. ÉCHEC (jeton expiré/invalide → µ:denied, cf. mjs-ws/core.ts::
-  // sendDeniedAndClose) : AUCUN événement client dédié n'existe pour µ:denied (mjs_socket.ts::
-  // _mjs_onDenied ne fait que fermer + poser `lastError`, cf. son commentaire de tête) — une sonde
-  // COURTE (25 ms) détecte la fermeture au lieu d'attendre le filet timeout (dernier recours,
-  // réseau réellement muet) : sans elle, un refus mettrait `MJS_COMPTE_ELEVATION_TIMEOUT_MS`
+  // sendDeniedAndClose) : mjs_socket.ts dispatche bien un événement 'denied' réservé (cf.
+  // _mjs_onDenied), mais une sonde COURTE (25 ms) sur l'état 'closed' reste plus directe qu'un
+  // abonnement dédié — une seule mécanique couvre aussi bien µ:denied qu'une fermeture réseau
+  // rapide sans trame applicative : sans elle, un refus mettrait `MJS_ACCOUNT_ELEVATION_TIMEOUT_MS`
   // (5 s) à se signaler alors qu'un aller-retour réseau réel est quasi instantané, MÊME classe de
   // latence qu'un welcome.
   function _accountElevate(h, token) {
     var self = h._mjs_sock;
     self.opts.auth = function() { return token; };
+    // jeton en cours d'élévation — tout welcome AUTHENTIFIÉ ultérieur (même arrivé après le rejet
+    // de CETTE promesse, cf. surWelcome/wiring persistant dans _mjs_ensureAccountWiring) remet
+    // compte.state en accord avec la connexion réelle. Effacé par _accountForget (déconnexion) ou
+    // par un refus EXPLICITE ci-dessous (sondeur) — jamais par le filet timeout, qui ne prouve rien
+    // (le réseau peut encore aboutir plus tard avec ce même jeton, cf. tête de fonction).
+    h._mjs_authToken = token;
     return new Promise(function(resolve, reject) {
       var reglee = false;
       var minuteur, sondeur;
@@ -159,7 +166,10 @@ if (typeof MjsSocket !== 'undefined') {
         self.off('welcome', surWelcome);
       }
       function surWelcome() {
-        if (reglee) { return; }
+        // jeton PÉRIMÉ (logout()/nouvelle élévation entre-temps, cf. _accountForget/_accountElevate) :
+        // une opération plus récente rend caduque la réponse de celle-ci — ne jamais ressusciter le
+        // compte sur un jeton qui n'est plus celui en cours.
+        if (reglee || h._mjs_authToken !== token) { return; }
         reglee = true;
         fini();
         _accountApply(h, token);
@@ -170,6 +180,11 @@ if (typeof MjsSocket !== 'undefined') {
         if (reglee || self.state !== 'closed') { return; }
         reglee = true;
         fini();
+        // fermeture rapide = refus EXPLICITE (µ:denied, cf. tête de fonction) : le jeton ne vaut
+        // plus rien, on restaure l'auth d'origine — sans quoi une reconnexion future (coupure
+        // réseau, cf. mjs_socket.ts) retenterait cette identité déjà refusée.
+        h._mjs_authToken = null;
+        self.opts.auth = h._mjs_originalAuth;
         reject(self.lastError || { code: 'account-elevation-echec', message: 'connexion refusée' });
       }, MJS_ACCOUNT_ELEVATION_PROBE_MS);
       minuteur = setTimeout(function() {
@@ -193,8 +208,33 @@ if (typeof MjsSocket !== 'undefined') {
     // opts.auth D'ORIGINE — capturé UNE FOIS, AVANT toute élévation (cf. _compteOublier) : ce
     // module « emprunte » opts.auth pendant qu'une identité de compte est active, le lui rend à la
     // déconnexion — jamais une appropriation permanente d'un réglage qui appartient à l'appli.
-    var h = { state: state, _mjs_sock: self, _mjs_cle: key, _mjs_jeton: null, _mjs_originalAuth: this.opts.auth };
+    var h = { state: state, _mjs_sock: self, _mjs_cle: key, _mjs_jeton: null, _mjs_authToken: null, _mjs_originalAuth: this.opts.auth };
     this._mjs_compte = h;
+
+    // welcome PERSISTANT (vit tant que le socket existe, contrairement au 'welcome' scopé à UNE
+    // seule élévation dans _accountElevate, désabonné dès que sa propre promesse se règle) : un
+    // welcome TARDIF (reconnexion déjà en vol après l'expiration du filet timeout ci-dessus) doit
+    // quand même remettre l'état en accord avec la connexion réelle — sinon compte.state.loggedIn
+    // restait bloqué à false alors que la socket est open, authentifiée avec ce même jeton
+    // (opts.auth le repose à chaque hello, cf. _accountElevate).
+    self.on('welcome', function() {
+      if (h._mjs_authToken) { _accountApply(h, h._mjs_authToken); }
+    });
+
+    // denied PERSISTANT — même raison que le welcome persistant juste au-dessus, symétrique : un
+    // refus EXPLICITE (µ:denied) qui arrive APRÈS que le filet timeout (5 s) ait déjà réglé la
+    // promesse d'élévation a aussi déjà coupé le sondeur 25 ms scopé à CETTE élévation (cf. fini()
+    // dans _accountElevate) — sans ce filet persistant, opts.auth restait pointé pour de bon sur le
+    // jeton refusé, réutilisé par toute reconnexion ultérieure. Vaut aussi APRÈS une élévation déjà
+    // RÉUSSIE : une coupure réseau involontaire reconnecte seule avec ce même jeton (opts.auth
+    // inchangé, cf. tête de fichier « Élévation ») — un refus explicite de CETTE reconnexion signifie
+    // que le jeton en cours ne vaut plus rien, l'identité EXPOSÉE doit donc redescendre en invité EN
+    // MÊME TEMPS que l'auth : même remise à zéro complète que logout() (_accountForget, y compris le
+    // jeton persisté en storage). Gardé par `h._mjs_authToken` comme avant : un refus qui ne vise pas
+    // le jeton en cours (déjà nul, ex. connexion jamais élevée) ne touche à rien.
+    self.on('denied', function(p) {
+      if (h._mjs_authToken) { _accountForget(h); h.state.error = _accountErrorText(p || 'denied'); }
+    });
 
     // creer()/connecter() peuvent échouer à DEUX endroits distincts — la requête account:create/
     // account:login elle-même (rejette TOUJOURS une chaîne, ex. 'account-name-taken', cf.
@@ -216,10 +256,12 @@ if (typeof MjsSocket !== 'undefined') {
 
     state.logout = function() {
       var p = self.request('account:logout', {}, { waitForOpen: true });
-      // l'intention de déconnexion LOCALE prime — purge le jeton (et restaure l'auth d'origine)
-      // que l'ack réussisse ou que la requête échoue (panne réseau) : jamais un jeton qui traîne
-      // après un deconnecter() appelé, cf. tête de fichier.
-      p.then(function() { _accountForget(h); }, function() { _accountForget(h); });
+      // l'intention de déconnexion LOCALE prime, TOUT DE SUITE — jamais après l'ack (cf. tête de
+      // fichier) : une élévation encore en vol (son propre welcome pas encore reçu) ne doit jamais
+      // ressusciter loggedIn/le jeton après ce point, même si ce welcome arrive avant la réponse de
+      // CETTE requête account:logout (cf. surWelcome/_accountElevate, gardé par h._mjs_authToken).
+      _accountForget(h);
+      p.catch(function() {});   // échec réseau déjà sans conséquence pour l'état local, purgé ci-dessus
       return p;
     };
 
