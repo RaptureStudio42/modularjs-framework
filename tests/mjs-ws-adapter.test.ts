@@ -5,7 +5,7 @@
 // — exactement le rôle que jouerait Redis entre deux VRAIS process. cf. tests/mjs-ws-adapter-redis.test.ts
 // pour le protocole RESP en isolation (sans Redis vivant) et docs/23-mjs-ws.md pour le guide.
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -80,19 +80,20 @@ async function startApp(
 
 // chaîne DIRIGÉE + INJECTIVE — direction 'in' (commande admin entrante /send),
 // cf. tests/mjs-ws-bridge.test.ts pour la couverture directe de la séparation de domaine.
-function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number): string {
-  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body]
+function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number, nonce: string): string {
+  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body, nonce]
   const canonical = fields.map(f => f.length +':'+ f).join('')
   return createHmac('sha256', secret).update(canonical).digest('hex')
 }
 
 async function postSigned(port: number, path: string, body: any): Promise<{ status: number; json: any }> {
   const bodyStr = JSON.stringify(body)
-  const ts  = Math.floor(Date.now() / 1000)
-  const sig = sign(SECRET, 'POST', path, bodyStr, ts)
+  const ts    = Math.floor(Date.now() / 1000)
+  const nonce = randomBytes(16).toString('hex')   // neuf à chaque requête : le pont l'exige par défaut
+  const sig   = sign(SECRET, 'POST', path, bodyStr, ts, nonce)
   const res  = await fetch('http://127.0.0.1:'+ port + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig },
+    headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig },
     body: bodyStr,
   })
   const text = await res.text()
@@ -185,7 +186,7 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
     assert.equal(appB.room('zone').size, 1)
     const cible = Array.from(appB.room('zone').clients)[0]
 
-    appA.room('zone').kick(cible.id, 'triche')   // A ne connaît l'id QUE par une source externe (ex. le pont) — jamais l'objet
+    appA.room('zone').kick('anon:'+ cible.id, 'triche')   // A ne connaît la personne QUE par une source externe (ex. la présence, le pont) — jamais l'objet ; sans compte : `anon:` suivi de son id de connexion
     await tick()
 
     assert.equal(leftReason, 'triche')
@@ -199,8 +200,8 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
     const bus = createMemoryAdapterBus()
     const { transport: tA, app: appA } = await startApp(bus)
     const { transport: tB, app: appB } = await startApp(bus)
-    const mondeA = appA.stream('monde')
-    const mondeB = appB.stream('monde')
+    const mondeA = appA.stream('monde', { public: true })
+    const mondeB = appB.stream('monde', { public: true })
 
     const traceA: Array<{ url: string; msg: any }> = []
     const µA = makeClient(tA, traceA)
@@ -244,7 +245,7 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
     await injector.start()
 
     const trace: Array<{ url: string; msg: any }> = []
-    appA.stream('ordre')   // déclaré côté A, jamais muté localement (seq=0)
+    appA.stream('ordre', { public: true })   // déclaré côté A, jamais muté localement (seq=0)
     const µA = makeClient(tA, trace)
     const sA = µA.socket('memory://ord')
     sA.connect()
@@ -281,8 +282,9 @@ describe('MJS-WS — adaptateur multi-processus (MemoryAdapter, boucle complète
     let fakeNow = Date.now()
     const bus = createMemoryAdapterBus()
     const now = () => fakeNow
-    const { transport: tA, app: appA } = await startApp(bus, { auth: (h: any) => ({ id: h.auth.uid }) }, now)
-    const { transport: tB, app: appB } = await startApp(bus, { auth: (h: any) => ({ id: h.auth.uid }) }, now)
+    // présence globale ouverte (fermée par défaut)
+    const { transport: tA, app: appA } = await startApp(bus, { auth: (h: any) => ({ id: h.auth.uid }), presence: 'public' }, now)
+    const { transport: tB, app: appB } = await startApp(bus, { auth: (h: any) => ({ id: h.auth.uid }), presence: 'public' }, now)
 
     const µA = makeClient(tA); const sA = µA.socket('memory://pa', { auth: () => ({ uid: 'ana' }) }); sA.connect()
     const $$pres = sA.presence()   // store réactif — vérifie aussi le DELTA leave, pas juste l'accesseur ponctuel

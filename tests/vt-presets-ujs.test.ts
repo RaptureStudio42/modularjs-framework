@@ -15,6 +15,7 @@ import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { transpile } from '../src/transpiler/index.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const VT_PRESETS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_vt_presets.ts'), 'utf-8')
@@ -41,6 +42,7 @@ function makeFakeDocument() {
 describe('mjs_vt_presets — bibliothèque de préréglages', function () {
   it('bases pseudos + rideaux en phase avec config.ts', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     assert.deepEqual(Object.keys(µ._vtPresets).sort(), ['cube', 'fade', 'flip', 'reveal', 'slide', 'turn', 'volet', 'zoom', 'zoom-out'].sort())
     assert.deepEqual(Object.keys(µ._mjs_vtCurtains).sort(), ['bars', 'blocks', 'iris', 'swipe'].sort())
@@ -55,6 +57,7 @@ describe('mjs_vt_presets — bibliothèque de préréglages', function () {
   for (const name of pseudoBases) {
     it(`préréglage '${name}' : CSS non vide ciblant ::view-transition-old/new(root)`, () => {
       const µ: any = { warn() {} }
+      poserMessages(µ)
       loadVtPresets(µ, makeFakeDocument())
       const entry = µ._vtPresets[name]
       const css = typeof entry === 'function' ? entry('left') : entry
@@ -66,6 +69,7 @@ describe('mjs_vt_presets — bibliothèque de préréglages', function () {
 
   it('rideau iris : rayon animé par @property --mjs-vtc-r (masque à couverture totale constante), zéro mask-size animé, raccord fermeture≡ouverture, invariants rideau conservés', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     const css = µ._mjs_vtCurtains.iris.css()
     assert.match(css, /@property --mjs-vtc-r\{syntax:'<percentage>';inherits:false;initial-value:0%\}/, 'propriété --mjs-vtc-r enregistrée (percentage, non hérité)')
@@ -81,6 +85,7 @@ describe('mjs_vt_presets — bibliothèque de préréglages', function () {
 describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique', function () {
   it('injecte une <style id="mjs-vt-presets"> dans document.head avec le CSS du préréglage demandé', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -91,19 +96,21 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('un 2e appel avec un AUTRE préréglage REMPLACE le contenu de la MÊME feuille (pas une 2e feuille créée)', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
     const first = doc.getElementById('mjs-vt-presets')
     µ._mjs_vtApplyPreset('zoom')
     const second = doc.getElementById('mjs-vt-presets')
-    assert.equal(first, second, 'même élément réutilisé, pas recréé')
+    assert.ok(first === second, 'même élément réutilisé, pas recréé')
     assert.equal(second.textContent, µ._vtPresets.zoom)
   })
 
   it('nom inconnu : µ.warn appelé (liste les noms valides), AUCUNE feuille créée', () => {
     const warnCalls: any[] = []
     const µ: any = { warn: (...a: any[]) => warnCalls.push(a) }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('n-existe-pas')
@@ -115,6 +122,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('nom inconnu APRÈS un préréglage valide : µ.warn + la feuille existante est VIDÉE (anti feuille périmée)', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -126,6 +134,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('_mjs_vtApplyPreset(true) — résolution « on » native : vide la feuille d\'un préréglage précédent', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('zoom')
@@ -136,6 +145,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('µ._isServer=true : no-op total, jamais côté serveur', () => {
     const µ: any = { warn() {}, _isServer: true }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -145,6 +155,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
   it('_mjs_vtApplyPreset(\'cube:up\') : le suffixe :direction n\'est plus honoré, µ.warn + repli sur la direction PAR DÉFAUT de la base (cube → left, PAS up)', () => {
     const warns: any[] = []
     const µ: any = { warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('cube:up')
@@ -157,6 +168,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('_mjs_vtApplyPreset(\'cube={ dir: up }\') → CSS de la fabrique cube direction up (rotateX, -50vh) — la SEULE façon d\'orienter, via la clé d\'option', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('cube={ dir: up }')
@@ -168,6 +180,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
   it('alias historique \'slide-right\' n\'existe plus : nom inconnu → µ.warn, feuille vidée (comme tout préréglage inconnu)', () => {
     const warns: any[] = []
     const µ: any = { warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -179,6 +192,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('duration (nombre NU) met le CSS généré à l\'échelle proportionnelle à la durée par défaut de la base (fade : .5s par défaut, duration:1000 → ×2 → 1s)', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade={ duration: 1000 }')
@@ -188,6 +202,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('sans duration : CSS strictement identique au préréglage brut (facteur 1, identité, zéro régression)', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -197,6 +212,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('duration: sur un préréglage DIRECTIONNEL (cube={ dir: up }), l\'échelle s\'applique aussi bien que le CSS soit issu de la fabrique', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     // cube : défaut 600ms (.6s) ; duration:300 → facteur 0.5 → .3s
@@ -208,6 +224,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
 
   it('duration (clé COURTE dur) équivaut à la forme longue', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade={ dur: 1000 }')
@@ -218,6 +235,7 @@ describe('µ._mjs_vtApplyPreset — injection/remplacement de la feuille unique'
   it('_mjs_vtApplyPreset d\'un RIDEAU (iris) : pas de feuille pseudo (vide la feuille existante), pas de warn', () => {
     const warns: any[] = []
     const µ: any = { warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     const doc = makeFakeDocument()
     loadVtPresets(µ, doc)
     µ._mjs_vtApplyPreset('fade')
@@ -231,6 +249,7 @@ describe('préréglages — invariants CSS (fabriques directionnelles, fidélit�
   const gen = (µ: any, base: string, dir: string) => { const e = µ._vtPresets[base]; return typeof e === 'function' ? e(dir) : e }
   it('perspective sur image-pair (JAMAIS -group) pour flip/cube/turn, dans les 4 directions', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     for (const base of ['flip', 'cube', 'turn']) for (const dir of ['left', 'right', 'up', 'down']) {
       const css = gen(µ, base, dir)
@@ -240,17 +259,20 @@ describe('préréglages — invariants CSS (fabriques directionnelles, fidélit�
   })
   it('mix-blend-mode:normal partout où des couches opaques s\'empilent', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     for (const base of ['volet', 'reveal', 'flip', 'cube', 'turn']) for (const dir of ['left', 'right', 'up', 'down']) assert.match(gen(µ, base, dir), /mix-blend-mode:normal/, `${base}:${dir}`)
     for (const base of ['zoom', 'zoom-out']) assert.match(gen(µ, base, 'left'), /mix-blend-mode:normal/, base)
   })
   it('z-index:1 sur l\'ancienne quand c\'est elle qui révèle (reveal/turn, 4 directions)', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     for (const base of ['reveal', 'turn']) for (const dir of ['left', 'right', 'up', 'down']) assert.match(gen(µ, base, dir), /z-index:1/, `${base}:${dir}`)
   })
   it('cube : axe partagé façon flux — -50vw horizontal, -50vh vertical', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     assert.match(gen(µ, 'cube', 'left'), /transform-origin:50% 50% -50vw/)
     assert.match(gen(µ, 'cube', 'right'), /transform-origin:50% 50% -50vw/)
@@ -259,6 +281,7 @@ describe('préréglages — invariants CSS (fabriques directionnelles, fidélit�
   })
   it('les RIDEAUX ne touchent jamais aux pseudos et n\'utilisent plus clip-path', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     for (const [name, spec0] of Object.entries(µ._mjs_vtCurtains)) {
       const spec: any = typeof spec0 === 'function' ? (spec0 as any)('down') : spec0
@@ -269,6 +292,7 @@ describe('préréglages — invariants CSS (fabriques directionnelles, fidélit�
   })
   it('fade dure .5s (visible), plus les .2s d\'origine', () => {
     const µ: any = { warn() {} }
+    poserMessages(µ)
     loadVtPresets(µ, makeFakeDocument())
     assert.match(µ._vtPresets.fade, /animation-duration:\.5s/)
   })
@@ -290,41 +314,49 @@ function installVt(µ: any, doc: any = {}) {
 describe('µ._mjs_vtResolvePage — résolution PAGE (attribut du lien > config)', function () {
   it('attribut mjs-vt="on" → true', () => {
     const µ: any = {}
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'on' }), true)
   })
   it('attribut mjs-vt="off" → false', () => {
     const µ: any = {}
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'off' }), false)
   })
   it('attribut mjs-vt="volet" (nom de préréglage) → "volet" (chaîne, pas un booléen)', () => {
     const µ: any = {}
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'volet' }), 'volet')
   })
   it('pas d\'attribut sur le lien → repli sur µ.viewTransition (config)', () => {
     const µ: any = { viewTransition: 'reveal' }
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => null }), 'reveal')
   })
   it('pas de lien du tout (popstate/submit) → repli sur µ.viewTransition (config)', () => {
     const µ: any = { viewTransition: true }
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage(null), true)
   })
   it('ni attribut ni config → false', () => {
     const µ: any = {}
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage(null), false)
   })
   it('µ.viewTransition="none" (config « désactivé ») → false', () => {
     const µ: any = { viewTransition: 'none' }
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage(null), false)
   })
   it('attribut mjs-vt="none" sur le lien ≡ "off" — coupe explicitement', () => {
     const µ: any = { viewTransition: 'fade' }
+    poserMessages(µ)
     installVt(µ)
     assert.equal(µ._mjs_vtResolvePage({ getAttribute: () => 'none' }), false)
   })
@@ -333,6 +365,7 @@ describe('µ._mjs_vtResolvePage — résolution PAGE (attribut du lien > config)
 describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startViewTransition', function () {
   it('gate OFF (µ.Router._mjs_vtEnabled() false) → swap() direct, document.startViewTransition PAS appelé', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => false } }
+    poserMessages(µ)
     let started = false
     const doc = { startViewTransition: (cb: any) => { started = true; cb() } }
     installVt(µ, doc)
@@ -344,6 +377,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('µ.Router absent (runtime tree-shaké sans "router") → repli silencieux sur swap() direct, jamais un crash', () => {
     const µ: any = {}
+    poserMessages(µ)
     const doc = { startViewTransition: () => { throw new Error('ne doit jamais être appelé') } }
     installVt(µ, doc)
     const calls: string[] = []
@@ -353,6 +387,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('gate ON mais résolution "off" (aucun attribut lien, config désactivée) → swap() direct, API pas invoquée', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: false }
+    poserMessages(µ)
     let started = false
     const doc = { startViewTransition: (cb: any) => { started = true; cb() } }
     installVt(µ, doc)
@@ -364,6 +399,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('gate ON + résolution "on" (config) → µ._mjs_vtApplyPreset(true) purge la feuille, puis startViewTransition', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: true }
+    poserMessages(µ)
     const applyCalls: any[] = []
     µ._mjs_vtApplyPreset = (n: any) => applyCalls.push(n)
     let started = false
@@ -378,6 +414,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('gate ON + résolution en CHAÎNE (préréglage) → µ._mjs_vtApplyPreset(nom) appelé AVANT document.startViewTransition, puis le swap tourne', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: 'zoom' }
+    poserMessages(µ)
     const order: string[] = []
     µ._mjs_vtApplyPreset = (n: string) => order.push('apply:' + n)
     const doc = { startViewTransition: (cb: any) => { order.push('start'); cb() } }
@@ -388,6 +425,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('cascade : attribut mjs-vt du LIEN gagne sur la config', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: 'zoom' }
+    poserMessages(µ)
     const applyCalls: string[] = []
     µ._mjs_vtApplyPreset = (n: string) => applyCalls.push(n)
     const doc = { startViewTransition: (cb: any) => cb() }
@@ -399,6 +437,7 @@ describe('µ._mjs_vtWrapSwap — enveloppe (ou pas) le swap dans document.startV
 
   it('cascade : lien mjs-vt="off" désactive explicitement, même si la config est active', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: true }
+    poserMessages(µ)
     let started = false
     const doc = { startViewTransition: (cb: any) => { started = true; cb() } }
     installVt(µ, doc)
@@ -764,7 +803,7 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     assert.equal(stats.errors.length, 1, 'attendait exactement 1 erreur de compilation')
     assert.match(
       stats.errors[0].message,
-      /@vt ne s'écrit plus ainsi : c'est désormais @pageTransition\.\nRemplace la ligne « @vt="zoom" » par : @pageTransition="zoom"/,
+      /@vt ne s'écrit plus ainsi : c'est désormais @pageTransition\.\nRemplacez la ligne « @vt="zoom" » par : @pageTransition="zoom"/,
     )
   })
 
@@ -794,7 +833,7 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
   it('@pageTransition="cube:left" (suffixe :direction) → ERREUR, exemple PROPRE à @pageTransition (chaîne, pas le point des 4 autres positions)', async () => {
     await assert.rejects(
       transpile('<a href="/x" @pageTransition="cube:left">Suivant</a>\n', { moduleName: 'pt-dir-1' }),
-      /la direction ne s'écrit plus dans le nom — écris @pageTransition="cube=\{ dir: left \}"\./,
+      /la direction ne s'écrit plus dans le nom — écrivez @pageTransition="cube=\{ dir: left \}"\./,
     )
   })
 
@@ -837,6 +876,7 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     assert.equal(decoded, 'cube={ dir: left }')
     const warnings: string[] = []
     const µ: any = { warn: (msg: string) => warnings.push(msg) }
+    poserMessages(µ)
     installVt(µ)
     loadVtPresets(µ, makeFakeDocument())
     const resolved = µ._mjs_vtResolvePage({ getAttribute: () => decoded })

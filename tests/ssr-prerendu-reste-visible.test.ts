@@ -23,12 +23,12 @@ interface Projet { root: string; srcDir: string; outDir: string }
 interface Ligne { t: number; valeurs: string[] }
 interface Releve { jalons: Record<string, string[]>; trames: Ligne[]; textes: Record<string, string>; textesFinaux: Record<string, string> }
 
-// retards en ms par préfixe de fichier servi : le cœur arrive après le premier affichage, les
-// modules de composants bien après le cœur — la fenêtre « cœur là, composant pas encore défini »
-// devient alors observable
-const RETARD_COEUR   = 1000
-const RETARD_MODULES = 2400
-const SELECTEURS     = ['mjs-racine', 'mjs-leger', 'mjs-tardif']
+// le cœur arrive après le premier affichage ; les modules de composants sont RETENUS jusqu'au relevé « cœur évalué » — la
+// fenêtre « cœur là, composant pas encore défini » devient alors observable, et dure le temps du relevé quelle que soit la
+// vitesse de la machine (avec un retard fixe, une machine chargée relevait parfois après l'arrivée des modules)
+const RETARD_COEUR = 1000
+const MODULES      = ['racine-', 'enfant-', 'leger-', 'tardif-']
+const SELECTEURS   = ['mjs-racine', 'mjs-leger', 'mjs-tardif']
 
 function fixture(prefix: string): Projet {
   const root   = mjsTmp(prefix)
@@ -60,9 +60,12 @@ function ilotLight(html: string): string {
   return m![0]
 }
 
-// sert la coquille puis out/ tel quel ; chaque préfixe de `retards` diffère l'envoi du fichier
-async function servir(p: Projet, corps: string, tete: string, retards: Record<string, number>): Promise<{ url: string; server: Server }> {
-  const html   = `<!doctype html><html><head><meta charset="utf-8">${tete}<script type="module" src="/out/bundle.js"></script></head><body>${corps}</body></html>`
+// sert la coquille puis out/ tel quel ; chaque préfixe de `retards` diffère l'envoi du fichier, chaque préfixe de `retenus`
+// le garde jusqu'à `liberer()`
+async function servir(p: Projet, corps: string, tete: string, retards: Record<string, number>, retenus: string[]): Promise<{ url: string; server: Server; liberer: () => void }> {
+  const html    = `<!doctype html><html><head><meta charset="utf-8">${tete}<script type="module" src="/out/bundle.js"></script></head><body>${corps}</body></html>`
+  let liberer   = () => {}
+  const libere  = new Promise<void>(resolve => { liberer = resolve })
   const server = createServer((req, res) => {
     const chemin  = decodeURIComponent((req.url ?? '/').split('?')[0])
     const envoyer = () => {
@@ -82,11 +85,17 @@ async function servir(p: Projet, corps: string, tete: string, retards: Record<st
     }
     const nom    = chemin.split('/').pop() ?? ''
     const retard = Object.entries(retards).find(([prefixe]) => nom.startsWith(prefixe))
-    if(retard) setTimeout(envoyer, retard[1])
+    if(retenus.some(prefixe => nom.startsWith(prefixe))) libere.then(envoyer)
+    else if(retard) setTimeout(envoyer, retard[1])
     else envoyer()
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
-  return { url: `http://127.0.0.1:${(server.address() as any).port}/`, server }
+  return { url: `http://127.0.0.1:${(server.address() as any).port}/`, server, liberer }
+}
+
+// le cœur est évalué : son bouclier (`:not(:defined)…{display:none}`) est adopté par le document
+function bouclierAdopte(): boolean {
+  return document.adoptedStyleSheets.some((feuille) => Array.from(feuille.cssRules).some((r) => r.cssText.includes(':not(:defined)')))
 }
 
 // posée AVANT tout script de la page : relève `display` de chaque sélecteur à CHAQUE trame, pour que
@@ -128,7 +137,7 @@ function lireTextes(sels: string[]): Record<string, string> {
 }
 
 async function sonder(browser: any, p: Projet, corps: string, tete: string): Promise<{ releve: Releve; erreurs: string[] }> {
-  const { url, server } = await servir(p, corps, tete, { 'mjs_core-': RETARD_COEUR, 'racine-': RETARD_MODULES, 'enfant-': RETARD_MODULES, 'leger-': RETARD_MODULES, 'tardif-': RETARD_MODULES })
+  const { url, server, liberer } = await servir(p, corps, tete, { 'mjs_core-': RETARD_COEUR }, MODULES)
   const page              = await browser.newPage()
   const erreurs: string[] = []
   page.on('pageerror', (e: Error) => erreurs.push(e.message))
@@ -141,10 +150,11 @@ async function sonder(browser: any, p: Projet, corps: string, tete: string): Pro
     await page.waitForTimeout(800)
     jalons.avantCoeur = await page.evaluate(lireDisplay, SELECTEURS)
     const textes      = await page.evaluate(lireTextes, SELECTEURS)
-    // 1 400 ms : le cœur est évalué (bouclier adopté), aucun composant n'est encore défini
-    await page.waitForTimeout(600)
+    // cœur évalué (bouclier adopté), aucun composant défini (modules encore retenus) : un état attendu, pas une heure fixe
+    await page.waitForFunction(bouclierAdopte, null, { timeout: 15000 })
     jalons.coeurSansModule = await page.evaluate(lireDisplay, SELECTEURS)
     // modules servis, composants définis et montés, puis 2 s de trames
+    liberer()
     await page.waitForFunction(() => !!customElements.get('mjs-racine') && !!customElements.get('mjs-leger'), null, { timeout: 15000 })
     await page.waitForTimeout(2000)
     jalons.apresMontage = await page.evaluate(lireDisplay, SELECTEURS)
@@ -153,6 +163,7 @@ async function sonder(browser: any, p: Projet, corps: string, tete: string): Pro
     return { releve: { jalons, trames, textes, textesFinaux }, erreurs }
   }
   finally {
+    liberer()
     await page.close()
     await new Promise(resolve => server.close(() => resolve(null)))
   }

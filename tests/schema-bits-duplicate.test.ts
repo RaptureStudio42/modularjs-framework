@@ -9,12 +9,14 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { creerRegistre, defSchema, bits } from '../src/schema/core.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 function makeMuClient(): any {
   const µ: any = { warn: () => {}, error: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }

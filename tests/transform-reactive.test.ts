@@ -38,7 +38,7 @@ describe('transformReactiveWrites', () => {
 
   it('UpdateExpression $.x++ (post) preserve l\'ancienne valeur, convertie en nombre', () => {
     const out = transformReactiveWrites(`const old = $.count++;`)
-    assert.match(out, /_v => \(µ\._set\(_mjsThis, 'count', \(\+_v\) \+ 1\), \+_v\)/)
+    assert.match(out, /\(_v\) => \(µ\._set\(_mjsThis, 'count', \(\+_v\) \+ 1\), \+_v\)/)
   })
 
   it('UpdateExpression ++$.x (pre) retourne nouvelle valeur, convertie en nombre', () => {
@@ -60,7 +60,7 @@ describe('transformReactiveWrites', () => {
 
   it('--$.count avec valeur CONSOMMÉE : forme fidèle (ancienne valeur, convertie en nombre)', () => {
     const out = transformReactiveWrites(`const old = $.count--;`)
-    assert.match(out, /_v => \(µ\._set\(_mjsThis, 'count', \(\+_v\) - 1\), \+_v\)/)
+    assert.match(out, /\(_v\) => \(µ\._set\(_mjsThis, 'count', \(\+_v\) - 1\), \+_v\)/)
   })
 
   it('computed wrap `{ _mjs_c: true, f: ... }` devient _mjs_setComputed', () => {

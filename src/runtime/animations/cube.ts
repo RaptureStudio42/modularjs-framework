@@ -4,7 +4,7 @@
   valid = ['left', 'right', 'up', 'down'];
   dir = (ref = opts.dir) != null ? ref : (ref1 = opts.direction) != null ? ref1 : 'left';
   if(valid.indexOf(dir) === -1) {
-    µ.warn(`[ModularJS] @transition.cube : direction invalide '${dir}' — repli 'left'.`);
+    µ.warn(`[ModularJS] *cube : direction invalide '${dir}' — repli 'left'.`);
     dir = 'left';
   }
   pct = function(v) {

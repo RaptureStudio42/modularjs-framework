@@ -30,7 +30,10 @@ describe('_mjs_vtResolveNavigation — une vue dont le module ne change pas ne v
     prevCustomEvent = (globalThis as any).CustomEvent
     prevCustomElements = (globalThis as any).customElements
   })
-  afterEach(() => {
+  afterEach(async () => {
+    // navigate() diffère d'une tâche le contrôle « aucune route » (setTimeout, faute de requestAnimationFrame ici) :
+    // il passe avant que la fenêtre du test ne soit rendue, sinon il lit `window` une fois rendu et lève hors de tout test
+    await new Promise((r) => setTimeout(r, 0))
     ;(globalThis as any).window = prevWindow
     ;(globalThis as any).document = prevDocument
     ;(globalThis as any).CustomEvent = prevCustomEvent
@@ -38,7 +41,7 @@ describe('_mjs_vtResolveNavigation — une vue dont le module ne change pas ne v
   })
 
   function loadRouter(win: any) {
-    const µ: any = { log() {}, warn() {}, error() {} }
+    const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
     const g: any = globalThis
     g.window = win
     g.document = win.document

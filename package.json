@@ -1,6 +1,6 @@
 {
   "name": "modularjs-framework",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "description": "ModularJS (MJS) — framework front compile-time : réactivité résolue à la compilation (sans Proxy au runtime), Custom Elements + Shadow DOM, syntaxe .mjs (Civet par défaut). Compilateur + runtime + CLI dev/HMR.",
   "license": "MIT",
   "author": "Matrix",
@@ -55,10 +55,10 @@
     "typecheck": "tsc --noEmit",
     "test": "bash script/test-enclos.sh",
     "test:brut": "mocha --recursive tests/ --extension ts --require tsx/esm --require ./tests/helpers/tmp-sweep.ts --exit",
-    "test:browser": "mocha tests/browser-smoke/smoke.browser.mts tests/browser-smoke/transitions.browser.mts --require tsx/esm --exit --timeout 600000",
+    "test:browser": "mocha tests/browser-smoke/smoke.browser.mts tests/browser-smoke/transitions.browser.mts tests/browser-smoke/effets.browser.mts tests/browser-smoke/curseurs.browser.mts tests/browser-smoke/direct.browser.mts tests/browser-smoke/squelettes.browser.mts tests/browser-smoke/effets-visuels-rendu.browser.mts tests/browser-smoke/effets-visuels-ecran.browser.mts tests/browser-smoke/effets-grande-balise.browser.mts tests/browser-smoke/coeur-accessibilite.browser.mts --require tsx/esm --exit --timeout 600000",
     "lint": "eslint .",
     "bench:ws": "tsx bench/mjs-ws-bench.ts",
-    "prepublishOnly": "npm run build:self && npm run typecheck && npm run lint && npm test",
+    "prepublishOnly": "npm run build:self && npm run typecheck && npm run lint && npm run test:browser",
     "repetition": "bash script/repetition-publication.sh"
   },
   "files": [
@@ -88,7 +88,7 @@
     "@types/node": "^20.12.0",
     "@types/ws": "^8.18.1",
     "eslint": "^10.7.0",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^20.11.15",
     "mocha": "^11.7.6",
     "playwright": "^1.61.1",
     "tsx": "^4.19.0",
@@ -99,7 +99,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "happy-dom": ">=15",
+    "happy-dom": ">=20.11.2",
     "sharp": ">=0.33",
     "yaml": "^2.9.0"
   },

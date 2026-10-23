@@ -9,7 +9,7 @@
 // en collision, pour qu'on ne perde plus des heures à diagnostiquer.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
@@ -56,33 +56,36 @@ describe('bundler — collision de basename', function () {
     await bundler.close()
   })
 
-  it('deux .civet avec le même basename → warning explicite (collision de module)', async function () {
+  it('deux .civet avec le même basename → deux modules, chacun son fichier et son code, sans avertissement de collision', async function () {
     const root = mjsTmp('collision-civet')
     const srcDir = join(root, 'src')
+    const outDir = join(root, 'out')
     const sub1 = join(srcDir, 'a')
     const sub2 = join(srcDir, 'b')
     mkdirSync(sub1, { recursive: true })
     mkdirSync(sub2, { recursive: true })
 
-    // Cas vécu en production : `attachments.module.civet` présent dans
-    // deux tutos. Les deux compiles concurrents partagent le mangleCache
-    // mutable → produisent des hashes différents → écrasement disque →
-    // le .mjs qui @import-e via la manifest référence un fichier
-    // supprimé → import 404 silencieux au runtime.
+    // Cas vécu en production : `attachments.module.civet` présent dans deux tutos. Le stem du module
+    // était son seul nom de fichier : les deux compilaient vers la même unité, l'un recevait le code
+    // de l'autre (ou leurs fichiers s'écrasaient) et le .mjs qui @import-e le perdant se retrouvait
+    // avec un import 404 silencieux. Chaque module porte maintenant son dossier devant son nom quand
+    // un autre module a le même (cf. tests/modules-homonymes.test.ts pour le navigateur).
     writeFileSync(join(sub1, 'helper.module.civet'), 'export hi = -> "A"')
     writeFileSync(join(sub2, 'helper.module.civet'), 'export hi = -> "B"')
 
     const bundler = new Bundler({
       sourceDir: srcDir,
-      outputDir: join(root, 'out'),
+      outputDir: outDir,
       manifestPath: join(root, 'bundle.js'),
     })
     const stats = await bundler.compile()
 
     assert.equal(stats.errors.length, 0)
-    const w = stats.warnings.find(x => x.includes("'helper.module.civet'"))
-    assert.ok(w, `warning de collision .civet attendu. got: ${stats.warnings.join('\n')}`)
-    assert.ok(w!.includes(sub1) && w!.includes(sub2), 'doit citer les deux chemins')
+    assert.equal(stats.warnings.some(x => /Collision de basename/.test(x)), false, `deux modules de dossiers différents ne se disputent plus un nom. got: ${stats.warnings.join('\n')}`)
+    const portant = (marque: string): string[] => readdirSync(outDir).filter(f => f.endsWith('.js') && readFileSync(join(outDir, f), 'utf8').includes(marque))
+    assert.equal(portant('"A"').length, 1, 'le code de a dans un seul fichier')
+    assert.equal(portant('"B"').length, 1, 'le code de b dans un seul fichier')
+    assert.notEqual(portant('"A"')[0], portant('"B"')[0], 'deux fichiers distincts : aucun n\'écrase l\'autre')
 
     await bundler.close()
   })

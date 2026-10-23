@@ -5,7 +5,7 @@
 // Correctif : validation d'entrée (sérialisable + profondeur bornée à 64) AVANT tout envoi → 400
 // catalogué ; échec d'encodage résiduel (accroche future core.ts) → 500.
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
@@ -16,8 +16,8 @@ const SECRET = 'secret-test-bridge'
 // MÊME chaîne canonique DIRIGÉE + INJECTIVE que bridge.ts::canonicalString(direction='in'),
 // réimplémentée en boîte noire (comme tests/mjs-ws-bridge.test.ts) — preuve indépendante.
 function lp(field: string): string { return field.length +':'+ field }
-function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number): string {
-  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body]
+function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number, nonce: string): string {
+  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body, nonce]
   const canonical = fields.map(lp).join('')
   return createHmac('sha256', secret).update(canonical).digest('hex')
 }
@@ -45,10 +45,11 @@ async function startApp(opts: MjsWsOptions = {}): Promise<{ transport: MemoryTra
 async function post(port: number, path: string, body: any): Promise<{ status: number; json: any }> {
   const bodyStr = JSON.stringify(body)
   const ts      = Math.floor(Date.now() / 1000)
-  const sig     = sign(SECRET, 'POST', path, bodyStr, ts)
+  const nonce   = randomBytes(16).toString('hex')   // neuf à chaque requête : le pont l'exige par défaut
+  const sig     = sign(SECRET, 'POST', path, bodyStr, ts, nonce)
   const res  = await fetch('http://127.0.0.1:'+ port + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig },
+    headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig },
     body: bodyStr,
   })
   const text = await res.text()
@@ -108,6 +109,7 @@ describe('MJS-WS — bridge.ts, garde de sérialisation des 4 endpoints de push'
 
   it('POST /stream (op add) — value trop imbriquée → 400 catalogué, le flux N\'EST JAMAIS empoisonné', async () => {
     const { transport, app, bridgePort } = await startApp()
+    app.stream('partie-x', { public: true })   // déclaré par le code : un flux né du pont n'est servi à personne sans déclaration
     const { status, json } = await post(bridgePort, '/stream', { name: 'partie-x', op: 'add', id: 'poison', value: nestedPayload() })
     assert.equal(status, 400)
     assert.equal(json.ok, false)

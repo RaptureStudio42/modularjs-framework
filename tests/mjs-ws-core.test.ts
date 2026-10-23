@@ -209,7 +209,7 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
     // écrit à l'origine contre les réponses-stub des étapes 1-2 (présence toujours
     // vide) — depuis les étapes 3-4 la présence est RÉELLE : le client authentifié
     // se voit LUI-MÊME dans la présence globale (id de connexion, faute d'identity).
-    const { transport, app } = await startApp({ onLog: () => {} })   // flux 'ennemis' jamais déclaré côté app → warn INTENTIONNEL (reset vide honnête)
+    const { transport, app } = await startApp({ onLog: () => {}, presence: 'public' })   // flux 'ennemis' jamais déclaré côté app → warn INTENTIONNEL (reset vide honnête) ; présence globale ouverte (fermée par défaut)
     const µ = makeClient(transport)
     const s = µ.socket('memory://t12', { reconnect: { backoff: [0], jitter: 0 } })
     s.connect(); await tick()
@@ -273,7 +273,7 @@ describe('MJS-WS — cœur du protocole + protections (boucle complète, vrai cl
   it("14. connexion qui tombe PENDANT auth() async : aucun pair de présence fantôme", async () => {
     let releaseAuth: ((v: unknown) => void) | null = null
     const { transport, app } = await startApp({
-      onLog: () => {},
+      onLog: () => {}, presence: 'public',   // présence globale ouverte (fermée par défaut)
       auth:  () => new Promise(resolve => { releaseAuth = resolve }),
     })
     const µ = makeClient(transport)

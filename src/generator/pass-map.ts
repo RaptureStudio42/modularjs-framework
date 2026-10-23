@@ -19,12 +19,14 @@ export interface PassResult {
 // `hires` : indispensable ici — sans lui, une passe qui déplace du code À
 // L'INTÉRIEUR d'une ligne (le cas le plus fréquent : `$.x = v` → `µ._set(...)`)
 // ne pose qu'un segment en tête de ligne, et le chaînage retombe sur la
-// mauvaise colonne. `includeContent: false` : le source du .mjs est recollé une
-// seule fois, tout en bout de chaîne.
+// mauvaise colonne. `'boundary'` : un segment à chaque frontière de mot, là où
+// tombent tous les déplacements des passes, au lieu d'un par caractère — carte
+// environ deux fois plus petite et plus vite faite. `includeContent: false` : le
+// source du .mjs est recollé une seule fois, tout en bout de chaîne.
 export function passResult(ms: MagicString, original: string, changed: boolean, sourceName: string): PassResult {
   if (!changed) return { code: original }
   return {
     code: ms.toString(),
-    map:  ms.generateMap({ source: sourceName, hires: true, includeContent: false }).toString(),
+    map:  ms.generateMap({ source: sourceName, hires: 'boundary', includeContent: false }).toString(),
   }
 }

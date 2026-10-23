@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { assertAbsent } from './helpers/dom-assert.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -51,7 +52,7 @@ describe('mjs_modal — µ.modal.close (fermeture programmatique globale)', func
     assert.equal(r.isDismissed, true)
     assert.equal(r.value, undefined)
     assert.equal(r.dismiss, 'close')
-    assert.equal(box(document), null, 'boîte retirée du DOM')
+    assertAbsent(box(document), 'boîte retirée du DOM')
   })
 
   it('result fourni : fusionné PAR-DESSUS le défaut (value overridé, dismiss/isDismissed conservés)', async function () {
@@ -81,7 +82,7 @@ describe('mjs_modal — µ.modal.close (fermeture programmatique globale)', func
     const r1 = await p
     assert.equal(r1.isConfirmed, true, 'fermée normalement par confirm')
     assert.doesNotThrow(() => { µ.modal.close() })
-    assert.equal(box(document), null, 'toujours fermée, rien de cassé')
+    assertAbsent(box(document), 'toujours fermée, rien de cassé')
   })
 
   it('un 2e appel après une fermeture via µ.modal.close() lui-même : no-op silencieux (idempotent)', async function () {
@@ -111,10 +112,10 @@ describe('mjs_modal — µ.modal.close (fermeture programmatique globale)', func
     document.body.appendChild(trigger)
     trigger.focus()
     const p = µ.modal.fire({ text: 'x' })
-    assert.notEqual(document.activeElement, trigger, 'focus quitte trigger pendant l\'ouverture')
+    assert.ok(document.activeElement !== trigger, 'focus quitte trigger pendant l\'ouverture')
     µ.modal.close()
     await p
-    assert.equal(document.activeElement, trigger, 'focus revenu sur trigger')
+    assert.ok(document.activeElement === trigger, 'focus revenu sur trigger')
   })
 
   it("fonctionne aussi avec les raccourcis (µ.modal.success ouverte, fermée par µ.modal.close())", async function () {

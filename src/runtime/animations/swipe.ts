@@ -1,35 +1,24 @@
 // animations/swipe.coffee — front dégradé qui balaie l'élément et le révèle derrière lui, jumeau « sur un élément » du rideau de page swipe (mjs_vt_presets.ts)
+// Le front suit `angle` (en degrés, 0 = vers le haut, 90 = vers la droite, comme un dégradé CSS) ;
+// `dir`/`direction` (right, left, up, down) reste compris.
 (function(opts = {}) {
-  var css, dir, g, pct, posFor, setup, table;
+  var angle, css, pct, setup, words;
   pct = function(v) {
     return Math.round(v * 1000) / 1000;
   };
-  table = {
-    right: { image: 'linear-gradient(to right, #000 0%, #000 59.33%, transparent 66.66%, transparent 100%)', size: '300% 100%' },
-    left:  { image: 'linear-gradient(to left, #000 0%, #000 59.33%, transparent 66.66%, transparent 100%)', size: '300% 100%' },
-    down:  { image: 'linear-gradient(to bottom, #000 0%, #000 59.33%, transparent 66.66%, transparent 100%)', size: '100% 300%' },
-    up:    { image: 'linear-gradient(to top, #000 0%, #000 59.33%, transparent 66.66%, transparent 100%)', size: '100% 300%' }
-  };
-  dir = opts.dir != null ? opts.dir : (opts.direction != null ? opts.direction : 'right');
-  if (table[dir] == null) {
-    µ.warn("[ModularJS] @transition.swipe : direction invalide '"+ dir +"' — repli 'right'.");
-    dir = 'right';
+  words = { up: 0, right: 90, down: 180, left: 270 };
+  angle = typeof opts.angle === 'number' ? opts.angle : words[opts.dir != null ? opts.dir : opts.direction];
+  if (angle == null) {
+    if (opts.dir != null || opts.direction != null) µ.warn("[ModularJS] *swipe : direction invalide '" + (opts.dir != null ? opts.dir : opts.direction) + "' — repli vers la droite.");
+    angle = 90;
   }
-  g = table[dir];
-  posFor = {
-    right: function(t, u) { return `${pct(u * 100)}% 0%`; },
-    left:  function(t, u) { return `${pct(t * 100)}% 0%`; },
-    down:  function(t, u) { return `0% ${pct(u * 100)}%`; },
-    up:    function(t, u) { return `0% ${pct(t * 100)}%`; }
-  }[dir];
-  // à u=1 (caché) la boîte ne voit que le tiers transparent, à u=0 (visible) que du noir, entre
-  // les deux la rampe traverse la boîte dans le sens de dir — masque constant, seule la position bouge
+  // le masque : noir (visible) jusqu'au front, transparent après ; le front, large de 20 % de la
+  // ligne du dégradé, traverse toute la balise quand t va de 0 à 1
   css = function(t, u) {
+    var p = t * 120;
     return {
-      maskImage: g.image,
-      maskSize: g.size,
-      maskRepeat: 'no-repeat',
-      maskPosition: posFor(t, u)
+      maskImage: `linear-gradient(${angle}deg, #000 ${pct(p - 20)}%, transparent ${pct(p)}%)`,
+      maskRepeat: 'no-repeat'
     };
   };
   setup = function(node) {

@@ -118,7 +118,7 @@ describe('mjs_modal — µ.config.notifyPosition', function () {
     µ.config.notifyPosition = 'bottom-left'
     µ.modal.notify('deux')
 
-    assert.equal(container(document), el, 'même nœud conteneur — jamais recréé')
+    assert.ok(container(document) === el, 'même nœud conteneur — jamais recréé')
     assert.deepEqual(positionClasses(el), ['mjs-toasts-bottom-left'], "le conteneur COURANT (avec le 1er toast dedans) a suivi le changement de position")
     assert.equal(el.querySelectorAll('.mjs-toast').length, 2, 'les deux toasts sont toujours là, rien perdu au changement de position')
   })

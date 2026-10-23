@@ -40,12 +40,25 @@
 // durée). Le positionnement (top/left, calculé depuis getBoundingClientRect) reste, lui, posé en
 // style direct — donnée purement géométrique et jetable, même famille que le FLIP (mjs_easing.ts).
 
+// test d'inclusion insensible à une méthode `contains` du composant (cf. mjs_element.ts)
+µ._mjs_inside = µ._mjs_inside || function(a, b) {
+  return typeof Node === 'function' && a instanceof Node ? Node.prototype.contains.call(a, b) : a.contains(b);
+};
+// même chose pour `closest`
+µ._mjs_closest = µ._mjs_closest || function(n, sel) {
+  if (typeof Element === 'function' && n instanceof Element) return Element.prototype.closest.call(n, sel);
+  return n && typeof n.closest === 'function' ? n.closest(sel) : null;
+};
+
 µ._mjs_titleSheet = new CSSStyleSheet();
 
 µ._mjs_titleSheet.replaceSync(`:where(.mjs-title){position:fixed;z-index:2147483647;max-width:280px;pointer-events:none;opacity:0;padding:var(--mjs-title-pad, 6px 10px);border-radius:var(--mjs-title-radius, 6px);border:1px solid var(--mjs-border, rgba(255,255,255,.25));background:var(--mjs-title-bg, #1c2333);color:var(--mjs-title-fg, #f4f4f5);box-shadow:var(--mjs-title-shadow, 0 4px 14px rgba(0,0,0,.35));font:13px/1.4 system-ui,sans-serif;transition:opacity var(--mjs-title-dur, 150ms) ease,transform var(--mjs-title-dur, 150ms) ease}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="top"]){transform:translateY(var(--mjs-title-offset, 4px))}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="bottom"]){transform:translateY(calc(var(--mjs-title-offset, 4px)*-1))}
 :where(.mjs-title.mjs-title-visible){opacity:1;transform:translateY(0)}`);
+
+// reste dans un composant qui repose ses feuilles (cf. _mjs_applyLayout)
+µ._mjs_titleSheet._mjs_keep = true;
 
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_titleSheet];
 
@@ -359,15 +372,14 @@ function __titleScheduleShow(el, root) {
 // posé SEULEMENT quand un élément est réellement trouvé ET traité — un 2ᵉ passage qui ne trouve
 // rien à CE niveau reste libre d'agir (délégations de portées différentes, cas légitime).
 function __titleAncestor(target) {
-  if (!target || typeof target.closest !== 'function') { return null; }
-  return target.closest('[mjs-title], [mjs-title-html]');
+  return µ._mjs_closest(target, '[mjs-title], [mjs-title-html]');
 }
 function __titleOnEnter(e) {
   if (e._mjs_mjsTitleHandled) { return; }
   if (e.type === 'mouseover' && (Date.now() - __titleLastTouchAt) < 800) { return; } // mouseover synthétique émis après un toucher (mobile) : ignoré
   var el = __titleAncestor(e.target);
   if (!el) { return; }
-  if (e.relatedTarget && el.contains && el.contains(e.relatedTarget)) { return; } // reste dedans
+  if (e.relatedTarget && el.contains && µ._mjs_inside(el, e.relatedTarget)) { return; } // reste dedans
   e._mjs_mjsTitleHandled = true;
   __titleScheduleShow(el, this);
 }
@@ -375,7 +387,7 @@ function __titleOnLeave(e) {
   if (e._mjs_mjsTitleHandled) { return; }
   var el = __titleAncestor(e.target);
   if (!el) { return; }
-  if (e.relatedTarget && el.contains && el.contains(e.relatedTarget)) { return; } // reste dedans
+  if (e.relatedTarget && el.contains && µ._mjs_inside(el, e.relatedTarget)) { return; } // reste dedans
   e._mjs_mjsTitleHandled = true;
   if (__titlePendingEl === el) { __titleClearPending(); }
   if (__titleCurrent === el) { __titleHide(); }

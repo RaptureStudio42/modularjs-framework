@@ -15,11 +15,16 @@
   // WeakMap : un `comp.routes` remplacé (nouvel objet) régénère naturellement
   // l'entrée ; aucune rétention au-delà de la vie du composant.
   _mjs_routeSortCache: new WeakMap(),
-  // sous `µ._csp` : feuille constructible unique, adoptée une seule fois sur
-  // `document` (le CSS du panneau est statique, pas besoin d'un <style> par appel).
-  _mjs_routeErrorSheetAdopted: false,
+  // PERF — segments découpés, gardés : ceux d'un motif (même découpage à chaque essai, sur toutes les passes de
+  // chaque navigation), et ceux de la dernière adresse essayée (une navigation l'essaie contre toutes les routes)
+  _mjs_routeSegs: new Map(),
+  _mjs_pathSegsKey: null,
+  _mjs_pathSegs: null,
+  // sous `µ._csp` : feuille constructible unique (le CSS du panneau est statique, pas besoin d'un
+  // <style> par appel), adoptée par chaque racine où le panneau se pose — l'ombre du routeur, ou `document`.
+  _mjs_routeErrorSheet: null,
   register: function(comp) {
-    µ.log(`🚦 [Router] Enregistrement de : <${comp.tagName.toLowerCase()}>`);
+    µ._mjs_logger()?.('🚦 [Router] ' + µ._mjs_txt('routerLogRegister', { tag: comp.tagName.toLowerCase() }, 'Enregistrement de : <{tag}>'));
     // Parité <routes>/@routes — `validateRoutePath` (transpiler/sections.ts)
     // refuse un `*` catch-all qui n'est pas en dernière position, mais SEULEMENT pour le bloc
     // <routes> : la table `@routes` calculée en script n'est jamais validée, et `_matchSegs`
@@ -51,7 +56,7 @@
         segs = path.split('/').filter(Boolean);
         for (i = 0; i < segs.length; i++) {
           if (segs[i] === '*' && i !== segs.length - 1) {
-            return new Error(`[Router] <${comp.tagName.toLowerCase()}> : route '${path}' invalide — le '*' catch-all doit être en DERNIÈRE position (segment '${segs[i + 1]}' et la suite ne seraient jamais atteints).`);
+            return new Error('[Router] ' + µ._mjs_txt('routerCatchAllLast', { tag: comp.tagName.toLowerCase(), path: path, seg: segs[i + 1] }, '<{tag}> : route \'{path}\' invalide — le \'*\' catch-all doit être en DERNIÈRE position (segment \'{seg}\' et la suite ne seraient jamais atteints).'));
           }
         }
       }
@@ -65,7 +70,7 @@
     this._mjs_canonicalizeUrl();
     // On se base sur l'URL complète du navigateur pour extraire le hash
     matchPath = this._mjs_getMatchPath(window.location.href);
-    µ.log(`🚦 [Router] Init <${comp.tagName.toLowerCase()}> avec le Hash Path : '${matchPath}'`);
+    µ._mjs_logger()?.('🚦 [Router] ' + µ._mjs_txt('routerLogInit', { tag: comp.tagName.toLowerCase(), matchPath: matchPath }, 'Init <{tag}> avec le Hash Path : \'{matchPath}\''));
     // garde de RÉ-ENTRANCE au
     // MONTAGE, jumelle de celle de `navigate()` : si le `@urlChange` de CE
     // composant redirige (`to('/login')`, garde d'auth canonique), le `navigate`
@@ -193,15 +198,13 @@
     // `split('#')[1]` tronquait au 2e `#` (`'/p#/a#b'` → '/a' au lieu de '/a#b').
     hashIdx = destination.indexOf('#');
     hashPart = hashIdx === -1 ? null : destination.slice(hashIdx + 1);
-    // Si aucun hash n'est présent, le composant est considéré à sa racine '/'
-    matchPath = hashPart ? hashPart : '/';
+    // Sans hash, ou avec une ancre ordinaire (`#installation`, sans le `/` des routes — la règle du
+    // clic, du Précédent et de hashchange), le composant est considéré à sa racine '/'
+    matchPath = (hashPart && hashPart.charAt(0) === '/') ? hashPart : '/';
     // Retire la query collée au hash (`#/settings?tab=x` → `/settings`) : sinon
     // `_mjs_matchRoute` compare `settings?tab=x` et une route statique ne matche plus.
     // (La query est lue à part par `_mjs_updateUrlStore`, sur `loc.hash`/`loc.search`.)
     matchPath = matchPath.split('?')[0];
-    if (!matchPath.startsWith('/')) {
-      matchPath = '/' + matchPath;
-    }
     if (matchPath.length > 1) {
       matchPath = matchPath.replace(/\/$/, '');
     }
@@ -214,15 +217,18 @@
   // NB : `_mjs_getMatchPath` normalisait DÉJÀ le slash pour le MATCH (pas de 404),
   // mais laissait l'URL VISIBLE sale ; cette fonction nettoie la barre d'adresse.
   _mjs_canonHash: function(hash) {
-    var body, pathPart, qi, queryPart;
+    var body, pathPart, qi, queryPart, end;
     if (!hash || hash.charAt(0) !== '#') { return hash; }
     body = hash.slice(1);
     qi = body.indexOf('?');
     pathPart = qi === -1 ? body : body.slice(0, qi);
     queryPart = qi === -1 ? '' : body.slice(qi);
     if (pathPart.length > 1 && pathPart.charAt(pathPart.length - 1) === '/') {
-      pathPart = pathPart.replace(/\/+$/, '');
-      if (pathPart === '') { pathPart = '/'; }
+      // boucle et non `/\/+$/` : sur un lien piégé (`#////…////a/`), l'expression régulière repart de chaque
+      // `/` de la suite — temps quadratique, onglet gelé dès le chargement
+      end = pathPart.length;
+      while (end > 0 && pathPart.charCodeAt(end - 1) === 47) { end--; }
+      pathPart = end === 0 ? '/' : pathPart.slice(0, end);
     }
     return '#' + pathPart + queryPart;
   },
@@ -242,7 +248,7 @@
     try {
       window.history.replaceState(window.history.state, '', loc.pathname + loc.search + canon);
     } catch (e) {
-      µ.warn(`[Router] canonicalisation du slash refusée pour '${hash}' :`, e);
+      µ.warn('[Router] ' + µ._mjs_txt('routerSlashRefused', { hash: hash }, 'canonicalisation du slash refusée pour \'{hash}\' :'), e);
     }
   },
   // Matche un chemin courant contre un motif de route pouvant contenir des
@@ -252,8 +258,17 @@
   // avec `*` (`/admin/*`). Retourne {ok, params}.
   _mjs_matchRoute: function(matchPath, routePath) {
     var rp, mp;
-    rp = routePath.split('/').filter(Boolean);
-    mp = matchPath.split('/').filter(Boolean);
+    // tableaux partagés, jamais modifiés (`_matchSegs` ne fait que les lire)
+    rp = this._mjs_routeSegs.get(routePath);
+    if (!rp) {
+      rp = routePath.split('/').filter(Boolean);
+      this._mjs_routeSegs.set(routePath, rp);
+    }
+    if (matchPath !== this._mjs_pathSegsKey) {
+      this._mjs_pathSegs = matchPath.split('/').filter(Boolean);
+      this._mjs_pathSegsKey = matchPath;
+    }
+    mp = this._mjs_pathSegs;
     if (rp.length === 0) {
       return { ok: mp.length === 0, params: {} };
     }
@@ -447,6 +462,10 @@
     // dessus et abandonne : les composants restants ont de toute façon déjà
     // été traités par l'appel imbriqué (sa boucle couvre TOUT `_mjs_awareComponents`).
     gen = ++this._mjs_navGen;
+    // la barre de navigation (mjs_nav_progress.ts) : armée ici, elle part quand les composants des
+    // vues nouvelles sont arrivés (cf. `_mjs_navProgressEnd`) — rien à l'écran si c'est rapide
+    this._mjs_navWaiting = [];
+    if (typeof µ._mjs_navProgressStart === 'function') { µ._mjs_navProgressStart(); }
     matchPath = this._mjs_getMatchPath(destination);
     // Mémorise le dernier chemin routé : le listener `hashchange` (mjs_ujs)
     // s'en sert pour ne PAS re-router quand un back/forward a déjà navigué
@@ -464,7 +483,7 @@
     var _hashPart2 = _hi2 !== -1 ? destination.slice(_hi2 + 1) : '';
     var _qi2 = _hashPart2.indexOf('?');
     this._mjs_lastNavQuery = _qi2 !== -1 ? _hashPart2.slice(_qi2 + 1) : '';
-    µ.log(`🚦 [Router] Navigation locale vers : '${matchPath}'`);
+    µ._mjs_logger()?.('🚦 [Router] ' + µ._mjs_txt('routerLogNavigate', { matchPath: matchPath }, 'Navigation locale vers : \'{matchPath}\''));
     if (pushHistory || replaceHistory) {
       // Canonicalise le slash final AVANT de (r)emplacer (`to('/about/')` ou
       // `<a href="#/about/">` → l'historique n'enregistre que `#/about`). On ne
@@ -481,11 +500,14 @@
         if (replaceHistory) {
           window.history.replaceState({}, '', _dest);
         } else {
+          // position de la route quittée, rendue au Précédent par la navigation (mjs_ujs.ts, popstate) qui
+          // coupe le défilement natif ; sans elle, le navigateur s'en charge seul
+          if (typeof µ._mjs_saveScroll === 'function') { µ._mjs_saveScroll(window.location.pathname + window.location.search + (window.location.hash || '#')); }
           window.history.pushState({}, '', _dest);
         }
       } catch (e) {
         // SecurityError sur URL cross-origin passée à l'API publique.
-        µ.warn(`[Router] (r)emplacement d'historique refusé pour '${_dest}' :`, e);
+        µ.warn('[Router] ' + µ._mjs_txt('routerHistoryRefused', { dest: _dest }, '(r)emplacement d\'historique refusé pour \'{dest}\' :'), e);
       }
     }
     // `_mjs_updateUrlStore` APRÈS le
@@ -500,24 +522,32 @@
     // Convention MJS : `e.data` (pas `e.detail`). CustomEvent natif ne
     // connaît que `detail` au constructor → on définit `data` manuellement
     // après la construction (idem `_mjs_emit`).
+    // la transition de cette navigation (posée plus bas) : celle d'une navigation précédente ne compte plus
+    µ._mjs_vtLast = null;
     const _routeEv = new CustomEvent('mjs-route-changed');
     Object.defineProperty(_routeEv, 'data', { value: matchPath, enumerable: true });
     window.dispatchEvent(_routeEv);
     ref = this._mjs_awareComponents;
     results = [];
     var _mjsInject = () => {
-      for (comp of ref) {
-        if (gen !== this._mjs_navGen) {
-          // Une navigation plus RÉCENTE a pris le dessus pendant cette boucle
-          // (redirect dans un @urlChange déjà traité) — elle a déjà mis à jour
-          // TOUS les composants avec le VRAI chemin final ; continuer ici
-          // écraserait ce travail avec notre `matchPath` périmé.
-          break;
+      // la navigation finit (barre de navigation) même si un `urlChange` ou une vue lève : l'erreur
+      // reste visible, la barre ne reste pas à l'écran jusqu'à la navigation suivante
+      try {
+        for (comp of ref) {
+          if (gen !== this._mjs_navGen) {
+            // Une navigation plus RÉCENTE a pris le dessus pendant cette boucle
+            // (redirect dans un @urlChange déjà traité) — elle a déjà mis à jour
+            // TOUS les composants avec le VRAI chemin final ; continuer ici
+            // écraserait ce travail avec notre `matchPath` périmé.
+            break;
+          }
+          if (typeof comp._mjs_hooks?.urlChange === "function") {
+            comp._mjs_hooks.urlChange.call(comp, matchPath, this._mjs_extractParams(comp, matchPath));
+          }
+          results.push(this._mjs_injectViewsForComponent(comp, matchPath));
         }
-        if (typeof comp._mjs_hooks?.urlChange === "function") {
-          comp._mjs_hooks.urlChange.call(comp, matchPath, this._mjs_extractParams(comp, matchPath));
-        }
-        results.push(this._mjs_injectViewsForComponent(comp, matchPath));
+      } finally {
+        if (gen === this._mjs_navGen) { this._mjs_navProgressEnd(gen); }
       }
       // Après la salve : l'URL a-t-elle trouvé preneur quelque part ? (cf.
       // `_mjs_scheduleNoMatchCheck` — retire aussi un panneau d'erreur précédent.)
@@ -538,11 +568,13 @@
       // charge AVANT l'API View Transitions — pas de pseudo, pas de lévitation
       // (sous le noir, un morph serait invisible)
       if (typeof µ._mjs_vtCurtainRun === 'function' && typeof vtWinner.value === 'string' && µ._mjs_vtCurtainRun(vtWinner.value, _mjsInject)) {
-        µ.log(`🎬 [Router] Permutation de vues sous RIDEAU (${vtWinner.value}, priorité ${vtWinner.priority})`);
+        µ._mjs_logger()?.('🎬 [Router] ' + µ._mjs_txt('routerLogCurtain', { value: vtWinner.value, priority: vtWinner.priority }, 'Permutation de vues sous RIDEAU ({value}, priorité {priority})'));
         return results;
       }
+      // navigateur sans l'API View Transitions : permutation directe, silencieuse (seuls les rideaux jouent sans elle)
+      if (typeof document.startViewTransition !== 'function') { _mjsInject(); return results; }
       if (typeof µ._mjs_vtApplyPreset === 'function') { µ._mjs_vtApplyPreset(vtWinner.value); }
-      µ.log(`🎬 [Router] Permutation de vues sous View Transition (${typeof vtWinner.value === 'string' ? vtWinner.value : 'natif'}, priorité ${vtWinner.priority})`);
+      µ._mjs_logger()?.('🎬 [Router] ' + µ._mjs_txt('routerLogViewTransition', { value: typeof vtWinner.value === 'string' ? vtWinner.value : µ._mjs_txt('routerLogNative', null, 'natif'), priority: vtWinner.priority }, 'Permutation de vues sous View Transition ({value}, priorité {priority})'));
       // couche de lévitation (éléments nommés en shadow) : cf. son bloc dans mjs_vt_presets.ts
       var _vtHoist = (typeof µ._mjs_vtHoistStart === 'function') ? µ._mjs_vtHoistStart() : null;
       // pose html[data-mjs-vt] (docs/17-router.md:420) : un CSS de PROJET peut cibler
@@ -566,6 +598,9 @@
         if (document.documentElement) { delete document.documentElement.dataset.mjsVt; }
         throw e;
       }
+      // mémorisée pour ceux qui attendent la permutation des vues (les effets en direct) : `activeViewTransition`
+      // est déjà vide quand la transition est sautée
+      µ._mjs_vtLast = _vtTrans || null;
       // retrait à finished, y compris en échec, SEULEMENT si le compteur n'a pas bougé.
       var _vtClearAttr = function() { if (µ._mjs_vtAttrSeq === _mjs_vtAttrSeq && document.documentElement) { delete document.documentElement.dataset.mjsVt; } };
       if (_vtTrans && _vtTrans.finished) { _vtTrans.finished.then(_vtClearAttr, _vtClearAttr); }
@@ -584,6 +619,22 @@
       _mjsInject();
     }
     return results;
+  },
+  // les balises des vues posées par la navigation en cours dont le code n'est pas encore arrivé
+  _mjs_navWaiting: [],
+  // celles qu'elle attend une fois ses vues posées (cf. `_mjs_navProgressEnd`)
+  _mjs_navTags: [],
+  // la fin d'une navigation, pour la barre de navigation : quand les composants de ses vues nouvelles
+  // sont définis (tout de suite s'ils l'étaient déjà) — seulement si aucune navigation plus récente ne
+  // l'a remplacée ; un composant qui n'arrive jamais, l'autoloader la retire en y renonçant
+  _mjs_navProgressEnd: function(gen) {
+    var tags = this._mjs_navWaiting;
+    var stop = () => { if (gen === this._mjs_navGen && typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); } };
+    this._mjs_navWaiting = [];
+    // les balises que la navigation attend encore : l'autoloader n'éteint la barre que pour l'une d'elles
+    this._mjs_navTags = tags;
+    if (tags.length === 0 || typeof customElements === 'undefined' || typeof customElements.whenDefined !== 'function') { return stop(); }
+    Promise.all(tags.map((t) => customElements.whenDefined(t))).then(stop, stop);
   },
   // ──────────────────────────────────────────────────────────────────────────
   // TRANSITIONS DE PAGE (@viewTransition) — la permutation des <@view> peut être enveloppée dans
@@ -608,14 +659,16 @@
     var cfg = µ.viewTransition;
     return (cfg && cfg !== 'none') ? cfg : false;
   },
-  // Garde D'ENVIRONNEMENT pure (API du navigateur présente + accessibilité) — SANS
+  // Garde D'ENVIRONNEMENT pure (accessibilité) — SANS
   // rapport avec la résolution de cascade (_mjs_vtResolve, cf. _mjs_vtResolveNavigation plus bas,
   // seule consommatrice réelle de cette cascade pour navigate()). PARTAGÉE : mjs_ujs.ts l'appelle
   // telle quelle (`µ.Router._mjs_vtEnabled()`) pour ses propres transitions de PAGE (swap de
   // #app-root, cascade lien/config distincte de celle-ci) — mjs_router.ts est chargé AVANT
   // mjs_ujs.ts (ordre CANONICAL, bundler/index.ts), donc atteignable sans dupliquer cette garde.
+  // l'API View Transitions n'y est pas : un rideau (vrai DOM, µ._mjs_vtCurtainRun) joue sans elle, les
+  // préréglages natifs la vérifient au moment de s'en servir (sans elle : permutation directe)
   _mjs_vtEnabled: function() {
-    if (typeof document === 'undefined' || typeof document.startViewTransition !== 'function') { return false; }
+    if (typeof document === 'undefined') { return false; }
     // accessibilité : « réduire les animations » ⇒ permutation directe, jamais de transition
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { return false; }
     return true;
@@ -759,10 +812,10 @@
   _mjs_injectViewsForComponent: function(comp, matchPath) {
     var injections, matchedModule, paths, pi, ref, routeMap, routePath, targetId;
     if (!comp.routes) {
-      µ.log(`   ↳ ⚠️ [Router] Aucun objet @routes trouvé dans <${comp.tagName.toLowerCase()}>`);
+      µ._mjs_logger()?.('   ↳ ⚠️ [Router] ' + µ._mjs_txt('routerLogNoRoutes', { tag: comp.tagName.toLowerCase() }, 'Aucun objet @routes trouvé dans <{tag}>'));
       return;
     }
-    µ.log(`   ↳ 🔍 [Router] Analyse des @routes pour <${comp.tagName.toLowerCase()}>...`);
+    µ._mjs_logger()?.('   ↳ 🔍 [Router] ' + µ._mjs_txt('routerLogAnalyze', { tag: comp.tagName.toLowerCase() }, 'Analyse des @routes pour <{tag}>...'));
     injections = 0;
     ref = comp.routes;
     for (targetId in ref) {
@@ -782,7 +835,7 @@
         }
       }
       if (matchedModule) {
-        µ.log(`      🎯 Match ! [${routePath}] -> Module [${matchedModule}] injecté dans <@view ${targetId}>`);
+        µ._mjs_logger()?.('      🎯 ' + µ._mjs_txt('routerLogMatch', { routePath: routePath, module: matchedModule, targetId: targetId }, 'Match ! [{routePath}] -> Module [{module}] injecté dans <@view {targetId}>'));
         this._mjs_injectView(comp, targetId, matchedModule, matchPath);
         injections++;
       } else {
@@ -792,7 +845,7 @@
       }
     }
     if (injections === 0) {
-      return µ.log(`      🚫 Aucun composant à injecter pour le path '${matchPath}'.`);
+      return µ._mjs_logger()?.('      🚫 ' + µ._mjs_txt('routerLogNothingToInject', { matchPath: matchPath }, 'Aucun composant à injecter pour le path \'{matchPath}\'.'));
     }
   },
   // ──────────────────────────────────────────────────────────────────────────
@@ -904,15 +957,24 @@
     node.innerHTML = '';
     node.appendChild(box);
     if (µ._csp) {
-      if (!this._mjs_routeErrorSheetAdopted) {
-        var errorSheet = new CSSStyleSheet();
-        errorSheet.replaceSync(µ._mjs_routeErrorCss);
-        document.adoptedStyleSheets = [...document.adoptedStyleSheets, errorSheet];
-        this._mjs_routeErrorSheetAdopted = true;
+      // adoptée par la racine du panneau (une feuille adoptée par `document` ne traverse pas une ombre),
+      // une fois par racine
+      var errorRoot = typeof node.getRootNode === 'function' ? node.getRootNode() : document;
+      if (!errorRoot || !errorRoot.adoptedStyleSheets) { errorRoot = document; }
+      if (!this._mjs_routeErrorSheet) {
+        this._mjs_routeErrorSheet = new CSSStyleSheet();
+        this._mjs_routeErrorSheet.replaceSync(µ._mjs_routeErrorCss);
+      }
+      if (errorRoot.adoptedStyleSheets.indexOf(this._mjs_routeErrorSheet) === -1) {
+        errorRoot.adoptedStyleSheets = [...errorRoot.adoptedStyleSheets, this._mjs_routeErrorSheet];
       }
     } else {
       var style = document.createElement('style');
       style.textContent = µ._mjs_routeErrorCss;
+      // marquée pour la règle qui la cache (cf. _mjs_routeErrorCss) : une règle du composant hôte
+      // qui rend visibles tous les enfants de la zone (`> * { display: block }`) afficherait sinon
+      // son CSS en texte sous le message
+      style.setAttribute('data-mjs-route-error-css', '');
       // <style> à CÔTÉ du panneau, pas dedans : sinon la feuille se retrouve dans
       // le `textContent` du message (copier-coller pollué). Les deux partent
       // ensemble — `_mjs_clearView` comme `_mjs_injectView` vident la zone entière.
@@ -923,24 +985,41 @@
   // s'enregistrent un par un — le premier `initComponent` verrait un état
   // partiel (« rien ne matche » alors que le composant qui matche n'a pas
   // encore monté). Un seul contrôle par salve, sur le DERNIER chemin demandé.
+  // un composant routé dont le montage attend encore (premier rendu gelé par l'attente des textes traduits, levé au
+  // plus tard par le secours) peut rediriger dans son `µmount` : le contrôle attend qu'il ait monté, puis juge l'adresse
+  // où l'on est arrivé ; sans montage en attente, il passe à l'image qui suit, comme avant
   _mjs_scheduleNoMatchCheck: function(matchPath) {
     if (µ._isServer || typeof document === 'undefined') { return; }
     var self = this;
     this._mjs_noMatchPath = matchPath;
+    // l'adresse de la demande : changée d'ici le contrôle, c'est la nouvelle qui compte
+    this._mjs_noMatchHref = window.location.href;
     if (this._mjs_noMatchPending) { return; }
     this._mjs_noMatchPending = true;
     var run = function() {
+      var comp, path, hash;
+      for (comp of self._mjs_awareComponents) {
+        if (comp._mjs_pendingMount && !comp._mjs_mounted && comp.isConnected && !comp._mjs_has_crashed) { return arm(); }
+      }
       self._mjs_noMatchPending = false;
-      self._mjs_checkNoMatch(self._mjs_noMatchPath);
+      path = self._mjs_noMatchPath;
+      hash = window.location.hash;
+      // redirection au montage (`location.replace('#/…')`) dont le `hashchange` n'est pas encore passé : l'adresse
+      // courante — sauf une ancre ordinaire, que le routeur ne suit pas
+      if (window.location.href !== self._mjs_noMatchHref && (!hash || hash.slice(0, 2) === '#/')) { path = self._mjs_getMatchPath(window.location.href); }
+      self._mjs_checkNoMatch(path);
     };
-    if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(run); }
-    else { setTimeout(run, 0); }
+    var arm = function() {
+      if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(run); }
+      else { setTimeout(run, 0); }
+    };
+    arm();
   },
   _mjs_checkNoMatch: function(matchPath) {
     if (this._mjs_anyRouteMatches(matchPath)) { return this._mjs_clearNoMatch(); }
     var mode = (µ.config && µ.config.routeNotFound) || 'error';
-    if (mode === 'silent') { return µ.log(`   ↳ 🚫 [Router] Aucune route pour '${matchPath}'.`); }
-    var msg = `[Router] Aucune route ne correspond à '${matchPath}'. Routes déclarées : ${this._mjs_declaredRoutes().join(', ') || '(aucune)'} — déclarez une route de repli ('/*') pour servir votre propre page 404.`;
+    if (mode === 'silent') { return µ._mjs_logger()?.('   ↳ 🚫 [Router] ' + µ._mjs_txt('routerNoRouteLog', { matchPath: matchPath }, 'Aucune route pour \'{matchPath}\'.')); }
+    var msg = '[Router] ' + µ._mjs_txt('routerNoRoute', { matchPath: matchPath, routes: this._mjs_declaredRoutes().join(', ') || µ._mjs_txt('routerNoneDeclared', null, '(aucune)') }, 'Aucune route ne correspond à \'{matchPath}\'. Routes déclarées : {routes} — déclarez une route de repli (\'/*\') pour servir votre propre page 404.');
     if (mode === 'warn') { return µ.warn(msg); }
     µ.error(msg);
     return this._mjs_showNoMatch(matchPath);
@@ -953,7 +1032,7 @@
       // le cache ressuscitait un composant DÉTRUIT — onMount étant one-shot,
       // ses timers/abonnements n'étaient jamais relancés.
       this._mjs_hibernateView(comp, targetNode.firstElementChild);
-      µ.log(`      🚫 [Router] Aucune route pour <@view ${targetId}> — vue vidée.`);
+      µ._mjs_logger()?.('      🚫 [Router] ' + µ._mjs_txt('routerLogViewCleared', { targetId: targetId }, 'Aucune route pour <@view {targetId}> — vue vidée.'));
       targetNode.innerHTML = '';
     }
   },
@@ -978,7 +1057,7 @@
     var cacheKey, currentElement, el, expectedTagName, instCache, newComponent, targetNode;
     targetNode = comp._shadow.querySelector(`metamjs-view#${targetId}`) || comp.querySelector(`metamjs-view#${targetId}`);
     if (!targetNode) {
-      µ.error(`      ❌ [Router] CRASH : <@view ${targetId}> introuvable dans le DOM !`);
+      µ.error('      ❌ [Router] ' + µ._mjs_txt('routerViewCrash', { targetId: targetId }, 'CRASH : <@view {targetId}> introuvable dans le DOM !'));
       return;
     }
     instCache = this.cache.get(comp);
@@ -1014,7 +1093,9 @@
       // un attribut natif `id`/`class`.
       return;
     }
-    newComponent = instCache.has(cacheKey) ? (µ.log(`      ⚡ [Router] Restauration depuis le cache : <${expectedTagName}>`), instCache.get(cacheKey)) : (µ.log(`      🏗️ [Router] Création DOM : <${expectedTagName}>`), el = document.createElement(expectedTagName), el._mjs_route_key = cacheKey, instCache.set(cacheKey, el), el);
+    newComponent = instCache.has(cacheKey) ? (µ._mjs_logger()?.('      ⚡ [Router] ' + µ._mjs_txt('routerLogCacheHit', { tag: expectedTagName }, 'Restauration depuis le cache : <{tag}>')), instCache.get(cacheKey)) : (µ._mjs_logger()?.('      🏗️ [Router] ' + µ._mjs_txt('routerLogCreate', { tag: expectedTagName }, 'Création DOM : <{tag}>')), el = document.createElement(expectedTagName), el._mjs_route_key = cacheKey, instCache.set(cacheKey, el), el);
+    // un composant dont le code n'est pas arrivé : la navigation l'attend (barre de navigation)
+    if (typeof customElements !== 'undefined' && !customElements.get(expectedTagName) && this._mjs_navWaiting) { this._mjs_navWaiting.push(expectedTagName); }
     // L'élément remplacé part en hibernation (il reste dans instCache) ;
     // celui qui revient en sort. Hibernation gardée — pas d'orphelin si
     // l'élément a été évincé du LRU pendant qu'il était affiché.

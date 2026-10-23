@@ -30,7 +30,7 @@ describe('événement à deux-points — chemin des MACROS GLOBALES (macros.ts)'
     assert.doesNotMatch(r.setup, /addEventListener\('mjs'/)
     assert.doesNotMatch(r.setup, /addEventListener\('relancer'/)
     // un SEUL handler défini (@_gl_0), pas deux
-    assert.equal((r.setup.match(/@_gl_\d+ = \(e, _\) =>/g) ?? []).length, 1)
+    assert.equal((r.setup.match(/@_gl_\d+ = \(e, _mjs_el\) =>/g) ?? []).length, 1)
     // le corps du handler est bien celui écrit, méthode du composant comprise
     assert.match(r.setup, /relancer\(\)/)
   })

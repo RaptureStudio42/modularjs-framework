@@ -51,9 +51,9 @@ $sharedWidth = 0
 <div clientWidth=!{$sharedWidth}><span>{item}</span></div>
 {end}
 `)
-    assert.match(compCode, /µ\._set\(_mjsThis,\s*'sharedWidth',\s*t\.clientWidth\)/,
-      "AVANT le fix : émettait '$.sharedWidth = t.clientWidth' — mute _state SANS jamais invalider")
-    assert.doesNotMatch(compCode, /\$\.sharedWidth\s*=\s*t\.clientWidth/)
+    assert.match(compCode, /µ\._set\(_mjsThis,\s*'sharedWidth',\s*_mjs_t\.clientWidth\)/,
+      "AVANT le fix : émettait '$.sharedWidth = _mjs_t.clientWidth' — mute _state SANS jamais invalider")
+    assert.doesNotMatch(compCode, /\$\.sharedWidth\s*=\s*_mjs_t\.clientWidth/)
   })
 
   it("item.field (cas courant, PAS un $.simpleVar) : continue d'utiliser l'assignation brute (le Proxy de l'item notifie déjà tout seul — pas de régression)", async () => {
@@ -65,7 +65,7 @@ $items = [{name:'a', width:0}]
 <div clientWidth=!{item.width}><span>{item.name}</span></div>
 {end}
 `)
-    assert.match(compCode, /item\.width\s*=\s*t\.clientWidth/,
+    assert.match(compCode, /item\.width\s*=\s*_mjs_t\.clientWidth/,
       'item.width reste une assignation directe sur le Proxy vivant (comportement déjà correct, à ne pas changer)')
     assert.doesNotMatch(compCode, /µ\._set\(_mjsThis,\s*'width'/,
       "item.width n'est PAS un $.simpleVar : ne doit PAS être routé vers µ._set")
@@ -77,7 +77,7 @@ $items = [{name:'a', width:0}]
 </script>
 <div clientWidth=!{$w}><span>{$w}</span></div>
 `)
-    assert.match(compCode, /µ\._set\(this,\s*'w',\s*t\.clientWidth\)/)
+    assert.match(compCode, /µ\._set\(this,\s*'w',\s*_mjs_t\.clientWidth\)/)
   })
 
   it('bout-en-bout : un ResizeObserver simulé sur UNE row met à jour le texte de TOUTES les rows (var partagée)', async function () {

@@ -11,7 +11,7 @@
 //   (c) mjs_vt_presets.ts l.415-427 `_mjs_vtCurtainRun` : `swap()` appelé sous le rideau noir sans
 //       garde — une permutation qui lève laisse `#mjs-vt-curtain` à vie. Fix : try/catch autour du
 //       seul `swap()`, la révélation continue comme avant.
-//   (d) core-modules/radio.mjs l.14 : `sel = 'mjs-radio[name="' + $name + '"]'` construit par
+//   (d) core-modules/radio.mjs l.14 : `sel = 'mjs-core-radio[name="' + $name + '"]'` construit par
 //       concaténation — un `name` contenant `"` fait lever `querySelectorAll` (SyntaxError) dans
 //       `@onChange`. Fix : échappement (`CSS.escape` ou repli regex).
 //   (e) mjs_store.ts `_mjs_buildProxy` ET mjs_element.ts `_mjs_wrapDeep` : `Object.setPrototypeOf` et
@@ -22,7 +22,7 @@
 // Harnais calqué sur tests/runtime-dynamic-tag-script-refused.test.ts (fichiers runtime bruts, `new Function`,
 // stub µ minimal) et tests/proto-pollution-set.test.ts (sandbox µ.Element pour _mjs_wrapDeep) —
 // item (d) calqué sur tests/core-toggles.test.ts (bundler réel + happy-dom, seul chemin qui monte
-// vraiment <mjs-radio> avec ses core-modules).
+// vraiment <mjs-core-radio> avec ses core-modules).
 //
 // Piège découvert en sondant (d) : `nativeInput.checked = true` seul lève DÉJÀ sous happy-dom (son
 // PROPRE groupement natif de radios interne construit aussi un sélecteur `input[type="radio"]
@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const easingSrc = readFileSync(join(__dirname, '../src/runtime/mjs_easing.ts'), 'utf8')
@@ -64,6 +65,7 @@ function makeEasing(): { µ: any; window: any; document: any } {
   const window: any = new Window({ url: 'http://localhost/' })
   const document: any = window.document
   const µ: any = { debug: false, log() {}, warn() {}, error() {} }
+  poserMessages(µ)
   new Function('µ', 'document', easingSrc)(µ, document)
   return { µ, window, document }
 }
@@ -150,6 +152,7 @@ function makeVt(): { µ: any; window: any; document: any; errorCalls: any[][] } 
   const document: any = window.document
   const errorCalls: any[][] = []
   const µ: any = { _isServer: false, _csp: false, log() {}, warn() {}, error(...args: any[]) { errorCalls.push(args) } }
+  poserMessages(µ)
   new Function('µ', 'document', 'requestAnimationFrame', 'setTimeout', vtSrc)(µ, document, window.requestAnimationFrame.bind(window), window.setTimeout.bind(window))
   return { µ, window, document, errorCalls }
 }
@@ -172,11 +175,11 @@ describe('(c) — mjs_vt_presets.ts _mjs_vtCurtainRun : swap() sans garde laisse
 })
 
 // ============================================================================
-// (d) — core-modules/radio.mjs, bundler réel (seul chemin qui monte <mjs-radio> avec ses
+// (d) — core-modules/radio.mjs, bundler réel (seul chemin qui monte <mjs-core-radio> avec ses
 // core-modules, cf. tests/core-toggles.test.ts)
 // ============================================================================
 
-describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non échappé", function () {
+describe("(d) — core-modules/radio.mjs : sélecteur mjs-core-radio[name=…] non échappé", function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -187,8 +190,8 @@ describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non é
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'hote.mjs'), [
       '<form>',
-      '  <@radio name=\'a"b\' value="x">X</@radio>',
-      '  <@radio name=\'a"b\' value="y">Y</@radio>',
+      '  <@@radio name=\'a"b\' value="x">X</@@radio>',
+      '  <@@radio name=\'a"b\' value="y">Y</@@radio>',
       '</form>',
     ].join('\n'))
 
@@ -198,7 +201,7 @@ describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non é
 
     const files = readdirSync(outDir)
     const pick = (re: RegExp) => { const f = files.find((f) => re.test(f)); assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`); return f! }
-    const chunkFiles = [pick(/^mjs_core-/), pick(/^radio-/), pick(/^hote-/)]
+    const chunkFiles = [pick(/^mjs_core-/), pick(/^core-radio-/), pick(/^hote-/)]
     const code = chunkFiles.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n')
 
     const window: any = new Window({ url: 'http://localhost/' })
@@ -210,7 +213,7 @@ describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non é
     await new Promise((r) => setTimeout(r, 80))
     const hote: any = document.body.querySelector('mjs-hote')
     const form: any = hote._shadow.querySelector('form')
-    const radios: any[] = Array.from(form.querySelectorAll('mjs-radio'))
+    const radios: any[] = Array.from(form.querySelectorAll('mjs-core-radio'))
     assert.equal(radios.length, 2, 'les 2 radios doivent être montées')
     const natives = radios.map((r) => r._shadow.querySelector('input.native'))
 
@@ -221,9 +224,11 @@ describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non é
     // LA MAIN ce seul patron `tag[attr="valeur"]` (valeur pouvant contenir des `\x` échappés) —
     // vérifie le COMPORTEMENT de radio.mjs (échappement correct, round-trip), pas le moteur de
     // sélecteur de happy-dom. Un name mal échappé (AVANT le fix) ne matche pas ce patron : l'erreur
-    // native d'origine est relevée telle quelle, le rouge reste un vrai rouge.
-    const originalQSA = form.querySelectorAll.bind(form)
-    form.querySelectorAll = (sel: string) => {
+    // native d'origine est relevée telle quelle, le rouge reste un vrai rouge. Posé sur la racine des boutons (l'ombre de l'hôte), où
+    // radio.mjs cherche le groupe : un bouton peut rejoindre le <form> par `form="id"` depuis n'importe où dans cette racine.
+    const racine: any = hote._shadow
+    const originalQSA = racine.querySelectorAll.bind(racine)
+    racine.querySelectorAll = (sel: string) => {
       try {
         return originalQSA(sel)
       } catch (err) {
@@ -252,7 +257,7 @@ describe("(d) — core-modules/radio.mjs : sélecteur mjs-radio[name=…] non é
     await new Promise((r) => setTimeout(r, 20))
 
     assert.equal(threw === null, true, 'dispatchEvent ne doit pas lever directement')
-    assert.equal(windowErrors.length, 0, "AVANT le fix : SyntaxError sur 'mjs-radio[name=\"a\"b\"]' remonté via l'event 'error' de la fenêtre")
+    assert.equal(windowErrors.length, 0, "AVANT le fix : SyntaxError sur 'mjs-core-radio[name=\"a\"b\"]' remonté via l'event 'error' de la fenêtre")
     assert.equal(radios[1]._state.checked, false, 'Y doit avoir été décoché par la coordination de groupe (@onChange)')
   })
 })
@@ -271,6 +276,7 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
     _mjs_epochs: new WeakMap(),
     activeComponent: null,
   }
+  poserMessages(µ)
   µ._mjs_toRaw = function(o: any) { while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW]; return o }
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }

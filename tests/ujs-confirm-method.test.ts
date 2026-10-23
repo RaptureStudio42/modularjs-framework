@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -46,6 +47,7 @@ function makeSubmitHandler() {
 // — sans la VRAIE implémentation greffée dessus, la promesse interne throw en
 // silence (rejet non observé) et aucune relance n'a lieu.
 function withConfirmRefire(µ: any) {
+  poserMessages(µ)
   new Function('µ', extractConfirmRefireStatement())(µ)
   return µ
 }
@@ -161,7 +163,7 @@ function makeForm(attrs: Record<string, string> = {}, urlBits: Record<string, st
   return el
 }
 function baseMu(win: any, overrides: any = {}) {
-  return Object.assign({
+  const µ = Object.assign({
     realTarget: (e: any) => e.target,
     warn(..._a: any[]) {}, error() {}, log() {},
     Router: { navigate() {} },
@@ -179,6 +181,8 @@ function baseMu(win: any, overrides: any = {}) {
       this.warn('[µ.UJS] @method="' + el.getAttribute('mjs-method') + '" ignoré — @noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retire l\'un des deux.')
     },
   }, overrides)
+  poserMessages(µ)
+  return µ
 }
 
 describe('mjs_ujs — @confirm (mjs-confirm) : confirmation avant action', function () {
@@ -674,6 +678,7 @@ function installNavDispatchHelpers(µ: any, doc: any, win: any) {
     if (m === 'get' || m === 'delete') return µ.ajax[m] && µ.ajax[m](opts.url, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
     return µ.ajax[m] && µ.ajax[m](opts.url, opts.data, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
   }
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractMarked(UJS_SRC, 'helpers-navigation'))(µ, doc, win)
 }
 
@@ -692,6 +697,7 @@ describe('mjs_ujs — µ._mjs_navDispatch (chemin PARTAGÉ submit/mjs-method) : 
     }
     class ParserWithRoot { parseFromString() { return { body: { childNodes: [newRoot] } } } }
     installNavDispatchHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, ParserWithRoot)
 
     let restoreCalled = false
@@ -717,6 +723,7 @@ describe('mjs_ujs — µ._mjs_navDispatch (chemin PARTAGÉ submit/mjs-method) : 
     const newRoot = { tag: 'form-avec-erreurs' }
     class ParserWithRoot { parseFromString() { return { body: { childNodes: [newRoot] } } } }
     installNavDispatchHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, ParserWithRoot)
 
     let restoreCalled = false

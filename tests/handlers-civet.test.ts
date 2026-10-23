@@ -51,13 +51,13 @@ describe('handlers inline — Civet par défaut', () => {
     assert.match(output, /\$\.go\(\)/)
   })
 
-  it('ternaire COLLÉ (a?b:c) : throw avec l\'indice « ajoute des espaces »', async () => {
+  it('ternaire COLLÉ (a?b:c) : throw avec l\'indice « ajoutez des espaces »', async () => {
     await assert.rejects(
       transpile(`<button @click={$n = $ok?'x':'y'}>x</button>`, { moduleName: 'hc-ternaire-colle' }),
       (err: any) => {
         assert.match(err.message, /\[ModularJS\] handler inline : échec de compilation Civet/, 'préfixe orientant attendu')
         assert.match(err.message, /« hc-ternaire-colle »/, 'nom du composant cité')
-        assert.match(err.message, /ajoute des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus')
+        assert.match(err.message, /ajoutez des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus')
         return true
       }
     )

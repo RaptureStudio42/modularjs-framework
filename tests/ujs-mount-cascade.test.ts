@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -38,6 +39,7 @@ function extractNavMountZoneStatement(src: string): string {
 function makeNavMountZone(µ: any, doc: any): (d?: any, target?: any) => { zone: any, mode: string, target: any } {
   if (µ._mjs_navTargetWarned === undefined) { µ._mjs_navTargetWarned = {} }
   if (µ._mjs_navZone === undefined) { µ._mjs_navZone = null }
+  poserMessages(µ)
   new Function('µ', 'document', extractNavMountZoneStatement(UJS_SRC))(µ, doc)
   return µ._mjs_navMountZone
 }

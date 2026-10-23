@@ -63,9 +63,9 @@ if (µ.Element) {
         }
         return res;
       };
-      return (this._mjs_hooks || (this._mjs_hooks = {}))[name] = wrapped;
+      return (this._mjs_hooks ||= {})[name] = wrapped;
     }
-    return (this._mjs_hooks || (this._mjs_hooks = {}))[name] = fn;
+    return (this._mjs_hooks ||= {})[name] = fn;
   };
 
   // Tir du montage — point d'entrée UNIQUE des 2 call-sites de `_mjs_invalidate` (mjs_element.ts) :
@@ -79,6 +79,7 @@ if (µ.Element) {
     // un timer DANS le rendu serveur.
     if (µ._isServer) return;
     this._mjs_mounted = true;
+    this._mjs_torn    = false;
     // le 1er rendu est TERMINÉ ici : ce qu'un callback de montage écrit part en
     // rendu SUIVANT et doit donc animer normalement. Sans cette ligne, le
     // fast-path SYNCHRONE de `_mjs_invalidate` repatchait le DOM avec le drapeau
@@ -100,7 +101,7 @@ if (µ.Element) {
   // Les callbacks sont invoqués par la destruction différée (cf.
   // disconnectedCallback, mjs_element.ts), avec le hook destroy.
   µ.Element.prototype._mjs_onDestroy = function(fn) {
-    (this._mjs_destroy_cbs || (this._mjs_destroy_cbs = [])).push(fn);
+    (this._mjs_destroy_cbs ||= []).push(fn);
     return fn;
   };
 
@@ -108,12 +109,12 @@ if (µ.Element) {
   // du DOM (hibernation du pageCache comprise), jamais vidées — une rune qui
   // suspend doit pouvoir reprendre autant de fois que le composant revient.
   µ.Element.prototype._mjs_onSleep = function(fn) {
-    (this._mjs_sleep_cbs || (this._mjs_sleep_cbs = [])).push(fn);
+    (this._mjs_sleep_cbs ||= []).push(fn);
     return fn;
   };
 
   µ.Element.prototype._mjs_onAwake = function(fn) {
-    (this._mjs_awake_cbs || (this._mjs_awake_cbs = [])).push(fn);
+    (this._mjs_awake_cbs ||= []).push(fn);
     return fn;
   };
 
@@ -143,13 +144,19 @@ if (µ.Element) {
       const cbs = this._mjs_destroy_cbs;
       this._mjs_destroy_cbs = null;
       for (let i = 0; i < cbs.length; i++) {
-        try { cbs[i](); } catch (e) { µ.warn('[ModularJS] _mjs_onDestroy : callback en erreur :', e); }
+        try { cbs[i](); } catch (e) { µ.warn(µ._mjs_msg('lifeOnDestroy', null, '_mjs_onDestroy : callback en erreur :'), e); }
       }
     }
-    if (typeof this._mjs_hooks?.destroy === 'function') {
-      const fn = this._mjs_hooks.destroy;
-      this._mjs_hooks.destroy = null;
-      try { fn.call(this); } catch (e) { µ.warn('[ModularJS] hook destroy en erreur :', e); }
+    // µdestroy une fois par montage : gardé par `_mjs_torn` (et non plus effacé) pour rejouer
+    // après une remise dans le DOM
+    if (typeof this._mjs_hooks?.destroy === 'function' && !this._mjs_torn) {
+      try { this._mjs_hooks.destroy.call(this); } catch (e) { µ.warn(µ._mjs_msg('lifeHook', null, 'hook destroy en erreur :'), e); }
     }
+    this._mjs_torn = true;
+    // détruit mais peut revenir (panneau gardé en mémoire, défilement virtuel, déplacement après un
+    // `await`) : le composant redevient « à monter » — le rendu de reconnexion (connectedCallback)
+    // rejoue µmount, qui repose ses nettoyages ; sans ça il revenait affiché, µmount jamais relancé
+    this._mjs_mounted      = false;
+    this._mjs_pendingMount = true;
   };
 }

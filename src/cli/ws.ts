@@ -6,7 +6,7 @@
 //
 // Résolution de l'entry (§7.1) : --entry > mjs.config.json `ws.entry` > défauts
 // `ws.server.mjs` > `server/ws.server.mjs` > `ws.js` > `ws.civet` > `server/ws.js` >
-// `server/ws.civet`, relatifs à --root. `.server.mjs` est le format RECOMMANDÉ (§6.1bis
+// `server/ws.civet`, relatifs à la racine du projet (dossier de mjs.config.json, à défaut --root). `.server.mjs` est le format RECOMMANDÉ (§6.1bis
 // docs/23-mjs-ws.md) — MÊME dialecte Civet que le <script> des composants (assignations
 // nues auto-déclarées, interpolation "#{}", `->`…), cf. cli/server-entry.ts.
 // Contrat de l'entry (§7.2) : `export default` = OBJET, clés acceptées =
@@ -61,9 +61,10 @@
 // rechargement précédent tourne encore (import + listen asynchrones) — sérialisé par
 // génération, cf. le commentaire devant reload()/scheduleReload() plus bas.
 
-import { existsSync, watch as fsWatch } from 'node:fs'
+import { existsSync, watch as fsWatch, realpathSync } from 'node:fs'
 import { resolve, dirname, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 import { mjsWs, DEFAULT_LIMITS, DEFAULT_HEARTBEAT, DEFAULT_TOKEN, resolveBridgeOptions, resolveResumeOptions, isLoopbackHost, isProxyOptions } from '../mjs-ws/index.js'
 import type { MjsWsApp, MjsWsLimits, MjsWsLogFn, MjsWsOptions, MjsWsTokenOptions, MjsWsTransport } from '../mjs-ws/index.js'
 import type { MjsConfig, WsConfig } from '../bundler/config.js'
@@ -127,12 +128,14 @@ export interface EntryContract {
   setup?: (app: MjsWsApp) => unknown
 }
 
-/** Valide + isole le contrat d'un module d'entry déjà importé (`mod` = namespace ES). */
-export function readEntryContract(mod: any, entryPath: string, warn: (message: string) => void): EntryContract {
+/** Valide + isole le contrat d'un module d'entry déjà importé (`mod` = namespace ES) — partagé par `mjs ws` et `mjs serveur`
+ *  (`produit`, pour les messages) : export default objet, clés réservées ignorées avec un avertissement, `setup` fonction si
+ *  présent. */
+export function readEntryContractOf<O, A>(produit: string, mod: any, entryPath: string, warn: (message: string) => void): { options: O, setup?: (app: A) => unknown } {
   const dflt = mod ? mod.default : undefined
   if (dflt === undefined || dflt === null || typeof dflt !== 'object' || Array.isArray(dflt)) {
     const got = dflt === undefined ? t('cli.aucun-export-defaut') : (Array.isArray(dflt) ? t('cli.un-tableau') : typeof dflt)
-    throw new Error(t('cli.entry-doit-export-default', { produit: 'mjs ws', entryPath, recu: got }))
+    throw new Error(t('cli.entry-doit-export-default', { produit, entryPath, recu: got }))
   }
 
   const options: Record<string, unknown> = {}
@@ -142,15 +145,20 @@ export function readEntryContract(mod: any, entryPath: string, warn: (message: s
     options[key] = (dflt as any)[key]
   }
 
-  let setup: ((app: MjsWsApp) => unknown) | undefined
+  let setup: ((app: A) => unknown) | undefined
   if (dflt.setup !== undefined) {
     if (typeof dflt.setup !== 'function') {
-      throw new Error(t('cli.entry-setup-doit-etre-fonction', { produit: 'mjs ws', entryPath, recu: typeof dflt.setup }))
+      throw new Error(t('cli.entry-setup-doit-etre-fonction', { produit, entryPath, recu: typeof dflt.setup }))
     }
     setup = dflt.setup
   }
 
-  return { options: options as MjsWsOptions, setup }
+  return { options: options as O, setup }
+}
+
+/** Contrat de l'entry de `mjs ws`. */
+export function readEntryContract(mod: any, entryPath: string, warn: (message: string) => void): EntryContract {
+  return readEntryContractOf<MjsWsOptions, MjsWsApp>('mjs ws', mod, entryPath, warn)
 }
 
 // --- priorités port/host/heartbeat/limits : entry > config > défauts CLI ----
@@ -175,102 +183,46 @@ export function buildRunPlan(
   warn: (message: string) => void,
   cliHost?: string,
 ): WsRunPlan {
-  const options: MjsWsOptions = { ...contract.options }
+  return buildRunPlanOf(contract, wsConfig, 'ws', SHARED_PLAN_KEYS, 4000, cliPort, warn, cliHost)
+}
 
-  // choix du transport — MÊME règle que heartbeat/limits
-  // ci-dessous : l'entry (une INSTANCE MjsWsTransport, cf. RESERVED_ENTRY_KEYS) prime EN BLOC
-  // sur la config (une chaîne 'ws'/'uws', seule forme représentable en JSON), avec un warn.
-  if (wsConfig?.transport !== undefined) {
-    if (options.transport !== undefined) warn(t('cli.entry-config-doublon', { champ: 'transport', chemin: 'ws.transport' }))
-    else options.transport = wsConfig.transport
-  }
+// clés que la section de configuration (`ws`, `serveur`) partage avec l'entry, dans l'ordre de leurs avertissements : transport
+// (instance dans l'entry, chaîne seulement en JSON), codec (µschema), heartbeat, limits, token (expiration, rafraîchissement),
+// bridge (pont universel ; son `secret` est exigé au lancement par bridge.ts), resume (reprise de session, `false` explicite
+// compris), adapter (multi-processus), stats, sessionExclusive, verifyOrigin (forme fonction comprise), ban (`false` explicite
+// compris)
+export const SHARED_PLAN_KEYS = ['transport', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'] as const
 
-  // µschema — MÊME règle que transport ci-dessus : pas de fusion, l'entry prime EN
-  // BLOC si les deux sont posés, avec un warn. Cf. docs/23-mjs-ws.md « µschema ».
-  if (wsConfig?.codec !== undefined) {
-    if (options.codec !== undefined) warn(t('cli.entry-config-doublon', { champ: 'codec', chemin: 'ws.codec' }))
-    else options.codec = wsConfig.codec
+/** Fusionne le contrat de l'entry, la section `section` de la configuration et --port/--host — partagé par `mjs ws` et
+ *  `mjs serveur`. Pour chaque clé de `keys`, l'ENTRY prime EN BLOC (pas de fusion clé à clé : le code de l'app passe avant la
+ *  configuration), avec un avertissement si les deux sont posées. Heartbeat et limites résolus ICI avec les MÊMES défauts que
+ *  mjsWs() (passthrough) : la bannière affiche les valeurs effectives sans recopier les littéraux. Port borné comme `ws.port`
+ *  (un --port hors plage retombait sur un RangeError brut de Node au moment de lier le transport) ; hôte local par défaut, comme
+ *  le pont : qui veut exposer le serveur le dit avec `--host ::`, jamais un silence (chaîne vide = absent). */
+export function buildRunPlanOf<O extends object, A>(
+  contract: { options: O, setup?: (app: A) => unknown },
+  config: object | undefined,
+  section: 'ws' | 'serveur',
+  keys: readonly string[],
+  defaultPort: number,
+  cliPort: number | undefined,
+  warn: (message: string) => void,
+  cliHost?: string,
+): { options: O, setup?: (app: A) => unknown, port: number, host: string, heartbeat: number, limits: MjsWsLimits } {
+  const cfg: any     = config
+  const options: any = { ...contract.options }
+  for (const cle of keys) {
+    if (cfg?.[cle] === undefined) continue
+    if (options[cle] !== undefined) warn(t('cli.entry-config-doublon', { champ: cle, chemin: `${section}.${cle}` }))
+    else options[cle] = cfg[cle]
   }
-  if (wsConfig?.heartbeat !== undefined) {
-    if (options.heartbeat !== undefined) warn(t('cli.entry-config-doublon', { champ: 'heartbeat', chemin: 'ws.heartbeat' }))
-    else options.heartbeat = wsConfig.heartbeat
-  }
-  if (wsConfig?.limits !== undefined) {
-    if (options.limits !== undefined) warn(t('cli.entry-config-doublon', { champ: 'limits', chemin: 'ws.limits' }))
-    else options.limits = wsConfig.limits
-  }
-  // suivi d'expiration + rafraîchissement du jeton — MÊME règle que heartbeat/
-  // limits : pas de fusion clé à clé, l'entry prime EN BLOC si les deux sont posés, avec un warn.
-  if (wsConfig?.token !== undefined) {
-    if (options.token !== undefined) warn(t('cli.entry-config-doublon', { champ: 'token', chemin: 'ws.token' }))
-    else options.token = wsConfig.token
-  }
-  // pont universel — MÊME règle que limits : pas de fusion clé à clé, l'entry
-  // prime EN BLOC si les deux sont posés (le code de l'app > la config), avec un warn.
-  // Cast explicite : WsConfig.bridge.secret est optionnel en FORME (bundler/config.ts ne
-  // valide QUE la forme), MjsWsBridgeOptions.secret est requis en TYPE (bonne DX côté appel
-  // programmatique) — l'obligation réelle est tranchée au RUNTIME par bridge.ts (resolveBridgeOptions,
-  // appelé par mjsWs()), qui lève clairement si `secret` finit par manquer.
-  if (wsConfig?.bridge !== undefined) {
-    if (options.bridge !== undefined) warn(t('cli.entry-config-doublon', { champ: 'bridge', chemin: 'ws.bridge' }))
-    else options.bridge = wsConfig.bridge as MjsWsOptions['bridge']
-  }
-  // reprise de session — MÊME règle que heartbeat/limits/bridge : l'entry prime
-  // EN BLOC (y compris un `resume: false` explicite dans l'entry face à un true en config).
-  if (wsConfig?.resume !== undefined) {
-    if (options.resume !== undefined) warn(t('cli.entry-config-doublon', { champ: 'resume', chemin: 'ws.resume' }))
-    else options.resume = wsConfig.resume
-  }
-  // adaptateur multi-processus — MÊME règle que heartbeat/limits/bridge/resume :
-  // pas de fusion clé à clé, l'entry prime EN BLOC si les deux sont posés (le code de l'app >
-  // la config), avec un warn. L'entry peut fournir soit {redis,prefix?} soit une instance
-  // MjsWsAdapter déjà construite (cf. index.ts) — la config JSON ne peut fournir que la 1re forme.
-  if (wsConfig?.adapter !== undefined) {
-    if (options.adapter !== undefined) warn(t('cli.entry-config-doublon', { champ: 'adapter', chemin: 'ws.adapter' }))
-    else options.adapter = wsConfig.adapter as MjsWsOptions['adapter']
-  }
-  // état/métriques — MÊME règle que heartbeat/limits/bridge/resume/adapter : pas de
-  // fusion, l'entry prime EN BLOC si les deux sont posés, avec un warn.
-  if (wsConfig?.stats !== undefined) {
-    if (options.stats !== undefined) warn(t('cli.entry-config-doublon', { champ: 'stats', chemin: 'ws.stats' }))
-    else options.stats = wsConfig.stats
-  }
-  // session exclusive par identité — MÊME règle que stats juste
-  // au-dessus : pas de fusion, l'entry prime EN BLOC si les deux sont posés, avec un warn.
-  if (wsConfig?.sessionExclusive !== undefined) {
-    if (options.sessionExclusive !== undefined) warn(t('cli.entry-config-doublon', { champ: 'sessionExclusive', chemin: 'ws.sessionExclusive' }))
-    else options.sessionExclusive = wsConfig.sessionExclusive
-  }
-  // vérification d'origine — MÊME règle que sessionExclusive juste
-  // au-dessus : pas de fusion, l'entry prime EN BLOC si les deux sont posés (y compris la forme
-  // fonction, non représentable en JSON), avec un warn.
-  if (wsConfig?.verifyOrigin !== undefined) {
-    if (options.verifyOrigin !== undefined) warn(t('cli.entry-config-doublon', { champ: 'verifyOrigin', chemin: 'ws.verifyOrigin' }))
-    else options.verifyOrigin = wsConfig.verifyOrigin
-  }
-  // mise au banc — MÊME règle : l'entry prime EN BLOC (y compris un `ban: false` explicite)
-  if (wsConfig?.ban !== undefined) {
-    if (options.ban !== undefined) warn(t('cli.entry-config-doublon', { champ: 'ban', chemin: 'ws.ban' }))
-    else options.ban = wsConfig.ban
-  }
-
-  // résolus AVANT l'appel à mjsWs() : l'app applique les MÊMES défauts, donc
-  // ceci reste un passthrough — mais permet à la bannière d'afficher les
-  // valeurs EFFECTIVES sans dupliquer les littéraux de défaut (index.ts, source unique)
   const heartbeat = options.heartbeat ?? DEFAULT_HEARTBEAT
   const limits: MjsWsLimits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) }
   options.heartbeat = heartbeat
-  options.limits = limits
-
-  const port = cliPort ?? wsConfig?.port ?? 4000
-  // Même borne que ws.port (bundler/config.ts, JSON) — SEUL --port pouvait encore
-  // échapper à toute validation et retomber sur un RangeError Node brut au moment de lier le
-  // transport (ws.port et le défaut 4000 sont déjà garantis dans la plage à ce stade)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t('cli.ws.port-hors-plage', { valeur: port }))
-  // défaut loopback : MÊME règle que le pont (resolveBridgeOptions,
-  // bridge.ts) — qui veut exposer le serveur le dit avec `--host ::`, jamais un silence
-  const host = (cliHost ?? wsConfig?.host ?? '').trim() || '127.0.0.1'  // chaîne vide = absent : repli local
-
+  options.limits    = limits
+  const port = cliPort ?? cfg?.port ?? defaultPort
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t(section === 'ws' ? 'cli.ws.port-hors-plage' : 'cli.serveur.port-hors-plage', { valeur: port }))
+  const host = (cliHost ?? cfg?.host ?? '').trim() || '127.0.0.1'
   return { options, setup: contract.setup, port, host, heartbeat, limits }
 }
 
@@ -323,8 +275,15 @@ export function describeTransport(transport: MjsWsOptions['transport']): string 
 // cf. docs/24-mjs-server.md §2 « Démarrer »), qui construit l'app via mjsServer() : aucune app
 // reçue ici n'a jamais de `.game`, donc rien de fiable à détecter — mention factuelle du transport seul.
 function printBanner(logger: CliLogger, entryPath: string, root: string, plan: WsRunPlan): void {
+  const hoteAffiche = (plan.host === '::' || plan.host === '0.0.0.0') ? `${t('cli.toutes-interfaces')} (${plan.host})` : plan.host
+  printEntryBanner(logger, 'MJS-WS', entryPath, root, plan, ` (${hoteAffiche})`)
+}
+
+/** Bannière de démarrage — partagée par `mjs ws` et `mjs serveur` : `titre` (MJS-WS, MJS-Server), `hote` (texte qui suit le
+ *  port), `extra` (lignes propres à la commande, juste avant le rappel de Ctrl+C). */
+export function printEntryBanner(logger: CliLogger, titre: string, entryPath: string, root: string, plan: { options: MjsWsOptions, port: number, heartbeat: number, limits: MjsWsLimits }, hote: string, extra?: () => void): void {
   const rel = relative(root, entryPath) || entryPath
-  logger.info(`MJS-WS — entry ${rel}`)
+  logger.info(`${titre} — entry ${rel}`)
   logger.info(`transport : ${describeTransport(plan.options.transport)}`)
   // µschema — affiche le codec EFFECTIF (défaut 'auto' si jamais posé, ni entry ni
   // config) — jamais un silence sur un réglage qui change le FORMAT DE TRAME (contrairement à
@@ -334,8 +293,7 @@ function printBanner(logger: CliLogger, entryPath: string, root: string, plan: W
   // libellé « toutes les interfaces » ne s'affiche plus QUE si l'hôte
   // effectif l'expose vraiment ('::'/'0.0.0.0', demandé via --host ou ws.host) : le défaut est
   // désormais 127.0.0.1 (buildRunPlan), MÊME philosophie que le pont (bridge.ts).
-  const hoteAffiche = (plan.host === '::' || plan.host === '0.0.0.0') ? `${t('cli.toutes-interfaces')} (${plan.host})` : plan.host
-  logger.info(t('cli.banniere-port', { port: plan.port, hote: ` (${hoteAffiche})` }))
+  logger.info(t('cli.banniere-port', { port: plan.port, hote }))
   logger.info(t('cli.banniere-heartbeat', { etat: plan.heartbeat === 0 ? t('cli.desactive') : `${plan.heartbeat} ms` }))
   // plafonds de connexions — valeurs EFFECTIVES (plan.limits déjà
   // fusionnée avec DEFAULT_LIMITS, cf. buildRunPlan) ; `null` = illimité, affiché tel quel.
@@ -371,6 +329,8 @@ function printBanner(logger: CliLogger, entryPath: string, root: string, plan: W
     logger.info(bridge.rateLimit
       ? t('cli.banniere-rate-limit-actif', { capacite: bridge.rateLimit.perIp.capacity, fenetre: bridge.rateLimit.perIp.windowMs / 1000, echecsCapacite: bridge.rateLimit.fails.capacity, echecsFenetre: bridge.rateLimit.fails.windowMs / 1000 })
       : t('cli.banniere-rate-limit-desactive'))
+    // nonce anti-rejeu — valeur EFFECTIVE via resolveBridgeOptions (exigé sauf `nonce: false`)
+    logger.info(t(bridge.nonce ? 'cli.banniere-nonce-exige' : 'cli.banniere-nonce-coupe'))
     // état/métriques — affichée seulement si active ET loopback : au-delà (host
     // distant), /state exige une requête signée comme le reste du pont — pas un lien à cliquer.
     if (plan.options.stats && isLoopbackHost(bridge.host)) {
@@ -392,6 +352,7 @@ function printBanner(logger: CliLogger, entryPath: string, root: string, plan: W
       ? t('cli.banniere-multi-processus-redis', { redis: a.redis, prefixe: prefix })
       : t('cli.banniere-multi-processus-custom', { prefixe: prefix }))
   }
+  extra?.()
   logger.info(t('cli.ctrl-c-arreter'))
 }
 
@@ -403,6 +364,7 @@ export function errText(err: unknown): string {
 // --- import cache-busté (rechargement à chaud) -------------------------------
 
 let importCounter = 0
+const requireCjs = createRequire(import.meta.url)
 
 // compilation `.server.mjs`/`.civet` déléguée à cli/server-entry.ts (module PARTAGÉ avec
 // cli/server.ts et server/serve-entry.ts — cf. le commentaire de tête du fichier) : un
@@ -412,6 +374,9 @@ let importCounter = 0
 export async function importEntryModule(entryPath: string, root: string): Promise<any> {
   if (entryPath.endsWith('.server.mjs')) return import(await compileServerFile(entryPath, root))
   if (entryPath.endsWith('.civet')) return import(await compileRawCivetFile(entryPath, root))
+  // une entrée CommonJS (`ws.js` sans `"type": "module"`, `.cjs`) passe par le chargeur CommonJS de Node, dont le cache tient au
+  // nom de fichier, pas à l'adresse : sans ce retrait, l'entrée modifiée n'était jamais relue
+  try { delete requireCjs.cache[realpathSync(entryPath)] } catch { /* absente : l'import dit pourquoi */ }
   const url = pathToFileURL(entryPath).href + '?v=' + (++importCounter)
   return import(url)
 }
@@ -451,24 +416,47 @@ export async function runWsCommand(
   config: MjsConfig | undefined,
   injections: WsCommandInjections = {},
 ): Promise<WsRunHandle> {
-  const logger    = createLogger()
   const entryPath = resolveEntryPath(args.root, args.entry, config?.ws?.entry)
   const transport = injections.transport
-
-  async function boot(): Promise<MjsWsApp> {
-    const mod      = await importEntryModule(entryPath, args.root)
-    const contract = readEntryContract(mod, entryPath, logger.warn)
-    const plan     = buildRunPlan(contract, config?.ws, args.port, logger.warn, args.host)
+  return runEntryServer(args.root, entryPath, injections.watch, {
+    readContract: readEntryContract,
+    buildPlan:    (contract: EntryContract, warn) => buildRunPlan(contract, config?.ws, args.port, warn, args.host),
     // l'injection de TEST (transport, ex. MemoryTransport) prime TOUJOURS — sinon (usage réel,
     // injections.transport === undefined) c'est plan.options.transport (résolu par buildRunPlan
     // depuis l'entry/la config, chaîne OU instance) qui doit passer, jamais être écrasé par un
     // `undefined` littéral ici (régression : auparavant, `transport` valait TOUJOURS
     // injections.transport, `undefined` en usage réel — inoffensif tant que `transport` n'était
     // pas une clé d'options légitime ; ça ne l'est plus).
-    const app      = mjsWs({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
+    create:       (plan: WsRunPlan, onLog) => mjsWs({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog }),
+    banner:       (logger, plan: WsRunPlan) => printBanner(logger, entryPath, args.root, plan),
+  })
+}
+
+/** Ce qui distingue `mjs ws` de `mjs serveur` au lancement comme à chaque rechargement (cf. runEntryServer). */
+export interface EntryServerSpec<C, P, A> {
+  readContract(mod: any, entryPath: string, warn: (message: string) => void): C
+  buildPlan(contract: C, warn: (message: string) => void): P
+  create(plan: P, onLog: MjsWsLogFn): A
+  banner(logger: CliLogger, plan: P): void
+}
+
+/** Lancement d'une entry de `mjs ws` ou `mjs serveur`, rechargement à chaud et arrêt propre — partagé par les deux commandes. */
+export async function runEntryServer<C, P extends { setup?: (app: A) => unknown }, A extends { listen(): Promise<unknown>, stop(): Promise<unknown> }>(
+  root: string,
+  entryPath: string,
+  watch: boolean | undefined,
+  spec: EntryServerSpec<C, P, A>,
+): Promise<{ readonly app: A, readonly entryPath: string, stop(): Promise<void> }> {
+  const logger    = createLogger()
+
+  async function boot(): Promise<A> {
+    const mod      = await importEntryModule(entryPath, root)
+    const contract = spec.readContract(mod, entryPath, logger.warn)
+    const plan     = spec.buildPlan(contract, logger.warn)
+    const app      = spec.create(plan, logger.log)
     if (plan.setup) await plan.setup(app)
     await app.listen()
-    printBanner(logger, entryPath, args.root, plan)
+    spec.banner(logger, plan)
     return app
   }
 
@@ -522,7 +510,7 @@ export async function runWsCommand(
   async function reload(myGeneration: number): Promise<void> {
     let mod: any
     try {
-      mod = await importEntryModule(entryPath, args.root)
+      mod = await importEntryModule(entryPath, root)
     } catch (err) {
       // périmé : une génération plus fraîche est déjà en jeu (reloadPending la reprendra) —
       // l'erreur porte sur un contenu déjà dépassé, plus la peine d'en informer
@@ -532,26 +520,34 @@ export async function runWsCommand(
       return
     }
     if (myGeneration !== reloadGeneration) return   // import périmé — jeté même réussi (cf. commentaire ci-dessus)
-    let contract: EntryContract
+    let contract: C
     try {
-      contract = readEntryContract(mod, entryPath, logger.warn)
+      contract = spec.readContract(mod, entryPath, logger.warn)
     } catch (err) {
       logger.error(t('cli.reload-echec-generique', { erreur: errText(err) }))
       return
     }
     try {
-      const plan = buildRunPlan(contract, config?.ws, args.port, logger.warn, args.host)
+      const plan = spec.buildPlan(contract, logger.warn)
+      // nouvelle app montée et son `setup()` joué AVANT d'arrêter l'ancienne (seul `listen()` exige
+      // le port) : un `setup()` qui jette (variable d'environnement manquante, faute) laisse
+      // l'ancien serveur en service au lieu d'un processus vivant qui n'écoute plus rien
+      const app = spec.create(plan, logger.log)
+      try {
+        if (plan.setup) await plan.setup(app)
+      } catch (err) {
+        await Promise.resolve().then(() => app.stop()).catch(() => {})
+        logger.error(t('cli.reload-setup-echec', { erreur: errText(err) }))
+        return
+      }
       await currentApp.stop()
-      // cf. le commentaire de boot() ci-dessus — même correction, même raison
-      const app = mjsWs({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
-      if (plan.setup) await plan.setup(app)
       await app.listen()
       // Un arrêt a été demandé PENDANT cet import/listen : ce nouveau serveur ne doit JAMAIS
       // devenir `currentApp` ni rester en écoute — refermé aussitôt (l'ancien est déjà arrêté par
       // le `currentApp.stop()` ci-dessus ou par shutdown() lui-même), sans le moindre message.
       if (shuttingDown) { await app.stop().catch(() => {}); return }
       currentApp = app
-      logger.info(t('cli.redemarre', { chemin: relative(args.root, entryPath) || entryPath }))
+      logger.info(t('cli.redemarre', { chemin: relative(root, entryPath) || entryPath }))
     } catch (err) {
       // hors contrat explicite (§7.6 ne garantit le zéro-coupure QUE sur l'import)
       // — filet de sécurité : ne jamais planter le process en silence.
@@ -561,7 +557,8 @@ export async function runWsCommand(
 
   let watcher: ReturnType<typeof fsWatch> | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
-  if (injections.watch ?? true) {
+  // production : le fichier d'entrée n'est pas surveillé (un déploiement redémarre le service)
+  if (watch ?? process.env.NODE_ENV !== 'production') {
     const dir = dirname(entryPath)
     watcher = fsWatch(dir, { persistent: true, recursive: false }, (_event, filename) => {
       if (!filename || !WATCHED_EXT.test(filename)) return

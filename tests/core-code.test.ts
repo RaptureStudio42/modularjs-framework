@@ -1,7 +1,7 @@
 // Test neuf — module cœur code (bloc de code à copier) : COMPORTEMENT runtime en
 // happy-dom, patron calqué sur tests/core-select.test.ts (bundler réel, core + chunks des
 // composants chargés dans une vraie Window happy-dom, interaction via dispatchEvent,
-// traversée du shadow fermé via `el._shadow`). Le gabarit hôte utilise <@code> (raccourci
+// traversée du shadow fermé via `el._shadow`). Le gabarit hôte utilise <@@code> (raccourci
 // résolu par le CŒUR, catalogue src/core-modules/ sans override) ; la résolution BUILD
 // (manifeste, chunk, réécriture du gabarit — normalement dans un fichier `*-build.test.ts`
 // séparé, cf. core-select-build.test.ts) est regroupée ICI, en fin de suite, dans une
@@ -25,69 +25,70 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
 
 const HOST = `<div id="code-basic">
-  <@code>
+  <@@code>
     <pre><code>hello()</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-clip-single">
-  <@code>
+  <@@code>
     <pre><code>x = 1
 y = 2   
 </code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-clip-two">
-  <@code>
+  <@@code>
     <pre><code>premier bloc</code></pre>
     <pre><code>second bloc</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-fallback-ok">
-  <@code>
+  <@@code>
     <pre><code>alpha</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-fallback-fail">
-  <@code>
+  <@@code>
     <pre><code>beta</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-labels">
-  <@code label="Copy code" copied-label="Copied!">
+  <@@code label="Copy code" copied-label="Copied!">
     <pre><code>gamma</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-plain">
-  <@code>npm install modularjs-framework</@code>
+  <@@code>npm install modularjs-framework</@@code>
 </div>
 
 <div id="code-plain-multi">
-  <@code>
+  <@@code>
     ligne une
       ligne deux indentee
     ligne trois
-  </@code>
+  </@@code>
 </div>
 
 <div id="code-frameless">
-  <@code frameless>npm install modularjs-framework</@code>
+  <@@code frameless>npm install modularjs-framework</@@code>
 </div>
 
 <div id="code-lines">
-  <@code><code data-file="app.mjs">
+  <@@code><code data-file="app.mjs">
       <div>ligne un</div>
       <div>ligne deux</div>
       <br>
       <div>ligne trois</div>
-    </code></@code>
+    </code></@@code>
 </div>
 `
 
@@ -99,7 +100,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
   let hote: any = null
 
   function code(id: string): any {
-    return hote._shadow.querySelector(`#${id} mjs-code`)
+    return hote._shadow.querySelector(`#${id} mjs-core-code`)
   }
   function btn(id: string): any {
     return code(id)._shadow.querySelector('button.copy')
@@ -126,7 +127,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
     document = window.document
     const files = readdirSync(outDir)
     const coreFile = files.find((f: string) => /^mjs_core-/.test(f))
-    const codeFile = files.find((f: string) => /^code-/.test(f))
+    const codeFile = files.find((f: string) => /^core-code-/.test(f))
     const hoteFile = files.find((f: string) => /^hote-/.test(f))
     assert.ok(coreFile && codeFile && hoteFile, 'core + code + hote compilés')
 
@@ -139,6 +140,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
 
     const combined = [coreFile, codeFile, hoteFile].map((f: string) => stripEsm(readFileSync(join(outDir, f!), 'utf-8'))).join('\n')
     window.eval(`${combined}\nglobalThis.µ = µ;`)
+    window.eval(libellesDuManifeste(join(root, 'bundle.js')))
 
     document.body.innerHTML = '<mjs-hote></mjs-hote>'
     await new Promise((r) => setTimeout(r, 80))
@@ -157,7 +159,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
       assert.ok(b, 'le bouton copy[part=button] doit exister dans le shadow')
       assert.equal(b.getAttribute('aria-label'), 'Copier le code')
       assert.equal(b.getAttribute('title'), 'Copier le code')
-      assert.ok(code('code-basic').querySelector('pre'), 'le <pre> doit rester un enfant du DOM léger de <mjs-code>')
+      assert.ok(code('code-basic').querySelector('pre'), 'le <pre> doit rester un enfant du DOM léger de <mjs-core-code>')
       const box = code('code-basic')._shadow.querySelector('pre.box')
       assert.ok(box, 'le shadow porte son enveloppe pre.box')
       assert.equal(box.classList.contains('block'), false, 'un <pre> projeté laisse l\'enveloppe NEUTRE (pas de classe block)')
@@ -218,7 +220,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
     })
   })
 
-  describe('forme courte — <@code>texte</@code>, sans <pre> ni <code> à écrire', () => {
+  describe('forme courte — <@@code>texte</@@code>, sans <pre> ni <code> à écrire', () => {
     it('texte nu projeté : l\'enveloppe du shadow passe en mode bloc (classe block)', () => {
       const box = code('code-plain')._shadow.querySelector('pre.box')
       assert.ok(box, 'enveloppe présente')
@@ -273,7 +275,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
   })
 })
 
-describe('core-code — résolution RÉELLE via <@code> (catalogue src/core-modules/)', function () {
+describe('core-code — résolution RÉELLE via <@@code> (catalogue src/core-modules/)', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -295,23 +297,23 @@ describe('core-code — résolution RÉELLE via <@code> (catalogue src/core-modu
 
   function readComponent(outDir: string, name: string): string {
     const files = readdirSync(outDir)
-    const f = files.find((f) => new RegExp(`^${name}-[a-f0-9]{8}\\.js$`).test(f))
+    const f = files.find((f) => new RegExp(`^${name}-[0-9a-z]{5}\\.js$`).test(f))
     assert.ok(f, `${name}-*.js doit exister dans ${outDir} (trouvés : ${files.join(', ')})`)
     return readFileSync(join(outDir, f!), 'utf-8')
   }
 
-  it('un projet qui n\'écrit pas <@code> : le manifeste ne porte pas code', async () => {
+  it('un projet qui n\'écrit pas <@@code> : le manifeste ne porte pas code', async () => {
     const { stats } = await buildProject({ 'hote.mjs': '<p>rien à copier ici</p>' })
     assert.equal(stats.errors.length, 0, messages(stats))
-    assert.equal(stats.manifest['code'], undefined, 'code ne doit pas apparaître si rien ne le référence')
+    assert.equal(stats.manifest['core-code'], undefined, 'code ne doit pas apparaître si rien ne le référence')
   })
 
-  it('<@code> seul : build vert, manifeste porte code (clé PLATE), chunk émis, gabarit réécrit <mjs-code>', async () => {
-    const { outDir, stats } = await buildProject({ 'hote.mjs': '<@code><pre><code>x = 1</code></pre></@code>' })
+  it('<@@code> seul : build vert, manifeste porte code (clé PLATE), chunk émis, gabarit réécrit <mjs-core-code>', async () => {
+    const { outDir, stats } = await buildProject({ 'hote.mjs': '<@@code><pre><code>x = 1</code></pre></@@code>' })
     assert.equal(stats.errors.length, 0, messages(stats))
-    assert.ok(stats.manifest['code'], 'manifeste doit exposer code')
+    assert.ok(stats.manifest['core-code'], 'manifeste doit exposer code')
     const files = readdirSync(outDir)
-    assert.ok(files.some((f) => /^code-[a-f0-9]{8}\.js$/.test(f)), `chunk code-*.js attendu parmi : ${files.join(', ')}`)
-    assert.match(readComponent(outDir, 'hote'), /<mjs-code\b/)
+    assert.ok(files.some((f) => /^core-code-[0-9a-z]{5}\.js$/.test(f)), `chunk code-*.js attendu parmi : ${files.join(', ')}`)
+    assert.match(readComponent(outDir, 'hote'), /<mjs-core-code\b/)
   })
 })

@@ -81,15 +81,15 @@ describe('lexer.tokenize', () => {
 
   describe('hooks de cycle de vie en runes µ (µmount & co → _mjs_hook)', () => {
     it('µmount -> : enregistre via l\'API interne unique', () => {
-      assert.equal(tokenize('µmount ->'), "this._mjs_hook 'mount', ->")
+      assert.equal(tokenize('µmount ->'), "_mjsThis._mjs_hook 'mount', ->")
     })
 
     it('µurlChange (path, params) -> : hook à arguments (et µurlChange ⊄ µurl)', () => {
-      assert.equal(tokenize('µurlChange (path, params) ->'), "this._mjs_hook 'urlChange', (path, params) ->")
+      assert.equal(tokenize('µurlChange (path, params) ->'), "_mjsThis._mjs_hook 'urlChange', (path, params) ->")
     })
 
     it('µfailed (err, reset) -> : error boundary script', () => {
-      assert.equal(tokenize('µfailed (err, reset) ->'), "this._mjs_hook 'failed', (err, reset) ->")
+      assert.equal(tokenize('µfailed (err, reset) ->'), "_mjsThis._mjs_hook 'failed', (err, reset) ->")
     })
 
     it('identifiant plus long intact (µmountFoo)', () => {
@@ -169,13 +169,13 @@ describe('lexer.tokenize', () => {
 
   describe('§xxx contextes', () => {
     it('getContext', () => {
-      assert.equal(tokenize('§theme'), "this._mjs_getContext('theme')")
+      assert.equal(tokenize('§theme'), "_mjsThis._mjs_getContext('theme')")
     })
 
     it('setContext', () => {
       assert.equal(
         tokenize('§theme = "dark"'),
-        `this._mjs_setContext('theme', "dark")`
+        `_mjsThis._mjs_setContext('theme', "dark")`
       )
     })
   })
@@ -194,16 +194,16 @@ describe('lexer.tokenize', () => {
 
   describe('§§xxx → TOUJOURS contexte réactif de sous-arbre (plus de résolution vers un singleton)', () => {
     it('même si le nom est ∈ externalVars (singleton importé ailleurs) → reste _mjs_getRCtx', () => {
-      assert.equal(tokenize('§§count', { externalVars: ['$count'] }), "this._mjs_getRCtx('count')")
+      assert.equal(tokenize('§§count', { externalVars: ['$count'] }), "_mjsThis._mjs_getRCtx('count')")
     })
     it('accès profond : §§count.value → _mjs_getRCtx(...).value (jamais résolu en singleton)', () => {
-      assert.equal(tokenize('§§count.value', { externalVars: ['$count'] }), "this._mjs_getRCtx('count').value")
+      assert.equal(tokenize('§§count.value', { externalVars: ['$count'] }), "_mjsThis._mjs_getRCtx('count').value")
     })
     it('sans externalVars (cas courant) → contexte réactif _mjs_getRCtx', () => {
-      assert.equal(tokenize('§§config'), "this._mjs_getRCtx('config')")
+      assert.equal(tokenize('§§config'), "_mjsThis._mjs_getRCtx('config')")
     })
     it('déclaration → contexte réactif _mjs_setRCtx', () => {
-      assert.equal(tokenize("§§theme = 'dark'"), "this._mjs_setRCtx('theme', 'dark')")
+      assert.equal(tokenize("§§theme = 'dark'"), "_mjsThis._mjs_setRCtx('theme', 'dark')")
     })
   })
 
@@ -236,12 +236,12 @@ describe('lexer.tokenize', () => {
     })
 
     it('setter § : un `;` DANS une chaîne du RHS ne coupe plus la capture', () => {
-      assert.equal(tokenize('§msg = "Erreur; réessayez"'), 'this._mjs_setContext(\'msg\', "Erreur; réessayez")')
+      assert.equal(tokenize('§msg = "Erreur; réessayez"'), '_mjsThis._mjs_setContext(\'msg\', "Erreur; réessayez")')
     })
 
     it('le § de CODE (hors chaîne) et celui d\'une interpolation #{…} restent tokenisés', () => {
-      assert.equal(tokenize('x = §theme'), "x = this._mjs_getContext('theme')")
-      assert.equal(tokenize('"#{§theme}"'), '"#{this._mjs_getContext(\'theme\')}"')
+      assert.equal(tokenize('x = §theme'), "x = _mjsThis._mjs_getContext('theme')")
+      assert.equal(tokenize('"#{§theme}"'), '"#{_mjsThis._mjs_getContext(\'theme\')}"')
     })
 
     it('interpolation : un `}` littéral en chaîne ne ferme plus l\'interpolation trop tôt', () => {

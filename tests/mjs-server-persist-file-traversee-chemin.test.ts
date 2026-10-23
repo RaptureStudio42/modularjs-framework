@@ -71,7 +71,7 @@ describe('mjs-server/persist-file — confinement du dossier de stockage', () =>
 
   it("load() ignore un LIEN SYMBOLIQUE déposé dans le dossier de stockage — jamais suivi hors du dossier", async () => {
     const dir = mjsTmp('persist-file-symlink')
-    const cibleHorsDir = join(dirname(dir), 'cible-hors-dossier-'+ Date.now() +'.json')
+    const cibleHorsDir = join(mjsTmp('persist-file-symlink-cible'), 'cible-hors-dossier.json')   // dossier à part, retiré en fin de run même si le test échoue
     writeFileSync(cibleHorsDir, JSON.stringify({ id: 'evil', secret: 'donnee-hors-dossier' }))
     symlinkSync(cibleHorsDir, join(dir, 'lien.json'))
 

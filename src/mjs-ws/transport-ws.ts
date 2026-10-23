@@ -9,7 +9,9 @@
 import type { IncomingMessage } from 'node:http'
 import type { WebSocket as WsSocket, WebSocketServer as WsServer } from 'ws'
 import type { MjsWsConnection, MjsWsRemoteInfo, MjsWsTransport } from './transport.js'
-import { normalizeRemoteAddress } from './transport.js'
+import { createAddressResolver } from './trust-proxy.js'
+import { DEFAULT_MAX_PAYLOAD } from './transport.js'
+import type { MjsWsAddressResolver, MjsWsTrustProxy } from './trust-proxy.js'
 import { t } from '../messages/index.js'
 
 export interface WsTransportOpts {
@@ -23,11 +25,17 @@ export interface WsTransportOpts {
    *  coupe, LUI, PENDANT la réception (Receiver.haveLength, code de fermeture 1009 natif), même
    *  garantie que transport-uws.ts (maxPayloadLength). */
   maxPayload?: number
+  /** Proxy inverse de confiance (cf. trust-proxy.ts) — mjsWs() y câble `opts.trustProxy`. Absent ou `false` : l'adresse
+   *  du visiteur reste celle de la socket. `'loopback'` ou une liste d'adresses/plages : les en-têtes X-Forwarded-For /
+   *  X-Real-IP d'un pair de confiance donnent l'adresse du visiteur. `true` est refusé (lève à la construction). */
+  trustProxy?: MjsWsTrustProxy
+  /** Avertisseur appelé UNE fois quand des en-têtes de proxy arrivent d'une adresse locale alors que `trustProxy` n'est
+   *  pas réglé (mjsWs() y branche l'avertissement du journal). Sans effet quand `trustProxy` est réglé, `false` compris. */
+  onProxyHeaders?: () => void
 }
 
-// défaut aligné sur DEFAULT_LIMITS.maxPayload (index.ts) — dupliqué ici en LITTÉRAL pour ne pas
-// créer de dépendance circulaire (index.ts importe ce fichier), MÊME patron que transport-uws.ts
-// (DEFAULT_MAX_PAYLOAD) : mjsWs() passe de toute façon limits.maxPayload RÉSOLU à chaque
+// défaut = DEFAULT_LIMITS.maxPayload (index.ts), une seule valeur (DEFAULT_MAX_PAYLOAD, transport.ts) :
+// mjsWs() passe de toute façon limits.maxPayload RÉSOLU à chaque
 // construction via resolveTransport() — ce défaut ne joue qu'en usage STANDALONE (`new
 // WsTransport()` hors mjsWs(), ex. tests). PIÈGE évité en gardant `?? DEFAULT_MAX_PAYLOAD` (jamais
 // `maxPayload: this._opts.maxPayload` tel quel) : un objet littéral `{ maxPayload: undefined }`
@@ -35,7 +43,6 @@ export interface WsTransportOpts {
 // clé PRÉSENTE (même valant `undefined`) gagne sur le spread des défauts internes de la lib, qui
 // coerce ensuite en 0 côté Receiver (`options.maxPayload | 0`) = AUCUNE limite, pire que le bug
 // d'origine. Vérifié en direct contre node_modules/ws (8.20.0).
-const DEFAULT_MAX_PAYLOAD = 65536
 
 // mémoïsé : un seul import() réel même si plusieurs WsTransport démarrent dans le même process
 let wsModulePromise: Promise<typeof import('ws')> | null = null
@@ -113,8 +120,13 @@ export class WsTransport implements MjsWsTransport {
   private _opts: WsTransportOpts
   private _wss: WsServer | null = null
   private _handler: ((conn: MjsWsConnection) => void) | null = null
+  // l'adresse retenue pour une connexion (socket, ou visiteur annoncé par un proxy de confiance) — lève ICI sur un trustProxy faux
+  private _addressOf: MjsWsAddressResolver
 
-  constructor(opts: WsTransportOpts = {}) { this._opts = opts }
+  constructor(opts: WsTransportOpts = {}) {
+    this._opts      = opts
+    this._addressOf = createAddressResolver(opts.trustProxy, opts.onProxyHeaders)
+  }
 
   onConnection(handler: (conn: MjsWsConnection) => void): void { this._handler = handler }
 
@@ -128,9 +140,10 @@ export class WsTransport implements MjsWsTransport {
         headers: req.headers as MjsWsRemoteInfo['headers'],
         // IP distante (plafond de connexions PAR IP — core.ts) —
         // req.socket est le socket TCP brut de la requête d'upgrade, MÊME source que
-        // bridge.ts::clientIp() (jamais un en-tête X-Forwarded-For, trivialement falsifiable).
+        // bridge.ts::clientIp() : un en-tête X-Forwarded-For n'est lu que d'un proxy déclaré de confiance
+        // (opts.trustProxy, cf. trust-proxy.ts), jamais d'un pair quelconque — trivialement falsifiable.
         // normalisée à la source (IPv4-mappée « ::ffff:a.b.c.d » → « a.b.c.d »), cf. transport.ts
-        address: normalizeRemoteAddress(req.socket?.remoteAddress),
+        address: this._addressOf(req.socket?.remoteAddress, req.headers as MjsWsRemoteInfo['headers']),
       }
       const conn = new WsConnection(ws, remoteInfo)
       if (this._handler) this._handler(conn)

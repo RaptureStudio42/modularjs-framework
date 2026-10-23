@@ -8,8 +8,9 @@
 // lu via proto pollué renvoie la valeur injectée.
 //
 // Fix (mjs_element.ts) :
-//   - `_set` : `if (!µ._mjs_safeKey(k)) return true` en tête (aligne sur le reste
-//     du runtime — µ._mjs_deepSet/_mjs_guardPath, socket, vault).
+//   - `_set` : `if (!µ._mjs_safeKey(k)) return true` en tête (le premier niveau de
+//     l'état refuse ces noms ; une écriture profonde compilée, µ._mjs_deepSet, ne
+//     contrôle pas ses clés : elle écrit comme JavaScript).
 //   - `_mjs_wrapDeep` set/deleteProperty traps : même garde (filet d'un alias
 //     ÉCHAPPÉ `externalMerge($obj, untrusted)`).
 

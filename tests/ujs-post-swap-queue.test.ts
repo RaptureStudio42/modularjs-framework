@@ -36,6 +36,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -51,6 +52,7 @@ function extractHelpersBlock(): string {
   return extractMarked(UJS_SRC, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock())(µ, document, window)
 }
 function extractClickBody(): string {
@@ -80,6 +82,7 @@ function installNavDispatch(µ: any, win: any, doc: any, DOMParserCtor: any = cl
     }
   }
   installHelpers(µ, doc, win)
+  poserMessages(µ)
   new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, DOMParserCtor)
 }
 function extractVtResolvePageStatement(): string {
@@ -89,6 +92,7 @@ function extractVtWrapSwapStatement(): string {
   return extractMarked(UJS_SRC, '_mjs_vtWrapSwap')
 }
 function installVt(µ: any, doc: any) {
+  poserMessages(µ)
   new Function('µ', 'document', extractVtResolvePageStatement() + '\n' + extractVtWrapSwapStatement())(µ, doc)
 }
 

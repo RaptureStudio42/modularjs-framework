@@ -19,11 +19,13 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'animations', 'typewriter.ts'), 'utf-8')
 
 function loadFactory(µMock: any) {
+  poserMessages(µMock)
   return new Function('µ', 'return (' + SRC.trim().replace(/;\s*$/, '') + ')')(µMock)
 }
 
@@ -83,7 +85,7 @@ describe('animations/typewriter.ts — plusieurs nœuds texte RÉELS (ex. texte 
     const { intro } = factory({ speed: 1 })
     assert.throws(
       () => intro(node),
-      (e: any) => e instanceof Error && e.message === '@transition.typewriter exige un unique nœud texte',
+      (e: any) => e instanceof Error && e.message === '*typewriter exige un unique nœud texte',
       'AVANT le fix : aucune erreur, seul le 1er nœud animait, le 2e restait affiché intégralement dès le départ',
     )
   })

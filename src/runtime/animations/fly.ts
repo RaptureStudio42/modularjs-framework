@@ -1,43 +1,23 @@
-// animations/fly.coffee — port direct de Svelte fly.
+// animations/fly.ts — la balise arrive de loin et se pose : elle part déplacée de `x`, `y` (un nombre en px, ou une longueur écrite comme
+// « 10% »), transparente à `opacity`, floue de `blur` (px, au centième), tournée de `rotate` et penchée de `skew` (degrés, la rotation d'abord :
+// l'inclinaison tourne avec la balise), et se redresse en arrivant ; elle repart comme elle est venue
+// options : x, y (0), opacity (0), blur, skew, rotate (sans), duration (400), delay (0), easing (ease-out)
 (function(opts = {}) {
-  var ref, ref1, ref2, setup, splitUnit, startOp, xUnit, xVal, yUnit, yVal;
-  splitUnit = function(v) {
-    var m;
-    if (typeof v === 'number') {
-      return [v, 'px'];
-    } else {
-      m = String(v).match(/^([\d.\-]+)(.*)$/);
-      if (m) {
-        return [parseFloat(m[1]), m[2] || 'px'];
-      } else {
-        return [parseFloat(v) || 0, 'px'];
-      }
+  var x   = µ._mjs_animLen(opts.x ?? 0);
+  var y   = µ._mjs_animLen(opts.y ?? 0);
+  var deg = function(v, u) {
+    return Math.round(v * u * 100) / 100 || 0;
+  };
+  return µ._mjs_animFrom(opts, {
+    opacity: opts.opacity,
+    add: function(node, style) {
+      var tf = style.transform === 'none' ? '' : style.transform;
+      var fl = style.filter === 'none' ? '' : style.filter;
+      return function(t, u, o) {
+        var f = { transform: `${tf} translate(${u * x[0]}${x[1]}, ${u * y[0]}${y[1]})${opts.rotate ? ` rotate(${deg(opts.rotate, u)}deg)` : ''}${opts.skew ? ` skewX(${deg(opts.skew, u)}deg)` : ''}`.trim(), opacity: o };
+        if (opts.blur) f.filter = `${fl} blur(${Math.round(opts.blur * u * 100) / 100}px)`.trim();
+        return f;
+      };
     }
-  };
-  startOp = (ref = opts.opacity) != null ? ref : 0;
-  [xVal, xUnit] = splitUnit((ref1 = opts.x) != null ? ref1 : 0);
-  [yVal, yUnit] = splitUnit((ref2 = opts.y) != null ? ref2 : 0);
-  setup = function(node) {
-    var baseTransform, ref3, ref4, ref5, style, targetOpacity;
-    style = window.getComputedStyle(node);
-    targetOpacity = +style.opacity;
-    baseTransform = style.transform === 'none' ? '' : style.transform;
-    return {
-      delay: (ref3 = opts.delay) != null ? ref3 : 0,
-      duration: (ref4 = opts.duration) != null ? ref4 : 400,
-      easing: µ.easing.resolve(opts.easing),
-      steps: (ref5 = opts.steps) != null ? ref5 : 60,
-      css: function(t, u) {
-        return {
-          transform: `${baseTransform} translate(${u * xVal}${xUnit}, ${u * yVal}${yUnit})`.trim(),
-          opacity: targetOpacity - (targetOpacity - startOp) * u
-        };
-      }
-    };
-  };
-  setup._isCfgFactory = true;
-  return {
-    intro: setup,
-    outro: setup
-  };
+  });
 });

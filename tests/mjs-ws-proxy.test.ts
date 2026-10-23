@@ -29,9 +29,21 @@ async function waitUntil(pred: () => boolean, timeoutMs = 1500): Promise<void> {
   }
 }
 
+// ce que chaque test ouvre (clients, applis, faux back), refermé après lui MÊME s'il échoue : un test interrompu avant
+// son `s.destroy()` laissait un client se reconnecter par le WebSocket global — posé par le test suivant, vers SON
+// transport — et fausser ses comptes (clients, POST reçus)
+const aFermer: Array<() => unknown> = []
+const wsAvant = (globalThis as any).WebSocket
+
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
   new Function('µ', clientSrc)(µ)
+  const socket = µ.socket
+  µ.socket = function(...args: any[]) {
+    const s = socket.apply(this, args)
+    aFermer.push(() => s.destroy())
+    return s
+  }
   return µ
 }
 
@@ -51,6 +63,7 @@ function makeClientAvecEntetes(transport: MemoryTransport, headers: Record<strin
 async function startApp(opts: MjsWsOptions = {}): Promise<{ transport: MemoryTransport; app: MjsWsApp }> {
   const transport = new MemoryTransport()
   const app = mjsWs({ transport, heartbeat: 0, ...opts })
+  aFermer.push(() => app.stop())
   await app.listen()
   return { transport, app }
 }
@@ -59,7 +72,8 @@ const SECRET = 'secret-proxy-test-1234567890'
 
 // --- faux serveur node:http qui DÉCIDE (accepte/refuse/hang) et vérifie la signature reçue -----
 // `sign` (durcissement verifyResponse) — optionnel : quand présent, la RÉPONSE est à son tour
-// signée (x-mjs-ws-timestamp/x-mjs-ws-signature, canonicalString avec 'RESPONSE'), via createHmac
+// signée (x-mjs-ws-timestamp/x-mjs-ws-signature, canonicalString avec 'RESPONSE' et la signature de la
+// requête, qui lie la réponse à sa requête), via createHmac
 // BRUT — MÊME technique que la vérification de la requête ci-dessous (jamais une primitive de
 // production importée : preuve boîte noire, comme le reste du fichier). Absent = réponse NON
 // signée, EXACTEMENT le comportement d'avant (non-régression des 12 tests existants).
@@ -89,7 +103,7 @@ function startDecisionServer(secret: string, decide: (req: DecisionReq) => Decis
         if (outcome.sign) {
           const signTs        = outcome.sign.ts ?? Math.floor(Date.now() / 1000)
           const signSecret    = outcome.sign.secret ?? secret
-          const canonicalResp = signTs +'.RESPONSE.'+ httpReq.url +'.'+ bodyOut
+          const canonicalResp = signTs +'.RESPONSE.'+ httpReq.url +'.'+ sig +'\n'+ bodyOut
           headersOut['x-mjs-ws-timestamp'] = String(signTs)
           headersOut['x-mjs-ws-signature'] = createHmac('sha256', signSecret).update(canonicalResp).digest('hex')
         }
@@ -97,6 +111,7 @@ function startDecisionServer(secret: string, decide: (req: DecisionReq) => Decis
         res.end(bodyOut)
       })
     })
+    aFermer.push(() => { server.closeAllConnections(); return new Promise<void>(r => server.close(() => r())) })
     server.listen(0, '127.0.0.1', () => {
       const addr = server.address() as any
       resolveStart({
@@ -108,6 +123,14 @@ function startDecisionServer(secret: string, decide: (req: DecisionReq) => Decis
 }
 
 describe('MJS-WS — proxy de décisions (proxy.ts)', () => {
+  afterEach(async () => {
+    for (const fermer of aFermer.splice(0)) {
+      try { await fermer() } catch { /* déjà refermé par le test */ }
+    }
+  })
+
+  after(() => { (globalThis as any).WebSocket = wsAvant })
+
   it('1. connect autorisé via proxy auth → identity posée, µ:welcome', async () => {
     const server = await startDecisionServer(SECRET, (req) => {
       const token = req.body.hello?.auth?.token

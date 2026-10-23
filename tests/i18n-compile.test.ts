@@ -1,6 +1,6 @@
 // i18n v1 — CÔTÉ COMPILATEUR. Rune `µt('clé', vars)` → `µ.t(...)` ;
 // directives racines `@i18n 'section'` (préfixe compile-time des clés
-// RELATIVES) et `@i18nPlaceholder <mode>` (auto|key|wait, voyage en 3e
+// RELATIVES) et `@i18nPlaceholder <valeur>` (wait|key|*skeleton|*loader, voyage en 3e
 // argument LITTÉRAL de chaque appel) ; émission d'instance `_mjs_i18n =
 // [section, mode]` (nouveau placeholder [[I18N_LINE]], à côté de
 // [[STORE_KEYS_LINE]]) — contrat runtime figé, ce fichier ne teste QUE la
@@ -26,7 +26,7 @@ describe('i18n — sucre µt → µ.t (sigils.ts, MU_SHORT_GLOBALS)', function (
   })
 
   it('lexer : les hooks (µurlChange, MU_HOOKS) restent prioritaires, aucune collision avec µt', () => {
-    assert.equal(tokenize('µurlChange (p, a) ->'), "this._mjs_hook 'urlChange', (p, a) ->")
+    assert.equal(tokenize('µurlChange (p, a) ->'), "_mjsThis._mjs_hook 'urlChange', (p, a) ->")
   })
 
   it('cleanJs (interpolations/handlers) : µt(\'clé\', vars) → µ.t(\'clé\', vars)', () => {
@@ -119,9 +119,9 @@ describe('i18n — directive @i18n (extraction)', function () {
 })
 
 describe('i18n — directive @i18nPlaceholder (extraction)', function () {
-  it("@i18nPlaceholder auto : accepté SANS @i18n (agit sur les clés racine)", () => {
-    const res = extractDirectives('@i18nPlaceholder auto\n<p>hi</p>')
-    assert.equal(res.moduleI18nPlaceholder, 'auto')
+  it("@i18nPlaceholder *skeleton : accepté SANS @i18n (agit sur les clés racine)", () => {
+    const res = extractDirectives('@i18nPlaceholder *skeleton\n<p>hi</p>')
+    assert.equal(res.moduleI18nPlaceholder, '*skeleton')
     assert.equal(res.moduleI18nSection, null)
   })
 
@@ -146,7 +146,7 @@ describe('i18n — directive @i18nPlaceholder (extraction)', function () {
   it('mode invalide : ERREUR listant les valeurs valides', () => {
     assert.throws(
       () => extractDirectives('@i18nPlaceholder yolo\n<p>hi</p>'),
-      /@i18nPlaceholder.*yolo.*auto, key ou wait/s
+      /@i18nPlaceholder.*yolo.*wait, key, \*skeleton, \*loader/s
     )
   })
 
@@ -225,13 +225,13 @@ describe('i18n — préfixage compile-time (transpile bout-en-bout)', function (
     assert.match(output, /µ\.t\('panier\.x', undefined, 'wait'\)/)
   })
 
-  it("@i18nPlaceholder auto (sans @i18n) : 3e argument ajouté, 2e argument vars préservé", async () => {
+  it("@i18nPlaceholder *skeleton (sans @i18n) : 3e argument ajouté, 2e argument vars préservé", async () => {
     const src = [
-      '@i18nPlaceholder auto',
+      '@i18nPlaceholder *skeleton',
       "<p>{µt('/nav.fermer', {n: 3})}</p>",
     ].join('\n')
-    const { output } = await transpile(src, { moduleName: 'mjs-i18n-auto-vars' })
-    assert.match(output, /µ\.t\('nav\.fermer', \{n: 3\}, 'auto'\)/)
+    const { output } = await transpile(src, { moduleName: 'mjs-i18n-skeleton-vars' })
+    assert.match(output, /µ\.t\('nav\.fermer', \{n: 3\}, '\*skeleton'\)/)
   })
 })
 

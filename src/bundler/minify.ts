@@ -16,6 +16,7 @@
 // avec un message clair pointant le fichier et la ligne fautive.
 
 import { transform } from 'esbuild'
+import * as acorn from 'acorn'
 import { t } from '../messages/index.js'
 import { maskInertSameLength } from '../lexer/index.js'
 import type { LogLevelName } from './config.js'
@@ -43,6 +44,143 @@ export function buildPureList(level: LogLevelName): string[] {
   if (level === 'error' || level === 'silent') list.push('console.warn', 'µ.warn')
   if (level === 'silent') list.push('console.error', 'µ.error')
   return list
+}
+
+// ============================================================================
+// traces du runtime — retrait du code envoyé
+//
+// `pure` ne vaut que pour un nom GLOBAL : esbuild laisse `µ.log(…)` entier dès que `µ` est un nom du fichier
+// (variable du cœur, liaison importée d'un composant ou d'un morceau d'effet), donc toujours : les traces du
+// runtime ne partaient jamais, texte compris
+// pour le texte du runtime (option `runtimeSource`) on réécrit l'appelé, et lui seul, en un identifiant libre
+// que `define` pose à null : `MJS_TRACE?.(…)` est un appel optionnel sur null, qu'esbuild retire avec ses
+// arguments, en instruction comme dans un return ou une expression à virgule
+// les arguments ne sont jamais lus : appels imbriqués, chaînes et gabarits restent exacts ; la recherche se fait
+// sur la vue masquée (chaînes, morceaux de gabarit, commentaires, expressions régulières blanchis, expressions
+// `${…}` gardées) pour ne rien toucher de ce qui dit `µ.log(` sans l'appeler ; le masque se lit sur les jetons
+// d'acorn, qui sait qu'une barre après `)` ou `}` ouvre une expression régulière quand l'instruction le veut (le
+// masque du lexer la prend pour une division, et réécrirait le `µ.log(` qu'elle contient)
+//
+// une trace du runtime ne porte aucun effet de bord (tests/runtime-traces-sans-effet-de-bord.test.ts) : ses
+// arguments partent avec elle ; celles dont le texte coûte (µ._mjs_txt inscrit une entrée d'attente et pose des
+// écouteurs) s'écrivent µ._mjs_logger()?.(…) : coupées, elles n'évaluent rien, même sans minification
+// ============================================================================
+
+// repères de l'aide `µ._mjs_logger` (mjs_init.ts) : le bloc part avec les traces qu'elle garde
+const TRACE_LOGGER_BLOCK_RE = /^\/\/ <trace-logger>\n[\s\S]*?^\/\/ <\/trace-logger>\n?/m
+
+// l'appelé d'une trace : `µ.log` suivi d'une parenthèse, ou `µ._mjs_logger()` suivi de `?.(`
+const TRACE_CALLEE_RE = /(?<![\w$µ.])µ\.(?:log(?=\s*\()|_mjs_logger\(\)(?=\?\.\())/g
+
+// le nom `_mjs_logger`, seul ou derrière un point
+const TRACE_LOGGER_NAME_RE = /(?<![\w$])_mjs_logger(?![\w$])/g
+
+// ce que le texte doit porter pour qu'il y ait quelque chose à lire : un appel `µ.log`, l'aide ou ses repères
+const TRACE_HINT_RE = /µ\.log|_mjs_logger|<trace-logger>/
+
+// le texte avec chaînes, morceaux de gabarit, expressions régulières et commentaires blanchis (même longueur, retours
+// à la ligne gardés), d'après les jetons d'acorn ; un code qu'acorn ne lit pas (en module, puis en script) retombe sur
+// le masque du lexer
+function maskInertTokens(text: string): string {
+  const spans: Array<[number, number]> = []
+  const types                          = acorn.tokTypes
+  for (const sourceType of ['module', 'script'] as const) {
+    spans.length = 0
+    try {
+      acorn.parse(text, {
+        ecmaVersion: 'latest',
+        sourceType,
+        onToken: (token) => { if (token.type === types.string || token.type === types.regexp || token.type === types.template) spans.push([token.start, token.end]) },
+        onComment: (_block, _text, start, end) => { spans.push([start, end]) },
+      })
+    }
+    catch {
+      continue
+    }
+    let out    = ''
+    let cursor = 0
+    for (const [start, end] of spans.sort((a, b) => a[0] - b[0])) {
+      out   += text.slice(cursor, start) + text.slice(start, end).replace(/[^\n]/g, ' ')
+      cursor = end
+    }
+    return out + text.slice(cursor)
+  }
+  return maskInertSameLength(text)
+}
+
+// `µ.log(` devient `MJS_TRACE?.(` et `µ._mjs_logger()?.(` aussi ; l'appelant pose `define: { MJS_TRACE: 'null' }`
+// (minifyJs, option runtimeSource), sans lui le résultat ne tourne pas
+// le bloc de l'aide `µ._mjs_logger` (repères `// <trace-logger>`) est retiré, ses lignes laissées vides, quand
+// plus rien d'autre ne la nomme ; un autre usage la garde en place
+export function cutRuntimeTraces(source: string): string {
+  // ni trace, ni aide, ni repères dans ce texte (la plupart des morceaux d'effets) : rien à lire, rien à retirer
+  if (!TRACE_HINT_RE.test(source)) return source
+
+  const masked = maskInertTokens(source)
+  const calls  = [...masked.matchAll(TRACE_CALLEE_RE)]
+  const helper = TRACE_LOGGER_BLOCK_RE.exec(source)
+
+  let edits: Array<[number, number, string]> = calls.map(m => [m.index!, m.index! + m[0].length, m[0] === 'µ.log' ? 'MJS_TRACE?.' : 'MJS_TRACE'])
+  if (helper !== null) {
+    const from  = helper.index
+    const to    = from + helper[0].length
+    const named = [...masked.matchAll(TRACE_LOGGER_NAME_RE)].some(m => (m.index! < from || m.index! >= to) && !calls.some(c => m.index! >= c.index! && m.index! < c.index! + c[0].length))
+    if (!named) edits = [...edits.filter(([start, end]) => end <= from || start >= to), [from, to, helper[0].replace(/[^\n]/g, '')]]
+  }
+  let out    = ''
+  let cursor = 0
+  for (const [start, end, text] of edits.sort((a, b) => a[0] - b[0])) {
+    out   += source.slice(cursor, start) + text
+    cursor = end
+  }
+  return out + source.slice(cursor)
+}
+
+// ============================================================================
+// textes des traces du runtime — les messages que des traces sont seules à lire
+//
+// le routeur, le bloc {await} et la poignée de salon partie (mjs_socket.ts) écrivent leurs traces avec un texte du groupe `err` de la table des messages (µ._mjs_txt) ; en production ce groupe
+// vit dans un fichier par langue, chargé quand un message s'écrit. selon le niveau de console :
+//   - 'warn' (défaut), 'error', 'silent' : la construction retire les traces du code envoyé, personne ne lira leur texte :
+//     les fichiers de messages ne le portent plus (messagesWithoutTraces)
+//   - 'log' : les traces restent, leur texte part avec le manifeste (traceMessages) : sans lui la première trace sortirait
+//     en clés, puis serait rejouée dans le désordre à l'arrivée du fichier de messages. Les fichiers restent complets
+// tests/runtime-messages-des-traces.test.ts relit le runtime et garde ces listes
+// ============================================================================
+
+/** clés du groupe `err` que seules des traces lisent : celles du routeur, celle d'un {await} rejeté sans branche {error}, celle d'une poignée de salon partie,
+ *  celle d'une clé refusée (traces de µ.state, de µ.smooth et du socket) */
+export const TRACE_ONLY_MESSAGES: readonly string[] = [
+  'routerLogRegister', 'routerLogInit', 'routerLogNavigate', 'routerLogCurtain', 'routerLogViewTransition', 'routerLogNative', 'routerLogNoRoutes',
+  'routerLogAnalyze', 'routerLogMatch', 'routerLogNothingToInject', 'routerNoRouteLog', 'routerLogViewCleared', 'routerLogCacheHit', 'routerLogCreate',
+  'awaitUnhandled', 'sockHandleGone', 'runesKey',
+]
+
+/** clés qu'une trace lit : les précédentes, et le texte d'UJS que sa trace du mode 'silent' partage avec son avertissement */
+export const TRACE_READ_MESSAGES: readonly string[] = [...TRACE_ONLY_MESSAGES, 'ujsNoPage']
+
+/** le niveau de console de production retire les traces du runtime (même critère que la liste `pure` : `µ.log` y figure à tout niveau sauf 'log') */
+export function levelCutsTraces(level: LogLevelName): boolean {
+  return buildPureList(level).includes('µ.log')
+}
+
+/** le groupe `err` d'une langue sans les textes que seules des traces lisent */
+export function messagesWithoutTraces(messages: Record<string, string>): Record<string, string> {
+  const rest = { ...messages }
+  for (const key of TRACE_ONLY_MESSAGES) delete rest[key]
+  return rest
+}
+
+/** les textes de `keys` que le groupe `err` d'une langue porte */
+export function traceMessages(messages: Record<string, string>, keys: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const key of keys) if (key in messages) out[key] = messages[key]
+  return out
+}
+
+/** les clés de traces que le texte du cœur nomme : une appli sans routeur n'a pas à porter leur texte */
+export function traceKeysIn(core: string): string[] {
+  return TRACE_READ_MESSAGES.filter(key => core.includes(key))
 }
 
 // ============================================================================
@@ -108,9 +246,9 @@ export function withMangleCacheLock<T>(cache: object | undefined, fn: () => Prom
 //
 // Le relevé est textuel et large (commentaires et chaînes compris) : un nom réservé à tort coûte
 // quelques octets, un nom manqué rouvre le bogue. Seuls comptent les noms que le raccourcisseur
-// peut produire : 54 noms d'un caractère puis 3 456 de deux, bien plus que les propriétés
-// `_mjs_*` d'un gros projet (une centaine de correspondances, 2 caractères au plus) — 3 garde
-// de la marge.
+// peut produire : 54 noms d'un caractère puis 3 456 de deux, puis de trois. Une petite appli porte
+// environ 250 correspondances, une appli moyenne plus de 700 (2 caractères au plus) ; mesuré sur
+// 20 000 propriétés de synthèse, aucun nom ne dépasse 3 caractères — 3 garde de la marge.
 // ============================================================================
 export const RESERVED_NAME_MAX_LENGTH = 3
 
@@ -213,6 +351,37 @@ export function reserveDataMarkers(cache: Record<string, string | false>): strin
 export const CORE_HELPER_NAMES = ['_p', '_tm', '_al', '_def', '_esc', '_set', '_storeSet', '_storeDeclare', '_glCl', '_glSt', '_updDynEl', '_updModule', '_setHead', '_clearHead', '_vtPresets', '_isServer']
 
 // ============================================================================
+// NOMS QUE LE NAVIGATEUR PORTE DÉJÀ : jamais donnés à une propriété interne
+//
+// Les propriétés `_mjs_*` se posent sur des objets du navigateur : nœuds (`node._mjs_outro`, la sortie
+// d'une balise), événements, feuilles de style, fenêtre, document, tableaux, fonctions. Le
+// raccourcisseur, lui, ne sait rien du navigateur : il donne `x` à une propriété interne comme il
+// donnerait `q`. Posée sur une `<img>`, elle écrit alors dans `HTMLImageElement.x`, en lecture seule
+// — le cœur et les composants sont en mode strict, l'écriture lève (« Cannot set property x of
+// #<HTMLImageElement> which has only a getter ») et le composant ne se construit plus. Sur un nom
+// inscriptible c'est pire, parce que muet : `el.id = …` réécrit l'attribut, `liste.at = …` masque la
+// méthode du tableau.
+//
+// Lequel des noms tombe sur quelle propriété dépend du nombre de propriétés internes du projet et de
+// leur fréquence : une image qui porte `@out=…` marche tant que `x` nomme une propriété qu'on ne pose
+// pas sur un nœud, et casse le jour où une propriété de plus décale les noms.
+//
+// La liste EST le relevé, dans Chromium, Firefox et WebKit (le moteur de Safari), des noms d'au plus `RESERVED_NAME_MAX_LENGTH`
+// caractères portés par le prototype de chaque classe globale, et en propre par `window`, `document`
+// et `navigator`. Elle est large exprès (matrices, points, constantes WebGL compris) : un nom réservé
+// à tort coûte quelques octets, un nom manqué rouvre le bogue. Le test de réservation refait le relevé
+// dans les navigateurs installés : un nom neuf du navigateur fait rougir tant qu'il n'est pas ici.
+//
+// Hors de cette liste : les accès NOMMÉS, qui dépendent de la page — un champ `name="q"` fait de
+// `form.q` une propriété en lecture seule, un `id` ou un `<form name>` s'expose sur `window` ou
+// `document`. Les noms écrits dans un gabarit sont déjà réservés par le relevé des noms d'instance
+// (ils sont dans le code compilé) ; un nom qui n'existe qu'à l'exécution ne l'est pas. Le runtime ne
+// pose aucune propriété interne sur `window` ni sur `document`. Un appelant de `minifyJs` qui passe
+// son propre cache réserve lui-même ces noms (`reserveMangleNames(cache, PLATFORM_NAMES)`).
+// ============================================================================
+export const PLATFORM_NAMES = ['Q', 'a', 'b', 'c', 'd', 'e', 'f', 'r', 'w', 'x', 'y', 'z', 'CW', 'R8', 'RG', 'as', 'at', 'ax', 'ay', 'ch', 'cx', 'cy', 'db', 'dx', 'dy', 'fr', 'fx', 'fy', 'go', 'id', 'k1', 'k2', 'k3', 'k4', 'ok', 'p1', 'p2', 'p3', 'p4', 'r1', 'r2', 'rx', 'ry', 'to', 'x1', 'x2', 'y1', 'y2', 'CCW', 'CSS', 'INT', 'Ink', 'MAX', 'MIN', 'Map', 'NaN', 'ONE', 'R8I', 'RED', 'RG8', 'RGB', 'Set', 'URL', 'add', 'all', 'alt', 'arc', 'big', 'cmp', 'csp', 'cue', 'dir', 'div', 'end', 'gap', 'get', 'has', 'in1', 'in2', 'ink', 'key', 'low', 'm11', 'm12', 'm13', 'm14', 'm21', 'm22', 'm23', 'm24', 'm31', 'm32', 'm33', 'm34', 'm41', 'm42', 'm43', 'm44', 'map', 'max', 'mid', 'min', 'mul', 'now', 'pad', 'pan', 'pop', 'put', 'red', 'rel', 'rev', 'rtt', 'run', 'sdp', 'set', 'src', 'sub', 'sup', 'tag', 'tee', 'top', 'upX', 'upY', 'upZ', 'url', 'use']
+
+// ============================================================================
 // assertNoStringIndexedMjsAccess() : check au build qui fail si on détecte
 // un accès string-indexé sur une prop `_mjs_*`. Garde-fou pour le mangleCache.
 //
@@ -227,6 +396,8 @@ export const CORE_HELPER_NAMES = ['_p', '_tm', '_al', '_def', '_esc', '_set', '_
 //   3. `'_mjs_' + X`                       : concat string runtime
 //   4. `Object.defineProperty(*, '_mjs_X', …)` / `Reflect.X(*, '_mjs_X', …)`
 //   5. `'_mjs_X' in obj`                   : test d'existence par string
+//   6. `Object.hasOwn(*, '_mjs_X')` / `hasOwnProperty.call(*, '_mjs_X')` : idem
+//   7. `{ '_mjs_X': … }`                  : clé d'objet entre guillemets
 //
 // Faux positifs minimisés : le source est lu par `blankNonCode()` (infra), qui
 // blanchit commentaires, chaînes de données et littéraux regex. Un de ces
@@ -304,7 +475,7 @@ function scanRegexLiteral(source: string, start: number): number {
 //     `` [`_mjs_${…}`] `` ; les expressions `${…}`, elles, sont relues comme du
 //     code (chaînes et commentaires dedans blanchis).
 //   • une chaîne en position de CLÉ (précédée de `[` ou `,`) : motifs nº1 et nº4.
-//   • une chaîne qui EST un nom interne, où qu'elle soit : motifs nº3 et nº5.
+//   • une chaîne qui EST un nom interne, où qu'elle soit : motifs nº3, nº5, nº6 et nº7.
 // Le reste des chaînes est de la DONNÉE (prose d'un composant, message citant
 // un exemple) et part au blanc : un exemple en prose ne casse pas un build.
 // ============================================================================
@@ -422,6 +593,105 @@ function regexLiteralStarts(source: string, prev: string, prevAt: number): boole
   return !')]}\'"`'.includes(prev)
 }
 
+/** Fin d'un gabarit `` `…` `` ouvert en `start` : index APRÈS le `` ` `` fermant (la fin du source si
+ *  jamais fermé). Une expression `${…}` se lit comme du code. */
+function skipTemplate(source: string, start: number, visit?: (at: number) => void): number {
+  let i = start + 1
+  while(i < source.length) {
+    const c = source[i]
+    if(c === '\\') { i += 2; continue }
+    if(c === '`') return i + 1
+    if(c === '$' && source[i + 1] === '{') {
+      const group = scanGroup(source, i + 2, visit)
+      if(group.close < 0) return source.length
+      i = group.close + 1
+      continue
+    }
+    i++
+  }
+  return source.length
+}
+
+/** Parcourt du code depuis `from` jusqu'au `)`, `]` ou `}` qui ferme le groupe ouvert juste avant :
+ *  sa position (`-1` si le source finit avant) et celle des virgules de premier niveau. Chaînes,
+ *  gabarits, regex et commentaires sont sautés d'un bloc ; `visit` reçoit la position de chaque `µ`
+ *  rencontré dans du vrai code (expressions `${…}` des gabarits comprises). */
+function scanGroup(source: string, from: number, visit?: (at: number) => void): { close: number; commas: number[] } {
+  const commas: number[] = []
+  let depth  = 0
+  let prev   = ''
+  let prevAt = -1
+  let i      = from
+  while(i < source.length) {
+    const c = source[i]
+    if(c === '/' && source[i + 1] === '/') {
+      while(i < source.length && source[i] !== '\n') i++
+      continue
+    }
+    if(c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2)
+      i = end < 0 ? source.length : end + 2
+      continue
+    }
+    if(c === '/' && regexLiteralStarts(source, prev, prevAt)) {
+      const end = scanRegexLiteral(source, i)
+      if(end > 0) { prev = ')'; prevAt = end - 1; i = end; continue }
+    }
+    if(c === '\'' || c === '"') {
+      const end = scanQuoted(source, i, c)
+      if(end > 0) { prev = c; prevAt = end - 1; i = end; continue }
+    }
+    if(c === '`') {
+      i      = skipTemplate(source, i, visit)
+      prev   = '`'
+      prevAt = i - 1
+      continue
+    }
+    if(c === 'µ' && visit) visit(i)
+    if(c === '(' || c === '[' || c === '{') depth++
+    else if(c === ')' || c === ']' || c === '}') {
+      if(depth === 0) return { close: i, commas }
+      depth--
+    }
+    else if(c === ',' && depth === 0) commas.push(i)
+    if(!/\s/.test(c)) { prev = c; prevAt = i }
+    i++
+  }
+  return { close: -1, commas }
+}
+
+/** Retire, dans le source du runtime, le 3e argument (texte français de secours) de chaque appel
+ *  `µ._mjs_msg(clé, variables, 'texte')` / `µ._mjs_txt(…)`. Seul un 3e argument qui est une chaîne
+ *  littérale simple part ; un appel à 2 arguments, ou à 3e argument calculé (`fr`, concaténation,
+ *  gabarit…), reste intact. Les appels cités dans un commentaire, une chaîne ou un gabarit ne sont
+ *  pas des appels : ils ne bougent pas. */
+export function stripMsgFallbacks(source: string): string {
+  const call = /^µ\._mjs_(?:msg|txt)\s*\(/
+  const cuts: Array<[number, number]> = []
+  const visit = (at: number): void => {
+    const m = call.exec(source.slice(at, at + 40))
+    if(m === null) return
+    const { close, commas } = scanGroup(source, at + m[0].length)
+    if(close < 0 || commas.length !== 2) return
+    const third = source.slice(commas[1] + 1, close).trim()
+    if(!/^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/.test(third)) return
+    cuts.push([commas[1], close])
+  }
+  let pos = 0
+  while(pos < source.length) {
+    const group = scanGroup(source, pos, visit)
+    if(group.close < 0) break
+    pos = group.close + 1
+  }
+  let out    = ''
+  let cursor = 0
+  for(const [from, to] of cuts.sort((a, b) => a[0] - b[0])) {
+    out   += source.slice(cursor, from)
+    cursor = to
+  }
+  return out + source.slice(cursor)
+}
+
 export function assertNoStringIndexedMjsAccess(source: string, filename: string): void {
   // le source original sert à citer la ligne fautive ; le blanchi, de même longueur, à scanner
   const stripped = blankNonCode(source)
@@ -465,6 +735,19 @@ export function assertNoStringIndexedMjsAccess(source: string, filename: string)
       re: /(['"])_mjs_[\w$]*\1\s*in\s/,
       label: t('bundler.minify.label-in'),
     },
+    {
+      // `Object.hasOwn(o, '_mjs_X')`, `hasOwnProperty.call(o, '_mjs_X')`, `o.hasOwnProperty('_mjs_X')` :
+      // même raison que `in`, la string n'est pas manglée → le test ne trouve JAMAIS la prop
+      re: /hasOwn(?:Property)?(?:\s*\.\s*(?:call|apply))?\s*\([^)]*?(['"])_mjs_[a-zA-Z_$][\w$]*\1/,
+      label: t('bundler.minify.label-has-own'),
+    },
+    {
+      // `{ '_mjs_X': … }` : une clé d'objet entre guillemets n'est pas manglée (esbuild sans
+      // mangleQuoted) → la prop posée n'est jamais celle que lit l'accès pointé ; la correspondance
+      // commence sur la clé, la ligne citée est la sienne
+      re: /(?<=[{,]\s*)(['"])_mjs_[a-zA-Z_$][\w$]*\1\s*:/,
+      label: t('bundler.minify.label-cle-guillemets'),
+    },
   ]
 
   for (const { re, label } of patterns) {
@@ -500,6 +783,13 @@ export interface MinifyOpts {
    * exactement les mêmes appels). Absent : `'warn'`, comportement historique inchangé.
    */
   logLevel?: LogLevelName
+  /**
+   * Le texte est celui du runtime du framework (cœur, morceau d'effet), jamais du code d'une appli, et le build
+   * est un build de PRODUCTION (le développement garde ses traces, minifié ou non) : à un niveau de PROD qui
+   * coupe `log` (cf. `logLevel`), ses traces `µ.log(…)` et `µ._mjs_logger()?.(…)` partent avec leurs arguments
+   * et l'aide `µ._mjs_logger` avec elles (cf. `cutRuntimeTraces`). Absent : rien de plus que la liste `pure`.
+   */
+  runtimeSource?: boolean
   /**
    * Définitions supplémentaires (esbuild `define`), FUSIONNÉES à celles posées ci-dessous
    * (`'µ.debug'`) — jamais un remplacement. Sert `MJS_DEBUG` (identifiant LIBRE, contrairement à
@@ -558,7 +848,8 @@ export async function minifyJs(
   // On garde donc UNIQUEMENT le retrait de la ligne isolée ci-dessous ; les
   // LECTURES (→ false → DCE) sont déléguées au `define`. `pure:` (plus bas)
   // remplace par ailleurs l'ancienne regex `µ.log(...) → void 0` (qui
-  // cassait les appels imbriqués `µ.log(fn(g(y)))`).
+  // cassait les appels imbriqués `µ.log(fn(g(y)))`) ; il ne vaut que pour un `µ`
+  // libre, les traces du runtime passent par `cutRuntimeTraces` (cf. plus haut).
   //
   // Le motif est cherché sur une vue MASQUÉE (chaînes/gabarits/commentaires blanchis, même
   // longueur) et retiré du texte RÉEL aux MÊMES positions : sans ce masquage, une ligne de
@@ -575,6 +866,11 @@ export async function minifyJs(
   }
   cleaned += source.slice(cursor)
 
+  // traces du texte du runtime : retirées du code envoyé quand le niveau de PROD coupe `log` (même
+  // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log'), cf. `cutRuntimeTraces`
+  const cutsTraces = opts.runtimeSource === true && levelCutsTraces(opts.logLevel ?? 'warn')
+  const text       = cutsTraces ? cutRuntimeTraces(cleaned) : cleaned
+
   // le transform() + merge ci-dessous
   // touche `opts.mangleCache`, un objet PARTAGÉ MUTABLE entre tous les appels
   // de compilation en vol (cf. le commentaire détaillé en tête de fichier) —
@@ -583,7 +879,7 @@ export async function minifyJs(
   // DIFFÉRENTES. Sans mangleCache (dev, ou minify sans mangle de props), pas
   // de verrou : `withMangleCacheLock` exécute alors directement, sans file.
   return withMangleCacheLock(useMangleCache ? opts.mangleCache : undefined, async () => {
-    const result = await transform(cleaned, {
+    const result = await transform(text, {
       minify: true,
       target: 'es2022',
       format: 'esm',
@@ -610,13 +906,15 @@ export async function minifyJs(
       // `µ.debug` (converties à `MJS_DEBUG` — cf. mjs_easing/mjs_for/mjs_if/mjs_init/mjs_router/
       // mjs_destroy_hooks/mjs_debug/mjs_devinspect/mjs_devpanel.ts), et chaque `if (MJS_DEBUG)`
       // part en DCE avec `opts.define = { MJS_DEBUG: 'false' }`.
-      define: { 'µ.debug': 'false', ...opts.define },
+      define: { 'µ.debug': 'false', ...(cutsTraces ? { MJS_TRACE: 'null' } : {}), ...opts.define },
       // `pure` plutôt que `drop: ['console']` : `drop` vide TOUJOURS les corps de µ.error/µ.warn,
       // sans distinction de niveau — contrat trahi (« les erreurs ne doivent JAMAIS être
       // silencieuses », mjs_init) si le projet n'a rien demandé de tel. `pure` retire au
       // contraire EXACTEMENT ce que la clé `logLevel` (mjs.config.json) autorise pour le niveau
       // de PROD (cf. `buildPureList`) : au défaut `'warn'`, seuls les niveaux de TRACE
-      // (log/info/debug) et `µ.log` partent — `console.warn`/`µ.warn`/`console.error`/`µ.error`
+      // (log/info/debug) partent, et `µ.log` quand `µ` est un nom libre (jamais le cas dans le
+      // cœur ni dans un composant : les traces du runtime partent par `cutRuntimeTraces`, cf.
+      // `runtimeSource`) — `console.warn`/`µ.warn`/`console.error`/`µ.error`
       // ne rejoignent la liste QUE si le projet a explicitement demandé un niveau `'error'`/
       // `'silent'` plus strict.
       //

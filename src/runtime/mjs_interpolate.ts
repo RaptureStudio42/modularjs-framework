@@ -51,7 +51,7 @@ MjsInterpolator = (function() {
         try {
           fn();
         } catch (e) {
-          (µ.error || µ.warn)('[ModularJS] µ.interpolate : invalidator en erreur, détaché.', e);
+          (µ.error || µ.warn)(µ._mjs_msg('interpInvalidator', null, 'µ.interpolate : invalidator en erreur, détaché.'), e);
           this._mjs_invalidators.delete(owner);
         }
       }
@@ -101,7 +101,7 @@ MjsInterpolator = (function() {
       // (`_mjsDeepFinite`), qui a déjà cette double protection.
       if (typeof newTarget !== 'number' || !Number.isFinite(newTarget)) {
         if (typeof µ !== 'undefined' && µ.warn) {
-          µ.warn('[ModularJS] µ.interpolate : valeur non-finie ignorée (' + newTarget + ')');
+          µ.warn(µ._mjs_msg('interpNonFinite', { value: newTarget }, 'µ.interpolate : valeur non-finie ignorée ({value})'));
         }
         return;
       }

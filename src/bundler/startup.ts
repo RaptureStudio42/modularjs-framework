@@ -11,24 +11,25 @@
 // HTML rendu (`PrerenderReport.generated[].tags`), FERMÉ par la table des dépendances directes
 // (`µDeps`/`manifestDeps`, même marche que `µWalkDeps` du manifeste) : un enfant qu'un `{if}` faux
 // n'a pas rendu est quand même dans l'ensemble (il s'affichera au premier clic sans aller-retour),
-// et les modules `@import`-és par ces composants aussi. Les alias de balise sont des clés du
-// manifeste comme les autres.
+// et les modules `@import`-és par ces composants aussi, comme les fichiers de leurs effets
+// (`mjs_fx_<nom>`, cf. Bundler.compileFxChunks). Les alias de balise sont des clés du manifeste
+// comme les autres.
 //
 // FICHIER DE PAGE (`'bundle'`, construction de PRODUCTION seulement) : les COMPOSANTS de l'ensemble
 // sont assemblés en un `mjs_page-<slug>-<empreinte>.js` (préfixe `mjs_` obligatoire, hors d'atteinte
 // d'un nom de composant). Restent EXTERNES le cœur, les feuilles, les animations, les fichiers de
-// langue, le manifeste externe — et les MODULES : un module doit rester une instance unique, un
-// store singleton dupliqué dans le fichier de page casserait l'état partagé. Les fichiers séparés
+// langue, le manifeste externe, les fichiers d'effets — et les MODULES : un module doit rester une
+// instance unique, un store singleton dupliqué dans le fichier de page casserait l'état partagé. Les fichiers séparés
 // existent toujours : une autre page les charge seuls, le rendu serveur les lit un par un.
 //
 // En DÉVELOPPEMENT, `'bundle'` se comporte comme `'preload'` (une ligne d'information au journal) :
 // le rechargement à chaud et le cache des noms courts ne sont pas mêlés à un second assemblage.
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { build as esbuildBuild } from 'esbuild'
 import type { Bundler } from './index.js'
-import type { RenderConfig, RenderStartupMode } from './config.js'
+import type { RenderConfig, RenderStartupMode, BundleGroupConfig } from './config.js'
 import type { PrerenderReport } from '../server/prerender.js'
 import { pickStartup, startupSlug } from '../server/render-routes.js'
 import { t } from '../messages/index.js'
@@ -85,6 +86,17 @@ function isComponent(bundler: Bundler, name: string): boolean {
   return bundler.manifestSources.get(name)?.endsWith('.mjs') ?? false
 }
 
+/** Les clés d'un même FICHIER sont un seul composant (alias de dossier, cf. shortModuleName) : `names` complété de
+ *  toutes les clés du manifeste qui désignent les mêmes fichiers, triées. */
+function withSiblingKeys(bundler: Bundler, names: string[]): string[] {
+  const fichiers = new Set(names.map(n => bundler.manifest[n]).filter(Boolean).map(f => basename(f)))
+  const tous     = new Set(names)
+  for (const key of Object.keys(bundler.manifest)) {
+    if (bundler.manifest[key] && isComponent(bundler, key) && fichiers.has(basename(bundler.manifest[key]))) tous.add(key)
+  }
+  return [...tous].sort(byCodePoint)
+}
+
 /** Ensemble de démarrage : les balises du HTML résolues en clés de manifeste, fermées par
  *  `manifestDeps`. Une dépendance que le manifeste ne publie pas (alias empoisonné, cible en
  *  échec) n'est jamais suivie — même prudence que µWalkDeps côté navigateur. */
@@ -94,7 +106,7 @@ function startupSet(bundler: Bundler, tags: string[], keys: Map<string, string>)
     if (vus.has(name)) return
     vus.add(name)
     for (const dep of bundler.manifestDeps[name] ?? []) {
-      if (bundler.manifest[dep]) walk(dep)
+      if (bundler.unitPath(dep)) walk(dep)
     }
   }
   for (const tag of tags) {
@@ -127,6 +139,29 @@ function childrenFirst(bundler: Bundler, names: string[]): string[] {
   }
   for (const name of [...names].sort(byCodePoint)) visit(name)
   return ordre
+}
+
+/**
+ * Le `Bundler` dont le manifeste fait foi pour ce que le dossier de sortie contient MAINTENANT. Le prérendu recompile
+ * dans le même dossier (second `Bundler`, cf. `PrerenderReport.bundler`) : si une source a changé entre les deux
+ * compilations, les empreintes du premier manifeste désignent des fichiers qui n'existent plus. Le dernier
+ * compile est donc celui que l'assemblage (fichiers de page, liens de préchargement) et la purge doivent lire.
+ * Le premier reste le bon quand le prérendu n'a rien recompilé, ou l'a fait AILLEURS (fichier unique `js: 'bundle'` :
+ * dossier de travail temporaire) — jamais dans le même dossier de sortie.
+ */
+export function latestBundler(first: Bundler, report: PrerenderReport): Bundler {
+  const dernier = report.bundler
+  if (!dernier || dernier === first || first.jsMode === 'bundle') return first
+  return resolve(dernier.outputDir) === resolve(first.outputDir) ? dernier : first
+}
+
+/** Garde-fou : chaque fichier que l'assemblage va lire ou annoncer existe dans le dossier de sortie. Sinon le dossier
+ *  a été recompilé sous d'autres empreintes depuis le manifeste lu — erreur claire, jamais un fragment qui nomme un
+ *  fichier disparu avec une sortie 0. */
+function assertOutputsPresent(bundler: Bundler, files: Iterable<string>): void {
+  for (const f of files) {
+    if (!existsSync(join(bundler.outputDir, f))) throw new Error(t('bundler.startup.recompile-empreintes', { fichier: f }))
+  }
 }
 
 /** `<link rel="modulepreload">` d'un href. */
@@ -165,6 +200,9 @@ async function bundlePage(bundler: Bundler, files: string[]): Promise<{ code: st
   const result = await esbuildBuild({
     stdin: { contents: entree, resolveDir: bundler.outputDir, sourcefile: 'mjs_page.js', loader: 'js' },
     absWorkingDir: bundler.outputDir,
+    // `outfile` : sans lui esbuild refuse une carte externe (« Cannot use an external source map without an
+    // output path ») ; rien n'est écrit par lui (`write: false`), seuls les chemins des `sources` s'en servent
+    outfile: join(bundler.outputDir, 'mjs_page.js'),
     bundle: true,
     write: false,
     format: 'esm',
@@ -183,6 +221,196 @@ async function bundlePage(bundler: Bundler, files: string[]): Promise<{ code: st
   const js  = result.outputFiles!.find(f => f.path.endsWith('.js')) ?? result.outputFiles![0]
   const map = result.outputFiles!.find(f => f.path.endsWith('.map'))
   return { code: js.text, map: map?.text }
+}
+
+export interface GroupReport {
+  /** Nom du groupe (clé de `bundles`). */
+  name: string
+  /** Chemin web du fichier de groupe. */
+  file: string
+  /** Racines résolues en clés du manifeste, triées. */
+  roots: string[]
+  /** Composants assemblés (racines et descendance), triés. */
+  names: string[]
+  /** Toutes les clés du manifeste qui désignent ces fichiers, alias compris (deux clés d'un même fichier
+   *  sont un seul composant : toutes suivent le groupe). Triées. */
+  keys: string[]
+}
+
+/** Clé du manifeste d'un composant nommé dans un groupe (racine ou `except`) : le nom tel quel ou sans son préfixe `mjs-`,
+ *  casse ignorée. Un module (`.civet`/`.coffee`) n'est jamais un composant ; `null` si le nom n'en désigne aucun. */
+function resolveGroupComponent(bundler: Bundler, keys: Map<string, string>, name: string): string | null {
+  const lower = name.trim().toLowerCase()
+  const real  = keys.get(lower) ?? keys.get(lower.replace(/^mjs-/, ''))
+  if (!real || !bundler.manifest[real] || !isComponent(bundler, real)) return null
+  return real
+}
+
+/** Un composant atteint par plusieurs groupes : son nom, les groupes qui l'atteignent (triés) et, parmi eux, ceux dont il est
+ *  une RACINE — `except` ne peut pas l'y laisser dehors. */
+interface GroupConflict {
+  name: string
+  groups: string[]
+  roots: string[]
+}
+
+/** Un groupe tel que la configuration l'écrit : en liste (forme courte) ou en objet, avec son `except` s'il en porte un (les noms
+ *  tels que l'application les a écrits) ; `null` : pas de clé `except`. Le message d'erreur en tire ce qu'il dit de la forme et de
+ *  l'`except` existant. */
+interface GroupForm {
+  list:   boolean
+  except: string[] | null
+}
+
+/** Une liste de noms pour un message : au plus trois en entier, au-delà les deux premiers puis « … » (« a, b, … »). */
+function abridge(names: string[]): string {
+  return names.length > 3 ? `${names.slice(0, 2).join(', ')}, …` : names.join(', ')
+}
+
+/** Des noms entre guillemets, séparés par des virgules : le contenu d'une liste JSON écrite dans un message. */
+function quoted(names: string[]): string {
+  return names.map(n => JSON.stringify(n)).join(', ')
+}
+
+/**
+ * Le message de l'erreur « plusieurs groupes » : TOUS les conflits d'un coup (un composant par ligne, avec les groupes qui
+ * l'atteignent), puis ce qu'il faut écrire dans la configuration pour qu'aucun conflit ne reste, sans second tour :
+ * - la ligne `"except"` exacte, pour les groupes qui n'en ont pas encore ; elle ne porte que les composants dont AUCUN groupe n'est
+ *   racine : `except` refuse une racine (`except-racine`), la ligne passe donc telle quelle dans chaque groupe nommé ;
+ * - pour un groupe qui a DÉJÀ un `except`, sa liste complétée : collée en seconde clé, la ligne partagée prendrait la place de la
+ *   première (JSON garde la dernière) et ferait revenir les composants que ce groupe laissait déjà dehors ;
+ * - une racine a sa consigne à part : l'ajouter à `except` des autres groupes (elle reste dans le sien) ; quand plusieurs groupes la
+ *   déclarent racine, la garder dans un seul et, dans chacun des autres, la retirer des racines ET l'ajouter à `except` (un groupe
+ *   qui l'atteint encore par une autre de ses racines ne s'en sortirait pas autrement) ;
+ * - un mot sur la forme objet, seulement quand l'un des groupes à modifier est écrit en liste.
+ * Les lignes suivant la première portent trois espaces : la CLI imprime la première après un retrait de trois colonnes.
+ */
+function groupConflictMessage(conflicts: GroupConflict[], forms: Map<string, GroupForm>): string {
+  const sorted  = [...conflicts].sort((a, b) => byCodePoint(a.name, b.name))
+  const free    = sorted.filter(c => c.roots.length === 0)
+  const lines   = [t('bundler.groupes.plusieurs-groupes', { nb: sorted.length, composants: sorted.map(c => c.name).join(', ') })]
+  const touched = new Set<string>()   // les groupes dont la configuration est à modifier sans en donner la liste complète
+  for (const c of sorted) lines.push(t('bundler.groupes.plusieurs-groupes-ligne', { composant: c.name, nb: c.groups.length, groupes: abridge(c.groups) }))
+  if (free.length > 0) {
+    const named = [...new Set(free.flatMap(c => c.groups))].sort(byCodePoint)
+    const plain = named.filter(g => !forms.get(g)!.except)
+    const given = named.filter(g => forms.get(g)!.except)
+    if (plain.length > 0) {
+      lines.push(t('bundler.groupes.plusieurs-groupes-conseil', { nb: free.length, nbGroupes: plain.length, groupes: plain.join(', '), except: quoted(free.map(c => c.name)) }))
+      for (const g of plain) touched.add(g)
+    }
+    if (given.length > 0) {
+      lines.push(t('bundler.groupes.plusieurs-groupes-existant'))
+      for (const g of given) lines.push(t('bundler.groupes.plusieurs-groupes-existant-ligne', { groupe: g, except: quoted([...forms.get(g)!.except!, ...free.filter(c => c.groups.includes(g)).map(c => c.name)]) }))
+    }
+  }
+  for (const c of sorted.filter(c => c.roots.length > 0)) {
+    const others = c.groups.filter(g => !c.roots.includes(g))
+    lines.push(t('bundler.groupes.plusieurs-groupes-racine', { composant: c.name, racines: c.roots.join(', '), nbRacines: c.roots.length, autres: others.join(', '), nbAutres: others.length }))
+    for (const g of c.roots.length > 1 ? c.groups : others) touched.add(g)
+  }
+  if ([...touched].some(g => forms.get(g)!.list)) lines.push(t('bundler.groupes.plusieurs-groupes-forme-liste'))
+  return lines.join('\n')
+}
+
+/**
+ * Groupes de fichiers (`bundles` de mjs.config.json) : pour chaque groupe, ses racines et toute leur
+ * descendance par la table des dépendances, MOINS ce qui reste externe (modules, fichiers d'effets :
+ * seuls les composants entrent), assemblés en `mjs_group-<nom>-<empreinte>.js` — même assemblage que
+ * le fichier de page, mêmes externes. Appelée par compile() après la table des dépendances et AVANT
+ * l'écriture du manifeste, qui repointe sur ce fichier chaque composant du groupe. Les fichiers
+ * séparés restent écrits : le rendu serveur les lit, `prune` les garde.
+ *
+ * `except` (forme objet) : ces composants et ce que SEULS ils atteignent restent hors du groupe, en fichiers séparés
+ * (ils restent dans la table des dépendances : le préchargement de la racine les nomme aussi).
+ *
+ * Un composant atteint par PLUSIEURS groupes lève une erreur (jamais de copie silencieuse) qui les relève tous et dit quoi écrire
+ * dans la configuration (cf. groupConflictMessage). Un composant
+ * non racine du groupe que lit aussi un composant extérieur reste dans le groupe — la page qui
+ * l'utilise charge tout le groupe — et un avertissement le nomme.
+ */
+export async function assembleGroups(bundler: Bundler, bundles: Record<string, BundleGroupConfig>): Promise<{ groups: GroupReport[]; warnings: string[] }> {
+  const keys   = manifestKeysByLower(bundler)
+  const noms   = Object.keys(bundles).sort(byCodePoint)
+  const plans: { name: string; roots: string[]; names: string[]; keys: string[] }[] = []
+  const owner  = new Map<string, GroupConflict>()
+  const forms  = new Map<string, GroupForm>()
+  for (const name of noms) {
+    const conf    = bundles[name]
+    const racines = Array.isArray(conf) ? conf : conf.roots
+    forms.set(name, { list: Array.isArray(conf), except: Array.isArray(conf) ? null : conf.except ?? null })
+    const roots   = [...new Set(racines.map(r => {
+      const real = resolveGroupComponent(bundler, keys, r)
+      if (!real) throw new Error(t('bundler.groupes.racine-inconnue', { groupe: name, racine: r }))
+      return real
+    }))].sort(byCodePoint)
+    // `except` : composants laissés dehors. La marche ne les traverse pas : eux, et ce que SEULS ils atteignent,
+    // ne sont jamais vus ; un descendant atteint aussi par un non-exclu l'est par cet autre chemin et reste dedans
+    const except      = new Set<string>()
+    const exceptFiles = new Set<string>()
+    for (const e of Array.isArray(conf) ? [] : conf.except ?? []) {
+      const real = resolveGroupComponent(bundler, keys, e)
+      if (!real) throw new Error(t('bundler.groupes.except-inconnu', { groupe: name, composant: e }))
+      if (roots.includes(real)) throw new Error(t('bundler.groupes.except-racine', { groupe: name, composant: e }))
+      except.add(real)
+      exceptFiles.add(basename(bundler.manifest[real]))
+    }
+    const seen = new Set<string>()
+    const walk = (key: string): void => {
+      if (seen.has(key) || except.has(key) || (bundler.manifest[key] && exceptFiles.has(basename(bundler.manifest[key])))) return
+      seen.add(key)
+      for (const dep of bundler.manifestDeps[key] ?? []) { if (bundler.unitPath(dep)) walk(dep) }
+    }
+    for (const root of roots) walk(root)
+    const names     = [...seen].filter(n => isComponent(bundler, n) && bundler.manifest[n]).sort(byCodePoint)
+    const rootFiles = new Set(roots.map(r => basename(bundler.manifest[r])))
+    const counted   = new Set<string>()
+    for (const n of names) {
+      // la propriété se juge sur le FICHIER : deux clés d'un même fichier (alias) sont un seul composant
+      const file = basename(bundler.manifest[n])
+      if (counted.has(file)) continue
+      counted.add(file)
+      // pas d'arrêt ici : tous les conflits sont relevés d'abord (cf. groupConflictMessage)
+      const entry: GroupConflict = owner.get(file) ?? { name: n, groups: [], roots: [] }
+      entry.groups.push(name)
+      if (rootFiles.has(file)) entry.roots.push(name)
+      owner.set(file, entry)
+    }
+    // les clés sœurs (alias de dossier) du même fichier : le manifeste les repointe toutes sur le groupe
+    const fichiersDuGroupe = new Set(names.map(n => basename(bundler.manifest[n])))
+    const keysDuGroupe     = Object.keys(bundler.manifest).filter(k => bundler.manifest[k] && isComponent(bundler, k) && fichiersDuGroupe.has(basename(bundler.manifest[k]))).sort(byCodePoint)
+    plans.push({ name, roots, names, keys: keysDuGroupe })
+  }
+
+  // un composant atteint par plusieurs groupes arrête le build, avec TOUS les conflits d'un coup plutôt que le premier seul
+  const conflicts = [...owner.values()].filter(o => o.groups.length > 1)
+  if (conflicts.length > 0) throw new Error(groupConflictMessage(conflicts, forms))
+
+  const warnings: string[] = []
+  for (const plan of plans) {
+    const inside = new Set(plan.names)
+    for (const n of plan.names) {
+      if (plan.roots.includes(n)) continue
+      const appelants = Object.keys(bundler.manifestDeps).filter(c => !inside.has(c) && isComponent(bundler, c) && bundler.manifestDeps[c].includes(n)).sort(byCodePoint)
+      if (appelants.length > 0) warnings.push(t('bundler.groupes.utilise-hors-groupe', { composant: n, groupe: plan.name, appelants: appelants.join(', ') }))
+    }
+  }
+
+  const groups: GroupReport[] = []
+  for (const plan of plans) {
+    const files = [...new Set(childrenFirst(bundler, plan.names).map(n => basename(bundler.manifest[n])))]
+    assertOutputsPresent(bundler, files)
+    let code: string
+    let map: string | undefined
+    try {
+      ({ code, map } = await bundlePage(bundler, files))
+    } catch (e: any) {
+      throw new Error(t('bundler.groupes.echec', { groupe: plan.name, raison: e?.message ?? String(e) }))
+    }
+    const file = bundler.writeHashed(`mjs_group-${plan.name}`, '.js', code, map)
+    groups.push({ name: plan.name, file, roots: plan.roots, names: plan.names, keys: plan.keys })
+  }
+  return { groups, warnings }
 }
 
 // LIGNES-REPÈRES de l'en-tête de démarrage : elles bornent, juste sous la ligne-bandeau, la zone
@@ -285,7 +513,7 @@ export async function emitStartup(
       // fichier : l'ensemble assemblé est l'UNION de leurs composants, chaque fragment ne déclarant
       // que les siens dans sa fiche.
       slug: startupSlug(page.url),
-      components: names.filter(n => isComponent(bundler, n)),
+      components: withSiblingKeys(bundler, names.filter(n => isComponent(bundler, n))),
       modules: names.filter(n => !isComponent(bundler, n)),
     }
   })
@@ -304,6 +532,7 @@ export async function emitStartup(
     for (const slug of [...parSlug.keys()].sort(byCodePoint)) {
       const noms  = [...parSlug.get(slug)!]
       const files = [...new Set(childrenFirst(bundler, noms).map(n => basename(bundler.manifest[n])))]
+      assertOutputsPresent(bundler, files)
       let code: string
       let map: string | undefined
       try {
@@ -314,7 +543,7 @@ export async function emitStartup(
       const href = bundler.writeHashed(`mjs_page-${slug}`, '.js', code, map)
       assembles.set(slug, href)
       sortie.pageFiles.push(href)
-      log(t('bundler.startup.fichier-de-page', { page: slug, fichier: basename(href), nb: noms.length }))
+      log(t('bundler.startup.fichier-de-page', { page: slug, fichier: basename(href), nb: files.length }))
     }
     sortie.pageFiles.sort(byCodePoint)
   }
@@ -326,8 +555,9 @@ export async function emitStartup(
     // manifeste peuvent nommer le MÊME fichier (alias de dossier, cf. shortModuleName), un fichier
     // n'a besoin que d'un lien.
     const hrefs = [...new Set(pageFile
-      ? [pageFile, ...plan.modules.map(n => bundler.manifest[n])]
-      : plan.names.map(n => bundler.manifest[n]))]
+      ? [pageFile, ...plan.modules.map(n => bundler.unitPath(n)!)]
+      : plan.names.map(n => bundler.unitPath(n)!))]
+    assertOutputsPresent(bundler, hrefs.map(h => basename(h)))
     const entete = hrefs.map(lien)
     if (pageFile) {
       const fiche = { file: pathsForm(pageFile), names: plan.components }

@@ -3,7 +3,9 @@
 // appel fantôme apparaît. Plusieurs pages réelles en sont mortes avant le correctif.
 
 import assert from 'node:assert/strict'
-import { rebindDetachedThis } from '../src/generator/this-rebinding.js'
+import { rebindDetachedThisMapped } from '../src/generator/this-rebinding.js'
+
+const rebindDetachedThis = (js: string): string => rebindDetachedThisMapped(js).code
 
 describe('rebindDetachedThis — ASI', () => {
 

@@ -2,14 +2,15 @@
 // ENTIER (comme µinspect($x)) mais filtre l'AFFICHAGE console à ce seul chemin — une simple
 // portée de sortie, pas un changement de ce que la rune observe. Compilation : sigils.ts
 // (cheminInspectPlat, MU_INSPECT_ARG_BODY/OUT) et generator/utils.ts (reecritOuRejetteRuneChemin)
-// — cf. mu-inspect-suffixe-jamais-orphelin.test.ts / mu-inspect-minmax-suffixe-espace-ou-appel.
-// test.ts pour la matrice exhaustive des formes acceptées/refusées ; ce fichier couvre le
-// contrat bout en bout (compilation ET exécution runtime du filtre).
+// — cf. mu-inspect-suffixe-jamais-orphelin.test.ts / mu-inspect-suffixe-espace-ou-appel.test.ts
+// pour la matrice exhaustive des formes acceptées/refusées ; ce fichier couvre le contrat bout en
+// bout (compilation ET exécution runtime du filtre).
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { cleanJs } from '../src/generator/utils.js'
+import { applyMjsSugarToScript, transpile } from '../src/transpiler/index.js'
 
 describe('µinspect($x.chemin) — compilation', () => {
   it('chemin à deux segments : µinspect($x.a.b) → µ.inspect(\'x\', \'a.b\')', () => {
@@ -63,7 +64,7 @@ describe('µ.inspect(clé, chemin) — exécution (filtre From/To par chemin)', 
     const deepJs = readFileSync(resolvePath('src/runtime/mjs_deep.ts'), 'utf-8')
     const elemJs = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
     const runesJs = readFileSync(resolvePath('src/runtime/mjs_runes.ts'), 'utf-8')
-    const rareRunesJs = readFileSync(resolvePath('src/runtime/mjs_rare_runes.ts'), 'utf-8')
+    const inspectJs = readFileSync(resolvePath('src/runtime/mjs_inspect.ts'), 'utf-8')
     const setup = `
       class HTMLElement {
         constructor() {}
@@ -80,7 +81,7 @@ describe('µ.inspect(clé, chemin) — exécution (filtre From/To par chemin)', 
       ${deepJs}
       ${elemJs}
       ${runesJs.replace(/^import[^;]*;?$/gm, '').replace(/export\s*\{[^}]*\}/, '')}
-      ${rareRunesJs.replace(/^import[^;]*;?$/gm, '').replace(/export\s*\{[^}]*\}/, '')}
+      ${inspectJs.replace(/^import[^;]*;?$/gm, '').replace(/export\s*\{[^}]*\}/, '')}
       class MjsInspectCheminTest extends µ.Element {
         constructor() {
           super();
@@ -193,5 +194,20 @@ describe('µ.inspect(clé, chemin) — exécution (filtre From/To par chemin)', 
     const { groups } = captureConsole(() => µ._mjs_deepSet(el, ['x', 'bar'], 99))
     // mode "tout" : affiche même si SEUL bar (hors chemin 'foo') a changé
     assert.ok(groups.some((g: string) => g === '🔍 [MJS Inspect] x'), `groupe "tout" attendu: ${JSON.stringify(groups)}`)
+  })
+})
+
+// un store ($$x) n'est pas l'état d'un composant : µinspect recevait sa VALEUR au lieu d'une clé et
+// ne suivait rien, en silence — refus clair, qui dit comment suivre un store
+describe('µinspect sur un store ($$x) : refusé avec un message clair', () => {
+  it('avec ou sans parenthèses, argument sur la ligne suivante compris', async () => {
+    assert.throws(() => cleanJs('µinspect($$x)'), /µinspect[\s\S]*store[\s\S]*µconsole/)
+    assert.throws(() => applyMjsSugarToScript('µinspect $$x', 'civet'), /µinspect[\s\S]*store/)
+    assert.throws(() => cleanJs('µinspect(\n  $$x\n)'), /µinspect[\s\S]*store/)
+    await assert.rejects(transpile('<script>\n$$compteur = 5\nµinspect($$compteur)\n</script>\n<p>{$$compteur}</p>\n', { moduleName: 'inspect-store' }), /µinspect[\s\S]*store/)
+  })
+
+  it('un commentaire qui cite µinspect($$x) ne casse rien', () => {
+    assert.doesNotThrow(() => cleanJs('// µinspect($$x) est refusé\ndoStuff()'))
   })
 })

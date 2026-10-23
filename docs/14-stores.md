@@ -29,12 +29,12 @@ On l'importe via `@import µ$$count` (le module, lui, **déclare/exporte** avec 
 
 Trois `<@tuto-counter>` qui importent ce module partagent **la même valeur** : cliquer sur l'un incrémente le compteur de tous, parce qu'ils lisent et écrivent dans le même singleton.
 
-> ⚠️ **Un seul symbole, un seul rôle** : le module **déclare** le store avec `µ$$count` (le `µ` = « on invoque le framework »), et le composant l'**importe et le consomme** avec ce **même** `µ$$count` — symétrie totale entre déclaration, import et usage. L'ancienne forme `@import §§count` lève une **erreur de compilation** explicite qui oriente vers `@import µ$$count` ; `@import $count` (dollar simple) est pareillement rejeté à la compilation ; consommer le singleton importé via `$count`, `$$count` ou `§§count` est également une erreur (seul `µ$$count` est valide). Ne confonds pas `§` (contexte d'arbre, non réactif), `§§` (contexte réactif de sous-arbre — jamais un import) et `µ$$` (déclaration, import et consommation d'un singleton, un seul et même symbole). Le store **zéro-import** `$$x` (→ `µ.store.x`) est une autre voie, sans `@import` ni `export`.
+> ⚠️ **Un seul symbole, un seul rôle** : le module **déclare** le store avec `µ$$count` (le `µ` = « on invoque le framework »), et le composant l'**importe et le consomme** avec ce **même** `µ$$count` — symétrie totale entre déclaration, import et usage. L'ancienne forme `@import §§count` lève une **erreur de compilation** explicite qui oriente vers `@import µ$$count` ; `@import $count` (dollar simple) est pareillement rejeté à la compilation ; consommer le singleton importé via `$count`, `$$count` ou `§§count` est également une erreur (seul `µ$$count` est valide). Ne confondez pas `§` (contexte d'arbre, non réactif), `§§` (contexte réactif de sous-arbre — jamais un import) et `µ$$` (déclaration, import et consommation d'un singleton, un seul et même symbole). Le store **zéro-import** `$$x` (→ `µ.store.x`) est une autre voie, sans `@import` ni `export`.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi un fichier séparé&nbsp;?</summary>
 
-Un store doit être **une seule et même valeur** pour tous les composants qui le partagent. En le mettant dans un module à part et en l'`export`-ant, le système de modules garantit qu'il n'est créé **qu'une fois** : chaque `@import` pointe vers la même instance. Si tu déclarais `µ$$count` à l'intérieur d'un composant, chaque instance du composant aurait *son propre* compteur — l'inverse de ce qu'on veut.
+Un store doit être **une seule et même valeur** pour tous les composants qui le partagent. En le mettant dans un module à part et en l'`export`-ant, le système de modules garantit qu'il n'est créé **qu'une fois** : chaque `@import` pointe vers la même instance. Si vous déclariez `µ$$count` à l'intérieur d'un composant, chaque instance du composant aurait *son propre* compteur — l'inverse de ce qu'on veut.
 
 </details>
 
@@ -100,7 +100,7 @@ Tout champ lu via `µ$$feed.x` enregistre le composant comme abonné à la clé 
 - `µ$$` : la valeur la plus simple possible, partagée. Parfait pour un compteur, un drapeau, une petite donnée. On la lit/mute directement (`µ$$count.value++`).
 - `µStore` : une classe pour de l'état structuré — plusieurs champs, objets imbriqués, abonnement *par champ* (un composant qui ne lit que `µ$$feed.version` ne re-rend pas si une autre clé change). À privilégier pour le vrai état d'application (session, panier, page).
 
-Les deux sont des sources de vérité globales ; choisis selon la richesse de la donnée.
+Les deux sont des sources de vérité globales ; choisissez selon la richesse de la donnée.
 
 </details>
 
@@ -111,16 +111,167 @@ composant qui lit `$$score` ne se re-rend **que** quand la clé `score` change �
 clé du store est mutée à côté (`$$autreChose`, par exemple). Fini le re-rendu global qu'un store
 générique imposerait à tous ses lecteurs.
 
+Une écriture du store faite dans un module `.civet` ou `.coffee` importé prévient ses lecteurs
+comme dans un composant, imbriquée comprise (`$$droits.compte.n = 5`, `+=`, `.push(…)`, `delete`),
+ou faite à travers un élément trouvé (`$$taches.find((t) -> t.id == id).fait = true`, voir plus bas).
+
 Accès **non réactif** : `µread $$x` (lecture brute, n'enregistre aucun abonnement) et
 `µwrite $$x, v` (écriture brute, ne notifie personne) — utiles pour poser une valeur de départ ou
 lire ponctuellement sans provoquer de re-rendu.
 
 > ⚠️ **Règle d'aliasing.** Une mutation écrite **en clair** sur `$$obj.a.b` est suivie, **même** via un
 > alias local direct assigné dans le même bloc (`sous = $$obj.a` puis `sous.b = 5` reste tracké et
-> notifie). Mais dès que la référence traverse la frontière d'un **appel de fonction** (le
+> notifie, en Civet comme en CoffeeScript). Mais dès que la référence traverse la frontière d'un **appel de fonction** (le
 > sous-objet du store passé en argument à une fonction qui le mute de son côté), plus rien ne
 > notifie : le store n'a pas de filet de rattrapage à l'exécution (contrairement à l'état local
 > d'un composant, qui en a un).
+>
+> Un alias du magasin écrit dans l'**objet qu'il tient**, comme en JavaScript, puis prévient les
+> lecteurs de la clé, et ceux des clés qui rangent l'objet écrit : `$$pb = $$pa`, puis `sb := $$pa`,
+> `$$pa = { x: 100 }` et `sb.x = 12` écrivent l'ancien objet, que range encore `pb` — le lecteur de
+> `$$pb` suit ; `$$autre = $$cfg.a`, puis `sous := $$cfg.a` et `sous.b = 1` (ou `$$cfg.a.b = 1`) — le
+> lecteur de `$$autre` suit. Une clé qui range un objet **parent** de l'objet écrit est prévenue par
+> une écriture faite par le chemin (`$$cfg.a.l.push(x)` prévient `$$autre`), pas par un alias de
+> l'objet écrit (`l := $$cfg.a.l`, puis `l.push(x)`) : écrivez alors par le chemin. Si la clé, ou une liste avant
+> l'élément, change entre la prise de l'alias et l'écriture, l'écriture va toujours à l'objet tenu :
+> `ancien := $$cfg`, puis `$$cfg = $$autre`, puis `ancien.on = false` écrit dans l'ancien objet, et
+> `$$cfg` garde celui de `$$autre` ; `p := $$items[0]`, puis `$$items.unshift(neuf)`, puis
+> `p.fait = true` coche l'ancien premier, pas `neuf`. Un alias jamais pris (`sous = $$cfg.a if c`,
+> `c` faux, ou un `return` avant l'affectation) lève à l'écriture la `TypeError` de JavaScript
+> (« Cannot set properties of undefined »). La règle est la même pour toute variable qui prend sa
+> valeur dans le magasin : déclaration Civet (`sous := $$cfg.a`, `let sous = $$cfg.a`), variable
+> déclarée sans valeur puis affectée une fois (`let sous`, puis `sous = $$cfg.a`), alias CoffeeScript
+> (`sous = $$cfg.a`), variable prise par un indice (`p := $$items[i]`), variable qui garde un élément
+> trouvé (ci-dessous) — et une variable qui garde un objet de l'état local garde de même l'objet
+> qu'elle tenait (cf. [Réactivité — état profond](03-reactivite.md#état-profond--mutation-imbriquée)).
+> Pour écrire là où la clé pointe au moment de l'écriture, écrivez par le chemin (`$$cfg.on = false`).
+>
+> Le suivi est prudent : un nom déclaré plus d'une fois dans le `<script>` (même dans deux
+> fonctions différentes), réassigné, ou paramètre d'une fonction n'est jamais pris pour un alias du
+> magasin, ni pour une variable qui garde un élément trouvé (ci-dessous), et ce qu'il écrit ne
+> redessine rien. En CoffeeScript, où une variable s'écrit `sous = …` sans mot de déclaration, la
+> première affectation vaut déclaration : un nom affecté une seule fois dans sa fonction, hors d'une
+> boucle, est suivi ; affecté deux fois, ou sous le même nom dans deux fonctions, il ne l'est pas.
+> Donnez à chaque alias son propre nom, ou écrivez par le chemin (`$$items[0].fait = true`).
+>
+> **Un élément trouvé est suivi aussi.** Une écriture qui passe par l'élément que rend `find`,
+> `findLast`, `at` (liste) ou `get` (`Map`) prévient les lecteurs de la clé, comme l'écriture par le
+> chemin : affectation (`=`, `+=`, `||=`, `&&=`, `??=`, et `?=` en CoffeeScript), `++` et `--`,
+> `delete`, méthode qui modifie (`.push(…)`, `.splice(…)`…), cible plus profonde (`.meta.vu = true`),
+> clé calculée (`[champ]`), chaîne optionnelle (`$$carte.get(k)?.tags.push(x)`,
+> `$$carte.get(k)?.n += 1`, `delete $$carte.get(k)?.note` : élément absent, rien n'est écrit), dans un
+> composant Civet ou CoffeeScript comme dans un module `.civet` ou `.coffee` importé. Un reffet
+> (`µeffect`) qui lit la clé repart sur une telle écriture faite ailleurs. L'élément n'est cherché
+> qu'une fois par écriture : le prédicat n'est pas rappelé pour `+=` ou `++`. Un `find` qui ne trouve
+> rien lève l'erreur de JavaScript, celle de l'écriture (`TypeError: Cannot set properties of
+> undefined`), comme sans MJS. Sur un magasin typé, la règle contrôle l'écriture faite par `find`
+> comme celle faite par le chemin. `delete` rend `true`, comme en JavaScript.
+>
+> **Sécurité.** Une clé venue de **données** — l'adresse de la page, un champ de formulaire, le message d'un autre
+> utilisateur, un JSON reçu — peut valoir `'__proto__'`, `'constructor'` ou `'prototype'`. Une écriture du magasin par
+> un chemin qui part de sa racine (`$$prefs[section][champ] = v`, `$$taches[0][champ][k] = v`, avec `+=`, `||=`, `++`,
+> `delete` ou une méthode : `$$liste[champ].push(x)`) refuse ces trois noms, à n'importe quel rang : rien n'est écrit,
+> et la console nomme le segment refusé (« chemin d'état refusé (segment « __proto__ ») — mutation ignorée. »). Sans ce
+> refus, avec `section` valant `'__proto__'`, l'écriture irait dans le modèle commun de tous les objets de la page
+> (`Object.prototype`), et `champ` apparaîtrait sur chacun d'eux, les vôtres comme ceux des bibliothèques (« pollution
+> de prototype »). Une clé convertie en texte compte comme ce texte (`['__proto__']`, un objet dont `toString` rend
+> `'__proto__'`) : convertie une seule fois, elle est comparée puis écrite telle quelle. Un indice ou un symbole ne sont
+> jamais refusés.
+>
+> Les autres formes lisent d'abord l'objet écrit, comme JavaScript le lit : après un élément trouvé
+> (`$$taches.find(f)[champ][k] = v`), derrière `?.` (`$$prefs[section]?[champ] = v`), dans la variable de travail de
+> CoffeeScript (`$$prefs[section][champ] ?= v`, `or=`, `and=`), par une clé faite d'une expression
+> (`$$prefs[req.section][champ] = v`), par une variable ou un alias qui garde un objet du magasin (`lu := $$prefs[section]`,
+> puis `lu[champ] = v`), dans un objet fait d'une expression (`($$prefs[section] || {})[champ] = v`), ou dans un objet
+> qu'une lecture a rangé dans le magasin (`$$o.p = $$o[k]`, puis `$$o.p.x = v`). Là, `'__proto__'` mène au prototype et
+> `'constructor'` à la fonction `Object` : l'écriture refuse alors l'objet atteint — elle n'écrit jamais dans un
+> prototype ni dans une fonction, n'y appelle aucune méthode, n'y supprime rien —, rien n'est écrit, et la console nomme
+> le segment qui y mène (« chemin d'état refusé (segment « __proto__ ») — mutation ignorée. »). `'prototype'` y mène à
+> `undefined`, comme en JavaScript : `?.` s'arrête, une autre forme lève la `TypeError` de JavaScript, et rien n'est
+> écrit non plus. Une fonction rangée dans le magasin ne reçoit donc aucune écriture : rangez ce qu'elle porterait dans
+> un objet, à côté d'elle.
+>
+> Vérifiez tout de même une clé venue de données avant de l'employer — une écriture refusée est une donnée perdue, et
+> vos autres objets (ceux de vos bibliothèques, les vôtres hors de `$` et `$$`) n'ont pas ce refus : comparez-la à la
+> liste des clés permises, vérifiez que l'objet la porte déjà en propre (`Object.hasOwn`), ou rangez ces données dans
+> une `Map`, dont les clés ne touchent aucun prototype. L'état local d'un composant refuse les mêmes noms
+> (`$reglages[section][nom] = v`, cf. [03 · Réactivité](03-reactivite.md)).
+>
+> ```civet
+> # refusé, rien n'est écrit, si section ou champ vaut '__proto__', 'constructor' ou 'prototype'
+> $$prefs[section][champ] = valeur
+>
+> # refusé aussi : derrière `?.`, la section est lue comme JavaScript la lit, puis le prototype atteint est refusé
+> $$prefs[section]?[champ] = valeur
+>
+> # correct : seules les clés connues passent
+> SECTIONS := ['affichage', 'sons']
+> if SECTIONS.includes(section) and Object.hasOwn($$prefs[section], champ)
+>   $$prefs[section][champ] = valeur
+>
+> # correct aussi : une Map de Map, dont les clés ne sont pas des propriétés
+> $$prefs.get(section)?.set(champ, valeur)
+> ```
+>
+> **Ce que permet un prototype pollué.** Une propriété posée sur `Object.prototype` ne fait pas qu'apparaître : tout
+> code qui lit une option **absente** reçoit cette valeur à la place de « rien » — le vôtre, celui d'une bibliothèque,
+> et même le navigateur, qui lit de cette façon les options de `fetch` (`credentials`, `mode`, `body`…). Quand la valeur
+> finit dans du HTML, une adresse ou un en-tête, c'est l'auteur des données qui choisit ce que fait la page : avec
+> `champ` valant `'html'`, une fenêtre ouverte ensuite par un code qui lit `options.html` pose ce HTML, et le script
+> qu'il contient s'exécute dans la page, avec les droits de l'utilisateur. Les modules du cœur qui reçoivent des
+> options — `µ.modal.fire` et ses raccourcis, `µ.modal.notify`, `µ.ajax`, `µ.socket` — ne lisent que celles que vous
+> leur passez, jamais une valeur héritée. Le cœur ne prend rien non plus sur le prototype quand il lit ses propres
+> tables par un nom — la table des fichiers des composants (une balise `<mjs-…>` inconnue n'importe rien), les balises
+> que le chargeur attend et les dépendances que le manifeste précharge au démarrage, les silhouettes des composants, les
+> réglages des effets (recopiés aussi quand un réglage tenu par une variable change, et passés à l'animation d'un effet
+> de l'appli), le type d'un toast, les langues chargées (une langue inconnue choisie par une donnée reste vide : ses
+> textes retombent sur la langue par défaut, aucun fichier n'est demandé pour elle) — ni dans les requêtes qu'il envoie de
+> lui-même (le journal d'erreurs, le rafraîchissement du schéma de `µ.ajax.binary`). Votre code et vos bibliothèques,
+> eux, héritent. Pour vous protéger d'une pollution venue d'ailleurs — une bibliothèque, votre code hors de `$` et `$$` — :
+> vérifiez la clé avant d'écrire ; dans votre code, lisez une option seulement si l'objet la porte en propre
+> (`Object.hasOwn(opts, 'html')`), ou rangez vos options dans une table sans prototype (`Object.create(null)`), qui
+> n'hérite de rien.
+>
+> Une **lecture** rend aussi ce que JavaScript rend : `lu := $$o[k]` rend `Object.prototype` pour `k`
+> valant `'__proto__'`, `Object` pour `'constructor'`, `undefined` pour `'prototype'` ; l'écriture
+> qui suit (`lu.x = v`, `lu.push(x)`, `delete lu.x`) refuse un prototype ou une fonction (« Sécurité » plus haut), et
+> va dans tout autre objet. Une méthode absente lève la
+> `TypeError` de JavaScript (« push is not a function »).
+>
+> Une variable qui garde cet élément est suivie de même : en Civet, sa déclaration
+> (`tache := $$taches.find(…)`, ou `tache = …` à sa première apparition, dans un bloc compris) ; en CoffeeScript, où chaque
+> variable s'écrit `tache = …`, celle qui n'est affectée qu'une seule fois dans sa fonction, hors
+> d'une boucle. Les règles prudentes ci-dessus valent pour elle. Elle vise l'**objet** qu'elle tient :
+> `tache.fait = true` écrit dans cet objet, même après un `unshift`, puis prévient la clé, comme
+> tout alias du magasin.
+>
+> ```civet
+> # NOTIFIE : écriture à travers l'élément trouvé, la clé racine 'taches' est prévenue
+> $$taches.find((t) -> t.id == id).fait = true
+> $$carte.get(k)?.vus += 1
+> tache := $$taches.find((t) -> t.id == id)
+> tache.tags.push('urgent')
+> ```
+>
+> Restent hors de ce suivi, et n'y redessinent rien (la valeur change, l'écran non) :
+>
+> - la variable d'une boucle (`for t of $$taches` puis `t.fait = true`, `for t in $$taches` en
+>   CoffeeScript, ou `{for t in $$taches}` dans le gabarit), et en CoffeeScript une variable affectée
+>   dans une boucle ;
+> - le paramètre d'une fonction (`$$taches.forEach((t) -> t.fait = true)`), donc un élément passé à
+>   une fonction qui l'écrit de son côté (`marquer($$taches.find(…))`) ;
+> - la variable du `<script>` écrite par un gestionnaire ou une liaison du gabarit
+>   (`@click={tache.fait = true}`, `value=!{tache.nom}`) ;
+> - une fonction écrite avant la déclaration de la variable (`@marquer = -> tache.fait = true`, puis
+>   `tache := …` plus bas) ;
+> - une variable tirée d'une déstructuration (`{ meta } := $$taches.find(…)`) ;
+> - un nom réassigné ou déclaré deux fois (voir plus haut), une copie (`slice`, `map`, `filter` : la
+>   copie est écrite, le magasin non), une autre méthode que ces quatre
+>   (`$$taches.filter(…)[0].fait = true`), et `+=` ou `++` dont la clé calculée est une expression
+>   (`[i + 1]` : un nom ou un littéral seulement).
+>
+> Écrivez alors par le chemin (`$$taches[i].fait = true`), ou par `find` à l'endroit même de
+> l'écriture.
 >
 > ```civet
 > # NOTIFIE : mutation écrite en clair, la clé racine 'panier' est suivie
@@ -133,16 +284,54 @@ lire ponctuellement sans provoquer de re-rendu.
 >
 > La voie sûre : muter `$$obj.a` en clair, à l'endroit même où c'est lu — jamais passer un
 > sous-objet du store à une fonction qui le mute de son côté.
+>
+> **Un module `.js` est copié tel quel.** MJS ne le réécrit jamais : un magasin reçu en argument y
+> est un objet ordinaire, et une écriture faite là-bas change la valeur sans rien redessiner —
+> pour le magasin entier (`$$ui`) comme pour un sous-objet (`$$ui.a`). Le build et les tests
+> restent verts, la vue ne bouge plus. Un module `.civet` ou `.coffee` n'y change rien quand le
+> magasin lui est passé en argument : l'écriture n'y est suivie que si `$$x` est écrit en clair
+> dans le module lui-même.
+>
+> ```civet
+> # fx.js : export function raiseFx(ui, spec) { ui.coinFx = spec }
+> raiseFx($$ui, 'etincelle')   # NE NOTIFIE PAS : $$ui part brut, l'écriture a lieu DANS le .js
+> $$ui.coinFx = 'etincelle'    # NOTIFIE : écrite en clair, dans le composant
+> ```
+>
+> Trois voies sûres : écrire dans le magasin depuis le composant ; faire **renvoyer** la valeur par
+> la fonction et l'écrire dans le composant (`$$ui.coinFx = fxOf('etincelle')`) ; ou écrire le
+> module en `.civet` / `.coffee` et y écrire `$$ui.coinFx = spec` en clair, sans recevoir le
+> magasin en argument.
+>
+> Le build prévient quand la fonction du `.js` écrit directement dans le paramètre qui reçoit le
+> magasin : il relit le fichier, et un `$$x` (ou un chemin dedans) donné en argument à une fonction
+> qui fait `ui.coinFx = spec`, `ui.items.push(x)`, `delete ui.a` ou `Object.assign(ui, …)` — sur le
+> paramètre, sur un de ses membres, sur un alias simple (`const u = ui`) ou sur un paramètre
+> déstructuré (`({ items }) => items.push(x)`) — sort un avertissement `reactivity`, une ligne par
+> magasin écrit, qui nomme la fonction, le magasin, le fichier `.js` et la ligne de l'écriture
+> (cf. [32 · CLI et configuration](32-cli-et-configuration.md)). Une fonction qui ne fait que lire
+> son argument, ou qui rend une valeur neuve, ne donne rien : `$$ui = regler($$ui, v)` reste muet
+> tant que `regler` n'écrit pas dans `ui`.
+>
+> Le build ne devine pas : il ne voit pas une écriture faite plus loin, par une autre fonction à
+> laquelle la première passe son paramètre, ni une écriture faite sur un élément pris en parcourant
+> le paramètre (`for (const x of ui.items) x.done = true`), et se tait quand le fichier ne se lit
+> pas ou ne s'analyse pas, quand il pèse plus de 1 Mo (un module de cette taille n'est pas lu),
+> quand la fonction n'y figure pas (ré-export depuis un autre fichier, valeur calculée), ou quand
+> le nom du paramètre est lié ou réaffecté ailleurs dans la fonction.
+> `"lint": { "reactivity": false }` coupe l'avertissement, avec les autres cas de ce type. Ne sont
+> pas signalés non plus : un magasin rangé dans un objet ou un tableau littéral, un magasin passé
+> par une variable intermédiaire, `µlang` et `µtheme`.
 
-> ⚠️ **Ne jamais `Object.assign` un JSON externe dans un store.** `Object.assign($$cfg, JSON.parse(texte))` échappe à toute garde : une clé `__proto__` dans le JSON remplace le prototype de `$$cfg` lui-même. Écris les clés une par une, ou filtre-les avant de les copier.
+> ⚠️ **Ne jamais `Object.assign` un JSON externe dans un store.** `Object.assign($$cfg, JSON.parse(texte))` copie toutes ses clés, comme JavaScript : une clé `__proto__` dans le JSON remplace le prototype de `$$cfg` lui-même. Ne copiez que les clés permises (cf. « Sécurité » plus haut).
 
-> ⚠️ **Lire `__proto__`/`constructor`/`prototype` sur un `µStore`/`µ.state` rend `undefined` sauf si cette clé a été posée explicitement dans les données** (ex. `{ constructor: 'Ferrari' }`, qui reste lisible et réactive normalement) — une clé HÉRITÉE de ce nom ne fuite jamais telle quelle hors du store. Cette même garde masque `.constructor` à travers un objet réactif : pour connaître le nom de la CLASSE réelle d'une instance rangée dans un store, utilise `instanceof` ou `Object.getPrototypeOf(...)`, jamais `.constructor.name` directement sur la valeur lue.
+> ⚠️ **Lire `__proto__`/`constructor`/`prototype` à travers un `µStore` (`µ$$x`, `store.data`) ou un `µ.state` rend `undefined` sauf si cette clé a été posée explicitement dans les données** (ex. `{ constructor: 'Ferrari' }`, qui reste lisible et réactive normalement) — une clé HÉRITÉE de ce nom ne fuite jamais telle quelle hors de leurs données. Ce n'est PAS le cas du magasin `$$` : `$$o[k]` rend ce que rend JavaScript (`Object.prototype` pour `'__proto__'`, `Object` pour `'constructor'`, cf. « Sécurité » plus haut) ; l'état local d'un composant (`$o[k]`) rend `undefined`, comme un `µ.state` ([03 · Réactivité](03-reactivite.md)). Cette même garde masque `.constructor` à travers un objet réactif d'un `µStore` ou d'un `µ.state` : pour connaître le nom de la CLASSE réelle d'une instance qui y est rangée, utilisez `instanceof` ou `Object.getPrototypeOf(...)`, jamais `.constructor.name` directement sur la valeur lue. L'instance `µStore` elle-même (`store[k]`) est un objet ordinaire : `store.constructor` est sa classe.
 
 > ⚠️ **Un même objet rangé sous deux clés racines** (`new µStore({a: partage, b: partage})`, `µ.state({a: partage, b: partage})`) : muter via une clé notifie aussi les lecteurs de l'AUTRE clé — les deux pointent le même objet, la mutation les concerne toutes les deux. Ce qui NE change pas d'un mécanisme à l'autre : l'**identité** des proxys rendus. `µStore` construit un proxy **distinct par clé** (`store.data.a !== store.data.b`, même s'ils enveloppent le même objet brut) ; `µ.state` construit un proxy **unique par objet**, partagé (`state.a === state.b`). Un objet qui n'est atteint que par une seule clé ne reçoit toujours qu'une notification par mutation, dans les deux cas. Un **même composant** abonné aux DEUX clés à la fois n'est, lui non plus, invalidé qu'**une seule fois** par mutation — jamais une fois par clé partagée — dans les deux mécanismes.
 
 ## Ne pas exporter de `$foo` réactif
 
-Les variables réactives d'instance (`$foo`) sont liées à **une instance** d'un composant, pas au module : ne les `export`-e pas pour faire du partage d'état. Pour partager, utilise un `µ$$`, un `µStore`, ou un `§` contexte selon la portée voulue.
+Les variables réactives d'instance (`$foo`) sont liées à **une instance** d'un composant, pas au module : ne les `export`-ez pas pour faire du partage d'état. Pour partager, utilisez un `µ$$`, un `µStore`, ou un `§` contexte selon la portée voulue.
 
 ## Lire une clé que le serveur n'a peut-être pas garnie
 
@@ -178,6 +367,8 @@ Les trois situations où une clé manque, et où l'accès optionnel s'impose :
 | `§§x` | Symbole de lecture/écriture réactive — contexte de sous-arbre, toujours (cf. [Contexte](13-contexte.md)) ; jamais un import de singleton, ni léger ni `µStore` (voir `µ$$x` ci-dessus) | `§§x = …` (déclaré par un ancêtre) | `§§x` (lecture = abonnement, écriture = invalidation) |
 
 > 🔗 À ne pas confondre avec `§` (contexte d'arbre, scopé à un ancêtre — chapitre [Contexte](13-contexte.md)) ni avec `µ$` (variable réactive universelle, même moteur que `µ$$` mais sémantique « variable » et non « store »).
+
+Après un point, `$$x` n'est pas le store mais une propriété : `obj.$$x` lit la propriété `$$x` de `obj`, dans le `<script>` comme dans le gabarit, comme `obj.$x` lit sa propriété `$x`. Une plage ou une décomposition (`[1..$$n]`, `[...$$liste]`) lit bien le store.
 
 ---
 

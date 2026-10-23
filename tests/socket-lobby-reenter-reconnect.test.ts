@@ -60,7 +60,8 @@ describe('sock.lobby — reconnexion : lobby:enter rejoué', () => {
     const sB = µB.socket('memory://reco-b', { auth: () => theo, reconnect: { enabled: false } })
     const hallB = sB.lobby()
     await tick()
-    assert.equal(hallB.members.length, 2, 'Theo voit déjà Zora ET lui-même')
+    // coupée sans reprise de session, Zora a quitté le salon du hall : son départ est annoncé aussitôt
+    assert.equal(hallB.members.length, 1, 'Zora coupée : partie du hall, Theo seul')
 
     await tick(60)   // le backoff (30ms) reconnecte A automatiquement
     assert.equal(sA.state, 'open')

@@ -32,7 +32,7 @@
 // import(variable) permis — `lintNoRawImport` (transpiler/index.ts), MÊME garde que <script>/
 // <script module>, avec ses clés catalogue propres (entry serveur) substituées via son 5e paramètre.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, lstatSync, chmodSync } from 'node:fs'
 import { dirname, join, resolve, extname, relative, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -60,10 +60,31 @@ let importCounter = 0
 export function serverCacheDir(root: string): string {
   const nm  = join(root, 'node_modules')
   const dir = existsSync(nm) ? join(nm, '.cache', 'mjs', 'server') : join(tmpdir(), `mjs-server-cache-${process.getuid?.() ?? 'nouid'}`)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  if (existsSync(nm)) {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  } else {
+    sharedTmpCacheDir(dir)
+  }
   const pkg = join(dir, 'package.json')
   if (!existsSync(pkg)) writeFileSync(pkg, '{"type":"module"}\n')
   return dir
+}
+
+// dossier de cache sous le dossier temporaire COMMUN de la machine : son nom est prévisible, un
+// autre utilisateur peut le créer d'avance et y déposer le code que le serveur importe. Créé en
+// 0700 ; s'il existe déjà, ce doit être un vrai dossier (pas un lien) à nous, que les AUTRES ne
+// peuvent pas écrire — sinon refus. Le groupe ne compte pas : un umask 002 (défaut Debian, Ubuntu,
+// groupe privé de l'utilisateur) laisse les anciens dossiers en 775. Un dossier à nous ouvert au
+// groupe ou lisible par les autres est refermé en 0700.
+function sharedTmpCacheDir(dir: string): void {
+  if (!existsSync(dir)) {
+    try { mkdirSync(dir, { mode: 0o700 }) } catch (err: any) { if (err?.code !== 'EEXIST') throw err }
+  }
+  const uid = process.getuid?.()
+  if (uid === undefined) return   // Windows : ni propriétaire ni mode POSIX à vérifier
+  const st = lstatSync(dir)
+  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o002) !== 0) throw new Error(t('cli.entry-cache-non-sur', { dossier: dir }))
+  if ((st.mode & 0o077) !== 0) chmodSync(dir, 0o700)
 }
 
 // écriture atomique — MÊME précédent que compileWorkerInMemory (bundler/worker-pool.ts) : temp
@@ -143,10 +164,13 @@ function looksLikePath(spec: string): boolean {
 interface ServerCompileCtx {
   /** pile des chemins ABSOLUS en cours de compilation — détection de cycle par DFS classique */
   visiting: string[]
+  /** URL déjà rendue pour chaque fichier dans CE chargement : un module importé par deux fichiers
+   *  (diamant) n'est chargé qu'une fois, son état (magasin, cache, pool) reste partagé */
+  compiled: Map<string, string>
 }
 
 function newCtx(): ServerCompileCtx {
-  return { visiting: [] }
+  return { visiting: [], compiled: new Map() }
 }
 
 // résout UNE cible @import : URL http(s) telle quelle ; fichier du projet (préfixé `./`/`../`/`/`/
@@ -170,7 +194,12 @@ async function resolveImportTarget(targetPath: string, fromAbsPath: string, root
 
   const ext = extname(projectFile)
   if (ext === '.civet' || ext === '.mjs') return compileServerFile(projectFile, root, ctx)
-  return `${pathToFileURL(projectFile).href}?v=${++importCounter}`
+  let url = ctx.compiled.get(projectFile)
+  if (url === undefined) {
+    url = `${pathToFileURL(projectFile).href}?v=${++importCounter}`
+    ctx.compiled.set(projectFile, url)
+  }
+  return url
 }
 
 // --- masquage commentaires/chaînes ---------------------------------------------
@@ -290,7 +319,9 @@ async function extractServerImports(src: string, absPath: string, root: string, 
     importClauses.unshift(clause)
     cleaned = cleaned.slice(0, match.index) + cleaned.slice(match.index + full.length)
   }
-  const otherDirective = maskCommentsAndStrings(cleaned).match(/^[ \t]*(@[a-zA-Z][a-zA-Z0-9]*)\b/m)
+  // seules les directives CONNUES sont refusées : `@n = 0`, `@n++` (this.n) sont du Civet ordinaire,
+  // comme une propriété suivie d'un mot-opérateur (`@lang or "fr"`, `@display if @display?`)
+  const otherDirective = maskCommentsAndStrings(cleaned).match(/^[ \t]*(@(?:import|css|routes|i18nPlaceholder|i18n|display|lang))(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m)
   if (otherDirective) throw new Error(t('cli.entry-directive-interdite', { entryPath: absPath, directive: otherDirective[1] }))
   return { cleaned, importClauses }
 }
@@ -312,6 +343,8 @@ function refuserConstanteReaffectee(js: string): void {
 // cycle par la pile `ctx.visiting` (DFS classique) — `ctx` frais par défaut, PARTAGÉ explicitement
 // entre l'appel racine et ses dépendances (cf. `resolveImportTarget` ci-dessus).
 export async function compileServerFile(absPath: string, root: string, ctx: ServerCompileCtx = newCtx()): Promise<string> {
+  const deja = ctx.compiled.get(absPath)
+  if (deja !== undefined) return deja
   if (ctx.visiting.includes(absPath)) {
     const chain = [...ctx.visiting, absPath].map(p => relative(root, p) || p).join(' → ')
     throw new Error(t('cli.entry-import-cycle', { entryPath: absPath, chaine: chain }))
@@ -320,7 +353,8 @@ export async function compileServerFile(absPath: string, root: string, ctx: Serv
   try {
     const source = readFileSync(absPath, 'utf8')
     if (extname(absPath) === '.mjs') {
-      const hint = findComponentMarkupHint(source)
+      // chaînes et commentaires masqués : un gabarit de courriel `"""<style>…"""` n'est pas du markup
+      const hint = findComponentMarkupHint(maskCommentsAndStrings(source))
       if (hint) throw new Error(t('cli.ws.entry-markup-composant', { entryPath: absPath, indice: hint }))
     }
     const { cleaned, importClauses } = await extractServerImports(source, absPath, root, ctx)
@@ -335,7 +369,9 @@ export async function compileServerFile(absPath: string, root: string, ctx: Serv
       throw new Error(t('cli.ws.erreur-compilation', { entryPath: absPath, erreur: errText(err) }))
     }
     lintNoRawImport(result.code, relative(root, absPath) || absPath, importClauses.length, undefined, { static: 'cli.entry-import-natif-interdit', dynamic: 'cli.entry-import-dynamique-interdit', reexport: 'cli.entry-reexport-interdit' })
-    return writeCacheFile(absPath, root, result.code, result.map)
+    const url = writeCacheFile(absPath, root, result.code, result.map)
+    ctx.compiled.set(absPath, url)
+    return url
   } finally {
     ctx.visiting.pop()
   }
@@ -360,7 +396,8 @@ export async function compileRawCivetFile(absPath: string, root: string): Promis
   // cause — refusé ICI, avant toute tentative de compilation. Masquage commentaires/chaînes d'abord
   // (même garde que extractServerImports plus haut) : un `# @import x '...'` affiché en exemple ne
   // doit jamais déclencher ce refus.
-  const directiveMatch = maskCommentsAndStrings(source).match(/^[ \t]*@(import|css|routes|i18n|i18nPlaceholder|display|lang)\b/m)
+  // même règle que extractServerImports : une propriété suivie d'un mot-opérateur (`@lang or "fr"`) ou d'un opérateur est du Civet ordinaire
+  const directiveMatch = maskCommentsAndStrings(source).match(/^[ \t]*@(import|css|routes|i18nPlaceholder|i18n|display|lang)(?=[ \t]+(?!(?:or|and|xor|not|is|isnt|in|of|instanceof|if|unless|then|else|for|while|until|when|by|as|satisfies)\b)[^\s=+\-*\/%&|^<>!?.,;:)\]}]|[ \t]*$)/m)
   if (directiveMatch) throw new Error(t('cli.entry-civet-brut-directive', { entryPath: absPath, directive: `@${directiveMatch[1]}` }))
   const { getAdapter } = await import('../languages/index.js')
   let result: CompileResult

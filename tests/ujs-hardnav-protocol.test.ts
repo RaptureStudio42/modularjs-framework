@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -28,8 +29,11 @@ const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts
 // µ._mjs_navApplyJson vit dans 'helpers-navigation' ; µ._mjs_finalPathFor et µ._mjs_hardNav sont 2 blocs séparés
 // juste au-dessus — _mjs_hardNav RÉEL, jamais stubbé ici.
 function installNav(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractMarked(UJS_SRC, '_mjs_hardNav'))(µ, document, window)
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractMarked(UJS_SRC, '_mjs_finalPathFor'))(µ, document, window)
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractMarked(UJS_SRC, 'helpers-navigation'))(µ, document, window)
 }
 
@@ -155,6 +159,7 @@ describe('mjs_ujs — µ._mjs_navApplyJson : destOrigin contre document.baseURI 
 
 describe('mjs_ujs — µ._mjs_hardNav : garde de protocole en défense en profondeur (autres appelants de _mjs_hardNav)', function () {
   function installHardNav(µ: any, window: any) {
+    poserMessages(µ)
     new Function('µ', 'window', extractMarked(UJS_SRC, '_mjs_hardNav'))(µ, window)
   }
 

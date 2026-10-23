@@ -178,8 +178,8 @@ describe('bundler — build PRODUCTION de bout en bout (minify + mangle + carnet
     assert.ok(typeof shortName === 'string' && shortName.length > 0, `le carnet doit mapper _mjs_probe vers un nom court, reçu : ${JSON.stringify(cache)}`)
 
     const files     = readdirSync(prod.outDir)
-    const compAFile = files.find((f) => /^comp-a-[a-f0-9]{8}\.js$/.test(f))
-    const compBFile = files.find((f) => /^comp-b-[a-f0-9]{8}\.js$/.test(f))
+    const compAFile = files.find((f) => /^comp-a-[0-9a-z]{5}\.js$/.test(f))
+    const compBFile = files.find((f) => /^comp-b-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(compAFile, 'comp-a-<hash>.js doit avoir été émis')
     assert.ok(compBFile, 'comp-b-<hash>.js doit avoir été émis')
 
@@ -215,7 +215,7 @@ describe('bundler — build PRODUCTION de bout en bout (minify + mangle + carnet
     await runA.bundler.close()
     assert.equal(runA.stats.errors.length, 0, 'motif V0.1.1 : build VERT attendu (fix racine closeRhs livré) — ' + runA.stats.errors.map((e) => e.message).join('\n'))
     const filesA    = readdirSync(join(rootA, 'out'))
-    const compFileA = filesA.find((f) => /^comp-[a-f0-9]{8}\.js$/.test(f))
+    const compFileA = filesA.find((f) => /^comp-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(compFileA, 'comp-<hash>.js doit avoir été émis')
     const codeA = readFileSync(join(rootA, 'out', compFileA as string), 'utf-8')
     assert.doesNotThrow(() => parse(codeA, { ecmaVersion: 'latest', sourceType: 'module' }), 'sortie minifiée invalide (parenthèse orpheline ?)')

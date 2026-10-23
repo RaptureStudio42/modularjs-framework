@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts'), 'utf-8')
@@ -34,7 +35,10 @@ describe('html[data-mjs-vt] posé/retiré par mjs_router.ts (navigate)', functio
     prevCustomEvent = (globalThis as any).CustomEvent
     prevCustomElements = (globalThis as any).customElements
   })
-  afterEach(() => {
+  afterEach(async () => {
+    // navigate() diffère d'une tâche le contrôle « aucune route » (setTimeout, faute de requestAnimationFrame ici) :
+    // il passe avant que la fenêtre du test ne soit rendue, sinon il lit `window` une fois rendu et lève hors de tout test
+    await new Promise((r) => setTimeout(r, 0))
     ;(globalThis as any).window = prevWindow
     ;(globalThis as any).document = prevDocument
     ;(globalThis as any).CustomEvent = prevCustomEvent
@@ -43,6 +47,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_router.ts (navigate)', functio
 
   function loadRouter(win: any) {
     const µ: any = { log() {}, warn() {}, error() {} }
+    poserMessages(µ)
     const g: any = globalThis
     g.window = win
     g.document = win.document
@@ -208,6 +213,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('préréglage nommé (résolu par lien) : attribut posé AVANT startViewTransition, retiré à finished (résolue)', async () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: false, _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     let seenDuring: string | undefined
     let finishedResolve: any
     const finished = new Promise((res) => { finishedResolve = res })
@@ -227,6 +233,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('finished REJETÉE → attribut retiré quand même', async () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: 'zoom', _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     let finishedReject: any
     const finished = new Promise((_res, rej) => { finishedReject = rej })
     const doc = makeDoc((cb: any) => { cb(); return { ready: Promise.resolve(), finished } })
@@ -243,6 +250,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('résolution booléenne "on" → attribut posé à \'on\'', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: true, _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     const doc = makeDoc((cb: any) => { cb(); return { ready: Promise.resolve(), finished: Promise.resolve() } })
     installVt(µ, doc)
 
@@ -253,6 +261,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('gate ON mais résolution "off" → startViewTransition jamais appelé, attribut jamais posé', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: false, _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     let started = false
     const doc = makeDoc((cb: any) => { started = true; cb(); return { ready: Promise.resolve(), finished: Promise.resolve() } })
     installVt(µ, doc)
@@ -265,6 +274,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('startViewTransition lève → attribut retiré, exception remonte', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: 'cube', _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     const doc = makeDoc(() => { throw new Error('InvalidStateError') })
     installVt(µ, doc)
 
@@ -283,6 +293,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
 
   it('document SANS documentElement (fixture minimale, comme tests/vt-presets-ujs.test.ts et tests/ujs-deferred-swap-confirm-wrapper.test.ts) → jamais un crash, le swap a quand même lieu', () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: 'zoom', _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     const calls: string[] = []
     const doc: any = { startViewTransition: (cb: any) => { cb() } } // pas de documentElement, forme des tests existants
 
@@ -296,6 +307,7 @@ describe('html[data-mjs-vt] posé/retiré par mjs_ujs.ts (_mjs_vtWrapSwap)', fun
   // mêmes deux transitions chevauchées, modèle EXACT d'une vérification Chromium réelle.
   it('deux transitions CHEVAUCHÉES (A puis B avant A.finished) : A.finished ne retire PAS l\'attribut de B (encore actif), B.finished le retire', async () => {
     const µ: any = { Router: { _mjs_vtEnabled: () => true }, viewTransition: false, _mjs_vtParse: fakeVtParse }
+    poserMessages(µ)
     let finishedAResolve: any, finishedBResolve: any
     const finishedA = new Promise((res) => { finishedAResolve = res })
     const finishedB = new Promise((res) => { finishedBResolve = res })

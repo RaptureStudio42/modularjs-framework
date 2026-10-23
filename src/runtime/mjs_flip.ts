@@ -1,10 +1,54 @@
 // mjs_flip.coffee
 var originalReconcileList;
 
+// `animate` de la balise, insensible à une méthode du composant du même nom (cf. mjs_element.ts)
+µ._mjs_animate = µ._mjs_animate || function(n, frames, opts) {
+  if (typeof Element === 'function' && n instanceof Element && typeof Element.prototype.animate === 'function') return Element.prototype.animate.call(n, frames, opts);
+  return n.animate(frames, opts);
+};
+
 if (µ.Element) {
   originalReconcileList = µ.Element.prototype._mjs_reconcileList;
+  // clés `by` que plusieurs éléments de la collection portent : la réconciliation (mjs_for.ts) ne rend que le premier de chacune, la ligne qui porte
+  // la clé change d'élément d'une passe à l'autre et son identité n'est pas sûre ; les clés se comparent en chaîne, une clé absente est ignorée
+  const duplicateKeys = function(items, keyAttr) {
+    const seen = new Set(), dups = new Set();
+    items.forEach(function(item) {
+      var key = item?.[keyAttr];
+      if (key != null) {
+        (seen.has(key = String(key)) ? dups : seen).add(key);
+      }
+    });
+    return dups;
+  };
+  // relevé des balises `mjs-flip` d'une liste, chacune avec son identifiant : [nœud, identifiant]
+  // identifiant = étiquette `mjs-key` posée par le compilateur (clé du `by` du `{for}`, précédée de celle des lignes qui l'enveloppent dans une
+  // liste imbriquée, suivie de la place de la balise quand la ligne porte plusieurs balises @flip) ; sans étiquette, le nœud lui-même
+  // les lignes dont la clé est dans `skip` (clés en double) n'y figurent pas
+  // relevé VIVANT des nœuds de la ligne : un `{if}` à sa racine insère son contenu entre ses deux marqueurs, absent de `entry.nodes`
+  const flipNodesOf = function(self, cacheId, skip) {
+    const found = [];
+    if (self._mjs_list_cache && self._mjs_list_cache[cacheId]) {
+      self._mjs_list_cache[cacheId].forEach((entry, key) => {
+        if (skip && skip.has(key)) {
+          return;
+        }
+        self._mjs_liveEntryNodes(entry.nodes).forEach(function(n) {
+          if (n.nodeType === 1) {
+            if (n.hasAttribute('mjs-flip')) {
+              found.push([n, n.getAttribute('mjs-key') || n]);
+            }
+            n.querySelectorAll('[mjs-flip]').forEach(function(child) {
+              found.push([child, child.getAttribute('mjs-key') || child]);
+            });
+          }
+        });
+      });
+    }
+    return found;
+  };
   // Alignement strict sur la nouvelle signature de réconciliation latérale
-  µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn) {
+  µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr) {
     var flipNodes, rects, result;
     // Flag posé au compile-time (`static _mjs_hasFlip`, cf. template.ts) quand
     // le composant déclare `@flip`. Avant, le code lisait `this._has_flip` qui
@@ -25,30 +69,13 @@ if (µ.Element) {
       return originalReconcileList.apply(this, arguments);
     }
     this._mjs_flipping_cids.add(cacheId);
-    flipNodes = [];
-    if (this._mjs_list_cache && this._mjs_list_cache[cacheId]) {
-      this._mjs_list_cache[cacheId].forEach(function(entry) {
-        return entry.nodes.forEach(function(n) {
-          if (n.nodeType === 1) {
-            if (n.hasAttribute('mjs-flip')) {
-              flipNodes.push(n);
-            }
-            return n.querySelectorAll('[mjs-flip]').forEach(function(child) {
-              return flipNodes.push(child);
-            });
-          }
-        });
-      });
-    }
+    flipNodes = flipNodesOf(this, cacheId);
     // 1. FIRST (Mesure)
     rects = new Map();
-    flipNodes.forEach(function(n) {
-      var identifier, key;
-      key = n.getAttribute('mjs-key');
-      identifier = key ? key : n;
-      return rects.set(identifier, {
-        rect: n.getBoundingClientRect(),
-        parent: n.parentNode
+    flipNodes.forEach(function(p) {
+      return rects.set(p[1], {
+        rect: p[0].getBoundingClientRect(),
+        parent: p[0].parentNode
       });
     });
     // 2. MUTATION (Application de la réconciliation)
@@ -63,23 +90,14 @@ if (µ.Element) {
     }
     // 3. MICRO-TICK & PLAY
     Promise.resolve().then(() => {
-      var newFlipNodes;
+      var cache, dups, items, newFlipNodes;
       this._mjs_flipping_cids.delete(cacheId);
-      newFlipNodes = [];
-      if (this._mjs_list_cache && this._mjs_list_cache[cacheId]) {
-        this._mjs_list_cache[cacheId].forEach(function(entry) {
-          return entry.nodes.forEach(function(n) {
-            if (n.nodeType === 1) {
-              if (n.hasAttribute('mjs-flip')) {
-                newFlipNodes.push(n);
-              }
-              return n.querySelectorAll('[mjs-flip]').forEach(function(child) {
-                return newFlipNodes.push(child);
-              });
-            }
-          });
-        });
-      }
+      // moins de lignes que d'éléments : des clés en double, dont les lignes ne glissent pas (leur identité n'est pas sûre)
+      cache = this._mjs_list_cache?.[cacheId];
+      items = col && (Array.isArray(col) ? col : Object.values(col));
+      dups = cache && items && items.length !== cache.size ? duplicateKeys(items, keyAttr) : null;
+      // même relevé vivant qu'avant la mutation
+      newFlipNodes = flipNodesOf(this, cacheId, dups);
       // Liste CIBLE vs SOURCE. Si cette liste a GAGNÉ un node ce tick (un
       // arrivant via @in : présent dans newFlipNodes mais SANS position
       // antérieure dans `rects`), c'est la colonne CIBLE → le trou d'accueil
@@ -87,9 +105,8 @@ if (µ.Element) {
       // crossfade ait un emplacement où atterrir. Sinon (liste SOURCE qui PERD
       // un node), la fermeture du trou reste différée (`mjs-flip-delay`) le
       // temps que le crossfade se termine.
-      var listGained = newFlipNodes.some(function(n) {
-        var k = n.getAttribute('mjs-key');
-        return !rects.get(k ? k : n);
+      var listGained = newFlipNodes.some(function(p) {
+        return !rects.get(p[1]);
       });
       // PERF — 3 PASSES pour ne forcer qu'UN SEUL reflow au lieu
       // d'un par nœud. Avant, par nœud : cancel (écriture) → getBoundingClientRect
@@ -107,9 +124,9 @@ if (µ.Element) {
       // garantit désormais pour TOUS les nœuds avant la moindre lecture.
 
       // PASSE 1 — annuler TOUS les mjs-flip encore en vol.
-      newFlipNodes.forEach(function(n) {
-        if (typeof n.getAnimations === "function") {
-          n.getAnimations().forEach(function(a) {
+      newFlipNodes.forEach(function(p) {
+        if (typeof p[0].getAnimations === "function") {
+          p[0].getAnimations().forEach(function(a) {
             if (a.id === 'mjs-flip') {
               return a.cancel();
             }
@@ -118,11 +135,10 @@ if (µ.Element) {
       });
       // PASSE 2 — mesurer TOUS les newRect (un seul reflow pour l'ensemble).
       var measures = [];
-      newFlipNodes.forEach(function(n) {
-        var identifier, key, oldData;
-        key = n.getAttribute('mjs-key');
-        identifier = key ? key : n;
-        oldData = rects.get(identifier);
+      newFlipNodes.forEach(function(p) {
+        var n, oldData;
+        n = p[0];
+        oldData = rects.get(p[1]);
         if (!oldData) {
           return;
         }
@@ -137,7 +153,7 @@ if (µ.Element) {
       });
       // PASSE 3 — deltas + animate (écritures groupées).
       return measures.forEach(function(m) {
-        var deltaX, deltaY, duration, flipDelay, flipEasing, n, newRect, oldRect;
+        var deltaX, deltaY, duration, flipDelay, flipEasing, n, newRect, oldRect, frames, opts;
         n = m.n;
         oldRect = m.oldRect;
         newRect = m.newRect;
@@ -145,7 +161,8 @@ if (µ.Element) {
         deltaY = oldRect.top - newRect.top;
         if (deltaX !== 0 || deltaY !== 0) {
           duration = parseInt(n.getAttribute('mjs-flip'));
-          if (isNaN(duration)) {
+          // durée négative (liaison calculée) : refusée par animate(), la durée par défaut la remplace
+          if (isNaN(duration) || duration < 0) {
             duration = 200;
           }
           flipDelay = listGained ? 0 : parseInt(n.getAttribute('mjs-flip-delay'));
@@ -153,14 +170,15 @@ if (µ.Element) {
             flipDelay = 0;
           }
           flipEasing = n.getAttribute('mjs-flip-easing') || 'cubic-bezier(0.25, 1, 0.5, 1)';
-          return n.animate([
+          frames = [
             {
               transform: `translate(${deltaX}px, ${deltaY}px)`
             },
             {
               transform: 'translate(0px, 0px)'
             }
-          ], {
+          ];
+          opts = {
             duration: duration,
             delay: flipDelay,
             // `backwards` : pendant le délai, l'élément reste au 1er keyframe
@@ -170,7 +188,16 @@ if (µ.Element) {
             fill: 'backwards',
             easing: flipEasing,
             id: 'mjs-flip'
-          });
+          };
+          // courbe que le navigateur refuse (pas une valeur CSS : le nom d'une courbe de µ.easing, une faute de frappe) :
+          // la ligne glisse avec la courbe par défaut. L'erreur levée ici arrêtait toute la liste, en rejet non rattrapé
+          try {
+            return µ._mjs_animate(n, frames, opts);
+          }
+          catch (err) {
+            opts.easing = 'cubic-bezier(0.25, 1, 0.5, 1)';
+            return µ._mjs_animate(n, frames, opts);
+          }
         }
       });
     });

@@ -1,4 +1,4 @@
-// module cœur field : quand aucun `name` n'est fourni sur <@field>, le nom déduit du champ
+// module cœur field : quand aucun `name` n'est fourni sur <@@field>, le nom déduit du champ
 // enveloppé n'était lu qu'une fois au montage — un changement ultérieur de l'attribut `name`
 // du champ (composant tiers qui le renomme, par exemple) restait sans effet. Patron
 // build+happy-dom calqué sur tests/core-field.test.ts.
@@ -34,7 +34,7 @@ async function buildAndMount(hostSource: string): Promise<{ window: any; hote: a
     assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`)
     return f!
   }
-  const code = [pick(/^mjs_core-/), pick(/^field-/), pick(/^hote-/)]
+  const code = [pick(/^mjs_core-/), pick(/^core-field-/), pick(/^hote-/)]
     .map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
     .join('\n')
 
@@ -47,18 +47,18 @@ async function buildAndMount(hostSource: string): Promise<{ window: any; hote: a
   return { window, hote }
 }
 
-describe('mjs-field — name déduit du champ enveloppé, réévalué si son attribut change', function () {
+describe('mjs-core-field — name déduit du champ enveloppé, réévalué si son attribut change', function () {
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
 
   it('le name déduit suit l\'attribut name du champ enveloppé quand il change après le montage', async () => {
     const HOST = [
-      '<@field label="Pseudo">',
+      '<@@field label="Pseudo">',
       '  <input name="pseudo">',
-      '</@field>',
+      '</@@field>',
     ].join('\n')
     const { hote } = await buildAndMount(HOST)
-    const fieldEl = hote._shadow.querySelector('mjs-field')
+    const fieldEl = hote._shadow.querySelector('mjs-core-field')
     const input = fieldEl.querySelector('input')
     assert.equal(fieldEl._state.name, 'pseudo', 'préalable : name déduit au montage')
 
@@ -67,14 +67,14 @@ describe('mjs-field — name déduit du champ enveloppé, réévalué si son att
     assert.equal(fieldEl._state.name, 'surnom', 'le name déduit doit suivre le changement d\'attribut du champ enveloppé')
   })
 
-  it('un name EXPLICITE sur <@field> ignore les changements d\'attribut du champ enveloppé', async () => {
+  it('un name EXPLICITE sur <@@field> ignore les changements d\'attribut du champ enveloppé', async () => {
     const HOST = [
-      '<@field name="email" label="Adresse e-mail">',
+      '<@@field name="email" label="Adresse e-mail">',
       '  <input name="autre-nom">',
-      '</@field>',
+      '</@@field>',
     ].join('\n')
     const { hote } = await buildAndMount(HOST)
-    const fieldEl = hote._shadow.querySelector('mjs-field')
+    const fieldEl = hote._shadow.querySelector('mjs-core-field')
     const input = fieldEl.querySelector('input')
     assert.equal(fieldEl._state.name, 'email', 'préalable : le name explicite gagne au montage')
 

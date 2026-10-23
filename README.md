@@ -29,7 +29,7 @@ Tout tourne en ligne sur le site officiel — **[mjs.rapturestudio.fr](https://m
 - **Idiomatique.** Une syntaxe `.mjs` concise (Civet par défaut) : `$x` réactif, dérivés automatiques, blocs `{if}` / `{for}` / `{await}` / `{key}`, liaisons `value=!{$x}`, événements `@click`, transitions, stores, contexte, router.
 - **Isolé par design.** Chaque composant vit dans son *Shadow DOM* : styles scopés, pas de collision.
 - **Thémable.** Des variables de thème (`$$brand`) qui cascadent à travers les composants, même par-delà le Shadow DOM ; le plus proche gagne.
-- **Équipé.** Une bibliothèque de modules cœur prêts à l'emploi (`<@select>`, `<@field>`, `<@checkbox>`…), personnalisable sans forker le source.
+- **Équipé.** Une bibliothèque de modules cœur prêts à l'emploi (`<@@select>`, `<@@field>`, `<@@checkbox>`…), personnalisable sans forker le source.
 - **International.** Traduction et pluriel intégrés (`µt`, `@i18n`), dictionnaires chargés à la demande.
 
 ## Installation
@@ -40,7 +40,7 @@ npm install modularjs-framework
 
 ### Coloration dans l'éditeur
 
-`.mjs` est aussi l'extension des modules JavaScript de Node : sans rien faire, l'éditeur lit un composant MJS comme du JavaScript et le souligne en erreurs de bout en bout. L'extension VS Code du dépôt règle ça — installation et réglage par chemin dans [`editors/vscode/`](./editors/vscode/).
+`.mjs` est aussi l'extension des modules JavaScript de Node : sans rien faire, l'éditeur lit un composant MJS comme du JavaScript et le souligne en erreurs de bout en bout. L'extension VS Code du dépôt règle ça, et complète les 117 effets pendant la frappe, avec leur aide au survol — installation et réglage par chemin dans [`editors/vscode/`](./editors/vscode/).
 
 ## Premiers pas
 
@@ -73,7 +73,7 @@ npx mjs dev --port 3939                     # dev + HMR
 
 ## Documentation
 
-- 📖 **[Référence du langage](./docs/)** — 36 sections : le langage (réactivité, blocs, bindings, événements, transitions, stores, contexte, router, cycle de vie, SSR, temps réel, navigation, i18n, pièges…), une fiche d'aide-mémoire condensée, et l'outillage — ligne de commande et configuration, harnais de test des applications, panneau d'inspection, images, application installable. Chaque page : référence dense + encarts dépliables *Pour débutants*.
+- 📖 **[Référence du langage](./docs/)** — 38 sections : le langage (réactivité, blocs, bindings, événements, transitions, stores, contexte, router, cycle de vie, SSR, temps réel, navigation, i18n, pièges…), une fiche d'aide-mémoire condensée, et l'outillage — ligne de commande et configuration, harnais de test des applications, panneau d'inspection, images, application installable. Chaque page : référence dense + encarts dépliables *Pour débutants*.
 - 🎓 **[Tuto interactif](https://mjs.rapturestudio.fr/tuto)** — 144 leçons avec éditeur live (le parcours d'apprentissage pas-à-pas).
 
 ## Configuration — `mjs.config.json`
@@ -152,7 +152,7 @@ Everything runs online on the official site — **[mjs.rapturestudio.fr](https:/
 - **Idiomatic.** A concise `.mjs` syntax (Civet by default): reactive `$x`, automatic derived values, `{if}` / `{for}` / `{await}` / `{key}` blocks, `value=!{$x}` bindings, `@click` events, transitions, stores, context, router.
 - **Isolated by design.** Every component lives in its own *Shadow DOM*: scoped styles, no collisions.
 - **Themeable.** Theme variables (`$$brand`) that cascade through components, even across the Shadow DOM boundary; the closest one wins.
-- **Batteries included.** A ready-to-use core module library (`<@select>`, `<@field>`, `<@checkbox>`…), customizable without forking the source.
+- **Batteries included.** A ready-to-use core module library (`<@@select>`, `<@@field>`, `<@@checkbox>`…), customizable without forking the source.
 - **International.** Built-in translation and pluralization (`µt`, `@i18n`), dictionaries loaded on demand.
 
 ## Installation
@@ -163,7 +163,7 @@ npm install modularjs-framework
 
 ### Editor syntax highlighting
 
-`.mjs` is also Node's JavaScript module extension: out of the box, editors read an MJS component as plain JavaScript and underline it end to end with errors. The repo's VS Code extension fixes this — install and setup instructions in [`editors/vscode/`](./editors/vscode/).
+`.mjs` is also Node's JavaScript module extension: out of the box, editors read an MJS component as plain JavaScript and underline it end to end with errors. The repo's VS Code extension fixes this, and completes the 117 effects as you type, with their help on hover — install and setup instructions in [`editors/vscode/`](./editors/vscode/).
 
 ## Getting started
 
@@ -196,7 +196,7 @@ npx mjs dev --port 3939                # dev + HMR
 
 ## Documentation
 
-- 📖 **[Language reference](./docs/)** — 36 sections: the language (reactivity, blocks, bindings, events, transitions, stores, context, router, lifecycle, SSR, real-time, navigation, i18n, pitfalls…), a condensed cheat sheet, and the tooling — command line and configuration, app test harness, inspector panel, images, installable app. Each page: dense reference + collapsible *For beginners* boxes.
+- 📖 **[Language reference](./docs/)** — 38 sections: the language (reactivity, blocks, bindings, events, transitions, stores, context, router, lifecycle, SSR, real-time, navigation, i18n, pitfalls…), a condensed cheat sheet, and the tooling — command line and configuration, app test harness, inspector panel, images, installable app. Each page: dense reference + collapsible *For beginners* boxes.
 - 🎓 **[Interactive tutorial](https://mjs.rapturestudio.fr/tuto?lang=en)** — 144 lessons with a live editor (a step-by-step learning path).
 
 ## Configuration — `mjs.config.json`

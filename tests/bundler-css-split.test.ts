@@ -63,8 +63,8 @@ describe('bundler — clé css', function () {
     const out2 = readFileSync(p2.manifest, 'utf-8')
     await b2.close()
 
-    const hash1 = out1.match(/mjs_styles-([a-f0-9]{8})\.js/)
-    const hash2 = out2.match(/mjs_styles-([a-f0-9]{8})\.js/)
+    const hash1 = out1.match(/mjs_styles-([0-9a-z]{5})\.js/)
+    const hash2 = out2.match(/mjs_styles-([0-9a-z]{5})\.js/)
     assert.ok(hash1 && hash2, `les deux manifestes doivent importer mjs_styles-<hash>.js (mécanisme historique). out1:\n${out1}\nout2:\n${out2}`)
     assert.equal(hash1![1], hash2![1], 'même CSS source → même hash, que `css` soit absent ou explicitement \'bundle\'')
     assert.ok(!readdirSync(p1.outDir).some(f => f.startsWith('mjs_style_')), 'mode bundle : aucun fichier mjs_style_<nom> (split) ne doit exister')
@@ -111,7 +111,7 @@ describe('bundler — clé css', function () {
       const hp = bundler.splitStyleHashedPaths[name]
       assert.ok(hp, `chemin haché manquant pour la feuille '${name}'`)
       const fname = basename(hp)
-      assert.match(fname, new RegExp(`^mjs_style_${name}-[a-f0-9]{8}\\.js$`), `nom de fichier inattendu pour '${name}' : ${fname}`)
+      assert.match(fname, new RegExp(`^mjs_style_${name}-[0-9a-z]{5}\\.js$`), `nom de fichier inattendu pour '${name}' : ${fname}`)
       assert.ok(existsSync(join(p.outDir, fname)), `fichier absent sur disque : ${fname}`)
       const content = readFileSync(join(p.outDir, fname), 'utf-8')
       assert.match(content, new RegExp(`µ\\.CSS\\["${name}"\\]`), `contenu attendu (µ.CSS["${name}"]) absent de ${fname} :\n${content}`)
@@ -233,7 +233,7 @@ describe('bundler — clé css', function () {
     assert.equal(bundler.viewRequestedSheets.size, 0, 'mode bundle : le scan <@view css=…> ne doit JAMAIS tourner')
     assert.equal(bundler.splitEagerHashedPaths.length, 0, 'mode bundle : aucun chemin split eager (mécanisme inactif)')
     const manifestSrc = readFileSync(p.manifest, 'utf-8')
-    assert.match(manifestSrc, /mjs_styles-[a-f0-9]{8}\.js/, 'mode bundle : import historique unique, inchangé')
+    assert.match(manifestSrc, /mjs_styles-[0-9a-z]{5}\.js/, 'mode bundle : import historique unique, inchangé')
     assert.ok(!readdirSync(p.outDir).some(f => f.startsWith('mjs_style_')), "mode bundle : aucun fichier mjs_style_<nom> (split) ne doit exister")
     await bundler.close()
   })
@@ -246,7 +246,7 @@ describe('bundler — clé css', function () {
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
     assert.ok(bundler.splitRootHashedPath, 'mjs_root doit produire son propre fichier split')
-    assert.match(basename(bundler.splitRootHashedPath!), /^mjs_style_root-[a-f0-9]{8}\.js$/)
+    assert.match(basename(bundler.splitRootHashedPath!), /^mjs_style_root-[0-9a-z]{5}\.js$/)
     const rootSrc = readFileSync(join(p.outDir, basename(bundler.splitRootHashedPath!)), 'utf-8')
     assert.match(rootSrc, /document\.adoptedStyleSheets/, 'mjs_root doit rester adopté sur le document, pas dans un shadow')
     assert.match(rootSrc, /color:purple/)
@@ -262,8 +262,8 @@ describe('bundler — clé css', function () {
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'lazy' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
-    assert.ok(!readdirSync(p.outDir).some(f => /^mjs_style_theme-[a-f0-9]{8}\.js$/.test(f)), "mode lazy : la feuille ne doit PAS devenir un module JS (c'est le mode split)")
-    assert.ok(!readdirSync(p.outDir).some(f => /^mjs_styles-[a-f0-9]{8}\.js$/.test(f)), 'mode lazy : aucun bundle de styles unique (c\'est le mode bundle)')
+    assert.ok(!readdirSync(p.outDir).some(f => /^mjs_style_theme-[0-9a-z]{5}\.js$/.test(f)), "mode lazy : la feuille ne doit PAS devenir un module JS (c'est le mode split)")
+    assert.ok(!readdirSync(p.outDir).some(f => /^mjs_styles-[0-9a-z]{5}\.js$/.test(f)), 'mode lazy : aucun bundle de styles unique (c\'est le mode bundle)')
     await bundler.close()
   })
 

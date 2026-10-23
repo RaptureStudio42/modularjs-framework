@@ -9,7 +9,7 @@
 //   1) effects → _mjs_updText('t3', 'reticulating splines...') sur l'ANCIEN t3.
 //   2) struct → _mjs_updKey crée NEW <p> avec NEW t3 vide. NEW t3 remplace
 //      l'ancien dans this._mjs_nodes.
-// L'animation `@in.typewriter` capture alors `text = node.textContent` du
+// L'animation `@in=*typewriter` capture alors `text = node.textContent` du
 // NEW <p>, qui est vide (juste whitespace) → l'anim joue '' vers ''.
 //
 // Fix : invalider le fast path → struct AVANT effects (cf. la microtask

@@ -18,11 +18,14 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
-import { timingSafeEqual } from 'node:crypto'
+import { basename, dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { transpile } from '../transpiler/index.js'
 import { writeHashedAsset } from './ssr-head.js'
-import { t } from '../messages/index.js'
+import { t, getMessagesLang, type MsgKey } from '../messages/index.js'
+import { resolveTrustProxy } from '../mjs-ws/trust-proxy.js'
+import { safeEqual } from '../mjs-ws/package-helpers.js'
 
 // même patron que Bundler.locateRuntimeDir/locateCoreModulesDir (bundler/index.ts) : plusieurs
 // emplacements possibles selon dev (tsx, ce fichier vit à sa vraie place) / prod bundlé (dist/
@@ -39,6 +42,63 @@ function locateViewerSource(fileName: string): string {
     if (existsSync(c)) return c
   }
   return candidates[0]
+}
+
+// dossier du runtime — même patron que Bundler.locateRuntimeDir (bundler/index.ts) : dev (tsx), prod bundlé (dist/cli.js), install npm
+function locateRuntimeDir(): string {
+  const candidates = [
+    fileURLToPath(new URL('../runtime/', import.meta.url)),
+    fileURLToPath(new URL('../src/runtime/', import.meta.url)),
+    fileURLToPath(new URL('../../src/runtime/', import.meta.url)),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return candidates[0]
+}
+
+// ce que les visionneuses appellent dans le cœur et qu'un cœur nu (`runtime: 'core'`) n'embarque pas : le fichier du runtime et le
+// membre qu'il pose (sur `µ` ou sur `µ.Element.prototype`), cherché dans le texte du cœur pour savoir s'il manque, puis dans la
+// page pour ne jamais le poser deux fois. Dans l'ordre du cœur. La liste suit le code compilé des visionneuses
+// (tests/viewer-page-coeur-nu.test.ts le garde) ; rien n'entre dans le cœur de l'application, seule la page de la visionneuse s'alourdit
+export const VIEWER_RUNTIME = [
+  { file: 'mjs_deep.ts',          member: '_mjs_deepSet',          on: 'µ' },
+  { file: 'mjs_lifecycle.ts',     member: '_mjs_hook',             on: 'µ.Element.prototype' },
+  { file: 'mjs_destroy_hooks.ts', member: '_mjs_destroyWithHooks', on: 'µ.Element.prototype' },
+  { file: 'mjs_if.ts',            member: '_mjs_updIf',            on: 'µ.Element.prototype' },
+  { file: 'mjs_for.ts',           member: '_mjs_updFor',           on: 'µ.Element.prototype' },
+  { file: 'mjs_for_nested.ts',    member: '_mjs_updList',          on: 'µ.Element.prototype' },
+] as const
+type ViewerRuntimeEntry = typeof VIEWER_RUNTIME[number]
+
+// texte du cœur que la page charge : le fichier du cœur (fichiers séparés), cherché dans le dossier de sortie que le serveur donne
+// (à défaut, à côté du manifeste), ou le manifeste lui-même (fichier unique, cœur fusionné dedans) ; null si le fichier est
+// introuvable — la page apporte alors tout, et son test de présence tranche
+function readCoreText(manifestPath: string, manifestSrc: string, corePath: string, separate: boolean, outputDir: string | undefined): string | null {
+  if (!separate) return manifestSrc
+  const file = join(outputDir ?? dirname(manifestPath), basename(corePath))
+  return existsSync(file) ? readFileSync(file, 'utf-8') : null
+}
+
+// les fichiers que le cœur n'a pas : un membre posé par `.membre = function` (ou `async function`) dans le texte du cœur y est
+function missingViewerRuntime(coreText: string | null): ViewerRuntimeEntry[] {
+  if (coreText === null) return [...VIEWER_RUNTIME]
+  return VIEWER_RUNTIME.filter(e => !new RegExp('\\.' + e.member + '\\s*=\\s*(?:async\\s+)?function').test(coreText))
+}
+
+const CORE_IMPORT_LINE_RE = /^import \{ µ \} from [^\n]*\n/
+
+// joint ces fichiers juste après l'import du cœur, chacun derrière son test de présence : la page les pose avant d'avoir
+// le moindre élément, et un cœur qui a déjà le membre n'est jamais redéfini. Sans l'import en tête, erreur plutôt que rien joint
+export function withViewerRuntime(js: string, files: ViewerRuntimeEntry[]): string {
+  if (!CORE_IMPORT_LINE_RE.test(js)) throw new Error(t('server.viewer-import-coeur-introuvable'))
+  const dir     = locateRuntimeDir()
+  const runtime = files.map(e => {
+    const path = join(dir, e.file)
+    if (!existsSync(path)) throw new Error(t('server.viewer-runtime-introuvable', { fichier: e.file, dossier: dir }))
+    return 'if (!' + e.on + '.' + e.member + ') {\n' + readFileSync(path, 'utf-8') + '\n}'
+  }).join('\n')
+  return js.replace(CORE_IMPORT_LINE_RE, imp => imp + runtime + '\n')
 }
 
 const CORE_IMPORT_RE = /const µCore = '([^']+)';/
@@ -79,7 +139,25 @@ export const THEME_VIEWER: ViewerSpec = { fileName: 'theme-viewer.mjs', moduleNa
 // cache MÉMOIRE PAR VISIONNEUSE (clé `spec.fileName`) : ouvrir l'atelier /__mjs/theme n'invalide
 // jamais le cache du journal, et réciproquement — sinon chaque aller-retour entre les deux
 // visionneuses recompilait l'autre à chaque fois.
-const cache = new Map<string, { corePath: string, csp: boolean, js: string }>()
+const cache = new Map<string, { corePath: string, csp: boolean, kit: string, lang: string, js: string }>()
+
+// textes des visionneuses : `⟪cle⟫` dans leur source désigne `viewer.<cle>` du catalogue, dans la langue des messages —
+// littéral de chaîne dans le script, texte échappé dans le gabarit ; `⟪#langue⟫` donne la langue elle-même (règle du pluriel)
+const TEXT_MARK_RE = /⟪(#?[a-z0-9.-]+)⟫/g
+
+function viewerText(cle: string): string {
+  return cle === '#langue' ? getMessagesLang() : t(('viewer.' + cle) as MsgKey) ?? cle
+}
+
+/** Source d'une visionneuse avec ses textes dans la langue des messages. Exportée pour test direct. */
+export function localizeViewerSource(source: string): string {
+  const fin      = source.indexOf('</script>')
+  const script   = fin === -1 ? '' : source.slice(0, fin)
+  const reste    = fin === -1 ? source : source.slice(fin)
+  const litteral = (s: string): string => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  const html     = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\{/g, '&#123;').replace(/\}/g, '&#125;')
+  return script.replace(TEXT_MARK_RE, (_m, cle: string) => litteral(viewerText(cle))) + reste.replace(TEXT_MARK_RE, (_m, cle: string) => html(viewerText(cle)))
+}
 
 const CSP_URL_MARKER = '\0mjs-viewer-src:'
 
@@ -88,7 +166,7 @@ const CSP_URL_MARKER = '\0mjs-viewer-src:'
  *  src="/__mjs/bundle.js">` dans la page (même cœur µ, import ES dédupliqué par URL). Lève si le
  *  manifeste est absent/illisible ou si la compilation échoue — l'appelant répond 500 (l'app
  *  continue de tourner). */
-export async function getViewerScript(manifestPath: string | null, spec: ViewerSpec): Promise<string> {
+export async function getViewerScript(manifestPath: string | null, spec: ViewerSpec, outputDir?: string): Promise<string> {
   if (!manifestPath || !existsSync(manifestPath)) {
     throw new Error(t('server.journal-viewer-manifest-absent'))
   }
@@ -107,12 +185,16 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
     throw new Error(t('server.journal-viewer-core-introuvable'))
   }
   const csp = CSP_FLAG_RE.test(manifestSrc)
-  const cached = cache.get(spec.fileName)
-  if (cached && cached.corePath === corePath && cached.csp === csp) return cached.js
-  const source = readFileSync(locateViewerSource(spec.fileName), 'utf-8')
+  // ce que le cœur chargé n'a pas (cœur nu) : la page l'apporte ; la clé du cache le suit, le cœur pouvant changer sous le même chemin
+  const missing = missingViewerRuntime(readCoreText(manifestPath, manifestSrc, corePath, m !== null, outputDir))
+  const kit     = missing.map(e => e.member).join(',')
+  const cached  = cache.get(spec.fileName)
+  const lang    = getMessagesLang()
+  if (cached && cached.corePath === corePath && cached.csp === csp && cached.kit === kit && cached.lang === lang) return cached.js
+  const source = localizeViewerSource(readFileSync(locateViewerSource(spec.fileName), 'utf-8'))
   const { output } = await transpile(source, { moduleName: spec.moduleName })
   const withCore = output.replace("µ.asset('mjs_core.js')", JSON.stringify(corePath))
-  let js = escapeScriptClose(withCore)
+  let js = escapeScriptClose(missing.length > 0 ? withViewerRuntime(withCore, missing) : withCore)
   if (csp) {
     // (mode `csp`) — `<script type="module">` en ligne BLOQUÉ par `script-src` sans
     // 'unsafe-inline' (vérifié en navigateur). Sort en fichier servi : même trailer
@@ -129,7 +211,7 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
     const url = writeHashedAsset(outputDir, urlPrefix, 'mjs_viewer_' + spec.moduleName, '.js', full)
     js = CSP_URL_MARKER + url
   }
-  cache.set(spec.fileName, { corePath, csp, js })
+  cache.set(spec.fileName, { corePath, csp, kit, lang, js })
   return js
 }
 
@@ -154,15 +236,6 @@ export function viewerScriptElement(js: string, spec: ViewerSpec): string {
   return '<script type="module">' + js + '\ndocument.body.appendChild(document.createElement(' + JSON.stringify(tag) + '));</script>\n'
 }
 
-// comparaison à temps constant — longueur d'abord (timingSafeEqual lève sinon), même patron que
-// mjs-ws/token.ts:safeEqualB64 (transposé ici, pas importé : sous-système différent).
-function safeEqualStr(a: string, b: string): boolean {
-  const ba = Buffer.from(a, 'utf8')
-  const bb = Buffer.from(b, 'utf8')
-  if (ba.length !== bb.length) return false
-  return timingSafeEqual(ba, bb)
-}
-
 /** Décision « production » PARTAGÉE : le drapeau CLI/config (`env`, MÊME
  *  paramètre que `render-request.ts` reçoit déjà, cf. son `isProd`) prime, `NODE_ENV=production`
  *  reste accepté comme second signal (systemd/pm2 qui l'exportent sans jamais passer par --prod).
@@ -180,21 +253,60 @@ export function isProdEnv(env?: 'dev' | 'prod'): boolean {
  *  EXIGÉ dans toute circonstance (dev compris — poser un jeton verrouille partout, sans exception
  *  discrète) ; `false` = jamais. Le refus (quelle qu'en soit la raison) est TOUJOURS un 404, jamais
  *  un 403 — indistinct d'une route qui n'existe pas. */
-export function isViewerAllowed(viewerCfg: boolean | string | undefined, url: URL, env?: 'dev' | 'prod'): boolean {
+export function isViewerAllowed(viewerCfg: boolean | string | undefined, url: URL, env?: 'dev' | 'prod', cookie?: string | string[]): boolean {
   if (viewerCfg === false) return false
   if (typeof viewerCfg === 'string' && viewerCfg.length > 0) {
-    return safeEqualStr(url.searchParams.get('token') ?? '', viewerCfg)
+    return safeEqual(url.searchParams.get('token') ?? '', viewerCfg) || safeEqual(cookieValue(cookie, VIEWER_COOKIE), viewerCookieValue(viewerCfg))
   }
   return !isProdEnv(env)
 }
 
+// jeton de la visionneuse : reçu une fois dans l'adresse, puis porté par un cookie de session dont la valeur en dérive (le
+// jeton lui-même n'y est jamais écrit)
+const VIEWER_COOKIE = 'mjs-journal'
+
+function viewerCookieValue(token: string): string {
+  return createHash('sha256').update('mjs-journal\0' + token).digest('base64url')
+}
+
+function cookieValue(header: string | string[] | undefined, name: string): string {
+  for (const part of (Array.isArray(header) ? header.join('; ') : header ?? '').split(';')) {
+    const i = part.indexOf('=')
+    if (i !== -1 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim()
+  }
+  return ''
+}
+
+/** En-têtes de la page de la visionneuse du journal : aucun Referer ne part de la page (son adresse peut porter le jeton) ;
+ *  un jeton reçu dans l'adresse devient un cookie de session réservé aux routes `/__mjs/` (HttpOnly, SameSite=Strict, Secure
+ *  quand la page arrive en https, cf. isSecureRequest), puis la visionneuse retire le jeton de la barre d'adresse et de l'entrée
+ *  de l'onglet. L'historique du navigateur garde l'adresse tapée (vu dans Chromium, même avec une redirection qui pose le cookie). */
+export function setViewerPageHeaders(res: ServerResponse, viewerCfg: boolean | string | undefined, url: URL, secure: boolean): void {
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  if (typeof viewerCfg === 'string' && viewerCfg.length > 0 && url.searchParams.has('token')) {
+    res.setHeader('Set-Cookie', `${VIEWER_COOKIE}=${viewerCookieValue(viewerCfg)}; Path=/__mjs/; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`)
+  }
+}
+
+/** Vrai si la requête est arrivée en https : socket TLS, ou proxy de confiance (`journal.trustProxy`, mêmes valeurs que MJS-WS)
+ *  qui l'annonce par `X-Forwarded-Proto: https` (le premier de la liste). Sans `journal.trustProxy`, ou venu d'un autre pair,
+ *  l'en-tête n'est pas lu. Décide `Secure` sur le cookie de la visionneuse. */
+export function isSecureRequest(req: IncomingMessage, trustProxy: unknown): boolean {
+  if ((req.socket as any).encrypted) return true
+  const confiance = resolveTrustProxy(trustProxy)
+  if (confiance === null || !confiance.trusts(req.socket.remoteAddress)) return false
+  const proto = req.headers['x-forwarded-proto']
+  return (Array.isArray(proto) ? proto[0] : proto ?? '').split(',')[0].trim().toLowerCase() === 'https'
+}
+
 /** Avertissement AU DÉMARRAGE (une fois, pas par requête) quand une config met explicitement
  *  `journal.viewer: true` ET tourne en production — le défaut (absent/undefined) reste silencieux,
- *  c'est le cas normal du dev (cf. isViewerAllowed juste au-dessus). N'empêche rien, ne change
- *  aucun comportement : la page continue d'être servie exactement pareil. Appelée depuis les 2
- *  points d'entrée joignables (`mjs dev` → server/index.ts, `mjs serve` → render-server.ts). */
+ *  c'est le cas normal du dev (cf. isViewerAllowed juste au-dessus). `true` vaut « hors production
+ *  seulement » : en production la page n'est PAS servie (404) — l'avertissement le dit, pour qui
+ *  croyait l'avoir ouverte (un jeton, `viewer: "<jeton>"`, l'ouvre). Appelée depuis les 2 points
+ *  d'entrée joignables (`mjs dev` → server/index.ts, `mjs serve` → render-server.ts). */
 export function warnIfJournalViewerOpenInProd(viewerCfg: boolean | string | undefined, env?: 'dev' | 'prod'): void {
   if (viewerCfg === true && isProdEnv(env)) {
-    console.error(t('server.index-journal-viewer-en-prod'))
+    console.error(t('server.journal-viewer-ignore-en-prod'))
   }
 }

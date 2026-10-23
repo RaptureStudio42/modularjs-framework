@@ -117,6 +117,8 @@ function validerType(nomSchema: string, nomChamp: string, type: MjschemaFieldTyp
     if (!Array.isArray(type.noms) || type.noms.length === 0) throw new Error(t('schema.bits-noms-vides', { schema: nomSchema, champ: nomChamp }))
     if (type.noms.length > 8) throw new Error(t('schema.bits-trop-de-noms', { schema: nomSchema, champ: nomChamp, nb: type.noms.length }))
     if (new Set(type.noms).size !== type.noms.length) throw new Error(t('schema.bits-noms-double', { schema: nomSchema, champ: nomChamp }))
+    // un nom de bits() devient une clé de l'objet décodé : même garde qu'un nom de champ (`__proto__` disparaissait)
+    for (const n of type.noms) validerNomChamp(nomSchema, n)
     return
   }
   throw new Error(t('schema.type-champ-invalide', { schema: nomSchema, champ: nomChamp }))
@@ -235,24 +237,58 @@ function tailleScalaireFixe(t: MjschemaScalar): number | null {
   }
 }
 
+// propriété lue sur l'objet à encoder — jamais celle qu'Object.prototype prête à tout objet : `toString` ou
+// `constructor` absents de l'objet étaient lus comme des valeurs (drapeau de bits() vrai, « function Object() … »
+// envoyé en chaîne). Un getter posé par une classe reste lu
+function lireCle(o: unknown, cle: string): unknown {
+  if (o == null) return undefined
+  if (cle in Object.prototype && !Object.prototype.hasOwnProperty.call(o, cle)) return undefined
+  return (o as Record<string, unknown>)[cle]
+}
+
+// plage de chaque entier : une valeur hors plage arrivait repliée sans un mot (u8 300 → 44, u32 -1 → 4294967295),
+// et une donnée en `codec: 'auto'` dépendait alors du transport. Une fraction reste tronquée vers zéro
+const PLAGES: Partial<Record<MjschemaScalar, [number, number]>> = {
+  u8: [0, 255], i8: [-128, 127], u16: [0, 65535], i16: [-32768, 32767], u32: [0, 4294967295], i32: [-2147483648, 2147483647],
+}
+
+function verifierPlage(nomSchema: string, champ: string, index: number, scalarType: MjschemaScalar, valeur: unknown): void {
+  const plage = PLAGES[scalarType]
+  if (!plage) return
+  const n = Math.trunc(numOr0(valeur))
+  // un nombre infini ou NaN est hors plage comme 300 en u8 (numOr0 le ramènerait à 0 sans un mot) ; une valeur absente ou qui
+  // n'est pas un nombre vaut toujours 0
+  if (n < plage[0] || n > plage[1] || Math.abs(Number(valeur)) === Infinity || Number.isNaN(valeur)) {
+    throw new Error(t('schema.valeur-hors-plage', { schema: nomSchema, champ: index >= 0 ? `${champ}[${index}]` : champ, type: scalarType, valeur: String(valeur), min: plage[0], max: plage[1] }))
+  }
+}
+
+// octets UTF-8 des chaînes du message : encodés UNE fois à la mesure, recopiés tels quels à l'écriture (les deux
+// passes parcourent les champs dans le même ordre) — chaque chaîne était encodée deux fois
+interface Chaines { octets: Uint8Array[]; i: number }
+
 // param renommé t → scalarType (E2b4) : `t` collisionnait avec l'import du traducteur de messages
-function mesurerScalaire(scalarType: MjschemaScalar, valeur: unknown): number {
+function mesurerScalaire(scalarType: MjschemaScalar, valeur: unknown, chaines: Chaines, nomSchema: string, champ: string, index = -1): number {
   const fixe = tailleScalaireFixe(scalarType)
-  if (fixe != null) return fixe
+  if (fixe != null) {
+    verifierPlage(nomSchema, champ, index, scalarType, valeur)
+    return fixe
+  }
   const octets = utf8Encoder.encode(String(valeur ?? ''))
   const max = scalarType === 'str8' ? 255 : 65535
   if (octets.byteLength > max) throw new Error(t('schema.chaine-trop-longue', { type: scalarType, octets: octets.byteLength, max }))
+  chaines.octets.push(octets)
   return (scalarType === 'str8' ? 1 : 2) + octets.byteLength
 }
 
-function mesurerChamp(type: MjschemaFieldType, valeur: unknown): number {
-  if (typeof type === 'string') return mesurerScalaire(type, valeur)
+function mesurerChamp(type: MjschemaFieldType, valeur: unknown, chaines: Chaines, nomSchema: string, champ: string): number {
+  if (typeof type === 'string') return mesurerScalaire(type, valeur, chaines, nomSchema, champ)
   if (type.kind === 'bits') return 1
   // list — 2 (compteur u16) + chaque élément mesuré comme le scalaire `of`
   const arr = Array.isArray(valeur) ? valeur : []
   if (arr.length > 65535) throw new Error(t('schema.list-trop-longue', { of: type.of, n: arr.length }))
   let total = 2
-  for (const v of arr) total += mesurerScalaire(type.of, v)
+  for (let i = 0; i < arr.length; i++) total += mesurerScalaire(type.of, arr[i], chaines, nomSchema, champ, i)
   return total
 }
 
@@ -261,7 +297,11 @@ function mesurerChamp(type: MjschemaFieldType, valeur: unknown): number {
 // bug de FORME de la charge applicative n'est jamais laissé faire tomber le process)
 function numOr0(v: unknown): number { const n = Number(v); return Number.isFinite(n) ? n : 0 }
 
-function ecrireScalaire(vue: DataView, offset: number, t: MjschemaScalar, valeur: unknown): number {
+// un champ flottant écrit tout nombre, `Infinity`, `-Infinity` et `NaN` compris (IEEE les sait) ; une valeur absente ou qui n'est pas un
+// nombre vaut 0, comme ailleurs
+function flottant(v: unknown): number { return typeof v === 'number' ? v : numOr0(v) }
+
+function ecrireScalaire(vue: DataView, offset: number, t: MjschemaScalar, valeur: unknown, chaines: Chaines): number {
   switch (t) {
     case 'u8':   vue.setUint8(offset, numOr0(valeur) & 0xFF); return offset + 1
     case 'i8':   vue.setInt8(offset, numOr0(valeur)); return offset + 1
@@ -270,10 +310,10 @@ function ecrireScalaire(vue: DataView, offset: number, t: MjschemaScalar, valeur
     case 'i16':  vue.setInt16(offset, numOr0(valeur), true); return offset + 2
     case 'u32':  vue.setUint32(offset, numOr0(valeur), true); return offset + 4
     case 'i32':  vue.setInt32(offset, numOr0(valeur), true); return offset + 4
-    case 'f32':  vue.setFloat32(offset, numOr0(valeur), true); return offset + 4
-    case 'f64':  vue.setFloat64(offset, numOr0(valeur), true); return offset + 8
+    case 'f32':  vue.setFloat32(offset, flottant(valeur), true); return offset + 4
+    case 'f64':  vue.setFloat64(offset, flottant(valeur), true); return offset + 8
     case 'str8': case 'str16': {
-      const octets = utf8Encoder.encode(String(valeur ?? ''))
+      const octets = chaines.octets[chaines.i++]
       if (t === 'str8') { vue.setUint8(offset, octets.byteLength); offset += 1 }
       else { vue.setUint16(offset, octets.byteLength, true); offset += 2 }
       new Uint8Array(vue.buffer, vue.byteOffset + offset, octets.byteLength).set(octets)
@@ -282,18 +322,18 @@ function ecrireScalaire(vue: DataView, offset: number, t: MjschemaScalar, valeur
   }
 }
 
-function ecrireChamp(vue: DataView, offset: number, type: MjschemaFieldType, valeur: unknown): number {
-  if (typeof type === 'string') return ecrireScalaire(vue, offset, type, valeur)
+function ecrireChamp(vue: DataView, offset: number, type: MjschemaFieldType, valeur: unknown, chaines: Chaines): number {
+  if (typeof type === 'string') return ecrireScalaire(vue, offset, type, valeur, chaines)
   if (type.kind === 'bits') {
     let octet = 0
-    for (let i = 0; i < type.noms.length; i++) if ((valeur as Record<string, unknown> | null | undefined)?.[type.noms[i]]) octet |= (1 << i)
+    for (let i = 0; i < type.noms.length; i++) if (lireCle(valeur, type.noms[i])) octet |= (1 << i)
     vue.setUint8(offset, octet)
     return offset + 1
   }
   const arr = Array.isArray(valeur) ? valeur : []
   vue.setUint16(offset, arr.length, true)
   offset += 2
-  for (const v of arr) offset = ecrireScalaire(vue, offset, type.of, v)
+  for (const v of arr) offset = ecrireScalaire(vue, offset, type.of, v, chaines)
   return offset
 }
 
@@ -352,18 +392,20 @@ function lireChamp(vue: DataView, offset: number, type: MjschemaFieldType): [unk
 
 /** `objet` est lu champ par champ selon l'ORDRE déclaré (def.ordre) — un champ absent/mal typé
  *  s'encode en valeur zéro plutôt que de lever (cf. numOr0) : SEULES les erreurs STRUCTURELLES
- *  (schéma inconnu, chaîne/list trop longue pour son préfixe) font throw. */
+ *  (schéma inconnu, chaîne/list trop longue pour son préfixe, entier hors de la plage de son type)
+ *  font throw. */
 export function encode(registre: MjschemaRegistre, nom: string, objet: Record<string, unknown> | null | undefined): Uint8Array {
   const def = registre.parNom.get(nom)
   if (!def) throw new Error(t('schema.encode-schema-inconnu', { nom }))
   const o = objet ?? {}
+  const chaines: Chaines = { octets: [], i: 0 }
   let taille = 1   // octet id
-  for (const c of def.ordre) taille += mesurerChamp(def.champs[c], o[c])
+  for (const c of def.ordre) taille += mesurerChamp(def.champs[c], lireCle(o, c), chaines, nom, c)
   const tampon = new ArrayBuffer(taille)
   const vue = new DataView(tampon)
   vue.setUint8(0, def.id)
   let offset = 1
-  for (const c of def.ordre) offset = ecrireChamp(vue, offset, def.champs[c], o[c])
+  for (const c of def.ordre) offset = ecrireChamp(vue, offset, def.champs[c], lireCle(o, c), chaines)
   return new Uint8Array(tampon)
 }
 

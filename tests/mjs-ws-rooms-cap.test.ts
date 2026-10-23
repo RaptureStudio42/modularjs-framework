@@ -16,6 +16,7 @@ import { mjsWs, DEFAULT_LIMITS } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 import { t } from '../src/messages/index.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -24,6 +25,7 @@ const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }
@@ -68,7 +70,7 @@ describe('MJS-WS — plafond de salons par client (limits.maxRoomsPerClient)', (
     const s = µ.socket('memory://cap1')
     s.connect(); await tick()
 
-    s.room('a'); await tick()
+    const a = s.room('a'); await tick()
     s.room('b'); await tick()
     assert.equal(app.room('a').size, 1)
     assert.equal(app.room('b').size, 1)
@@ -80,7 +82,7 @@ describe('MJS-WS — plafond de salons par client (limits.maxRoomsPerClient)', (
 
     // libère un slot (leave) — un nouveau salon doit alors passer : la garde borne le NOMBRE
     // courant, ce n'est pas un blocage définitif de la connexion
-    s.room('a').leave(); await tick()
+    a.leave(); await tick()   // le leave() de la poignée qui tient le salon (chaque room() en est une)
     s.room('d'); await tick()
     assert.equal(app.room('d').size, 1, 'un salon libéré rouvre un slot sous le plafond')
 
@@ -177,8 +179,9 @@ describe('MJS-WS — garde de présence optionnelle (rooms.canSeePresence)', () 
     await app.stop()
   })
 
-  it('hook ABSENT → présence de salon ouverte comme avant (NON-RÉGRESSION, comportement historique inchangé)', async () => {
+  it('hook ABSENT, salon ouvert (app.room(nom, { presence: \'public\' })) → présence de salon lisible sans garde', async () => {
     const { transport, app } = await startApp()   // aucun rooms.canSeePresence
+    app.room('zone', { presence: 'public' })
     const brut = await rawClient(transport, 'memory://pres2')
     brut.frames.length = 0
     brut.send({ t: 'µ:sub-presence', p: { room: 'zone' } })
@@ -192,7 +195,7 @@ describe('MJS-WS — garde de présence optionnelle (rooms.canSeePresence)', () 
   })
 
   it('canSeePresence n\'affecte JAMAIS la présence GLOBALE (room absent) — même un hook qui refuse tout salon', async () => {
-    const { transport, app } = await startApp({ rooms: { canSeePresence: () => false } })
+    const { transport, app } = await startApp({ rooms: { canSeePresence: () => false }, presence: 'public' })   // présence globale ouverte (fermée par défaut)
     const brut = await rawClient(transport, 'memory://pres4')
     brut.frames.length = 0
     brut.send({ t: 'µ:sub-presence', p: {} })   // pas de room → présence GLOBALE

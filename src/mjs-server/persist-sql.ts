@@ -4,7 +4,8 @@
 // qui doit renvoyer une Promise résolue en TABLEAU DE LIGNES pour un SELECT (peu importe la forme
 // exacte renvoyée par le pilote pour les autres requêtes, jamais lue ici). Deux dialectes de
 // paramètres bind supportés (`opts.dialect`) : `'?'` (MySQL/mysql2, positionnel) ou `'$'`
-// (PostgreSQL/pg, `$1 $2 …`).
+// (PostgreSQL/pg, `$1 $2 …`). SQLite n'est pas pris en charge : son upsert diffère des deux (cf. save()
+// plus bas — sous SQLite, chaque save() du dialecte '?' échoue, signalé une fois en clair au journal).
 //
 // CÂBLAGE — l'appli fournit `query`, PAS un client/pool brut (cette façade ne connaît AUCUN nom de
 // paquet) :
@@ -21,8 +22,11 @@
 //
 // SCHÉMA — à la construction, une seule fois (fire-and-forget, MÊME patron que persist-file.ts
 // `_ready` pour le mkdir initial) :
-//   CREATE TABLE IF NOT EXISTS <table> (id VARCHAR(64) PRIMARY KEY, data TEXT, updated_at BIGINT)
-// DDL volontairement dialecte-agnostique (types portables MySQL/Postgres, aucun paramètre bind) —
+//   CREATE TABLE IF NOT EXISTS <table> (id VARCHAR(64) PRIMARY KEY, data LONGTEXT, updated_at BIGINT)   -- dialecte '?'
+//   CREATE TABLE IF NOT EXISTS <table> (id VARCHAR(64) PRIMARY KEY, data TEXT, updated_at BIGINT)       -- dialecte '$'
+// un seul type change avec le dialecte : sous MySQL/MariaDB, TEXT s'arrête à 64 Ko alors qu'un journal lockstep peut atteindre
+// 16 Mo (LONGTEXT) ; PostgreSQL n'a pas de LONGTEXT et son TEXT n'a pas de limite
+// pratique. Le reste est portable (aucun paramètre bind) —
 // toute opération publique (save/remove/load) ATTEND cette promesse avant sa propre requête
 // (`this._ready`, jamais réémise si l'appel initial échoue — limite connue v1, même choix assumé
 // que persist-file.ts pour son mkdir). `data` et `updated_at` sont des identifiants NON RÉSERVÉS
@@ -43,14 +47,22 @@
 // fire-and-forget par contrat ; load() avale l'erreur et renvoie [], démarrage SANS restauration —
 // MÊME repli que persist-redis.ts/persist-bridge.ts).
 //
+// ARRÊT — flush() (appelé par app.stop()) attend les écritures en vol (`_inFlight`, cf. PendingWrites dans persist.ts) : chacune n'est
+// suivie que WRITE_TIMEOUT_MS (30 s) depuis son départ, le moment où le moteur abandonne une écriture restée sans réponse (requête
+// pendante) et repart avec la suivante. Garder pour toujours la promesse abandonnée retenait une promesse de plus par tentative sous
+// une panne muette (120 par heure et par partie), et stop() ne rendait jamais la main. Passé le délai l'écriture est lâchée (elle peut
+// encore aboutir, le moteur rattrape alors son arrivée) ; un warn dit combien d'écritures n'ont pas répondu, et l'arrêt continue
+// sans elles (la connexion appartient à l'appli, pas à nous).
+//
 //   import { mjsServer, SqlPersistAdapter } from 'modularjs-framework/mjs-server'
 //   app = mjsServer({ persist: new SqlPersistAdapter({ query, table: 'saved_games', dialect: '$' }) })
 
-import type { MjsWsLogFn, MjsWsLogLevel } from '../mjs-ws/index.js'
+import type { MjsWsLogFn } from '../mjs-ws/index.js'
 import type { MjsServerPersistAdapter } from './persist.js'
 import type { MjsServerGameSnapshot } from './game.js'
-import { encodeSnapshot, decodeSnapshot } from './persist.js'
+import { encodeSnapshot, decodeSnapshot, PendingWrites, WRITE_TIMEOUT_MS } from './persist.js'
 import { t } from '../messages/index.js'
+import { consoleLog } from '../mjs-ws/package-helpers.js'
 
 export type SqlDialect = '?' | '$'
 
@@ -65,12 +77,7 @@ export interface SqlPersistAdapterOpts {
   onLog?: MjsWsLogFn
 }
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[mjs-server:persist-sql] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
+const defaultLog = consoleLog('[mjs-server:persist-sql]')
 
 // identifiant SQL simple — table CONFIGURÉE par l'appli (jamais une entrée utilisateur), mais une
 // garde immédiate à la construction (erreur claire) coûte 1 ligne et évite d'injecter un nom
@@ -83,7 +90,8 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
   private _dialect: SqlDialect
   private _onLog: MjsWsLogFn
   private _ready: Promise<void>
-  private _enVol = new Set<Promise<void>>()
+  private _inFlight = new PendingWrites()
+  private _sqliteSignaled = false
 
   constructor(opts: SqlPersistAdapterOpts) {
     if (typeof opts.query !== 'function') throw new Error(t('serveur.persist-sql-query-manquant'))
@@ -93,18 +101,18 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
     this._query   = opts.query
     this._dialect = opts.dialect ?? '?'
     this._onLog   = opts.onLog ?? defaultLog
-    this._ready   = this._query(`CREATE TABLE IF NOT EXISTS ${this._table} (id VARCHAR(64) PRIMARY KEY, data TEXT, updated_at BIGINT)`, [])
+    const dataType = this._dialect === '?' ? 'LONGTEXT' : 'TEXT'   // cf. tête de fichier, SCHÉMA
+    this._ready   = this._query(`CREATE TABLE IF NOT EXISTS ${this._table} (id VARCHAR(64) PRIMARY KEY, data ${dataType}, updated_at BIGINT)`, [])
       .then(() => {})
       .catch(err => { this._onLog('warn', t('serveur.persist-sql-table-creation-echouee', { table: this._table }), { err: err instanceof Error ? err.message : String(err) }) })
   }
 
-  // garde-fou — .catch() AVANT .finally() : une promesse orpheline rejetée ne doit
-  // JAMAIS devenir un unhandledRejection (Node 20 tue le process dessus). En pratique save()/remove()
-  // catchent déjà tout en interne (le .catch() ci-dessous ferme la chaîne) — filet de sécurité.
-  private _suivre(p: Promise<void>, label: string): void {
-    this._enVol.add(p)
-    p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'sql', label: label }), { err: err instanceof Error ? err.message : String(err) }))
-      .finally(() => this._enVol.delete(p))
+  // garde-fou — .catch() : une promesse orpheline rejetée ne doit JAMAIS devenir un unhandledRejection
+  // (Node 20 tue le process dessus). En pratique save()/remove() catchent déjà tout en interne (le .catch()
+  // ci-dessous ferme la chaîne) — filet de sécurité. `_inFlight` ne suit `p` que WRITE_TIMEOUT_MS (cf. l'en-tête, « ARRÊT »)
+  private _suivre(p: Promise<void>, label: string): Promise<void> {
+    this._inFlight.track(p)
+    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'sql', label: label }), { err: err instanceof Error ? err.message : String(err) }))
   }
 
   private _upsertSql(): string {
@@ -117,15 +125,28 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
     return this._dialect === '?' ? `DELETE FROM ${this._table} WHERE id = ?` : `DELETE FROM ${this._table} WHERE id = $1`
   }
 
-  save(id: string, data: MjsServerGameSnapshot): void {
+  // promesse rendue = fin de la requête, jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  save(id: string, data: MjsServerGameSnapshot): Promise<void> {
     const params = [id, encodeSnapshot(data), Date.now()]
-    this._suivre(this._ready
+    return this._suivre(this._ready
       .then(() => this._query(this._upsertSql(), params)).then(() => {})
-      .catch(err => this._onLog('warn', t('serveur.persist-backend-save-echouee', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) })), `save('${id}')`)
+      .catch(err => {
+        const message = err instanceof Error ? err.message : String(err)
+        this._onLog('warn', t('serveur.persist-backend-save-echouee', { backend: 'sql', id: id }), { err: message })
+        this._signalSqlite(message)
+      }), `save('${id}')`)
   }
 
-  remove(id: string): void {
-    this._suivre(this._ready
+  // SQLite refuse l'upsert du dialecte '?' (`near "DUPLICATE": syntax error`) : dit une fois en clair qu'il n'est pas pris en charge,
+  // sans quoi seule l'erreur de syntaxe du pilote, répétée à chaque save(), laissait croire à une panne passagère
+  private _signalSqlite(message: string): void {
+    if (this._sqliteSignaled || this._dialect !== '?' || !/near "DUPLICATE"/.test(message)) return
+    this._sqliteSignaled = true
+    this._onLog('warn', t('serveur.persist-sql-sqlite-non-pris-en-charge'))
+  }
+
+  remove(id: string): Promise<void> {
+    return this._suivre(this._ready
       .then(() => this._query(this._deleteSql(), [id])).then(() => {})
       .catch(err => this._onLog('warn', t('serveur.persist-backend-remove-echouee', { backend: 'sql', id: id }), { err: err instanceof Error ? err.message : String(err) })), `remove('${id}')`)
   }
@@ -147,7 +168,10 @@ export class SqlPersistAdapter implements MjsServerPersistAdapter {
     }
   }
 
+  // attend les écritures en vol — chacune au plus WRITE_TIMEOUT_MS depuis son départ (cf. PendingWrites) : un warn compte celles
+  // restées sans réponse, puis flush() rend la main
   async flush(): Promise<void> {
-    await Promise.allSettled(Array.from(this._enVol))
+    const unanswered = await this._inFlight.settle()
+    if (unanswered > 0) this._onLog('warn', t('serveur.persist-backend-flush-sans-reponse', { backend: 'sql', nb: unanswered, delai: WRITE_TIMEOUT_MS / 1000 }))
   }
 }

@@ -10,7 +10,9 @@
 // Fix : `bodyIndent`/`insertAt` mémorisent où commence le corps de chaque
 // portée ; une affectation plus profonde (ou un `if`/`unless` POSTFIX) est
 // HISSÉE en tête de portée (`nom .= undefined`) au lieu d'être déclarée sur
-// place — les branches restent des affectations NUES.
+// place — les branches restent des affectations NUES. La déclaration se pose
+// devant la première ligne du corps, sur cette même ligne (ou sur la ligne vide
+// juste au-dessus) : les lignes du script restent celles du fichier.
 
 import assert from 'node:assert/strict'
 import { applyMjsSugarToScript } from '../src/transpiler/index.js'
@@ -25,8 +27,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     ].join('\n')
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
-      'onFailed .= undefined',
-      'if ok',
+      'onFailed .= undefined; if ok',
       '  onFailed = 1',
       'else',
       '  onFailed = 2',
@@ -46,8 +47,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
       '@go = ->',
-      '  a .= undefined',
-      '  if ok',
+      '  a .= undefined; if ok',
       '    a = 1',
       '  else',
       '    a = 2',
@@ -63,8 +63,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     ].join('\n')
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
-      'x .= undefined',
-      'if ok then x = 1',
+      'x .= undefined; if ok then x = 1',
       'x',
     ].join('\n')
     assert.equal(out, expected)
@@ -74,8 +73,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     const input = 'x = 1 if ok'
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
-      'x .= undefined',
-      'x = 1 if ok',
+      'x .= undefined; x = 1 if ok',
     ].join('\n')
     assert.equal(out, expected)
   })
@@ -96,8 +94,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     ].join('\n')
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
-      'y .= undefined',
-      'switch v',
+      'y .= undefined; switch v',
       '  when 1',
       "    y = 'a'",
       '  else',
@@ -113,9 +110,7 @@ describe('applyMjsSugarToScript — hissage de la déclaration hors branche (pi�
     ].join('\n')
     const out = applyMjsSugarToScript(input, 'civet')
     const expected = [
-      'a .= undefined',
-      'b .= undefined',
-      'if ok',
+      'a .= undefined; b .= undefined; if ok',
       '  { a, b } = f()',
     ].join('\n')
     assert.equal(out, expected)

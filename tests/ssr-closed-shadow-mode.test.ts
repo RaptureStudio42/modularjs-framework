@@ -91,7 +91,7 @@ describe('shadowMode:\'closed\' — échec clair (client) + avertissement proact
       const caught = window.eval(`
         (() => {
           const StubClass = customElements.get('mjs-stub');
-          const orig = HTMLElement.prototype.attachShadow;
+          const orig = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'attachShadow');
           HTMLElement.prototype.attachShadow = function() {
             throw new DOMException("Failed to execute 'attachShadow' on 'Element': Shadow root cannot be created on a host which already hosts a shadow tree.", "NotSupportedError");
           };
@@ -101,7 +101,8 @@ describe('shadowMode:\'closed\' — échec clair (client) + avertissement proact
           } catch (e) {
             return { threw: true, message: e.message };
           } finally {
-            HTMLElement.prototype.attachShadow = orig;
+            if (orig) Object.defineProperty(HTMLElement.prototype, 'attachShadow', orig);
+            else delete HTMLElement.prototype.attachShadow;
           }
         })()
       `)

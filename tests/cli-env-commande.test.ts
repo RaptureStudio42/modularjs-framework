@@ -6,7 +6,7 @@
 //     sans le moindre message.
 //   • `"env": "prod"`, posé au mjs.config.json pour dire ce que produit le DÉPLOIEMENT, est
 //     parti sur le serveur ET est resté sur la machine du dev : `mjs dev` lisait la même clé et
-//     sortait un core minifié de 144 lignes, sans `devPanel` — la même panne, revenue.
+//     sortait un core minifié de 144 lignes, sans le panneau — la même panne, revenue.
 //   • `NODE_ENV=production` qui traîne dans un shell suffisait à changer ce que produit un build.
 //
 // Tests via de VRAIS SOUS-PROCESSUS (cli.ts exécute `run(process.argv)` à son top-level :
@@ -41,7 +41,7 @@ function lireCore(root: string): string {
 
 // `µ` est un `var` de haut niveau, renommé par esbuild en minifiant : on cherche la PROPRIÉTÉ,
 // jamais manglée (même sonde que bundler-env-dev-prod.test.ts).
-const aLePanneau = (core: string) => /\.devPanel\s*=\s*function/.test(core)
+const aLePanneau = (core: string) => /\.console\s*=\s*function/.test(core)
 // les bandeaux `// === mjs_xxx.ts ===` de la concaténation ne survivent pas à esbuild
 const estMinifie = (core: string) => !/\/\/ === mjs_element\.ts ===/.test(core)
 

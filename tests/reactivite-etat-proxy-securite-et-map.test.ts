@@ -68,7 +68,7 @@ describe('_mjs_wrapDeep (état $ de composant) — lecture __proto__ et Map.get(
     // `o` est un PARAMÈTRE de fonction : le suivi statique du compilateur ne le
     // traite jamais comme un alias de `$obj` (« taint », cf. path-tracker.ts) — la
     // lecture `o.__proto__` passe donc par le VRAI filet Proxy (_mjs_wrapDeep),
-    // pas par le chemin compilé (_mjs_deepSet, déjà gardé par µ._mjs_guardPath).
+    // pas par le chemin compilé (_mjs_deepSet, qui écrit comme JavaScript, sans contrôle de clé).
     const root2 = mjsTmp('etat-proxy-securite-leak')
     const srcDir = join(root2, 'src')
     mkdirSync(srcDir, { recursive: true })

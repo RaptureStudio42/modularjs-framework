@@ -18,10 +18,13 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { assertAbsent } from './helpers/dom-assert.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER = join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts')
 const routerSrc = readFileSync(ROUTER, 'utf-8')
+// la feuille du panneau (`µ._mjs_routeErrorCss`) vit dans ce fichier-ci, pas dans le routeur
+const pageCacheSrc = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_page_cache.ts'), 'utf-8')
 
 describe('routeur — aucune route ne matche : erreur visible', function () {
   const g: any = globalThis
@@ -37,6 +40,7 @@ describe('routeur — aucune route ne matche : erreur visible', function () {
     const errors: any[] = []
     const warns: any[] = []
     const µ: any = { log() {}, warn: (...a: any[]) => warns.push(a), error: (...a: any[]) => errors.push(a), config: config ?? {} }
+    poserMessages(µ)
     new Function('µ', routerSrc)(µ)
     const viewNode: any = win.document.createElement('metamjs-view')
     viewNode.id = 'main'
@@ -66,6 +70,28 @@ describe('routeur — aucune route ne matche : erreur visible', function () {
     assert.match(box.textContent, /\/nimportequoi/, "l'adresse fautive est affichée")
     assert.ok(viewNode.querySelector('style'), 'le panneau apporte son style (il vit en shadow, la CSS de l\'app ne l\'atteint pas)')
     assert.doesNotMatch(box.textContent, /margin:/, 'la feuille est à CÔTÉ du message, pas dedans (copier-coller propre)')
+  })
+
+  // la vue vit dans le shadow du composant qui la porte : une règle de CE composant qui rend
+  // visibles tous les enfants de la zone (`> * { display: block }`, vu sur le site de la doc)
+  // atteint aussi la feuille posée à côté du panneau — son CSS s'affichait en texte sous le message
+  it('la feuille du panneau reste invisible, même si la page rend visibles tous les enfants de la vue', function () {
+    const { µ, viewNode } = scene({ '/': 'home' })
+    poserMessages(µ)
+    new Function('µ', pageCacheSrc)(µ)
+    const regle = win.document.createElement('style')
+    regle.textContent = 'metamjs-view > * { display: block }'
+    win.document.head.appendChild(regle)
+    win.document.body.appendChild(viewNode)
+    try {
+      µ.Router._mjs_checkNoMatch('/nimportequoi')
+      const feuilles = Array.from(viewNode.querySelectorAll('style')) as any[]
+      assert.ok(feuilles.length > 0, 'le panneau pose sa feuille')
+      for (const f of feuilles) assert.equal(win.getComputedStyle(f).display, 'none', 'le texte de la feuille ne doit jamais s\'afficher')
+    } finally {
+      regle.remove()
+      viewNode.remove()
+    }
   })
 
   it('le détail développeur (liste des routes) n\'apparaît dans le panneau que sous µ.debug', function () {
@@ -119,6 +145,7 @@ describe('routeur — aucune route ne matche : erreur visible', function () {
   it('multi-zones : une seule zone remplie suffit à taire l\'erreur (le vidage par zone reste silencieux)', function () {
     const errors: any[] = []
     const µ: any = { log() {}, warn() {}, error: (...a: any[]) => errors.push(a), config: {} }
+    poserMessages(µ)
     new Function('µ', routerSrc)(µ)
     const principale: any = win.document.createElement('metamjs-view')
     principale.id = 'main'

@@ -1,43 +1,16 @@
-// animations/blur.coffee — port direct de Svelte blur.
+// animations/blur.ts — la balise se précise : floue de `amount` (5 ; un nombre en px, ou une longueur écrite comme « 1em ») et transparente
+// à `opacity` (0) au départ, nette et pleine à l'arrivée ; elle repart comme elle est venue
+// options : amount (5), opacity (0), duration (400), delay (0), easing (ease-in-out)
 (function(opts = {}) {
-  var aUnit, aVal, amount, ref, ref1, setup, splitUnit, startOp;
-  splitUnit = function(v) {
-    var m;
-    if (typeof v === 'number') {
-      return [v, 'px'];
-    } else {
-      m = String(v).match(/^([\d.\-]+)(.*)$/);
-      if (m) {
-        return [parseFloat(m[1]), m[2] || 'px'];
-      } else {
-        return [parseFloat(v) || 0, 'px'];
-      }
+  var amount = µ._mjs_animLen(opts.amount ?? 5);
+  return µ._mjs_animFrom(opts, {
+    easing: 'ease-in-out',
+    opacity: opts.opacity,
+    add: function(node, style) {
+      var fl = style.filter === 'none' ? '' : style.filter;
+      return function(t, u, o) {
+        return { opacity: o, filter: `${fl} blur(${u * amount[0]}${amount[1]})`.trim() };
+      };
     }
-  };
-  amount = (ref = opts.amount) != null ? ref : 5;
-  startOp = (ref1 = opts.opacity) != null ? ref1 : 0;
-  [aVal, aUnit] = splitUnit(amount);
-  setup = function(node) {
-    var baseFilter, ref2, ref3, ref4, ref5, style, targetOpacity;
-    style = window.getComputedStyle(node);
-    targetOpacity = +style.opacity;
-    baseFilter = style.filter === 'none' ? '' : style.filter;
-    return {
-      delay: (ref2 = opts.delay) != null ? ref2 : 0,
-      duration: (ref3 = opts.duration) != null ? ref3 : 400,
-      easing: µ.easing.resolve((ref4 = opts.easing) != null ? ref4 : µ.easing.cubicInOut),
-      steps: (ref5 = opts.steps) != null ? ref5 : 60,
-      css: function(t, u) {
-        return {
-          opacity: (targetOpacity - startOp) * t + startOp,
-          filter: `${baseFilter} blur(${u * aVal}${aUnit})`.trim()
-        };
-      }
-    };
-  };
-  setup._isCfgFactory = true;
-  return {
-    intro: setup,
-    outro: setup
-  };
+  });
 });

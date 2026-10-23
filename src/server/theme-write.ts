@@ -98,14 +98,16 @@ export function findThemeDecls(source: string, name: string, prefix: string): Th
   const hits: ThemeDecl[] = []
   const lines = source.split('\n')
   for (let i = 0; i < lines.length; i++) {
-    const m = re.exec(lines[i])
+    // fin de ligne Windows (CRLF) : le `\r` est mis de côté pour le motif, puis recollé à la fin
+    const cr   = lines[i].endsWith('\r') ? '\r' : ''
+    const m    = re.exec(cr ? lines[i].slice(0, -1) : lines[i])
     if (!m) continue
     const rest = m[4]
     const fin  = finDeValeur(rest)
     // valeur vide = la vraie valeur est ailleurs (ligne suivante, bloc imbriqué) : pas de
     // tranche à remplacer ici, la ligne n'est pas candidate
     if (fin === 0) continue
-    hits.push({ line: i + 1, head: m[1] + m[2] + m[3], value: rest.slice(0, fin), tail: rest.slice(fin) })
+    hits.push({ line: i + 1, head: m[1] + m[2] + m[3], value: rest.slice(0, fin), tail: rest.slice(fin) + cr })
   }
   return hits
 }

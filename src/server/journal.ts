@@ -65,6 +65,8 @@ export interface JournalOptions {
   dir: string
   maxEntries?: number
   maxBytes?: number
+  /** durée de vie d'une entrée en jours, depuis sa dernière occurrence (défaut 30) */
+  maxDays?: number
 }
 
 export interface Journal {
@@ -87,6 +89,8 @@ export type RecordServerFn = (entry: { message: string, pile?: string, url?: str
 
 const DEFAULT_MAX_ENTRIES = 200
 const DEFAULT_MAX_BYTES   = 1_048_576
+const DEFAULT_MAX_DAYS    = 30
+const DAY_MS              = 86_400_000
 const DEBOUNCE_MS         = 1000
 // Cap défensif du champ STOCKÉ `message` — aligné sur le plafond déjà posé par l'endpoint POST
 // (render-server.ts, 2 Ko) : un filet pour les AUTRES appelants (les 5 points de capture serveur,
@@ -96,10 +100,78 @@ const MAX_MESSAGE_CHARS       = 2048
 // « message (1re ligne, ≤300 c.) » qualifie la signature, PAS le champ stocké.
 const MAX_SIGNATURE_MSG_CHARS = 300
 const MAX_PILE_CHARS          = 8192
+// même plafond pour l'adresse d'une entrée serveur que celui que l'endpoint POST pose déjà à celle d'une entrée client
+const MAX_URL_CHARS           = 2048
 
 const FILE_BY_SOURCE: Record<JournalSource, string> = {
   server: 'mjs-errors-server.ndjson',
   client: 'mjs-errors-client.ndjson',
+}
+
+// secrets masqués à l'écriture : ni le fichier, ni la signature, ni la visionneuse ne les voient. Le texte est d'abord ramené à sa
+// taille stockée, plus une marge pour qu'un secret à cheval sur la coupe soit reconnu entier, puis masqué, puis coupé (cf. record()).
+// Chaque motif ne démarre qu'en un point précis (séparateur, mot `Bearer`, `Basic`, `Cookie`, `Authorization`, guillemet, adresse,
+// début d'une suite de caractères qu'aucun caractère de la même suite ne précède) et ses répétitions sont bornées : temps linéaire,
+// même sur un message hostile ; maskSecrets ramène d'elle-même son entrée à 64 Kio
+const MAX_MASK_INPUT_CHARS = 65_536
+const MASK_MARGIN_CHARS    = 16_384
+const SECRET_PARAM_NAME    = /(?:token|secret|passw(?:or)?d|pwd|pass|key|signature|sig|code|otp|jwt|session(?:id)?|sid|auth(?:orization)?|credentials?|ticket|nonce|state|verifier)$/
+// noms d'une paire JSON : ceux d'un secret, sans les noms ordinaires d'un objet (`code`, `state`, `key`…) ; un mot de passe partout dans
+// le nom ; `cookie` et `authorization` ont leur motif (cf. COOKIE_RE, AUTH_HEADER_RE)
+const SECRET_JSON_NAME     = /passw(?:or)?d|pwd|(?:token|secret|passphrase|apikey|accesskey|privatekey|signature|jwt|sessionid|sid|credentials?|otp|verifier)$/
+const PARAM_RE             = /([?&;#])([^=&#?\s"'<>]{1,64})=([^&#\s"'<>]+)/g
+// valeur d'un en-tête d'identification, écrit en clair (`Cookie: …`) ou en JSON (`"cookie": "…"`), jusqu'à la fin de la ligne, de la
+// chaîne ou d'une parenthèse fermante ; `Authorization` garde son schéma (`Authorization: Basic ***`)
+const COOKIE_RE            = /\b((?:set-)?cookie)(["']?[ \t]*:[ \t]*["']?)[^\r\n"')\]}]{1,4096}/gi
+const AUTH_HEADER_RE       = /\b((?:proxy-)?authorization)(["']?[ \t]*:[ \t]*["']?)(?:([A-Za-z][A-Za-z0-9-]{0,31})[ \t]+)?[^\r\n"')\]}]{1,4096}/gi
+const BEARER_RE            = /\bBearer\s+[A-Za-z0-9._~+/-]{8,4096}=*/g
+// `Basic` suivi d'un base64 qui ne se lit pas comme un mot : un chiffre, `+`, `/`, `=` ou une bosse (`dX`)
+const BASIC_RE             = /\bBasic\s+(?=[A-Za-z0-9+/]{0,4096}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,4096}={0,2}/g
+const JSON_PAIR_RE         = /"([^"\\\r\n]{1,64})"([ \t]*:[ \t]*)("(?:[^"\\\r\n]|\\.){0,4096}"|-?[0-9][0-9.eE+-]{0,63})/g
+const JWT_RE               = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{4,4096}\.[A-Za-z0-9_-]{4,4096}\.[A-Za-z0-9_-]{0,4096}/g
+// courriel écrit `@` ou `%40` (formulaire GET, `encodeURIComponent`) : la partie locale
+const EMAIL_RE             = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}(@|%40)((?:[A-Za-z0-9-]{1,63}\.){1,8}[A-Za-z]{2,24})\b/g
+// une adresse http(s), ou le chemin seul qui ouvre le texte (le champ `url` d'une entrée)
+const URL_RE               = /\bhttps?:\/\/[^\s"'<>]{1,4096}|^\/[^\s"'<>]{0,4096}/g
+// segment de chemin de 16 caractères ou plus (lettres, chiffres, `-`, `_`), extension à part
+const SEGMENT_RE           = /(?<=\/)([A-Za-z0-9_-]{16,})(\.[A-Za-z0-9]{1,8})?(?=[/?#;]|$)/g
+
+// une partie de segment (entre `-` et `_`) qui se lit : un nombre de 4 chiffres au plus, un court repère (`s24`, `mp3`, `1080p`), ou
+// un mot — une voyelle au moins, jamais 6 consonnes de suite, et dès 16 lettres une voyelle sur quatre
+function seLit(partie: string): boolean {
+  const p = partie.toLowerCase()
+  if (/^(?:\d{0,4}|[a-z]{1,4}\d{1,4}|\d{1,4}[a-z]{1,3})$/.test(p)) return true
+  if (!/^[a-z]+$/.test(p) || !/[aeiouy]/.test(p) || /[^aeiouy]{6}/.test(p)) return false
+  return p.length < 16 || p.replace(/[^aeiouy]/g, '').length * 4 >= p.length
+}
+
+// les segments du chemin d'une adresse qui ne se lisent pas comme des mots (jeton, UUID, empreinte) deviennent `***`, extension
+// gardée ; l'hôte n'est jamais touché, un slug lisible (`mon-article-2024`) reste en clair
+function maskUrlPath(adresse: string): string {
+  const debut = adresse.startsWith('/') ? 0 : adresse.indexOf('/', adresse.indexOf('//') + 2)
+  if (debut === -1) return adresse
+  return adresse.slice(0, debut) + adresse.slice(debut).replace(SEGMENT_RE, (seg, nom: string, ext?: string) => nom.split(/[-_]/).every(seLit) ? seg : '***' + (ext ?? ''))
+}
+
+/** Masque jetons et identifiants : paramètres d'adresse au nom de secret, valeur des en-têtes `Cookie`, `Set-Cookie`,
+ *  `Authorization`, `Proxy-Authorization`, `Bearer …`, `Basic …`, paires JSON au nom de secret, JWT, partie locale d'un courriel
+ *  (`@` ou `%40`), segments de chemin d'une adresse qui ne se lisent pas comme des mots. Exportée pour test direct. */
+export function maskSecrets(text: string): string {
+  return text.slice(0, MAX_MASK_INPUT_CHARS)
+    .replace(PARAM_RE, (all, sep: string, name: string) => SECRET_PARAM_NAME.test(name.toLowerCase().replace(/[^a-z]/g, '')) ? `${sep}${name}=***` : all)
+    .replace(COOKIE_RE, '$1$2***')
+    .replace(AUTH_HEADER_RE, (_all, nom: string, sep: string, schema?: string) => `${nom}${sep}${schema ? schema + ' ' : ''}***`)
+    .replace(BEARER_RE, 'Bearer ***')
+    .replace(BASIC_RE, 'Basic ***')
+    .replace(JSON_PAIR_RE, (all, nom: string, sep: string) => SECRET_JSON_NAME.test(nom.toLowerCase().replace(/[^a-z]/g, '')) ? `"${nom}"${sep}"***"` : all)
+    .replace(JWT_RE, '***')
+    .replace(EMAIL_RE, '***$1$2')
+    .replace(URL_RE, maskUrlPath)
+}
+
+// coupe d'abord (avec la marge), masque, puis ramène à la taille stockée : le coût du masquage suit la taille stockée, jamais le message reçu
+function maskThenTruncate(s: string, max: number): string {
+  return truncate(maskSecrets(truncate(s, max + MASK_MARGIN_CHARS)), max)
 }
 
 function truncate(s: string, max: number): string {
@@ -133,9 +205,31 @@ function removeOldest(entries: JournalEntry[]): void {
   entries.splice(idx, 1)
 }
 
+// taille sérialisée de chaque entrée (sa ligne NDJSON + le saut de ligne), retenue : tenir le
+// plafond en octets ne resérialise plus tout le journal à chaque record() (≈ 1 Mio, plusieurs ms
+// de boucle bloquée par erreur). Une entrée modifiée (regroupement) est oubliée, puis remesurée.
+const entrySizes = new WeakMap<JournalEntry, number>()
+
+function entrySize(e: JournalEntry): number {
+  let n = entrySizes.get(e)
+  if (n === undefined) { n = Buffer.byteLength(JSON.stringify(e), 'utf-8') + 1; entrySizes.set(e, n) }
+  return n
+}
+
+// retire l'entrée la plus ancienne et rend sa taille
+function removeOldestSized(entries: JournalEntry[]): number {
+  let idx = 0
+  for (let i = 1; i < entries.length; i++) {
+    if (entries[i].dernier < entries[idx].dernier) idx = i
+  }
+  return entrySize(entries.splice(idx, 1)[0])
+}
+
 function enforceCaps(entries: JournalEntry[], maxEntries: number, maxBytes: number): void {
   while (entries.length > maxEntries) removeOldest(entries)
-  while (entries.length > 0 && Buffer.byteLength(serialize(entries), 'utf-8') > maxBytes) removeOldest(entries)
+  let total = 0
+  for (const e of entries) total += entrySize(e)
+  while (entries.length > 0 && total > maxBytes) total -= removeOldestSized(entries)
 }
 
 // écriture atomique (tmp + renameSync, même patron que Bundler.writeFileAtomicAlways) — dossier
@@ -208,6 +302,7 @@ function ensureSigtermHook(): void {
 export function createJournal(opts: JournalOptions): Journal {
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES
   const maxBytes   = opts.maxBytes ?? DEFAULT_MAX_BYTES
+  const maxAgeMs   = (opts.maxDays ?? DEFAULT_MAX_DAYS) * DAY_MS
 
   // état par source — chargé paresseusement (1re opération qui le touche), dirty + timer de
   // debounce propres à CHAQUE fichier (server/client sont deux ressources indépendantes).
@@ -230,6 +325,12 @@ export function createJournal(opts: JournalOptions): Journal {
   const getEntries = (source: JournalSource): JournalEntry[] => {
     const table = tables[source]
     if (table.entries === null) table.entries = loadFile(pathFor(source))
+    // durée de vie : une entrée sans nouvelle occurrence depuis `maxDays` jours est oubliée, sur le disque aussi (date illisible comprise)
+    const limite = Date.now() - maxAgeMs
+    if (table.entries.some((e) => !(e.dernier >= limite))) {
+      table.entries = table.entries.filter((e) => e.dernier >= limite)
+      scheduleFlush(source)
+    }
     return table.entries
   }
 
@@ -270,14 +371,15 @@ export function createJournal(opts: JournalOptions): Journal {
   return {
     record(source, input) {
       try {
-        const message = truncate(String(input.message ?? ''), MAX_MESSAGE_CHARS)
-        const pile     = truncate(String(input.pile ?? ''), MAX_PILE_CHARS)
-        const url      = String(input.url ?? '')
+        const message = maskThenTruncate(String(input.message ?? ''), MAX_MESSAGE_CHARS)
+        const pile     = maskThenTruncate(String(input.pile ?? ''), MAX_PILE_CHARS)
+        const url      = maskThenTruncate(String(input.url ?? ''), MAX_URL_CHARS)
         const signature = signatureOf(message, pile, url)
         const now = Date.now()
         const entries = getEntries(source)
         const existing = entries.find((e) => e.signature === signature)
         if (existing) {
+          entrySizes.delete(existing)   // compteur, date, version : sa taille change
           existing.n++
           existing.dernier = now
           if (input.version !== undefined) existing.version = input.version

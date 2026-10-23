@@ -17,41 +17,361 @@
 // faisait retomber `_mjs_attempt` à 0 à CHAQUE cycle — le backoff `[500,1000,2000,5000]` n'escaladait
 // alors jamais, indéfiniment (pilonnage au palier le plus court).
 var MJSOCKET_STABLE_MS = 2000;
+// les trames des effets en direct (volatiles et regroupées : curseurs, défilement ; points de chaleur)
+// partagent la connexion de l'appli, dont le serveur borne le débit (40/s par défaut) et expulse qui
+// dépasse : à elles toutes, pas plus de MJSOCKET_FX_RATE par seconde — le reste est pour l'appli ;
+// `"effects": { "rate": n }` de mjs.config.json la règle (µ._fxConf, posé par le manifeste)
+var MJSOCKET_FX_RATE = 4;
+
+// la part des effets en direct, par seconde : celle de la config, sinon MJSOCKET_FX_RATE
+µ._mjs_fxRate = function() {
+  var r = µ._fxConf && µ._fxConf.rate;
+  return typeof r === 'number' && r >= 1 ? r : MJSOCKET_FX_RATE;
+};
 
 µ._mjs_sockets = µ._mjs_sockets || {};
+// les effets en direct qui attendent que l'appli ouvre leur connexion (son `auth`, cf. µ._mjs_fxSock)
+µ._mjs_sockWait = µ._mjs_sockWait || [];
+// rien dans la variable de sa connexion au bout de ce délai : l'effet en direct le dit en console (ms)
+µ._mjs_sockGrace = 2000;
+// une propriété du composant (`@sock`) n'est suivie par rien : tant que l'effet n'a pas de connexion, il la relit
+// à cet intervalle (ms)
+µ._mjs_sockPoll = 250;
+// le numéro de la prochaine connexion propre à un effet (sa clé dans µ._mjs_sockets)
+var _mjsSockOwn = 0;
+
+// deux `auth` qui disent la même identité : `null`, `undefined` et l'absence disent « aucune » ; deux objets se
+// comparent par leurs clés (symboles compris), quel que soit l'ordre (une clé `undefined` n'est pas une clé : elle ne
+// partirait pas) ; deux dates par leur instant, deux `Map` et deux `Set` par leur contenu, `NaN` est égal à `NaN` ;
+// deux expressions régulières par leur source et leurs drapeaux, deux erreurs par leur nom et leur message, deux
+// primitives encapsulées par leur valeur, deux `URL` par leur adresse, deux tampons, vues et tableaux typés par leurs
+// octets, deux `WeakMap` ou `WeakSet` par référence seule ; deux fonctions ne se comparent que par référence — deux
+// fermetures de même code peuvent porter deux identités, la prudence avertit — ; un objet circulaire n'est égal
+// qu'à lui-même ; jamais d'exception (un getter ou un Proxy qui lève, une chaîne trop profonde) : « différent »,
+// donc l'avertissement prudent
+var _mjsSockDepth = 64;
+// deux suites d'octets ou d'éléments (tampon, vue, tableau typé) : même longueur, mêmes éléments, `NaN` égal à `NaN`
+var _mjsSockOctets = function(x, y) {
+  if (x.length !== y.length) return false;
+  for (var i = 0; i < x.length; i++) if (!Object.is(x[i], y[i])) return false;
+  return true;
+};
+var _mjsSockSame = function(a, b, visited) {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  visited = visited || [];
+  if (visited.length >= _mjsSockDepth * 2) return false;
+  if (visited.indexOf(a) >= 0 || visited.indexOf(b) >= 0) return false;
+  visited.push(a, b);
+  var ok = false;
+  try {
+    var tag = Object.prototype.toString.call(a);
+    if (Array.isArray(a) !== Array.isArray(b)) ok = false;
+    else if (!Array.isArray(a) && tag !== Object.prototype.toString.call(b)) ok = false;
+    else if (a instanceof Date) ok = Object.is(a.getTime(), b.getTime());
+    else if (a instanceof RegExp) ok = a.source === b.source && a.flags === b.flags;
+    else if (a instanceof Error) ok = a.name === b.name && a.message === b.message;
+    else if (tag === '[object Number]' || tag === '[object Boolean]' || tag === '[object String]') ok = Object.is(a.valueOf(), b.valueOf());
+    else if (typeof URL !== 'undefined' && a instanceof URL) ok = a.href === b.href;
+    else if (tag === '[object WeakMap]' || tag === '[object WeakSet]') ok = false;
+    else if (tag === '[object ArrayBuffer]' || tag === '[object SharedArrayBuffer]') ok = _mjsSockOctets(new Uint8Array(a), new Uint8Array(b));
+    else if (tag === '[object DataView]') ok = _mjsSockOctets(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+    else if (ArrayBuffer.isView(a)) ok = _mjsSockOctets(a, b);
+    else if (a instanceof Map) {
+      ok = a.size === b.size;
+      a.forEach(function(v, k) { if (ok) ok = b.has(k) && _mjsSockSame(v, b.get(k), visited); });
+    }
+    else if (a instanceof Set) {
+      ok = a.size === b.size;
+      a.forEach(function(v) { if (ok) ok = b.has(v); });
+    }
+    else if (Array.isArray(a)) {
+      ok = a.length === b.length;
+      for (var i = 0; ok && i < a.length; i++) ok = _mjsSockSame(a[i], b[i], visited);
+    }
+    else {
+      var enumKeys = function(o) {
+        var allKeys = Reflect.ownKeys(o);
+        var out     = [];
+        for (var m = 0; m < allKeys.length; m++) if (Object.prototype.propertyIsEnumerable.call(o, allKeys[m]) && o[allKeys[m]] !== void 0) out.push(allKeys[m]);
+        return out;
+      };
+      var ka  = enumKeys(a);
+      var kb  = new Set(enumKeys(b));
+      ok = ka.length === kb.size;
+      for (var j = 0; ok && j < ka.length; j++) ok = kb.has(ka[j]) && _mjsSockSame(a[ka[j]], b[ka[j]], visited);
+    }
+  }
+  catch (e) {
+    ok = false;
+  }
+  visited.length -= 2;
+  return ok;
+};
+var _mjsSockSameAuth = function(a, b) {
+  return _mjsSockSame(a == null ? null : a, b == null ? null : b);
+};
 
 µ.socket = function(url, opts) {
+  // la connexion propre d'un effet en direct (`server`) : à lui seul, jamais celle que l'appli tient ou tiendra à
+  // la même adresse, ni ses options, ni son identité ; connue de µ._mjs_sockets (l'effet *offline la voit),
+  // sous une clé à elle
+  if (opts && opts._mjs_own) {
+    var own = new MjsSocket(url, opts);
+    own._mjs_key = url + '\u0000' + (++_mjsSockOwn);
+    µ._mjs_sockets[own._mjs_key] = own;
+    return own;
+  }
   var existing = µ._mjs_sockets[url];
-  if (existing && !existing._mjs_destroyed) { existing._mjs_refs++; return existing; }
+  if (existing && !existing._mjs_destroyed) {
+    existing._mjs_refs++;
+    // une autre identité demandée à une adresse déjà tenue : la connexion revient telle quelle, sous sa première
+    // identité — la console le dit une fois par connexion, au lieu de se taire
+    // sans option, ou sans clé `auth` : l'appel ne demande aucune identité, il reprend la connexion telle qu'elle est
+    var dits = existing._mjs_warnedOpts || (existing._mjs_warnedOpts = {});
+    if (opts && typeof opts === 'object' && 'auth' in opts && !_mjsSockSameAuth(existing.opts && existing.opts.auth, opts.auth) && !dits['reuse-auth']) {
+      dits['reuse-auth'] = true;
+      µ.warn('[µ.socket] ' + µ._mjs_txt('sockDuplicateAuth', { url: url }, '{url} : une connexion à cette adresse existe déjà avec un autre auth — elle vous revient telle quelle, sous sa première identité ; fermez-la (destroy()) avant d\'en ouvrir une autre sous une autre identité'));
+    }
+    return existing;
+  }
   var s = new MjsSocket(url, opts || {});
   µ._mjs_sockets[url] = s;
   return s;
 };
 
+// les effets en direct qui attendent que leur connexion s'ouvre : réveillés quand une connexion s'ouvre, juste
+// après (l'appli tient déjà son objet)
+µ._mjs_sockWake = function() {
+  if (!µ._mjs_sockWait.length) return;
+  Promise.resolve().then(function() {
+    µ._mjs_sockWait.slice().forEach(function(w) { w(); });
+  });
+};
+
+// la route de la page change (la navigation du routeur MJS, le retour en arrière du navigateur, l'ancre) :
+// `fn` est appelée ; rend de quoi ne plus l'écouter
+µ._mjs_fxRoute = function(fn) {
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return function() {};
+  var evs = ['mjs-route-changed', 'popstate', 'hashchange'];
+  evs.forEach(function(e) { window.addEventListener(e, fn); });
+  return function() { evs.forEach(function(e) { window.removeEventListener(e, fn); }); };
+};
+
+// la variable de la connexion d'un effet en direct quand c'est une propriété du composant (`@sock` par défaut,
+// `sock: @autre`) : de quoi la relire — aucun suivi n'avertit d'une propriété qu'on pose plus tard ; rien pour
+// un store ou un état (`$$sock`, `$x`), que le moteur des effets suit déjà. `el` : la balise de l'effet, `comp` :
+// le composant qui l'a posé (le troisième argument du `setup`)
+µ._mjs_fxVar = function(el, name, comp) {
+  if (!comp || typeof comp !== 'object') return null;
+  var w    = el && el._mjs_fxWritten && el._mjs_fxWritten[name] && el._mjs_fxWritten[name].sock;
+  var path = w === void 0 ? ['sock'] : /^@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(w) ? w.slice(1).split('.') : null;
+  if (!path) return null;
+  return function() {
+    var v = comp;
+    for (var i = 0; v && i < path.length; i++) v = v[path[i]];
+    return v;
+  };
+};
+
+// la connexion d'un effet en direct (*follow, *cursors, *react, *heatmap) : celle de sa variable (`sock`,
+// `@sock` du composant par défaut), tenue sans la retenir — l'appli la ferme (`destroy()`, à la
+// déconnexion d'un utilisateur) : elle se ferme vraiment et l'effet s'en détache ; une autre connexion
+// dans la variable relance l'effet (µ._mjs_fxSet). Une propriété du composant (`@sock`), qu'aucun suivi n'avertit,
+// est relue (`more.read`, cf. µ._mjs_fxVar) tant que l'effet n'a pas de connexion : posée plus tard (après une
+// connexion de l'utilisateur, après un `await`), ou à la place de celle que l'appli a fermée, elle est prise aussi.
+// Avec un `auth` et pas encore ouverte, l'effet attend que l'appli l'ouvre (il ne l'ouvre pas sans l'identité).
+// `server` écrit (et pas de `sock`) : sa connexion à lui seul — jamais celle que l'appli tient ou tiendra à la même
+// adresse, ni son identité —, fermée avec l'effet. Rien dans la variable (ou autre chose qu'une connexion) : rien
+// ne part, et l'effet le dit en console (`msg`) après µ._mjs_sockGrace. `link(sock)` pose ce qui vit sur la
+// connexion (salon, écoutes) et rend de quoi le défaire ; `more.room` rend le nom du salon de la page : quand la
+// route change, ce que `link` a posé est défait puis refait (la connexion reste ; l'effet relit son salon) ; rend
+// de quoi renoncer
+µ._mjs_fxSock = function(given, server, msg, link, more) {
+  more = more || {};
+  var done     = false;
+  var sock     = null;
+  var undo     = null;
+  var wait     = null;
+  var awaited  = null;
+  var timer    = 0;
+  var watch    = 0;
+  var roomName = null;
+  var route    = null;
+  var usable   = function(k) { return !!k && typeof k === 'object' && typeof k.room === 'function' && !k._mjs_destroyed; };
+  var prete    = function(k) { return !k._mjs_destroyed && (k.state === 'open' || !k.opts || k.opts.auth === void 0); };
+  var bind     = function(k) {
+    sock  = k;
+    roomName = more.room ? more.room() : null;
+    undo  = link(k);
+  };
+  var defait = function() {
+    var u = undo;
+    undo = null;
+    sock = null;
+    if (typeof u === 'function') u();
+  };
+  // la route change : le salon change, la connexion reste — l'effet quitte l'ancien salon et rejoint le nouveau, un
+  // microtour plus tard : le routeur dit « la route change » AVANT d'injecter la vue suivante, et l'effet d'une vue que
+  // la navigation retire ne rejoint pas le salon d'après pour le quitter aussitôt (un faux arrivant chez les autres) ;
+  // plusieurs événements d'une même navigation (popstate, hashchange) : le premier refait le lien, les autres trouvent
+  // le salon déjà refait
+  if (more.room) {
+    var rebind = function() {
+      if (done || !sock || more.room() === roomName) return;
+      var u = undo;
+      undo = null;
+      if (typeof u === 'function') u();
+      bind(sock);
+    };
+    route = µ._mjs_fxRoute(function() {
+      Promise.resolve().then(function() {
+        // sous une View Transition, la vue sortante reste en place (et son effet vivant) jusqu'à la fin du rappel
+        // qui permute les vues : on attend cette permutation — celle que le routeur a lancée, `activeViewTransition`
+        // est déjà vide quand la transition est sautée —, et une vue retirée ne relie plus rien ; si le rappel
+        // lève, les vues n'ont pas été permutées : la vue toujours affichée garde son effet dans son salon, et la
+        // transition rejetée est oubliée — un événement d'historique seul ne l'attendrait plus jamais
+        var t = µ._mjs_vtLast;
+        if (t && t.updateCallbackDone && typeof t.updateCallbackDone.then === 'function') t.updateCallbackDone.then(rebind, function() { if (µ._mjs_vtLast === t) µ._mjs_vtLast = null; });
+        else rebind();
+      });
+    });
+  }
+  var k0 = usable(given) ? given : null;
+  if (!k0 && !given && server) {
+    var own = µ.socket(server, { _mjs_own: true });
+    bind(own);
+    return function() {
+      if (done) return;
+      done = true;
+      if (route) route();
+      defait();
+      own.destroy();
+    };
+  }
+  var lache = function() {
+    if (timer) clearTimeout(timer);
+    timer = 0;
+    var i = wait ? µ._mjs_sockWait.indexOf(wait) : -1;
+    if (i >= 0) µ._mjs_sockWait.splice(i, 1);
+    wait  = null;
+    awaited = null;
+  };
+  var stopWatch = function() {
+    if (watch) clearInterval(watch);
+    watch = 0;
+  };
+  // détruite par l'appli : l'effet s'en détache, et relit sa variable (une autre connexion peut y arriver)
+  var perdue = function() {
+    defait();
+    startWatch();
+  };
+  var branche = function(k) {
+    lache();
+    stopWatch();
+    (k._mjs_fxDrops || (k._mjs_fxDrops = [])).push(perdue);
+    bind(k);
+  };
+  // une connexion dans la variable : branchée tout de suite, ou à son ouverture si elle a un `auth` (l'appli l'ouvre)
+  var adopt = function(k) {
+    if (prete(k)) branche(k);
+    else {
+      awaited = k;
+      wait  = function() {
+        if (done || !prete(k)) return;
+        branche(k);
+      };
+      µ._mjs_sockWait.push(wait);
+    }
+  };
+  // la variable relue, tant que rien n'est branché : une connexion y est arrivée, ou une autre que celle qu'on attend
+  var reread = function() {
+    if (done || sock) return;
+    var v;
+    try {
+      v = more.read();
+    }
+    catch {
+      return;
+    }
+    if (!usable(v) || v === awaited) return;
+    lache();
+    adopt(v);
+  };
+  var startWatch = function() {
+    if (done || watch || sock || typeof more.read !== 'function') return;
+    watch = setInterval(reread, µ._mjs_sockPoll);
+  };
+  if (k0) adopt(k0);
+  else {
+    timer = setTimeout(function() {
+      timer = 0;
+      µ.error(msg);
+    }, µ._mjs_sockGrace);
+  }
+  startWatch();
+  return function() {
+    if (done) return;
+    done = true;
+    if (route) route();
+    lache();
+    stopWatch();
+    var d = sock && sock._mjs_fxDrops;
+    var i = d ? d.indexOf(perdue) : -1;
+    if (i >= 0) d.splice(i, 1);
+    defait();
+  };
+};
+
+// un effet en direct sur cette connexion : ses messages (`prefix`) demandent un paquet côté serveur —
+// s'il manque, le serveur répond « type inconnu », et l'effet le dit une fois en console au lieu de ne
+// rien faire (cf. _mjs_fxMissing). `invoke` : ce qui s'écrit dans `app.use(…)` quand ce n'est pas `paquet()` —
+// heatmapPackage refuse de démarrer sans ses origines
+µ._mjs_fxPackage = function(sock, prefix, effet, paquet, invoke) {
+  var p = sock._mjs_fxPackages || (sock._mjs_fxPackages = {});
+  if (!p[prefix]) p[prefix] = { effet: effet, paquet: paquet, invoke: invoke || paquet + '()', dit: false };
+};
+
+// le salon d'un effet en direct : `room` écrit ; sinon la page — son chemin et sa route (`#/…` du
+// routeur MJS, sans ancre ni requête) : deux routes ne se mêlent pas
+µ._mjs_fxRoomName = function(s) {
+  if (s.room) return s.room;
+  var h = location.hash || '';
+  return location.pathname + (/^#\//.test(h) ? h.replace(/^(#[^?#]*).*$/, '$1') : '');
+};
+
+// le salon d'un effet en direct sur une connexion partagée : plusieurs effets de la page peuvent tenir
+// le même (deux zones *follow, une scène *react et celle de la page), l'appli aussi — room() compte ses
+// poignées, le salon est quitté au départ de la dernière
+µ._mjs_fxRoom = function(sock, name) {
+  return sock.room(name);
+};
+
 function MjsSocket(url, opts) {
+  var k;
   this.url = url;
-  this.opts = opts;
+  // les options propres de l'appelant, lues une fois, sans prototype : un `protocols` ou un `auth` hérité ne part pas au
+  // serveur
+  this.opts = Object.create(null);
+  for (k in opts) { if (Object.prototype.hasOwnProperty.call(opts, k)) { this.opts[k] = opts[k]; } }
   this._mjs_refs = 1;
   this._mjs_destroyed = false;
   // état réactif (un seul store interne, exposé via getters)
   // resumed : true si le dernier µ:welcome clôt une reprise de session réussie, false pour un accueil neuf — MàJ par _mjs_onWelcome à chaque welcome
   this._mjs_st = µ.state({ state: 'closed', latency: null, lastError: null, resumed: false });
   this._mjs_ws = null;
+  this._mjs_helloSent = false;      // µ:hello parti sur le fil courant — avant lui, rien d'autre ne part (cf. _mjs_rawSend)
   this._mjs_wantOpen = false;       // true = on veut être connecté (≠ close volontaire)
+  this._mjs_closedByApp = false;    // close() de l'appli : le runtime ne rouvre plus rien de lui-même (cf. _mjs_reopen), seul connect() reprend la main
   this._mjs_session = null;         // {id, key} du dernier µ:welcome (serveur MJS-WS avec reprise) — rejoué au prochain µ:hello, purgé sur µ:bye/µ:denied
-  this._mjs_handlers = {};          // type -> [fn]
-  this._mjs_subs = {};              // type -> true (liste resub envoyée au serveur)
-  this._mjs_rooms = {};             // name -> true (re-join auto)
-  // join-optimiste — FIFO des noms de salon dont le µ:join vient
-  // d'être ENVOYÉ (readyState open, cf. _mjs_sendJoin), pas encore confirmé/refusé. Le protocole
-  // n'a AUCUN champ room/code sur µ:error (vérifié dans rooms.ts/core.ts) :
-  // impossible de savoir avec certitude à quel salon une erreur générique se rapporte. La FIFO
-  // du serveur (core.ts, un message entrant traité en entier avant le suivant) garantit l'ORDRE —
-  // le plus ancien salon en attente est la meilleure correspondance dispo, cf. _mjs_onGuardError.
-  this._mjs_pendingRoomJoins = [];
-  this._mjs_presence = {};          // room(key) -> store réactif
-  this._mjs_streams = {};           // type -> { store, lastSeq }
-  this._mjs_reqs = {};              // id -> { resolve, reject, timer }
+  // registres par nom de salon, de flux ou de type, sans prototype : un nom comme `toString`, `constructor` ou `__proto__`
+  // n'y trouve rien d'hérité (salon rejoint, flux reçu ; une trame du serveur ainsi nommée n'écrit pas sur Object.prototype)
+  this._mjs_handlers = Object.create(null);   // type -> [fn]
+  this._mjs_subs = Object.create(null);       // type -> true (liste resub envoyée au serveur)
+  this._mjs_rooms = Object.create(null);      // name -> {n: poignées qui le tiennent} (re-join auto, cf. room())
+  this._mjs_presence = Object.create(null);   // room(key) -> store réactif
+  this._mjs_streams = Object.create(null);    // type -> { store, lastSeq }
+  this._mjs_reqs = Object.create(null);   // id -> { resolve, reject, timer } ; sans prototype : un µ:ack d'id `toString` n'y trouve rien
   this._mjs_reqSeq = 0;
   this._mjs_queue = [];             // [{type, payload}] hors-ligne
   this._mjs_queueOverflowWarned = false;   // débordement de _mjs_queue déjà signalé — remis à false au prochain welcome (file vidée)
@@ -70,14 +390,38 @@ function MjsSocket(url, opts) {
   // watchdogs en attente ; un pong reçu les invalide TOUS (la preuve de vie
   // la plus récente rend caduques toutes les échéances antérieures).
   this._mjs_hbWatchdogs = [];
-  this._mjs_coalesce = {};          // type -> { payload, scheduled }
-  this._mjs_cooldownAt = {};        // type -> timestamp dernier envoi
-  this._mjs_debounce = {};          // type -> { payload, timer }
+  this._mjs_coalesce = Object.create(null);     // type -> { payload, scheduled }
+  this._mjs_cooldownAt = Object.create(null);   // type -> timestamp dernier envoi
+  this._mjs_debounce = Object.create(null);     // type -> { payload, timer }
   this._mjs_warnedOpts = {};        // option -> true, un seul µ.warn par option invalide
 }
 
 MjsSocket.prototype._mjs_now = function() {
   return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+};
+
+// un jeton de la part des effets : false quand elle est épuisée (elle se refait à MJSOCKET_FX_RATE par seconde)
+// le serveur ne connaît pas un type de message : celui d'un effet en direct, dont le paquet manque
+// côté serveur — dit une fois par connexion et par paquet
+MjsSocket.prototype._mjs_fxMissing = function(type) {
+  var p = this._mjs_fxPackages;
+  if (!p) return;
+  for (var prefix in p) {
+    if (type.indexOf(prefix) !== 0 || p[prefix].dit) continue;
+    p[prefix].dit = true;
+    µ.error(µ._mjs_msg('socketPackage', { effet: p[prefix].effet, type: type, paquet: p[prefix].paquet, invoke: p[prefix].invoke }, '{effet} : le serveur MJS WS ne connaît pas « {type} » — il lui manque le paquet {paquet} : ajoutez app.use({invoke}) côté serveur ; en attendant, rien ne part'));
+  }
+};
+
+MjsSocket.prototype._mjs_fxToken = function() {
+  var now  = this._mjs_now();
+  var rate = µ._mjs_fxRate();
+  var b    = this._mjs_fxBucket || (this._mjs_fxBucket = { n: rate, at: now });
+  b.n  = Math.min(rate, b.n + (now - b.at) * rate / 1000);
+  b.at = now;
+  if (b.n < 1) return false;
+  b.n--;
+  return true;
 };
 
 // --- propriétés réactives ---
@@ -98,6 +442,7 @@ MjsSocket.prototype.connect = function() {
   this._mjs_abandonWarned = false;
   this._mjs_attempt       = 0;
   this._mjs_wantOpen      = true;
+  this._mjs_closedByApp   = false;
   this._mjs_open();
   return this;
 };
@@ -140,7 +485,7 @@ MjsSocket.prototype._mjs_open = function() {
     this._mjs_wantOpen = false;
     this._mjs_abandoned = true;
     this._mjs_st.lastError = { code: 'badurl', message: String((e && e.message) || e) };
-    µ.error('[µ.socket] URL invalide, connexion abandonnée : ' + this.url, e);
+    µ.error('[µ.socket] ' + µ._mjs_txt('sockBadUrl', { url: this.url }, 'URL invalide, connexion abandonnée : {url}'), e);
     this._mjs_setState('closed');
     return;
   }
@@ -158,7 +503,10 @@ MjsSocket.prototype._mjs_open = function() {
 
 MjsSocket.prototype._mjs_onOpen = function() {
   var self = this;
+  var ws   = this._mjs_ws;
   var hello = function(auth) {
+    // un jeton arrivé après la chute de ce fil ne part pas sur le suivant, qui envoie son propre µ:hello
+    if (self._mjs_ws !== ws) { return; }
     var p = {
       auth: auth, protocol: 1,
       resub: Object.keys(self._mjs_subs),
@@ -173,7 +521,7 @@ MjsSocket.prototype._mjs_onOpen = function() {
     // bon, cf. mjs-ws/core.ts::pushSchemaIfMismatch) — permet au serveur de détecter un désaccord et
     // pousser µ:schema en retour.
     if (µ._mjs_mjschemaHelloHash) { p.schemaHash = µ._mjs_mjschemaHelloHash(); }
-    self._mjs_rawSend({ t: 'µ:hello', p: p });
+    if (self._mjs_rawSend({ t: 'µ:hello', p: p })) { self._mjs_helloSent = true; }
   };
   var a = this.opts.auth;
   if (typeof a === 'function') {
@@ -203,6 +551,8 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
   this._mjs_setState('open');
   this._mjs_st.lastError = null;
   this._mjs_startHeartbeat();
+  // les effets en direct qui attendaient que l'appli ouvre sa connexion
+  µ._mjs_sockWake();
   // abonnements stream/presence/room
   // perdus en connexion PARESSEUSE : `stream()`/`presence()`/`room()`
   // envoient leur message dédié (`µ:sub-stream`/`µ:sub-presence`/`µ:join`)
@@ -236,6 +586,10 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
   // 2e `µ:resync` redondant si le tout premier delta post-reconnexion
   // ressemble par ailleurs à un trou (même garde anti-rafale que le chemin
   // existant).
+  // les salons D'ABORD : un flux réservé à un salon (`room`) ou gardé par l'appartenance, demandé avant le µ:join, serait
+  // refusé sur-le-champ (lu hors du salon) — à la première connexion (paresseuse) comme à chaque reconnexion. Chaque re-join
+  // peut LUI AUSSI être refusé par la garde (permissions changées entre-temps) : le refus nomme son salon, cf. _mjs_onJoinDenied
+  for (var __rm in this._mjs_rooms) { this._mjs_sendJoin(__rm); }
   for (var __st in this._mjs_streams) {
     var __stObj = this._mjs_streams[__st];
     if (__stObj.lastSeq) {
@@ -246,10 +600,6 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
     }
   }
   for (var __pk in this._mjs_presence) { this._mjs_rawSend({ t: 'µ:sub-presence', p: { room: __pk || undefined } }); }
-  // join-optimiste — _mjs_sendJoin (pas _mjs_rawSend direct) : chaque re-join
-  // post-reconnexion peut LUI AUSSI être refusé par la garde (permissions changées entre-temps),
-  // doit donc entrer dans la même FIFO d'attente que le tout premier join, cf. room()/_mjs_onGuardError.
-  for (var __rm in this._mjs_rooms) { this._mjs_sendJoin(__rm); }
   // vider la file hors-ligne — `_mjs_queueOverflowWarned` repart à false : un débordement
   // futur (nouvelle connexion) redevient un épisode NEUF, à signaler à nouveau une seule fois.
   var q = this._mjs_queue; this._mjs_queue = []; this._mjs_queueOverflowWarned = false;
@@ -275,7 +625,7 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
   // ci-dessus). `_mjs_dispatch` protège déjà chaque handler individuellement (try/catch) : un
   // handler qui throw ne casse jamais la suite.
   var __wp = {};
-  if (msg.p) { for (var __wk in msg.p) { if (__wk !== 'session') { __wp[__wk] = msg.p[__wk]; } } }
+  if (msg.p) { for (var __wk in msg.p) { if (__wk !== 'session') { _mjs_putOwn(__wp, __wk, msg.p[__wk]); } } }
   this._mjs_dispatch('welcome', { t: 'welcome', p: __wp });
 };
 
@@ -290,8 +640,27 @@ MjsSocket.prototype._mjs_onDenied = function(msg) {
   this._mjs_session = null;            // fin définitive — une session ne survit jamais à un refus
   // Annule un reconnect éventuellement programmé : on abandonne définitivement.
   if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
-  this._mjs_teardown(true);           // fin définitive → rejette AUSSI les waitForOpen en attente
+  // une requête qui attendait l'ouverture n'est jamais partie : rejetée avec la raison du refus (`denied`), pas « connexion
+  // fermée », et jamais envoyée sous une autre identité (la création et la connexion d'un compte repartent d'elles-mêmes sur
+  // la connexion invitée qui suit, cf. mjs_accounts.ts)
+  var refus = this._mjs_st.lastError, pend = this._mjs_pendingOpenReqs;
+  var pourquoi = (refus && typeof refus.message === 'string') ? refus.message : 'denied';
   this._mjs_pendingOpenReqs = [];
+  for (var __pi = 0; __pi < pend.length; __pi++) {
+    var __r = this._mjs_reqs[pend[__pi].id];
+    if (!__r) { continue; }
+    delete this._mjs_reqs[pend[__pi].id];
+    if (__r.timer) { clearTimeout(__r.timer); }
+    try { __r.reject({ code: 'denied', message: pourquoi }); } catch (e) {}
+  }
+  this._mjs_teardown(true);           // fin définitive
+  // la file hors ligne appartient à l'identité refusée : un connect() suivant, peut-être sous une autre identité, n'en
+  // envoie rien (même règle à l'adieu du serveur et à la session exclusive perdue, cf. µ:bye et _mjs_onClose), pas plus que
+  // de ses envois différés encore en attente — et le dit
+  var perdus = this._mjs_queue.length + this._mjs_cancelPending();
+  if (perdus) { µ.warn('[µ.socket] ' + µ._mjs_txt('sockQueueDenied', { n: perdus }, 'file hors ligne vidée ({n} en attente) : le serveur a refusé l\'identité pour laquelle ces messages ont été écrits, ils ne partent sous aucune autre — renvoyez-les une fois reconnecté si besoin')); }
+  this._mjs_queue = [];
+  this._mjs_queueOverflowWarned = false;
   this._mjs_setState('closed');
   // 'denied' = 2e nom d'événement RÉSERVÉ côté client, exactement comme 'welcome' juste au-dessus
   // (même registre, même `_mjs_dispatch`, même réserve : un message applicatif serveur littéralement
@@ -352,14 +721,20 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
       this._mjs_petWatchdog();
       return;
     case 'µ:ack':     return this._mjs_onAck(msg);
-    case 'µ:error':   this._mjs_st.lastError = msg.p || { message: 'error' }; this._mjs_onGuardError(); return;
+    case 'µ:error':
+      this._mjs_st.lastError = msg.p || { message: 'error' };
+      if (msg.p && typeof msg.p.type === 'string') this._mjs_fxMissing(msg.p.type);
+      // seul le refus d'entrée nomme son salon : toute autre erreur (message de chat trop long, débit…) n'en fait
+      // oublier aucun
+      else if (msg.p && msg.p.code === 'join-denied' && typeof msg.p.room === 'string') this._mjs_onJoinDenied(msg.p.room);
+      return;
     case 'µ:presence':return this._mjs_onPresence(msg);
     case 'µ:left':    return this._mjs_onLeft(msg);
     // µschema (mjs_schema.ts) — extension MINIME : remplace le registre
     // CLIENT, cf. µ._mjs_mjschemaOnPush (absent si le module 'schema' n'est pas chargé → no-op, trame
     // ignorée comme n'importe quel autre type µ: inconnu l'aurait été avant l'ajout de µschema).
     case 'µ:schema':  if (µ._mjs_mjschemaOnPush) { µ._mjs_mjschemaOnPush(this, msg); } return;
-    case 'µ:bye':     this._mjs_st.lastError = msg.p || null; this._mjs_wantOpen = false; this._mjs_abandoned = true; this._mjs_session = null; if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; } this._mjs_teardown(true); this._mjs_pendingOpenReqs = []; this._mjs_setState('closed'); return;
+    case 'µ:bye':     this._mjs_st.lastError = msg.p || null; this._mjs_wantOpen = false; this._mjs_abandoned = true; this._mjs_session = null; if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; } this._mjs_teardown(true); this._mjs_pendingOpenReqs = []; this._mjs_cancelPending(); this._mjs_queue = []; this._mjs_queueOverflowWarned = false; this._mjs_setState('closed'); return;
   }
   // delta de stream ? (ne tombe PAS aussi dans les handlers pub/sub)
   if (this._mjs_streams[msg.t]) { return this._mjs_onStreamDelta(msg.t, msg); }
@@ -385,13 +760,16 @@ MjsSocket.prototype._mjs_onClose = function(ev) {
     this._mjs_wantOpen = false;
     this._mjs_abandoned = true;
     this._mjs_session = null;
+    this._mjs_cancelPending();
+    this._mjs_queue = [];
+    this._mjs_queueOverflowWarned = false;
     if (!this._mjs_st.lastError) { this._mjs_st.lastError = { code: ev.code === 4003 ? 'replaced' : 'refused' }; }
   }
   if (this._mjs_wantOpen && !this._mjs_destroyed) { this._mjs_scheduleReconnect(); }
   else { this._mjs_setState('closed'); }
 };
 
-MjsSocket.prototype._mjs_teardown = function(final) {
+MjsSocket.prototype._mjs_teardown = function(final, unknown) {
   // une connexion qui tombe AVANT d'être jugée stable ne doit jamais réinitialiser le
   // backoff en douce — annule le minuteur de stabilité posé par _mjs_onWelcome, sur TOUTE fin de vie
   // de la connexion (reconnexion, fermeture volontaire, denied, µ:bye — seul choke point commun).
@@ -402,12 +780,8 @@ MjsSocket.prototype._mjs_teardown = function(final) {
     this._mjs_ws = null;
   }
   this._mjs_stopHeartbeat();
-  // join-optimiste — la FIFO d'attente ne survit PAS à cette
-  // connexion : un µ:join en vol dessus ne recevra plus jamais SA réponse (onmessage coupé
-  // juste au-dessus). Sans ce reset, une entrée PÉRIMÉE traînerait devant la FIFO et se ferait
-  // pop par erreur par le premier µ:error de la PROCHAINE connexion — _mjs_onWelcome réarme une
-  // entrée fraîche pour chaque salon encore dans _mjs_rooms via _mjs_sendJoin, cf. plus haut.
-  this._mjs_pendingRoomJoins = [];
+  // le prochain fil repart sans µ:hello : rien ne part avant le sien
+  this._mjs_helloSent = false;
   // teardown incomplet : les request()
   // en attente d'un `µ:ack` sur ce socket ne seront JAMAIS ack'ées (le serveur
   // ne reverra jamais leur id, et une reconnexion = nouvelle poignée de main
@@ -421,17 +795,19 @@ MjsSocket.prototype._mjs_teardown = function(final) {
   // la renverra après reconnexion (le fix `waitForOpen` redevenait sinon
   // inopérant dès qu'UNE tentative échouait). Seule une fin de vie DÉFINITIVE
   // (`final` : close/destroy/denied/bye) rejette TOUT.
+  // `unknown` : reconnexion voulue par le runtime (cf. _mjs_reopen) — une requête déjà partie a pu être servie, son
+  // résultat est inconnu ; jamais « connexion fermée », que l'appli prendrait pour une requête à rejouer
   var spared = {};
   if (!final && this._mjs_pendingOpenReqs) {
     for (var __pi = 0; __pi < this._mjs_pendingOpenReqs.length; __pi++) { spared[this._mjs_pendingOpenReqs[__pi].id] = true; }
   }
   var reqs = this._mjs_reqs;
-  this._mjs_reqs = {};
+  this._mjs_reqs = Object.create(null);
   for (var __id in reqs) {
     if (spared[__id]) { this._mjs_reqs[__id] = reqs[__id]; continue; } // épargnée : ré-inscrite pour _mjs_onWelcome
     var __r = reqs[__id];
     if (__r.timer) { clearTimeout(__r.timer); }
-    try { __r.reject({ code: 'closed', message: 'connexion fermée avant réponse du serveur' }); } catch (e) {}
+    try { __r.reject(unknown ? { code: 'unknown', message: 'connexion renouvelée après l\'envoi : le serveur a pu servir la requête, sa réponse est perdue' } : { code: 'closed', message: 'connexion fermée avant réponse du serveur' }); } catch (e) {}
   }
 };
 
@@ -455,6 +831,10 @@ MjsSocket.prototype._mjs_scheduleReconnect = function() {
 
 // --- envoi bas niveau ---
 MjsSocket.prototype._mjs_rawSend = function(obj) {
+  // avant le µ:hello, rien d'autre ne part : le serveur refuserait la connexion pour de bon (« µ:hello attendu en
+  // premier message ») — un salon, un flux ou une présence demandés pendant l'attente d'un `auth` asynchrone
+  // partent au welcome, qui les rejoue tous
+  if (!this._mjs_helloSent && obj.t !== 'µ:hello') { return false; }
   if (this._mjs_ws && this._mjs_ws.readyState === 1) {
     try {
       // µschema (mjs_schema.ts) — extension MINIME : un frame ADMISSIBLE
@@ -523,7 +903,7 @@ MjsSocket.prototype._mjs_normWait = function(value, defaultMs, name) {
   if (typeof n === 'number' && !isNaN(n)) { return (n < 0) ? 0 : n; }
   if (!this._mjs_warnedOpts[name]) {
     this._mjs_warnedOpts[name] = true;
-    µ.warn('[µ.socket] option ' + name + ' ignorée : valeur invalide ' + JSON.stringify(value));
+    µ.warn('[µ.socket] ' + µ._mjs_txt('sockOptionInvalid', { name: name, value: JSON.stringify(value) }, 'option {name} ignorée : valeur invalide {value}'));
   }
   return null;
 };
@@ -537,7 +917,7 @@ MjsSocket.prototype.send = function(type, payload, opts) {
   if (this._mjs_abandoned) {
     if (!this._mjs_abandonWarned) {
       this._mjs_abandonWarned = true;
-      µ.warn('[µ.socket] envoi ignoré : connexion abandonnée (close() volontaire, essais épuisés ou reconnect.enabled:false) — appelez connect() pour reprendre : ' + this.url);
+      µ.warn('[µ.socket] ' + µ._mjs_txt('sockSendDropped', { url: this.url }, 'envoi ignoré : connexion abandonnée (close() volontaire, essais épuisés ou reconnect.enabled:false) — appelez connect() pour reprendre : {url}'));
     }
     return false;
   }
@@ -555,11 +935,15 @@ MjsSocket.prototype.send = function(type, payload, opts) {
   }
   // ordre inchangé cooldown → debounce → coalesce ; _mjs_normWait rend toujours soit null
   // (option absente ou invalide) soit un nombre déjà clampé ≥0
+  // `volatile` : une trame qui ne vaut que maintenant (une position, un émoji) — jamais mise en file hors
+  // ligne ; `key` : regroupée à part des autres trames du même type (un salon, une zone)
+  var vol = !!(opts && opts.volatile);
+  var key = opts && opts.key != null ? type + '\u0000' + opts.key : type;
   var db = this._mjs_normWait(opts && opts.debounce, this.opts.debounceMs || 200, 'debounce');
-  if (db != null) { return this._mjs_debounceSend(type, payload, db); }   // attend le silence, coalesce ignoré si présent
+  if (db != null) { return this._mjs_debounceSend(type, payload, db, key, vol); }   // attend le silence, coalesce ignoré si présent
   var co = this._mjs_normWait(opts && opts.coalesce, this.opts.coalesceMs || 50, 'coalesce');
-  if (co != null) { return this._mjs_coalesceSend(type, payload, co); }   // garde la dernière, coalesce:0 = tour de boucle suivant
-  return this._mjs_sendNow(type, payload);
+  if (co != null) { return this._mjs_coalesceSend(type, payload, co, key, vol); }   // garde la dernière, coalesce:0 = tour de boucle suivant
+  return this._mjs_sendNow(type, payload, vol);
 };
 
 // sucre — envoi scopé à UN SALON SANS le rejoindre (aucun `µ:join`), contrairement à
@@ -575,9 +959,12 @@ MjsSocket.prototype.sendTo = function(room, type, payload, opts) {
 // proxy dont `send` délègue à `self.send(name + '/' + type, ...)`), pas par
 // un champ `room` sur le message. Code mort depuis une itération de design
 // antérieure, jamais atteint.
-MjsSocket.prototype._mjs_sendNow = function(type, payload) {
+MjsSocket.prototype._mjs_sendNow = function(type, payload, volatile) {
   var obj = { t: type, p: payload };
   if (this.state === 'open') { return this._mjs_rawSend(obj); }
+  // périmée dans une seconde : elle ne chasse pas les messages de l'appli de la file, et n'est pas
+  // rejouée d'un coup à la reconnexion (le serveur expulserait pour débit)
+  if (volatile) { return false; }
   if (this.opts.queueOffline !== false) {
     this._mjs_queue.push({ type: type, payload: payload });
     var maxQ = this.opts.maxQueue || 1000;
@@ -589,19 +976,22 @@ MjsSocket.prototype._mjs_sendNow = function(type, payload) {
       if (!this._mjs_queueOverflowWarned) {
         this._mjs_queueOverflowWarned = true;
         this._mjs_st.lastError = { code: 'queue-overflow', message: 'file hors-ligne pleine (maxQueue=' + maxQ + ') — message le plus ancien perdu' };
-        µ.warn('[µ.socket] file hors-ligne pleine (maxQueue=' + maxQ + ') — message le plus ancien perdu');
+        µ.warn('[µ.socket] ' + µ._mjs_txt('sockQueueFull', { maxQ: maxQ }, 'file hors-ligne pleine (maxQueue={maxQ}) — message le plus ancien perdu'));
       }
     }
   }
   return false;
 };
 
-MjsSocket.prototype._mjs_coalesceSend = function(type, payload, interval) {
+MjsSocket.prototype._mjs_coalesceSend = function(type, payload, interval, key, volatile) {
   // intervalle en MILLISECONDES, homogène avec cooldown (l'ancienne unité Hz est morte) ;
-  // `true` retombe sur le défaut opts.coalesceMs (50 ms ≈ 20 trames/s)
+  // `true` retombe sur le défaut opts.coalesceMs (50 ms ≈ 20 trames/s) ; une case par clé (le type,
+  // ou le type et la clé donnée à send)
   var ms   = (typeof interval === 'number') ? interval : (this.opts.coalesceMs || 50);
-  var slot = this._mjs_coalesce[type] || (this._mjs_coalesce[type] = { payload: null, scheduled: false, timer: null });
-  slot.payload = payload;
+  var k    = key || type;
+  var slot = this._mjs_coalesce[k] || (this._mjs_coalesce[k] = { payload: null, scheduled: false, timer: null });
+  slot.payload  = payload;
+  slot.volatile = !!volatile;
   if (!slot.scheduled) {
     slot.scheduled = true;
     var self = this;
@@ -621,16 +1011,20 @@ MjsSocket.prototype._mjs_coalesceSend = function(type, payload, interval) {
     // une horloge injectable.
     var tick = function() {
       if (self._mjs_ws && self._mjs_ws.bufferedAmount > maxBuf) { slot.timer = setTimeout(tick, ms); return; }
+      // une trame d'effet au-delà de la part des effets : retenue, sa dernière valeur partira
+      if (slot.volatile && self.state === 'open' && !self._mjs_fxToken()) { slot.timer = setTimeout(tick, ms); return; }
       slot.scheduled = false;
       slot.timer = null;
-      self._mjs_sendNow(type, slot.payload);
+      // parti : la case n'a plus rien à garder (un salon de plus visité ne laisse pas une case de plus à vie)
+      if (self._mjs_coalesce[k] === slot) delete self._mjs_coalesce[k];
+      self._mjs_sendNow(type, slot.payload, slot.volatile);
     };
     slot.timer = setTimeout(tick, ms);
   }
   return true;
 };
 
-MjsSocket.prototype._mjs_debounceSend = function(type, payload, wait) {
+MjsSocket.prototype._mjs_debounceSend = function(type, payload, wait, key, volatile) {
   // silence de `ms` sur ce type avant émission — contrairement à coalesce (cadence fixe même
   // sous activité continue), ici rien ne part tant que les envois s'enchaînent plus vite que
   // `ms` : chaque nouvel envoi remplace la charge en attente ET remet la minuterie à zéro ;
@@ -642,17 +1036,22 @@ MjsSocket.prototype._mjs_debounceSend = function(type, payload, wait) {
   // toute façon relancer setTimeout à CHAQUE appel (c'est le sens même du debounce), mais la
   // FONCTION `tick` elle-même n'a pas besoin d'être réallouée à chaque fois — posée UNE FOIS sur le
   // slot, elle relit `ms`/`maxBuf` DEPUIS le slot (dernier appel gagne), donc un comportement
-  // identique à la fermeture recréée à chaque appel, sans son coût d'allocation.
+  // identique à la fermeture recréée à chaque appel, sans son coût d'allocation tant que les envois s'enchaînent (la case
+  // part avec le message : elle se refait après un silence).
   var self = this;
-  var slot = this._mjs_debounce[type];
+  var k    = key || type;
+  var slot = this._mjs_debounce[k];
   if (!slot) {
-    slot = this._mjs_debounce[type] = { payload: null, timer: null, ms: 0, maxBuf: 0 };
+    slot = this._mjs_debounce[k] = { payload: null, timer: null, ms: 0, maxBuf: 0 };
     slot.tick = function() {
       if (self._mjs_ws && self._mjs_ws.bufferedAmount > slot.maxBuf) { slot.timer = setTimeout(slot.tick, slot.ms); return; }
       slot.timer = null;
-      self._mjs_sendNow(type, slot.payload);
+      // parti : la case n'a plus rien à garder (un salon de plus visité ne laisse pas une case de plus à vie)
+      if (self._mjs_debounce[k] === slot) delete self._mjs_debounce[k];
+      self._mjs_sendNow(type, slot.payload, slot.volatile);
     };
   }
+  slot.volatile = !!volatile;
   slot.ms      = (typeof wait === 'number') ? wait : (this.opts.debounceMs || 200);
   slot.maxBuf  = this.opts.maxBuffered || 65536;
   slot.payload = payload;
@@ -809,6 +1208,7 @@ MjsSocket.prototype._mjs_onStreamDelta = function(type, msg) {
   if (p.op === 'reset') {
     st.resyncing = false;
     st.lastSeq = (seq != null) ? seq : 0;
+    st.seqKnown = (seq != null);
     this._mjs_applyDelta(st.store, p);
     return;
   }
@@ -819,7 +1219,9 @@ MjsSocket.prototype._mjs_onStreamDelta = function(type, msg) {
     // Détection de trou : on a sauté des numéros → on redemande depuis le dernier
     // vu. Flag anti-rafale : tant que le trou n'est pas comblé, ne PAS ré-émettre
     // un resync à chaque delta en avance (le serveur peut en pousser plusieurs).
-    if (st.lastSeq && seq > st.lastSeq + 1) {
+    // Dès 0 aussi après un état complet numéroté (flux encore vide, `reset` à 0) :
+    // un delta qui en saute un est un trou comme un autre.
+    if ((st.lastSeq || st.seqKnown) && seq > st.lastSeq + 1) {
       if (!st.resyncing) {
         st.resyncing = true;
         this._mjs_rawSend({ t: 'µ:resync', p: { stream: type, from: st.lastSeq } });
@@ -834,36 +1236,42 @@ MjsSocket.prototype._mjs_onStreamDelta = function(type, msg) {
 };
 
 // Garde anti-pollution locale (indépendante de mjs_init : le socket peut être
-// chargé/testé isolément). Bloque __proto__/constructor/prototype sur une clé
-// issue d'un message réseau non fiable.
+// chargé/testé isolément). Bloque __proto__/constructor/prototype sur un segment de
+// chemin réseau écrit dans une vue ORDINAIRE, sans état réactif pour la garder (_applyDeltaOps, mjs_game.ts).
 function _mjs_safeKey(k) {
   return k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
 }
+// range une clé venue du réseau sur une copie ordinaire : `__proto__` y reste une clé comme une autre — l'affectation
+// `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+function _mjs_putOwn(o, k, v) {
+  if (k === '__proto__') { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); }
+  else { o[k] = v; }
+}
+// clé de premier niveau d'un magasin de présence ou de flux (un pair, une clé du flux) : écrite telle quelle, ces magasins sont
+// des états réactifs (µ.state) qui refusent eux-mêmes __proto__, constructor et prototype — le seul contrôle, au plus près de
+// l'état (une trace le dit pendant le développement, une fois par nom)
 MjsSocket.prototype._mjs_applyDelta = function(store, p) {
   var k, cur, merged, a, b;
   switch (p.op) {
     case 'reset':
       for (k in store) { delete store[k]; }
       var vals = p.values || {};
-      for (k in vals) { if (_mjs_safeKey(k)) store[k] = vals[k]; }
+      for (k in vals) { store[k] = vals[k]; }
       break;
     case 'add':
-      if (_mjs_safeKey(p.key)) store[p.key] = p.value;
+      store[p.key] = p.value;
       break;
     case 'update':
+      // les champs de l'entrée sont des données, gardés tous comme ceux d'un 'add', ces trois noms compris
       cur = store[p.key] || {};
       merged = {};
-      for (a in cur) { merged[a] = cur[a]; }
+      for (a in cur) { _mjs_putOwn(merged, a, cur[a]); }
       var patch = p.patch || {};
-      for (b in patch) { if (_mjs_safeKey(b)) merged[b] = patch[b]; }
-      if (_mjs_safeKey(p.key)) store[p.key] = merged;
+      for (b in patch) { _mjs_putOwn(merged, b, patch[b]); }
+      store[p.key] = merged;
       break;
     case 'remove':
-      // cohérence avec 'add'/'update' juste au-dessus (et 'reset') : la clé vient du réseau,
-      // même garde qu'eux — trouvé en revue le 23/09, effet observable limité (delete ne peut
-      // pas écraser le PROTOTYPE comme le ferait un set), corrigé par cohérence avec le contrat
-      // documenté en tête de _mjs_safeKey.
-      if (_mjs_safeKey(p.key)) delete store[p.key];
+      delete store[p.key];
       break;
   }
 };
@@ -890,16 +1298,16 @@ MjsSocket.prototype._mjs_onPresence = function(msg) {
     case 'reset':
       for (id in store) { delete store[id]; }
       peers = p.peers || {};
-      for (id in peers) { if (_mjs_safeKey(id)) store[id] = peers[id]; }
+      for (id in peers) { store[id] = peers[id]; }
       break;
-    case 'join':  if (_mjs_safeKey(p.id)) store[p.id] = p.meta; break;
-    case 'leave': if (_mjs_safeKey(p.id)) delete store[p.id]; break;
+    case 'join':  store[p.id] = p.meta; break;
+    case 'leave': delete store[p.id]; break;
   }
 };
 
 // purge COMPLÈTE d'un
 // salon, appelée par leave() (client) ET _mjs_onLeft (kick serveur). Le proxy
-// room() est un pur namespace de préfixe SANS état propre : handlers, streams,
+// room() ne garde que les désabonnements de ses propres écoutes : handlers, streams,
 // présence et callback onLeft vivent tous sur le SOCKET PARTAGÉ. L'ancien
 // leave() ne retirait QUE les handlers `name/…` — streams (`_mjs_streams['name/type']`
 // + `_mjs_subs`), présence (`_mjs_presence[name]` + `_mjs_subs`) et `_mjs_onLeftCb[name]`
@@ -919,39 +1327,17 @@ MjsSocket.prototype._mjs_purgeRoom = function(name) {
   if (this._mjs_onLeftCb) { delete this._mjs_onLeftCb[name]; }
 };
 
-// join-optimiste — envoie µ:join et n'empile dans la FIFO d'attente
-// QUE si la trame est RÉELLEMENT partie (readyState open, cf. _mjs_rawSend) : un appel avant ouverture
-// (le cas le plus courant, cf. room() plus bas) est un no-op réseau — rien n'empile alors, seul
-// le VRAI envoi post-welcome (_mjs_onWelcome) le fera. Sans cette garde, une entrée FANTÔME (jamais
-// transmise, donc jamais susceptible de provoquer une VRAIE réponse serveur) désynchroniserait
-// la FIFO d'un cran et ferait pop la MAUVAISE entrée à la première erreur venue.
+// join optimiste : µ:join part tout de suite (un appel avant l'ouverture est un no-op réseau, le welcome rejoint tous
+// les salons de _mjs_rooms) ; le serveur n'accuse pas un join accepté, et son refus nomme le salon
 MjsSocket.prototype._mjs_sendJoin = function(name) {
-  var sent = this._mjs_rawSend({ t: 'µ:join', p: { room: name } });
-  if (sent) {
-    this._mjs_pendingRoomJoins.push(name);
-    if (this._mjs_pendingRoomJoins.length > 64) { this._mjs_pendingRoomJoins.shift(); }   // borne défensive — jamais atteinte en usage normal
-  }
+  this._mjs_rawSend({ t: 'µ:join', p: { room: name } });
 };
 
-// join-optimiste — µ:error générique (SANS champ room, cf. tête de
-// fichier) reçu pendant qu'au moins un salon est en attente : on retire le PLUS ANCIEN (FIFO) de
-// _mjs_rooms, plus jamais re-tenté automatiquement au welcome suivant. Dégât collatéral ASSUMÉ : une
-// erreur SANS RAPPORT (débit, type inconnu…) survenant pendant l'attente peut à tort faire sortir
-// ce salon de _mjs_rooms — mineur et RÉCUPÉRABLE, l'appli peut rappeler sock.room(name) (cf. tête de
-// fichier) ; JAMAIS les autres salons, ni presence/stream (aucun appel à _mjs_purgeRoom ici).
-MjsSocket.prototype._mjs_onGuardError = function() {
-  if (this._mjs_pendingRoomJoins.length === 0) { return; }
-  var name = this._mjs_pendingRoomJoins.shift();
+// le serveur refuse l'entrée d'un salon (`µ:error { code: 'join-denied', room }`) : ce salon sort de _mjs_rooms, plus
+// jamais re-tenté au welcome suivant — l'appli peut rappeler sock.room(name) ; jamais les autres salons, ni
+// presence/stream (aucun appel à _mjs_purgeRoom ici)
+MjsSocket.prototype._mjs_onJoinDenied = function(name) {
   if (this._mjs_rooms[name]) { delete this._mjs_rooms[name]; }
-};
-
-// join-optimiste — retire TOUTES les entrées d'attente pour `name`
-// (leave() explicite avant réponse serveur, cf. room().leave() plus bas) : garde la FIFO propre,
-// jamais d'entrée obsolète qui ferait pop la mauvaise correspondance pour un salon SANS RAPPORT.
-MjsSocket.prototype._mjs_forgetPendingJoin = function(name) {
-  var kept = [], i;
-  for (i = 0; i < this._mjs_pendingRoomJoins.length; i++) { if (this._mjs_pendingRoomJoins[i] !== name) { kept.push(this._mjs_pendingRoomJoins[i]); } }
-  this._mjs_pendingRoomJoins = kept;
 };
 
 MjsSocket.prototype.room = function(name) {
@@ -964,50 +1350,105 @@ MjsSocket.prototype.room = function(name) {
   // membres) au pire, selon l'implémentation. `_mjs_rooms[name]` sert DÉJÀ de
   // registre d'appartenance (relu par _mjs_onWelcome pour le re-join auto après
   // reconnexion) : on s'en sert aussi comme garde ici. Le proxy retourné
-  // reste un NOUVEL objet à chaque appel (comportement inchangé) — il est
-  // sans état propre, tout vit sur `self`, donc en renvoyer un nouveau ou le
-  // même est strictement équivalent pour l'appelant.
-  if (!this._mjs_rooms[name]) {
-    this._mjs_rooms[name] = true;
-    this._mjs_sendJoin(name);   // join-optimiste — cf. _mjs_sendJoin/_mjs_onGuardError plus bas
+  // reste un NOUVEL objet à chaque appel (comportement inchangé).
+  // Plusieurs poignées du même salon (une discussion et un autre composant, deux halls du même nom, un
+  // effet en direct et l'appli) : `_mjs_rooms[name]` compte ses poignées — le départ de l'une ne retire
+  // que ses propres écoutes, le salon n'est quitté qu'au départ de la dernière. Un salon perdu entre-temps
+  // (exclusion, entrée refusée) repart d'un compte neuf : une poignée d'avant n'y décompte plus rien.
+  var held = this._mjs_rooms[name];
+  if (!held) {
+    held = this._mjs_rooms[name] = { n: 0 };
+    this._mjs_sendJoin(name);   // join optimiste, cf. _mjs_sendJoin/_mjs_onJoinDenied
   }
+  held.n++;
   var self = this;
   var prefix = name + '/';
+  var mine = [], gone = false, myLeft;   // désabonnements des écoutes de CETTE poignée, départ fait, son rappel d'exclusion
+  // chaque poignée pose son rappel d'exclusion dans la liste du salon (`_mjs_onLeftCb[name]`) et n'en retire que le sien
+  var dropLeft = function() {
+    var l = self._mjs_onLeftCb && self._mjs_onLeftCb[name], i = l ? l.indexOf(myLeft) : -1;
+    if (i !== -1) { l.splice(i, 1); }
+  };
+  // une poignée partie (leave() fait, souvent à la destruction de son composant) n'inscrit ni n'envoie plus rien : un on(), un
+  // onLeft(), un stream() ou un presence() tardif s'accrocherait au salon d'une autre poignée, ou à celui rejoint plus tard (et
+  // reviendrait à chaque reconnexion), un send() ou un request() partirait en son nom ; le développement le dit
+  var late = function(fn) {
+    µ._mjs_logger()?.('[µ.socket] ' + µ._mjs_txt('sockHandleGone', { fn: fn, room: name }, '{fn}() sur une poignée du salon « {room} » déjà partie (leave()) : rien n\'est inscrit ni envoyé — pour reprendre ce salon, prenez une poignée neuve avec sock.room()'));
+  };
   return {
-    on:       function(type, h) { return self.on(prefix + type, h); },
-    send:     function(type, p, opts) { return self.send(prefix + type, p, opts); },
-    request:  function(type, p, opts) { return self.request(prefix + type, p, opts); },
-    stream:   function(type, opts) { return self.stream(prefix + type, opts); },
-    presence: function() { return self.presence(name); },
-    onLeft:   function(fn) { (self._mjs_onLeftCb || (self._mjs_onLeftCb = {}))[name] = fn; },
-    // Garde symétrique à celle du join ci-dessus : un leave() déjà effectif
-    // (2e appel, ex. double cleanup @destroy) ne renvoie pas un 2e `µ:leave`.
+    on:       function(type, h) {
+      if (gone) { late('on'); return function() {}; }
+      var off = self.on(prefix + type, h);
+      var un  = function() { var i = mine.indexOf(un); if (i !== -1) { mine.splice(i, 1); off(); } };
+      mine.push(un);
+      return un;
+    },
+    send:     function(type, p, opts) {
+      if (gone) { late('send'); return false; }
+      return self.send(prefix + type, p, opts);
+    },
+    request:  function(type, p, opts) {
+      if (gone) { late('request'); return Promise.reject({ code: 'left', message: 'poignée du salon « ' + name + ' » déjà partie (leave()) : requête non envoyée' }); }
+      return self.request(prefix + type, p, opts);
+    },
+    // partie : un magasin qui ne reçoit rien, aucun abonnement
+    stream:   function(type, opts) {
+      if (gone) { late('stream'); return µ.state({}); }
+      return self.stream(prefix + type, opts);
+    },
+    presence: function() {
+      if (gone) { late('presence'); return µ.state({}); }
+      return self.presence(name);
+    },
+    // registre sans prototype : un salon nommé `toString` ou `constructor` n'y trouve pas de méthode héritée
+    onLeft:   function(fn) {
+      if (gone) { late('onLeft'); return; }
+      var c = self._mjs_onLeftCb || (self._mjs_onLeftCb = Object.create(null));
+      dropLeft();
+      (c[name] || (c[name] = [])).push(myLeft = fn);
+    },
+    // un 2e leave() de la même poignée (ex. double cleanup @destroy) ne décompte rien
     leave:    function() {
-      if (self._mjs_rooms[name]) {
-        delete self._mjs_rooms[name];
-        self._mjs_rawSend({ t: 'µ:leave', p: { room: name } });
-        // purge
-        // COMPLÈTE du salon (handlers, streams, présence, onLeft), pas seulement
-        // les handlers : sinon fuite mémoire (closures/stores retenus à vie sur
-        // le socket partagé) ET ré-abonnement du salon QUITTÉ à chaque
-        // reconnexion (_mjs_onWelcome ré-émet µ:sub-stream/µ:sub-presence). Cf.
-        // _mjs_purgeRoom (partagé avec le kick serveur _mjs_onLeft).
-        self._mjs_purgeRoom(name);
-        // join-optimiste — un leave() explicite avant toute réponse serveur rend
-        // l'éventuelle entrée FIFO de CE salon obsolète (la garde n'a plus rien à confirmer/refuser
-        // pour un salon déjà quitté côté client) : la laisser traîner ferait pop la MAUVAISE
-        // entrée si une erreur sans rapport arrive ensuite pour un AUTRE salon en attente.
-        self._mjs_forgetPendingJoin(name);
-      }
+      if (gone) { return; }
+      gone = true;
+      while (mine.length) { mine[0](); }
+      dropLeft();
+      if (self._mjs_rooms[name] !== held || --held.n > 0) { return; }
+      delete self._mjs_rooms[name];
+      self._mjs_rawSend({ t: 'µ:leave', p: { room: name } });
+      // purge
+      // COMPLÈTE du salon (handlers, streams, présence, onLeft), pas seulement
+      // les handlers : sinon fuite mémoire (closures/stores retenus à vie sur
+      // le socket partagé) ET ré-abonnement du salon QUITTÉ à chaque
+      // reconnexion (_mjs_onWelcome ré-émet µ:sub-stream/µ:sub-presence). Cf.
+      // _mjs_purgeRoom (partagé avec le kick serveur _mjs_onLeft).
+      self._mjs_purgeRoom(name);
     }
   };
+};
+
+// une poignée de discussion ou de hall ouverte pendant qu'un composant s'exécute (initialisation, µmount, effet — fonction
+// de magasin comprise : c'est le moment de l'appel qui compte) suit ce composant, comme µevery : fermée à sa destruction
+// (`fermer` rend false s'il n'y a rien à fermer), rouverte s'il revient dans la page (`ouvrir`). Fermée par l'appli
+// (`h._mjs_shut`), elle le reste ; ouverte hors de tout composant, rien ne change. Une partie ne suit pas le composant (cf.
+// mjs_game.ts)
+MjsSocket.prototype._mjs_ownHandle = function(h, fermer, ouvrir) {
+  var comp = µ.activeComponent, fin;
+  if (!comp || typeof comp._mjs_onDestroy !== 'function') { return; }
+  fin = function() {
+    comp._mjs_onDestroy(fin);
+    if (h._mjs_shut || fermer() === false) { return; }
+    (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(function() { if (!h._mjs_shut) { ouvrir(); } });
+  };
+  comp._mjs_onDestroy(fin);
 };
 
 MjsSocket.prototype._mjs_onLeft = function(msg) {
   var p = msg.p || {};
   delete this._mjs_rooms[p.room];
-  var cb = this._mjs_onLeftCb && this._mjs_onLeftCb[p.room];
-  if (cb) { try { cb(p.reason); } catch (e) {} }
+  // les rappels de TOUTES les poignées du salon, sur une copie : un rappel peut quitter sa poignée (leave() retire le sien)
+  var cbs = (this._mjs_onLeftCb && this._mjs_onLeftCb[p.room] || []).slice(), i;
+  for (i = 0; i < cbs.length; i++) { try { cbs[i](p.reason); } catch (e) {} }
   // kick serveur symétrique au
   // leave() client : purge streams/présence/handlers du salon (APRÈS le
   // callback, qui peut vouloir lire l'état une dernière fois). Sans ça, mêmes
@@ -1018,15 +1459,19 @@ MjsSocket.prototype._mjs_onLeft = function(msg) {
 // --- cycle de vie ---
 // fermeture volontaire = rien ne doit repartir : purge les envois `debounce`/`coalesce`
 // encore EN VOL (send() avec anti-rebond/regroupement) — appelée par close() ET destroy(),
-// jamais par _mjs_teardown() (coupure réseau involontaire : la file hors-ligne reste le
-// comportement voulu, cf. _mjs_teardown plus haut)
+// et aux fins d'identité (refus, adieu du serveur, session exclusive perdue : comme la file, ils
+// appartiennent à l'identité qui les a écrits), jamais par _mjs_teardown() (coupure réseau
+// involontaire : la file hors-ligne reste le comportement voulu, cf. _mjs_teardown plus haut).
+// Rend le nombre d'envois annulés, trames volatiles exclues (elles ne seraient jamais parties hors ligne)
 MjsSocket.prototype._mjs_cancelPending = function() {
+  var n = 0;
   var coal = this._mjs_coalesce;
-  for (var __ct in coal) { if (coal[__ct].timer) { clearTimeout(coal[__ct].timer); } }
-  this._mjs_coalesce = {};
+  for (var __ct in coal) { if (coal[__ct].timer) { clearTimeout(coal[__ct].timer); if (!coal[__ct].volatile) { n++; } } }
+  this._mjs_coalesce = Object.create(null);
   var deb = this._mjs_debounce;
-  for (var __dt in deb) { if (deb[__dt].timer) { clearTimeout(deb[__dt].timer); } }
-  this._mjs_debounce = {};
+  for (var __dt in deb) { if (deb[__dt].timer) { clearTimeout(deb[__dt].timer); if (!deb[__dt].volatile) { n++; } } }
+  this._mjs_debounce = Object.create(null);
+  return n;
 };
 
 MjsSocket.prototype.close = function(code, reason) {
@@ -1036,11 +1481,34 @@ MjsSocket.prototype.close = function(code, reason) {
   // request()/stream() après ce close() explicite rouvrait quand même une connexion brute. Seul un
   // connect() explicite (qui remet ce flag à false) reprend la main.
   this._mjs_abandoned = true;
+  // le close() de l'appli gagne toujours : aucune reconnexion du runtime (élévation d'un compte, retour en invité après
+  // un refus, cf. _mjs_reopen) ne rouvre ce qu'elle a fermé
+  this._mjs_closedByApp = true;
   if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
   this._mjs_teardown(true);           // fermeture volontaire = fin définitive → rejette les waitForOpen
   this._mjs_cancelPending();          // idem — un debounce/coalesce en vol ne doit pas ressusciter dans _mjs_queue après coup
   this._mjs_pendingOpenReqs = [];
+  // idem pour la file hors ligne : après une déconnexion de l'appli, un connect() sous une autre identité n'envoie pas
+  // les messages laissés par la précédente
+  this._mjs_queue = [];
+  this._mjs_queueOverflowWarned = false;
   this._mjs_setState('closed');
+};
+
+// reconnexion voulue par le runtime (élévation d'un compte, cf. mjs_accounts.ts) : le fil repart avec le nouvel `auth`
+// sans rien perdre de ce que l'appli attend — file hors ligne, requêtes qui attendent l'ouverture (chat:me,
+// lobby:enter…), salons et abonnements rejoués au welcome ; contrairement à close(), rien n'est abandonné — et jamais
+// après un close() de l'appli, qui gagne toujours (seul son connect() reprend la main). Une requête déjà partie sur le fil
+// quitté n'aura pas sa réponse : rejetée `unknown` (le serveur a pu la servir)
+MjsSocket.prototype._mjs_reopen = function() {
+  if (this._mjs_destroyed || this._mjs_closedByApp) { return; }
+  if (this._mjs_reconnectTimer) { clearTimeout(this._mjs_reconnectTimer); this._mjs_reconnectTimer = null; }
+  this._mjs_teardown(false, true);    // une requête déjà partie : résultat inconnu
+  this._mjs_abandoned     = false;
+  this._mjs_abandonWarned = false;
+  this._mjs_attempt       = 0;
+  this._mjs_wantOpen      = true;
+  this._mjs_open();
 };
 
 MjsSocket.prototype.destroy = function() {
@@ -1049,7 +1517,16 @@ MjsSocket.prototype.destroy = function() {
   if (this._mjs_refs && --this._mjs_refs > 0) { return; }
   this.close();
   this._mjs_destroyed = true;
-  if (µ._mjs_sockets[this.url] === this) { delete µ._mjs_sockets[this.url]; }
+  var key = this._mjs_key || this.url;
+  if (µ._mjs_sockets[key] === this) { delete µ._mjs_sockets[key]; }
+  // les effets en direct qui s'en servaient sans la retenir s'en détachent (et attendent la suivante)
+  var drops = this._mjs_fxDrops;
+  this._mjs_fxDrops = null;
+  if (drops) {
+    drops.forEach(function(d) {
+      try { d(); } catch (e) { µ.error('[µ.socket] ' + µ._mjs_txt('sockLiveEffect', null, 'effet en direct'), e); }
+    });
+  }
   // teardown incomplet : destroy() est
   // la fin de vie DÉFINITIVE (connect() refusera désormais tout, cf. sa garde
   // `if (this._mjs_destroyed) return`) — mais 2 restes pouvaient survivre au-delà :

@@ -9,7 +9,7 @@
 // Chaîne canonique DIRIGÉE + INJECTIVE — cf. lp()/sign()
 // ci-dessous (réimplémentation boîte noire, direction 'in') et startMockBack (direction 'out').
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -106,9 +106,9 @@ async function req(
 ): Promise<{ status: number; json: any }> {
   const bodyStr = body !== undefined ? JSON.stringify(body) : ''
   const ts      = override.ts ?? Math.floor(Date.now() / 1000)
-  const sig     = override.badSig ? '0'.repeat(64) : sign(override.secret ?? SECRET, method, path, bodyStr, ts, override.nonce)
-  const headers: Record<string, string> = { 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig }
-  if (override.nonce) headers['x-mjs-ws-nonce'] = override.nonce
+  const nonce   = override.nonce ?? randomBytes(16).toString('hex')   // neuf par défaut : le pont l'exige par défaut
+  const sig     = override.badSig ? '0'.repeat(64) : sign(override.secret ?? SECRET, method, path, bodyStr, ts, nonce)
+  const headers: Record<string, string> = { 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig }
   if (bodyStr) headers['content-type'] = 'application/json'
   const res  = await fetch('http://127.0.0.1:'+ port + path, { method, headers, body: bodyStr || undefined })
   const text = await res.text()
@@ -194,11 +194,12 @@ describe('MJS-WS — pont universel : signature HMAC-SHA256 anti-rejeu (vrai ser
     const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET } })
     const ts     = Math.floor(Date.now() / 1000)
     const signed = JSON.stringify({ type: 'x' })
-    const sig    = sign(SECRET, 'POST', '/broadcast', signed, ts)
+    const nonce  = randomBytes(16).toString('hex')
+    const sig    = sign(SECRET, 'POST', '/broadcast', signed, ts, nonce)
     const sentButDifferent = JSON.stringify({ type: 'y' })   // corps ENVOYÉ diffère du corps SIGNÉ
     const r = await fetch('http://127.0.0.1:'+ bridgePort +'/broadcast', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig },
+      headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig },
       body: sentButDifferent,
     })
     assert.equal(r.status, 401)
@@ -260,10 +261,11 @@ describe('MJS-WS — pont universel : chaîne canonique dirigée + injective', f
     const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET } })
     const ts      = Math.floor(Date.now() / 1000)
     const bodyStr = JSON.stringify({ type: 'x' })
-    const sig     = signCanonical(SECRET, canonicalString(ts, 'POST', '/broadcast', bodyStr, undefined, 'out'))
+    const nonce   = randomBytes(16).toString('hex')   // nonce présent : le refus tient à la direction seule
+    const sig     = signCanonical(SECRET, canonicalString(ts, 'POST', '/broadcast', bodyStr, nonce, 'out'))
     const r = await fetch('http://127.0.0.1:'+ bridgePort +'/broadcast', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig },
+      headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig },
       body: bodyStr,
     })
     assert.equal(r.status, 401)
@@ -292,7 +294,7 @@ describe('MJS-WS — pont universel : chaîne canonique dirigée + injective', f
   })
 })
 
-describe('MJS-WS — pont universel : nonce anti-rejeu (optionnel, ws.bridge.nonce)', function () {
+describe('MJS-WS — pont universel : nonce anti-rejeu (ws.bridge.nonce, actif par défaut)', function () {
   this.timeout(10000)
 
   it('nonce actif : requête signée+noncée → 200, la MÊME rejouée (même ts/sig/nonce) → 401 nonce-rejoué', async () => {
@@ -321,8 +323,8 @@ describe('MJS-WS — pont universel : nonce anti-rejeu (optionnel, ws.bridge.non
     await app.stop()
   })
 
-  it('nonce off (défaut) : comportement actuel INTACT — un rejeu dans la fenêtre ±300s reste accepté', async () => {
-    const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET } })
+  it('nonce: false : une requête sans nonce passe, et son rejeu dans la fenêtre ±300s aussi', async () => {
+    const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET, nonce: false } })
     const ts      = Math.floor(Date.now() / 1000)
     const bodyStr = JSON.stringify({ type: 'x' })
     const sig     = sign(SECRET, 'POST', '/broadcast', bodyStr, ts)
@@ -330,7 +332,7 @@ describe('MJS-WS — pont universel : nonce anti-rejeu (optionnel, ws.bridge.non
     const a = await fetch('http://127.0.0.1:'+ bridgePort +'/broadcast', { method: 'POST', headers, body: bodyStr })
     const b = await fetch('http://127.0.0.1:'+ bridgePort +'/broadcast', { method: 'POST', headers, body: bodyStr })
     assert.equal(a.status, 200)
-    assert.equal(b.status, 200, "option off (défaut) : la fenêtre ±300s seule gouverne, rejeu accepté — comportement historique documenté, inchangé")
+    assert.equal(b.status, 200, 'nonce: false : la fenêtre ±300s seule gouverne, rejeu accepté')
     await app.stop()
   })
 
@@ -351,7 +353,7 @@ describe('MJS-WS — pont universel : nonce anti-rejeu (optionnel, ws.bridge.non
   it('ws.bridge.nonce : clé inconnue avec typo → suggestion ; type invalide → erreur ; booléen valide accepté', () => {
     assert.throws(
       () => findConfig(writeConfig({ ws: { bridge: { noncee: true } } })),
-      /ws\.bridge\.noncee : clé inconnue — tu voulais dire 'nonce' \?/,
+      /ws\.bridge\.noncee : clé inconnue — vouliez-vous dire 'nonce' \?/,
     )
     assert.throws(
       () => findConfig(writeConfig({ ws: { bridge: { nonce: 'oui' } } })),
@@ -465,6 +467,7 @@ describe('MJS-WS — pont universel : endpoints (boucle complète, vrai client �
     // créé À LA VOLÉE par le tout premier appel HTTP (aucun app.stream() préalable côté code)
     const created = await req(bridgePort, 'POST', '/stream', { name: 'monde', op: 'add', id: 'a', value: { v: 1 } })
     assert.deepEqual(created.json, { ok: true })
+    app.stream('monde', { public: true })   // un flux né du pont n'est servi qu'une fois déclaré par le code (public ici)
 
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://br-stream', { reconnect: { backoff: [0], jitter: 0 } })
@@ -542,10 +545,10 @@ describe('MJS-WS — pont universel : webhooks sortants (mini-serveur node:http,
     const µ = makeClient(transport)
     const s = µ.socket('memory://br-wh-cycle', { auth: () => ({ uid: 'u1' }), reconnect: { enabled: false } })
     s.connect(); await tick()
-    s.room('zone'); await tick()
+    const zone = s.room('zone'); await tick()
     s.send('chat', { texte: 'yo' })
     await tick()
-    s.room('zone').leave(); await tick()
+    zone.leave(); await tick()   // le leave() de la poignée qui tient le salon (chaque room() en est une)
     await waitUntil(() => back.received.filter((m: any) => m.event !== 'disconnect').length >= 4, 4000)
     s.destroy()
     await waitUntil(() => back.received.some((m: any) => m.event === 'disconnect'), 4000)

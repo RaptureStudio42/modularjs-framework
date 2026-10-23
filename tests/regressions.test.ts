@@ -303,31 +303,31 @@ nom = => console.log('hi')
         /_mjs_filt \?\?= \{\}\)\['[a-z_0-9]+_active__\w+'\]/,
         'l\'entrée _mjs_filt de la classe filtrée doit être posée'
       )
-      assert.match(output, /__fe\.prev = curr/, 'le snapshot prev = curr doit être posé sur l\'entrée')
+      assert.match(output, /__fe\.prev = _mjs_curr/, 'le snapshot prev = curr doit être posé sur l\'entrée')
 
       // Pattern structurel attendu :
-      //   if (prev !== curr) {
-      //     const idx = __fe.idx;
-      //     if (idx) { ... }                   // bloc imbriqué
-      //     __fe.prev = curr;                  // AU MÊME niveau que if(idx)
+      //   if (_mjs_prev !== _mjs_curr) {
+      //     const _mjs_idx = __fe.idx;
+      //     if (_mjs_idx) { ... }              // bloc imbriqué
+      //     __fe.prev = _mjs_curr;             // AU MÊME niveau que if(_mjs_idx)
       //   }
-      // Critère : le `}` qui ferme `if (idx)` doit être suivi (avec espaces) de
-      // `__fe.prev = curr` — donc la fermeture de if(idx) précède l'assignation,
-      // et l'assignation est hors du if(idx).
+      // Critère : le `}` qui ferme `if (_mjs_idx)` doit être suivi (avec espaces) de
+      // `__fe.prev = _mjs_curr` — donc la fermeture de if(_mjs_idx) précède l'assignation,
+      // et l'assignation est hors du if(_mjs_idx).
       assert.match(
         output,
-        /\}\s*__fe\.prev = curr/,
-        "__fe.prev = curr DOIT suivre la fermeture de if(idx) (donc hors du if(idx))"
+        /\}\s*__fe\.prev = _mjs_curr/,
+        "__fe.prev = _mjs_curr DOIT suivre la fermeture de if(_mjs_idx) (donc hors du if(_mjs_idx))"
       )
 
-      // Garde-fou supplémentaire : `if (prev !== curr) {` doit précéder le
-      // `const idx = ` dans l'output (l'idx-lookup est dans le bloc prev/curr,
+      // Garde-fou supplémentaire : `if (_mjs_prev !== _mjs_curr) {` doit précéder le
+      // `const _mjs_idx = ` dans l'output (l'idx-lookup est dans le bloc prev/curr,
       // pas l'inverse comme avant le fix).
-      const idxOfPrev = output.indexOf('if (prev !== curr)')
-      const idxOfIdxLookup = output.indexOf('const idx = ', idxOfPrev)
+      const idxOfPrev = output.indexOf('if (_mjs_prev !== _mjs_curr)')
+      const idxOfIdxLookup = output.indexOf('const _mjs_idx = ', idxOfPrev)
       assert.ok(
         idxOfPrev >= 0 && idxOfIdxLookup > idxOfPrev,
-        "`const idx = ` doit apparaître APRÈS `if (prev !== curr) {` (ordre inversé par le fix)"
+        "`const _mjs_idx = ` doit apparaître APRÈS `if (_mjs_prev !== _mjs_curr) {` (ordre inversé par le fix)"
       )
     })
   })
@@ -405,7 +405,7 @@ nom = => console.log('hi')
       const deepJs = readFileSync(resolvePath('src/runtime/mjs_deep.ts'), 'utf-8')
       const elemJs = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
       const runesJs = readFileSync(resolvePath('src/runtime/mjs_runes.ts'), 'utf-8')
-      const rareRunesJs = readFileSync(resolvePath('src/runtime/mjs_rare_runes.ts'), 'utf-8')
+      const rareRunesJs = readFileSync(resolvePath('src/runtime/mjs_rare_runes.ts'), 'utf-8') + '\n' + readFileSync(resolvePath('src/runtime/mjs_inspect.ts'), 'utf-8')
       const setup = `
         class HTMLElement {
           constructor() {}
@@ -711,7 +711,8 @@ nom = => console.log('hi')
       for (const t of ['t2', 't3', 't4']) {
         assert.match(
           branchExec,
-          new RegExp(`if \\(_c_if1 === \\d\\) \\{ \\{ this\\._mjs_updText\\('${t}'`),
+          // une mise à jour jumelle d'un effet n'est rejouée qu'à la (re)création de la branche : `if (_mjs_nb) { … }`
+          new RegExp(`if \\(_c_if1 === \\d\\) \\{ (?:\\{|if \\(_mjs_nb\\) \\{) this\\._mjs_updText\\('${t}'`),
           `le branchExec doit contenir l'init de ${t}`
         )
       }

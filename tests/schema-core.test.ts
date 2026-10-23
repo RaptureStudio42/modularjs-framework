@@ -115,8 +115,8 @@ describe('schema/core — µschema (registre pur, aucune API node/navigateur)', 
 
   it('9. champ de type inconnu → throw AVEC suggestion (faute de frappe proche)', () => {
     const r = creerRegistre()
-    assert.throws(() => defSchema(r, 'x', { n: 'u9' as any }), /tu voulais dire 'u8'/)
-    assert.throws(() => defSchema(r, 'y', { s: 'sttr8' as any }), /tu voulais dire 'str8'/)
+    assert.throws(() => defSchema(r, 'x', { n: 'u9' as any }), /vouliez-vous dire 'u8'/)
+    assert.throws(() => defSchema(r, 'y', { s: 'sttr8' as any }), /vouliez-vous dire 'str8'/)
     assert.throws(() => defSchema(r, 'z', { q: 'zzzzzzzzzz' as any }), /type inconnu/)
   })
 

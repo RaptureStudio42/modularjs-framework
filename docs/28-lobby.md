@@ -3,7 +3,7 @@
 > **Module optionnel.** Le paquet Lobby compose un hall d'accueil — qui est en ligne (avec statut),
 > s'inviter, annoncer une table/partie ouverte et la rejoindre en un clic — par-dessus
 > [23 · MJS-WS](23-mjs-ws.md), sans le modifier, via le mécanisme des paquets activables (`app.use`).
-> Tant que tu n'appelles pas `app.use(lobbyPackage(...))`, son coût est **nul**.
+> Tant que vous n'appelez pas `app.use(lobbyPackage(...))`, son coût est **nul**.
 
 ```ts
 // serveur — TypeScript classique (lobbyPackage est une simple composition app.use(), comme
@@ -129,7 +129,10 @@ bas niveau).
 | `noteMaxLength` | `200` | Longueur max de la note d'invitation — **non imposée par une spécification externe**, valeur par défaut retenue. |
 | `listingTitleMaxLength` | `80` | Longueur max du titre d'une annonce. Au-delà : `lobby-title-invalid`. |
 | `listingCodeMaxLength` | `40` | Longueur max du code d'une annonce — **idem, défaut retenu**. Au-delà : **tronqué**, jamais un refus. |
+| `listingMetaMaxLength` | `2000` | Taille max de `meta` une fois écrit en JSON, en caractères. Au-delà, ou valeur qui ne s'écrit pas en JSON : `lobby-meta-invalid`. |
+| `listingRate` | `{ rate: 6/60, burst: 6 }` | Seau à jetons **par identité** pour annoncer ou mettre à jour une table ≈ 6 par minute, comme `invitationRate`. Au-delà : `lobby-rate`. |
 | `listingTtlMs` | `300000` (5 min) | Durée de vie d'une annonce. |
+| `blockedMax` | `256` | Plafond de blocages gardés **par identité**, tous halls confondus (cf. [§7](#invitations)). Au-delà : `lobby-block-limit`, sans autre sanction. Un entier ≥ 1 : toute autre valeur (`0`, `2.5`, `'10'`, `NaN`, `Infinity`, `null`) fait lever `lobbyPackage()` dès sa construction. |
 | `moderators` | absent | `(identity) => bool` — réservé au retrait de l'annonce d'un **autre** ([§8](#annonces)). |
 | `onJoin` | absent | `(ctx) => …` — hook d'appariement (cf. [§8](#annonces)), best-effort. |
 | `onLog` | console, préfixe `[mjs-ws:lobby]` | Utilisé **uniquement** si `onJoin` lève. |
@@ -161,16 +164,22 @@ vip  = sock.lobby('vip')              # hall nommé — n'importe quel nom rejoi
 | `advertise({title, code?, seats?, meta?})` | fonction | 1 annonce active par identité (la nouvelle remplace l'ancienne) — **fire-and-forget**. |
 | `withdraw(id?)` | fonction | Sans argument : retire SA **propre** annonce. |
 | `join(listing)` | fonction | `listing` = un id OU l'objet annonce lui-même — **fire-and-forget**. |
-| `block(identityId)` | fonction | Ignore silencieusement les invitations futures de cette identité (session). |
-| `close()` | fonction | Quitte le hall (`µ:leave`) et purge le store local (minuteurs compris). |
+| `block(identityId)` | fonction | Ignore silencieusement les invitations futures de cette identité, tant que vous restez dans le hall (cf. [§7](#invitations)). |
+| `close()` | fonction | Quitte le hall (`µ:leave`, sauf si une autre poignée du même hall reste ouverte) et coupe les minuteurs d'expiration des invitations et des annonces ; ce que le store montre déjà reste en place. |
 
 > ⚠️ **`applicants`/`replies` vont au-delà du store minimal envisagé au
 > départ** (`{members, me, status, invitations, invite, reply, listings, advertise, withdraw,
 > join, block, close}`) : sans eux, `lobby:applicant` (« untel veut rejoindre **ma** table ») et
 > `lobby:replied` (« untel a répondu à **mon** invitation ») resteraient invisibles depuis `sock.lobby()`
 > — même raison d'être que `remove`/`mute` ajoutés par `sock.chat` ([26 · Chat §4](26-chat.md#le-client)).
-> Tableaux qui s'accumulent (aucune notion de « lu » en v1) — vide-les toi-même si besoin
+> Tableaux qui s'accumulent (aucune notion de « lu » en v1) — videz-les vous-même si besoin
 > (`hall.applicants = []`).
+
+### Plusieurs poignées, dans un composant
+
+Chaque `sock.lobby(hall)` est une poignée indépendante ; deux poignées du même hall partagent la même entrée dans le salon `lobby:<hall>`, qui compte ses poignées : fermer l'une ne quitte le hall qu'au départ de la dernière.
+
+Ouverte pendant qu'un composant s'exécute — son code d'initialisation, son `µmount`, un de ses effets —, la poignée est rattachée à ce composant, y compris quand l'appel passe par une fonction d'un magasin ou d'un module appelée depuis là (c'est le moment de l'appel qui compte, pas l'endroit où le code est écrit). Elle le suit, comme `µevery` : à la destruction du composant, elle se ferme (hall quitté, expirations des invitations et des annonces coupées) ; s'il revient dans la page, elle se rouvre — hall rejoint de nouveau, `lobby:enter` redemandé (`me` et `members` à jour), invitations et annonces gardées avec leur expiration reposée (celle qui a expiré pendant la fermeture disparaît aussitôt). Fermée par `close()`, elle le reste. Ouverte hors de tout composant (au chargement d'un module, à l'initialisation de l'appli, dans un gestionnaire d'événement), elle n'est rattachée à rien : `close()` reste à appeler.
 
 ### Erreurs — `sock.lastError`
 
@@ -240,9 +249,25 @@ hall.invite(unAutrePresentId, 'viens jouer')   # note optionnelle, ≤ 200 carac
 **Blocage.** `hall.block(identityId)` — les invitations futures de cette identité sont ensuite
 ignorées **silencieusement** : l'émetteur ne voit **aucune différence** de comportement (pas
 d'erreur, pas de confirmation distincte) que sa cible l'ait bloqué ou non — impossible de sonder si
-on a été bloqué. Mémoire **session/process**, même limite v1 que le muet du chat
-([26 · Chat §7](26-chat.md#limites)) : redémarrage, ou reconnexion sur un autre processus (cluster),
-efface le blocage.
+on a été bloqué.
+
+- **On ne bloque qu'une personne présente dans le hall.** Une identité absente : `lobby-away`, comme pour
+  une invitation (elle ne peut de toute façon vous inviter qu'une fois entrée). Un identifiant de plus de
+  128 caractères : `lobby-block-invalid`.
+- **Un blocage dure tant que la personne qui bloque reste dans le hall.** Quand sa dernière connexion le
+  quitte (`close()`, expulsion, déconnexion), ses blocages de ce hall sont oubliés. Ils vivent dans la
+  mémoire du processus, même limite v1 que le muet du chat ([26 · Chat §7](26-chat.md#limites)) : un
+  redémarrage, ou une reconnexion sur un autre processus (cluster), les efface aussi.
+- **Le nombre de blocages a un plafond : `blockedMax`, 256 par défaut** ([§3](#options)), compté par identité,
+  **tous halls confondus**. Au-delà, la demande est refusée (`lobby-block-limit`) et rien n'est gardé, sans
+  autre sanction : ni expulsion, ni mise au banc. Rebloquer une identité déjà bloquée ne compte pas ; les
+  blocages d'un hall quitté ne comptent plus.
+- **Pourquoi un plafond : la mémoire du serveur.** Chaque blocage est un identifiant que le serveur garde en
+  mémoire ; le plafond borne ce qu'une seule identité peut lui faire retenir, quels que soient le nombre de
+  halls et le nombre de présents.
+- **Le débit des messages est déjà borné, pour toute trame.** `limits.rate` / `limits.burst` du serveur
+  (40 par seconde, rafale de 80, par défaut — [23 · MJS-WS §3](23-mjs-ws.md#protections)) valent pour
+  `lobby:block` comme pour toute autre trame : le hall n'ajoute pas de débit propre aux blocages.
 
 ---
 
@@ -278,7 +303,7 @@ appariement de partie :
 
 ```ts
 import { mjsWs, lobbyPackage } from 'modularjs-framework/ws'
-import { mjsServer } from 'modularjs-framework/mjs-server'   // module jeu — importé par TON appli, pas par lobby.ts
+import { mjsServer } from 'modularjs-framework/mjs-server'   // module jeu — importé par VOTRE appli, pas par lobby.ts
 
 const app = mjsServer(mjsWs({ auth }))
 
@@ -304,15 +329,17 @@ de ce paquet.
 - **Présence riche = agrégation maison, pas un registre réinventé.** L'appartenance au hall (qui est
   réellement connecté) reste intégralement gouvernée par `app.room('lobby:' + hall)` (MJS-WS) ; ce
   paquet n'ajoute qu'une couche de métadonnées (statut/texte/depuis) par-dessus, tenue à jour à
-  `lobby:enter` et nettoyée au balayage opportuniste — cf. le point suivant pour le délai que ça
-  implique.
-- **Un départ met jusqu'à ~50 actions lobby (tout le paquet confondu) à être signalé aux autres.**
-  Comme les seaux de débit du chat ([26 · Chat §7](26-chat.md#limites)), aucun hook « connexion
-  fermée » n'est accessible depuis un paquet composé sur l'API publique : la disparition de
-  `.members`/`.listings` chez les **autres** clients (`lobby:left`/`lobby:withdrawn`) est détectée au
-  balayage opportuniste, pas instantanément. La présence **réelle** (côté serveur, pour l'autorisation)
-  reste, elle, toujours exacte (`app.room().clients`) — seule la **propagation** aux autres clients a ce
-  délai.
+  `lobby:enter` et nettoyée au départ du salon du hall, avec le balayage opportuniste en filet — cf. le point
+  suivant.
+- **Un départ est signalé aux autres aussitôt.** Quand la dernière connexion d'une identité quitte le salon
+  du hall (`µ:leave`, expulsion, déconnexion), les autres membres reçoivent `lobby:left` (et `lobby:withdrawn`
+  pour son annonce) sur-le-champ ; une identité qui garde un autre onglet dans le hall reste présente. Le
+  balayage opportuniste (toutes les ~50 actions lobby de membres, tout le paquet confondu) reste en filet :
+  seule compte l'action d'un membre du hall visé, la trame refusée d'un client qui n'en est pas membre
+  (`lobby-denied`) ne le fait jamais avancer, et il lit les connexions de chaque hall une seule fois (son coût
+  suit membres + connexions, jamais leur produit). En multi-processus, une identité encore connectée au hall
+  sur un autre process n'est annoncée partie ici qu'à ce balayage. La présence **réelle** (côté serveur, pour
+  l'autorisation) reste toujours exacte (`app.room().clients`).
 - **« Action » = une action lobby qui réussit sa validation.** Un rejet (débit, forme invalide) ne
   réarme pas le seuil d'absence auto — simplification assumée (cf. [§6](#absent-auto)) : le paquet ne
   peut pas observer un horodatage de trame bas niveau, contrairement au watchdog de silence interne
@@ -320,7 +347,7 @@ de ce paquet.
 - **Blocage et anti-force-brute des invitations sont en mémoire process, non répliqués.** Comme la
   modération du chat et l'anti-force-brute des comptes — un déploiement multi-processus ne partage ni
   les blocages, ni les seaux de débit entre processus.
-- **`onJoin` ne fait aucune vérification de cohérence pour toi.** Places restantes, double
+- **`onJoin` ne fait aucune vérification de cohérence pour vous.** Places restantes, double
   candidature, annonce déjà pleine… tout ça reste à la charge de l'appli hôte dans son propre hook
   — le paquet se contente de notifier et de transmettre.
 - **Pas de page de démonstration dédiée** sur le site vitrine — laissé à une
@@ -341,12 +368,14 @@ de ce paquet.
 | `lobby-denied` | Pas membre du hall, action avant `lobby:enter`, ou retrait d'annonce ni propriétaire ni modérateur. |
 | `lobby-status-invalid` | `status` absent/hors énumération `free\|busy\|away`. |
 | `lobby-text-invalid` | Texte de statut OU note d'invitation non-chaîne ou trop longue. |
-| `lobby-rate` | Débit de changement de statut (1/5 s) OU d'envoi d'invitations (≈ 6/min) épuisé. |
+| `lobby-rate` | Débit de changement de statut (1/5 s), d'envoi d'invitations (≈ 6/min) OU d'annonce de tables (≈ 6/min, `listingRate`) épuisé. |
 | `lobby-self-invite` | Tentative de s'inviter soi-même. |
-| `lobby-away` | Identité invitée non présente dans CE hall. |
+| `lobby-away` | Identité invitée, ou à bloquer, non présente dans CE hall. |
 | `lobby-invitation-unknown` | Invitation inconnue, expirée, ou qui n'est pas la mienne (anti-énumération). |
 | `lobby-title-invalid` | Titre d'annonce absent/vide/trop long (> 80 par défaut). |
 | `lobby-listing-unknown` | Annonce inconnue, expirée, ou aucune annonce active à retirer sans id. |
+| `lobby-block-invalid` | Identité à bloquer de plus de 128 caractères. |
+| `lobby-block-limit` | Plafond `blockedMax` (256 par défaut) déjà atteint pour cette identité, tous halls confondus (un blocage neuf de plus) — refus seul, sans autre sanction. |
 
 ### Le protocole `lobby:*` — préfixe de convention, pas une réservation
 
@@ -374,8 +403,9 @@ possibles avec le **même** paquet installé une seule fois.
 | `lobby:block` | CLIENT→SERVEUR (fire-and-forget) | `{hall?, identityId}` |
 
 Identité — `from.id`/`from.name` sont toujours résolus depuis `client.identity` (duck-typé
-`{id, ...meta}`) : `name` = `identity.name`, repli l'id lui-même. Rien de
-tout ceci ne peut être usurpé depuis la charge du client.
+`{id, ...meta}`) : `name` = `identity.name`, repli l'id lui-même. Un visiteur sans compte a pour id
+(`.me.id`, `from.id`, `invite`, `block`) `anon:` suivi de son id de connexion — jamais confondu avec un
+compte qui porterait cet id. Rien de tout ceci ne peut être usurpé depuis la charge du client.
 
 ---
 

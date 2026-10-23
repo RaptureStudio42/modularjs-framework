@@ -15,11 +15,13 @@ import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'animations', 'typewriter.ts'), 'utf-8')
 
 function loadFactory(µMock: any) {
+  poserMessages(µMock)
   return new Function('µ', 'return (' + SRC.trim().replace(/;\s*$/, '') + ')')(µMock)
 }
 
@@ -50,7 +52,7 @@ describe('animations/typewriter.ts — contrat "unique nœud texte"', function (
     const { intro } = factory({ speed: 1 })
     assert.throws(
       () => intro(node),
-      (e: any) => e instanceof Error && e.message === '@transition.typewriter exige un unique nœud texte',
+      (e: any) => e instanceof Error && e.message === '*typewriter exige un unique nœud texte',
       'doit lever une Error avec EXACTEMENT ce message',
     )
     assert.equal(node.outerHTML, '<p>Bonjour <b>Monde</b> !</p>', 'le markup ne doit PAS avoir été touché avant le throw')
@@ -94,7 +96,7 @@ describe('animations/typewriter.ts — contrat "unique nœud texte"', function (
     const warned: any[] = []
     const node = win.document.createElement('p')
     // Reproduit EXACTEMENT la forme posée par le compilateur pour :
-    //   <p @in.typewriter={...}>
+    //   <p @in=*typewriter(…)>
     //     {messages[$i] or ''}
     //   </p>
     // — 3 nœuds texte SÉPARÉS (indentation avant / interpolation / indentation
@@ -129,6 +131,7 @@ describe('animations/typewriter.ts — contrat "unique nœud texte"', function (
   it('intégration — via µ._mjs_runTransition : le throw de setup() devient un µ.warn + node visible (markup jamais détruit)', async function () {
     ;(globalThis as any).µ = (globalThis as any).µ || {}
     const µ: any = (globalThis as any).µ
+    poserMessages(µ)
     µ.Ticker = µ.Ticker || { add() {} }
     µ._mjs_interpolatorSet = µ._mjs_interpolatorSet || new WeakSet()
     µ.anim = µ.anim || {}
@@ -152,14 +155,14 @@ describe('animations/typewriter.ts — contrat "unique nœud texte"', function (
 })
 
 // Test d'intégration : compilation RÉELLE (Bundler) des
-// deux formes documentées de @in.typewriter, sur un VRAI re-rendu ({key} + bump —
+// deux formes documentées de @in=*typewriter, sur un VRAI re-rendu ({key} + bump —
 // le 1er rendu n'anime jamais, doc l.166-168). AVANT le fix : la forme multi-
 // lignes (doc l.225-231) déclenchait le warn et l'intro n'animait PAS
 // caractère par caractère (setup() levait, la transition s'abandonnait en
 // laissant le texte complet visible d'un coup — un fallback qui ressemble à
 // une réussite si on ne regarde QUE le texte final, d'où l'assertion sur
 // warned.length ET sur l'état EN PLEIN VOL, pas seulement sur l'état final).
-describe('animations/typewriter.ts — usages documentés de @in.typewriter, sur un VRAI re-rendu (intégration)', function () {
+describe('animations/typewriter.ts — usages documentés de @in=*typewriter, sur un VRAI re-rendu (intégration)', function () {
   this.timeout(40000)
 
   const stripEsm = (s: string) => s
@@ -199,6 +202,9 @@ describe('animations/typewriter.ts — usages documentés de @in.typewriter, sur
     window.µ.warn = (...a: any[]) => warned.push(a)
     document.body.innerHTML = `<mjs-${name}></mjs-${name}>`
     const el = document.body.firstElementChild
+    // le montage peut prendre plus de 80 ms sur une machine chargée : on attend le bouton
+    for (let n = 0; n < 150 && !(el._shadow || el).querySelector?.('#bump'); n++) await new Promise((r) => setTimeout(r, 20))
+    // … puis la fin du premier rendu, qui n'anime jamais
     await new Promise((r) => setTimeout(r, 80))
     const bumpBtn = (el._shadow || el).querySelector('#bump')
     assert.ok(bumpBtn, 'bouton bump introuvable')
@@ -206,10 +212,14 @@ describe('animations/typewriter.ts — usages documentés de @in.typewriter, sur
     await new Promise((r) => setTimeout(r, 5))
     const pMidFlight = (el._shadow || el).querySelector('p')
     const midFlightText = pMidFlight ? pMidFlight.textContent : null
-    await new Promise((r) => setTimeout(r, 400))
+    // la frappe dure 50 ms ; sur une machine chargée, on laisse jusqu'à 3 s pour qu'elle finisse
+    for (let n = 0; n < 150 && !/Salut/.test((el._shadow || el).querySelector('p')?.textContent ?? ''); n++) await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 50))
     const pFinal = (el._shadow || el).querySelector('p')
+    const finalText = pFinal ? pFinal.textContent : null
+    // lu avant close() : la fermeture est réelle, le document fermé n'a plus de texte
     window.close?.()
-    return { warned, midFlightText, finalText: pFinal ? pFinal.textContent : null }
+    return { warned, midFlightText, finalText }
   }
 
   it('forme COMPACTE (doc l.181) — sur re-rendu : 0 warn, texte final correct (non-régression)', async function () {
@@ -219,7 +229,7 @@ describe('animations/typewriter.ts — usages documentés de @in.typewriter, sur
       "$messages = ['Bonjour', 'Salut']",
       '</script>',
       '{key $i}',
-      "  <p @in.typewriter={speed: 10}>{$messages[$i] or ''}</p>",
+      "  <p @in=*typewriter(speed: 10)>{$messages[$i] or ''}</p>",
       '{end}',
       '<button id="bump" @click={$i = 1}>bump</button>',
     ].join('\n')
@@ -235,7 +245,7 @@ describe('animations/typewriter.ts — usages documentés de @in.typewriter, sur
       "messages = ['Bonjour', 'Salut']",
       '</script>',
       '{key $i}',
-      '  <p @in.typewriter={speed: 10}>',
+      '  <p @in=*typewriter(speed: 10)>',
       "    {messages[$i] or ''}",
       '  </p>',
       '{end}',

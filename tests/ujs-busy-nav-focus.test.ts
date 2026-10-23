@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -58,7 +59,9 @@ function installNavDispatch(µ: any, win: any = {}, doc: any = {}, DOMParser: an
       return µ.ajax[m] && µ.ajax[m](opts.url, opts.data, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
     }
   }
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock())(µ, doc, win)
+  poserMessages(µ)
   new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, class {}, DOMParser)
 }
 
@@ -265,6 +268,7 @@ describe('mjs_ujs — µnav (état de navigation réactif)', function () {
 describe('mjs_ujs — abandon réel des requêtes de navigation (AbortController)', function () {
   it('_mjs_abortStaleNav : la 2e navigation abandonne le controller de la 1re, en fournit un NOUVEAU non aborted', function () {
     const µ: any = {}
+    poserMessages(µ)
     new Function('µ', extractAbortStaleNavStatement())(µ)
 
     const c1 = µ._mjs_abortStaleNav()
@@ -287,6 +291,7 @@ describe('mjs_ujs — abandon réel des requêtes de navigation (AbortController
     // _mjs_navDispatch délègue l'abandon à µ._mjs_abortStaleNav — l'installer d'abord
     // (sans lui, `typeof µ._mjs_abortStaleNav === 'function'` est faux → signal
     // toujours undefined, cf. garde défensive de _mjs_navDispatch).
+    poserMessages(µ)
     new Function('µ', extractAbortStaleNavStatement())(µ)
     installNavDispatch(µ, win)
 
@@ -313,6 +318,7 @@ describe('mjs_ajax — _request : abandon par signal externe = chemin SILENCIEUX
         reject(err)
       })
     })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let errorCalled = false, successCalled = false
@@ -330,6 +336,7 @@ describe('mjs_ajax — _request : abandon par signal externe = chemin SILENCIEUX
     const fakeFetch = (_url: string, opts: any) => new Promise((_mjs_resolve, reject) => {
       opts.signal.addEventListener('abort', () => { const err: any = new Error('aborted'); err.name = 'AbortError'; reject(err) })
     })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let capturedErr: any
@@ -342,6 +349,7 @@ describe('mjs_ajax — _request : abandon par signal externe = chemin SILENCIEUX
 
 describe('mjs_ujs — focus après swap (accessibilité)', function () {
   function installFocusHelpers(µ: any) {
+    poserMessages(µ)
     new Function('µ', extractFocusHelpersStatement())(µ)
   }
 

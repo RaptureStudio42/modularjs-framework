@@ -69,10 +69,10 @@ describe('voie AST rewriteMuImportAst (sigils.ts) — unitaire, sur du JS déjà
     )
   })
 
-  it("µimport('style.css') (extension non .js) → throw rune-import-extension-js", () => {
+  it("µimport('style.css') (extension qui n'est pas un module) → throw rune-import-extension", () => {
     assert.throws(
       () => rewriteMuImportAst(`x = µimport('style.css')`, '<script>'),
-      /\[ModularJS\] µimport ne charge que des modules ES « \.js » .*style\.css/
+      /\[ModularJS\] µimport ne charge qu'un module .*« \.js ».*« \.civet ».*« \.coffee ».*style\.css/
     )
   })
 

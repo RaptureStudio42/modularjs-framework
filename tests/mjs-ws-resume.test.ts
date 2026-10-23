@@ -147,7 +147,7 @@ describe('MJS-WS — reprise de session (boucle complète, vrai client µ.socket
     const { transport, app } = await startApp({ resume: true, onLog: () => {} })
     const recu: any[] = []
     wireWebSocket(transport, { 'memory://s4': { in: recu } })
-    const monde = app.stream('monde')
+    const monde = app.stream('monde', { public: true })
     const µ = makeMu(); const s = µ.socket('memory://s4', { reconnect: { backoff: [50], jitter: 0 } })
     s.connect()
     const $$m = s.stream('monde')
@@ -233,7 +233,7 @@ describe('MJS-WS — reprise de session (boucle complète, vrai client µ.socket
   })
 
   it('7. expiration de la grâce sans retour : leave de présence émis À CE MOMENT (pas avant), session morte, retour ensuite = frais', async () => {
-    const { transport, app } = await startApp({ resume: { grace: 120 }, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {} })
+    const { transport, app } = await startApp({ resume: { grace: 120 }, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {}, presence: 'public' })   // présence globale ouverte (fermée par défaut)
     const recuA: any[] = []; const recuO: any[] = []
     wireWebSocket(transport, { 'memory://s7a': { in: recuA }, 'memory://s7o': { in: recuO } })
     const µA = makeMu(); const sA = µA.socket('memory://s7a', { auth: () => ({ uid: 'a' }), reconnect: { backoff: [300], jitter: 0 } })   // backoff > grâce : il reviendra APRÈS l'expiration

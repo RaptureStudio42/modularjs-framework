@@ -11,12 +11,14 @@ import { fileURLToPath } from 'node:url'
 import {
   creerRegistre, defSchema, encode, hashRegistre, serialiserDefinitions, chargerDefinitions,
 } from '../src/schema/core.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const schemaSrc = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 function makeµ(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', schemaSrc)(µ)
   return µ
 }

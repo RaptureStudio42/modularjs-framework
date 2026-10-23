@@ -38,13 +38,13 @@ Le revers : il ne peut voir que ce qui est **écrit dans le binding**. Si la don
 
 **Symptôme** : `$todos[0].fait = true` re-rend normalement le `{for}` (réactivité profonde, path-tracking compile-time) — mais une mutation faite **après que l'objet a transité par une fonction externe non trackée**, ou sur un **alias réassigné**, ne déclenche rien.
 
-**Cause** : MJS suit à la **compilation** les alias de `$x` dans la portée du `<script>` et réécrit chaque mutation profonde reconnue en appel direct au runtime (`µ._mjs_deepSet`/`µ._mjs_deepCall`) — pas de Proxy sur le chemin nominal. Le suivi est délibérément **conservateur** : un nom devient « intraçable » (jamais traité comme alias) s'il est réassigné en dur (`t = {}`), paramètre de fonction, ou déclaré plus d'une fois — perdre le tracking d'un alias réassigné est préférable à corrompre l'état. Pour les échappements courants (appel de fonction externe, `.push` d'un alias…), le compilateur pose automatiquement un **Proxy ciblé** de secours à la frontière — la réactivité reste donc préservée dans l'immense majorité des cas, y compris échappés.
+**Cause** : MJS réécrit à la **compilation** chaque mutation profonde écrite sur le `$` lui-même (`$todos[0].fait = true`) en appel direct au runtime (`µ._mjs_deepSet`/`µ._mjs_deepCall`) — pas de Proxy sur ce chemin. Une variable qui garde un objet de l'état (`t = $todos[0]`) tient l'**enveloppe réactive** de cet objet : ce qu'elle écrit va dans cet objet-là, même si `$todos` change entre-temps, et prévient tout ce qui l'affiche. Réassignée en dur (`t = { ...t }`, `t = {}`), elle ne tient plus l'objet de l'état : ce qu'elle écrit ensuite ne regarde plus que sa copie. Pour les échappements courants (appel de fonction externe, `.push` d'un alias…), le compilateur pose automatiquement un **Proxy ciblé** de secours à la frontière — la réactivité reste donc préservée dans l'immense majorité des cas, y compris échappés.
 
 ```html
 <script>
   $todos = [{ fait: false, texte: 'a' }]
 
-  # ✓ réactif — alias direct, suivi à la compilation :
+  # ✓ réactif — écrit sur le $ lui-même, réécrit à la compilation :
   cocher = -> $todos[0].fait = true
 
   # ⚠️ cas limite — alias RÉASSIGNÉ en dur avant mutation :
@@ -57,7 +57,9 @@ Le revers : il ne peut voir que ce qui est **écrit dans le binding**. Si la don
 <ul>{for t in $todos}<li>{t.texte} — {t.fait}</li>{end}</ul>
 ```
 
-**Solution** : dans le doute (alias qui transite par un helper externe complexe, structure de contrôle inhabituelle), **réaffecte la variable racine** (`$todos = $todos.map(...)`) — la réassignation est toujours reconnue sans ambiguïté. Pour une donnée que tu remplaces *systématiquement* en bloc plutôt que de muter, utilise `µraw` ([État brut](11-etat-brut.md)) — c'est la seule forme d'état où la réaffectation est **obligatoire**, jamais suivie même en profondeur.
+**Solution** : dans le doute (alias qui transite par un helper externe complexe, structure de contrôle inhabituelle), **réaffectez la variable racine** (`$todos = $todos.map(...)`) — la réassignation est toujours reconnue sans ambiguïté. Pour une donnée que vous remplacez *systématiquement* en bloc plutôt que de muter, utilisez `µraw` ([État brut](11-etat-brut.md)) — c'est la seule forme d'état où la réaffectation est **obligatoire**, jamais suivie même en profondeur.
+
+**Le magasin `$$x` n'a pas ce filet** : un `$$x` (ou un chemin dedans) donné en argument à une fonction qui l'écrit de son côté ne redessine rien — surtout quand la fonction vient d'un module `.js`, que MJS copie tel quel sans jamais le réécrire. Le build le signale (`reactivity`) quand la fonction du `.js` écrit directement dans le paramètre qui reçoit le magasin ; il ne voit pas une écriture faite plus loin par une autre fonction. La règle et les voies sûres sont dans [Stores — règle d'aliasing](14-stores.md#sous-le-capot-depuis-la-statisation).
 
 ## 3. Nommage des fichiers — kebab-case obligatoire
 
@@ -103,6 +105,8 @@ Le `<script>` d'un composant est écrit en **Civet** (dialecte proche de Coffee/
 
 > ⚠️ Rappel de style : dans le code MJS, on utilise la flèche **`->`** (style Coffee) ; `=>` n'est réservé qu'aux cas où la liaison de `this` est nécessaire (typiquement un `µeffect` qui doit toucher le composant via `@`).
 
+> ⚠️ **Flèche sur une ligne qui affecte un `if … then … else`.** Dans le `<script>` comme dans le `<script module>`, `f = => x = if a then 'b' else 'c'` (de même avec `unless`, `switch`, `try`, `for` ou `while`) est refusé à la compilation : Civet compile cette forme en JavaScript invalide, et le message le dit, avec la ligne produite. Mettez la valeur entre parenthèses (`f = => x = (if a then 'b' else 'c')`), ou écrivez le corps de la flèche à la ligne suivante, indenté.
+
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi pas les backticks, j'en fais en JS&nbsp;?</summary>
 
@@ -114,7 +118,7 @@ Les backticks compilent en réalité tout aussi bien (Civet les laisse passer te
 
 ## 5. Footguns de cast — la position du suffixe compte
 
-**Symptôme** : tu places le suffixe de cast après le `=!` → **le compilateur s'arrête** avec un message clair : *« Liaison two-way mal formée… le suffixe va sur le NOM de l'attribut »*.
+**Symptôme** : vous placez le suffixe de cast après le `=!` → **le compilateur s'arrête** avec un message clair : *« Liaison two-way mal formée… le suffixe va sur le NOM de l'attribut »*.
 
 **Cause** : le suffixe de cast doit être collé **au nom de l'attribut**, *avant* `=!`. Placé après le `=!`, il ne fait pas partie d'une liaison valide.
 
@@ -193,7 +197,7 @@ Feuille externe (Google Fonts…) : même principe, avec un `<link>` au lieu d'u
 
 Trois outils, tous **dev-only** (aucun ne doit rester dans du code livré tel quel — les appels `µdebug`/`console.*` sont retirés à la minification en prod) :
 
-**`µdebug $x`** — point d'arrêt **réactif** : sucre pur, réécrit en effet qui `console.log` la valeur **et** pose un `debugger;` à **chaque** changement de `$x`.
+**`µdebug $x`** — point d'arrêt **réactif** : sucre pur, réécrit en reffet qui `console.log` la valeur **et** pose un `debugger;` à **chaque** changement de `$x`.
 
 ```html
 <script>
@@ -240,7 +244,7 @@ Trois outils, tous **dev-only** (aucun ne doit rester dans du code livré tel qu
 
 **Solution** : MJS refuse ces deux formes à la compilation (message explicite qui cite `isnt` et précise « identifiant réservé ») — renommez (`isnt_`, `estPas`…). L'opérateur `a isnt b` reste, lui, disponible sans restriction.
 
-> 💡 Piège voisin (même mécanisme d'auto-déclaration du `<script>`) : `x =` avec le membre droit à la ligne **suivante** n'est jamais promu en déclaration — seule la même ligne que le `=` est reconnue ; Civet compile alors une réassignation à un nom jamais déclaré, et MJS lève l'erreur pédagogique habituelle (« Utilise `x := …` ») — gardez le membre droit sur la même ligne que `=`.
+> 💡 Piège voisin (même mécanisme d'auto-déclaration du `<script>`) : `x =` avec le membre droit à la ligne **suivante** n'est jamais promu en déclaration — seule la même ligne que le `=` est reconnue ; Civet compile alors une réassignation à un nom jamais déclaré, et MJS lève l'erreur pédagogique habituelle (« Utilisez `x := …` ») — gardez le membre droit sur la même ligne que `=`.
 
 ## 10. `$`, `$$`, `µ`, `§`, `§§` — jamais comme nom de variable
 
@@ -266,6 +270,116 @@ Trois outils, tous **dev-only** (aucun ne doit rester dans du code livré tel qu
   paint = (el) ->
     el.style.color = 'red'
 </script>
+```
+
+
+## 11. `@nom` vit sur la balise du composant
+
+**Symptôme** : un composant ne se crée plus (`document.createElement` rend un élément inconnu), plante au montage, ou cesse de marcher sans erreur claire.
+
+**Cause** : dans un composant, `this` est sa balise : `@titre = …` pose `titre` sur l'élément HTML lui-même. Un nom qui existe déjà sur toute balise (`title`, `hidden`, `children`, `setAttribute`…) la masque.
+
+**Ce que fait le build** :
+- une propriété en lecture seule (`@children`, `@dataset`, `@offsetWidth`…) ou une méthode dont le cadre se sert (`@setAttribute`, `@dispatchEvent`, `@querySelector`… vingt noms) : **erreur**, qui dit de renommer — le build lit ces écritures par leurs détours (`@['setAttribute'] = …`, `Object.assign @, { … }`, déstructuration, alias `self = @` dans sa fonction, dans `µmount ->`) ; il ne refuse pas ce qui s'écrit sur un autre objet que la balise (une fonction que le script appelle avec `new` ou avec un autre `this`, un champ ou un bloc statique de classe), `Object.defineProperty(@, 'children', …)` redéfinit sans écrire et n'est refusé que pour les vingt méthodes, et une clé calculée à l'exécution ne se voit pas ;
+- une propriété reflétée en attribut (`@title`, `@id`, `@hidden`…) : avertissement `[lint.naming]` — le composant ne se crée plus par `createElement` ;
+- un nom de méthode courant (`@remove`, `@contains`, `@replaceWith`, `@matches`, `@closest`, `@animate`, `@focus`, `@click`) reste libre : le cadre prend la méthode de la balise elle-même pour retirer, remplacer, reconnaître ou animer le composant, lui rendre le focus (après une navigation, à la fermeture d'une fenêtre) ou rejouer son clic confirmé, la vôtre ne la gêne pas — `@matches = -> $profils.filter(…)` dans une appli de rencontres ne détourne plus le focus d'après navigation.
+
+**Solution** : un nom à vous (`@titreCarte`, `@envoyer`) — ou un état `$titre`, qui ne vit pas sur la balise.
+
+---
+
+## 12. L'élément sous un point s'arrête à la balise d'un composant
+
+**Symptôme** : `document.elementFromPoint(x, y)` rend `<mjs-carte>` alors que le doigt est sur un bouton de la carte — un glisser-déposer, une bulle qui suit la souris ou un bouton « remonter en haut » ne savent pas sur quoi ils tombent.
+
+**Cause** : l'intérieur d'un composant est fermé (Shadow DOM fermé) ; le navigateur s'arrête à sa balise.
+
+**Solution** : `µ.elementAt(x, y)` — l'élément le plus profond sous le point (coordonnées de la fenêtre, comme `e.clientX`/`e.clientY`), à travers les composants imbriqués (32 niveaux au plus) ; `null` hors de la fenêtre, et pour une coordonnée qui n'est pas un nombre (`NaN`, `Infinity`, `undefined`, une chaîne). Hors des composants, le même résultat que le navigateur. Rien n'est ouvert : le reste de la page ne voit toujours pas l'intérieur des composants.
+
+```civet
+lacher = (e)->
+  cible = µ.elementAt(e.clientX, e.clientY)
+```
+
+## 13. Une fenêtre maison se ferme quand on clique dedans
+
+**Symptôme** : un composant « fenêtre » se ferme au clic sur son fond (`<div class="fond" @click={…}>` autour de son `<@slot>`) ; un clic sur le texte qu'on a glissé dedans la ferme aussi.
+
+**Cause** : le texte glissé n'a pas de gestionnaire : le clic remonte jusqu'au premier trouvé, celui du fond — comme pour une balise que le composant aurait écrite lui-même (cf. [6 · Événements](06-evenements.md)).
+
+**Solution** : `.self` sur le fond — il ne répond qu'à un clic sur lui-même.
+
+```html
+<script>
+  $ouverte = true
+</script>
+<div class="fond" role="button" tabindex="0" @click.self={$ouverte = false}>
+  <div class="boite"><@slot/></div>
+</div>
+```
+
+## 14. `@click` qui renvoie `false` n'annule pas l'action par défaut
+
+**Symptôme** : `<a href="/x" @click={-> false}>` suit quand même le lien ; un formulaire s'envoie malgré le `false` renvoyé.
+
+**Cause** : un `false` renvoyé par un gestionnaire n'annule rien dans MJS : de ce qu'il renvoie, seule une fonction compte, et elle est appelée.
+
+**Solution** : `@click.prevent={…}`, ou `e.preventDefault()` dans le gestionnaire (cf. [6 · Événements](06-evenements.md), § Modificateurs).
+
+## 15. Le HTML du gabarit est lu comme le lit le navigateur
+
+MJS calcule au build où se trouve chaque valeur `{…}` dans l'arbre que le navigateur bâtira : il suit donc ses règles, et refuse ce que le navigateur réarrangerait dans votre dos. Chaque refus cite la ligne du fichier `.mjs` où se trouve la balise ou le texte en cause, dans un bloc `{if}`/`{for}` comme ailleurs.
+
+- **Éléments non refermés** : `<ul><li>a<li>b</ul>`, `<tr><td>a<td>b`, `<select><option>a<option>b`, `<dl><dt>a<dd>b` sont du HTML valide ; comme le navigateur, MJS fait de chaque `<li>` (`<td>`, `<option>`, `<dd>`…) le frère du précédent. De même pour `<button>` dans un `<button>`, `<h2>` dans un `<h1>`, `<a>` dans un `<a>`, `<rt>` après un `<rt>` ; un `<col>` posé dans un `<table>` reçoit son `<colgroup>`, et `<tbody>` referme un `<thead>` resté ouvert.
+- **Fermantes en double** : la fermante d'un élément déjà refermé d'office (le `</li>` du premier `<li>` dans `<ul><li>a<li>b</li></li></ul>`) est ignorée, comme le fait le navigateur, au lieu de refermer aussi ce qui l'entoure ; un `</p>` arrivé après la fermeture d'office de son `<p>` donne un `<p>` vide.
+- **`<p>` et éléments de bloc** : `<p>a<div>b</div></p>` (de même avec `<li>`, `<dd>`, `<dt>`) est refusé à la construction — le navigateur referme le `<p>` avant la `<div>`. Un `<button>`, une cellule `<td>` ou un `<template>` entre les deux arrêtent cette règle : `<p>Texte <button><div>…</div></button></p>` est permis.
+- **`<template>`** : son contenu est rangé à part (`template.content`), hors de la page. Une valeur `{…}`, un bloc (`{if}`, `{for}`…) ou un gestionnaire placé dedans est refusé à la construction ; un `<template>` entièrement statique reste permis. Sortez la partie dynamique du `<template>`, ou affichez-la dans un sous-composant.
+- **`<?…?>`, `<!…>`** : le navigateur en fait des commentaires ; ils comptent comme tels et ne décalent rien.
+- **`<textarea>` et `<title>`** : leur contenu est du texte pour le navigateur, aucun commentaire n'y est lu — `<textarea>a<!-->b</textarea>` affiche `a<!-->b`, `<textarea><!-- x --></textarea>` affiche `<!-- x -->`. MJS les garde de même, tels qu'écrits (une valeur `{…}` écrite dans ce commentaire n'est pas lue), et la fermante `</textarea>` l'emporte sur un `-->` écrit plus loin. Une balise écrite dedans y est un texte aussi : `<textarea><b x={$v}>gras</b></textarea>` affiche `<b x={$v}>gras</b>`, sans élément ni liaison. Une valeur `{…}` écrite dans le contenu, elle, est lue : elle écrit le texte de l'élément, au premier rendu puis à chaque changement (`<title>{$titre}</title>`, `<textarea>Bonjour {$nom}</textarea>`). Pour un champ, ce texte est sa valeur de départ, que la saisie remplace : pour suivre la saisie, liez `value=!{$x}` (cf. [07 — Liaisons](07-bindings.md)). Dans un `<svg>` ou un `<math>`, `<title>` est un élément ordinaire : un commentaire y reste un commentaire.
+- **`</script>` dans une valeur d'attribut** : permis entre guillemets, dans une expression `{…}` (chaînes comprises) et dans une valeur sans guillemets, qui va jusqu'au blanc ou au `>` comme dans le navigateur (`<p title=a</script>b>` donne le titre `a</script` et le texte `b>`). Dans le gabarit et les valeurs que pose le code produit, il est écrit `<\/script>` (même valeur) : il ne refermerait pas la balise `<script>` d'une page où ce code serait mis en ligne. Un `</script>` dans le texte reste refusé.
+- **Tableaux** : un élément (un composant compris) ou du texte placé directement dans un `<table>`, `<tbody>`, `<thead>`, `<tfoot>` ou `<tr>` est refusé à la construction — le navigateur le retire du tableau et le pose avant lui ; un `<form>`, lui, y reste, vide et refermé sur place, et son contenu sort du formulaire (refusé de même : placez le `<form>` autour du `<table>`, ou dans une cellule). Seuls les rangées, cellules, sections, `<caption>`, `<col>`/`<colgroup>`, `<template>` et `<input type="hidden">` y restent : placez le reste dans une cellule `<td>`.
+- **`<form>` dans un `<form>`, `<select>` dans un `<select>`**, `<a>` dans un `<a>` à travers un bloc : refusés à la construction — le navigateur ignore le second, ou déplace ce qui les sépare.
+- **SVG et MathML** : une balise HTML de texte ou de bloc (`<span>`, `<div>`, `<p>`, `<b>`…) posée dans un `<svg>` hors d'un `<foreignObject>` en fait sortir : le navigateur referme le `<svg>` et la pose après lui, MJS aussi. Un `<![CDATA[…]]>` y est un texte, jusqu'au `]]>` : un `<` ou une accolade n'y ouvrent ni balise ni valeur, et la section part telle qu'écrite ; sans `]]>`, elle avalerait toute la suite du composant, elle est refusée.
+- **`<html>`, `<head>`, `<body>`** dans un gabarit sont ignorés, comme par le navigateur (leur contenu reste) ; `<image>` y devient `<img>`.
+
+## 16. « Imbrication trop profonde » à la construction
+
+**Symptôme** : la construction s'arrête sur « IMBRICATION TROP PROFONDE », vers une ligne du gabarit.
+
+**Cause** : le gabarit est imbriqué sur des milliers de niveaux — balises dans des balises, ou blocs `{if}`/`{for}`/`{await}`/`{key}` dans d'autres blocs — et l'analyse a épuisé la pile d'appels.
+
+**Solution** : réduisez l'imbrication à quelques centaines de niveaux au plus, par exemple en découpant cette partie en composants.
+
+## 17. Une donnée d'un visiteur dans un attribut `style` écrit en entier
+
+**Symptôme** : une couleur choisie par un visiteur (profil, réglage, message) ajoute ses propres déclarations. Avec `<p style="color: {$c}">` et `$c = 'red; background-image: url(https://pisteur.example/p.png)'`, la page appelle un serveur tiers à chaque affichage ; `red; position: fixed; inset: 0; background: white` recouvre toute la page.
+
+**Cause** : un attribut `style` écrit en entier reçoit la valeur telle quelle, `;` compris, au navigateur comme dans le HTML du rendu serveur. MJS ne la filtre pas : c'est une injection CSS, et l'écarter est à votre charge.
+
+**Solution** : une propriété par liaison, `@style.<prop>={…}` (cf. [8 · Classes & styles](08-class.md)), et une valeur vérifiée avant d'être liée — une liste de valeurs permises, ou une forme stricte (`/^#[0-9a-f]{6}$/i`).
+
+```html
+<!-- à éviter : la valeur d'un visiteur dans le style écrit en entier -->
+<p style="color: {$c}">…</p>
+
+<!-- une propriété par liaison -->
+<p @style.color={$c}>…</p>
+```
+
+Au navigateur, la valeur liée passe par `style.setProperty`, qui la refuse en entier si elle n'est pas une valeur de cette propriété — sans juger ce qu'elle désigne : une adresse venue d'un visiteur dans `@style.background-image` appelle toujours le serveur de son choix. Le rendu serveur avec le moteur `'happy-dom'` (le moteur par défaut du rendu à la demande, cf. [19 · SSR](19-ssr.md), § 8) applique la même règle à toutes les propriétés et à toute variable CSS liée (`--couleur={$c}`) : une valeur qui ajouterait une déclaration ou une règle (un `;` ou une accolade hors d'une chaîne et hors de parenthèses, par exemple) est refusée en entier, et la propriété garde sa valeur d'avant. Il ne vérifie pas toujours, en revanche, que la valeur convient à la propriété : une valeur que le navigateur aurait refusée (`transform: red`) peut figurer dans le HTML, et le navigateur l'ignore en lisant la page.
+
+## 18. Une clé venue de données dans une écriture du magasin `$$` ou de l'état `$`
+
+**Symptôme** : la console affiche « chemin d'état refusé (segment « __proto__ ») — mutation ignorée. » après une écriture comme `$$prefs[section][champ] = v`, ou `$reglages[section][champ] = v` dans un composant, et rien n'est écrit. Ou, sans message : une propriété apparaît sur tous les objets de la page (`({})[champ]` vaut `v`), une bibliothèque se met à se tromper — ou pire, un HTML que personne n'a écrit s'affiche et son script s'exécute. `section` venait de l'adresse de la page, d'un formulaire ou du message d'un autre utilisateur, et valait `'__proto__'`.
+
+**Cause** : `$$prefs['__proto__']` est le modèle commun de tous les objets (`Object.prototype`) ; `'constructor'` mène à la fonction `Object`. Une écriture profonde du magasin ou de l'état d'un composant refuse ces deux noms, et `'prototype'`, dans le chemin qu'elle reçoit (le message ci-dessus) ; une écriture du magasin dont votre code lit d'abord l'objet — un élément trouvé (`$$taches.find(f)[section][k] = v`), `?.`, la variable de travail de CoffeeScript (`?=`, `or=`), une clé faite d'une expression (`$$prefs[req.section][k] = v`), une variable qui garde un objet du magasin, une lecture (`lu := $$prefs[section]`, puis `lu[k] = v`) — refuse d'écrire dans le prototype ou la fonction qu'elle atteint, avec le même message ; un chemin de l'état aussi, quand une lecture y a rangé l'objet qu'il atteint (`$reglages.p = $$prefs[section]`, puis `$reglages.p[k] = v`), et, quand cet objet est un prototype, toute écriture qui passe par l'état enveloppé : une forme qui lit avant d'écrire (`$reglages.p[k] += v`, `||=`, `?=`, `or=`), une variable qui le garde (`t := $reglages.p`, puis `t[k] = v`), `Object.assign($reglages.p, …)`, la rune `µproxy`. Écrivent en revanche là où JavaScript écrit (« pollution de prototype ») : une bibliothèque, et votre code hors de `$` et `$$`. Une fois le prototype pollué, tout code qui lit une option absente reçoit la valeur posée — le vôtre, une bibliothèque, le navigateur (les options de `fetch`) : une option `html` lue ainsi puis posée dans la page fait exécuter le script choisi par l'auteur des données. Les modules du cœur qui reçoivent des options (`µ.modal.fire` et ses raccourcis, `µ.modal.notify`, `µ.ajax`, `µ.socket`) ne lisent que celles que vous leur passez ; les tables que le cœur lit par un nom (la table des fichiers des composants, les balises que le chargeur attend et les dépendances préchargées au démarrage, les silhouettes, les réglages des effets, recopiés compris, le type d'un toast, les langues chargées : une langue inconnue choisie par une donnée reste vide et retombe sur la langue par défaut) et les requêtes qu'il envoie de lui-même (journal d'erreurs, rafraîchissement du schéma) ne prennent rien sur le prototype ; votre code, lui, hérite.
+
+**Solution** : vérifiez une clé venue de données avant de l'employer — une liste de clés permises, `Object.hasOwn`, ou une `Map`, dont les clés ne touchent aucun prototype (cf. [14 · Stores](14-stores.md), « Sécurité » ; [03 · Réactivité](03-reactivite.md)) : une écriture refusée est une donnée perdue, et vos objets hors de `$` et `$$` n'ont pas ce refus. Dans votre code, lisez une option seulement si l'objet la porte en propre (`Object.hasOwn(opts, 'html')`), ou rangez vos options dans une table sans prototype (`Object.create(null)`).
+
+```civet
+SECTIONS := ['affichage', 'sons']
+if SECTIONS.includes(section) and Object.hasOwn($$prefs[section], champ)
+  $$prefs[section][champ] = valeur
 ```
 
 ---

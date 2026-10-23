@@ -31,8 +31,12 @@
 //    demandé), pas un filtrage caché en plus.
 //  - .end() n'impose AUCUNE phase — si l'auteur veut fermer les coups après la fin, il déclare sa
 //    propre phase 'fin' à coups vides dans `def.phases` et l'atteint lui-même via `.to('fin')`.
-//  - .end() arme une grâce de destruction = `def.emptyTtl` (réutilisé, pas de clé de config en
-//    plus) : la partie reste interrogeable (resync) le temps que les clients encaissent la fin.
+//  - .end() arme une grâce de destruction = `def.endTtl` (défaut `def.emptyTtl`, qui reste la vie d'une
+//    partie vide non finie) : la partie reste interrogeable (resync) le temps que les clients encaissent la fin.
+//    Elle désarme aussi la minuterie de tour (`µturn`), la fenêtre de confirmation des sièges de la file
+//    (`µmatch`) et TOUTES les minuteries nommées de l'appli (`.timer()`) : une partie finie n'est jamais « annulée »,
+//    son tour n'est pas rejoué et le code de l'appli ne tourne plus ; une minuterie armée après la fin (depuis
+//    `onEnd`, par exemple) ne part pas non plus. La grâce (`µempty`) est la seule minuterie qui reste armée.
 
 import type { MjsWsApp, MjsWsClient } from '../mjs-ws/index.js'
 import { TokenBucket, errMessage } from '../mjs-ws/guard.js'
@@ -46,10 +50,15 @@ import type { MjsServerHistory, MjsServerHistoryPositions, MjsServerHistoryMeta 
 import { createLockstep } from './lockstep.js'
 import type { MjsServerLockstep, MjsServerLockstepTick } from './lockstep.js'
 import { t } from '../messages/index.js'
+import type { MsgKey } from '../messages/index.js'
 
-// id de peer = identity.id si présent, sinon l'id de connexion — RÉIMPLÉMENTATION LOCALE de
+// id de peer = identity.id si présent, sinon `anon:` suivi de l'id de connexion — RÉIMPLÉMENTATION LOCALE de
 // mjs-ws/rooms.ts peerIdOf (non exportée par l'index public de MJS-WS —
-// composition sur l'API PUBLIQUE seulement) — MÊME logique, à la ligne près. Conséquence à
+// composition sur l'API PUBLIQUE seulement), même forme : les anonymes ont leur propre espace de noms. Sans lui, un compte
+// dont l'id valait l'id de connexion d'un anonyme (`c5`, dans une appli où l'on choisit son pseudo) reprenait le siège de cet
+// anonyme. MJS-WS refuse dès le hello un compte dont l'id commence par `anon:` ; s'il en arrivait un quand même, il serait
+// préfixé une fois de plus (jamais un id de connexion, qui ne commence pas ainsi). Seul écart : un id vide, ou un objet sans
+// conversion propre, compte ici comme une absence d'identité. Conséquence à
 // connaître : sans `opts.auth` côté MJS-WS, chaque reconnexion change d'id (repli sur l'id de
 // connexion, qui ne survit jamais à une coupure) — µgame:resync ne peut alors JAMAIS retrouver
 // un siège après coupure. Une identité stable (opts.auth) est le prix de la reprise v1.
@@ -57,11 +66,13 @@ export function peerIdOf(client: MjsWsClient): string {
   const identity = client.identity
   if (identity && typeof identity === 'object' && 'id' in (identity as object)) {
     const raw = (identity as Record<string, unknown>).id
+    const id  = raw != null ? String(raw) : ''
     // chaîne vide/blanche = pas d'identité stable (auth mal typée…) — repli sur l'id de connexion,
-    // sinon deux connexions distinctes collisionnent sur le même siège
-    if (raw != null && String(raw).trim() !== '') return String(raw)
+    // sinon deux connexions distinctes collisionnent sur le même siège ; même repli pour un objet sans conversion propre
+    // (`[object Object]`, le même pour tous), un objet qui se convertit en chaîne (identifiant de base de données) restant stable
+    if (id.trim() !== '' && !(typeof raw === 'object' && id.startsWith('[object '))) return id.startsWith('anon:') ? 'anon:' + id : id
   }
-  return client.id
+  return 'anon:' + client.id
 }
 
 // noms de minuterie RÉSERVÉS (internes à MJS-Server) — jamais un nom d'auteur valide dans
@@ -69,6 +80,22 @@ export function peerIdOf(client: MjsWsClient): string {
 // (refusé aussi, cf. plus bas) : même politique que le préfixe 'µgame:' des trames (index.ts).
 export const RESERVED_TIMER_NAMES = new Set(['µturn', 'µmatch', 'µempty'])
 
+// messages du journal selon le code JEU que _guardTimerCall garde : une minuterie applicative (def.timers, par défaut), le crochet
+// hooks.onTurnTimeout, le passage de tour automatique (turns.order ; next() ne rend jamais de Promise : `rejected` y est sans objet)
+interface TimerCallKeys { thrown: MsgKey; rejected?: MsgKey }
+const TIMER_CALL_KEYS:      TimerCallKeys = { thrown: 'serveur.partie-timer-applicatif-leve', rejected: 'serveur.partie-timer-applicatif-rejete' }
+const TURN_TIMEOUT_KEYS:    TimerCallKeys = { thrown: 'serveur.partie-onturntimeout-leve', rejected: 'serveur.partie-onturntimeout-rejete' }
+const TURN_ORDER_AUTO_KEYS: TimerCallKeys = { thrown: 'serveur.partie-turns-order-timeout-leve' }
+
+// résultat de la fin « entrée refusée » d'un joueur dont hooks.onJoin a refusé l'entrée — même forme que les fins d'annulation
+// ({ cancelled: true, reason: 'seat-expired' }) : un drapeau et une raison
+function joinRefusedResult(): { refused: true; reason: 'join-refused' } {
+  return { refused: true, reason: 'join-refused' }
+}
+
+// plafond d'un setTimeout Node (2^31-1 ms, 24,8 jours) : au-delà il arme 1 ms — cf. _arm, qui attend par tranches, et limits.moveWaitMs,
+// refusé au-delà (game-def.ts)
+export const MAX_TIMEOUT_MS = 2147483647
 const JOURNAL_MAX = 200
 // mode action — throttle LOCAL de _markDirty (persistance), INDÉPENDANT de def.tick (jusqu'à
 // 60 Hz) : borne la fréquence d'APPEL du hook _onMutate, jamais la logique d'écriture elle-même
@@ -90,9 +117,16 @@ const ANTICHEAT_LOG_MAX = 100
 // FIXE, garde volontairement SIMPLE (MÊME esprit que HASH_LIMIT ci-dessus, pas de clé def dédiée)
 const ANTIREPLAY_WINDOW = 1000
 
+/** cf. MjsServerLimitsDef.moveWaitMs — un coup asynchrone qui ne s'est pas réglé en 10 s libère la requête du joueur (ses coups suivants restent refusés jusqu'à sa fin) */
+export const DEFAULT_MOVE_WAIT_MS = 10000
+
+// segments que le client refuse de suivre dans un chemin à points (garde contre la pollution de prototype, cf. mjs_game.ts::_applyDeltaOps)
+const UNSAFE_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
 /** une opération de delta (cf. _buildFrame) — `v` pose/remplace la valeur au chemin `p`
- *  ('a.2.b', à points, jamais échappés — LIMITE v1 documentée : une clé de vue contenant un point
- *  littéral casserait le chemin), `x: 1` supprime la clé finale du chemin. */
+ *  ('a.2.b', à points, jamais échappés : un objet qui porte une clé à point, ou une clé __proto__/constructor/prototype, est remplacé
+ *  en bloc, cf. deepDiff),
+ *  `x: 1` supprime la clé finale du chemin. */
 export interface MjsServerDeltaOp { p: string; v?: unknown; x?: 1 }
 
 /** diff profond RÉCURSIF (objets/tableaux traités UNIFORMÉMENT via Object.keys — un index de
@@ -118,6 +152,12 @@ function deepDiff(chemin: string, old: unknown, fresh: unknown, ops: MjsServerDe
     return
   }
   const keys = new Set([...Object.keys(old as object), ...Object.keys(fresh as object)])
+  // une clé qui contient un point (« jean.dupont ») ne s'écrit pas dans un chemin à points, le client y lirait deux clés ; une clé
+  // __proto__/constructor/prototype (un pseudo « constructor ») y serait jetée par le client, qui ne suit jamais ces segments :
+  // l'objet qui la porte est remplacé EN BLOC à ce chemin (à la racine, chemin vide : vue complète, cf. _buildFrame)
+  for (const key of keys) {
+    if (key.includes('.') || UNSAFE_PATH_KEYS.has(key)) { ops.push({ p: chemin, v: fresh }); return }
+  }
   for (const key of keys) {
     const subPath = chemin ? chemin +'.'+ key : key
     const inOld = Object.prototype.hasOwnProperty.call(old, key)
@@ -140,7 +180,8 @@ export interface MjsServerSeat {
 interface JournalEntry {
   move: string
   player: string
-  p: unknown
+  // plus jamais remplie (cf. _playMove) : seule une sauvegarde d'une version antérieure peut encore la porter
+  p?: unknown
   at: number
 }
 
@@ -259,7 +300,7 @@ export class Game {
   _dirty = false
   _destroyed = false
   /** `true` dès le PREMIER .end() réussi (cf. .end() plus bas) — SÉPARÉE de `_destroyed` : une partie
-   *  finie mais encore dans sa fenêtre de grâce `emptyTtl` est `_ended=true, _destroyed=false` (toujours
+   *  finie mais encore dans sa fenêtre de grâce `endTtl` est `_ended=true, _destroyed=false` (toujours
    *  interrogeable, cf. commentaire de tête). Rend .end() IDEMPOTENT — sans elle, un move métier
    *  qui rappelle game.end() (pattern resign/gameOver, avant que
    *  la grâce ne rende `_destroyed` vrai) rejouait hooks.onEnd + µgame:end + réarmait `µempty` à
@@ -272,6 +313,10 @@ export class Game {
   _endResult: unknown = undefined
   /** `true` dès que `seats` a été atteint une 1re fois (cf. matchmaking.ts µgame:start) — jamais réinitialisé */
   _started = false
+  /** partie MUETE — posée par matchmaking.ts le temps d'apparier un groupe de la file : tant que tous les joueurs appariés n'ont pas passé
+   *  hooks.onJoin, rien ne part de la partie vers les sièges (ni roster, ni état, ni événement), la boucle de tick ne démarre pas et rien
+   *  n'est sauvegardé ; _announce() la rend audible. `false` partout ailleurs (parties par code, parties restaurées). */
+  _silent = false
   _buckets: Array<TokenBucket | null> = []
   /** anti-triche (µgame:hash) — seau à jetons DÉDIÉ par siège, canal DISTINCT de `_buckets`
    *  (coups) : cf. HASH_LIMIT/_consumeHashToken plus bas. */
@@ -354,6 +399,11 @@ export class Game {
    *  matchmaking.ts (seul point qui voit toutes les parties vivantes) — cette fonction n'est qu'un
    *  simple PONT, zéro état ici. */
   _identityQuota: ((id: string) => boolean) | null = null
+  /** identité d'un joueur → ses coups asynchrones pas encore réglés (cf. _onMove) : `turn` se règle à la fin du DERNIER (`false`), ou
+   *  au passage de limits.moveWaitMs depuis son départ (`true`) — le coup suivant du joueur l'attend ; `done`, à la vraie fin de tous ;
+   *  `stuck` : un de ces coups a passé limits.moveWaitMs sans se régler, les coups suivants sont refusés. L'entrée disparaît dès que
+   *  plus rien n'est en cours */
+  _movesInFlight = new Map<string, { turn: Promise<boolean>; done: Promise<unknown>; stuck: boolean }>()
 
   constructor(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, id: string) {
     this.app        = app
@@ -365,16 +415,22 @@ export class Game {
     this.phase      = def.phases ? (Object.keys(def.phases)[0] ?? null) : null
     this.space      = def.space ? createSpace(def.space.cell, msg => def.log('warn', msg)) : null
     this._history     = def.history ? createHistory(def.history.ticks) : null
-    this._lockstep  = def.mode === 'lockstep' ? createLockstep(id, def.lockstepJournal?.maxTicks ?? null) : null
+    this._lockstep  = def.mode === 'lockstep' ? createLockstep(id, def.lockstepJournal?.maxTicks ?? null, { maxBytes: def.lockstepJournal?.maxBytes, maxOrderBytes: def.lockstepJournal?.maxOrderBytes }) : null
   }
 
   // --- API publique (contrat du design MJS-Server) --------------------------------------------
 
   /** tour suivant — 'roundrobin' (ordre des sièges) ou `turns.order` fourni ; no-op sans `turns` */
   next(): void {
+    this._passTurn(null)
+  }
+
+  /** cf. next() — `fromSeat` = le siège que le détenteur du tour vient de quitter (départ, entrée refusée) : en 'roundrobin', le tour
+   *  repart du siège qui le suit (sans lui, il revenait au premier siège : un joueur rejouait aussitôt, un autre était sauté) */
+  _passTurn(fromSeat: number | null): void {
     if (!this.def.turns) return
     const order = this.def.turns.order
-    const nextSeat = order === 'roundrobin' ? this._nextRoundrobin() : order(this)
+    const nextSeat = order === 'roundrobin' ? this._nextRoundrobin(fromSeat) : order(this)
     this.turn = typeof nextSeat === 'string' ? nextSeat : (nextSeat ? nextSeat.id : null)
     this._armTurnTimeout()
     this._markDirty()
@@ -390,9 +446,17 @@ export class Game {
   }
 
   /** arme/réarme une minuterie NOMMÉE — à l'échéance, appelle `def.timers[name](game)`.
-   *  Sérialisable ({name, at}, cf. serialize()) : jamais de fermeture stockée. */
+   *  Sérialisable ({name, at}, cf. serialize()) : jamais de fermeture stockée. Sans effet une fois la partie finie :
+   *  .end() coupe les minuteries de l'appli, et celle qu'on armerait ensuite (depuis hooks.onEnd, par exemple) ne part pas. Sans effet non
+   *  plus sur une partie détruite : un hooks.onJoin asynchrone peut rendre la main après la destruction du groupe de la file.
+   *  Un nom absent de `def.timers` lève tout de suite (propriété PROPRE, comme moves/intents : un nom hérité, 'toString'…, n'est pas
+   *  une minuterie déclarée) — armé, il ne lançait rien à son échéance. */
   timer(name: string, ms: number): void {
     if (RESERVED_TIMER_NAMES.has(name)) throw new Error(t('serveur.partie-timer-nom-reserve', { nom: name }))
+    if (!Object.hasOwn(this.def.timers, name)) {
+      const declared = Object.keys(this.def.timers)
+      throw new Error(t('serveur.partie-timer-inconnu', { nom: name, timers: declared.length > 0 ? declared.join(', ') : t('serveur.partie-timer-aucun') }))
+    }
     this._armByName(name, ms)
   }
 
@@ -445,14 +509,22 @@ export class Game {
     return Date.now() - (latency + this.def.history.interp)
   }
 
-  /** fin de partie — µgame:end + hooks.onEnd, puis destruction après une grâce `def.emptyTtl`
-   *  (laisse un dernier resync voir l'issue avant que la partie ne disparaisse du registre).
+  /** fin de partie — µgame:end + hooks.onEnd, puis destruction après une grâce `def.endTtl` (défaut `def.emptyTtl`) :
+   *  la partie reste interrogeable avant de disparaître du registre — un resync répond encore, mais sans dire qu'elle est
+   *  finie (la réponse n'a ni `ended` ni `result` : l'issue n'y est que si le `state` ou la `view` de l'appli la porte).
+   *  La minuterie de tour (`µturn`), la fenêtre de confirmation des sièges de la file (`µmatch`) et toutes les minuteries nommées
+   *  de l'appli (`.timer()`) sont désarmées d'entrée : sans cela, la fenêtre `seatTtl` encore ouverte « annulait » la partie finie
+   *  en pleine grâce (2e µgame:end, partie détruite), le tour continuait de passer (onTurnTimeout rappelé, état rediffusé et
+   *  sauvegardé) et les minuteries de l'appli (un rappel récurrent, par exemple) tiraient pendant toute la grâce. Une minuterie
+   *  armée après la fin (par hooks.onEnd, ou par un appel direct à `.timer()`) n'est pas armée (cf. _armByName).
    *  IDEMPOTENT (cf. `_ended`) : un 2e appel (avant OU après la grâce) est un NO-OP total — pas de
    *  2e diffusion µgame:end, pas de 2e hooks.onEnd, pas de réarmement de `µempty` (sinon la partie
    *  resterait vivante indéfiniment tant qu'un move rejoue .end() sous le quota limits.moves).
    *  hooks.onEnd est protégé par un `finally` — même s'il LÈVE, `µempty` est TOUJOURS armée
    *  ensuite (sinon une partie dont le hook casse ne serait plus jamais détruite, cf. _checkEmpty/
    *  _onEmptyExpired) ; le throw, lui, continue de remonter normalement à l'appelant de .end().
+   *  `endTtl ?? emptyTtl` : une définition résolue construite à la main avant l'option `endTtl` n'a que `emptyTtl`.
+   *  Une Promise rendue par le hook (hors contrat) n'est pas attendue : son rejet est journalisé, la fin a eu lieu (cf. _followRejection).
    *  Relayée aux spectateurs (cf. _broadcastToSpectatorsRaw) — anti-triche, amélioration : une
    *  partie finie restait visuellement active côté spectateur (aucun signal de fin). */
   end(result: unknown): void {
@@ -460,12 +532,16 @@ export class Game {
     this._ended = true
     this._endResult = result
     this._stopTickLoop()
+    this._disarm('µturn')
+    this._disarm('µmatch')
+    this._disarmAppTimers()
+    this._unconfirmedSeats = null
     this._broadcastTo('µgame:end', { result })
     this._broadcastToSpectatorsRaw('µgame:end', { result })
     try {
-      this.def.hooks.onEnd?.(this, result)
+      this._followRejection('serveur.partie-onend-rejete', this.def.hooks.onEnd?.(this, result))
     } finally {
-      this._armByName('µempty', this.def.emptyTtl)
+      this._armByName('µempty', this.def.endTtl ?? this.def.emptyTtl)
     }
   }
 
@@ -486,7 +562,9 @@ export class Game {
       phase:   this.phase,
       turn:    this.turn,
       seq:     this.seq,
-      journal: this.journal.slice(),
+      // trace des coups sans leur charge : déjà reflétée dans `state`, la recopier ferait grossir
+      // chaque sauvegarde du détail de chaque coup (jusqu'à 200 charges, sans borne de taille)
+      journal: this.journal.map(e => ({ move: e.move, player: e.player, at: e.at })),
       // anti-triche par joueur repeuplé au restore — _buckets (cadence flood) repart PLEIN
       // par design (TokenBucket non sérialisable proprement, risque moindre qu'un rejeu accepté)
       seats: this.players.map(j => j ? { seat: j.seat, id: j.id, connected: j.connected, lastAntiReplaySeq: this._lastAntiReplaySeq.get(j.id), lastMoveAt: this._lastMoveAt.get(j.id) } : null),
@@ -525,19 +603,114 @@ export class Game {
    *  une identité authentifiée stable, cf. opts.auth, bénéficie de la protection).
    *
    *  Sinon (aucun siège existant pour cette identité) : assigne un siège NEUF (1er emplacement
-   *  libre) — throw si complète. */
-  _createSeat(client: MjsWsClient): MjsServerSeat {
+   *  libre) — throw si complète.
+   *
+   *  `admissions` — posé par matchmaking.ts (file publique et parties par code) : la Promise rendue par hooks.onJoin n'est alors PAS suivie
+   *  d'un refus après coup (cf. _refuseSeat) mais rangée dans ce tableau, que l'appelant attend ; elle rend le siège si onJoin a rejeté,
+   *  `null` sinon. Tant que l'appelant n'a pas statué, le siège n'est pas annoncé (ni roster, ni sauvegarde, ni boucle de tick) : il
+   *  l'admet (_seatAdmitted) ou le défait sans trace (_dropSeat). */
+  _createSeat(client: MjsWsClient, admissions?: Array<Promise<MjsServerSeat | null>>): MjsServerSeat {
     const existing = this._reattachSeat(client)
     if (existing) { this._broadcastSeats(); return existing }
+    // partie finie (grâce `endTtl`) : un joueur déjà assis s'y rattache encore (ci-dessus), un nouveau venu n'y prend pas le siège
+    // laissé libre par un départ — il serait assis dans une partie terminée et hooks.onJoin tournerait après la fin
+    if (this._ended) throw new Error(t('serveur.partie-terminee'))
     const index = this.players.findIndex(j => j === null)
     if (index === -1) throw new Error(t('serveur.partie-complete'))
     const player: MjsServerSeat = { seat: index, id: peerIdOf(client), clients: new Set([client]), connected: true }
     this.players[index] = player
-    this.def.hooks.onJoin?.(this, player)
+    // le siège est posé AVANT onJoin (le hook lit game.players et player.seat) ; un throw de onJoin REFUSE le joueur : son siège
+    // est rendu avant que l'erreur ne remonte (rien n'a été diffusé de lui, aucune trame de la partie ne lui part ensuite). Ce que
+    // onJoin a fait avant de lever (état modifié, game.send()…) n'est PAS défait. Une Promise rendue par le hook (hors contrat) est
+    // suivie : son rejet est journalisé. Sans `admissions`, il refuse le joueur après coup (cf. _refuseSeat), le siège étant annoncé
+    // tout de suite ; avec `admissions`, c'est l'appelant qui attend la Promise (l'appariement de la file, ou la réponse d'une partie
+    // par code) et décide du sort du siège, qui n'est annoncé qu'ensuite
+    try {
+      const key     = !admissions ? 'serveur.partie-onjoin-rejete' : this._silent ? 'serveur.partie-onjoin-rejete-file' : 'serveur.partie-onjoin-rejete-code'
+      const joining = this._followRejection(key, this.def.hooks.onJoin?.(this, player), admissions ? undefined : () => this._refuseSeat(player))
+      if (admissions && joining) {
+        admissions.push(joining.then(admitted => admitted ? null : player))
+        return player
+      }
+    } catch (err) {
+      this._dropSeat(player)
+      throw err
+    }
+    this._seatAdmitted()
+    return player
+  }
+
+  /** le siège qui vient d'être pris est admis (hooks.onJoin n'a pas refusé) : le roster part, la partie est sauvegardée et sa boucle de
+   *  tick démarre au 1er siège CONNECTÉ (mode action) — no-op en mode événementiel (tick=0) pour la boucle, cf. _checkEmpty */
+  _seatAdmitted(): void {
     this._broadcastSeats()
     this._markDirty()
-    this._checkEmpty()   // démarre la boucle de tick au 1er siège CONNECTÉ (mode action, cf. _checkEmpty) — no-op en mode événementiel (tick=0)
-    return player
+    this._checkEmpty()
+  }
+
+  /** défait un siège pris dont l'admission est refusée AVANT toute annonce (throw de onJoin, ou rejet connu avant la réponse d'une
+   *  partie par code) : rien n'a été diffusé de lui, personne ne voit rien. Sans effet si le siège a changé de main (l'appli a pu le
+   *  vider elle-même, contournement historique). S'il avait la main (onJoin a pu la lui donner), le tour passe au siège suivant. Une
+   *  partie sans siège connecté est fermée ou arme sa grâce de partie vide (cf. _afterDeparture), sans repousser celle déjà en cours */
+  _dropSeat(player: MjsServerSeat): void {
+    if (this.players[player.seat] === player) {
+      this.players[player.seat] = null
+      this._passTurnFrom(player)
+    }
+    if (!this._timers.has('µempty')) this._afterDeparture()
+  }
+
+  /** refus d'un siège après coup (la Promise de hooks.onJoin est rejetée) — un départ forcé, sans hooks.onLeave (le joueur n'est
+   *  jamais entré) : le siège est vidé, les autres sièges et les spectateurs reçoivent µgame:left, le tour passe au siège suivant
+   *  s'il avait la main (sinon l'autre joueur attendait l'échéance de turns.timeout), puis le roster à jour part, l'état est
+   *  rediffusé et sauvegardé, et une partie qui n'a plus aucun siège connecté est fermée ou arme sa grâce de partie vide (cf.
+   *  _afterDeparture ; sans repousser celle déjà en cours). Le refusé a déjà reçu la réponse de sa requête : il reçoit, lui seul et
+   *  avant les autres, une fin de partie « entrée refusée » (µgame:end { refused: true, reason: 'join-refused' }), puis plus aucune
+   *  trame ; son prochain coup ou resync est refusé comme celui de n'importe quel joueur non assis. Sans effet si le siège a changé
+   *  de main entre-temps (départ, contournement historique) ou si la partie est détruite */
+  _refuseSeat(player: MjsServerSeat): void {
+    if (this._destroyed || this.players[player.seat] !== player) return
+    this.players[player.seat] = null
+    for (const c of player.clients) { this._lastViews.delete(c); this._lastMeta.delete(c) }
+    for (const c of player.clients) this._sendJoinRefused(c)
+    this._broadcastTo('µgame:left', { seat: player.seat })
+    this._broadcastToSpectatorsRaw('µgame:left', { seat: player.seat })
+    this._passTurnFrom(player)
+    this._broadcastSeats()
+    this._markDirty()
+    if (!this._timers.has('µempty')) this._afterDeparture()
+  }
+
+  /** le siège tout juste vidé de `player` (entrée refusée, cf. _refuseSeat/_dropSeat) avait la main : le tour passe au siège suivant.
+   *  Une erreur de turns.order n'a personne à qui remonter : elle est journalisée, le refus va à son terme */
+  _passTurnFrom(player: MjsServerSeat): void {
+    if (!this.def.turns || this.turn !== player.id) return
+    try {
+      this._passTurn(player.seat)
+    } catch (err) {
+      this.def.log('error', t('serveur.partie-turns-order-refus-leve', { msg: errMessage(err) }))
+    }
+  }
+
+  /** fin de partie « entrée refusée » (µgame:end { refused: true, reason: 'join-refused' }) à UNE connexion : le refus d'un joueur
+   *  assis (cf. _refuseSeat) ou d'un ticket de la file défait avant l'annonce de sa partie (matchmaking.ts) — la partie, elle, ne
+   *  finit pas pour les autres. Le refus d'un joueur assis part dans la forme `{ game, result }` : `game` est une partie que son client
+   *  connaît. Celui d'un ticket de la file (`queue`) porte en plus `type` et `queue: true` : `game` est l'id d'une partie défaite
+   *  qu'aucun client n'a jamais vu, de quoi rattacher la fin à la poignée en file du même type et à elle seule */
+  _sendJoinRefused(client: MjsWsClient, queue = false): void {
+    const result = joinRefusedResult()
+    this.app.send(client, 'µgame:end', queue ? { game: this.id, type: this.type, queue: true, result } : { game: this.id, result })
+  }
+
+  /** fin du silence d'une partie de la file (cf. `_silent`) : tous les joueurs appariés ont passé hooks.onJoin, la partie devient
+   *  audible — le roster part, l'état est diffusé et sauvegardé, la boucle de tick démarre (mode action). L'annonce de la partie
+   *  aux sièges (µgame:start et réponse de l'appelant) revient à matchmaking.ts. Une partie finie pendant son silence (hooks.onJoin
+   *  a appelé .end()) n'avait rien pu dire de sa fin : µgame:end part aux sièges un tour de boucle plus tard, après leur µgame:start
+   *  et la réponse de l'appelant (avant, leur client ne connaît pas encore la partie et ignorerait la fin) */
+  _announce(): void {
+    this._silent = false
+    this._seatAdmitted()
+    if (this._ended) setImmediate(() => this._broadcastTo('µgame:end', { result: this._endResult }))
   }
 
   /** rattache CETTE connexion à un siège EXISTANT de même identité (reconnexion) — `null` si aucun */
@@ -580,10 +753,12 @@ export class Game {
    *  pour l'ack de la requête. Tout µgame:move ultérieur de cette connexion est rejeté PAR
    *  CONSTRUCTION (_findSeatOf ne cherche que dans `this.players`, cf. _onMove plus
    *  bas — message précisé « spectateur : lecture seule »). Idempotent (Set) : rejouer la même
-   *  requête avec la MÊME connexion ne fait rien de plus. */
+   *  requête avec la MÊME connexion ne fait rien de plus. La vue est calculée AVANT l'inscription : une vue qui lève fait échouer
+   *  la requête sans laisser la connexion inscrite (sinon une erreur au journal à chaque diffusion). */
   _addSpectator(client: MjsWsClient): { view: unknown } {
+    const info = this._spectatorInfo()
     this._spectators.add(client)
-    return this._spectatorInfo()
+    return info
   }
 
   /** vue SÛRE d'un spectateur — cf. def.spectatorView (game-def.ts::resolveGameDef, RÉSOUT DÉJÀ le
@@ -612,7 +787,12 @@ export class Game {
    *  aussi un spectateur (anti-triche) : retrait silencieux de `_spectators`, AUCUNE trame en
    *  retour pour lui (permet à sock.leave() côté client de fonctionner SANS changement, qu'il
    *  s'agisse d'une poignée siège OU spectateur) — le départ D'UN SIÈGE, lui, diffuse µgame:left
-   *  aux AUTRES sièges ET, désormais, aux spectateurs (cf. _broadcastToSpectatorsRaw). */
+   *  aux AUTRES sièges ET, désormais, aux spectateurs (cf. _broadcastToSpectatorsRaw).
+   *  le siège est vidé AVANT le code JEU (hooks.onLeave, puis turns.order au passage de tour) ; un throw de ce code ne coupe jamais
+   *  la suite du départ (prévenir les autres, roster, état, partie vide à détruire : sans elle, une partie dont le dernier joueur
+   *  part ainsi resterait en mémoire pour toujours) ; la 1re erreur remonte à celui qui part une fois le départ fini (réponse
+   *  d'erreur de sa requête µgame:leave), la 2e, qui n'a plus personne à qui remonter, est journalisée ; ce que le code a fait
+   *  avant de lever n'est pas défait ; une Promise rejetée par onLeave est journalisée (cf. _followRejection) */
   _leave(client: MjsWsClient): void {
     const player = this._findSeatOf(client)
     if (player) {
@@ -622,13 +802,26 @@ export class Game {
       // quitte puis rejoint (même objet client, ex. leave/play sans coupure réseau) retrouverait une
       // baseline PÉRIMÉE de son passage précédent et sauterait la 1re diffusion « vue complète »
       for (const c of player.clients) { this._lastViews.delete(c); this._lastMeta.delete(c) }
-      this.def.hooks.onLeave?.(this, player)
+      let failure: { err: unknown } | null = null   // enveloppée : une valeur levée falsy (throw undefined) reste une erreur
+      try {
+        this._followRejection('serveur.partie-onleave-rejete', this.def.hooks.onLeave?.(this, player))
+      } catch (err) {
+        failure = { err }
+      }
       this._broadcastTo('µgame:left', { seat: player.seat })
       this._broadcastToSpectatorsRaw('µgame:left', { seat: player.seat })
-      if (this.def.turns && this.turn === player.id) this.next()
+      if (this.def.turns && this.turn === player.id) {
+        try {
+          this._passTurn(player.seat)
+        } catch (err) {
+          if (failure) this.def.log('error', t('serveur.partie-turns-order-depart-leve', { msg: errMessage(err) }))
+          else failure = { err }
+        }
+      }
       this._broadcastSeats()
       this._markDirty()
-      this._checkEmpty()
+      this._afterDeparture()
+      if (failure) throw failure.err
       return
     }
     if (this._spectators.delete(client)) return
@@ -636,7 +829,8 @@ export class Game {
   }
 
   /** déconnexion (MJS-WS opts.onDisconnect) — marque le siège déconnecté SANS le vider ; la
-   *  partie continue (tour par tour social, pas de kick auto v1). Un spectateur (anti-triche),
+   *  partie continue (tour par tour social, pas de kick auto v1), sauf une table jamais complète qui
+   *  n'a plus aucun siège connecté, fermée tout de suite (cf. _afterDeparture). Un spectateur (anti-triche),
    *  lui, est retiré PURE ET SIMPLEMENT (aucun « siège déconnecté » à conserver pour un
    *  rôle en lecture seule — cf. _addSpectator, jamais de resync spectateur v1). Retourne
    *  `true` si ce client occupait bien un siège OU regardait ICI (matchmaking s'en sert pour
@@ -653,7 +847,7 @@ export class Game {
       if (player.clients.size === 0) player.connected = false
       this._broadcastSeats()
       this._markDirty()
-      this._checkEmpty()
+      this._afterDeparture()
       return true
     }
     return this._spectators.delete(client)
@@ -661,9 +855,69 @@ export class Game {
 
   /** coup reçu — vérifs (assis, phase, tour, anti-abus) puis `def.moves[move](game, player, p)` ;
    *  un throw (garde ICI ou dans le move lui-même) remonte tel quel — matchmaking.ts le laisse
-   *  filer jusqu'à app.serve (µ:ack{e:true}, comme tout serve() normal). */
+   *  filer jusqu'à app.serve (µ:ack{e:true}, comme tout serve() normal).
+   *  Les coups d'un même joueur passent un par un, comme les trames d'une même connexion (mjs-ws) : tant qu'un coup ASYNCHRONE
+   *  du joueur n'est pas réglé, le suivant (venu d'un autre onglet) attend sa fin, puis passe toutes les gardes comme s'il
+   *  arrivait (sans quoi deux onglets jouaient deux fois dans le même tour). Sans coup en cours, rien ne change : un coup
+   *  synchrone rend son résultat, ou lève, tout de suite. Un coup qui ne se règle pas en limits.moveWaitMs depuis son départ (cf.
+   *  _moveSettled) libère sa requête : elle reçoit une erreur, le coup continue sur le serveur — MJS-WS traite les trames d'une
+   *  connexion une par une, et tout ce que l'onglet du joueur enverrait ensuite (resync, départ, discussion) attendrait sinon
+   *  derrière elle. Les coups suivants du joueur, eux, sont refusés jusqu'à la vraie fin de ce coup, ceux qui l'attendaient
+   *  compris : jamais deux coups du même joueur à la fois. */
   _onMove(client: MjsWsClient, move: string, p: unknown): unknown {
-    // partie déjà terminée (fenêtre de grâce `emptyTtl`) — la partie reste interrogeable (resync)
+    const id      = peerIdOf(client)
+    const pending = this._movesInFlight.get(id)
+    if (pending?.stuck) throw new Error(t('serveur.partie-coup-precedent-en-cours'))
+    const result  = pending ? pending.turn.then(expired => this._playQueuedMove(client, move, p, expired)) : this._playMove(client, move, p)
+    if (!result || typeof (result as any).then !== 'function') return result
+    const ended = (result as Promise<unknown>).then(() => {}, () => {})
+    // un coup en file part quand le précédent est réglé : son délai de garde court à partir de là ; refusé derrière un coup resté
+    // sans réponse, il garde l'entrée bloquée jusqu'à la fin de celui-ci
+    const turn  = pending ? pending.turn.then(expired => expired || this._moveSettled(result as Promise<unknown>, move)) : this._moveSettled(result as Promise<unknown>, move)
+    const entry = { turn, done: pending ? Promise.all([pending.done, ended]) : ended, stuck: false }
+    this._movesInFlight.set(id, entry)
+    turn.then(expired => { if (expired) entry.stuck = true })
+    entry.done.then(() => { if (this._movesInFlight.get(id) === entry) this._movesInFlight.delete(id) })
+    return new Promise<unknown>((resolve, reject) => {
+      (result as Promise<unknown>).then(resolve, reject)
+      turn.then(expired => { if (expired) reject(new Error(t('serveur.partie-coup-sans-reponse', { coup: move, ms: this._moveWaitMs() }))) })
+    })
+  }
+
+  /** cf. MjsServerLimitsDef.moveWaitMs — repli sur le défaut pour une définition résolue construite à la main avant l'option */
+  _moveWaitMs(): number {
+    return this.def.limits.moveWaitMs ?? DEFAULT_MOVE_WAIT_MS
+  }
+
+  /** fin (réglée, jamais rejetée) d'un coup asynchrone (`false`), ou passage de limits.moveWaitMs sans qu'il soit réglé (`true`) —
+   *  journalisé : sa requête reçoit une erreur et les coups suivants du joueur sont refusés jusqu'à sa fin (le coup lui-même
+   *  continue, sa fin éventuelle rediffuse l'état comme d'habitude). La minuterie ne retient pas le processus et disparaît dès la
+   *  fin du coup */
+  _moveSettled(result: Promise<unknown>, move: string): Promise<boolean> {
+    const ms = this._moveWaitMs()
+    return new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => {
+        if (!this._destroyed) this.def.log('warn', t('serveur.partie-coup-sans-fin', { coup: move, ms }))
+        resolve(true)
+      }, ms)
+      timer.unref?.()
+      const done = () => { clearTimeout(timer); resolve(false) }
+      result.then(done, done)
+    })
+  }
+
+  /** coup qui attendait la fin du précédent coup asynchrone du même joueur (cf. _onMove) — la partie a pu être détruite entre-temps
+   *  (annulée, vidée) : il ne tourne pas, comme un coup qui arriverait maintenant ; le précédent a passé limits.moveWaitMs sans se
+   *  régler (`expired`) : refusé, il ne joue pas en même temps que lui */
+  _playQueuedMove(client: MjsWsClient, move: string, p: unknown, expired: boolean): unknown {
+    if (this._destroyed) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    if (expired) throw new Error(t('serveur.partie-coup-precedent-en-cours'))
+    return this._playMove(client, move, p)
+  }
+
+  /** cf. _onMove — le coup lui-même, gardes comprises */
+  _playMove(client: MjsWsClient, move: string, p: unknown): unknown {
+    // partie déjà terminée (fenêtre de grâce `endTtl`) — la partie reste interrogeable (resync)
     // mais plus JOUABLE : aucun coup ne mute l'état ni ne se diffuse après .end()
     if (this._ended) throw new Error(t('serveur.partie-terminee'))
     const player = this._findSeatOf(client)
@@ -687,20 +941,23 @@ export class Game {
     // moveIntervalMs) — cf. _antiCheatGuard : s'applique UNIFORMÉMENT aux 3 branches
     // ci-dessous (lockstep compris — un ORDRE est un coup pour ces gardes génériques, cf. sa
     // propre doc), AVANT toute exécution/mise en file/ordre ; no-op quasi total si rien n'est déclaré.
-    this._antiCheatGuard(player, move, p)
+    // `accept` enregistre séquence et heure du coup, une fois passés les refus qui suivent (débit, nom de coup)
+    const accept = this._antiCheatGuard(player, move, p)
 
     // mode lockstep — AUCUNE exécution serveur : chaque µgame:move devient un ORDRE en
     // file pour le tick COURANT (cf. lockstep.ts addOrder), diffusé GROUPÉ par _broadcastTickOrders
     // au tick suivant — jamais de résultat (l'ack matchmaking.ts::handlerMove reste {ok:true,
     // result:undefined}, INCHANGÉ), jamais `this.journal` (celui-ci reste le journal COURT v1 du
     // mode authoritative, cf. commentaire de tête — le VRAI journal lockstep vit dans `this._lockstep`,
-    // illimité, cf. son fichier). `move` n'est PAS validé contre `def.moves` — n'importe quel nom
+    // borné en octets, cf. son fichier). `move` n'est PAS validé contre `def.moves` — n'importe quel nom
     // devient un ordre valide (aucune whitelist demandée : chaque µgame:move reçu devient
-    // un ORDRE, sans condition).
+    // un ORDRE, sous la seule condition de taille de lockstepJournal.maxOrderBytes).
     if (this.def.mode === 'lockstep') {
       if (!this._consumeToken(player)) throw new Error(t('serveur.partie-trop-de-coups'))
-      this._confirmSeat(player.id)
+      // addOrder refuse un ordre trop gros (lockstepJournal.maxOrderBytes) : il passe AVANT accept(), comme les autres refus
       this._lockstep!.addOrder(player.id, move, p)
+      accept()
+      this._confirmSeat(player.id)
       return undefined
     }
 
@@ -719,6 +976,7 @@ export class Game {
     // gestionnaire ne soit réellement enregistré sous ce nom.
     const intentFn = Object.hasOwn(this.def.intents, move) ? this.def.intents[move] : undefined
     if (intentFn) {
+      accept()
       this._confirmSeat(player.id)
       let queue = this._intentQueue.get(player.id)
       if (!queue) { queue = new Map(); this._intentQueue.set(player.id, queue) }
@@ -728,6 +986,7 @@ export class Game {
 
     const fn = Object.hasOwn(this.def.moves, move) ? this.def.moves[move] : undefined
     if (!fn) throw new Error(t('serveur.partie-coup-inconnu', { coup: move }))
+    accept()
     this._confirmSeat(player.id)
     const result = fn(this, player, p)
     // coup ASYNCHRONE — `fn` peut renvoyer une Promise dont la RÉSOLUTION mute `state` (ex. un
@@ -736,10 +995,13 @@ export class Game {
     // RÉSOLUTION, aucune trame ne reflète JAMAIS le nouvel état pour ce coup. Chaîne SÉPARÉE de
     // `result` (jamais `.then()` en remplacement) : la valeur renvoyée à l'appelant (cf.
     // matchmaking.ts::handlerMove, qui `await`) reste EXACTEMENT celle de `fn`, inchangée.
+    // Un REJET aussi : le coup a pu modifier l'état avant d'échouer (débit puis paiement refusé) — rien n'est annulé, l'état
+    // réel du serveur est rediffusé et sauvegardé, comme après une minuterie de l'appli (cf. _guardTimerCall)
     if (result && typeof (result as any).then === 'function') {
-      (result as Promise<unknown>).then(() => this._markDirty()).catch(() => {})
+      (result as Promise<unknown>).then(() => this._markDirty(), () => this._markDirty())
     }
-    this.journal.push({ move, player: player.id, p, at: Date.now() })
+    // sans la charge `p` (jusqu'à 64 Ko par coup, 200 coups gardés) : rien ne la relit, la sauvegarde ne la garde pas non plus
+    this.journal.push({ move, player: player.id, at: Date.now() })
     if (this.journal.length > JOURNAL_MAX) this.journal.shift()
     this._markDirty()
     return result
@@ -773,9 +1035,10 @@ export class Game {
   }
 
   /** ouvre la fenêtre de confirmation seatTtl (parties issues de la file, cf. matchmaking.ts) —
-   *  `unconfirmedIds` = sièges qui n'ont pas eux-mêmes déclenché la complétion du groupe. */
+   *  `unconfirmedIds` = sièges qui n'ont pas eux-mêmes déclenché la complétion du groupe. Rien pour une partie déjà finie (pendant
+   *  l'appariement) : une partie finie n'est jamais annulée. */
   _armConfirmWindow(unconfirmedIds: string[], ms: number): void {
-    if (unconfirmedIds.length === 0) return
+    if (unconfirmedIds.length === 0 || this._ended) return
     this._unconfirmedSeats = new Set(unconfirmedIds)
     this._armByName('µmatch', ms)
   }
@@ -803,8 +1066,9 @@ export class Game {
 
   // --- diffusion ------------------------------------------------------------------------------
 
-  /** bas niveau : MÊME charge `p` à tous les sièges CONNECTÉS (µgame:end/left/seat/event) */
+  /** bas niveau : MÊME charge `p` à tous les sièges CONNECTÉS (µgame:end/left/seat/event) — rien ne part d'une partie muette (`_silent`) */
   _broadcastTo(type: string, p: Record<string, unknown>): void {
+    if (this._silent) return
     const frame = { game: this.id, ...p }
     for (const player of this.players) {
       if (!player) continue
@@ -841,8 +1105,9 @@ export class Game {
       const base = { game: this.id, phase: this.phase, turn: this.turn, seq: this.seq, ...meta }
       // normalisation JSON — MÊME forme que ce qui voyage réellement sur le fil (le transport
       // JSON.stringify la trame de toute façon) : clone STABLE, jamais aliasé à game.state (une vue
-      // qui réutilise des objets internes mutés en place casserait le diff)
-      const viewNorm = JSON.parse(JSON.stringify(this.viewFor(player))) as unknown
+      // qui réutilise des objets internes mutés en place casserait le diff) ; la chaîne sert aussi de mesure de la vue (plus bas)
+      const viewJson = JSON.stringify(this.viewFor(player))
+      const viewNorm = JSON.parse(viewJson) as unknown
       if (!this._lastViews.has(client)) {
         this._lastViews.set(client, viewNorm)
         this._lastMeta.set(client, { phase: this.phase, turn: this.turn, ack })
@@ -861,8 +1126,10 @@ export class Game {
       if (ops.length === 0 && !metaChanged) return null   // ni vue ni méta n'ont changé POUR ELLE — aucune trame
       this._lastMeta.set(client, { phase: this.phase, turn: this.turn, ack })
       if (ops.length === 0) return { ...base }   // méta seule — la vue, elle, n'a pas bougé
+      // un chemin vide ne s'écrit pas en delta (la racine change de forme, ou porte une clé à point) : vue complète
+      if (ops.some(op => op.p === '')) return { ...base, view: viewNorm }
 
-      const viewSize   = JSON.stringify(viewNorm).length
+      const viewSize  = viewJson.length   // celle de la vue normalisée : la même chaîne, sans la sérialiser une 2e fois
       const deltaSize = JSON.stringify(ops).length
       if (deltaSize > viewSize * 0.6) return { ...base, view: viewNorm }   // repli : delta trop gros
       return { ...base, delta: ops }
@@ -896,10 +1163,21 @@ export class Game {
    *  simplicité assumée (aucun `_lastViews` par spectateur : lecture seule, pas de couture
    *  predict/ack à préserver). No-op si aucun spectateur (Set vide, coût nul). Appelée depuis
    *  _broadcastToPlayers (couvre événementiel ET action) ET _broadcastTickOrders (lockstep, qui ne
-   *  passe jamais par _broadcastToPlayers) — MÊME `seq` que la diffusion joueurs du round. */
+   *  passe jamais par _broadcastToPlayers) — MÊME `seq` que la diffusion joueurs du round.
+   *  Garde-fou (def.spectatorView, code JEU) — appelée depuis une microtâche ou la boucle de tick, sans requête à
+   *  qui répondre : un throw y ferait tomber le process. Capturé : log error, trame des spectateurs ignorée pour
+   *  ce round (les sièges ont déjà reçu la leur), la suite du round (sauvegarde) continue — MÊME principe que
+   *  _buildFrame pour les sièges. */
   _broadcastToSpectators(): void {
     if (this._spectators.size === 0) return
-    const frame = { game: this.id, ...this._spectatorInfo(), phase: this.phase, turn: this.turn, seq: this.seq }
+    let info: { view: unknown }
+    try {
+      info = this._spectatorInfo()
+    } catch (err) {
+      this.def.log('error', t('serveur.partie-spectatorview-leve', { msg: errMessage(err) }))
+      return
+    }
+    const frame = { game: this.id, ...info, phase: this.phase, turn: this.turn, seq: this.seq }
     for (const client of this._spectators) this.app.send(client, 'µgame:state', frame)
   }
 
@@ -923,7 +1201,7 @@ export class Game {
   /** mode événementiel (tick=0) — groupe les mutations d'une même microtâche en UNE diffusion */
   _broadcastState(): void {
     this._dirty = false
-    if (this._destroyed) return
+    if (this._destroyed || this._silent) return   // muette : ni trame ni sauvegarde, _announce() marque la partie à nouveau
     this._broadcastToPlayers()
     this._onMutate?.(this)
   }
@@ -960,6 +1238,14 @@ export class Game {
   _broadcastTickOrders(): void {
     if (this._destroyed) return
     const group = this._lockstep!.closeTick()
+    // journal plein (lockstepJournal.maxBytes) : ce tick n'est ni journalisé ni diffusé, la partie se termine — chaque
+    // joueur garde l'état du dernier tick reçu, jamais un journal tronqué. hooks.onEnd tourne ici dans la boucle de tick : protégé
+    if (!group) {
+      this.def.log('warn', t('serveur.partie-journal-lockstep-plein', { id: this.id, max: this.def.lockstepJournal?.maxBytes }))
+      this._guardTick('hooks.onEnd', () => this.end({ ended: true, reason: 'journal-full' }))
+      this._markDirtyTick()
+      return
+    }
     this.seq = group.tick
     this._broadcastTo('µgame:orders', { tick: group.tick, orders: group.orders })
     this._broadcastToSpectators()
@@ -990,7 +1276,7 @@ export class Game {
    *  retour désarme ET (re)démarre la boucle (mode action) — couvre aussi bien un 1er siège frais
    *  (cf. _createSeat) qu'un resync après coupure (cf. _reattachSeat).
    *  Garde `_ended` EN PREMIER — une partie FINIE ne doit jamais voir son compte à rebours de
-   *  fermeture (`µempty`, armé par .end()) annulé, ni sa boucle de tick relancée : un resync d'un
+   *  fermeture (`µempty`, armé par .end() à `endTtl`) annulé ou réarmé à `emptyTtl`, ni sa boucle de tick relancée : un resync d'un
    *  siège encore connecté au moment du .end() (ou qui se reconnecte pendant la grâce) appelle
    *  _reattachSeat → _checkEmpty comme n'importe quel resync normal — sans cette garde, il
    *  ranimerait une partie censée n'être plus qu'interrogeable (cf. .end()/_ended). */
@@ -1001,14 +1287,27 @@ export class Game {
     this._stopTickLoop()
   }
 
+  /** un siège vient de partir (µgame:leave, déconnexion, entrée refusée) : une partie qui n'a plus aucun siège connecté est fermée
+   *  tout de suite quand personne n'a à y revenir — une table jamais complète (`_started` faux), ou une partie dont plus aucun siège
+   *  n'est occupé (tous partis ou refusés : aucun µgame:resync ne la retrouverait). Sans cela, ces tables vides vivaient `emptyTtl` :
+   *  des refus de hooks.onJoin ou une page rechargée remplissaient la borne des parties privées de leur créateur, et une connexion qui
+   *  enchaînait µgame:play/leave dans la file publique gardait autant de parties qu'elle en demandait. Sinon, cf. _checkEmpty :
+   *  `emptyTtl` garde une partie commencée pour le retour de ses joueurs déconnectés. Une partie finie garde sa grâce `endTtl` ; une
+   *  partie muette (appariement de la file en cours) est laissée à matchmaking.ts, qui la défait lui-même */
+  _afterDeparture(): void {
+    const abandoned = !this._ended && !this._silent && !this.players.some(j => j && j.connected) && (!this._started || this.players.every(j => j === null))
+    if (abandoned) this._closeAbandoned()
+    else this._checkEmpty()
+  }
+
   // --- mode action — boucle de tick (def.tick Hz) + slowTick (def.slowTick) -------------------
 
   /** démarre la boucle — no-op si déjà tournante/tick=0/partie détruite/partie TERMINÉE (cf.
    *  `_ended` — même raison que _checkEmpty juste au-dessus, filet redondant si un futur appel
-   *  direct contournait _checkEmpty) — cf. _checkEmpty, .end(), ._destroy() pour les points
-   *  d'arrêt : AUCUN setInterval ne doit jamais rester résiduel */
+   *  direct contournait _checkEmpty)/partie MUETTE (cf. `_silent` : _announce() la démarre) — cf.
+   *  _checkEmpty, .end(), ._destroy() pour les points d'arrêt : AUCUN setInterval ne doit jamais rester résiduel */
   _startTickLoop(): void {
-    if (this.def.tick <= 0 || this._tickHandle || this._destroyed || this._ended) return
+    if (this.def.tick <= 0 || this._tickHandle || this._destroyed || this._ended || this._silent) return
     const period = 1000 / this.def.tick
     this._lastTick = Date.now()
     this._tickHandle = setInterval(() => this._runTick(), period)
@@ -1052,6 +1351,8 @@ export class Game {
     this._lastTick = now
     if (this.def.mode === 'lockstep') { this._broadcastTickOrders(); return }
     this._applyIntents()
+    // une intention a terminé la partie : plus de simulation (elle modifiait l'état final), l'état final part encore
+    if (this._ended) { this._broadcastTick(); return }
     this._guardTick('simulate', () => this.def.simulate?.(this, dt))
     this._broadcastTick()
   }
@@ -1060,14 +1361,21 @@ export class Game {
    *  de réception réseau ; la file est vidée après coup (nouvelle fenêtre pour le tick suivant).
    *  Couture _ack (netcode) : `_extractN` détache un `_n` numérique éventuel AVANT
    *  l'appel à `fn` — le jeu reçoit un payload STRICTEMENT identique à ce qu'il recevrait sans la
-   *  couture, aucune fuite de méta-donnée protocole dans `def.intents`. */
+   *  couture, aucune fuite de méta-donnée protocole dans `def.intents`.
+   *  Une intention qui termine la partie (.end()) arrête la file : celles qui suivent dans ce tick ne tournent pas (le score de
+   *  l'autre joueur était compté après la victoire). */
   _applyIntents(): void {
     if (this._intentQueue.size === 0) return
     for (const player of this.players) {
+      if (this._ended) break
       if (!player) continue
       const queue = this._intentQueue.get(player.id)
       if (!queue) continue
-      for (const [name, p] of queue) { const fn = this.def.intents[name]; if (fn) this._guardTick('intent:'+ name, () => fn(this, player, this._extractN(player.id, p))) }
+      for (const [name, p] of queue) {
+        if (this._ended) break
+        const fn = this.def.intents[name]
+        if (fn) this._guardTick('intent:'+ name, () => fn(this, player, this._extractN(player.id, p)))
+      }
     }
     this._intentQueue.clear()
   }
@@ -1086,50 +1394,102 @@ export class Game {
     return reste
   }
 
+  /** annulation (`seat-expired`, `replaced`) : la même fin part aux sièges et aux spectateurs (cf. _broadcastToSpectatorsRaw) */
   _cancel(reason: string): void {
-    this._broadcastTo('µgame:end', { result: { cancelled: true, reason } })
+    const result = { cancelled: true, reason }
+    this._broadcastTo('µgame:end', { result })
+    this._broadcastToSpectatorsRaw('µgame:end', { result })
+    this._destroy()
+  }
+
+  /** fermeture d'une partie que ses joueurs ont laissée (cf. _afterDeparture, grâce `µempty` échue) : une partie NON finie prévient
+   *  d'abord ses spectateurs, dont la vue restait sinon figée (µgame:end { cancelled: true, reason: 'abandoned' }) — aucun siège n'a
+   *  plus de connexion. Une partie finie les a déjà prévenus à .end() ; l'arrêt du serveur (_destroy direct) ne dit rien, la partie
+   *  sauvegardée revit au redémarrage */
+  _closeAbandoned(): void {
+    if (!this._ended && !this._destroyed) this._broadcastToSpectatorsRaw('µgame:end', { result: { cancelled: true, reason: 'abandoned' } })
     this._destroy()
   }
 
   // --- minuteries — {name, at} sérialisable, jamais de fermeture stockée (cf. .timer() public) ---
 
   /** réservée (µturn/µmatch/µempty) → code FRAMEWORK, laissé remonter tel quel (un throw ici est
-   *  un bug interne, pas à masquer) ; APPLICATIVE (def.timers) → code JEU, protégé (cf.
+   *  un bug interne, pas à masquer) — SAUF le code JEU que l'échéance de µturn appelle (hooks.onTurnTimeout,
+   *  turns.order), gardé dans _onTurnExpired ; APPLICATIVE (def.timers) → code JEU, protégé (cf.
    *  _guardApplicativeTimer) : un `setTimeout` nu n'a AUCUNE requête à qui répondre, un throw non
    *  capturé y ferait planter le PROCESS entier. */
   _armByName(name: string, ms: number): void {
-    const onExpire = RESERVED_TIMER_NAMES.has(name)
+    if (this._destroyed) return   // partie détruite : plus aucune minuterie, ni du framework ni de l'appli (un crochet asynchrone peut rendre la main après la destruction)
+    const reserved = RESERVED_TIMER_NAMES.has(name)
+    if (this._ended && !reserved) return   // partie finie : le code de l'appli ne tourne plus (ni .timer(), ni onEnd, ni la minuterie nommée d'une sauvegarde restaurée)
+    const onExpire = reserved
       ? () => this._onReservedTimer(name)
       : () => this._guardApplicativeTimer(name)
     this._arm(name, ms, onExpire)
   }
 
-  /** garde-fou minuterie APPLICATIVE (def.timers[name], cf. _armByName) — capture SYNC (throw) ET
-   *  ASYNC (rejet, si l'auteur renvoie malgré tout une Promise) : log error par le canal déjà
-   *  utilisé par le serveur (def.log), AUCUN changement de gameplay — même esprit que _guardTick
-   *  pour la boucle de tick, adapté à un appel HORS tick (arme/réarme n'importe quand). */
+  /** minuterie APPLICATIVE (def.timers[name], cf. _armByName) — appel gardé par _guardTimerCall ; un nom non déclaré (sauvegarde
+   *  d'une version antérieure de l'appli, nom hérité d'Object.prototype) ne lance rien */
   _guardApplicativeTimer(name: string): void {
-    const fn = this.def.timers[name]
+    const fn = Object.hasOwn(this.def.timers, name) ? this.def.timers[name] : undefined
     if (!fn) return
-    try {
-      // `fn` est typée `(game) => void` (def.timers) — un auteur peut malgré tout renvoyer une
-      // Promise À L'EXÉCUTION (le type ne l'empêche pas) : cast large pour rester capable de la
-      // détecter, MÊME idiome que _guardTick (fn: () => unknown) pour la boucle de tick.
-      const r = fn(this) as unknown
-      if (r && typeof (r as any).then === 'function') {
-        (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('serveur.partie-timer-applicatif-rejete', { nom: name, msg: errMessage(err) })))
-      }
-    } catch (err) {
-      this.def.log('error', t('serveur.partie-timer-applicatif-leve', { nom: name, msg: errMessage(err) }))
-    }
+    this._guardTimerCall(name, () => fn(this))
   }
 
+  /** garde-fou d'un appel de code JEU fait par une minuterie (def.timers[name], hooks.onTurnTimeout, passage de tour
+   *  automatique) — capture SYNC (throw) ET ASYNC (rejet, si l'auteur renvoie malgré tout une Promise) : log error par
+   *  le canal déjà utilisé par le serveur (def.log), AUCUN changement de gameplay — même esprit que _guardTick pour la
+   *  boucle de tick, adapté à un appel HORS tick (arme/réarme n'importe quand). `keys` choisit le message du journal selon
+   *  l'appel (une minuterie applicative par défaut, `name` la nomme ; les crochets et le passage de tour ont le leur). */
+  _guardTimerCall(name: string, call: () => unknown, keys: TimerCallKeys = TIMER_CALL_KEYS): void {
+    try {
+      // `call` est typé `() => unknown` : def.timers et les hooks sont typés `=> void`, un auteur peut malgré tout
+      // renvoyer une Promise À L'EXÉCUTION (le type ne l'empêche pas) — MÊME idiome que _guardTick
+      // (fn: () => unknown) pour la boucle de tick, de quoi la détecter.
+      const r = call()
+      if (r && typeof (r as any).then === 'function') {
+        // l'état change aussi après l'attente (même si elle est rejetée, la minuterie a pu le modifier avant) : une 2e marque à la fin
+        (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t(keys.rejected ?? keys.thrown, { nom: name, msg: errMessage(err) }))).then(() => this._markDirty())
+      }
+    } catch (err) {
+      this.def.log('error', t(keys.thrown, { nom: name, msg: errMessage(err) }))
+    }
+    // l'état a pu changer (même si la minuterie a levé après l'avoir modifié) : diffusion + sauvegarde, comme après un coup
+    this._markDirty()
+  }
+
+  /** une Promise rendue par du code JEU que personne n'attend (crochet async : onJoin, onLeave, onEnd, onCreate) : son rejet est
+   *  journalisé avec le message `key` (un par crochet), jamais un rejet non géré qui ferait tomber le processus ; `onRejected`
+   *  tourne ensuite (onJoin : le refus du siège, cf. _refuseSeat) ; aucune marque de diffusion à la fin de l'attente (la Promise
+   *  n'est pas attendue par l'appelant). Rend `null` quand le crochet n'a rendu aucune Promise, sinon une Promise qui dit comment
+   *  il a fini : `true` s'il a abouti, `false` s'il a rejeté (rejet déjà journalisé, `onRejected` déjà passé) — seul l'appariement
+   *  de la file l'attend (cf. _createSeat), les autres appelants l'ignorent */
+  _followRejection(key: MsgKey, r: unknown, onRejected?: () => void): Promise<boolean> | null {
+    if (!(r && typeof (r as any).then === 'function')) return null
+    return Promise.resolve(r as PromiseLike<unknown>).then(() => true, (err: unknown) => {
+      this.def.log('error', t(key, { msg: errMessage(err) }))
+      onRejected?.()
+      return false
+    })
+  }
+
+  /** arme (ou réarme) la minuterie `name` à `ms` ms d'ici. Une durée au-delà de MAX_TIMEOUT_MS (24,8 jours) est attendue
+   *  PAR TRANCHES : à chaque tranche le reste se recalcule sur l'échéance `at` (la même que celle sauvegardée par serialize()),
+   *  et l'entrée garde toujours la poignée de la tranche EN COURS (désarmement, réarmement et destruction la coupent).
+   *  `Infinity` = attente sans fin : l'échéance est bornée à Number.MAX_SAFE_INTEGER pour rester un nombre sérialisable en JSON.
+   *  Une durée qui n'est pas un nombre (NaN, absente d'une définition construite à la main) donne une échéance immédiate, mais
+   *  toujours un nombre : un `NaN` sauvegardé devient `null` en JSON et la sauvegarde entière ne se restaure plus. */
   _arm(name: string, ms: number, onExpire: () => void): void {
     const existing = this._timers.get(name)
     if (existing) clearTimeout(existing.handle)
-    const at = Date.now() + ms
-    const handle = setTimeout(() => { this._timers.delete(name); onExpire() }, ms)
-    this._timers.set(name, { at, handle })
+    const span  = Math.min(ms, Number.MAX_SAFE_INTEGER)
+    const at    = Date.now() + (Number.isFinite(span) ? span : 0)
+    const entry = { at, handle: undefined as unknown as ReturnType<typeof setTimeout> }
+    const wait  = (left: number): void => {
+      entry.handle = left > MAX_TIMEOUT_MS ? setTimeout(() => wait(at - Date.now()), MAX_TIMEOUT_MS) : setTimeout(() => { this._timers.delete(name); onExpire() }, left)
+    }
+    wait(ms)
+    this._timers.set(name, entry)
   }
 
   _disarm(name: string): void {
@@ -1137,8 +1497,15 @@ export class Game {
     if (existing) { clearTimeout(existing.handle); this._timers.delete(name) }
   }
 
+  /** coupe toutes les minuteries nommées de l'appli (`.timer()`), jamais celles du framework (µturn, µmatch, µempty) */
+  _disarmAppTimers(): void {
+    for (const name of Array.from(this._timers.keys())) {
+      if (!RESERVED_TIMER_NAMES.has(name)) this._disarm(name)
+    }
+  }
+
   _armTurnTimeout(): void {
-    if (!this.def.turns || !this.def.turns.timeout) return
+    if (this._ended || !this.def.turns || !this.def.turns.timeout) return   // partie finie : plus de tour à chronométrer (un .next() après .end() n'arme rien)
     this._armByName('µturn', this.def.turns.timeout)
   }
 
@@ -1148,18 +1515,26 @@ export class Game {
     else if (name === 'µempty') this._onEmptyExpired()
   }
 
+  /** hooks.onTurnTimeout et, sans lui, le passage de tour automatique (turns.order peut être une fonction de l'auteur) :
+   *  code JEU appelé par une minuterie, gardé comme une minuterie applicative (cf. _guardTimerCall) — le crochet garde son
+   *  appel en méthode de `hooks` (`this` = hooks). Sans effet sur une partie finie : .end() désarme `µturn`, mais la sauvegarde
+   *  d'une version antérieure, qui ne le désarmait pas, la porte encore et la restauration la réarme. */
   _onTurnExpired(): void {
-    if (this.def.hooks.onTurnTimeout) this.def.hooks.onTurnTimeout(this)
-    else this.next()
+    if (this._ended) return
+    if (this.def.hooks.onTurnTimeout) this._guardTimerCall('hooks.onTurnTimeout', () => this.def.hooks.onTurnTimeout!(this), TURN_TIMEOUT_KEYS)
+    else this._guardTimerCall('turns.order', () => this.next(), TURN_ORDER_AUTO_KEYS)
   }
 
+  /** fin de la fenêtre de confirmation des sièges de la file : annule la partie si un siège n'a rien confirmé. Une partie FINIE
+   *  n'est jamais annulée (sa grâce `endTtl` va à son terme, un seul µgame:end part) : .end() désarme `µmatch`, mais la sauvegarde
+   *  d'une version antérieure, qui ne le désarmait pas, la porte encore et la restauration la réarme. */
   _onMatchExpired(): void {
-    if (!this._unconfirmedSeats || this._unconfirmedSeats.size === 0) return
+    if (this._ended || !this._unconfirmedSeats || this._unconfirmedSeats.size === 0) return
     this._cancel('seat-expired')
   }
 
   _onEmptyExpired(): void {
-    this._destroy()
+    this._closeAbandoned()
   }
 
   // --- anti-abus (limits.moves) — seau à jetons PAR SIÈGE, TokenBucket réutilisée de mjs-ws/guard.ts ---
@@ -1192,8 +1567,11 @@ export class Game {
    *  (cadence serveur), DANS CET ORDRE. Chaque sous-garde qui REJETTE journalise+compte D'ABORD
    *  (_reportSuspicion) PUIS throw — même convention que _consumeToken ci-dessus : un refus ICI
    *  redevient une ack d'erreur classique côté client (cf. commentaire de tête de _onMove),
-   *  aucun canal d'erreur spécial à connaître. Ne throw JAMAIS si les 3 options sont absentes. */
-  _antiCheatGuard(player: MjsServerSeat, move: string, p: unknown): void {
+   *  aucun canal d'erreur spécial à connaître. Ne throw JAMAIS si les 3 options sont absentes.
+   *  Rend la fonction qui ENREGISTRE la séquence (antiReplay) et l'heure (moveIntervalMs) du coup : _onMove ne l'appelle qu'une fois
+   *  le coup accepté (débit limits.moves, nom de coup) — sinon un coup refusé pour débit consommait son numéro, et sa reprise
+   *  légitime passait pour un rejeu (refusée, comptée suspecte, remontée à def.onSuspicion). */
+  _antiCheatGuard(player: MjsServerSeat, move: string, p: unknown): () => void {
     if (this.def.suspect) {
       const r = this.def.suspect(move, { seat: player.seat, game: this, type: this.type, turn: this.turn, phase: this.phase, p })
       if (r) {
@@ -1207,8 +1585,9 @@ export class Game {
       }
     }
 
+    let seq: number | null = null
     if (this.def.antiReplay) {
-      const seq = this._extractAntiReplaySeq(p)
+      seq = this._extractAntiReplaySeq(p)
       // aucun _n/_s numérique attaché à CE coup → rien à vérifier, jamais un faux rejet (cf.
       // commentaire de _extractAntiReplaySeq : rétro-compat totale pour un coup qui n'en porte pas)
       if (seq != null) {
@@ -1221,18 +1600,17 @@ export class Game {
           this._reportSuspicion(player, move, 'rejeu-fenetre', true)
           throw new Error(t('serveur.partie-coup-rejete-sequence-avance', { coup: move, seq: seq, dernier: last }))
         }
-        this._lastAntiReplaySeq.set(player.id, seq)
       }
     }
 
+    let now: number | null = null
     if (this.def.limits.moveIntervalMs) {
-      const now = Date.now()
+      now = Date.now()
       const last = this._lastMoveAt.get(player.id)
       if (last != null && now - last < this.def.limits.moveIntervalMs) {
         this._reportSuspicion(player, move, 'rate', true)
         throw new Error(t('serveur.partie-coup-rejete-cadence', { coup: move }))
       }
-      this._lastMoveAt.set(player.id, now)
     }
 
     // anti-triche (opt-in, anti-triche poussé au maximum) — quota de coups PAR
@@ -1247,6 +1625,11 @@ export class Game {
     if (this._identityQuota && !this._identityQuota(player.id)) {
       this._reportSuspicion(player, move, 'quota-identite', true)
       throw new Error(t('serveur.partie-coup-rejete-quota-identite', { coup: move }))
+    }
+
+    return () => {
+      if (seq != null) this._lastAntiReplaySeq.set(player.id, seq)
+      if (now != null) this._lastMoveAt.set(player.id, now)
     }
   }
 
@@ -1287,12 +1670,14 @@ export class Game {
 
   // --- tour par tour (turns.order 'roundrobin') ------------------------------------------------
 
-  /** ordre = celui des SIÈGES occupés (index croissant), connectés ou non — cf. commentaire de tête */
-  _nextRoundrobin(): MjsServerSeat | null {
+  /** ordre = celui des SIÈGES occupés (index croissant), connectés ou non — cf. commentaire de tête. Détenteur du tour qui n'est
+   *  plus assis : le siège occupé qui suit `fromSeat` (celui qu'il vient de quitter, en bouclant), à défaut le premier */
+  _nextRoundrobin(fromSeat: number | null = null): MjsServerSeat | null {
     const seats = this.players.filter((j): j is MjsServerSeat => j !== null)
     if (seats.length === 0) return null
     const currentIdx = seats.findIndex(j => j.id === this.turn)
-    return seats[currentIdx === -1 ? 0 : (currentIdx + 1) % seats.length]
+    if (currentIdx === -1) return fromSeat === null ? seats[0] : (seats.find(j => j.seat > fromSeat) ?? seats[0])
+    return seats[(currentIdx + 1) % seats.length]
   }
 }
 
@@ -1305,21 +1690,21 @@ export class Game {
  *  STRUCTURELLE que ce fichier lit directement (.slice()/.map()/for…of un peu plus bas), sinon
  *  c'est une TypeError bien plus cryptique qui surviendrait à leur place. */
 function validateSnapshot(data: MjsServerGameSnapshot): void {
-  if (!data || typeof data !== 'object') throw new Error(t('serveur.restore-invalide', { champ: 'racine', attendu: 'un objet' }))
-  if (typeof data.id !== 'string' || data.id === '') throw new Error(t('serveur.restore-invalide', { champ: 'id', attendu: 'une chaîne non vide' }))
-  if (typeof data.type !== 'string' || data.type === '') throw new Error(t('serveur.restore-invalide', { champ: 'type', attendu: 'une chaîne non vide' }))
-  if (!Array.isArray(data.journal)) throw new Error(t('serveur.restore-invalide', { champ: 'journal', attendu: 'un tableau' }))
-  if (!Array.isArray(data.seats)) throw new Error(t('serveur.restore-invalide', { champ: 'seats', attendu: 'un tableau' }))
-  if (!Array.isArray(data.timers)) throw new Error(t('serveur.restore-invalide', { champ: 'timers', attendu: 'un tableau' }))
+  if (!data || typeof data !== 'object') throw new Error(t('serveur.restore-invalide', { champ: t('serveur.restore-champ-racine'), attendu: t('serveur.restore-attendu-objet') }))
+  if (typeof data.id !== 'string' || data.id === '') throw new Error(t('serveur.restore-invalide', { champ: 'id', attendu: t('serveur.restore-attendu-chaine-non-vide') }))
+  if (typeof data.type !== 'string' || data.type === '') throw new Error(t('serveur.restore-invalide', { champ: 'type', attendu: t('serveur.restore-attendu-chaine-non-vide') }))
+  if (!Array.isArray(data.journal)) throw new Error(t('serveur.restore-invalide', { champ: 'journal', attendu: t('serveur.restore-attendu-tableau') }))
+  if (!Array.isArray(data.seats)) throw new Error(t('serveur.restore-invalide', { champ: 'seats', attendu: t('serveur.restore-attendu-tableau') }))
+  if (!Array.isArray(data.timers)) throw new Error(t('serveur.restore-invalide', { champ: 'timers', attendu: t('serveur.restore-attendu-tableau') }))
   for (const s of data.seats) {
     if (s === null) continue
     if (typeof s !== 'object' || typeof s.seat !== 'number' || typeof s.id !== 'string') {
-      throw new Error(t('serveur.restore-invalide', { champ: 'seats[]', attendu: "{seat:number, id:string} ou null" }))
+      throw new Error(t('serveur.restore-invalide', { champ: 'seats[]', attendu: t('serveur.restore-attendu-siege') }))
     }
   }
   for (const timer of data.timers) {
     if (!timer || typeof timer.name !== 'string' || typeof timer.at !== 'number') {
-      throw new Error(t('serveur.restore-invalide', { champ: 'timers[]', attendu: '{name:string, at:number}' }))
+      throw new Error(t('serveur.restore-invalide', { champ: 'timers[]', attendu: t('serveur.restore-attendu-minuterie') }))
     }
   }
 }
@@ -1368,16 +1753,21 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
   // `_ended` (cf. _checkEmpty) : une partie restaurée déjà terminée ne relance ni tick ni grâce.
   game._checkEmpty()
   for (const { name, at } of data.timers) game._armByName(name, Math.max(0, at - Date.now()))
+  // partie finie dont la sauvegarde n'a pas sa grâce (écrite pendant un arrêt, ou par une version antérieure) : sans elle, rien ne la
+  // détruirait jamais ni ne la retirerait du stockage — sa grâce de fin repart entière
+  if (game._ended && !game._timers.has('µempty')) game._armByName('µempty', def.endTtl ?? def.emptyTtl)
   return game
 }
 
 /** Crée une partie FRAÎCHE — `def.state(game)` puis `hooks.onCreate` (dans cet ordre : l'état
  *  existe déjà quand onCreate le lit). Seul point d'entrée normal — jamais `new Game()` direct
  *  hors de ce fichier (le state ne serait pas initialisé). Mode lockstep : `def.state`
- *  est `null` (interdit, cf. game-def.ts) — `game.state` reste `undefined`, jamais assigné. */
+ *  est `null` (interdit, cf. game-def.ts) — `game.state` reste `undefined`, jamais assigné.
+ *  Un throw de onCreate remonte à l'appelant (aucune partie n'est rendue) ; une Promise qu'il rend n'est pas attendue, son
+ *  rejet est journalisé et la partie est créée quand même (cf. _followRejection). */
 export function createGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy: (game: Game) => void, id: string): Game {
   const game = new Game(app, def, onDestroy, id)
   if (def.state) game.state = def.state(game)
-  def.hooks.onCreate?.(game)
+  game._followRejection('serveur.partie-oncreate-rejete', def.hooks.onCreate?.(game))
   return game
 }

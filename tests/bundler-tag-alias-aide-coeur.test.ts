@@ -52,7 +52,7 @@ async function construire(p: Projet, js: JsMode, env: 'dev' | 'prod', extra: Rec
 
 function lireComposant(p: Projet, nom: string): string {
   const fichiers = readdirSync(p.outDir)
-  const f        = fichiers.find(f => new RegExp(`^${nom}-[a-f0-9]{8}\\.js$`).test(f))
+  const f        = fichiers.find(f => new RegExp(`^${nom}-[0-9a-z]{5}\\.js$`).test(f))
   assert.ok(f, `${nom}-*.js attendu dans la sortie (trouvés : ${fichiers.join(', ')})`)
   return readFileSync(join(p.outDir, f!), 'utf-8')
 }

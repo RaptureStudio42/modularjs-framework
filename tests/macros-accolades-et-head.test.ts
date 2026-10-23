@@ -123,8 +123,8 @@ describe('macros — fin de balise consciente des accolades/guillemets', functio
 
   it('non-régression : <@module $comp class="x"> statique, sortie inchangée', () => {
     const r = processGlobalMacros(`<@module $comp class="x">hi</@module>`)
-    assert.match(r.html, /<div mjs-mod="0" class="x">/)
-    assert.match(r.setup, /µ\._updModule\(@, '0', \(\$comp\)\)/)
+    assert.match(r.html, /<div mjs-mod="0" mjs-comp=\{\$comp\} class="x">/)
+    assert.doesNotMatch(r.setup, /_updModule/)
   })
 })
 

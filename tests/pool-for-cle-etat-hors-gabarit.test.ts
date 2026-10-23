@@ -116,7 +116,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     assert.ok(row4, 'row id=4 rendue')
     assert.equal(row4.querySelector('span.lbl').textContent, 'D', 'le label suit le nouvel item')
     const input4: any = row4.querySelector('input.inp')
-    assert.equal(input4, input2, 'un <input> SANS état opaque reste recyclé (identité du nœud) — seule sa valeur est remise au gabarit')
+    assert.ok(input4 === input2, 'un <input> SANS état opaque reste recyclé (identité du nœud) — seule sa valeur est remise au gabarit')
     assert.equal(input4.value, '', 'input vierge : la valeur tapée pour id=2 ne doit pas fuiter sur id=4')
 
     win.close?.()
@@ -164,7 +164,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const chk4: any = row4.querySelector('input.chk')
-    assert.equal(chk4, chk2, 'la case à cocher SANS état opaque reste recyclée (identité du nœud)')
+    assert.ok(chk4 === chk2, 'la case à cocher SANS état opaque reste recyclée (identité du nœud)')
     assert.equal(chk4.checked, false, 'décochée : la coche de id=2 ne doit pas fuiter sur id=4')
 
     win.close?.()
@@ -217,7 +217,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const sel4: any = row4.querySelector('select.sel')
-    assert.equal(sel4, sel2, 'le <select> SANS état opaque reste recyclé (identité du nœud)')
+    assert.ok(sel4 === sel2, 'le <select> SANS état opaque reste recyclé (identité du nœud)')
     assert.equal(sel4.value, 'y', 'option Y (gabarit) restaurée : le choix Z de id=2 ne doit pas fuiter sur id=4')
 
     win.close?.()
@@ -267,7 +267,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const input4: any = row4.querySelector('input.inp')
-    assert.equal(input4, input2, 'un <input> LIÉ est lui aussi recyclé (identité du nœud)')
+    assert.ok(input4 === input2, 'un <input> LIÉ est lui aussi recyclé (identité du nœud)')
     assert.equal(input4.value, 'B', 'la liaison de la nouvelle clé réécrit bien sa valeur, même identique à l\'ancienne')
 
     win.close?.()
@@ -325,7 +325,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const child4: any = row4.querySelector('mjs-enfantetat')
-    assert.notEqual(child4, child2, 'le composant enfant ne doit PAS être recyclé vers une autre clé')
+    assert.ok(child4 !== child2, 'le composant enfant ne doit PAS être recyclé vers une autre clé')
     assert.equal(child4._shadow.querySelector('span.cnt').textContent, '0', 'compteur remis à zéro : pas d\'état hérité de l\'ancienne clé')
 
     win.close?.()
@@ -462,7 +462,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const ra4: any = row4.querySelector('input.ra')
-    assert.equal(ra4, ra2, 'le radio SANS état opaque reste recyclé (identité du nœud)')
+    assert.ok(ra4 === ra2, 'le radio SANS état opaque reste recyclé (identité du nœud)')
     assert.equal(ra4.checked, false, 'décoché : la coche de id=2 ne doit pas fuiter sur id=4')
 
     win.close?.()
@@ -508,7 +508,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const ta4: any = row4.querySelector('textarea.ta')
-    assert.equal(ta4, ta2, 'la textarea SANS état opaque reste recyclée (identité du nœud)')
+    assert.ok(ta4 === ta2, 'la textarea SANS état opaque reste recyclée (identité du nœud)')
     assert.equal(ta4.value, '', 'vierge : le texte tapé pour id=2 ne doit pas fuiter sur id=4')
 
     win.close?.()
@@ -559,7 +559,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const sel4: any = row4.querySelector('select.sel')
-    assert.equal(sel4, sel2, 'le <select multiple> SANS état opaque reste recyclé (identité du nœud)')
+    assert.ok(sel4 === sel2, 'le <select multiple> SANS état opaque reste recyclé (identité du nœud)')
     const selected = Array.from(sel4.options as any[]).filter((o: any) => o.selected).map((o: any) => o.value)
     assert.deepEqual(selected, [], 'aucune option ne doit rester sélectionnée : le choix de id=2 ne doit pas fuiter sur id=4')
 
@@ -607,7 +607,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue')
     const inp4: any = row4.querySelector('input.inp')
-    assert.equal(inp4, inp2, 'un <input> à valeur statique reste recyclé (identité du nœud)')
+    assert.ok(inp4 === inp2, 'un <input> à valeur statique reste recyclé (identité du nœud)')
     assert.equal(inp4.value, 'PREREMPLI', 'valeur remise à celle du gabarit, pas à vide')
 
     win.close?.()
@@ -658,7 +658,7 @@ describe('{for … by clé} — pool de lignes : la valeur d\'un champ de formul
     const row4: any = shadow.querySelector('section.row[data-id="4"]')
     assert.ok(row4, 'row id=4 rendue (pas de crash malgré range/date/color/file)')
     const rg4: any = row4.querySelector('input.rg')
-    assert.equal(rg4, rg2, 'le range reste recyclé (identité du nœud)')
+    assert.ok(rg4 === rg2, 'le range reste recyclé (identité du nœud)')
     assert.equal(rg4.value, '3', 'range remis à la valeur du gabarit')
     assert.equal(row4.querySelector('input.dt').value, '2020-01-01', 'date remise au gabarit')
 

@@ -132,7 +132,7 @@ function _mjlockstepDispatchEvent(st, type, p) {
 function _mjlockstepReset(st, frame) {
   var i, g, journal, anomaly;
   if (typeof frame.seed !== 'number') {
-    µ.error("[µ.lockstep] partie '"+ (frame.game || '?') +"' n'est pas en mode lockstep côté serveur (def.mode) — µ.lockstep restera inerte");
+    µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepNotLockstep', { game: (frame.game || '?') }, 'partie \'{game}\' n\'est pas en mode lockstep côté serveur (def.mode) — µ.lockstep restera inerte'));
     return;
   }
   st.seed = frame.seed;
@@ -143,7 +143,7 @@ function _mjlockstepReset(st, frame) {
   journal = frame.journal || [];
   anomaly = _mjlockstepJournalAnomaly(journal);
   if (anomaly) {
-    µ.error("[µ.lockstep] journal tronqué au resync (tick "+ anomaly.tick +" reçu, tick "+ anomaly.expected +" attendu) — resync déterministe impossible, état local potentiellement faux");
+    µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepJournalTruncated', { tick: anomaly.tick, expected: anomaly.expected }, 'journal tronqué au resync (tick {tick} reçu, tick {expected} attendu) — resync déterministe impossible, état local potentiellement faux'));
     _mjlockstepDispatchEvent(st, 'divergence', { tick: anomaly.tick, expected: anomaly.expected, reason: 'journal-truncated' });
   }
   for (i = 0; i < journal.length; i++) { g = journal[i]; _mjlockstepReplayTick(st, g.tick, g.orders); }

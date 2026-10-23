@@ -51,14 +51,24 @@ var _smoothSampleAt = function(buf, t, fromIdx) {
   return _smoothSampleAt(buf, t, 0).pos;
 };
 
+// range un champ venu du réseau sur une copie : `__proto__` y reste une clé comme une autre — l'affectation
+// `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+function _smoothPut(o, k, v) {
+  if (k === '__proto__') { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); }
+  else { o[k] = v; }
+}
+
+// clé propre, jamais héritée : `k in b` trouvait `constructor` ou `toString` sur le prototype d'un objet qui ne les a pas
+var _smoothOwn = Object.prototype.hasOwnProperty;
+
 // Interpolation linéaire champ par champ ; les champs non-numériques prennent
 // la valeur d'arrivée (ex. une couleur, un nom).
 µ._mjs_smoothLerp = function(a, b, r) {
   var out = {}, k;
   for (k in b) {
-    out[k] = (typeof a[k] === 'number' && typeof b[k] === 'number')
+    _smoothPut(out, k, (typeof a[k] === 'number' && typeof b[k] === 'number')
       ? a[k] + (b[k] - a[k]) * r
-      : b[k];
+      : b[k]);
   }
   return out;
 };
@@ -72,7 +82,7 @@ var _smoothSampleAt = function(buf, t, fromIdx) {
   if (a === b) { return true; }
   if (a == null || b == null) { return false; }
   for (k in b) { if (!Object.is(a[k], b[k])) { return false; } }
-  for (k in a) { if (!(k in b)) { return false; } }
+  for (k in a) { if (!_smoothOwn.call(b, k)) { return false; } }
   return true;
 };
 
@@ -96,8 +106,9 @@ function _smoothEstFini(pos) {
             : 100;
   var maxSamples = opts.maxSamples || 30;
   var out = µ.state({});
-  var buffers = {};   // id -> [{ t, pos }]
-  var cursors = {};   // id -> dernier index encadrant (reprise O(1))
+  // sans prototype : une entité nommée `toString` ou `constructor` n'y trouve rien d'hérité
+  var buffers = Object.create(null);   // id -> [{ t, pos }]
+  var cursors = Object.create(null);   // id -> dernier index encadrant (reprise O(1))
   var live = true;
   // avertissement échantillon non fini — PAR INSTANCE, comme
   // lastError/_mjs_queueOverflowWarned de mjs_socket.ts (this._xxx, classe) — ici en var de CLOSURE
@@ -117,14 +128,14 @@ function _smoothEstFini(pos) {
         // échantillon corrompu (Infinity/NaN, ex. 1e309 côté réseau) : jamais retenu,
         // sinon _mjs_smoothLerp propage un NaN dans le store affiché — averti UNE fois, pas par trame
         if (!_smoothEstFini(pos)) {
-          if (!_smoothWarnedNonFinite) { _smoothWarnedNonFinite = true; µ.warn('[µ.smooth] échantillon non fini (Infinity/NaN) ignoré pour \'' + id + '\''); }
+          if (!_smoothWarnedNonFinite) { _smoothWarnedNonFinite = true; µ.warn('[µ.smooth] ' + µ._mjs_txt('smoothNonFinite', { id: id }, 'échantillon non fini (Infinity/NaN) ignoré pour \'{id}\'')); }
           continue;
         }
         buf = buffers[id] || (buffers[id] = []);
         last = buf.length ? buf[buf.length - 1].pos : null;
         if (last === null || !µ._mjs_smoothEq(last, pos)) {
           clone = {};
-          for (k in pos) { clone[k] = pos[k]; }
+          for (k in pos) { _smoothPut(clone, k, pos[k]); }
           buf.push({ t: now, pos: clone });
           // PERF — `shift()` retire la TÊTE : l'index mémorisé de
           // cette entité doit reculer d'un cran pour rester valide.
@@ -137,7 +148,7 @@ function _smoothEstFini(pos) {
       // 2. afficher « il y a `delay` ms » en interpolant + purger les disparus
       target = now - delay;
       for (id in buffers) {
-        if (!(id in source) || source[id] == null) {
+        if (!_smoothOwn.call(source, id) || source[id] == null) {
           delete buffers[id];
           delete out[id];
           delete cursors[id];

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { mjsServer, resolveGameDef, deterministicSeed } from '../src/mjs-server/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import type { MjsServerApp, MjsServerOptions } from '../src/mjs-server/index.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -22,6 +23,7 @@ const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }
@@ -57,6 +59,7 @@ const lockstepClientSrc = ['mjs_socket.ts', 'mjs_game.ts', 'mjs_det.ts', 'mjs_lo
 // console réelle (même esprit que µ.warn/µ.log stubbés plus haut)
 function makeMuLockstep(erreurs: string[]): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: (msg: string) => erreurs.push(String(msg)), warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', lockstepClientSrc)(µ)
   return µ
 }

@@ -111,7 +111,8 @@ describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
   it('corruption tolérée : lignes JSON invalides ignorées, les lignes valides survivent', () => {
     const dir = mjsTmp('journal-corrupt')
     mkdirSync(dir, { recursive: true })
-    const valide = { ts: 1, source: 'server', signature: 'ok\n\n/x', message: 'ok', pile: '', url: '/x', version: null, n: 1, premier: 1, dernier: 1 }
+    const maintenant = Date.now()
+    const valide = { ts: maintenant, source: 'server', signature: 'ok\n\n/x', message: 'ok', pile: '', url: '/x', version: null, n: 1, premier: maintenant, dernier: maintenant }
     const contenu = '{"json invalide sans fermeture\n' + JSON.stringify(valide) + '\n\n[1,2,3]\n"une simple chaine JSON valide mais pas un objet"\n'
     writeFileSync(join(dir, 'mjs-errors-server.ndjson'), contenu, 'utf-8')
     const j = makeJournal({ dir })

@@ -8,38 +8,38 @@
 </script>
 
 <form id="demo-form">
-  <@select name="country" search value=!{$country} placeholder="Choisir un pays">
-    <@option value="fr" icon="🇫🇷">France</@option>
-    <@option value="de" icon="🇩🇪">Allemagne</@option>
-    <@option value="be" icon="🇧🇪">Belgique</@option>
-    <@option value="ch" icon="🇨🇭">Suisse</@option>
-    <@option value="ca" icon="🇨🇦">Canada</@option>
-  </@select>
+  <@@select name="country" search value=!{$country} placeholder="Choisir un pays">
+    <@@option value="fr" icon="🇫🇷">France</@@option>
+    <@@option value="de" icon="🇩🇪">Allemagne</@@option>
+    <@@option value="be" icon="🇧🇪">Belgique</@@option>
+    <@@option value="ch" icon="🇨🇭">Suisse</@@option>
+    <@@option value="ca" icon="🇨🇦">Canada</@@option>
+  </@@select>
 
-  <@select name="langues" multiple value=!{$langues} placeholder="Langues parlées">
-    <@option value="fr">Français</@option>
-    <@option value="en">Anglais</@option>
-    <@option value="de">Allemand</@option>
-  </@select>
+  <@@select name="langues" multiple value=!{$langues} placeholder="Langues parlées">
+    <@@option value="fr">Français</@@option>
+    <@@option value="en">Anglais</@@option>
+    <@@option value="de">Allemand</@@option>
+  </@@select>
 
-  <@field name="email" label="Email" help="On ne le partage jamais." ok-label="Adresse valide">
+  <@@field name="email" label="Email" help="On ne le partage jamais." ok-label="Adresse valide">
     <input type="email" name="email" value=!{$email}>
-  </@field>
+  </@@field>
 
-  <@checkbox name="terms" checked=!{$accept}>J'accepte les conditions</@checkbox>
+  <@@checkbox name="terms" checked=!{$accept}>J'accepte les conditions</@@checkbox>
 
-  <@radio name="size" value="s" group=!{$size}>S</@radio>
-  <@radio name="size" value="m" group=!{$size}>M</@radio>
-  <@radio name="size" value="l" group=!{$size}>L</@radio>
+  <@@radio name="size" value="s" group=!{$size}>S</@@radio>
+  <@@radio name="size" value="m" group=!{$size}>M</@@radio>
+  <@@radio name="size" value="l" group=!{$size}>L</@@radio>
 
-  <@switch name="alerts" checked=!{$alerts}>Notifications</@switch>
+  <@@switch name="alerts" checked=!{$alerts}>Notifications</@@switch>
 
   <button type="button" id="btn-delete" @title="Supprime définitivement cette ligne">🗑</button>
   <button type="button" id="btn-submit" @title="Valide le formulaire">✔</button>
 </form>
 
 <div class="code-box">
-  <@code>
+  <@@code>
     <pre><code>total = 0
 step01 = total + 1
 step02 = step01 + 1
@@ -80,11 +80,11 @@ step36 = step35 + 1
 step37 = step36 + 1
 step38 = step37 + 1
 total = step38</code></pre>
-  </@code>
+  </@@code>
 </div>
 
 <div class="code-short">
-  <@code>npm install modularjs-framework</@code>
+  <@@code>npm install modularjs-framework</@@code>
 </div>
 
 <style>
@@ -96,7 +96,7 @@ total = step38</code></pre>
     padding: 16px
 
   // règle de PAGE volontairement collisionnante : une déclaration normale de CET arbre (celui où
-  // l'input EST écrit en markup) doit perdre face au ::slotted() de mjs-field
+  // l'input EST écrit en markup) doit perdre face au ::slotted() de mjs-core-field
   // pour la bordure d'état, grâce au !important du module — sonde de non-régression.
   input[type="email"]
     border: 1px solid #586273

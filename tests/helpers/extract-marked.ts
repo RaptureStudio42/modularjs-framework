@@ -13,12 +13,28 @@
 // accolade ouvrante et la dernière fermante de la tranche (déjà exacte) suffisent.
 
 import { strict as assert } from 'node:assert'
+import { readFileSync } from 'node:fs'
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// les aides du cœur qu'une tranche peut appeler (`µ._mjs_matches`, `µ._mjs_closest`, `µ._mjs_animate`,
+// mjs_element.ts : les méthodes de la balise, jamais celles du composant du même nom) — dans le vrai
+// bundle, le cœur les pose avant tout autre fichier ; une tranche qui s'en sert les reçoit en tête, posées
+// sur le µ du banc s'il ne les a pas déjà
+let natifs: string | null = null
+function avecNatifs(code: string): string {
+  if (!/µ\._mjs_(matches|closest|animate)\(/.test(code)) return code
+  if (natifs === null) natifs = tranche(readFileSync(new URL('../../src/runtime/mjs_element.ts', import.meta.url), 'utf-8'), 'natifs-de-balise')
+  return natifs + '\n' + code
+}
+
 export function extractMarked(src: string, name: string): string {
+  return avecNatifs(tranche(src, name))
+}
+
+function tranche(src: string, name: string): string {
   const safe = escapeRegExp(name)
   const openRe = new RegExp(`^[ \\t]*//[ \\t]*>>>[ \\t]*extrait-test[ \\t]+${safe}[ \\t]*$`, 'm')
   const openMatch = openRe.exec(src)
@@ -32,9 +48,9 @@ export function extractMarked(src: string, name: string): string {
 }
 
 export function extractMarkedBody(src: string, name: string): string {
-  const full = extractMarked(src, name)
+  const full = tranche(src, name)
   const open = full.indexOf('{')
   const close = full.lastIndexOf('}')
   assert.ok(open !== -1 && close > open, `corps '{ … }' introuvable dans la tranche marquée "${name}"`)
-  return full.slice(open + 1, close)
+  return avecNatifs(full.slice(open + 1, close))
 }

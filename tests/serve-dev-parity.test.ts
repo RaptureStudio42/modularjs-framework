@@ -13,7 +13,7 @@ import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler } from '../src/server/render-request.js'
 import { createServeEntry } from '../src/server/serve-entry.js'
 import { startRenderServer } from '../src/server/render-server.js'
-import { terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.js'
 
 after(async () => { await terminateSharedWorkerPool() })
 
@@ -24,7 +24,8 @@ function setup() {
   mkdirSync(srcDir, { recursive: true })
   mkdirSync(outDir, { recursive: true })
   writeFileSync(join(srcDir, 'home.mjs'), '<h1>Accueil</h1>')
-  writeFileSync(join(outDir, 'manifest.js'), 'µ.paths = {};\nµ.version = "abcd1234";\n')
+  // manifeste d'une construction précédente, avec la marque des sorties : le rendu le remplace en recompilant (un fichier que ModularJS n'a pas produit ne l'est jamais)
+  writeFileSync(join(outDir, 'manifest.js'), `${MARQUE_SORTIE}\nµ.paths = {};\nµ.version = "abcd1234";\n`)
   // chargeur serve.server.mjs — props MINIMALES sur '/'
   writeFileSync(join(root, 'serve.server.mjs'), `export default {
   props: {

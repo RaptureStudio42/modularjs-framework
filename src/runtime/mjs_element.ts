@@ -24,12 +24,50 @@ MJS_DATE_MUTATORS = new Set([
   'setYear', // legacy mais toujours présente
 ]);
 
+// pièges du Proxy de `_mjs_wrapDeep` (méthode mutatrice d'une Map/Set/Date, écriture, suppression) : la copie de
+// l'objet d'avant la mutation, faite UNIQUEMENT si µ.inspect suit cette var — sinon coût prohibitif sur les
+// tableaux et Map souvent mutés ; puis, la mutation faite, l'époque de la var et la notification de toutes les
+// clés qui atteignent l'objet
+function _mjsSnapBefore(el, rootKey, obj) {
+  const ins = el._mjs_inspections;
+  return (ins && ins.has(rootKey))
+    ? (Array.isArray(obj) ? obj.slice() : (obj instanceof Map ? new Map(obj) : (obj instanceof Set ? new Set(obj) : {...obj})))
+    : void 0;
+}
+function _mjsMutated(el, rootKey, obj, snap) {
+  (el._mjs_bindEpochs ||= {})[rootKey] = µ._mjs_bumpEpoch(obj);
+  el._mjs_notifyMutationAliased(obj, rootKey, snap);
+}
+// écriture, définition ou suppression refusée par l'enveloppe de `_mjs_wrapDeep` dans une fonction ou un prototype : même
+// avertissement que les aides d'écriture profonde (mjs_deep.ts), `seg` le segment qui y mène ; rend `true`, la valeur
+// d'un refus du piège `set` ou `deleteProperty` (une écriture refusée ne lève pas, même en mode strict)
+function _mjsEnvRefus(seg) {
+  µ.warn(µ._mjs_msg('initPath', { seg: seg }, 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.'));
+  return true;
+}
+
+// enveloppe d'une valeur dérivée compilée (`{ _mjs_c: true, f }`) : elle porte toujours sa fonction `f` — une donnée
+// reçue qui a la clé `_mjs_c` (JSON, dictionnaire aux clés choisies par un utilisateur) n'en est pas une
+function _mjsDerive(x) {
+  return x?._mjs_c && typeof x.f === 'function';
+}
+
+// le VRAI shadow root d'une balise est prêt, neuf ou repris d'un rendu serveur (jamais pour le repli `mjs-light`) :
+// pont UJS (retargeting shadow fermé, cf. µ._mjs_ujsShadowAttach dans mjs_ujs.ts) et @title (mjs_title.ts), gardes
+// `typeof` : ces modules peuvent être absents d'un runtime tree-shaké ; puis le défilement interne
+function _mjsShadowReady(el) {
+  el._mjs_isLight = false;
+  if (typeof µ._mjs_ujsShadowAttach === 'function') { µ._mjs_ujsShadowAttach(el._shadow); }
+  if (typeof µ._mjs_titleAttach === 'function') { µ._mjs_titleAttach(el._shadow); }
+  if (el._shadow.addEventListener) { el._shadow.addEventListener('scroll', µ._mjs_innerScroll, { capture: true, passive: true }); }
+}
+
 // Attributs HTML natifs / d'accessibilité à NE PAS exposer comme props
 // réactives du composant — ils restent attachés au custom element pour le
 // browser/screen-reader, et ne polluent pas $.X côté script.
 MJS_NATIVE_ATTRS = new Set(['class', 'id', 'style', 'src', 'href', 'alt', 'title', 'type', 'value', 'placeholder', 'disabled', 'checked', 'name', 'for', 'tabindex', 'role', 'lang', 'dir', 'hidden', 'draggable', 'contenteditable', 'spellcheck', 'translate', 'inert', 'slot', 'is', 'part', 'exportparts']);
 
-MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly', 'required', 'selected', 'hidden', 'multiple', 'autofocus', 'muted', 'autoplay', 'loop', 'controls']);
+MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly', 'required', 'selected', 'hidden', 'multiple', 'autofocus', 'muted', 'autoplay', 'loop', 'controls', 'allowfullscreen', 'async', 'default', 'defer', 'formnovalidate', 'inert', 'ismap', 'itemscope', 'nomodule', 'novalidate', 'playsinline', 'reversed']);
 
 // factorise la logique de `_mjs_updAttr` (props
 // booléennes, `null`/`false`/`undefined` → removeAttribute, filtre XSS
@@ -43,22 +81,93 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // au root, qui passait déjà par `_mjs_updAttr` → `µ._mjs_safeAttr`). `_mjs_updAttr`
 // délègue désormais ICI (zéro duplication) : root et `{for}` partagent
 // maintenant EXACTEMENT la même sémantique.
-µ._mjs_updAttrNode = function(node, attrName, val) {
+// les méthodes de nœud dont le cadre se sert, prises au prototype : une méthode du composant du même
+// nom (`@remove = ->`, un nom naturel) masque celle de sa balise — le composant restait alors en
+// fantôme dans la page. Un objet qui n'est pas un nœud du DOM (un banc de test) garde sa méthode
+// (ce fichier est toujours au cœur : les blocs {for}, {await}… s'en servent sans la reposer ; un
+// fichier du runtime qui peut être chargé sans lui pose la sienne)
+µ._mjs_rm ||= function(n) {
+  if (typeof Node !== 'function' || !(n instanceof Node)) return n.remove();
+  var p = n.parentNode;
+  if (p) Node.prototype.removeChild.call(p, n);
+};
+µ._mjs_swap ||= function(cur, nn) {
+  if (typeof Node !== 'function' || !(cur instanceof Node)) return cur.replaceWith(nn);
+  var p = cur.parentNode;
+  if (p) Node.prototype.replaceChild.call(p, nn, cur);
+};
+µ._mjs_inside ||= function(a, b) {
+  return typeof Node === 'function' && a instanceof Node ? Node.prototype.contains.call(a, b) : a.contains(b);
+};
+// même chose pour `matches`, `closest` et `animate`, que le cadre appelle sur toutes les balises de la
+// page : `@matches = ->` (les profils compatibles d'un site de rencontres) envoyait le focus d'après
+// navigation sur le composant, `@closest` répondait aux clics à la place de la balise, `@animate`
+// remplaçait sa transition. Un objet qui n'est pas un élément (nœud texte, banc de test) garde les siennes
+// >>> extrait-test natifs-de-balise
+µ._mjs_matches ||= function(n, sel) {
+  if (typeof Element === 'function' && n instanceof Element) return Element.prototype.matches.call(n, sel);
+  return !!n && typeof n.matches === 'function' && n.matches(sel);
+};
+µ._mjs_closest ||= function(n, sel) {
+  if (typeof Element === 'function' && n instanceof Element) return Element.prototype.closest.call(n, sel);
+  return n && typeof n.closest === 'function' ? n.closest(sel) : null;
+};
+µ._mjs_animate ||= function(n, frames, opts) {
+  if (typeof Element === 'function' && n instanceof Element && typeof Element.prototype.animate === 'function') return Element.prototype.animate.call(n, frames, opts);
+  return n.animate(frames, opts);
+};
+// <<< extrait-test natifs-de-balise
+
+// valeur liée d'un <select>, en liaison simple ou double sens (code généré par attributes/index.ts) : un tableau
+// choisit les options d'un `multiple` (`.value = tableau` ne choisissait rien). Ses <option> peuvent arriver après
+// elle (liste chargée ensuite, `{for}`) : la valeur (`_mjs_sv`, jamais undefined ici) est réappliquée à chaque
+// changement des options, observé dès la première écriture, sauf si l'utilisateur a choisi depuis la dernière écriture
+// de la variable (`null`) — en double sens, son choix écrit la variable, réappliquée ensuite comme avant
+µ._mjs_selVal = (node, val) => {
+  if (node._mjs_sv === void 0) {
+    new MutationObserver(() => node._mjs_sv !== null && µ._mjs_selVal(node, node._mjs_sv)).observe(node, { childList: true, subtree: true });
+    node.addEventListener('input', () => node._mjs_sv = null);
+  }
+  node._mjs_sv = val;
+  if (node.multiple && Array.isArray(val)) {
+    val = val.map(String);
+    for (const o of node.options) o.selected = val.includes(o.value);
+  }
+  else node.value = val;
+};
+
+µ._mjs_updAttrNode = function(node, attrName, val, sur) {
   if (!node) return;
   if (MJS_BOOLEAN_PROPS.has(attrName)) {
     if (attrName === 'value') {
-      // `<select multiple value={tableau}>` en liaison SIMPLE
-      // (pas two-way) : `.value = arr` ne fait RIEN (le setter DOM natif attend
-      // un scalaire) → `.selectedOptions` reste vide, en silence. Sémantique
-      // multi-sélection déjà câblée côté `bindingStandard` (two-way,
-      // attributes/index.ts) mais jamais ici — même trou, chemin différent.
-      if (node.tagName === 'SELECT' && node.multiple && Array.isArray(val)) {
-        const arr = val.map(String);
-        Array.from(node.options).forEach((o) => { o.selected = arr.includes(String(o.value)); });
-        return;
+      // valeur absente (undefined, null) : champ vide, comme le texte `{$x}` — jamais « undefined »
+      if (val == null) val = '';
+      // champ de saisie : la valeur liée ne s'écrit que quand ELLE change (`_mjs_vw`, dernière
+      // valeur écrite), jamais contre le DOM vivant — un rendu qui repasse (ligne de {for}, branche,
+      // navigation) remettait sinon le modèle par-dessus la frappe en cours. Le <select> garde la
+      // comparaison au DOM : ses <option> peuvent arriver après sa valeur
+      if (node.tagName === 'SELECT') return µ._mjs_selVal(node, val);
+      if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
+        if (node._mjs_vw === val) return;
+        node._mjs_vw = val;
       }
       if (node.value !== val) node.value = val;
       return;
+    }
+    const boolVal = !!val;
+    var first     = false;
+    // case cochée, option choisie : même règle que la valeur d'un champ — le clic de
+    // l'utilisateur reste tant que la valeur liée ne change pas (`_mjs_bw`, dernière écrite)
+    if ((attrName === 'checked' && node.tagName === 'INPUT') || (attrName === 'selected' && node.tagName === 'OPTION')) {
+      if (node._mjs_bw === boolVal) return;
+      first        = node._mjs_bw === void 0;
+      node._mjs_bw = boolVal;
+      // premier rendu dans la page : l'attribut dit la valeur de départ, celle où `form.reset()`
+      // revient — posé avant la propriété, qui garde le dernier mot ; plus touché ensuite
+      if (first && !µ._isServer) {
+        if (boolVal) node.setAttribute(attrName, '');
+        else         node.removeAttribute(attrName);
+      }
     }
     // `hasIdl` capturé AVANT l'assignation qui suit (une propriété expando
     // fausserait le test après coup). Sur une balise SANS IDL native pour cet attribut (ex
@@ -69,7 +178,6 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // native intacte, y compris le cas FANTOME SSR checked/selected juste en dessous (qui
     // doit rester silencieux côté client, cf. son propre commentaire).
     const hasIdl = attrName in Object.getPrototypeOf(node);
-    const boolVal = !!val;
     if (node[attrName] !== boolVal) node[attrName] = boolVal;
     if (!hasIdl) {
       if (boolVal) node.setAttribute(attrName, '');
@@ -81,21 +189,60 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // `checked=''` dans le HTML statique et personne ne le retire : une case
     // rendue COCHEE alors que l'etat dit decochee. On miroite donc l'attribut,
     // mais UNIQUEMENT au serveur (`µ._isServer`) — cote client, l'attribut de
-    // contenu porte la valeur PAR DEFAUT du formulaire (reset), on n'y touche pas
+    // contenu porte la valeur PAR DEFAUT du formulaire (reset) : posée au premier rendu (plus haut),
+    // on n'y touche plus
     if (µ._isServer && (attrName === 'checked' || attrName === 'selected')) {
       if (boolVal) node.setAttribute(attrName, '');
       else         node.removeAttribute(attrName);
     }
     return;
   }
+  // la classe calculée ne remplace que ce qu'elle avait posé : une classe basculée par `@class{…}` sur
+  // la même balise (le choix courant d'une liste, après un tri) reste ; sans autre classe que la
+  // sienne, l'écriture reste directe
+  if (attrName === 'class') {
+    var mien  = val === false || val === null || val === void 0 ? '' : (typeof val === 'string' ? val : String(val));
+    var ecrit = mien;
+    var base  = node._mjs_clsBase;
+    var cur   = node.getAttribute('class') || '';
+    if (base !== void 0 && cur !== base) {
+      var avant = base.split(/\s+/);
+      var apres = mien.split(/\s+/);
+      cur.split(/\s+/).forEach(function(c) {
+        if (c && avant.indexOf(c) < 0 && apres.indexOf(c) < 0) ecrit += (ecrit ? ' ' : '') + c;
+      });
+    }
+    // première écriture sur une balise déjà classée : une bascule `@class{…}` écrite avant la classe calculée
+    // est passée la première (le code compilé suit l'ordre d'écriture) et sa garde `_mjs_cl_<classe>` ne la
+    // rejouera pas — les jetons des bascules actives restent. Tout autre jeton déjà là (la classe d'un rendu
+    // serveur que l'état d'ici ne redit pas) tombe, comme avant
+    else if (base === void 0 && cur) {
+      var gardes = Object.keys(node).filter(function(k) { return k.indexOf('_mjs_cl_') === 0 && node[k] === true; }).map(function(k) { return k.slice(8); }).join('_');
+      if (gardes) {
+        var wanted = mien.split(/\s+/);
+        gardes     = '_' + gardes + '_';
+        cur.split(/\s+/).forEach(function(c) {
+          if (c && wanted.indexOf(c) < 0 && gardes.indexOf('_' + c.replace(/[^a-zA-Z0-9_$]/g, '_') + '_') >= 0) ecrit += (ecrit ? ' ' : '') + c;
+        });
+      }
+    }
+    node._mjs_clsBase = mien;
+    // `class` n'a rien à faire refuser au filtre des attributs (µ._mjs_safeAttr) : écrite directement
+    if (ecrit) { if (cur !== ecrit) node.setAttribute('class', ecrit); }
+    else node.removeAttribute('class');
+    return;
+  }
   if (val === false && attrName.startsWith('aria-')) {
-    // aria-* à false = chaîne 'false' (existe pour le lecteur d'écran), pas un retrait
-    µ._mjs_safeAttr(node, attrName, 'false');
+    // aria-* à false = chaîne 'false' (existe pour le lecteur d'écran), pas un retrait ; nom sans risque, écrit sans le filtre
+    if (node.getAttribute(attrName) !== 'false') node.setAttribute(attrName, 'false');
   } else if (val === false || val === null || val === void 0) {
     node.removeAttribute(attrName);
   } else {
     const strVal = typeof val === 'string' ? val : String(val);
-    µ._mjs_safeAttr(node, attrName, strVal);
+    // `sur` : nom écrit dans le gabarit, que le compilateur sait sans risque (ni `on…`, ni `srcdoc`, ni adresse, cf.
+    // attrSur, generator/utils.ts) — écrit sans le filtre ; un nom à risque ou calculé (étalement, balise dynamique) y passe
+    if (sur) { if (node.getAttribute(attrName) !== strVal) node.setAttribute(attrName, strVal); }
+    else µ._mjs_safeAttr(node, attrName, strVal);
   }
 };
 
@@ -115,21 +262,31 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // pas de shadow où slotter) ; une custom property `--host-x` n'a pas de `:` devant, jamais
 // confondue. Cache par BALISE + texte : une réécriture par composant, jamais par instance.
 µ._lightHostCss = function(css, tag) {
-  var cacheKey, ch, close, consumedAny, contexts, ctxAncestor, ctxOnHost, findParenEnd, i, j, len, open, out, quote, suffix;
+  var cacheKey, ch, close, consumedAny, contexts, ctxAncestor, ctxOnHost, findParenEnd, i, j, len, open, out, skipQuoted, suffix;
   if (!css) return css;
-  if (µ._mjs_lightHostCssCache == null) {
-    µ._mjs_lightHostCssCache = new Map();
-  }
+  µ._mjs_lightHostCssCache ??= new Map();
   cacheKey = tag+String.fromCharCode(1)+css; // séparateur jamais présent dans du CSS
   if (µ._mjs_lightHostCssCache.has(cacheKey)) {
     return µ._mjs_lightHostCssCache.get(cacheKey);
   }
-  // parenthèse FERMANTE appariée à celle d'indice `open` (`:host(:not(.a))` → la bonne, pas la 1re)
+  // fin d'une chaîne entre guillemets ouverte à l'indice `k` (échappements sautés) : indice qui suit
+  // le guillemet fermant
+  skipQuoted = function(k) {
+    var q = css[k];
+    while (++k < css.length) {
+      if (css[k] === '\\') k++;
+      else if (css[k] === q) return k + 1;
+    }
+    return k;
+  };
+  // parenthèse FERMANTE appariée à celle d'indice `open` (`:host(:not(.a))` → la bonne, pas la 1re) ;
+  // une parenthèse dans une chaîne ne compte pas (`:host([title=")"])`)
   findParenEnd = function(start) {
     var depth, j;
     depth = 0;
     for (j = start; j < css.length; j++) {
-      if (css[j] === '(') depth++;
+      if (css[j] === '"' || css[j] === '\'') j = skipQuoted(j) - 1;
+      else if (css[j] === '(') depth++;
       else if (css[j] === ')') {
         depth--;
         if (depth === 0) return j;
@@ -143,13 +300,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   while (i < len) {
     // guillemets : contenu recopié tel quel, jamais de :host à réécrire dedans (`content: ":host"`)
     if (css[i] === '"' || css[i] === '\'') {
-      quote = css[i];
-      j = i + 1;
-      while (j < len) {
-        if (css[j] === '\\') { j += 2; continue; }
-        if (css[j] === quote) { j++; break; }
-        j++;
-      }
+      j = skipQuoted(i);
       out += css.slice(i, j);
       i = j;
       continue;
@@ -224,9 +375,55 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // RACCOURCI en production (mangleProps) : seul du code compilé AVEC le bundle peut les nommer. Ce
 // nom-ci n'est jamais raccourci — c'est par lui que le rendu serveur (server/renderToString.ts,
 // server/render-browser.ts) lit ces valeurs.
+// un défilement dans un composant ne sort pas de son shadow root (`scroll` ne traverse pas) : chaque
+// shadow root le relaie à qui s'y abonne — les effets qui dessinent sur la page (*cursors, *follow,
+// *heatmap), dont les marques suivent le contenu
+µ._mjs_scrollSubs ||= new Set();
+µ._mjs_innerScroll = function(e) {
+  if (µ._mjs_scrollSubs.size) µ._mjs_scrollSubs.forEach(function(f) { f(e); });
+};
+
+// Héritage CSS depuis <@view css="..."> : on remonte l'arbre en franchissant
+// les frontières Shadow DOM (via root.host), et on accumule toutes les feuilles
+// de chaque <metamjs-view css="..."> ancêtre. Ça permet qu'un composant imbriqué
+// (enfant d'un composant injecté dans la view) hérite aussi du thème de la view.
+// Partagé par `_mjs_applyLayout` et par `µ._ssrInfo` (le rendu serveur écrit les mêmes feuilles).
+µ._mjs_inheritedCss = function(el) {
+  var cssAttr, j, len, node, ref, root, scope, sheetName;
+  var names = [];
+  // rien n'est lu sur les ancêtres eux-mêmes : `closest` pris au prototype (µ._mjs_closest) y trouve les vues, `getRootNode` (du
+  // composant, puis de chaque hôte franchi) l'ombre à quitter — lue sur un <form>, une propriété est d'abord cherchée parmi ses champs,
+  // liste que le navigateur refait après la mise à niveau de chaque champ associé : mille cases d'un formulaire la faisaient refaire mille fois
+  scope = el;
+  node = el.parentElement;
+  for (;;) {
+    node = µ._mjs_closest(node, 'metamjs-view');
+    if (node) {
+      cssAttr = node.getAttribute('css');
+      if (cssAttr) {
+        ref = cssAttr.split(/\s+/);
+        for (j = 0, len = ref.length; j < len; j++) {
+          sheetName = ref[j];
+          if (sheetName) {
+            names.push(sheetName);
+          }
+        }
+      }
+      node = node.parentElement;
+      continue;
+    }
+    root = scope.getRootNode();
+    if (root.nodeType !== 11 || !root.host) return names; // ShadowRoot → on saute à l'hôte, qui peut être lui-même une vue
+    node = scope = root.host;
+  }
+};
+
 µ._ssrInfo = function(el) {
   return {
     baseCss: el._mjs_baseCss,
+    // feuilles partagées que le montage adopte AVANT la feuille propre, dans l'ordre de
+    // `_mjs_applyLayout` : remise à zéro, héritées d'une vue, déclarées par `@css`
+    sheets: (µ.CSS && µ.CSS['mjs_reset'] ? ['mjs_reset'] : []).concat(µ._mjs_inheritedCss(el), el._mjs_sharedCss || []),
     isLight: el._mjs_isLight === true,
     nodes: el._mjs_nodes,
     awaitStates: el._mjs_awaitStates,
@@ -264,6 +461,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 µ.Element = class Element extends HTMLElement {
   constructor() {
     super();
+    // crochet de construction, posé le temps d'un `cloneNode` : le miroir vivant de `µclone el, mirror: true` (mjs_clone.ts), dont l'état est celui de
+    // l'original avant que son script ne le lise — celui aussi de la copie d'un composant que pose *marquee (mjs_fx_marquee.ts)
+    if (µ._mjs_mirror) µ._mjs_mirror(this);
     // Mode `mjs-light` (opt-in instance) : si l'élément porte l'attribut
     // `mjs-light`, le composant n'utilise PAS de Shadow DOM. À la place,
     // `this._shadow` pointe sur le composant lui-même (light DOM).
@@ -322,13 +522,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // le swap. `_mjs_ssrAdopt` sert d'amorce à la future config `ssrMode`.
       this._shadow = this.shadowRoot;
       this._mjs_ssrAdopt = true;
-      this._mjs_isLight = false;
-      // Pont UJS (retargeting shadow fermé, cf. µ._mjs_ujsShadowAttach dans
-      // mjs_ujs.ts) : posé dès que `this._shadow` est un VRAI shadow root
-      // (jamais pour le repli `mjs-light` ci-dessus). Garde `typeof` : le
-      // module 'ujs' peut être absent d'un runtime tree-shaké.
-      if (typeof µ._mjs_ujsShadowAttach === 'function') { µ._mjs_ujsShadowAttach(this._shadow); }
-      if (typeof µ._mjs_titleAttach === 'function') { µ._mjs_titleAttach(this._shadow); } // @title, même raisonnement (mjs_title.ts)
+      // pont UJS, @title, défilement interne : posés dès que `this._shadow` est un VRAI shadow root
+      _mjsShadowReady(this);
       // En mode hydratation, on GARDE le DOM serveur (il sera adopté par
       // _mjs_mount → _mjs_hydrate). En render-then-replace (défaut), on vide la
       // « photo » serveur ici pour laisser place à la vue reconstruite.
@@ -362,17 +557,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // (défaut), seul mode que ce moteur d'hydratation sait adopter (cf.
         // avertissement jumeau côté serveur, renderToString.ts).
         throw new Error(
-          '[mjs] <' + this.tagName.toLowerCase() + "> : un Shadow DOM 'closed' préexiste " +
-          "(SSR avec shadowMode:'closed' ?) — MJS ne peut pas l'adopter ni le reconstruire " +
-          "(contenu inaccessible en mode closed). Utilisez shadowMode:'open' (défaut) dans " +
-          'les options de rendu SSR.'
+          '[mjs] ' + µ._mjs_txt('elementClosedShadow', { tag: this.tagName.toLowerCase() }, '<{tag}> : un Shadow DOM \'closed\' préexiste (SSR avec shadowMode:\'closed\' ?) — MJS ne peut pas l\'adopter ni le reconstruire (contenu inaccessible en mode closed). Utilisez shadowMode:\'open\' (défaut) dans les options de rendu SSR.')
         );
       }
-      this._mjs_isLight = false;
-      // Pont UJS — même appel que la branche SSR reuse ci-dessus (cf. son
-      // commentaire) : ici pour le cas nominal (attachShadow neuf).
-      if (typeof µ._mjs_ujsShadowAttach === 'function') { µ._mjs_ujsShadowAttach(this._shadow); }
-      if (typeof µ._mjs_titleAttach === 'function') { µ._mjs_titleAttach(this._shadow); } // @title, même raisonnement (mjs_title.ts)
+      // même appel que la branche SSR reuse ci-dessus : ici pour le cas nominal (attachShadow neuf)
+      _mjsShadowReady(this);
     }
     this._mjs_nodes = {};
     // routing événementiel : l'id est désormais porté par une PROP
@@ -389,8 +578,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // _mjs_inline : populé par init via template (jamais vide en pratique)
     this._mjs_render_scheduled = false;
     this._mjs_inline = [];
+    this._mjs_refuses = null;
     this._mjs_is_mounted = false;
     this._mjs_mjsInitialized = false;
+    // la prop liée remonte vers le parent (cf. _mjs_notifyMutation) : fermé jusqu'à ce que la connexion ait reçu les valeurs du parent
+    this._mjs_bindOpen = false;
     // Bug-fix : flag indépendant de `_mjs_lastMutedVars` pour signaler au
     // microtask consumer qu'au moins une var muée pilote `_mjs_renderStruct`.
     // Mis à `true` dans `_mjs_invalidate` si `_mjs_renderStructVars[k] === 1`,
@@ -425,8 +617,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // énumérable). Le codegen spread appelle `node._set(k, v)` par entrée →
     // sans garde, le setter natif `__proto__` de `_state` change son
     // [[Prototype]] et un `{$role}` lu via proto pollué renvoie la valeur
-    // injectée. On aligne `_set` sur le reste du runtime (µ._mjs_deepSet/_mjs_guardPath,
-    // socket _mjs_safeKey, vault) qui filtrent déjà ces clés.
+    // injectée. Ces trois clés sont refusées au premier niveau de l'état comme dans une écriture
+    // profonde (µ._mjs_deepSet, mjs_deep.ts).
     // Rend `false` (écriture refusée) — le code généré (`µ._set(...)`) ne dépend plus
     // de cette valeur (l'affectation réactive utilisée comme valeur vaut désormais la
     // valeur assignée, jamais le retour de `_set`), un appelant DIRECT peut donc
@@ -435,10 +627,22 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // Hot path bench: 1000× setLabel('string'). Factorise typeof v
     // pour éviter 3 typeof checks séparés. La majorité des sets sont primitive→primitive.
     const old = this._state[k];
-    const tv = typeof v;
+    let tv = typeof v;
     if (old === v && (tv !== 'object' || v === null)) {
       // 1. Sortie ultra-rapide si la primitive n'a pas changé
+      // champ nombre en saisie refusée lié à `k` : la même valeur écrite par le code le remplace (rare, cf. µ._mjs_refuse)
+      if (this._mjs_refuses) µ._mjs_refuseRetablir(this, k, old);
       return true;
+    }
+    // 1-bis. Types et valeurs permises (bloc <vars>, mjs_types.ts) : la règle de la variable passe
+    // avant tout le reste — valeur convertie, ramenée dans sa plage, ou refusée (rien n'est écrit,
+    // la valeur d'avant reste). Un composant sans <vars> ne paie que ce test
+    const T = this._mjs_types;
+    if (T !== void 0 && hasProp.call(T, k)) {
+      v = µ._mjs_tset(this, k, v);
+      if (v === µ._mjs_TNO) return false;
+      tv = typeof v;
+      if (old === v && (tv !== 'object' || v === null)) return true;
     }
     // Variant posé en PROP (`layout={expr}`) et non en attribut : `syncProps`
     // ne surveille que les ATTRIBUTS — sans ce relais, la bascule changeait l'état
@@ -447,7 +651,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // s'en sert comme d'un état ordinaire (`'list'`/`'grid'`, rien à voir avec le style)
     // et garde la main — sinon le seul fait de nommer sa variable `layout` faisait
     // crasher son montage dès qu'un `<style name="…">` existait ailleurs dans le fichier
-    if ((k === 'layout' || k === 'template') && this._shadow && !(this._mjs_var_bits && hasProp.call(this._mjs_var_bits, k))) {
+    // `_mjs_lay` : le composant lit µlayout — sa prop `layout`, déclarée pour lui, reste le modèle
+    if ((k === 'layout' || k === 'template') && this._shadow && (this._mjs_lay || !(this._mjs_var_bits && hasProp.call(this._mjs_var_bits, k)))) {
       this._mjs_layoutName = v || '';   // mémorisé pour la reconnexion : aucun attribut ne le porte
       this._mjs_applyLayout(v || 'default');
     }
@@ -467,7 +672,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // interpolateur) — évite le boxing sur le hot path des sets primitifs.
     const oldObj = old !== null && typeof old === 'object';
     // Optim #B — Fast-path "pure data var" : aucun computed / binds / inspections,
-    // valeur primitive simple, pas de limits, pas d'effect/struct sur k, pas
+    // valeur primitive simple, pas d'effect/struct sur k, pas
     // d'effects user → on bypass _mjs_notifyMutation (skip computed dirty-marking et
     // dispatch mjs-bind) et on appelle directement _mjs_invalidate(k).
     //
@@ -482,8 +687,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       (!this._mjs_effects || this._mjs_effects.length === 0) &&
       !this._mjs_binds &&
       !this._mjs_inspections &&
-      (this._mjs_limits == null || this._mjs_limits[k] == null) &&
-      !(oldObj && old._mjs_c) &&
+      !(oldObj && _mjsDerive(old)) &&
       !(oldObj && µ._mjs_interpolatorSet.has(old))
     ) {
       this._state[k] = v;
@@ -492,12 +696,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     }
     // 2. Protection des Computed : ré-écrire un computed avec une primitive
     // ne le casse pas — on garde juste le wrapper et notifie les listeners.
-    if (oldObj && old._mjs_c && tv !== 'function' && !(v != null && v._mjs_c)) {
+    if (oldObj && _mjsDerive(old) && tv !== 'function' && !_mjsDerive(v)) {
       this._mjs_notifyMutation(k, old);
       return true;
     }
     var parsed = v;
-    var max, min, ref, ref1;
     // 2-ter. Assigner une valeur (nombre OU objet/tableau) à une var qui tient
     // un interpolateur (spring/tweened) règle sa CIBLE — on ne remplace PAS la
     // var (sauf si on assigne un autre interpolateur = ré-init). Permet les
@@ -508,20 +711,12 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       old.value = v;
       return true;
     }
-    // 3. Interception des nombres (Interpolators & Limites)
+    // 3. Interception des nombres (interpolateurs) — une plage éventuelle est déjà passée plus
+    // haut (types, 1-bis), un ressort y a reçu ses bornes
     if (tv === 'number') {
       if (oldObj && µ._mjs_interpolatorSet.has(old)) {
         old.value = parsed;
         return true;
-      }
-      if ((ref = this._mjs_limits) != null ? ref[k] : void 0) {
-        ({min, max} = this._mjs_limits[k]);
-        if (min !== null) {
-          parsed = Math.max(min, parsed);
-        }
-        if (max !== null) {
-          parsed = Math.min(max, parsed);
-        }
       }
     } else if (parsed != null && µ._mjs_interpolatorSet.has(parsed)) {
       // `this` = owner (clé de la Map _mjs_invalidators — voir mjs_spring.ts/
@@ -531,10 +726,6 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       parsed._mjs_attachInvalidator(this, () => {
         return this._mjs_notifyMutation(k, old);
       });
-      if ((ref1 = this._mjs_limits) != null ? ref1[k] : void 0) {
-        parsed.min = this._mjs_limits[k].min;
-        parsed.max = this._mjs_limits[k].max;
-      }
     }
     if (old === parsed && (tv !== 'object' || parsed === null)) {
       // 4. Sortie finale si la valeur clampée/calculée est identique
@@ -544,7 +735,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // mutation profonde. `$.box.width = X` doit re-render même si on n'a pas
     // appelé `µ._set(this, 'box', ...)` directement. Le compile-time gain
     // reste sur les primitives ; les objets payent le coût Proxy V1 (~marginal).
-    if (tv === 'object' && parsed !== null && !µ._mjs_interpolatorSet.has(parsed) && !parsed._mjs_c && !(parsed instanceof Promise) && !µ._mjs_rawSet.has(parsed)) {
+    if (tv === 'object' && parsed !== null && !µ._mjs_interpolatorSet.has(parsed) && !_mjsDerive(parsed) && !(parsed instanceof Promise) && !µ._mjs_rawSet.has(parsed)) {
       // reconnaissance des enveloppes (mort de la boucle two-way
       // inter-composants). `parsed` peut arriver ENVELOPPÉ par
       // un AUTRE composant/rune/store (écho d'une liaison `!{}`, ou valeur
@@ -566,13 +757,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         if (((this._mjs_bindEpochs != null && this._mjs_bindEpochs[k]) || 0) === ep) {
           return true;
         }
-        (this._mjs_bindEpochs || (this._mjs_bindEpochs = {}))[k] = ep;
+        (this._mjs_bindEpochs ||= {})[k] = ep;
         this._mjs_notifyMutation(k, old);
         return true;
       }
-      var __raw = parsed;
-      parsed = this._mjs_wrapDeep(parsed, k);
-      (this._mjs_bindEpochs || (this._mjs_bindEpochs = {}))[k] = µ._mjs_epochs.get(__raw) || 0;
+      // liste : ses éléments rangés bruts (`$l = $l.filter(…)` lit des éléments enveloppés), copiée s'il le faut
+      var __raw = µ._mjs_rawIn(parsed);
+      parsed = this._mjs_wrapDeep(__raw, k);
+      (this._mjs_bindEpochs ||= {})[k] = µ._mjs_epochs.get(__raw) || 0;
     }
     this._state[k] = parsed;
     this._mjs_notifyMutation(k, old);
@@ -598,7 +790,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   //   - **Fast-path Symbol** : Symbols sont rares, traités en premier sans
   //     dispatch.
   //   - `mutators` est un Set (O(1) `.has`) au lieu d'array `.includes` O(n).
-  _mjs_wrapDeep(target, rootKey) {
+  _mjs_wrapDeep(target, rootKey, via) {
     // reconnaissance des enveloppes : `target` peut être l'enveloppe
     // d'un AUTRE composant/rune/store (cf. µ._mjs_RAW) — on retrouve le brut
     // AVANT tout, pour que le carnet (_mjs_proxyCache, indexé par target) reste
@@ -628,32 +820,32 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     ) {
       return target;
     }
-    if (this._mjs_proxyCache == null) {
-      this._mjs_proxyCache = new WeakMap();
-    }
+    this._mjs_proxyCache ??= new WeakMap();
     // cible BRUTE → ensemble des clés d'état par lesquelles elle a été atteinte
     // (alimentée juste en dessous, à CHAQUE appel) : `$a = obj ; $b = obj` partagent
     // le MÊME objet — une mutation faite via l'un doit aussi prévenir un lecteur de
     // l'autre (cf. `_mjs_notifyMutationAliased`, utilisé par le handler plus bas).
-    if (this._mjs_rootsByTarget == null) {
-      this._mjs_rootsByTarget = new WeakMap();
-    }
+    this._mjs_rootsByTarget ??= new WeakMap();
     let __roots = this._mjs_rootsByTarget.get(target);
     if (!__roots) {
       __roots = new Set();
       this._mjs_rootsByTarget.set(target, __roots);
     }
     __roots.add(rootKey);
-    // Skip double-lookup (has + get = 2 WeakMap traversals).
-    // (d) — cache par (target, rootKey) : un même objet partagé entre DEUX vars
-    // d'état (`$a = obj ; $b = obj`) a un Proxy PAR rootKey (identité stable par
-    // clé) ; la notification croisée entre alias est portée par `_mjs_rootsByTarget`
-    // ci-dessus, pas par ce cache.
-    let __byRoot = this._mjs_proxyCache.get(target);
-    if (__byRoot !== void 0) {
-      const __cached = __byRoot.get(rootKey);
-      if (__cached !== void 0) return __cached;
-    }
+    // sous-objet lu par l'enveloppe de son conteneur (`via` = les clés qui atteignent le conteneur) : il est
+    // atteint par TOUTES ces clés, pas seulement par celle qui a créé l'enveloppe du conteneur
+    if (via !== void 0 && via.size > 1) via.forEach((k) => __roots.add(k));
+    // UNE seule enveloppe par cible brute, quelle que soit la clé qui l'atteint : après `$sel = it`,
+    // `it === $sel`, `$items.indexOf($sel)` rend son rang, `includes` le trouve. La notification croisée
+    // entre clés est portée par `_mjs_rootsByTarget` ci-dessus, pas par ce cache
+    const __cached = this._mjs_proxyCache.get(target);
+    if (__cached !== void 0) return __cached;
+    // objet qui est une fonction ou un prototype (`Object.prototype`, rangé dans l'état par une lecture
+    // `$loc.p = $$o['__proto__']`) : rien ne s'y écrit, ne s'y définit ni ne s'y supprime par cette enveloppe (`+=`, `||=`,
+    // alias, `Object.assign`, rune `µproxy`), même contrôle que les aides d'écriture profonde (mjs_deep.ts). Testé une
+    // fois, à la création de l'enveloppe : une écriture n'en paie que la lecture
+    let __c;
+    const __refus = typeof target === 'function' ? 'constructor' : (__c = target.constructor) && __c.prototype === target ? '__proto__' : '';
 
     // Précalcul une seule fois par création de Proxy.
     const isMap = target instanceof Map;
@@ -666,9 +858,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                    : isMap ? MJS_MAP_MUTATORS
                    : isDate ? MJS_DATE_MUTATORS
                    : null;
-    // Cache local au Proxy : méthodes liées (bind/closure) calculées 1 fois.
+    // Cache local au Proxy : méthodes liées (bind/closure) calculées 1 fois. Celles du prototype (`includes`, `map`,
+    // `get`…) se rendent sans garde ; celles qui sont propres à l'objet (`ownCache`) se gardent à chaque lecture
     const methodCache = new Map();
+    let ownCache;
     const el = this;
+    // ce qui sort d'une liste, d'une Map ou d'un Set par une méthode de lecture (µ._mjs_readFn, mjs_init.ts) : même
+    // enveloppe qu'une lecture par indice — un objet modifié pendant une itération prévient le composant
+    const w = (v) => el._mjs_wrapDeep(v, rootKey, __roots);
 
     // Forward declaration : on bind les méthodes "plain" sur LE PROXY (pas
     // sur l'objet brut) pour que les mutations `this.x = y` à l'intérieur
@@ -685,11 +882,12 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // muter sans re-déclencher le set trap → évite la double invalidation).
           if (prop === µ._mjs_RAW) return obj;
           const val = obj[prop];
-          if (typeof val !== 'function') return val;
+          if (typeof val !== 'function' || µ._mjs_fixed(obj, prop)) return val;
           // (c) — for-of / spread / déstructuration : le Symbol.iterator d'un
           // Array plain doit yield des éléments PROXIFIÉS (réactifs), comme
           // `.forEach` — sinon `for (t of $arr) t.x = …` ne re-rend pas.
-          if (!isWrapped && prop === Symbol.iterator) return val.bind(proxy);
+          // Map/Set : même ré-enveloppement que `entries()` (Map) / `values()` (Set), plus bas
+          if (prop === Symbol.iterator) return isWrapped ? µ._mjs_readFn(obj, prop, val, proxy, w) : val.bind(proxy);
           return val.bind(obj);
         }
 
@@ -700,65 +898,62 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // jamais fuir à travers ce Proxy — les exposer les enveloppe récursivement (branche
         // plain plus bas), et écrire sur l'enveloppe pollue le PROTOTYPE RÉEL, partagé par
         // tout le realm. Une clé PROPRE (l'utilisateur a volontairement une donnée nommée
-        // `constructor` etc.) reste lue normalement. Même famille que `µ._mjs_guardPath`
-        // (mjs_init.ts, chemins compilés) et le set trap plus bas (`µ._mjs_safeKey`,
-        // écriture) — ici, c'est la LECTURE qui était sans garde.
+        // `constructor` etc.) reste lue normalement. Même famille que le set trap plus bas
+        // (`µ._mjs_safeKey`, écriture) — ici, c'est la LECTURE qui était sans garde.
         if (
           (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') &&
-          !Object.prototype.hasOwnProperty.call(obj, prop)
+          !hasProp.call(obj, prop)
         ) {
           return void 0;
         }
 
-        // Set/Map/Date/RegExp : leurs internal slots ne survivent pas au Proxy.
-        // On bind sur target ; les méthodes mutatives notifient la mutation.
-        if (isWrapped) {
-          if (typeof val !== 'function') return val;
-          const cached = methodCache.get(prop);
-          if (cached !== undefined) return cached;
-          const bound = (mutators && mutators.has(prop))
-            ? function(...args) {
-                // Snapshot avant mutation UNIQUEMENT si µ.inspect actif sur cette
-                // var — sinon coût prohibitif sur arrays/maps fréquemment mutés.
-                const __ins = el._mjs_inspections;
-                const __snap = (__ins && __ins.has(rootKey))
-                  ? (Array.isArray(obj) ? obj.slice() : (obj instanceof Map ? new Map(obj) : (obj instanceof Set ? new Set(obj) : {...obj})))
-                  : void 0;
-                const result = val.apply(obj, args);
-                // cf. commentaire jumeau du set-trap plus bas : le
-                // mutateur natif (add/delete/clear/set…) EST le côté mutant.
-                (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-                el._mjs_notifyMutationAliased(obj, rootKey, __snap);
-                return result;
-              }
-            // `Map.get(k)` rend la valeur INTERNE brute par un appel natif, HORS
-            // du trap `get` ci-dessus : un élément objet stocké dans un Map en
-            // ressortait donc TOUJOURS brut, échappant à toute réactivité — même
-            // défaut que `list[0]` avant son fix, même remède (ré-envelopper).
-            : (isMap && prop === 'get')
-              ? function(...args) {
-                  const r = val.apply(obj, args);
-                  return (r !== null && typeof r === 'object' && !µ._mjs_rawSet.has(r)) ? el._mjs_wrapDeep(r, rootKey) : r;
-                }
-              : val.bind(obj);
-          methodCache.set(prop, bound);
-          return bound;
-        }
-
-        // Plain object/array : fast path.
+        // Méthode, liée une fois par enveloppe (methodCache). Set/Map/Date/RegExp : leurs internal
+        // slots ne survivent pas au Proxy — liée à la cible ; les méthodes mutatives notifient la
+        // mutation. `Map.get(k)`, `forEach`, les itérateurs rendaient la valeur INTERNE brute par un
+        // appel natif, HORS de ce trap : ré-enveloppée par l'aide commune (µ._mjs_readFn, mjs_init.ts) ;
+        // les clés d'une Map sortent telles quelles (`get`/`has`/`delete` les retrouvent), `has` d'un
+        // Set retrouve l'élément rendu enveloppé. Objet ou liste : liée au PROXY (pas obj) → mutations
+        // `this.x = y` dans la méthode passent par le proxy set handler → re-render correct ; liste :
+        // `indexOf`, `includes`, `find`… retrouvent l'objet poussé, tenu brut ou par son enveloppe.
         // `obj[prop]` au lieu de Reflect.get pour que les getters soient
         // invoqués avec `this = obj` (crucial pour champs privés `#x`).
+        // propriété FIGÉE (µ._mjs_fixed, mjs_init.ts : objet gelé, propriété ni modifiable ni configurable d'un objet
+        // fermé aux ajouts) : la règle des Proxy exige SA valeur, rendue brute — une enveloppe ou une méthode liée
+        // faisait lever le moteur à la lecture, et le rendu tombait. Testée seulement pour un objet ou une fonction :
+        // la lecture d'une primitive ne la paie pas
         if (typeof val === 'function') {
-          const cached = methodCache.get(prop);
-          if (cached !== undefined) return cached;
-          // Bind sur le PROXY (pas obj) → mutations `this.x = y` dans la
-          // méthode passent par le proxy set handler → re-render correct.
-          const bound = val.bind(proxy);
-          methodCache.set(prop, bound);
+          // méthode du prototype déjà liée : rendue sans payer la garde, la règle des Proxy ne visant que les propriétés
+          // propres ; une méthode propre se garde à chaque lecture (objet gelé après coup : SA valeur)
+          let bound = methodCache.get(prop);
+          if (bound !== undefined) return bound;
+          if (µ._mjs_fixed(obj, prop)) return val;
+          const own = hasProp.call(obj, prop);
+          if (own && (bound = ownCache?.get(prop)) !== undefined) return bound;
+          bound = (mutators && mutators.has(prop))
+            ? function(...args) {
+                const __snap = _mjsSnapBefore(el, rootKey, obj);
+                // ce que la méthode range (élément d'un Set, valeur d'une Map) : déballé, comme la même méthode écrite
+                // directement (µ._mjs_deepCall, mjs_deep.ts) — une liste donnée est rangée telle quelle ; la clé d'une
+                // Map reste telle quelle, `get` la retrouve sous la forme donnée
+                if (prop === 'add') args[0] = µ._mjs_toRaw(args[0]);
+                else if (prop === 'set') args[1] = µ._mjs_toRaw(args[1]);
+                let result = val.apply(obj, args);
+                // Set : l'élément rendu enveloppé par une itération se retire aussi (la Set range le brut)
+                if (isSet && prop === 'delete' && !result) result = val.call(obj, µ._mjs_toRaw(args[0]));
+                // cf. commentaire jumeau du set-trap plus bas : le
+                // mutateur natif (add/delete/clear/set…) EST le côté mutant.
+                _mjsMutated(el, rootKey, obj, __snap);
+                return result;
+              }
+            : (isWrapped || Array.isArray(obj)) ? µ._mjs_readFn(obj, prop, val, proxy, w) : val.bind(proxy);
+          (own ? (ownCache ||= new Map()) : methodCache).set(prop, bound);
           return bound;
         }
+        if (isWrapped) return val;
+
+        // Plain object/array : fast path.
         if (val !== null && typeof val === 'object' && !µ._mjs_rawSet.has(val)) {
-          return el._mjs_wrapDeep(val, rootKey);
+          return µ._mjs_fixed(obj, prop) ? val : el._mjs_wrapDeep(val, rootKey, __roots);
         }
         return val;
       },
@@ -769,22 +964,24 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // pas polluer le prototype. Les Symbols passent (µ._mjs_safeKey ne bloque que
         // les 3 chaînes dangereuses).
         if (!µ._mjs_safeKey(prop)) return true;
+        if (__refus) return _mjsEnvRefus(__refus);
         // déballe une valeur ENTRANTE déjà enveloppée (par CE composant
         // ou un autre) : `$a.nested = $b` (où `$b` est déjà un Proxy réactif) ne
         // doit pas empiler Proxy-de-Proxy — même idiome que les set-traps runes
         // (mjs_runes.ts).
-        value = µ._mjs_toRaw(value);
+        value = µ._mjs_rawIn(value);
+        // types (mjs_types.ts) : l'écriture passe la règle de son conteneur, s'il en a une — un
+        // alias échappé (`regler($x)`) n'y échappe pas ; refusée, elle n'a simplement pas lieu
+        const __treg = el._mjs_treg;
+        if (__treg !== void 0 && __treg.has(obj)) {
+          value = µ._mjs_tdeep(el, __treg, obj, prop, value);
+          if (value === µ._mjs_TNO) return true;
+        }
         // Snapshot pour µ.inspect (seulement si activé pour cette var).
-        const __insSet = el._mjs_inspections;
-        const __snapSet = (__insSet && __insSet.has(rootKey))
-          ? (Array.isArray(obj) ? obj.slice() : (obj instanceof Map ? new Map(obj) : (obj instanceof Set ? new Set(obj) : {...obj})))
-          : void 0;
+        const __snapSet = _mjsSnapBefore(el, rootKey, obj);
         if (isWrapped) {
           obj[prop] = value;
-          if (!µ._mjs_rawSet.has(obj)) {
-            (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-            el._mjs_notifyMutationAliased(obj, rootKey, __snapSet);
-          }
+          if (!µ._mjs_rawSet.has(obj)) _mjsMutated(el, rootKey, obj, __snapSet);
           return true;
         }
         if (obj[prop] === value) {
@@ -793,14 +990,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // Invalide le cache de méthode si la prop est réécrite avec une
         // fonction différente (rare mais possible).
         if (methodCache.has(prop)) methodCache.delete(prop);
+        ownCache?.delete(prop);
         obj[prop] = value;
         if (!µ._mjs_rawSet.has(obj)) {
           // le CÔTÉ MUTANT enregistre SA PROPRE époque tout de suite :
           // sans ça, l'écho qui revient de la frontière two-way ne se
           // distinguerait pas d'une mutation externe, et se re-notifierait
           // lui-même (cf. `_set`, comparaison oldRaw/parsed + époque).
-          (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-          el._mjs_notifyMutationAliased(obj, rootKey, __snapSet);
+          _mjsMutated(el, rootKey, obj, __snapSet);
         }
         return true;
       },
@@ -815,17 +1012,16 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       deleteProperty: function(obj, prop) {
         // SÉCURITÉ — symétrique du set trap.
         if (!µ._mjs_safeKey(prop)) return true;
-        const __insDel = el._mjs_inspections;
-        const __snapDel = (__insDel && __insDel.has(rootKey))
-          ? (Array.isArray(obj) ? obj.slice() : (obj instanceof Map ? new Map(obj) : (obj instanceof Set ? new Set(obj) : {...obj})))
-          : void 0;
+        if (__refus) return _mjsEnvRefus(__refus);
+        // types : un champ obligatoire d'un objet typé ne se supprime pas
+        const __tregDel = el._mjs_treg;
+        if (__tregDel !== void 0 && !µ._mjs_tdelete(el, __tregDel, obj, prop)) return true;
+        const __snapDel = _mjsSnapBefore(el, rootKey, obj);
         const had = prop in obj;
         if (methodCache.has(prop)) methodCache.delete(prop);
+        ownCache?.delete(prop);
         delete obj[prop];
-        if (had && !µ._mjs_rawSet.has(obj)) {
-          (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[rootKey] = µ._mjs_bumpEpoch(obj);
-          el._mjs_notifyMutationAliased(obj, rootKey, __snapDel);
-        }
+        if (had && !µ._mjs_rawSet.has(obj)) _mjsMutated(el, rootKey, obj, __snapDel);
         return true;
       },
       // SÉCURITÉ — `Object.defineProperty(proxy, '__proto__', …)`
@@ -833,6 +1029,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // même garde, même silence (filet d'un alias ÉCHAPPÉ, cf. commentaire du `set` plus haut).
       defineProperty: function(obj, prop, desc) {
         if (!µ._mjs_safeKey(prop)) return false;
+        if (__refus) {
+          _mjsEnvRefus(__refus);
+          return false;
+        }
         return Reflect.defineProperty(obj, prop, desc);
       },
       // SÉCURITÉ — `Object.setPrototypeOf(proxy, evil)` changeait le
@@ -840,16 +1040,12 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       setPrototypeOf: function(obj, proto) {
         // message copié à tort du store (mjs_store.ts) :
         // ici c'est l'ÉTAT RÉACTIF d'un COMPOSANT (_mjs_wrapDeep), pas le store global.
-        µ.warn('[ModularJS] état : changement de prototype refusé');
+        µ.warn(µ._mjs_msg('elProto', null, 'état : changement de prototype refusé'));
         return false;
       }
     };
     proxy = new Proxy(target, handler);
-    if (__byRoot === void 0) {
-      __byRoot = new Map();
-      this._mjs_proxyCache.set(target, __byRoot);
-    }
-    __byRoot.set(rootKey, proxy);
+    this._mjs_proxyCache.set(target, proxy);
     return proxy;
   }
 
@@ -899,7 +1095,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
             return void 0;
           }
           if (v._mjs_evaluating) {
-            µ.warn(`[ModularJS] Cycle réactif détecté sur '${k}' — retourne undefined`);
+            µ.warn(µ._mjs_msg('elCycle', { k: k }, 'Cycle réactif détecté sur \'{k}\' — retourne undefined'));
             return void 0;
           }
           // Cache hit : retourne la valeur mémorisée sans ré-évaluer.
@@ -942,18 +1138,18 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // src/runtime/mjs_lifecycle.ts — patch de `µ.Element.prototype` posé APRÈS
   // cette classe, même technique que mjs_on.ts.
 
-  // objet BRUT muté (`obj`, cible du proxy `_mjs_wrapDeep` qui vient de trapper la
-  // mutation) atteint par PLUSIEURS clés d'état (`$a = obj ; $b = obj`, cf.
-  // `_mjs_rootsByTarget` posé par `_mjs_wrapDeep`) : notifie CHACUNE, pas seulement
-  // `rootKey` (la clé du proxy qui a muté) — sinon un lecteur de `$b` ne voit jamais
-  // passer une mutation faite via `$a`, alors que les deux pointent le même objet.
-  // Un seul proxy par (target, rootKey) ici (contrairement à µ.state) : chaque clé
-  // a son propre abonnement, jamais de double invalidation pour un même lecteur.
+  // objet BRUT muté (`obj` : cible du proxy `_mjs_wrapDeep` qui vient de trapper la
+  // mutation, ou conteneur écrit par une mutation profonde compilée, mjs_deep.ts) atteint
+  // par PLUSIEURS clés d'état (`$a = obj ; $b = obj`, cf. `_mjs_rootsByTarget` posé par
+  // `_mjs_wrapDeep`) : notifie CHACUNE, et toujours `rootKey` (la clé écrite) — sinon un
+  // lecteur de `$b` ne voit jamais passer une mutation faite via `$a`, alors que les deux
+  // pointent le même objet. Une seule enveloppe par cible, mais chaque clé a son propre
+  // abonnement : jamais de double invalidation pour un même lecteur.
   _mjs_notifyMutationAliased(obj, rootKey, oldValue) {
     var roots = this._mjs_rootsByTarget && this._mjs_rootsByTarget.get(obj);
-    if (roots && roots.size > 1) {
+    if (roots && (roots.size > 1 || !roots.has(rootKey))) {
       roots.forEach((key) => this._mjs_notifyMutation(key, oldValue));
-      return;
+      if (roots.has(rootKey)) return;
     }
     this._mjs_notifyMutation(rootKey, oldValue);
   }
@@ -965,7 +1161,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // ternary. V8 ne hoist pas ces locaux entre appels. Cache direct simplifié.
     // 99% des composants n'ont ni `_mjs_inspections` ni `_mjs_binds` → skip total.
     const __ins = this._mjs_inspections;
-    // affichage de `µinspect` (tout `$x`, ou ses seuls chemins) : dans mjs_rare_runes.ts, le
+    // affichage de `µinspect` (tout `$x`, ou ses seuls chemins) : dans mjs_inspect.ts, le
     // module qui pose `_mjs_inspections` — un projet qui n'inspecte rien n'en embarque pas une ligne
     if (__ins && __ins.size > 0 && __ins.has(k)) µ._mjs_inspectAffiche(this, k, oldValue);
     // V2 — invalidation memo computed : marquer dirty TOUS les computeds.
@@ -999,17 +1195,28 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // validée. Avant, l'allocation se faisait quand même.
     // Cache local + simplify du Set#has check.
     const __binds = this._mjs_binds;
-    if (__binds && __binds.size > 0 && __binds.has(k)) {
-      // Convention MJS : `e.data` (pas `e.detail`). Voir _mjs_emit.
-      // Direct assignation au lieu de defineProperty (économise ~50ns alloc).
-      // CustomEvent ne réserve pas la prop `data`, assignation libre OK.
-      const _bindEv = new CustomEvent(`mjs-bind:${k}`, {
-        bubbles: true,
-        composed: false
-      });
-      _bindEv.data = this._state[k];
-      return this.dispatchEvent(_bindEv);
+    // ne remonte que ce que l'enfant écrit lui-même, une fois les valeurs de son parent reçues : ni le défaut de son script (`$x = null`, à sa mise
+    // à niveau), ni ce que le parent lui livre à la connexion (attribut, registre `µ._mjs_pend`) — le parent gagne, sa variable ne reçoit jamais
+    // ces valeurs. Reste ouvert détaché : un `µsleep`, un `µdestroy` ou une minuterie écrivent encore dans la variable d'un parent détaché avec lui
+    if (__binds && __binds.size > 0 && __binds.has(k) && this._mjs_bindOpen) {
+      // pendant la réconciliation d'un `{for}`, une ligne déplacée voit ses enfants déconnectés puis reconnectés alors que les indices gardés
+      // sur les nœuds sont ceux de l'ancienne place : l'écriture attend la fin de la réconciliation (cf. mjs_for.ts) et part vers la ligne d'arrivée
+      if (µ._mjs_hold) return µ._mjs_holdBind(this, k, oldValue);
+      return this._mjs_emitBind(k);
     }
+  }
+
+  // l'écriture liée part vers le parent : `mjs-bind:k`, la valeur de l'état dans `e.data`
+  _mjs_emitBind(k) {
+    // Convention MJS : `e.data` (pas `e.detail`). Voir _mjs_emit.
+    // Direct assignation au lieu de defineProperty (économise ~50ns alloc).
+    // CustomEvent ne réserve pas la prop `data`, assignation libre OK.
+    const _bindEv = new CustomEvent(`mjs-bind:${k}`, {
+      bubbles: true,
+      composed: false
+    });
+    _bindEv.data = this._state[k];
+    return this.dispatchEvent(_bindEv);
   }
 
   // ==========================================
@@ -1113,16 +1320,22 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       }
       return v;
     };
-    syncProps = () => {
+    // `only` : les seuls attributs à relire (ceux qui ont bougé, cf. l'observateur plus bas) ; absent,
+    // tous — au montage. `deja` : les props que le parent a posées TYPÉES dans le registre, relu plus bas
+    // (au montage seulement) : leur attribut, reflet texte ou posé par le rendu serveur, n'est pas relu
+    syncProps = (only, deja) => {
       var attr, j, key, len, parsed, ref, results;
       ref = this.attributes;
       results = [];
       for (j = 0, len = ref.length; j < len; j++) {
         attr = ref[j];
+        if (only && !only.has(attr.name)) continue;
         const _nameL = attr.name.toLowerCase();
         key = attr.name.replace(/-([a-z])/g, function(g) {
           return g[1].toUpperCase();
         });
+        // relu en chaîne, 7 deviendrait "7" chez l'enfant, puis chez le parent par la liaison à deux sens
+        if (deja && hasProp.call(deja, key)) continue;
         // Skip : préfixes MJS internes, attributs natifs HTML, et conventions
         // ARIA/data-* (gérés par le browser, jamais exposés comme props).
         // EXCEPTION : si l'attribut natif (`title`, `src`, `name`, …) correspond
@@ -1130,7 +1343,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // — le browser pose aussi l'attribut natif mais le composant veut la
         // valeur dans `_state` (cas `<mjs-audio-player title="…">`).
         const _isDeclaredProp = this._mjs_var_bits != null
-          && Object.prototype.hasOwnProperty.call(this._mjs_var_bits, key);
+          && hasProp.call(this._mjs_var_bits, key);
         if (attr.name.startsWith('mjs-')
             || (MJS_NATIVE_ATTRS.has(_nameL) && !_isDeclaredProp)
             || _nameL.startsWith('aria-')
@@ -1168,7 +1381,12 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // reconnexion. On ne lit surtout pas `_state` — un composant peut avoir un `$layout`
     // à lui, sans rapport avec le style (cf. le garde de `_set`)
     this._mjs_applyLayout(this._mjs_layoutName || this.getAttribute('layout') || this.getAttribute('template') || 'default');
-    syncProps();
+    const __pend = µ._mjs_pending.get(this);
+    // à chaque connexion, les valeurs que le parent livre (attributs, registre) ne sont pas des écritures de l'enfant et ne remontent pas : celles du
+    // registre peuvent être périmées (le défaut qu'un composant du milieu a posé avant d'avoir reçu la sienne), l'attribut d'une page rendue par le
+    // serveur reste celui de la page servie ; leur écho écraserait la variable du parent — la prop liée reste fermée jusqu'à la fin de cette reprise
+    this._mjs_bindOpen = false;
+    syncProps(void 0, __pend);
     // Props posées par un parent AVANT la mise à niveau : elles n'ont jamais touché
     // l'élément, un registre hors instance les tenait (`µ._mjs_pend`, cf. mjs_init.ts).
     // CHAQUE clé passe par `_set`, dans l'ordre où elle est arrivée : le chemin exact d'un
@@ -1178,13 +1396,13 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // en production, et une prop au nom d'attribut natif (`id`, `title`) arrive comme
     // ailleurs. Vient AVANT la reprise des propriétés propres ci-dessous : ces dernières
     // sont forcément postérieures (`µ._mjs_pend` retire celle qu'il double).
-    const __pend = µ._mjs_pending.get(this);
     if (__pend) {
       µ._mjs_pending.delete(this);
       for (const __pk in __pend) {
         this._set(__pk, __pend[__pk]);
       }
     }
+    this._mjs_bindOpen = true;
     if (this._mjs_var_bits) {
       // Object.keys + for-let-i au lieu de for...in (V8 spécialise mieux).
       const __vbk = Object.keys(this._mjs_var_bits);
@@ -1206,7 +1424,32 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
       }
     }
+    // seuls les attributs qui ont bougé sont relus : relire les autres rendait leur valeur de
+    // départ aux props écrites depuis (µmount, liaison qui remonte de l'enfant) — le simple retrait
+    // de `mjs-loading`, juste après le premier rendu, y suffisait
+    const _onAttrs = (records) => {
+      var names = new Set(), i;
+      for (i = 0; i < records.length; i++) if (records[i].attributeName !== 'mjs-loading') names.add(records[i].attributeName);
+      if (names.size) syncProps(names);
+    };
+    // retire `mjs-loading` ET vide l'enregistrement que ce retrait vient de poser dans le guetteur
+    // d'attributs : il se réveillait pour rien, une fois par composant. Un autre attribut changé
+    // entre-temps (posé par le parent) est relu ici, comme le guetteur l'aurait fait juste après
+    const _dropLoading = () => {
+      if (!this._mjs_is_mounted) return;
+      this.removeAttribute('mjs-loading');
+      _onAttrs(this._mjs_propObserver.takeRecords());
+    };
     this._mjs_invalidate('_awaits_');
+    // i18n (mjs_i18n.ts, module OPTIONNEL — `µ.i18n` peut être absent si le
+    // runtime bundlé n'inclut pas 'i18n') : `_mjs_i18n` posé par le
+    // compilateur = [section|null, overrideMode|null]. `µ.i18n._mjs_connect` enregistre le
+    // composant et, en mode 'wait' avec fragment pas encore arrivé, gèle le PREMIER rendu
+    // (déjà planifié juste au-dessus par `_mjs_invalidate('_awaits_')`) jusqu'à son arrivée —
+    // cf. la garde `_mjs_i18n_hold` dans `_mjs_invalidate` — et allonge `_mjs_cssPending` de
+    // cette attente. Sa place est ICI, avant la lecture de `_mjs_cssPending` ci-dessous : la
+    // retenue de [mjs-loading] doit déjà y trouver l'attente du fragment
+    if (this._mjs_i18n && µ.i18n) µ.i18n._mjs_connect(this);
     // Anti-FOUC : _mjs_invalidate schédule le premier render en microtask. La
     // microtask suivante (enchaînée ici) s'exécute APRÈS ce render, on peut
     // donc retirer [mjs-loading] → le composant apparaît déjà rendu.
@@ -1216,27 +1459,17 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // sur `_mjs_cssPending` AVANT de rendre la main, et on retient [mjs-loading]
     // jusqu'à ce qu'elle soit adoptée. Sans ça le composant s'afficherait nu le
     // temps d'un aller-retour réseau — exactement le clignotement que le mode
-    // paresseux doit éviter. Hors 'lazy', `_mjs_cssPending` est toujours absent et
+    // paresseux doit éviter. Même retenue pour le gel i18n en mode 'wait' : sa
+    // promesse a rejoint `_mjs_cssPending` juste au-dessus (cf. `_mjs_connect`).
+    // Hors 'lazy' et hors 'wait', `_mjs_cssPending` est toujours absent et
     // le chemin ci-dessous est celui de toujours, à l'identique.
     const _cssPending = this._mjs_cssPending;
     if (_cssPending) {
-      _cssPending.then(() => {
-        if (this._mjs_is_mounted) {
-          this.removeAttribute('mjs-loading');
-        }
-      });
+      _cssPending.then(_dropLoading);
     } else {
-      queueMicrotask(() => {
-        if (this._mjs_is_mounted) {
-          return this.removeAttribute('mjs-loading');
-        }
-      });
+      queueMicrotask(_dropLoading);
     }
-    if (this._mjs_propObserver == null) {
-      this._mjs_propObserver = new MutationObserver(function() {
-        return syncProps();
-      });
-    }
+    this._mjs_propObserver ??= new MutationObserver(_onAttrs);
     this._mjs_propObserver.observe(this, {
       attributes: true
     });
@@ -1253,17 +1486,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // SSR : les hooks de cycle de vie CLIENT (µawake/µmount) ne s'exécutent
     // PAS côté serveur (µ._isServer posé par renderToString dans happy-dom) ;
     // ils joueront à l'hydratation dans le navigateur, comme onMount de Svelte.
-    if (typeof this._mjs_hooks?.awake === "function" && !µ._isServer) {
-      this._mjs_hooks.awake.call(this);
-    }
     // file `_mjs_awake_cbs` — même motif que `_mjs_mount_cbs` : la map des hooks
     // n'a qu'UNE case par nom, une rune qui s'y poserait écraserait le `µawake ->`
     // de l'utilisateur. Contrairement à la file de montage, celle-ci n'est PAS
     // vidée : elle rejoue à chaque reconnexion (µevery `pause: true`)
-    if (this._mjs_awake_cbs && !µ._isServer) {
-      const __ac = this._mjs_awake_cbs;
-      for (let i = 0, n = __ac.length; i < n; i++) __ac[i].call(this);
-    }
+    if (!µ._isServer) this._mjs_lifeRun('awake', this._mjs_awake_cbs);
     // Store global statisé (`$$`) — abonnement PAR CLÉ (mjs_store_globals.ts),
     // en miroir de µ._mjs_registerUniversalDep pour les contextes. `_mjs_storeKeys`
     // est posé par le compilateur (liste statique des clés `$$x` lues par CE
@@ -1277,20 +1504,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (this._mjs_storeKeys && this._mjs_storeKeys.length > 0 && typeof µ._mjs_storeSubscribe === 'function') {
       µ._mjs_storeSubscribe(this, this._mjs_storeKeys);
     }
-    // i18n (mjs_i18n.ts, module OPTIONNEL — `µ.i18n` peut être absent si le
-    // runtime bundlé n'inclut pas 'i18n') : `_mjs_i18n` posé par le
-    // compilateur = [section|null, overrideMode|null]. `µ.i18n._mjs_connect` enregistre le
-    // composant et, en mode 'wait' avec fragment pas encore arrivé, gèle le PREMIER rendu
-    // (déjà planifié juste au-dessus par `_mjs_invalidate('_awaits_')`) jusqu'à son arrivée —
-    // cf. la garde `_mjs_i18n_hold` dans `_mjs_invalidate`.
-    if (this._mjs_i18n && µ.i18n) µ.i18n._mjs_connect(this);
+    // i18n : `µ.i18n._mjs_connect(this)` se fait plus haut, avant la lecture de `_mjs_cssPending`
     if (this._mjs_is_router_aware) {
       return (ref = µ.Router) != null ? typeof ref.register === "function" ? ref.register(this) : void 0 : void 0;
     }
   }
 
   disconnectedCallback() {
-    var e, err, j, len, ref, ref1, ref2, ref3, ref4, td, unsub;
+    var e, err, j, len, ref, ref1, ref2, ref3, ref4, refs, td, unsub;
     this._mjs_is_mounted = false;
     // topologie changée (déconnexion) : invalide + purge (ne pas retenir des
     // références d'ancêtres morts)
@@ -1314,10 +1535,16 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
       }
     }
+    // connexion suivante : chaque balise redevient à attacher (`_mjs_att` périmé), le rendu de la
+    // reconnexion repose les `@attach` dont le nettoyage tourne juste en dessous
+    this._mjs_ae++;
     if (this._mjs_attachments) {
       ref2 = this._mjs_attachments;
       for (td of ref2) {
-        try { td(); } catch (e) { µ.warn('[ModularJS] @attach/@this teardown en erreur :', e); }
+        // une référence `@this` se vide en dernier : `µsleep`, `µdestroy` et le nettoyage de `µmount`
+        // la lisent encore (cf. la fin de la méthode)
+        if (td._mjs_ref) { (refs || (refs = [])).push(td); continue; }
+        try { td(); } catch (e) { µ.warn(µ._mjs_msg('elTeardown', null, '@attach/@this teardown en erreur :'), e); }
       }
       this._mjs_attachments.clear();
       // les td ci-dessus s'exécutent UNE fois,
@@ -1351,14 +1578,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       ref4 = this._mjs_effects;
       for (j = 0, len = ref4.length; j < len; j++) {
         e = ref4[j];
+        // effacé : au reconnect, `_mjs_runEffectsV2` rappelle le nettoyage avant
+        // de re-fire l'effet → le teardown tournait DEUX fois (faux pour une
+        // désinscription comptée). Effacé AVANT d'être joué : un retrait du reffet
+        // demandé depuis ce nettoyage (mjs_effect.ts) ne le rejoue pas
+        var __cl = e.cleanup;
+        e.cleanup = null;
         try {
-          if (typeof e.cleanup === "function") {
-            e.cleanup();
-            // Null APRÈS exécution : au reconnect, `_mjs_runEffectsV2` rappelle
-            // `e.cleanup()` avant de re-fire l'effet → le teardown tournait
-            // DEUX fois (faux pour une désinscription comptée).
-            e.cleanup = null;
-          }
+          if (__cl) __cl.call(e);
         } catch (error1) {
           err = error1;
           µ.warn("Cleanup error on unmount:", err);
@@ -1377,17 +1604,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (typeof µ._mjs_storeUnsubscribe === "function") { µ._mjs_storeUnsubscribe(this); }
     // Nettoyage du registre i18n (mjs_i18n.ts, module OPTIONNEL).
     if (µ.i18n && this._mjs_i18n) { µ.i18n._mjs_unmount(this); }
-    if (typeof this._mjs_hooks?.sleep === "function") {
-      this._mjs_hooks.sleep.call(this);
-    }
     // file `_mjs_sleep_cbs` — symétrique de `_mjs_awake_cbs`, jamais vidée, et
     // gardée côté SERVEUR comme elle : ce que suspend une rune n'existe qu'au
-    // navigateur (le hook `µsleep` juste au-dessus n'a pas cette garde, par
-    // héritage — on ne la reprend pas ici)
-    if (this._mjs_sleep_cbs && !µ._isServer) {
-      const __sc = this._mjs_sleep_cbs;
-      for (let i = 0, n = __sc.length; i < n; i++) __sc[i].call(this);
-    }
+    // navigateur (le hook `µsleep` n'a pas cette garde, par héritage — on ne la reprend pas ici)
+    this._mjs_lifeRun('sleep', this._mjs_sleep_cbs);
     // ---- Destruction DIFFÉRÉE — fix critique : `onDestroy` (où vivent le
     // hook utilisateur `@destroy` et les callbacks `_mjs_onDestroy`) n'était
     // JAMAIS invoqué par le runtime. Un déplacement DOM synchrone
@@ -1408,6 +1628,27 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         if (typeof µ._mjs_isPageCached === "function" && µ._mjs_isPageCached(__self)) return;
         __self._mjs_runDestroyCallbacks();
       });
+    }
+    // les références `@this`, après la destruction différée ci-dessus ; un composant seulement déplacé
+    // (reconnecté dans le même tour) garde les siennes
+    if (refs) {
+      const __me = this;
+      queueMicrotask(() => {
+        if (__me.isConnected) return;
+        for (let i = 0, n = refs.length; i < n; i++) {
+          try { refs[i](); } catch (e) { µ.warn(µ._mjs_msg('elTeardown', null, '@attach/@this teardown en erreur :'), e); }
+        }
+      });
+    }
+  }
+
+  // hook µawake / µsleep de l'utilisateur, puis la file des runes (au navigateur seulement) : chacun
+  // sous son try — une erreur ne sort jamais de connectedCallback / disconnectedCallback (sinon
+  // `el.remove()` levait chez l'appelant et la suite, destruction différée comprise, n'avait pas
+  // lieu : µevery tournait après le retrait), et n'empêche pas les suivants de tourner
+  _mjs_lifeRun(name, cbs) {
+    for (const fn of [this._mjs_hooks?.[name], ...(!µ._isServer && cbs || [])]) {
+      try { fn?.call(this); } catch (e) { µ.warn(µ._mjs_msg('lifeRun', { name }, 'hook µ{name} en erreur :'), e); }
     }
   }
 
@@ -1437,19 +1678,68 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // Auto-passive : les types listés (touch/wheel sans preventDefault) sont
     // enregistrés `passive` → le navigateur scrolle sans attendre le handler.
     const passiveSet = passive ? new Set(passive) : null;
+    // la phase où l'événement se route : un événement qui remonte l'est à la remontée, comme un écouteur posé sur
+    // la balise (un `stopPropagation()` natif d'un descendant arrête nos gestionnaires, `.stop` ne prive jamais la
+    // cible des siens, l'enfant joue avant la balise que son parent a posée) ; à la capture (1), celui qui ne
+    // remonte pas (focus, blur, load, scroll, un événement envoyé sans `bubbles`…), qu'une écoute à la remontée ne
+    // verrait jamais, et `submit` : un envoi retenu (`@submit.prevent`) ne part jamais, même quand un écouteur de la
+    // page coupe l'événement sur le formulaire. Celui qui naît dans du contenu glissé (2), chez nous ou chez un
+    // enfant, est lu à la capture et routé une fois sa cible atteinte, après les écouteurs de celle-ci (un
+    // `stopPropagation()` natif posé sur elle arrête nos gestionnaires, `.stop` ne la prive pas des siens, un
+    // composant glissé joue avant le gestionnaire que son auteur pose sur sa balise) : son auteur joue avant le
+    // cadre qui le reçoit (le bouton glissé qui a son gestionnaire joue seul)
+    const cap = (e) => {
+      if (!e.bubbles || e.type === 'submit') return 1;
+      // glissé, notre balise chez un enfant ou celle d'un autre chez nous : entre la cible et notre racine, un ancêtre
+      // est un hôte à ombre (fermée chez MJS, où `assignedSlot` ne dit rien)
+      for (let n = e.target.parentNode; n && n !== root; n = n.parentNode) {
+        if (n.shadowRoot || n._mjs_isLight === false) return 2;
+      }
+      return 0;
+    };
     for (let __ei = 0, __eln = events.length; __ei < __eln; __ei++) {
       const evt = events[__ei];
       const map = routes[evt];
-      const opts = (passiveSet && passiveSet.has(evt))
-        ? { capture: true, passive: true }
-        : true;
-      root.addEventListener(evt, (e) => {
+      // entrée/sortie de survol : le vrai pointeur se lit sur le jumeau qui remonte (Chromium ne les
+      // présente même pas à cette racine, sauf écouteur ailleurs dans la page) ; celles qu'un code
+      // fabrique (`dispatchEvent`) gardent le routeur ordinaire, ci-dessous
+      // (table et routeur dans mjs_boundary.ts, absents d'un projet sans ces événements : routeur ordinaire)
+      const __be = this._mjs_boundaryEvents;
+      const boundary = __be && hasProp.call(__be, evt);
+      if (boundary) root.addEventListener(__be[evt], (e) => this._mjs_routeBoundary(evt, map, e), true);
+      const pas = !!passiveSet && passiveSet.has(evt);
+      // un seul routeur par type, posé aux deux phases de la racine : chaque événement n'y est routé qu'une fois,
+      // dans la sienne ; le contenu glissé, sur sa cible, derrière ses écouteurs (rien si l'un d'eux a coupé la
+      // propagation) — `p`, le chemin lu à la capture : vu de la cible, l'intérieur fermé du cadre n'y figure plus
+      const route = (e, p) => {
+        if (!p) {
+          let c;
+          if (boundary && e.isTrusted || (e.eventPhase === 1) !== (c = cap(e)) > 0) return;
+          if (c > 1) {
+            p = e.composedPath();
+            e.target.addEventListener(evt, (x) => x === e && !e.cancelBubble && route(e, p), { once: true, passive: pas });
+            return;
+          }
+        }
         let t = e.target;
+        // contenu glissé dans un de nos slots : ses nœuds sont ceux du composant qui l'a écrit, et leurs
+        // identifiants de routage (`e1`, `e2`… numérotés par composant) tomberaient sur les nôtres —
+        // jamais lus ici. L'événement nous arrive par le slot : la remontée reprend là, sauf si un
+        // gestionnaire du contenu glissé l'a déjà pris sans `.propagate` (mode léger : pas de slot)
+        if (t && root !== this && t.getRootNode() !== root) {
+          t = this._mjs_slotEntry?.(e, true, p);
+          if (!t) return;
+        }
+        // un effet retient l'événement de sa balise avant ses liaisons et ses gestionnaires (*guard :
+        // une valeur hors de la règle ne part pas dans la variable)
+        if (t && t._mjs_hold && t._mjs_hold(e)) return;
         const __inline = this._mjs_inline;
         while (t && t !== root) {
           // l'id de routing est porté par le nœud (`_mjs_ids`), pas une
           // WeakMap : lecture de prop directe pendant la remontée parentNode.
-          const ids = t._mjs_ids;
+          // Sans ombre pour séparer deux composants (un léger posé chez nous, ou ce que nous lui
+          // confions), leurs nœuds se côtoient : on ne lit que ceux que NOUS avons écrits (`_mjs_eo`)
+          const ids = t._mjs_eo === this ? t._mjs_ids : void 0;
           if (ids) {
             // Fix collision IDs : un node peut porter plusieurs ids (event +
             // binding loop). On essaie chaque id ; le 1er qui matche `map`
@@ -1497,7 +1787,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                     // le même nœud (ex. `@click.once` et `@keydown.once`) partagent le même id
                     // de routage — sans `evt`, le premier type déclenché désarmait aussi l'autre.
                     const onceKey = evt + ':' + (list ? ids[i] + '#' + k : ids[i]);
-                    if (!this._mjs_once_fired) this._mjs_once_fired = new WeakMap();
+                    this._mjs_once_fired ||= new WeakMap();
                     let __fired = this._mjs_once_fired.get(t);
                     if (__fired && __fired.has(onceKey)) continue;
                     if (!__fired) { __fired = new Set(); this._mjs_once_fired.set(t, __fired); }
@@ -1509,9 +1799,23 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                   // `e.currentTarget.getBoundingClientRect()` échoue. Le 2e arg
                   // `t` reste aussi disponible. Cas vécu : seek slider audio-player.
                   try { Object.defineProperty(e, 'currentTarget', { value: t, configurable: true }); } catch (_err) { /* event read-only */ }
-                  const result = fnWrapper.call(this, e, t);
-                  if (typeof result === 'function') {
-                    result.call(this, e, t);
+                  // passage de ce gestionnaire, rendu à sa fin même s'il lève : un événement routé imbriqué ouvre le
+                  // sien puis rend la main ; la fonction de retrait d'un `µon` posé pendant ce passage en porte la
+                  // marque (mjs_on.ts)
+                  var __prev = µ._mjs_evPass, __pass = µ._mjs_evPass = {};
+                  try {
+                    const result = fnWrapper.call(this, e, t);
+                    // fonction rendue (forme `@click={save}`) appelée, sauf la fonction de retrait d'un `µon` née dans ce
+                    // passage (`@click={$brancher()}`) : l'écouteur que ce gestionnaire vient de poser reste
+                    if (typeof result === 'function' && result._mjs_born !== __pass) {
+                      result.call(this, e, t);
+                    }
+                    // une promesse rendue, sur une balise qu'un effet `on: success|error` écoute (mjs_fx.ts)
+                    else if (result && t._mjs_fxResult && typeof result.then === 'function') {
+                      t._mjs_fxResult(result);
+                    }
+                  } finally {
+                    µ._mjs_evPass = __prev;
                   }
                   // Restaure le getter natif de currentTarget — même obligation
                   // que dans _mjs_on : l'event POURSUIT sa propagation et un
@@ -1526,9 +1830,21 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                 // Vérifié APRÈS la liste : `stopPropagation` n'a jamais coupé
                 // les autres listeners du MÊME nœud (c'est le rôle de
                 // `stopImmediatePropagation`), on reste sur la sémantique DOM.
-                if (e.cancelBubble) return;
-                // Handler normal : le nœud le plus proche gagne → on s'arrête.
-                if (!propagate) return;
+                if (e.cancelBubble) {
+                  // les écouteurs posés après nous sur la racine (`µon`, la navigation) ne jouent pas non plus ;
+                  // méthode native : la navigation surveille celle de l'événement, et elle est relancée juste en dessous
+                  Event.prototype.stopImmediatePropagation.call(e);
+                  // ce qui attendait la remontée (la navigation d'un lien, pont shadow de mjs_ujs.ts) ne
+                  // la verra jamais : elle joue ici, gestionnaires déjà joués, sauf action prévenue
+                  if (e._mjs_afterStop !== void 0 && !e.defaultPrevented) e._mjs_afterStop(e);
+                  return;
+                }
+                // Handler normal : le nœud le plus proche gagne → on s'arrête, et le composant qui
+                // affiche ce nœud dans un de ses slots le saura (`_mjs_slotEntry`).
+                if (!propagate) {
+                  e._mjs_taken = t;
+                  return;
+                }
                 // `.propagate` : on sort des ids de CE nœud et on laisse le
                 // `while` remonter vers l'ancêtre suivant.
                 break;
@@ -1539,7 +1855,11 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // Si parentNode traverse une frontière ShadowRoot, on s'arrête.
           if (t && t.nodeType === 11) break;
         }
-      }, opts);
+      };
+      for (const capture of [true, false]) root.addEventListener(evt, route, { capture, passive: pas });
+      // la navigation (mjs_ujs.ts, absente d'un projet sans elle) lit le lien et l'envoi à la remontée sur cette
+      // même racine, une fois nos gestionnaires joués (`@click.prevent` la retient) : son écouteur repasse après nous
+      µ._mjs_ujsLate?.(root, evt);
     }
   }
 
@@ -1550,7 +1870,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // de gabarit, il charge une feuille de style — un variant de FORME
   // (grille, ordre, masquage), jamais de couleurs (variables `$$` d'un `<theme>`).
   async _mjs_applyLayout(name = 'default') {
-    var cssAttr, j, l, len, len1, len2, m, node, ref, ref1, sheet, sheetName, sheets;
+    var sheet, sheets, tag;
     sheets = [];
     // un fetch de variant lent ne doit pas écraser une bascule demandée APRÈS lui
     const _seq = (this._mjs_layoutSeq = (this._mjs_layoutSeq || 0) + 1);
@@ -1579,31 +1899,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (µ._mjs_themeAppSheet) {
       sheets.push(µ._mjs_themeAppSheet);
     }
-    // Héritage CSS depuis <@view css="..."> : on remonte l'arbre en franchissant
-    // les frontières Shadow DOM (via root.host), et on accumule toutes les feuilles
-    // de chaque <metamjs-view css="..."> ancêtre. Ça permet qu'un composant imbriqué
-    // (enfant d'un composant injecté dans la view) hérite aussi du thème de la view.
-    var inheritedNames = [];
-    node = this.parentNode;
-    while (node) {
-      if (node.nodeType === 11) { // DocumentFragment / ShadowRoot → on saute à l'hôte
-        node = node.host;
-        continue;
-      }
-      if (node.tagName === 'METAMJS-VIEW') {
-        cssAttr = node.getAttribute('css');
-        if (cssAttr) {
-          ref = cssAttr.split(/\s+/);
-          for (j = 0, len = ref.length; j < len; j++) {
-            sheetName = ref[j];
-            if (sheetName) {
-              inheritedNames.push(sheetName);
-            }
-          }
-        }
-      }
-      node = node.parentNode;
-    }
+    var inheritedNames = µ._mjs_inheritedCss(this);
     // Mode `css: 'lazy'` : les feuilles partagées ne sont pas dans le
     // bundle, ce sont des `.css` hachés dont l'URL vit au manifeste. `µ._mjs_lazyCssWait`
     // (mjs_lazy_css.ts, joint seulement dans ce mode) rend la promesse des feuilles encore
@@ -1622,48 +1918,39 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // PENDANT le chargement doit gagner
       if (_seq !== this._mjs_layoutSeq) { return; }
     }
-    for (l = 0, len1 = inheritedNames.length; l < len1; l++) {
-      sheetName = inheritedNames[l];
-      // Les feuilles extérieures sont poussées en premier pour que les styles locaux
-      // du composant puissent les surcharger.
-      if (µ.CSS[sheetName]) {
-        sheets.push(µ.CSS[sheetName]);
-      } else if (!(µ._cssLazy && µ._cssLazy[sheetName])) {
-        // une feuille CONNUE du mode paresseux n'est pas orpheline : elle est
-        // simplement différée (et absente au rendu serveur, par construction) —
-        // c'est `µ._mjs_fetchLazyCss` qui parle quand son fichier manque vraiment
-        µ.warn(`[ModularJS] Orphelin CSS hérité : La feuille '${sheetName}' est absente du registre.`);
-      }
-    }
-    if (this._mjs_sharedCss) {
-      ref1 = this._mjs_sharedCss;
-      for (m = 0, len2 = ref1.length; m < len2; m++) {
-        sheetName = ref1[m];
+    // feuilles nommées, héritées puis déclarées par le composant : celles du registre sont poussées dans cet ordre (les
+    // feuilles extérieures en premier, pour que les styles locaux du composant puissent les surcharger). Une feuille
+    // CONNUE du mode paresseux n'est pas orpheline : elle est simplement différée (et absente au rendu serveur, par
+    // construction) — c'est `µ._mjs_fetchLazyCss` qui parle quand son fichier manque vraiment
+    const named = (names, orphan) => {
+      for (const sheetName of names) {
         if (µ.CSS[sheetName]) {
           sheets.push(µ.CSS[sheetName]);
         } else if (!(µ._cssLazy && µ._cssLazy[sheetName])) {
-          // cf. le jumeau ci-dessus : différée n'est pas orpheline
-          µ.warn(`[ModularJS] Orphelin CSS local : La feuille '${sheetName}' est introuvable.`);
+          orphan(sheetName);
         }
       }
+    };
+    named(inheritedNames, (sheetName) => µ.warn(µ._mjs_msg('elOrphanInherited', { sheetName: sheetName }, 'Orphelin CSS hérité : La feuille \'{sheetName}\' est absente du registre.')));
+    if (this._mjs_sharedCss) {
+      named(this._mjs_sharedCss, (sheetName) => µ.warn(µ._mjs_msg('elOrphanLocal', { sheetName: sheetName }, 'Orphelin CSS local : La feuille \'{sheetName}\' est introuvable.')));
     }
-    if (this._mjs_baseCss && this._mjs_baseCss.trim() !== "") {
-      if (µ._mjs_componentStyleCache == null) {
-        µ._mjs_componentStyleCache = new Map();
-      }
-      if (!µ._mjs_componentStyleCache.has(this._mjs_baseCss)) {
+    const css = this._mjs_baseCss;
+    const hasCss = css && css.trim() !== "";
+    if (hasCss) {
+      tag = this.tagName.toLowerCase();
+      // une feuille par texte, partagée par toutes les instances
+      sheet = (µ._mjs_componentStyleCache ??= new Map()).get(css);
+      if (!sheet) {
         sheet = new CSSStyleSheet();
-        sheet.replaceSync(this._mjs_baseCss);
-        µ._mjs_componentStyleCache.set(this._mjs_baseCss, sheet);
+        sheet.replaceSync(css);
+        µ._mjs_componentStyleCache.set(css, sheet);
       }
-      sheets.push(µ._mjs_componentStyleCache.get(this._mjs_baseCss));
+      sheets.push(sheet);
       // Index PAR TAG de la feuille adoptée (rechargement CSS à chaud en dev,
       // cf. µ._hotCss dans mjs_hotcss.ts) — s'AJOUTE au cache par texte
       // ci-dessus sans le modifier (zéro régression prod, byte-safe).
-      if (µ._mjs_componentStyleByTag == null) {
-        µ._mjs_componentStyleByTag = new Map();
-      }
-      µ._mjs_componentStyleByTag.set(this.tagName.toLowerCase(), µ._mjs_componentStyleCache.get(this._mjs_baseCss));
+      (µ._mjs_componentStyleByTag ??= new Map()).set(tag, sheet);
     }
     // Mode `mjs-light` : HTMLElement n'a pas `adoptedStyleSheets`. On émet le
     // CSS du composant comme un <style> inline injecté dans le head global
@@ -1675,84 +1962,74 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // document.head ne franchit JAMAIS cette frontière (encapsulation Shadow DOM), la feuille
       // doit rejoindre CE shadow-là. Même idiome que le reste du fichier (`getRootNode().host`)
       // pour détecter le shadow hôte ; racine (hors de tout shadow réel, `.host` absent) : repli
-      // document.head INCHANGÉ (bloc jumeau plus bas, condition étendue mais corps byte-identique).
+      // document.head, mêmes aides (feuille adoptée sous CSP, sinon <style>) que pour le shadow hôte.
       var lightRoot = this.getRootNode ? this.getRootNode() : null;
-      if (this._mjs_baseCss && this._mjs_baseCss.trim() !== "" && lightRoot && lightRoot.host) {
-        // ATTENTION — un light n'a JAMAIS de piste d'adoption SSR (docs/19-ssr.md : « hydrateScript
-        // reste vide pour ce mode, quel que soit ssrMode ») : il RECONSTRUIT systématiquement son
-        // contenu à la connexion, y compris quand c'est l'HÔTE (ancêtre à shadow réel) qui vide puis
-        // reconstruit LE SIEN (mesuré : `replaceChildren` + `adoptedStyleSheets = sheets` de l'hôte
-        // ÉCRASENT tout ce qu'une instance PRÉCÉDENTE de ce même tag avait posé). Un marqueur qui ne
-        // fait que « j'ai déjà pose » resterait vrai après cet écrasement et bloquerait la repose de
-        // l'instance qui SURVIT — la garde vérifie donc la présence RÉELLE, à chaque connexion.
-        var nestedTag = this.tagName.toLowerCase();
-        // `:host` réécrit en `nestedTag` AVANT adoption/injection : le document (ou le
-        // shadow de l'ancêtre) n'a pas de host réel, `:host` n'y matcherait rien
-        var nestedCss = µ._lightHostCss(this._mjs_baseCss, nestedTag);
-        if (µ._csp) {
-          if (lightRoot._mjs_mjsLightSheets == null) {
-            lightRoot._mjs_mjsLightSheets = new Map();
+      if (hasCss) {
+        // `:host` réécrit en `tag` AVANT adoption/injection : le document (ou le shadow de
+        // l'ancêtre) n'a pas de host réel, `:host` n'y matcherait rien. Réécrit aussi AVANT le test
+        // de déduplication du document (donc SUR le texte réécrit) : deux composants au CSS source
+        // identique mais balises différentes ont un texte réécrit différent (leur nom y est imprimé)
+        // et donnent chacun leur PROPRE feuille, à raison
+        const lightCss = µ._lightHostCss(css, tag);
+        // sous CSP : une feuille adoptée par `root` (shadow de l'ancêtre ou document). Seule table
+        // qui la retient pour µ._hotCss : pas de <style data-mjs-css> sous CSP, et
+        // µ._mjs_componentStyleByTag (chemin ombre) ne la voit pas
+        const adopt = (root) => {
+          const lightSheet = new CSSStyleSheet();
+          lightSheet.replaceSync(lightCss);
+          root.adoptedStyleSheets = [...root.adoptedStyleSheets, lightSheet];
+          µ._mjs_lightSheetsByTag ??= new Map();
+          if (!µ._mjs_lightSheetsByTag.has(tag)) {
+            µ._mjs_lightSheetsByTag.set(tag, []);
           }
-          var knownSheet = lightRoot._mjs_mjsLightSheets.get(nestedTag);
-          if (!knownSheet || lightRoot.adoptedStyleSheets.indexOf(knownSheet) === -1) {
-            var nestedLightSheet = new CSSStyleSheet();
-            nestedLightSheet.replaceSync(nestedCss);
-            lightRoot.adoptedStyleSheets = [...lightRoot.adoptedStyleSheets, nestedLightSheet];
-            lightRoot._mjs_mjsLightSheets.set(nestedTag, nestedLightSheet);
-            // seule table qui retient cette feuille CSP pour µ._hotCss : pas de
-            // <style data-mjs-css> sous CSP, et µ._mjs_componentStyleByTag (chemin ombre) ne la voit pas
-            if (µ._mjs_lightSheetsByTag == null) {
-              µ._mjs_lightSheetsByTag = new Map();
-            }
-            if (!µ._mjs_lightSheetsByTag.has(nestedTag)) {
-              µ._mjs_lightSheetsByTag.set(nestedTag, []);
-            }
-            µ._mjs_lightSheetsByTag.get(nestedTag).push({ sheet: nestedLightSheet, text: nestedCss });
-          }
-        } else if (!lightRoot.querySelector('style[data-mjs-light="' + nestedTag + '"]')) {
-          var nestedLightStyleEl = document.createElement('style');
-          nestedLightStyleEl.setAttribute('data-mjs-light', nestedTag);
-          nestedLightStyleEl.setAttribute('data-mjs-css', nestedTag);
-          nestedLightStyleEl.textContent = nestedCss;
-          lightRoot.appendChild(nestedLightStyleEl);
-        }
-      }
-      if (this._mjs_baseCss && this._mjs_baseCss.trim() !== "" && !(lightRoot && lightRoot.host)) {
-        if (µ._mjs_lightStyleInjected == null) {
-          µ._mjs_lightStyleInjected = new Set();
-        }
-        // idem : réécrit AVANT le test de déduplication (donc SUR le texte réécrit) —
-        // deux composants au CSS source identique mais balises différentes ont un texte réécrit
-        // différent (leur nom y est imprimé) et donnent chacun leur PROPRE feuille, à raison
-        var docCss = µ._lightHostCss(this._mjs_baseCss, this.tagName.toLowerCase());
-        if (!µ._mjs_lightStyleInjected.has(docCss)) {
+          µ._mjs_lightSheetsByTag.get(tag).push({ sheet: lightSheet, text: lightCss });
+          return lightSheet;
+        };
+        // sinon un <style> ; `data-mjs-css` : marqueur pour le rechargement CSS à chaud en dev
+        // (µ._hotCss : remplacement du textContent par tag) — distinct de data-mjs-light
+        // (inchangé) pour ne rien casser chez qui le cible déjà
+        const styleEl = (parent) => {
+          const lightStyleEl = document.createElement('style');
+          lightStyleEl.setAttribute('data-mjs-light', tag);
+          lightStyleEl.setAttribute('data-mjs-css', tag);
+          lightStyleEl.textContent = lightCss;
+          parent.appendChild(lightStyleEl);
+        };
+        if (lightRoot && lightRoot.host) {
+          // ATTENTION — un light n'a JAMAIS de piste d'adoption SSR (docs/19-ssr.md : « hydrateScript
+          // reste vide pour ce mode, quel que soit ssrMode ») : il RECONSTRUIT systématiquement son
+          // contenu à la connexion, y compris quand c'est l'HÔTE (ancêtre à shadow réel) qui vide puis
+          // reconstruit LE SIEN (mesuré : `replaceChildren` + `adoptedStyleSheets = sheets` de l'hôte
+          // ÉCRASENT tout ce qu'une instance PRÉCÉDENTE de ce même tag avait posé). Un marqueur qui ne
+          // fait que « j'ai déjà pose » resterait vrai après cet écrasement et bloquerait la repose de
+          // l'instance qui SURVIT — la garde vérifie donc la présence RÉELLE, à chaque connexion.
           if (µ._csp) {
-            var lightStyleSheet = new CSSStyleSheet();
-            lightStyleSheet.replaceSync(docCss);
-            document.adoptedStyleSheets = [...document.adoptedStyleSheets, lightStyleSheet];
-            // idem imbriqué ci-dessus : seule table qui retient cette feuille pour µ._hotCss
-            if (µ._mjs_lightSheetsByTag == null) {
-              µ._mjs_lightSheetsByTag = new Map();
+            lightRoot._mjs_mjsLightSheets ??= new Map();
+            var knownSheet = lightRoot._mjs_mjsLightSheets.get(tag);
+            if (!knownSheet || lightRoot.adoptedStyleSheets.indexOf(knownSheet) === -1) {
+              lightRoot._mjs_mjsLightSheets.set(tag, adopt(lightRoot));
             }
-            if (!µ._mjs_lightSheetsByTag.has(this.tagName.toLowerCase())) {
-              µ._mjs_lightSheetsByTag.set(this.tagName.toLowerCase(), []);
-            }
-            µ._mjs_lightSheetsByTag.get(this.tagName.toLowerCase()).push({ sheet: lightStyleSheet, text: docCss });
-          } else {
-            var lightStyleEl = document.createElement('style');
-            lightStyleEl.setAttribute('data-mjs-light', this.tagName.toLowerCase());
-            // marqueur pour le rechargement CSS à chaud en dev (µ._hotCss :
-            // remplacement du textContent par tag) — distinct de data-mjs-light
-            // (inchangé) pour ne rien casser chez qui le cible déjà
-            lightStyleEl.setAttribute('data-mjs-css', this.tagName.toLowerCase());
-            lightStyleEl.textContent = docCss;
-            document.head.appendChild(lightStyleEl);
+          } else if (!lightRoot.querySelector('style[data-mjs-light="' + tag + '"]')) {
+            styleEl(lightRoot);
           }
-          µ._mjs_lightStyleInjected.add(docCss);
+        } else {
+          // racine (hors de tout shadow réel) : une seule feuille par texte réécrit, dans le document
+          µ._mjs_lightStyleInjected ??= new Set();
+          if (!µ._mjs_lightStyleInjected.has(lightCss)) {
+            if (µ._csp) {
+              adopt(document);
+            } else {
+              styleEl(document.head);
+            }
+            µ._mjs_lightStyleInjected.add(lightCss);
+          }
         }
       }
     } else {
-      this._shadow.adoptedStyleSheets = sheets;
+      // les feuilles posées en route (`_mjs_keep` : un effet, une bulle, une traduction en
+      // attente) restent — leur module ne les reposerait pas
+      var kept = this._shadow.adoptedStyleSheets.filter(function(s) { return s._mjs_keep; });
+      this._shadow.adoptedStyleSheets = kept.length ? sheets.concat(kept) : sheets;
     }
     if (name === 'default') {
       return;
@@ -1795,7 +2072,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // attendu n'a pas lieu : on le dit UNE fois, pas une par composant.
       else if (!µ._mjs_hydrateWarned) {
         µ._mjs_hydrateWarned = true;
-        µ.warn("[ModularJS] hydratation demandée par la page mais absente du cœur : mode ssr:markers/positional/diff dans render, ou runtime: ['hydrate'].");
+        µ.warn(µ._mjs_msg('elHydrate', null, 'hydratation demandée par la page mais absente du cœur : mode ssr:markers/positional/diff dans render, ou runtime: [\'hydrate\'].'));
       }
       // Hydratation échouée / non applicable / absente : on jette la « photo » serveur
       // (non vidée en mode hydratation, cf. constructor) avant de reconstruire,
@@ -1859,6 +2136,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       } else {
         n._mjs_ids = [id];
       }
+      // le composant qui a écrit le nœud : ses ids ne valent que pour lui (cf. `_mjs_bindEvents`)
+      n._mjs_eo = this;
     }
   }
 
@@ -1966,12 +2245,17 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // Skip µ.activeComponent setter/getter Proxy : ces updates ciblés
     // sont des _mjs_updText/_mjs_updAttr simples qui ne touchent pas aux stores
     // universels. Pas besoin de tracker l'activeComponent.
+    //   - pas la 2e écriture, dans le même tour, d'une var qui pilote un bloc (`$x = {…}; $x = null`) :
+    //     son rendu de bloc est reporté (dédoublonné), ses liaisons liraient la branche encore
+    //     affichée avec la nouvelle valeur (`$x.champ` sur null) — elle passe par le chemin
+    //     ordinaire, le bloc d'abord
     if (
       k !== '_awaits_' &&
       !this._mjs_render_scheduled &&
       !µ._mjs_inEffect &&
       this._mjs_is_mounted &&
-      this._mjs_effectsByVar
+      this._mjs_effectsByVar &&
+      !(this._mjs_struct_dispatched_in_tick && this._mjs_renderStructVars && this._mjs_renderStructVars[k] === 1)
     ) {
       const __list = this._mjs_effectsByVar[k];
       const __hasUserEffects = this._mjs_effects && this._mjs_effects.length > 0;
@@ -1999,32 +2283,20 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // tourner pour rendre la nouvelle branche, même si `_awaits_` n'est
           // pas dans `_mjs_renderStructVars` (qui ne liste que les vars user).
           const __needsStruct = k === '_awaits_' || (__rsv != null && __rsv[k] === 1);
-          // Optim #3 — Guard de dedup : si déjà dispatché dans ce tick,
-          // skip le re-render struct (le 1er fire a déjà tout reconcilé).
-          // Reset du flag programmé via queueMicrotask au 1er fire.
+          // Optim #3 — Guard de dedup : le 1er rendu de bloc du tick pose le drapeau (remis à zéro en
+          // microtask) ; une 2e écriture d'une var qui pilote un bloc dans le même tick
+          // (`$items.push(a); $items.push(b)`, `$x = {…}; $x = null`) n'entre plus dans cette voie
+          // (cf. sa condition d'entrée) : le chemin ordinaire rend les blocs puis les liaisons, sur
+          // l'état final
           if (__needsStruct && this._mjs_renderStruct) {
-            if (!this._mjs_struct_dispatched_in_tick) {
-              this._mjs_struct_dispatched_in_tick = true;
-              const __self = this;
-              queueMicrotask(() => { __self._mjs_struct_dispatched_in_tick = false; });
-              try { this._mjs_safeRenderStruct(); } catch (err) {
-                this._mjs_catchError(err);
-                return;
-              }
-            } else if (!this._mjs_pending_struct_dirty) {
-              // 2e mutation de la même var struct DANS LE MÊME TICK sync
-              // (`$items.push(a); $items.push(b)`) : le garde a déjà rendu
-              // l'état d'après la 1re — sans ce rattrapage, le DOM restait
-              // figé dessus. On replanifie en microtask (_mjs_renderStruct est
-              // idempotent : au pire un passage redondant).
-              this._mjs_pending_struct_dirty = true;
-              const __self = this;
-              queueMicrotask(() => {
-                if (!__self._mjs_pending_struct_dirty) return;
-                __self._mjs_pending_struct_dirty = false;
-                if (__self._mjs_has_crashed || !__self._mjs_is_mounted) return;
-                try { __self._mjs_safeRenderStruct(); } catch (err) { __self._mjs_catchError(err); }
-              });
+            this._mjs_struct_dispatched_in_tick = true;
+            // noms écrits depuis la dernière passe : un `{for}` de racine ne se rejoue que si l'un des siens y figure
+            if (this._mjs_chgd) this._mjs_chgd.add(k);
+            const __self = this;
+            queueMicrotask(() => { __self._mjs_struct_dispatched_in_tick = false; });
+            try { this._mjs_safeRenderStruct(); } catch (err) {
+              this._mjs_catchError(err);
+              return;
             }
           }
           // Inline le loop d'effects (court typiquement 1-3).
@@ -2122,23 +2394,27 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         // Garde anti-boucle réactive. Une boucle d'effets (un effet qui
         // mute sa propre dépendance) s'exprime ici en chaîne INFINIE de
         // microtasks : le navigateur ne reprend jamais la main → onglet gelé
-        // sans même un avertissement. On compte les flushs par RAFALE de
-        // microtasks ; le compteur est remis à zéro par une macrotask
-        // (setTimeout 0), qui ne s'exécute QUE si la chaîne s'arrête. Seuil
-        // volontairement large (10 000, façon Solid) : aucune cascade légitime
-        // ne l'atteint, seule une boucle le peut. Au-delà : un avertissement
-        // explicite (une fois par rafale) et CE flush est abandonné — la
-        // chaîne se brise, la page reste vivante pour le débogage.
-        const __g = µ._mjs_mtFlush = (µ._mjs_mtFlush || { n: 0, warned: false });
-        if (++__g.n === 1) {
-          setTimeout(() => { __g.n = 0; __g.warned = false; }, 0);
+        // sans même un avertissement. On compte les flushs de CHAQUE composant par
+        // RAFALE de microtasks : une page qui monte 10 000 composants d'un coup n'est
+        // pas une boucle, seule une boucle re-rend le MÊME composant sans fin. La
+        // rafale est nommée par sa minuterie de fin (`_mjs_mtT`, setTimeout 0, qui ne
+        // s'exécute QUE si la chaîne s'arrête) : rafale nouvelle, compteur du composant
+        // reparti de zéro. Seuil volontairement large (10 000, façon Solid) : aucune
+        // cascade légitime ne l'atteint. Au-delà : un avertissement explicite (une fois
+        // par rafale et par composant), et les effets du composant s'arrêtent jusqu'à la fin
+        // de la rafale (plus bas) tandis que l'affichage suit encore l'état — la chaîne se
+        // brise sans laisser un écran périmé ; si elle continue sans eux, le rendu s'arrête aussi.
+        const __e = µ._mjs_mtT ||= setTimeout(() => { µ._mjs_mtT = 0; });
+        if (this._mjs_mtE !== __e) {
+          this._mjs_mtE = __e;
+          this._mjs_mtN = 0;
         }
-        if (__g.n > 10000) {
-          if (!__g.warned) {
-            __g.warned = true;
-            µ.warn(`[ModularJS] Boucle réactive détectée sur <${this.tagName ? this.tagName.toLowerCase() : '?'}> : plus de 10 000 rendus dans la même rafale de microtasks. Un effet mute probablement sa propre dépendance ($x = $x + … dans un µeffect ?). Rendu abandonné pour garder la page vivante.`);
+        const __n = ++this._mjs_mtN;
+        if (__n > 10000) {
+          if (__n === 10001) {
+            µ.warn(µ._mjs_msg('elLoop', { tag: this.tagName ? this.tagName.toLowerCase() : '?' }, 'Boucle réactive détectée sur <{tag}> : plus de 10 000 rendus dans la même rafale de microtasks. Un effet mute probablement sa propre dépendance ($x = $x + … dans un µeffect ?). Effets suspendus pour garder la page vivante.'));
           }
-          return;
+          if (__n > 10100) return;
         }
         // `_mjs_pending_full` ne donne plus de passe-droit : un composant monté
         // puis retiré DANS LE MÊME TICK exécutait tout son mount (effects,
@@ -2215,7 +2491,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // ne le relit après l'appel sur ce chemin)
           µ._mjs_inEffect = true;
           try {
-            this._mjs_runEffectsV2(pending, fullRender);
+            if (__n <= 10000) this._mjs_runEffectsV2(pending, fullRender);
           } finally {
             µ._mjs_inEffect = false;
           }
@@ -2233,6 +2509,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     }
     if (k === '_awaits_') {
       this._mjs_pending_full = true;
+      if (this._mjs_chgd) this._mjs_chgd.add(k);
     } else {
       // for-let-i au lieu de for-of (évite alloc iterator + symbol lookup).
       const __ebv = this._mjs_effectsByVar;
@@ -2246,6 +2523,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
       }
       if (this._mjs_lastMutedVars) this._mjs_lastMutedVars.add(k);
+      if (this._mjs_chgd) this._mjs_chgd.add(k);
       // Bug-fix : track séparément si une var muée pilote `_mjs_renderStruct`.
       // Indépendant de la présence d'effects user (qui était la condition
       // pour allouer `_mjs_lastMutedVars`). Sans ce flag, un composant sans effect
@@ -2278,6 +2556,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // prochain batch ou laissé null.
     const mutedVars = this._mjs_lastMutedVars;
     this._mjs_lastMutedVars = null;
+    // passage imbriqué (lancé pendant un effet) : l'effet extérieur redevient l'effet en cours à la fin
+    const __effPrev = µ._mjs_effRun;
     // for-let-i au lieu de for-of (V8 spécialise mieux sur Array).
     for (let __ei = 0, __eln = __effs.length; __ei < __eln; __ei++) {
       const e = __effs[__ei];
@@ -2294,14 +2574,29 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         shouldFire = true;
       }
       if (!shouldFire) continue;
+      // effet en cours : une écriture du store faite pendant son passage ne relance pas les effets qui écrivent eux-mêmes
+      // la clé (mjs_store_globals.ts)
+      µ._mjs_effRun = e;
+      // nettoyage (une fonction ou null : seul ce qu'un passage rend de fonction y est rangé) effacé avant d'être joué :
+      // un retrait du reffet demandé pendant ce passage (µeffect rend la fonction qui le retire, mjs_effect.ts) ne le
+      // rejoue pas
+      var __cl = e.cleanup;
+      e.cleanup = null;
       try {
-        if (typeof e.cleanup === 'function') e.cleanup();
+        if (__cl) __cl.call(e);
       } catch (err) { µ.warn('Cleanup error:', err); }
       try {
-        const res = e.fn();
-        e.cleanup = typeof res === 'function' ? res : null;
+        // reffet retiré (`fn` effacé) : il ne tourne plus ; retiré pendant son propre passage, ce qu'il vient de rendre
+        // joue aussitôt, une fois
+        const res = e.fn && e.fn();
+        if (typeof res === 'function') {
+          if (e.fn) e.cleanup = res;
+          else res.call(e);
+        }
       } catch (err) {
         if (typeof this._mjs_catchError === 'function') this._mjs_catchError(err);
+      } finally {
+        µ._mjs_effRun = __effPrev;
       }
     }
   }
@@ -2348,7 +2643,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // `_mjs_dying` : sa mort est toujours DÉFINITIVE, la purge est donc sans risque
       // (cf. commentaire ci-dessus sur les points de mort définitive).
       this._mjs_mjsPurgeSubtreeState(node);
-      node.remove();
+      µ._mjs_rm(node);
       return MJS_RESOLVED_DESTROY;
     }
     if (node._mjs_dying) {
@@ -2370,7 +2665,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // générateur émet `µ._mjs_getTextNode(` (cf. son en-tête) : sans lui, personne n'y puise,
       // le remplir ne ferait que retenir des nœuds morts.
       if (µ._mjs_recycleTextLeaves) { µ._mjs_recycleTextLeaves(node); }
-      node.remove();
+      µ._mjs_rm(node);
       return MJS_RESOLVED_DESTROY;
     }
     // Au-delà de ce point, le composant PEUT porter des hooks de destruction
@@ -2389,17 +2684,17 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     node._mjs_dead = true;
     this._mjs_mjsPurgeSubtreeState(node);
     if (µ._mjs_recycleTextLeaves) { µ._mjs_recycleTextLeaves(node); }   // cf. le chemin rapide ci-dessus
-    node.remove();
+    µ._mjs_rm(node);
     return MJS_RESOLVED_DESTROY;
   }
 
-  _mjs_updAttr(id, attrName, val) {
+  _mjs_updAttr(id, attrName, val, sur) {
     // Inspiré Solid `setAttribute` : skip hasAttribute (qui read attr map)
     // avant removeAttribute, et skip String() si déjà string.
     // V8 spécialise mieux getAttribute===setAttribute branch que has+set.
     // Logique déléguée à `µ._mjs_updAttrNode` (voir sa définition en tête de
     // fichier) — root et `{for}` partagent désormais EXACTEMENT le même code.
-    µ._mjs_updAttrNode(this._mjs_nodes[id], attrName, val);
+    µ._mjs_updAttrNode(this._mjs_nodes[id], attrName, val, sur);
   }
 
   // `_mjs_updHtml` (interpolation brute `{{…}}`) : mjs_html.ts, joint seulement si le code compilé
@@ -2444,11 +2739,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         this._mjs_renderStructDirty = false;
         this._mjs_renderStruct();
       } while (this._mjs_renderStructDirty && ++__guard < 20);
+      // passe finie : plus rien d'écrit en attente (la 1re passe, complète, fait naître le registre)
+      if (this._mjs_chgd) this._mjs_chgd.clear();
+      else this._mjs_chgd = new Set();
       if (this._mjs_renderStructDirty) {
         // Sortie de boucle PAR LE GARDE : un cycle réactif réel re-mute une
         // var structurelle à chaque passe. Avant : abandon silencieux, DOM
         // potentiellement incohérent et bug user indétectable.
-        µ.warn(`[ModularJS] <${this.tagName?.toLowerCase()}> : boucle de mutations structurelles détectée (20 passes) — re-render abandonné. Une var pilotant un {for}/{if} est probablement re-mutée par le rendu lui-même.`);
+        µ.warn(µ._mjs_msg('elStructLoop', { tag: this.tagName?.toLowerCase() }, '<{tag}> : boucle de mutations structurelles détectée (20 passes) — re-render abandonné. Une var pilotant un {for}/{if} est probablement re-mutée par le rendu lui-même.'));
       }
     } finally {
       this._mjs_inRenderStruct = false;
@@ -2483,7 +2781,13 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     µ._fatalErrors = (µ._fatalErrors || 0) + 1;
     var __fatal = document.createElement('div');
     __fatal.className = 'mjs-fatal-error';
-    __fatal.textContent = `Fatal Error: ${err.message}`;
+    // n'importe quelle valeur jetée (`undefined`, un Symbol, un objet sans prototype) : son texte, jamais une seconde
+    // exception ici
+    let __txt = '';
+    try { __txt = ': ' + String(err?.message ?? err); } catch (_e) { /* valeur sans texte */ }
+    __fatal.textContent = 'Fatal Error' + __txt;
+    // en production le texte est d'abord court : le fichier de messages, à son arrivée, réécrit ce bandeau
+    if (Object.isExtensible(err)) err._mjs_fatal = __fatal;
     this._shadow.appendChild(__fatal);
   }
 
@@ -2492,3 +2796,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // varNames avec les vars muées.
 
 };
+
+// connexion courante du composant, lue par `@attach` : une balise dont `_mjs_att` vaut cette
+// valeur a déjà reçu son attache et le rendu suivant la saute (cf. bindingAttach, générateur) ;
+// valeur de départ sur le prototype, avancée par `disconnectedCallback` sur l'instance
+µ.Element.prototype._mjs_ae = 1;

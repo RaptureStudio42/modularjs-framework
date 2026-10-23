@@ -96,8 +96,8 @@
 // `onDisconnect` déjà fourni par l'appli hôte (les deux tournent, jamais l'un à la place de l'autre).
 
 import { mjsWs } from '../mjs-ws/index.js'
-import type { MjsWsApp, MjsWsLogLevel, MjsWsOptions, MjsWsStatsSnapshot } from '../mjs-ws/index.js'
-import { resolveGameDef } from './game-def.js'
+import type { MjsWsApp, MjsWsLogFn, MjsWsOptions, MjsWsStatsSnapshot } from '../mjs-ws/index.js'
+import { resolveGameDef, receivedReadable } from './game-def.js'
 import type { MjsServerGameDef, MjsServerResolvedDef } from './game-def.js'
 import { createMatchmaking } from './matchmaking.js'
 import type { MjsServerMatchmaking } from './matchmaking.js'
@@ -109,6 +109,7 @@ import type { MjsServerGameStats } from './game.js'
 import { resolvePersistOption, createPersistEngine } from './persist.js'
 import type { MjsServerPersistOption } from './persist.js'
 import { t } from '../messages/index.js'
+import { consoleLog } from '../mjs-ws/package-helpers.js'
 
 // resolveGameDef, matchmaking.ts::create(), restoreGameFromSnapshot(), Game — pas seulement des types : couture de la
 // persistance à venir ET utilisées par les tests pour exercer directement des
@@ -196,6 +197,11 @@ export interface MjsServerAntiCheatOptions {
    *  ci-dessus. Défaut `undefined`/absent = le défaut TOUJOURS actif de matchmaking.ts (verrou
    *  conservateur, contrairement à movesPerIdentity qui est opt-in) ; `null` explicite désactive. */
   codePerIp?: [number, number] | null
+  /** parties privées en cours (pas finies) d'un même créateur où il siège encore, tous types et toutes connexions confondus — son identité, ou son
+   *  adresse s'il est anonyme (sa connexion quand le transport n'en donne pas). La même valeur borne les parties privées en cours où
+   *  une même identité siège, créées ou rejointes par code (un anonyme : sa connexion). Entier ≥ 1 ; absent = 5 (défaut TOUJOURS
+   *  actif, cf. matchmaking.ts::DEFAULT_PRIVATE_GAMES_PER_CREATOR) ; `null` explicite désactive les deux bornes. */
+  privateGamesPerCreator?: number | null
 }
 
 export interface MjsServerOptions extends MjsWsOptions {
@@ -209,12 +215,7 @@ export interface MjsServerOptions extends MjsWsOptions {
   antiCheat?: MjsServerAntiCheatOptions
 }
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[MJS-Server] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
+const defaultLog = consoleLog('[MJS-Server]')
 
 /** Construit une app MJS-Server — MÊMES options que `mjsWs(opts)` (réutilise `mjsWs()` public tel
  *  quel), augmentée de `.game()` + `opts.persist` (persist.ts). `opts.serve`/`opts.on` d'un type
@@ -225,9 +226,16 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   // affecté APRÈS l'app (matchmaking a besoin de `app.send`), capturé par closure — MÊME patron
   // que bridgeEngine/clusterEngine dans mjs-ws/core.ts (cf. son commentaire de tête, createCore)
   let matchmaking: MjsServerMatchmaking | null = null
+  // journal de MJS-Server (parties, persistance) : appelé depuis des minuteries, des microtâches et des chaînes de
+  // promesses où aucune requête n'attend de réponse — un onLog qui lève (intégration cassée) y ferait tomber le process.
+  // Celui de MJS-WS est déjà gardé (mjs-ws/core.ts) ; celui-ci l'est ici, en un seul point de passage pour tous ses appelants
+  const log: MjsWsLogFn = (level, message, meta) => {
+    try { (opts.onLog ?? defaultLog)(level, message, meta) }
+    catch { /* journal cassé — jamais laisser un bug de journalisation faire tomber le serveur */ }
+  }
   // persistance — `null` si opts.persist absent, AUCUN hook armé dans ce cas (cf.
   // persist.ts createPersistEngine, qui court-circuite tout avant la moindre Map/timer)
-  const persistEngine = createPersistEngine(resolvePersistOption(opts.persist), opts.onLog ?? defaultLog)
+  const persistEngine = createPersistEngine(resolvePersistOption(opts.persist), log)
   // anti-triche (détection par coup) — compteurs APP-ENTIÈRE, TOUJOURS créés (coût
   // négligible, MÊME politique « toujours actif » que mjs-ws/stats.ts) : rattachés à CHAQUE partie
   // par matchmaking.ts (armés comme `_onMutate`/persist.ts::armGame), greffés sur app.stats()
@@ -242,11 +250,12 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   const movesPerIdentity = opts.antiCheat?.movesPerIdentity ?? null
   if (movesPerIdentity !== null) {
     if (!Array.isArray(movesPerIdentity) || movesPerIdentity.length !== 2) {
-      throw new Error(t('serveur.index-movesperidentity-invalide', { received: JSON.stringify(movesPerIdentity) }))
+      throw new Error(t('serveur.index-movesperidentity-invalide', { received: receivedReadable(movesPerIdentity) }))
     }
+    // fenêtre FINIE : NaN donnait un taux NaN (quota désactivé en silence), Infinity un taux nul (tout bloqué après n coups)
     const [n, window] = movesPerIdentity
-    if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || window <= 0) {
-      throw new Error(t('serveur.index-movesperidentity-invalide', { received: JSON.stringify(movesPerIdentity) }))
+    if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || !Number.isFinite(window) || window <= 0) {
+      throw new Error(t('serveur.index-movesperidentity-invalide', { received: receivedReadable(movesPerIdentity) }))
     }
   }
   // cf. MjsServerAntiCheatOptions.codePerIp ; `undefined` (option absente)
@@ -256,12 +265,17 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   const codePerIp = opts.antiCheat?.codePerIp
   if (codePerIp !== undefined && codePerIp !== null) {
     if (!Array.isArray(codePerIp) || codePerIp.length !== 2) {
-      throw new Error(t('serveur.index-codeperip-invalide', { received: JSON.stringify(codePerIp) }))
+      throw new Error(t('serveur.index-codeperip-invalide', { received: receivedReadable(codePerIp) }))
     }
     const [n, window] = codePerIp
-    if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || window <= 0) {
-      throw new Error(t('serveur.index-codeperip-invalide', { received: JSON.stringify(codePerIp) }))
+    if (!Number.isInteger(n) || n < 1 || typeof window !== 'number' || !Number.isFinite(window) || window <= 0) {
+      throw new Error(t('serveur.index-codeperip-invalide', { received: receivedReadable(codePerIp) }))
     }
+  }
+  // cf. MjsServerAntiCheatOptions.privateGamesPerCreator — même résolution que codePerIp : absent = défaut de createMatchmaking
+  const privateGamesPerCreator = opts.antiCheat?.privateGamesPerCreator
+  if (privateGamesPerCreator !== undefined && privateGamesPerCreator !== null && (!Number.isInteger(privateGamesPerCreator) || privateGamesPerCreator < 1)) {
+    throw new Error(t('serveur.index-privategamespercreator-invalide', { received: receivedReadable(privateGamesPerCreator) }))
   }
 
   // µschema × 'µgame:' — le préfixe réservé vaut AUSSI pour les schémas binaires.
@@ -295,7 +309,7 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
   // ci-dessus : `app.stats` ici est ENCORE la version MJS-WS nue (mjs-ws/stats.ts, aucun `game`).
   const baseStats  = app.stats
 
-  matchmaking = createMatchmaking(app, gameDefs, baseServe, baseOn, persistEngine, gameStats, movesPerIdentity, codePerIp)
+  matchmaking = createMatchmaking(app, gameDefs, baseServe, baseOn, persistEngine, gameStats, movesPerIdentity, codePerIp, undefined, privateGamesPerCreator)
 
   app.serve = (type, handler) => {
     if (type.startsWith(RESERVED_PREFIX)) throw new Error(t('serveur.index-serve-prefixe-reserve', { type: type, prefix: RESERVED_PREFIX }))
@@ -322,6 +336,9 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
     await baseListen()
   }
   app.stop = async () => {
+    // plus aucun coup accepté dès le début de l'arrêt : la rafale finale ci-dessous ne le contiendrait pas, il serait acquitté puis
+    // perdu au redémarrage
+    matchmaking!.refuseMoves()
     // rafale finale de persistance AVANT destroyAll() — capture les minuteries encore vivantes
     // (à - maintenant) ; destroyAll() les VIDE (cf. game.ts _destroy), un ordre inversé
     // sauverait des parties SANS leurs minuteries en cours (perdues au prochain redémarrage)
@@ -334,11 +351,11 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
 
   app.game = (type, def) => {
     if (gameDefs.has(type)) throw new Error(t('serveur.index-game-deja-declare', { type: type }))
-    // opts.onLog ?? defaultLog — MÊME patron que persistEngine plus haut (cf. son commentaire) :
+    // le journal de l'app (opts.onLog ?? defaultLog, gardé, cf. `log` plus haut) — MÊME patron que persistEngine :
     // resolveGameDef reste une fonction PURE par défaut (log no-op si appelée directement, cf. les
     // ~15 call-sites de tests) ; seule CETTE app réelle branche le vrai logger (anti-triche,
     // avertissement def.view absente).
-    gameDefs.set(type, resolveGameDef(type, def, opts.onLog ?? defaultLog))
+    gameDefs.set(type, resolveGameDef(type, def, log))
   }
 
   return app

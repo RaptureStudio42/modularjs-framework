@@ -16,6 +16,7 @@
 // transport-uws.ts). Le choix string-vs-Uint8Array est fait UNE fois, en amont (core.ts::sendRaw,
 // via mjs-ws/schema.ts::encodeOutbound) — aucun transport ne re-décide quoi que ce soit.
 
+import { SocketAddress, isIP } from 'node:net'
 import { t } from '../messages/index.js'
 
 /** Origine + en-têtes de la requête d'upgrade, quand le transport les expose. */
@@ -28,31 +29,71 @@ export interface MjsWsRemoteInfo {
    *  JAMAIS comptée ni limitée par le plafond par IP (seul le plafond GLOBAL peut encore
    *  s'appliquer). Posée par transport-ws.ts (req.socket.remoteAddress) et transport-uws.ts
    *  (res.getRemoteAddressAsText(), pendant la fenêtre `upgrade`). Toujours déjà normalisée par
-   *  normalizeRemoteAddress() ci-dessous — jamais une forme IPv4-mappée brute. */
+   *  normalizeRemoteAddress() ci-dessous — jamais une forme IPv4-mappée brute. Derrière un proxy
+   *  déclaré de confiance (`opts.trustProxy`, cf. trust-proxy.ts) : l'adresse du visiteur lue dans les
+   *  en-têtes du proxy, à la place de celle du proxy lui-même. */
   address?: string
 }
 
 // une connexion IPv4 sur un bind DUAL-STACK (host par défaut)
-// arrive systématiquement sous forme IPv4-MAPPÉE (« ::ffff:a.b.c.d ») côté `remoteAddress`/
-// `getRemoteAddressAsText()` — jamais sous sa forme nue. Sans normalisation, le plafond PAR IP
-// (core.ts, clé de `connectionsByIp`) pourrait traiter différemment la MÊME IPv4 selon le transport
-// ('ws'/'uws') ou l'API réseau sous-jacente. Retire UNIQUEMENT ce préfixe — une adresse IPv6
-// NATIVE (`::1`, `2001:db8::1`…) n'est jamais réécrite, ce n'est PAS la « même » IP qu'une IPv4 au
-// sens réseau (un attaquant multipliant les adresses littérales d'un préfixe IPv6
-// routé reste un risque DISTINCT, non traité ici). Seul point d'appel légitime : transport-ws.ts/
-// transport-uws.ts, à la source — jamais recanonisée plus loin (core.ts consomme déjà la forme finale).
+// arrive systématiquement sous forme IPv4-MAPPÉE côté `remoteAddress`/`getRemoteAddressAsText()` —
+// jamais sous sa forme nue : « ::ffff:a.b.c.d » sous `ws`, et en forme IPv6 LONGUE sous uWebSockets.js
+// (« 0000:0000:0000:0000:0000:ffff:7f00:0001 », jamais abrégée). Sans normalisation, le plafond PAR IP
+// (core.ts, clé de `connectionsByIp`), `meta.address` et les clés de banc publiées entre processus
+// traiteraient différemment la MÊME adresse selon le transport ('ws'/'uws'). Toute adresse IPv6 est
+// donc ramenée à la forme que le système écrit (minuscules, abrégée), puis l'IPv4 mappée à sa forme
+// nue ; une adresse IPv6 NATIVE (`::1`, `2001:db8::1`…) reste IPv6, ce n'est PAS la « même » IP
+// qu'une IPv4 au sens réseau (un attaquant multipliant les adresses littérales d'un préfixe IPv6
+// routé : cf. addressForLimits ci-dessous). Un texte qui n'est pas une adresse passe tel quel.
+// Seul point d'appel légitime : transport-ws.ts/transport-uws.ts, à la source (via trust-proxy.ts) —
+// jamais recanonisée plus loin (core.ts consomme déjà la forme finale).
+// la taille maximale d'une trame reçue, par défaut (DEFAULT_LIMITS.maxPayload, index.ts) — une seule valeur pour mjsWs() et
+// pour les transports intégrés construits seuls (`new WsTransport()`, `new UwsTransport()` hors mjsWs(), ex. tests)
+export const DEFAULT_MAX_PAYLOAD = 65536
+
 const IPV4_MAPPED_PREFIX = '::ffff:'
 export function normalizeRemoteAddress(address: string | undefined): string | undefined {
   if (address === undefined) return undefined
-  return address.toLowerCase().indexOf(IPV4_MAPPED_PREFIX) === 0 ? address.slice(IPV4_MAPPED_PREFIX.length) : address
+  let forme = address
+  if (isIP(address) === 6 && !address.includes('%')) {
+    try { forme = new SocketAddress({ address, family: 'ipv6' }).address }
+    catch { /* adresse refusée par le système : laissée telle quelle */ }
+  }
+  return forme.toLowerCase().indexOf(IPV4_MAPPED_PREFIX) === 0 ? forme.slice(IPV4_MAPPED_PREFIX.length) : forme
+}
+
+// adresse qui compte pour les limites PAR ADRESSE — plafond de connexions, débit partagé et mise au banc (core.ts),
+// seau du pont (bridge.ts), budgets des comptes (accounts.ts) : une IPv6 compte pour tout son préfixe /56. Un abonné en
+// reçoit souvent un entier (256 préfixes /64, des milliards d'adresses) qu'il ferait tourner pour multiplier ses
+// connexions et ses essais. IPv4 : l'adresse elle-même ; adresse inconnue : `undefined`
+export function addressForLimits(address: string | undefined): string | undefined {
+  const forme = normalizeRemoteAddress(address)
+  if (forme === undefined) return undefined
+  return isIP(forme) === 6 ? ipv6Prefix(forme, 56) : forme
+}
+
+// préfixe /56 ou /48 d'une IPv6 écrite sous n'importe quelle forme (abrégée, avec zone `%eth0`)
+export function ipv6Prefix(adresse: string, bits: 48 | 56): string {
+  const [tete, queue] = adresse.split('%')[0].split('::')
+  const groupes = tete ? tete.split(':') : []
+  if (queue !== undefined) {
+    const fin = queue ? queue.split(':') : []
+    while (groupes.length + fin.length < 8) groupes.push('0')
+    groupes.push(...fin)
+  }
+  const valeurs = groupes.slice(0, 4).map(g => parseInt(g, 16) || 0)
+  const tete48  = valeurs.slice(0, 3).map(v => v.toString(16)).join(':')
+  return bits === 48 ? tete48 + '::/48' : tete48 + ':' + ((valeurs[3] ?? 0) & 0xff00).toString(16) + '::/56'
 }
 
 /** Une connexion unique, côté serveur — quel que soit le transport réel. */
 export interface MjsWsConnection {
   readonly bufferedAmount: number
   readonly remoteInfo: MjsWsRemoteInfo
-  /** `string` = trame texte (JSON) ; `Uint8Array` = trame BINAIRE (µschema) */
-  send(data: string | Uint8Array): void
+  /** `string` = trame texte (JSON) ; `Uint8Array` = trame BINAIRE (µschema). `false` = trame ABANDONNÉE par le
+   *  transport lui-même (contre-pression native, ex. uWebSockets.js au-delà de sa borne d'attente) : core.ts la
+   *  compte rejetée, comme une trame jetée par sa propre garde d'engorgement. Rien (ou `true`) = acceptée. */
+  send(data: string | Uint8Array): void | boolean
   close(code?: number, reason?: string): void
   /** `string` = trame texte (JSON attendu par le protocole µ:) ; `Uint8Array` = trame BINAIRE
    *  normalisée (cf. commentaire de tête) — jamais les deux à la fois, jamais autre chose. */

@@ -23,7 +23,9 @@
 // rooms.ts (qui ne reçoit qu'une fonction déjà prête, cf. rooms.ts::MjsWsRoomsEngineOptions).
 
 import { Buffer } from 'node:buffer'
-import { canonicalString, signCanonical, isLoopbackHost, safeEqualHex, REPLAY_WINDOW_S } from './bridge.js'
+import { createHash } from 'node:crypto'
+import { canonicalString, signCanonical, isLoopbackHost, REPLAY_WINDOW_S, resolveSecretRef } from './bridge.js'
+import { safeEqual } from './package-helpers.js'
 import { errMessage } from './guard.js'
 import type { MjsWsClient, MjsWsHelloPayload, MjsWsLogFn } from './core.js'
 import type { MjsWsRemoteInfo } from './transport.js'
@@ -36,7 +38,8 @@ export interface MjsWsProxyOptions {
   secret: string
   /** délai avant abandon d'UNE requête, ms (défaut 5000) — au-delà : décision de REFUS, jamais bloquant/pendant. */
   timeout?: number
-  /** cache court optionnel, par clé de requête — évite de marteler le back sur des reconnexions/rejoins rapprochés. Absent = pas de cache. */
+  /** cache court optionnel, par clé de requête — évite de marteler le back sur des reconnexions/rejoins rapprochés. Absent = pas de cache.
+   *  Seule une réponse du back se garde : un refus dû à une panne (délai dépassé, réseau, statut non 2xx) jamais. */
   cache?: { ttl: number }
   /** échappatoire EXPLICITE à la garde TLS de resolveProxyOptions — autorise `url`
    *  en http:// même hors loopback (127.0.0.1/localhost/::1/[::1]). Défaut false : à n'activer qu'en
@@ -44,8 +47,10 @@ export interface MjsWsProxyOptions {
   allowInsecure?: boolean
   /** durcissement optionnel — exige que la RÉPONSE du back soit signée elle-même
    *  (mêmes en-têtes x-mjs-ws-timestamp/x-mjs-ws-signature, MÊME secret,
-   *  canonicalString(ts, 'RESPONSE', pathWithQuery, corpsRéponse) — méthode 'RESPONSE', jamais
-   *  'POST', pour ne jamais confondre la signature de la REQUÊTE avec celle de la RÉPONSE). Défaut
+   *  canonicalString(ts, 'RESPONSE', pathWithQuery, signatureRequête + '\n' + corpsRéponse) — méthode
+   *  'RESPONSE', jamais 'POST', pour ne jamais confondre la signature de la REQUÊTE avec celle de la
+   *  RÉPONSE ; la signature de la requête lie la réponse à SA requête : rejouée pour une autre, elle
+   *  est refusée). Défaut
    *  false : la réponse est acceptée telle quelle, comme avant — RÉTRO-COMPAT TOTALE (la recette
    *  Rails actuelle, docs/23-mjs-ws.md §7.11, ne signe pas sa réponse et continue de marcher SANS
    *  aucun changement tant que cette option reste absente). */
@@ -68,20 +73,9 @@ export function isProxyOptions(x: unknown): x is MjsWsProxyOptions {
   return typeof x === 'object' && x !== null && typeof (x as { url?: unknown }).url === 'string'
 }
 
-// secret littéral OU 'env:NOM_VAR' — MÊME patron que resolveSecretValue (bridge.ts, PRIVÉE, non
-// exportée — bridge.ts reste en LECTURE SEULE) : dupliqué ICI à l'identique
-// plutôt qu'importé.
+// secret littéral OU 'env:NOM_VAR' — la règle du pont (bridge.ts::resolveSecretRef), avec les messages du proxy
 function resolveSecret(raw: string, label: string): string {
-  if (raw == null || raw === '') {
-    throw new Error(t('ws.proxy.secret-manquant', { label }))
-  }
-  if (raw.indexOf('env:') === 0) {
-    const varName = raw.slice(4)
-    const value   = process.env[varName]
-    if (!value) throw new Error(t('ws.proxy.secret-env-absent', { label, varName }))
-    return value
-  }
-  return raw
+  return resolveSecretRef(raw, label, 'ws.proxy.secret-manquant', 'ws.proxy.secret-env-absent')
 }
 
 // hôtes "loopback" — jamais exposés à un tiers réseau, donc hors du périmètre de la garde TLS
@@ -128,19 +122,21 @@ export function resolveProxyOptions(raw: MjsWsProxyOptions): MjsWsResolvedProxyO
 }
 
 // vérifie que la RÉPONSE du back est bien signée par LUI (durcissement optionnel, verifyResponse)
-// — MÊME schéma que la requête (canonicalString/signCanonical/safeEqualHex, bridge.ts, réutilisées
-// telles quelles), méthode 'RESPONSE' pour ne jamais confondre avec la signature 'POST' de la
-// requête sortante (postSigned ci-dessous). `null` = signature valide, sinon le message d'erreur
+// — MÊME schéma que la requête (canonicalString/signCanonical de bridge.ts, safeEqual de package-helpers.ts,
+// réutilisées telles quelles), méthode 'RESPONSE' pour ne jamais confondre avec la signature 'POST' de la
+// requête sortante (postSigned ci-dessous). La signature de la requête (`sigRequete`) entre dans la
+// chaîne signée : sans elle, une réponse vue en chemin se rejouerait pour n'importe quel autre hello
+// pendant toute la fenêtre anti-rejeu. `null` = signature valide, sinon le message d'erreur
 // (français, journalisé par l'appelant) — jamais de throw, cf. postSigned.
-function verifierSignatureReponse(resolved: MjsWsResolvedProxyOptions, rawBody: string, headers: Headers): string | null {
+function verifierSignatureReponse(resolved: MjsWsResolvedProxyOptions, rawBody: string, headers: Headers, sigRequete: string): string | null {
   const ts  = headers.get('x-mjs-ws-timestamp')
   const sig = headers.get('x-mjs-ws-signature')
   if (!ts || !sig) return t('ws.proxy.signature-absente')
   const tsNum = Number(ts)
   if (!Number.isFinite(tsNum)) return t('ws.proxy.timestamp-invalide')
   if (Math.abs(Date.now() / 1000 - tsNum) > REPLAY_WINDOW_S) return t('ws.proxy.horodatage-hors-fenetre')
-  const attendue = signCanonical(resolved.secret, canonicalString(tsNum, 'RESPONSE', resolved.pathWithQuery, rawBody))
-  return safeEqualHex(attendue, sig) ? null : t('ws.bridge.signature-invalide')
+  const attendue = signCanonical(resolved.secret, canonicalString(tsNum, 'RESPONSE', resolved.pathWithQuery, sigRequete +'\n'+ rawBody))
+  return safeEqual(attendue, sig, 'hex') ? null : t('ws.bridge.signature-invalide')
 }
 
 // Plafond de la RÉPONSE du back, MÊME esprit que readBody
@@ -198,7 +194,7 @@ async function postSigned(resolved: MjsWsResolvedProxyOptions, event: string, co
     // durcissement optionnel (verifyResponse) — AVANT le JSON.parse : une réponse mal signée est
     // refusée sans même être interprétée, cf. verifierSignatureReponse ci-dessus.
     if (resolved.verifyResponse) {
-      const erreur = verifierSignatureReponse(resolved, rawBody, res.headers)
+      const erreur = verifierSignatureReponse(resolved, rawBody, res.headers, sig)
       if (erreur) { onLog('warn', t('ws.proxy.reponse-signature-refus', { url: resolved.url, erreur, event })); return null }
     }
     try { return JSON.parse(rawBody) }
@@ -216,8 +212,9 @@ interface CacheEntry<T> { at: number; value: T }
 /**
  * Fabrique GÉNÉRIQUE — POST signé `{event, ...corps}`, réponse JSON mappée vers la décision voulue
  * par `mapResult` (`null` en entrée = timeout/échec réseau/statut non-2xx/JSON invalide, jamais un
- * throw : à `mapResult` de choisir le refus qui va avec son protocole). Cache optionnel (clé = JSON
- * du `corps` envoyé) : résolu et construit ICI, UNE SEULE FOIS — la fonction RENVOYÉE porte le
+ * throw : à `mapResult` de choisir le refus qui va avec son protocole). Cache optionnel (clé = empreinte
+ * sha256 du JSON du `corps` envoyé, 44 caractères quelle que soit la taille du hello : un champ libre
+ * de 60 Ko ne s'accumule pas en mémoire) : résolu et construit ICI, UNE SEULE FOIS — la fonction RENVOYÉE porte le
  * cache dans sa fermeture, il survit donc à tous les appels ultérieurs (reconnexions/rejoins),
  * jamais recréé à chaque hello/join (cf. core.ts, qui appelle cette fabrique UNE fois au boot).
  */
@@ -234,7 +231,7 @@ export function creerProxyDecision<T>(
   return async (corps) => {
     let cleCache: string | null = null
     if (cache && ttl != null) {
-      try { cleCache = JSON.stringify(corps) } catch { cleCache = null }   // structure improbable (cyclique) — jamais de crash pour un simple souci de clé de cache
+      try { cleCache = createHash('sha256').update(JSON.stringify(corps)).digest('base64') } catch { cleCache = null }   // structure improbable (cyclique) — jamais de crash pour un simple souci de clé de cache
       if (cleCache != null) {
         const hit = cache.get(cleCache)
         if (hit && Date.now() - hit.at < ttl) return hit.value
@@ -242,7 +239,10 @@ export function creerProxyDecision<T>(
     }
     const json     = await postSigned(resolved, event, corps, onLog)
     const decision = mapResult(json)
-    if (cache && cleCache != null) {
+    // seule une réponse du back se garde : le refus d'une panne (délai dépassé, réseau, statut non 2xx, réponse illisible
+    // ou mal signée) n'est jamais gardé, le visiteur entre dès que le back revient sans attendre la fin du `ttl`
+    if (cache && cleCache != null && json != null) {
+      cache.delete(cleCache)   // réécrite en queue : la purge par âge suppose l'ordre d'insertion = l'ordre d'âge
       cache.set(cleCache, { at: Date.now(), value: decision })
       purgerCache(cache, ttl!)
     }
@@ -285,7 +285,7 @@ function purgerCache<T>(cache: Map<string, CacheEntry<T>>, ttl: number): void {
 // qu'il n'a pas demandés, et la garde TLS de resolveProxyOptions (http hors loopback refusé sauf
 // allowInsecure) reste ce qui empêche ce cookie de voyager en clair.
 //
-// Clé de cache : `corps` sérialisé (creerProxyDecision) — le cookie EN FAIT PARTIE, le cache est
+// Clé de cache : empreinte du `corps` sérialisé (creerProxyDecision) — le cookie EN FAIT PARTIE, le cache est
 // donc par VISITEUR, jamais partagé entre deux identités. Cookie absent = clé omise, corps
 // STRICTEMENT identique à l'ancien : un back déjà en place ne voit aucun changement.
 //

@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC  = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
@@ -20,6 +21,7 @@ function mount(pageUrl: string, baseHref: string | null) {
   const document = window.document
   document.head.innerHTML = (baseHref ? `<base href="${baseHref}">` : '') + '<meta name="csrf-token" content="SECRET123">'
   window.µ = { log() {}, error() {}, warn() {} }
+  poserMessages(window.µ)
   return window
 }
 

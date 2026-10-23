@@ -103,7 +103,7 @@ describe('µ._mjs_fixPosition / µ._mjs_unfixPosition — épinglage et nettoyag
     // `_mjs_reconcileList` (via `_mjs_updList`) EXACTEMENT dans le scénario "clé encore
     // dying qui réapparaît" — plus fiable qu'orchestrer une vraie transition
     // asynchrone avec timing racy, et évite toute dépendance à la syntaxe
-    // exacte d'une directive `@out` custom (@out.NOM référence `µ.anim.NOM`,
+    // exacte d'une directive `@out` custom (@out=*NOM référence `µ.anim.NOM`,
     // un registre global — hors sujet ici).
     it("une row dont l'entrée cache est encore _mjs_dying, ré-ajoutée avec la MÊME clé, voit son épinglage @flip nettoyé", async () => {
       const root = mjsTmp('fixpos')

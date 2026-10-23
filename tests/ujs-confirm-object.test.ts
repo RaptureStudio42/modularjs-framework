@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -27,6 +28,7 @@ function extractConfirmDefaultBlock(): string {
   return extractMarked(UJS_SRC, 'confirm-default')
 }
 function installConfirmDefault(µ: any, win: any) {
+  poserMessages(µ)
   new Function('µ', 'window', extractConfirmDefaultBlock())(µ, win)
 }
 
@@ -36,6 +38,7 @@ describe('mjs_ujs — @confirm forme objet (runtime, µ.confirm)', function () {
     const win: any = { confirm: () => { throw new Error('ne doit pas être appelé : µ.modal présent') } }
     const modal = { fire: (opts: any) => { fireCalls.push(opts); return Promise.resolve({ isConfirmed: true }) } }
     const µ: any = { config: { confirm: true }, modal, warn() {} }
+    poserMessages(µ)
     installConfirmDefault(µ, win)
 
     µ.confirm(JSON.stringify({ text: 'Vraiment supprimer ?', ok: 'Supprimer', cancel: 'Annuler' }), null)
@@ -49,6 +52,7 @@ describe('mjs_ujs — @confirm forme objet (runtime, µ.confirm)', function () {
     const win: any = { confirm: () => true }
     const modal = { fire: (opts: any) => { fireCalls.push(opts); return Promise.resolve({ isConfirmed: true }) } }
     const µ: any = { config: { confirm: true }, modal, warn() {} }
+    poserMessages(µ)
     installConfirmDefault(µ, win)
 
     µ.confirm(JSON.stringify({ text: 'Continuer ?' }), null)
@@ -61,6 +65,7 @@ describe('mjs_ujs — @confirm forme objet (runtime, µ.confirm)', function () {
     const win: any = { confirm: () => true }
     const modal = { fire: (opts: any) => { fireCalls.push(opts); return Promise.resolve({ isConfirmed: true }) } }
     const µ: any = { config: { confirm: true }, modal, warn() {} }
+    poserMessages(µ)
     installConfirmDefault(µ, win)
 
     µ.confirm('Supprimer ?', null)
@@ -73,6 +78,7 @@ describe('mjs_ujs — @confirm forme objet (runtime, µ.confirm)', function () {
     const win: any = { confirm: () => true }
     const modal = { fire: (opts: any) => { fireCalls.push(opts); return Promise.resolve({ isConfirmed: true }) } }
     const µ: any = { config: { confirm: true }, modal, warn() {} }
+    poserMessages(µ)
     installConfirmDefault(µ, win)
 
     assert.doesNotThrow(() => µ.confirm('{not valid json', null))
@@ -95,6 +101,7 @@ describe('mjs_ujs — @confirm forme objet (runtime, µ.confirm)', function () {
     const received: any[] = []
     const win: any = { confirm: () => { throw new Error('ne doit pas être appelé') } }
     const µ: any = { config: { confirm: true }, warn() {} }
+    poserMessages(µ)
     installConfirmDefault(µ, win) // pose d'abord le routeur par défaut…
     const raw = JSON.stringify({ text: 'x', ok: 'y' })
     µ.confirm = function (message: string, _el: any) { received.push(message); return true } // …puis réassignation

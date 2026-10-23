@@ -11,16 +11,17 @@
 // l'id ». Conséquence utile : la graine est TOUJOURS ré-dérivable depuis `id` seul —
 // aucun besoin de la persister séparément (cf. `_restoreJournal`, appelé SANS graine explicite).
 //
-// JOURNAL — append-only, illimité PAR DÉFAUT (contrairement à `Game.journal`, le journal court v1
-// des coups CLASSIQUES, cf. game.ts commentaire de tête) : la rejouabilité lockstep exige
-// l'historique COMPLET depuis la genèse (µgame:resync renvoie tout, le client rejoue, cf.
-// mjs_lockstep.ts) — une partie lockstep TRÈS longue fait donc grandir ce tableau sans borne tant que
-// rien ne la borne explicitement (limite v1 documentée, comme le double `_lastViews`/
-// `_intentQueue` déjà pris ailleurs). Bornable en OPT-IN via
-// `def.lockstepJournal.maxTicks` (cf. game.ts, paramètre `maxTicks` de `createLockstep` plus bas) :
-// anneau qui purge les plus VIEUX ticks au-delà du seuil — comportement HISTORIQUE (illimité)
-// inchangé tant que `maxTicks` reste absent ; un futur snapshot+troncature périodique (préservant la
-// reprise AU-DELÀ de la fenêtre) reste HORS SCOPE ici.
+// JOURNAL — append-only (contrairement à `Game.journal`, le journal court v1 des coups CLASSIQUES,
+// cf. game.ts commentaire de tête) : la rejouabilité lockstep exige l'historique COMPLET depuis la
+// genèse (µgame:resync renvoie tout, le client rejoue depuis son état initial, cf. mjs_lockstep.ts) —
+// aucun instantané d'état ne permet de l'élaguer sans fausser l'état d'un joueur. Deux bornes, en
+// octets du JSON (UTF-8, tel que renvoyé au resync et sauvegardé) : `maxOrderBytes` — un ordre plus
+// gros est REFUSÉ par addOrder (throw, il n'entre jamais dans le journal) ; `maxBytes` — un tick qui
+// ferait dépasser le journal n'y entre pas, closeTick rend `null` et game.ts TERMINE la partie
+// (raison 'journal-full') : tous les joueurs gardent l'état du dernier tick diffusé, jamais un journal
+// tronqué. Défauts dans game-def.ts (def.lockstepJournal) ; borne absente (appel direct) = illimité.
+// En OPT-IN, `def.lockstepJournal.maxTicks` reste un anneau qui purge les plus VIEUX ticks au-delà du
+// seuil (troncature assumée par l'auteur, cf. game-def.ts) — la borne d'octets s'y applique après purge.
 //
 // PERSISTANCE (µpersist) — `Game.serialize()` (mode lockstep) inclut `{ journal: journal() }` (PAS
 // la graine, ré-dérivable de `id`) à la place de `state` : « save = l'append des ordres » au sens
@@ -51,6 +52,9 @@
 // Un seau à jetons DÉDIÉ (game.ts::_consumeHashToken, TokenBucket de mjs-ws/guard.ts) filtre en
 // amont un flood de hash par ailleurs VALIDES mais coûteux à traiter, cf. game.ts::_receiveHash.
 
+import { Buffer } from 'node:buffer'
+import { t } from '../messages/index.js'
+
 export interface MjsServerLockstepOrder {
   player: string
   move: string
@@ -72,15 +76,26 @@ export interface MjsServerLockstepDivergence {
   reason: 'auto-contradiction' | 'quorum'
 }
 
+/** bornes en octets du JSON (UTF-8) — cf. tête de fichier « JOURNAL » ; absente ou `null` = aucune borne */
+export interface MjsServerLockstepBounds {
+  /** taille maximale du journal entier — au-delà, closeTick rend `null` (partie à terminer) */
+  maxBytes?: number | null
+  /** taille maximale d'UN ordre `{player, move, p}` — au-delà, addOrder lève */
+  maxOrderBytes?: number | null
+}
+
 export interface MjsServerLockstep {
   readonly seed: number
-  /** file un ordre pour le tick COURANT (pas encore diffusé) — cf. Game._onMove */
+  /** file un ordre pour le tick COURANT (pas encore diffusé) — cf. Game._onMove. Lève si l'ordre
+   *  dépasse `maxOrderBytes` : il n'entre alors ni dans le tick ni dans le journal */
   addOrder(player: string, move: string, p: unknown): void
   /** clôt le tick courant (ordres accumulés + avance le compteur), journalise (append), évince les
    *  entrées de divergence sorties de la fenêtre (cf. tête de fichier « FENÊTRE ») et retourne le
-   *  groupe à diffuser — TOUJOURS renvoyé, même `orders: []` (le tick lui-même est l'horloge commune
-   *  que les clients doivent avancer — jamais de trame sautée faute d'ordre) */
-  closeTick(): MjsServerLockstepTick
+   *  groupe à diffuser — renvoyé même `orders: []` (le tick lui-même est l'horloge commune
+   *  que les clients doivent avancer — jamais de trame sautée faute d'ordre). `null` seulement quand
+   *  ce tick ferait dépasser `maxBytes` au journal : rien n'est journalisé ni à diffuser, la partie
+   *  doit se terminer (cf. game.ts::_broadcastTickOrders) */
+  closeTick(): MjsServerLockstepTick | null
   /** journal COMPLET depuis la genèse (rejouabilité, µgame:play/start/resync — cf. game.ts _infoMode) */
   journal(): MjsServerLockstepTick[]
   /** reçoit un hash annoncé par un joueur pour `tick` (cf. tête de fichier pour le modèle quorum +
@@ -98,6 +113,9 @@ export interface MjsServerLockstep {
    *  contrat public MjsServerApp) — nombre de ticks actuellement retenus pour la détection de
    *  divergence ; TOUJOURS ≤ FENETRE_TICKS + DELAI_AVANT_TICKS + 1 (borné, cf. tête de fichier). */
   _hashSize(): number
+  /** introspection interne (tests/diagnostics) — taille en octets du JSON de `journal()`, tenue à
+   *  chaque tick (jamais recalculée sur tout le journal) */
+  _bytes(): number
   _clear(): void
 }
 
@@ -134,15 +152,27 @@ interface TickHashState {
 
 const absoluteMajority = (seats: number): number => Math.floor(seats / 2) + 1
 
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), 'utf8')
+
+// octets d'un tick journalisé `{"tick":N,"orders":[…]}` : 21 fixes, les chiffres du tick, ses ordres et leurs virgules
+const tickBytes = (tick: number, ordersBytes: number, count: number): number => 21 + String(tick).length + ordersBytes + Math.max(0, count - 1)
+
 /** construit le moteur lockstep d'UNE partie — `id` sert à dériver la graine (cf. deterministicSeed) ;
  *  le journal démarre VIDE (partie fraîche, cf. matchmaking.ts::create()) — `_restoreJournal` le repeuple pour
  *  une partie RESTAURÉE (cf. restoreGameFromSnapshot), sans jamais changer la graine (ré-dérivée de `id`, donc
- *  déjà identique à l'originale — aucune valeur à restaurer séparément). */
-export function createLockstep(id: string, maxTicks: number | null = null): MjsServerLockstep {
+ *  déjà identique à l'originale — aucune valeur à restaurer séparément). `bounds` : cf. tête de fichier « JOURNAL ». */
+export function createLockstep(id: string, maxTicks: number | null = null, bounds: MjsServerLockstepBounds = {}): MjsServerLockstep {
   const seed = deterministicSeed(id)
+  const maxBytes      = bounds.maxBytes ?? null
+  const maxOrderBytes = bounds.maxOrderBytes ?? null
   let fullJournal: MjsServerLockstepTick[] = []
   let currentOrders: MjsServerLockstepOrder[] = []
   let tickCount = 0
+  // taille du journal tenue au fil des ticks : octets de chaque tick journalisé (alignés sur
+  // fullJournal), des ordres du tick courant, et du JSON entier (`[` + ticks séparés par `,` + `]`)
+  let tickSizes: number[] = []
+  let currentBytes = 0
+  let journalBytes = 2
   // divergence (anti-triche) — PAR TICK, cf. TickHashState ; bornée par éviction dans
   // closeTick() (au-delà du simple refus à l'entrée dans receiveHash, cf. tête de fichier)
   const hashesPerTick = new Map<number, TickHashState>()
@@ -151,19 +181,35 @@ export function createLockstep(id: string, maxTicks: number | null = null): MjsS
     get seed() { return seed },
 
     addOrder(player, move, p) {
-      currentOrders.push({ player, move, p })
+      const order: MjsServerLockstepOrder = { player, move, p }
+      const bytes = jsonBytes(order)
+      if (maxOrderBytes != null && bytes > maxOrderBytes) throw new Error(t('serveur.partie-ordre-trop-gros', { taille: bytes, max: maxOrderBytes }))
+      currentOrders.push(order)
+      currentBytes += bytes
     },
 
     closeTick() {
-      tickCount++
-      const group: MjsServerLockstepTick = { tick: tickCount, orders: currentOrders }
-      currentOrders = []
-      fullJournal.push(group)
+      const tick  = tickCount + 1
+      const bytes = tickBytes(tick, currentBytes, currentOrders.length)
       // journal borné (opt-in, def.lockstepJournal.maxTicks, cf. game.ts) — MÊME idiome que
-      // l'éviction hashesPerTick juste en dessous : anneau, purge les plus VIEUX ticks au-delà de
-      // `maxTicks` ; `maxTicks` null (défaut, absent de la déclaration) = illimité, comportement
-      // HISTORIQUE inchangé (cf. commentaire de tête « JOURNAL »)
-      if (maxTicks != null && fullJournal.length > maxTicks) fullJournal.splice(0, fullJournal.length - maxTicks)
+      // l'éviction hashesPerTick plus bas : anneau, purge les plus VIEUX ticks au-delà de
+      // `maxTicks` ; `maxTicks` null (défaut, absent de la déclaration) = aucun anneau. Les octets
+      // du tick évincé (et sa virgule) sont décomptés AVANT la borne : un anneau n'est jamais pris
+      // pour un journal plein
+      const evicted = maxTicks != null && fullJournal.length + 1 > maxTicks ? fullJournal.length + 1 - maxTicks : 0
+      let freed = 0
+      for (let i = 0; i < evicted; i++) freed += tickSizes[i] + 1
+      const nextBytes = journalBytes + (fullJournal.length > 0 ? 1 : 0) + bytes - freed
+      // journal plein : ce tick n'entre pas (ni journalisé ni diffusé), l'appelant termine la partie
+      if (maxBytes != null && nextBytes > maxBytes) return null
+      tickCount = tick
+      const group: MjsServerLockstepTick = { tick, orders: currentOrders }
+      currentOrders = []
+      currentBytes  = 0
+      journalBytes  = nextBytes
+      fullJournal.push(group)
+      tickSizes.push(bytes)
+      if (evicted > 0) { fullJournal.splice(0, evicted); tickSizes.splice(0, evicted) }
       // éviction active — sans ça, une entrée qui a un jour reçu UN hash reste en mémoire
       // indéfiniment une fois hors fenêtre (le refus à l'entrée dans receiveHash empêche
       // seulement la CRÉATION de nouvelles entrées hors fenêtre, jamais la purge des anciennes au
@@ -228,10 +274,16 @@ export function createLockstep(id: string, maxTicks: number | null = null): MjsS
       // jamais réintroduire plus de `maxTicks` ticks qu'un journal vécu normalement n'en garderait
       fullJournal = maxTicks != null && journal.length > maxTicks ? journal.slice(journal.length - maxTicks) : journal.slice()
       tickCount = fullJournal[fullJournal.length - 1].tick
+      // taille mesurée sur le JSON restauré tel quel — un journal déjà au-delà de `maxBytes` (borne
+      // abaissée entre deux lancements) fait refuser le tick suivant : la partie se termine, rien n'est tronqué
+      tickSizes    = fullJournal.map(jsonBytes)
+      journalBytes = 2 + tickSizes.reduce((sum, n) => sum + n, 0) + fullJournal.length - 1
     },
 
     _hashSize() { return hashesPerTick.size },
 
-    _clear() { fullJournal = []; currentOrders = []; hashesPerTick.clear() },
+    _bytes() { return journalBytes },
+
+    _clear() { fullJournal = []; currentOrders = []; tickSizes = []; currentBytes = 0; journalBytes = 2; hashesPerTick.clear() },
   }
 }

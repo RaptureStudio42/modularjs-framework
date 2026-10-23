@@ -42,7 +42,7 @@ function wait(ms: number): Promise<void> {
 describe('mjs_modal — µ.modal.notify (toast)', function () {
   it('1er appel : monte .mjs-toasts dans document.body, contenant un .mjs-toast', function () {
     const { document, µ } = loadModal()
-    assert.equal(container(document), null, 'précondition : rien avant le 1er appel')
+    assertAbsent(container(document), 'précondition : rien avant le 1er appel')
     µ.modal.notify('hop')
     assert.ok(container(document), '.mjs-toasts doit être monté')
     assert.equal(toasts(document).length, 1)
@@ -53,7 +53,7 @@ describe('mjs_modal — µ.modal.notify (toast)', function () {
     µ.modal.notify('un')
     const first = container(document)
     µ.modal.notify('deux')
-    assert.equal(container(document), first, 'même référence de nœud')
+    assert.ok(container(document) === first, 'même référence de nœud')
   })
 
   it('empilement ×2 : deux toasts INDÉPENDANTS dans le même conteneur', function () {

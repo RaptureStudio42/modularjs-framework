@@ -1,15 +1,14 @@
 // mjs-server/game — validation STRICTE de la définition d'un jeu (`app.game(type, def)`), MÊME
 // patron que bundler/config.ts (clé inconnue = échec immédiat, suggestion orthographique sur
-// les fautes de frappe via un `suggestKey` local — celui de bundler/config.ts n'est pas exporté,
-// et importer le compilateur depuis MJS-Server serait un couplage absurde ; même algorithme,
-// réimplémenté ici en ~15 lignes). Résout tous les défauts UNE SEULE FOIS ici — game.ts et
+// les fautes de frappe via `keyUnknown` de util.ts, qui porte le `suggestKey` de MJS-WS, mjs-ws/package-helpers.ts — prendre
+// celui de bundler/config.ts ferait dépendre MJS-Server du compilateur ; même algorithme). Résout tous les défauts UNE SEULE FOIS ici — game.ts et
 // matchmaking.ts ne revoient jamais `def` brut, seulement ce résultat déjà normalisé.
 
 import type { Game, MjsServerSeat } from './game.js'
 // valeur (pas juste un type) importée de game.ts — jamais l'inverse : game.ts ne dépend QUE
 // des types de ce fichier (import type, effacé à la compilation), le sens runtime reste À SENS
 // UNIQUE (game.ts → game.ts) — aucun cycle d'import réel entre les deux modules.
-import { RESERVED_TIMER_NAMES } from './game.js'
+import { RESERVED_TIMER_NAMES, DEFAULT_MOVE_WAIT_MS, MAX_TIMEOUT_MS } from './game.js'
 // anti-triche (détection par coup, cf. game.ts::_antiCheatGuard) — types SEULS
 // (aucun cycle runtime, MÊME patron que MjsServerLockstepDivergence plus bas) : les signatures
 // def.suspect/onSuspicion sont DÉCLARÉES ici mais RÉSOLUES/appelées côté game.ts, qui possède déjà
@@ -23,34 +22,27 @@ import type { MjsWsLogFn } from '../mjs-ws/index.js'
 // cycle runtime (lockstep.ts n'importe rien de MJS-Server, cf. son commentaire de tête)
 import type { MjsServerLockstepDivergence } from './lockstep.js'
 import { t } from '../messages/index.js'
+import { keyUnknown } from './util.js'
 
-// --- suggestion orthographique (distance de Levenshtein ≤ 2, sinon aucune) -------------------
-
-function levenshtein(a: string, b: string): number {
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
-  for (let i = 0; i <= a.length; i++) dp[i][0] = i
-  for (let j = 0; j <= b.length; j++) dp[0][j] = j
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1])
-    }
+// la valeur reçue, telle quelle, pour un message de refus (les durées) — ne lève JAMAIS : JSON.stringify rendait `null` pour Infinity, -Infinity et NaN,
+// `undefined` pour un symbole ou une fonction, et levait une TypeError sur un BigInt, un objet circulaire ou un toJSON/accesseur qui lève : le refus
+// prévu n'arrivait pas, ou l'exception de l'appli prenait sa place. Les autres valeurs gardent le rendu JSON (chaîne entre guillemets, null, [], {}…)
+function receivedValue(value: unknown): string {
+  if (value === undefined) return 'undefined'
+  if (typeof value === 'bigint') return `${value}n`
+  if (typeof value === 'symbol') return String(value)
+  if (typeof value === 'function') return t('serveur.valeur-recue-fonction')
+  if (typeof value === 'number') return String(value)
+  try {
+    return JSON.stringify(value) ?? t('serveur.valeur-recue-objet')
+  } catch {
+    return t('serveur.valeur-recue-objet')
   }
-  return dp[a.length][b.length]
 }
 
-function suggestKey(key: string, validKeys: Iterable<string>): string | null {
-  let best: string | null = null
-  let bestDist = Infinity
-  for (const k of validKeys) { const d = levenshtein(key, k); if (d < bestDist) { bestDist = d; best = k } }
-  return best !== null && bestDist <= 2 ? best : null
-}
-
-function keyUnknown(prefix: string, k: string, known: Iterable<string>): Error {
-  const suggestion = suggestKey(k, known)
-  const hint = suggestion ? t('serveur.cle-inconnue-suggestion', { suggestion: suggestion }) : ''
-  return new Error(t('serveur.cle-inconnue', { prefix: prefix, k: k, hint: hint, clesValides: Array.from(known).join(', ') }))
+/** cf. receivedValue — un tableau (une paire [n, fenêtreMs] refusée) élément par élément : `[2, NaN]`, là où JSON écrivait `[2,null]` */
+export function receivedReadable(value: unknown): string {
+  return Array.isArray(value) ? '[' + value.map(receivedValue).join(', ') + ']' : receivedValue(value)
 }
 
 // extracteur PAR DÉFAUT de def.history (compensation de lag) QUAND def.space est déclaré —
@@ -81,6 +73,11 @@ export interface MjsServerLimitsDef {
    *  _antiCheatGuard. Un coup trop rapproché est journalisé (raison 'rate') ET rejeté —
    *  aucune variante « log seul » pour cette garde-ci (contrairement à def.suspect). */
   moveIntervalMs?: number
+  /** ms — délai de garde d'un coup ASYNCHRONE qui ne se règle pas (cf. game.ts::_onMove) : passé ce délai depuis son départ, sa
+   *  requête reçoit une erreur (journalisé) et les coups suivants du joueur sont refusés jusqu'à sa fin. Nombre > 0, au plus
+   *  MAX_TIMEOUT_MS (2^31-1, le plus long délai d'une minuterie Node : au-delà, Node l'arme à 1 ms et la garde tombait) ; absent =
+   *  DEFAULT_MOVE_WAIT_MS */
+  moveWaitMs?: number
 }
 
 export interface MjsServerHooksDef {
@@ -135,8 +132,11 @@ export interface MjsServerGameDef {
   /** minuteries NOMMÉES — l'échéance appelle timers[name](game), cf. game.timer() */
   timers?: Record<string, (game: Game) => void>
   limits?: MjsServerLimitsDef
-  /** ms — partie sans plus aucun joueur CONNECTÉ → détruite après ce délai, défaut 60000 */
+  /** ms — partie commencée sans plus aucun joueur CONNECTÉ → détruite après ce délai (ses joueurs peuvent revenir), défaut 60000 ; une
+   *  table jamais complète, ou sans plus aucun siège occupé, est fermée dès le départ de son dernier joueur (cf. game.ts::_afterDeparture) */
   emptyTtl?: number
+  /** ms — grâce après .end() avant la destruction de la partie FINIE (elle reste interrogeable en resync le temps de la grâce), joueurs connectés ou non — défaut = emptyTtl ; emptyTtl reste la vie d'une partie vide NON finie */
+  endTtl?: number
   hooks?: MjsServerHooksDef
   /** mode 'lockstep' EXCLUSIVEMENT (erreur si déclaré hors lockstep) — anti-triche (durcissement
    *  quorum, cf. mjs-server/lockstep.ts receiveHash) : `info.suspects` = sièges identifiés (auto-
@@ -145,13 +145,17 @@ export interface MjsServerGameDef {
    *  diffusion µgame:event 'divergence' {tick, suspects, reason} à tous les joueurs (cf.
    *  game.ts::_receiveHash). */
   onDivergence?: (game: Game, info: MjsServerLockstepDivergence) => void
-  /** mode 'lockstep' SEULEMENT (erreur si déclaré hors lockstep) — plafonne le journal d'ordres
-   *  (cf. lockstep.ts) à `maxTicks` DERNIERS ticks, en ANNEAU (les plus vieux purgés à chaque tick
-   *  clos) ; absent = illimité (défaut HISTORIQUE inchangé, cf. lockstep.ts commentaire de tête
-   *  « JOURNAL »). TRADE-OFF assumé : un client qui rate plus de `maxTicks` ticks (déconnexion
-   *  longue) reçoit à la reconnexion un journal TRONQUÉ — resync déterministe impossible à
-   *  reconstituer pour lui (aucun snapshot d'état ici, cf. def.mode). */
-  lockstepJournal?: { maxTicks: number }
+  /** mode 'lockstep' SEULEMENT (erreur si déclaré hors lockstep) — bornes du journal d'ordres (cf.
+   *  lockstep.ts commentaire de tête « JOURNAL »), toutes facultatives, en octets du JSON :
+   *  `maxOrderBytes` (défaut DEFAULT_LOCKSTEP_ORDER_BYTES) — un ordre plus gros est refusé au joueur,
+   *  il n'entre pas dans le journal ; `maxBytes` (défaut DEFAULT_LOCKSTEP_JOURNAL_BYTES) — quand le
+   *  journal la dépasserait, la partie se termine (`result: { ended: true, reason: 'journal-full' }`),
+   *  jamais de troncature. `maxTicks` (opt-in, absent = aucun anneau) plafonne en plus le journal aux
+   *  `maxTicks` DERNIERS ticks, en ANNEAU (les plus vieux purgés à chaque tick clos). TRADE-OFF assumé
+   *  de l'anneau : un client qui rate plus de `maxTicks` ticks (déconnexion longue) reçoit à la
+   *  reconnexion un journal TRONQUÉ — resync déterministe impossible à reconstituer pour lui (aucun
+   *  snapshot d'état ici, cf. def.mode). */
+  lockstepJournal?: { maxTicks?: number; maxBytes?: number; maxOrderBytes?: number }
   /** mode ACTION (tick > 0 requis) — intentions NOMMÉES reçues via µgame:move, mises en FILE par
    *  joueur (la DERNIÈRE valeur gagne par nom) et appliquées à CHAQUE tick, jamais à réception —
    *  cf. game.ts _onMove/_applyIntents. Un nom ne peut pas être à la fois dans
@@ -227,12 +231,15 @@ export interface MjsServerResolvedDef {
   readonly phases: Record<string, string[]> | null
   readonly turns: { order: 'roundrobin' | ((game: Game) => MjsServerSeat | string | null); timeout: number } | null
   readonly timers: Record<string, (game: Game) => void>
-  readonly limits: { moves: [number, number] | null; moveIntervalMs: number | null }
+  readonly limits: { moves: [number, number] | null; moveIntervalMs: number | null; moveWaitMs: number }
   readonly emptyTtl: number
+  /** cf. MjsServerGameDef.endTtl — TOUJOURS résolu (repli sur emptyTtl, puis sur le défaut), jamais absent */
+  readonly endTtl: number
   readonly hooks: MjsServerHooksDef
   readonly onDivergence: ((game: Game, info: MjsServerLockstepDivergence) => void) | null
-  /** cf. MjsServerGameDef.lockstepJournal — `null` = illimité (défaut, absent de la déclaration) */
-  readonly lockstepJournal: { maxTicks: number } | null
+  /** cf. MjsServerGameDef.lockstepJournal — en 'lockstep', TOUJOURS résolu (défauts appliqués,
+   *  `maxTicks: null` = aucun anneau) ; `null` hors lockstep */
+  readonly lockstepJournal: { maxTicks: number | null; maxBytes: number; maxOrderBytes: number } | null
   readonly intents: Record<string, (game: Game, player: MjsServerSeat, p: unknown) => unknown>
   readonly simulate: ((game: Game, dt: number) => void) | null
   readonly slowTick: { hz: number; fn: (game: Game) => void } | null
@@ -267,16 +274,21 @@ export const DEFAULT_EMPTY_TTL = 60000
  *  `limits.moves` dimensionnée à son tick (ou `null` pour désactiver) — ce défaut cible le cas
  *  courant (jeu social/tour par tour à cadence humaine), pas le netcode haute fréquence. */
 export const DEFAULT_MOVES_LIMIT: [number, number] = [30, 1000]
+/** mode 'lockstep' — bornes du journal d'ordres quand `lockstepJournal` ne les déclare pas (cf.
+ *  MjsServerGameDef.lockstepJournal) : 2 Ko par ordre, 16 Mo pour le journal entier (renvoyé en entier à
+ *  chaque resync et à chaque sauvegarde) */
+export const DEFAULT_LOCKSTEP_ORDER_BYTES   = 2048
+export const DEFAULT_LOCKSTEP_JOURNAL_BYTES = 16 * 1024 * 1024
 
-const KNOWN_GAME_KEYS              = new Set(['mode', 'seats', 'code', 'seatTtl', 'tick', 'state', 'moves', 'view', 'phases', 'turns', 'timers', 'limits', 'emptyTtl', 'hooks', 'onDivergence', 'lockstepJournal', 'intents', 'simulate', 'slowTick', 'deltas', 'space', 'history', 'suspect', 'antiReplay', 'onSuspicion', 'spectatorView'])
+const KNOWN_GAME_KEYS              = new Set(['mode', 'seats', 'code', 'seatTtl', 'tick', 'state', 'moves', 'view', 'phases', 'turns', 'timers', 'limits', 'emptyTtl', 'endTtl', 'hooks', 'onDivergence', 'lockstepJournal', 'intents', 'simulate', 'slowTick', 'deltas', 'space', 'history', 'suspect', 'antiReplay', 'onSuspicion', 'spectatorView'])
 const KNOWN_TURNS_KEYS             = new Set(['order', 'timeout'])
-const KNOWN_LIMITS_KEYS            = new Set(['moves', 'moveIntervalMs'])
+const KNOWN_LIMITS_KEYS            = new Set(['moves', 'moveIntervalMs', 'moveWaitMs'])
 const KNOWN_HOOKS_KEYS             = new Set(['onCreate', 'onJoin', 'onLeave', 'onEnd', 'onTurnTimeout'])
 const KNOWN_SLOWTICK_KEYS          = new Set(['hz', 'fn'])
 const KNOWN_SPACE_KEYS             = new Set(['cell'])
 const KNOWN_HISTORY_KEYS             = new Set(['ticks', 'extract', 'interp'])
 // mode 'lockstep' SEULEMENT — cf. MjsServerGameDef.lockstepJournal
-const KNOWN_LOCKSTEP_JOURNAL_KEYS = new Set(['maxTicks'])
+const KNOWN_LOCKSTEP_JOURNAL_KEYS = new Set(['maxTicks', 'maxBytes', 'maxOrderBytes'])
 
 /** Valide + résout `def` pour `type` — throw immédiat (message français, préfixé) au premier
  *  problème rencontré. Jamais de valeur par défaut SILENCIEUSE sur une clé mal typée : soit elle
@@ -295,7 +307,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     throw new Error(t('serveur.game-code-invalide', { prefix: prefix, received: JSON.stringify(raw.code), receivedType: typeof raw.code }))
   }
   if (raw.seatTtl !== undefined && (typeof raw.seatTtl !== 'number' || !Number.isFinite(raw.seatTtl) || raw.seatTtl <= 0)) {
-    throw new Error(t('serveur.game-seatttl-invalide', { prefix: prefix, received: JSON.stringify(raw.seatTtl) }))
+    throw new Error(t('serveur.game-seatttl-invalide', { prefix: prefix, received: receivedValue(raw.seatTtl) }))
   }
   if (raw.tick !== undefined && (typeof raw.tick !== 'number' || !Number.isFinite(raw.tick) || raw.tick < 0)) {
     throw new Error(t('serveur.game-tick-invalide', { prefix: prefix, received: JSON.stringify(raw.tick) }))
@@ -341,8 +353,16 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
       throw new Error(t('serveur.game-lockstepjournal-invalide', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.lockstepJournal)) if (!KNOWN_LOCKSTEP_JOURNAL_KEYS.has(k)) throw keyUnknown(`${prefix}.lockstepJournal`, k, KNOWN_LOCKSTEP_JOURNAL_KEYS)
-    if (!Number.isInteger(raw.lockstepJournal.maxTicks) || raw.lockstepJournal.maxTicks < 1) {
-      throw new Error(t('serveur.game-lockstepjournal-maxticks-invalide', { prefix: prefix, received: JSON.stringify(raw.lockstepJournal.maxTicks) }))
+    // trois clés facultatives : absente = défaut (ou aucun anneau pour maxTicks), présente = entier ≥ 1
+    const { maxTicks, maxBytes, maxOrderBytes } = raw.lockstepJournal
+    if (maxTicks !== undefined && (!Number.isInteger(maxTicks) || maxTicks < 1)) {
+      throw new Error(t('serveur.game-lockstepjournal-maxticks-invalide', { prefix: prefix, received: JSON.stringify(maxTicks) }))
+    }
+    if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
+      throw new Error(t('serveur.game-lockstepjournal-maxbytes-invalide', { prefix: prefix, received: receivedValue(maxBytes) }))
+    }
+    if (maxOrderBytes !== undefined && (!Number.isInteger(maxOrderBytes) || maxOrderBytes < 1)) {
+      throw new Error(t('serveur.game-lockstepjournal-maxorderbytes-invalide', { prefix: prefix, received: receivedValue(maxOrderBytes) }))
     }
   }
   if (raw.phases !== undefined) {
@@ -364,7 +384,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
       throw new Error(t('serveur.game-turns-order-invalide', { prefix: prefix, received: JSON.stringify(raw.turns.order) }))
     }
     if (raw.turns.timeout !== undefined && (typeof raw.turns.timeout !== 'number' || !Number.isFinite(raw.turns.timeout) || raw.turns.timeout <= 0)) {
-      throw new Error(t('serveur.game-turns-timeout-invalide', { prefix: prefix, received: JSON.stringify(raw.turns.timeout) }))
+      throw new Error(t('serveur.game-turns-timeout-invalide', { prefix: prefix, received: receivedValue(raw.turns.timeout) }))
     }
   }
   if (raw.timers !== undefined) {
@@ -384,19 +404,27 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     // `null` EXPLICITE = désactivation ASSUMÉE du quota (cf. DEFAULT_MOVES_LIMIT) — jamais
     // destructuré comme un tuple (piège : `[n, fenetre] = null` lève un TypeError générique, pas
     // notre message d'erreur clair ci-dessous) ; seul `undefined` (clé absente) applique le défaut.
+    // tableau vérifié AVANT de déstructurer (un nombre lèverait une TypeError brute) ; fenêtre FINIE : NaN (variable d'environnement
+    // absente) donnait un taux NaN qui laisse passer tous les coups, Infinity un taux nul qui bloque tout après n coups
     if (raw.limits.moves !== undefined && raw.limits.moves !== null) {
-      const [n, window] = raw.limits.moves
-      if (!Array.isArray(raw.limits.moves) || raw.limits.moves.length !== 2 || !Number.isInteger(n) || n < 1 || typeof window !== 'number' || window <= 0) {
-        throw new Error(t('serveur.game-limits-moves-invalide', { prefix: prefix, received: JSON.stringify(raw.limits.moves) }))
+      const moves = raw.limits.moves as unknown
+      if (!Array.isArray(moves) || moves.length !== 2 || !Number.isInteger(moves[0]) || moves[0] < 1 || typeof moves[1] !== 'number' || !Number.isFinite(moves[1]) || moves[1] <= 0) {
+        throw new Error(t('serveur.game-limits-moves-invalide', { prefix: prefix, received: receivedReadable(raw.limits.moves) }))
       }
     }
     // anti-triche — cf. MjsServerLimitsDef.moveIntervalMs
     if (raw.limits.moveIntervalMs !== undefined && (typeof raw.limits.moveIntervalMs !== 'number' || !Number.isFinite(raw.limits.moveIntervalMs) || raw.limits.moveIntervalMs <= 0)) {
-      throw new Error(t('serveur.game-limits-moveintervalms-invalide', { prefix: prefix, received: JSON.stringify(raw.limits.moveIntervalMs) }))
+      throw new Error(t('serveur.game-limits-moveintervalms-invalide', { prefix: prefix, received: receivedValue(raw.limits.moveIntervalMs) }))
+    }
+    if (raw.limits.moveWaitMs !== undefined && (typeof raw.limits.moveWaitMs !== 'number' || !Number.isFinite(raw.limits.moveWaitMs) || raw.limits.moveWaitMs <= 0 || raw.limits.moveWaitMs > MAX_TIMEOUT_MS)) {
+      throw new Error(t('serveur.game-limits-movewaitms-invalide', { prefix: prefix, received: receivedValue(raw.limits.moveWaitMs) }))
     }
   }
   if (raw.emptyTtl !== undefined && (typeof raw.emptyTtl !== 'number' || !Number.isFinite(raw.emptyTtl) || raw.emptyTtl <= 0)) {
-    throw new Error(t('serveur.game-emptyttl-invalide', { prefix: prefix, received: JSON.stringify(raw.emptyTtl) }))
+    throw new Error(t('serveur.game-emptyttl-invalide', { prefix: prefix, received: receivedValue(raw.emptyTtl) }))
+  }
+  if (raw.endTtl !== undefined && (typeof raw.endTtl !== 'number' || !Number.isFinite(raw.endTtl) || raw.endTtl <= 0)) {
+    throw new Error(t('serveur.game-endttl-invalide', { prefix: prefix, received: receivedValue(raw.endTtl) }))
   }
   if (raw.hooks !== undefined) {
     if (typeof raw.hooks !== 'object' || raw.hooks === null || Array.isArray(raw.hooks)) {
@@ -473,7 +501,7 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
       throw new Error(t('serveur.game-histo-extraire-requis', { prefix: prefix }))
     }
     if (raw.history.interp !== undefined && (typeof raw.history.interp !== 'number' || !Number.isFinite(raw.history.interp) || raw.history.interp < 0)) {
-      throw new Error(t('serveur.game-histo-interp-invalide', { prefix: prefix, received: JSON.stringify(raw.history.interp) }))
+      throw new Error(t('serveur.game-histo-interp-invalide', { prefix: prefix, received: receivedValue(raw.history.interp) }))
     }
   }
 
@@ -528,11 +556,16 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     // `??` serait FAUX ici : il confondrait `null` explicite (désactivation VOULUE) avec `undefined`
     // (clé absente) et réappliquerait le défaut dans les DEUX cas — seule une comparaison stricte à
     // `undefined` distingue « l'auteur n'a rien dit » de « l'auteur a dit null » (cf. DEFAULT_MOVES_LIMIT)
-    limits:   { moves: raw.limits?.moves !== undefined ? raw.limits.moves : DEFAULT_MOVES_LIMIT, moveIntervalMs: raw.limits?.moveIntervalMs ?? null },
+    limits:   { moves: raw.limits?.moves !== undefined ? raw.limits.moves : DEFAULT_MOVES_LIMIT, moveIntervalMs: raw.limits?.moveIntervalMs ?? null, moveWaitMs: raw.limits?.moveWaitMs ?? DEFAULT_MOVE_WAIT_MS },
     emptyTtl: raw.emptyTtl ?? DEFAULT_EMPTY_TTL,
+    endTtl:   raw.endTtl ?? raw.emptyTtl ?? DEFAULT_EMPTY_TTL,   // sans endTtl, la grâce après la fin reste emptyTtl (comportement d'avant l'option)
     hooks:    raw.hooks ?? {},
     onDivergence: raw.onDivergence ?? null,
-    lockstepJournal: raw.lockstepJournal ? { maxTicks: raw.lockstepJournal.maxTicks } : null,
+    lockstepJournal: mode === 'lockstep' ? {
+      maxTicks:      raw.lockstepJournal?.maxTicks ?? null,
+      maxBytes:      raw.lockstepJournal?.maxBytes ?? DEFAULT_LOCKSTEP_JOURNAL_BYTES,
+      maxOrderBytes: raw.lockstepJournal?.maxOrderBytes ?? DEFAULT_LOCKSTEP_ORDER_BYTES,
+    } : null,
     intents:  raw.intents ?? {},
     simulate: raw.simulate ?? null,
     slowTick: raw.slowTick ? { hz: raw.slowTick.hz, fn: raw.slowTick.fn } : null,

@@ -4,7 +4,7 @@
 
 ## 1. Ce que le framework fait, et ce qu'il ne fait pas
 
-**Il fait** : à chaque build réussi, écrire la liste complète de ce qu'il a émis — bundles JS, feuilles CSS, tout fichier haché — avec leurs empreintes, dans `<outputDir>/mjs-precache.json`, accompagnée de l'identifiant du build.
+**Il fait** : à chaque build réussi, écrire la liste complète de ce qu'il a émis — bundles JS, feuilles CSS, tout fichier haché — avec leurs empreintes, dans `<outputDir>/mjs-precache.json`, accompagnée de l'identifiant du build. Sous `mjs dev`, après des éditions, des renommages ou des remises en place, la liste est la même que celle d'un build à froid sur les mêmes fichiers, à condition que chaque fichier cité (image, son, `.js`) soit présent sur le disque.
 
 **Il ne fait pas** : fournir un service worker. Ce n'est pas une paresse, c'est un choix délibéré — les stratégies de cache (réseau d'abord, cache d'abord, quand vider) sont des décisions d'**application**, qui dépendent de ce que fait l'application : un site vitrine, une messagerie temps réel et un éditeur hors ligne n'ont pas la même réponse à « que faire si le réseau manque ? ». Un service worker imposé par un framework est un service worker qu'on finit par combattre.
 
@@ -18,11 +18,13 @@ Sa forme exacte, écrite par `writePrecacheManifest()` à la fin d'un build :
 {
   "version": "a1b2c3d4",
   "assets": [
-    "/modularjs/mjs_core-1a2b3c4d.js",
-    "/modularjs/page-5e6f7a8b.js"
+    "/modularjs/mjs_core-k3x9a.js",
+    "/modularjs/page-m81pz.js"
   ]
 }
 ```
+
+Quand la construction écrit dans le dossier des sources (`outputDir` dans `sourceDir`), la liste porte en plus, en tête, la clé `"@generated": "ModularJS"` : la marque qui la distingue d'un fichier à vous du même nom (cf. [§ prune](32-cli-et-configuration.md#prune)). `version` et `assets` ne changent pas.
 
 Quatre garanties, chacune vérifiée par un test dédié :
 
@@ -124,8 +126,8 @@ Deux lignes, côté page :
 Trois vérifications, dans les outils du navigateur :
 
 1. **Onglet Application** — le manifeste apparaît (nom, icônes lues correctement), le service worker est actif, et le cache créé porte le nom `mjs-<version>` avec la liste attendue dedans.
-2. **Mode hors ligne** — coche « Offline » dans le même onglet, recharge : la page s'affiche depuis le cache, `µonline` passe à `false`, le bandeau ou le bouton réagit.
-3. **Purge au nouveau build** — relance un build, puis recharge la page une fois (une seule suffit avec la recette ci-dessus, qui se resynchronise à chaque navigation plutôt que d'attendre que le navigateur détecte un `sw.js` modifié — lui ne change jamais) : dans l'onglet Application, l'ancien cache `mjs-<ancienne-version>` a disparu, seul le nouveau reste.
+2. **Mode hors ligne** — cochez « Offline » dans le même onglet, rechargez : la page s'affiche depuis le cache, `µonline` passe à `false`, le bandeau ou le bouton réagit.
+3. **Purge au nouveau build** — relancez un build, puis rechargez la page une fois (une seule suffit avec la recette ci-dessus, qui se resynchronise à chaque navigation plutôt que d'attendre que le navigateur détecte un `sw.js` modifié — lui ne change jamais) : dans l'onglet Application, l'ancien cache `mjs-<ancienne-version>` a disparu, seul le nouveau reste.
 
 ---
 

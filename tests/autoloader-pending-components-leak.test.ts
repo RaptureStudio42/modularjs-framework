@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { mjsTmp } from './helpers/tmp.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AUTOLOADER_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_autoloader.ts'), 'utf-8')
@@ -65,6 +66,7 @@ describe("mjs_autoloader — load() purge pendingComponents même quand l'import
       error: (...a: any[]) => spies.error?.push(a),
       paths,
     }
+    poserMessages(µ)
     new Function('µ', AUTOLOADER_SRC)(µ)
     return µ.Autoloader
   }

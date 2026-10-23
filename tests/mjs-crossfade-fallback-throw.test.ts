@@ -17,6 +17,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 ;(globalThis as any).µ = (globalThis as any).µ || {}
 const µ: any = (globalThis as any).µ
@@ -29,6 +30,7 @@ const µ: any = (globalThis as any).µ
 await import('../src/runtime/mjs_easing.js') // µ.easing réel (µ.easing.resolve)
 
 const crossfadeSrc = readFileSync(join(process.cwd(), 'src/runtime/animations/crossfade.ts'), 'utf-8')
+poserMessages(µ)
 new Function('µ', `µ.anim = µ.anim || {}; µ.anim.crossfade = ${crossfadeSrc.trim()};`)(µ)
 
 let uid = 0

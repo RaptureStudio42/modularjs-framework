@@ -165,6 +165,17 @@ export const MU_LANG_OUT  = 'µ.store.__mjsLang'
 export const MU_THEME_BODY = `µtheme(?![a-zA-Z0-9_])`
 export const MU_THEME_OUT  = 'µ.store.__mjsTheme'
 
+// µlayout → le modèle choisi du composant (`layout="x"` sur sa balise, « default » sans rien) :
+// la prop `layout`, lue seulement — le modèle se choisit sur la balise. Le transpileur la déclare,
+// et note chaque nom comparé à µlayout comme un modèle connu du composant (transpiler/index.ts)
+export const MU_LAYOUT_BODY       = `µlayout(?![a-zA-Z0-9_])`
+export const MU_LAYOUT_OUT        = "($.layout || 'default')"
+// toute écriture : `=` et ses formes composées (`?=` et `:=` de Coffee/Civet compris), `--`, et `++`
+// COLLÉ derrière ; posée devant (`++µlayout`), cf. MU_LAYOUT_PREFIX_WRITE_BODY. `++` entre deux blancs
+// est la concaténation de Civet (`['card'] ++ µlayout`, `µlayout ++ 'x'`) : une lecture
+export const MU_LAYOUT_WRITE_BODY        = `µlayout(?:[ \\t]*(?:(?:[-+*/%?:.&|^]|\\*\\*|\\?\\?|\\|\\||&&|<<|>>>?)?=(?!=)|--)|\\+\\+)`
+export const MU_LAYOUT_PREFIX_WRITE_BODY = `(?:\\+\\+|--[ \\t]*)µlayout(?![a-zA-Z0-9_])`
+
 // hooks de cycle de vie en RUNES (µmount ->, µdestroy ->, µurlChange (p, a) ->…) :
 // la forme @mount -> est RETIRÉE (elle reposait sur un `=` fragile — piège nº1
 // historique — et squattait 6 noms de méthodes sur l'instance). `urlChange`
@@ -196,12 +207,13 @@ export const MU_EVERY_BODY = `µevery(?![a-zA-Z0-9_$])`
 // de langue d'une landing). `import` : même piège —
 // vérifié empiriquement (`applyMjsSugarToScript` transformait `µimport(...)`
 // en `µ.import(...)` AVANT que rewriteMuImport ne puisse le voir) : sans
-// cette exclusion, la rune ci-dessous n'est jamais atteinte. `theme` :
+// cette exclusion, la rune ci-dessous n'est jamais atteinte. `theme`, `layout` :
 // même piège que `lang`, même remède.
-export const MU_SCRIPT_RUNES = `read|write|lang|theme|derived|import|toggle|${MU_HOOKS}`
+export const MU_SCRIPT_RUNES = `read|write|lang|theme|layout|derived|import|toggle|${MU_HOOKS}`
 
 // µimport('chemin.js') / mjsimport('chemin.js') → chargement PARESSEUX d'un
-// module ES, chemin LITTÉRAL exigé (empreinte résolue AU BUILD par µasset,
+// module (ES copié tel quel, ou module `.civet`/`.coffee` que MJS compile),
+// chemin LITTÉRAL exigé (empreinte résolue AU BUILD par µasset,
 // cf. bundler/index.ts preResolveAssets — un argument calculé est invisible
 // à cette pré-résolution côté master, pas de disque dans les workers ; seule
 // échappatoire pour ça : `import(variable)` nu, laissé passer par le lint
@@ -209,6 +221,17 @@ export const MU_SCRIPT_RUNES = `read|write|lang|theme|derived|import|toggle|${MU
 // (lookahead négatif alphanumérique) : µimporter/mjsimporter restent des
 // identifiants utilisateur intacts, jamais cette rune.
 export const MU_IMPORT_BODY = `(?:µ|mjs)import(?![a-zA-Z0-9_])`
+
+// extensions qu'un µimport charge : un module ES copié tel quel (.js), ou un module que MJS
+// compile comme `@import` (.civet, .coffee). Un composant .mjs a sa propre voie (sa balise) : refusé
+const MU_IMPORT_EXTENSIONS = /\.(?:js|civet|coffee)$/
+
+// refus d'une cible de µimport qui n'est pas un module chargeable — null si la cible convient
+function muImportCibleRefusee(chemin: string, sectionLabel: string): Error | null {
+  if (MU_IMPORT_EXTENSIONS.test(chemin)) return null
+  if (chemin.endsWith('.mjs')) return new Error(t('transpiler.rune-import-composant', { section: sectionLabel, chemin }))
+  return new Error(t('transpiler.rune-import-extension', { section: sectionLabel, chemin }))
+}
 
 // ancre + parenthèse ouvrante — garde de tête `(?<![\w.µ])` calquée sur les
 // RE_MU_*_G des deux moteurs (évite un faux positif sur un identifiant plus
@@ -284,10 +307,10 @@ export function rewriteMuImport(src: string, sectionLabel: string): string {
       if (src[e] !== ')') {
         throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
       }
-      if (!chemin.endsWith('.js')) {
-        throw new Error(t('transpiler.rune-import-extension-js', { section: sectionLabel, chemin }))
-      }
-      out += `µ._mjs_import(µasset('${chemin}'))`
+      const refus = muImportCibleRefusee(chemin, sectionLabel)
+      if (refus) throw refus
+      // guillemet d'origine : `µimport("l'outil.js")` réécrit entre apostrophes cassait la chaîne
+      out += `µ._mjs_import(µasset(${quote}${chemin}${quote}))`
       i = e + 1
       codeStart = i
       continue
@@ -355,6 +378,9 @@ function rewriteMuImportWindows(content: string, marker: string, sectionLabel: s
 // (sortie langage exotique, cf. parseModuleAst) : jamais PIRE que l'existant.
 export function rewriteMuImportAst(js: string, sectionLabel: string): string {
   if (!js) return js
+  // ni `µimport` ni `mjsimport` dans le texte, ni échappement `\u` qui pourrait en écrire un : rien à réécrire ni à refuser,
+  // l'analyse du script entier est sautée
+  if (!js.includes('µimport') && !js.includes('mjsimport') && !js.includes('\\u')) return js
   let ast: acorn.Node
   try {
     ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', allowReturnOutsideFunction: true })
@@ -376,9 +402,8 @@ export function rewriteMuImportAst(js: string, sectionLabel: string): string {
         throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
       }
       const arg = args[0]
-      if (!(arg.value as string).endsWith('.js')) {
-        throw new Error(t('transpiler.rune-import-extension-js', { section: sectionLabel, chemin: arg.value }))
-      }
+      const refus = muImportCibleRefusee(arg.value as string, sectionLabel)
+      if (refus) throw refus
       // `arg.raw` VERBATIM (guillemets/échappements de l'auteur préservés) —
       // jamais une reconstruction (JSON.stringify etc.) qui reformaterait.
       ms.overwrite(node.start, node.end, `µ._mjs_import(µasset(${arg.raw}))`)
@@ -549,6 +574,39 @@ function buildToggle(args: string[], sectionLabel: string): string {
   return `${cible} = (${tests.join(' : ')} : ${valeurs[0]})`
 }
 
+// `$âge`, `$$été` : un nom d'état n'est lu que si sa PREMIÈRE lettre est sans accent (a-z, A-Z, `_`) ; la suite du
+// nom peut en porter (`$prénom`). Sans cette garde, le nom restait tel quel dans le code émis et le composant
+// tombait au montage sur « $âge is not defined ». Appelée en tête de rewriteMuToggle, seule passe qui voit tout le
+// code MJS (script, gestionnaires, interpolations) avant la réécriture des `$x` ; chaînes, commentaires et
+// littéraux regex sautés (skipInertFrom)
+const ETAT_ACCENTUE_RAPIDE = /\$[^\x00-\x7F]/
+const SUITE_DU_NOM         = /[\p{L}\p{M}\p{N}_]*/uy
+function premiereLettreSansAccent(c: string): string {
+  const base = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  if (/^[a-zA-Z]$/.test(base)) return base
+  const ligatures: Record<string, string> = { 'œ': 'oe', 'Œ': 'Oe', 'æ': 'ae', 'Æ': 'Ae' }
+  return ligatures[c] ?? '_' + c
+}
+function refuseEtatAccentue(src: string): void {
+  if (!ETAT_ACCENTUE_RAPIDE.test(src)) return
+  const n = src.length
+  let i   = 0
+  while (i < n) {
+    const inert = skipInertFrom(src, i)
+    if (inert >= 0) { i = inert; continue }
+    if (src[i] === '$' && !/[\w$.]/.test(src[i - 1] ?? '')) {
+      const sigil = src[i + 1] === '$' ? '$$' : '$'
+      const c     = src[i + sigil.length] ?? ''
+      if (c > '\x7F' && /\p{L}/u.test(c)) {
+        SUITE_DU_NOM.lastIndex = i + sigil.length + 1
+        const suite = SUITE_DU_NOM.exec(src)?.[0] ?? ''
+        throw new Error(t('transpiler.etat-premiere-lettre-accentuee', { nom: sigil + c + suite, suggestion: sigil + premiereLettreSansAccent(c) + suite }))
+      }
+    }
+    i++
+  }
+}
+
 // rewriteMuToggle — corps PARTAGÉ des deux moteurs de sucre (pré-passe du lexer
 // pour les <script>, tête de cleanJs pour les interpolations {…}/handlers).
 // Scan manuel caractère par caractère, masquage des chaînes/commentaires FAIT
@@ -557,6 +615,7 @@ function buildToggle(args: string[], sectionLabel: string): string {
 // La sortie reste en syntaxe MJS (`$x`, `$$x` verbatim) : elle est destinée aux
 // passes du dessous, jamais au runtime directement.
 export function rewriteMuToggle(src: string, sectionLabel: string): string {
+  refuseEtatAccentue(src)
   if (!src.includes('µtoggle')) return src
   let out       = ''
   let i         = 0
@@ -647,7 +706,7 @@ function rewriteMuToggleWindows(contenu: string, marqueur: string, sectionLabel:
 // ci-dessus) en `µ.foo` — SANS liste blanche, contrairement à MU_SHORT_BODY qui ne
 // couvre qu'un sous-ensemble choisi (url/online/.../t/...). cleanJs/cleanJsExpr
 // (interpolations de texte, valeurs d'attribut) n'avaient QUE MU_PASCAL_BODY et
-// MU_SHORT_BODY : une rune minuscule hors liste blanche (µraw/µsnap/µplay/µminmax/
+// MU_SHORT_BODY : une rune minuscule hors liste blanche (µraw/µsnap/µplay/
 // µinspect, mjs_rare_runes.ts) ressortait littérale dans le JS final —
 // `µraw is not defined` au premier rendu (repro : `weatherData={µraw(result)}` dans
 // une branche `{success result}`). La garde d'exclusion (MU_SCRIPT_RUNES) était déjà
@@ -656,13 +715,13 @@ function rewriteMuToggleWindows(contenu: string, marqueur: string, sectionLabel:
 // main (cf. bandeau de tête de ce fichier).
 export const MU_UNIVERSAL_BODY = `µ(?!(?:${MU_SCRIPT_RUNES})\\b)([a-zA-Z]\\w*)`
 
-// argTermineOuChemin — fragment de gabarit PARTAGÉ entre µinspect et µminmax : après `$nom`, soit
+// argTermineOuChemin — fragment de gabarit de µinspect : après `$nom`, soit
 // le prochain caractère utile (espaces ignorés) EST un des `terminateurs` attendus (fin réelle de
 // l'argument — rien à capturer), soit tout ce qui suit jusqu'au PROCHAIN terminateur est un chemin
 // REFUSÉ (capturé pour le message d'erreur). LISTE BLANCHE plutôt que liste noire de suffixes
 // interdits (point, appel, indexation…) énumérés un par un : une énumération manuelle rate
-// toujours la variante suivante — une parenthèse ou un crochet IMBRIQUÉ (`µminmax($o(bar()), …)`,
-// `µminmax($o[a[0]], …)`) contournait ainsi chaque nouvelle entrée ajoutée à l'ancienne liste
+// toujours la variante suivante — une parenthèse ou un crochet IMBRIQUÉ (`µinspect($o(bar()))`,
+// `µinspect($o[a[0]])`) contournait ainsi chaque nouvelle entrée ajoutée à l'ancienne liste
 // (`[^()]*`/`[^[\]]*` ne comptent pas la profondeur, un `)`/`]` interne refermait le groupe trop
 // tôt et laissait le reste échapper). Ici, tout ce qui n'est PAS exactement le terminateur attendu
 // est un chemin — nul besoin de nommer chaque forme, la capture non-gourmande s'arrête d'elle-même
@@ -690,9 +749,9 @@ export function cheminInspectPlat(chemin: string): string | undefined {
   return segments === undefined ? undefined : segments.join('.')
 }
 
-// cheminSegments — même liste blanche que cheminInspectPlat, segments gardés SÉPARÉS : µminmax
-// les transmet en tableau (une clé en chaîne peut contenir un point, `$x['a.b']`, qu'un plat
-// joint par des points confondrait avec un sous-chemin)
+// cheminSegments — même liste blanche que cheminInspectPlat, segments gardés SÉPARÉS (une clé en
+// chaîne peut contenir un point, `$x['a.b']`, qu'un plat joint par des points confondrait avec un
+// sous-chemin)
 export function cheminSegments(chemin: string): string[] | undefined {
   const segments: string[] = []
   let pos = 0
@@ -702,12 +761,6 @@ export function cheminSegments(chemin: string): string[] | undefined {
     pos += m[0].length
   }
   return pos === chemin.length && segments.length > 0 ? segments : undefined
-}
-
-// clé de µminmax sur un chemin, en tableau de chaînes à guillemets simples — jamais doubles : le
-// <script> passe ensuite par Civet, qui interpolerait un `#{…}` logé dans une clé en chaîne
-export function cleMinmaxChemin(nom: string, segments: string[]): string {
-  return '[' + [nom, ...segments].map(seg => `'${seg.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ') + ']'
 }
 
 // µ.inspect($x) → µ.inspect('x') — le runtime (mjs_rare_runes.ts) attend la CLÉ
@@ -726,7 +779,7 @@ export function cleMinmaxChemin(nom: string, segments: string[]): string {
 // compilation claire, plutôt qu'un réécrit à moitié (parenthèse orpheline qui cassait aussi le
 // code voisin) ou un résidu qui n'échouait qu'à l'exécution. Fonction plutôt que gabarit `$1` :
 // les deux groupes de nom sont MUTUELLEMENT EXCLUSIFS (un seul se remplit selon la forme
-// reconnue). `µ\.?` (point OPTIONNEL, calqué sur MU_MINMAX_ARG_PAREN_BODY) : les deux
+// reconnue). `µ\.?` (point OPTIONNEL) : les deux
 // consommateurs existants (generator/utils.ts, transpiler/index.ts) n'appellent ce corps
 // qu'APRÈS leur propre sucre universel (`µinspect` déjà pointé en `µ.inspect`), le point y est
 // donc toujours présent — le rendre optionnel ne change rien pour eux. Nécessaire pour un
@@ -742,44 +795,16 @@ export const MU_INSPECT_ARG_OUT = (_m: string, nomParen: string | undefined, che
   return `µ.inspect('${nom}', '${plat}')`
 }
 
-// µ.minmax($x, min, max) → µ.minmax(_mjsThis, 'x', min, max) — le runtime clampe
-// `_mjsThis._mjs_limits[key]`, jamais `$x` lui-même. Un CHEMIN FIXE derrière le symbole
-// (`$x.volume`, `$x.son.volume`, `$x['cle']`, `$x.pistes[0].volume` — même liste blanche que
-// µinspect, cheminSegments) borne une PROPRIÉTÉ : `µ.minmax(_mjsThis, ['x', 'volume'], min, max)`,
-// clé en tableau (mjs_rare_runes.ts, µ._mjs_minmaxChemin). SEULE la forme PARENTHÉSÉE est
-// partagée : elle produit un appel COMPLET valide en JS direct (la parenthèse
-// fermante d'ORIGINE, non capturée, referme l'appel — même trick que
-// RAW_WRITE_PAREN_BODY plus haut). La forme SANS parenthèses (`µminmax $x, 0, 10`,
-// sucre Coffee) reste SCRIPT-ONLY (transpiler/index.ts) : sa sortie nue n'est valide
-// qu'une fois recompilée par Civet — chemin que cleanJs (repli templateLang:'js',
-// sites FRAGMENT) ne garantit pas. Terminateur = virgule (le premier argument s'arrête
-// TOUJOURS là, les deux suivants sont min/max) : tout ce qui suit le nom avant cette virgule est
-// capturé par argTermineOuChemin — un chemin FIXE est réécrit, un appel, un index calculé ou un
-// espace (`$config.volume()`, `$config[i]`, `$config . volume`) lèvent une erreur de compilation
-// claire (docs/03-reactivite.md). Nom `[a-zA-Z0-9_]+` (jamais de `$` dedans, même classe
-// qu'inspect ci-dessus) : un second `$` fait échouer tout le motif — `$$x` (store) est refusé en
-// amont, avec un message clair (MU_RUNE_STORE_BODY plus bas, reecritOuRejetteRuneChemin).
-export const MU_MINMAX_ARG_PAREN_BODY = `(?<!µ\\.)µ\\.?minmax\\s*\\(\\s*\\$([a-zA-Z0-9_]+)${argTermineOuChemin(',')}`
-// forme SANS parenthèses (`µminmax $x.volume, 0, 10`, sucre Civet du <script>) — même
-// terminateur que la forme parenthésée : scannée sur le texte ENTIER par
-// reecritOuRejetteRuneChemin (generator/utils.ts), jamais morceau par morceau — une clé en chaîne
-// (`$x['cle']`) coupait sinon l'appel en deux et la réécriture ne se faisait jamais
-export const MU_MINMAX_ARG_NU_BODY = `(?<!µ\\.)µ\\.?minmax[ \\t]+\\$([a-zA-Z0-9_]+)${argTermineOuChemin(',')}`
+// µinspect sur un STORE (`$$x`) : la rune vise l'état d'UN composant — sur un store, le sucre
+// général passait la VALEUR du store (`µ.inspect(µ.store.x)`) là où le runtime attend une clé : suivi
+// muet. Entre parenthèses, l'argument peut passer à la ligne (`µinspect(\n  $$x)`) — sans
+// parenthèse, espaces seulement (une ligne suivante serait une autre instruction). Pour un store :
+// `µconsole $$x` (panneau) et, pour le contraindre, son type dans un <vars>
+export const MU_RUNE_STORE_BODY = `(?<!µ\\.)µ\\.?(inspect)(?:\\s*\\(\\s*|[ \\t]+)\\$\\$([a-zA-Z_][a-zA-Z0-9_]*)`
 
-// µminmax/µinspect sur un STORE (`$$x`) : ces runes visent l'état d'UN composant — sur un store,
-// le sucre général passait la VALEUR du store (`µ.minmax(µ.store.x, …)`) là où le runtime attend
-// une clé : plantage à la construction du composant pour µminmax, suivi muet pour µinspect
-// Entre parenthèses, l'argument peut passer à la ligne (`µminmax(\n  $$x, …)`) : même tolérance
-// que MU_MINMAX_ARG_PAREN_BODY — sans parenthèse, espaces seulement (une ligne suivante serait une
-// autre instruction)
-export const MU_RUNE_STORE_BODY = `(?<!µ\\.)µ\\.?(minmax|inspect)(?:\\s*\\(\\s*|[ \\t]+)\\$\\$([a-zA-Z_][a-zA-Z0-9_]*)`
-
-export const MU_MINMAX_ARG_PAREN_OUT  = (_m: string, nom: string, chemin: string | undefined): string => {
-  if (!chemin) return `µ.minmax(_mjsThis, '${nom}'`
-  const segments = cheminSegments(chemin)
-  if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
-  return `µ.minmax(_mjsThis, ${cleMinmaxChemin(nom, segments)}`
-}
+// µminmax n'existe plus (V3) : les types du bloc <vars> le remplacent. Toute trace dans le CODE
+// (commentaires et chaînes masqués par l'appelant) refuse la compilation avec la marche à suivre
+export const MU_MINMAX_RETIRE_BODY = `(?<![\\w.$])µ\\.?minmax\\b`
 
 // ============================================================================
 // littéraux regex `/…/` — PARTAGÉS entre les TROIS moteurs de sucre (parser,
@@ -802,7 +827,29 @@ const REGEX_APRES_SIGNE   = /[({[,;:=!&|?+\-*%<>~^]$/
 // mot-clé (`{ $in / 2 }`, `{ $obj.of / 2 }`) — la division partait en regex et avalait le document
 // … ni `§`, `@`, `µ`, `&` : `@new / $total / 2` (propriété `new`, division) partait en regex, `$total`
 // n'était plus sucré — « $total is not defined » au montage, build vert
-const REGEX_APRES_MOT_CLE = /(?<![\w$.§@µ&])(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await)$/
+// … et les mots de Civet et Coffee après lesquels une expression commence (`v = 1 if /[\s,']/.test(v)`,
+// `a and /x/.test(b)`) : lu comme une division, le `/` laissait une apostrophe de la regex ouvrir une
+// fausse chaîne, qui avalait la suite du script
+const REGEX_APRES_MOT_CLE = /(?<![\w$.§@µ&])(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await|throw|if|unless|and|or|not|then|when|while|until|is|isnt)$/
+// `)` d'une condition (`if (ok) /'/.test(s)`, `while (…) /x/.exec(l)`) : le `/` qui suit ouvre une regex — après toute
+// autre parenthèse il divise. Lu comme une division, l'apostrophe de la regex ouvrait une fausse chaîne qui avalait la
+// suite (un µtoggle placé après n'était plus réécrit). Appariement compté en arrière sur 400 caractères au plus : une
+// parenthèse écrite dans une chaîne fausse le compte, qui ne trouve alors rien (division, comme avant)
+const MOT_DE_CONDITION = /(?<![\w$.§@µ&])(?:if|while|for|with)\s*$/
+const PORTEE_CONDITION = 400
+// ce que lit ouvreUneRegex au plus, blancs de fin exclus : la portée de l'appariement et les 16 caractères du mot qui
+// précède la parenthèse. Un appelant qui ne garde que la queue de son texte (le lexeur) en garde au moins autant
+export const PORTEE_OUVRE_UNE_REGEX = PORTEE_CONDITION + 16
+function apresCondition(gauche: string, fin: number): boolean {
+  let profondeur = 0
+  const borne    = Math.max(0, fin - PORTEE_CONDITION)
+  for (let k = fin - 1; k >= borne; k--) {
+    const c = gauche[k]
+    if (c === ')') profondeur++
+    else if (c === '(' && --profondeur === 0) return MOT_DE_CONDITION.test(gauche.slice(Math.max(0, k - 16), k))
+  }
+  return false
+}
 // `++`/`--` PRODUISENT une valeur : le `/` qui suit divise (le `+`/`-` final de REGEX_APRES_SIGNE
 // ne vise que la forme préfixe/binaire)
 const INCREMENT_FINAL     = /(?:\+\+|--)$/
@@ -829,6 +876,7 @@ export function ouvreUneRegex(gauche: string): boolean {
   // `</…` = balise HTML FERMANTE, jamais une regex (`a < /re/` n'existe pas) — transformCodeOnly voit le source
   // ENTIER, template compris : sans cette garde `</script><p>…</p>` était avalé comme un littéral.
   if (net.endsWith('<')) return false
+  if (net.endsWith(')')) return apresCondition(gauche, j)
   return REGEX_APRES_SIGNE.test(net) || REGEX_APRES_MOT_CLE.test(net)
 }
 
@@ -857,4 +905,88 @@ export function scanRegexLiteral(str: string, i: number): number {
   if (!ferme) return -1
   const drapeaux = str.slice(j).match(/^[a-z]*/)
   return j + (drapeaux ? drapeaux[0].length : 0)
+}
+
+// ----------------------------------------------------------------------------
+// finExpression — l'accolade ouvrante d'une expression `{…}` en `i` (expression du HTML, `${…}` d'un gabarit) :
+// rend l'index juste APRÈS son accolade fermante, ou -1 si elle ne se referme jamais. Chaînes, gabarits (et leurs
+// `${…}`), commentaires et littéraux regex sont lus d'un bloc : une accolade ou un guillemet qu'ils contiennent ne
+// compte pas (`{ $s.replace(/"/g, '') }`, `${ $a ? '{' : '' }`). Même lecture qu'extractBalanced (parser), sur une
+// chaîne brute : un commentaire de ligne s'arrête à la fin de la ligne ou à l'accolade fermante, une regex se
+// referme sur sa ligne (sinon le `/` est une division). Aide commune de transformCodeOnly, maskStaticHtmlText et
+// maskInterpolations (transpileur) et de la fin de balise d'un composant auto-fermé (générateur), qui comptaient les
+// accolades chacune à sa façon, sans rien savoir des regex.
+// `sansFin` (facultatif) reçoit, quand l'accolade ne se referme pas, la position des accolades restées ouvertes : la
+// lecture depuis chacune serait la même et ne se refermerait pas non plus. Seule exception, une regex jugée sur la
+// parenthèse d'une condition (apresCondition), qui peut lire avant une accolade : celles qui étaient alors ouvertes
+// ne sont pas retenues.
+// ----------------------------------------------------------------------------
+export function finExpression(src: string, i: number, sansFin?: Set<number>): number {
+  const n = src.length
+  let prof = 1
+  let j = i + 1
+  const ouvertes = sansFin ? [i] : null
+  let douteuses  = 0   // ouvertes[0 … douteuses[ ont vu une regex jugée sur une condition
+  const echec = (): number => {
+    if (ouvertes) for (let k = douteuses; k < ouvertes.length; k++) sansFin!.add(ouvertes[k])
+    return -1
+  }
+  while (j < n) {
+    const c = src[j]
+    if (c === '"' || c === "'") {
+      let k = j + 1
+      while (k < n && src[k] !== c) k += src[k] === '\\' ? 2 : 1
+      if (k >= n) return echec()
+      j = k + 1
+      continue
+    }
+    if (c === '`') {
+      let k = j + 1
+      while (k < n && src[k] !== '`') {
+        if (src[k] === '\\') { k += 2; continue }
+        if (src[k] === '$' && src[k + 1] === '{') {
+          const e = finExpression(src, k + 1)
+          if (e < 0) return echec()
+          k = e
+          continue
+        }
+        k++
+      }
+      if (k >= n) return echec()
+      j = k + 1
+      continue
+    }
+    if (c === '/' && src[j + 1] === '/') {
+      while (j < n && src[j] !== '\n' && src[j] !== '}') j++
+      continue
+    }
+    if (c === '/' && src[j + 1] === '*') {
+      const e = src.indexOf('*/', j + 2)
+      if (e < 0) return echec()
+      j = e + 2
+      continue
+    }
+    if (c === '/' && ouvertes) {
+      let t = j
+      while (t > i + 1 && /\s/.test(src[t - 1])) t--
+      if (t > i + 1 && src[t - 1] === ')') douteuses = ouvertes.length
+    }
+    if (c === '/' && ouvreUneRegex(src.slice(i + 1, j))) {
+      const e = scanRegexLiteral(src, j)
+      if (e !== -1) { j = e; continue }
+    }
+    if (c === '{') {
+      prof++
+      if (ouvertes) ouvertes.push(j)
+    }
+    else if (c === '}') {
+      if (--prof === 0) return j + 1
+      if (ouvertes) {
+        ouvertes.pop()
+        douteuses = Math.min(douteuses, ouvertes.length)
+      }
+    }
+    j++
+  }
+  return echec()
 }

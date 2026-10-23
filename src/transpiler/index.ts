@@ -21,22 +21,24 @@ import { createHash } from 'node:crypto'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 
-import { MU_HOOKS, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, cheminSegments, cleMinmaxChemin, rewriteMuImportAst, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { compileVars, checkRessorts, type RuleAst } from './var-types.js'
+import { MU_HOOKS, MU_LAYOUT_OUT, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, rewriteMuImportAst, ouvreUneRegex, scanRegexLiteral, finExpression } from '../sigils.js'
 import { parseVtValue } from '../bundler/config.js'
 import { extractDirectives, buildPersistCode } from './directives.js'
-import { extractSections } from './sections.js'
-import { jsTemplate } from './template.js'
+import { extractSections, findScriptMatches, findStyleMatches } from './sections.js'
+import { jsTemplate, autoloaderLine } from './template.js'
 import { compileCss } from './css.js'
 import { rewriteStyleVars, wrapThemeBlock, type ThemeVar } from './style-vars.js'
 import { processIncludes, processGlobalMacros, newIncludeAccumulator } from './macros.js'
 import { lintSplitRune, maskNonCode } from './split-rune.js'
 import { analyserConstReassign, findConstReassignment } from './const-reassign.js'
-import { tokenize } from '../lexer/index.js'
+import { tokenize, scanDoubleQuoteAt, scanTemplateAt, convertCoffeeInterpolations } from '../lexer/index.js'
 import { compile as compileHtml } from '../generator/index.js'
 import type { EventRoute } from '../generator/state.js'
 import type { TagRef } from '../parser/index.js'
-import { Scanner, extractBalanced } from '../parser/index.js'
+import { Scanner, extractBalanced, expandLayoutBlocks } from '../parser/index.js'
 import { generateCreateFnBody } from '../generator/paths.js'
+import { fermerComposantsAutoFermes } from '../generator/compile.js'
 import { reecritOuRejetteRuneChemin } from '../generator/utils.js'
 import { Analyzer, collectStoreReads } from '../analyzer/index.js'
 import { getAdapter, type SupportedLang } from '../languages/index.js'
@@ -44,11 +46,17 @@ import { transformReactiveWritesMapped } from '../generator/transform-reactive.j
 import { applyPathTrackingMapped } from '../generator/path-tracker.js'
 import { annotateEffectDepsMapped } from '../generator/effect-deps.js'
 import { rebindDetachedThisMapped } from '../generator/this-rebinding.js'
+import { pseudoClashWarnings } from '../effects/pseudo-clash.js'
 import { lintReservedSymbolNames } from '../generator/reserved-symbols.js'
-import { state as generatorState } from '../generator/state.js'
+import { storeArgsToRawJsLint, inlineHandlerLines } from '../generator/store-args.js'
+import { state as generatorState, withState } from '../generator/state.js'
+import { setProjectEffects, withProjectEffects, sockAbsent, type ProjectEffect } from '../effects/catalog.js'
+import { resolveEffectImages } from './effect-images.js'
 import { checkA11y } from './a11y.js'
 import { checkUjsForm } from './ujs-form.js'
+import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { t, type MsgKey } from '../messages/index.js'
+import { maskHtmlComments as masqueCommentairesHtml, readHtmlComment } from '../mask.js'
 import { decode, encode } from '@jridgewell/sourcemap-codec'
 import { chainSourceMaps, shiftGeneratedPosition, finalizeSourceMap } from './source-map-chain.js'
 
@@ -59,12 +67,13 @@ import { chainSourceMaps, shiftGeneratedPosition, finalizeSourceMap } from './so
 // `decode`/`encode` travaillent en entiers ABSOLUS (la lib redélimite les deltas
 // VLQ elle-même) : ajouter l'offset au champ `sourceLine` de chaque segment suffit.
 // ----------------------------------------------------------------------------
-export function shiftSourceMapLines(mapJson: string, lineOffset: number): string {
-  if (lineOffset === 0) return mapJson
+export function shiftSourceMapLines(mapJson: string, lineOffset: number, sansPlace = 0): string {
+  if (lineOffset === 0 && sansPlace === 0) return mapJson
   const raw = JSON.parse(mapJson)
   const decoded = decode(raw.mappings ?? '')
+  // `sansPlace` : premières lignes du texte compilé ajoutées par le compilateur, sans ligne d'origine
   const shifted = decoded.map(line => line.map(seg => seg.length >= 4
-    ? [seg[0], seg[1], seg[2] + lineOffset, seg[3], ...seg.slice(4)] as typeof seg
+    ? (seg[2] < sansPlace ? [seg[0]] : [seg[0], seg[1], seg[2] + lineOffset, seg[3], ...seg.slice(4)]) as typeof seg
     : seg))
   raw.mappings = encode(shifted)
   return JSON.stringify(raw)
@@ -126,7 +135,7 @@ function parseScriptAst(js: string): acorn.Node | null {
 function detectRouterAware(jsInitBase: string, preAst?: acorn.Node | null): boolean {
   const ast = preAst !== undefined ? preAst : parseScriptAst(jsInitBase)
   if (!ast) {
-    return /\bthis\.routes\b/.test(jsInitBase) || /this\._mjs_hook\(\s*['"]urlChange['"]/.test(jsInitBase)
+    return /\bthis\.routes\b/.test(jsInitBase) || /\b(?:this|_mjsThis)\._mjs_hook\(\s*['"]urlChange['"]/.test(jsInitBase)
   }
   let found = false
   walk.simple(ast, {
@@ -144,10 +153,10 @@ function detectRouterAware(jsInitBase: string, preAst?: acorn.Node | null): bool
       }
     },
     CallExpression(node: any) {
-      // `this._mjs_hook('urlChange', fn)`.
+      // `_mjsThis._mjs_hook('urlChange', fn)` (la rune `µurlChange`), ou `this._mjs_hook(…)`.
       if (
         node.callee?.type === 'MemberExpression' &&
-        node.callee.object?.type === 'ThisExpression' &&
+        (node.callee.object?.type === 'ThisExpression' || node.callee.object?.type === 'Identifier' && node.callee.object.name === '_mjsThis') &&
         node.callee.property?.type === 'Identifier' &&
         node.callee.property.name === '_mjs_hook' &&
         node.arguments?.[0]?.type === 'Literal' &&
@@ -207,12 +216,23 @@ function detectRoutesReassignment(jsInitBase: string, preAst?: acorn.Node | null
 // ci-dessus (parseScriptAst), sur le MÊME jsInitBase (repli regex identique à l'ancien
 // comportement si le parse échoue, rare — jamais de silence total). `preAst` : mêmes
 // sémantiques que detectRouterAware ci-dessus.
+// Hors compte : les poses ENCHAÎNÉES de <@window>/<@document>/<@body>/<@html>/<@head>
+// (processGlobalMacros, macros.ts) — `((_mjs_prevAwake = @_mjs_hooks?.awake) => @_mjs_hook 'awake', …)()`,
+// ajoutées APRÈS le <script> : elles reprennent le µawake/µsleep du composant et le rappellent,
+// rien n'est écrasé. Les compter refusait tout composant qui écrivait µawake à côté d'un
+// <@window>, alors qu'il n'y avait qu'un seul µawake.
 // ============================================================================
+// nom du paramètre qui garde le hook précédent dans une pose enchaînée (macros.ts)
+const chainParamName = (hook: string): string => `_mjs_prev${hook[0].toUpperCase()}${hook.slice(1)}`
+
 function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): string | null {
   const countFromText = (): string | null => {
     const counts = new Map<string, number>()
     for (const m of jsInitBase.matchAll(new RegExp(`_mjs_hook\\(\\s*'(${MU_HOOKS})'`, 'g'))) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1)
-    for (const [name, n] of counts) if (n > 1) return name
+    for (const [name, n] of counts) {
+      const chained = jsInitBase.split(`(${chainParamName(name)} = `).length - 1
+      if (n - chained > 1) return name
+    }
     return null
   }
   const ast = preAst !== undefined ? preAst : parseScriptAst(jsInitBase)
@@ -221,7 +241,11 @@ function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): st
   }
   const hookNames = new Set(MU_HOOKS.split('|'))
   const counts = new Map<string, number>()
-  walk.full(ast, (node: any) => {
+  // une pose dans une fonction dont un paramètre s'appelle `_mjs_prev<Hook>` est enchaînée
+  const isChained = (hook: string, ancestors: any[]): boolean => ancestors.some((a: any) =>
+    (a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression')
+    && (a.params ?? []).some((p: any) => (p.type === 'AssignmentPattern' ? p.left : p)?.name === chainParamName(hook)))
+  walk.fullAncestor(ast, (node: any, _st: unknown, ancestors: any[]) => {
     if (node.type !== 'CallExpression') return
     const callee = node.callee
     const isHookCallee = callee?.type === 'Identifier' && callee.name === '_mjs_hook'
@@ -229,6 +253,7 @@ function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): st
     if (!isHookCallee) return
     const arg0 = node.arguments?.[0]
     if (arg0?.type !== 'Literal' || typeof arg0.value !== 'string' || !hookNames.has(arg0.value)) return
+    if (isChained(arg0.value, ancestors)) return
     counts.set(arg0.value, (counts.get(arg0.value) ?? 0) + 1)
   })
   for (const [name, n] of counts) if (n > 1) return name
@@ -238,6 +263,26 @@ function detectDuplicateHook(jsInitBase: string, preAst?: acorn.Node | null): st
 export interface TranspileOpts {
   /** Si non précisé, déduit du fichier source. */
   moduleName?: string
+  /** règles nommées des fichiers `*.types.mjs` du projet (bundler, compileTypesFiles) : un nom cité
+   *  dans le `<vars>` du composant est remplacé par sa définition, au build. */
+  typeDefs?: Record<string, RuleAst>
+  /** effets des fichiers `*.effects.mjs` du projet (bundler, compileEffectsFiles) : un effet réglé
+   *  se résout à la compilation, un effet CSS part avec le composant qui le pose. */
+  effectDefs?: Record<string, ProjectEffect>
+  /** texte de chaque règle dans le code émis, pour les messages de développement — `false` en
+   *  production (défaut `true`). */
+  typesText?: boolean
+  /** les chargements qui montrent un squelette d'eux-mêmes (`effects.skeleton` de mjs.config.json ;
+   *  défaut `['await']`) — ici, `await` : un {await} sans branche d'attente */
+  skeleton?: string[]
+  /** *guard d'office sur un champ lié à une variable typée (`effects.guard` de mjs.config.json ;
+   *  défaut `true`, `false` : gardé sans effet ni bulle ; `{ delay }` : la pause, lue au runtime) */
+  guard?: boolean | { delay?: number | string }
+  /** les stores typés dans le `<vars>` d'un composant du projet (bundler) : un champ lié à l'un d'eux
+   *  reçoit *guard d'office, même quand la règle est posée par un autre composant */
+  typedStores?: string[]
+  /** les modèles en fichier des composants (`carte.compacte.mjs`), cf. ParseDiag.models */
+  models?: { dev?: Record<string, string[]>, core?: Record<string, string[]> }
   /** Langage par défaut pour <script> sans `lang=`. */
   defaultScriptLang?: SupportedLang
   /**
@@ -320,6 +365,20 @@ export interface TranspileOpts {
    */
   ujsForm?: boolean
   /**
+   * Coupe individuellement les DEUX autres types d'avertissement que ce fichier émet — `include`
+   * (`<@include>` sans baseDir) et `routes` (`@routes` qui réassigne un bloc `<routes>`) —
+   * cf. src/diagnostics.ts pour la table complète des types et leur gravité. `a11y`/
+   * `maxStateVars`/`ujsForm` ci-dessus restent gérés par leur PROPRE champ, jamais par ce bag.
+   */
+  lint?: LintToggles
+  /**
+   * Le terminal accepte-t-il la couleur, calculé UNE FOIS par le thread principal
+   * (`resolveColorsEnabled`, src/diagnostics.ts) puis transmis ici : un thread de travail
+   * n'est jamais un terminal, il ne redétermine jamais ça lui-même. Défaut `false` — un
+   * appelant isolé de `transpile()` (test, outillage) n'a pas besoin de couleur.
+   */
+  colorsEnabled?: boolean
+  /**
    * Préfixe des variables de thème : `$$brand` (dans un `<style>` ou un `<theme>`)
    * compile en `var(--<varPrefix>-brand)`. Défaut `'mjs'`, réglable dans
    * `mjs.config.json`. UN SEUL préfixe pour tout le monde — jamais de préfixe
@@ -368,6 +427,98 @@ export function normalizeSigilAlias(src: string, sigil?: string): string {
   if (!src || !sigil || sigil === 'µ') return src
   const re = SIGIL_ALIASES[sigil]
   return re ? src.replace(re, 'µ') : src
+}
+
+// L'alias s'écrit pour `µ` dans le CODE seul, jamais dans ce qui s'affiche ou se lit tel quel : avant, `mjs.dev`
+// devenait `µ.dev` dans le texte, les liens, `<pre>`, les chaînes du script, et `.mjs.actif` devenait `.µ.actif`
+// dans la feuille de style (règle perdue).
+
+// le code (script, expression `{…}`, ligne `@import`) : alias hors chaînes, commentaires et regex, l'intérieur des
+// interpolations compris (vue maskNonCode, même longueur)
+export function sigilAliasCode(src: string, sigil: string, lang = 'civet'): string {
+  const re = SIGIL_ALIASES[sigil]
+  if (!re || !src.includes(sigil)) return src
+  const vue = maskNonCode(src, lang)
+  return src.replace(re, (m: string, pos: number) => vue.startsWith(m, pos) ? 'µ' : m)
+}
+
+// un appel d'asset ou d'image écrit en clair dans un attribut (`<img src="mjs.asset('x.png')">`) : la résolution des
+// assets le cherche dans tout le HTML, il garde l'alias
+const ALIAS_APPEL_EN_CLAIR_RE = /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
+
+// le HTML et les directives : alias dans les expressions `{…}` et les lignes `@import` ; le texte, les attributs,
+// `<pre>`, les commentaires HTML restent tels qu'écrits
+function sigilAliasHtml(html: string, sigil: string): string {
+  if (!SIGIL_ALIASES[sigil] || !html.includes(sigil)) return html
+  let out   = ''
+  let texte = ''
+  const vider = () => { if (texte) { out += texte.replace(ALIAS_APPEL_EN_CLAIR_RE, 'µ'); texte = '' } }
+  const n = html.length
+  // accolades sans fin rendues par finExpression : relire depuis l'une d'elles ne se refermerait pas davantage (même mémoire que
+  // scanTagClose : un gabarit aux accolades non refermées coûtait un temps quadratique)
+  const sansFin = new Set<number>()
+  let i = 0
+  while (i < n) {
+    if ((i === 0 || html[i - 1] === '\n') && /^[ \t]*@import\b/.test(html.slice(i, i + 40))) {
+      vider()
+      const nl  = html.indexOf('\n', i)
+      const fin = nl < 0 ? n : nl + 1
+      out += sigilAliasCode(html.slice(i, fin), sigil)
+      i = fin
+      continue
+    }
+    if (html.startsWith('<!--', i)) {
+      const commentaire = readHtmlComment(html, i)
+      if (commentaire !== null) {
+        vider()
+        out += html.slice(i, commentaire.end)
+        i = commentaire.end
+        continue
+      }
+    }
+    if (html[i] === '{' && !sansFin.has(i)) {
+      const fin = finExpression(html, i, sansFin)
+      if (fin > 0) {
+        vider()
+        out += sigilAliasCode(html.slice(i, fin), sigil)
+        i = fin
+        continue
+      }
+    }
+    texte += html[i]
+    i++
+  }
+  vider()
+  return out
+}
+
+// la source entière : chaque <script> par sigilAliasCode, le HTML et les directives par sigilAliasHtml ; <style> et
+// <theme> (`.mjs.actif` y est un sélecteur) et <vars> (une règle n'a pas de rune : `'mjs.fr'` ne devient pas
+// `'µ.fr'`) tels qu'écrits. Sections trouvées comme extractSections et extractDirectives les trouvent
+function sigilAliasOutsideVars(src: string, sigil?: string, langParDefaut = 'civet'): string {
+  if (!src || !sigil || sigil === 'µ' || !SIGIL_ALIASES[sigil] || !src.includes(sigil)) return src
+  const zones: Array<{ debut: number; fin: number; lang: string | null }> = []
+  const { moduleScripts, scripts } = findScriptMatches(src)
+  for (const m of [...moduleScripts, ...scripts]) {
+    const idx   = m.indices!
+    const corps = idx[idx.length - 1]
+    const attrs = src.slice(idx[0][0], corps[0])
+    zones.push({ debut: corps[0], fin: corps[1], lang: /lang[ \t]*=[ \t]*['"]([^'"]+)['"]/.exec(attrs)?.[1] ?? langParDefaut })
+  }
+  const styles = findStyleMatches(src, [...moduleScripts, ...scripts])
+  for (const m of styles.matches) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
+  for (const m of styles.maskedView.matchAll(/^[ \t]*<theme\b[^>]*>[\s\S]*?<\/theme>/gmd)) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
+  for (const m of src.matchAll(/^[ \t]*<vars\b[^>]*>[\s\S]*?<\/vars>/gmd)) zones.push({ debut: m.indices![0][0], fin: m.indices![0][1], lang: null })
+  zones.sort((a, b) => a.debut - b.debut)
+  let out  = ''
+  let last = 0
+  for (const z of zones) {
+    if (z.debut < last) continue
+    out += sigilAliasHtml(src.slice(last, z.debut), sigil)
+    out += z.lang === null ? src.slice(z.debut, z.fin) : sigilAliasCode(src.slice(z.debut, z.fin), sigil, z.lang)
+    last = z.fin
+  }
+  return out + sigilAliasHtml(src.slice(last), sigil)
 }
 
 export interface TranspileData {
@@ -427,6 +578,20 @@ export interface TranspileData {
   /** Statisation $$ — ligne module-level `µ._storeDeclare([...])`, exécutée
    * UNE fois au chargement (pas par instance) ; chaîne VIDE si aucune clé $$. */
   storeDeclareLine: string
+  /** types — lignes module-level collées après `storeDeclareLine` : la table des règles des
+   *  variables et props (`const _mjs_T_<Classe> = {…};`) et celle des stores
+   *  (`µ._mjs_storeTypes({…});`) ; chaîne VIDE sans bloc `<vars>` (sortie inchangée). */
+  typesDecl: string
+  /** types — ligne d'instance collée après `stateMethodClashLine` : `this._mjs_types = …;`,
+   *  posée avant le script (la valeur de départ passe la règle) ; chaîne VIDE sinon. */
+  typesLine: string
+  /** types — texte canonique de la règle de chaque store déclaré dans le `<vars>` : le build
+   *  refuse deux règles différentes pour le même store. */
+  storeTypes: Record<string, string>
+  /** types — le `<vars>` cite une règle nommée : le composant dépend des fichiers `*.types.mjs`. */
+  usesNamedTypes: boolean
+  /** le composant pose un effet de l'appli : il dépend des fichiers `*.effects.mjs`. */
+  usesProjectEffects: boolean
   /** collision état/méthode homonymes : ligne d'instance collée en fin
    * de `this._mjs_var_bits = […];` (jamais de retour à la ligne avant), qui liste
    * les noms `$x`/`@x` homonymes pour que le runtime épargne la MÉTHODE au
@@ -434,7 +599,8 @@ export interface TranspileData {
   stateMethodClashLine: string
   /** i18n — ligne d'instance `_mjsThis._mjs_i18n = [section, mode];` (émise
    *  seulement si @i18n OU le JS final contient `µ.t(`) ; chaîne VIDE sinon
-   *  (zéro coût pour les modules sans i18n). */
+   *  (zéro coût pour les modules sans i18n). Un module à plusieurs sections
+   *  (`@i18n 'a' 'b'`) y ajoute un 3e élément, la liste des sections en plus. */
   i18nLine: string
   jsModule: string
   jsInitBase: string
@@ -447,9 +613,13 @@ export interface TranspileData {
   themeVariants: string[]
   /** CSS de chaque déclinaison (`<style name="bandeau">`), par nom — écrit en fichier frère par le build. */
   layoutCss: Record<string, string>
+  /** le composant lit µlayout : sa prop `layout` choisit aussi le style nommé (cf. mjs_element.ts, `_set`) */
+  layoutRune?: boolean
   sharedCssNames: string[]
   moduleDisplay: string
   modulePreload: string | null
+  /** `@formAssociated` (cf. directives.ts) : la ligne du socle du formulaire avant l'enregistrement de la balise. */
+  moduleFormAssociated?: boolean
   moduleViewTransition: string | null
   moduleViewTransitionPriority: number
   hasDynamicSlots: boolean
@@ -522,13 +692,22 @@ async function applyAssetReplacements(
     return { from: full, to }
   }))
   let out = text
-  // `to` en 2e argument de `.replace` est un STRING :
-  //    `String.replace` y lit les motifs spéciaux `$$`/`$&`/`` $` ``/`$'`/`$N` — un chemin web
-  //    résolu contenant l'un d'eux (nom de fichier avec `$`) coupait/dupliquait le texte au lieu
-  //    de s'insérer tel quel (même piège fermé plus bas pour le squelette de classe, cf.
-  //    injectTemplate). La forme FONCTION neutralise ces motifs : `to` est réinjecté littéral.
-  for (const { from, to } of replacements) out = out.replace(from, () => to)
+  // chaque appel retenu remplacé À SA PLACE, du dernier au premier (les positions d'avant restent justes) : un
+  // `.replace(texte)` visait la PREMIÈRE occurrence du texte — le même appel cité plus haut dans un commentaire ou une
+  // chaîne recevait l'adresse, l'appel réel restait non résolu. `to` est inséré tel quel (un `$` du chemin ne compte pas)
+  for (let k = matches.length - 1; k >= 0; k--) {
+    const at = matches[k].index!
+    out = out.slice(0, at) + replacements[k].to + out.slice(at + replacements[k].from.length)
+  }
   return out
+}
+
+// les feuilles de style du composant : même remplacement que le HTML, sans le masquage des blocs de doc (`<pre>` et `<code>` n'existent pas
+// en CSS) et avec les alias ASCII (`mjs.asset`), que l'alias de sigil ne réécrit pas dans un style — en SASS le `.` préfixe une classe
+const STYLE_ASSET_CALL_RE = /(['"]?)(?:µasset|µ\.asset|mjsasset|mjs\.asset)\(['"](.+?)['"]\)\1/g
+
+async function replaceStyleAssets(text: string, resolveAsset: (path: string) => Promise<string>): Promise<string> {
+  return applyAssetReplacements(text, [...text.matchAll(STYLE_ASSET_CALL_RE)], resolveAsset)
 }
 
 async function replaceMagicAssets(
@@ -574,7 +753,7 @@ function replaceMagicImages(text: string, images?: Record<string, string>): stri
 // ----------------------------------------------------------------------------
 // applyMjsSugarToScript — préprocessing du script avant compilation langage.
 // Reproduit les transformations CoffeeScript de transpiler.rb (µ. routing,
-// runes µ$, µ.minmax, µ.inspect). Appliquées sur la source brute (Coffee/Civet/TS/JS).
+// runes µ$, µ.inspect). Appliquées sur la source brute (Coffee/Civet/TS/JS).
 // ----------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
@@ -640,7 +819,7 @@ export function lintSingletonConsume(source: string): Set<string> {
     .replace(/^[ \t]*@import\b[^\n]*$/gm, '')
     .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, '')
     .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '')
     .replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => ' '.repeat(m.length))
   for (const name of singletonImports) {
     // Interdits : `$NOM` (bare), `$$NOM` (store global) — jamais `µ$$NOM`
@@ -689,7 +868,8 @@ export function lintImportDollarName(source: string): void {
 // indentation significative), tout juste extrait par extractSections (donc
 // post-dedent) et AVANT les appends générés (persist/macros/includes émettent
 // leurs propres µeffect, légitimes, jamais scannés ici) :
-//   - occurrence sur une ligne INDENTÉE → corps imbriqué (méthode, hook, cb) ;
+//   - occurrence dans une enveloppe (méthode, hook, cb, objet), quel que soit son retrait, sauf sous des blocs de
+//     contrôle (`if`, `for`, `try`…) tous ouverts depuis le premier niveau (effetImbrique) ;
 //   - occurrence précédée sur SA ligne de `->` / `=>` / `do` → callback inline
 //     même en colonne 0 (`setTimeout -> µeffect ->`).
 // Le <script module>, lui, s'exécute à l'IMPORT du fichier généré (jsModule
@@ -700,12 +880,146 @@ export function lintImportDollarName(source: string): void {
 // assumée que lintSingletonConsume sur les heredocs `"""…"""`.
 const EFFECT_RUNE_RE   = /(?<![\w$.])(µ\.?(?:effect|inspect))(?![\w$])/g
 const NESTED_BEFORE_RE = /->|=>|(?<![\w$])do(?![\w$])/
+// ligne qui ouvre un bloc de contrôle (condition, boucle, essai), `}` d'un bloc js précédent toléré en tête
+const BLOC_DE_CONTROLE_RE = /^[ \t]*(?:\}[ \t]*)?(?:if|else|unless|for|while|until|loop|switch|when|case|default|try|catch|finally)(?![\w$])/
 
-export function lintEffectTopLevel(scriptSource: string, isModule = false): void {
+// le corps d'un `if` ou d'un `for` de premier niveau s'exécute à l'initialisation, comme le premier niveau lui-même : un
+// µeffect y fonctionne. Toute autre enveloppe (fonction, méthode, hook, rappel, objet, expression sur plusieurs lignes) garde
+// le refus. Le jugement suit la structure du script (structureDuScript) et non le texte d'une ligne : une accolade se juge sur
+// l'instruction qu'elle ouvre, une regex n'ouvre ni ne ferme rien, et le corps d'une fonction est refusé quel que soit le retrait
+const FONCTION_RE         = /(?<![\w$])function(?![\w$])/
+const ouvreUneFonction    = (texte: string): boolean => NESTED_BEFORE_RE.test(texte) || FONCTION_RE.test(texte)
+const ouvreBlocDeControle = (texte: string): boolean => BLOC_DE_CONTROLE_RE.test(texte) && !ouvreUneFonction(texte)
+
+// masque de MASK_STRINGS_AND_COMMENTS_RE, sauf un `#` qui suit un point (`this.#n`) : champ privé du JavaScript, jamais un
+// commentaire CoffeeScript — masqué jusqu'à la fin de la ligne, il emportait l'accolade qui le suit (`get n() { return this.#n }`).
+// Une chaîne sur plusieurs lignes (`"""…"""`, `'''…'''`) se lit d'un bloc, et un gabarit jusqu'à l'accent grave de son niveau
+// (`${…}` imbriqués compris, scanTemplateAt du lexeur) : une accolade écrite dedans n'ouvre ni ne ferme rien
+const MASQUE_EFFET_RE = /"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`|\/\*[\s\S]*?\*\/|###[\s\S]*?###|\/\/[^\n]*|(?<!\.)#[^\n]*/g
+// gabarit lu comme avant (jusqu'à l'accent grave suivant) quand ses `${…}` ne se referment pas
+const GABARIT_SIMPLE_RE = /`(?:[^`\\]|\\.)*`/y
+
+function masqueEffet(src: string): string {
+  let out = ''
+  let pos = 0
+  MASQUE_EFFET_RE.lastIndex = 0
+  for (let m = MASQUE_EFFET_RE.exec(src); m !== null; m = MASQUE_EFFET_RE.exec(src)) {
+    let fin = m.index + m[0].length
+    if (m[0] === '`') {
+      fin = scanTemplateAt(src, m.index)
+      if (fin === -1) {
+        GABARIT_SIMPLE_RE.lastIndex = m.index
+        fin = GABARIT_SIMPLE_RE.exec(src) ? GABARIT_SIMPLE_RE.lastIndex : -1
+      }
+      // accent grave jamais refermé : du texte
+      if (fin === -1) continue
+    }
+    out += src.slice(pos, m.index) + src.slice(m.index, fin).replace(/[^\n]/g, ' ')
+    pos = fin
+    MASQUE_EFFET_RE.lastIndex = fin
+  }
+  return out + src.slice(pos)
+}
+
+interface Accolade { ouvre: number, ferme: number, controle: boolean }
+interface StructureDuScript { texte: string, accolades: Accolade[], suites: boolean[] }
+
+// script masqué de ses chaînes et commentaires, lu caractère par caractère : ses regex sont masquées à leur tour (même lecture
+// que finExpression, `/\{/`, `/[{]/` ou `/}/` n'ouvrent ni ne ferment rien) et chaque accolade est jugée sur l'instruction
+// qu'elle ouvre, lue depuis son début — dernier `;`, `{` ou `}`, ou fin de ligne hors parenthèse —, condition sur plusieurs
+// lignes comprise (`if (a &&` puis `    b) {`). Rend le texte sans ses regex, les accolades et, par ligne, si elle continue une
+// parenthèse ouverte plus haut
+function structureDuScript(masque: string): StructureDuScript {
+  let texte = masque
+  const accolades: Accolade[] = []
+  const pile: { accolade: Accolade, parens: number, debut: number, precedente: string }[] = []
+  const suites = [false]
+  let parens     = 0    // parenthèses et crochets ouverts depuis l'accolade englobante
+  let debut      = 0    // début de l'instruction en cours
+  let precedente = ''   // instruction de la ligne d'avant : celle d'une accolade seule sur sa ligne
+  for (let p = 0; p < texte.length; p++) {
+    const c = texte[p]
+    if (c === '/' && ouvreUneRegex(texte.slice(0, p))) {
+      const fin = scanRegexLiteral(texte, p)
+      if (fin !== -1) {
+        texte = texte.slice(0, p) + ' '.repeat(fin - p) + texte.slice(fin)
+        p = fin - 1
+        continue
+      }
+    }
+    if (c === '(' || c === '[') parens++
+    else if ((c === ')' || c === ']') && parens > 0) parens--
+    else if (c === '{') {
+      const accolade = { ouvre: p, ferme: -1, controle: ouvreBlocDeControle(texte.slice(debut, p).trim() || precedente) }
+      accolades.push(accolade)
+      pile.push({ accolade, parens, debut, precedente })
+      parens     = 0
+      debut      = p + 1
+      precedente = ''
+    }
+    else if (c === '}') {
+      const ouverte = pile.pop()
+      if (ouverte) {
+        ouverte.accolade.ferme = p
+        parens = ouverte.parens
+      }
+      // accolade prise dans une parenthèse (objet en argument, rappel) : l'instruction qui l'englobe continue
+      if (ouverte && ouverte.parens > 0) {
+        debut      = ouverte.debut
+        precedente = ouverte.precedente
+      }
+      else {
+        debut      = p + 1
+        precedente = ''
+      }
+    }
+    else if (c === ';' && parens === 0) {
+      debut      = p + 1
+      precedente = ''
+    }
+    else if (c === '\n') {
+      suites.push(parens > 0)
+      if (parens === 0) {
+        const instruction = texte.slice(debut, p).trim()
+        if (instruction) precedente = instruction
+        debut = p + 1
+      }
+    }
+  }
+  return { texte, accolades, suites }
+}
+
+// imbriqué si une accolade encore ouverte à la `position` de l'occurrence n'ouvre pas un bloc de contrôle, ou, pour une ligne
+// indentée, si une ligne qui l'englobe (moins indentée, en remontant jusqu'au premier niveau) n'en ouvre pas un — retraits de
+// Civet et de CoffeeScript. Une ligne qui continue une parenthèse ouverte plus haut appartient à l'instruction de sa première
+// ligne, jugée à sa place ; une fonction ouverte dans cette suite garde le refus
+function effetImbrique(lines: string[], li: number, position: number, structure: StructureDuScript): boolean {
+  if (structure.accolades.some(a => !a.controle && a.ouvre < position && (a.ferme === -1 || a.ferme > position))) return true
+  let retrait = /^[ \t]*/.exec(lines[li])![0].length
+  for (let k = li - 1; k >= 0 && retrait > 0; k--) {
+    const ligne = lines[k]
+    if (ligne.trim() === '') continue
+    const r = /^[ \t]*/.exec(ligne)![0].length
+    if (r >= retrait) continue
+    if (structure.suites[k]) {
+      if (ouvreUneFonction(ligne)) return true
+      continue
+    }
+    if (!ouvreBlocDeControle(ligne)) return true
+    retrait = r
+  }
+  return retrait > 0
+}
+
+// `firstLine` : ligne du fichier où commence `scriptSource` (le refus dans <script module> cite la ligne du `.mjs`)
+export function lintEffectTopLevel(scriptSource: string, isModule = false, firstLine = 1): void {
   if (!scriptSource) return
-  const masked = scriptSource.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => m.replace(/[^\n]/g, ' '))
-  const lines = masked.split('\n')
-  for (let li = 0; li < lines.length; li++) {
+  const masked = masqueEffet(scriptSource)
+  if (!masked.includes('effect') && !masked.includes('inspect')) return
+  const structure = structureDuScript(masked)
+  const lines     = structure.texte.split('\n')
+  let debutLigne  = 0
+  for (let li = 0; li < lines.length; debutLigne += lines[li].length + 1, li++) {
     const line = lines[li]
     if (!line.includes('effect') && !line.includes('inspect')) continue
     EFFECT_RUNE_RE.lastIndex = 0
@@ -713,10 +1027,10 @@ export function lintEffectTopLevel(scriptSource: string, isModule = false): void
     while ((m = EFFECT_RUNE_RE.exec(line)) !== null) {
       const rune = m[1]
       if (isModule) {
-        throw new Error(t('transpiler.rune-effect-dans-module', { rune, ligne: li + 1 }))
+        throw new Error(t('transpiler.rune-effect-dans-module', { rune, ligne: li + firstLine }))
       }
-      if (/^[ \t]/.test(line) || NESTED_BEFORE_RE.test(line.slice(0, m.index))) {
-        throw new Error(t('transpiler.rune-effect-imbriquee', { rune, ligne: li + 1 }))
+      if (effetImbrique(lines, li, debutLigne + m.index, structure) || NESTED_BEFORE_RE.test(line.slice(0, m.index))) {
+        throw new Error(t('transpiler.rune-effect-imbriquee', { rune, ligne: li + firstLine }))
       }
     }
   }
@@ -736,7 +1050,7 @@ export function lintEffectTopLevel(scriptSource: string, isModule = false): void
 // ----------------------------------------------------------------------------
 const EMIT_RUNE_RE = /µ\.?\s*emit\b/g
 
-export function lintEmitInModule(moduleSource: string): void {
+export function lintEmitInModule(moduleSource: string, firstLine = 1): void {
   if (!moduleSource) return
   const masked = moduleSource.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => m.replace(/[^\n]/g, ' '))
   const lines = masked.split('\n')
@@ -744,7 +1058,7 @@ export function lintEmitInModule(moduleSource: string): void {
     if (!lines[li].includes('emit')) continue
     EMIT_RUNE_RE.lastIndex = 0
     const m = EMIT_RUNE_RE.exec(lines[li])
-    if (m) throw new Error(t('transpiler.rune-emit-dans-module', { rune: m[0], ligne: li + 1 }))
+    if (m) throw new Error(t('transpiler.rune-emit-dans-module', { rune: m[0], ligne: li + firstLine }))
   }
 }
 
@@ -767,11 +1081,15 @@ export { lintSplitRune }
 // ----------------------------------------------------------------------------
 const ON_URL_CHANGE_LEGACY_RE = /(?<![\w$])(?:@|this\.)onUrlChange\b\s*=(?!=)/
 
-export function lintOnUrlChangeLegacy(scriptSource: string, moduleName: string): void {
+export function lintOnUrlChangeLegacy(scriptSource: string, moduleName: string, lint?: LintToggles, colorsEnabled = false, firstLine?: number): void {
   if (!scriptSource) return
   const masked = scriptSource.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => m.replace(/[^\n]/g, ' '))
-  if (ON_URL_CHANGE_LEGACY_RE.test(masked)) {
-    console.warn(t('transpiler.on-url-change-legacy', { moduleName }))
+  const found = ON_URL_CHANGE_LEGACY_RE.exec(masked)
+  if (found) {
+    // la ligne du .mjs quand on connaît celle où commence le script
+    const ligne = firstLine === undefined ? '' : firstLine + (masked.slice(0, found.index).match(/\n/g)?.length ?? 0)
+    const line = typedLine('legacy', t('transpiler.on-url-change-legacy', { moduleName, ligne }), lint)
+    if (line !== null) printDiagnostic(line, colorsEnabled)
   }
 }
 
@@ -805,10 +1123,12 @@ export function lintOnUrlChangeLegacy(scriptSource: string, moduleName: string):
 // JS est vide ou ne parse pas (sortie langage exotique). PERF : permet de
 // PARTAGER l'AST entre lintUndeclaredTopLevelAssignment et lintNoRawImport (2
 // parse du même texte par section, ×2 avec le module → jusqu'à 4/composant).
-export function parseModuleAst(js: string): acorn.Node | null {
+// `locations` : positions de ligne dans l'AST, celles que lit le contrôle des constantes (findConstReassignment) quand il
+// reçoit cet AST au lieu de relire le texte
+export function parseModuleAst(js: string, locations = false): acorn.Node | null {
   if (!js) return null
   try {
-    return acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' })
+    return acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', locations })
   } catch {
     return null
   }
@@ -869,6 +1189,373 @@ export function lintUndeclaredTopLevelAssignment(js: string, lang: string, exter
     if (declared.has(name)) continue
     throw new Error(t('transpiler.nom-jamais-declare', { nom: name }))
   }
+}
+
+// ----------------------------------------------------------------------------
+// lintElementPropertyAtConstruction — le `<script>` tourne pendant la CONSTRUCTION de la balise du
+// composant : `@title = …` à son premier niveau n'y pose pas une donnée mais la propriété `title`
+// de la balise elle-même (HTMLElement). Deux familles, mesurées dans Chromium :
+//   - lecture seule (`@children`, `@dataset`, `@offsetWidth`…) : l'écriture lève (module strict),
+//     le composant tombe au montage, quel que soit son chemin de création — refusé au build ;
+//     `Reflect.set` n'est pas de ceux-là : il rend `false` sans lever, jamais refusé pour cela ;
+//   - reflet ou contenu (`@title`, `@id`, `@hidden`, `@part`, `@ariaLabel`, `@textContent`…) :
+//     l'écriture pose un attribut ou un enfant sur la balise. Créée par `document.createElement`
+//     (le routeur pour une page, `<@element>`, la relance d'un `<@failed>`), la balise est alors
+//     refusée par le navigateur (« The result must not have attributes ») ; tirée d'un gabarit ou
+//     de la page, elle vit, l'attribut en plus ; au rendu serveur, rien ne casse. Selon la valeur
+//     même (`@hidden = false` ne pose rien) : averti, jamais refusé.
+// Plus loin (µmount, méthode, écouteur) : libre.
+// Une MÉTHODE de la balise que ModularJS appelle lui-même (`@setAttribute = …`, cf.
+// ELEMENT_FRAMEWORK_METHODS) : refusée où que `this` soit la balise, pas seulement à la construction.
+// ----------------------------------------------------------------------------
+// propriétés en lecture seule de la balise : les écrire lève
+const ELEMENT_READONLY_PROPS = new Set([
+  'attributes', 'children', 'childNodes', 'firstChild', 'lastChild', 'firstElementChild', 'lastElementChild',
+  'previousSibling', 'nextSibling', 'previousElementSibling', 'nextElementSibling', 'parentNode', 'parentElement',
+  'childElementCount', 'nodeName', 'nodeType', 'tagName', 'localName', 'namespaceURI', 'prefix', 'ownerDocument',
+  'isConnected', 'baseURI', 'shadowRoot', 'assignedSlot', 'dataset', 'attributeStyleMap', 'isContentEditable',
+  'clientWidth', 'clientHeight', 'clientTop', 'clientLeft', 'offsetWidth', 'offsetHeight', 'offsetTop', 'offsetLeft',
+  'offsetParent', 'scrollWidth', 'scrollHeight',
+])
+// propriétés de la balise qui, écrites, posent un attribut (reflet) ou des enfants
+const ELEMENT_REFLECTED_PROPS = new Set([
+  'id', 'className', 'classList', 'slot', 'part', 'style', 'title', 'lang', 'translate', 'dir', 'hidden', 'inert',
+  'accessKey', 'draggable', 'spellcheck', 'autocapitalize', 'autocorrect', 'autofocus', 'contentEditable',
+  'enterKeyHint', 'inputMode', 'popover', 'tabIndex', 'writingSuggestions', 'role',
+  'innerHTML', 'outerHTML', 'textContent', 'innerText', 'outerText',
+])
+// méthodes de la balise que ModularJS appelle lui-même sur une balise de composant, APRÈS son
+// <script> — noms techniques, que personne ne prend pour une méthode à soi : masquées, c'est la
+// fonction de l'auteur qui part à leur place et le composant cesse de marcher (runtime/) :
+//   - attributs : setAttribute, getAttribute, removeAttribute au montage de chaque composant
+//     (mjs_element.ts, connectedCallback), hasAttribute (slots indexés, @flip, @title) ;
+//   - événements : dispatchEvent (µemit, liaisons), add/removeEventListener (µon d'un composant
+//     léger, effets, transitions) ;
+//   - contenu : appendChild, insertBefore, removeChild, replaceChild, replaceChildren (blocs du
+//     contenu que la page lui confie, <@element>, <@failed>, zone de navigation), querySelector
+//     (<@view> du routeur), querySelectorAll (retrait), getRootNode (événements délégués) ;
+//   - mesure et animation : getBoundingClientRect, getClientRects, getAnimations (transitions,
+//     @flip, effets), setPointerCapture (*goo), cloneNode (@viewTransition, couche de lévitation).
+// Les noms naturels que le cadre appelle aussi (remove, contains, replaceWith, matches, closest,
+// focus, click, animate) restent libres : un auteur les prend pour ses propres méthodes, c'est au
+// cadre de ne pas dépendre d'eux. attachShadow et getAttributeNames ne servent qu'au constructeur,
+// avant le <script> : libres aussi.
+const ELEMENT_FRAMEWORK_METHODS = new Set([
+  'setAttribute', 'getAttribute', 'removeAttribute', 'hasAttribute', 'addEventListener', 'removeEventListener', 'dispatchEvent',
+  'appendChild', 'insertBefore', 'removeChild', 'replaceChild', 'replaceChildren', 'querySelector', 'querySelectorAll', 'getRootNode',
+  'getBoundingClientRect', 'getClientRects', 'getAnimations', 'setPointerCapture', 'cloneNode',
+])
+
+// où `this` désigne le composant : le premier niveau du <script>, une flèche, une méthode posée sur lui
+// (`@f = ->`), ou une fonction sans propriétaire (le rappel de `µmount ->`, `f = ->`) que le compilateur lit
+// comme le composant (cf. generator/this-rebinding.ts). Une méthode de classe ou d'objet, un champ de
+// classe : `this` y est autre chose. Une fonction que le <script> construit avec `new` ou rebranche (`f.call(obj)`)
+// pose aussi ses propriétés ailleurs que sur le composant. `ancestors` : ceux du nœud, lui-même en dernier
+function thisIsComponent(ancestors: any[], foreign: ForeignThis): boolean {
+  for (let i = ancestors.length - 2; i >= 0; i--) {
+    const a = ancestors[i]
+    if (a.type === 'PropertyDefinition' || a.type === 'StaticBlock') return false
+    if (a.type !== 'FunctionExpression' && a.type !== 'FunctionDeclaration') continue
+    const parent = ancestors[i - 1]
+    if (parent?.type === 'MethodDefinition' || parent?.type === 'Property') return false
+    if (parent?.type === 'AssignmentExpression' && parent.right === a && parent.left?.type === 'MemberExpression') {
+      const owner  = parent.left.object
+      const direct = owner?.type === 'ThisExpression'
+      if (!direct && !(owner?.type === 'Identifier' && owner.name === '_mjsThis')) return false
+      if (!parent.left.computed && foreign.members.has(parent.left.property?.name)) return false
+      if (direct) continue
+      return true
+    }
+    const names = [a.id?.name, parent?.type === 'VariableDeclarator' && parent.init === a ? parent.id?.name : undefined, parent?.type === 'AssignmentExpression' && parent.right === a ? parent.left?.name : undefined]
+    return !names.some(n => n !== undefined && foreign.names.has(n))
+  }
+  return true
+}
+
+// les fonctions que le <script> ne laisse pas être le composant : celles qu'il construit avec `new` (`new Fake 1`,
+// `new @Emitter`) ou appelle avec un autre `this` (`f.call(obj)`, `.apply`, `.bind`) ; `call(@)` garde le composant.
+// Lues par leur nom, sans portée : un homonyme construit ailleurs la dispense aussi — un contrôle peut manquer une
+// écriture, jamais refuser à tort
+interface ForeignThis { names: Set<string>, members: Set<string> }
+
+function collectForeignThis(ast: acorn.Node): ForeignThis {
+  const names   = new Set<string>()
+  const members = new Set<string>()
+  const retain  = (target: any): void => {
+    if (target?.type === 'Identifier') names.add(target.name)
+    else if (target?.type === 'MemberExpression' && !target.computed && target.property?.type === 'Identifier' && (target.object?.type === 'ThisExpression' || (target.object?.type === 'Identifier' && target.object.name === '_mjsThis'))) members.add(target.property.name)
+  }
+  walk.simple(ast, {
+    NewExpression(node: any) { retain(node.callee) },
+    CallExpression(node: any) {
+      const c = node.callee
+      if (c?.type !== 'MemberExpression' || c.computed || !['call', 'apply', 'bind'].includes(c.property?.name)) return
+      const first = node.arguments[0]
+      if (first?.type === 'ThisExpression' || (first?.type === 'Identifier' && first.name === '_mjsThis')) return
+      retain(c.object)
+    },
+  })
+  return { names, members }
+}
+
+// ce que le <script> dit de `this` : les fonctions qui ne sont pas le composant, et les alias du composant
+// (`self = @`, `self := @`) — `self.nom = …` écrit sur lui. Un alias suit sa portée, à la fonction près : un
+// nom lié dans une fonction (variable, paramètre, fonction, classe) lui appartient ; l'alias n'en est un que si
+// toutes ses écritures de cette portée sont `= this` — réaffecté à autre chose (`self = {}`, une variable de
+// boucle, un paramètre), il cesse d'en être un
+interface ThisInfo { foreign: ForeignThis, isAlias: (name: string, ancestors: any[]) => boolean }
+
+const FUNCTION_NODES = new Set(['FunctionExpression', 'FunctionDeclaration', 'ArrowFunctionExpression'])
+
+// les noms que lie un motif (paramètre, déclaration, déstructuration)
+function patternNames(pat: any, out: string[] = []): string[] {
+  switch (pat?.type) {
+    case 'Identifier':        out.push(pat.name); break
+    case 'ObjectPattern':     for (const p of pat.properties) patternNames(p.type === 'RestElement' ? p.argument : p.value, out); break
+    case 'ArrayPattern':      for (const el of pat.elements) patternNames(el, out); break
+    case 'AssignmentPattern': patternNames(pat.left, out); break
+    case 'RestElement':       patternNames(pat.argument, out); break
+  }
+  return out
+}
+
+function analyzeThis(ast: acorn.Node): ThisInfo {
+  const foreign = collectForeignThis(ast)
+  const bound   = new Map<any, Set<string>>()
+  const defs    = new Map<any, Set<string>>()
+  const others  = new Map<any, Set<string>>()
+  const add     = (table: Map<any, Set<string>>, scope: any, names: string[]): void => {
+    if (!table.has(scope)) table.set(scope, new Set())
+    for (const n of names) table.get(scope)!.add(n)
+  }
+  // la fonction englobante (ou la racine) d'un nœud : `ancestors`, lui-même en dernier
+  const scopeOfNode = (ancestors: any[]): any => {
+    for (let i = ancestors.length - 1; i > 0; i--) if (FUNCTION_NODES.has(ancestors[i].type)) return ancestors[i]
+    return ancestors[0]
+  }
+  // la portée où `name` est lié, vu d'un nœud : la fonction la plus proche qui le lie, sinon la racine
+  const scopeOfName = (name: string, ancestors: any[]): any => {
+    for (let i = ancestors.length - 1; i > 0; i--) if (FUNCTION_NODES.has(ancestors[i].type) && bound.get(ancestors[i])?.has(name)) return ancestors[i]
+    return ancestors[0]
+  }
+  walk.ancestor(ast, {
+    VariableDeclarator(node: any, _st: unknown, ancestors: any[]) { add(bound, scopeOfNode(ancestors), patternNames(node.id)) },
+    FunctionDeclaration(node: any, _st: unknown, ancestors: any[]) {
+      add(bound, scopeOfNode(ancestors.slice(0, -1)), patternNames(node.id))
+      add(bound, node, node.params.flatMap((p: any) => patternNames(p)))
+    },
+    FunctionExpression(node: any) { add(bound, node, node.params.flatMap((p: any) => patternNames(p))) },
+    ArrowFunctionExpression(node: any) { add(bound, node, node.params.flatMap((p: any) => patternNames(p))) },
+    ClassDeclaration(node: any, _st: unknown, ancestors: any[]) { add(bound, scopeOfNode(ancestors.slice(0, -1)), patternNames(node.id)) },
+    CatchClause(node: any, _st: unknown, ancestors: any[]) { add(bound, scopeOfNode(ancestors), patternNames(node.param)) },
+  })
+  // les noms liés qui ne sont pas un alias : paramètres, fonctions, classes, imports, variables de boucle et toute écriture d'autre chose
+  const other = (name: string, ancestors: any[]): void => add(others, scopeOfName(name, ancestors), [name])
+  const write = (target: any, ancestors: any[], alias: boolean): void => {
+    for (const name of patternNames(target)) {
+      if (alias && target.type === 'Identifier') add(defs, scopeOfName(name, ancestors), [name])
+      else other(name, ancestors)
+    }
+  }
+  walk.ancestor(ast, {
+    VariableDeclarator(node: any, _st: unknown, ancestors: any[]) {
+      const head = ancestors.at(-3)
+      if (node.init) write(node.id, ancestors, node.init.type === 'ThisExpression' && thisIsComponent(ancestors, foreign))
+      else if ((head?.type === 'ForInStatement' || head?.type === 'ForOfStatement') && head.left === ancestors.at(-2)) write(node.id, ancestors, false)
+    },
+    AssignmentExpression(node: any, _st: unknown, ancestors: any[]) { write(node.left, ancestors, node.operator === '=' && node.right?.type === 'ThisExpression' && thisIsComponent(ancestors, foreign)) },
+    UpdateExpression(node: any, _st: unknown, ancestors: any[]) { write(node.argument, ancestors, false) },
+    ForInStatement(node: any, _st: unknown, ancestors: any[]) { if (node.left.type !== 'VariableDeclaration') write(node.left, ancestors, false) },
+    ForOfStatement(node: any, _st: unknown, ancestors: any[]) { if (node.left.type !== 'VariableDeclaration') write(node.left, ancestors, false) },
+    FunctionDeclaration(node: any, _st: unknown, ancestors: any[]) {
+      if (node.id) other(node.id.name, ancestors.slice(0, -1))
+      for (const name of node.params.flatMap((p: any) => patternNames(p))) add(others, node, [name])
+    },
+    FunctionExpression(node: any) { for (const name of node.params.flatMap((p: any) => patternNames(p))) add(others, node, [name]) },
+    ArrowFunctionExpression(node: any) { for (const name of node.params.flatMap((p: any) => patternNames(p))) add(others, node, [name]) },
+    ClassDeclaration(node: any, _st: unknown, ancestors: any[]) { if (node.id) other(node.id.name, ancestors.slice(0, -1)) },
+    CatchClause(node: any, _st: unknown, ancestors: any[]) { for (const name of patternNames(node.param)) other(name, ancestors) },
+    ImportSpecifier(node: any, _st: unknown, ancestors: any[]) { other(node.local.name, ancestors) },
+    ImportDefaultSpecifier(node: any, _st: unknown, ancestors: any[]) { other(node.local.name, ancestors) },
+    ImportNamespaceSpecifier(node: any, _st: unknown, ancestors: any[]) { other(node.local.name, ancestors) },
+  })
+  const isAlias = (name: string, ancestors: any[]): boolean => {
+    const scope = scopeOfName(name, ancestors)
+    return defs.get(scope)?.has(name) === true && !others.get(scope)?.has(name)
+  }
+  return { foreign, isAlias }
+}
+
+// `obj` désigne-t-il le composant : `this` (partout, ou seulement là où il vaut le composant), `_mjsThis`
+// (forme compilée de `@@`), un alias de `this`
+function isComponentRef(obj: any, ancestors: any[], info: ThisInfo, everywhere = false): boolean {
+  if (obj?.type === 'ThisExpression') return everywhere || thisIsComponent(ancestors, info.foreign)
+  return obj?.type === 'Identifier' && (obj.name === '_mjsThis' || info.isAlias(obj.name, ancestors))
+}
+
+// les accès `obj.nom` que écrit une cible d'affectation : elle-même, ou ceux d'un motif de déstructuration
+// (`[@a, { k: @b }, ...@c] = …`)
+function memberTargets(target: any): any[] {
+  if (!target) return []
+  switch (target.type) {
+    case 'MemberExpression':  return [target]
+    case 'ArrayPattern':      return target.elements.flatMap((el: any) => memberTargets(el))
+    case 'ObjectPattern':     return target.properties.flatMap((p: any) => memberTargets(p.type === 'RestElement' ? p.argument : p.value))
+    case 'AssignmentPattern': return memberTargets(target.left)
+    case 'RestElement':       return memberTargets(target.argument)
+  }
+  return []
+}
+
+// le texte d'une clé écrite en dur : `'nom'`, `"nom"`, un gabarit sans expression ; null sinon
+function literalKey(k: any): string | null {
+  if (k?.type === 'Literal' && typeof k.value === 'string') return k.value
+  if (k?.type === 'TemplateLiteral' && k.expressions.length === 0 && k.quasis.length === 1) return k.quasis[0].value.cooked
+  return null
+}
+
+// le nom qu'écrit un accès `obj.nom`, `obj['nom']` ; null quand il ne se lit pas (clé calculée à l'exécution)
+function memberName(m: any): string | null {
+  if (!m.computed) return m.property?.type === 'Identifier' ? m.property.name : null
+  return literalKey(m.property)
+}
+
+// `Object.assign(obj, { nom: … })`, `Object.defineProperty(obj, 'nom', …)`, `Object.defineProperties`,
+// `Reflect.set` : l'objet visé et les noms posés dessus ; `open` quand un nom ne se lit pas (un spread, un
+// objet construit ailleurs, une clé calculée) ; `definition` quand l'appel redéfinit la propriété sans l'écrire
+// (`defineProperty`, `defineProperties`) : rien ne lève, rien n'est posé sur la balise ; `withoutThrow` pour
+// `Reflect.set`, qui écrit mais rend `false` sur une propriété en lecture seule au lieu de lever
+function callWrites(call: any): { target: any, names: string[], open: boolean, definition: boolean, withoutThrow: boolean } | null {
+  const c = call.callee
+  if (c?.type !== 'MemberExpression' || c.computed || c.object?.type !== 'Identifier' || c.property?.type !== 'Identifier') return null
+  const args: any[] = call.arguments
+  if (args.length === 0) return null
+  const names: string[] = []
+  let open = false
+  const listKeys = (o: any): void => {
+    if (o?.type !== 'ObjectExpression') { open = true; return }
+    for (const p of o.properties) {
+      const name = p.type !== 'Property' ? null : !p.computed && p.key?.type === 'Identifier' ? p.key.name : literalKey(p.key)
+      if (name === null) open = true
+      else names.push(name)
+    }
+  }
+  const addKey = (k: any): void => {
+    const name = literalKey(k)
+    if (name === null) open = true
+    else names.push(name)
+  }
+  switch (`${c.object.name}.${c.property.name}`) {
+    case 'Object.assign':           for (const a of args.slice(1)) listKeys(a); break
+    case 'Object.defineProperties': listKeys(args[1]); break
+    case 'Object.defineProperty':
+    case 'Reflect.defineProperty':
+    case 'Reflect.set':             addKey(args[1]); break
+    default:                        return null
+  }
+  return { target: args[0], names, open, definition: c.property.name.startsWith('define'), withoutThrow: c.property.name === 'set' && c.object.name === 'Reflect' }
+}
+
+// les noms que le <script> pose sur l'instance (`@sock = …`), où que ce soit : en tête, ou dans une
+// fonction (une connexion ouverte une fois l'utilisateur connecté) — `this.nom` ou `_mjsThis.nom`, par une
+// affectation, une déstructuration (`[@sock] = …`), `Object.assign @, { sock }`, un alias (`self = @`).
+// Une écriture dont le nom ne se lit pas au build (`@[nom] = …`, `Object.assign @, reglages`) pourrait poser
+// n'importe lequel : `sock` est alors compté, plutôt qu'une fausse erreur
+function collectInstanceProps(ast: acorn.Node | null): string[] {
+  const names = new Set<string>()
+  if (!ast) return []
+  const info = analyzeThis(ast)
+  let open = false
+  const written = (target: any, ancestors: any[]): void => {
+    for (const m of memberTargets(target)) {
+      if (!isComponentRef(m.object, ancestors, info, true)) continue
+      const name = memberName(m)
+      if (name === null) open = true
+      else names.add(name)
+    }
+  }
+  walk.ancestor(ast, {
+    AssignmentExpression(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    ForInStatement(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    ForOfStatement(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    CallExpression(node: any, _st: unknown, ancestors: any[]) {
+      const w = callWrites(node)
+      if (!w || !isComponentRef(w.target, ancestors, info, true)) return
+      for (const name of w.names) names.add(name)
+      if (w.open) open = true
+    },
+  })
+  if (open) names.add('sock')
+  return [...names]
+}
+
+// les noms que le code d'un gestionnaire du HTML pose sur le composant (`@sock = …`, `[@sock] = …`,
+// `{ k: @sock } = …`), lus sur le texte : ce code n'est compilé qu'après le HTML, qui a besoin de ces noms
+function collectHandlerInstanceProps(code: string, lang: string): string[] {
+  const names = new Set<string>()
+  const stripped = maskNonCode(code, lang)
+  for (const m of stripped.matchAll(/(?<![\w$.@])@@?([A-Za-z_]\w*)/g)) {
+    const start = m.index!
+    const end   = start + m[0].length
+    if (/^\s*(?:\*\*|\?\?|\|\||&&|<<|>>>?|[-+*/%&|^?])?[:.]?=(?![=>])/.test(stripped.slice(end))) { names.add(m[1]); continue }
+    // dans un motif de déstructuration : le groupe `[…]` ou `{…}` qui l'entoure est suivi d'un `=`
+    const opening = Math.max(stripped.lastIndexOf('[', start), stripped.lastIndexOf('{', start))
+    if (opening === -1) continue
+    const closing = stripped.indexOf(stripped[opening] === '[' ? ']' : '}', end)
+    if (closing !== -1 && !/[\]}]/.test(stripped.slice(opening + 1, start)) && /^\s*=(?![=>])/.test(stripped.slice(closing + 1))) names.add(m[1])
+  }
+  return [...names]
+}
+
+// Les écritures lues : `@nom = …`, `@['nom'] = …`, une déstructuration (`[@nom] = …`), `Object.assign @, { nom }`,
+// `Object.defineProperty(@, 'nom', …)`, `Reflect.set`, par `@` ou par un alias (`self = @`) ; ce qui ne se
+// voit pas au build reste libre : une clé calculée à l'exécution (`@[nom] = …`), un objet construit ailleurs
+// (`Object.assign @, reglages`), le composant passé à une fonction. `lineOf(position du JS)` : la ligne du .mjs
+function lintElementPropertyAtConstruction(ast: acorn.Node | null, moduleName: string | undefined, lint?: LintToggles, colorsEnabled = false, lineOf?: (offset: number) => number | null): void {
+  if (!ast) return
+  const info    = analyzeThis(ast)
+  const avertis = new Set<string>()
+  // un nom écrit sur `obj` ; `ancestors` : ceux de l'écriture, `at` : sa position dans le JS compilé ;
+  // `definition` : redéfini sans être écrit (defineProperty) — les méthodes du cadre y sont masquées comme
+  // ailleurs, mais ni la lecture seule ni le reflet ne s'y appliquent ; `withoutThrow` : écrit par `Reflect.set`,
+  // qui rend `false` sur une propriété en lecture seule au lieu de lever — le reflet, lui, s'écrit bel et bien
+  const check = (obj: any, nom: string | null, ancestors: any[], at: number, definition = false, withoutThrow = false): void => {
+    if (nom === null || !isComponentRef(obj, ancestors, info)) return
+    if (ELEMENT_FRAMEWORK_METHODS.has(nom)) throw new Error(t('transpiler.methode-balise-masquee', { moduleName: moduleName ?? '?', nom }))
+    if (definition) return
+    // propriété : hors de toute fonction (flèche comprise), jouée pendant la construction
+    if (ancestors.some((a: any) => a.type === 'FunctionExpression' || a.type === 'FunctionDeclaration' || a.type === 'ArrowFunctionExpression')) return
+    if (ELEMENT_READONLY_PROPS.has(nom) && !withoutThrow) throw new Error(t('transpiler.propriete-balise-lecture-seule', { moduleName: moduleName ?? '?', nom }))
+    if ((ELEMENT_REFLECTED_PROPS.has(nom) || /^aria[A-Z]/.test(nom)) && !avertis.has(nom)) {
+      avertis.add(nom)
+      const line = typedLine('naming', t('transpiler.propriete-balise-construction', { moduleName: moduleName ?? '?', nom, ligne: lineOf?.(at) ?? '' }), lint)
+      if (line !== null) printDiagnostic(line, colorsEnabled)
+    }
+  }
+  const written = (target: any, ancestors: any[]): void => {
+    for (const m of memberTargets(target)) check(m.object, memberName(m), ancestors, m.start)
+  }
+  walk.ancestor(ast, {
+    AssignmentExpression(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    UpdateExpression(node: any, _st: unknown, ancestors: any[]) { written(node.argument, ancestors) },
+    ForInStatement(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    ForOfStatement(node: any, _st: unknown, ancestors: any[]) { written(node.left, ancestors) },
+    CallExpression(node: any, _st: unknown, ancestors: any[]) {
+      const w = callWrites(node)
+      if (w) for (const nom of w.names) check(w.target, nom, ancestors, node.start, w.definition, w.withoutThrow)
+    },
+  })
+}
+
+// la ligne du .mjs d'une position du JS compilé du <script>, lue dans la carte de source du compilateur (déjà
+// décalée à la ligne du bloc) ; null sans carte ou sans repère : jamais une ligne inventée
+function sourceLineOf(js: string, mapJson: string | undefined, offset: number): number | null {
+  if (!mapJson) return null
+  const segments = decode(JSON.parse(mapJson).mappings ?? '')[js.slice(0, offset).split('\n').length - 1] ?? []
+  const col      = offset - (offset > 0 ? js.lastIndexOf('\n', offset - 1) + 1 : 0)
+  const marks    = segments.filter(s => s.length >= 4)
+  const mark     = [...marks].reverse().find(s => s[0] <= col) ?? marks[0]
+  return mark ? (mark[2] as number) + 1 : null
 }
 
 // ----------------------------------------------------------------------------
@@ -991,6 +1678,17 @@ function collectTopLevelDeclarations(ast: acorn.Node | null, nature: 'binding' |
   return out
 }
 
+// noms qu'un `import` pose au premier niveau d'une section compilée (`import { fmt } from …`,
+// `import * as u from …`, `import d from …`) — visibles des gestionnaires par closure
+function collectImportNames(ast: acorn.Node | null): string[] {
+  const out: string[] = []
+  for (const node of ((ast as any)?.body ?? []) as any[]) {
+    if (node.type !== 'ImportDeclaration') continue
+    for (const s of node.specifiers ?? []) if (s.local?.name) out.push(s.local.name)
+  }
+  return out
+}
+
 // ----------------------------------------------------------------------------
 // dropRedundantVarDeclarations — retire d'un JS produit par Coffee les `var X;` SANS valeur
 // dont le nom vit déjà dans le corps de fonction où ce code sera inséré. Contrepartie du
@@ -1038,11 +1736,22 @@ function dropRedundantVarDeclarations(js: string, connus: string[]): string {
 // un paramètre), laissait passer la constante du `<script module>`, absente de sa liste, et
 // ratait une cible déstructurée (`[compteur] = …`).
 // ----------------------------------------------------------------------------
+// défaut de Civet : une flèche `=>` à corps en ligne qui affecte un if/unless/switch/try sort sa variable temporaire derrière la
+// flèche, sans accolades (`() =>let ref;if (a) ref = …`), un for ou un while y devient `return for (…)` — signature lue sur la
+// ligne de JavaScript produite qui ne s'analyse pas (gestionnaires inline, `<script>`)
+const FLECHE_EN_LIGNE_CIVET_RE = /=>\s*let ref\d*;|\breturn (?:for|while) \(/
+
 function controlerGestionnairesInline(js: string, consts: string[], moduleName: string | undefined, locauxDuGabarit: Iterable<string> = []): void {
   const { violation, analysable, erreur } = analyserConstReassign(js, consts, locauxDuGabarit)
   if (violation?.gabarit) throw new Error(t('transpiler.handler-local-gabarit-reaffecte', { moduleName: moduleName ?? '?', nom: violation.name }))
   if (violation) throw new Error(t('transpiler.handler-const-reaffectee', { moduleName: moduleName ?? '?', nom: violation.name }))
-  if (!analysable) throw new Error(t('transpiler.handler-js-invalide', { moduleName: moduleName ?? '?', ligne: erreur?.ligne ?? 0, extrait: erreur?.extrait ?? '' }))
+  if (!analysable) {
+    const vars = { moduleName: moduleName ?? '?', ligne: erreur?.ligne ?? 0, extrait: erreur?.extrait ?? '' }
+    // défaut de Civet (FLECHE_EN_LIGNE_CIVET_RE) — la flèche fine d'un gestionnaire est une `=>`. Message de cette forme, avec
+    // les deux écritures qui passent
+    if (FLECHE_EN_LIGNE_CIVET_RE.test(js.split('\n')[vars.ligne - 1] ?? '')) throw new Error(t('transpiler.handler-fleche-en-ligne', vars))
+    throw new Error(t('transpiler.handler-js-invalide', vars))
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1078,6 +1787,68 @@ function lintHandlerSelfRefDeclaration(src: string, moduleName: string | undefin
 }
 
 // ----------------------------------------------------------------------------
+// lintHandlerBareMethod — avertit (lint.events, jamais bloquant) d'un gestionnaire (`@click=valider`,
+// `@click={valider}`, `@click={valider(1)}`) qui cite NU le nom d'une méthode du composant
+// (`@valider = ->`, posée sur l'instance, jamais une variable) alors que ni le `<script>`, ni le
+// `<script module>`, ni un import, ni le gestionnaire lui-même ne déclare ce nom : au clic,
+// « valider is not defined » en console, rien à l'écran, et le build ne disait rien. Lit le JS
+// compilé des gestionnaires : seuls les identifiants en position d'EXPRESSION comptent (jamais une
+// propriété `o.valider`, une clé `{ valider: 1 }` ni une déclaration). Un homonyme déclaré dans un
+// gestionnaire le masque (faux négatif possible, jamais de fausse alerte). `alreadySaid` : un
+// avertissement par nom et par composant, quel que soit le nombre de gestionnaires qui le citent.
+// ----------------------------------------------------------------------------
+// les fonctions de la fenêtre que le navigateur offre sous leur nom nu : une méthode du composant qui porte
+// ce nom ne les masque pas dans un gestionnaire, qui appelle alors la fonction du navigateur
+const WINDOW_FUNCTIONS = new Set([
+  'alert', 'confirm', 'prompt', 'print', 'open', 'close', 'stop', 'focus', 'blur', 'find', 'scroll', 'scrollTo', 'scrollBy',
+  'moveTo', 'moveBy', 'resizeTo', 'resizeBy', 'fetch', 'postMessage', 'atob', 'btoa', 'getSelection', 'getComputedStyle', 'matchMedia',
+  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame', 'queueMicrotask', 'structuredClone',
+])
+
+function lintHandlerBareMethod(inlinesJs: string, methodNames: Set<string>, declared: Set<string>, moduleName: string | undefined, alreadySaid: Set<string>, lint?: LintToggles, colorsEnabled = false, lineOf?: (nom: string) => number | ''): void {
+  const cite   = (n: string): boolean => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}(?![\\w$])`).test(inlinesJs)
+  const cibles = new Set([...methodNames].filter(n => !declared.has(n) && cite(n)))
+  if (cibles.size === 0) return
+  let ast: acorn.Node
+  try {
+    ast = acorn.parse(inlinesJs, { ecmaVersion: 'latest', sourceType: 'module' })
+  }
+  catch {
+    return
+  }
+  const locaux = new Set<string>()
+  const noter = (pat: any): void => {
+    if (!pat) return
+    switch (pat.type) {
+      case 'Identifier':        locaux.add(pat.name); break
+      case 'ObjectPattern':     for (const p of pat.properties ?? []) noter(p.type === 'RestElement' ? p.argument : p.value); break
+      case 'ArrayPattern':      for (const el of pat.elements ?? []) noter(el); break
+      case 'AssignmentPattern': noter(pat.left); break
+      case 'RestElement':       noter(pat.argument); break
+    }
+  }
+  walk.full(ast, (node: any) => {
+    if (node.type === 'VariableDeclarator') noter(node.id)
+    else if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') {
+      noter(node.id)
+      for (const p of node.params ?? []) noter(p)
+    }
+    else if (node.type === 'CatchClause') noter(node.param)
+    else if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') noter(node.id)
+  })
+  // `Identifier` de acorn-walk : les seuls identifiants en position d'expression (une propriété
+  // non calculée, une clé, un motif de déclaration passent par d'autres visiteurs)
+  walk.simple(ast, {
+    Identifier(node: any) {
+      if (!cibles.has(node.name) || locaux.has(node.name) || alreadySaid.has(node.name)) return
+      alreadySaid.add(node.name)
+      const line = typedLine('events', t('transpiler.handler-methode-nue', { moduleName: moduleName ?? '?', nom: node.name, ligne: lineOf?.(node.name) ?? '', fenetre: WINDOW_FUNCTIONS.has(node.name) }), lint)
+      if (line !== null) printDiagnostic(line, colorsEnabled)
+    },
+  })
+}
+
+// ----------------------------------------------------------------------------
 // maskDocBlocks — soustrait les blocs de DOCUMENTATION (`<pre>`, `<code>`,
 // commentaires HTML) avant une passe de réécriture de sigils sur le SOURCE BRUT,
 // puis les restaure à l'identique. Objectif : le code d'AFFICHAGE des tutos/doc
@@ -1091,7 +1862,7 @@ function maskDocBlocks(src: string): { masked: string; restore: (s: string) => s
   const masked = src
     .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, stash)
     .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, stash)
-    .replace(/<!--[\s\S]*?-->/g, stash)
+    .replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, stash)
   const restore = (s: string): string =>
     s.replace(/\x00MJSDOC(\d+)\x00/g, (_m, i) => blocks[Number(i)])
   return { masked, restore }
@@ -1170,24 +1941,12 @@ function maskStaticHtmlText(src: string): { masked: string; restore: (s: string)
       i = end
       continue
     }
-    // `{…}` d'interpolation : site RÉEL de template → LIVE (accolades imbriquées
-    // et chaînes internes comptées, cf. header).
+    // `{…}` d'interpolation : site RÉEL de template → LIVE (fin lue par finExpression : chaînes, commentaires
+    // et regex compris, cf. header) ; jamais refermée, tout le reste
     if (src[i] === '{') {
       flush()
-      let depth = 1
-      let j = i + 1
-      let inStr = false
-      let strCh = ''
-      while (j < n && depth > 0) {
-        const ch = src[j]
-        if (inStr) {
-          if (ch === '\\') { j += 2; continue }
-          if (ch === strCh) inStr = false
-        } else if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch }
-        else if (ch === '{') depth++
-        else if (ch === '}') depth--
-        j++
-      }
+      const fin = finExpression(src, i)
+      const j = fin < 0 ? n : fin
       out += src.slice(i, j)
       i = j
       continue
@@ -1206,7 +1965,7 @@ function maskStaticHtmlText(src: string): { masked: string; restore: (s: string)
 // sigils.ts, MU_SCRIPT_RUNES) ; bâtie UNE fois hors de la fonction. Corps PARTAGÉ
 // avec cleanJs (generator/utils.ts, RE_MU_UNIVERSAL_G) — même texte, une seule
 // source (sigils.ts) : c'est l'absence de ce partage qui laissait les runes
-// minuscules hors liste blanche (µraw/µsnap/µplay/µminmax/µinspect) littérales
+// minuscules hors liste blanche (µraw/µsnap/µplay/µinspect) littérales
 // dans une expression HTML.
 const MU_UNIVERSAL_RE = new RegExp(MU_UNIVERSAL_BODY, 'g')
 
@@ -1293,20 +2052,21 @@ function transformCodeOnly(input: string, transform: (codeChunk: string) => stri
         if (input[i] === quote) { i += 1; break }
         // Template literal `${...}` : recurse dans l'expression (qui est du code)
         if (quote === '`' && input[i] === '$' && input[i + 1] === '{') {
-          // Capture le segment `...${` brut, puis recurse sur l'expression
+          // Capture le segment `...${` brut, puis recurse sur l'expression, dont la fin est lue par
+          // finExpression : une accolade dans une chaîne ou une regex de l'expression (`${ $a ? '{' : '' }`)
+          // ne compte pas. Jamais refermée : le reste est transformé tel quel, sans `}` ajoutée en fin de script
           chunks.push(input.slice(start, i + 2))
-          i += 2
-          let depth = 1
-          const exprStart = i
-          while (i < n && depth > 0) {
-            if (input[i] === '{') depth++
-            else if (input[i] === '}') depth--
-            if (depth === 0) break
-            i++
+          const fin = finExpression(input, i + 1)
+          const exprStart = i + 2
+          if (fin < 0) {
+            chunks.push(transform(input.slice(exprStart)))
+            i = n
+            start = n
+            break
           }
-          chunks.push(transform(input.slice(exprStart, i)))
+          chunks.push(transform(input.slice(exprStart, fin - 1)))
           chunks.push('}')
-          i += 1
+          i = fin
           // Continue dans la string template
           const restStart = i
           while (i < n && input[i] !== '`') {
@@ -1722,7 +2482,8 @@ function parenDeltaHorsChaines(line: string): number {
 // SOURCE UNIQUE — applyMjsSugarToScript l'appelle ci-dessous pour son propre usage
 // composant (comportement 100% inchangé, cf. tests existants sur applyMjsSugarToScript).
 // ----------------------------------------------------------------------------
-export function applyCivetDialectSugar(src: string, lang?: string, predeclared?: string[]): string {
+// `firstLine` : la ligne du fichier où tombe la première ligne de `src` (la balise <script>), pour citer une faute à sa ligne réelle
+export function applyCivetDialectSugar(src: string, lang?: string, predeclared?: string[], firstLine = 1): string {
   let out = src
 
   // ─── Pass 1 : conversion `#` Coffee comment → `//` JS comment ─────────────
@@ -1743,10 +2504,11 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     const cn = out.length
     while (ci < cn) {
       const c = out[ci], c1 = out[ci + 1], c2 = out[ci + 2]
-      // `### ... ###` (début de ligne OU inline) → `/* ... */`
+      // `### ... ###` (début de ligne OU inline) → `/* ... */` ; un `*/` du contenu (motif de chemin
+      // `src/**/*.json`) devient `*\/`, sinon il refermait le commentaire au milieu
       if (c === '#' && c1 === '#' && c2 === '#') {
         const end = out.indexOf('###', ci + 3)
-        conv += '/*' + out.slice(ci + 3, end < 0 ? cn : end) + '*/'
+        conv += '/*' + out.slice(ci + 3, end < 0 ? cn : end).replace(/\*\//g, '*\\/') + '*/'
         ci = end < 0 ? cn : end + 3
         continue
       }
@@ -1775,6 +2537,12 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         }
         continue
       }
+      // chaîne `"…"` lue au niveau (lecteur du lexeur) : une interpolation `#{…}` y porte ses propres guillemets — le `#{`
+      // d'une chaîne écrite DANS l'interpolation n'est pas un commentaire (il sortait en `//{…}`)
+      if (c === '"') {
+        const e = scanDoubleQuoteAt(out, ci)
+        if (e > 0) { conv += out.slice(ci, e); ci = e; continue }
+      }
       // chaînes mono-ligne `"..."` `'...'` → inchangées (escapes, bornées à la ligne)
       if (c === '"' || c === "'") {
         conv += c
@@ -1794,10 +2562,11 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
       // littéral regex `/…/` : zone inerte, même garde que transformCodeOnly plus bas —
       // sans ce garde-fou, `re = /#\d/` voyait son `#` (suivi
       // d'un `\`, non alphanumérique) converti par la branche `#` juste en dessous : `re = ///\d/`,
-      // échec de compilation bruyant mais FAUX (`/#\d/` est un regex légitime). `conv` = texte déjà
-      // ÉMIS par cette Pass 1 (pas `out` brut : un `#`/`###` PRÉCÉDENT pas encore converti fausserait
-      // le contexte gauche attendu par `ouvreUneRegex`).
-      if (c === '/' && ouvreUneRegex(conv)) {
+      // échec de compilation bruyant mais FAUX (`/#\d/` est un regex légitime). Contexte gauche lu sur
+      // la source `out` : relire `conv`, en construction, l'aplatissait à chaque `/` (coût quadratique).
+      // Les deux ne diffèrent que par la marque des commentaires déjà convertis (`#` ou `//`, `###` ou
+      // `/* */`), ni signe ni mot-clé : ouvreUneRegex rend la même réponse.
+      if (c === '/' && ouvreUneRegex(out.slice(0, ci))) {
         const fin = scanRegexLiteral(out, ci)
         if (fin !== -1) { conv += out.slice(ci, fin); ci = fin; continue }
       }
@@ -1814,14 +2583,22 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     out = conv
   }
 
+  // un <script lang="js"> ou lang="ts" est du JavaScript ou du TypeScript ordinaire : les passes 2 à 4 (dialecte
+  // façon Coffee du Civet) n'y ont pas cours — un paramètre réaffecté y recevait `a .= undefined` (construction
+  // refusée sur du code que l'auteur n'a pas écrit), une chaîne `"prix #{n}"` y devenait un gabarit qui évaluait `n`
+  if (lang === 'js' || lang === 'ts') return out
+
   // ─── Pass 2 : `for X in Y` (Coffee values) → `for X of Y` (Civet/JS values).
-  // Uniquement sur le CODE (transformCodeOnly évite les strings/comments).
-  out = transformCodeOnly(out, (code) =>
-    code.replace(
-      /\bfor(\s+[a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)?\s+)in(\s+)/g,
-      'for$1of$2'
+  // Uniquement sur le CODE (transformCodeOnly évite les strings/comments). SKIP Coffee : `for x in` y parcourt déjà les
+  // valeurs, et `for x of` les CLÉS d'un objet — la boucle recevait « 0 », « 1 »… au lieu des éléments.
+  if (lang !== 'coffee') {
+    out = transformCodeOnly(out, (code) =>
+      code.replace(
+        /\bfor(\s+[a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)?\s+)in(\s+)/g,
+        'for$1of$2'
+      )
     )
-  )
+  }
 
   // ─── Pass 2b : `isnt` (Coffee) → `is not` (que Civet transforme en `!==`).
   // Civet ne connaît PAS `isnt` : il parse `a isnt b` comme l'appel
@@ -1858,61 +2635,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   // une regex globale corrompait `'voir "#{x}"'` et transformait `"""…#{x}…"""`
   // en triple-backtick (SyntaxError Civet) : la cause racine du « Failed to
   // parse » historique sur les interpolations.
-  function toTemplateLiteral(body: string): string {
-    return '`' + body.replace(/`/g, '\\`').replace(/\$\{/g, '\\${').replace(/#\{([^}]+)\}/g, '${$1}') + '`'
-  }
-  function convertCoffeeInterpolations(src: string): string {
-    let res = ''
-    let i = 0
-    const n = src.length
-    while (i < n) {
-      const ch = src[i]
-      if (ch === '/' && src[i + 1] === '/') {
-        const e = src.indexOf('\n', i)
-        const end = e === -1 ? n : e
-        res += src.slice(i, end); i = end; continue
-      }
-      if (ch === '/' && src[i + 1] === '*') {
-        const e = src.indexOf('*/', i + 2)
-        const end = e === -1 ? n : e + 2
-        res += src.slice(i, end); i = end; continue
-      }
-      if (src.startsWith("'''", i)) {
-        const e = src.indexOf("'''", i + 3)
-        const end = e === -1 ? n : e + 3
-        res += src.slice(i, end); i = end; continue
-      }
-      if (ch === "'") {
-        let j = i + 1
-        while (j < n && src[j] !== "'" && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
-        if (j < n && src[j] === "'") { res += src.slice(i, j + 1); i = j + 1 } else { res += src.slice(i, j); i = j }
-        continue
-      }
-      if (ch === '`') {
-        let j = i + 1
-        while (j < n && src[j] !== '`') { if (src[j] === '\\') j++; j++ }
-        const end = Math.min(j + 1, n)
-        res += src.slice(i, end); i = end; continue
-      }
-      if (src.startsWith('"""', i)) {
-        const e = src.indexOf('"""', i + 3)
-        if (e === -1) { res += src.slice(i); break }
-        const body = src.slice(i + 3, e)
-        res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, e + 3)
-        i = e + 3; continue
-      }
-      if (ch === '"') {
-        let j = i + 1
-        while (j < n && src[j] !== '"' && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
-        if (j >= n || src[j] === '\n') { res += src.slice(i, j); i = j; continue }
-        const body = src.slice(i + 1, j)
-        res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, j + 1)
-        i = j + 1; continue
-      }
-      res += ch; i++
-    }
-    return res
-  }
+  // conversion partagée avec les expressions du gabarit : convertCoffeeInterpolations (lexer/index.ts)
   if (lang !== 'coffee') {
     out = convertCoffeeInterpolations(out)
   }
@@ -2113,7 +2836,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         const nomCompose = cm[1] ?? cm[2]
         if (RESERVED.has(nomCompose)) continue
         if (constanteSure(nomCompose)) {
-          throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nomCompose, ligne: li + 1 }))
+          throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nomCompose, ligne: li + firstLine }))
         }
       }
       // "bonus mémoire" — `[^=]`
@@ -2178,7 +2901,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
             // SEULEMENT à l'exécution (« Assignment to constant variable »), le build restant
             // vert. Refus À LA COMPILATION, message qui nomme l'identifiant, la ligne fautive et
             // la solution.
-            throw new Error(t('transpiler.civet-reaffectation-constante', { nom: name, ligne: li + 1 }))
+            throw new Error(t('transpiler.civet-reaffectation-constante', { nom: name, ligne: li + firstLine }))
           }
         }
       } else {
@@ -2239,7 +2962,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
           for (const nm of names) {
             if (undeclared.includes(nm)) continue
             if (constanteSure(nm)) {
-              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + 1 }))
+              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + firstLine }))
             }
           }
           if (undeclared.length > 0) {
@@ -2275,7 +2998,7 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
             } else if (constanteSure(nm)) {
               // même garde que l'affectation simple, restreinte à CETTE portée : `if a then x = 1`
               // reste une réaffectation, même écrite en ligne après `then`/`else`
-              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + 1 }))
+              throw new Error(t('transpiler.civet-reaffectation-constante', { nom: nm, ligne: li + firstLine }))
             }
           }
         }
@@ -2387,6 +3110,10 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
     // d'insertion puis splice en DÉCROISSANT (une insertion plus haute ne
     // décale jamais un insertAt plus bas encore en attente) ; les noms d'un
     // même groupe sont insérés ENSEMBLE pour garder leur ordre d'origine
+    // Les déclarations se posent sur une ligne existante, pour que les lignes du script restent celles du fichier (positions
+    // des erreurs, carte de source) : la ligne vide juste au-dessus, sinon devant la ligne elle-même (`y .= undefined; if …`).
+    // Une ligne qu'une passe suivante lit depuis son début (`µ$x = …`, `export`, `import`, `µdebug`, symbole) reçoit encore
+    // ses déclarations sur une ligne à elles.
     if (pendingHoists.length) {
       const seen = new Set<string>()
       const byInsertAt = new Map<number, { indent: number; name: string }[]>()
@@ -2399,8 +3126,20 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
         byInsertAt.set(h.insertAt, group)
       }
       for (const at of [...byInsertAt.keys()].sort((a, b) => b - a)) {
-        const decls = byInsertAt.get(at).map(h => `${' '.repeat(h.indent)}${h.name} .= undefined`)
-        lines.splice(at, 0, ...decls)
+        const group  = byInsertAt.get(at)
+        const decls  = group.map(h => `${h.name} .= undefined`)
+        const indent = ' '.repeat(group[0].indent)
+        const tete   = lines[at].trimStart()
+        if (at > 0 && lines[at - 1].trim() === '' && !inertLines.has(at - 1)) {
+          lines[at - 1] = indent + decls.join('; ')
+        }
+        else if (/^[a-zA-Z_]/.test(tete) && !/^(?:import|export)\b/.test(tete)) {
+          const marge = lines[at].length - tete.length
+          lines[at] = lines[at].slice(0, marge) + decls.join('; ') + '; ' + tete
+        }
+        else {
+          lines.splice(at, 0, ...decls.map(d => indent + d))
+        }
       }
     }
     out = lines.join('\n')
@@ -2409,7 +3148,83 @@ export function applyCivetDialectSugar(src: string, lang?: string, predeclared?:
   return out
 }
 
-export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: string[], _sectionLabel = '<script>'): string {
+// µconsole (ou `µ.console`) → ouvre le panneau d'inspection. Appel GARDÉ : le panneau n'existe
+// qu'en développement (absent des builds de production), la rune n'y fait alors rien. Réécrite sur
+// le texte ENTIER, chaînes et commentaires masqués : un argument en chaîne (`µconsole '.panier'`)
+// serait sinon séparé du nom par transformCodeOnly. Trois formes :
+//   µconsole          → sur CE composant (`_mjsThis` ; hors composant, `<script module>`, sans
+//                       sélection plutôt qu'une ReferenceError)
+//   µconsole(arg)     → l'argument tel quel : sélecteur, élément, valeur à inspecter, true/false
+//   µconsole arg      → forme Civet sans parenthèses : UN argument, chaîne ou chemin (`$$panier.x`)
+// Forme de sortie valable dans tous les dialectes (ni ternaire, absent de Coffee, ni `?.`)
+const MOTS_APRES_UNE_RUNE = new Set(['if', 'unless', 'and', 'or', 'then', 'else', 'when', 'for', 'while', 'until', 'not', 'is', 'isnt', 'in', 'of', 'instanceof'])
+
+// la position `at` de la vue masquée (commentaires blanchis) finit-elle l'instruction ? blancs, puis
+// fin du texte ou de la ligne, `;`, une fermante, ou un mot de la langue (`µconsole $x if debug`)
+function statementEnd(src: string, blanked: string, at: number): boolean {
+  let k = at
+  while (k < blanked.length && (blanked[k] === ' ' || blanked[k] === '\t')) {
+    // un blanc de la vue qui n'en est pas un dans le texte : un second texte (il continue l'instruction,
+    // `µconsole 'a' 'b'`) ou un commentaire (il la finit)
+    if (src[k] !== ' ' && src[k] !== '\t') return src[k] !== "'" && src[k] !== '"' && src[k] !== '`'
+    k++
+  }
+  if (k >= blanked.length || '\n\r;)]}'.includes(blanked[k])) return true
+  const word = /^[A-Za-z_]\w*/.exec(blanked.slice(k, k + 12))
+  return !!word && MOTS_APRES_UNE_RUNE.has(word[0])
+}
+
+function consoleSansParentheses(src: string, at: number): Error {
+  const debut = src.lastIndexOf('\n', at - 1) + 1
+  const fin   = src.indexOf('\n', at)
+  return new Error(t('transpiler.console-parentheses', { ecrit: src.slice(debut, fin === -1 ? src.length : fin).trim() }))
+}
+
+function reecritRuneConsole(src: string, lang?: string): string {
+  const vue = maskNonCode(src, lang ?? 'civet')
+  const re  = /(?<![\w$.])µ\.?console(?![\w$])/g
+  let sortie = '', dernier = 0, m: RegExpExecArray | null
+  while ((m = re.exec(vue))) {
+    const apresNom = m.index + m[0].length
+    let i = apresNom
+    while (i < src.length && (src[i] === ' ' || src[i] === '\t')) i++
+    const c = src[i]
+    let fin = apresNom, arg: string | null = null
+    if (vue[i] === '(') {
+      // parenthèse fermante du même niveau, cherchée sur la vue masquée (une parenthèse dans une
+      // chaîne ne compte pas) ; jamais refermée : rien réécrit, le compilateur le dira
+      let prof = 0, j = i
+      for (; j < vue.length; j++) {
+        if (vue[j] === '(') prof++
+        else if (vue[j] === ')' && --prof === 0) break
+      }
+      if (j >= vue.length) continue
+      arg = src.slice(i + 1, j).trim()
+      fin = j + 1
+    }
+    else if (c === '.' || c === '[') continue   // `µ.console.log(…)` : pas la rune
+    else if ((c === "'" || c === '"') && i > apresNom) {
+      // un texte à triples guillemets se refermerait au premier guillemet
+      if (src.startsWith(c.repeat(3), i)) throw consoleSansParentheses(src, m.index)
+      let j = i + 1
+      while (j < src.length && src[j] !== c) { if (src[j] === '\\') j++; j++ }
+      arg = src.slice(i, j + 1)
+      fin = j + 1
+    }
+    else if (i > apresNom && /[$A-Za-z_]/.test(c ?? '')) {
+      const jeton = /^[$\w.]+/.exec(src.slice(i))![0]
+      if (!MOTS_APRES_UNE_RUNE.has(jeton)) { arg = jeton; fin = i + jeton.length }
+    }
+    // sans parenthèses, l'argument (ou la rune seule) finit l'instruction : `µconsole foo(1)`,
+    // `µconsole @el`, `µconsole $x, 'label'` seraient mal découpés — les parenthèses sont demandées
+    if (vue[i] !== '(' && !statementEnd(src, vue, fin)) throw consoleSansParentheses(src, m.index)
+    sortie += src.slice(dernier, m.index) + (arg ? `(µ.console && µ.console(${arg}))` : "(µ.console && µ.console((typeof _mjsThis != 'undefined' && _mjsThis) || null))")
+    dernier = fin
+  }
+  return sortie + src.slice(dernier)
+}
+
+export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: string[], sectionLabel = '<script>', firstLine = 1): string {
   // Sigil store CANONIQUE `µ$$X` / `$$X` : on DOUBLE le `$` de la variable
   // réactive (`µ$X`/`$X`). Même mécanisme runtime que `µ$` (universal state
   // partagé via `µ.state`), sigil distinct pour signaler la sémantique « store ».
@@ -2452,7 +3267,7 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // dialecte Coffee/Civet des composants (commentaires #, for…in→of, isnt,
   // interpolation "#{}", auto-déclaration scope-aware) — cf. applyCivetDialectSugar
   // ci-dessus, SOURCE UNIQUE partagée avec `mjs ws` (fichiers *.server.mjs).
-  out = applyCivetDialectSugar(out, lang, predeclared)
+  out = applyCivetDialectSugar(out, lang, predeclared, firstLine)
 
   // ─── Runes µ$ ASSIGNEMENT (statement-level) — chaînes/commentaires masqués D'ABORD ───
   // Ces deux regex line-anchored réécrivent une LIGNE COMPLÈTE `µ$X = expr` (ou
@@ -2465,22 +3280,35 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // MÊME multi-ligne, s'efface en UN placeholder compact avant les deux regex — restauré à
   // l'identique en sortie, y compris quand il finit dans le rhs du code généré (`µ$X = 'texte'`).
   const { masked: maskedForDollar, restore: restoreDollar } = maskStringsAndComments(out)
-  //   `export µ$X = expr` → `µ_state.X ?= µ.state(expr)` + `export $X = µ_state.X`
+  // commentaire de ligne en fin d'expression (`µ$n = 0  # compteur`) : laissé après la réécriture, sinon restauré dans
+  // `µ.state(…)` il avale la `)` et le reste de la ligne
+  const sansCommentaireFinal = (rhs: string): [string, string] => {
+    const m = /^(.*?\S)([ \t]+\x00MJSSTR\d+\x00)$/.exec(rhs)
+    if (!m || !/^(?:\/\/|#(?!##))/.test(restoreDollar(m[2].trimStart()))) return [rhs, '']
+    return [m[1], m[2]]
+  }
+  //   `export µ$X = expr` → `µ_state.X ?= µ.state(expr); export $X = µ_state.X` (sur la même ligne : les lignes du script
+  //   restent celles du fichier)
   let maskedDollarOut = maskedForDollar.replace(
     /^([ \t]*)export[ \t]+µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
-    (_m, indent, name, rhs) =>
-      `${indent}µ_state.${name} ?= µ.state(${rhs})\n${indent}export $${name} = µ_state.${name}`
+    (_m, indent, name, rhs) => {
+      const [expr, commentaire] = sansCommentaireFinal(rhs)
+      return `${indent}µ_state.${name} ?= µ.state(${expr}); export $${name} = µ_state.${name}${commentaire}`
+    }
   )
   //   `µ$X = expr` (sans export) → `µ_state.X ?= µ.state(expr)`
   maskedDollarOut = maskedDollarOut.replace(
     /^([ \t]*)µ\$([a-zA-Z0-9_]+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm,
-    (_m, indent, name, rhs) => `${indent}µ_state.${name} ?= µ.state(${rhs})`
+    (_m, indent, name, rhs) => {
+      const [expr, commentaire] = sansCommentaireFinal(rhs)
+      return `${indent}µ_state.${name} ?= µ.state(${expr})${commentaire}`
+    }
   )
   out = restoreDollar(maskedDollarOut)
 
   // ─── Réécritures µ SENSIBLES aux chaînes/commentaires ─────────────
   // µfoo→µ.foo, routage API (µ.on/emit/…), runes µ$ en LECTURE, µdebug,
-  // inspect/minmax/proxy s'appliquaient jusqu'ici en `.replace` GLOBAL → une
+  // inspect/proxy s'appliquaient jusqu'ici en `.replace` GLOBAL → une
   // chaîne ou un commentaire contenant `µs`, `µ.on`, `µ$x`… était réécrit
   // (corruption silencieuse d'un texte affiché/logué : `'durée 12 µs'` →
   // `'durée 12 µ.s'`). On les passe toutes dans transformCodeOnly (mêmes chunks
@@ -2491,9 +3319,33 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // `µinspect($x.chemin)` d'abord, sur le texte ENTIER : une clé en chaîne (`$x['cle']`) coupait
   // l'appel en morceaux dans transformCodeOnly, qui ne le reconnaissait plus — même réécriture
   // (et même refus d'un chemin invalide) que dans le gabarit, chaînes et commentaires masqués
-  if (out.includes('inspect') || out.includes('minmax')) out = reecritOuRejetteRuneChemin(out, true)
+  // (µminmax, retiré en V3, y est refusé avec la marche à suivre — d'où le second test)
+  if (out.includes('inspect') || out.includes('minmax')) out = reecritOuRejetteRuneChemin(out)
+  // la rune seule (`µconsole`, `µ.console`) : un `console.log` ordinaire ne coûte pas un masquage du script
+  if (/µ\.?console/.test(out)) out = reecritRuneConsole(out, lang)
   out = transformCodeOnly(out, (code) => {
     let c = code
+    // µproxy $.path → µ._mjs_makeDeepProxy(_mjsThis, ['path'])
+    // Escape hatch manuel pour les cas où le compile-time path
+    // tracker ne peut pas détecter l'escape (eval, new Function, dynamic etc.)
+    // AVANT le sucre µfoo → µ.foo ci-dessous : passé après, il en faisait `µ.proxy(…)`, absent du runtime (TypeError à
+    // l'appel, pour chaque forme)
+    c = c.replace(
+      /(?<!µ\.)µproxy\s+\$\.([a-zA-Z_$][\w$.]*)/g,
+      (_m, path) => {
+        const parts = path.split('.').map((p: string) => `'${p}'`).join(', ')
+        return `µ._mjs_makeDeepProxy(_mjsThis, [${parts}])`
+      }
+    )
+    // Variante : `µproxy $X`, `µproxy $X.a.b` (chemin entier, comme `µproxy $.X.a.b`) ; une variable du magasin (`$$x`)
+    // n'en est pas une
+    c = c.replace(
+      /(?<!µ\.)µproxy\s+\$([a-zA-Z_][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g,
+      (_m, path) => {
+        const parts = path.split('.').map((p: string) => `'${p}'`).join(', ')
+        return `µ._mjs_makeDeepProxy(_mjsThis, [${parts}])`
+      }
+    )
     // µfoo → µ.foo (sucre universel) — SAUF les runes à compilation LEXER
     // (µread/µwrite → _state brut, hooks µmount & co → _mjs_hook, liste unique
     // sigils.ts) : les pointer ici (`µ.read`, `µ.mount`) les rendait invisibles
@@ -2503,57 +3355,10 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // seuls les tests unitaires du lexer — hors pipeline — passaient)
     c = c.replace(MU_UNIVERSAL_RE, 'µ.$1')
 
+
     // µ.inspect($x) → µ.inspect('x') — corps PARTAGÉ avec cleanJs (sigils.ts,
     // MU_INSPECT_ARG_BODY), même texte des deux côtés.
     c = c.replace(new RegExp(MU_INSPECT_ARG_BODY, 'g'), MU_INSPECT_ARG_OUT)
-
-    // µ.minmax($x, min, max) → µ.minmax(_mjsThis, 'x', min, max)
-    // Le runtime utilise _mjsThis._mjs_limits[x] = { min, max } pour clamper en _set.
-    // Forme parenthésée : corps PARTAGÉ avec cleanJs (sigils.ts, MU_MINMAX_ARG_PAREN_BODY).
-    c = c.replace(new RegExp(MU_MINMAX_ARG_PAREN_BODY, 'g'), MU_MINMAX_ARG_PAREN_OUT)
-    // Forme SANS parenthèses (sucre Coffee, `µminmax $x, 0, 10`) : SCRIPT-ONLY, pas
-    // partagée — sa sortie nue n'est valide qu'une fois recompilée par Civet, ce que
-    // ce moteur garantit (applyMjsSugarToScript tourne toujours avant tokenize) mais
-    // pas cleanJs/cleanJsExpr (sortie JS FINALE, cf. bandeau de tête generator/utils.ts).
-    // Terminateur = virgule (le premier argument s'arrête TOUJOURS là) : LISTE BLANCHE, comme
-    // la forme parenthésée ci-dessus (sigils.ts, `argTermineOuChemin`, fonction interne non
-    // exportée — reproduite ici) plutôt qu'une énumération de suffixes interdits point par
-    // point. Une énumération manuelle rate toujours la variante suivante : elle couvrait déjà
-    // le point espacé, l'appel et l'index, mais une parenthèse ou un crochet IMBRIQUÉS
-    // (`µminmax $o(bar()), 0, 10`, `µminmax $o[a[0]], 0, 10`) refermaient le groupe répétable
-    // trop tôt et laissaient le reste échapper hors quotes (`µ.minmax _mjsThis, 'o'(bar()), 0,
-    // 10`), sans la moindre erreur — même signature que le défaut d'origine. Ici, après `$nom`
-    // (espaces tolérés), seule une virgule termine légitimement l'argument ; tout le reste
-    // jusqu'à la PROCHAINE virgule est un chemin, réécrit s'il est FIXE (cheminSegments), sinon
-    // refusé avec le MÊME message que la forme parenthésée (`transpiler.rune-minmax-chemin`). Nom `[a-zA-Z0-9_]+`
-    // (jamais de `$` dedans, même classe qu'inspect/minmax parenthésés) : `$$x` (store, non
-    // documenté pour cette rune) fait échouer tout le motif, retombe sur les règles générales.
-    c = c.replace(
-      /(?<!µ\.)µ\.?minmax\s+\$([a-zA-Z0-9_]+)(?:(?=[ \t]*(?:,))|([\s\S]*?)(?=[ \t]*(?:,)))/g,
-      (_m, nom, chemin) => {
-        if (!chemin) return `µ.minmax _mjsThis, '${nom}'`
-        // chemin FIXE (`µminmax $x.volume, 0, 10`) : même liste blanche que la forme parenthésée
-        const segments = cheminSegments(chemin)
-        if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
-        return `µ.minmax _mjsThis, ${cleMinmaxChemin(nom, segments)}`
-      }
-    )
-
-    // µproxy $.path → µ._mjs_makeDeepProxy(_mjsThis, ['path'])
-    // Escape hatch manuel pour les cas où le compile-time path
-    // tracker ne peut pas détecter l'escape (eval, new Function, dynamic etc.)
-    c = c.replace(
-      /(?<!µ\.)µproxy\s+\$\.([a-zA-Z_$][\w$.]*)/g,
-      (_m, path) => {
-        const parts = path.split('.').map((p: string) => `'${p}'`).join(', ')
-        return `µ._mjs_makeDeepProxy(_mjsThis, [${parts}])`
-      }
-    )
-    // Variante : `µproxy $X` (sans point, avec tokenization à venir)
-    c = c.replace(
-      /(?<!µ\.)µproxy\s+\$([a-zA-Z_$][\w$]*)/g,
-      "µ._mjs_makeDeepProxy(_mjsThis, ['$1'])"
-    )
 
     // µdebug $x → point d'arrêt RÉACTIF (équivalent de {@debug} de Svelte). Sucre
     // pur : se réécrit en effet qui log la valeur + `debugger;` À CHAQUE changement
@@ -2562,17 +3367,14 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // NB : `µdebug` est DÉJÀ devenu `µ.debug` via le sucre universel µfoo→µ.foo
     // (ci-dessus) ; on matche donc `µ.debug` et on génère directement
     // `µ.effect`/`µ.log` (déjà pointés, comme le `µeffect` des macros post-sucre).
-    //   µdebug $count   →   µ.effect =>
-    //                         µ.log('[µdebug] count =', $count)
-    //                         debugger
+    //   µdebug $count   →   µ.effect => µ.log('[µdebug] count =', $count); debugger
+    // Sur la même ligne (Civet et CoffeeScript mettent les deux instructions dans le corps de l'effet) : les lignes
+    // du script restent celles du fichier.
     // Chemin `\$[\w$.]+` (pas seulement `$ident` simple) : `µdebug $obj.a`
     // devenait `µ.debug($.obj.a)` → TypeError à l'init (`µ.debug` est un booléen).
     c = c.replace(
       /^([ \t]*)µ\.debug[ \t]+\$([a-zA-Z_$][\w$.]*)[ \t]*$/gm,
-      (_m, indent, name) =>
-        `${indent}µ.effect =>\n` +
-        `${indent}  µ.log('[µdebug] ${name} =', $${name})\n` +
-        `${indent}  debugger`
+      (_m, indent, name) => `${indent}µ.effect => µ.log('[µdebug] ${name} =', $${name}); debugger`
     )
 
     // Routage API instance vers méthodes privées (CoffeeScript : @ = this).
@@ -2588,9 +3390,13 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     // via `@`. `<script module>` (aucun `_mjsThis` en scope) refuse µemit à la
     // compilation, cf. lintEmitInModule plus bas — pas de repli runtime ici.
     c = c.replace(/µ\.?\s*emit\b/g, '_mjsThis._mjs_emit')
-    c = c.replace(/µ\.?\s*on\b/g, '@_mjs_on')
-    c = c.replace(/µ\.?\s*setContext\b/g, '@_mjs_setContext')
-    c = c.replace(/µ\.\s*getContext\b/g, '@_mjs_getContext')
+    // µon, µsetContext / µ.getContext : le composant dont le script les porte (`_mjsThis`), comme `§` — `@` valait l'état
+    // dans une fonction rangée dans l'état (`$go = -> µsetContext 'x', 1`, appelée `$go()`). Un module n'a pas de
+    // composant : `@` y reste
+    const recepteur = sectionLabel === '<script module>' ? '@' : '_mjsThis.'
+    c = c.replace(/µ\.?\s*on\b/g, recepteur + '_mjs_on')
+    c = c.replace(/µ\.?\s*setContext\b/g, recepteur + '_mjs_setContext')
+    c = c.replace(/µ\.\s*getContext\b/g, recepteur + '_mjs_getContext')
 
     // `µ$X` (lecture) → `µ_state.X`
     c = c.replace(/µ\$([a-zA-Z0-9_]+)/g, 'µ_state.$1')
@@ -2616,7 +3422,13 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
     const decl = lang === 'coffee'              ? 'µ_state = µ.state({})'
                : (lang === 'js' || lang === 'ts') ? 'let µ_state = µ.state({})'
                :                                    'µ_state .= µ.state({})'
-    lines.splice(insertAt, 0, decl)
+    // sur une ligne existante (les lignes du script restent celles du fichier) : la ligne vide où elle irait, sinon devant
+    // la ligne elle-même (un nom, ou un `µ_state.x ?= …` déjà réécrit) ; une autre (symbole, `import`, `export`…) en reçoit
+    // une à elle
+    const tete = insertAt < lines.length ? lines[insertAt].trimStart() : ''
+    if (insertAt < lines.length && tete === '') lines[insertAt] = decl
+    else if (/^(?:[a-zA-Z_]|µ_state\.)/.test(tete) && !/^(?:import|export)\b/.test(tete)) lines[insertAt] = decl + '; ' + lines[insertAt]
+    else lines.splice(insertAt, 0, decl)
     out = lines.join('\n')
   }
 
@@ -2704,6 +3516,26 @@ function scanQuoted(str: string, i: number): { content: string; end: number } | 
   return null
 }
 
+// scanTranslatedCall — depuis `str[i]`, reconnaît un appel `µt(…)` COMPLET (parenthèses appariées,
+// chaînes/gabarits/regex respectés, via extractBalanced) qui termine la valeur d'une clé : suivi de la
+// fin du texte ou d'une virgule, rien d'autre (`µt('a') + 'b'` refusé). Rend l'expression telle
+// qu'écrite (`µt(…)`, réécrite ensuite par le pipeline comme dans un gabarit) et l'index juste après
+// la parenthèse fermante, ou `null` : une variable, une concaténation, un autre appel restent refusés.
+function scanTranslatedCall(str: string, i: number): { expr: string; end: number } | null {
+  if (!str.startsWith('µt(', i)) return null
+  const scanner = new Scanner(str)
+  scanner.pos = i + 3
+  try {
+    const body = extractBalanced(scanner, ')')
+    const end  = scanner.pos
+    if (!/^\s*(?:,|$)/.test(str.slice(end))) return null
+    return { expr: `µt(${body})`, end }
+  }
+  catch {
+    return null
+  }
+}
+
 // clampRaw — borne un extrait de source à une longueur d'affichage raisonnable pour un message
 // d'erreur (une chaîne @confirm/@title non refermée traînerait sinon TOUT le reste du fichier).
 function clampRaw(s: string): string {
@@ -2747,12 +3579,28 @@ function replaceBraceDirective(html: string, marker: string, build: (raw: string
 // de commentaire, cf. maskHtmlComments plus bas) et replaceQuotedDirective juste en dessous
 // (« même balise » entre deux occurrences d'un marqueur, au lieu du `.includes('>')` trompé par un
 // `>` littéral dans la valeur d'un AUTRE attribut).
+// Accolades sans fin de `sansFinTexte` (rendues par finExpression) : une balise suivante qui retombe sur l'une d'elles
+// sait d'avance qu'elle ne se referme pas, sans relire tout le reste du texte (un gabarit en cours de frappe, aux
+// accolades non refermées, coûtait un temps quadratique)
+let sansFinTexte = ''
+let sansFin      = new Set<number>()
+
 function scanTagClose(html: string, from: number): number {
+  if (html !== sansFinTexte) {
+    sansFinTexte = html
+    sansFin      = new Set()
+  }
   let quote: string | null = null
   for (let i = from; i < html.length; i++) {
     const ch = html[i]
     if (quote) { if (ch === quote) quote = null; continue }
     if (ch === '"' || ch === "'") { quote = ch; continue }
+    // une expression `{…}` (valeur d'attribut, raccourci) se lit d'un bloc (finExpression) : un guillemet ou un `>` qu'elle
+    // contient (`{$s.replace(/"/g, '').length > 0}`) n'ouvre pas de valeur et ne ferme pas la balise ; jamais refermée, lecture d'avant
+    if (ch === '{' && !sansFin.has(i)) {
+      const fin = finExpression(html, i, sansFin)
+      if (fin > 0) { i = fin - 1; continue }
+    }
     if (ch === '>') return i
   }
   return -1
@@ -2877,10 +3725,10 @@ function maskHtmlComments(html: string, mask: (m: string) => string): string {
   let i = 0
   while (i < html.length) {
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4)
-      if (end === -1) { out += html.slice(i, i + 4); i += 4; continue }
-      out += mask(html.slice(i, end + 3))
-      i = end + 3
+      const comment = readHtmlComment(html, i)
+      if (comment === null) { out += html.slice(i, i + 4); i += 4; continue }
+      out += mask(html.slice(i, comment.end))
+      i = comment.end
       continue
     }
     if (html[i] === '<' && /[a-zA-Z/]/.test(html[i + 1] ?? '')) {
@@ -2928,9 +3776,9 @@ function maskAttrQuotes(html: string): string {
 // VERBATIM (jamais masquée ICI) : la valeur d'une directive à accolades (`@confirm={ text: … }`,
 // `@viewTransition.cube={ dir: left }`) est elle-même un `{…}`, mais À L'INTÉRIEUR d'une balise —
 // la masquer aurait caché la directive à la regex censée la traiter, pas seulement la prose.
-// Comptage de `{}` conscient des chaînes imbriquées (mêmes gardes que maskStaticHtmlText plus
-// haut, même famille de bogue) : un `}` littéral dans l'une d'elles (`{'a}'}`) ne referme jamais
-// l'interpolation trop tôt.
+// Fin de l'interpolation lue par finExpression (même aide que maskStaticHtmlText plus haut) : un `}`
+// littéral dans une chaîne (`{'a}'}`) ne la referme jamais trop tôt, un guillemet dans une regex
+// (`{ $t.replace(/"/g, '') }`) n'ouvre pas une chaîne qui masquerait tout le reste du HTML.
 function maskInterpolations(html: string, mask: (m: string) => string): string {
   let out = ''
   let i = 0
@@ -2948,20 +3796,8 @@ function maskInterpolations(html: string, mask: (m: string) => string): string {
       continue
     }
     if (html[i] === '{') {
-      let depth = 1
-      let j = i + 1
-      let inStr = false
-      let strCh = ''
-      while (j < n && depth > 0) {
-        const ch = html[j]
-        if (inStr) {
-          if (ch === '\\') { j += 2; continue }
-          if (ch === strCh) inStr = false
-        } else if (ch === '"' || ch === "'" || ch === '`') { inStr = true; strCh = ch }
-        else if (ch === '{') depth++
-        else if (ch === '}') depth--
-        j++
-      }
+      const fin = finExpression(html, i)
+      const j = fin < 0 ? n : fin
       out += mask(html.slice(i, j))
       i = j
       continue
@@ -2975,8 +3811,8 @@ function maskInterpolations(html: string, mask: (m: string) => string): string {
 function preprocessHtml(html: string, moduleName: string): string {
   let out = html
 
-  // Auto-fermeture mjs-* : <mjs-foo /> → <mjs-foo></mjs-foo>
-  out = out.replace(/<(mjs-[a-zA-Z0-9_-]+)([^>]*?)\/>/gm, '<$1$2></$1>')
+  // Auto-fermeture mjs-* : <mjs-foo /> → <mjs-foo></mjs-foo> (un `>` entre guillemets ou dans une expression ne coupe pas la balise)
+  out = fermerComposantsAutoFermes(out)
 
   // Vérification d'isométrie (open vs close) — comptée sur une vue où les valeurs d'attribut
   // (maskAttrQuotes) ET les interpolations de TEXTE (maskInterpolations, définie plus bas) sont
@@ -3086,16 +3922,28 @@ function preprocessHtml(html: string, moduleName: string): string {
   out = replaceBraceDirective(out, '@confirm={', (raw) => {
     const trimmed = raw.trim()
     if (!/^[a-zA-Z_$][\w$]*\s*:/.test(trimmed)) return `mjs-confirm={${raw}}`
-    const obj = {}
+    const obj: Record<string, string> = {}
+    const parts: string[] = []
+    let translated = false
     let rest = trimmed
     while (rest.length > 0) {
       const keyM = rest.match(/^(text|ok|cancel)\s*:\s*/)
       const vi = keyM ? keyM[0].length : -1
-      const scanned = keyM && (rest[vi] === "'" || rest[vi] === '"') ? scanQuoted(rest, vi) : null
-      if (!keyM || !scanned) throw new Error(t('transpiler.confirm-objet-invalide', { raw }))
-      obj[keyM[1]] = scanned.content
-      rest = rest.slice(scanned.end + 1).replace(/^\s*,?\s*/, '')
+      const call = keyM ? scanTranslatedCall(rest, vi) : null
+      const scanned = keyM && !call && (rest[vi] === "'" || rest[vi] === '"') ? scanQuoted(rest, vi) : null
+      if (!keyM || (!scanned && !call)) throw new Error(t('transpiler.confirm-objet-invalide', { raw }))
+      if (call) {
+        translated = true
+        parts.push(`${keyM[1]}: ${call.expr}`)
+        rest = rest.slice(call.end).replace(/^\s*,?\s*/, '')
+        continue
+      }
+      obj[keyM[1]] = scanned!.content
+      parts.push(`${keyM[1]}: ${JSON.stringify(scanned!.content)}`)
+      rest = rest.slice(scanned!.end + 1).replace(/^\s*,?\s*/, '')
     }
+    // au moins un µt(…) : attribut dynamique qui fabrique le même JSON, refait à chaque changement de langue
+    if (translated) return `mjs-confirm={JSON.stringify({ ${parts.join(', ')} })}`
     return `mjs-confirm="${escapeVtAttrValue(JSON.stringify(obj))}"`
   })
 
@@ -3175,12 +4023,20 @@ function preprocessHtml(html: string, moduleName: string): string {
     if (!/^[a-zA-Z_$][\w$]*\s*:/.test(trimmed)) return `mjs-title={${raw}}`
     const conf: Record<string, string | number> = {}
     let text: string | undefined
+    let textCall: string | undefined
     let rest = trimmed
     while (rest.length > 0) {
       const keyM = rest.match(/^(text|delay|side|dur|transition)\s*:\s*/)
       if (!keyM) throw new Error(t('transpiler.title-objet-invalide', { raw }))
       const key = keyM[1]
       const vi = keyM[0].length
+      // text: µt(…) : seul appel accepté, et seulement pour cette clé (les réglages restent littéraux)
+      const call = key === 'text' ? scanTranslatedCall(rest, vi) : null
+      if (call) {
+        textCall = call.expr
+        rest = rest.slice(call.end).replace(/^\s*,?\s*/, '')
+        continue
+      }
       let str: string | undefined
       let num: string | undefined
       if (rest[vi] === "'" || rest[vi] === '"') {
@@ -3207,8 +4063,8 @@ function preprocessHtml(html: string, moduleName: string): string {
         conf[key] = str
       }
     }
-    if (text === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
-    let attrs = `mjs-title="${escapeVtAttrValue(text)}"`
+    if (text === undefined && textCall === undefined) throw new Error(t('transpiler.title-objet-invalide', { raw }))
+    let attrs = textCall !== undefined ? `mjs-title={${textCall}}` : `mjs-title="${escapeVtAttrValue(text!)}"`
     if (Object.keys(conf).length > 0) attrs += ` mjs-title-conf="${escapeVtAttrValue(JSON.stringify(conf))}"`
     return attrs
   })
@@ -3408,11 +4264,13 @@ function classifyUpdates(updates: string[]): {
   const trans: string[] = []
   const content: string[] = []
   for (const u of updates) {
-    // `_mjs_td` = code généré par `@attach` : on l'inclut dans struct pour qu'il
-    // re-tire à chaque re-rendu d'un bloc parent (`{if}`/`{key}`/`{for}`). Sinon
-    // le nœud est recréé (avec un nouveau ref) mais l'attach ne re-fire jamais.
-    // La garde `if (_node._mjs_td) { … purge … }` rend l'opération idempotente.
-    if (/_mjs_updIf|_mjs_updFor|_mjs_updAwait|_mjs_updKey|_updElement|_mjs_td/.test(u)) struct.push(u)
+    // `_mjs_td` = code généré par `@attach` : on l'inclut dans struct pour qu'il soit
+    // repassé à chaque re-rendu d'un bloc parent (`{if}`/`{key}`/`{for}`) — un nœud
+    // recréé (nouveau ref) reçoit son attache ; une balise déjà attachée sur la même
+    // connexion (`_mjs_att`) est sautée, cf. bindingAttach (generator/attributes).
+    // `µ._mjs_fx(` (effet `*nom`) : même besoin, même rangement ; le moteur ignore une
+    // seconde pose sur le même nœud
+    if (/_mjs_updIf|_mjs_updFor|_mjs_updAwait|_mjs_updKey|_updElement|_mjs_td|µ\._mjs_fx\(/.test(u)) struct.push(u)
     else if (/_mjs_intro|_mjs_outro/.test(u)) trans.push(u)
     else content.push(u)
   }
@@ -3562,8 +4420,12 @@ function splitTopLevelArgs(raw: string): string[] {
 // celui-ci avale un gabarit ENTIER, `${…}` compris (cf. commentaire d'applyI18nPrefixing plus
 // bas) — les guillemets/commentaires seuls n'ont pas ce défaut, un gabarit se masque À PART
 // (maskTemplateLiterals, juste en dessous).
+// Commentaires JS seulement (`//`, `/* */`), jamais `#`/`###` : ce masque ne lit que du JS DÉJÀ
+// compilé, où `#` n'ouvre aucun commentaire. Pris pour un commentaire, le `#` d'un lien
+// (`"#/x/#{n}"`, devenu un gabarit) masquait la fin de sa ligne — et les `µ.t(` qui la suivaient
+// n'étaient plus préfixés par la section (libellés vides à l'écran)
 const MASK_QUOTES_AND_COMMENTS_RE =
-  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\/\*[\s\S]*?\*\/|###[\s\S]*?###|\/\/[^\n]*|#[^\n]*/g
+  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g
 
 // Masque UNIQUEMENT le texte figé d'un gabarit (backtick) — une interpolation `${…}` est du JS
 // VIVANT (jamais un `µ.t('clé')` simplement mentionné en dur) : elle reste lisible, jamais
@@ -3622,7 +4484,7 @@ function maskTemplateLiterals(code: string): string {
 // Scan caractère par caractère de `µ.t(`, balance-aware (chaînes + parenthèses
 // imbriquées) — trouve la parenthèse fermante RÉELLE de chaque appel, jamais
 // un `)` interne à un objet `vars` ou une chaîne.
-function applyI18nPrefixing(code: string, section: string | null, mode: string | null): string {
+function applyI18nPrefixing(code: string, section: string | null, mode: string | null, more: readonly string[] = []): string {
   if (!code.includes('µ.t(')) return code
   const marker = 'µ.t('
   // le marqueur était cherché par `indexOf` sur
@@ -3683,13 +4545,13 @@ function applyI18nPrefixing(code: string, section: string | null, mode: string |
       // laissé tel quel. Dans les deux cas, les arguments suivants sont rescannés (µ.t niché).
       const tpl = parseTemplateLiteralArg(args[0] ?? '')
       const first = (tpl && tpl.content.startsWith('/')) ? '`' + tpl.content.slice(1) + '`' : (args[0] ?? '').trim()
-      const rest  = args.slice(1).map(a => applyI18nPrefixing(a.trim(), section, mode))
+      const rest  = args.slice(1).map(a => applyI18nPrefixing(a.trim(), section, mode, more))
       out += marker + [first, ...rest].join(', ') + ')'
     }
     else {
       const isAbsolute = lit.content.startsWith('/')
       const key = isAbsolute ? lit.content.slice(1) : (section ? `${section}.${lit.content}` : lit.content)
-      const rest = args.slice(1).map(a => applyI18nPrefixing(a.trim(), section, mode))
+      const rest = args.slice(1).map(a => applyI18nPrefixing(a.trim(), section, mode, more))
       let newArgs = [`${lit.quote}${key}${lit.quote}`]
       if (mode) {
         newArgs.push(rest[0] ?? 'undefined')
@@ -3697,6 +4559,12 @@ function applyI18nPrefixing(code: string, section: string | null, mode: string |
       }
       else {
         newArgs = newArgs.concat(rest)
+      }
+      // sections en plus du module : la clé relative se cherche aussi chez elles, dans l'ordre écrit (4e argument de µ.t)
+      if (section && !isAbsolute && more.length > 0) {
+        newArgs = newArgs.slice(0, 3)
+        while (newArgs.length < 3) newArgs.push('undefined')
+        newArgs.push(`[${more.map(s => `${lit.quote}${s}.${lit.content}${lit.quote}`).join(', ')}]`)
       }
       out += marker + newArgs.join(', ') + ')'
     }
@@ -3725,16 +4593,18 @@ function buildClassName(moduleName: string): string {
 // l'idiome correct : <@head><style>@font-face { … src: url(µasset('…')) }
 // </style></@head> (injecté dans document.head, hors Shadow DOM).
 // ----------------------------------------------------------------------------
-export function cssTrapWarnings(css: string): string[] {
+export function cssTrapWarnings(css: string, lint?: LintToggles): string[] {
   const warnings: string[] = []
   if (/@font-face\b/.test(css)) {
-    warnings.push(t('transpiler.css-trap-fontface'))
+    const w = typedLine('cssTrap', t('transpiler.css-trap-fontface'), lint)
+    if (w !== null) warnings.push(w)
   }
   // Les @import SASS sont résolus À LA COMPILATION (jamais présents dans le
   // CSS compilé) — un @import qui survit ici est forcément du CSS pur
   // explicite, aucun faux positif possible.
   if (/@import\b/.test(css)) {
-    warnings.push(t('transpiler.css-trap-import'))
+    const w = typedLine('cssTrap', t('transpiler.css-trap-import'), lint)
+    if (w !== null) warnings.push(w)
   }
   return warnings
 }
@@ -3751,6 +4621,159 @@ function serializeComputedDeps(analyzer: Analyzer | null | undefined): string {
     if (deps.length > 0) parts.push(`${JSON.stringify(k)}: ${JSON.stringify(deps)}`)
   }
   return parts.length > 0 ? `{ ${parts.join(', ')} }` : '{}'
+}
+
+// les valeurs des attributs des balises, hors accolades : `<p title="$layout">`, `class='a $x'`, `title=$layout`
+// lisent une variable sans accolades ; le texte entre les balises, lui, n'en lit aucune. La fin d'une balise
+// se lit comme ailleurs : guillemets reconnus, accolades comptées
+function attributeValues(html: string): string {
+  const values: string[] = []
+  const re = /<[A-Za-z@][^\s>\/]*/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    let i = m.index + m[0].length
+    let depth = 0
+    let quote = ''
+    let from = -1
+    for (; i < html.length; i++) {
+      const c = html[i]
+      if (quote) {
+        if (c === quote) { values.push(html.slice(from, i)); quote = '' }
+      }
+      else if (depth > 0) {
+        if (c === '{') depth++
+        else if (c === '}') depth--
+      }
+      else if (c === '{') depth++
+      else if (c === '>') break
+      else if (c === '=') {
+        let j = i + 1
+        while (j < html.length && /\s/.test(html[j])) j++
+        if (html[j] === '"' || html[j] === "'") { quote = html[j]; from = j + 1; i = j }
+        else if (html[j] !== '{') {
+          const raw = /^[^\s>"'{]+/.exec(html.slice(j))
+          if (raw) { values.push(raw[0]); i = j + raw[0].length - 1 }
+        }
+      }
+    }
+    re.lastIndex = i
+  }
+  return values.join('\n')
+}
+
+// le code du HTML d'un composant : le contenu de ses accolades (interpolations, blocs, valeurs
+// d'attributs, gestionnaires), sans le texte autour — `<p>La rune µlayout…</p>` ne lit rien. Une
+// accolade jamais refermée n'est pas lue (le parseur la signale plus loin, à sa ligne) : la lecture
+// reprend juste après elle
+function templateCode(html: string): string {
+  const accolades = lireAccolades(html)
+  const parts: string[] = []
+  let at = html.indexOf('{')
+  while (at !== -1) {
+    const lue  = accolades.get(at)
+    let next = at + 1
+    if (lue) {
+      parts.push(lue.corps)
+      next = lue.fin
+    }
+    // sinon accolade seule : rien à lire, cf. plus haut
+    at = html.indexOf('{', next)
+  }
+  return parts.join('\n')
+}
+
+// chaque accolade du HTML lue par extractBalanced : son contenu et la position qui suit sa fermante, `null` si elle ne se referme
+// jamais. Une accolade jamais refermée lit jusqu'à la fin du texte, et la lecture reprend juste après elle : lues dans l'ordre, n
+// accolades ouvertes coûtaient n lectures jusqu'à la fin (quadratique, des secondes pour quelques milliers de lignes). Lues de la
+// dernière à la première, une lecture qui compte une accolade déjà connue pour ne jamais se refermer s'arrête là : elle ne se
+// refermera pas non plus — même lecture du texte qui suit, à une condition : aucune `)` sans sa `(` après l'accolade, la seule
+// différence possible venant du regard en arrière d'ouvreUneRegex sur une parenthèse (sigils.ts, apresCondition). Tant qu'aucune
+// accolade ne reste ouverte (tout gabarit qui se construit), la lecture dans l'ordre suffit et coûte moins
+function lireAccolades(html: string): Map<number, { corps: string, fin: number } | null> {
+  const dansLOrdre = new Map<number, { corps: string, fin: number } | null>()
+  const lecteur    = new Scanner(html)
+  for (let at = html.indexOf('{'); at !== -1; at = html.indexOf('{', lecteur.pos)) {
+    lecteur.pos = at + 1
+    try {
+      dansLOrdre.set(at, { corps: extractBalanced(lecteur, '}'), fin: lecteur.pos })
+    }
+    catch {
+      return lireAccoladesALEnvers(html)
+    }
+  }
+  return dansLOrdre
+}
+
+function lireAccoladesALEnvers(html: string): Map<number, { corps: string, fin: number } | null> {
+  const lues    = new Map<number, { corps: string, fin: number } | null>()
+  const echecs  = new Set<number>()
+  const scanner = new Scanner(html)
+  // plus petit solde `(` moins `)` atteint à partir de chaque position, et solde juste avant elle
+  const solde = new Int32Array(html.length + 1)
+  for (let i = 0; i < html.length; i++) solde[i + 1] = solde[i] + (html[i] === '(' ? 1 : html[i] === ')' ? -1 : 0)
+  const minimum = new Int32Array(html.length + 1)
+  minimum[html.length] = solde[html.length]
+  for (let i = html.length - 1; i >= 0; i--) minimum[i] = Math.min(solde[i], minimum[i + 1])
+  for (let at = html.lastIndexOf('{'); at !== -1; at = at === 0 ? -1 : html.lastIndexOf('{', at - 1)) {
+    scanner.pos = at + 1
+    try {
+      const corps = extractBalanced(scanner, '}', false, echecs)
+      lues.set(at, { corps, fin: scanner.pos })
+    }
+    catch {
+      lues.set(at, null)
+      if (minimum[at + 1] >= solde[at + 1]) echecs.add(at)
+    }
+  }
+  return lues
+}
+
+// le même HTML, les chaînes et commentaires du code des accolades blanchis (même longueur, lignes gardées) : un nom
+// écrit dans un texte (`@log('alert')`) n'est pas une citation de ce nom. Une accolade jamais refermée est laissée telle quelle
+function blankBraceStrings(html: string, lang: string): string {
+  const accolades = lireAccolades(html)
+  let out         = ''
+  let from        = 0
+  let at          = html.indexOf('{')
+  while (at !== -1) {
+    const lue  = accolades.get(at)
+    let next = at + 1
+    if (lue) {
+      out += html.slice(from, at + 1) + maskNonCode(html.slice(at + 1, lue.fin - 1), lang)
+      from = lue.fin - 1
+      next = lue.fin
+    }
+    // sinon accolade seule : rien à blanchir
+    at = html.indexOf('{', next)
+  }
+  return out + html.slice(from)
+}
+
+// les noms de modèles que le script compare à µlayout, lus sur l'AST du JS compilé (µlayout y est
+// devenu `$.layout || 'default'`, quel que soit le langage) : `=== 'x'` (et `==`, `!==`, `!=`),
+// `switch µlayout` et ses `case`, `['x', 'y'].includes(µlayout)` (ou `.indexOf`) — un commentaire
+// ou une chaîne qui les cite ne compte pas
+function layoutNamesInScript(ast: acorn.Node | null): string[] {
+  const names: string[] = []
+  if (!ast) return names
+  const isLayout = (n: any): boolean => n?.type === 'LogicalExpression' && n.operator === '||' && n.left?.type === 'MemberExpression' && !n.left.computed && n.left.object?.type === 'Identifier' && n.left.object.name === '$' && n.left.property?.name === 'layout' && n.right?.type === 'Literal' && n.right.value === 'default'
+  const text     = (n: any): string | null => n?.type === 'Literal' && typeof n.value === 'string' ? n.value : null
+  const add      = (n: any): void => { const s = text(n); if (s !== null) names.push(s) }
+  walk.simple(ast, {
+    BinaryExpression(n: any) {
+      if (!['===', '==', '!==', '!='].includes(n.operator)) return
+      if (isLayout(n.left)) add(n.right)
+      else if (isLayout(n.right)) add(n.left)
+    },
+    SwitchStatement(n: any) {
+      if (isLayout(n.discriminant)) for (const c of n.cases) add(c.test)
+    },
+    CallExpression(n: any) {
+      const callee = n.callee
+      if (callee?.type === 'MemberExpression' && !callee.computed && ['includes', 'indexOf'].includes(callee.property?.name) && callee.object?.type === 'ArrayExpression' && isLayout(n.arguments[0])) for (const e of callee.object.elements) add(e)
+    },
+  })
+  return names
 }
 
 // wrapModuleError — préfixe `err.message` du nom du module (build
@@ -3786,6 +4809,9 @@ async function transpileImpl(
   opts: TranspileOpts = {}
 ): Promise<{ data: TranspileData; output: string; sourceMap?: string }> {
   const moduleName = opts.moduleName ?? 'inline'
+  // calculé UNE fois, en tête — transmis tel quel aux adapters de langage et aux modules
+  // profonds (analyzer/parser/generator) qui tournent dans CE même appel, jamais recalculé.
+  const colorsEnabled = opts.colorsEnabled ?? false
   // dirInject : préfixe URL public des assets. Le bundler passe explicitement
   // `${urlPrefix}/`. Pour usage standalone (sans bundler), default à `/modularjs/`.
   const dirInject = opts.dirInject ?? '/modularjs/'
@@ -3801,7 +4827,9 @@ async function transpileImpl(
   //    plus du tout sur un fichier CRLF, et toute la suite du pipeline est bâtie sur
   //    des regex `^`/`$`/`\n` (moduleVars, extractSections, lints…) qui tiennent pour acquis
   //    UNE fin de ligne LF. CR seul (vieux Mac) traité pareil. La sortie est en LF pour tous.
-  source = source.replace(/\r\n?/g, '\n')
+  //    La marque BOM d'un fichier UTF-8 retirée au même endroit : laissée en tête, elle cachait la directive de la
+  //    première ligne (`@i18n 'sec'` ignoré en silence)
+  source = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
 
   // -1. Alias ASCII sigil/contexte — DOIT tourner AVANT le lint singleton et
   //    extractDirectives : sinon `@import mjs$$X` (sigil ASCII) ou
@@ -3813,7 +4841,7 @@ async function transpileImpl(
   //    les mêmes passes retournent plus bas (script.raw/moduleSection.raw/html)
   //    pour couvrir aussi le texte injecté ENSUITE par <@include>/macros (pas
   //    encore inliné ici).
-  source = normalizeSigilAlias(source, opts.sigil)
+  source = sigilAliasOutsideVars(source, opts.sigil, opts.defaultScriptLang ?? 'civet')
   source = normalizeContextAlias(source, opts.contextAlias)
 
   // 0. Lint singleton : `@import µ$$X` est la SEULE forme d'import — toute
@@ -3882,20 +4910,41 @@ async function transpileImpl(
   })
   const { module: moduleSection, script, style, layouts, routes: routesSections } = sections
   let html = sections.html
+  // le script tel qu'écrit, avant ce qui s'y ajoute (partiels, persistance) : ses lignes sont celles du fichier
+  const writtenScript = script.raw
+
+  // 2-quater. Types et valeurs permises — un <types> n'a pas sa place dans un composant (fichier
+  //    *.types.mjs) ; le <vars> est lu tout de suite, ses fautes sortent avant tout le reste, et
+  //    ses règles sont émises plus bas, avec la classe (data.typesDecl/typesLine)
+  if (sections.types.length > 0) throw new Error(t('transpiler.types-dans-composant', { ligne: sections.types[0].startLine }))
+  if (sections.effects.length > 0) throw new Error(t('transpiler.effets-dans-composant', { ligne: sections.effects[0].startLine }))
+  // un composant sans HTML (script ou style seuls, un commentaire) ne rend rien
+  if (html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim() === '') {
+    const vide = typedLine('emptyComponent', t('transpiler.composant-sans-html', { moduleName }), opts.lint)
+    if (vide !== null) sections.warnings.push(vide)
+  }
+  // `@formAssociated` écrit plus d'une fois : la directive n'a qu'un sens, la compilation passe et un avertissement le dit
+  if (dir.moduleFormAssociatedTwice) sections.warnings.push(t('transpiler.form-associated-plusieurs-fois', { moduleName }))
+  const varRules = compileVars(sections.vars, opts.typeDefs ?? {}, opts.typesText !== false)
+  checkRessorts(varRules, [
+    { text: moduleSection.raw, startLine: moduleSection.startLine, code: true },
+    { text: script.raw, startLine: script.startLine, code: true },
+    { text: html, startLine: sections.htmlStartLine, code: false },
+  ])
 
   // 2-bis. Lint µeffect/µinspect hors top-level — sur le SOURCE du dev tout
   //    juste extrait (post-dedent, AVANT les appends persist/macros/includes
   //    qui génèrent leurs propres µeffect, légitimes). Copie normalisée
   //    `mjs.effect`→`µ.effect` pour le SCAN seulement (l'alias sigil n'est
   //    appliqué au vrai source qu'à l'étape 4-bis).
-  lintEffectTopLevel(normalizeSigilAlias(script.raw, opts.sigil), false)
-  lintEffectTopLevel(normalizeSigilAlias(moduleSection.raw, opts.sigil), true)
+  lintEffectTopLevel(normalizeSigilAlias(script.raw, opts.sigil), false, script.startLine)
+  lintEffectTopLevel(normalizeSigilAlias(moduleSection.raw, opts.sigil), true, moduleSection.startLine)
 
   // 2-bis-bis. Lint µemit dans <script module> : aucune
   //    instance de composant dans le module, `_mjsThis` n'y existe pas. Même
   //    copie normalisée que ci-dessus, <script> composant hors périmètre
   //    (µemit y reste légitime à toute profondeur, cf. lintEmitInModule).
-  lintEmitInModule(normalizeSigilAlias(moduleSection.raw, opts.sigil))
+  lintEmitInModule(normalizeSigilAlias(moduleSection.raw, opts.sigil), moduleSection.startLine)
 
   // 2-bis-ter. Rune séparée de son symbole (`µ` puis `.setContext(…)` à la ligne suivante) : refusée sur le
   //    source brut du dev, alias `mjs` reconnu par la règle elle-même, numéro recalé sur la ligne du `.mjs`.
@@ -3906,7 +4955,7 @@ async function transpileImpl(
   // 2-ter. Garde-fou V1 `@onUrlChange = ` — AVERTISSEMENT (jamais bloquant),
   //    scanné sur le <script> composant seul (le hook de route n'a de sens que
   //    sur une INSTANCE ; <script module> n'a pas de `this` de composant).
-  lintOnUrlChangeLegacy(script.raw, moduleName)
+  lintOnUrlChangeLegacy(script.raw, moduleName, opts.lint, colorsEnabled, script.startLine)
 
   // 3. Auto-imports : injectés en haut du module
   if (dir.pendingAutoImports.length > 0) {
@@ -3924,7 +4973,12 @@ async function transpileImpl(
   //     de _header.mjs jamais résolu → 404, figé en `&#39;` après le passage
   //     par le générateur HTML).
   const includeAcc = newIncludeAccumulator()
-  html = processIncludes(html, opts.baseDir, includeAcc, opts.sourceDir, { sigil: opts.sigil, scriptLang: script.lang, moduleLang: moduleSection.lang })
+  // les blocs `{? nom}` du composant, développés AVANT d'y verser les partiels : une faute y est citée à
+  // sa ligne du fichier, pas décalée de la hauteur des partiels (ceux des partiels, plus bas)
+  html = expandLayoutBlocks(html, sections.htmlStartLine)
+  // le HTML du composant lui-même, avant les partiels : ses lignes sont celles du fichier
+  const hostHtml = html
+  html = processIncludes(html, opts.baseDir, includeAcc, opts.sourceDir, { sigil: opts.sigil, scriptLang: script.lang, moduleLang: moduleSection.lang }, opts.lint)
   // Append partial scripts/styles/modules au parent
   if (includeAcc.script.length > 0) script.raw += '\n' + includeAcc.script.join('\n')
   if (includeAcc.module.length > 0) moduleSection.raw += '\n' + includeAcc.module.join('\n')
@@ -3937,11 +4991,12 @@ async function transpileImpl(
 
   // 4b. Sigil ASCII (fallback clavier non-AZERTY) : `mjs.X` → `µ.X` etc.,
   //     APRÈS les includes (leur contenu en bénéficie aussi), AVANT
-  //     résolution µasset/sucre µ/lexer. `µ` reste canonique.
+  //     résolution µasset/sucre µ/lexer. `µ` reste canonique. Dans le code seul : chaînes, commentaires,
+  //     texte et attributs du HTML gardent `mjs.` tel qu'écrit (sigilAliasCode, sigilAliasHtml).
   if (opts.sigil && opts.sigil !== 'µ') {
-    script.raw        = normalizeSigilAlias(script.raw, opts.sigil)
-    moduleSection.raw = normalizeSigilAlias(moduleSection.raw, opts.sigil)
-    html              = normalizeSigilAlias(html, opts.sigil)
+    script.raw        = sigilAliasCode(script.raw, opts.sigil, script.lang)
+    moduleSection.raw = sigilAliasCode(moduleSection.raw, opts.sigil, moduleSection.lang)
+    html              = sigilAliasHtml(html, opts.sigil)
     // PAS `style.raw` : en SASS le `.` préfixe une CLASSE ; aliaser
     // `mjs`→`µ` y transformerait un sélecteur `.mjs.active` en `.µ.active`
     // (mort). Le style DYNAMIQUE passe par `--var={}`/@style dans le template,
@@ -3960,13 +5015,26 @@ async function transpileImpl(
   if (opts.resolveAsset) {
     script.raw         = await replaceMagicAssets(script.raw, opts.resolveAsset, script.lang)
     moduleSection.raw  = await replaceMagicAssets(moduleSection.raw, opts.resolveAsset, moduleSection.lang)
+    // un chemin local écrit en clair dans un réglage d'image d'un effet (`*behind('photo.jpg')`) devient l'appel
+    // `µimage('photo.jpg')` que le bundler a résolu (preResolveAssets), remplacé ci-dessous comme les autres ; `µasset('photo.jpg')`
+    // pour un réglage dont l'effet ne lit que l'adresse : avant le remplacement des µasset, qui le résout
+    if (opts.preResolvedImages) html = resolveEffectImages(html)
     html               = await replaceMagicAssets(html, opts.resolveAsset)
+    // les feuilles du composant (`<style>` et ses déclinaisons nommées) : leur texte est du CSS, du SCSS ou du SASS que la compilation des
+    // styles, plus bas, change en chaîne de CSS — l'appel `µasset('x.woff2')` n'y serait plus retrouvé par personne. Remplacé ici, dans la
+    // source, par l'adresse que le bundler a résolue (celle des dossiers de assetDirs comprise) ; un fichier introuvable reste le repère
+    // d'asset manquant, que le bundler refuse
+    style.raw          = await replaceStyleAssets(style.raw, opts.resolveAsset)
+    for (const ly of layouts) ly.raw = await replaceStyleAssets(ly.raw, opts.resolveAsset)
     script.raw         = replaceMagicImages(script.raw, opts.preResolvedImages)
     moduleSection.raw  = replaceMagicImages(moduleSection.raw, opts.preResolvedImages)
     html               = replaceMagicImages(html, opts.preResolvedImages)
   }
 
-  const macros = processGlobalMacros(html, { firstLine: sections.htmlStartLine, sigil: opts.sigil })
+  // `{? timer}` → `{if (µlayout is 'timer')}` des partiels inclus : avant tout ce qui lit le HTML
+  // (µlayout, modèles connus) ; ceux du composant sont déjà développés (cf. processIncludes)
+  html = expandLayoutBlocks(html, sections.htmlStartLine)
+  const macros = processGlobalMacros(html, { firstLine: sections.htmlStartLine, sigil: opts.sigil, sourceHtml: hostHtml })
   html = macros.html
   if (macros.setup) script.raw += macros.setup
   if (macros.teardown) script.raw += macros.teardown
@@ -3997,7 +5065,7 @@ async function transpileImpl(
   //    chaîne multi-lignes comme une vraie var module, empêchant l'auto-déclaration de
   //    l'homonyme dans le <script> (ReferenceError au montage, prouvé par le test rouge).
   const modulePrep = moduleSection.raw
-    ? tokenize(applyMjsSugarToScript(moduleSection.raw, moduleSection.lang, undefined, '<script module>'), { externalVars, moduleMode: true })
+    ? tokenize(applyMjsSugarToScript(moduleSection.raw, moduleSection.lang, undefined, '<script module>', moduleSection.startLine - dir.pendingAutoImports.length), { externalVars, moduleMode: true, fileName: `${moduleName}.module`, firstLine: moduleSection.startLine - dir.pendingAutoImports.length })
     : ''
   // même remap qu'au <script> composant (cf.
   // scriptCompiled plus bas) : une erreur Civet DANS <script module> citait une position relative
@@ -4008,20 +5076,30 @@ async function transpileImpl(
   let moduleCompiled: { code: string, map?: string }
   if (modulePrep) {
     try {
-      moduleCompiled = await moduleAdapter.compileToJs(modulePrep, { fileName: `${moduleName}.module` })
+      moduleCompiled = await moduleAdapter.compileToJs(modulePrep, { fileName: `${moduleName}.module`, lint: opts.lint, colorsEnabled })
     }
     catch (e) {
-      throw remapAdapterErrorLine(e, `${moduleName}.module`, moduleSection.startLine)
+      throw remapAdapterErrorLine(e, `${moduleName}.module`, moduleSection.startLine - dir.pendingAutoImports.length)
     }
   }
   else {
     moduleCompiled = { code: '' }
   }
   let moduleJs = moduleCompiled.code
-  const moduleAst = parseModuleAst(moduleJs)
+  // une seule analyse du JS compilé, partagée par les contrôles qui suivent (constantes, symboles réservés, déclarations…)
+  const moduleAst = parseModuleAst(moduleJs, true)
+  // défaut de Civet sur une flèche en ligne (FLECHE_EN_LIGNE_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript
+  // du bloc ne s'analyse pas, la page mourait au chargement — même refus que pour le <script> (cf. plus bas)
+  if (moduleJs && !moduleAst) {
+    let position: RegExpExecArray | null = null
+    try { acorn.parse(moduleJs, { ecmaVersion: 'latest', sourceType: 'module' }) }
+    catch (e: any) { position = /\((\d+):\d+\)$/.exec(String(e?.message ?? '')) }
+    const produite = position ? moduleJs.split('\n')[Number(position[1]) - 1] ?? '' : ''
+    if (FLECHE_EN_LIGNE_CIVET_RE.test(produite)) throw new Error(t('transpiler.script-fleche-en-ligne', { moduleName, ligne: Number(position![1]), extrait: produite.trim().slice(0, 160), section: '<script module>' }))
+  }
   // même contrôle des constantes `:=` que pour le `<script>` (cf. plus bas), sur le JS du bloc
   // `<script module>` juste compilé : une constante réaffectée dans le bloc lui-même
-  const moduleConstReassign = findConstReassignment(moduleJs)
+  const moduleConstReassign = findConstReassignment(moduleJs, [], moduleAst)
   if (moduleConstReassign) {
     throw new Error(t('transpiler.civet-reaffectation-constante', { nom: moduleConstReassign.name, ligne: moduleConstReassign.line, code: true }))
   }
@@ -4047,7 +5125,7 @@ async function transpileImpl(
         return out
       })()
   const scriptPrep = script.raw
-    ? tokenize(applyMjsSugarToScript(script.raw, script.lang, moduleVars, '<script>'), { externalVars })
+    ? tokenize(applyMjsSugarToScript(script.raw, script.lang, moduleVars, '<script>', script.startLine), { externalVars, fileName: `${moduleName}.script`, firstLine: script.startLine })
     : ''
 
   // 8. Compile via language adapter → JS standard
@@ -4063,7 +5141,7 @@ async function transpileImpl(
   let scriptCompiled: { code: string, map?: string }
   if (scriptPrep) {
     try {
-      scriptCompiled = await scriptAdapter.compileToJs(scriptPrep, { fileName: `${moduleName}.script` })
+      scriptCompiled = await scriptAdapter.compileToJs(scriptPrep, { fileName: `${moduleName}.script`, lint: opts.lint, colorsEnabled })
     }
     catch (e) {
       throw remapAdapterErrorLine(e, `${moduleName}.script`, script.startLine)
@@ -4083,19 +5161,19 @@ async function transpileImpl(
   // JS compilé, jamais de la source Civet — dit explicitement dans le message (`code: true`).
   // Les constantes du `<script module>` sont visibles du `<script>` (qui s'exécute dans leur
   // portée) : les réaffecter depuis le `<script>` plante de même, sauf homonyme local.
-  const constReassign = findConstReassignment(scriptJs, collectTopLevelDeclarations(moduleAst, 'const'))
+  // 7-bis/7-ter. Lints AST. PERF : chaque section est analysée UNE fois (parseModuleAst, avec les positions de ligne)
+  // et l'AST partagé par tous les contrôles : constantes, symboles réservés, déclarations, imports, analyseur
+  const scriptAst = parseModuleAst(scriptJs, true)
+  const constReassign = findConstReassignment(scriptJs, collectTopLevelDeclarations(moduleAst, 'const'), scriptAst)
   if (constReassign) {
     throw new Error(t('transpiler.civet-reaffectation-constante', { nom: constReassign.name, ligne: constReassign.line, code: true }))
   }
   // garde symboles réservés, cf. generator/reserved-symbols.ts
-  lintReservedSymbolNames(moduleJs, moduleName, '<script module>')
+  lintReservedSymbolNames(moduleJs, moduleName, '<script module>', moduleAst)
   const scriptSourceMap  = scriptCompiled.map  ? shiftSourceMapLines(scriptCompiled.map, script.startLine - 1) : undefined
-  const moduleSourceMap  = moduleCompiled.map  ? shiftSourceMapLines(moduleCompiled.map, moduleSection.startLine - 1) : undefined
+  // les lignes d'import ajoutées devant le bloc (`@import`) n'ont pas de place dans le fichier : leurs segments perdent leur position
+  const moduleSourceMap  = moduleCompiled.map  ? shiftSourceMapLines(moduleCompiled.map, moduleSection.startLine - 1 - dir.pendingAutoImports.length, dir.pendingAutoImports.length) : undefined
 
-  // 7-bis/7-ter. Lints AST. PERF : chaque section est parsée UNE fois
-  // (parseModuleAst) et l'AST partagé entre les deux lints (avant : jusqu'à 4
-  // parse acorn/composant).
-  const scriptAst = parseModuleAst(scriptJs)
 
   // Noms top-level du `<script>` et du `<script module>`, lus sur l'AST du JS COMPILÉ et
   // JAMAIS sur le texte source : ce sont exactement les identifiants qui existeront dans le
@@ -4119,9 +5197,31 @@ async function transpileImpl(
   // doit pas être flaggée « nom jamais déclaré » (la var vit dans le module).
   // garde symboles réservés AVANT ce lint : sinon `$ = 3` est d'abord signalé
   // « nom jamais déclaré », message qui conseille `$ := …` — lequel échoue à son tour sur la garde
-  lintReservedSymbolNames(scriptJs, moduleName, '<script>')
+  lintReservedSymbolNames(scriptJs, moduleName, '<script>', scriptAst)
   lintUndeclaredTopLevelAssignment(scriptJs, script.lang, [...externalVars, ...moduleVars], scriptAst)
   lintUndeclaredTopLevelAssignment(moduleJs, moduleSection.lang, externalVars, moduleAst)
+  // `@title = …` en tête du <script> : la balise du composant, pas une donnée (cf. la fonction)
+  // la ligne du .mjs d'une position du JS compilé : citée seulement quand la carte de source dit vrai — le sucre
+  // n'a pas ajouté de ligne au script (déclaration de `µ$x`, variable hissée en tête) et la position est dans le
+  // script écrit, pas dans ce qu'on lui a versé après (partiels, persistance, macros)
+  const scriptKeepsLines = scriptPrep.split('\n').length === script.raw.split('\n').length
+  const lastWrittenLine  = script.startLine - 1 + writtenScript.split('\n').length
+  const scriptLineOf     = (offset: number): number | null => {
+    const line = scriptKeepsLines ? sourceLineOf(scriptJs, scriptSourceMap, offset) : null
+    return line !== null && line <= lastWrittenLine ? line : null
+  }
+  lintElementPropertyAtConstruction(scriptAst, moduleName, opts.lint, colorsEnabled, scriptLineOf)
+  // une fonction d'un module .js copié tel quel qui écrit dans le magasin `$$x` reçu en argument (cf. generator/store-args.ts) :
+  // le <script> et le <script module> ici, les gestionnaires et les expressions du HTML plus bas
+  const scanStoreArgs = storeArgsToRawJsLint(dir.pendingAutoImports, moduleName, opts.lint, colorsEnabled, opts.sourceDir)
+  scanStoreArgs(scriptJs, scriptLineOf)
+  scanStoreArgs(moduleJs)
+  // un effet en direct de <@document> sans connexion écrite la prend dans `@sock` : le script, ou un
+  // gestionnaire du HTML, doit le poser
+  const htmlWithoutComments = masqueCommentairesHtml(html)
+  const codeHtml = templateCode(htmlWithoutComments)
+  const instanceProps = [...new Set([...collectInstanceProps(scriptAst), ...collectHandlerInstanceProps(codeHtml, templateLang)])]
+  if (macros.docSock.length > 0 && !instanceProps.includes('sock')) throw new Error(sockAbsent(macros.docSock[0]))
 
   // Lint import ES classique interdit — cf. lintNoRawImport.
   // moduleJs peut légitimement commencer par dir.pendingAutoImports.length
@@ -4143,9 +5243,17 @@ async function transpileImpl(
   // tout de même analysés et leurs `_mjs_var_bits` correctement remplis.
   let analyzer: Analyzer
   try {
-    analyzer = new Analyzer(scriptJs ?? '', externalVars)
+    analyzer = new Analyzer(scriptJs ?? '', externalVars, opts.lint, colorsEnabled, scriptAst)
   }
   catch (e: any) {
+    // défaut de Civet sur une flèche en ligne (FLECHE_EN_LIGNE_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript produit
+    // ne s'analyse pas et acorn parle d'autre chose (« The keyword 'let' is reserved », « Unexpected token »). Signature lue sur la
+    // ligne qu'acorn désigne (`(ligne:colonne)` en fin de message) : message de cette forme, avec les deux écritures qui passent
+    const position = /\((\d+):\d+\)$/.exec(String(e?.message ?? ''))
+    const produite = position ? (scriptJs ?? '').split('\n')[Number(position[1]) - 1] ?? '' : ''
+    if (FLECHE_EN_LIGNE_CIVET_RE.test(produite)) {
+      throw new Error(t('transpiler.script-fleche-en-ligne', { moduleName, ligne: Number(position![1]), extrait: produite.trim().slice(0, 160) }))
+    }
     // Piste ciblée (bug Civet amont) : un objet 100 % spread en position
     // `else` d'un if/then/else inline (`x = if $c then {...$a} else {...$b}`)
     // compile en JS invalide (`else {ref = ...b}`) — l'erreur atterrit ICI,
@@ -4169,6 +5277,22 @@ async function transpileImpl(
     throw new Error(`${e.message}${spreadElseHint}${spreadFatArrowHint}`)
   }
   analyzer.autoDeclareFromTemplate(html)
+
+  // µlayout — le modèle choisi : la prop `layout`, déclarée ici même si seul le script la lit ; un
+  // composant qui a sa propre variable `$layout` ne peut pas s'en servir (les deux se confondraient).
+  // Lu dans le code seulement : le script tel que le lexer l'a réécrit (son compilateur, TypeScript
+  // par exemple, reformate ensuite la réécriture), et le code entre accolades du HTML ; chaînes et
+  // commentaires ne comptent pas pour l'homonymie. Le raccourci d'un attribut (`title="$layout"`, hors
+  // accolades) lit la variable aussi ; le texte entre les balises n'en lit aucune
+  const muLayout = scriptPrep.includes(MU_LAYOUT_OUT) || /(?<![\w.µ])µlayout(?![\w])/.test(codeHtml)
+  const SAME_NAME_RE = /(?<![\w.$])\$layout(?![\w])/
+  if (muLayout && SAME_NAME_RE.test(maskNonCode(script.raw, script.lang) + '\n' + maskNonCode(codeHtml, templateLang) + '\n' + attributeValues(htmlWithoutComments))) {
+    // la ligne de la variable quand elle est dans le script écrit ; ailleurs (partiel inclus, HTML aux
+    // blocs développés), sa position ne se relie plus au fichier
+    const ecrite = SAME_NAME_RE.exec(maskNonCode(writtenScript, script.lang))
+    throw new Error(t('transpiler.mu-layout-homonyme', { moduleName, ligne: ecrite ? script.startLine + (writtenScript.slice(0, ecrite.index).match(/\n/g)?.length ?? 0) : '' }))
+  }
+  if (muLayout) analyzer.autoDeclareFromTemplate('{$layout}')
 
   // collision état/méthode homonymes.
   // `$x` (état) et `@x` (méthode) occupent la MÊME propriété de l'instance.
@@ -4196,7 +5320,7 @@ async function transpileImpl(
   // `lint.maxStateVars` (mjs.config.json), 0 = désactivé, défaut 40.
   const maxStateVars = opts.maxStateVars ?? 40
   if (maxStateVars > 0 && analyzer.stateVars.length > maxStateVars) {
-    console.warn(t('transpiler.trop-de-variables-etat', { moduleName, n: analyzer.stateVars.length, seuil: maxStateVars }))
+    printDiagnostic(typedLine('maxStateVars', t('transpiler.trop-de-variables-etat', { moduleName, n: analyzer.stateVars.length, seuil: maxStateVars }))!, colorsEnabled)
   }
 
   // Lint « accessibilité » (a11y) — sept contrôles ciblés (image
@@ -4204,8 +5328,10 @@ async function transpileImpl(
   // bouton/lien sans nom accessible, champ de saisie sans étiquette), cf.
   // transpiler/a11y.ts. Simple AVERTISSEMENT, jamais bloquant, même famille que
   // maxStateVars ci-dessus. Activé par DÉFAUT — `lint.a11y: false` coupe tout.
+  // Étiquette `[lint.a11y]` posée ICI (une fois par ligne, pas par composant) : remplace
+  // l'ancien rappel « pour couper ce contrôle » répété à chaque composant.
   if (opts.a11y ?? true) {
-    for (const msg of checkA11y(html, moduleName)) console.warn(msg)
+    for (const msg of checkA11y(html, moduleName, sections.htmlStartLine)) printDiagnostic(typedLine('a11y', msg)!, colorsEnabled)
   }
 
   // Lint « <form> sans action ni méthode » (ujsForm —
@@ -4214,7 +5340,7 @@ async function transpileImpl(
   // ci-dessus : simple AVERTISSEMENT, jamais bloquant. Activé par DÉFAUT —
   // `lint.ujsForm: false` coupe tout.
   if (opts.ujsForm ?? true) {
-    for (const msg of checkUjsForm(html, moduleName)) console.warn(msg)
+    for (const msg of checkUjsForm(html, moduleName, sections.htmlStartLine)) printDiagnostic(typedLine('ujsForm', msg)!, colorsEnabled)
   }
 
   // 10. Generator HTML — V2 retourne aussi `effectsByVar` (Map varName → codes).
@@ -4225,6 +5351,14 @@ async function transpileImpl(
     externalVars,
     templateLang,
     moduleName,
+    lint: opts.lint,
+    colorsEnabled,
+    autoSkeleton: !opts.skeleton || opts.skeleton.includes('await'),
+    models: opts.models,
+    guarded: [...varRules.names.map(n => '$' + n), ...new Set([...varRules.storeNames, ...(opts.typedStores ?? [])].map(n => '$$' + n))],
+    guardSilent: opts.guard === false,
+    instanceProps,
+    firstLine: sections.htmlStartLine,
   })
 
   // `<@view name>` réellement transformé en `<metamjs-view id="name">` par le
@@ -4326,8 +5460,9 @@ async function transpileImpl(
   // être vues comme des lectures — même portée que l'ancien scan).
   // `analyzer.methodReads` : un `µeffect` qui APPELLE une méthode
   // (`this.fmt()`) hérite des lectures de CETTE méthode dans ses deps
-  // précalculées, cf. effect-deps.ts.
-  const _p3 = annotateEffectDepsMapped(jsInitBase, analyzer.methodReads)
+  // précalculées, cf. effect-deps.ts. `analyzer.computedDeps` : un dérivé fondé sur une clé du store que
+  // l'effet écrit y cède la place à ses racines (même fichier).
+  const _p3 = annotateEffectDepsMapped(jsInitBase, analyzer.methodReads, analyzer.computedDeps)
   passMaps.push(_p3.map)
   jsInitBase = _p3.code
   // Correctif automatique `this` perdu (cf. this-rebinding.ts) — une flèche
@@ -4382,7 +5517,10 @@ async function transpileImpl(
   // Réutilisé par la garde .page.mjs, plus bas après detectRouterAware.
   const hasRoutesDirective = detectRoutesReassignment(jsInitBase, sharedInitAst)
   if (routesSections.length > 0) {
-    if (hasRoutesDirective) sections.warnings.push(t('transpiler.routes-script-reassigne'))
+    if (hasRoutesDirective) {
+      const routesWarning = typedLine('routes', t('transpiler.routes-script-reassigne'), opts.lint)
+      if (routesWarning !== null) sections.warnings.push(routesWarning)
+    }
     const routesObjParts = routesSections.map(rs => {
       const entriesStr = rs.entries.map(([path, comp]) => `${JSON.stringify(path)}: ${JSON.stringify(comp)}`).join(', ')
       return `${JSON.stringify(rs.target)}: {${entriesStr}}`
@@ -4484,6 +5622,31 @@ async function transpileImpl(
     if (forme) throw new Error(t('transpiler.page-marqueur-manquant', { moduleName, suggestion, forme }))
   }
 
+  // méthode du composant citée nue par un gestionnaire (cf. lintHandlerBareMethod) : ce que les
+  // gestionnaires voient par closure — noms du `<script>`, du `<script module>` et leurs imports.
+  // Ceux de <@window>/<@document>/<@body>/<@html> vivent dans le <script> compilé (`this._gl_x =
+  // (e, _mjs_el) => …`, macros.ts) : même contrôle, gestionnaire par gestionnaire
+  const visibleNames = analyzer.methodNames.size > 0
+    ? new Set([...moduleTopVars, ...scriptVars, ...scriptConsts, ...collectImportNames(scriptAst), ...collectImportNames(moduleAst)])
+    : null
+  const bareMethodsSaid = new Set<string>()
+  // la ligne du .mjs du premier gestionnaire du HTML du composant qui cite `nom` (`@click=nom`,
+  // `@click={ …nom… }`) ; '' quand on ne le retrouve pas : le HTML d'un partiel inclus n'a pas ses lignes ici
+  const htmlForLines = blankBraceStrings(masqueCommentairesHtml(hostHtml), templateLang)
+  const handlerLine = (nom: string): number | '' => {
+    const id = nom.replace(/\$/g, '\\$')
+    const m  = new RegExp(`@[\\w.:-]+\\s*=\\s*(?:\\{[^}]*(?<![\\w$.@])${id}(?![\\w$])|${id}(?![\\w$]))`).exec(htmlForLines)
+    return m ? sections.htmlStartLine + (htmlForLines.slice(0, m.index).match(/\n/g)?.length ?? 0) : ''
+  }
+  if (visibleNames) {
+    for (const stmt of ((scriptAst as any)?.body ?? []) as any[]) {
+      const affect = stmt.type === 'ExpressionStatement' ? stmt.expression : null
+      const cible  = affect?.type === 'AssignmentExpression' ? affect.left : null
+      if (cible?.type !== 'MemberExpression' || cible.object?.type !== 'ThisExpression' || !/^_gl_/.test(cible.property?.name ?? '')) continue
+      if (affect.right?.type === 'ArrowFunctionExpression') lintHandlerBareMethod(scriptJs.slice(affect.right.start, affect.right.end), analyzer.methodNames, visibleNames, moduleName, bareMethodsSaid, opts.lint, colorsEnabled, handlerLine)
+    }
+  }
+
   if (inlines.length > 0) {
     // Grammaire des handlers inline (`@click={…}`). Le generator émet un squelette Coffee-like PARTAGÉ par les deux
     // chemins (postfix if, if/then/else, and/or/not/is…) ; seul l'existentiel
@@ -4497,7 +5660,7 @@ async function transpileImpl(
     // rendant undefined tous les µ._set(_mjsThis, ...) plus haut.
     const chunksInline = inlines.map(c => {
       const code = c.toString().trim()
-      if (!code) return '  (e, _) -> null'
+      if (!code) return '  (e, _mjs_el) -> null'
       return code.split('\n').map(l => `  ${l}`).join('\n')
     })
     const inlinesSrc = '@_mjs_inline = [\n' + chunksInline.join('\n') + '\n]\n'
@@ -4564,7 +5727,7 @@ async function transpileImpl(
         const coffeeAdapter = getAdapter('coffee')
         const inlinesProcessed = tokenize(applyMjsSugarToScript(inlinesSrcGroupe, 'coffee', undefined, '<script> (handlers)'), { externalVars })
         inlinesJsGroupe = (await coffeeAdapter.compileToJs(inlinesProcessed, {
-          fileName: `${moduleName}.inlines`,
+          fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled,
         })).code
         // Coffee auto-déclare NATIVEMENT : il n'a pas de `predeclared`, et pose un `var n;` en
         // tête de chaque handler qui écrit un nom qu'il ne connaît pas — même écriture perdue,
@@ -4586,7 +5749,7 @@ async function transpileImpl(
         lintHandlerSelfRefDeclaration(inlinesProcessed, moduleName)
         try {
           inlinesJsGroupe = (await civetAdapter.compileToJs(inlinesProcessed, {
-            fileName: `${moduleName}.inlines`,
+            fileName: `${moduleName}.inlines`, lint: opts.lint, colorsEnabled,
           })).code
         }
         catch (err: any) {
@@ -4631,7 +5794,10 @@ async function transpileImpl(
     //  zone cartographiée du <script>, il n'a pas de source .mjs propre à pointer)
     // garde symboles réservés, cf. generator/reserved-symbols.ts
     lintReservedSymbolNames(inlinesJs, moduleName, '<script> (handlers)')
-    jsInitBase += '\n' + rebindDetachedThisMapped(annotateEffectDepsMapped(applyPathTrackingMapped(transformReactiveWritesMapped(inlinesJs).code).code, analyzer.methodReads).code).code
+    // méthode du composant citée nue par un gestionnaire inline (cf. visibleNames plus haut)
+    if (visibleNames) lintHandlerBareMethod(inlinesJs, analyzer.methodNames, visibleNames, moduleName, bareMethodsSaid, opts.lint, colorsEnabled, handlerLine)
+    scanStoreArgs(inlinesJs, inlineHandlerLines(generatorState.inlineLines))
+    jsInitBase += '\n' + rebindDetachedThisMapped(annotateEffectDepsMapped(applyPathTrackingMapped(transformReactiveWritesMapped(inlinesJs).code).code, analyzer.methodReads, analyzer.computedDeps).code).code
   }
 
   // voie AST (post-Civet) : ferme le trou du gabarit (µimport niché
@@ -4686,6 +5852,7 @@ async function transpileImpl(
   // faire hors registre de présence (l'accesseur '*' n'existe pas, ignoré
   // silencieusement côté runtime — cf. doute signalé au rapport).
   const storeDeclareScan = `${jsInitWithEffects}\n${allEffectCodes.join('\n')}\n${struct.join('\n')}\n${trans.join('\n')}`
+  scanStoreArgs([...allEffectCodes, ...struct, ...trans])
   const storeDeclareKeys = new Set<string>()
   for (const m of storeDeclareScan.matchAll(/µ\.store\.([a-zA-Z_$][\w$]*)/g)) storeDeclareKeys.add(m[1])
   for (const m of storeDeclareScan.matchAll(/µ\._mjs_storeRaw\.([a-zA-Z_$][\w$]*)/g)) storeDeclareKeys.add(m[1])
@@ -4700,18 +5867,24 @@ async function transpileImpl(
   // seulement scannées. `_mjs_i18n` émis si le module a @i18n OU appelle µ.t(
   // (post-réécriture — la présence du marqueur survit toujours à la réécriture).
   const i18nSection = dir.moduleI18nSection
+  const i18nMore = dir.moduleI18nExtraSections
   const i18nMode = dir.moduleI18nPlaceholder
-  const jsInitI18n = applyI18nPrefixing(jsInitWithEffects, i18nSection, i18nMode)
-  const structI18n = struct.map(u => applyI18nPrefixing(u, i18nSection, i18nMode))
-  const transI18n = trans.map(u => applyI18nPrefixing(u, i18nSection, i18nMode))
+  const i18nFx   = dir.moduleI18nPlaceholderFx
+  const jsInitI18n = applyI18nPrefixing(jsInitWithEffects, i18nSection, i18nMode, i18nMore)
+  const structI18n = struct.map(u => applyI18nPrefixing(u, i18nSection, i18nMode, i18nMore))
+  const transI18n = trans.map(u => applyI18nPrefixing(u, i18nSection, i18nMode, i18nMore))
   // même réécriture i18n que struct/trans ci-dessus (une liaison
   // two-way vers un enfant peut très bien vivre sous @i18n, cf. le repro).
-  const initialPropBindsI18n = initialPropBinds.map(u => applyI18nPrefixing(u, i18nSection, i18nMode))
+  const initialPropBindsI18n = initialPropBinds.map(u => applyI18nPrefixing(u, i18nSection, i18nMode, i18nMore))
   const hasI18nCalls = jsInitI18n.includes('µ.t(') ||
     structI18n.some(u => u.includes('µ.t(')) ||
     transI18n.some(u => u.includes('µ.t('))
+  // la ligne d'instance : [section, mode, sections en plus, réglages de l'effet d'attente] — un élément n'est écrit que si un autre le suit
+  const i18nInstance: unknown[] = [i18nSection, i18nMode]
+  if (i18nMore.length > 0 || i18nFx) i18nInstance.push(i18nMore.length > 0 ? i18nMore : null)
+  if (i18nFx) i18nInstance.push(i18nFx)
   const i18nLine = (i18nSection !== null || hasI18nCalls)
-    ? `_mjsThis._mjs_i18n = ${JSON.stringify([i18nSection, i18nMode])};`
+    ? `_mjsThis._mjs_i18n = ${JSON.stringify(i18nInstance)};`
     : ''
 
   // Piège Shadow DOM (@font-face/@import silencieusement inertes en
@@ -4799,7 +5972,24 @@ async function transpileImpl(
     for (const r of rw.read) if (!varsRead.includes(r)) varsRead.push(r)
     layoutCss[ly.name] = compileCss(withSassPreamble(rw, ly.lang), ly.lang)
   }
-  const cssWarnings = cssTrapWarnings(baseCss)
+  // les modèles du HTML seul : chaque nom comparé à µlayout (`µlayout is 'timer'`, `'timer' == µlayout`,
+  // `switch µlayout` et ses `when`, `['mini', 'micro'].includes(µlayout)`) — connus comme un style nommé,
+  // mais sans style à charger (valeur vide : ni fichier ni requête). Le script est lu sur son AST, le
+  // HTML sur le code de ses accolades
+  if (muLayout) {
+    const found = layoutNamesInScript(scriptAst)
+    const cmp   = `(?:===?|!==?|\\bisnt\\b|\\bis\\s+not\\b|\\bis\\b)`
+    const re    = new RegExp(`µlayout\\s*${cmp}\\s*(['"])([A-Za-z][\\w-]*)\\1|(['"])([A-Za-z][\\w-]*)\\3\\s*${cmp}\\s*µlayout|\\[([^\\[\\]]*)\\]\\s*\\.\\s*(?:includes|indexOf)\\s*\\(\\s*µlayout\\s*\\)`, 'g')
+    let mc: RegExpExecArray | null
+    while ((mc = re.exec(codeHtml)) !== null) {
+      if (mc[5] === undefined) found.push(mc[2] ?? mc[4])
+      else for (const m of mc[5].matchAll(/(['"])([A-Za-z][\w-]*)\1/g)) found.push(m[2])
+    }
+    for (const nom of found) {
+      if (/^[A-Za-z][\w-]*$/.test(nom) && nom !== 'default' && !(nom in layoutCss)) layoutCss[nom] = ''
+    }
+  }
+  const cssWarnings = cssTrapWarnings(baseCss, opts.lint)
 
   const data: TranspileData = {
     scriptSourceMap,
@@ -4821,6 +6011,11 @@ async function transpileImpl(
     structVarsStr,
     storeKeysLine,
     storeDeclareLine,
+    typesDecl: (varRules.vars.length > 0 ? `\nconst _mjs_T_${className} = {${varRules.vars.join(',')}};` : '') + (varRules.stores.length > 0 ? `\nµ._mjs_storeTypes({${varRules.stores.join(',')}});` : ''),
+    typesLine: varRules.vars.length > 0 ? `\n    this._mjs_types = _mjs_T_${className};` : '',
+    storeTypes: varRules.storeTypes,
+    usesNamedTypes: varRules.usesNamedTypes,
+    usesProjectEffects: generatorState.usesProjectEffects || macros.usesProjectEffects,
     stateMethodClashLine,
     i18nLine,
     jsModule: moduleJs,
@@ -4830,9 +6025,11 @@ async function transpileImpl(
     varsRead,
     themeVariants: sections.themes.map(th => th.name).filter(n => n !== ''),
     layoutCss,
+    layoutRune: muLayout,
     sharedCssNames: sections.style.sharedCssNames,
     moduleDisplay: sections.style.moduleDisplay,
     modulePreload: dir.modulePreload,
+    moduleFormAssociated: dir.moduleFormAssociated,
     moduleViewTransition: sections.style.moduleViewTransition,
     moduleViewTransitionPriority: sections.style.moduleViewTransitionPriority,
     hasDynamicSlots,
@@ -4842,7 +6039,7 @@ async function transpileImpl(
     includedPartials: Array.from(includeAcc.resolved),
     macroErrors: [...includeAcc.errors, ...macros.errors],
     tagRefs,
-    sectionWarnings: [...sections.warnings, ...includeAcc.warnings, ...cssWarnings],
+    sectionWarnings: [...sections.warnings, ...includeAcc.warnings, ...cssWarnings, ...macros.warnings, ...pseudoClashWarnings(html, opts.lint)],
     aliasTag: opts.aliasTag,
     componentDeps,
   }
@@ -4862,7 +6059,18 @@ async function transpileImpl(
   let sourceMap: string | undefined
   const chained = chainSourceMaps(scriptSourceMap, passMaps)
   if (chained && mappedScriptAnchor.length > 8) {
-    const idx = output.indexOf(mappedScriptAnchor)
+    let idx = output.indexOf(mappedScriptAnchor)
+    // sous @i18n ou avec µimport, le script est encore réécrit après la prise de l'ancre (clés préfixées, appel µimport) :
+    // l'ancre passe par les mêmes réécritures (ses lignes ne bougent pas, la carte reste juste à la ligne) ; une ancre
+    // toujours introuvable laisse le composant sans carte, comme avant
+    if (idx < 0) {
+      try {
+        idx = output.indexOf(applyI18nPrefixing(rewriteMuImportAst(mappedScriptAnchor, '<script>'), i18nSection, i18nMode, i18nMore))
+      }
+      catch {
+        idx = -1
+      }
+    }
     if (idx >= 0) {
       const before  = output.slice(0, idx)
       const genLine = before.split('\n').length - 1
@@ -4882,12 +6090,18 @@ export async function transpile(
   source: string,
   opts: TranspileOpts = {}
 ): Promise<{ data: TranspileData; output: string; sourceMap?: string }> {
-  try {
-    return await transpileImpl(source, opts)
-  }
-  catch (err) {
-    wrapModuleError(err, opts.moduleName)
-  }
+  // les effets de l'appli, lus par le catalogue pendant cette compilation
+  setProjectEffects(opts.effectDefs)
+  // un état du générateur et des effets de l'appli propres à cet appel : deux compilations lancées en même temps
+  // (Promise.all, serveur qui compile à la demande) ne se prennent ni transitions, ni références, ni effets
+  return withState(() => withProjectEffects(opts.effectDefs ?? {}, async () => {
+    try {
+      return await transpileImpl(source, opts)
+    }
+    catch (err) {
+      wrapModuleError(err, opts.moduleName)
+    }
+  }))
 }
 
 // ----------------------------------------------------------------------------
@@ -4917,7 +6131,7 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
   // échappement pour insertion dans un littéral JS simple OU double-guillemet :
   // `data.moduleName`/`data.tagName` dérivent du nom de fichier (jamais garantis « propres » — un
   // dépôt partagé, un upload, une génération dynamique de composant les contrôlent potentiellement),
-  // et atterrissent tels quels dans PLUSIEURS littéraux du squelette (jsInit ci-dessous, [[MOD_NAME]]
+  // et atterrissent tels quels dans PLUSIEURS littéraux du squelette (jsInit ci-dessous
   // et [[TAG_NAME]] plus bas) sans quoi un `'`/`"` casse la chaîne et exécute la suite comme du JS
   // réel. `\`` et `${` NE sont PAS couverts (jamais utilisé dans un template literal, cf. escapeTpl
   // pour ce cas) — seulement les guillemets simple/double, l'antislash, et les retours à la ligne
@@ -4925,8 +6139,8 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
   const escapeJsString = (s: string): string =>
     s.replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
 
-  let jsInit = `µ.activeComponent = this;\n    ${data.jsInitBase}`
-  jsInit += `\n    this._mjs_dir = '${dirInject}';\n    this._mjs_modName = '${escapeJsString(data.moduleName)}';`
+  // dossier et nom posés AVANT le code du composant : un `layout` écrit dans son script les lit aussitôt
+  let jsInit = `µ.activeComponent = this;\n    this._mjs_dir = '${escapeJsString(dirInject)}';\n    this._mjs_modName = '${escapeJsString(data.moduleName)}';\n    ${data.jsInitBase}`
   if (data.sharedCssNames.length > 0) {
     jsInit += `\n    this._mjs_sharedCss = ${JSON.stringify(data.sharedCssNames)};`
   }
@@ -4940,9 +6154,10 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
   const layoutNames = Object.keys(data.layoutCss)
   if (layoutNames.length > 0) {
     const stamps: Record<string, string> = {}
-    for (const n of layoutNames) stamps[n] = createHash('md5').update(data.layoutCss[n]).digest('hex').slice(0, 8)
+    for (const n of layoutNames) stamps[n] = data.layoutCss[n] ? createHash('md5').update(data.layoutCss[n]).digest('hex').slice(0, 8) : ''
     jsInit += `\n    this._mjs_layouts = ${JSON.stringify(stamps)};`
   }
+  if (data.layoutRune) jsInit += `\n    this._mjs_lay = 1;`
   jsInit += `\n    µ.activeComponent = null;`
 
   let eventsCode = ''
@@ -4987,7 +6202,6 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
     '[[VAR_BITS]]': data.varBitsStr,
     '[[COMPUTED_DEPS]]': data.computedDepsStr,
     '[[BASE_CSS]]': escapeTpl(scopedCss),
-    '[[MOD_NAME]]': escapeJsString(data.moduleName),
     '[[CREATE_FN_BODY]]': data.createFnBody,
     '[[EVENTS]]': eventsCode,
     '[[EVT_IDS]]': evtIdsCode,
@@ -4999,6 +6213,8 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
     '[[STRUCT_VARS]]': data.structVarsStr,
     '[[STORE_KEYS_LINE]]': data.storeKeysLine,
     '[[STORE_DECLARE_LINE]]': data.storeDeclareLine,
+    '[[TYPES_DECL]]': data.typesDecl ?? '',
+    '[[TYPES_LINE]]': data.typesLine ?? '',
     '[[STATE_METHOD_CLASH_LINE]]': data.stateMethodClashLine,
     '[[I18N_LINE]]': data.i18nLine,
     '[[JS_INIT]]': jsInit,
@@ -5008,10 +6224,21 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
     // slots indexés : drapeau + appel émis SEULEMENT si le composant écrit `<@slot` — sans lui,
     // `_mjs_injectSlots` (mjs_slots.ts) ne faisait rien, et c'est cet appel littéral que la détection
     // du cœur cherche (bundler/features.ts, clé `slots`)
+    '[[AUTOLOADER_LINE]]': '',
     '[[DYNAMIC_SLOTS_LINE]]': data.hasDynamicSlots ? '\n\n    this._mjs_has_dynamic_slots = true;\n    this._mjs_injectSlots();' : '',
     '[[NO_DESTROY_HOOKS]]': data.hasDestroyHooks ? 'false' : 'true',
     '[[HAS_FLIP]]': data.hasFlip ? 'true' : 'false',
+    // `@formAssociated` : la classe passe par le socle du formulaire (mjs_form_associated.ts) AVANT son enregistrement — le navigateur lit
+    // `formAssociated` et les rappels du formulaire au moment de `customElements.define`. C'est cet appel littéral que la détection du cœur
+    // cherche (bundler/features.ts, clé `form_associated`) ; sans la directive, rien n'est écrit et le fichier n'entre pas au cœur
+    '[[FORM_ASSOCIATED_LINE]]': data.moduleFormAssociated ? `µ._mjs_formClass(${data.className});\n` : '',
   }
+  // guetteur de balises `mjs-*` : seulement si le code émis peut en faire apparaître (cf. autoloaderLine)
+  slots['[[AUTOLOADER_LINE]]'] = autoloaderLine(
+    ['[[CREATE_FN_BODY]]', '[[EVENTS]]', '[[UPDATES_STRUCTURE]]', '[[UPDATES_TRANSITIONS]]', '[[EFFECTS_BY_VAR]]', '[[EFFECTS_ALL]]', '[[INITIAL_PROP_BINDS]]', '[[JS_INIT]]'].map((k) => slots[k]).concat(data.jsModule ?? ''),
+    data.hasDynamicSlots || data.hasDestroyHooks
+  )
+
   // Tokens TOUS ancrés `[[…]]` (le `TAG_NAME` nu, non ancré, aurait été
   // remplacé PARTOUT dans le squelette : fragile à l'évolution du template).
   // Chiffres admis dans le nom (`[[I18N_LINE]]`) — AUCUN autre token existant n'en contient, extension sans risque.
@@ -5031,7 +6258,7 @@ export function injectTemplate(data: TranspileData, dirInject: string): string {
   // Ex pour file `tuto-snippets-card.mjs` : enregistre aussi `mjs-snippets-card`
   // pour que le user puisse écrire `<mjs-snippets-card>` dans son template.
   // `data.aliasTag` atterrit tel quel dans DEUX littéraux JS
-  // double-guillemet ci-dessous, même piège que [[MOD_NAME]]/[[TAG_NAME]] plus haut :
+  // double-guillemet ci-dessous, même piège que [[TAG_NAME]] plus haut :
   // même `escapeJsString`, jamais dupliquée (closure déjà en scope de cette fonction).
   // L'enregistrement lui-même vit dans une brique du cœur (`µ._al`, runtime mjs_alias.ts, jointe aux
   // seuls projets qui écrivent un alias — c'est CET appel que la détection cherche, cf.

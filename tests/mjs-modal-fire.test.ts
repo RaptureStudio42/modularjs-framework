@@ -297,7 +297,7 @@ describe('mjs_modal — µ.modal.fire : rendu de base (title/text/html/icônes/b
     assert.ok(box(document), 'présent avant clic')
     box(document).querySelector('.mjs-modal-confirm').click()
     await p
-    assert.equal(box(document), null, 'la boîte doit disparaître')
+    assertAbsent(box(document), 'la boîte doit disparaître')
     assertAbsent(document.body.querySelector('.mjs-modal-backdrop'), 'le backdrop doit disparaître')
   })
 

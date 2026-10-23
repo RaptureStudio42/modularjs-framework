@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -31,6 +32,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 // µ._mjs_ajaxGet (préchargement des liens) est HORS du bloc helpers ci-dessus (section
@@ -204,6 +206,7 @@ describe("mjs_ujs — method 'append' et le cache de pages : dé-hibernation", f
       paths: { b: 'yyy.js' },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = { hasAttribute: () => false, origin: 'http://x', target: '', protocol: 'http:', pathname: '/b', search: '', hash: '', href: 'http://x/b', closest: function (this: any) { return this } }

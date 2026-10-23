@@ -209,7 +209,7 @@ $hits = 0
     div1.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 50))
     const div2: any = el._shadow.querySelector('div')
-    assert.equal(div2, div1, 'jamais remplacé : même référence de nœud avant/après le clic')
+    assert.ok(div2 === div1, 'jamais remplacé : même référence de nœud avant/après le clic')
     assert.match(div2.textContent, /Hits:\s*1/, 'le clic doit incrémenter sur le nœud jamais remplacé')
 
     window.close?.()

@@ -158,20 +158,20 @@ describe('µ.state — la RACINE refuse __proto__ en écriture (set/defineProper
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('state.__proto__ = x est refusé avec un avertissement, le prototype réel ne change pas', async () => {
+  it('state.__proto__ = x est refusé, une trace de développement le dit, le prototype réel ne change pas', async () => {
     const { window } = await mount('staterootset')
     window.eval(`
       globalThis.result = { warned: 0 }
       var state = µ.state({ a: 1 })
       var evil = { injected: 42 }
-      var origWarn = µ.warn
-      µ.warn = function () { globalThis.result.warned++; return origWarn.apply(µ, arguments) }
+      var origLog = µ.log
+      µ.log = function () { globalThis.result.warned++; return origLog.apply(µ, arguments) }
       state.__proto__ = evil
       globalThis.result.protoChanged = Object.getPrototypeOf(state[µ._mjs_RAW]) === evil
-      µ.warn = origWarn
+      µ.log = origLog
     `)
     const result = JSON.parse(window.eval('JSON.stringify(globalThis.result)'))
-    assert.equal(result.warned, 1, 'un avertissement doit être émis (même garde que les proxys imbriqués)')
+    assert.equal(result.warned, 1, 'une trace doit le dire (même garde que les proxys imbriqués)')
     assert.equal(result.protoChanged, false, 'le prototype réel de l\'état ne doit pas changer')
   })
 
@@ -190,19 +190,19 @@ describe('µ.state — la RACINE refuse __proto__ en écriture (set/defineProper
     assert.equal(result.threw, 'TypeError', 'Object.defineProperty doit signaler un refus (trap defineProperty renvoie false)')
   })
 
-  it('delete state.__proto__ est refusé avec un avertissement (symétrique de `set`)', async () => {
+  it('delete state.__proto__ est refusé, une trace de développement le dit (symétrique de `set`)', async () => {
     const { window } = await mount('staterootdelete')
     window.eval(`
       globalThis.result = { warned: 0 }
       var state = µ.state({ a: 1 })
       var rawBefore = state[µ._mjs_RAW]
-      var origWarn = µ.warn
-      µ.warn = function () { globalThis.result.warned++; return origWarn.apply(µ, arguments) }
+      var origLog = µ.log
+      µ.log = function () { globalThis.result.warned++; return origLog.apply(µ, arguments) }
       delete state.__proto__
       globalThis.result.sameRaw = state[µ._mjs_RAW] === rawBefore
-      µ.warn = origWarn
+      µ.log = origLog
     `)
     const result = JSON.parse(window.eval('JSON.stringify(globalThis.result)'))
-    assert.equal(result.warned, 1, 'un avertissement doit être émis, même garde que `set`')
+    assert.equal(result.warned, 1, 'une trace doit le dire, même garde que `set`')
   })
 })

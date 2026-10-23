@@ -69,10 +69,10 @@ describe('symbole @@ — référence sûre au composant dans une lambda', functi
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('compile-time — @@x → _mjsThis.x (mécanisme explicite) ; @x simple DANS un helper -> top-level nu → AUSSI _mjsThis.x (auto-fix this-rebinding.ts)', async function () {
+  it('compile-time — @@x → _mjsThis.x (mécanisme explicite) ; @x simple DANS un helper -> top-level nu → le this de l\'appelant, le composant quand il est absent (auto-fix this-rebinding.ts)', async function () {
     const out = await compileComponent()
     assert.match(out, /_mjsThis\.compteurSur\s*=/, '@@compteurSur (mécanisme explicite, inchangé) doit compiler en _mjsThis.compteurSur')
-    assert.match(out, /\(this \?\? _mjsThis\)\.compteurCasse\s*=/, '@compteurCasse (raccourci @ simple, dans un helper -> top-level nu) doit AUSSI compiler en (this ?? _mjsThis).compteurCasse depuis ce correctif — plus besoin de @@ pour ce cas, et un this explicite (call/bind) reste respecté')
+    assert.match(out, /\(this \?\? _mjsThis\)\.compteurCasse\s*=/, '@compteurCasse (raccourci @ simple, dans un helper -> top-level nu) vise le this de l\'appelant (.call, new, écouteur posé à la main), le composant quand `this` est absent')
   })
 
   it('runtime — clic sur le bouton "sûr" : incrémente sans crash (helper -> appelé nu, via @@)', async function () {

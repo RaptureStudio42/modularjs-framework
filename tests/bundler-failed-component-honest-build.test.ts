@@ -180,12 +180,11 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     await bundler.close()
   })
 
-  // un composant en échec ne doit PAS voir son ANCIENNE
-  // sortie rester référencée dans un `mjs build` : la version repêchée peut importer un
-  // `mjs_core-<hash>.js` supprimé depuis, et la page meurt au navigateur alors que le build
-  // se termine « vert » (constaté en production sur un cas réel). Le repêchage
-  // reste la règle en `dev`/`serve` (site utilisable pendant qu'on corrige une faute de frappe).
-  it("keepFailedComponents:false : aucun repêchage, l'entrée disparaît et le message le dit", async function () {
+  // un `mjs build` dont un composant échoue ne repêche rien ET ne publie rien : le manifeste et les fichiers du dernier
+  // build réussi restent servis tels quels, cohérents entre eux (rien n'est retiré, l'ancien cœur compris). Avant, le
+  // manifeste était réécrit sans le composant, et le site servi depuis ce dossier le perdait à l'instant même où le build
+  // échouait. Le repêchage reste la règle en `dev`/`serve` (site utilisable pendant qu'on corrige une faute de frappe).
+  it("keepFailedComponents:false : aucun repêchage, rien de publié, le message le dit", async function () {
     const { srcDir, outDir, manifest } = makeProject()
     writeFileSync(join(srcDir, 'good.mjs'), '<p>je compile toujours</p>')
     writeFileSync(join(srcDir, 'logo.png'), Buffer.from([0, 1, 2, 3]))
@@ -196,6 +195,7 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     assert.equal(stats1.errors.length, 0, stats1.errors.map(e => e.message).join('\n'))
     const ancienChemin = stats1.manifest['broken']
     assert.ok(ancienChemin, "'broken' doit être au manifeste du build sain")
+    const manifesteSain = readFileSync(manifest, 'utf-8')
     await sain.close()
 
     writeFileSync(join(srcDir, 'broken.mjs'), ['<script lang="coffee">', "  path = µasset('missing-now.png')", '</script>', '<p>{path}</p>'].join('\n'))
@@ -203,9 +203,9 @@ describe('bundler — build honnête quand un composant .mjs tombe', function ()
     const stats2 = await strict.compile()
 
     assert.ok(stats2.errors.length > 0, 'le composant cassé doit être une erreur de build')
-    assert.equal(stats2.manifest['broken'], undefined, "l'ancienne version ne doit plus être référencée")
-    const surDisque = readFileSync(manifest, 'utf-8')
-    assert.ok(!surDisque.includes('"broken":'), "le manifeste écrit ne doit plus porter la clé du composant en échec")
+    assert.equal(stats2.manifest['broken'], undefined, "l'ancienne version n'est pas reprise dans le manifeste de ce build")
+    assert.equal(readFileSync(manifest, 'utf-8'), manifesteSain, 'rien de publié : le manifeste du build sain reste tel quel')
+    assert.ok(readdirSync(outDir).includes(ancienChemin!.split('/').pop()!), 'le fichier qu\'il nomme est toujours là')
     const avertissements = stats2.warnings.join('\n')
     assert.ok(!avertissements.includes('reste servie'), "plus de message « ancienne version reste servie »")
     assert.match(avertissements, /broken/, 'le composant en échec reste nommé')

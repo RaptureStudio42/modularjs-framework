@@ -5,6 +5,8 @@ import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { t } from '../messages/index.js'
 import { maskNonCode, maskHtmlComments } from '../mask.js'
 import { findScriptMatches, findStyleMatches } from './sections.js'
+import { parsePlaceholder, PLACEHOLDER_DIRECTIVE } from '../effects/placeholder.js'
+import type { EffectValue } from '../effects/catalog.js'
 
 export interface PersistEntry {
   var: string
@@ -16,6 +18,11 @@ export interface DirectivesResult {
   cleaned: string
   /** Mode de préchargement par défaut de TOUS les liens du module (`@preload`). */
   modulePreload: string | null
+  /** Le composant est un élément associé au formulaire (`@formAssociated`) : le compilateur écrit l'appel du socle
+   *  (`µ._mjs_formClass`, runtime mjs_form_associated.ts) juste avant l'enregistrement de sa balise. */
+  moduleFormAssociated: boolean
+  /** `@formAssociated` écrit plus d'une fois : un seul sens, un avertissement le dit (transpiler/index.ts). */
+  moduleFormAssociatedTwice: boolean
   /** Vars persistées dans localStorage. */
   persistLocalVars: PersistEntry[]
   /** Vars persistées dans sessionStorage. */
@@ -29,16 +36,26 @@ export interface DirectivesResult {
    *  (clés inchangées). Un chemin ABSOLU (`µt('/nav.fermer')`) n'est JAMAIS
    *  préfixé, section ou pas. */
   moduleI18nSection: string | null
-  /** Override de rendu i18n pendant le chargement (`@i18nPlaceholder <mode>`,
-   *  auto|key|wait) — voyage en 3e argument LITTÉRAL de chaque `µ.t(...)` du
+  /** Sections en plus de la première (`@i18n 'accueil' 'onglets'` → `['onglets']`), dans l'ordre écrit : le module les
+   *  demande avec la sienne (même vague de requêtes, attente commune) et une clé relative se cherche dans toutes, la
+   *  première qui la porte gagne. Vide pour un module à une seule section. */
+  moduleI18nExtraSections: string[]
+  /** Override de l'attente des textes traduits (`@i18nPlaceholder <valeur>`,
+   *  wait|key|*skeleton|*loader) — voyage en 3e argument LITTÉRAL de chaque `µ.t(...)` du
    *  module ; null si absente (2 arguments max, jamais de 3e). */
   moduleI18nPlaceholder: string | null
+  /** Les réglages écrits de l'effet (`*loader(bloom)` → `{ style: 'bloom' }`) ; null sans effet ou sans réglage. */
+  moduleI18nPlaceholderFx: Record<string, EffectValue> | null
 }
 
 export function extractDirectives(content: string): DirectivesResult {
   let modulePreload: string | null = null
+  let moduleFormAssociated = false
+  let moduleFormAssociatedTwice = false
   let moduleI18nSection: string | null = null
+  let moduleI18nExtraSections: string[] = []
   let moduleI18nPlaceholder: string | null = null
+  let moduleI18nPlaceholderFx: Record<string, EffectValue> | null = null
   const persistLocalVars: PersistEntry[] = []
   const persistSessionVars: PersistEntry[] = []
   const pendingAutoImports: string[] = []
@@ -92,11 +109,18 @@ export function extractDirectives(content: string): DirectivesResult {
   // l'intérieur de cette fausse casse (chaîne, gabarit) fuit comme texte actif avant même
   // d'atteindre l'erreur. `allScripts` triée : `findScriptMatches` rend module et non-module en
   // deux tableaux séparés, un `<script>` pouvant précéder textuellement un `<script module>`.
+  // le texte ne change qu'au retrait d'une directive : sur le même texte, mêmes bornes, sans relire tout le fichier
+  // (lexer Civet et masque CSS) — la recherche revenait sinon une quinzaine de fois par composant
+  let lastText: string | null = null
+  let lastMatches: { scripts: RegExpMatchArray[], styles: RegExpMatchArray[] } = { scripts: [], styles: [] }
   const findScriptStyleMatches = (text: string): { scripts: RegExpMatchArray[], styles: RegExpMatchArray[] } => {
+    if (text === lastText) return lastMatches
     const { moduleScripts, scripts } = findScriptMatches(text, true)
     const allScripts = [...moduleScripts, ...scripts].sort((a, b) => a.indices![0][0] - b.indices![0][0])
     const { matches: styles } = findStyleMatches(text, allScripts, true)
-    return { scripts: allScripts, styles }
+    lastText    = text
+    lastMatches = { scripts: allScripts, styles }
+    return lastMatches
   }
 
   // maskStyleBlocks — remplace chaque <style>…</style> RÉEL par le même jeton opaque que
@@ -202,7 +226,7 @@ export function extractDirectives(content: string): DirectivesResult {
     const view = maskInterpolationContent(blankScriptStyleRanges(text))
     let out    = ''
     let cursor = 0
-    for (const m of view.matchAll(/<!--[\s\S]*?-->/g)) {
+    for (const m of view.matchAll(/<!--(?:-?>|[\s\S]*?--!?>)/g)) {
       const start = m.index!
       const end   = start + m[0].length
       out += text.slice(cursor, start) + mask(text.slice(start, end))
@@ -283,39 +307,59 @@ export function extractDirectives(content: string): DirectivesResult {
     throw new Error(t('transpiler.display-racine-interdite', { ligne: `@display ${val}`, remplacement: `<style @display="${val}">` }))
   })
 
-  // ----- @i18n ----- (section i18n du module, préfixe les clés `µt(...)` relatives)
+  // ----- @i18n ----- (sections i18n du module, la première préfixe les clés `µt(...)` relatives)
   // `@i18n 'panier'` ou `@i18n "panier"` — section validée /^[a-z0-9_-]+$/
   // (mêmes guillemets simples/doubles que `@import`, cf. plus bas).
+  // plusieurs sections sur la MÊME ligne (`@i18n 'accueil' 'onglets-admin'`) : la première est celle du module,
+  // les autres se demandent avec elle ; chacune est validée comme une section seule, un nom répété est refusé.
   // 2 directives @i18n dans le même module écrasaient la
   // 1ère en silence (`moduleI18nSection` réassigné sans vérif) : erreur de
   // compilation EXPLICITE dès la 2e occurrence.
   cleaned = activeDirective(
     cleaned,
-    /^[ \t]*@i18n[ \t]+['"]([^'"]+)['"][ \t]*$/gm,
-    (_m, section) => {
+    /^[ \t]*@i18n((?:[ \t]+['"][^'"]+['"])+)[ \t]*$/gm,
+    (_m, noms) => {
+      const sections = [...(noms as string).matchAll(/['"]([^'"]+)['"]/g)].map(m => m[1])
       if (moduleI18nSection !== null) {
-        throw new Error(t('transpiler.i18n-double', { ancienneSection: moduleI18nSection, section }))
+        throw new Error(t('transpiler.i18n-double', { ancienneSection: [moduleI18nSection, ...moduleI18nExtraSections].join(' '), section: sections.join(' ') }))
       }
-      if (!/^[a-z0-9_-]+$/.test(section)) {
-        throw new Error(t('transpiler.i18n-section-invalide', { section }))
-      }
-      moduleI18nSection = section
+      sections.forEach((section, i) => {
+        if (!/^[a-z0-9_-]+$/.test(section)) {
+          throw new Error(t('transpiler.i18n-section-invalide', { section }))
+        }
+        if (sections.indexOf(section) !== i) {
+          throw new Error(t('transpiler.i18n-section-ecrite-deux-fois', { section }))
+        }
+      })
+      moduleI18nSection       = sections[0]
+      moduleI18nExtraSections = sections.slice(1)
       return ''
     }
   )
+  // une ligne `@i18n` restée après la lecture ci-dessus n'a pas la forme de la directive (virgule entre les noms, deux noms collés,
+  // nom sans guillemets, commentaire en fin de ligne, aucune section…) : sans ce refus, la ligne ne posait aucune section et sortait
+  // en texte dans la page. Ni `@i18nPlaceholder` (lu plus bas : un caractère de nom suit `@i18n`), ni un membre ou un appel
+  // (`@i18n.x`, `@i18n(…)` : code d'un script) ne sont concernés ; mêmes zones inertes que les autres directives
+  cleaned = activeDirective(
+    cleaned,
+    /^[ \t]*@i18n(?![A-Za-z0-9_$.(\[?!])[^\n]*$/gm,
+    (m: string) => {
+      throw new Error(t('transpiler.i18n-ligne-invalide', { ligne: m.trim() }))
+    }
+  )
 
-  // ----- @i18nPlaceholder ----- (mode de rendu pendant le chargement i18n)
-  // `@i18nPlaceholder <mode>` nu, mode ∈ auto|key|wait. `wait` exige une
+  // ----- @i18nPlaceholder ----- (l'attente des textes traduits)
+  // `@i18nPlaceholder <valeur>`, valeur ∈ wait|key|*skeleton|*loader(…) (cf. effects/placeholder.ts ;
+  // `auto` n'existe plus, l'erreur donne `*skeleton`). `wait` et `*loader` exigent une
   // section `@i18n` à attendre (validé après extraction, une fois les deux
   // directives lues quel que soit leur ordre d'écriture dans le fichier).
   cleaned = activeDirective(
     cleaned,
-    /^[ \t]*@i18nPlaceholder[ \t]+([a-zA-Z-]+)[ \t]*$/gm,
-    (_m, mode) => {
-      if (!['auto', 'key', 'wait'].includes(mode)) {
-        throw new Error(t('transpiler.i18n-placeholder-mode-invalide', { mode }))
-      }
-      moduleI18nPlaceholder = mode
+    /^[ \t]*@i18nPlaceholder[ \t]+(\S[^\n]*?)[ \t]*$/gm,
+    (_m, valeur) => {
+      const lu = parsePlaceholder(valeur, PLACEHOLDER_DIRECTIVE)
+      moduleI18nPlaceholder   = lu.mode
+      moduleI18nPlaceholderFx = lu.settings
       return ''
     }
   )
@@ -332,6 +376,20 @@ export function extractDirectives(content: string): DirectivesResult {
     cleaned,
     /^[ \t]*@preload(?:[ \t]*=)?[ \t]*["']?(on|hover|off)["']?[ \t]*$/gm,
     (_m, val) => { modulePreload = val; return '' },
+  )
+
+  // ----- @formAssociated ----- (le composant devient un élément associé au formulaire, cf. mjs_form_associated.ts)
+  // Forme unique, nue : `@formAssociated` seul sur sa ligne. Une valeur ou un mot de plus (`@formAssociated true`) est refusé : la
+  // directive ne se règle pas, et la ligne sortait sinon en texte dans la page
+  cleaned = activeDirective(
+    cleaned,
+    /^[ \t]*@formAssociated(?![A-Za-z0-9_$.(\[?!])([^\n]*)$/gm,
+    (m: string, reste: string) => {
+      if (reste.trim() !== '') throw new Error(t('transpiler.form-associated-ligne-invalide', { ligne: m.trim() }))
+      if (moduleFormAssociated) moduleFormAssociatedTwice = true
+      moduleFormAssociated = true
+      return ''
+    }
   )
 
   // ----- @viewTransition ----- RELOGÉ : `@viewTransition` quitte
@@ -509,11 +567,11 @@ export function extractDirectives(content: string): DirectivesResult {
     if (suggestion) throw new Error(t('transpiler.directive-racine-inconnue', { nom, suggestion }))
   }
 
-  // `wait` diffère le premier rendu tant que la section n'est pas chargée —
-  // sans section @i18n, rien à attendre. auto/key restent autorisés seuls
+  // `wait` et `*loader` diffèrent le premier rendu tant que la section n'est pas chargée —
+  // sans section @i18n, rien à attendre. key/*skeleton restent autorisés seuls
   // (ils agissent sur les clés racine, hors scope de section).
-  if (moduleI18nPlaceholder === 'wait' && moduleI18nSection === null) {
-    throw new Error(t('transpiler.i18n-placeholder-wait-sans-section'))
+  if ((moduleI18nPlaceholder === 'wait' || moduleI18nPlaceholder === '*loader') && moduleI18nSection === null) {
+    throw new Error(t('transpiler.i18n-placeholder-wait-sans-section', { mode: moduleI18nPlaceholder }))
   }
 
   // Restaure les blocs <pre>/<code>/commentaires HTML masqués pendant le scan. Boucle, car les
@@ -531,12 +589,16 @@ export function extractDirectives(content: string): DirectivesResult {
   return {
     cleaned,
     modulePreload,
+    moduleFormAssociated,
+    moduleFormAssociatedTwice,
     persistLocalVars,
     persistSessionVars,
     pendingAutoImports,
     externalReactives,
     moduleI18nSection,
+    moduleI18nExtraSections,
     moduleI18nPlaceholder,
+    moduleI18nPlaceholderFx,
   }
 }
 
@@ -583,28 +645,55 @@ export function buildPersistCode(
       const keyExpr = entry.suffix
         ? `"${tagKeyPrefix}:${clean}:" + (${entry.suffix})`
         : `'${tagKeyPrefix}:${clean}'`
-      // `.=` (Civet let) pour les vars locales du bloc — Coffee auto-déclarait,
-      // Civet exige la déclaration explicite. `:=` aurait été const → blocant
-      // pour le try/catch qui réassigne potentiellement. Les temporaires sont
+      // `.=` (Civet let) pour la clé du bloc — Coffee auto-déclarait,
+      // Civet exige la déclaration explicite. Les temporaires sont
       // suffixés par le nom UNIQUE (cf. uniqueClean ci-dessus) : sans ça, un nom
       // partagé produisait un second `let _mjs_p_key_…` dans le même scope →
       // « Identifier has already been declared » (bug vécu, régression
-      // verrouillée par tests/persist.test.ts). NB : la CLÉ de stockage
+      // verrouillée par tests/persist-multi-vars.test.ts). NB : la CLÉ de stockage
       // (`keyExpr`) et la var réactive (`$${clean}`) gardent le nom RÉEL.
-      const uname = uniqueClean(clean)
-      const keyVar = `_mjs_p_key_${uname}`
+      // Le navigateur peut refuser le stockage (navigation privée, accès bloqué, quota plein) : l'accès
+      // à `localStorage`/`sessionStorage`, `getItem` et `JSON.parse` sont sous UNE garde (la var garde sa
+      // valeur de départ) ; l'accès et `setItem` sous une autre, dans le rappel de l'effet (la sauvegarde
+      // est perdue, l'état continue de changer). Le `catch` ne dit rien : ni message, ni relance. La garde
+      // ne couvre QUE le stockage : restent HORS garde la clé de la lecture, la clé de l'écriture et
+      // `JSON.stringify` (une faute dans `by:` ou un état non sérialisable sort comme sans garde, au montage
+      // ou à chaque passage de l'effet ; tests/persist-stockage-refuse*.test.ts). Clé statique : l'effet
+      // reprend la clé déjà lue, un seul littéral dans le code émis ; clé dynamique (`by:`) : l'effet la
+      // recalcule à chaque passage, avant `JSON.stringify` et avant le `try`
+      // `if stored` et non `stored?` : "" n'est pas du JSON (JSON.parse lèverait, le catch l'avalait),
+      // même effet pour 6 octets de moins
+      // La valeur stockée n'est reprise que de la même forme que la valeur de départ : `typeof` vaut 'object'
+      // pour une liste, un objet et `null` — une valeur laissée par une version précédente (objet là où la
+      // variable attend une liste, `null` qui plantait au premier rendu) est ignorée. Une variable partie
+      // de `null` (rien encore) reprend un objet ou une liste, comme avant ; `not cur` vaut `cur is null` une fois
+      // les `typeof` égaux (un 0, un '' ou un false de départ n'a pas de forme à vérifier), plus court
+      const uname     = uniqueClean(clean)
+      const keyVar    = `_mjs_p_key_${uname}`
       const storedVar = `_mjs_p_stored_${uname}`
       const parsedVar = `_mjs_p_parsed_${uname}`
+      const curVar    = `_mjs_p_cur_${uname}`
+      const jsonVar   = `_mjs_p_json_${uname}`
+      const writeKey  = entry.suffix ? `_mjs_p_wkey_${uname}` : keyVar
+      const writeDecl = entry.suffix ? `  ${writeKey} := ${keyExpr}\n` : ''
       code += `\n${keyVar} .= ${keyExpr}\n` +
-              `${storedVar} .= ${backend}.getItem(${keyVar})\n` +
-              `if ${storedVar}?\n` +
-              `  try\n` +
+              `try\n` +
+              `  ${storedVar} := ${backend}.getItem(${keyVar})\n` +
+              `  if ${storedVar}\n` +
               `    ${parsedVar} := JSON.parse(${storedVar})\n` +
-              `    if $${clean} is undefined or typeof ${parsedVar} is typeof $${clean}\n` +
+              `    ${curVar} := $${clean}\n` +
+              `    if ${curVar} is undefined or (typeof ${parsedVar} is typeof ${curVar} and (not ${curVar} or (${parsedVar} isnt null and Array.isArray(${parsedVar}) is Array.isArray(${curVar}))))\n` +
               `      $${clean} = ${parsedVar}\n` +
+              `catch _e\n` +
+              `  null\n` +
+              `µ.effect =>\n` +
+              writeDecl +
+              `  ${jsonVar} := JSON.stringify($${clean})\n` +
+              `  try\n` +
+              `    ${backend}.setItem(${writeKey}, ${jsonVar})\n` +
               `  catch _e\n` +
               `    null\n` +
-              `µ.effect => ${backend}.setItem(${keyExpr}, JSON.stringify($${clean}))\n`
+              `  return\n`
     }
   }
   return code

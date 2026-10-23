@@ -49,13 +49,13 @@ describe('mjs_modal — focus initial (au montage)', function () {
   it("sans input : le bouton CONFIRM reçoit le focus initial", function () {
     const { document, µ } = loadModal()
     µ.modal.fire({ text: 'x', showCancelButton: true })
-    assert.equal(document.activeElement, box(document).querySelector('.mjs-modal-confirm'))
+    assert.ok(document.activeElement === box(document).querySelector('.mjs-modal-confirm'), 'le bouton de confirmation reçoit le focus initial')
   })
 
   it("avec input : l'INPUT reçoit le focus initial (pas le bouton confirm)", function () {
     const { document, µ } = loadModal()
     µ.modal.fire({ input: 'text' })
-    assert.equal(document.activeElement, box(document).querySelector('.mjs-modal-input'))
+    assert.ok(document.activeElement === box(document).querySelector('.mjs-modal-input'), 'le champ de saisie reçoit le focus initial')
   })
 
   it('le focus initial est posé avec {preventScroll:true} — espionne HTMLElement.prototype.focus le temps du fire()', function () {
@@ -82,9 +82,9 @@ describe('mjs_modal — focus trap (Tab/Shift+Tab bouclent DANS la boîte)', fun
     const confirmEl = b.querySelector('.mjs-modal-confirm')
     const cancelEl = b.querySelector('.mjs-modal-cancel')
     cancelEl.focus()
-    assert.equal(document.activeElement, cancelEl)
+    assert.ok(document.activeElement === cancelEl, 'le dernier élément (annuler) a le focus avant le Tab')
     tab(window, document, false)
-    assert.equal(document.activeElement, confirmEl, 'Tab depuis le dernier doit boucler vers le premier')
+    assert.ok(document.activeElement === confirmEl, 'Tab depuis le dernier doit boucler vers le premier')
   })
 
   it('Shift+Tab depuis le PREMIER élément focusable (confirm) revient au DERNIER (cancel)', function () {
@@ -95,7 +95,7 @@ describe('mjs_modal — focus trap (Tab/Shift+Tab bouclent DANS la boîte)', fun
     const cancelEl = b.querySelector('.mjs-modal-cancel')
     confirmEl.focus()
     tab(window, document, true)
-    assert.equal(document.activeElement, cancelEl, 'Shift+Tab depuis le premier doit boucler vers le dernier')
+    assert.ok(document.activeElement === cancelEl, 'Shift+Tab depuis le premier doit boucler vers le dernier')
   })
 
   it('Tab au MILIEU (deny, avec confirm+deny+cancel) : navigation normale, PAS de saut forcé', function () {
@@ -116,9 +116,9 @@ describe('mjs_modal — focus trap (Tab/Shift+Tab bouclent DANS la boîte)', fun
     const { window, document, µ } = loadModal()
     µ.modal.fire({ text: 'x' })
     const confirmEl = box(document).querySelector('.mjs-modal-confirm')
-    assert.equal(document.activeElement, confirmEl)
+    assert.ok(document.activeElement === confirmEl, 'le bouton de confirmation, seul focusable, a le focus avant le Tab')
     tab(window, document, false)
-    assert.equal(document.activeElement, confirmEl, 'reste sur l\'unique élément focusable')
+    assert.ok(document.activeElement === confirmEl, 'reste sur l\'unique élément focusable')
   })
 
   it('focus détourné HORS de la boîte pendant que la modale est ouverte : le Tab suivant ramène DANS la boîte', function () {
@@ -128,9 +128,9 @@ describe('mjs_modal — focus trap (Tab/Shift+Tab bouclent DANS la boîte)', fun
     document.body.appendChild(outsideBtn)
     µ.modal.fire({ text: 'x' })
     outsideBtn.focus() // simule un focus qui aurait échappé au trap (ex. script tiers)
-    assert.equal(document.activeElement, outsideBtn)
+    assert.ok(document.activeElement === outsideBtn, 'le focus est bien sorti de la boîte, sur le bouton extérieur')
     tab(window, document, false)
-    assert.equal(document.activeElement, box(document).querySelector('.mjs-modal-confirm'), 'ramené DANS la boîte')
+    assert.ok(document.activeElement === box(document).querySelector('.mjs-modal-confirm'), 'ramené DANS la boîte')
   })
 
   it('inputValidator affiche un message d\'erreur (nouvel élément) : le trap le prend en compte au Tab suivant sans planter', async function () {
@@ -150,15 +150,15 @@ describe('mjs_modal — retour de focus à la fermeture', function () {
     trigger.textContent = 'ouvrir'
     document.body.appendChild(trigger)
     trigger.focus()
-    assert.equal(document.activeElement, trigger)
+    assert.ok(document.activeElement === trigger, 'le déclencheur a le focus avant l\'ouverture')
     const calls = spyFocus(trigger)
 
     const p = µ.modal.fire({ text: 'x' })
-    assert.notEqual(document.activeElement, trigger, 'le focus doit avoir quitté trigger pendant que la modale est ouverte')
+    assert.ok(document.activeElement !== trigger, 'le focus doit avoir quitté trigger pendant que la modale est ouverte')
     box(document).querySelector('.mjs-modal-confirm').click()
     await p
 
-    assert.equal(document.activeElement, trigger, 'le focus doit revenir sur trigger')
+    assert.ok(document.activeElement === trigger, 'le focus doit revenir sur trigger')
     assert.equal(calls.length, 1)
     assert.equal(calls[0].preventScroll, true) // cf. note de réalm en tête de fichier (deepEqual cross-realm)
   })
@@ -172,30 +172,30 @@ describe('mjs_modal — retour de focus à la fermeture', function () {
     let p = µ.modal.fire({ text: 'x', showDenyButton: true })
     box(document).querySelector('.mjs-modal-deny').click()
     await p
-    assert.equal(document.activeElement, trigger, 'deny')
+    assert.ok(document.activeElement === trigger, 'deny')
 
     trigger.focus()
     p = µ.modal.fire({ text: 'x', showCancelButton: true })
     box(document).querySelector('.mjs-modal-cancel').click()
     await p
-    assert.equal(document.activeElement, trigger, 'cancel')
+    assert.ok(document.activeElement === trigger, 'cancel')
 
     trigger.focus()
     p = µ.modal.fire({ text: 'x' })
     document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     await p
-    assert.equal(document.activeElement, trigger, 'esc')
+    assert.ok(document.activeElement === trigger, 'esc')
 
     trigger.focus()
     p = µ.modal.fire({ text: 'x' })
     document.body.querySelector('.mjs-modal-backdrop').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }))
     await p
-    assert.equal(document.activeElement, trigger, 'backdrop')
+    assert.ok(document.activeElement === trigger, 'backdrop')
 
     trigger.focus()
     p = µ.modal.fire({ text: 'x', timer: 10 })
     await p
-    assert.equal(document.activeElement, trigger, 'timer')
+    assert.ok(document.activeElement === trigger, 'timer')
   })
 
   it("aucun élément focusé avant ouverture (document.activeElement = body) : la fermeture ne plante pas", async function () {
@@ -213,7 +213,7 @@ describe('mjs_modal — retour de focus à la fermeture', function () {
     const trigger = document.createElement('button')
     document.body.appendChild(trigger)
     trigger.focus()
-    assert.equal(document.activeElement, trigger)
+    assert.ok(document.activeElement === trigger, 'le déclencheur a le focus avant l\'ouverture')
 
     const p = µ.modal.fire({ text: 'x' })
     trigger.remove()
@@ -225,6 +225,6 @@ describe('mjs_modal — retour de focus à la fermeture', function () {
     })())
     // focus() sur un nœud détaché est un no-op (spec HTML, reproduit par happy-dom) : le focus
     // retombe sur body, jamais un crash faute de vérifier isConnected avant l'appel.
-    assert.equal(document.activeElement, document.body)
+    assert.ok(document.activeElement === document.body, 'le focus retombe sur body : le déclencheur retiré du DOM ne le reprend pas')
   })
 })

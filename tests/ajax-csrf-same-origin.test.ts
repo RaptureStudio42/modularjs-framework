@@ -12,6 +12,7 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC  = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
@@ -23,6 +24,7 @@ const fakeLocation = { origin: 'https://app.example', href: 'https://app.example
 async function headersFor(url: string) {
   const warnings: string[] = []
   const µ: any = { log() {}, error() {}, warn: (...a: any[]) => warnings.push(a.join(' ')) }
+  poserMessages(µ)
   let seen: any = null
   const fakeFetch = async (_u: string, opts: any) => {
     seen = opts.headers

@@ -7,7 +7,7 @@ Certains frameworks proposent des *snippets* — des fragments de template **par
 - un fragment **paramétré par des valeurs** (texte, nombres, expressions) → un **sous-composant** à attributs réactifs ;
 - un emplacement **à remplir avec du contenu arbitraire** (titre, actions, corps libre) → un **slot** (`<@slot>`).
 
-> ⚠️ N'écris pas `{#snippet}` ni `{@render}` dans un composant MJS : ces mots-clés n'existent pas et ne sont pas reconnus par le compilateur. Le pendant naturel d'un snippet, c'est un sous-composant Web Component (vu ci-dessous) ou un slot.
+> ⚠️ N'écrivez pas `{#snippet}` ni `{@render}` dans un composant MJS : ces mots-clés n'existent pas et ne sont pas reconnus par le compilateur. Le pendant naturel d'un snippet, c'est un sous-composant Web Component (vu ci-dessous) ou un slot.
 
 ## Fragment paramétré → sous-composant à attributs
 
@@ -38,7 +38,7 @@ Les attributs `emoji` et `description` alimentent **directement** les variables 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi un composant plutôt qu'une fonction&nbsp;?</summary>
 
-Un snippet ressemble à une petite fonction qui renvoie du markup. En MJS, l'unité de markup réutilisable, c'est le **composant**. Tu écris une fois la structure d'une ligne dans `tuto-monkey.mjs`, puis tu l'« appelles » autant de fois que tu veux en plaçant la balise `<@tuto-monkey …>` avec des attributs différents.
+Un snippet ressemble à une petite fonction qui renvoie du markup. En MJS, l'unité de markup réutilisable, c'est le **composant**. Vous écrivez une fois la structure d'une ligne dans `tuto-monkey.mjs`, puis vous l'« appelez » autant de fois que vous voulez en plaçant la balise `<@tuto-monkey …>` avec des attributs différents.
 
 Avantage : c'est du **HTML standard**, sans syntaxe spéciale à apprendre. Les attributs jouent le rôle des paramètres, et le composant les interpole dans son template.
 
@@ -79,7 +79,7 @@ Quand on veut offrir un **trou à remplir** avec du contenu arbitraire fourni pa
 
 ### Slots nommés
 
-Plusieurs emplacements distincts → des **slots nommés**. Côté enfant `<@slot nom>` ; côté parent, on cible un slot avec l'attribut `slot="nom"` sur l'élément projeté — pour **un seul** élément. Dès que **plusieurs** éléments visent le même slot nommé, on les regroupe dans un bloc `<@fill nom>…</@fill>` : le compilateur pose lui-même `slot="nom"` sur chacun de ses enfants (sucre de compilation, l'attribut natif reste la forme sous-jacente). Sans contenu de repli à délimiter, la fermante `</@slot>` est facultative — `<@slot nom>` et `<@slot>` seuls (ci-dessous) suffisent.
+Plusieurs emplacements distincts → des **slots nommés**. Côté enfant `<@slot nom>` ; côté parent, on cible un slot avec l'attribut `slot="nom"` sur l'élément projeté — pour **un seul** élément. Dès que **plusieurs** éléments visent le même slot nommé, on les regroupe dans un bloc `<@fill nom>…</@fill>` : le compilateur pose lui-même `slot="nom"` sur chacun de ses enfants (sucre de compilation, l'attribut natif reste la forme sous-jacente). Sans contenu de repli à délimiter, la fermante `</@slot>` est facultative — `<@slot nom>` et `<@slot>` seuls (ci-dessous) suffisent. Un `<@slot>` peut aussi vivre dans un bloc (`{if}…{else}`) : le contenu projeté va au slot de la branche affichée, et suit la bascule.
 
 ```html
 <!-- enfant : trois emplacements + un corps libre -->
@@ -101,14 +101,14 @@ Plusieurs emplacements distincts → des **slots nommés**. Côté enfant `<@slo
 </@tuto-passing-snippets-list>
 ```
 
-Le contenu sans attribut `slot=` ni bloc `<@fill>` (ici la boucle `{for}`) tombe dans le slot **anonyme** `<@slot>`. Un texte nu ne peut pas viser un slot nommé à l'intérieur d'un bloc `<@fill>` — enveloppe-le dans un élément (`<span>`, `<p>`…). On combine ainsi les deux idiomes : le conteneur (`list`) offre les emplacements via slots, et chaque ligne projetée (`row`) est elle-même un sous-composant paramétré par attributs.
+Le contenu sans attribut `slot=` ni bloc `<@fill>` (ici la boucle `{for}`) tombe dans le slot **anonyme** `<@slot>`. Un texte nu ne peut pas viser un slot nommé à l'intérieur d'un bloc `<@fill>` — enveloppez-le dans un élément (`<span>`, `<p>`…). On combine ainsi les deux idiomes : le conteneur (`list`) offre les emplacements via slots, et chaque ligne projetée (`row`) est elle-même un sous-composant paramétré par attributs.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — sous-composant ou slot, lequel choisir&nbsp;?</summary>
 
-La question à te poser : **« qui décide du contenu&nbsp;? »**
+La question à vous poser : **« qui décide du contenu&nbsp;? »**
 
-- Le **fragment lui-même** connaît sa structure, seules quelques **valeurs** changent (un emoji, un nom, une couleur) → **sous-composant à attributs**. Tu passes les valeurs : `<@monkey emoji="🙈">`.
+- Le **fragment lui-même** connaît sa structure, seules quelques **valeurs** changent (un emoji, un nom, une couleur) → **sous-composant à attributs**. Vous passez les valeurs : `<@monkey emoji="🙈">`.
 - Le **parent** veut injecter du **markup libre** (un titre riche, des boutons d'action, un corps quelconque) → **slot**. Le composant offre l'emplacement, le parent le remplit avec ce qu'il veut.
 
 Souvent on mélange les deux, comme dans l'exemple de la liste de couleurs : un conteneur à slots, peuplé de lignes qui sont des sous-composants paramétrés.
@@ -147,7 +147,7 @@ Souvent on mélange les deux, comme dans l'exemple de la liste de couleurs : un 
 
 Le script et le style du partial sont **concaténés** à ceux du composant parent (même portée — les variables du partial et du parent se voient mutuellement) ; un partial peut lui-même contenir des `<@include>` (récursion), avec une **garde anti-cycle** : une inclusion circulaire (`A` inclut `B` qui inclut `A`) échoue à la compilation plutôt que de boucler à l'infini.
 
-> 🔗 Pour du contenu **paramétré par valeurs** avec une vraie frontière d'instance (attributs réactifs, cycle de vie propre), préfère un sous-composant — voir plus haut. `<@include>` reste l'outil pour du HTML/script/style **littéralement dupliqué**, sans vouloir l'isoler en composant à part entière.
+> 🔗 Pour du contenu **paramétré par valeurs** avec une vraie frontière d'instance (attributs réactifs, cycle de vie propre), préférez un sous-composant — voir plus haut. `<@include>` reste l'outil pour du HTML/script/style **littéralement dupliqué**, sans vouloir l'isoler en composant à part entière.
 
 ---
 

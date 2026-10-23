@@ -1,420 +1,256 @@
-// mjs_spring.coffee
-// Ressort physique. Supporte les valeurs SCALAIRES (un nombre) ET les valeurs
-// composites (objet `{x, y}` ou tableau `[a, b]` de nombres, récursivement) —
-// comme la classe `Spring` de Svelte 5 : un seul ressort pilote plusieurs axes
-// avec une stiffness/damping partagée. Le step interpole chaque composante
-// numérique indépendamment.
-var MjsPhysicsSpring;
+// µ.spring : valeur animée par un oscillateur amorti, un pas unitaire par image
+// x'' = k·(c − x) − a·x' (Euler semi-implicite : vitesse d'abord, position avec la nouvelle vitesse)
+// une valeur peut être un nombre, un tableau ou un objet : chaque nombre est une feuille indépendante
 
-// Helpers (locaux → mangle-safe, pas sur `µ`).
-function _mjsIsNum(v) {
-  return typeof v === 'number';
-}
+const SPRING_WARN = '[µspring] ';
 
-function _mjsZeroLike(v) {
-  if (_mjsIsNum(v)) {
-    return 0;
-  }
-  if (Array.isArray(v)) {
-    return v.map(_mjsZeroLike);
-  }
-  if (v && typeof v === 'object') {
-    var o = {}, k;
-    for (k in v) {
-      o[k] = _mjsZeroLike(v[k]);
-    }
-    return o;
+// bornes de réglage : stabilité du schéma k < 4 − 2a, repos atteignable (a > 0, précision > 0)
+const clampDamping   = function(a) {
+  if (typeof a !== 'number' || !isFinite(a)) return 0.8;
+  return Math.min(1, Math.max(0.01, a));
+};
+
+const clampStiffness = function(k, damping) {
+  const top = 4 - 2 * damping - 0.01;
+  if (typeof k !== 'number' || !isFinite(k)) return Math.min(0.15, top);
+  return Math.min(top, Math.max(0.001, k));
+};
+
+const clampPrecision = function(p) {
+  return (typeof p === 'number' && isFinite(p) && p > 0) ? p : 0.01;
+};
+
+// nature d'une valeur : num, array, object ou other (texte, null, booléen, undefined)
+const kindOf = function(v) {
+  if (typeof v === 'number') return 'num';
+  if (Array.isArray(v)) return 'array';
+  if (v !== null && typeof v === 'object') return 'object';
+  return 'other';
+};
+
+const hasKey = function(o, key) {
+  return Object.prototype.hasOwnProperty.call(o, key);
+};
+
+// fini en profondeur : un « autre » compte pour fini
+const isDeepFinite = function(v) {
+  const kind = kindOf(v);
+  if (kind === 'num') return isFinite(v);
+  if (kind === 'other') return true;
+  return Object.keys(v).every(function(key) { return isDeepFinite(v[key]); });
+};
+
+// range une clé de la valeur animée sur une copie : `__proto__` y reste une clé comme une autre — l'affectation
+// `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+const putKey = function(o, key, v) {
+  if (key === '__proto__') Object.defineProperty(o, key, { value: v, writable: true, enumerable: true, configurable: true });
+  else o[key] = v;
+};
+
+// zéro de même forme (un « autre » donne 0)
+const zerosLike = function(v) {
+  const kind = kindOf(v);
+  if (kind === 'array') return v.map(zerosLike);
+  if (kind === 'object') {
+    const out = {};
+    for (const key of Object.keys(v)) putKey(out, key, zerosLike(v[key]));
+    return out;
   }
   return 0;
-}
+};
 
-// nature d'une composante — nombre / tableau / objet / autre (string, etc.) — sert au garde-fou
-// de changement de forme À TOUTE PROFONDEUR dans `_mjsSpringStep` (le setter `value` plus bas ne
-// voit, lui, que la racine).
-function _mjsNature(v) {
-  if (_mjsIsNum(v)) {
-    return 'num';
-  }
-  if (Array.isArray(v)) {
-    return 'array';
-  }
-  if (v && typeof v === 'object') {
-    return 'object';
-  }
-  return 'other';
-}
+// vitesse d'une sous-branche, 0 si la vitesse n'a pas cette forme
+const speedAt = function(vel, key) {
+  return (vel !== null && typeof vel === 'object') ? vel[key] : 0;
+};
 
-// Avance une valeur (récursive) d'un pas de ressort. Retourne {value, velocity}
-// de la même forme. `ctx.settled` passe à false dès qu'une composante bouge
-// encore (façon `tick_spring` de Svelte).
-// UNION courant∪cible — AVANT : bornée sur
-// les clés/index de `cur` SEULEMENT, une clé SEULEMENT dans `tgt` n'animait
-// jamais (pop à la dernière frame) et une clé ABSENTE de `tgt` produisait un
-// NaN qui figeait tout le ressort. Chaque clé/index suit désormais SA PROPRE
-// règle, indépendante des autres : absente de la cible → garde sa valeur
-// courante (figée, ne bloque pas les autres axes) ; absente de current →
-// apparaît directement à la valeur cible (sans animer CET axe).
-function _mjsSpringStep(cur, tgt, vel, stiffness, damping, precision, ctx) {
-  var delta, force, next, i, k, vals, vels, r, len, curHas, tgtHas, allKeys, curNat, tgtNat;
-  // changement de NATURE (nombre/tableau/objet) entre current et la cible, à CETTE profondeur —
-  // pas seulement à la racine (cf. le setter `value` plus bas, qui ne compare QUE le sommet) :
-  // `{a:{x:1}} -> {a:[1,2]}` prenait la branche objet ci-dessous, qui fusionnait les index du
-  // tableau comme des clés (`for...in` sur un Array) → hybride `{0:1,1:2,x:1}`, jamais un vrai
-  // tableau, figé sans le moindre avertissement. Saut direct à la cible pour CETTE branche (même
-  // filet que la valeur non numérique tout en bas), 1 seul avertissement par appel de `_mjs_step`
-  // (la forme redevient cohérente dès la frame suivante, plus rien à signaler ensuite).
-  curNat = _mjsNature(cur);
-  tgtNat = _mjsNature(tgt);
-  if (curNat !== tgtNat && curNat !== 'other' && tgtNat !== 'other') {
-    if (!ctx.warned) {
-      ctx.warned = true;
-      µ.warn('[µspring] une valeur imbriquée change de forme (objet/tableau/nombre) — cette branche saute directement à la nouvelle valeur.');
-    }
-    return { value: tgt, velocity: _mjsZeroLike(tgt) };
+// un pas pour la valeur cur vers tgt ; rend [position, vitesse]
+// run.moved : une feuille n'est pas au repos ; run.reshaped : une branche a changé de nature
+const advance = function(cur, vel, tgt, p, run) {
+  const ck = kindOf(cur);
+  const tk = kindOf(tgt);
+  if (ck === 'other') return [tgt, zerosLike(tgt)];
+  if (tk !== 'other' && tk !== ck) {
+    run.reshaped = true;
+    return [tgt, zerosLike(tgt)];
   }
-  if (_mjsIsNum(cur)) {
-    delta = tgt - cur;
-    force = (delta * stiffness) - (vel * damping);
-    vel = vel + force;
-    next = cur + vel;
-    if (Math.abs(vel) < precision && Math.abs(tgt - next) < precision) {
-      return { value: tgt, velocity: 0 };
-    }
-    ctx.settled = false;
-    return { value: next, velocity: vel };
+  if (ck === 'num') {
+    const v  = (typeof vel === 'number') ? vel : 0;
+    const nv = v + p.k * (tgt - cur) - p.a * v;
+    const nx = cur + nv;
+    // seuil de repos à l'échelle de la cible : près d'une très grande valeur, ou sous une précision plus fine que l'écart
+    // représentable, le ressort restait près de la cible sans jamais se poser — pas k·écart arrondi à zéro (terme 1/k), ou
+    // cycle d'arrondi d'un ressort raide peu amorti, 200 crans au plus mesurés (terme 1024). Valeur ordinaire : la précision.
+    // Près de zéro, le plus petit écart représentable est Number.MIN_VALUE : sous 1e-320, le ressort ne se posait jamais
+    const eps = Math.max(p.eps, (Math.abs(tgt) * Number.EPSILON + Number.MIN_VALUE) * (1024 + 1 / p.k));
+    if (Math.abs(nv) < eps && Math.abs(tgt - nx) < eps) return [tgt, 0];
+    run.moved = true;
+    return [nx, nv];
   }
-  if (Array.isArray(cur)) {
-    vals = []; vels = [];
-    len = Math.max(cur.length, Array.isArray(tgt) ? tgt.length : 0);
-    for (i = 0; i < len; i++) {
-      curHas = i < cur.length;
-      tgtHas = Array.isArray(tgt) && i < tgt.length;
-      if (curHas && !tgtHas) {
-        vals.push(cur[i]); vels.push(0); // index absent de la cible : figé
-      } else if (!curHas && tgtHas) {
-        vals.push(tgt[i]); vels.push(0); // index absent de current : apparaît direct
-      } else {
-        r = _mjsSpringStep(cur[i], tgt[i], vel[i], stiffness, damping, precision, ctx);
-        vals.push(r.value); vels.push(r.velocity);
-      }
-    }
-    return { value: vals, velocity: vels };
+  const isArray = ck === 'array';
+  const same    = tk === ck;
+  let keys;
+  if (isArray) {
+    const n = Math.max(cur.length, same ? tgt.length : 0);
+    keys    = [];
+    for (let i = 0; i < n; i++) keys.push(i);
   }
-  if (cur && typeof cur === 'object') {
-    vals = {}; vels = {};
-    allKeys = new Set(Object.keys(cur));
-    if (tgt && typeof tgt === 'object') {
-      for (k in tgt) { allKeys.add(k); }
+  else {
+    keys = Object.keys(cur);
+    if (same) {
+      for (const key of Object.keys(tgt)) if (!hasKey(cur, key)) keys.push(key);
     }
-    for (k of allKeys) {
-      curHas = Object.prototype.hasOwnProperty.call(cur, k);
-      tgtHas = tgt && Object.prototype.hasOwnProperty.call(tgt, k);
-      if (curHas && !tgtHas) {
-        vals[k] = cur[k]; vels[k] = 0; // clé absente de la cible : figée
-      } else if (!curHas && tgtHas) {
-        vals[k] = tgt[k]; vels[k] = 0; // clé absente de current : apparaît direct
-      } else {
-        r = _mjsSpringStep(cur[k], tgt[k], vel[k], stiffness, damping, precision, ctx);
-        vals[k] = r.value; vels[k] = r.velocity;
-      }
-    }
-    return { value: vals, velocity: vels };
   }
-  // Composante non numérique (string…) : on saute directement à la cible.
-  return { value: tgt, velocity: 0 };
-}
+  const xs = isArray ? [] : {};
+  const vs = isArray ? [] : {};
+  for (const key of keys) {
+    const inCur = isArray ? key < cur.length : hasKey(cur, key);
+    const inTgt = same && (isArray ? key < tgt.length : hasKey(tgt, key));
+    if (inCur && inTgt) {
+      const pair = advance(cur[key], speedAt(vel, key), tgt[key], p, run);
+      putKey(xs, key, pair[0]);
+      putKey(vs, key, pair[1]);
+    }
+    else if (inCur) {
+      putKey(xs, key, cur[key]);
+      putKey(vs, key, zerosLike(cur[key]));
+    }
+    else {
+      putKey(xs, key, tgt[key]);
+      putKey(vs, key, zerosLike(tgt[key]));
+    }
+  }
+  return [xs, vs];
+};
 
-// Forme (clés d'objet, longueur de tableau) différente entre current et une
-// nouvelle cible composite ? Sert UNIQUEMENT au warn — posé UNE fois au `set`
-// (jamais dans `_mjsSpringStep`, rappelée à chaque frame).
-function _mjsShapeDiffers(cur, tgt) {
-  var curIsArr = Array.isArray(cur), tgtIsArr = Array.isArray(tgt), curKeys, k;
-  if (curIsArr || tgtIsArr) {
-    return !curIsArr || !tgtIsArr || cur.length !== tgt.length;
-  }
-  if (cur && tgt && typeof cur === 'object' && typeof tgt === 'object') {
-    curKeys = Object.keys(cur);
-    if (curKeys.length !== Object.keys(tgt).length) { return true; }
-    for (k of curKeys) {
-      if (!Object.prototype.hasOwnProperty.call(tgt, k)) { return true; }
-    }
-    return false;
+// formes incompatibles entre deux composites de même genre (longueurs ou clés différentes)
+const shapeMismatch = function(cur, tgt) {
+  if (Array.isArray(cur) && Array.isArray(tgt)) return cur.length !== tgt.length;
+  if (kindOf(cur) === 'object' && kindOf(tgt) === 'object') {
+    const ck = Object.keys(cur);
+    return ck.length !== Object.keys(tgt).length || ck.some(function(key) { return !hasKey(tgt, key); });
   }
   return false;
+};
+
+const warnSpring = function(text) {
+  µ.warn(SPRING_WARN + text);
+};
+
+class Spring {
+  constructor(value, stiffness = 0.15, damping = 0.8, min = null, max = null) {
+    this.current           = value;
+    this.target            = value;
+    this.velocity          = zerosLike(value);
+    this.min               = min;
+    this.max               = max;
+    this._mjs_invalidators = new Map();
+    this._mjs_precision    = 0.01;
+    // l'amortissement d'abord : il fixe la borne de la raideur
+    this._mjs_damping   = clampDamping(damping);
+    this._mjs_stiffness = clampStiffness(stiffness, this._mjs_damping);
+    µ._mjs_interpolatorSet.add(this);
+  }
+
+  get value() { return this.target; }
+
+  set value(v) {
+    if (!isDeepFinite(v)) return;
+    if (typeof v === 'number') {
+      if (this.min !== null) v = Math.max(this.min, v);
+      if (this.max !== null) v = Math.min(this.max, v);
+      if (typeof this.current !== 'number') {
+        warnSpring(µ._mjs_txt('springShapeToNumber', null, 'la cible change de forme (objet/tableau → nombre) — le ressort redémarre à zéro sur la nouvelle forme.'));
+        this.current  = 0;
+        this.velocity = 0;
+      }
+      else if (v === this.target) return;
+    }
+    else {
+      const curIsArray = Array.isArray(this.current);
+      if (typeof this.current === 'number') {
+        warnSpring(µ._mjs_txt('springShapeToObject', null, 'la cible change de forme (nombre → objet/tableau) — le ressort redémarre à zéro sur la nouvelle forme.'));
+        this.current  = zerosLike(v);
+        this.velocity = zerosLike(v);
+      }
+      else if (curIsArray !== Array.isArray(v)) {
+        warnSpring(µ._mjs_txt('springContainerKind', null, 'la cible change de nature de conteneur (objet <-> tableau) — le ressort redémarre à zéro sur la nouvelle forme.'));
+        this.current  = zerosLike(v);
+        this.velocity = zerosLike(v);
+      }
+      else if (shapeMismatch(this.current, v)) warnSpring(µ._mjs_txt('springShapeMismatch', null, 'la cible n\'a pas la même forme que la valeur courante (clés ou longueur différentes) — chaque axe est traité indépendamment : absent de la cible => figé à sa valeur courante, absent de current => apparaît sans animer.'));
+    }
+    this.target = v;
+    µ.Ticker.add(this);
+  }
+
+  get stiffness() { return this._mjs_stiffness; }
+
+  set stiffness(k) {
+    this._mjs_stiffness = clampStiffness(k, this._mjs_damping);
+    this._mjs_notify();
+  }
+
+  get damping() { return this._mjs_damping; }
+
+  set damping(a) {
+    this._mjs_damping   = clampDamping(a);
+    this._mjs_stiffness = clampStiffness(this._mjs_stiffness, this._mjs_damping);
+    this._mjs_notify();
+  }
+
+  get precision() { return clampPrecision(this._mjs_precision); }
+
+  set precision(p) { this._mjs_precision = clampPrecision(p); }
+
+  _mjs_attachInvalidator(owner, fn) {
+    this._mjs_invalidators.set(owner, fn);
+    return fn;
+  }
+
+  // abonnés dans l'ordre d'insertion ; un propriétaire mort est retiré sans appel
+  _mjs_notify() {
+    for (const [owner, fn] of this._mjs_invalidators) {
+      if (owner && owner._mjs_dead) {
+        this._mjs_invalidators.delete(owner);
+        continue;
+      }
+      fn();
+    }
+  }
+
+  // une image (le temps réel n'intervient pas) ; true tant que le ressort bouge
+  _mjs_step() {
+    const run  = { moved: false, reshaped: false };
+    const p    = { k: this._mjs_stiffness, a: this._mjs_damping, eps: this.precision };
+    const next = advance(this.current, this.velocity, this.target, p, run);
+    if (run.reshaped) warnSpring(µ._mjs_txt('springNestedShape', null, 'une valeur imbriquée change de forme (objet/tableau/nombre) — cette branche saute directement à la nouvelle valeur.'));
+    // divergence : on se fige sur la cible
+    if (!isDeepFinite(next[0]) || !isDeepFinite(next[1])) {
+      this.current  = this.target;
+      this.velocity = zerosLike(this.target);
+      this._mjs_notify();
+      return false;
+    }
+    this.current  = next[0];
+    this.velocity = next[1];
+    if (typeof this.current === 'number') {
+      if (this.min !== null && this.current < this.min) {
+        this.current  = this.min;
+        this.velocity = 0;
+      }
+      if (this.max !== null && this.current > this.max) {
+        this.current  = this.max;
+        this.velocity = 0;
+      }
+    }
+    // repos : current vaut déjà la cible, clés figées comprises, donc pas de recopie
+    if (!run.moved) this.velocity = zerosLike(this.current);
+    this._mjs_notify();
+    return run.moved;
+  }
 }
 
-function _mjsDeepFinite(v) {
-  if (_mjsIsNum(v)) {
-    return Number.isFinite(v);
-  }
-  if (Array.isArray(v)) {
-    return v.every(_mjsDeepFinite);
-  }
-  if (v && typeof v === 'object') {
-    var k;
-    for (k in v) {
-      if (!_mjsDeepFinite(v[k])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return true;
-}
-
-// --- Bornes de STABILITÉ du schéma d'Euler (sans dt) ---
-// La récurrence `vel += k*(tgt-cur) - c*vel ; next = cur + vel` DIVERGE
-// (→ Infinity/NaN → boucle rAF infinie) dès que `stiffness >= 4 - 2*damping`
-// (critère de Jury de la matrice d'état 2×2). Au damping défaut 0.8, la borne
-// tombe à 2.4 : un `stiffness` ≥ 2.4 explose. On clampe donc stiffness JUSTE
-// sous cette borne, et damping dans [0, 1].
-function _mjsClampDamping(c) {
-  if (!_mjsIsNum(c) || !Number.isFinite(c)) {
-    return 0.8;
-  }
-  // `damping=0` était accepté (borne basse à 0).
-  // Or le déterminant de la matrice d'état de la récurrence est `1-c` : à
-  // c=0, il vaut 1 → l'schéma d'Euler semi-implicite ne PERD jamais d'énergie
-  // → oscillation ENTRETENUE indéfiniment (jamais `|vel| < precision` ET
-  // `|tgt-next| < precision` simultanément) → `_mjs_step` retourne toujours
-  // `true` → tâche µ.Ticker/rAF IMMORTELLE, même après destroy du composant.
-  // Plancher epsilon (au lieu de 0 strict) pour garantir une dissipation
-  // minimale et donc un settle garanti en temps fini.
-  return Math.max(0.01, Math.min(c, 1));
-}
-
-function _mjsClampStiffness(k, c) {
-  var maxStable = 4 - 2 * c - 0.01; // marge de sécurité sous la borne
-  if (!_mjsIsNum(k) || !Number.isFinite(k)) {
-    return Math.min(0.15, maxStable);
-  }
-  return Math.max(0.001, Math.min(k, maxStable));
-}
-
-// plancher de PRÉCISION. La condition de settle
-// (`|vel| < precision` ET `|tgt-next| < precision`) devient INATTEIGNABLE si
-// `precision <= 0` (ou NaN/Infinity) → `_mjs_step` ne retourne jamais false → tâche
-// µ.Ticker/rAF IMMORTELLE, même après destroy (exacte même classe de bug que
-// damping=0, cf. `_mjsClampDamping`). `precision` étant une propriété PUBLIQUE
-// (un slider mal câblé, un `spring.precision = 0`), on la borne à un epsilon.
-function _mjsClampPrecision(p) {
-  if (!_mjsIsNum(p) || !Number.isFinite(p) || p <= 0) {
-    return 0.01;
-  }
-  return p;
-}
-
-MjsPhysicsSpring = (function() {
-  class MjsPhysicsSpring {
-    constructor(current, stiffness1 = 0.15, damping1 = 0.8, min1 = null, max1 = null) {
-      this.current = current;
-      // Clamp dès la construction : `µ.spring(v, 5, 0.8)` (au-dessus de la
-      // borne stable 2.4) divergerait sinon, le constructeur court-circuitant
-      // les setters. damping d'abord (il fixe la borne de stiffness).
-      this._mjs_damping = _mjsClampDamping(damping1);
-      this._mjs_stiffness = _mjsClampStiffness(stiffness1, this._mjs_damping);
-      this.min = min1;
-      this.max = max1;
-      this.target = this.current;
-      this.velocity = _mjsZeroLike(current);
-      this.precision = 0.01;
-      // `_invalidator` était un SLOT UNIQUE (pas
-      // une collection) : (a) un ressort PARTAGÉ (singleton/module) affiché
-      // par 2 composants voyait le 2ᵉ `_mjs_attachInvalidator` ÉCRASER le 1ᵉʳ →
-      // seul le DERNIER composant monté se re-rendait ; (b) au destroy d'un
-      // composant, rien ne détachait son invalidator → un ressort encore actif
-      // continuait d'appeler `_mjs_notifyMutation` sur un composant MORT (retenu
-      // en mémoire, cycles perdus). Fix : `Map<owner, fn>` — un ré-attach du
-      // MÊME owner remplace proprement son entrée (pas d'accumulation), et
-      // `_mjs_notifyInvalidators` purge PARESSEUSEMENT les owners `_mjs_dead` au
-      // moment de la notification (auto-nettoyage, pas de hook de destroy à
-      // câbler côté composant).
-      this._mjs_invalidators = new Map();
-      // Tag d'identification dans µ._mjs_interpolatorSet (cf. mjs_init.ts).
-      µ._mjs_interpolatorSet.add(this);
-    }
-
-    _mjs_attachInvalidator(owner, fn) {
-      this._mjs_invalidators.set(owner, fn);
-      return fn;
-    }
-
-    _mjs_notifyInvalidators() {
-      for (const [owner, fn] of this._mjs_invalidators) {
-        if (owner != null && owner._mjs_dead) {
-          this._mjs_invalidators.delete(owner);
-          continue;
-        }
-        fn();
-      }
-    }
-
-    _mjs_step() {
-      var ctx, r;
-      ctx = { settled: true };
-      r = _mjsSpringStep(this.current, this.target, this.velocity, this._mjs_stiffness, this._mjs_damping, this.precision, ctx);
-      // Garde anti-divergence (filet au-delà du clamp des setters/constructeur) :
-      // si un axe a explosé en Infinity/NaN, on FIGE à la cible et on settle
-      // (retour false → le Ticker éjecte la tâche) plutôt que de propager la
-      // valeur non finie → boucle rAF infinie.
-      if (!_mjsDeepFinite(r.value) || !_mjsDeepFinite(r.velocity)) {
-        this.current = this.target;
-        this.velocity = _mjsZeroLike(this.current);
-        this._mjs_notifyInvalidators();
-        return false;
-      }
-      this.current = r.value;
-      this.velocity = r.velocity;
-      // min/max : clamp scalaire uniquement (sans objet de min/max par axe).
-      if (_mjsIsNum(this.current)) {
-        if (this.min !== null && this.current < this.min) {
-          this.current = this.min;
-          this.velocity = 0;
-        }
-        if (this.max !== null && this.current > this.max) {
-          this.current = this.max;
-          this.velocity = 0;
-        }
-      }
-      // sur la frame de settle : on notifie UNE seule fois
-      // (avant : notifier la valeur quasi-cible, snap, RE-notifier → un
-      // re-render superflu par settle et par abonné). `this.current` (assigné
-      // juste au-dessus depuis `r.value`) EST déjà la valeur exacte : chaque
-      // feuille numérique convergée renvoie `tgt` littéralement (cf.
-      // _mjsSpringStep), donc re-snapper sur `this.target` ici est redondant —
-      // et FAUX : `this.target` seul
-      // ne porte plus les clés/index figés hors de sa propre forme (union
-      // courant∪cible), un snap dessus les aurait fait disparaître au settle.
-      if (ctx.settled) {
-        this.velocity = _mjsZeroLike(this.current);
-        this._mjs_notifyInvalidators();
-        return false;
-      }
-      this._mjs_notifyInvalidators();
-      return true;
-    }
-
-  };
-
-  // `value` / `target` : règle la CIBLE (relance le ticker). Accepte un nombre
-  // OU une valeur composite (objet/tableau).
-  Object.defineProperty(MjsPhysicsSpring.prototype, 'value', {
-    get: function() {
-      return this.target;
-    },
-    set: function(newTarget) {
-      // Garde NaN/Infinity (scalaire ou profond) : sans ça le ressort n'est
-      // JAMAIS settled → boucle rAF infinie.
-      if (!_mjsDeepFinite(newTarget)) {
-        return;
-      }
-      if (_mjsIsNum(newTarget)) {
-        if (this.min !== null) {
-          newTarget = Math.max(this.min, newTarget);
-        }
-        if (this.max !== null) {
-          newTarget = Math.min(this.max, newTarget);
-        }
-        if (!_mjsIsNum(this.current)) {
-          // RÉGRESSION corrigée — cible SCALAIRE alors que current
-          // était composite (objet/tableau) : dans `_mjsSpringStep`, TOUTE clé
-          // de `cur` est "absente" d'une cible scalaire (pas de clé sur un
-          // nombre) → chaque axe prenait la branche figée, `ctx.settled` ne
-          // passait jamais à false, `_mjs_step` rendait `false` dès la 1re frame
-          // (Ticker éjecte la tâche) sans que `current` bouge — bloqué à vie,
-          // en silence. Bascule de TYPE : aucun appariement axe-à-axe n'a de
-          // sens, on reforme current ET velocity en NOMBRE (même schéma que
-          // la branche symétrique juste en dessous) et on laisse le ressort
-          // converger normalement vers la cible scalaire.
-          µ.warn('[µspring] la cible change de forme (objet/tableau → nombre) — le ressort redémarre à zéro sur la nouvelle forme.');
-          this.current = 0;
-          this.velocity = 0;
-        } else if (this.target === newTarget) {
-          return;
-        }
-      } else if (_mjsIsNum(this.current)) {
-        // 1ʳᵉ cible composite alors que le ressort était scalaire : (re)forme
-        // current ET velocity selon la nouvelle structure. AVANT : seule la
-        // vélocité était reformée, current restait un nombre nu — `_mjsSpringStep`
-        // le traitait dans sa branche numérique face à un `tgt` composite (coercion
-        // JS en chaîne « [object Object]NaN » le temps d'une frame), et ne rejoignait
-        // la cible qu'au hasard du filet « composante non numérique → saute à la
-        // cible » à la frame SUIVANTE. Reformer current ICI anime proprement dès la
-        // 1re frame, sans jamais passer par cette chaîne parasite.
-        µ.warn('[µspring] la cible change de forme (nombre → objet/tableau) — le ressort redémarre à zéro sur la nouvelle forme.');
-        this.current = _mjsZeroLike(newTarget);
-        this.velocity = _mjsZeroLike(newTarget);
-      } else if (Array.isArray(this.current) !== Array.isArray(newTarget)) {
-        // RÉGRESSION corrigée — bascule de NATURE de conteneur (objet
-        // plat <-> tableau), PAS juste une bascule de type scalaire<->composite
-        // ci-dessus : `_mjsShapeDiffers` avertissait déjà (curIsArr !== tgtIsArr)
-        // mais ne reformait ni current ni velocity. objet -> tableau : `_mjsSpringStep`
-        // prend la branche OBJET (cur n'est pas un Array), fusionne les clés nommées
-        // de cur et les index de tgt (for...in sur un tableau) dans UN SEUL objet
-        // plat -> hybride non-Array. tableau -> objet : `_mjsSpringStep` prend la
-        // branche ARRAY (cur EST un Array), Array.isArray(tgt) faux -> chaque index
-        // reste figé pour toujours, les clés de la cible objet ne sont jamais lues —
-        // ressort mort en silence. Même schéma que les bascules scalaire<->composite
-        // plus haut : reforme current ET velocity dans la nature de la CIBLE.
-        µ.warn('[µspring] la cible change de nature de conteneur (objet <-> tableau) — le ressort redémarre à zéro sur la nouvelle forme.');
-        this.current = _mjsZeroLike(newTarget);
-        this.velocity = _mjsZeroLike(newTarget);
-      } else if (_mjsShapeDiffers(this.current, newTarget)) {
-        // clés/longueur différentes entre current et la nouvelle cible : chaque
-        // axe suit sa propre règle (cf. _mjsSpringStep) — signalé UNE fois ici,
-        // jamais par frame dans _mjs_step().
-        µ.warn('[µspring] la cible n\'a pas la même forme que la valeur courante (clés ou longueur différentes) — chaque axe est traité indépendamment : absent de la cible => figé à sa valeur courante, absent de current => apparaît sans animer.');
-      }
-      this.target = newTarget;
-      µ.Ticker.add(this);
-    }
-  });
-
-  // stiffness / damping : RÉACTIFS — muter `spring.stiffness` (ex. via un
-  // `bind` sur un slider) doit re-render les `{$spring.stiffness}` qui le lisent.
-  // On notifie via l'invalidator attaché quand le ressort est posé dans une var.
-  Object.defineProperty(MjsPhysicsSpring.prototype, 'stiffness', {
-    get: function() {
-      return this._mjs_stiffness;
-    },
-    set: function(v) {
-      // Clamp sous la borne stable (dépend de damping) : sans ça un slider lié
-      // à `spring.stiffness` poussé au-delà de 4-2·damping fait diverger le
-      // ressort → jamais settled → boucle rAF infinie.
-      this._mjs_stiffness = _mjsClampStiffness(v, this._mjs_damping);
-      this._mjs_notifyInvalidators();
-    }
-  });
-
-  Object.defineProperty(MjsPhysicsSpring.prototype, 'damping', {
-    get: function() {
-      return this._mjs_damping;
-    },
-    set: function(v) {
-      this._mjs_damping = _mjsClampDamping(v);
-      // La borne stable de stiffness est `4-2·damping` : damping ayant bougé,
-      // on re-clampe stiffness pour rester dans la zone stable.
-      this._mjs_stiffness = _mjsClampStiffness(this._mjs_stiffness, this._mjs_damping);
-      this._mjs_notifyInvalidators();
-    }
-  });
-
-  // precision : bornée à un plancher epsilon au set (cf. `_mjsClampPrecision`).
-  // Une precision <= 0 rendrait le settle inatteignable → Ticker immortel. Le
-  // constructeur (`this.precision = 0.01`) passe par ce setter → `_mjs_precision`.
-  Object.defineProperty(MjsPhysicsSpring.prototype, 'precision', {
-    get: function() {
-      return this._mjs_precision;
-    },
-    set: function(v) {
-      this._mjs_precision = _mjsClampPrecision(v);
-    }
-  });
-
-  return MjsPhysicsSpring;
-
-}).call(this);
-
-µ.spring = function(val, stiffness = 0.15, damping = 0.8, min = null, max = null) {
-  return new MjsPhysicsSpring(val, stiffness, damping, min, max);
+µ.spring = function(value, stiffness, damping, min, max) {
+  return new Spring(value, stiffness, damping, min, max);
 };

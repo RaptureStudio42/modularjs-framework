@@ -8,14 +8,6 @@ var MetaViewStub, µ;
 // directive est un mécanisme totalement distinct, `bindingAttach` dans
 // generator/attributes/index.ts, qui n'y touche pas). Retiré.
 
-if (µ._mjs_styleCache == null) {
-  µ._mjs_styleCache = {};
-}
-
-if (µ._mjs_baseStyleCache == null) {
-  µ._mjs_baseStyleCache = new Map();
-}
-
 // Registre global pour les Singletons CSS partagés (@css)
 if (µ.CSS == null) {
   µ.CSS = {};
@@ -35,15 +27,15 @@ if (µ.CSS == null) {
 //      server/renderToString.ts et server/render-browser.ts sur chaque
 //      élément `mjs-*` rendu) : leur balisage est là, visible, et il reste
 //      à l'écran jusqu'au premier rendu client, qui le remplace.
+//      `:not([mjs-skel-host])` en épargne ceux qui montrent la silhouette de leur
+//      contenu en attendant leur code (mjs_fx_skeleton.ts, µ._mjs_skelShow).
 //   2. `[mjs-loading]` couvre le gap entre customElements.define et la fin
 //      du premier render (posé par connectedCallback, retiré en microtask) —
 //      un élément prérendu compris, dont le contenu est alors remplacé.
 // Même instance CSSStyleSheet adoptée partout → coût mémoire constant.
 µ._mjs_shield = new CSSStyleSheet();
 
-µ._mjs_shield.replaceSync(':not(:defined):not([mjs-ssr]),[mjs-loading]{display:none!important}');
-
-document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield];
+µ._mjs_shield.replaceSync(':not(:defined):not([mjs-ssr]):not([mjs-skel-host]),[mjs-loading]{display:none!important}');
 
 // Feuille système : classes utilitaires utilisées par le runtime (overlays
 // d'erreur, fallback). Pas de style inline — tout passe par des classes pour
@@ -53,7 +45,8 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield];
 µ._mjs_systemSheet.replaceSync(`.mjs-fatal-error{color:var(--mjs-error-fg, red);font-weight:bold;padding:10px;border:2px solid var(--mjs-error-border, red)}
 .mjs-error{color:var(--mjs-error-fg, red)}`);
 
-document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_systemSheet];
+// les deux feuilles rejoignent le document ensemble, le bouclier d'abord
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield, µ._mjs_systemSheet];
 
 // Thème clair/sombre embarqué (`µ._mjs_themeSheet`/`µ._mjs_themeAppSheet`/`µ._themeAdopt`, 8 variables
 // --mjs-surface/fg/fg-muted/border/hover/selected/accent/shadow + thèmes d'application
@@ -175,10 +168,12 @@ Object.defineProperty(µ, 'activeComponent', {
 // branchement disparaît à la compilation, l'échappatoire console n'existe
 // plus dans ce bundle-là (µ.debug reste assignable, mais plus lu nulle part).
 //
-// Aux niveaux de PROD stricts ('error'/'silent'), le minifieur retire aussi
+// En PROD, au-dessus de 'log' (défaut 'warn'), le build retire du cœur les traces
+// `µ.log(…)` et `µ._mjs_logger()?.(…)` avec leurs arguments, et l'aide `µ._mjs_logger`
+// avec elles ; aux niveaux stricts ('error'/'silent'), le minifieur retire aussi
 // les appels `console.*` correspondants DU BUNDLE (cf. bundler/minify.ts,
-// `pure` dépendant du niveau) — cette vérification de niveau reste utile en
-// dev/non-minifié, où rien n'est retiré à la compilation.
+// `cutRuntimeTraces` et `pure`, dépendant du niveau) — cette vérification de niveau
+// reste utile en dev/non-minifié, où rien n'est retiré à la compilation.
 // ----------------------------------------------------------------------------
 µ.debug = false;
 
@@ -190,15 +185,36 @@ var mjsLogLevel = function() {
 };
 
 µ.log = function(...args) {
-  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.log) console.log(...args);
+  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.log) {
+    if (_mjsMsgPend) { _mjsMsgNote('log', args); }
+    console.log(...args);
+  }
 };
 
+// `µ._mjs_logger()?.(…)` : µ.log quand le niveau laisse passer `log`, sinon rien ; l'appel optionnel ne calcule
+// alors pas ses arguments ; garde des traces dont le texte coûte (µ._mjs_txt tire le texte de la table des
+// messages) : coupée, une trace n'appelle pas µ._mjs_txt, ne pose aucun écouteur, n'inscrit aucune entrée
+// d'attente, ne demande aucun fichier
+// en PROD au-dessus de 'log' le build retire ces appels avec leurs arguments, puis cette aide, bornée par les
+// repères ci-dessous (bundler/minify.ts, cutRuntimeTraces) ; une trace ne porte jamais d'effet de bord
+// <trace-logger>
+µ._mjs_logger = function() {
+  return MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.log ? µ.log : null;
+};
+// </trace-logger>
+
 µ.warn = function(...args) {
-  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.warn) console.warn(...args);
+  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.warn) {
+    if (_mjsMsgPend) { _mjsMsgNote('warn', args); }
+    console.warn(...args);
+  }
 };
 
 µ.error = function(...args) {
-  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.error) console.error(...args);
+  if (MJS_LOG_LEVEL_RANK[mjsLogLevel()] >= MJS_LOG_LEVEL_RANK.error) {
+    if (_mjsMsgPend) { _mjsMsgNote('error', args); }
+    console.error(...args);
+  }
 };
 
 // Écriture d'attribut DÉFENSIVE pour les valeurs/clés DYNAMIQUES (binding
@@ -352,6 +368,26 @@ var mjsLogLevel = function() {
   // aucune barre de vie), quelle que soit la source (config ou appel).
   notifyDuration: 4000,
 
+  // Pause du décompte d'un toast (µ.modal.notify, mjs_modal.ts) : `true` (défaut) = tant que le pointeur (souris, stylet) survole
+  // le toast ou que le focus est dedans, le minuteur de fermeture et la barre de vie s'arrêtent, puis repartent avec le temps
+  // RESTANT ; `false` = le décompte continue quoi qu'il arrive. `opts.pause` d'un appel précis (booléen) prime toujours sur cette
+  // clé globale ; toute valeur non booléenne vaut l'absence d'option (ici : `true`). Relue à CHAQUE appel de notify(). Un toast
+  // permanent (`duration: 0`) n'a rien à figer.
+  notifyPause: true,
+
+  // Glisser pour fermer (µ.modal.notify, mjs_modal.ts) : `true` (défaut) = on tire le toast à l'horizontale (doigt, souris, stylet)
+  // et, lâché au-delà d'un seuil (distance ou lancer) dans le sens de l'ancrage de la pile, il sort de l'écran en glissant puis se
+  // ferme comme par la croix ; en deçà il revient. `false` = rien de tout cela (ni geste, ni touch-action, ni pointerdown retenu).
+  // `opts.swipe` d'un appel précis (booléen) prime toujours sur cette clé globale ; toute valeur non booléenne vaut l'absence
+  // d'option (ici : `true`). Relue à CHAQUE appel de notify().
+  notifySwipe: true,
+
+  // La barre de navigation (mjs_nav_progress.ts) — un trait de lumière en haut de la page quand
+  // un lien, un formulaire ou une page du routeur met du temps : `true` (défaut) = après 500 ms ; un
+  // nombre = ce seuil en ms ; `{ delay, place }` (place : 'top', 'bottom') ; `false` = jamais.
+  // L'allure se règle en CSS (variables --mjs-nav-progress-color/-height/-speed/-zindex).
+  navProgress: true,
+
   // Politique du veilleur flash/error (µ._mjs_navFlash, mjs_ujs.ts) sur les sacs de props serveur qui
   // entrent au magasin depuis la navigation (nominal/none/422/1er chargement) : 'popup' (défaut) =
   // µ.modal.notify/µ.modal.error (mjs_modal.ts — repli alert/console si le module 'modal' est absent
@@ -393,8 +429,179 @@ var mjsLogLevel = function() {
   journal: false
 };
 
-// `µ._mjs_label`/`µ._mjs_labelLang` (libellés du runtime, router/ujs/modal) vivent
-// désormais dans src/runtime/mjs_page_cache.ts.
+// libellés du runtime (src/runtime-labels.ts) posés par le manifest en TOUTES langues
+// (`µ._runtimeLabels = { fr: {…}, en: {…} }`) : la langue se choisit ICI, à l'affichage, jamais au build —
+// un site basculé en anglais montrait des toasts « Succès »/« Erreur ».
+// CORRECTIF d'ordre : la langue DEMANDÉE au store (`µlang`, µ._mjs_storeRaw.__mjsLang)
+// prime désormais sur la langue EFFECTIVE du module i18n (µ._mjs_i18nEffectiveLang, mjs_i18n.ts) — un toast
+// tiré dans le MÊME TICK qu'un clic « EN » sortait encore en français, `µ._mjs_i18nEffectiveLang()` restant
+// sur l'ancienne langue tant que le swap asynchrone n'a pas fini d'assurer les fragments de la
+// langue cible. Ordre complet : store (`__mjsLang`) → langue effective i18n
+// → `<html lang>` → langue de repli du build (`µ._runtimeLabelsLang` = i18n.default du projet, sinon
+// clé `lang` du CLI). Langue inconnue de la table (de, es…) → repli sur celle du build, puis en, puis
+// fr. `µ._mjs_label` consulte D'ABORD le dictionnaire du PROJET (`µ._mjs_i18nLookup`, mjs_i18n.ts) sur la clé
+// racine réservée `mjs.<groupe>.<clé>` (`mjs.toast.success`, `mjs.modal.cancel`…) — une chaîne trouvée
+// là l'emporte sur cette table entière, cf. docs/29-i18n.md « Libellés du framework ».
+µ._mjs_labelLang = function() {
+  var l = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || (typeof µ._mjs_i18nEffectiveLang === 'function' && µ._mjs_i18nEffectiveLang()) || (typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || µ._runtimeLabelsLang || '';
+  return String(l).toLowerCase().split('-')[0];
+};
+µ._mjs_label = function(group, key) {
+  var fromProject = typeof µ._mjs_i18nLookup === 'function' ? µ._mjs_i18nLookup('mjs.' + group + '.' + key) : undefined;
+  if (typeof fromProject === 'string') { return fromProject; }
+  var all = µ._runtimeLabels;
+  if (!all) { return undefined; }
+  var tbl = all[µ._mjs_labelLang()] || all[µ._runtimeLabelsLang] || all.en || all.fr;
+  return (tbl && tbl[group]) ? tbl[group][key] : undefined;
+};
+// message que le framework écrit dans la console du navigateur (avertissement, erreur levée) : texte
+// du groupe `err` de la table (clé `dev.xxx` = groupe `dev`), dans la langue courante, surchargeable
+// par `mjs.err.<clé>` dans les dictionnaires du site. `fr` = texte français de secours, rendu tel quel
+// quand la table manque ; `{nom}` est remplacé par `vars.nom`, une accolade sans variable reste
+// intacte ({for}, {if}…). `_mjs_msg` pose le préfixe [ModularJS], identique dans toutes les langues ;
+// `_mjs_txt` rend le texte seul (morceau d'un message à plusieurs arguments). Ne lève jamais : au
+// pire, le texte de secours (ou la clé).
+// EN PRODUCTION le groupe `err` n'est pas au manifeste : il vit dans un fichier par langue
+// (`µ._msgUrls`, posé par le build), chargé une seule fois, et seulement quand un message est
+// réellement ÉCRIT (µ.log/warn/error au niveau courant) ou qu'une erreur du framework atteint la page
+// sans être attrapée (événements `error` / `unhandledrejection` de window, écoutés dès la première
+// inscription). `_mjs_txt` rend alors un texte court (clé + variables, `clé {}` sans variables) et se
+// contente d'inscrire l'entrée dans une table d'attente (50 entrées, 10 appels notés chacune) : une
+// trace coupée ne télécharge donc rien — le build la retire avec ses arguments au-dessus de 'log', et les traces
+// qui tirent un texte de la table (routeur, UJS) sont gardées par µ._mjs_logger, qui n'évalue pas leur texte
+// quand le niveau les coupe, même sans minification. Au niveau 'log' ces traces écrivent : le build pose leur texte au
+// manifeste (groupe `err` réduit à ces textes, bundler/minify.ts), elles sortent en texte tout de suite, dans l'ordre. À l'arrivée
+// du fichier, chaque appel noté est rejoué une fois, même niveau, mêmes arguments, texte complet ; une
+// erreur levée sans appel noté sort par µ.error. Toutes les entrées de la langue quittent la table,
+// résolues ou non, à l'arrivée comme à l'échec ; un échec ne relance rien avant 30 s. Sans `document` ni
+// `fetch` (prérendu, Node) : texte court, aucune inscription.
+// état par langue : absent = jamais demandé, Infinity = chargé, 1 = en cours, sinon date de l'échec
+var _mjsMsgLoads = {};
+var _mjsMsgWait  = new Map();
+var _mjsMsgPend  = 0;
+// un appel à µ.log/warn/error dont un argument (chaîne, ou erreur par son `message` : crash d'un
+// composant intercepté) contient un texte court en attente : niveau et arguments sont notés, pour être
+// rejoués avec le texte complet (même niveau, même préfixe)
+function _mjsMsgNote(lvl, args) {
+  var call = [lvl, args];
+  _mjsMsgWait.forEach(function(w, s) {
+    if (!args.some(function(a) { return (a?.message || a)?.indexOf?.(s) >= 0; })) { return; }
+    if (w.c.length < 10) { w.c.push(call); }
+    _mjsMsgAsk(w);
+  });
+}
+// texte d'une valeur quelconque, sans jamais lever : `String` écrit aussi un Symbol (une concaténation `+ ''` lève sur
+// lui) ; un objet sans prototype, qui n'a ni toString ni valueOf, donne un texte vide
+function _mjsMsgStr(a) {
+  try { return String(a); } catch (e) { return ''; }
+}
+// une erreur non attrapée qui porte un texte court en attente : l'entrée est « levée »
+function _mjsMsgHear(e) {
+  var m = _mjsMsgStr(e.message || e.error?.message || e.reason?.message || e.reason);
+  _mjsMsgWait.forEach(function(w, s) { if (m.indexOf(s) >= 0) { w.t = 1; _mjsMsgAsk(w); } });
+}
+// texte complet d'une entrée : les morceaux en attente dans ses variables sont résolus d'abord
+// (et ne s'écrivent plus seuls), sur une copie — l'objet de l'appelant, peut-être gelé, reste le sien
+function _mjsMsgFull(e) {
+  var v = Object.assign({}, e.v);
+  for (var n in v) {
+    var p = _mjsMsgWait.get(v[n]);
+    if (p) { p.p = 1; v[n] = _mjsMsgFull(p); }
+  }
+  return µ._mjs_txt(e.k, v);
+}
+function _mjsMsgDone(lang, ok, err) {
+  var keys  = [];
+  var text  = {};
+  var calls = [];
+  _mjsMsgWait.forEach(function(w, s) { if (w.l === lang) { keys.push(s); } });
+  _mjsMsgLoads[lang] = ok ? Infinity : Date.now();
+  if (ok) {
+    var all = µ._runtimeLabels = µ._runtimeLabels || {};
+    (all[lang] = all[lang] || {}).err = err;
+    keys.sort(function(x, y) { return y.length - x.length; }).forEach(function(s) {
+      var e = _mjsMsgWait.get(s);
+      if ((text[s] = _mjsMsgFull(e)) === s) { return; }
+      if (e.c.length) { calls.push(...e.c); }
+      else if (e.t && !e.p) { calls.push(['error', [(e.m ? '[ModularJS] ' : '') + text[s]]]); }
+    });
+  }
+  keys.forEach(function(s) { _mjsMsgWait.delete(s); });
+  _mjsMsgPend = _mjsMsgWait.size ? 1 : 0;
+  // texte d'un argument par _mjsMsgStr : un Symbol ou un objet sans prototype n'arrête plus le rejeu
+  var full = function(a) { return keys.reduce(function(t, s) { return t.split(s).join(text[s]); }, _mjsMsgStr(a)); };
+  calls.forEach(function(c) {
+    if (c.d) { return; }
+    c.d = 1;
+    // une erreur passée en objet est rejouée par son texte ; le bandeau fatal qu'elle a posé dans la page suit
+    µ[c[0]](...c[1].map(function(a) {
+      if (a?._mjs_fatal) { a._mjs_fatal.textContent = 'Fatal Error: ' + full(a.message); }
+      var t = full(a);
+      return typeof a === 'string' || (a?.message && t !== _mjsMsgStr(a)) ? t : a;
+    }));
+  });
+}
+function _mjsMsgAsk(w) {
+  var at = _mjsMsgLoads[w.l];
+  if (at < 2 || Date.now() - at < 30000) { return; }
+  _mjsMsgLoads[w.l] = 1;
+  new Promise(function(r) { r(fetch(w.u)); }).then(function(r) { return r.ok ? r.json() : Promise.reject(r); }).then(function(err) {
+    _mjsMsgDone(w.l, 1, err);
+  }, function() { _mjsMsgDone(w.l); });
+}
+// langue du fichier de messages à servir : la courante, sinon celle du projet, sinon en, sinon fr
+function _mjsMsgLang() {
+  return [µ._mjs_labelLang(), µ._runtimeLabelsLang, 'en', 'fr'].filter(function(l) { return Object.prototype.hasOwnProperty.call(µ._msgUrls, l); })[0];
+}
+// <msg-idle>
+// réglage `messages: 'idle'` : le build ajoute `µ._msgIdle()` au manifeste, qui télécharge le fichier de
+// la langue courante une fois la page affichée et au repos ; bloc retiré du cœur sans ce réglage
+var _mjsMsgIdle = 0;
+µ._msgIdle = function() {
+  if (_mjsMsgIdle++ || typeof document === 'undefined' || typeof fetch !== 'function') { return; }
+  var go = function() {
+    try {
+      var lang = _mjsMsgLang();
+      if (lang) { _mjsMsgAsk({ l: lang, u: µ._msgUrls[lang] }); }
+    } catch (e) { }
+  };
+  var rest = function() { window.requestIdleCallback ? window.requestIdleCallback(go) : setTimeout(go, 200); };
+  document.readyState === 'complete' ? rest() : window.addEventListener('load', rest);
+};
+// </msg-idle>
+µ._mjs_txt = function(key, vars, fr, msg) {
+  var txt = typeof fr === 'string' ? fr : String(key);
+  try {
+    var dot = String(key).indexOf('.');
+    var grp = dot < 0 ? 'err' : key.slice(0, dot);
+    var t   = µ._mjs_label(grp, dot < 0 ? key : key.slice(dot + 1));
+    if (typeof t === 'string') { txt = t; }
+    else if (grp === 'err' && µ._msgUrls) {
+      txt = String(key);
+      try { txt += ' ' + JSON.stringify(vars || {}); } catch (e) { txt += ' {}'; }
+      try {
+        var urls = µ._msgUrls;
+        var lang = _mjsMsgLang();
+        var at   = _mjsMsgLoads[lang];
+        if (lang && typeof document !== 'undefined' && typeof fetch === 'function' && !(Date.now() - at < 30000) && !_mjsMsgWait.has(txt)) {
+          if (_mjsMsgWait.size > 49) { _mjsMsgWait.delete(_mjsMsgWait.keys().next().value); }
+          _mjsMsgWait.set(txt, { k: key, v: vars, c: [], m: msg, l: lang, u: urls[lang] });
+          if (!_mjsMsgPend) {
+            window.addEventListener('error', _mjsMsgHear);
+            window.addEventListener('unhandledrejection', _mjsMsgHear);
+          }
+          _mjsMsgPend = 1;
+        }
+      } catch (e) { }
+      return txt;
+    }
+    return txt.replace(/\{(\w+)\}/g, function(m, n) { return (vars && Object.prototype.hasOwnProperty.call(vars, n)) ? String(vars[n]) : m; });
+  }
+  catch (e) { return txt; }
+};
+µ._mjs_msg = function(key, vars, fr) {
+  return '[ModularJS] ' + µ._mjs_txt(key, vars, fr, 1);
+};
 
 // ----------------------------------------------------------------------------
 // V2 rewrite : helpers compile-time pour la suppression du Proxy.
@@ -425,12 +632,16 @@ var mjsLogLevel = function() {
 // avertissement à chaque re-rendu du parent.
 µ._mjs_ro = new WeakMap();
 
-µ._mjs_pend = function(el, k, v) {
+µ._mjs_pend = function(el, k, v, attr) {
   // `__proto__`/`constructor`/`prototype` : refusées AVANT tout, élément tiers compris — ces
-  // noms-là ne s'écrivent sur aucun élément (cohérence avec µ._mjs_guardPath, CWE-1321).
+  // noms-là ne s'écrivent sur aucun élément (CWE-1321).
   if (!µ._mjs_safeKey(k)) return;
   // élément TIERS : il porte SES noms, jamais ceux du framework — la prop reste une propriété
   // propre (une bibliothèque tierce la lit à sa mise à niveau), comportement d'avant le registre.
+  // Liaison à deux sens (`attr`) : une balise que le manifeste dit étrangère au projet reçoit un ATTRIBUT,
+  // texte ou JSON pour un objet, comme toute balise qui n'est pas un composant. Sans manifeste, une balise
+  // définie mais pas encore mise à niveau (ligne de `{for}`) reste prise pour un élément tiers : sa
+  // propriété propre, TYPÉE, est reprise à la mise à niveau, un attribut la ferait relire en chaîne.
   // Un composant DU PROJET va au registre : le manifeste (`µ.paths`, clé = nom sans le préfixe
   // `mjs-`) le reconnaît, qu'il soit déjà défini ou non — une ligne de `{for}` est peuplée avant
   // son insertion, donc avant la mise à niveau, même quand la balise est définie depuis
@@ -442,6 +653,11 @@ var mjsLogLevel = function() {
   var n = el.localName || (el.tagName || '').toLowerCase();
   var duProjet = n.slice(0, 4) === 'mjs-' && (µ.paths ? Object.prototype.hasOwnProperty.call(µ.paths, n.slice(4)) : !customElements.get(n));
   if (!duProjet) {
+    if (attr && µ.paths) {
+      v = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      if (el.getAttribute(k) !== v) { el.setAttribute(k, v); }
+      return;
+    }
     // propriété en LECTURE SEULE sur l'élément tiers (une page peut figer `value` par
     // Object.defineProperty) : l'écriture LÈVE en mode strict, et l'exception partirait du rendu
     // du PARENT — frontière d'erreur, hôte vidé. On prévient une fois par élément et par clé,
@@ -457,7 +673,7 @@ var mjsLogLevel = function() {
       }
       if (!vues[k]) {
         vues[k] = true;
-        µ.warn(`[ModularJS] <${n}> : propriété « ${k} » en lecture seule, valeur ignorée.`);
+        µ.warn(µ._mjs_msg('initReadOnly', { tag: n, prop: k }, '<{tag}> : propriété « {prop} » en lecture seule, valeur ignorée.'));
       }
     }
     return;
@@ -484,25 +700,8 @@ var mjsLogLevel = function() {
 
 // Path-tracking compile-time avec auto-Proxy fallback.
 
-// Garde anti-pollution de prototype (CWE-1321) : les chemins peuvent contenir
-// des segments DYNAMIQUES (`$.x[clé]` → valeur runtime, potentiellement issue
-// d'une saisie utilisateur). Aucune clé d'état légitime ne s'appelle
-// __proto__/constructor/prototype — on refuse, comme lodash.set post-CVE.
-µ._mjs_guardPath = function(path) {
-  var i, s;
-  for (i = 0; i < path.length; i++) {
-    s = path[i];
-    if (s === '__proto__' || s === 'constructor' || s === 'prototype') {
-      µ.warn(`[ModularJS] chemin d'état refusé (segment « ${s} ») — mutation ignorée.`);
-      return false;
-    }
-  }
-  return true;
-};
-
-// Variante légère (sans alloc ni warn) pour une clé UNIQUE issue d'une source
-// non fiable (delta/presence WebSocket, réhydratation SSR d'un JSON de page).
-// Bloque `__proto__`/`constructor`/`prototype` — cohérence avec µ._mjs_guardPath.
+// Clé UNIQUE issue d'une source non fiable (attribut de balise, réhydratation SSR d'un JSON de page,
+// pièges des enveloppes réactives) : bloque `__proto__`/`constructor`/`prototype`.
 µ._mjs_safeKey = function(k) {
   return k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
 };
@@ -523,6 +722,49 @@ var mjsLogLevel = function() {
 µ._mjs_toRaw = function(o) {
   while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW];
   return o;
+};
+
+// valeur RANGÉE dans un état (affectation) : déballée. Un objet est rangé tel quel, jamais copié ni parcouru : ses
+// accesseurs restent des accesseurs, deux variables qui le reçoivent le partagent, une donnée neuve ou profonde (réponse
+// JSON, liste chaînée) ne coûte rien — une liste rangée DANS un objet garde les enveloppes reçues. Une liste qui en
+// tient (`l = l.filter(…)`, `[...l, x]` : éléments lus par l'enveloppe) est rangée par une copie de ses données brutes,
+// faite à chaque affectation : la liste de l'auteur reste intacte, une liste gelée donne une copie gelée. Une liste
+// µraw est rangée telle quelle
+µ._mjs_rawIn = (v) => {
+  v = µ._mjs_toRaw(v);
+  if (!Array.isArray(v) || µ._mjs_rawSet.has(v) || !v.some((e) => e !== µ._mjs_toRaw(e))) return v;
+  const c = v.map(µ._mjs_toRaw);
+  return Object.isFrozen(v) ? Object.freeze(c) : c;
+};
+
+// propriété FIGÉE de `o` : propre, ni modifiable ni configurable — la règle des Proxy exige que la lire par une
+// enveloppe rende SA valeur (une enveloppe ou une méthode liée fait lever le moteur). Appelée seulement quand la valeur
+// lue est un objet ou une fonction : une primitive ne paie rien. Un objet ouvert aux ajouts, le cas courant, ne paie
+// qu'un test ; ses propriétés figées par `Object.defineProperty` ne sont pas vues (limite écrite, docs/03)
+µ._mjs_fixed = (o, k) => !Object.isExtensible(o) && (k = Object.getOwnPropertyDescriptor(o, k)) !== void 0 && k.writable === false && k.configurable === false;
+
+// méthode d'une collection réactive qui ne la modifie pas, commune à l'état d'un composant (mjs_element.ts), à
+// µ.state et à µ.Store : `o` la collection brute, `k` la méthode, `f` sa fonction, `p` l'enveloppe, `w` enveloppe
+// une valeur lue. Liste : `indexOf`, `lastIndexOf`, `includes` cherchent l'élément déballé dans la liste brute —
+// l'objet poussé se retrouve, tenu brut ou par son enveloppe ; une liste rangée dans un objet, qui tient ses éléments
+// par leur enveloppe, ne les y retrouve pas. Le reste lit par l'enveloppe (`find`, `findIndex`… : un appel du
+// prédicat par élément, tel que l'état le rend). Map / Set : ce qui en sort (`get`, `forEach`, `values`, `entries`,
+// `for…of`) est enveloppé, les clés d'une Map restent brutes ; `has` retrouve aussi ce qu'on tient par son enveloppe
+µ._mjs_readFn = (o, k, f, p, w) => {
+  if (Array.isArray(o)) {
+    return /^(lastI|i)ndexOf$|^includes$/.test(String(k)) ? (x, ...r) => f.call(o, µ._mjs_toRaw(x), ...r) : f.bind(p);
+  }
+  if (o instanceof Map || o instanceof Set) {
+    // itérateur qui ré-enveloppe : valeurs, ou entrées [clé, valeur] (clé d'une Map brute)
+    const s = o instanceof Set, it = (n) => function* () { for (const x of f.call(o)) yield n ? [s ? w(x[0]) : x[0], w(x[1])] : w(x); };
+    return k === 'get' ? (x) => w(f.call(o, x))
+      : k === 'has' ? (x) => f.call(o, x) || f.call(o, µ._mjs_toRaw(x))
+      : k === 'forEach' ? (t, h) => f.call(o, (v, x) => t.call(h, w(v), s ? w(x) : x, p))
+      : k === 'values' || (s && (k === 'keys' || k === Symbol.iterator)) ? it(0)
+      : k === 'entries' || k === Symbol.iterator ? it(1)
+      : f.bind(o);
+  }
+  return f.bind(o);
 };
 
 // Époque de mutation PAR OBJET BRUT (WeakMap globale, O(1), zéro comparaison

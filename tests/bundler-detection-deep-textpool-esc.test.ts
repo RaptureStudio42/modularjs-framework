@@ -25,24 +25,29 @@ const MARQUE_DEEP     = 'µ._mjs_deepSet = function'
 const MARQUE_TEXTPOOL = 'µ._mjs_getTextNode = function'
 const MARQUE_ESC      = 'µ._esc = function'
 
+// la détection des mutations profondes se prouve en PRODUCTION : un build de développement joint d'office ce que l'atelier de
+// thème appelle (dont ces fonctions), cf. theme-atelier-coeur-developpement.test.ts. Non minifié : les marques restent lisibles
+const PROD = { env: 'prod', minify: false }
+
 interface Projet { root: string; outDir: string }
 
 // Les cas `esc` passent `runtime: []` (cœur nu) : le panneau de développement, qui appelle
 // `µ._esc` lui-même, n'est inséré que dans un build de dev NON nu — sans ce cadrage, il joindrait
 // le module à lui seul et masquerait le signal testé ici.
 async function construire(cfgExtra: any, sources: Record<string, string>, prefix = 'detect-init'): Promise<Projet> {
+  const { env, ...cfg } = cfgExtra   // l'environnement vient de la commande, jamais du fichier de configuration
   const root   = mjsTmp(prefix)
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
   for (const [name, content] of Object.entries(sources)) writeFileSync(join(srcDir, name), content)
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
-    sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', urlPrefix: '/out', defaultScriptLang: 'civet', lint: { a11y: false }, ...cfgExtra
+    sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', urlPrefix: '/out', defaultScriptLang: 'civet', lint: { a11y: false }, ...cfg
   }))
   const found = findConfig(root)
   assert.ok(found, 'mjs.config.json doit être trouvé')
   const opts    = resolveBundlerOpts(found!.config, found!.configDir)
-  const bundler = new Bundler(opts as any)
+  const bundler = new Bundler({ ...opts, ...(env ? { env } : {}) } as any)
   const stats   = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
   return { root, outDir }
@@ -70,26 +75,26 @@ describe('mjs_deep.ts — mutations profondes détectées, build RÉEL', functio
   this.timeout(120000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('composant sans mutation profonde : ABSENT', async function () {
-    const coeur = contenuCoeur((await construire({}, NU)).outDir)
+  it('composant sans mutation profonde : ABSENT (production)', async function () {
+    const coeur = contenuCoeur((await construire(PROD, NU)).outDir)
     assert.equal(coeur.includes(MARQUE_DEEP), false)
     assert.equal(coeur.includes('_mjs_makeDeepProxy'), false, 'aucune trace du module dans le cœur')
   })
 
   it('écriture `$o.n = 2` : PRÉSENT', async function () {
-    assert.ok(contenuCoeur((await construire({}, ECRIT)).outDir).includes(MARQUE_DEEP))
+    assert.ok(contenuCoeur((await construire(PROD, ECRIT)).outDir).includes(MARQUE_DEEP))
   })
 
   it('méthode mutative `$xs.push(2)` : PRÉSENT', async function () {
-    assert.ok(contenuCoeur((await construire({}, POUSSE)).outDir).includes(MARQUE_DEEP))
+    assert.ok(contenuCoeur((await construire(PROD, POUSSE)).outDir).includes(MARQUE_DEEP))
   })
 
   it('`delete $o.n` : PRÉSENT', async function () {
-    assert.ok(contenuCoeur((await construire({}, SUPPRIME)).outDir).includes(MARQUE_DEEP))
+    assert.ok(contenuCoeur((await construire(PROD, SUPPRIME)).outDir).includes(MARQUE_DEEP))
   })
 
   it("runtime: ['deep'] sans usage : présent quand même (explicite gagne)", async function () {
-    assert.ok(contenuCoeur((await construire({ runtime: ['deep'] }, NU)).outDir).includes(MARQUE_DEEP))
+    assert.ok(contenuCoeur((await construire({ ...PROD, runtime: ['deep'] }, NU)).outDir).includes(MARQUE_DEEP))
   })
 })
 
@@ -197,7 +202,7 @@ describe('cœur sans (puis avec) deep/textpool/esc — montage dans Chromium', f
   })
 
   it('SANS les trois : une branche {if} qui se referme détruit ses nœuds sans erreur', async function () {
-    const p = await construire({}, {
+    const p = await construire(PROD, {
       'bas.mjs': '<script>\n$v = true\n$t = \'ok\'\nbascule = -> $v = not $v\n</script>\n<div><button class="b" @click={bascule()}>b</button>{if $v}<p class="cible">{$t}</p>{end}</div>\n'
     }, 'sans-trois')
     const coeur = contenuCoeur(p.outDir)
@@ -231,7 +236,7 @@ describe('cœur sans (puis avec) deep/textpool/esc — montage dans Chromium', f
   })
 
   it('AVEC les trois : mutation profonde, titre échappé et liste impérative se comportent comme avant', async function () {
-    const p = await construire({}, {
+    const p = await construire(PROD, {
       'tri.mjs': [
         '<script>',
         '$o = { n: 1 }',

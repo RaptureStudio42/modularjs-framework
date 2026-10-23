@@ -14,12 +14,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { resolve, join, extname } from 'node:path'
 import { normalizeUrlPrefix, type MjsConfig } from '../bundler/config.js'
-import { HMRServer, hmrClientSnippet, isTrustedDevOrigin, hasTrustedBrowserOrigin } from './hmr.js'
-import { shell, isRealPathWithin, MIME, readCappedBody } from './render-server.js'
+import { HMRServer, hmrClientSnippet, isTrustedDevOrigin, hasTrustedBrowserOrigin, createDevHostCheck, hostForUrl, hostNameForMessage, createDevOriginCheck } from './hmr.js'
+import { shell, isRealPathWithin, isBuildFingerprinted, MIME, readCappedBody, serveBundleNeighbor, isBrowserResource, isServableFile, isProjectRootFileServable } from './render-server.js'
 import { buildSsrHead } from './ssr-head.js'
 import { rewriteThemeValue } from './theme-write.js'
 import { readBuildVersion } from './build-version.js'
-import { getViewerScript, isViewerAllowed, viewerScriptElement, warnIfJournalViewerOpenInProd, isProdEnv, JOURNAL_VIEWER, THEME_VIEWER } from './viewer-page.js'
+import { getViewerScript, isViewerAllowed, setViewerPageHeaders, isSecureRequest, viewerScriptElement, warnIfJournalViewerOpenInProd, isProdEnv, JOURNAL_VIEWER, THEME_VIEWER } from './viewer-page.js'
 import type { Journal, RecordServerFn } from './journal.js'
 import { isPlainObject } from './serve-entry.js'
 import type { RenderHandler, RenderResponse } from './render-request.js'
@@ -29,6 +29,7 @@ import { TokenBucket, pruneIdleBuckets } from './token-bucket.js'
 import { resolvePage } from './render-routes.js'
 import { escapeJsonForScript } from './renderToString.js'
 import { t } from '../messages/index.js'
+import { createAddressResolver, type MjsWsAddressResolver } from '../mjs-ws/trust-proxy.js'
 
 // Chemin virtuel FIXE du bundle pour la résolution `render.routes` en dev — même
 // convention que render-server.ts (`/__mjs/bundle.js`, hors de `outputDir`/
@@ -159,8 +160,10 @@ export interface ServerOpts {
 // seule à jour (les fichiers `.webp`/`.woff2`/`.png`/`.jpg`/`.woff`/`.ico` recevaient
 // `application/octet-stream`). Les entrées LOCALES ci-dessous (avec charset, + `.map`, absent de
 // l'autre table) gardent le pas sur celles de MIME (spread en premier) ; `.avif`/`.mp3` ajoutées
-// ICI (ni l'une ni l'autre table ne les couvrait encore).
-const MIME_TYPES: Record<string, string> = {
+// ICI (ni l'une ni l'autre table ne les couvrait encore), puis les sous-titres (`<track>` exige
+// `text/vtt`), données, modèles 3D, sons et vidéos que la racine du projet sert aussi. Exportée pour
+// test direct (toute extension annoncée ici sort de la racine du projet).
+export const MIME_TYPES: Record<string, string> = {
   ...MIME,
   '.js':   'application/javascript; charset=utf-8',
   '.mjs':  'application/javascript; charset=utf-8',
@@ -171,6 +174,18 @@ const MIME_TYPES: Record<string, string> = {
   '.svg':  'image/svg+xml',
   '.avif': 'image/avif',
   '.mp3':  'audio/mpeg',
+  '.vtt':  'text/vtt; charset=utf-8',
+  '.md':   'text/markdown; charset=utf-8',
+  '.csv':  'text/csv; charset=utf-8',
+  '.glb':  'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.m4a':  'audio/mp4',
+  '.aac':  'audio/aac',
+  '.flac': 'audio/flac',
+  '.opus': 'audio/ogg',
+  '.mov':  'video/quicktime',
+  '.m4v':  'video/mp4',
+  '.ogv':  'video/ogg',
 }
 
 // Sérialise µres pour le 1er chargement HTML, MÊME fonction que render-server.ts
@@ -187,6 +202,9 @@ function resScript(pathname: string, props: Record<string, unknown>): string {
     return ''
   }
 }
+
+// `isBrowserResource` (ce que la racine du projet laisse sortir) vit dans render-server.ts, partagée avec `mjs serve` ; réexportée ici
+export { isBrowserResource } from './render-server.js'
 
 // Seau à jetons par IP (POST /__mjs/errors) — CLASSE PARTAGÉE,
 // cf. token-bucket.ts (portait ici une copie locale, comme render-server.ts).
@@ -209,16 +227,24 @@ export class StaticServer {
   entry: ServeEntry | null
   recordServer: RecordServerFn
   errorsRateLimit = new Map<string, TokenBucket>()
+  // adresse du visiteur derrière un proxy de confiance (`journal.trustProxy`), sinon celle de la socket
+  adresseVisiteur: MjsWsAddressResolver
   // réponses en cours d'écriture, et rappel posé par stop() pour couper le reste dès qu'il n'y en a plus
   private inflight = 0
   private onDrained: (() => void) | null = null
   // arrêt en cours ou fait, partagé par tous les appels à stop() (double Ctrl+C, SIGINT puis SIGTERM)
   private arret: Promise<void> | null = null
+  // en-tête Host admis (cf. createDevHostCheck, hmr.ts) : garde contre le rebinding DNS
+  private hostAllowed: (host: string | string[] | undefined) => boolean
+  // garde d'origine (cf. createDevOriginCheck, hmr.ts), une pour le rechargement à chaud et les formulaires, sur les noms de hostAllowed
+  private originAllowed: (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false
 
   constructor(opts: ServerOpts) {
     this.rootDir = resolve(opts.rootDir)
     this.port = opts.port ?? 3939
     this.host = opts.host ?? '127.0.0.1'
+    this.hostAllowed = createDevHostCheck(this.host, undefined, opts.config?.dev?.allowedHosts)
+    this.originAllowed = createDevOriginCheck(opts.config?.dev?.allowedHosts, this.host, this.hostAllowed)
     // Normalisation DÉFENSIVE (slashs finaux retirés) :
     // `StaticServer` peut être construit directement (middleware, tests), hors `validateConfig`
     // (bundler/config.ts), qui normalise déjà `urlPrefix` côté mjs.config.json — sans ce filet ICI
@@ -247,6 +273,7 @@ export class StaticServer {
     warnIfJournalViewerOpenInProd(this.config?.journal?.viewer, this.env) // une fois au démarrage, cf. viewer-page.ts
     // cf. ServerOpts.journal : absent ⇒ AUCUNE route journal servie par `handle`.
     this.journal = opts.journal ?? null
+    this.adresseVisiteur = createAddressResolver(this.config?.journal?.trustProxy)
     // cf. ServerOpts.entry : absent ⇒ AUCUN verbe mutant traité par `handle` (405 sec, porte
     // GET/HEAD historique inchangée).
     this.entry = opts.entry ?? null
@@ -271,12 +298,12 @@ export class StaticServer {
       this.server.on('error', reject)
       this.server.listen(this.port, this.host, () => {
         if (this.hmrEnabled) {
-          this.hmr = new HMRServer(this.server!)
+          this.hmr = new HMRServer(this.server!, { listenHost: this.host, isAllowedHost: this.hostAllowed, allowedHosts: this.config?.dev?.allowedHosts, originCheck: this.originAllowed })
           // eslint-disable-next-line no-console
-          console.log(t('server.index-hmr-actif', { host: this.host, port: this.port }))
+          console.log(t('server.index-hmr-actif', { host: hostForUrl(this.host), port: this.port }))
         }
         // eslint-disable-next-line no-console
-        console.log(t('server.index-ecoute', { host: this.host, port: this.port, pathPrefix: this.pathPrefix }))
+        console.log(t('server.index-ecoute', { host: hostForUrl(this.host), port: this.port, pathPrefix: this.pathPrefix }))
         resolveStart()
       })
     })
@@ -308,10 +335,17 @@ export class StaticServer {
     this.hmr?.notifyReload(modules)
   }
 
-  /** Snippet client à injecter dans la page de dev. */
-  getHMRClientSnippet(): string {
+  /** Snippet client à injecter dans la page de dev. `reqHost` : en-tête Host (déjà contrôlé) de
+   *  la requête qui le demande — l'adresse par laquelle ce navigateur joint vraiment le serveur
+   *  (`0.0.0.0` n'en est pas une, un téléphone passe par l'adresse du réseau local). */
+  getHMRClientSnippet(reqHost?: string): string {
     const protocol = 'ws'
-    const wsUrl = `${protocol}://${this.host}:${this.port}/__mjs_hmr`
+    const adresse = this.server?.address()
+    const port = adresse && typeof adresse === 'object' ? adresse.port : this.port
+    // l'en-tête Host entre dans un script servi : son nom passe par le filtre des messages, son port par des chiffres seuls
+    const portHote = reqHost?.match(/:(\d{1,5})$/)?.[1]
+    const hote     = reqHost === undefined ? hostForUrl(this.host) + ':' + port : hostForUrl(hostNameForMessage(reqHost)) + (portHote ? ':' + portHote : '')
+    const wsUrl    = `${protocol}://${hote}/__mjs_hmr`
     return hmrClientSnippet(wsUrl)
   }
 
@@ -323,6 +357,15 @@ export class StaticServer {
     // `?_hmr=<ts>` cache-buster sur les `<link rel=stylesheet>` (cf. hmr.ts) —
     // sans cette césure, tout asset demandé avec un cache-buster casse.
     const url = (req.url ?? '/').split('?')[0]
+
+    // Rebinding DNS : une page hostile dont le nom bascule vers 127.0.0.1 joint ce serveur, mais
+    // son navigateur envoie toujours CE nom dans Host — refusé ici, pour toutes les routes
+    if (!this.hostAllowed(req.headers.host)) {
+      res.statusCode = 403
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.end(t('server.hote-refuse', { nom: hostNameForMessage(req.headers.host) }))
+      return
+    }
 
     // cf. commentaire détaillé dans
     // hmr.ts (`isTrustedDevOrigin`) : un wildcard `*` inconditionnel permet à
@@ -400,8 +443,8 @@ export class StaticServer {
         return
       }
       if (req.method === 'GET' || req.method === 'DELETE') {
-        const fullUrl = new URL(req.url || '/', 'http://' + this.host)
-        if (!isViewerAllowed(this.config?.journal?.viewer, fullUrl, this.env)) {
+        const fullUrl = new URL(req.url || '/', 'http://' + hostForUrl(this.host))
+        if (!isViewerAllowed(this.config?.journal?.viewer, fullUrl, this.env, req.headers.cookie)) {
           res.statusCode = 404
           res.end('Not Found')
           return
@@ -428,8 +471,9 @@ export class StaticServer {
           // le tout premier build n'a pas encore fini garde son 404 (jamais un 500 de compilation).
           if (!this.manifestPath || !existsSync(this.manifestPath)) { res.statusCode = 404; res.end('Not Found'); return }
           try {
-            const script = await getViewerScript(this.manifestPath, JOURNAL_VIEWER)
+            const script = await getViewerScript(this.manifestPath, JOURNAL_VIEWER, this.rootDir)
             res.statusCode = 200
+            setViewerPageHeaders(res, this.config?.journal?.viewer, fullUrl, isSecureRequest(req, this.config?.journal?.trustProxy))
             res.setHeader('Content-Type', 'text/html; charset=utf-8')
             res.end(shell('', RENDER_BUNDLE_PATH, this.defaultLang, viewerScriptElement(script, JOURNAL_VIEWER)))
           } catch (e: any) {
@@ -472,7 +516,7 @@ export class StaticServer {
         return
       }
       const reqUrl = req.url || '/'
-      await handleMutatingRequest(req, res, pathname, reqUrl, { config: this.config, entry: this.entry, recordServer: this.recordServer, manifestPath: this.manifestPath })
+      await handleMutatingRequest(req, res, pathname, reqUrl, { config: this.config, entry: this.entry, recordServer: this.recordServer, manifestPath: this.manifestPath, devOrigin: this.originAllowed })
       return
     }
 
@@ -501,12 +545,20 @@ export class StaticServer {
       return
     }
 
+    // fichiers voisins du manifeste (fichier unique coupé en morceaux), sous le même chemin virtuel : le manifeste les importe par
+    // un chemin relatif (`./chunk-….js`) ; seulement ceux que le build a consignés, cf. serveBundleNeighbor
+    if (url.startsWith('/__mjs/')) {
+      let nom = ''
+      try { nom = decodeURIComponent(url.slice('/__mjs/'.length)) } catch { /* nom illisible : rien à servir */ }
+      if (serveBundleNeighbor(this.manifestPath, nom, req.method, res)) return
+    }
+
     // Endpoint dédié au client HMR (snippet JS à inclure dans la page).
     if (this.hmrEnabled && url === '/__mjs_hmr/client.js') {
       res.statusCode = 200
       res.setHeader('Content-Type', MIME_TYPES['.js'])
       res.setHeader('Cache-Control', 'no-cache')
-      res.end(this.getHMRClientSnippet())
+      res.end(this.getHMRClientSnippet(typeof req.headers.host === 'string' ? req.headers.host : undefined))
       return
     }
 
@@ -532,7 +584,7 @@ export class StaticServer {
       // le fichier, pas la présence d'un bloc `render`).
       if (!this.manifestPath || !existsSync(this.manifestPath)) { res.statusCode = 404; res.end('Not Found'); return }
       try {
-        const script = await getViewerScript(this.manifestPath, THEME_VIEWER)
+        const script = await getViewerScript(this.manifestPath, THEME_VIEWER, this.rootDir)
         res.statusCode = 200
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         res.end(shell('', RENDER_BUNDLE_PATH, this.defaultLang, viewerScriptElement(script, THEME_VIEWER)))
@@ -609,7 +661,9 @@ export class StaticServer {
       // écrire `..` (prouvé : lien vers /etc/hostname → HTTP 200 avec le contenu réel). On
       // compare donc les chemins RÉELS, des deux côtés — la racine peut elle-même vivre
       // derrière un lien (/tmp sur macOS, dossiers de déploiement datés)
-      if (!isRealPathWithin(this.rootDir, filePath)) {
+      // `outputDir` qui est la racine du projet (ou la contient) : ses secrets ne sortent pas plus par ici (cf. isProjectFileRefused)
+      // verdict gardé tant que le chemin mène au même fichier inchangé (cf. isServableFile)
+      if (!isServableFile(filePath, this.rootDir, this.projectRoot, this.config, this.configDir)) {
         res.statusCode = 404
         res.end('Not Found')
         return
@@ -647,7 +701,8 @@ export class StaticServer {
     // Cache fort sur les fichiers hashed (immutable). Les non-hashed ne
     // devraient pas être servis par ici, mais on évite de cacher trop fort
     // par défaut pour ne pas tirer dans le pied du dev.
-    if (/-[a-f0-9]{8}\./.test(rel)) {
+    // empreinte réelle du build seulement, vérifiée sur le contenu (cf. isBuildFingerprinted, render-server.ts)
+    if (isBuildFingerprinted(filePath)) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
     } else {
       res.setHeader('Cache-Control', 'no-cache')
@@ -774,7 +829,7 @@ export class StaticServer {
   // (render-server.ts, cf. le commentaire de readJsonBody ci-dessus pour le pourquoi) plutôt que
   // relue ici à la main : une coupure réseau ne journalise plus jamais un fragment reçu jusque-là.
   private async serveErrorsPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const ip = req.socket.remoteAddress ?? 'inconnue'
+    const ip = this.adresseVisiteur(req.socket.remoteAddress, req.headers) ?? 'inconnue'
     let bucket = this.errorsRateLimit.get(ip)
     if (!bucket) {
       pruneIdleBuckets(this.errorsRateLimit)   // purge avant croissance, cf. token-bucket.ts
@@ -935,11 +990,11 @@ export class StaticServer {
       res.end('Bad Request')
       return
     }
-    // Segment caché (`.git`, `.env`…) ou `node_modules` : jamais servi, même présent sur le
+    // Segment caché (`.git`, `.env`…), dossier ou fichier privé : jamais servi, même présent sur le
     // disque — la racine servie ICI est celle du PROJET ENTIER (dossier de mjs.config.json), pas
-    // un `public/` déjà isolé de ces dossiers par construction.
+    // un `public/` déjà isolé de ces dossiers par construction (cf. isBrowserResource).
     const segments = pathname.split('/').filter(Boolean)
-    if (segments.some(s => s.startsWith('.') || s === 'node_modules')) {
+    if (!isBrowserResource(pathname.endsWith('/') ? [...segments, 'index.html'] : segments)) {
       res.statusCode = 404
       res.end('Not Found')
       return
@@ -951,14 +1006,14 @@ export class StaticServer {
     const filePath = join(this.projectRoot!, rel)
     let body: Buffer
     try {
-      if (!statSync(filePath).isFile()) {
-        res.statusCode = 404
-        res.end('Not Found')
-        return
-      }
       // Même défense que la branche assets ci-dessus (cf. son commentaire) : un lien symbolique
-      // posé dans la racine et pointant ailleurs sort de l'arborescence sans jamais écrire `..`.
-      if (!isRealPathWithin(this.projectRoot!, filePath)) {
+      // posé dans la racine et pointant ailleurs sort de l'arborescence sans jamais écrire `..` ;
+      // même garde sur le chemin RÉEL : un lien posé dans la racine vers `config/`, ou un nom que le
+      // disque lit autrement (casse, nom court 8.3 sous Windows), ne la contourne pas ; les entrées
+      // serveur déclarées dans la configuration non plus, quel que soit leur nom. Verdict gardé tant
+      // que le chemin et la racine mènent au même endroit réel, au même fichier inchangé
+      // (cf. isProjectRootFileServable)
+      if (!isProjectRootFileServable(filePath, this.projectRoot!, this.config, this.configDir)) {
         res.statusCode = 404
         res.end('Not Found')
         return
@@ -975,10 +1030,11 @@ export class StaticServer {
     res.setHeader('Content-Type', MIME_TYPES[ext] ?? 'application/octet-stream')
     res.setHeader('Cache-Control', 'no-cache')
     if (req.method === 'HEAD') { res.end(); return }
-    // Client de rechargement injecté dans toute page HTML servie DEPUIS ICI (hmr actif) — même
-    // script que l'atelier/le journal (getHMRClientSnippet), simplement RÉFÉRENCÉ plutôt qu'en
-    // ligne : un projet sans bloc `render` n'avait jusqu'ici aucun moyen de le recevoir (cf.
-    // cli/init.ts, qui documente encore l'ajout MANUEL du même tag dans la page de l'utilisateur).
+    // Client de rechargement injecté dans toute page HTML servie DEPUIS ICI (hmr actif) — le
+    // script de /__mjs_hmr/client.js (getHMRClientSnippet), RÉFÉRENCÉ plutôt qu'en ligne : il vise
+    // l'origine d'où il est chargé (un tunnel qui réécrit Host compris). Un projet sans bloc
+    // `render` n'avait jusqu'ici aucun moyen de le recevoir (cf. cli/init.ts, qui documente encore
+    // l'ajout MANUEL du même tag dans la page de l'utilisateur).
     if (ext === '.html' && this.hmrEnabled) {
       const html = body.toString('utf-8')
       const tag = '<script src="/__mjs_hmr/client.js"></script>'

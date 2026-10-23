@@ -32,6 +32,7 @@
 // en silence).
 
 import { t } from '../messages/index.js'
+import { putOwn } from '../mjs-ws/guard.js'
 
 export interface MjsServerHistoryPositions {
   [id: string]: { x: number; y: number }
@@ -54,7 +55,8 @@ export interface MjsServerHistory {
   /** pousse l'instantané du tick courant — écrase circulairement la plus ancienne entrée au-delà de
    *  `ticks`, copie DÉFENSIVE de `positions` (jamais la référence reçue, cf. tête de fichier) */
   pousser(tick: number, at: number, positions: MjsServerHistoryPositions): void
-  /** rembobine à l'instant `instantMs` (ms epoch, borné — cf. commentaire de tête) et RETOURNE le résultat de `fn` */
+  /** rembobine à l'instant `instantMs` (ms epoch, borné — cf. commentaire de tête) et RETOURNE le résultat de `fn` ; un instant qui
+   *  n'est pas un nombre fini lève une erreur claire */
   rewind<T>(instantMs: number, fn: (positions: MjsServerHistoryPositions, meta: MjsServerHistoryMeta) => T): T
   /** vide le tampon — appelée à la fin de partie (cf. game.ts _destroy) */
   _clear(): void
@@ -73,15 +75,19 @@ export function createHistory(size: number): MjsServerHistory {
     pousser(tick, at, positions) {
       // copie INDÉPENDANTE (dict + chaque {x,y}) — cf. « COPIE DÉFENSIVE À L'ÉCRITURE » en tête de
       // fichier : sans elle, un extracteur qui réutilise son objet `positions` réécrirait le passé
-      // en le mutant APRÈS ce `pousser` (même mécanique que le gel en lecture de rewind() plus bas)
+      // en le mutant APRÈS ce `pousser` (même mécanique que le gel en lecture de rewind() plus bas) ; rangée par putOwn : une entité
+      // `__proto__` y reste une clé propre (l'affectation changerait le prototype de la copie)
       const copy: MjsServerHistoryPositions = {}
-      for (const id of Object.keys(positions)) copy[id] = { x: positions[id].x, y: positions[id].y }
+      for (const id of Object.keys(positions)) putOwn(copy, id, { x: positions[id].x, y: positions[id].y })
       ring[cursor] = { tick, at, positions: copy }
       cursor = (cursor + 1) % size
       if (filled < size) filled++
     },
 
     rewind(instantMs, fn) {
+      // un instant qui n'est pas un nombre fini (horodatage client absent : undefined, NaN) n'a aucune entrée « plus proche » :
+      // refusé clairement, `fn` jamais appelée, plutôt qu'une TypeError interne sur une entrée introuvable
+      if (!Number.isFinite(instantMs)) throw new Error(t('serveur.histo-instant-invalide', { received: String(instantMs) }))
       if (filled === 0) throw new Error(t('serveur.histo-tampon-vide'))
       let best: MjsServerHistoryEntry | null = null
       let bestGap = Infinity
@@ -92,7 +98,7 @@ export function createHistory(size: number): MjsServerHistory {
       }
       const chosenEntry = best!
       const frozenPositions: MjsServerHistoryPositions = {}
-      for (const id of Object.keys(chosenEntry.positions)) frozenPositions[id] = Object.freeze({ ...chosenEntry.positions[id] })
+      for (const id of Object.keys(chosenEntry.positions)) putOwn(frozenPositions, id, Object.freeze({ ...chosenEntry.positions[id] }))
       Object.freeze(frozenPositions)
       return fn(frozenPositions, { tick: chosenEntry.tick, at: chosenEntry.at, gap: bestGap })
     },

@@ -13,7 +13,8 @@ import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { transpile } from '../src/transpiler/index.js'
-import { scanCompiledFeatures, SCAN_KEYS } from '../src/bundler/features.js'
+import { scanCompiledFeatures, SCAN_KEYS, FX_KEYS } from '../src/bundler/features.js'
+import { DETECTED_CORE_MODULES } from '../src/bundler/config.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 async function scanOf(src: string, moduleName: string, baseDir?: string): Promise<Set<string>> {
@@ -52,8 +53,8 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('await'))
   })
 
-  it('@transition.fade sur un {if} : "destroy_hooks" présent', async () => {
-    const used = await scanOf('<script lang="coffee">\n@ok = true\n</script>\n<p @transition.fade @if=!{@ok}>y</p>\n', 'f6')
+  it('@transition=*fade sur un {if} : "destroy_hooks" présent', async () => {
+    const used = await scanOf('<script lang="coffee">\n@ok = true\n</script>\n<p @transition=*fade @if=!{@ok}>y</p>\n', 'f6')
     assert.ok(used.has('destroy_hooks'))
   })
 
@@ -125,18 +126,100 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('title'))
   })
 
-  it('µplay/µminmax/µinspect/µraw/µsnap : "rare_runes" présent (5 formes)', async () => {
+  it('µraw/µsnap : "rare_runes" présent, sans "inspect" ni "play"', async () => {
     const formes = [
-      '<script lang="coffee">\n@go = ->\n  µplay($el, \'x\')\n</script>\n<p>y</p>\n',
-      '<script lang="coffee">\n@go = ->\n  µminmax(1, 0, 10)\n</script>\n<p>y</p>\n',
-      '<script lang="coffee">\nµinspect(\'x\')\n</script>\n<p>y</p>\n',
       '<script lang="coffee">\n@go = ->\n  µraw($el)\n</script>\n<p>y</p>\n',
       '<script lang="coffee">\n$x =: 1 + 1\n</script>\n<p>{$x}</p>\n',
     ]
     for (const src of formes) {
       const used = await scanOf(src, 'f18')
       assert.ok(used.has('rare_runes'), src)
+      assert.equal(used.has('inspect') || used.has('play'), false, src)
     }
+  })
+
+  it('µinspect : "inspect" présent ; µplay : "play" présent — chacun seul', async () => {
+    const insp = await scanOf('<script lang="coffee">\nµinspect(\'x\')\n</script>\n<p>y</p>\n', 'f18i')
+    assert.ok(insp.has('inspect'))
+    assert.equal(insp.has('play') || insp.has('rare_runes'), false)
+    const play = await scanOf('<script lang="coffee">\n@go = ->\n  µplay($el, \'x\')\n</script>\n<p>y</p>\n', 'f18p')
+    assert.ok(play.has('play'))
+    assert.equal(play.has('inspect') || play.has('rare_runes'), false)
+  })
+
+  it('µ.state(…) écrit : "state" présent ; composant sans : absent', async () => {
+    const avec = await scanOf('<script lang="coffee">\n@o = µ.state({a: 1})\n</script>\n<p>y</p>\n', 'f18s')
+    assert.ok(avec.has('state'))
+    const sans = await scanOf('<p>y</p>\n', 'f18t')
+    assert.equal(sans.has('state'), false)
+  })
+
+  it('champ lié dont la saisie peut être refusée : "refuse" présent ; type fixe autre, case à cocher, sans liaison : absent', async () => {
+    const entete = '<script>\n$n = 0\n$t = \'number\'\n</script>\n'
+    const cas: Array<[string, boolean]> = [
+      ['<input type="number" value=!{$n}>', true],
+      ['<input type="number" value.number=!{$n}>', true],
+      ['<input type={$t} value=!{$n}>', true],
+      ['<input type="text" value=!{$n}>', false],
+      ['<input type="text" value.number=!{$n}>', false],
+      ['<input value=!{$n}>', false],
+      ['<input type="checkbox" checked=!{$n}>', false],
+      ['<input type="number" value={$n}>', false],
+      ['<p>y</p>', false]
+    ]
+    for (const [i, [gabarit, attendu]] of cas.entries()) {
+      for (const templateLang of ['civet', 'js'] as const) {
+        const { output, data } = await transpile(entete + gabarit + '\n', { moduleName: 'f18r' + i + templateLang, templateLang } as any)
+        assert.equal(scanCompiledFeatures(output, data).has('refuse'), attendu, templateLang + ' : ' + gabarit)
+      }
+    }
+  })
+
+  it('composant qui reçoit du contenu glissé (une balise <slot> dans son gabarit) : "slot_events" présent, quel que soit le bloc qui la porte ; sans <slot> : absent', async () => {
+    const cas: Array<[string, boolean]> = [
+      ['<div @click={go()}><slot></slot></div>', true],
+      ['<div @click={go()}><@slot title></@slot></div>', true],
+      ['<script>$o = true</script>\n{if $o}<div @click={go()}><slot></slot></div>{end}', true],
+      ['<script>$xs = [1]</script>\n{for x in $xs}<li @click={go()}><slot name="a"></slot>{x}</li>{end}', true],
+      ['<script>$p = Promise.resolve(1)</script>\n{await $p}..{success v}<div @click={go()}><slot></slot></div>{end}', true],
+      ['<script>$k = 1</script>\n{key $k}<div @click={go()}><slot></slot></div>{end}', true],
+      ['<script>\nµmount ->\n  @_shadow.appendChild(document.createElement(\'slot\'))\n</script>\n<p>y</p>', true],
+      ['<div @click={go()}>x</div>', false],
+      ['<p slot="a">y</p>', false]
+    ]
+    for (const [i, [gabarit, attendu]] of cas.entries()) {
+      const { output, data } = await transpile(gabarit + '\n', { moduleName: 'f18e' + i } as any)
+      assert.equal(scanCompiledFeatures(output, data).has('slot_events'), attendu, gabarit)
+    }
+  })
+
+  it('un gabarit qui écrit @pointerenter, @pointerleave, @mouseenter ou @mouseleave : "boundary" présent ; les autres événements (@click, @pointerover, @mouseover) : absent', async () => {
+    const cas: Array<[string, boolean]> = [
+      ['<div @pointerenter={go()}>x</div>', true],
+      ['<div @pointerleave={go()}>x</div>', true],
+      ['<div @mouseenter={go()}>x</div>', true],
+      ['<script>$xs = [1]</script>\n{for x in $xs}<li @mouseleave={go()}>{x}</li>{end}', true],
+      ['<div @click={go()}>x</div>', false],
+      ['<div @pointerover={go()} @mouseover={go()}>x</div>', false]
+    ]
+    for (const [i, [gabarit, attendu]] of cas.entries()) {
+      const { output, data } = await transpile(gabarit + '\n', { moduleName: 'f18s' + i } as any)
+      assert.equal(scanCompiledFeatures(output, data).has('boundary'), attendu, gabarit)
+    }
+  })
+
+  it('µ.elementAt(x, y) écrit : "element_at" présent ; composant sans : absent', async () => {
+    const avec = await scanOf('<script lang="coffee">\n@go = (e) -> µ.elementAt(e.clientX, e.clientY)\n</script>\n<p>y</p>\n', 'f18a')
+    assert.ok(avec.has('element_at'))
+    const sans = await scanOf('<script lang="coffee">\n@go = (e) -> e.clientX\n</script>\n<p>y</p>\n', 'f18b')
+    assert.equal(sans.has('element_at'), false)
+  })
+
+  it('µ[\'elementAt\'](x, y) ou { elementAt } = µ : "element_at" présent aussi', async () => {
+    const crochets = await scanOf('<script lang="coffee">\n@go = (e) -> µ[\'elementAt\'](e.clientX, e.clientY)\n</script>\n<p>y</p>\n', 'f18c')
+    assert.ok(crochets.has('element_at'))
+    const extrait = await scanOf('<script lang="coffee">\n@go = (e) ->\n  { elementAt } = µ\n  elementAt(e.clientX, e.clientY)\n</script>\n<p>y</p>\n', 'f18d')
+    assert.ok(extrait.has('element_at'))
   })
 
   it('new µStore({...}) : "store" présent', async () => {
@@ -223,17 +306,60 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
   it('module de script SANS data (2e argument omis) : ne lève jamais, layout_variant lu sur le texte seul', async () => {
     const { output } = await transpile('<script lang="coffee">\n@go = ->\n  µplay($el, \'x\')\n</script>\n<p>y</p>\n', { moduleName: 'f29' })
     const used = scanCompiledFeatures(output)
-    assert.ok(used.has('rare_runes'))
+    assert.ok(used.has('play'))
   })
 
-  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"textpool"/"esc"/"for_nested"/"alias"', () => {
-    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias']
+  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"textpool"/"esc"/"for_nested"/"alias" + "types" + "fx" + "lang" + "state" + "inspect" + "play" + "refuse" + "slot_events" + "element_at" + "boundary" + "adopt_sheet" + "form_reset" + "form_associated" + "clone"', () => {
+    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone']
     assert.deepEqual([...SCAN_KEYS].sort(), [...attendues].sort())
   })
 
   it('composant porteur d\'un alias court : "alias" présent', async () => {
     const { output, data } = await transpile('<script>$x=1</script><p>{$x}</p>', { moduleName: 'doc-carte', aliasTag: 'mjs-carte' })
     assert.ok(scanCompiledFeatures(output, data).has('alias'))
+  })
+
+  it('module de saisie du cœur (appel de la remise à zéro du formulaire dans son montage) : "form_reset" présent ; sans cet appel : absent', async () => {
+    const avec = await transpile('<script>\n$x = 1\nµmount ->\n  µ._mjs_formReset(@, (-> $x), (v)-> $x = v)\n</script>\n<p>{$x}</p>')
+    assert.ok(scanCompiledFeatures(avec.output, avec.data).has('form_reset'))
+    const sans = await transpile('<script>$x=1\nµmount ->\n  $x = 2\n</script><p>{$x}</p>')
+    assert.equal(scanCompiledFeatures(sans.output, sans.data).has('form_reset'), false)
+  })
+
+  it('composant déclaré `@formAssociated` (le socle du formulaire, appelé avant l\'enregistrement de sa balise) : "form_associated" présent ; sans la directive : absent', async () => {
+    const avec = await transpile('@formAssociated\n<script>\n$x = 1\n</script>\n<p>{$x}</p>')
+    assert.ok(scanCompiledFeatures(avec.output, avec.data).has('form_associated'))
+    const sans = await transpile('<script>\n$x = 1\n</script>\n<p>{$x}</p>')
+    assert.equal(scanCompiledFeatures(sans.output, sans.data).has('form_associated'), false)
+  })
+
+  it('composant avec un <vars> : "types" présent — règles des variables ou des stores', async () => {
+    assert.ok((await scanOf('<vars>\n$x int 0..9\n</vars>\n<script>$x=1</script><p>{$x}</p>', 'typee')).has('types'))
+    assert.ok((await scanOf('<vars>\n$$x int 0..9\n</vars>\n<p>{$$x}</p>', 'typee-store')).has('types'))
+    assert.equal((await scanOf('<script>$x=1</script><p>{$x}</p>', 'non-typee')).has('types'), false)
+  })
+
+  it('composant avec un effet : "fx" et la clé de CET effet seulement ("fx_neon"), jamais les autres', async () => {
+    const used = await scanOf('<h1 *neon(#f0f)>x</h1>\n{if 1}<p *float>y</p>{end}', 'effets')
+    assert.ok(used.has('fx'))
+    assert.ok(used.has('fx_neon'))
+    assert.ok(used.has('fx_float'))
+    assert.equal(used.has('fx_glitch'), false)
+    assert.equal(used.has('fx_transition'), false)
+    assert.equal((await scanOf('<p>*neon</p>', 'texte-etoile')).has('fx'), false, 'un « *neon » dans le texte n\'est pas un effet')
+  })
+
+  it('une transition, posée ou sur le cycle de vie : "fx" et "fx_transition", une seule clé pour toutes ; un effet joué à l\'entrée : sa clé à lui', async () => {
+    const pose = await scanOf('<p *fade(on: view)>x</p>', 'transition-posee')
+    assert.ok(pose.has('fx') && pose.has('fx_transition'))
+    assert.equal(pose.has('fx_fade'), false)
+    const vie = await scanOf('<script>\n$v = true\n</script>\n{if $v}<p @in=*fly @out=*scramble>x</p>{end}', 'transition-vie')
+    assert.ok(vie.has('fx') && vie.has('fx_transition') && vie.has('fx_scramble'))
+  })
+
+  it('chaque effet du catalogue est un module détecté (liste de config.ts) : un oubli n\'y tombe jamais en silence', () => {
+    assert.ok(FX_KEYS.length >= 5)
+    for (const k of ['fx', ...FX_KEYS]) assert.ok((DETECTED_CORE_MODULES as readonly string[]).includes(k), `${k} absent de DETECTED_CORE_MODULES`)
   })
 
   it('composant SANS alias court : "alias" absent — aucun appel émis', async () => {

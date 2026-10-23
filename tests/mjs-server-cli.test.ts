@@ -42,13 +42,24 @@ function makeClient(transport: MemoryTransport): any {
   return makeMu()
 }
 
+// une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
+// sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
+const capturesEnCours: Array<() => void> = []
+afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
   const orig = { log: console.log, warn: console.warn, error: console.error }
   console.log   = (...a: any[]) => { lines.push(a.join(' ')) }
   console.warn  = (...a: any[]) => { lines.push(a.join(' ')) }
   console.error = (...a: any[]) => { lines.push(a.join(' ')) }
-  return { lines, restore: () => { console.log = orig.log; console.warn = orig.warn; console.error = orig.error } }
+  const restore = (): void => {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error
+    const i = capturesEnCours.indexOf(restore)
+    if (i >= 0) capturesEnCours.splice(i, 1)
+  }
+  capturesEnCours.push(restore)
+  return { lines, restore }
 }
 
 // ============================================================================
@@ -81,7 +92,7 @@ describe('mjs.config.json — section `serveur` (validation stricte, patron `ws`
 
   it("throw sur serveur.X inconnu, avec suggestion orthographique ('entrry' → 'entry')", () => {
     const root = writeConfig({ serveur: { entrry: 'serveur.js' } })
-    assert.throws(() => findConfig(root), /serveur\.entrry : clé inconnue.*tu voulais dire 'entry'/)
+    assert.throws(() => findConfig(root), /serveur\.entrry : clé inconnue.*vouliez-vous dire 'entry'/)
   })
 
   it('throw sur serveur non-objet', () => {
@@ -104,7 +115,7 @@ describe('mjs.config.json — section `serveur` (validation stricte, patron `ws`
 
   it('throw sur serveur.limits.X inconnu, avec suggestion orthographique', () => {
     const root = writeConfig({ serveur: { limits: { ratee: 5 } } })
-    assert.throws(() => findConfig(root), /serveur\.limits\.ratee : clé inconnue.*tu voulais dire 'rate'/)
+    assert.throws(() => findConfig(root), /serveur\.limits\.ratee : clé inconnue.*vouliez-vous dire 'rate'/)
   })
 
   it("serveur.verifyOrigin : accepte un tableau non vide de chaînes non vides, throw sinon (allowlist, refus 1008)", () => {
@@ -127,7 +138,7 @@ describe('mjs.config.json — section `serveur` (validation stricte, patron `ws`
 
   it("throw sur serveur.antiTriche.X inconnu, avec suggestion orthographique", () => {
     const root = writeConfig({ serveur: { antiCheat: { movesPerIdentityy: [10, 500] } } })
-    assert.throws(() => findConfig(root), /serveur\.antiCheat\.movesPerIdentityy : clé inconnue.*tu voulais dire 'movesPerIdentity'/)
+    assert.throws(() => findConfig(root), /serveur\.antiCheat\.movesPerIdentityy : clé inconnue.*vouliez-vous dire 'movesPerIdentity'/)
   })
 
   it('serveur.antiTriche non-objet → throw', () => {

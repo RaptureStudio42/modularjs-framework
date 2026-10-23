@@ -6,7 +6,7 @@
 // contient réellement. Cf. Bundler.pruneOrphans (src/bundler/index.ts).
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, unlinkSync, readdirSync, existsSync, symlinkSync } from 'node:fs'
+import { mkdirSync, writeFileSync, unlinkSync, readdirSync, existsSync, symlinkSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
@@ -20,6 +20,15 @@ const comp = (lettre: string) => [
   '</script>',
   `<p>{$x} ${lettre}</p>`,
 ].join('\n')
+
+// consigne des noms au registre des sorties (`.mjs-outputs.json`, clé `files`), comme l'aurait fait le build qui les a
+// écrits : le ménage ne retire que ce que ce registre liste, jamais un fichier sur la seule forme de son nom
+function consigner(dossier: string, ...noms: string[]): void {
+  const chemin   = join(dossier, '.mjs-outputs.json')
+  const registre = JSON.parse(readFileSync(chemin, 'utf-8'))
+  registre.files = [...new Set([...(registre.files ?? []), ...noms])].sort()
+  writeFileSync(chemin, JSON.stringify(registre, null, 2) + '\n')
+}
 
 describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un build sans erreur', function () {
   this.timeout(30000)
@@ -53,12 +62,12 @@ describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un 
     writeFileSync(join(srcDir, 'c.mjs'), comp('c'))
 
     const avant = readdirSync(outDir)
-    const bJs  = avant.find(f => /^b-[a-f0-9]{8}\.js$/.test(f))
+    const bJs  = avant.find(f => /^b-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(bJs, `attendu un b-<hash>.js après le 1er build, trouvé : ${avant.join(', ')}`)
     const bMap = avant.find(f => f === `${bJs}.map`)
 
     // 2. dépose AVANT le 2e compile — fichiers étrangers/stables (jamais dans la famille hachée du
-    // bundler) et fichiers de la famille hachée jamais émis par ce projet (« zombies »)
+    // bundler) et fichiers de la famille hachée qu'aucun build n'a écrits (« zombies », absents du registre) : tous restent
     writeFileSync(join(outDir, 'notes.txt'), 'hello\n')
     writeFileSync(join(outDir, 'index.html'), '<html></html>\n')
     writeFileSync(join(outDir, 'card.wide.css'), '.card{color:red}\n')
@@ -79,16 +88,16 @@ describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un 
 
     const { removed, failed } = bundler2.pruneOrphans()
     assert.deepEqual(failed, [])
-    const attendus = [bJs, ...(bMap ? [bMap] : []), 'hero-960-89abcdef.webp', 'zombie-0123abcd.js', 'zombie-0123abcd.js.map']
+    const attendus = [bJs, ...(bMap ? [bMap] : [])]
       .sort((a, b) => a! < b! ? -1 : a! > b! ? 1 : 0)
-    assert.deepEqual(removed, attendus, `attendu exactement l'orphelin b (+ son .map) et les 3 zombies, trouvé : ${removed.join(', ')}`)
+    assert.deepEqual(removed, attendus, `attendu exactement l'orphelin b (+ son .map), trouvé : ${removed.join(', ')}`)
 
     const apres = readdirSync(outDir)
-    // 1./2. l'orphelin et les zombies ont disparu
+    // 1. l'orphelin a disparu ; 2. les zombies, qu'aucun build n'a écrits, restent
     assert.ok(!apres.includes(bJs!), 'le .js orphelin doit avoir disparu')
     if (bMap) assert.ok(!apres.includes(bMap), 'le .map orphelin doit avoir disparu')
-    assert.ok(!apres.includes('zombie-0123abcd.js') && !apres.includes('zombie-0123abcd.js.map') && !apres.includes('hero-960-89abcdef.webp'),
-      'les 3 zombies (famille hachée jamais émise) doivent avoir disparu')
+    assert.ok(apres.includes('zombie-0123abcd.js') && apres.includes('zombie-0123abcd.js.map') && apres.includes('hero-960-89abcdef.webp'),
+      'les 3 zombies (forme hachée, jamais écrits par un build) doivent rester')
     // 2. étrangers/stables intacts
     assert.ok(existsSync(join(outDir, 'notes.txt')), 'notes.txt (étranger) doit survivre')
     assert.ok(existsSync(join(outDir, 'index.html')), 'index.html (étranger) doit survivre')
@@ -97,13 +106,13 @@ describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un 
     assert.ok(existsSync(join(outDir, 'i18n', 'fr', 'x-abcdef12.json')), 'i18n/fr/ (sous-dossier) doit survivre intact')
     assert.ok(existsSync(join(outDir, 'mjs_pages', 'index.html')), 'mjs_pages/ (sous-dossier) doit survivre intact')
     // 3. a/c (émis ce tour-ci) et leur .map survivent, le manifeste (nom stable) aussi
-    const aJs = apres.find(f => /^a-[a-f0-9]{8}\.js$/.test(f))
-    const cJs = apres.find(f => /^c-[a-f0-9]{8}\.js$/.test(f))
+    const aJs = apres.find(f => /^a-[0-9a-z]{5}\.js$/.test(f))
+    const cJs = apres.find(f => /^c-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(aJs, 'a doit survivre')
     assert.ok(cJs, 'c doit survivre')
     assert.ok(apres.includes(`${aJs}.map`), `le .map de a (émis ce tour-ci) doit survivre — vu : ${apres.join(', ')}`)
     assert.ok(apres.includes(`${cJs}.map`), `le .map de c (émis ce tour-ci) doit survivre — vu : ${apres.join(', ')}`)
-    assert.ok(apres.some(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f)), 'le runtime doit survivre')
+    assert.ok(apres.some(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f)), 'le runtime doit survivre')
     assert.ok(apres.includes('bundle.js'), 'le manifeste (nom stable, logé DANS outputDir) doit survivre')
 
     await bundler2.close()
@@ -217,9 +226,10 @@ describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un 
     // build froid réel (685 fichiers), sans qu'aucun 2e compile() n'ait jamais tourné.
     await bundler.compileMjs(compPath)
 
-    // dépose un zombie APRÈS le compile, AVANT pruneOrphans() : sa disparition prouve que la purge
-    // a réellement tourné (pas juste « rien à faire »)
+    // dépose un zombie APRÈS le compile, AVANT pruneOrphans(), consigné au registre comme une sortie d'un build précédent :
+    // sa disparition prouve que la purge a réellement tourné (pas juste « rien à faire »)
     writeFileSync(join(outDir, 'zombie-0123abcd.js'), 'export {}\n')
+    consigner(root, 'zombie-0123abcd.js')
 
     const { removed, failed, skipped } = bundler.pruneOrphans()
     assert.equal(skipped, undefined, `un hit intra-compile ne doit JAMAIS bloquer la purge, trouvé skipped=${skipped}`)
@@ -295,6 +305,8 @@ describe('Bundler.pruneOrphans() — purge des orphelins d\'outputDir après un 
     // défaut n'inclut que .js/.css/.map + les formats d'image CONFIGURÉS — .css évite de dépendre
     // du format d'image par défaut, non pertinent pour ce test précis.
     writeFileSync(join(outDir, 'mjs_ssr_headline-a1b2c3d4.css'), '.orphelin{}')
+    // les deux consignés au registre : seul le nom du vrai fragment le protège encore
+    consigner(outDir, 'mjs_ssr_head-a1b2c3d4.css', 'mjs_ssr_headline-a1b2c3d4.css')
 
     const { removed } = bundler.pruneOrphans()
     assert.ok(!removed.includes('mjs_ssr_head-a1b2c3d4.css'), 'le vrai fragment serveur doit rester protégé')

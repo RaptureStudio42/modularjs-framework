@@ -1,10 +1,9 @@
-// Test neuf — bundler/index.ts : résolution UNIQUE du
-// raccourci <@nom> (projet PUIS cœur), <@mjs-nom> (ancienne notation dédiée
-// au cœur) désormais une ERREUR DE MIGRATION, balises littérales
-// mjs-*/mjs-core-* écrites à la main, gardes sur les noms de fichiers projet
-// (réservé / préfixe core-), compilation TRANSITIVE des modules cœur
-// référencés sous leur nom PLAT. Patron `buildProject` calqué sur
-// tests/mjs-modal-bundler-integration.test.ts.
+// Test neuf — bundler/index.ts : `<@nom>` désigne un composant du PROJET, `<@@nom>` un
+// module de la bibliothèque CŒUR (balise mjs-core-nom) ; <@mjs-nom> (ancienne notation
+// dédiée au cœur) est une ERREUR DE MIGRATION ; balises littérales mjs-*/mjs-core-* écrites
+// à la main ; gardes sur les noms de fichiers projet (réservé / préfixe core-) ; compilation
+// TRANSITIVE des modules cœur référencés, sous la clé core-<nom>. Patron `buildProject`
+// calqué sur tests/mjs-modal-bundler-integration.test.ts.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -33,7 +32,7 @@ function messages(stats: any): string {
 
 function readComponent(outDir: string, name: string): string {
   const files = readdirSync(outDir)
-  const f = files.find((f) => new RegExp(`^${name}-[a-f0-9]{8}\\.js$`).test(f))
+  const f = files.find((f) => new RegExp(`^${name}-[0-9a-z]{5}\\.js$`).test(f))
   assert.ok(f, `${name}-*.js doit exister dans ${outDir} (trouvés : ${files.join(', ')})`)
   return readFileSync(join(outDir, f!), 'utf-8')
 }
@@ -77,7 +76,7 @@ describe('bundler — raccourci-dev <@nom> valide → build vert, <mjs-nom> dans
   })
 })
 
-describe('bundler — raccourci-dev <@nom> INCONNU → erreur agrégée + suggestion levenshtein', function () {
+describe('bundler — <@nom> INCONNU → erreur agrégée + suggestion levenshtein', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -91,10 +90,17 @@ describe('bundler — raccourci-dev <@nom> INCONNU → erreur agrégée + sugges
     assert.ok(stats.errors.length > 0, 'le build doit échouer')
     const msg = messages(stats)
     assert.match(msg, /balise <@slect> inconnue/)
-    assert.match(msg, /résolution projet puis cœur/)
-    assert.match(msg, /ni balise réservée, ni composant du projet, ni module cœur/)
+    assert.match(msg, /ni balise du langage, ni composant du projet/)
     assert.match(msg, /<@select>/)
     assert.match(msg, /composant du projet/)
+  })
+
+  it('<@selct> (typo) sans composant du projet, select au cœur → suggestion « <@@select> (module cœur) »', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, { 'select.mjs': '<p>cœur select</p>' })
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@selct/></div>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    assert.match(messages(stats), /<@@select> \(module cœur\)/)
   })
 
   it('<@slect> — distance ÉGALE projet/cœur (select.mjs des deux côtés) → départage gagné par le PROJET', async () => {
@@ -119,73 +125,111 @@ describe('bundler — raccourci-dev <@nom> INCONNU → erreur agrégée + sugges
   })
 })
 
-describe('bundler — raccourci <@nom> résolu par le cœur (catalogue de test coreModulesDir)', function () {
+describe('bundler — <@@nom> : la bibliothèque cœur (catalogue de test coreModulesDir)', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('<@tst> (bare, PAS de projet homonyme) + tst.mjs au catalogue → build vert, manifest.tst (PLAT), chunk émis, <mjs-tst> dans le gabarit', async () => {
+  it('<@@tst> + tst.mjs au catalogue → build vert, clé core-tst, chunk core-tst-*.js, <mjs-core-tst> dans le gabarit', async () => {
     const root = mjsTmp('tagshortcut-core')
     const coreModulesDir = makeCoreCatalog(root, { 'tst.mjs': '<p>cœur tst</p>' })
-    const { outDir, stats } = await buildProject({ 'hote.mjs': '<div><@tst/></div>' }, { coreModulesDir })
+    const { outDir, stats } = await buildProject({ 'hote.mjs': '<div><@@tst/></div>' }, { coreModulesDir })
     assert.equal(stats.errors.length, 0, messages(stats))
-    assert.ok(stats.manifest['tst'], 'manifest doit exposer la clé PLATE tst (plus de préfixe core-)')
-    assert.equal(stats.manifest['core-tst'], undefined, 'l\'ancienne clé core-tst ne doit plus jamais être écrite')
-    const files = readdirSync(outDir)
-    assert.ok(files.some((f) => /^tst-[a-f0-9]{8}\.js$/.test(f)), `chunk tst-*.js attendu parmi : ${files.join(', ')}`)
-    assert.match(readComponent(outDir, 'hote'), /<mjs-tst><\/mjs-tst>/)
+    assert.ok(stats.manifest['core-tst'], 'le manifeste expose la clé core-tst')
+    assert.equal(stats.manifest['tst'], undefined, 'le nom nu tst reste libre pour le projet')
+    assert.match(readComponent(outDir, 'hote'), /<mjs-core-tst><\/mjs-core-tst>/)
+    assert.match(readComponent(outDir, 'core-tst'), /µ\._def\("mjs-core-tst"/)
   })
 
-  it('<@tsst> (typo) → erreur + suggestion mentionnant <@tst>', async () => {
+  it('<@tst> (un seul @) : aucun composant tst au projet, tst au cœur → erreur qui dit d’écrire <@@tst>', async () => {
     const root = mjsTmp('tagshortcut-core')
     const coreModulesDir = makeCoreCatalog(root, { 'tst.mjs': '<p>cœur tst</p>' })
-    const { stats } = await buildProject({ 'hote.mjs': '<div><@tsst/></div>' }, { coreModulesDir })
-    assert.ok(stats.errors.length > 0)
-    assert.match(messages(stats), /<@tst>/)
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@tst/></div>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0, 'le build doit échouer : <@tst> ne désigne plus le cœur')
+    const msg = messages(stats)
+    assert.match(msg, /« <@tst> » : aucun composant « tst » dans le projet/)
+    assert.match(msg, /« <@@tst> »/)
+    assert.equal(stats.manifest['core-tst'], undefined, 'le module cœur n’est pas compilé en douce')
   })
 
-  it('transitivité : tst.mjs référence <@tst2> (bare) → tst2 aussi au manifeste (clé PLATE)', async () => {
+  it('<@@tsst> (typo) → erreur + suggestion <@@tst>', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, { 'tst.mjs': '<p>cœur tst</p>' })
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@@tsst/></div>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    const msg = messages(stats)
+    assert.match(msg, /« <@@tsst> » : aucun module cœur « tsst »/)
+    assert.match(msg, /<@@tst> \(module cœur\)/)
+  })
+
+  it('<@@panier> alors que panier est un composant du PROJET → erreur qui dit d’écrire <@panier>', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, {})
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@@panier/></div>', 'panier.mjs': '<p>panier</p>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    assert.match(messages(stats), /« <@@panier> » : aucun module cœur « panier » — le composant du projet s'écrit « <@panier> »/)
+  })
+
+  it('<@@slot> : une balise du langage garde un seul @', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, {})
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@@slot/></div>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    assert.match(messages(stats), /« <@@slot> » : une balise du langage s'écrit avec un seul @ — « <@slot> »/)
+  })
+
+  it('transitivité : tst.mjs référence <@@tst2> → core-tst2 aussi au manifeste', async () => {
     const root = mjsTmp('tagshortcut-core')
     const coreModulesDir = makeCoreCatalog(root, {
-      'tst.mjs': '<div><p>cœur tst</p><@tst2/></div>',
+      'tst.mjs': '<div><p>cœur tst</p><@@tst2/></div>',
       'tst2.mjs': '<p>cœur tst2</p>',
     })
-    const { stats } = await buildProject({ 'hote.mjs': '<div><@tst/></div>' }, { coreModulesDir })
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@@tst/></div>' }, { coreModulesDir })
     assert.equal(stats.errors.length, 0, messages(stats))
-    assert.ok(stats.manifest['tst'], 'tst attendu au manifeste')
-    assert.ok(stats.manifest['tst2'], 'tst2 (référencé TRANSITIVEMENT par tst.mjs) attendu au manifeste')
+    assert.ok(stats.manifest['core-tst'], 'core-tst attendu au manifeste')
+    assert.ok(stats.manifest['core-tst2'], 'core-tst2 (référencé TRANSITIVEMENT par tst.mjs) attendu au manifeste')
   })
 
-  // la règle « un module cœur ne référence QUE du cœur » DISPARAÎT : un module cœur
-  // qui référence <@panier> (composant PROJET) résout désormais avec SUCCÈS (même résolution
-  // projet-puis-cœur, qu'elle vienne d'un fichier projet ou d'un module cœur).
-  it('override projet-sur-cœur : un module cœur (tst.mjs) référence <@panier>, le CŒUR a AUSSI un module "panier" — le PROJET prime quand même', async () => {
+  // les deux espaces de noms sont séparés : un composant du projet ne masque plus un module
+  // cœur, et un module cœur ne réserve plus aucun nom au projet
+  it('projet et cœur ont chacun un « panier » : <@panier> = projet, <@@panier> = cœur, les deux coexistent', async () => {
     const root = mjsTmp('tagshortcut-core')
-    const coreModulesDir = makeCoreCatalog(root, {
-      'tst.mjs': '<div><@panier/></div>',
-      'panier.mjs': '<p>panier CŒUR — ne doit JAMAIS être choisi</p>',
-    })
+    const coreModulesDir = makeCoreCatalog(root, { 'panier.mjs': '<p>panier CŒUR</p>' })
     const { outDir, stats } = await buildProject({
-      'hote.mjs': '<div><@tst/></div>',
+      'hote.mjs': '<div><@panier/><@@panier/></div>',
       'panier.mjs': '<p>panier PROJET</p>',
     }, { coreModulesDir })
-    assert.equal(stats.errors.length, 0, messages(stats), 'le build doit réussir : plus de règle « cœur ne référence que du cœur »')
-    assert.ok(stats.manifest['tst'], 'le module cœur tst doit être compilé (référencé par hote.mjs)')
-    const files = readdirSync(outDir)
-    const panierFiles = files.filter((f) => /^panier-[a-f0-9]{8}\.js$/.test(f))
-    assert.equal(panierFiles.length, 1, `un seul chunk panier-*.js attendu (celui du projet) parmi : ${files.join(', ')}`)
-    const panierOut = readFileSync(join(outDir, panierFiles[0]), 'utf-8')
-    assert.match(panierOut, /panier PROJET/, 'le contenu compilé doit être celui DU PROJET (override)')
-    assert.doesNotMatch(panierOut, /panier CŒUR/, 'le panier du cœur ne doit jamais être compilé (masqué par le projet)')
+    assert.equal(stats.errors.length, 0, messages(stats))
+    assert.match(readComponent(outDir, 'panier'), /panier PROJET/)
+    assert.match(readComponent(outDir, 'core-panier'), /panier CŒUR/)
+    const hote = readComponent(outDir, 'hote')
+    assert.match(hote, /<mjs-panier><\/mjs-panier>/)
+    assert.match(hote, /<mjs-core-panier><\/mjs-core-panier>/)
   })
 
-  it('<@mjs-tst/> (ANCIENNE notation retirée) → ERREUR DE MIGRATION, même si tst.mjs existe réellement au catalogue cœur', async () => {
+  it('<@mjs-tst/> (ANCIENNE notation retirée) → erreur de migration qui dit d’écrire <@@tst> quand tst est au cœur', async () => {
     const root = mjsTmp('tagshortcut-core')
     const coreModulesDir = makeCoreCatalog(root, { 'tst.mjs': '<p>cœur tst</p>' })
     const { stats } = await buildProject({ 'hote.mjs': '<div><@mjs-tst/></div>' }, { coreModulesDir })
     assert.ok(stats.errors.length > 0, 'le build doit échouer (notation retirée), même si tst.mjs existe')
     const msg = messages(stats)
     assert.match(msg, /« <@mjs-tst> » est retirée/)
-    assert.match(msg, /écris « <@tst> »/)
+    assert.match(msg, /écrivez « <@@tst> »/)
+  })
+
+  it('<@mjs-core-tst/> (ancienne notation et nouvelle balise mêlées) → écris « <@@tst> »', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, { 'tst.mjs': '<p>cœur tst</p>' })
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@mjs-core-tst/></div>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    assert.match(messages(stats), /écrivez « <@@tst> »/)
+  })
+
+  it('<@mjs-panier/> alors que panier est au projet → écris « <@panier> »', async () => {
+    const root = mjsTmp('tagshortcut-core')
+    const coreModulesDir = makeCoreCatalog(root, {})
+    const { stats } = await buildProject({ 'hote.mjs': '<div><@mjs-panier/></div>', 'panier.mjs': '<p>panier</p>' }, { coreModulesDir })
+    assert.ok(stats.errors.length > 0)
+    assert.match(messages(stats), /écrivez « <@panier> »/)
   })
 })
 
@@ -202,7 +246,7 @@ describe('bundler — gardes sur les fichiers du projet (nom réservé / préfix
   it('fichier core-x.mjs (préfixe core- réservé) → erreur', async () => {
     const { stats } = await buildProject({ 'core-x.mjs': '<p>x</p>' })
     assert.ok(stats.errors.length > 0)
-    assert.match(messages(stats), /préfixe RÉSERVÉ au catalogue interne des modules cœur/)
+    assert.match(messages(stats), /préfixe RÉSERVÉ aux modules cœur \(balise <mjs-core-nom>, écrite <@@nom>\)/)
   })
 
   // un ALIAS court n'est qu'un confort : contrairement au basename (guards ci-dessus,
@@ -240,12 +284,18 @@ describe('bundler — balises littérales mjs-*/mjs-core-* écrites à la main',
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('<mjs-core-x> littéral dans un gabarit dev → erreur (n\'existe plus, jamais écrite à la main)', async () => {
+  it('<mjs-core-x> littéral : aucun module cœur « x » → erreur (le préfixe mjs-core- est réservé au cœur)', async () => {
     const { stats } = await buildProject({ 'hote.mjs': '<div><mjs-core-x></mjs-core-x></div>' })
     assert.ok(stats.errors.length > 0)
-    const msg = messages(stats)
-    assert.match(msg, /n'existe plus/)
-    assert.match(msg, /<@x>/)
+    assert.match(messages(stats), /<mjs-core-x> : aucun module cœur « x »/)
+  })
+
+  it('<mjs-core-select> littéral (catalogue réel) → compile le module cœur, sans avertissement', async () => {
+    const { outDir, stats } = await buildProject({ 'hote.mjs': '<div><mjs-core-select></mjs-core-select></div>' })
+    assert.equal(stats.errors.length, 0, messages(stats))
+    assert.equal(stats.warnings.some((w: string) => w.includes('mjs-core-select')), false, stats.warnings.join(' | '))
+    assert.ok(stats.manifest['core-select'], 'le module cœur select doit être compilé')
+    assert.match(readComponent(outDir, 'hote'), /<mjs-core-select>/)
   })
 
   it('<mjs-typo> littéral inconnu → build VERT + avertissement dans stats.warnings', async () => {
@@ -263,14 +313,14 @@ describe('bundler — balises littérales mjs-*/mjs-core-* écrites à la main',
     assert.equal(stats.warnings.some((w: string) => w.includes('mjs-panier')), false, `aucun avertissement ne doit mentionner mjs-panier (reçu : ${stats.warnings.join(' | ')})`)
   })
 
-  // kind 'litteral-dev' : même logique que 'raccourci-dev' — inconnu du PROJET mais
-  // connu du CŒUR → inclusion SILENCIEUSE (aucun avertissement), pas juste un raccourci `@`.
-  it('<mjs-select> littéral INCONNU du projet mais CONNU du cœur (catalogue réel) → résout le cœur SANS avertissement', async () => {
-    const { outDir, stats } = await buildProject({ 'hote.mjs': '<div><mjs-select></mjs-select></div>' })
-    assert.equal(stats.errors.length, 0, messages(stats))
-    assert.equal(stats.warnings.some((w: string) => w.includes('mjs-select')), false, `aucun avertissement ne doit mentionner mjs-select (reçu : ${stats.warnings.join(' | ')})`)
-    assert.ok(stats.manifest['select'], 'le module cœur select doit être compilé (clé PLATE)')
-    assert.match(readComponent(outDir, 'hote'), /<mjs-select>/)
+  // une balise littérale `mjs-select` désignait le module cœur quand il se compilait sous ce nom :
+  // il s'appelle maintenant `mjs-core-select`, l'ancienne balise ne mène plus à rien
+  it('<mjs-select> littéral INCONNU du projet mais CONNU du cœur (catalogue réel) → erreur qui dit d’écrire <@@select>', async () => {
+    const { stats } = await buildProject({ 'hote.mjs': '<div><mjs-select></mjs-select></div>' })
+    assert.ok(stats.errors.length > 0)
+    const msg = messages(stats)
+    assert.match(msg, /<mjs-select> : aucun composant « select » dans le projet/)
+    assert.match(msg, /« <@@select> » \(balise <mjs-core-select>\)/)
   })
 })
 

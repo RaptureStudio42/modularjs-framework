@@ -1,192 +1,125 @@
-// animations/crossfade.coffee
-
-// Port direct de Svelte crossfade. La pair d'animations couplées s'enregistre
-// dans µ.anim.* sous la forme :
-//   µ.anim.crossfade('todos')
-//   →  µ.anim.todosSend     (à utiliser sur @out)
-//      µ.anim.todosReceive  (à utiliser sur @in)
-
-// Différence avec Svelte (qui utilise destructuring `[send, receive] = ...`) :
-// notre architecture par-nom rend les deux sides accessibles globalement.
-
-// Aligné 1:1 sur Svelte pour la transformation : translate dx,dy + scale dw,dh
-// (matrix), opacity, et capture du transform de base + opacity naturelle.
-
-// Usage côté composant :
-//   µ.anim.crossfade('todos', duration: 600)
-//   <label @in.todosReceive={key: item.id} @out.todosSend={key: item.id}>...
+// animations/crossfade.ts — deux balises qui se répondent : celle qui part d'une liste (@out) et celle qui arrive dans une autre (@in),
+// de même clé, ne sont qu'un seul objet qui voyage d'une place à l'autre ; µ.anim.crossfade('todos', { duration: 600 }) enregistre
+//   µ.anim.todosSend      à poser sur @out
+//   µ.anim.todosReceive   à poser sur @in
+//   <label @in.todosReceive={key: item.id} @out.todosSend={key: item.id}>…</label>
+// l'objet voyage par un déplacement et une échelle (sa boîte de départ sur la boîte d'arrivée), son opacité en fondu ; l'entrée suit la courbe,
+// la sortie son contraire (1 - courbe, pas la courbe à l'envers dans le temps) : à chaque image les deux sont au même endroit et leurs
+// opacités font 1, un seul objet se voit. Sans partenaire, rien ne voyage : `fallback(node, params, isIntro)` rend alors { css(t, u), duration,
+// delay, easing } si l'on veut une transition ordinaire, ou rien
+// réglages : duration (√distance × 30 ms, ou une fonction de la distance), delay (0), easing (cubicOut), fallback ; les paramètres écrits sur @in
+// ou @out gagnent sur ceux de crossfade()
 (function(name, defaults = {}) {
-  var buildAnim, defaultDuration, makeTransition, sampleAndRun, toReceive, toSend;
-  toReceive = new Map();
-  toSend = new Map();
-  defaultDuration = function(d) {
-    return Math.sqrt(d) * 30;
+  var sent     = new Map();
+  var received = new Map();
+  // une méthode de la balise prise au prototype (µ._mjs_dom, du moteur des effets) : un composant qui écrit `@getAttribute` ou
+  // `@getBoundingClientRect` masque celle de sa balise ; une animation chargée sans le moteur prend celle de la balise
+  var dom = function(n, name, a) {
+    return µ._mjs_dom ? µ._mjs_dom[name](n, a) : n[name](a);
   };
-  buildAnim = function(fromNode, node, params, isIntro) {
-    var baseTransform, d, delay, dh, duration, dw, dx, dy, easing, finalDuration, from, i, keyframes, p, ref, ref1, ref2, ref3, ref4, ref5, steps, style, sx, sy, t, targetOpacity, to, u;
-    delay = (ref = (ref1 = params.delay) != null ? ref1 : defaults.delay) != null ? ref : 0;
-    duration = (ref2 = (ref3 = params.duration) != null ? ref3 : defaults.duration) != null ? ref2 : defaultDuration;
-    easing = µ.easing.resolve((ref4 = (ref5 = params.easing) != null ? ref5 : defaults.easing) != null ? ref4 : µ.easing.cubicOut);
-    from = fromNode.getBoundingClientRect();
-    to = node.getBoundingClientRect();
-    dx = from.left - to.left;
-    dy = from.top - to.top;
-    dw = from.width / Math.max(to.width, 1);
-    dh = from.height / Math.max(to.height, 1);
-    d = Math.sqrt(dx * dx + dy * dy);
-    finalDuration = typeof duration === 'function' ? duration(d) : duration;
-    style = window.getComputedStyle(node);
-    baseTransform = style.transform === 'none' ? '' : style.transform;
-    targetOpacity = +style.opacity;
-    steps = 60;
-    keyframes = (function() {
-      var j, ref6, results;
-      results = [];
-      for (i = j = 0, ref6 = steps; (0 <= ref6 ? j <= ref6 : j >= ref6); i = 0 <= ref6 ? ++j : --j) {
-        p = i / steps;
-        // Intro (receive) : t = easing(p) → opacity 0→1, translate counterpart→self.
-        // Outro (send)    : t = 1 - easing(p) → opacity 1→0, translate self→counterpart.
-        // On flippe la VALEUR (1-easing), pas le TEMPS (easing(1-p)) : ainsi les deux
-        // côtés partagent le même easing dans le temps → positions superposées à
-        // chaque frame ET somme des opacités = 1 (vrai crossfade, un seul élément
-        // visible). `easing(1-p)` ou `direction:reverse` désynchronisent (easing
-        // asymétrique) et on voit DEUX copies animées.
-        t = isIntro ? easing(p) : 1 - easing(p);
-        u = 1 - t;
-        sx = t + (1 - t) * dw;
-        sy = t + (1 - t) * dh;
-        results.push({
-          opacity: t * targetOpacity,
-          transformOrigin: 'top left',
-          transform: `${baseTransform} translate(${u * dx}px, ${u * dy}px) scale(${sx}, ${sy})`.trim(),
-          offset: p
-        });
-      }
-      return results;
-    })();
+  // l'animation finie ou annulée libère son maintien (fill), qui figerait les styles et accumulerait des objets Animation
+  var free = function(anim) {
+    try { anim.cancel(); } catch (_e) {}
+  };
+  // les 61 images d'un trajet : image(p) rend celle de l'avancée p (de 0 à 1)
+  var sample = function(image) {
+    var frames = [];
+    var i;
+    for (i = 0; i <= 60; i++) frames.push(Object.assign(image(i / 60), { offset: i / 60 }));
+    return frames;
+  };
+  // de la balise `from` à la place de `node`
+  var travel = function(from, node, params, isIntro) {
+    var delay    = params.delay ?? defaults.delay ?? 0;
+    var duration = params.duration ?? defaults.duration ?? function(d) { return Math.sqrt(d) * 30; };
+    var easing   = µ.easing.resolve(params.easing ?? defaults.easing ?? µ.easing.cubicOut);
+    var a        = dom(from, 'getBoundingClientRect');
+    var b        = dom(node, 'getBoundingClientRect');
+    // la boîte de la partenaire est celle qu'a relevée la première à passer : un vol de durée nulle fait sortir sa balise du DOM avant que l'autre ne passe
+    var peer     = node._mjs_xfPeer;
+    if (peer) a = peer;
+    else from._mjs_xfPeer = b;
+    node._mjs_xfPeer = null;
+    var dx       = a.left - b.left;
+    var dy       = a.top - b.top;
+    var dw       = a.width / Math.max(b.width, 1);
+    var dh       = a.height / Math.max(b.height, 1);
+    var total    = typeof duration === 'function' ? duration(Math.sqrt(dx * dx + dy * dy)) : duration;
+    var style    = window.getComputedStyle(node);
+    var base     = style.transform === 'none' ? '' : style.transform;
+    var opacity  = +style.opacity;
+    var frames   = sample(function(p) {
+      var t = isIntro ? easing(p) : 1 - easing(p);
+      var u = 1 - t;
+      return { opacity: t * opacity, transformOrigin: 'top left', transform: `${base} translate(${u * dx}px, ${u * dy}px) scale(${t + (1 - t) * dw}, ${t + (1 - t) * dh})`.trim() };
+    });
     return new Promise(function(resolve) {
-      var anim;
-      anim = node.animate(keyframes, {
-        duration: finalDuration,
-        delay,
-        fill: 'forwards'
-      });
-      // cancel() après finished (même hygiène que µ._mjs_runTransition) : le
-      // `fill: forwards` gardait l'Animation ACTIVE indéfiniment — styles
-      // figés par le fill + objets Animation accumulés dans la timeline à
-      // chaque re-déclenchement sur un nœud réutilisé (liste keyed).
-      return anim.finished.then(function() {
-        try { anim.cancel(); } catch (_e) {}
-        return resolve();
-      }, function() {
-        try { anim.cancel(); } catch (_e) {}
-        return resolve();
-      });
+      var anim = µ._mjs_animate(node, frames, { duration: total, delay, fill: 'forwards' });
+      var done = function() {
+        free(anim);
+        resolve();
+      };
+      anim.finished.then(done, done);
     });
   };
-  makeTransition = function(items, counterparts, isIntro) {
+  // le repli : une transition ordinaire { css(t, u), duration, delay, easing }, échantillonnée en 60 images ; une annulation se résout sans lever
+  // (une promesse rejetée ferait rejeter tout le groupe de sorties qui l'attend, et ses balises resteraient à l'écran)
+  var fallback = function(node, cfg, isIntro) {
+    var easing = µ.easing.resolve(cfg.easing);
+    var frames = sample(function(p) {
+      var t = isIntro ? easing(p) : easing(1 - p);
+      return cfg.css(t, 1 - t);
+    });
+    var anim = µ._mjs_animate(node, frames, { duration: cfg.duration ?? 400, delay: cfg.delay ?? 0, fill: 'forwards' });
+    return anim.finished.then(function(r) {
+      free(anim);
+      return r;
+    }, function() {
+      free(anim);
+    });
+  };
+  // une moitié du couple : `items` garde les balises de son côté, `others` celles de l'autre
+  var side = function(items, others, isIntro) {
     return function(params = {}) {
-      var handler, key, out, sideKey;
-      key = params.key;
-      sideKey = isIntro ? 'intro' : 'outro';
-      handler = function(node) {
+      var key = params.key;
+      var out = {};
+      out[isIntro ? 'intro' : 'outro'] = function(node) {
+        var shown = node.style && node.style.opacity;
         items.set(key, node);
-        // Appariement send↔receive : on attend 2 rAF, PAS un seul microtask.
-        // La liste SOURCE (qui perd l'item → @out/send) et la liste CIBLE (qui
-        // le gagne → @in/receive) sont deux blocs {for} distincts qui se rendent
-        // dans des ticks réactifs SÉPARÉS. Avec un seul `Promise.resolve().then`,
-        // le premier côté enregistré voyait `counterparts` encore vide et tombait
-        // sur le fallback (rétrécissement sur place) ; les deux côtés tombaient
-        // alors en fallback et l'item ne « volait » jamais d'une liste à l'autre.
-        // Deux rAF garantissent que les DEUX blocs ont fini de se rendre (tous les
-        // effets réactifs microtask sont vidés) avant l'appariement.
+        // l'entrante ne se montre pas pendant l'attente : posée à sa place, pleinement opaque, elle doublerait la sortante avant le départ du vol
+        if (isIntro && node.style) node.style.opacity = '0';
+        // l'appariement attend deux images : les deux listes se rendent chacune dans leur tour réactif, et la première arrivée ne verrait
+        // sinon aucun partenaire (les deux côtés tomberaient en repli, l'objet ne voyagerait jamais)
         return new Promise(function(resolve, reject) {
-          var __defer = function(cb) { return requestAnimationFrame(function() { return requestAnimationFrame(cb); }); };
-          return __defer(function() {
-            var cfg, other;
-            // `defaults.fallback` (ou son `cfg.css`, dans `sampleAndRun`) est du code
-            // UTILISATEUR — un throw synchrone ICI sort du double rAF SANS jamais passer par
-            // `resolve`/`reject` (un callback rAF qui lève est juste avalé par le navigateur) :
-            // la promesse de ce handler @in/@out restait EN ATTENTE À VIE, ce qui gelait le
-            // Promise.all d'un groupe d'outro entier (nœuds fantômes, jamais retirés du DOM).
-            // `buildAnim` n'appelle lui aucun code utilisateur synchrone risqué — protégé par
-            // construction — mais ce filet ne lui nuit pas.
-            try {
-              if (counterparts.has(key)) {
-                other = counterparts.get(key);
-                counterparts.delete(key);
-                return buildAnim(other, node, params, isIntro).then(resolve, reject);
-              } else {
-                items.delete(key);
-                if (defaults.fallback) {
-                  cfg = defaults.fallback(node, params, isIntro);
-                  if (cfg != null ? cfg.css : void 0) {
-                    // fallback en mode css(t,u) : sample
-                    return sampleAndRun(node, cfg, isIntro).then(resolve, reject);
-                  } else {
-                    return resolve();
-                  }
-                } else {
-                  return resolve();
-                }
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              var cfg;
+              // l'opacité de la balise est rendue avant d'être lue (sans laisser d'attribut style vide) : l'animation prend le relais dans cette même image
+              if (isIntro && node.style) {
+                node.style.opacity = shown || '';
+                if (!shown && node.getAttribute && dom(node, 'getAttribute', 'style') === '') dom(node, 'removeAttribute', 'style');
               }
-            } catch (e) {
-              µ.warn('[mjs-crossfade] fonction de repli en échec — transition close proprement :', e);
-              return resolve();
-            }
+              // fallback et css sont du code de l'appli : qu'ils lèvent hors de ce rappel, et la promesse resterait en attente — un groupe de sorties entier gelé
+              try {
+                if (others.has(key)) {
+                  var other = others.get(key);
+                  others.delete(key);
+                  return travel(other, node, params, isIntro).then(resolve, reject);
+                }
+                items.delete(key);
+                cfg = defaults.fallback && defaults.fallback(node, params, isIntro);
+                return cfg && cfg.css ? fallback(node, cfg, isIntro).then(resolve, reject) : resolve();
+              } catch (e) {
+                µ.warn('[mjs-crossfade] ' + µ._mjs_txt('crossfadeFallbackFailed', null, 'fonction de repli en échec — transition close proprement :'), e);
+                return resolve();
+              }
+            });
           });
         });
       };
-      out = {};
-      out[sideKey] = handler;
       return out;
     };
   };
-  sampleAndRun = function(node, cfg, isIntro) {
-    var duration, easing, frame, i, keyframes, p, ref, ref1, steps, t;
-    duration = (ref = cfg.duration) != null ? ref : 400;
-    easing = µ.easing.resolve(cfg.easing);
-    steps = 60;
-    keyframes = (function() {
-      var j, ref1, results;
-      results = [];
-      for (i = j = 0, ref1 = steps; (0 <= ref1 ? j <= ref1 : j >= ref1); i = 0 <= ref1 ? ++j : --j) {
-        p = i / steps;
-        t = isIntro ? easing(p) : easing(1 - p);
-        frame = cfg.css(t, 1 - t);
-        frame.offset = p;
-        results.push(frame);
-      }
-      return results;
-    })();
-    var anim = node.animate(keyframes, {
-      duration,
-      delay: (ref1 = cfg.delay) != null ? ref1 : 0,
-      fill: 'forwards'
-    });
-    // Même hygiène que buildAnim : libérer le fill une fois l'animation finie.
-    // contrairement à `buildAnim`
-    // au-dessus (`.then(onFulfilled, onRejected)`), cette Promise n'avait
-    // QU'UN callback de succès : si `anim.finished` REJETTE (animation
-    // annulée — un node retiré du DOM, ou une autre transition qui la
-    // supplante), la rejection se PROPAGE sans être rattrapée jusqu'à
-    // l'appelant (ligne ~117 : `sampleAndRun(...).then(resolve, reject)` →
-    // `reject` de la Promise du handler `@in`/`@out`). Si ce handler est
-    // dans le tableau `transitions` d'un groupe d'outro
-    // (`_mjs_destroyNodeAndChildren`, `await Promise.all(transitions)`), UNE
-    // SEULE transition annulée fait REJETER TOUT LE GROUPE → le reste de la
-    // séquence destroy (marquage `_mjs_dead`, callbacks `outroend`,
-    // `node.remove()`) n'est JAMAIS exécuté → node(s) zombie bloqué(s) en
-    // `_mjs_dying` À VIE, jamais retirés du DOM. Fix : même contrat que
-    // `buildAnim`/`µ._mjs_runTransition` (mode css) — une annulation RÉSOUT
-    // gracieusement (pas de re-throw), après avoir quand même libéré le fill.
-    return anim.finished.then(function(r) {
-      try { anim.cancel(); } catch (_e) {}
-      return r;
-    }, function() {
-      try { anim.cancel(); } catch (_e) {}
-    });
-  };
-  µ.anim[`${name}Send`] = makeTransition(toSend, toReceive, false);
-  µ.anim[`${name}Receive`] = makeTransition(toReceive, toSend, true);
+  µ.anim[`${name}Send`] = side(sent, received, false);
+  µ.anim[`${name}Receive`] = side(received, sent, true);
 });

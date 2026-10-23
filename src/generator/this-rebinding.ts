@@ -53,7 +53,9 @@
 //     EXPLICITE de l'appelant (`helper.call(x)`, `helper.bind(x)()`,
 //     `arr.forEach(helper, x)`) pose un `this` réel, non-`undefined` — `??` le
 //     respecte. Seul un appel VRAIMENT nu (module ES strict → `this===undefined`)
-//     retombe sur `_mjsThis`, exactement le cas visé.
+//     retombe sur `_mjsThis`, exactement le cas visé. Un `this` que pose le navigateur (écouteur
+//     posé à la main : l'élément ; `setTimeout` : la fenêtre ; observateur : l'observateur) est le
+//     `this` de l'appelant comme un autre : `@x` le lit, `@@x` lit le composant
 //
 // Portée délibérément GÉNÉRALE (tout ThisExpression, pas seulement les sites
 // d'appel `_mjs_getRCtx`/`_mjs_setRCtx`/`_mjs_getContext` issus de §/§§, ni le
@@ -105,11 +107,11 @@ function opensStatementInList(node: any, ancestors: any[]): boolean {
   return false
 }
 
-export function rebindDetachedThis(js: string): string {
-  return rebindDetachedThisMapped(js).code
-}
-
-// Variante qui rend AUSSI la carte de source de cette passe — cf. pass-map.ts.
+// Réécrit chaque `this` à risque en `(this ?? _mjsThis)` et rend AUSSI la carte de source de cette
+// passe — cf. pass-map.ts. `@x` est le `this` que donne l'appelant, partout : `.call(x)`, `.bind(x)`,
+// `new Fn()`, `forEach(fn, x)`, un écouteur posé à la main (l'élément), `setTimeout` (la fenêtre), un
+// observateur (l'observateur) ; seul un appel nu (`this` absent) retombe sur le composant. Le
+// composant lui-même, d'où qu'on l'appelle, s'écrit `@@x`
 export function rebindDetachedThisMapped(js: string): PassResult {
   if (!js || !js.includes('this')) return { code: js }
 
@@ -157,7 +159,8 @@ export function rebindDetachedThisMapped(js: string): PassResult {
           // jamais l'objet global — `??` retombe alors sur `_mjsThis` (le bug
           // visé, réparé) tout en respectant un `this` explicitement posé par
           // l'appelant (jamais `undefined`, donc jamais écrasé).
-          ms.overwrite(node.start, node.end, (opensStatementInList(node, ancestors) ? ';' : '') + '(this ?? _mjsThis)')
+          const prefix = opensStatementInList(node, ancestors) ? ';' : ''
+          ms.overwrite(node.start, node.end, prefix + '(this ?? _mjsThis)')
           changed = true
         }
         return

@@ -13,7 +13,7 @@ function fakeClient(id: string): MjsWsClient {
 describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seulement', () => {
   it('présence GLOBALE : alice présente via p1 ET p2 — p1 part → aucun faux départ, la présence fusionnée la garde', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     engine.applyRemotePresence(undefined, 'p1', 'join', 'alice', {})
     engine.applyRemotePresence(undefined, 'p2', 'join', 'alice', {})   // alice présente via DEUX process distants
 
@@ -35,7 +35,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('présence GLOBALE : identité présente LOCALEMENT et sur un process distant — le départ distant ne publie rien', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     const local = fakeClient('local-1')
     ;(local as any).identity = { id: 'bob' }
     engine.onWelcome(local)                                      // bob présent LOCALEMENT
@@ -52,7 +52,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('présence DE SALON : même garantie que la globale', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     engine.applyRemotePresence('salle-1', 'p1', 'join', 'alice', {})
     engine.applyRemotePresence('salle-1', 'p2', 'join', 'alice', {})
 
@@ -67,7 +67,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('bail expiré (purgeRemoteProcess) : ne publie un leave que si l\'identité ne reste présente NULLE PART ailleurs', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     engine.applyRemotePresence(undefined, 'p1', 'join', 'alice', {})
     engine.applyRemotePresence(undefined, 'p2', 'join', 'alice', {})
 
@@ -86,7 +86,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('présence GLOBALE : alice déjà présente via p1 (distant) — une connexion LOCALE qui arrive ensuite n\'émet aucun second join', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     engine.applyRemotePresence(undefined, 'p1', 'join', 'alice', {})   // alice déjà là via p1
 
     const sub = fakeClient('sub1')
@@ -103,7 +103,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('présence GLOBALE : alice présente LOCALEMENT et via p1 — le départ LOCAL ne publie rien tant que p1 reste', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     const local = fakeClient('local-1')
     ;(local as any).identity = { id: 'alice' }
     engine.onWelcome(local)                                         // alice présente LOCALEMENT (1re connexion)
@@ -124,7 +124,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('présence DE SALON : même garantie pour une connexion LOCALE qui rejoint après une présence distante déjà connue', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     engine.applyRemotePresence('salle-1', 'p1', 'join', 'alice', {})
 
     const sub = fakeClient('sub1')
@@ -141,7 +141,7 @@ describe('MJS-WS — rooms.ts, présence multi-serveurs : transitions 0↔1 seul
 
   it('ordre inverse — local d\'abord puis distant : pas de second join, la présence tient après le départ distant', async () => {
     const sent: any[] = []
-    const engine = createRoomsEngine({} as any, (c, f) => sent.push({ c, f }), () => {})
+    const engine = createRoomsEngine({ presenceGlobale: 'public' } as any, (c, f) => sent.push({ c, f }), () => {})   // présence globale ouverte (fermée par défaut)
     const sub = fakeClient('sub1')
     await engine.handleSubPresence(sub, undefined)
     sent.length = 0

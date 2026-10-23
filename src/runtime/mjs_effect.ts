@@ -3,7 +3,7 @@
 // syntaxes qui s'appuient dessus EN SILENCE est présente (aucune ne laisse le mot « effect »
 // dans le source du projet — le signal doit donc les couvrir explicitement, cf.
 // bundler/index.ts, scanRuntimeFeatures) :
-//   - `@persist` (transpiler/directives.ts) compile en `µ.effect => backend.setItem(...)` ;
+//   - `@persist` (transpiler/directives.ts) compile en un `µ.effect` dont le rappel écrit `backend.setItem(...)` sous un `try` (le navigateur peut refuser le stockage) ;
 //   - `µdebug $x` (transpiler/index.ts) compile en `µ.effect => µ.log(...); debugger` ;
 //   - `<@head>` à contenu, les liaisons class/style de `<@body>`/`<@html>`, `<@element>`/
 //     `<@module>`, et les liaisons two-way `scrollX`/`scrollY` de `<@window>` (transpiler/
@@ -13,7 +13,7 @@
 //
 // Cache de RegExp par var name (var names sont stables dans le projet).
 // Évite alloc + compilation regex × N vars × M effects par composant.
-µ._mjs_effectVarRegexCache = µ._mjs_effectVarRegexCache || {};
+µ._mjs_effectVarRegexCache ||= {};
 
 // `precomputedVars` (2e paramètre,
 // optionnel) est injecté par le compilateur (generator/effect-deps.ts) : liste
@@ -33,11 +33,9 @@
   var comp, fnStr, key, staticVars, rxCache;
   comp = µ.activeComponent;
   if (!comp) {
-    return µ.warn("[ModularJS] µ.effect doit être appelé à l'initialisation.");
+    return µ.warn(µ._mjs_msg('effectInit', null, 'µ.effect doit être appelé à l\'initialisation.'));
   }
-  if (comp._mjs_effects == null) {
-    comp._mjs_effects = [];
-  }
+  comp._mjs_effects ??= [];
   // V2 — dispatch direct sans bitmask : on collecte la LISTE des state vars
   // lues par l'effect (scan statique de la source de fn) au lieu d'un mask.
   // Le runtime (`_mjs_runEffectsV2`) filtre par intersection avec `_mjs_lastMutedVars`.
@@ -88,9 +86,22 @@
     if (expanded != null) staticVars = Array.from(expanded);
   }
   comp._mjs_userEffectVars = void 0;
-  return comp._mjs_effects.push({
+  var rec = {
     staticVars,
     fn,
     cleanup: null
-  });
+  };
+  comp._mjs_effects.push(rec);
+  // rendue à l'appelant : retire le reffet. Le tableau est remplacé, jamais modifié en place : un passage en cours
+  // (_mjs_runEffectsV2, mjs_element.ts) finit le sien sans sauter ni rejouer un autre reffet, et y croise celui-ci sans
+  // le jouer (`fn` effacé). Son nettoyage joue une fois ; un deuxième appel ne fait rien ; appelée après la destruction,
+  // elle ne rejoue pas le nettoyage, déjà joué, et le reffet ne repart pas quand le composant revient dans la page
+  return function() {
+    var c = rec.cleanup;
+    if (!rec.fn) return;
+    rec.fn = rec.cleanup = null;
+    comp._mjs_effects = comp._mjs_effects.filter(function(x) { return x !== rec; });
+    comp._mjs_userEffectVars = void 0;
+    if (c) c.call(rec);
+  };
 };

@@ -14,7 +14,7 @@ const pause  = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 async function serveurAvecGrosFichier(prefixe: string): Promise<{ serveur: StaticServer; port: number }> {
   const root = mjsTmp(prefixe)
-  writeFileSync(join(root, 'gros.bin'), Buffer.alloc(TAILLE, 7))
+  writeFileSync(join(root, 'gros.mp4'), Buffer.alloc(TAILLE, 7))
   const port    = 20000 + Math.floor(Math.random() * 10000)
   const serveur = new StaticServer({ rootDir: join(root, 'out'), projectRoot: root, port })
   await serveur.start()
@@ -32,7 +32,7 @@ describe('StaticServer.stop() — envois en cours et appels répétés', functio
     const fin     = new Promise<void>(r => sock.on('close', () => r()))
     sock.on('data', (d: Buffer) => { recu += d.length })
     sock.on('error', () => {})
-    sock.write(`GET /gros.bin HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`)
+    sock.write(`GET /gros.mp4 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`)
     await premier
     sock.pause()
 

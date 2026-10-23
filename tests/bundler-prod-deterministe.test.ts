@@ -43,7 +43,7 @@ function writeFixture(srcDir: string): void {
     '$show = true',
     '$obj = { _mjs_probe_a: \'a\' }',
     '</script>',
-    '{if $show}<p class="a" @transition.fade>{$obj._mjs_probe_a}</p>{end}',
+    '{if $show}<p class="a" @transition=*fade>{$obj._mjs_probe_a}</p>{end}',
   ].join('\n'))
   // module .civet @import-é par un composant — passe aussi par la minification différée.
   writeFileSync(join(srcDir, 'helper.civet'), 'export triple := (x) -> x * 3\n')
@@ -63,7 +63,7 @@ function sortedContents(outDir: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const f of readdirSync(outDir)) {
     if (!/\.(js|css)$/.test(f)) continue
-    const stem = f.replace(/-[a-f0-9]{8}(\.js|\.css)$/, '$1')
+    const stem = f.replace(/-[0-9a-z]{5}(\.js|\.css)$/, '$1')
     out[stem] = readFileSync(join(outDir, f), 'utf-8')
   }
   return out

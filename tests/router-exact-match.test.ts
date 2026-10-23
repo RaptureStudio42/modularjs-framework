@@ -32,7 +32,7 @@ const routerSrc = readFileSync(ROUTER, 'utf-8')
 
 describe('routeur — match EXACT des routes', function () {
   describe('_mjs_matchRoute — unitaire', function () {
-    const µ: any = { log() {}, warn() {}, error() {} }
+    const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
     new Function('µ', routerSrc)(µ)
     const match = (url: string, route: string): any => µ.Router._mjs_matchRoute(url, route)
 
@@ -112,7 +112,7 @@ describe('routeur — match EXACT des routes', function () {
     }
 
     it("un layout déclaré `/dashboard/*` reste injecté quand l'URL descend d'un niveau", function () {
-      const µ: any = { log() {}, warn() {}, error() {} }
+      const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
       new Function('µ', routerSrc)(µ)
       const { viewNode, comp } = monter(µ, { '/dashboard/*': 'layout' })
 
@@ -124,7 +124,7 @@ describe('routeur — match EXACT des routes', function () {
     })
 
     it("le même layout déclaré SANS `*` se vide dès que l'URL descend (c'est le changement)", function () {
-      const µ: any = { log() {}, warn() {}, error() {} }
+      const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
       new Function('µ', routerSrc)(µ)
       const { viewNode, comp } = monter(µ, { '/dashboard': 'layout' })
 
@@ -136,7 +136,7 @@ describe('routeur — match EXACT des routes', function () {
     })
 
     it("une route SANS rapport avec l'URL courante vide bien la vue (inchangé)", function () {
-      const µ: any = { log() {}, warn() {}, error() {} }
+      const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
       new Function('µ', routerSrc)(µ)
       const { viewNode, comp } = monter(µ, { '/dashboard': 'layout' })
       µ.Router._mjs_injectViewsForComponent(comp, '/dashboard')

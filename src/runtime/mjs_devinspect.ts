@@ -3,7 +3,7 @@
 // N'EST PAS DANS LE BUNDLE DE PRODUCTION : même règle que mjs_debug/mjs_devpanel (cf.
 // bundler/index.ts). Chargé JUSTE AVANT mjs_devpanel, qui s'en sert pour ses onglets État et
 // Contexte (une valeur composée y devient cliquable et se déplie ICI, avec le même moteur) et
-// pour `µ.devObject()`. Ce fichier ne connaît RIEN du panneau ni de la modale : donné un hôte
+// pour `µconsole valeur`. Ce fichier ne connaît RIEN du panneau ni de la modale : donné un hôte
 // DOM et une valeur, il affiche, déplie, et édite — n'importe où on le monte.
 //
 // Ce qu'il fait : une arborescence dépliable de N'IMPORTE QUELLE valeur JS — objet, tableau,
@@ -23,7 +23,7 @@ var _diOuverts = new Map();
 
 // le Set des chemins ouverts pour un namespace donné (une valeur/onglet/composant) — créé au
 // premier accès, survit à tous les redessins tant que le namespace n'est pas explicitement remis
-// à zéro (µ._mjs_diReset, utilisé par µ.devObject pour ne jamais hériter du pli d'un appel précédent)
+// à zéro (µ._mjs_diReset, utilisé par `µconsole valeur` pour ne jamais hériter du pli d'un appel précédent)
 function _diSetOuverts(ns) {
   var s = _diOuverts.get(ns);
   if (!s) { s = new Set(); _diOuverts.set(ns, s); }
@@ -77,7 +77,7 @@ function _mjs_diApercu(v, kind) {
     case 'number': case 'boolean': return String(v);
     case 'symbol': return String(v);
     case 'function': return 'ƒ ' + (v.name || '(anonyme)') + '()';
-    case 'node': return '<' + (v.tagName ? v.tagName.toLowerCase() : 'nœud') + '>';
+    case 'node': return '<' + (v.tagName ? v.tagName.toLowerCase() : µ._mjs_txt('dev.inspNode', null, 'nœud')) + '>';
     case 'date': { try { return v.toISOString(); } catch (e) { return 'Date invalide'; } }
     case 'regexp': return v.toString();
     case 'error': return (v.name || 'Error') + ': ' + (v.message || '');
@@ -104,15 +104,16 @@ function _mjs_diApercu(v, kind) {
       var brut = µ._mjs_toRaw(v);
       var proto = brut ? Object.getPrototypeOf(brut) : null;
       var nomClasse = proto && proto.constructor && proto.constructor.name;
-      return 'Objet' + (nomClasse && nomClasse !== 'Object' ? ' ' + nomClasse : '');
+      return µ._mjs_txt('dev.inspObject', null, 'Objet') + (nomClasse && nomClasse !== 'Object' ? ' ' + nomClasse : '');
     }
   }
 }
 µ._mjs_diApercu = _mjs_diApercu;
 
 // entrées PROPRES seulement (jamais le prototype) : Object.keys + clés symboliques énumérables.
-// un accesseur qui explose est capturé (okGet false) et affiché comme un échec, pas relancé
-function _diEntreesObjet(v) {
+// un accesseur qui explose est capturé (okGet false) et affiché comme un échec, pas relancé.
+// seules les `max` premières valeurs sont lues ; le reste se compte par le nombre de clés, sans lecture
+function _diEntreesObjet(v, max) {
   var cles = [], syms = [];
   try {
     cles = Object.keys(v);
@@ -122,7 +123,7 @@ function _diEntreesObjet(v) {
     });
   } catch (e) { /* ownKeys/getOwnPropertySymbols en échec (proxy exotique) : liste vide, pas de crash */ }
   var toutes = cles.concat(syms), out = [];
-  for (var i = 0; i < toutes.length; i++) {
+  for (var i = 0; i < toutes.length && i < max; i++) {
     var c = toutes[i], val, ok = true, err;
     try { val = v[c]; } catch (e) { ok = false; err = (e && e.message) || String(e); }
     out.push({
@@ -132,43 +133,32 @@ function _diEntreesObjet(v) {
       valeur: val, okGet: ok, errMsg: err
     });
   }
-  return out;
+  return { entries: out, restants: toutes.length - out.length };
 }
 
-/** Les entrées d'un conteneur, plafonnées à `_DI_MAX`, avec le compte de ce qui reste. */
+/** Les entrées d'un conteneur, plafonnées à `_DI_MAX`, avec le compte de ce qui reste — compté par la taille,
+ *  sans parcourir le reste (le panneau redessine toutes les 700 ms). */
 function _diEntries(conteneur, kind) {
-  var out = [], restants = 0;
-  if (kind === 'map') {
+  var out = [];
+  if (kind === 'map' || kind === 'set') {
     var i = 0;
-    conteneur.forEach(function(val, cle) {
-      if (out.length < _DI_MAX) out.push({ cle: cle, cheminSeg: '#' + i, label: _mjs_diApercu(cle, _mjs_diKind(cle)), valeur: val, okGet: true });
-      else restants++;
+    for (var e of conteneur.entries()) {
+      if (i === _DI_MAX) break;
+      out.push(kind === 'map'
+        ? { cle: e[0], cheminSeg: '#' + i, label: _mjs_diApercu(e[0], _mjs_diKind(e[0])), valeur: e[1], okGet: true }
+        : { cle: i, cheminSeg: '#' + i, label: String(i), valeur: e[1], okGet: true });
       i++;
-    });
-    return { entries: out, restants: restants };
-  }
-  if (kind === 'set') {
-    var j = 0;
-    conteneur.forEach(function(val) {
-      if (out.length < _DI_MAX) out.push({ cle: j, cheminSeg: '#' + j, label: String(j), valeur: val, okGet: true });
-      else restants++;
-      j++;
-    });
-    return { entries: out, restants: restants };
+    }
+    return { entries: out, restants: conteneur.size - out.length };
   }
   if (kind === 'array' || kind === 'typedarray') {
     var len = conteneur.length || 0;
-    for (var k = 0; k < len; k++) {
-      if (out.length < _DI_MAX) out.push({ cle: k, cheminSeg: String(k), label: String(k), valeur: conteneur[k], okGet: true });
-      else restants++;
+    for (var k = 0; k < len && k < _DI_MAX; k++) {
+      out.push({ cle: k, cheminSeg: String(k), label: String(k), valeur: conteneur[k], okGet: true });
     }
-    return { entries: out, restants: restants };
+    return { entries: out, restants: len - out.length };
   }
-  var brut = _diEntreesObjet(conteneur);
-  for (var m = 0; m < brut.length; m++) {
-    if (out.length < _DI_MAX) out.push(brut[m]); else restants++;
-  }
-  return { entries: out, restants: restants };
+  return _diEntreesObjet(conteneur, _DI_MAX);
 }
 
 /** Écrit `valeur` à la clé `cle` d'un conteneur — Map/Set/objet-tableau ont chacun leur geste natif. */
@@ -186,6 +176,7 @@ var _DI_CSS = `
 .di-pousse { display: inline-block; width: 1.1em; flex: none; }
 .di-cle { color: #7ee787; }
 .di-type { color: #8b949e; font-size: .85em; }
+.di-regle { color: #d2a8ff; font-size: .85em; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .di-apercu { color: #e6edf3; overflow: hidden; text-overflow: ellipsis; }
 .di-circulaire { color: #f0883e; }
 .di-echec { color: #f85149; }
@@ -199,18 +190,23 @@ var _DI_CSS = `
  * Monte l'inspecteur dans `hote` (n'importe quel élément DOM) sur `valeur`. `options` :
  * `titre` (bandeau facultatif) · `ns` (namespace du pli, par défaut 'racine') ·
  * `onWriteRoot(cle, v)` (intercepte l'écriture d'une clé de PREMIER NIVEAU ; retourne `true` si
- * elle a géré l'écriture — sinon repli sur l'affectation directe) · `filtrerRacine(cle)` /
+ * elle a géré l'écriture — sinon repli sur l'affectation directe) · `onWriteDeep(cleRacine)`
+ * (appelée APRÈS une écriture plus profonde, avec la clé de premier niveau d'où elle descend :
+ * sert à prévenir quand la valeur n'a pas de filet réactif, un store) · `filtrerRacine(cle)` /
  * `triRacine(a, b)` (ne s'appliquent qu'au premier niveau — un objet niché montre tout, brut) ·
- * `videTexte` (message quand il n'y a rien à montrer).
+ * `regleRacine(cle)` (texte de la règle d'une clé de premier niveau, affiché après sa valeur ;
+ * `undefined` : rien) · `videTexte` (message quand il n'y a rien à montrer).
  */
 µ._mjs_diRender = function(hote, valeur, options) {
   options = options || {};
   var ns = options.ns || 'racine';
   var titre = options.titre;
   var onWriteRoot = options.onWriteRoot;
+  var onWriteDeep = options.onWriteDeep;
   var filtrerRacine = options.filtrerRacine;
   var triRacine = options.triRacine;
-  var videTexte = options.videTexte || 'aucune valeur';
+  var regleRacine = options.regleRacine;
+  var videTexte = options.videTexte || µ._mjs_txt('dev.inspNoValue', null, 'aucune valeur');
   var ouverts = _diSetOuverts(ns);
   var regs;   // reconstruit à CHAQUE redessin — les fermetures d'un ancien passage ne doivent pas survivre
 
@@ -218,21 +214,23 @@ var _DI_CSS = `
     return ns + JSON.stringify(cheminParentSegs.concat([seg]));
   }
 
-  function rendreEntrees(conteneur, kind, cheminParentSegs, ancetres, profondeur, filtre, tri) {
+  // `racine` : la clé de PREMIER NIVEAU d'où descend ce conteneur — c'est elle qu'`onWriteDeep`
+  // reçoit après une écriture profonde (un store se prévient par sa clé racine)
+  function rendreEntrees(conteneur, kind, cheminParentSegs, ancetres, profondeur, filtre, tri, racine) {
     var res = _diEntries(conteneur, kind);
     var liste = res.entries;
     if (profondeur === 0 && filtre) liste = liste.filter(function(e) { return filtre(e.cle); });
     if (profondeur === 0 && tri) liste = liste.slice().sort(function(a, b) { return tri(a.cle, b.cle); });
-    var html = liste.map(function(e) { return rendreLigne(e, conteneur, kind, cheminParentSegs, ancetres, profondeur); }).join('');
-    if (res.restants > 0) html += '<div class="di-reste">… et ' + res.restants + ' de plus (affichage plafonné à ' + _DI_MAX + ')</div>';
+    var html = liste.map(function(e) { return rendreLigne(e, conteneur, kind, cheminParentSegs, ancetres, profondeur, profondeur === 0 ? e.cle : racine); }).join('');
+    if (res.restants > 0) html += '<div class="di-reste">… ' + µ._mjs_txt('dev.inspMore', { n: res.restants, max: _DI_MAX }, 'et {n} de plus (affichage plafonné à {max})') + '</div>';
     return html;
   }
 
-  function rendreLigne(e, conteneurParent, kindParent, cheminParentSegs, ancetres, profondeur) {
+  function rendreLigne(e, conteneurParent, kindParent, cheminParentSegs, ancetres, profondeur, racine) {
     var indent = 'style="padding-left:' + (0.5 + profondeur * 1.1) + 'rem"';
     if (!e.okGet) {
       return '<div class="di-ligne" ' + indent + '><span class="di-pousse"></span><span class="di-cle">' + µ._esc(e.label) +
-        '</span><span class="di-type">accesseur</span><span class="di-apercu di-echec">⚠ échec : ' + µ._esc(e.errMsg) + '</span></div>';
+        '</span><span class="di-type">' + µ._mjs_txt('dev.inspAccessor', null, 'accesseur') + '</span><span class="di-apercu di-echec">⚠ ' + µ._mjs_txt('dev.inspFailed', null, 'échec :') + ' ' + µ._esc(e.errMsg) + '</span></div>';
     }
     var chem = chemin(cheminParentSegs, e.cheminSeg);
     var vkind = _mjs_diKind(e.valeur);
@@ -250,22 +248,25 @@ var _DI_CSS = `
     var apercu;
     var editable = !expansible && kindParent !== 'set' && _diEditable(vkind);
     if (circulaire) {
-      apercu = '<span class="di-apercu di-circulaire">↺ référence circulaire</span>';
+      apercu = '<span class="di-apercu di-circulaire">↺ ' + µ._mjs_txt('dev.inspCircular', null, 'référence circulaire') + '</span>';
     } else if (editable && vkind === 'boolean') {
-      var idxB = regs.push({ type: 'checkbox', conteneur: conteneurParent, kind: kindParent, cle: e.cle, estRacine: profondeur === 0 }) - 1;
+      var idxB = regs.push({ type: 'checkbox', conteneur: conteneurParent, kind: kindParent, cle: e.cle, estRacine: profondeur === 0, racine: racine }) - 1;
       apercu = '<input type="checkbox" class="di-check" data-di-idx="' + idxB + '"' + (e.valeur ? ' checked' : '') + '>';
     } else if (editable) {
-      var idxI = regs.push({ type: 'input', conteneur: conteneurParent, kind: kindParent, cle: e.cle, valType: vkind, estRacine: profondeur === 0 }) - 1;
+      var idxI = regs.push({ type: 'input', conteneur: conteneurParent, kind: kindParent, cle: e.cle, valType: vkind, estRacine: profondeur === 0, racine: racine }) - 1;
       var val = e.valeur === null ? '' : String(e.valeur);
       apercu = '<input type="text" class="di-valeur" data-di-idx="' + idxI + '" data-di-key="' + µ._esc(e.label) + '" value="' + µ._esc(val) + '">';
     } else {
       apercu = '<span class="di-apercu">' + µ._esc(_mjs_diApercu(e.valeur, vkind)) + '</span>';
     }
+    // la règle d'une variable typée (bloc <vars>) suit sa valeur : `volume  number  50  · int 0..100`
+    var regle = profondeur === 0 && typeof regleRacine === 'function' ? regleRacine(e.cle) : void 0;
+    if (regle) apercu += '<span class="di-regle" title="' + µ._esc(regle) + '">· ' + µ._esc(regle) + '</span>';
     var ligne = '<div class="di-ligne" ' + indent + '>' + chevron + '<span class="di-cle">' + µ._esc(e.label) +
       '</span><span class="di-type">' + vkind + '</span>' + apercu + '</div>';
     if (ouvert) {
       var segs = cheminParentSegs.concat([e.cheminSeg]);
-      ligne += '<div class="di-enfants">' + rendreEntrees(e.valeur, vkind, segs, ancetres.concat([e.valeur]), profondeur + 1, null, null) + '</div>';
+      ligne += '<div class="di-enfants">' + rendreEntrees(e.valeur, vkind, segs, ancetres.concat([e.valeur]), profondeur + 1, null, null, racine) + '</div>';
     }
     return ligne;
   }
@@ -289,6 +290,9 @@ var _DI_CSS = `
         else v = el.value;
         if (reg.estRacine && typeof onWriteRoot === 'function' && onWriteRoot(reg.cle, v)) { dessiner(); return; }
         _diPoser(reg.conteneur, reg.kind, reg.cle, v);
+        // valeur SANS filet réactif (un store : objets bruts, cf. mjs_store_globals) — l'écriture
+        // directe ne prévient personne, l'hôte le fait par la clé racine
+        if (!reg.estRacine && typeof onWriteDeep === 'function') onWriteDeep(reg.racine);
         dessiner();
       });
     });
@@ -299,11 +303,11 @@ var _DI_CSS = `
     var kind = _mjs_diKind(valeur);
     var corps;
     if (!_diExpandable(kind)) {
-      // racine scalaire (ex. µ.devObject(42)) : rien à quoi rattacher une écriture, lecture seule
+      // racine scalaire (ex. `µconsole 42`) : rien à quoi rattacher une écriture, lecture seule
       corps = '<div class="di-arbre"><div class="di-ligne"><span class="di-pousse"></span><span class="di-type">' + kind +
         '</span><span class="di-apercu">' + µ._esc(_mjs_diApercu(valeur, kind)) + '</span></div></div>';
     } else {
-      var html = rendreEntrees(valeur, kind, [], [valeur], 0, filtrerRacine, triRacine);
+      var html = rendreEntrees(valeur, kind, [], [valeur], 0, filtrerRacine, triRacine, undefined);
       corps = '<div class="di-arbre">' + (html || '<p class="di-vide">' + µ._esc(videTexte) + '</p>') + '</div>';
     }
     hote.innerHTML = '<style>' + _DI_CSS + '</style>' + (titre ? '<div class="di-titre">' + µ._esc(titre) + '</div>' : '') + corps;
@@ -313,4 +317,4 @@ var _DI_CSS = `
   dessiner();
 };
 
-if (µ.debug) console.log("🔬 [ModularJS] inspecteur d'objets armé — µ.devObject(valeur), ou depuis le panneau (Ctrl+Shift+Espace)");
+if (µ.debug) console.log('🔬 ' + µ._mjs_msg('dev.inspectArmed', null, 'inspecteur d\'objets armé — µconsole(valeur), ou depuis le panneau (Ctrl+Shift+Espace)'));

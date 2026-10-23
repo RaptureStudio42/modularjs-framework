@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 import { startRenderServer } from '../src/server/render-server.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 after(() => sweepRegistered())
 
@@ -180,6 +181,7 @@ describe('mjs_store_globals (source réelle) — réhydratation de µres depuis 
     const calls: any[] = []
     const warns: any[] = []
     const µ = { _mjs_resSet: (p: any) => calls.push(p), warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     const el = { textContent: JSON.stringify({ name: 'Ada' }) }
     runResBoot(µ, fakeDoc(el))
     assert.deepEqual(calls, [{ name: 'Ada' }])
@@ -190,6 +192,7 @@ describe('mjs_store_globals (source réelle) — réhydratation de µres depuis 
     const calls: any[] = []
     const warns: any[] = []
     const µ = { _mjs_resSet: (p: any) => calls.push(p), warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     runResBoot(µ, fakeDoc(null))
     assert.equal(calls.length, 0)
     assert.equal(warns.length, 0)
@@ -199,6 +202,7 @@ describe('mjs_store_globals (source réelle) — réhydratation de µres depuis 
     const calls: any[] = []
     const warns: any[] = []
     const µ = { _mjs_resSet: (p: any) => calls.push(p), warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     const el = { textContent: '{ pas du json valide' }
     assert.doesNotThrow(() => runResBoot(µ, fakeDoc(el)))
     assert.equal(calls.length, 0)
@@ -209,6 +213,7 @@ describe('mjs_store_globals (source réelle) — réhydratation de µres depuis 
     const calls: any[] = []
     const warns: any[] = []
     const µ = { _mjs_resSet: (p: any) => calls.push(p), warn: (...a: any[]) => warns.push(a) }
+    poserMessages(µ)
     assert.doesNotThrow(() => runResBoot(µ, undefined))
     assert.equal(calls.length, 0)
     assert.equal(warns.length, 0)

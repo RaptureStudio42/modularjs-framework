@@ -11,12 +11,24 @@ const lightHostCssCache = new Map<string, string>()
 // contrôle littéral dans la source (fragile aux diffs/éditeurs)
 const CACHE_KEY_SEP = String.fromCharCode(1)
 
+// fin d'une chaîne entre guillemets ouverte à l'indice `k` (échappements sautés) : indice qui suit le guillemet fermant
+function skipQuoted(css: string, k: number): number {
+  const quote = css[k]
+  while (++k < css.length) {
+    if (css[k] === '\\') k++
+    else if (css[k] === quote) return k + 1
+  }
+  return k
+}
+
 // position de la parenthèse FERMANTE appariée à celle d'indice `open` (parenthèses imbriquées
 // possibles, `:host(:not(.a))` → la bonne, pas la première rencontrée)
 function findParenEnd(css: string, open: number): number {
   let depth = 0
   for (let j = open; j < css.length; j++) {
-    if (css[j] === '(') depth++
+    // une parenthèse dans une chaîne ne compte pas (`:host([title=")"])`), comme au navigateur
+    if (css[j] === '"' || css[j] === '\'') j = skipQuoted(css, j) - 1
+    else if (css[j] === '(') depth++
     else if (css[j] === ')') {
       depth--
       if (depth === 0) return j

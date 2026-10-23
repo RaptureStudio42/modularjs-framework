@@ -9,13 +9,13 @@
 // existant (Rails/Express…) qui délègue le rendu des pages à MJS. Le renderer SSR
 // est créé UNE fois (compile le projet) puis réutilisé à chaque requête.
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { resolveBundlerOpts, type MjsConfig, type RenderMode } from '../bundler/config.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
 import { resolvePage } from './render-routes.js'
 import { urlToFile } from './prerender.js'
-import { isWithinDir, isRealPathWithin } from './render-server.js'
+import { isServableFile } from './render-server.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
 import type { RecordServerFn } from './journal.js'
 // render.forwardOrigin : logique de résolution + garde SSRF dans un module FEUILLE
@@ -302,7 +302,8 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // sortir `file` de `pagesDir`. On ne LIT le fichier prérendu que s'il reste
       // DANS `pagesDir` ; sinon repli résilient (SSR/CSR), jamais de readFileSync
       // hors dossier.
-      if (isWithinDir(pagesDir, file) && existsSync(file) && isRealPathWithin(pagesDir, file)) {
+      // verdict gardé tant que le chemin mène au même fichier inchangé (cf. isServableFile)
+      if (isServableFile(file, pagesDir, null, null, null)) {
         return { kind: 'prerender', status: 200, body: readFileSync(file, 'utf-8'), component: page.component, mode: page.mode, resProps }
       }
       // Fichier absent (build pas encore lancé) ou hors pagesDir → repli résilient : on rend à la volée.

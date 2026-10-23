@@ -30,20 +30,23 @@
   // signature souple : le hash est au MILIEU, donc absent ⇒ `opts` porte la fonction
   if (typeof opts === 'function' && fn == null) { fn = opts; opts = null; }
   if (!comp) {
-    return µ.warn("[ModularJS] µevery doit être appelé à l'initialisation.");
+    return µ.warn(µ._mjs_msg('everyInit', null, 'µevery doit être appelé à l\'initialisation.'));
   }
   if (typeof fn !== 'function' || typeof delay !== 'number' || !(delay >= 0)) {
-    return µ.warn("[ModularJS] µevery s'écrit « µevery 2500, -> » : un délai en millisecondes, puis la fonction à répéter.");
+    return µ.warn(µ._mjs_msg('everySyntax', null, 'µevery s\'écrit « µevery 2500, -> » : un délai en millisecondes, puis la fonction à répéter.'));
   }
+  // au-delà de 2³¹−1 ms (24,8 jours, `Infinity` compris), le navigateur ramène le délai à 0 (Node à 1 ms) : la
+  // fonction tournerait en boucle — le délai est borné à cette limite
+  delay = Math.min(delay, 2147483647);
   if (opts != null && (typeof opts !== 'object' || Array.isArray(opts))) {
-    µ.warn("[ModularJS] µevery : le 2e argument est un hash d'options (« µevery 3000, pause: true, -> ») — reçu :", opts);
+    µ.warn(µ._mjs_msg('everyHash', null, 'µevery : le 2e argument est un hash d\'options (« µevery 3000, pause: true, -> ») — reçu :'), opts);
     opts = null;
   }
   var CLES = ['immediate', 'times', 'while', 'pause', 'onStop'];
   var lire = function(cle, type, defaut) {
     if (opts == null || opts[cle] == null) return defaut;
     if (typeof opts[cle] !== type) {
-      µ.warn('[ModularJS] µevery : option « ' + cle + ' » attendue de type ' + type + ', reçu : ', opts[cle], '— option ignorée.');
+      µ.warn(µ._mjs_msg('everyOptType', { opt: cle, type: type }, 'µevery : option « {opt} » attendue de type {type}, reçu : '), opts[cle], µ._mjs_txt('everyIgnored', null, '— option ignorée.'));
       return defaut;
     }
     return opts[cle];
@@ -51,7 +54,7 @@
   if (opts != null) {
     for (var cle in opts) {
       if (!Object.prototype.hasOwnProperty.call(opts, cle)) continue;   // jamais les clés HÉRITÉES : un objet fabriqué sur un prototype porteur ferait un faux « option inconnue »
-      if (CLES.indexOf(cle) < 0) µ.warn('[ModularJS] µevery : option inconnue « ' + cle + ' ». Options reconnues : ' + CLES.join(', ') + '.');
+      if (CLES.indexOf(cle) < 0) µ.warn(µ._mjs_msg('everyUnknownOpt', { opt: cle, list: CLES.join(', ') }, 'µevery : option inconnue « {opt} ». Options reconnues : {list}.'));
     }
   }
   var immediate = lire('immediate', 'boolean', true);
@@ -60,7 +63,7 @@
   var onStop    = lire('onStop', 'function', null);
   var limite    = lire('times', 'number', null);
   if (limite != null && !(limite >= 0)) {
-    µ.warn('[ModularJS] µevery : option « times » attendue ≥ 0, reçu :', limite, '— option ignorée.');
+    µ.warn(µ._mjs_msg('everyTimes', null, 'µevery : option « times » attendue ≥ 0, reçu :'), limite, µ._mjs_txt('everyIgnored', null, '— option ignorée.'));
     limite = null;
   }
   var id      = null;
@@ -72,7 +75,7 @@
   // sauf sur un composant déjà mort ou crashé, où la frontière n'a plus de sens
   var routeErreur = function(err) {
     if (typeof comp._mjs_catchError === 'function' && !comp._mjs_has_crashed && !comp._mjs_dead) comp._mjs_catchError(err);
-    else µ.warn('[ModularJS] µevery :', err);
+    else µ.warn(µ._mjs_msg('everyError', null, 'µevery :'), err);
   };
   // Un corps ASYNC (`µevery 3000, -> $x = await sonder()`) rend une promesse : le
   // try/catch qui l'entoure est SYNCHRONE et ne voit rien de ce qui rejette APRÈS
@@ -106,7 +109,7 @@
       // s'arrêterait jamais, en silence. On le dit et on arrête.
       if (suite && typeof suite.then === 'function') {
         suite.then(null, function() {});
-        µ.warn("[ModularJS] µevery : l'option « while » doit rendre un booléen SYNCHRONE — une fonction async rend une promesse, toujours vraie, et la répétition ne s'arrêterait jamais. Arrêt.");
+        µ.warn(µ._mjs_msg('everyWhileAsync', null, 'µevery : l\'option « while » doit rendre un booléen SYNCHRONE — une fonction async rend une promesse, toujours vraie, et la répétition ne s\'arrêterait jamais. Arrêt.'));
         return stop();
       }
       if (!suite) return stop();
@@ -116,7 +119,15 @@
     tirs++;                                                     // un tir raté reste un tir : sinon `times: 3` sur une fonction qui jette boucle sans fin
     if (limite != null && tirs >= limite) stop();
   };
+  var enFile = false;                                           // `demarre` attend dans la file du montage
+  var attendre = function() {
+    if (enFile) return;
+    enFile = true;
+    (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(demarre);
+    comp._mjs_pendingMount = true;                              // jamais remis à false ailleurs qu'au tir du montage
+  };
   var demarre = function() {
+    enFile = false;
     if (arrete || comp._mjs_dead) return;                       // détruit entre le setup et le montage : rien à démarrer
     if (limite != null && tirs >= limite) return stop();        // `times: 0`
     if (immediate) tick();
@@ -124,8 +135,20 @@
     id = setInterval(tick, delay);
   };
   // teardown DÉFINITIF (jamais à µsleep) : _mjs_onDestroy est une LISTE, aucun risque
-  // d'écrasement entre deux µevery du même composant
-  comp._mjs_onDestroy(stop);
+  // d'écrasement entre deux µevery du même composant. Un composant détruit peut revenir dans la page
+  // (le cycle de vie rejoue alors µmount) : le timer qui tournait encore repart à ce montage, là où il en
+  // était (`times` continue son compte, `onStop` est déjà parti pour cet arrêt) ; fini ou arrêté par sa
+  // main, il reste arrêté
+  var fin = function() {
+    var tournait = !arrete;
+    stop();
+    if (tournait) {
+      arrete = false; enPause = false;                          // `enPause` levé : la reprise de µawake ne double pas celle du montage
+      comp._mjs_onDestroy(fin);
+      attendre();
+    }
+  };
+  comp._mjs_onDestroy(fin);
   if (pause) {
     // suspension à la déconnexion du DOM — c'est ce qui manquait à l'hibernation du
     // pageCache (page parquée, timer qui continuait de tourner hors écran)
@@ -142,8 +165,7 @@
   if (comp._mjs_mounted) {
     demarre();                                                  // déjà monté (µevery posé depuis un µmount) : la file ne sera plus vidée
   } else {
-    (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(demarre);
-    comp._mjs_pendingMount = true;                              // jamais remis à false ailleurs qu'au tir du montage
+    attendre();
   }
   return stop;                                                  // main d'arrêt : `arreter = µevery 1000, ->` puis `arreter()`
 };

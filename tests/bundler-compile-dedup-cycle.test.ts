@@ -17,11 +17,12 @@
 //      résoudre, puisqu'elle dépend transitivement d'elle-même).
 //
 // Fix : `AsyncLocalStorage` trace la chaîne de résolution en cours (chemin
-// direct, détecté immédiatement, cf. 3ᵉ test) + un filet de sécurité par
-// timeout pour le cas résiduel de 2 fichiers CHACUN indépendamment
-// top-level qui se réfèrent mutuellement — chacun a sa PROPRE chaîne
-// racine, invisible à l'autre (cf. commentaire détaillé sur
-// `compileWithDedup` dans src/bundler/index.ts, et le 4ᵉ test ci-dessous).
+// direct, détecté immédiatement, cf. 3ᵉ test) ; deux fichiers CHACUN
+// indépendamment top-level qui se réfèrent mutuellement (chacun a sa PROPRE
+// chaîne racine, invisible à l'autre) sont vus par le registre des attentes
+// croisées, à l'instant où la boucle se ferme (4ᵉ test). Un filet de sécurité
+// par timeout reste pour tout autre blocage (5ᵉ test) — cf. commentaire détaillé
+// sur `compileWithDedup` dans src/bundler/index.ts.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync } from 'node:fs'
@@ -133,19 +134,18 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     await bundler.close()
   })
 
-  it('cycle entre 2 fichiers .civet TOUS DEUX top-level → filet de sécurité (timeout) déclenché, pas de hang éternel', async function () {
+  it('cycle entre 2 fichiers .civet TOUS DEUX top-level → la boucle est dite aussitôt, sans attendre le filet de sécurité', async function () {
     const { srcDir, outDir, manifest } = makeProject('cycle-toplevel')
     // Contrairement au test précédent, ICI les deux fichiers sont
     // indépendamment top-level (aucun préfixe `_` : `.civet` n'a pas de
     // mécanisme de partial) : le scan principal lance compileScriptModule
     // pour CHACUN séparément, CHACUN avec sa PROPRE chaîne racine — la
-    // détection par chaîne ne voit donc PAS ce cycle (elle ne regarde que
-    // l'historique de la chaîne courante). Seul le filet de sécurité par
-    // timeout de compileWithDedup le rattrape.
+    // détection par chaîne seule ne voit donc PAS ce cycle. La détection par
+    // attentes croisées (qui attend qui) le voit à l'instant où il se ferme.
     writeFileSync(join(srcDir, 'a.civet'), "path = µasset('b.civet')\n")
     writeFileSync(join(srcDir, 'b.civet'), "path = µasset('a.civet')\n")
 
-    // Timeout court pour garder le test rapide (défaut prod : 12000ms).
+    // Délai du filet court : s'il parlait ici, ce serait lui et non la détection.
     const bundler = new Bundler({
       sourceDir: srcDir, outputDir: outDir, manifestPath: manifest,
       dedupWaitTimeoutMs: 300,
@@ -154,11 +154,34 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
 
     assert.ok(stats.errors.length > 0,
       'AVANT le fix (filet de sécurité) : interblocage SILENCIEUX et ÉTERNEL — jamais une erreur, jamais une fin de build')
-    assert.match(
-      stats.errors.map(e => e.message).join('\n'),
-      /bloquée depuis.*probable dépendance circulaire/,
-      `un message de timeout/cycle est attendu. errors:\n${stats.errors.map(e => e.message).join('\n')}`,
-    )
+    const messages = stats.errors.map(e => e.message).join('\n')
+    assert.match(messages, /Cycle @import\/µasset détecté : a\.civet → b\.civet → a\.civet/,
+      `la boucle est nommée. errors:\n${messages}`)
+    assert.doesNotMatch(messages, /bloquée depuis/, 'ce n\'est pas le filet de sécurité qui parle')
+    await bundler.close()
+  })
+
+  it('un blocage qui n\'est pas une boucle (un fichier lent qu\'un autre attend) → le filet de sécurité (timeout) reste déclenché', async function () {
+    const { srcDir, outDir, manifest } = makeProject('filet-lent')
+    // `b.civet` attend `a.civet`, déjà en vol et plus lent que le délai : aucune boucle (a n'importe rien),
+    // donc rien à nommer — seul le délai borne l'attente. `a` finit de lui-même ensuite : la construction se termine.
+    writeFileSync(join(srcDir, 'a.civet'), 'value = 1\n')
+    writeFileSync(join(srcDir, 'b.civet'), "path = µasset('a.civet')\n")
+
+    const bundler = new Bundler({
+      sourceDir: srcDir, outputDir: outDir, manifestPath: manifest,
+      dedupWaitTimeoutMs: 300,
+    })
+    const original = (bundler as any)._compileScriptModuleInner.bind(bundler)
+    ;(bundler as any)._compileScriptModuleInner = (fp: string, ext: string) => fp.endsWith('a.civet')
+      ? new Promise(resolve => setTimeout(() => resolve(original(fp, ext)), 1500))
+      : original(fp, ext)
+    const stats = await bundler.compile()
+
+    const messages = stats.errors.map(e => e.message).join('\n')
+    assert.match(messages, /bloquée depuis.*probable dépendance circulaire/,
+      `un message de timeout est attendu. errors:\n${messages}`)
+    assert.doesNotMatch(messages, /Cycle @import\/µasset détecté/, 'aucune boucle n\'est nommée')
     await bundler.close()
   })
 

@@ -43,10 +43,20 @@
 // MÉLANGE intentions et moves classiques sur la MÊME poignée prédite reste hors-scope v1 (dès qu'un
 // `_ack` est vu une 1re fois, `st.ackVu` bascule à true POUR TOUJOURS — le filet ne se réarme pas).
 
+// range une clé venue des données (état serveur, coup de l'auteur) sur une copie : `__proto__` y reste une clé comme une autre —
+// l'affectation `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+function _mjpredictPut(o, k, v) {
+  if (k === '__proto__') { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); }
+  else { o[k] = v; }
+}
+
+// clé propre, jamais héritée : `k in b` trouvait `constructor` ou `toString` sur le prototype d'une copie qui ne les a plus
+var _mjpredictOwn = Object.prototype.hasOwnProperty;
+
 function _mjpredictDeepClone(v) {
   var out, k;
   if (Array.isArray(v)) { out = []; for (k = 0; k < v.length; k++) { out.push(_mjpredictDeepClone(v[k])); } return out; }
-  if (v && typeof v === 'object') { out = {}; for (k in v) { out[k] = _mjpredictDeepClone(v[k]); } return out; }
+  if (v && typeof v === 'object') { out = {}; for (k in v) { _mjpredictPut(out, k, _mjpredictDeepClone(v[k])); } return out; }
   return v;
 }
 
@@ -58,7 +68,7 @@ function _mjpredictEq(a, b) {
   if (a === b) { return true; }
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') { return a === b; }
   for (k in b) { if (!_mjpredictEq(a[k], b[k])) { return false; } }
-  for (k in a) { if (!(k in b)) { return false; } }
+  for (k in a) { if (!_mjpredictOwn.call(b, k)) { return false; } }
   return true;
 }
 
@@ -68,7 +78,7 @@ function _mjpredictConNumero(p, n) {
   var out, k;
   if (p && typeof p === 'object' && !Array.isArray(p)) {
     out = {};
-    for (k in p) { out[k] = p[k]; }
+    for (k in p) { _mjpredictPut(out, k, p[k]); }
     out._n = n;
     return out;
   }
@@ -134,7 +144,15 @@ function _mjpredictRejouerUn(st, entry) {
     var entry = { name: name, p: p, n: n };
     st.pending.push(entry);
     _mjpredictRejouerUn(st, entry);   // (b) application locale IMMÉDIATE, avant tout aller-retour réseau
-    return moveOriginal.call(game, name, _mjpredictConNumero(p, n));
+    var r = moveOriginal.call(game, name, _mjpredictConNumero(p, n));
+    if (!r || typeof r.then !== 'function') { return r; }
+    // refusé (hors ligne, coupure, refus du jeu) : le serveur ne l'appliquera jamais — la prédiction le retire et
+    // repart de l'état serveur ; l'appelant reçoit le refus tel quel
+    return r.then(null, function(err) {
+      var i = st.pending.indexOf(entry);
+      if (i !== -1) { st.pending.splice(i, 1); _mjpredictRejouer(st); }
+      throw err;
+    });
   };
 
   function onServer(frame) {

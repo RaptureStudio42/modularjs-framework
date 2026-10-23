@@ -12,7 +12,8 @@
 //   3. la couleur choisie dans un groupe s'écrit dans LA ligne de ce groupe, jamais une autre.
 
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { localizeViewerSource } from '../src/server/viewer-page.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHarness } from '../src/testing/index.js'
@@ -43,7 +44,7 @@ function projetTemporaire(): string {
   const root   = mjsTmp('theme-viewer-groupes')
   const srcDir = join(root, 'src')
   mkdirSync(srcDir, { recursive: true })
-  copyFileSync(SOURCE, join(srcDir, 'tst-thgr-atelier.mjs'))
+  writeFileSync(join(srcDir, 'tst-thgr-atelier.mjs'), localizeViewerSource(readFileSync(SOURCE, 'utf-8')))
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js' }, null, 2))
   return root
 }
@@ -118,6 +119,8 @@ describe('theme-viewer.mjs — l\'atelier est rangé par source, et l\'écriture
     await c.fire('.bascule input', 'change')
     assert.ok(c.find('.precision.ecrit'), 'l\'interrupteur « Enregistrer dans le source » doit être allumé')
     await c.type('.groupes section:nth-child(2) input.pastille', '#ff0000')
+    // l'écriture part à la fin du choix (`change`), jamais à chaque `input` d'un glisser
+    await c.fire('.groupes section:nth-child(2) input.pastille', 'change')
     assert.equal(ecritures.length, 1, 'un seul enregistrement, celui de la ligne touchée')
     assert.equal(ecritures[0].name, 'accent')
     assert.equal(ecritures[0].file, 'src/app.theme.mjs')

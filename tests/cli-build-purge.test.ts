@@ -34,7 +34,7 @@ describe('cli.ts — `mjs build` purge les orphelins d\'outputDir', function () 
     assert.doesNotMatch(build1.stdout, /🧹/, 'un 1er build (rien à purger) ne doit rien annoncer')
 
     const avant = readdirSync(join(root, 'out'))
-    const bJs = avant.find(f => /^b-[a-f0-9]{8}\.js$/.test(f))
+    const bJs = avant.find(f => /^b-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(bJs, `attendu un b-<hash>.js après le 1er build, trouvé : ${avant.join(', ')}`)
 
     // renommage : b disparaît — le sinistre mesuré en production
@@ -47,7 +47,7 @@ describe('cli.ts — `mjs build` purge les orphelins d\'outputDir', function () 
 
     const apres = readdirSync(join(root, 'out'))
     assert.ok(!apres.includes(bJs!), 'le b-*.js orphelin doit avoir disparu')
-    assert.ok(apres.some(f => /^a-[a-f0-9]{8}\.js$/.test(f)), 'a doit survivre')
+    assert.ok(apres.some(f => /^a-[0-9a-z]{5}\.js$/.test(f)), 'a doit survivre')
     assert.ok(apres.includes('bundle.js'), 'le manifeste doit survivre')
 
     // "prune": false désactive la purge

@@ -1,15 +1,17 @@
 {
   "name": "modularjs",
   "displayName": "ModularJS",
-  "description": "Coloration syntaxique des composants ModularJS (.mjs) — script Civet, gabarit, table de routes (bloc <routes> et forme calculée @routes), blocs theme et style en SASS (ou le langage de lang=\"…\", côté script comme côté style), symboles $ $$ § µ @.",
-  "version": "1.9.0",
+  "description": "Coloration syntaxique des composants ModularJS (.mjs), complétion et aide au survol des 117 effets — script Civet, gabarit, table de routes (bloc <routes> et forme calculée @routes), types et valeurs permises (blocs <vars> et <types>), blocs theme et style en SASS (ou le langage de lang=\"…\", côté script comme côté style), symboles $ $$ § µ @.",
+  "version": "1.15.0",
   "publisher": "rapturestudio",
   "license": "MIT",
   "categories": ["Programming Languages"],
   "keywords": ["modularjs", "mjs", "civet", "web components", "shadow dom"],
   "repository": { "type": "git", "url": "git+https://github.com/RaptureStudio42/modularjs-framework.git", "directory": "editors/vscode" },
-  "homepage": "https://modularjs.rapturestudio.fr",
+  "homepage": "https://mjs.rapturestudio.fr",
   "engines": { "vscode": "^1.70.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:modularjs"],
   "contributes": {
     "languages": [
       {

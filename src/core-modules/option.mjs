@@ -1,7 +1,7 @@
 <script>
   µeffect =>
     if $value == undefined then @removeAttribute('value') else @setAttribute('value', String($value))
-    if $icon == undefined or $icon == null then @removeAttribute('icon') else @setAttribute('icon', String($icon))
+    if $icon == undefined or $icon == null or typeof $icon == 'object' then @removeAttribute('icon') else @setAttribute('icon', String($icon))
 </script>
 
 <slot></slot>

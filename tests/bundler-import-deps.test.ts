@@ -50,7 +50,7 @@ describe('bundler — invalidation des .mjs qui @import un module .civet', funct
     const findHash = (prefix: string): string => {
       const f = readdirSync(outDir).find((n: string) => n.startsWith(prefix + '-'))
       if (!f) throw new Error(`no compiled file for ${prefix}`)
-      const m = f.match(/-([a-f0-9]+)\.js$/)
+      const m = f.match(/-([0-9a-z]+)\.js$/)
       if (!m) throw new Error(`bad name ${f}`)
       return m[1]
     }

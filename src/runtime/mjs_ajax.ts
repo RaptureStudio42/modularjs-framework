@@ -30,9 +30,19 @@ function _mjajaxMemeOrigine(url) {
   always: function() {}
 };
 
+// les options PROPRES de l'appelant, sans prototype : une option absente vaut l'absence d'option, jamais une valeur posée
+// sur Object.prototype (en-têtes, corps, schéma hérités par chaque requête) ; même règle pour ce que lit fetch(), qui
+// prend aussi les membres hérités de ses options (`credentials`, `mode`, `body`…)
+function _mjajaxPropres(o) {
+  var r = Object.create(null), k;
+  for (k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) { r[k] = o[k]; } }
+  return r;
+}
+
 // Internal Engine (private)
 _request = function(options) {
   var base, base1, fetchOptions, ref, ref1, memeOrigine, controller, timeoutId, failed, schemaRegistre, schemaErr, corpsSchema;
+  options = _mjajaxPropres(options);
   if (options.success == null) {
     options.success = µ.ajax.success;
   }
@@ -65,19 +75,23 @@ _request = function(options) {
       });
     }
   }
-  fetchOptions = {
-    method: options.method,
-    headers: {
-      // JSON préféré, HTML accepté : la navigation ujs récupère des PAGES via
-      // µ.ajax.get — l'ancien `application/json` sec faisait répondre du JSON
-      // (ou un 406) aux backends à content-negotiation (Rails respond_to).
-      'Accept': 'application/json, text/html;q=0.9, */*;q=0.8',
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  };
+  fetchOptions = Object.create(null);
+  fetchOptions.method = options.method;
+  fetchOptions.headers = Object.create(null);
+  // JSON préféré, HTML accepté : la navigation ujs récupère des PAGES via
+  // µ.ajax.get — l'ancien `application/json` sec faisait répondre du JSON
+  // (ou un 406) aux backends à content-negotiation (Rails respond_to).
+  fetchOptions.headers['Accept'] = 'application/json, text/html;q=0.9, */*;q=0.8';
+  // `X-Requested-With` vers l'origine de la page seulement, comme jQuery : vers une autre origine, cet
+  // en-tête non standard force une requête préalable OPTIONS, et une API qui autorise les GET simples
+  // (CORS `*`) sans l'approuver faisait échouer la requête là où un fetch nu passait
+  memeOrigine = _mjajaxMemeOrigine(options.url);
+  if (memeOrigine) {
+    fetchOptions.headers['X-Requested-With'] = 'XMLHttpRequest';
+  }
   if (options.headers) {
     for (var hk in options.headers) {
-      fetchOptions.headers[hk] = options.headers[hk];
+      if (Object.prototype.hasOwnProperty.call(options.headers, hk)) { fetchOptions.headers[hk] = options.headers[hk]; }
     }
   }
   if ((ref = options.method) !== 'GET' && ref !== 'HEAD') {
@@ -89,13 +103,12 @@ _request = function(options) {
     // (clic, formulaire, préchargement) filtre déjà le cross-origin ; l'API directe µ.ajax.post({url:
     // 'https://tiers.example/…'}) ne passait par AUCUN filtre et offrait le jeton de session au tiers
     // (qui n'a qu'à l'autoriser dans son Access-Control-Allow-Headers pour le recevoir)
-    memeOrigine = _mjajaxMemeOrigine(options.url);
     if (µ.csrfToken && memeOrigine) {
       if ((base = fetchOptions.headers)['X-CSRF-Token'] == null) {
         base['X-CSRF-Token'] = µ.csrfToken;
       }
     } else if (µ.csrfToken && !memeOrigine) {
-      µ.warn("[µ.ajax] requête " + options.method + " vers une autre origine (" + options.url + ") : le jeton CSRF de la page n'est PAS envoyé — il n'a de sens que pour l'origine qui l'a émis.");
+      µ.warn('[µ.ajax] ' + µ._mjs_txt('ajaxCrossOrigin', { method: options.method, url: options.url }, 'requête {method} vers une autre origine ({url}) : le jeton CSRF de la page n\'est PAS envoyé — il n\'a de sens que pour l\'origine qui l\'a émis.'));
     }
   }
   // Exclusive serialization
@@ -114,6 +127,10 @@ _request = function(options) {
       // 'application/x-www-form-urlencoded;charset=UTF-8' (le serveur
       // l'accepte via startsWith) — un JSON.stringify ici détruirait le
       // corps (piège identifié : une URLSearchParams stringifiée vaut '{}').
+      fetchOptions.body = options.data;
+    } else if (options.data instanceof Blob || options.data instanceof ArrayBuffer || ArrayBuffer.isView(options.data)) {
+      // fichier ou octets (Blob, File, ArrayBuffer, Uint8Array, DataView…) : partent tels quels, fetch pose
+      // seul le type d'un Blob qui en porte un — JSON.stringify en faisait `{}` ou `{"0":7,"1":8}` en silence
       fetchOptions.body = options.data;
     } else {
       if ((base1 = fetchOptions.headers)['Content-Type'] == null) {
@@ -175,12 +192,18 @@ _request = function(options) {
     // FINALE après tout redirect serveur suivi NATIVEMENT par `fetch`. Sans
     // lui, aucun appelant (mjs_ujs.ts en particulier, PRG des formulaires) ne
     // pouvait détecter qu'une redirection a eu lieu côté serveur.
-    if (response.status === 204 || response.headers.get('content-length') === '0') {
+    // raccourci « pas de corps » réservé aux réponses ok : un 401, 403, 422 ou 500 sans corps (le
+    // `head :forbidden` de Rails) part dans `error` avec son statut, jamais dans `success(null)`
+    if (response.ok && (response.status === 204 || response.headers.get('content-length') === '0')) {
       return { body: null, url: response.url, nav: nav };
     }
     isJson = (ref2 = response.headers.get('content-type')) != null ? ref2.includes('application/json') : void 0;
     if (isJson) {
-      return response.json().then(function(json) {
+      // réponse en erreur : corps lu en texte puis décodé sous garde — annoncée JSON mais illisible (page
+      // HTML d'un proxy, corps vide), elle garde son statut ci-dessous, avec son texte brut pour corps
+      return (response.ok ? response.json() : response.text().then(function(text) {
+        try { return JSON.parse(text); } catch { return text; }
+      })).then(function(json) {
         // `json.error` ne vaut échec QUE sur réponse non-ok : un 200 légitime
         // `{error: [...]}` (payload métier, erreurs de validation listées)
         // partait dans options.error.
@@ -320,14 +343,14 @@ _request = function(options) {
 function _mjajaxRegistre(options) {
   var registre = options.codec || µ._mjs_mjschemaRegistre, noms;
   if (typeof mjschemaEncode !== 'function' || typeof mjschemaDecode !== 'function' || typeof mjschemaHashRegistre !== 'function' || typeof mjschemaChargerDefinitions !== 'function') {
-    throw new Error("[µ.ajax.binary] option 'schema' utilisée sans le module runtime 'schema' chargé — µschema-HTTP a besoin de son codec (µ.schema/µ.list/µ.bits, cf. docs/23-mjs-ws.md §3.2). Ajoute 'schema' à la sélection runtime (mjs.config.json), ou passe un registre tout fait via options.codec.");
+    throw new Error('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinNoSchemaModule', null, 'option \'schema\' utilisée sans le module runtime \'schema\' chargé — µschema-HTTP a besoin de son codec (µ.schema/µ.list/µ.bits, cf. docs/23-mjs-ws.md §3.2). Ajoutez \'schema\' à la sélection runtime (mjs.config.json), ou passez un registre tout fait via options.codec.'));
   }
   if (!registre) {
-    throw new Error("[µ.ajax.binary] aucun registre disponible — déclare au moins un schéma via µ.schema(...) avant d'appeler µ.ajax.binary(url, { schema: '" + options.schema + "' }), ou passe options.codec.");
+    throw new Error('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinNoRegistry', { schema: options.schema }, 'aucun registre disponible — déclarez au moins un schéma via µ.schema(...) avant d\'appeler µ.ajax.binary(url, { schema: \'{schema}\' }), ou passez options.codec.'));
   }
   if (!registre.parNom || !registre.parNom.has(options.schema)) {
     noms = registre.parNom ? Array.from(registre.parNom.keys()).join(', ') : '';
-    throw new Error("[µ.ajax.binary] schéma inconnu '" + options.schema + "' — schémas déclarés dans ce registre : " + (noms || '(aucun)'));
+    throw new Error('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinUnknownSchema', { schema: options.schema, names: (noms || µ._mjs_txt('ajaxBinNoneDeclared', null, '(aucun)')) }, 'schéma inconnu \'{schema}\' — schémas déclarés dans ce registre : {names}'));
   }
   return registre;
 }
@@ -351,9 +374,12 @@ function _mjajaxLireVersion(bytes) {
 // { hash, schemas: [...] } — la MÊME que la trame µ:schema côté WS (cf. mjs_schema.ts,
 // mjschemaChargerDefinitions).
 function _mjajaxRafraichirSchema(options) {
-  var url = options.schemaUrl || (options.url + (options.url.indexOf('?') === -1 ? '?' : '&') + 'schema=1');
-  return fetch(url, { headers: { 'Accept': 'application/json' } }).then(function(r) {
-    if (!r.ok) { throw new Error('[µ.ajax.binary] rafraîchissement du schéma en échec (' + url + ') : HTTP ' + r.status); }
+  var url  = options.schemaUrl || (options.url + (options.url.indexOf('?') === -1 ? '?' : '&') + 'schema=1');
+  // réglages sans prototype : fetch() lit aussi les membres hérités (credentials, mode, method…)
+  var init = Object.create(null);
+  init.headers = { 'Accept': 'application/json' };
+  return fetch(url, init).then(function(r) {
+    if (!r.ok) { throw new Error('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinRefreshFailed', { url: url, status: r.status }, 'rafraîchissement du schéma en échec ({url}) : HTTP {status}')); }
     return r.json();
   }).then(function(json) {
     var registreFrais = mjschemaChargerDefinitions(json);
@@ -365,7 +391,7 @@ function _mjajaxRafraichirSchema(options) {
 function _mjajaxDecoderAvecRafraichissement(registre, bytes, options) {
   var version, hashLocal, charge;
   if (bytes.byteLength < 8) {
-    return Promise.reject(new Error('[µ.ajax.binary] réponse trop courte pour porter une version de schéma (8 octets attendus, ' + bytes.byteLength + ' reçus)'));
+    return Promise.reject(new Error('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinTooShort', { size: bytes.byteLength }, 'réponse trop courte pour porter une version de schéma (8 octets attendus, {size} reçus)')));
   }
   version = _mjajaxLireVersion(bytes);
   charge = bytes.subarray(8);
@@ -376,7 +402,7 @@ function _mjajaxDecoderAvecRafraichissement(registre, bytes, options) {
   }
   // désaccord de version — mise à jour à chaud (cf. tête de section) : la requête d'origine n'échoue
   // pas, elle ATTEND le rafraîchissement puis re-décode la MÊME charge déjà reçue.
-  µ.warn('[µ.ajax.binary] version de schéma différente (client ' + hashLocal + ', serveur ' + version + ') — rafraîchissement en arrière-plan');
+  µ.warn('[µ.ajax.binary] ' + µ._mjs_txt('ajaxBinVersionDiff', { hashLocal: hashLocal, version: version }, 'version de schéma différente (client {hashLocal}, serveur {version}) — rafraîchissement en arrière-plan'));
   return _mjajaxRafraichirSchema(options).then(function(registreFrais) {
     return mjschemaDecode(registreFrais, charge);
   });
@@ -496,8 +522,9 @@ function _mjajaxRepondreSchema(response, registre, options) {
 // (nom, obligatoire pour activer le binaire) / codec (registre optionnel) / schemaUrl (endpoint de
 // rafraîchissement optionnel).
 µ.ajax.binary = function(url, options) {
-  options = options || {};
-  options.url = url;
+  // copie : l'objet de l'appelant reste intact (url, méthode devinée, rappels par défaut), réutilisé il
+  // ne garde plus la méthode devinée au premier appel
+  options = Object.assign({}, options, { url: url });
   if (options.method == null) {
     options.method = options.data ? 'POST' : 'GET';
   }

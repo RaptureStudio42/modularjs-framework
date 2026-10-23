@@ -127,7 +127,7 @@ describe('mjs_router.ts — instCache borné en LRU (hibernation sans borne)', f
     µ.Router._mjs_injectView(comp, 'slot1', 'page-a', '/a-again')
     const restoredEl = view.firstElementChild
 
-    assert.equal(restoredEl, firstEl, "la MÊME instance DOM doit être restaurée depuis le cache (pas recréée)")
+    assert.ok(restoredEl === firstEl, "la MÊME instance DOM doit être restaurée depuis le cache (pas recréée)")
     win.close?.()
   })
 })

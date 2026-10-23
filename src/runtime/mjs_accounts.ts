@@ -36,8 +36,8 @@
 // (`identity` sans `id`) à un compte (`id` généré) EST un changement d'id — TOUJOURS `refresh-
 // denied`, quel que soit le jeton. Un hello FRAIS (nouvelle connexion), en revanche, n'a AUCUNE
 // identité antérieure à comparer : `_compteElever` ci-dessous pose `sock.opts.auth` pour qu'il
-// renvoie le jeton, puis force une RECONNEXION contrôlée (`close()` + `connect()`, MÊME socket,
-// MÊME salons/abonnements réabonnés automatiquement par le welcome suivant, cf. mjs_socket.ts) —
+// renvoie le jeton, puis force une RECONNEXION contrôlée (`_mjs_reopen()`, MÊME socket, MÊME salons/abonnements
+// réabonnés automatiquement par le welcome suivant, file hors ligne et requêtes en attente gardées, cf. mjs_socket.ts) —
 // c'est CE hello, tout neuf, qui devient authentifié. Après élévation, `opts.auth` reste posé sur
 // ce jeton : une reconnexion FUTURE (coupure réseau) le réutilise automatiquement, SANS repasser
 // par ce module — `deconnecter()` restaure l'`auth` d'ORIGINE (cf. plus bas), pour qu'une
@@ -136,26 +136,37 @@ if (typeof MjsSocket !== 'undefined') {
     h._mjs_sock.opts.auth = h._mjs_originalAuth;
   }
 
+  // création ou connexion d'un compte : elle vaut pour toute identité. Lancée pendant l'essai d'un jeton que le serveur
+  // refuse, elle n'est jamais partie (rejet `denied`, cf. mjs_socket.ts::_mjs_onDenied) : elle repart sur la connexion
+  // invitée que rouvre le denied persistant (cf. _mjs_ensureAccountWiring) — sauf si rien ne se rouvre (close() de l'appli,
+  // refus qui ne vise pas le jeton du compte), où le refus reste sa réponse
+  function _accountAsk(self, type, payload) {
+    return self.request(type, payload, { waitForOpen: true }).catch(function(err) {
+      if (err && err.code === 'denied' && !self._mjs_abandoned) { return self.request(type, payload, { waitForOpen: true }); }
+      throw err;
+    });
+  }
+
   // Élève la connexion via une RECONNEXION CONTRÔLÉE (cf. tête de fichier « ÉLÉVATION » pour le
   // POURQUOI — sock.refresh() est structurellement incapable de changer identity.id). Pose
-  // `opts.auth` sur le jeton, ferme la connexion courante SI besoin (`close()` est un no-op sûr sur
-  // un socket jamais encore connecté — `_mjs_ws` est déjà `null`), puis `connect()` : le welcome SUIVANT
-  // porte la nouvelle identité (mjs_socket.ts réabonne salons/flux automatiquement, cf. hello()).
+  // `opts.auth` sur le jeton, puis repart sur un fil neuf (`_mjs_reopen()`, sûr sur un socket jamais encore connecté) :
+  // le welcome SUIVANT porte la nouvelle identité (mjs_socket.ts réabonne salons/flux automatiquement, cf. hello()) ;
+  // contrairement à close(), ni la file hors ligne ni les requêtes qui attendent l'ouverture (chat:me, lobby:enter
+  // d'un salon ou d'un hall ouverts avant le premier accès à sock.account) ne sont perdues.
   // Résolue au PROCHAIN 'welcome'. ÉCHEC (jeton expiré/invalide → µ:denied, cf. mjs-ws/core.ts::
-  // sendDeniedAndClose) : mjs_socket.ts dispatche bien un événement 'denied' réservé (cf.
-  // _mjs_onDenied), mais une sonde COURTE (25 ms) sur l'état 'closed' reste plus directe qu'un
-  // abonnement dédié — une seule mécanique couvre aussi bien µ:denied qu'une fermeture réseau
-  // rapide sans trame applicative : sans elle, un refus mettrait `MJS_ACCOUNT_ELEVATION_TIMEOUT_MS`
-  // (5 s) à se signaler alors qu'un aller-retour réseau réel est quasi instantané, MÊME classe de
-  // latence qu'un welcome.
+  // sendDeniedAndClose) : rejetée à l'événement 'denied' (cf. _mjs_onDenied) — le denied persistant
+  // de _mjs_ensureAccountWiring a déjà effacé le jeton et fait repartir la connexion en invité. Une
+  // fermeture SANS refus (close() de l'appli, essais épuisés, adieu du serveur) n'est pas un refus :
+  // la sonde courte (25 ms) sur l'état 'closed' règle seulement la promesse, sans rien effacer — le
+  // jeton reste celui de la connexion, un connect() de l'appli le reprend. Le filet de temps (5 s)
+  // non plus : un accueil lent n'est pas un refus, le welcome persistant appliquera encore le jeton.
   function _accountElevate(h, token) {
     var self = h._mjs_sock;
     self.opts.auth = function() { return token; };
     // jeton en cours d'élévation — tout welcome AUTHENTIFIÉ ultérieur (même arrivé après le rejet
     // de CETTE promesse, cf. surWelcome/wiring persistant dans _mjs_ensureAccountWiring) remet
-    // compte.state en accord avec la connexion réelle. Effacé par _accountForget (déconnexion) ou
-    // par un refus EXPLICITE ci-dessous (sondeur) — jamais par le filet timeout, qui ne prouve rien
-    // (le réseau peut encore aboutir plus tard avec ce même jeton, cf. tête de fonction).
+    // compte.state en accord avec la connexion réelle. Effacé par _accountForget (déconnexion, ou
+    // refus EXPLICITE du serveur) — jamais par la sonde ni par le filet de temps, qui ne prouvent rien.
     h._mjs_authToken = token;
     return new Promise(function(resolve, reject) {
       var reglee = false;
@@ -164,6 +175,7 @@ if (typeof MjsSocket !== 'undefined') {
         clearTimeout(minuteur);
         clearInterval(sondeur);
         self.off('welcome', surWelcome);
+        self.off('denied', surRefus);
       }
       function surWelcome() {
         // jeton PÉRIMÉ (logout()/nouvelle élévation entre-temps, cf. _accountForget/_accountElevate) :
@@ -175,17 +187,19 @@ if (typeof MjsSocket !== 'undefined') {
         _accountApply(h, token);
         resolve();
       }
+      function surRefus(p) {
+        if (reglee) { return; }
+        reglee = true;
+        fini();
+        reject(p || { code: 'account-elevation-echec', message: 'connexion refusée' });
+      }
       self.on('welcome', surWelcome);
+      self.on('denied', surRefus);
       sondeur = setInterval(function() {
         if (reglee || self.state !== 'closed') { return; }
         reglee = true;
         fini();
-        // fermeture rapide = refus EXPLICITE (µ:denied, cf. tête de fonction) : le jeton ne vaut
-        // plus rien, on restaure l'auth d'origine — sans quoi une reconnexion future (coupure
-        // réseau, cf. mjs_socket.ts) retenterait cette identité déjà refusée.
-        h._mjs_authToken = null;
-        self.opts.auth = h._mjs_originalAuth;
-        reject(self.lastError || { code: 'account-elevation-echec', message: 'connexion refusée' });
+        reject(self.lastError || { code: 'account-elevation-echec', message: 'connexion fermée' });
       }, MJS_ACCOUNT_ELEVATION_PROBE_MS);
       minuteur = setTimeout(function() {
         if (reglee) { return; }
@@ -193,8 +207,7 @@ if (typeof MjsSocket !== 'undefined') {
         fini();
         reject(self.lastError || { code: 'account-elevation-echec', message: 'aucune réponse du serveur' });
       }, MJS_ACCOUNT_ELEVATION_TIMEOUT_MS);
-      self.close();     // no-op sûr si jamais connecté (cf. mjs_socket.ts::close, _mjs_ws déjà null)
-      self.connect();
+      self._mjs_reopen();
     });
   }
 
@@ -232,8 +245,17 @@ if (typeof MjsSocket !== 'undefined') {
     // MÊME TEMPS que l'auth : même remise à zéro complète que logout() (_accountForget, y compris le
     // jeton persisté en storage). Gardé par `h._mjs_authToken` comme avant : un refus qui ne vise pas
     // le jeton en cours (déjà nul, ex. connexion jamais élevée) ne touche à rien.
+    // Puis la connexion repart en invité, au rechargement comme page ouverte (jeton expiré, secret
+    // changé) : le temps réel ne s'éteint pas avec le jeton et login() reste possible — la file hors
+    // ligne de l'identité refusée est déjà vidée et ses requêtes qui attendaient l'ouverture rejetées
+    // `denied` (cf. mjs_socket.ts::_mjs_onDenied), une création ou une connexion de compte en attente
+    // repart sur cette connexion invitée (cf. _accountAsk), et un close() de l'appli gagne toujours
+    // (_mjs_reopen ne rouvre jamais ce qu'elle a fermé).
     self.on('denied', function(p) {
-      if (h._mjs_authToken) { _accountForget(h); h.state.error = _accountErrorText(p || 'denied'); }
+      if (!h._mjs_authToken) { return; }
+      _accountForget(h);
+      h.state.error = _accountErrorText(p || 'denied');
+      self._mjs_reopen();
     });
 
     // creer()/connecter() peuvent échouer à DEUX endroits distincts — la requête account:create/
@@ -243,13 +265,13 @@ if (typeof MjsSocket !== 'undefined') {
     // mjs_socket.ts) — un SEUL `.catch` capture les deux, `.erreur` reste TOUJOURS une chaîne
     // affichable telle quelle (`{if compte.erreur}{compte.erreur}{end}`, cf. tête de fichier).
     state.create = function(name, secret) {
-      return self.request('account:create', { name: name, secret: secret }, { waitForOpen: true })
+      return _accountAsk(self, 'account:create', { name: name, secret: secret })
         .then(function(res) { return _accountElevate(h, res.token); })
         .catch(function(err) { state.error = _accountErrorText(err); throw err; });
     };
 
     state.login = function(name, secret) {
-      return self.request('account:login', { name: name, secret: secret }, { waitForOpen: true })
+      return _accountAsk(self, 'account:login', { name: name, secret: secret })
         .then(function(res) { return _accountElevate(h, res.token); })
         .catch(function(err) { state.error = _accountErrorText(err); throw err; });
     };
@@ -269,12 +291,12 @@ if (typeof MjsSocket !== 'undefined') {
     // l'appli, cf. tête de fichier « reconnexion connectée d'office ») : un jeton ABSENT ne
     // déclenche RIEN (zéro coût, MÊME opt-in strict que le reste de MJS-WS). Un jeton mort
     // (expiré/révoqué) est purgé — évite de retenter indéfiniment un jeton mort au prochain accès.
+    // Seul un refus du serveur l'efface (denied persistant ci-dessus, qui fait repartir la page en
+    // invité) : un accueil plus lent que le filet de temps ou un close() de l'appli ne prouvent rien
+    // contre lui, le rejet de l'élévation est alors sans suite.
     var stocke = _accountRead(key);
     if (stocke) {
-      _accountElevate(h, stocke).then(
-        function() {},
-        function(err) { _accountForget(h); state.error = _accountErrorText(err); }
-      );
+      _accountElevate(h, stocke).catch(function() {});
     }
   };
 

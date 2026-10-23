@@ -83,7 +83,7 @@ describe('mjs.config.json — clé `languages` (résolution + rétrocompat defau
 
   it('(f) defaultScriptLang et languages.script posés DIFFÉRENTS → throw (garde une seule des deux clés)', () => {
     const root = writeConfig({ defaultScriptLang: 'civet', languages: { script: 'ts' } })
-    assert.throws(() => findConfig(root), /garde une seule des deux clés/)
+    assert.throws(() => findConfig(root), /gardez une seule des deux clés/)
   })
 
   it('(g) sous-clé inconnue dans languages → throw avec la liste des clés admises', () => {

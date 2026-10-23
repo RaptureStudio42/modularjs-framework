@@ -94,7 +94,7 @@ describe('sucre µurl & co — globales framework en forme courte', function () 
     })
 
     it('µmount non pointé (pipeline complet → _mjs_hook)', () => {
-      assert.equal(tokenize(applyMjsSugarToScript('µmount ->')), "this._mjs_hook 'mount', ->")
+      assert.equal(tokenize(applyMjsSugarToScript('µmount ->')), "_mjsThis._mjs_hook 'mount', ->")
     })
 
     it('µurlChange non pointé, µurl toujours routé (µ.url)', () => {

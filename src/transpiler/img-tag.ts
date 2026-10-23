@@ -1,4 +1,4 @@
-// transpiler/img-tag — `<@img src="hero.jpg">`
+// transpiler/img-tag — `<@@img src="hero.jpg">`
 // résolu au build par la MÊME mécanique que `µimage('hero.jpg')` (cf. bundler/index.ts,
 // preResolveAssets). Ce module ne fait QUE le repérage/la réécriture TEXTE de la balise —
 // aucun accès disque ici (seul le bundler l'a, via resolveOneImage) et aucun import de
@@ -83,7 +83,7 @@ function scanTemplateLiteral(raw: string, openIdx: number): number {
   return -1
 }
 
-// parseAttrs — découpe le texte ENTRE `<@img` et le `>`/`/>` fermant en attributs.
+// parseAttrs — découpe le texte ENTRE `<@@img` et le `>`/`/>` fermant en attributs.
 // Profondeur `{`/`}` suivie pour les valeurs accolades (`name={ {a:1} }`), guillemet
 // respecté pour les valeurs `"…"`/`'…'` — même esprit que `findMacroTagEnd`, à l'échelle
 // d'un seul attribut plutôt que de la balise entière.
@@ -162,19 +162,19 @@ function parseAttrs(raw: string): ImgTagAttr[] {
   return attrs
 }
 
-// scanImgTags — repère chaque `<@img …>` littéral d'un texte (déjà masqué par
+// scanImgTags — repère chaque `<@@img …>` littéral d'un texte (déjà masqué par
 // maskCodeBlocks côté bundler, pour qu'un exemple affiché dans <pre>/<code> ne matche
-// jamais). Limite de mot (`<@imgx` n'est pas une balise), fin réelle via findMacroTagEnd
+// jamais). Limite de mot (`<@@imgx` n'est pas une balise), fin réelle via findMacroTagEnd
 // (accolades/guillemets suivis) — jamais le premier `>` textuel. `src` n'est candidat que
 // s'il est entre guillemets et sans `{` dans la valeur (une valeur à accolade est une
 // interpolation pour le pipeline d'attributs, jamais un chemin littéral).
 // CASSE IGNORÉE : la résolution de module (resolveTagShortcuts) et le
-// lint a11y sont insensibles à la casse — un scan sensible laissait `<@IMG src="absent.png">`
+// lint a11y sont insensibles à la casse — un scan sensible laissait `<@@IMG src="absent.png">`
 // traverser tout le build sans un mot. Le nom écrit est conservé (`tagOpen`) : la balise
-// ressort telle que l'auteur l'a tapée, sa fermeture `</@IMG>` reste appariée.
+// ressort telle que l'auteur l'a tapée, sa fermeture `</@@IMG>` reste appariée.
 export function scanImgTags(text: string): ImgTag[] {
   const tags: ImgTag[] = []
-  for (const m of text.matchAll(/<@img\b/gi)) {
+  for (const m of text.matchAll(/<@@img\b/gi)) {
     const afterName = m.index! + m[0].length
     const tagEnd = findMacroTagEnd(text, afterName)
     if (tagEnd === -1) continue   // jamais refermée : hors périmètre de ce scan, signalé ailleurs

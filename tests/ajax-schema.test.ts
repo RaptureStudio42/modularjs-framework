@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { creerRegistre, defSchema, encode as coreEncode, hashRegistre, serialiserDefinitions, list, bits } from '../src/schema/core.js'
 import type { MjschemaFields } from '../src/schema/core.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC   = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
@@ -18,7 +19,9 @@ const SCHEMA_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_sch
 const CLIENT_SRC = AJAX_SRC + '\n' + SCHEMA_SRC
 
 function makeMu(): any {
-  return { log() {}, warn() {}, error() {} }
+  const µ: any = { log() {}, warn() {}, error() {} }
+  poserMessages(µ)
+  return µ
 }
 const fakeDocument = { querySelector: () => null }
 

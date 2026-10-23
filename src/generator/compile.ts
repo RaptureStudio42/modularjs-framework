@@ -9,29 +9,33 @@
 //     centralisés dans `ctx.updates` et seront placés par le transpiler dans
 //     `_mjs_renderStruct` (exécuté à chaque mutation — coût marginal).
 
-import { parse, Node } from '../parser/index.js'
+import { parse, pileDebordee, Node } from '../parser/index.js'
 import type { TagRef } from '../parser/index.js'
 import { state, reset, getEffectVars, registerEffect } from './state.js'
 import type { EventRoute } from './state.js'
-import { cleanJsExpr } from './utils.js'
-import { dispatchAttribute, SELECT_VALUE_DEFER_PREFIX, type AttrCtx } from './attributes/index.js'
-import { generateCreateFnBody, SVG_NS, MATH_NS } from './paths.js'
+import { cleanJsExpr, freeIdentifiers, decodeHtmlEntities } from './utils.js'
+import { dispatchAttribute, detectFilteredPattern, isRawExpr, texteDeBranche, suiviDeBloc, brancheCourante, MJS_BOOLEAN_PROPS, SELECT_VALUE_DEFER_PREFIX, type AttrCtx } from './attributes/index.js'
+import { generateCreateFnBody, SVG_NS, MATH_NS, marqueLigne, retenirLignesRacine } from './paths.js'
+import { finExpression } from '../sigils.js'
 import { t } from '../messages/index.js'
+import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 
 const VOID_TAGS = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
                    'link', 'meta', 'param', 'source', 'track', 'wbr']
 
-const MJS_BOOLEAN_PROPS = ['value', 'checked', 'disabled', 'open', 'readonly',
-                            'required', 'selected', 'hidden', 'multiple',
-                            'autofocus', 'muted', 'autoplay', 'loop', 'controls']
+// balises dont le contenu est du texte brut pour le navigateur (aucune balise n'y est analysée)
+const TEXTE_BRUT = new Set(['textarea', 'title', 'style', 'script'])
 
-const SPECIAL_ATTR_PREFIXES = ['@transition', '@in', '@out', '@intro', '@outro',
-                                '@attach', '@this', '@class', '@style', '@flip',
-                                '@childtransition', '@html', '@text', '@group']
+// noms exacts des directives, suivis au plus d'un modificateur (`@in.global`, `@style.color`,
+// `@class{…}`) : `@input`, `@invalid`, `@transitionend`, `@outcome` restent des événements, dont
+// la ligne de {for} doit être posée sur la balise
+const SPECIAL_ATTR_NAMES = ['@transition', '@in', '@out', '@introstart', '@introend', '@outrostart', '@outroend',
+                            '@attach', '@this', '@class', '@style', '@flip',
+                            '@childtransition', '@html', '@text', '@group']
 
 function isSpecialAttr(name: string | null | undefined): boolean {
   if (!name) return false
-  return SPECIAL_ATTR_PREFIXES.some((p) => name.startsWith(p))
+  return SPECIAL_ATTR_NAMES.some((p) => name === p || (name.startsWith(p) && /^[.{]/.test(name.slice(p.length))))
 }
 
 // Optim #5 — Helpers pour la closure des refs.
@@ -100,7 +104,7 @@ function extractRefsForClosure(code: string, baseRefIds?: string[]): { refIds: s
   // ouvrant et on laisse le `}` final tel quel — le `if` disparaît seulement,
   // le bloc reste.
   transformedBody = transformedBody.replace(
-    /(const\s+(n[a-zA-Z0-9_$]+)\s*=\s*_nref_[a-zA-Z0-9_$]+;\s*)if\s*\(\s*\2\s*\)\s*\{/g,
+    /(const\s+(_mjs_n[a-zA-Z0-9_$]+)\s*=\s*_nref_[a-zA-Z0-9_$]+;\s*)if\s*\(\s*\2\s*\)\s*\{/g,
     '$1{'
   )
   return { refIds: Array.from(found), transformedBody }
@@ -147,10 +151,24 @@ interface Ctx {
   portee: PorteeEntree[]
   /** namespace SVG/MathML ambiant, posé par
    * `compileTag` en entrant dans `<svg>`/`<math>`, hérité par tout le
-   * sous-arbre (relais nécessaire à `compileAwait` : le contenu d'une branche
-   * `{await}` est compilé en fragment SÉPARÉ, sans jamais voir la balise
-   * `<svg>` englobante — cf. son commentaire). */
+   * sous-arbre, boucles comprises (relais nécessaire aux blocs : le contenu d'un `{for}`, d'un
+   * `{if}`, d'un `{key}` ou d'une branche `{await}` est compilé en fragment SÉPARÉ, sans jamais
+   * voir la balise `<svg>` englobante — cf. GenerateCreateFnBodyOpts.foreignNsRoot). */
   svgNs?: string | null
+  /** dans un `<svg>`/`<math>` (hors `<foreignObject>`), boucles comprises : un effet `*nom`
+   * n'y est pas permis */
+  foreign?: boolean
+  /** corps d'une branche `{if}` ou d'un `{key}` de racine : son type reste `root`, mais ses ancres
+   * peuvent être recréées d'un rendu à l'autre (un `{for}` n'y est jamais gardé par ses variables) ;
+   * dans une branche `{await}`, le corps d'un `{if}` ou d'un `{key}` de la branche : son type reste `await`,
+   * et un changement de choix le refait sans rendu complet derrière lui (cf. suiviDeBloc) */
+  enBloc?: boolean
+  /** dans une branche `{await}`, attente et branche sans nom comprises (ce que `portee` ne dit pas) : l'id du bloc, clé de son état dans `_mjs_awaitLastRender`, et l'état
+   * qui dit que CETTE branche est celle qui est affichée (cf. brancheCourante, attributes/index.ts) */
+  branche?: { id: string; etat: 'pending' | 'success' | 'error' }
+  /** dans le contenu d'une balise de texte brut (`<textarea>`, `<title>` HTML, `<style>`, `<script>`) d'une branche `{await}` : le navigateur n'y analyse aucune balise, un
+   * marqueur de nœud texte y serait écrit tel quel ; le texte y reste calculé une fois */
+  texteBrut?: boolean
 }
 
 /** Nom que le gabarit met en portée, dans l'ordre du gabarit : un `{for}` (variable et index), un
@@ -173,11 +191,66 @@ export interface LoopInfo {
   /** Nom de l'attribut-clé de la loop (`by X` → 'X'), ou null si non keyée.
    * Sert au cacheId STABLE des loops imbriquées (#1). */
   key: string | null
+  /** Place de chaque balise `@flip` du gabarit de la ligne, quand il y a plusieurs places (cf. `placesFlip`) */
+  flipPlaces?: Map<Node, number>
 }
 
 // ============================================================================
 // preprocess
 // ============================================================================
+// l'accolade fermante de l'expression `{…}` qui ouvre en `debut`, ou -1 : lecture commune (finExpression), qui sait les chaînes,
+// les gabarits, les commentaires et les regex — un guillemet ou une accolade d'une regex (`{$s.replace(/"/g, '').length > 0}`)
+// ouvrait une chaîne fantôme, et la balise se coupait au `>` de la comparaison
+function finAccolade(html: string, debut: number): number {
+  const fin = finExpression(html, debut)
+  return fin < 0 ? -1 : fin - 1
+}
+
+// le `>` qui ferme la balise ouverte avant `depuis`, en sautant les valeurs entre guillemets et les expressions `{…}` ; une accolade jamais
+// refermée rend le premier `>` qui la suit, comme la lecture d'avant
+function finDeBalise(html: string, depuis: number): number {
+  let i = depuis
+  while (i < html.length) {
+    const ch = html[i]
+    if (ch === '"' || ch === "'") {
+      const j = html.indexOf(ch, i + 1)
+      if (j === -1) return -1
+      i = j + 1
+      continue
+    }
+    if (ch === '{') {
+      const j = finAccolade(html, i)
+      if (j === -1) return html.indexOf('>', i)
+      i = j + 1
+      continue
+    }
+    if (ch === '>') return i
+    i++
+  }
+  return -1
+}
+
+/** Composants auto-fermés : `<mjs-x … />` → `<mjs-x …></mjs-x>`. La balise se termine au vrai `/>` : un `>` dans une valeur entre guillemets ou
+ * dans une expression (`<mjs-x v={$n > 1} />`) ne la coupe plus — le composant était refusé pour un « déséquilibre structurel », et le message
+ * proposait d'écrire exactement ce qui était écrit. Partagé par le transpileur (preprocessHtml) et le générateur (preprocess). */
+export function fermerComposantsAutoFermes(html: string): string {
+  const ouverture = /<(mjs-[a-zA-Z0-9_-]+)/g
+  let sortie = ''
+  let depuis = 0
+  let m: RegExpExecArray | null
+  while ((m = ouverture.exec(html)) !== null) {
+    const debut = m.index + m[0].length
+    const fin   = finDeBalise(html, debut)
+    if (fin === -1) continue
+    const corps = html.slice(debut, fin)
+    if (!corps.endsWith('/')) continue
+    sortie += html.slice(depuis, m.index) + `<${m[1]}${corps.slice(0, -1)}></${m[1]}>`
+    depuis = fin + 1
+    ouverture.lastIndex = fin + 1
+  }
+  return sortie + html.slice(depuis)
+}
+
 export function preprocess(htmlRaw: string): string {
   // 1. <@view name [css="..."] [data-mjs-vt="..."] [data-mjs-vt-p="..."]> → <metamjs-view id="name" css="..." data-mjs-vt="..." data-mjs-vt-p="..."></metamjs-view>
   let result = htmlRaw.replace(
@@ -204,17 +277,13 @@ export function preprocess(htmlRaw: string): string {
   // et simplement par-dessus tout `{name}` qu'elle contient ; seul un
   // `{name}` RÉELLEMENT hors de toute valeur quotée atteint l'alternative de
   // raccourci.
-  result = result.replace(/<([a-zA-Z0-9_-]+)([^>]*)>/g, (_match, tagName, rawAttrs) => {
-    let attrs = rawAttrs.replace(
+  // composants auto-fermés d'abord (fermerComposantsAutoFermes) : la regex des balises ci-dessous s'arrête au premier `>`, celui d'une expression compris
+  result = fermerComposantsAutoFermes(result).replace(/<([a-zA-Z0-9_-]+)([^>]*)>/g, (_match, tagName, rawAttrs) => {
+    const attrs = rawAttrs.replace(
       /"[^"]*"|'[^']*'|(?<=\s)\{(\$?)([a-zA-Z_][a-zA-Z0-9_]*)\}(?=\s|\/|$)/g,
       (m: string, dollar: string | undefined, name: string | undefined) =>
         name === undefined ? m : `${name}="{${dollar}${name}}"`
     )
-
-    if (tagName.startsWith('mjs-') && /\/$/.test(attrs)) {
-      attrs = attrs.replace(/\/$/, '')
-      return `<${tagName}${attrs}></${tagName}>`
-    }
     return `<${tagName}${attrs}>`
   })
 
@@ -233,10 +302,11 @@ export function walk(node: Node, ctx: Ctx): string {
       // Pas de pré-escape ici : le texte va dans surgicalHtml qui passe
       // ensuite par escapeTpl (transpiler/index.ts) — qui escape `\\`, `\``
       // et `\${` correctement pour le template literal d'output.
-      return node.content ?? ''
+      // la marque de ligne (cf. marqueLigne, paths.ts) est retirée avant toute lecture du gabarit
+      return marqueLigne(node.line) + (node.content ?? '')
 
     case 'expr': {
-      const isRaw = node._is_raw === true || (node.expr ?? '').startsWith('{')
+      const isRaw = isRawExpr(node)
       const cleanExpr = (node.expr ?? '').toString().trim()
 
       state.counter += 1
@@ -248,13 +318,23 @@ export function walk(node: Node, ctx: Ctx): string {
       const updMethod = isRaw ? '_mjs_updHtml' : '_mjs_updText'
 
       if (ctx.type === 'await') {
-        // `{{…}}` : un nœud texte afficherait les balises → conteneur posé par la branche, rempli
-        // à sa construction (même instantané que `{…}`)
+        // texte qui lit une variable réactive (ou un `{const}` qui en lit une), ou texte traduit (`µ.t(`) ou langue lue (`µlang`), qui suit la langue : son nœud est repéré
+        // (un marqueur, ou le conteneur de `{{…}}`), écrit à la construction de la branche puis tenu à jour par un effet de la racine, rejoué à chaque changement de ses
+        // variables et à chaque rendu complet (bascule de langue, arrivée d'un dictionnaire), et seulement quand la branche est affichée (cf. texteDeBranche)
+        const suivi = ctx.texteBrut ? null : texteDeBranche({ ctx, compiler: state }, lid, jsVar, vars, isRaw)
+        if (suivi) {
+          ctx.updates.push(suivi.pose)
+          registerEffect(suivi.effet, suivi.vars)
+          return isRaw ? `<span mjs-l-id='${lid}'></span>` : `<script type='mjs/marker' mjs-l-t='${lid}'></script>`
+        }
+        // `{{…}}` qui ne lit rien de réactif : un nœud texte afficherait les balises → conteneur posé par la branche, rempli
+        // à sa construction, une fois : rien ne peut le changer. Un texte `{…}` qui ne lit rien de réactif est calculé une fois de même ;
+        // `null` et `undefined` n'y écrivent rien, comme à la racine (`_mjs_updText`)
         if (isRaw) {
-          ctx.updates.push(`{ const n${lid} = __nodes['${lid}']; if(n${lid}) n${lid}.innerHTML = String(${jsVar}); }`)
+          ctx.updates.push(`{ const _mjs_n${lid} = __nodes['${lid}']; if(_mjs_n${lid}) _mjs_n${lid}.innerHTML = String(${jsVar}); }`)
           return `<span mjs-l-id='${lid}'></span>`
         }
-        return `\${${jsVar}}`
+        return `\${(${jsVar}) ?? ''}`
       }
 
       if (ctx.loops.length > 0) {
@@ -281,12 +361,12 @@ export function walk(node: Node, ctx: Ctx): string {
         for (const v of vars) state.structVars.add(v)
         if (isRaw) {
           // Factorise `String(${jsVar})` en variable locale (1 call au lieu de 2).
-          ctx.updates.push(`{ const n${lid} = __nodes['${lid}']; if(n${lid}) { const _mjs_ts = String(${jsVar}); if (n${lid}._mjs_h !== _mjs_ts) { n${lid}.innerHTML = _mjs_ts; n${lid}._mjs_h = _mjs_ts; } } }`)
+          ctx.updates.push(`{ const _mjs_n${lid} = __nodes['${lid}']; if(_mjs_n${lid}) { const _mjs_ts = String(${jsVar}); if (_mjs_n${lid}._mjs_h !== _mjs_ts) { _mjs_n${lid}.innerHTML = _mjs_ts; _mjs_n${lid}._mjs_h = _mjs_ts; } } }`)
           return `<span mjs-l-id='${lid}'></span>`
         }
         // text loop : assigne via node.data direct (équivalent nodeValue,
         // V8 spécialise mieux Text.data) + skip String() si déjà string.
-        ctx.updates.push(`{ const n${lid} = __nodes['${lid}']; if(n${lid}) { const _mjs_tv = ${jsVar}; const _mjs_ts = typeof _mjs_tv === 'string' ? _mjs_tv : (_mjs_tv == null ? '' : String(_mjs_tv)); if (n${lid}.data !== _mjs_ts) n${lid}.data = _mjs_ts; } }`)
+        ctx.updates.push(`{ const _mjs_n${lid} = __nodes['${lid}']; if(_mjs_n${lid}) { const _mjs_tv = ${jsVar}; const _mjs_ts = typeof _mjs_tv === 'string' ? _mjs_tv : (_mjs_tv == null ? '' : String(_mjs_tv)); if (_mjs_n${lid}.data !== _mjs_ts) _mjs_n${lid}.data = _mjs_ts; } }`)
         return `<script type='mjs/marker' mjs-l-t='${lid}'></script>`
       }
 
@@ -299,7 +379,7 @@ export function walk(node: Node, ctx: Ctx): string {
         : `<script type='mjs/marker' mjs-t='${lid}'></script>`
     }
 
-    case 'tag':   return compileTag(node, ctx)
+    case 'tag':   return marqueLigne(node.line) + compileTag(node, ctx)
     case 'if':    return compileIf(node, ctx)
     case 'for':   return compileFor(node, ctx)
     case 'await': return compileAwait(node, ctx)
@@ -359,7 +439,7 @@ export function compileTag(node: Node, ctx: Ctx): string {
         // en priorité (posée ici par la MÊME updateFn), l'attribut n'était
         // jamais relu. Économise 1 setAttribute × rows × loops au create et
         // à chaque réordonnancement.
-        const idxUpd = `{ const n_idx = __nodes['${lid}']; if(n_idx && n_idx._mjs_idx_${l.depth} !== ${idxVar}) { n_idx._mjs_idx_${l.depth} = ${idxVar}; } }`
+        const idxUpd = `{ const _mjs_nIdx = __nodes['${lid}']; if(_mjs_nIdx && _mjs_nIdx._mjs_idx_${l.depth} !== ${idxVar}) { _mjs_nIdx._mjs_idx_${l.depth} = ${idxVar}; } }`
         if (!ctx.updates.includes(idxUpd)) ctx.updates.push(idxUpd)
       }
     }
@@ -399,6 +479,39 @@ export function compileTag(node: Node, ctx: Ctx): string {
     }
   }
 
+  // `<textarea>`/`<title>` HTML hors d'une branche `{await}` (cf. Ctx.texteBrut) : le navigateur n'analyse aucune balise dans leur
+  // contenu, un marqueur de nœud texte y serait écrit tel quel. Un contenu de texte et d'interpolations se lie au texte de l'élément,
+  // posé au premier rendu puis réécrit quand une variable lue change ; `null` et `undefined` n'y écrivent rien, comme `_mjs_updText`
+  const nomBas   = (node.name ?? '').toLowerCase()
+  const texteLie = ctx.type !== 'await' && (nomBas === 'textarea' || (nomBas === 'title' && !ctx.svgNs)) &&
+    node.children.some((c) => c.type === 'expr') && node.children.every((c) => c.type === 'text' || c.type === 'expr')
+  if (texteLie) {
+    const vars: string[] = []
+    const morceaux: string[] = []
+    node.children.forEach((c, i) => {
+      if (c.type === 'text') {
+        // le saut de ligne qui suit `<textarea>` n'appartient pas à sa valeur (règle du navigateur)
+        const brut = i === 0 && nomBas === 'textarea' ? (c.content ?? '').replace(/^\r?\n/, '') : (c.content ?? '')
+        if (brut) morceaux.push(JSON.stringify(decodeHtmlEntities(brut, true)))
+        return
+      }
+      const expr = (c.expr ?? '').toString().trim()
+      vars.push(...getEffectVars(expr))
+      morceaux.push(`((${cleanJsExpr(expr, state.externalVars, state.templateLang, state.moduleName)}) ?? '')`)
+    })
+    const pose = (noeud: string) => `{ const _mjs_e = ${noeud}; if (_mjs_e) { const _mjs_s = '' + ${morceaux.join(' + ')}; if (_mjs_e.textContent !== _mjs_s) _mjs_e.textContent = _mjs_s; } }`
+    if (ctx.loops.length > 0) {
+      for (const v of vars) state.structVars.add(v)
+      ctx.updates.push(pose(`__nodes['${lid}']`))
+    }
+    else {
+      id ??= `t${++state.counter}`
+      const code = pose(`this._mjs_nodes['${id}']`)
+      registerEffect(code, [...new Set(vars)])
+      ctx.updates.push(code)
+    }
+  }
+
   if (id) attrStr += ` mjs-id='${id}'`
   if (lid) attrStr += ` mjs-l-id='${lid}'`
 
@@ -407,13 +520,15 @@ export function compileTag(node: Node, ctx: Ctx): string {
   // namespace ambiant du PARENT se transmet tel quel (une fois DANS un <svg>,
   // tout le sous-arbre y reste — sauf sous <foreignObject>, qui rouvre du HTML : svgNs remis à null).
   const tagNameLower = (node.name ?? '').toLowerCase()
-  const childCtx = tagNameLower === 'svg' ? { ...ctx, svgNs: SVG_NS }
-    : tagNameLower === 'math' ? { ...ctx, svgNs: MATH_NS }
-    : tagNameLower === 'foreignobject' ? { ...ctx, svgNs: null }
+  const childCtx = tagNameLower === 'svg' ? { ...ctx, svgNs: SVG_NS, foreign: true }
+    : tagNameLower === 'math' ? { ...ctx, svgNs: MATH_NS, foreign: true }
+    : tagNameLower === 'foreignobject' ? { ...ctx, svgNs: null, foreign: false }
     : ctx
+  // balise de texte brut d'une branche `{await}` : le texte qu'elle contient reste calculé une fois (cf. Ctx.texteBrut) ; le <title> d'un <svg> est une balise ordinaire
+  const enfantsCtx = ctx.type === 'await' && TEXTE_BRUT.has(tagNameLower) && !(tagNameLower === 'title' && childCtx.svgNs) ? { ...childCtx, texteBrut: true } : childCtx
 
   const selfEnd = ctx.updates.length
-  const inner = node.children.map((c) => walk(c, childCtx)).join('')
+  const inner = texteLie ? '' : node.children.map((c) => walk(c, enfantsCtx)).join('')
 
   if (selfEnd > selfStart) {
     const selfSlice = ctx.updates.splice(selfStart, selfEnd - selfStart)
@@ -436,9 +551,13 @@ export function compileIf(node: Node, ctx: Ctx): string {
   const id = `if${state.counter}`
 
   // Collecter les vars qui pilotent les conditions du `{if}`.
+  const condVars: string[] = []
   for (const branch of node.branches) {
     if (branch.expr) {
-      for (const v of getEffectVars(branch.expr)) state.structVars.add(v)
+      for (const v of getEffectVars(branch.expr)) {
+        state.structVars.add(v)
+        condVars.push(v)
+      }
     }
   }
 
@@ -462,6 +581,9 @@ export function compileIf(node: Node, ctx: Ctx): string {
     // 1re option. `__nodes` est déjà en scope ici (mergé par `_mjs_updItemIf`).
     const allPostUpdates: string[][] = []
     const htmlLogicParts: string[] = []
+    // dans une branche `{await}` les liaisons du contenu ont un effet de racine (cf. attributes/index.ts) : tant que ce `{if}` n'a pas choisi la branche `i`, ses nœuds
+    // (laissés dans `this._mjs_nodes` par un choix précédent) ne reçoivent rien, ils ont pu être recyclés par le pool de nœuds texte
+    const enBranche = ctx.type === 'await'
     // Chaque branche a sa propre createFn(item, index) → {fragment, refs}.
     // Le runtime appelle la createFn de la branche choisie et merge refs dans __nodes.
     for (let i = 0; i < node.branches.length; i++) {
@@ -469,8 +591,14 @@ export function compileIf(node: Node, ctx: Ctx): string {
       const preSize = ctx.updates.length
       // un `{const}` de CETTE branche ne vit que dans son corps : ensemble isolé par
       // branche, sur l'axe `ctx.locals` hérité (cf. Ctx.locals)
-      const branchCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
-      const innerHtmlRaw = branch.children.map((c) => walk(c, branchCtx)).join('')
+      const branchCtx: Ctx = { ...ctx, enBloc: true, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+      if (enBranche) state.effectGuardStack.push(`this._mjs_nodes['s-${id}']?._mjs_old_branch === ${i}`)
+      let innerHtmlRaw: string
+      try {
+        innerHtmlRaw = branch.children.map((c) => walk(c, branchCtx)).join('')
+      } finally {
+        if (enBranche) state.effectGuardStack.pop()
+      }
       const branchUpdatesRaw = ctx.updates.splice(preSize, ctx.updates.length - preSize)
       // cf. commentaire jumeau plus haut (`splitDeferredUpdates`) :
       // un two-way `<select value=!{...}>` de CETTE branche doit attendre les
@@ -482,11 +610,15 @@ export function compileIf(node: Node, ctx: Ctx): string {
       // en moins dans le code livré, au prix d'un appel de fonction à la construction. Vrai tant
       // qu'on n'est PAS dans une boucle : sous un `{for}`, cette createFn est construite une fois
       // par LIGNE et garde ses chaînes de propriétés directes. Même critère aux autres blocs.
-      const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0 })
+      // `foreignNsRoot` : une branche posée dans un <svg>/<math> y naît (cf. Ctx.svgNs)
+      const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0, foreignNsRoot: ctx.svgNs ?? null })
       allPostUpdates.push([...(createBody.postUpdates ?? []), ...deferred])
+      // les `{const}` de la branche sont aussi déclarés en tête de sa fonction de création : un élément construit un par un y pose
+      // déjà ses valeurs (attribut, texte), qui les lisent
+      const decls = branchUpdates.filter((u) => u.startsWith(CONST_DECL_PREFIX)).map((u) => u + ' ').join('')
       // La fonction prend les vars de boucle parent (item, index, etc.) en closure.
       // On émet directement le body inline pour bénéficier de l'inlining V8.
-      htmlLogicParts.push(`if (_c_${id} === ${i}) { _mjs_cfn = () => { ${createBody.body} }; }`)
+      htmlLogicParts.push(`if (_c_${id} === ${i}) { _mjs_cfn = () => { ${decls}${createBody.body} }; }`)
     }
     const htmlLogic = htmlLogicParts.join(' else ')
 
@@ -495,7 +627,10 @@ export function compileIf(node: Node, ctx: Ctx): string {
       const branchUpdates = allBranchUpdates[i]
       const postUpdates = allPostUpdates[i]
       if (branchUpdates.length === 0 && postUpdates.length === 0) continue
-      const wrapped = branchUpdates.map((u) => `{ ${u} }`).join(' ') + (postUpdates.length > 0 ? ' ' + postUpdates.map((u) => `{ ${u} }`).join(' ') : '')
+      // les `{const}` de la branche sont déclarés en tête de son bloc, sans bloc propre : chaque mise à jour a le sien, et une
+      // déclaration enfermée dans le sien (`{ const d = … }`) n'était plus en portée pour les mises à jour qui la lisent
+      const decls   = branchUpdates.filter((u) => u.startsWith(CONST_DECL_PREFIX)).map((u) => u + ' ').join('')
+      const wrapped = decls + branchUpdates.filter((u) => !u.startsWith(CONST_DECL_PREFIX)).map((u) => `{ ${u} }`).join(' ') + (postUpdates.length > 0 ? ' ' + postUpdates.map((u) => `{ ${u} }`).join(' ') : '')
       branchExecParts.push(`if (_c_${id} === ${i}) { ${wrapped} }`)
     }
     const branchExec = branchExecParts.join(' else ')
@@ -511,8 +646,16 @@ export function compileIf(node: Node, ctx: Ctx): string {
     // scope — au lieu de désigner l'item utilisateur, la lecture retombait
     // silencieusement sur l'ancre interne (corruption sans erreur). Régression
     // verrouillée par tests/reserved-names-collision.test.ts.
+    // l'ancre de départ naît sans choix (`_mjs_old_branch`), même quand le pool de nœuds texte (mjs_textpool) la sert d'un ancien usage : le premier choix construit toujours
     const ifUpdate = `{ const _mjs_ifStart = __nodes['s-${id}']; const _mjs_ifEnd = __nodes['e-${id}']; if (_mjs_ifStart && _mjs_ifEnd) { const _c_${id} = ${evalLogic}; if (_c_${id} !== _mjs_ifStart._mjs_old_branch) { let _mjs_cfn = null; ${htmlLogic} this._mjs_updItemIf(_mjs_ifStart, _mjs_ifEnd, _mjs_cfn, __nodes); _mjs_ifStart._mjs_old_branch = _c_${id}; } ${branchExecBlock} } }`
     ctx.updates.push(ifUpdate)
+    // dans une branche `{await}`, le choix suit aussi ses variables : un effet de la racine rejoue la condition et refait le contenu entre les ancres quand elle change, avec la
+    // valeur de la branche et les `{const}` recréés (cf. suiviDeBloc), seulement branche affichée ; les nœuds refaits rejoignent ceux du composant (`__nodes` est `this._mjs_nodes`),
+    // et `_mjs_basc` dit aux mises à jour du contenu neuf (attache, événement) qu'aucun rendu complet ne vient derrière. La mise à jour posée plus haut reste celle de la construction de la branche
+    const suivi = enBranche ? suiviDeBloc({ ctx, compiler: state }, evalLogic, `${evalLogic} ${htmlLogic} ${branchExec}`, condVars) : null
+    if (suivi) {
+      registerEffect(`{ const __nodes = this._mjs_nodes; const _mjs_ifStart = __nodes['s-${id}']; const _mjs_ifEnd = __nodes['e-${id}']; if (_mjs_ifStart && _mjs_ifEnd && ${suivi.garde}) { ${suivi.prelude}const _c_${id} = ${evalLogic}; if (_c_${id} !== _mjs_ifStart._mjs_old_branch) { let _mjs_cfn = null; ${htmlLogic} this._mjs_basc = ~~this._mjs_basc + 1; try { this._mjs_updItemIf(_mjs_ifStart, _mjs_ifEnd, _mjs_cfn, __nodes); _mjs_ifStart._mjs_old_branch = _c_${id}; ${branchExecBlock} } finally { this._mjs_basc--; } } } }`, suivi.vars)
+    }
     return `<script type='mjs/marker' mjs-l-t='s-${id}'></script><script type='mjs/marker' mjs-l-t='e-${id}'></script>`
   }
 
@@ -564,7 +707,7 @@ export function compileIf(node: Node, ctx: Ctx): string {
     let innerHtmlRaw: string
     try {
       // idem branche non-root : ensemble de locaux isolé par branche (cf. Ctx.locals)
-      const branchCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+      const branchCtx: Ctx = { ...ctx, enBloc: true, locals: new Set(ctx.locals), portee: [...ctx.portee] }
       innerHtmlRaw = b.children.map((c) => walk(c, branchCtx)).join('')
     } finally {
       // try/finally : une branche fautive (walk qui lève) ne doit pas laisser
@@ -574,7 +717,7 @@ export function compileIf(node: Node, ctx: Ctx): string {
     const branchUpdates = ctx.updates.splice(branchPre, ctx.updates.length - branchPre)
     allBranchUpdates.push(branchUpdates)
     // `compactPaths` : cf. la branche non-root ci-dessus — forme compacte hors boucle seulement.
-    const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0 })
+    const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0, foreignNsRoot: ctx.svgNs ?? null })
     allPostUpdates.push(createBody.postUpdates ?? [])
     return `if (_c_${id} === ${i}) { _mjs_cfn = () => { ${createBody.body} }; }`
   })
@@ -583,16 +726,33 @@ export function compileIf(node: Node, ctx: Ctx): string {
   // Exécution de l'état initial des interpolations/bindings de la branche
   // active. `c >= 0` exclut la pseudo-branche `-1` (aucun `{else}` et toutes
   // les conditions fausses → rien de rendu).
+  //
+  // Une mise à jour dont le code est identique à un effet enregistré pendant le walk (le jumeau,
+  // cf. `effectTwins`) n'est PAS rejouée à chaque passe : l'effet la joue au montage
+  // (`_mjs_effectsAll`, juste après la passe structurelle) et à chaque changement de sa variable.
+  // Elle n'est posée ici qu'à la (re)création de la branche après le montage, pour les valeurs
+  // dont la variable n'a pas bougé. Tout le reste (structure imbriquée, `postUpdates`, liaisons
+  // sans jumeau…) garde son rejeu à chaque passe, comme avant.
   const branchExecParts: string[] = []
+  let hasTwin = false
   for (let i = 0; i < allBranchUpdates.length; i++) {
     const branchUpdates = allBranchUpdates[i]
     const postUpdates = allPostUpdates[i]
     if (branchUpdates.length === 0 && postUpdates.length === 0) continue
-    const wrapped = branchUpdates.map((u) => `{ ${u} }`).join(' ') + (postUpdates.length > 0 ? ' ' + postUpdates.map((u) => `{ ${u} }`).join(' ') : '')
+    // l'ordre d'origine est gardé : une jumelle peut dépendre d'une structure posée avant elle
+    // (la valeur d'un <select> après le {for} de ses <option>)
+    const wrapped = branchUpdates.map((u) => {
+      const twin = state.effectTwins.has(u) && !/_mjs_updIf|_mjs_updFor|_mjs_updAwait|_mjs_updKey|_updElement|_mjs_td|µ\._mjs_fx\(|_mjs_intro|_mjs_outro/.test(u)
+      if (twin) hasTwin = true
+      return twin ? `if (_mjs_nb) { ${u} }` : `{ ${u} }`
+    }).join(' ') + (postUpdates.length > 0 ? ' ' + postUpdates.map((u) => `{ ${u} }`).join(' ') : '')
     branchExecParts.push(`if (_c_${id} === ${i}) { ${wrapped} }`)
   }
   const branchExec = branchExecParts.join(' else ')
   const branchExecBlock = branchExec === '' ? '' : ` if (_c_${id} >= 0) { ${branchExec} }`
+  // `_mjs_nb` : la branche vient d'être (re)créée après le montage
+  const twinDecl = hasTwin ? ' let _mjs_nb = false;' : ''
+  const twinSet  = hasTwin ? ' _mjs_nb = !this._mjs_initial_render;' : ''
 
   // V2 — pas de `if (dirty & ...)` : exécuté à chaque tick via _mjs_renderStruct.
   // On passe une createFn (au lieu de html+paths) à _mjs_updIf.
@@ -601,11 +761,112 @@ export function compileIf(node: Node, ctx: Ctx): string {
   // du script sont visibles : un `c = 42` (compteur/caractère, nom banal) au
   // <script> + `{if c > 3}` générait `const c = (c > 3) ? …` → auto-référence en
   // TDZ, crash dur à chaque _mjs_renderStruct. `_mjs_cfn` (pas `cfn`) même précaution.
-  const ifUpdate = `{ const _mjs_o = (this._mjs_old ??= {}); const _c_${id} = ${evalLogic}; if(_c_${id} !== _mjs_o.${id}){ let _mjs_cfn = null; ${htmlLogic} this._mjs_updIf('${id}', _mjs_cfn); _mjs_o.${id} = _c_${id}; }${branchExecBlock} }`
+  const ifUpdate = `{ const _mjs_o = (this._mjs_old ??= {}); const _c_${id} = ${evalLogic};${twinDecl} if(_c_${id} !== _mjs_o.${id}){ let _mjs_cfn = null; ${htmlLogic} this._mjs_updIf('${id}', _mjs_cfn); _mjs_o.${id} = _c_${id};${twinSet} }${branchExecBlock} }`
 
   ctx.updates.splice(preSize, 0, ifUpdate)
 
   return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
+}
+
+// expression « de ligne » : faite seulement de l'élément, de l'index, de littéraux et d'opérateurs
+// (accès `a.b`, `a['b']` compris), sans appel, sans affectation, sans fonction fléchée. Dans le doute : faux
+function exprDeLigne(expr: string | null | undefined, item: string, index: string): boolean {
+  if (expr == null) return false
+  let e = expr.replace(/'[^'\\#]*'|"[^"\\#]*"/g, '0')
+  if (/['"`\\#{}@$;]/.test(e)) return false
+  e = e.replace(/\bnot\s+/g, '!').replace(/\b(?:and|or|is|isnt)\b/g, '&')
+  if (/[\w\])]\s*\(/.test(e) || /->|=>|\+\+|--|(?<![=!<>])=(?!=)/.test(e)) return false
+  e = e.replace(/\b\d[\w.]*/g, '0')
+  // un blanc n'est permis que des DEUX côtés d'un opérateur, ou après une virgule : tout autre blanc
+  // peut être un appel sans parenthèses (`row.fmt i`, `row.fmt -i`, `row.x? 1`, `row.x . y`)
+  e = e.trim().replace(/\s+([+\-*\/%<>=!&|?:]+)\s+/g, '$1').replace(/,\s+/g, ',')
+  if (/\s/.test(e) || /[\w\])]\?[(\[]/.test(e)) return false
+  e = e.replace(/\??\.[A-Za-z_]\w*/g, '')
+  const permis = new Set([item, index, 'true', 'false', 'null', 'undefined'])
+  for (const m of e.match(/[A-Za-z_]\w*/g) ?? []) if (!permis.has(m)) return false
+  return /^[\w+\-*\/%<>=!&|?:()\[\],]*$/.test(e)
+}
+
+// ligne de `{for}` « pure » : sa mise à jour ne lit que l'élément et l'index de CETTE boucle. Liste
+// blanche : texte, `{expr}` de ligne, balises natives, attributs liés à une expression de ligne,
+// classe par clé (`@class{$x === item.y}`, déjà routée par un index clé → nœud), gestionnaires
+// d'événements (non joués à la mise à jour). Tout le reste (variable, prop, store, contexte, appel,
+// bloc, composant, slot, effet, `{const}`) rend la ligne impure
+function ligneEstPure(children: Node[], item: string | null, index: string): boolean {
+  if (!item) return false
+  return children.every((n) => noeudDeLignePur(n, item, index))
+}
+
+function noeudDeLignePur(n: Node, item: string, index: string): boolean {
+  if (n.type === 'text') return true
+  if (n.type === 'expr') return exprDeLigne(n.expr, item, index)
+  if (n.type !== 'tag') return false
+  const nom = n.name ?? ''
+  if (!/^[a-z][a-z0-9]*$/.test(nom) || nom === 'slot' || nom === 'script' || nom === 'style' || nom === 'template') return false
+  for (const a of n.attrs) {
+    const an = a.name ?? ''
+    if (a.type === 'spread') return false
+    if (an.startsWith('@class{') || /^@style\.[\w-]+\{/.test(an)) {
+      const cond = an.slice(an.indexOf('{') + 1, -1)
+      if (!exprDeLigne(cond, item, index) && !(an.startsWith('@class{') && detectFilteredPattern(cond, item, state.externalVars ?? []))) return false
+    } else if (an.startsWith('@')) {
+      if (a.type !== 'dynamic' || !/^@[a-z]+$/.test(an) || isSpecialAttr(an) || MJS_BOOLEAN_PROPS.includes(an.slice(1))) return false
+    } else if (!/^[a-z][a-z0-9_:-]*$/.test(an) || an.startsWith('mjs-') || MJS_BOOLEAN_PROPS.includes(an)) {
+      return false
+    } else if (a.type === 'dynamic') {
+      if (!exprDeLigne(a.expr, item, index)) return false
+    } else if (a.type === 'static' && /[{}*]/.test(a.val ?? '')) {
+      return false
+    }
+  }
+  return n.children.every((c) => noeudDeLignePur(c, item, index))
+}
+
+// globaux JavaScript sans état : leur lecture ne cache aucune variable que le compilateur ne voit pas
+// (ni `window`, `document`, `globalThis`, `localStorage`, `navigator`, `location` : ils portent un état)
+const GLOBAUX_SANS_ETAT = new Set([
+  'String', 'Number', 'Boolean', 'Array', 'Object', 'Math', 'JSON', 'Date', 'Intl', 'parseInt', 'parseFloat',
+  'isNaN', 'isFinite', 'undefined', 'NaN', 'Infinity', 'Symbol', 'BigInt', 'Map', 'Set', 'encodeURIComponent',
+  'decodeURIComponent',
+])
+
+// noms que le code émis lit sans les déclarer : état du composant, runtime, nœuds de la ligne, `this` de
+// l'appelant, `console` (avertissements émis par `@transition`, sans état) et espace `_mjs_` du générateur (réservé, cf. RESERVED_PREFIX_RE du parseur). Un nom en `_`
+// ou `__` du script n'en est pas un : il se distingue par ce préfixe exact, jamais par un simple `_`
+const INTERNES_EMIS = new Set(['$', 'µ', '__nodes', '_mjsThis', 'console'])
+
+// identifiants libres de l'itérable et du code d'une ligne (enveloppé en fléchée par l'appelant) dont la
+// provenance n'est pas connue et sûre : tout sauf état réactif, internes émis et globaux sans état.
+// Le code de l'élément, de l'index, des `{const}` et des fléchées en ligne y est déclaré, donc non libre.
+// Un code qui ne se parse pas rend un nom fictif : jamais de garde dans le doute
+function identifiantsNonSuivis(iterable: string, ligne: string): string[] {
+  const bloquants = new Set<string>()
+  for (const code of [`(${iterable});`, `${ligne};`]) {
+    const libres = freeIdentifiers(code)
+    if (!libres) return ['<non analysable>']
+    for (const nom of libres) {
+      if (INTERNES_EMIS.has(nom) || nom.startsWith('_mjs_') || GLOBAUX_SANS_ETAT.has(nom)) continue
+      bloquants.add(nom)
+    }
+  }
+  return [...bloquants]
+}
+
+// place de chaque balise `@flip` du gabarit d'une ligne de `{for}`, à toute profondeur (sous une autre balise, un `{if}`, un `{elsif}`, un `{else}` ou un
+// `{key}`) : son rang parmi ces balises, une balise avant ses enfants. Les branches d'un même `{if}` se partagent les mêmes places (une seule est là à la
+// fois) et le bloc occupe celles de sa branche la plus longue. Un `{for}` imbriqué a ses propres lignes, donc ses propres places : il n'est pas compté.
+// Rend le nombre de places
+function placesFlip(enfants: Node[], places: Map<Node, number>, depart = 0): number {
+  let n = depart
+  for (const c of enfants) {
+    if (c.type === 'tag') {
+      if (c.attrs.some((a) => a.name === '@flip')) places.set(c, n++)
+      n = placesFlip(c.children, places, n)
+    }
+    else if (c.type === 'if') n = Math.max(n, ...c.branches.map((b) => placesFlip(b.children, places, n)))
+    else if (c.type === 'key') n = placesFlip(c.children, places, n)
+  }
+  return n
 }
 
 // ============================================================================
@@ -619,7 +880,8 @@ export function compileFor(node: Node, ctx: Ctx): string {
 
   // Collecter les vars qui pilotent l'iterable. Si la mutation
   // d'une autre var arrive, `_mjs_renderStruct` peut être skip (gain select1k).
-  for (const v of getEffectVars(node.iterable)) {
+  const varsIterable = getEffectVars(node.iterable)
+  for (const v of varsIterable) {
     state.structVars.add(v)
   }
 
@@ -636,6 +898,9 @@ export function compileFor(node: Node, ctx: Ctx): string {
     depth: ctx.loops.length,
     key: node.key ?? null,
   }
+  // plusieurs places : l'étiquette de chaque balise `@flip` ajoute la sienne à celle de la ligne (attributes/index.ts) ; une seule : l'étiquette de la ligne
+  const places = new Map<Node, number>()
+  if (placesFlip(node.children, places) > 1) loopInfo.flipPlaces = places
   // noms que CE `{for}` introduit dans le corps des handlers de son sous-arbre :
   // le squelette de reconstruction les réassigne en tête de handler, ils doivent
   // donc y rester LOCAUX même si le `<script>` porte un homonyme (cf. state.templateLocals)
@@ -655,8 +920,21 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // ~3-5ms.
   const keyAttrLit = node.key ? `'${node.key}'` : 'null'
 
-  const loopCtx: Ctx = { type: 'for', loops: newLoops, updates: [], locals, portee: ctx.portee.concat([{ kind: 'for', loop: loopInfo }]) }
+  const loopCtx: Ctx = { type: 'for', loops: newLoops, updates: [], locals, portee: ctx.portee.concat([{ kind: 'for', loop: loopInfo }]), svgNs: ctx.svgNs, foreign: ctx.foreign }
+  // sous un `{await}` : les variables du dehors que les lignes lisent sont mises de côté, puis rendues
+  // à `structVars` — elles servent à refaire la liste quand l'une d'elles change (cf. plus bas)
+  const underAwait = ctx.type === 'await' && ctx.loops.length === 0
+  // `{for}` de racine : même mise de côté, pour connaître SES variables (itérable + lignes) et ne le
+  // rejouer que si l'une d'elles a changé (cf. `_mjs_chg`)
+  const racine = ctx.type === 'root' && !ctx.enBloc
+  const varsBefore = state.structVars
+  if (underAwait || racine) state.structVars = new Set()
   const bodyRaw = node.children.map((c) => walk(c, loopCtx)).join('')
+  const varsBody = state.structVars
+  if (underAwait || racine) {
+    for (const v of varsBody) varsBefore.add(v)
+    state.structVars = varsBefore
+  }
   // Les déclarations `{const}` (marquées CONST_DECL_PREFIX) sont émises TELLES
   // QUELLES et HISSÉES en tête — sans wrapper `{ … }`, sinon `NOM` serait
   // scopé à son bloc et invisible des updates frères qui le lisent. L'ordre
@@ -688,7 +966,8 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // Gabarit de LIGNE : jamais `compactPaths` (défaut faux). Ce corps est exécuté une fois par
   // ligne — 1 000 fois sur une création de liste : il garde ses chaînes de propriétés directes,
   // sans appel de fonction, et son code reste celui d'avant, à l'octet.
-  const createBody = generateCreateFnBody(bodyRaw, { keepRefs, splitSelectPostUpdates: true })
+  // `foreignNsRoot` : une ligne posée dans un <svg>/<math> y naît (cf. Ctx.svgNs)
+  const createBody = generateCreateFnBody(bodyRaw, { keepRefs, splitSelectPostUpdates: true, foreignNsRoot: ctx.svgNs ?? null })
   // `postUpdates` (ex. `value` d'un `<select>` dont les
   // `<option>` viennent d'un `{for}` imbriqué) doivent courir APRÈS les updates
   // de CETTE row (mêmes `__nodes`) : rejouées ici, dans le MÊME `localUpdates`
@@ -722,9 +1001,29 @@ export function compileFor(node: Node, ctx: Ctx): string {
       }
     }
   }
+  // Perf, modèle Solid/Svelte : fusionner la pose d'état INITIALE dans la
+  // factory. Au create, _mjs_reconcileList rappelait l'updateFn juste après
+  // l'insertion uniquement pour poser data/classe/idx — on l'appelle ici, dans
+  // le tplFn, et on signale `_mjs_init: 1` → _mjs_reconcileList saute ce passage pour
+  // les entries FRAÎCHES (les tours suivants repassent par updateFn, _mjs_init=0).
+  // RESTRICTION : composants SANS binding sensible à l'insertion
+  // (@transition/@attach/… — flag hasDestroyHooks) ; sinon comportement
+  // historique (pose en pass 2 après insertion).
+  const __fuseInit = !state.hasDestroyHooks
+  // ligne d'une liste imbriquée : sa closure de mise à jour fermerait sur la portée de la ligne
+  // PARENTE au rendu qui l'a construite (élément, index, `{const}`) — gardée sur l'entrée, la
+  // réconciliation la préférait à `updateFn` (plus bas), et une ligne parente rechargée par un objet
+  // neuf de même clé laissait ses lignes intérieures sur l'ancien objet ; après un tri, un clic y
+  // retrouvait l'ancienne ligne parente. La closure ne sert donc plus qu'à la pose initiale
+  // fusionnée, quand elle a lieu (le tplFn naît au rendu en cours, sa portée est fraîche) ; les
+  // passes suivantes prennent `updateFn`, recréée à chaque rendu de la ligne parente. Hors
+  // imbrication (racine, `{if}`/`{key}` de racine, branche `{await}`), aucune portée de ligne à
+  // capturer : code généré inchangé
+  const keepUpdFn  = ctx.loops.length === 0
+  const closureUpd = keepUpdFn || __fuseInit
   // Refs à pré-extraire : union(usedRefIds, evtIdsInFor) pour que les events
-  // aient leur _nref_ disponible avant le register.
-  const refsToExtract = Array.from(new Set([...usedRefIds, ...evtIdsInFor]))
+  // aient leur _nref_ disponible avant le register ; celles des mises à jour seulement si la closure existe
+  const refsToExtract = Array.from(new Set([...(closureUpd ? usedRefIds : []), ...evtIdsInFor]))
   const refExtractLines = refsToExtract.map(
     (rid) => `const _nref_${safeRefVarName(rid)} = __nodes['${rid}'];`
   ).join(' ')
@@ -740,38 +1039,40 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // pas d'alloc/maintenance de WeakMap, lookup au clic plus direct.
     const inlineRegister = evtIdsInFor.map((eid) => {
       const refExpr = `_nref_${safeRefVarName(eid)}`
-      return `{ const __n = ${refExpr}; if (__n && __n.nodeType === 1) { const __ex = __n._mjs_ids; if (__ex) { if (!__ex.includes('${eid}')) __ex.push('${eid}'); } else { __n._mjs_ids = ['${eid}']; } } }`
+      return `{ const __n = ${refExpr}; if (__n && __n.nodeType === 1) { const __ex = __n._mjs_ids; if (__ex) { if (!__ex.includes('${eid}')) __ex.push('${eid}'); } else { __n._mjs_ids = ['${eid}']; } __n._mjs_eo = this; } }`
     }).join(' ')
     registerRefsCode = `{ ${inlineRegister} }`
   }
 
-  // Perf, modèle Solid/Svelte : fusionner la pose d'état INITIALE dans la
-  // factory. Au create, _mjs_reconcileList rappelait l'updateFn juste après
-  // l'insertion uniquement pour poser data/classe/idx — on l'appelle ici, dans
-  // le tplFn, et on signale `_mjs_init: 1` → _mjs_reconcileList saute ce passage pour
-  // les entries FRAÎCHES (les tours suivants repassent par updateFn, _mjs_init=0).
-  // RESTRICTION : composants SANS binding sensible à l'insertion
-  // (@transition/@attach/… — flag hasDestroyHooks) ; sinon comportement
-  // historique (pose en pass 2 après insertion).
-  const __fuseInit = !state.hasDestroyHooks
+  // saut des lignes inchangées : seulement le `{for}` de racine, ligne pure (cf. ligneEstPure), pose
+  // initiale fusionnée (`_mjs_init`) : le runtime note alors l'élément et l'index posés dès la création
+  const lignePure = keepUpdFn && __fuseInit && ctx.type === 'root' && ligneEstPure(node.children, node.item, indexVar)
   const tplFn = `(${node.item || '_item'}, ${indexVar}) => {
     const __built = (() => { ${createBody.body} })();
     const __nodes = __built.refs;
     __nodes._mjs_reg = true;
     ${refExtractLines}
     ${registerRefsCode}
-    const updateFn = (${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdatesClosure} };
-    ${__fuseInit ? `updateFn(${node.item || '_item'}, ${indexVar});` : ''}
-    return { fragment: __built.fragment, refs: __nodes, updateFn${__fuseInit ? ', _mjs_init: 1' : ''} };
+    ${closureUpd ? `const _mjs_updFn = (${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdatesClosure} };` : ''}
+    ${__fuseInit ? `_mjs_updFn(${node.item || '_item'}, ${indexVar});` : ''}
+    return { fragment: __built.fragment, refs: __nodes${keepUpdFn ? ', updateFn: _mjs_updFn' : ''}${__fuseInit ? ', _mjs_init: 1' : ''}${lignePure ? ', _mjs_p: 1' : ''} };
   }`
 
-  // Fallback (compat) — pour les autres callers (non _mjs_reconcileList) qui
-  // appellent updateFn(__nodes, item, index) à l'ancienne. Inutile en pratique
-  // pour _mjs_reconcileList, mais conserve la signature pour _mjs_updFor/_mjs_updList.
-  const updateFn = `(__nodes, ${node.item}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`
+  // fonction de mise à jour passée à CHAQUE rendu, recréée avec la portée courante, refs lues sur
+  // l'entrée (`__nodes`) : `_mjs_reconcileList` la prend quand l'entrée n'a pas de closure
+  // (`_mjs_updFn`) — toujours le cas d'une ligne de liste imbriquée, cf. `keepUpdFn`
+  // hors imbrication, chaque entrée garde sa closure (`keepUpdFn`) : cette seconde copie ne serait jamais appelée
+  const updateFn = keepUpdFn ? 'null' : `(__nodes, ${node.item}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`
 
   if (ctx.type === 'root') {
-    ctx.updates.push(`{ const _mjsThis = this; this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); }`)
+    // gardé par ses variables quand on les connaît toutes ; sans aucune variable connue (itérable
+    // calculé hors de vue, ligne qui ne lit rien de réactif), dans le doute : rejoué à chaque passe
+    const varsDuFor = new Set([...varsIterable, ...varsBody])
+    // pas de garde dès qu'un identifiant libre du code émis (itérable + lignes) a une provenance que
+    // l'analyse ne suit pas : fonction, constante, `let` ou objet du script, import, global à état
+    // (cf. `identifiantsNonSuivis`) ; la liste reste alors rejouée à chaque passe de structure
+    const garde = racine && varsDuFor.size > 0 && identifiantsNonSuivis(jsIterable, `(${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`).length === 0 ? `if(this._mjs_chg([${[...varsDuFor].map((v) => `'${v}'`).join(',')}])) ` : ''
+    ctx.updates.push(`{ const _mjsThis = this; ${garde}this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); }`)
     return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
   }
 
@@ -787,7 +1088,26 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // les vars TOP-LEVEL du script sont en scope (branche {await} sans loop) — un
     // `startNode = {...}` du <script> + `{for x in startNode.items}` lisait l'ANCRE
     // DOM au lieu de l'objet. Cf. reserved-names-collision.test.ts ({await}+{for}).
-    ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${id}']; const _mjs_forEnd = __nodes['e-${id}']; if(_mjs_forStart && _mjs_forEnd) { this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); } }`)
+    // la liste se refait seule quand une variable de son itérable, ou une variable du dehors lue par une ligne, change : `_mjs_updAwait`
+    // ne rejoue pas une branche dont la promesse et le statut n'ont pas changé, et ni l'itérable ni les lignes ne lisent
+    // ces variables ailleurs que dans la fonction de mise à jour ; la fonction est gardée par la branche affichée et par les marqueurs
+    // (branche retirée : rien) et mémorisée par instance sous l'id du `{for}` ; l'effet enregistré ci-dessous la rappelle.
+    // Liste refaite dans la passe en cours (branche juste construite, `_mjs_awaitFresh` levé jusqu'à la
+    // fin de la passe, qui est synchrone) : l'effet de la même passe ne la refait pas, les valeurs
+    // viennent d'être lues. Hors de cette passe (variable changée plus tard) il la rappelle comme avant
+    // les valeurs lues par la liste au moment où elle est construite : l'effet ne saute son rappel que
+    // si elles n'ont pas bougé depuis (une écriture arrivée entre la construction et l'effet n'est pas perdue)
+    const varsSuivies = new Set([...varsIterable, ...varsBody])
+    const valeursLues = `[${[...varsSuivies].map((v) => `$[${JSON.stringify(v)}]`).join(', ')}]`
+    // la liste ne se refait que si sa branche est celle qui est affichée (cf. brancheCourante), comme toute autre liaison de la branche : ses deux repères sont des nœuds texte que le pool
+    // de nœuds texte réattribue, à la destruction de la branche, aux balises de la branche suivante ; ils gardent alors un parent, la garde des marqueurs laisse passer et la liste
+    // insérerait ses lignes dans l'autre branche, ou entre deux repères qui n'ont plus le même parent (le composant tombe). La fermeture mémorisée porte la garde elle-même : quel que
+    // soit l'appelant, une liste dont la branche n'est plus affichée n'est jamais refaite
+    const affichee   = brancheCourante({ ctx, compiler: state })
+    const siAffichee = affichee ? `${affichee} && ` : ''
+    ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${id}']; const _mjs_forEnd = __nodes['e-${id}']; if(_mjs_forStart && _mjs_forEnd) { const _mjs_refaire = () => { if(${siAffichee}_mjs_forStart.parentNode && _mjs_forEnd.parentNode) this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); }; (this._mjs_awaitFors ??= {})['${id}'] = _mjs_refaire; _mjs_refaire(); (this._mjs_awaitFresh ??= {})['${id}'] = ${valeursLues}; queueMicrotask(() => { this._mjs_awaitFresh['${id}'] = null; }); } }`)
+    // une ligne qui lit un texte traduit suit aussi la langue : l'effet rappelle la liste à chaque rendu complet
+    if (varsSuivies.size > 0 || /µ\.t\(|__mjsLang/.test(localUpdates)) registerEffect(`{ const _mjs_f = this._mjs_awaitFors && this._mjs_awaitFors['${id}']; const _mjs_w = this._mjs_awaitFresh; const _mjs_s = _mjs_w && _mjs_w['${id}']; if(_mjs_s) _mjs_w['${id}'] = null; const _mjs_v = ${valeursLues}; if(${siAffichee}_mjs_f && !(_mjs_s && _mjs_s.every((_mjs_a, _mjs_i) => _mjs_a === _mjs_v[_mjs_i]))) _mjs_f(); }`, [...varsSuivies])
     return `<script type='mjs/marker' mjs-l-t='s-${id}'></script><script type='mjs/marker' mjs-l-t='e-${id}'></script>`
   }
 
@@ -843,8 +1163,12 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // d'imbrication, deux boucles qui n'ont pas nommé leur index s'appellent
   // toutes deux `index` et la plus proche masque l'autre.
   // Le cas courant à DEUX niveaux émet exactement le même code qu'avant.
+  // Clé `by` du parent lue comme la clé de ligne (`_mjs_keyOf`, mjs_for.ts) : une valeur simple, ou un objet
+  // qui s'écrit lui-même (date, tableau), par son texte ; un objet ordinaire ou une fonction par son identité.
+  // Recollé en texte, un tel objet valait « [object Object] » pour toutes les lignes : leurs listes internes
+  // partageaient un seul cache, et les éléments de l'une passaient dans l'autre
   const discriminant = (loop: LoopInfo, idx: string) => loop.key
-    ? `(${loop.item} != null && typeof ${loop.item} === 'object' ? ${loop.item}.${loop.key} : ${idx})`
+    ? `(${loop.item} != null && typeof ${loop.item} === 'object' ? ((_mjs_k) => Object(_mjs_k) !== _mjs_k || typeof _mjs_k === 'object' && !String(_mjs_k).startsWith('[object ') ? _mjs_k : this._mjs_mjsTag(_mjs_k))(${loop.item}.${loop.key}) : ${idx})`
     : `(typeof ${loop.item} === 'object' && ${loop.item} !== null ? this._mjs_mjsTag(${loop.item}) : ${idx})`
 
   const ancestors = ctx.loops.slice(0, -1).map(loop => `${discriminant(loop, loop.internalIndex)} + '\\x1f' + `).join('')
@@ -873,9 +1197,8 @@ export function compileAwait(node: Node, ctx: Ctx): string {
   const id = `await${state.counter}`
 
   // Collecter les vars de l'expression promise.
-  if (node.expr) {
-    for (const v of getEffectVars(node.expr)) state.structVars.add(v)
-  }
+  const varsAwait = node.expr ? getEffectVars(node.expr) : []
+  for (const v of varsAwait) state.structVars.add(v)
 
   let tplPending = 'null'
   let tplSuccess = 'null'
@@ -899,7 +1222,7 @@ export function compileAwait(node: Node, ctx: Ctx): string {
     const valeur: PorteeEntree[] = branch.arg && (branch.type === 'success' || branch.type === 'error')
       ? [{ kind: 'await', name: branch.arg, id, champ: branch.type === 'success' ? 'data' : 'error' }]
       : []
-    const branchCtx: Ctx = { ...awaitCtx, locals: branchLocals, portee: awaitCtx.portee.concat(valeur) }
+    const branchCtx: Ctx = { ...awaitCtx, locals: branchLocals, portee: awaitCtx.portee.concat(valeur), branche: { id, etat: branch.type ?? 'pending' } }
     // Les branches `{await}` peuvent contenir des blocs structurels ({for},
     // {if}, {key}) qui poussent des updates dans `ctx.updates` référençant des
     // markers locaux (`s-forN`/`e-forN` via `__nodes`). On capture ces updates
@@ -923,7 +1246,7 @@ export function compileAwait(node: Node, ctx: Ctx): string {
     const { updates: branchUpdates, deferred } = splitDeferredUpdates(branchUpdatesRaw.filter((u) => !u.startsWith(CONST_DECL_PREFIX)))
     // Chaque branche émet une createFn qui produit {fragment, refs}.
     // Si la branche a des updates structurelles, on force le mode impératif :
-    // le body se termine par `return { fragment: _f, refs: <obj> };`. On
+    // le body se termine par `return { fragment: _mjs_fr, refs: <obj> };`. On
     // transforme ce return final pour nommer l'objet `refs` (variable locale),
     // exécuter les updates de branche en mode `__nodes` local, puis retourner.
     // le fragment de CETTE branche ne voit jamais le `<svg>`/`<math>`
@@ -945,7 +1268,7 @@ export function compileAwait(node: Node, ctx: Ctx): string {
     const postUpdates = [...(createBody.postUpdates ?? []), ...deferred]
     let fnBody: string
     if (branchUpdates.length > 0 || postUpdates.length > 0) {
-      const RET = 'return { fragment: _f, refs: '
+      const RET = 'return { fragment: _mjs_fr, refs: '
       const retIdx = createBody.body.lastIndexOf(RET)
       if (retIdx === -1) {
         // Garde-fou : forme de return inattendue → fallback sans updates
@@ -959,9 +1282,9 @@ export function compileAwait(node: Node, ctx: Ctx): string {
         const refsObj = refsObjAndEnd.slice(0, endIdx).trim()
         const tail = [...branchUpdates, ...postUpdates].join(' ')
         fnBody =
-          `${head} const refs = ${refsObj}; ` +
-          `{ const __nodes = refs; ${tail} } ` +
-          `return { fragment: _f, refs };`
+          `${head} const _mjs_refs = ${refsObj}; ` +
+          `{ const __nodes = _mjs_refs; ${tail} } ` +
+          `return { fragment: _mjs_fr, refs: _mjs_refs };`
       }
     } else {
       fnBody = createBody.body
@@ -997,17 +1320,22 @@ export function compileAwait(node: Node, ctx: Ctx): string {
   }
 
   if (ctx.type !== 'root') {
-    // plus de BACKTICKS littéraux : ils faisaient
-    // partie du texte injecté (re-échappé par escapeTpl) → le VISITEUR voyait
-    // « `<span…>` » au lieu du message. Fallback rendu proprement (dégradation
-    // gracieuse conservée ; un {await} imbriqué dans un AUTRE {await} reste non
-    // supporté — pas de throw pour ne pas casser une dégradation existante).
-    return `<span class='mjs-error'>[${t('generator.await-imbrique-non-supporte')}]</span>`
+    // un {await} dans la branche d'un autre {await}, ou dans un {if}/{key} de cette branche (le type du contexte se
+    // transmet) : `_mjs_updAwait` lit ses ancres et garde son état par promesse sur le composant, où les nœuds d'une
+    // branche ne sont pas encore quand ses mises à jour courent. Refusé comme celui d'un {for}, plutôt qu'un
+    // <span class="mjs-error"> visible des visiteurs en production, sans la moindre erreur de construction
+    throw new Error(t('generator.await-imbrique-dans-await', { ligne: node.line ?? '?' }))
   }
 
-  // Site EXPR (promesse {await EXPR}).
+  // Site EXPR (promesse {await EXPR}) : passée en fonction, avec les variables qu'elle cite — le runtime ne la relit
+  // qu'au premier rendu du bloc et quand l'une d'elles a été écrite. Relue à chaque passe, un appel (`charger()`)
+  // rendait une promesse neuve à chaque rendu, et sa résolution, qui rend, en relançait une autre, sans fin
   const jsAwaitExpr = cleanJsExpr(node.expr, state.externalVars, state.templateLang, state.moduleName)
-  ctx.updates.push(`this._mjs_updAwait('${id}', ${jsAwaitExpr}, ${tplPending}, ${tplSuccess}, ${tplError});`)
+  // un contexte (`§§cfg.lang`) ou la propriété d'un objet qui n'est pas une variable `$` (un état partagé :
+  // `partage.req`) : relue aussi quand un état partagé lu par le composant change (`_u`, mjs_runes.ts)
+  const lues = /§§|(?<![\w$.µ])[A-Za-zµ_][\w$µ]*\s*(?:\?\.|\.|\[)/.test(node.expr ?? '') ? [...varsAwait, '_u'] : varsAwait
+  const varsLues = lues.length > 0 ? `, [${lues.map((v) => `'${v}'`).join(',')}]` : ''
+  ctx.updates.push(`this._mjs_updAwait('${id}', () => (${jsAwaitExpr}), ${tplPending}, ${tplSuccess}, ${tplError}${varsLues});`)
   return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
 }
 
@@ -1021,7 +1349,8 @@ export function compileKey(node: Node, ctx: Ctx): string {
   const rawExpr = node.expr ?? ''
 
   // Collecter les vars de l'expression-clé.
-  for (const v of getEffectVars(rawExpr.toString())) state.structVars.add(v)
+  const keyVars = getEffectVars(rawExpr.toString())
+  for (const v of keyVars) state.structVars.add(v)
 
   // Site EXPR (expression {key EXPR}).
   const cleanExpr = cleanJsExpr(rawExpr.toString(), state.externalVars, state.templateLang, state.moduleName)
@@ -1029,7 +1358,7 @@ export function compileKey(node: Node, ctx: Ctx): string {
   if (ctx.type !== 'root') {
     const preSize = ctx.updates.length
     // un `{const}` de CE bloc `{key}` ne vit que dans son corps (cf. Ctx.locals)
-    const blocCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+    const blocCtx: Ctx = { ...ctx, enBloc: true, locals: new Set(ctx.locals), portee: [...ctx.portee] }
     const innerHtmlRaw = node.children.map((c) => walk(c, blocCtx)).join('')
     const branchUpdatesRaw = ctx.updates.splice(preSize, ctx.updates.length - preSize)
     // cf. commentaire jumeau dans la branche non-root de
@@ -1039,12 +1368,18 @@ export function compileKey(node: Node, ctx: Ctx): string {
 
     // createFn(item, index) → {fragment, refs}.
     // `compactPaths` : cf. compileIf — forme compacte hors boucle seulement.
-    const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0 })
+    const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0, foreignNsRoot: ctx.svgNs ?? null })
     // `postUpdates` (ex. `value` d'un `<select>` peuplé par un
     // `{for}` imbriqué) rejouées APRÈS `branchUpdates`, même `__nodes` (mergé
     // par `_mjs_updItemIf` juste avant, comme pour `compileIf` non-root).
     const postUpdates = [...(createBody.postUpdates ?? []), ...deferred]
-    const wrappedChildren = [...branchUpdates, ...postUpdates].map((u) => `{ ${u} }`).join(' ')
+    // les `{const}` du bloc sont déclarés en tête de sa fonction de création (un élément construit un par un y pose déjà ses valeurs,
+    // qui les lisent) et en tête de ses mises à jour, dans un bloc commun : chaque mise à jour a le sien, et une déclaration enfermée
+    // dans le sien (`{ const d = … }`) n'était plus en portée pour les mises à jour qui la lisent. Le bloc commun laisse aussi la
+    // clé, lue juste avant, hors de la portée des déclarations
+    const decls           = branchUpdates.filter((u) => u.startsWith(CONST_DECL_PREFIX)).map((u) => u + ' ').join('')
+    const updates         = [...branchUpdates.filter((u) => !u.startsWith(CONST_DECL_PREFIX)), ...postUpdates].map((u) => `{ ${u} }`).join(' ')
+    const wrappedChildren = decls === '' ? updates : `{ ${decls}${updates} }`
 
     // `_mjs_keyStart`/`_mjs_keyEnd`/`_mjs_keyVal` (avant : `startNode`/`endNode`/`v`
     // nus) : `cleanExpr` est le texte de `{key EXPR}` tel qu'écrit par l'utilisateur
@@ -1055,19 +1390,34 @@ export function compileKey(node: Node, ctx: Ctx): string {
     // d'item (mot anglais plausible) : lecture SILENCIEUSE de l'ancre interne au
     // lieu de l'item (corruption sans erreur). Régression verrouillée par
     // tests/reserved-names-collision.test.ts.
-    const keyUpdate = `{ const _mjs_keyStart = __nodes['s-${id}']; const _mjs_keyEnd = __nodes['e-${id}']; if (_mjs_keyStart && _mjs_keyEnd) { const _mjs_keyVal = ${cleanExpr}; if (_mjs_keyVal !== _mjs_keyStart._mjs_old_key) { _mjs_keyStart._mjs_old_key = _mjs_keyVal; this._mjs_updItemIf(_mjs_keyStart, _mjs_keyEnd, () => { ${createBody.body} }, __nodes); } ${wrappedChildren} } }`
+    // une ancre neuve n'a pas encore posé sa clé : c'est ce repère (`_mjs_key_set`), non la valeur `undefined`, qui dit qu'il reste à construire (un `{key}` de valeur `undefined`
+    // construit son contenu comme les autres, en tout lieu) ; le pool de nœuds texte l'ôte aux ancres qu'il remet à neuf
+    const keyUpdate = `{ const _mjs_keyStart = __nodes['s-${id}']; const _mjs_keyEnd = __nodes['e-${id}']; if (_mjs_keyStart && _mjs_keyEnd) { const _mjs_keyVal = ${cleanExpr}; if (!_mjs_keyStart._mjs_key_set || _mjs_keyVal !== _mjs_keyStart._mjs_old_key) { _mjs_keyStart._mjs_key_set = 1; _mjs_keyStart._mjs_old_key = _mjs_keyVal; this._mjs_updItemIf(_mjs_keyStart, _mjs_keyEnd, () => { ${decls}${createBody.body} }, __nodes); } ${wrappedChildren} } }`
     ctx.updates.push(keyUpdate)
+    // dans une branche `{await}`, la clé suit ses variables comme la condition d'un `{if}` (cf. compileIf) : l'effet refait le contenu quand elle change
+    const suivi = ctx.type === 'await' ? suiviDeBloc({ ctx, compiler: state }, cleanExpr, `${cleanExpr} ${decls}${createBody.body} ${wrappedChildren}`, keyVars) : null
+    if (suivi) {
+      registerEffect(`{ const __nodes = this._mjs_nodes; const _mjs_keyStart = __nodes['s-${id}']; const _mjs_keyEnd = __nodes['e-${id}']; if (_mjs_keyStart && _mjs_keyEnd && ${suivi.garde}) { ${suivi.prelude}const _mjs_keyVal = ${cleanExpr}; if (_mjs_keyVal !== _mjs_keyStart._mjs_old_key) { _mjs_keyStart._mjs_key_set = 1; _mjs_keyStart._mjs_old_key = _mjs_keyVal; this._mjs_basc = ~~this._mjs_basc + 1; try { this._mjs_updItemIf(_mjs_keyStart, _mjs_keyEnd, () => { ${decls}${createBody.body} }, __nodes); ${wrappedChildren} } finally { this._mjs_basc--; } } } }`, suivi.vars)
+    }
 
     return `<script type='mjs/marker' mjs-l-t='s-${id}'></script><script type='mjs/marker' mjs-l-t='e-${id}'></script>`
   }
 
   const preSize = ctx.updates.length
   // idem branche non-root : ensemble de locaux isolé par bloc (cf. Ctx.locals)
-  const blocCtx: Ctx = { ...ctx, locals: new Set(ctx.locals), portee: [...ctx.portee] }
-  const innerHtmlRaw = node.children.map((c) => walk(c, blocCtx)).join('')
+  const blocCtx: Ctx = { ...ctx, enBloc: true, locals: new Set(ctx.locals), portee: [...ctx.portee] }
+  // garde toujours vraie : seul but, faire noter par `registerEffect` les jumelles du contenu
+  // (cf. `effectTwins`), comme la garde de branche d'un `{if}`
+  state.effectGuardStack.push('true')
+  let innerHtmlRaw: string
+  try {
+    innerHtmlRaw = node.children.map((c) => walk(c, blocCtx)).join('')
+  } finally {
+    state.effectGuardStack.pop()
+  }
   // Idem au root : createFn() → {fragment, refs}.
   // `compactPaths` : cf. compileIf — forme compacte hors boucle seulement.
-  const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0 })
+  const createBody = generateCreateFnBody(innerHtmlRaw, { splitSelectPostUpdates: true, compactPaths: ctx.loops.length === 0, foreignNsRoot: ctx.svgNs ?? null })
 
   // Régression (fil d'Ariane du tuto) — MÊME mécanique que
   // `branchExecBlock` de `compileIf` ci-dessus, et que la branche non-root
@@ -1084,10 +1434,25 @@ export function compileKey(node: Node, ctx: Ctx): string {
   // `postUpdates` rejouées APRÈS `childUpdates`, même `__nodes` (mergé par
   // `_mjs_updKey` juste avant).
   const postUpdates = createBody.postUpdates ?? []
-  const wrappedChildren = [...childUpdates, ...postUpdates].map((u) => `{ ${u} }`).join(' ')
+  // Une mise à jour dont le code est identique à un effet enregistré pendant le walk (le jumeau)
+  // n'est PAS rejouée à chaque passe : l'effet la joue au montage et à chaque changement de sa
+  // variable. Elle n'est posée ici qu'à la (re)création du bloc après le montage, pour les valeurs
+  // dont la variable n'a pas bougé (cf. `compileIf`). L'ordre d'origine est gardé.
+  let hasTwin = false
+  const wrappedChildren = [
+    ...childUpdates.map((u) => {
+      const twin = state.effectTwins.has(u) && !/_mjs_updIf|_mjs_updFor|_mjs_updAwait|_mjs_updKey|_updElement|_mjs_td|µ\._mjs_fx\(|_mjs_intro|_mjs_outro/.test(u)
+      if (twin) hasTwin = true
+      return twin ? `if (_mjs_nb) { ${u} }` : `{ ${u} }`
+    }),
+    ...postUpdates.map((u) => `{ ${u} }`),
+  ].join(' ')
 
-  // V2 — pas de condition. `_mjs_updKey` est idempotent via `_mjs_key_cache`.
-  const keyUpdate = `this._mjs_updKey('${id}', ${cleanExpr}, () => { ${createBody.body} });${wrappedChildren ? ' ' + wrappedChildren : ''}`
+  // V2 — pas de condition. `_mjs_updKey` est idempotent via `_mjs_key_cache` ; il rend vrai quand
+  // il reconstruit : `_mjs_nb` = bloc recréé après le montage.
+  const keyUpdate = hasTwin
+    ? `{ const _mjs_nb = this._mjs_updKey('${id}', ${cleanExpr}, () => { ${createBody.body} }) && !this._mjs_initial_render; ${wrappedChildren} }`
+    : `this._mjs_updKey('${id}', ${cleanExpr}, () => { ${createBody.body} });${wrappedChildren ? ' ' + wrappedChildren : ''}`
   ctx.updates.splice(preSize, 0, keyUpdate)
 
   return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
@@ -1156,6 +1521,25 @@ export interface CompileOpts {
   templateLang?: 'civet' | 'js'
   /** Best-effort, cf. ResetOpts.moduleName (state.ts) — enrichit les erreurs. */
   moduleName?: string
+  /** coupe individuellement les avertissements `syntax`/`events` émis ici (parseur compris,
+   *  cf. src/diagnostics.ts) — transmis PAR APPEL, jamais un état partagé. */
+  lint?: LintToggles
+  colorsEnabled?: boolean
+  /** cf. ParseDiag.autoSkeleton */
+  autoSkeleton?: boolean
+  /** cf. ParseDiag.models */
+  models?: { dev?: Record<string, string[]>, core?: Record<string, string[]> }
+  /** cf. ParseDiag.guarded */
+  guarded?: string[]
+  /** cf. ParseDiag.guardSilent */
+  guardSilent?: boolean
+  /** cf. ResetOpts.instanceProps */
+  instanceProps?: string[]
+  /** cf. ParseDiag.firstLine : la ligne du fichier où commence le HTML reçu (1 par défaut). Le HTML d'un composant est
+   *  rogné en tête, ses lignes vides ne comptent plus : le parseur la compte et la pose sur chaque nœud (`Node.line`) ;
+   *  le générateur porte celle de chaque balise et de chaque texte jusqu'à la construction du gabarit (marqueLigne,
+   *  paths.ts), où ses messages la citent */
+  firstLine?: number
 }
 
 export type CompileResult = [
@@ -1209,17 +1593,67 @@ export type CompileResult = [
 // valeurs déjà dynamiques `{…}` (type 'dynamic', aucun risque de confusion).
 // Parcours dédié — PAS le `walk()` de codegen (appelé 2× en pre-pass/real-pass,
 // un hook là-dedans doublerait l'avertissement) : un seul passage sur l'AST
-// brut, juste après le parse.
-function warnCivetInterpolationInAttrs(node: Node, moduleName: string | undefined): void {
+// brut, juste après le parse. Le message cite la ligne de la balise (`Node.line`)
+function warnCivetInterpolationInAttrs(node: Node, moduleName: string | undefined, lint?: LintToggles, colorsEnabled = false): void {
   for (const attr of node.attrs) {
     if (attr.type === 'static' && attr.val && attr.val.includes('#{')) {
       const valeur = attr.val.length > 60 ? attr.val.slice(0, 60) +'…' : attr.val
-      console.warn(t('generator.interpolation-civet-attribut', { module: moduleName ?? '', attr: attr.name ?? '', valeur }))
+      const line = typedLine('syntax', t('generator.interpolation-civet-attribut', { module: moduleName ?? '', attr: attr.name ?? '', valeur, ligne: node.line ?? '' }), lint)
+      if (line !== null) printDiagnostic(line, colorsEnabled)
     }
   }
-  for (const child of node.children) warnCivetInterpolationInAttrs(child, moduleName)
+  for (const child of node.children) warnCivetInterpolationInAttrs(child, moduleName, lint, colorsEnabled)
   for (const branch of node.branches) {
-    for (const child of branch.children) warnCivetInterpolationInAttrs(child, moduleName)
+    for (const child of branch.children) warnCivetInterpolationInAttrs(child, moduleName, lint, colorsEnabled)
+  }
+}
+
+// attributs booléens HTML : leur seule PRÉSENCE vaut vrai, quelle que soit la valeur écrite
+const HTML_BOOLEAN_ATTRS = new Set(['allowfullscreen', 'async', 'autofocus', 'autoplay', 'checked', 'controls', 'default',
+  'defer', 'disabled', 'formnovalidate', 'hidden', 'inert', 'ismap', 'itemscope', 'loop', 'multiple', 'muted', 'nomodule',
+  'novalidate', 'open', 'playsinline', 'readonly', 'required', 'reversed', 'selected'])
+
+// balises dont le texte s'affiche tel qu'écrit (code montré, champ) : un `#` en tête de ligne y
+// est voulu — dont le bloc de code du module cœur (`<@@code>` donne `mjs-core-code`) et celui d'un
+// composant du développeur (`<@code>` donne `mjs-code`), où un extrait shell, Civet ou Python en a
+const LITERAL_TEXT_TAGS = new Set(['pre', 'code', 'kbd', 'samp', 'textarea', 'script', 'style', 'mjs-code', 'mjs-core-code'])
+
+// avertissements compile-time (jamais bloquants) sur deux pièges du HTML qui ne cassent rien au
+// build et trompent à l'écran — même parcours dédié que warnCivetInterpolationInAttrs, un seul
+// passage sur l'AST brut :
+//   - `disabled="false"` sur une balise NATIVE (un composant, lui, lit `"false"` comme false) : la
+//     balise reste désactivée ;
+//   - une ligne de texte qui commence par `#` suivi d'un autre `#`, ou d'un blanc puis d'un texte (la
+//     forme d'un commentaire Civet/Coffee), dans un nœud texte qui court sur plusieurs lignes : elle
+//     part à l'écran. Un `#` seul dans sa cellule (`<th>#</th>`, ou sur sa propre ligne), `#1`, un
+//     `<pre>`, un bloc de code : rien
+// chaque message cite la ligne (`Node.line`, celle du fichier) : celle de la balise, ou celle du `#` lui-même
+function warnSilentHtmlTraps(node: Node, moduleName: string | undefined, lint?: LintToggles, colorsEnabled = false, literal = false): void {
+  const nom = (node.name ?? '').toLowerCase()
+  if (node.type === 'tag' && !nom.startsWith('mjs-') && !nom.startsWith('@')) {
+    for (const attr of node.attrs) {
+      const attrName = (attr.name ?? '').toLowerCase()
+      if (attr.type !== 'static' || !HTML_BOOLEAN_ATTRS.has(attrName) || !/^\s*false\s*$/i.test(String(attr.val ?? ''))) continue
+      const line = typedLine('syntax', t('generator.attribut-booleen-false', { module: moduleName ?? '', balise: nom, attr: attrName, ligne: node.line ?? '' }), lint)
+      if (line !== null) printDiagnostic(line, colorsEnabled)
+    }
+  }
+  if (node.type === 'text' && !literal && node.content && node.content.includes('\n')) {
+    // le parseur pose `line` sur le premier caractère non blanc du texte : la première ligne du nœud
+    // se retrouve en retirant les sauts de ligne du blanc de tête ; sans `line`, la ligne n'est pas citée
+    const firstLineNo = node.line === undefined ? undefined : node.line - (node.content.match(/^\s*/)![0].match(/\n/g)?.length ?? 0)
+    for (const [offset, ligne] of node.content.split('\n').entries()) {
+      if (!/^\s*#(?:#|[ \t]+\S)/.test(ligne)) continue
+      const brut    = ligne.trim()
+      const extrait = brut.length > 60 ? brut.slice(0, 60) + '…' : brut
+      const line    = typedLine('syntax', t('generator.diese-dans-le-html', { module: moduleName ?? '', extrait, ligne: firstLineNo === undefined ? '' : firstLineNo + offset }), lint)
+      if (line !== null) printDiagnostic(line, colorsEnabled)
+    }
+  }
+  const childLiteral = literal || (node.type === 'tag' && LITERAL_TEXT_TAGS.has(nom))
+  for (const child of node.children) warnSilentHtmlTraps(child, moduleName, lint, colorsEnabled, childLiteral)
+  for (const branch of node.branches) {
+    for (const child of branch.children) warnSilentHtmlTraps(child, moduleName, lint, colorsEnabled, childLiteral)
   }
 }
 
@@ -1231,14 +1665,14 @@ function warnCivetInterpolationInAttrs(node: Node, moduleName: string | undefine
 // jamais dans l'AST (parseComment, parser/index.ts) : rien à exclure ici pour
 // eux. `<@element>`/`<@module>` restent des noms réservés (AT_RESERVED_NAMES) —
 // resolveTagName ne pousse jamais `mjs-element`/`mjs-module`, donc leur cible
-// dynamique n'apparaît jamais dans cette liste. `mjs-core-x` (balise littérale
-// interdite, cf. resolveTagShortcuts) exclue aussi : jamais une dépendance valide.
+// dynamique n'apparaît jamais dans cette liste. `mjs-core-x` (module cœur, `<@@x>`)
+// y entre sous `core-x`, sa clé au manifeste.
 // Consommée par le bundler pour la table de préchargement (writeManifest) —
 // jamais pour la RÉSOLUTION elle-même (resolveTagShortcuts reste seul juge de
 // ce qui compile).
 function collectDirectComponentDeps(node: Node, insideRawBlock: boolean, out: Set<string>): void {
   const nameLower = node.type === 'tag' ? (node.name ?? '').toLowerCase() : ''
-  if (node.type === 'tag' && !insideRawBlock && nameLower.startsWith('mjs-') && !nameLower.startsWith('mjs-core-')) {
+  if (node.type === 'tag' && !insideRawBlock && nameLower.startsWith('mjs-')) {
     out.add((node.name as string).slice('mjs-'.length))
   }
   const childInsideRawBlock = insideRawBlock || nameLower === 'pre' || nameLower === 'code'
@@ -1263,13 +1697,16 @@ function collectDirectComponentDeps(node: Node, insideRawBlock: boolean, out: Se
 // l'avertissement), même famille de garde que warnCivetInterpolationInAttrs.
 const RAW_EMIT_RE = /µ\.?\s*emit\s*\(?\s*([^,()\n]*),\s*e\s*(?=[),\n;]|$)/g
 
-function warnRawEventEmit(inlines: string[], moduleName: string | undefined): void {
-  for (const body of inlines) {
+// `lineNumbers` : la ligne de la balise de chaque gestionnaire de `inlines` (même index)
+function warnRawEventEmit(inlines: string[], lineNumbers: Array<number | undefined>, moduleName: string | undefined, lint?: LintToggles, colorsEnabled = false): void {
+  for (const [offset, body] of inlines.entries()) {
     RAW_EMIT_RE.lastIndex = 0
     const m = RAW_EMIT_RE.exec(body)
     if (!m) continue
-    const nomEvenement = m[1].trim().replace(/^['"]|['"]$/g, '')
-    console.warn(t('generator.emit-evenement-brut', { module: moduleName ?? '', nomEvenement }))
+    const eventName = m[1].trim().replace(/^['"]|['"]$/g, '')
+    const ligne = lineNumbers[offset] ?? ''
+    const line = typedLine('events', t('generator.emit-evenement-brut', { module: moduleName ?? '', nomEvenement: eventName, ligne }), lint)
+    if (line !== null) printDiagnostic(line, colorsEnabled)
   }
 }
 
@@ -1279,12 +1716,47 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
     externalVars: opts.externalVars ?? [],
     templateLang: opts.templateLang,
     moduleName: opts.moduleName,
+    lint: opts.lint,
+    colorsEnabled: opts.colorsEnabled,
+    instanceProps: opts.instanceProps,
   })
 
   const preprocessed = preprocess(htmlRaw)
   const tagRefs: TagRef[] = []
-  const ast = parse(preprocessed, tagRefs)
-  warnCivetInterpolationInAttrs(ast, opts.moduleName)
+  const ast = parse(preprocessed, tagRefs, { lint: opts.lint, colorsEnabled: opts.colorsEnabled, autoSkeleton: opts.autoSkeleton, models: opts.models, guarded: opts.guarded, guardSilent: opts.guardSilent, firstLine: opts.firstLine })
+  // la génération descend aussi d'un appel par niveau, plus vite que l'analyse : pile épuisée, la ligne
+  // du nœud le plus profond
+  try {
+    return compileArbre(ast, tagRefs, opts)
+  }
+  catch (e) {
+    if (pileDebordee(e)) throw new Error(t('parser.imbrication-trop-profonde', { ligne: ligneLaPlusProfonde(ast) }))
+    throw e
+  }
+}
+
+// ligne du nœud le plus profond (celle de son plus proche ancêtre qui en porte une), parcours sans
+// récursion : la pile vient justement de déborder
+function ligneLaPlusProfonde(racine: Node): number {
+  let ligne = 0
+  let max   = -1
+  const pile: Array<[Node, number, number]> = [[racine, 0, racine.line ?? 0]]
+  while (pile.length > 0) {
+    const [noeud, prof, ligneAncetre] = pile.pop()!
+    const l = noeud.line ?? ligneAncetre
+    if (prof > max) {
+      max   = prof
+      ligne = l
+    }
+    for (const enfant of noeud.children) pile.push([enfant, prof + 1, l])
+    for (const branche of noeud.branches) for (const enfant of branche.children) pile.push([enfant, prof + 1, l])
+  }
+  return ligne
+}
+
+function compileArbre(ast: Node, tagRefs: TagRef[], opts: CompileOpts): CompileResult {
+  warnCivetInterpolationInAttrs(ast, opts.moduleName, opts.lint, opts.colorsEnabled)
+  warnSilentHtmlTraps(ast, opts.moduleName, opts.lint, opts.colorsEnabled)
 
   // dépendances directes de balises — comparaison par point de code (jamais
   // localeCompare, cf. writeManifest) pour que deux builds du même code
@@ -1316,8 +1788,9 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   state.structVars = new Set()
   // idem : la pre-pass a déjà walké les `{for}`, le real pass les revisite
   state.templateLocals = new Set()
-  // idem : les locaux par gestionnaire de la pre-pass ne valent que pour elle
+  // idem : les locaux par gestionnaire de la pre-pass ne valent que pour elle, comme leurs lignes
   state.inlineLocals = []
+  state.inlineLines = []
   // Reset mountOnlyEffects : pendant le pre-pass, `getEffectVars` retourne
   // toujours `[]` (uniquement pour peupler `snippetRegistry`), donc tous les
   // effects sont à tort classés `mountOnly`. Sans ce reset, ils tireraient
@@ -1341,7 +1814,8 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
   state.eventsWithPrevent = new Set()
 
   const ctx: Ctx = { type: 'root', updates: [], loops: [], locals: new Set(), portee: [] }
-  const surgicalHtml = walk(ast, ctx)
+  // marques de ligne retirées ; gardées à part pour les messages de la construction du gabarit racine
+  const surgicalHtml = retenirLignesRacine(walk(ast, ctx))
 
   // dédupe des updates
   const seen = new Set<string>()
@@ -1362,7 +1836,7 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
 
   // avertissement « relais événement brut » (µemit 'x', e), après
   // le real pass, sur les inlines FINALES (cf. warnRawEventEmit plus haut).
-  warnRawEventEmit(state.inlines, opts.moduleName)
+  warnRawEventEmit(state.inlines, state.inlineLines, opts.moduleName, opts.lint, opts.colorsEnabled)
 
   return [surgicalHtml, uniqueUpdates, state.events, state.inlines, state.effectsByVar, state.structVars, state.mountOnlyEffects, passiveEvents, tagRefs, state.templateLocals, state.initialPropBinds, componentDeps, state.inlineLocals]
 }

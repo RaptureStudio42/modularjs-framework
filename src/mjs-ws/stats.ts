@@ -1,6 +1,6 @@
 // mjs-ws/stats — « l'état du serveur » : registre de compteurs LÉGER, TOUJOURS actif —
 // connexions/messages/garde/salons/flux/pont/adaptateur/sessions/erreurs +
-// réservoir de latences ping (p50/p95). Créé UNE FOIS par app (core.ts), passé en ÉCRITURE aux
+// réservoir des intervalles entre deux µ:ping (p50/p95). Créé UNE FOIS par app (core.ts), passé en ÉCRITURE aux
 // moteurs qui en ont besoin (streams.ts, sessions.ts, bridge.ts) — rooms.ts n'écrit RIEN ici, ses
 // gauges (nombre de salons, membres) sont lues EN DIRECT à la demande (cf. MjsWsStatsGauges plus
 // bas) : jamais deux sources de vérité, jamais de drift. app.stats() (core.ts) assemble le tout en
@@ -11,11 +11,15 @@
 
 import { randomBytes } from 'node:crypto'
 
-// --- réservoir de latences ping — échantillon glissant borné, p50/p95 calculés à la demande ---
+// --- réservoir de mesures en ms (intervalles entre deux µ:ping) — échantillon glissant borné, p50/p95
+// calculés à la demande. Le nom de la classe et de son type sont restés (`Latency…`, exportés) : c'est la mesure
+// exposée qui a changé de nom, `intervallesPing` — le serveur ne voit que l'écart entre deux pings reçus d'une
+// connexion (≈ la période du battement client), jamais un aller-retour (le client ne répond pas à un ping du
+// serveur) ; l'aller-retour se mesure côté client (`sock.latency`) ---
 
 export const LATENCY_RESERVOIR_SIZE = 256
 
-/** Anneau borné de latences (ms) — au-delà de LATENCY_RESERVOIR_SIZE valeurs, les plus anciennes
+/** Anneau borné de mesures (ms) — au-delà de LATENCY_RESERVOIR_SIZE valeurs, les plus anciennes
  *  sont écrasées (fenêtre GLISSANTE) plutôt que jetées par un shift() O(n) inutile. */
 export class LatencyReservoir {
   private _buf: number[] = []
@@ -160,7 +164,8 @@ export interface MjsWsStatsSnapshot {
   pont: MjsWsStatsPont
   adaptateur: MjsWsStatsAdaptateur
   sessions: MjsWsStatsSessions
-  latences: MjsWsStatsLatences
+  /** intervalle entre deux µ:ping reçus d'une même connexion, ms — PAS un aller-retour (cf. LatencyReservoir) */
+  intervallesPing: MjsWsStatsLatences
   erreurs: MjsWsStatsErreurs
 }
 
@@ -185,7 +190,7 @@ export interface MjsWsStatsRegistry {
   sessions: MjsWsStatsSessions
   erreurs: MjsWsStatsErreurs
   fluxCompteurs: Pick<MjsWsStatsFlux, 'deltasEmis' | 'resyncsRejeu' | 'resyncsReset'>
-  latencesPing: LatencyReservoir
+  intervallesPing: LatencyReservoir
   /** assemble l'instantané complet — `gauges` : valeurs lues EN DIRECT par l'appelant (core.ts) */
   snapshot(gauges: MjsWsStatsGauges): MjsWsStatsSnapshot
 }
@@ -204,7 +209,7 @@ export function createStatsRegistry(): MjsWsStatsRegistry {
     sessions:      { emises: 0, reprises: 0, expirees: 0, debordees: 0 },
     erreurs:       { erreurs: 0, avertissements: 0 },
     fluxCompteurs: { deltasEmis: 0, resyncsRejeu: 0, resyncsReset: 0 },
-    latencesPing:  new LatencyReservoir(),
+    intervallesPing: new LatencyReservoir(),
 
     snapshot(gauges: MjsWsStatsGauges): MjsWsStatsSnapshot {
       return {
@@ -220,7 +225,7 @@ export function createStatsRegistry(): MjsWsStatsRegistry {
         pont:       { ...registry.pont, requetesParEndpoint: { ...registry.pont.requetesParEndpoint } },
         adaptateur: { ...registry.adaptateur },
         sessions:   { ...registry.sessions },
-        latences:   registry.latencesPing.percentiles(),
+        intervallesPing: registry.intervallesPing.percentiles(),
         erreurs:    { ...registry.erreurs },
       }
     },
@@ -304,9 +309,9 @@ export function toPrometheusText(snapshot: MjsWsStatsSnapshot): string {
   counter('log_errors_total', snapshot.erreurs.erreurs)
   counter('log_warnings_total', snapshot.erreurs.avertissements)
 
-  if (snapshot.latences.p50 != null) gauge('ping_p50_ms', snapshot.latences.p50)
-  if (snapshot.latences.p95 != null) gauge('ping_p95_ms', snapshot.latences.p95)
-  gauge('ping_samples', snapshot.latences.echantillon)
+  if (snapshot.intervallesPing.p50 != null) gauge('ping_interval_p50_ms', snapshot.intervallesPing.p50)
+  if (snapshot.intervallesPing.p95 != null) gauge('ping_interval_p95_ms', snapshot.intervallesPing.p95)
+  gauge('ping_interval_samples', snapshot.intervallesPing.echantillon)
 
   return lines.join('\n') + '\n'
 }

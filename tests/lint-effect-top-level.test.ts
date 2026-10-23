@@ -16,7 +16,7 @@ describe('lintEffectTopLevel — unitaire (scan source, chaînes/commentaires ma
   })
 
   it('µeffect sur ligne indentée → throw avec le numéro de ligne', () => {
-    assert.throws(() => lintEffectTopLevel('@go = ->\n  µeffect ->\n    $n++'), /« µeffect » imbriqué \(ligne 2 du <script>\)/)
+    assert.throws(() => lintEffectTopLevel('@go = ->\n  µeffect ->\n    $n++'), /« µeffect » imbriqué \(ligne 2\)/)
   })
 
   it('µeffect en colonne 0 mais derrière un `->` sur la même ligne → throw', () => {

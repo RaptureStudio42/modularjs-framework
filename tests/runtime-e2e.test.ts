@@ -167,7 +167,7 @@ $label = "Hello Light"
     assert.equal(el._mjs_isLight, true, 'flag _mjs_isLight doit être positionné')
 
     // _shadow doit pointer sur le composant lui-même
-    assert.equal(el._shadow, el, '_shadow doit pointer sur this en light mode')
+    assert.ok(el._shadow === el, '_shadow doit pointer sur this en light mode')
 
     // En light mode : le <p> doit être trouvable directement depuis document
     // (pas dans un shadowRoot)

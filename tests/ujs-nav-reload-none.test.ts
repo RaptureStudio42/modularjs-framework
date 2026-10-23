@@ -23,9 +23,11 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
+const NAV_PROGRESS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_nav_progress.ts'), 'utf-8')
 const STORE_GLOBALS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_store_globals.ts'), 'utf-8')
 const AJAX_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
 
@@ -35,6 +37,9 @@ function extractHelpersBlock(src: string): string {
 }
 function installHelpers(µ: any, document: any, window: any) {
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
+  // la barre de navigation (mjs_nav_progress.ts), toujours là avec mjs_ujs.ts — ses minuteries ne
+  // sonnent jamais ici : aucune barre dans le document factice
+  new Function('µ', 'document', 'setTimeout', 'clearTimeout', 'CSSStyleSheet', NAV_PROGRESS_SRC)(µ, document, () => 1, () => {}, undefined)
 }
 function extractClickBody(src: string): string {
   return extractMarkedBody(src, '_mjs_ujsOnClick')
@@ -58,6 +63,7 @@ function extractResMergeStatement(): string {
   return extractMarked(STORE_GLOBALS_SRC, '_mjs_resMerge')
 }
 function installResMerge(µ: any) {
+  poserMessages(µ)
   new Function('µ', extractResMergeStatement())(µ)
 }
 

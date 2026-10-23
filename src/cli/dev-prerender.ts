@@ -15,7 +15,7 @@
 
 import type { MjsConfig } from '../bundler/config.js'
 import type { Bundler } from '../bundler/index.js'
-import { prerenderPages, type PrerenderReport } from '../server/prerender.js'
+import { prerenderPages, type PrerenderReport, type PrerenderOverrides } from '../server/prerender.js'
 import { emitStartup } from '../bundler/startup.js'
 import { t } from '../messages/index.js'
 
@@ -29,6 +29,9 @@ export interface PrerenderOnDevRecompileOpts {
   bundler?: Bundler
   /** Injectable pour les tests, comme `prerenderFn`. */
   startupFn?: typeof emitStartup
+  /** `--output`, `--manifest`, `--prod` de `mjs dev` : sans eux le prérendu recompilait dans le
+   *  dossier de sortie de mjs.config.json, en développement (même garde que `mjs build`). */
+  overrides?: PrerenderOverrides
 }
 
 /**
@@ -50,7 +53,7 @@ export async function prerenderOnDevRecompile(
   const warn = opts.warn ?? (() => {})
   const fn = opts.prerenderFn ?? prerenderPages
   try {
-    const report = await fn(config, configDir, log)
+    const report = await fn(config, configDir, log, opts.overrides ?? {})
     // En dev, `render.startup: 'bundle'` se comporte comme `'preload'` (liens seuls, cf.
     // bundler/startup.ts) : `prod: false`. Un recompile qui ne change rien ne touche AUCUN fichier :
     // le prérendu saute l'écriture d'un fragment dont le corps est déjà sur disque (cf.

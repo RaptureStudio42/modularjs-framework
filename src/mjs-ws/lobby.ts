@@ -32,7 +32,7 @@
 //   lobby:block       CLIENT→SERVEUR (fire-and-forget)  {hall?, identityId}
 //
 // Identité — AUCUNE confiance dans le client, MÊME résolution que chat.ts (peerIdOf/nameOf,
-// duck-typing `identity.name` pour le nom, `identity.id` puis `client.id` pour l'id) : tout
+// duck-typing `identity.name` pour le nom, `identity.id` puis `anon:` suivi de `client.id` pour l'id) : tout
 // `from`/`id` est TOUJOURS résolu SERVEUR.
 //
 // PRÉSENCE — pourquoi une Map INTERNE plutôt que le registre de rooms.ts. Un paquet composé sur
@@ -42,8 +42,9 @@
 // rejoint/quitté » (cf. chat.ts, même limite pour ses seaux de débit — AUCUN hook « salon vidé »
 // n'est accessible depuis un paquet). La présence RICHE de ce paquet (`presence`, Map<hall,
 // Map<identityId, ...>>) est donc une agrégation MAISON, tenue à jour à `lobby:enter` (création/
-// rafraîchissement) et NETTOYÉE au balayage opportuniste (ci-dessous) en comparant contre
-// `room(fullName).clients` (agrégation peerIdOf) — jamais en réinventant un registre de MEMBRES
+// rafraîchissement) et NETTOYÉE au départ du salon (accroche interne du moteur, `_onRoomLeave`), avec le balayage
+// opportuniste (ci-dessous) en filet, qui compare contre `room(fullName).clients` (agrégation peerIdOf) — jamais en
+// réinventant un registre de MEMBRES
 // (celui-là reste `app.room()`, seul juge de qui est réellement connecté : un départ disparaît
 // TOUJOURS de `.clients` immédiatement, que ce paquet l'ait remarqué ou non — cf. « Limites » du
 // balayage opportuniste, docs/28-lobby.md, pour le délai de propagation aux AUTRES clients).
@@ -77,11 +78,12 @@
 // minuterie dédiée.
 
 import { randomBytes } from 'node:crypto'
-import type { MjsWsApp, MjsWsClient, MjsWsLogFn, MjsWsLogLevel } from './core.js'
+import type { MjsWsApp, MjsWsClient, MjsWsLogFn } from './core.js'
 import { definePackage } from './packages.js'
 import type { MjsPackage } from './packages.js'
 import { peerIdOf } from './rooms.js'
-import { TokenBucket } from './guard.js'
+import { TokenBucket, checkSetting } from './guard.js'
+import { defaultLogOf, nameOf } from './package-helpers.js'
 import { t } from '../messages/index.js'
 
 /** statuts riches — cf. tête de fichier « ABSENT AUTO » pour la nuance auto vs explicite. */
@@ -150,6 +152,9 @@ export interface MjsWsLobbyOptions {
   listingRate?: { rate?: number; burst?: number }
   /** durée de vie d'une annonce, ms (défaut 300000 = 5 min). */
   listingTtlMs?: number
+  /** plafond de blocages gardés PAR IDENTITÉ, tous halls confondus (défaut 256) — un blocage neuf au-delà :
+   *  'lobby-block-limit', sans autre sanction. Un entier ≥ 1, vérifié à la construction (sinon lobbyPackage() lève). */
+  blockedMax?: number
   /** réservé aux actions de modération (`lobby:withdraw` sur l'annonce d'un AUTRE) — `identity` = `client.identity` brut. */
   moderators?(identity: unknown): boolean | Promise<boolean>
   /**
@@ -187,25 +192,12 @@ const VALID_STATUSES: readonly MjsWsLobbyStatus[] = ['free', 'busy', 'away']
 // opportunisticSweep) — détail d'implémentation INTERNE, jamais une option `opts.*` documentée.
 const SWEEP_EVERY_N_ACTIONS = 50
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[mjs-ws:lobby] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
-
-// name — MÊME résolution que chat.ts::nameOf (`identity.name`, repli `peerIdOf(client)`) :
-// dupliquée ICI plutôt qu'importée (chat.ts est hors zone, lecture seule) — même esprit que
-// accounts.ts qui n'a pas eu besoin de ce helper.
-// Convention d'identité PARTAGÉE : accounts.ts l'ÉMET dans le jeton, chat.ts le lit à l'identique.
-function nameOf(client: MjsWsClient): string {
-  const identity = client.identity
-  if (identity && typeof identity === 'object') {
-    const name = (identity as Record<string, unknown>).name
-    if (typeof name === 'string' && name) return name
-  }
-  return peerIdOf(client)
-}
+// blocages — une identité présente dans le hall seulement, de 128 caractères au plus, et 256 blocages au plus
+// par identité, tous halls confondus : sans borne, un seul client faisait retenir au serveur jusqu'à 64 Ko par
+// trame ; bornés par hall, des identifiants inventés dans 50 halls (un par salon rejoint), 2,5 Mo par connexion —
+// 256 n'est que le défaut du plafond par identité, que l'appli règle (`opts.blockedMax`)
+const BLOCK_ID_MAX_LENGTH = 128
+const DEFAULT_BLOCKED_MAX = 256
 
 // id court, unique — même primitive que chat.ts::genId (randomBytes(6), pas les 8 de accounts.ts :
 // ici des id ÉPHÉMÈRES — invitation/annonce —, jamais un identifiant de compte persisté).
@@ -271,7 +263,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
   const listingMetaMaxLength  = opts.listingMetaMaxLength ?? DEFAULT_ANNONCE_META_MAX_LENGTH
   const listingDebitBurst     = opts.listingRate?.burst ?? DEFAULT_ANNONCE_DEBIT_BURST
   const listingDebitRate      = opts.listingRate?.rate ?? DEFAULT_ANNONCE_DEBIT_RATE
-  const onLog                 = opts.onLog ?? defaultLog
+  const blockedMax            = opts.blockedMax ?? DEFAULT_BLOCKED_MAX
+  const onLog                 = opts.onLog ?? defaultLogOf('lobby')
+  // plafond de blocages vérifié dès la construction, comme les réglages numériques de mjsWs() : 0 refusait tout
+  // blocage, NaN (une variable d'environnement absente passée à Number()) ou Infinity levaient la borne en silence
+  if (opts.blockedMax !== undefined) checkSetting('blockedMax', opts.blockedMax, 'entier')
 
   // présence riche — Map<hall complet, Map<identityId, PresenceEntry>> (cf. tête de fichier « PRÉSENCE »)
   const presence = new Map<string, Map<string, PresenceEntry>>()
@@ -281,6 +277,8 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
   const listingByIdentity = new Map<string, Map<string, string>>()
   // invitations en attente — Map<hall complet, Map<invitationId, InvitationRecord>>
   const invitations = new Map<string, Map<string, InvitationRecord>>()
+  // blocages gardés par identité, tous halls confondus (borne blockedMax) — rendus quand sa présence part
+  const blockedCount = new Map<string, number>()
 
   let actionsDepuisBalayage = 0
 
@@ -403,6 +401,18 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     return out
   }
 
+  // départ définitif d'une identité du hall (sortie du salon annoncée par le moteur, ou balayage) : présence riche,
+  // blocages, annonce et invitations — les autres membres reçoivent lobby:left
+  function departDuHall(app: MjsWsApp, fullName: string, hall: string, id: string, entry: PresenceEntry): void {
+    presence.get(fullName)?.delete(id)
+    const restants = (blockedCount.get(id) ?? 0) - entry.blocked.size
+    if (restants > 0) blockedCount.set(id, restants)
+    else blockedCount.delete(id)
+    app.room(fullName).send('lobby:left', { hall, id })
+    withdrawListingOfIdentity(app, fullName, hall, id)
+    purgerInvitationsIdentite(fullName, id)
+  }
+
   // un passage de balayage pour UN hall — départs (présence riche désynchronisée de room().clients),
   // absent-auto, TTL des annonces/invitations. Mêmes garanties de bornage que chat.ts :
   // sous-Map retombée à zéro entrée → la clé de hall elle-même est réclamée (jamais un registre qui
@@ -413,14 +423,12 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
 
     const pres = presence.get(fullName)
     if (pres) {
+      // qui est encore là : les connexions du hall lues une seule fois (une lecture par membre coûtait
+      // membres × connexions à chaque balayage)
+      const presents = new Set<string>()
+      for (const c of app.room(fullName).clients) presents.add(peerIdOf(c))
       for (const [id, entry] of pres) {
-        if (!estPresentDansHall(app, fullName, id)) {
-          pres.delete(id)
-          app.room(fullName).send('lobby:left', { hall, id })
-          withdrawListingOfIdentity(app, fullName, hall, id)
-          purgerInvitationsIdentite(fullName, id)
-          continue
-        }
+        if (!presents.has(id)) { departDuHall(app, fullName, hall, id, entry); continue }
         if (awayAfterMs != null && !entry.awayAuto && entry.status !== 'away' && now - entry.lastActivity > awayAfterMs) {
           entry.previousStatus = entry.status
           entry.status = 'away'
@@ -450,7 +458,9 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
   }
 
   // point d'entrée UNIQUE du balayage — jamais de minuterie dédiée, cf. chat.ts::opportunisticSweep
-  // (même seuil SWEEP_EVERY_N_ACTIONS, même compteur GLOBAL au paquet entier, pas par hall).
+  // (même seuil SWEEP_EVERY_N_ACTIONS, même compteur GLOBAL au paquet entier, pas par hall). Appelé APRÈS
+  // les gardes de chaque action : seule l'action d'un membre du hall compte, un client refusé
+  // ('lobby-denied') ne déclenche jamais de balayage.
   function opportunisticSweep(app: MjsWsApp): void {
     actionsDepuisBalayage++
     if (actionsDepuisBalayage < SWEEP_EVERY_N_ACTIONS) return
@@ -460,6 +470,18 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
 
   const pkg = definePackage('lobby', app => {
 
+    // départ d'un membre (sa dernière connexion a quitté le salon du hall : µ:leave, expulsion, déconnexion) : annoncé aux
+    // autres tout de suite, sans attendre le balayage — accroche interne du moteur ; absente (app composée autrement), le
+    // balayage reste seul juge
+    const onRoomLeave = (app as any)._onRoomLeave as ((fn: (room: string, id: string) => void) => void) | undefined
+    onRoomLeave?.((room, id) => {
+      const pres  = presence.get(room)
+      const entry = pres?.get(id)
+      if (!pres || !entry) return
+      departDuHall(app, room, hallDeFullName(room), id, entry)
+      if (pres.size === 0) presence.delete(room)
+    })
+
     // entrée dans le hall — crée (1re fois) ou rafraîchit (reconnexion/2e onglet) la présence riche
     // de cette identité, renvoie l'état COMPLET (diffusion delta, état complet au
     // join). `estMembre` suppose le µ:join bas niveau déjà accepté — MÊME ordre que sock.chat()
@@ -467,8 +489,8 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.serve('lobby:enter', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
+      opportunisticSweep(app)   // avant presenceHall : un balayage peut réclamer la sous-Map vide du hall
 
       const identityId = peerIdOf(client)
       const pres = presenceHall(fullName)
@@ -497,11 +519,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:status', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')   // jamais entré (lobby:enter) — cf. tête de fichier
+      opportunisticSweep(app)
 
       const status = p?.status
       if (typeof status !== 'string' || VALID_STATUSES.indexOf(status as MjsWsLobbyStatus) === -1) throw new Error('lobby-status-invalid')
@@ -532,11 +554,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:invite', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       const cibleId = p?.identityId
       if (typeof cibleId !== 'string' || !cibleId) throw new Error('lobby-away')
@@ -575,11 +597,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:reply', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       const id = p?.id
       if (typeof id !== 'string' || !id) throw new Error('lobby-invitation-unknown')
@@ -604,11 +626,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:advertise', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       let title = p?.title
       if (typeof title !== 'string') throw new Error('lobby-title-invalid')
@@ -660,11 +682,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:withdraw', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       const idDemande = p?.id
       const cibleId = typeof idDemande === 'string' && idDemande ? idDemande : listingByIdentity.get(fullName)?.get(identityId)
@@ -693,11 +715,11 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
     app.on('lobby:join', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       const id = p?.id
       if (typeof id !== 'string' || !id) throw new Error('lobby-listing-unknown')
@@ -724,30 +746,40 @@ export function lobbyPackage(opts: MjsWsLobbyOptions = {}): MjsPackage {
 
     // blocage — session/process, cf. tête de fichier « BLOCAGE ». Payload malformé (identityId
     // absent/non-chaîne) ou auto-blocage : ignoré silencieusement, jamais une erreur métier (rien à
-    // signaler de plus qu'un no-op, MÊME esprit que chat.ts pour un salon malformé).
+    // signaler de plus qu'un no-op, MÊME esprit que chat.ts pour un salon malformé). Bornes : un
+    // identifiant de plus de BLOCK_ID_MAX_LENGTH caractères ('lobby-block-invalid'), une identité absente
+    // du hall ('lobby-away', comme pour une invitation) ou un blocage NEUF au-delà de blockedMax pour
+    // cette identité, tous halls confondus ('lobby-block-limit') est refusé, rien n'est gardé.
     app.on('lobby:block', async (p, client) => {
       const hall = hallOf(p)
       const fullName = salonPourHall(hall)
-      opportunisticSweep(app)
       if (!estMembre(app, fullName, client)) throw new Error('lobby-denied')
       const identityId = peerIdOf(client)
       const entry = presence.get(fullName)?.get(identityId)
       if (!entry) throw new Error('lobby-denied')
+      opportunisticSweep(app)
 
       const cibleId = p?.identityId
       if (typeof cibleId !== 'string' || !cibleId || cibleId === identityId) return
+      if (cibleId.length > BLOCK_ID_MAX_LENGTH) throw new Error('lobby-block-invalid')
+      const neuf = !entry.blocked.has(cibleId)
+      if (neuf && !presence.get(fullName)?.has(cibleId)) throw new Error('lobby-away')
+      if (neuf && (blockedCount.get(identityId) ?? 0) >= blockedMax) throw new Error('lobby-block-limit')
 
       entry.name = nameOf(client)
       touchAndReturn(app, fullName, hall, identityId, entry)
+      if (!neuf) return
       entry.blocked.add(cibleId)
+      blockedCount.set(identityId, (blockedCount.get(identityId) ?? 0) + 1)
     })
   })
 
   // accès à l'état interne à des fins de TEST UNIQUEMENT — MÊME précédent que chat.ts (_buckets/
   // _muetJusque/_dernierFrappeAt) : aucune primitive publique n'expose ces registres, indispensable
   // pour prouver depuis les tests que la purge mémoire (balayerHall) a bien eu lieu.
-  ;(pkg as any)._presence    = presence
-  ;(pkg as any)._listings    = listings
-  ;(pkg as any)._invitations = invitations
+  ;(pkg as any)._presence     = presence
+  ;(pkg as any)._listings     = listings
+  ;(pkg as any)._invitations  = invitations
+  ;(pkg as any)._blockedCount = blockedCount
   return pkg
 }

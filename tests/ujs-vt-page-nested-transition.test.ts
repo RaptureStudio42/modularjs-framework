@@ -28,25 +28,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
 const ROUTER_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts'), 'utf-8')
 
-// Globals posés/restaurés PAR TEST (même précaution que view-transition.test.ts : Node fournit un
-// CustomEvent natif incompatible avec les instances happy-dom, et un autre fichier de test du même
-// process Mocha peut avoir déjà posé sa propre Window avant celui-ci).
-let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any, __prevCustomElements: any
-beforeEach(() => {
-  __prevWindow = (globalThis as any).window
-  __prevDocument = (globalThis as any).document
-  __prevCustomEvent = (globalThis as any).CustomEvent
-  __prevCustomElements = (globalThis as any).customElements
-})
-afterEach(() => {
-  ;(globalThis as any).window = __prevWindow
-  ;(globalThis as any).document = __prevDocument
-  ;(globalThis as any).CustomEvent = __prevCustomEvent
-  ;(globalThis as any).customElements = __prevCustomElements
-})
-
 function loadRouter(win: any) {
-  const µ: any = { log() {}, warn() {}, error() {} }
+  const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
   const g: any = globalThis
   g.window = win
   g.document = win.document
@@ -110,6 +93,27 @@ function makeAsyncNestingTracker() {
 }
 
 describe("mjs_ujs/mjs_router — transition de PAGE et transition de VUE ROUTÉE ne s'imbriquent plus", function () {
+  // Globals posés/restaurés PAR TEST (même précaution que view-transition.test.ts : Node fournit un
+  // CustomEvent natif incompatible avec les instances happy-dom, et un autre fichier de test du même
+  // process Mocha peut avoir déjà posé sa propre Window avant celui-ci) ; crochets DANS le describe :
+  // posés à la racine du fichier, ils couraient après chaque test de tous les fichiers du process
+  let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any, __prevCustomElements: any
+  beforeEach(() => {
+    __prevWindow = (globalThis as any).window
+    __prevDocument = (globalThis as any).document
+    __prevCustomEvent = (globalThis as any).CustomEvent
+    __prevCustomElements = (globalThis as any).customElements
+  })
+  afterEach(async () => {
+    // navigate() diffère d'une tâche le contrôle « aucune route » (setTimeout, faute de requestAnimationFrame ici) :
+    // il passe avant que la fenêtre du test ne soit rendue, sinon il lit `window` une fois rendu et lève hors de tout test
+    await new Promise((r) => setTimeout(r, 0))
+    ;(globalThis as any).window = __prevWindow
+    ;(globalThis as any).document = __prevDocument
+    ;(globalThis as any).CustomEvent = __prevCustomEvent
+    ;(globalThis as any).customElements = __prevCustomElements
+  })
+
   it("updateCallback rappelé de façon ASYNCHRONE (comme un vrai navigateur) : navigate() depuis l'échange n'ouvre pas de seconde transition", async function () {
     const win: any = new Window({ url: 'http://localhost/#/x' })
     const { state, startViewTransition } = makeAsyncNestingTracker()

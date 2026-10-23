@@ -41,10 +41,11 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { signCanonical, canonicalString, isLoopbackHost } from '../mjs-ws/bridge.js'
-import type { MjsWsLogFn, MjsWsLogLevel } from '../mjs-ws/index.js'
+import type { MjsWsLogFn } from '../mjs-ws/index.js'
 import type { MjsServerPersistAdapter } from './persist.js'
 import type { MjsServerGameSnapshot } from './game.js'
 import { t } from '../messages/index.js'
+import { consoleLog } from '../mjs-ws/package-helpers.js'
 
 const RETRY_DELAYS_MS    = [2000, 10000]   // délai AVANT chaque retentative — essai initial sans délai (0/2/10 s, cf. commentaire de tête)
 const DEFAULT_TIMEOUT_MS = 5000            // même défaut que wh.timeoutMs (webhooks sortants, bridge.ts) — PAR TENTATIVE
@@ -75,12 +76,7 @@ export interface BridgePersistAdapterOpts {
   allowInsecure?: boolean
 }
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[mjs-server:persist-bridge] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
+const defaultLog = consoleLog('[mjs-server:persist-bridge]')
 
 // garde TLS — MÊME logique que src/mjs-ws/proxy.ts::estLoopback, RÉPLIQUÉE ici
 // plutôt qu'importée (périmètre différent : hostname d'une URL de PERSISTANCE, pas de proxy de
@@ -107,12 +103,12 @@ function signedRequest(target: URL, method: string, secret: string, body: string
     // FOIS sur `req` et sur `res` (la réponse en cours de lecture voit sa connexion coupée sous
     // elle) : sans écouter les DEUX, celui qui n'a pas de listener devient un événement 'error' non
     // géré (uncaughtException) — le garde évite un double resolve/reject, jamais un souci en soi.
-    let settled = false
+    let settled       = false
     const finirErreur = (err: Error): void => { if (!settled) { settled = true; reject(err) } }
-    const ts  = Math.floor(Date.now() / 1000)
-    const sig = signCanonical(secret, canonicalString(ts, method, target.pathname + target.search, body))
-    const requester = target.protocol === 'https:' ? httpsRequest : httpRequest
-    const req = requester(target, {
+    const ts          = Math.floor(Date.now() / 1000)   // l'heure MURALE, volontairement : le back compare cet horodatage signé à la sienne (± 300 s) — l'échéance globale, elle, suit performance.now()
+    const sig         = signCanonical(secret, canonicalString(ts, method, target.pathname + target.search, body))
+    const requester   = target.protocol === 'https:' ? httpsRequest : httpRequest
+    const req         = requester(target, {
       method,
       headers: {
         'content-type':      'application/json; charset=utf-8',
@@ -144,7 +140,9 @@ function signedRequest(target: URL, method: string, secret: string, body: string
 }
 
 /** 1 essai + jusqu'à RETRY_DELAYS_MS.length retentatives — `null` = abandon (tous les essais
- *  épuisés OU `deadline` — échéance ABSOLUE en ms epoch, cf. commentaire de tête — dépassée). Sans
+ *  épuisés OU `deadline` — échéance ABSOLUE, en ms sur l'horloge MONOTONE (performance.now()) : l'heure
+ *  murale saute (correction NTP, reprise d'une machine virtuelle) et ferait abandonner trop tôt ou
+ *  réessayer trop tard — dépassée). Sans
  *  `deadline`, un back qui échoue systématiquement mais vite pourrait quand même immobiliser
  *  l'appelant pendant la somme COMPLÈTE de RETRY_DELAYS_MS (jusqu'à ~27 s, essais compris) : la
  *  deadline coupe court dès qu'il ne reste plus le temps d'une retentative utile. `timeoutMs` — délai
@@ -154,18 +152,18 @@ function signedRequest(target: URL, method: string, secret: string, body: string
  *  son propre timeoutMs avant que la deadline n'ait la moindre chance d'agir. */
 async function withRetries(run: (attemptTimeoutMs: number) => Promise<HttpResponse>, onFailure: (err: unknown, attempt: number) => void, deadline: number, timeoutMs: number): Promise<HttpResponse | null> {
   for (let attempt = 0; ; attempt++) {
-    const restant = deadline - Date.now()
-    if (restant <= 0) { onFailure(new Error(t('serveur.persist-bridge-delai-global-depasse')), attempt); return null }
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) { onFailure(new Error(t('serveur.persist-bridge-delai-global-depasse')), attempt); return null }
     try {
-      const rep = await run(Math.min(timeoutMs, restant))
+      const rep = await run(Math.min(timeoutMs, remaining))
       if (rep.status >= 200 && rep.status < 300) return rep
       throw new Error(t('serveur.persist-bridge-reponse-http', { status: rep.status }))
     } catch (err) {
       onFailure(err, attempt)
       if (attempt >= RETRY_DELAYS_MS.length) return null
-      const restantApres = deadline - Date.now()
-      if (restantApres <= 0) return null
-      await sleep(Math.min(RETRY_DELAYS_MS[attempt], restantApres))
+      const remainingAfter = deadline - performance.now()
+      if (remainingAfter <= 0) return null
+      await sleep(Math.min(RETRY_DELAYS_MS[attempt], remainingAfter))
     }
   }
 }
@@ -177,7 +175,11 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
   private _timeoutMs: number
   private _totalTimeoutMs: number
   private _maxResponseBytes: number
-  private _enVol = new Set<Promise<void>>()
+  private _inFlight = new Set<Promise<void>>()
+
+  /** ms — délai global d'UNE écriture, tous essais compris : le moteur de persistance (persist.ts) l'attend aussi, plus une marge,
+   *  avant d'abandonner l'écriture — il suit donc le totalTimeoutMs réglé ici, au lieu des 30 s par défaut */
+  get writeTimeoutMs(): number { return this._totalTimeoutMs }
 
   constructor(opts: BridgePersistAdapterOpts) {
     if (!opts.url) throw new Error(t('serveur.persist-bridge-url-manquant'))
@@ -204,7 +206,7 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
     const rep = await withRetries(
       (attemptTimeoutMs) => signedRequest(this._target, 'GET', this._secret, '', attemptTimeoutMs, this._maxResponseBytes),
       (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-load-tentative-echouee', { tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
-      Date.now() + this._totalTimeoutMs,
+      performance.now() + this._totalTimeoutMs,
       this._timeoutMs,
     )
     if (!rep) { this._onLog('warn', t('serveur.persist-bridge-load-abandonne')); return [] }
@@ -223,33 +225,34 @@ export class BridgePersistAdapter implements MjsServerPersistAdapter {
     }
   }
 
-  save(id: string, data: MjsServerGameSnapshot): void { this._pousser({ op: 'save', id, data }, `save('${id}')`) }
-  remove(id: string): void { this._pousser({ op: 'remove', id }, `remove('${id}')`) }
+  // promesse rendue = fin de la requête (essais compris), jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  save(id: string, data: MjsServerGameSnapshot): Promise<void> { return this._pousser({ op: 'save', id, data }, `save('${id}')`) }
+  remove(id: string): Promise<void> { return this._pousser({ op: 'remove', id }, `remove('${id}')`) }
 
   async flush(): Promise<void> {
-    await Promise.allSettled(Array.from(this._enVol))
+    await Promise.allSettled(Array.from(this._inFlight))
   }
 
   // garde-fou — .catch() AVANT .finally() : une promesse orpheline rejetée ne doit
   // JAMAIS devenir un unhandledRejection (Node 20 tue le process dessus). En pratique avecRetentatives
   // catche déjà tout en interne (jamais un rejet ici) — filet de sécurité, MÊME patron que les 3
   // autres adaptateurs (persist-file/sql/redis.ts).
-  private _suivre(p: Promise<void>, label: string): void {
-    this._enVol.add(p)
-    p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'bridge', label: label }), { err: err instanceof Error ? err.message : String(err) }))
-      .finally(() => this._enVol.delete(p))
+  private _suivre(p: Promise<void>, label: string): Promise<void> {
+    this._inFlight.add(p)
+    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'bridge', label: label }), { err: err instanceof Error ? err.message : String(err) }))
+      .finally(() => { this._inFlight.delete(p) })
   }
 
-  private _pousser(payload: unknown, label: string): void {
+  private _pousser(payload: unknown, label: string): Promise<void> {
     const body = JSON.stringify(payload)
     const p = withRetries(
       (attemptTimeoutMs) => signedRequest(this._target, 'POST', this._secret, body, attemptTimeoutMs, this._maxResponseBytes),
       (err, attempt) => this._onLog('warn', t('serveur.persist-bridge-tentative-echouee', { label: label, tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err) }),
-      Date.now() + this._totalTimeoutMs,
+      performance.now() + this._totalTimeoutMs,
       this._timeoutMs,
     ).then((rep) => {
       if (!rep) this._onLog('warn', t('serveur.persist-bridge-abandonne-apres-tentatives', { label: label, tentatives: RETRY_DELAYS_MS.length + 1 }))
     })
-    this._suivre(p, label)
+    return this._suivre(p, label)
   }
 }

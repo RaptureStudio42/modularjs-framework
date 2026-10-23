@@ -2,7 +2,7 @@
 
 > 📚 Tuto interactif correspondant : **Chapitre 1 — Introduction**. Les encarts 🎓 *Pour débutants* dépliables donnent l'explication pas-à-pas ; le corps de la page reste la référence dense.
 
-**ModularJS (MJS)** est un framework de composants compilé. Tu écris des fichiers `.mjs` (markup + logique + style) ; un **compilateur** les transforme en `.js` standard, prêt à tourner dans le navigateur sans dépendance de runtime lourde. La philosophie tient en trois points : réactivité résolue à la **compilation**, composants = **Custom Elements** natifs, style **scopé** par Shadow DOM.
+**ModularJS (MJS)** est un framework de composants compilé. Vous écrivez des fichiers `.mjs` (markup + logique + style) ; un **compilateur** les transforme en `.js` standard, prêt à tourner dans le navigateur sans dépendance de runtime lourde. La philosophie tient en trois points : réactivité résolue à la **compilation**, composants = **Custom Elements** natifs, style **scopé** par Shadow DOM.
 
 ## Réactivité résolue à la compilation
 
@@ -13,21 +13,21 @@ C'est la différence majeure avec un framework qui enveloppe l'état dans un `Pr
 <details>
 <summary>🎓 <b>Pour débutants</b> — « compilé » vs « interprété », ça change quoi&nbsp;?</summary>
 
-Beaucoup de frameworks sont des **bibliothèques** : tu télécharges leur moteur, et c'est lui qui, dans le navigateur de ton visiteur, lit ton code et décide quoi afficher. Ce moteur a un coût (poids + temps de calcul).
+Beaucoup de frameworks sont des **bibliothèques** : vous téléchargez leur moteur, et c'est lui qui, dans le navigateur de votre visiteur, lit votre code et décide quoi afficher. Ce moteur a un coût (poids + temps de calcul).
 
-MJS fait le gros du travail **avant**, sur ta machine, au moment où tu construis le projet : il lit ton `.mjs` et écrit à la place un `.js` déjà optimisé, qui sait exactement quoi faire. Le navigateur du visiteur n'a plus qu'à exécuter des instructions simples. Tu paies l'intelligence une fois (à la compilation) au lieu de la repayer à chaque visite.
+MJS fait le gros du travail **avant**, sur votre machine, au moment où vous construisez le projet : il lit votre `.mjs` et écrit à la place un `.js` déjà optimisé, qui sait exactement quoi faire. Le navigateur du visiteur n'a plus qu'à exécuter des instructions simples. Vous payez l'intelligence une fois (à la compilation) au lieu de la repayer à chaque visite.
 
 </details>
 
 ## Composants = Custom Elements + Shadow DOM
 
-Un composant MJS n'est pas une abstraction maison : c'est un **Custom Element** standard du navigateur. Un fichier `mon-bouton.mjs` devient la balise `<mjs-mon-bouton>`, enregistrée via `customElements.define`. Tu peux l'utiliser comme n'importe quelle balise HTML, l'inspecter dans les outils du navigateur, l'imbriquer.
+Un composant MJS n'est pas une abstraction maison : c'est un **Custom Element** standard du navigateur. Un fichier `mon-bouton.mjs` devient la balise `<mjs-mon-bouton>`, enregistrée via `customElements.define`. Vous pouvez l'utiliser comme n'importe quelle balise HTML, l'inspecter dans les outils du navigateur, l'imbriquer.
 
 Son `<style>` est attaché en **Shadow DOM** : les règles CSS sont **isolées**, elles ne fuient pas vers le reste de la page et ne sont pas écrasées par le CSS global. Pas besoin de conventions de nommage (**bem**) ni de CSS-in-JS pour éviter les collisions — c'est le navigateur qui garantit l'isolation.
 
 ## Parenté avec Svelte
 
-MJS s'inspire de **Svelte** : même esprit « compilateur plutôt que runtime », même structure de fichier composant (`<script>` + markup + `<style>`), et le **parcours du tuto interactif suit chapitre pour chapitre celui de Svelte**. Si tu connais Svelte, tu retrouveras tes repères.
+MJS s'inspire de **Svelte** : même esprit « compilateur plutôt que runtime », même structure de fichier composant (`<script>` + markup + `<style>`), et le **parcours du tuto interactif suit chapitre pour chapitre celui de Svelte**. Si vous connaissez Svelte, vous retrouverez vos repères.
 
 Mais MJS a ses **spécificités**, et c'est là que ce calque s'arrête :
 
@@ -37,7 +37,7 @@ Mais MJS a ses **spécificités**, et c'est là que ce calque s'arrête :
 - **Pas d'`import … from`** dans un `<script>` : on importe avec la directive `@import` (voir [Anatomie d'un composant → Importer un module](02-composant.md) et [Pièges & bonnes pratiques](18-pieges.md)).
 - Sucre propre à MJS : `value=!`, `@event` nu, `--var={}`, blocs `{if}`/`{for}`, etc.
 
-> ⚠️ Ne recopie pas la syntaxe d'un autre framework — des `$props()`, `$state`, `<svelte:*>` n'existent pas en MJS. La doc et les tutos te donnent l'idiome exact : suis-le plutôt que de deviner par analogie.
+> ⚠️ Ne recopiez pas la syntaxe d'un autre framework — des `$props()`, `$state`, `<svelte:*>` n'existent pas en MJS. La doc et les tutos vous donnent l'idiome exact : suivez-le plutôt que de deviner par analogie.
 
 ## Mini-exemple « Hello »
 
@@ -60,7 +60,7 @@ Le `<script>` est en Civet ; `name` est une variable locale, et `{ … }` dans l
 
 Un fichier `.mjs` se lit du haut vers le bas comme un petit document : d'abord (optionnel) un bloc `<script>` pour la logique, puis du **markup HTML** posé directement, puis (optionnel) un bloc `<style>`. Tout ce qui n'est ni `<script>` ni `<style>` est le **HTML** affiché par le composant.
 
-Les accolades `{ … }` sont des « trous » dans ce HTML : MJS y insère le résultat de l'expression JavaScript/Civet que tu écris. `{name}` affiche la valeur de `name` ; `{name.toUpperCase()}` affiche cette valeur en majuscules.
+Les accolades `{ … }` sont des « trous » dans ce HTML : MJS y insère le résultat de l'expression JavaScript/Civet que vous écrivez. `{name}` affiche la valeur de `name` ; `{name.toUpperCase()}` affiche cette valeur en majuscules.
 
 </details>
 

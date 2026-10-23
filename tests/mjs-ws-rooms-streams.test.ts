@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -22,6 +23,7 @@ const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }
@@ -178,7 +180,7 @@ describe('MJS-WS — salons & présence (boucle complète, vrai client µ.socket
   })
 
   it("4. présence GLOBALE : reset avec peers, delta join à l'arrivée d'un 2e client, delta leave à sa déconnexion — et `room` ABSENT du JSON émis", async () => {
-    const { transport, app } = await startApp()
+    const { transport, app } = await startApp({ presence: 'public' })   // présence globale ouverte (fermée par défaut)
     const brut = await rawClient(transport, 'memory://r4-brut')
     brut.frames.length = 0
     brut.send({ t: 'µ:sub-presence', p: {} })   // présence globale : room ABSENT du JSON (undefined verbatim côté client)
@@ -216,7 +218,8 @@ describe('MJS-WS — salons & présence (boucle complète, vrai client µ.socket
     const µA = makeClient(transport); const sA = µA.socket('memory://r5a', { auth: () => ({ uid: 'u1', pseudo: 'Ana' }) })
     sA.connect(); sA.room('zone'); await tick()
 
-    // B observe la présence du salon SANS le rejoindre (abonné-présence ≠ membre)
+    // B observe la présence du salon SANS le rejoindre (salon ouvert : abonné-présence ≠ membre)
+    app.room('zone', { presence: 'public' })
     const µB = makeClient(transport); const sB = µB.socket('memory://r5b', { auth: () => ({ uid: 'u2', pseudo: 'Bob' }) })
     sB.connect()
     const $$pres = sB.presence('zone')
@@ -237,6 +240,7 @@ describe('MJS-WS — salons & présence (boucle complète, vrai client µ.socket
     const { transport, app } = await startApp({
       auth:  (hello: any) => ({ id: hello.auth.uid, pseudo: hello.auth.pseudo }),
       rooms: { meta: (client: any) => ({ pseudo: client.identity.pseudo }) },
+      presence: 'public',   // présence globale ouverte (fermée par défaut)
     })
     const µO = makeClient(transport); const sO = µO.socket('memory://r6-obs', { auth: () => ({ uid: 'obs' }) })
     sO.connect()
@@ -276,7 +280,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('7. sub → reset snapshot de l\'état courant, au seq courant', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const monde = app.stream('monde')
+    const monde = app.stream('monde', { public: true })
     monde.add('e1', { x: 1 })
     monde.add('e2', { x: 2 })
     const µ = makeClient(transport, trace)
@@ -295,7 +299,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('8. add/update/remove → le store client suit exactement, seq strictement croissants par flux', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const monde = app.stream('monde')
+    const monde = app.stream('monde', { public: true })
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://f8')
     s.connect()
@@ -317,7 +321,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('9. RESYNC INCRÉMENTAL : coupure, 3 mutations dans la fenêtre du journal, reconnexion réelle → rattrapage par REJEU aux seq d\'origine, AUCUN reset après le premier', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const monde = app.stream('monde')
+    const monde = app.stream('monde', { public: true })
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://f9', { reconnect: { backoff: [0], jitter: 0 } })
     s.connect()
@@ -348,7 +352,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('10. trou HORS fenêtre (journal: 2, 5 mutations pendant la coupure) → reset complet, état final juste', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const monde = app.stream('monde', { journal: 2 })
+    const monde = app.stream('monde', { public: true, journal: 2 })
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://f10', { reconnect: { backoff: [0], jitter: 0 } })
     s.connect()
@@ -374,7 +378,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('11. reset() serveur = NOUVELLE ÉPOQUE : journal vidé, un resync post-reset → reset complet (jamais un rejeu qui traverse) ; en ligne, le client l\'accepte à n\'importe quel seq', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const monde = app.stream('monde')
+    const monde = app.stream('monde', { public: true })
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://f11', { reconnect: { backoff: [0], jitter: 0 } })
     s.connect()
@@ -418,7 +422,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
     assert.ok(warns.some(w => w.includes('fantome')), 'warn onLog : abonnement à un flux non déclaré')
 
     // déclaré APRÈS coup : le sub d'avant n'a PAS créé d'abonnement fantôme
-    const fantome = app.stream('fantome')
+    const fantome = app.stream('fantome', { public: true })
     fantome.add('a', { v: 1 })
     await tick()
     assert.deepEqual({ ...$$f }, {}, 'pas abonné rétroactivement — un flux répondu « inconnu » ne pousse rien')
@@ -432,7 +436,7 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   // EXACTEMENT comme s'il n'avait jamais existé.
   it("13b. app.stream(nom).destroy() : disparaît du registre — un futur abonné retombe sur 'jamais déclaré'", async () => {
     const { transport, app } = await startApp()
-    const s1 = app.stream('partie-1')
+    const s1 = app.stream('partie-1', { public: true })
     s1.add('e1', { x: 1 })
     assert.equal(app.stats().flux.nombre, 1)
 
@@ -452,8 +456,8 @@ describe('MJS-WS — flux à journal borné + resync incrémental (boucle compl�
   it('13. deux flux indépendants : compteurs seq séparés, abonnés séparés', async () => {
     const trace: Array<{ url: string; msg: any }> = []
     const { transport, app } = await startApp()
-    const alpha = app.stream('alpha')
-    const beta  = app.stream('beta')
+    const alpha = app.stream('alpha', { public: true })
+    const beta  = app.stream('beta', { public: true })
     const µ = makeClient(transport, trace)
     const s = µ.socket('memory://f13')
     s.connect()

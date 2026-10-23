@@ -109,9 +109,11 @@ describe('findMacroTagEnd sans borne : perte de contenu silencieuse', () => {
 })
 
 describe('a11y : role="presentation"/"none" coupe l\'alerte à tort', () => {
-  // dernier message = rappel de désactivation (ajouté dès qu'il y a ≥1 alerte), même convention que tests/a11y-lint.test.ts
+  // checkA11y() ne rend plus que les VRAIES alertes (rappel disparu, remplacé par l'étiquette
+  // [lint.a11y] au point d'impression, transpiler/index.ts) — identité gardée pour ne pas
+  // réécrire tous les appels, même convention que tests/a11y-lint.test.ts
   function realAlerts(msgs: string[]): string[] {
-    return msgs.length ? msgs.slice(0, -1) : msgs
+    return msgs
   }
 
   it('role="presentation" + @click sur <div> non interactif : alerte quand même (le rôle retire la sémantique, ne la donne pas)', () => {
@@ -229,8 +231,9 @@ describe('findMacroTagEnd : heredoc/chaîne à profondeur > 0 pris pour une bali
 })
 
 describe('a11y : role="presentation"/"none" + écouteur clavier justifie (régression du correctif précédent)', () => {
+  // même identité que ci-dessus (plus de rappel à retirer)
   function realAlerts(msgs: string[]): string[] {
-    return msgs.length ? msgs.slice(0, -1) : msgs
+    return msgs
   }
 
   it('fragment réel (modale de fond, fermeture au clic et au clavier) : role="presentation" + @click.self + @keydown → 0 alerte', () => {

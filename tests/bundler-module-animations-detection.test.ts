@@ -57,7 +57,7 @@ describe('bundler — animation détectée dans un module .civet autonome (@impo
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
     const files = readdirSync(outDir)
-    const animFile = files.find(f => /^mjs_anims-[a-f0-9]{8}\.js$/.test(f))
+    const animFile = files.find(f => /^mjs_anims-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(animFile,
       "AVANT le fix : usedAnimations restait vide (le seul usage de µ.anim, dans le .civet, n'était jamais scanné) → compileUsedAnimations() n'émettait même pas de fichier mjs_anims.")
 

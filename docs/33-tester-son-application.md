@@ -8,12 +8,14 @@ Le framework se teste lui-même, avec des milliers de cas, et ne proposait rien 
 
 **Ce n'est pas un lanceur de tests.** Le module n'impose ni Mocha, ni Vitest, ni Jest : on monte, on agit, on lit — l'assertion reste celle de l'outil que l'auteur préfère.
 
+**Le code y tourne en mode strict, comme dans la page.** Le navigateur charge le bundle en module, donc en mode strict ; le harnais évalue de même le cœur, les feuilles, les effets et les composants. Une écriture refusée (objet gelé, propriété sans setter) lève une `TypeError` dans le test comme dans le navigateur, au lieu de passer en silence.
+
 ## 2. Installation
 
-Le DOM simulé dans lequel le harnais charge le projet compilé vient de `happy-dom` — une dépendance **optionnelle** (même patron que `playwright` pour le moteur de rendu navigateur : le framework ne l'impose à personne), déclarée en pair optionnel dans `package.json`. Son absence ne fait pas tomber une erreur de résolution de module au visage de l'auteur : elle donne un message qui dit quoi installer (§6).
+Le DOM simulé dans lequel le harnais charge le projet compilé vient de `happy-dom`, en version **20.11.2 au moins** — une dépendance **optionnelle** (même patron que `playwright` pour le moteur de rendu navigateur : le framework ne l'impose à personne), déclarée en pair optionnel dans `package.json`. Son absence ne fait pas tomber une erreur de résolution de module au visage de l'auteur : elle donne un message qui dit quoi installer (§6). Une version plus ancienne est refusée de la même façon, avec la version trouvée et la commande pour monter : en dessous, happy-dom perd au ramasse-miettes le rappel d'un `MutationObserver`, un composant ne voit plus ses attributs changer et un test réussit ou échoue au hasard.
 
 ```bash
-npm i -D happy-dom
+npm i -D happy-dom@^20.11.2
 ```
 
 ```ts
@@ -124,7 +126,7 @@ Depuis l'interface `MountedComponent` — ce que rend `app.mount(nom, props?)` :
 | `type(selecteur, valeur)` | saisit une valeur dans un champ (valeur posée + événement `input`), puis attend le rendu |
 | `set(props)` | change des props depuis le parent, puis attend le rendu |
 | `tick()` | attend que le rendu en attente ait eu lieu |
-| `destroy()` | retire le composant de la page (ses hooks de démontage tournent) |
+| `destroy()` | retire le composant de la page (ses hooks de démontage tournent), même s'il a une méthode `@remove` : celle de l'auteur n'est jamais appelée |
 
 Les quatre verbes d'action (`click`, `fire`, `type`, `set`) attendent le rendu tout seuls — `tick()` est rarement nécessaire, les verbes ci-dessus le font déjà.
 
@@ -137,7 +139,7 @@ Et depuis `Harness` — ce que rend `createHarness(opts?)` :
 | `document` | son document |
 | `µ` | le runtime du framework, tel que la page le voit |
 | `components` | les composants trouvés dans le projet compilé, par nom |
-| `destroy()` | ferme la fenêtre et libère le compilateur — à appeler en fin de fichier de test |
+| `destroy()` | ferme la fenêtre et libère le compilateur — à appeler en fin de fichier de test ; le pool de threads du compilateur, partagé par tout le processus, reste à un autre Bundler qui compile encore (un second harnais, un Bundler du test) |
 
 Et les options de `createHarness(opts)` :
 
@@ -149,13 +151,13 @@ Et les options de `createHarness(opts)` :
 | `manifestPath` | — | idem |
 | `stylesheetsDir` | — | idem |
 | `url` | `http://localhost/` | URL de la page simulée — utile pour tester un routeur |
-| `only` | tout le projet | ne charge QUE ces composants, par nom de fichier sans extension |
+| `only` | tout le projet | ne charge QUE ces composants (et les fichiers qu'ils importent), par nom de fichier sans extension |
 
 ## 5. Trois surprises
 
 - **Un harnais par fichier de test suffit.** La compilation est le gros du coût, le montage est instantané : on crée le harnais une fois (`before`), on le ferme une fois (`after`) — c'est ce que fait l'exemple du §3.
-- **Tout le projet est chargé par défaut, pas seulement le composant testé.** Un composant imbriqué dans celui qu'on monte se monte donc tout seul, sans rien déclarer. Sur un très gros projet, l'option `only` restreint la liste chargée — au prix de devoir nommer explicitement les enfants que le composant testé embarque.
-- **`set()` ne fait pas la même chose selon la valeur.** Une valeur scalaire (chaîne, nombre, booléen, `null`) passe par l'**attribut** — le mécanisme réel qu'observe un composant dans une vraie page (`null`/`false` retire l'attribut, `true` pose un attribut vide, comme un attribut booléen HTML). Une valeur qu'un attribut ne saurait porter (objet, tableau, fonction) passe par l'écriture d'état du runtime, celle que le compilateur émet dans ce même cas. **Au montage en revanche**, `mount('nom', { … })` pose les props directement sur l'élément avant sa mise à niveau par le compilateur : objets et tableaux passent donc tels quels, sans détour par l'attribut.
+- **Tout le projet est chargé par défaut, pas seulement le composant testé.** Un composant imbriqué dans celui qu'on monte se monte donc tout seul, sans rien déclarer. Sur un très gros projet, l'option `only` restreint la liste chargée — au prix de devoir nommer explicitement les enfants que le composant testé embarque ; ce qu'un composant chargé importe d'un autre fichier du projet (`@import`) est chargé avec lui, avant lui.
+- **`set()` ne fait pas la même chose selon la valeur.** Une chaîne ou `null` passent par l'**attribut** — le mécanisme réel qu'observe un composant dans une vraie page —, sous le nom que le composant observe : `set({ startLabel: 'x' })` pose `start-label` ; `null` retire l'attribut. Un nombre, un booléen, comme une valeur qu'un attribut ne saurait porter (objet, tableau, fonction), passe par l'écriture d'état du runtime, celle que le compilateur émet quand un parent passe une expression (`count={$n}`) : la valeur arrive avec son type, sans attribut — `set({ count: 5 })` donne le nombre `5`, et non le texte `'5'`, `set({ on: true })` donne `true`, `set({ on: false })` donne `false`. **Au montage en revanche**, `mount('nom', { … })` pose les props directement sur l'élément avant sa mise à niveau par le compilateur : objets et tableaux passent donc tels quels, sans détour par l'attribut.
 
 ## 6. Les messages d'erreur
 
@@ -163,10 +165,11 @@ Le harnais parle quand il ne peut pas faire ce qu'on lui demande :
 
 | Message | Se déclenche quand |
 |---|---|
-| `[mjs/testing] aucun mjs.config.json trouvé depuis ${racine}, et aucun sourceDir donné — passe { root: '…' } ou { sourceDir: '…' } à createHarness().` | ni `mjs.config.json` (en remontant depuis `root`), ni `sourceDir` fourni en option |
+| `[mjs/testing] aucun mjs.config.json trouvé depuis ${racine}, et aucun sourceDir donné — passez { root: '…' } ou { sourceDir: '…' } à createHarness().` | ni `mjs.config.json` (en remontant depuis `root`), ni `sourceDir` fourni en option |
 | `[mjs/testing] le projet ne compile pas, le harnais ne peut rien monter :\n${detail}` | le projet compile avec des erreurs — `detail` reprend les messages du compilateur |
-| `[mjs/testing] le DOM simulé est absent — installe-le : npm i -D happy-dom (dépendance optionnelle, le framework ne l'impose à personne).` | `happy-dom` n'est pas installé |
-| `[mjs/testing] aucun mjs_core-<empreinte>.js dans ${dossier} — le build n'a rien écrit là où le harnais regarde (vérifie outputDir).` | le dossier de sortie ne contient pas le cœur du runtime compilé |
+| `[mjs/testing] le DOM simulé est absent — installez-le : npm i -D happy-dom (dépendance optionnelle, le framework ne l'impose à personne).` | `happy-dom` n'est pas installé |
+| `[mjs/testing] les tests d'application requièrent happy-dom 20.11.2 au moins (version installée : ${found}). En dessous, happy-dom perd au ramasse-miettes le rappel d'un MutationObserver : un composant ne voit plus ses attributs changer et un test réussit ou échoue au hasard. Montez la version : npm i -D happy-dom@^20.11.2` | `happy-dom` est installé en dessous de la version exigée — `found` est la version trouvée |
+| `[mjs/testing] aucun mjs_core-<empreinte>.js dans ${dossier} — le build n'a rien écrit là où le harnais regarde (vérifiez outputDir).` | le dossier de sortie ne contient pas le cœur du runtime compilé ; ici comme quand le cœur lève à son chargement, le harnais ferme sa fenêtre et son compilateur avant de rendre l'erreur : le processus de test peut sortir |
 | `[mjs/testing] le composant '${nom}' n'a pas pu être chargé : ${detail}` | le composant existe dans le projet compilé mais son chargement a levé une erreur |
 | `[mjs/testing] aucun composant '${nom}' dans le projet compilé. Connus : ${connus}` | `mount()` reçoit un nom absent des composants chargés — faute de frappe, ou composant exclu par `only` — le message liste les noms connus |
 | `[mjs/testing] aucun nœud ne correspond à '${selecteur}' dans <${tag}>.` | `click`/`fire`/`type` visent un sélecteur que le composant monté ne contient pas — le message nomme le composant visé |
@@ -175,9 +178,9 @@ Le harnais parle quand il ne peut pas faire ce qu'on lui demande :
 
 Il ne remplace pas un test de navigateur réel. Le DOM simulé (`happy-dom`) n'a ni mise en page, ni animations réelles, ni moteur de rendu : il expose les mêmes API DOM que le composant utilise (`querySelector`, `dispatchEvent`, attributs…), mais ne dessine rien. Une transition CSS ne joue pas, une mesure de position ou de taille ne reflète aucune vraie disposition, un focus visuel ne se voit pas. Pour tout ce qui **se voit** — transitions, mise en page, focus, rendu pixel — il faut un vrai navigateur. Le harnais couvre le comportement (ce que l'état devient, ce que le texte affiche, ce qui se déclenche), pas ce que l'œil verrait.
 
-Il ne donne accès, sur l'élément monté, qu'à **deux** propriétés internes : `_shadow` (la racine d'ombre, ou l'élément lui-même en mode léger) et `_state` (l'état du composant). Ce sont les seules dont le nom est garanti stable — le harnais s'en sert lui-même pour `shadow` et `state`. Tout le reste de la mécanique interne porte des noms préfixés `_mjs_` que la construction de production **raccourcit** (un nom d'une ou deux lettres, différent d'un projet à l'autre) : un test qui lit `el._mjs_quelqueChose` marche sur un build de développement et rend `undefined` sur un build de production, sans la moindre erreur. Passe par les verbes du harnais (`state`, `text()`, `html()`, `find()`), jamais par une propriété interne autre que ces deux-là.
+Il ne donne accès, sur l'élément monté, qu'à **deux** propriétés internes : `_shadow` (la racine d'ombre, ou l'élément lui-même en mode léger) et `_state` (l'état du composant). Ce sont les seules dont le nom est garanti stable — le harnais s'en sert lui-même pour `shadow` et `state`. Tout le reste de la mécanique interne porte des noms préfixés `_mjs_` que la construction de production **raccourcit** (un nom d'une ou deux lettres, différent d'un projet à l'autre) : un test qui lit `el._mjs_quelqueChose` marche sur un build de développement et rend `undefined` sur un build de production, sans la moindre erreur. Passez par les verbes du harnais (`state`, `text()`, `html()`, `find()`), jamais par une propriété interne autre que ces deux-là.
 
-Il ne charge pas non plus les feuilles de style **partagées** en mode `css: 'lazy'` ([32 · CLI & configuration](32-cli-et-configuration.md) § `css`) : ce mode produit de vrais fichiers `.css`, demandés par le runtime au montage du premier composant qui les déclare — un fetch que `createHarness()` ne simule pas. `µ.CSS` reste vide, sans le moindre avertissement : un composant `@css="marque"` monte et s'affiche normalement, juste sans le style partagé appliqué. Pour tester un comportement lié au CSS partagé (thème, classes issues d'une feuille `@css`), compile le projet en `css: 'bundle'` (le défaut) ou `css: 'split'` — les deux seuls modes où le harnais charge réellement ces feuilles.
+Il ne charge pas non plus les feuilles de style **partagées** en mode `css: 'lazy'` ([32 · CLI & configuration](32-cli-et-configuration.md) § `css`) : ce mode produit de vrais fichiers `.css`, demandés par le runtime au montage du premier composant qui les déclare — un fetch que `createHarness()` ne simule pas. `µ.CSS` reste vide, sans le moindre avertissement : un composant `@css="marque"` monte et s'affiche normalement, juste sans le style partagé appliqué. Pour tester un comportement lié au CSS partagé (thème, classes issues d'une feuille `@css`), compilez le projet en `css: 'bundle'` (le défaut) ou `css: 'split'` — les deux seuls modes où le harnais charge réellement ces feuilles.
 
 ---
 

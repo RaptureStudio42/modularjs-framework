@@ -57,18 +57,18 @@ describe('bundler — writeManifest : ordre STABLE des clés de µ.paths', funct
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
     // un composant par module cœur, chacun compilé en parallèle : c'est l'ordre
-    // d'arrivée de cette course qui décidait du rang de switch/checkbox/radio
-    writeFileSync(join(srcDir, 'page-switch.mjs'), '<@switch></@switch>')
-    writeFileSync(join(srcDir, 'page-checkbox.mjs'), '<@checkbox></@checkbox>')
-    writeFileSync(join(srcDir, 'page-radio.mjs'), '<@radio></@radio>')
-    writeFileSync(join(srcDir, 'page-field.mjs'), '<@field></@field>')
+    // d'arrivée de cette course qui décidait du rang de core-switch/core-checkbox/core-radio
+    writeFileSync(join(srcDir, 'page-switch.mjs'), '<@@switch></@@switch>')
+    writeFileSync(join(srcDir, 'page-checkbox.mjs'), '<@@checkbox></@@checkbox>')
+    writeFileSync(join(srcDir, 'page-radio.mjs'), '<@@radio></@@radio>')
+    writeFileSync(join(srcDir, 'page-field.mjs'), '<@@field></@@field>')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
     const keys = manifestKeys(bundler.manifestPath)
-    assert.ok(keys.includes('switch') && keys.includes('checkbox') && keys.includes('radio'), `modules cœur absents du manifeste :\n${keys.join(', ')}`)
+    assert.ok(keys.includes('core-switch') && keys.includes('core-checkbox') && keys.includes('core-radio'), `modules cœur absents du manifeste :\n${keys.join(', ')}`)
     const sorted = [...keys].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
     assert.deepEqual(keys, sorted, `clés de µ.paths non triées :\n${keys.join(', ')}`)
 
@@ -85,9 +85,9 @@ describe('bundler — writeManifest : ordre STABLE des clés de µ.paths', funct
     const root   = mjsTmp('paths-ordre-rebuild')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'page-switch.mjs'), '<@switch></@switch>')
-    writeFileSync(join(srcDir, 'page-checkbox.mjs'), '<@checkbox></@checkbox>')
-    writeFileSync(join(srcDir, 'page-radio.mjs'), '<@radio></@radio>')
+    writeFileSync(join(srcDir, 'page-switch.mjs'), '<@@switch></@@switch>')
+    writeFileSync(join(srcDir, 'page-checkbox.mjs'), '<@@checkbox></@@checkbox>')
+    writeFileSync(join(srcDir, 'page-radio.mjs'), '<@@radio></@@radio>')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     await bundler.compile()
@@ -96,7 +96,7 @@ describe('bundler — writeManifest : ordre STABLE des clés de µ.paths', funct
     const second = manifestKeys(bundler.manifestPath).join('|')
 
     assert.equal(second, first, 'même code, deux builds → µ.paths doit être identique')
-    for (const core of ['switch', 'checkbox', 'radio']) {
+    for (const core of ['core-switch', 'core-checkbox', 'core-radio']) {
       assert.ok(second.split('|').includes(core), `module cœur « ${core} » disparu de µ.paths au 2e compile :\n${second}`)
     }
 

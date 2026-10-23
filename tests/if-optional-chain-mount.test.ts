@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { assertAbsent } from './helpers/dom-assert.js'
 
 const stripEsm = (s: string) => s
   .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
@@ -102,7 +103,7 @@ closeIt = -> $x = null
     const p = () => el._shadow.querySelector('p')
 
     assert.equal(el._mjs_has_crashed, undefined, 'aucun crash au montage (x=null)')
-    assert.equal(p(), null, 'x=null → aucun <p> au montage')
+    assertAbsent(p(), 'x=null → aucun <p> au montage')
 
     click('.open')
     await new Promise((r) => setTimeout(r, 50))
@@ -117,7 +118,7 @@ closeIt = -> $x = null
     click('.close')
     await new Promise((r) => setTimeout(r, 50))
     assert.equal(el._mjs_has_crashed, undefined, 'aucun crash à la fermeture')
-    assert.equal(p(), null, 'x repasse à null → le <p> disparaît sans erreur')
+    assertAbsent(p(), 'x repasse à null → le <p> disparaît sans erreur')
 
     win.close?.()
   })

@@ -3,8 +3,8 @@
 // Ce qu'on verrouille ici : dépliage récursif, cas durs de types (cyclique, Map, Set, tableau,
 // nœud DOM, fonction, null/undefined, chaîne longue, symbole), le plafond de 200 entrées,
 // l'édition RÉELLE de l'objet source (y compris imbriqué, racine scalaire lecture seule),
-// l'échappement HTML, µ.devObject sans héritage de pli entre deux appels, et les bascules du
-// panneau (µ.devPanel bascule/true/false/sélecteur, Échap, bouton fermer, onglets État/Contexte).
+// l'échappement HTML, µ.console(valeur) sans héritage de pli entre deux appels, et les bascules du
+// panneau (µ.console ouvre/true/false/sélecteur, Échap, bouton fermer, onglets État/Contexte).
 //
 // Pipeline RÉEL (Bundler → core compilé puis chargé dans happy-dom), jamais une copie recodée
 // à la main de l'inspecteur : mjs_devinspect/mjs_devpanel sont embarqués dans le bundle CORE
@@ -200,21 +200,21 @@ describe('mjs_devinspect — l\'inspecteur d\'objets', function () {
     // preuve que le test détecte vraiment une régression d'échappement, pas un faux vert
   })
 
-  it('µ.devObject deux fois de suite : aucun héritage du pli du premier appel', function () {
+  it('µ.console(valeur) deux fois de suite : aucun héritage du pli du premier appel', function () {
     const window = fenetreAvecCore(core)
     // `texteProfond` est une chaîne ÉDITABLE : rendue en `<input value="…">`, jamais dans
     // `textContent` — vérifier le champ, pas le texte du panneau
-    window.µ.devObject({ a: { texteProfond: 'PREMIER_PROFOND' } })
+    window.µ.console({ a: { texteProfond: 'PREMIER_PROFOND' } })
     const racine1 = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine1.querySelector('.di-chevron').dispatchEvent(new window.Event('click', { bubbles: true }))
     const champ1 = racine1.querySelector('input.di-valeur[data-di-key="texteProfond"]') as any
     assert.ok(champ1, `le premier objet doit être déplié :\n${racine1.innerHTML}`)
     assert.equal(champ1.value, 'PREMIER_PROFOND')
 
-    window.µ.devObject({ a: { texteProfond: 'SECOND_PROFOND' } })
+    window.µ.console({ a: { texteProfond: 'SECOND_PROFOND' } })
     const racine2 = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     assert.equal(racine2.querySelectorAll('input.di-valeur[data-di-key="texteProfond"]').length, 0, `le second appel ne doit PAS hériter du pli du premier :\n${racine2.innerHTML}`)
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 })
 
@@ -250,8 +250,8 @@ async function compilerArbre() {
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
   const files = readdirSync(outDir)
   const core  = readFileSync(join(outDir, files.find(f => /^mjs_core-/.test(f))!), 'utf-8')
-  const enfant  = readFileSync(join(outDir, files.find(f => /^dpb-enfant-[a-f0-9]{8}\.js$/.test(f))!), 'utf-8')
-  const parent  = readFileSync(join(outDir, files.find(f => /^dpb-parent-[a-f0-9]{8}\.js$/.test(f))!), 'utf-8')
+  const enfant  = readFileSync(join(outDir, files.find(f => /^dpb-enfant-[0-9a-z]{5}\.js$/.test(f))!), 'utf-8')
+  const parent  = readFileSync(join(outDir, files.find(f => /^dpb-parent-[0-9a-z]{5}\.js$/.test(f))!), 'utf-8')
   await bundler.close()
   return { core, enfant, parent }
 }
@@ -272,32 +272,37 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
   before(async () => { bundle = await compilerArbre() })
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('devPanel() bascule, (true) ouvre, (false) ferme', async function () {
+  it('µ.console() et (true) ouvrent, (false) ferme — µ.devPanel et µ.devObject n\'existent plus', async function () {
     const window = fenetreAvecArbre(bundle)
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    assert.equal(window.µ.devPanel(true), true, '(true) doit ouvrir')
+    assert.equal(window.µ.devPanel, undefined, 'µ.devPanel est retiré : µconsole le remplace')
+    assert.equal(window.µ.devObject, undefined, 'µ.devObject aussi')
+
+    assert.equal(window.µ.console(true), true, '(true) doit ouvrir')
     assert.ok(window.document.querySelector('[data-mjs-devpanel]'), 'le panneau doit être monté')
-    assert.equal(window.µ.devPanel(true), true, '(true) sur un panneau déjà ouvert reste ouvert')
+    assert.equal(window.µ.console(true), true, '(true) sur un panneau déjà ouvert reste ouvert')
 
-    assert.equal(window.µ.devPanel(false), false, '(false) doit fermer')
+    assert.equal(window.µ.console(false), false, '(false) doit fermer')
     assertAbsent(window.document.querySelector('[data-mjs-devpanel]'), 'le panneau doit être retiré')
-    assert.equal(window.µ.devPanel(false), false, '(false) sur un panneau déjà fermé reste fermé')
+    assert.equal(window.µ.console(false), false, '(false) sur un panneau déjà fermé reste fermé')
 
-    assert.equal(window.µ.devPanel(), true, 'sans argument, bascule vers ouvert')
-    assert.equal(window.µ.devPanel(), false, 'sans argument, bascule vers fermé')
+    // sans argument, µconsole OUVRE (écrit dans le code, elle ne doit pas refermer un panneau
+    // déjà ouvert) — seul le raccourci clavier bascule
+    assert.equal(window.µ.console(), true, 'sans argument, ouvre')
+    assert.equal(window.µ.console(), true, 'et reste ouvert')
   })
 
-  it('devPanel(sélecteur css) ouvre et sélectionne l\'instance visée', async function () {
+  it('µ.console(sélecteur css) ouvre et sélectionne l\'instance visée', async function () {
     const window = fenetreAvecArbre(bundle)
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    assert.equal(window.µ.devPanel('mjs-dpb-enfant'), true, 'un sélecteur doit ouvrir le panneau')
+    assert.equal(window.µ.console('mjs-dpb-enfant'), true, 'un sélecteur doit ouvrir le panneau')
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     assert.equal(racine.querySelector('.ligne[aria-selected="true"]').textContent, 'dpb-enfant·1', `l'instance visée par le sélecteur doit être surlignée sélectionnée :\n${racine.textContent}`)
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   it('Échap ferme le panneau', async function () {
@@ -305,9 +310,12 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     assert.ok(window.document.querySelector('[data-mjs-devpanel]'), 'ouvert avant Échap')
-    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+    // la touche part du panneau, où le focus entre à l'ouverture : une Échap de la page, elle, reste
+    // à l'application (cf. tests/devpanel-echap-surlignage-reglages.test.ts)
+    const panneau = window.document.querySelector('[data-mjs-devpanel]').shadowRoot.querySelector('.panneau')
+    panneau.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, composed: true }))
     assertAbsent(window.document.querySelector('[data-mjs-devpanel]'), 'Échap doit fermer le panneau')
   })
 
@@ -316,7 +324,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     assertAbsent(racine.querySelector('.voile'), 'le panneau n\'est plus une modale : aucun voile ne doit couvrir la page')
     const panneau = racine.querySelector('.panneau')
@@ -329,7 +337,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelector('[data-action="close"]').dispatchEvent(new window.Event('click', { bubbles: true }))
     assertAbsent(window.document.querySelector('[data-mjs-devpanel]'), 'le bouton fermer doit fermer le panneau')
@@ -340,7 +348,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     window.document.body.innerHTML = '<mjs-dpb-parent></mjs-dpb-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     const lignes = Array.from(racine.querySelectorAll('.ligne')) as any[]
     const ligneEnfant = lignes.find(l => l.textContent.includes('dpb-enfant'))
@@ -353,7 +361,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     const champCouleur = racine.querySelector('input.di-valeur[data-di-key="couleur"]') as any
     assert.ok(champCouleur, `la variable d'état doit être éditable :\n${racine.querySelector('.onglet-corps').innerHTML}`)
     assert.equal(champCouleur.value, 'sombre', 'la valeur d\'état (reçue du contexte du parent) doit être celle de l\'instance')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   it('l\'onglet Contexte affiche les valeurs posées par l\'instance sélectionnée', async function () {
@@ -364,7 +372,7 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     // le parent pose `§theme` — c'est SUR LUI que la Map `_mjs_contexts` existe, jamais sur
     // l'enfant qui ne fait que le lire (cf. `_mjs_getContext`, mjs_element.ts : remonte
     // l'arborescence, n'écrit jamais dans le consommateur)
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     const lignes = Array.from(racine.querySelectorAll('.ligne')) as any[]
     lignes[0].dispatchEvent(new window.Event('click', { bubbles: true }))
@@ -378,6 +386,6 @@ describe('mjs_devpanel — bascules et onglets (via l\'inspecteur)', function ()
     const champTheme = Array.from(corps.querySelectorAll('input.di-valeur')).find((el: any) => el.getAttribute('data-di-key') === '"theme"') as any
     assert.ok(champTheme, `la clé de contexte doit être éditable :\n${corps.innerHTML}`)
     assert.equal(champTheme.value, 'sombre', 'et sa valeur')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 })

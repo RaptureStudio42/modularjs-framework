@@ -42,6 +42,9 @@ export interface MjsWsWatchdogDeps {
 export interface MjsWsWatchdogHandle { stop(): void }
 
 const NOTIFIER = 'systemd-notify'
+// sous ce battement (une fenêtre de moins de 200 ms), un avertissement : presque aucune marge, et un `systemd-notify` lancé
+// au moins dix fois par seconde
+const BATTEMENT_COURT_MS = 100
 
 /** arme le battement, ou rend `null` quand personne ne le réclame (poste de développement, unité sans
  *  `WatchdogSec`) — l'appelant n'a rien à tester, `null` veut dire « il n'y avait rien à faire ». */
@@ -59,9 +62,10 @@ export function armWatchdog(log: MjsWsLogFn, deps: MjsWsWatchdogDeps = {}): MjsW
   // place de son père — un père déjà gelé (contrat sd_watchdog_enabled). Absent = on bat.
   if (env.WATCHDOG_PID && env.WATCHDOG_PID !== String(pid)) return null
 
-  // la moitié de la fenêtre, jamais moins d'une seconde : c'est la marge que recommande systemd, et
-  // elle laisse passer un ralentissement sans réveiller le chien
-  const periode = Math.max(1000, Math.floor(usec / 2000))
+  // la moitié de la fenêtre, quelle qu'elle soit, et jamais plus : c'est la marge que recommande systemd, et elle laisse
+  // passer un ralentissement sans réveiller le chien. Un plancher plus haut que la moitié ferait battre un service réglé
+  // court moins souvent que sa fenêtre : systemd le tuerait à coup sûr. Une fenêtre courte est seulement signalée
+  const periode = Math.max(1, Math.floor(usec / 2000))
   let vivant    = true
 
   // LE PREMIER BATTEMENT EST VÉRIFIÉ, LES SUIVANTS NON, ET C'EST DÉLIBÉRÉ. Si `systemd-notify` est
@@ -89,6 +93,7 @@ export function armWatchdog(log: MjsWsLogFn, deps: MjsWsWatchdogDeps = {}): MjsW
   // tient la boucle en vie — même choix que l'éviction périodique des salons.
   minuterie.unref()
   log('info', t('ws.watchdog.arme', { periode: String(periode), fenetre: String(Math.floor(usec / 1000)) }))
+  if (periode < BATTEMENT_COURT_MS) log('warn', t('ws.watchdog.fenetre-trop-courte', { periode: String(periode), fenetre: String(Math.floor(usec / 1000)) }))
 
   return { stop() { vivant = false; clearInterval(minuterie) } }
 }

@@ -1,4 +1,4 @@
-// sur une balise de COMPOSANT, un attribut nu (`<@checkbox
+// sur une balise de COMPOSANT, un attribut nu (`<@@checkbox
 // disabled>`, `<mjs-card active>`) passe désormais `true` à la compilation (`disabled='true'`
 // écrit dans le gabarit, lu par `parseProp` du runtime) au lieu de la chaîne vide que `parseProp`
 // ne reconnaissait pas. `title=""` (valeur écrite mais vide, chemin `type: 'static'`) reste `''`.
@@ -65,7 +65,7 @@ async function buildAndMount(hostSource: string, cores: string[]): Promise<{ win
     assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`)
     return f!
   }
-  const chunkFiles = [pick(/^mjs_core-/), ...cores.map((c) => pick(new RegExp(`^${c}-`))), pick(/^hote-/)]
+  const chunkFiles = [pick(/^mjs_core-/), ...cores.map((c) => pick(new RegExp(`^core-${c}-`))), pick(/^hote-/)]
   const code = chunkFiles.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n')
 
   const window: any = new Window({ url: 'http://localhost/' })
@@ -98,10 +98,10 @@ describe('attribut nu sur balise de composant = true', function () {
     assert.equal(child.querySelector('.t').textContent, '[]')
   })
 
-  it("b. module cœur checkbox : <@checkbox disabled> désactive réellement l'input natif", async () => {
-    const host = '<form><@checkbox name="a" disabled>Accepte</@checkbox></form>'
+  it("b. module cœur checkbox : <@@checkbox disabled> désactive réellement l'input natif", async () => {
+    const host = '<form><@@checkbox name="a" disabled>Accepte</@@checkbox></form>'
     const { hote } = await buildAndMount(host, ['checkbox'])
-    const native = hote._shadow.querySelector('mjs-checkbox')._shadow.querySelector('input.native')
+    const native = hote._shadow.querySelector('mjs-core-checkbox')._shadow.querySelector('input.native')
     assert.equal(native.disabled, true)
   })
 

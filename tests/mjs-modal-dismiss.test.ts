@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { assertAbsent } from './helpers/dom-assert.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -49,7 +50,7 @@ describe('mjs_modal — fermeture par Échap (allowEscapeKey, défaut true)', fu
     assert.equal(r.isConfirmed, false)
     assert.equal(r.isDismissed, true)
     assert.equal(r.dismiss, 'esc')
-    assert.equal(box(document), null)
+    assertAbsent(box(document), 'boîte retirée du DOM après Échap')
   })
 
   it('allowEscapeKey:false — Échap ne fait RIEN, la modale reste ouverte', async function () {
@@ -89,7 +90,7 @@ describe('mjs_modal — fermeture par clic backdrop (allowOutsideClick, défaut 
     assert.equal(r.isConfirmed, false)
     assert.equal(r.isDismissed, true)
     assert.equal(r.dismiss, 'backdrop')
-    assert.equal(box(document), null)
+    assertAbsent(box(document), 'boîte retirée du DOM après le clic sur le fond')
   })
 
   it('clic à l\'INTÉRIEUR de la boîte (target = box, pas backdrop) : ne ferme PAS, malgré la remontée (bubbling) jusqu\'au backdrop', async function () {
@@ -131,7 +132,7 @@ describe('mjs_modal — timer (auto-fermeture)', function () {
     assert.equal(r.isConfirmed, false)
     assert.equal(r.isDismissed, true)
     assert.equal(r.dismiss, 'timer')
-    assert.equal(box(document), null)
+    assertAbsent(box(document), 'boîte retirée du DOM après le délai du timer')
   })
 
   it('pas de timer (absent) : la modale ne se ferme jamais toute seule', async function () {

@@ -1,5 +1,5 @@
 // Test de régression : une animation
-// référencée (typo `@transition.fadde` au lieu de `@transition.fade`, ou
+// référencée (typo `µ.anim.fadde` au lieu de `µ.anim.fade` dans un script, ou
 // tout usage de `µ.anim.X` où X n'existe pas dans src/runtime/animations/)
 // était sautée en SILENCE par `compileUsedAnimations` — le composant génère
 // quand même du code appelant `µ.anim.fadde`, jamais défini → échec
@@ -74,31 +74,31 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
   // l'utilise) : aucun fichier `<runtimeDir>/animations/<nom>.ts` ne la décrit,
   // ce n'était pourtant PAS un « manquant ».
 
-  it("µanim.create('spin', …) + @in.spin (anim DÉFINIE dynamiquement) → aucun warning « Animation inconnue »", async function () {
+  it("µanim.create('toupie', …) + @in=*toupie (anim DÉFINIE dynamiquement) → aucun warning « Animation inconnue »", async function () {
     const root = mjsTmp('anim-defined-create')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    // 'spin' n'existe PAS dans src/runtime/animations/ — elle est enregistrée
-    // par µanim.create() au chargement du <script>, avant que @in.spin ne s'en serve.
+    // 'toupie' n'existe PAS dans src/runtime/animations/ — elle est enregistrée
+    // par µanim.create() au chargement du <script>, avant que @in=*toupie ne s'en serve.
     writeFileSync(join(srcDir, 'comp.mjs'), [
       '<script>',
       '  $visible = true',
-      "  µanim.create('spin', { duration: 1000 })",
+      "  µanim.create('toupie', { duration: 1000 })",
       '</script>',
-      '{if $visible}<div @in.spin={duration: 1000}>x</div>{end}',
+      '{if $visible}<div @in=*toupie(duration: 1000ms)>x</div>{end}',
     ].join('\n'))
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()
 
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
-    const warning = stats.warnings.find(w => w.includes("'spin'"))
+    const warning = stats.warnings.find(w => w.includes("'toupie'"))
     assert.ok(!warning,
-      `AVANT le fix : 'spin' (définie dynamiquement par µanim.create) était signalée comme manquante à tort. warnings:\n${stats.warnings.join('\n')}`)
+      `AVANT le fix : 'toupie' (définie dynamiquement par µanim.create) était signalée comme manquante à tort. warnings:\n${stats.warnings.join('\n')}`)
     await bundler.close()
   })
 
-  it("µanim.crossfade('todo', …) + @in.todoReceive/@out.todoSend (anims DÉFINIES dynamiquement) → aucun warning « Animation inconnue »", async function () {
+  it("µanim.crossfade('todo', …) + @in=*todoReceive/@out=*todoSend (anims DÉFINIES dynamiquement) → aucun warning « Animation inconnue »", async function () {
     const root = mjsTmp('anim-defined-crossfade')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
@@ -111,7 +111,7 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
       "  µanim.crossfade('todo', { duration: 600 })",
       '</script>',
       '{for todo in $items}',
-      '  <div @in.todoReceive={key: todo.id} @out.todoSend={key: todo.id}>x</div>',
+      '  <div @in=*todoReceive(key: todo.id) @out=*todoSend(key: todo.id)>x</div>',
       '{end}',
     ].join('\n'))
 
@@ -125,7 +125,7 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
     await bundler.close()
   })
 
-  it('@in.zzznope (jamais définie, ni fichier runtime ni µanim.create/crossfade) → warning « Animation inconnue » TOUJOURS émis', async function () {
+  it('@in=*zzznope (jamais définie, ni fichier runtime ni µanim.create/crossfade) → erreur « transition inconnue » TOUJOURS émise', async function () {
     const root = mjsTmp('anim-really-missing')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
@@ -133,19 +133,22 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
       '<script lang="coffee">',
       '  $visible = true',
       '</script>',
-      '{if $visible}<div @in.zzznope>x</div>{end}',
+      '{if $visible}<div @in=*zzznope>x</div>{end}',
     ].join('\n'))
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()
 
-    assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
     // Contrôle négatif du correctif B : une VRAIE anim manquante (jamais définie
     // par µanim.create/crossfade) ne doit PAS être avalée par `definedAnimations`.
-    const warning = stats.warnings.find(w => w.includes('zzznope'))
-    assert.ok(warning,
-      `une VRAIE anim manquante doit toujours être signalée. warnings:\n${stats.warnings.join('\n')}`)
-    assert.match(warning!, /Animation inconnue/)
+    // Posée par une directive, elle arrête la construction.
+    const erreur = stats.errors.map(e => e.message).find(m => m.includes('zzznope'))
+    assert.ok(erreur,
+      `une VRAIE anim manquante doit toujours être signalée. errors:\n${stats.errors.map(e => e.message).join('\n')}`)
+    assert.match(erreur!, /\*zzznope : transition inconnue/)
+    // l'erreur dit aussi où la directive s'écrit : le fichier et la ligne de sa balise
+    assert.match(erreur!, /comp\.mjs \(ligne 4\)/)
+    assert.equal(stats.warnings.filter(w => w.includes('zzznope')).length, 0)
     await bundler.close()
   })
 })

@@ -18,8 +18,9 @@ type JsMode = 'split' | 'bundle'
 
 interface Projet { root: string; srcDir: string; outDir: string }
 
-// définition telle qu'écrite dans le module (build de développement : rien n'est minifié)
-const MARQUE_ALIAS = 'µ._al = function'
+// définition telle qu'écrite dans le module (build de développement : rien n'est minifié), EN TÊTE DE LIGNE : le chargeur
+// reprend aussi `µ._al = function` (enveloppe indentée qui retient les balises de la page prérendue), sans l'aide d'alias
+const MARQUE_ALIAS = /^µ\._al = function/m
 
 const ENFANT = ['<script>', "$name = 'defaut'", '</script>', '<p>{$name}</p>', ''].join('\n')
 
@@ -48,7 +49,7 @@ async function construire(p: Projet, js: JsMode, env: 'dev' | 'prod', extra: Rec
 }
 
 function contenuCoeur(p: Projet): string {
-  const f = readdirSync(p.outDir).find(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f))
+  const f = readdirSync(p.outDir).find(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f))
   assert.ok(f, `mjs_core-*.js attendu dans la sortie (trouvés : ${readdirSync(p.outDir).join(', ')})`)
   return readFileSync(join(p.outDir, f!), 'utf-8')
 }
@@ -104,7 +105,7 @@ describe('mjs_alias.ts — alias de balise détecté, build RÉEL', function () 
     const p = projet('alias-detect-plat-split', PLAT)
     await construire(p, 'split', 'dev')
     const coeur = contenuCoeur(p)
-    assert.equal(coeur.includes(MARQUE_ALIAS), false, "l'aide d'alias ne doit pas être livrée à un projet plat")
+    assert.equal(MARQUE_ALIAS.test(coeur), false, "l'aide d'alias ne doit pas être livrée à un projet plat")
     assert.equal(readdirSync(p.outDir).some(f => /^mjs_alias/.test(f)), false, 'aucun fichier séparé mjs_alias dans la sortie')
   })
 
@@ -112,27 +113,27 @@ describe('mjs_alias.ts — alias de balise détecté, build RÉEL', function () 
     const p = projet('alias-detect-plat-bundle', PLAT)
     await construire(p, 'bundle', 'dev')
     const code = readFileSync(join(p.outDir, 'bundle.js'), 'utf-8')
-    assert.equal(code.includes(MARQUE_ALIAS), false, "l'aide d'alias ne doit pas être livrée à un projet plat")
+    assert.equal(MARQUE_ALIAS.test(code), false, "l'aide d'alias ne doit pas être livrée à un projet plat")
   })
 
   it('projet à alias : PRÉSENT', async function () {
     const p = projet('alias-detect-alias', ALIAS)
     await construire(p, 'split', 'dev')
-    assert.ok(contenuCoeur(p).includes(MARQUE_ALIAS), "l'aide d'alias doit être livrée dès qu'un composant l'appelle")
+    assert.ok(MARQUE_ALIAS.test(contenuCoeur(p)), "l'aide d'alias doit être livrée dès qu'un composant l'appelle")
   })
 
   it("runtime: ['alias'] sans aucun alias : présent quand même (explicite gagne)", async function () {
     const p = projet('alias-detect-force', PLAT)
     await construire(p, 'split', 'dev', { runtime: ['alias'] })
-    assert.ok(contenuCoeur(p).includes(MARQUE_ALIAS), "la demande explicite doit joindre l'aide")
+    assert.ok(MARQUE_ALIAS.test(contenuCoeur(p)), "la demande explicite doit joindre l'aide")
   })
 
   it('cache-hit : une 2e construction sans rien changer garde le module', async function () {
     const p = projet('alias-detect-cache', ALIAS)
     await construire(p, 'split', 'dev')
-    assert.ok(contenuCoeur(p).includes(MARQUE_ALIAS), "l'aide doit être là à la 1re construction")
+    assert.ok(MARQUE_ALIAS.test(contenuCoeur(p)), "l'aide doit être là à la 1re construction")
     await construire(p, 'split', 'dev')
-    assert.ok(contenuCoeur(p).includes(MARQUE_ALIAS), "le signal doit survivre au cache-hit (aucune unité recompilée)")
+    assert.ok(MARQUE_ALIAS.test(contenuCoeur(p)), "le signal doit survivre au cache-hit (aucune unité recompilée)")
   })
 })
 

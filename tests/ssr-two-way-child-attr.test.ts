@@ -3,7 +3,7 @@
 // JS pur, jamais reflété comme attribut HTML. Côté serveur, `serializeShadow` ne capture que les
 // attributs réels : la valeur two-way disparaissait donc du HTML prérendu, et l'enfant reconstruit
 // à froid côté client (hydratation) démarrait avec sa valeur PAR DÉFAUT
-// (`<@color value=!{$panel} editable>`, prop toujours vide au prérendu).
+// (`<@@color value=!{$panel} editable>`, prop toujours vide au prérendu).
 // Correctif : `updateLogic` pose AUSSI l'attribut quand `µ._isServer`, sans toucher le chemin client.
 
 import assert from 'node:assert/strict'

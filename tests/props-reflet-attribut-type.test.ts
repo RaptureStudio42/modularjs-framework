@@ -3,7 +3,7 @@
 // Défaut : chaque composant observe ses propres attributs (`_mjs_propObserver`) et les relit tous
 // en props à chaque changement (`syncProps`). Un composant qui reflète sa prop en attribut — le
 // module cœur `option` pose `value="18"` pour `value={18}` — se relisait donc lui-même : l'attribut
-// texte « 18 » remplaçait le nombre 18 posé par le parent. Côté `<@select>`, la variable liée
+// texte « 18 » remplaçait le nombre 18 posé par le parent. Côté `<@@select>`, la variable liée
 // recevait « 18 » au lieu de 18 et un `includes` strict (choix multiple) ne retrouvait plus rien.
 // Correctif : un attribut qui n'est que le reflet texte de la valeur courante (même texte) ne la
 // remplace pas ; un attribut vraiment changé se relit comme avant.

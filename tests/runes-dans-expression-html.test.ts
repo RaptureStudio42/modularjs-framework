@@ -1,5 +1,5 @@
 // une rune du sucre universel µfoo → µ.foo (mjs_rare_runes.ts : µraw, µsnap, µplay,
-// µminmax, µinspect) écrite dans une EXPRESSION du HTML — interpolation de texte
+// µinspect) écrite dans une EXPRESSION du HTML — interpolation de texte
 // `{...}` ou valeur d'attribut simple `prop={...}` — n'était PAS réécrite en
 // `µ.raw(...)`/`µ.snap(...)`/... : elle ressortait LITTÉRALE dans le JS final, et
 // `µraw`/`µsnap`/... n'existent nulle part au runtime hors `µ.raw`/`µ.snap` →
@@ -75,7 +75,6 @@ const RUNES_MANQUANTES: Array<[nom: string, appel: string, prefixe: string]> = [
   ['µraw',     'µraw($x)',                'µ.raw('],
   ['µsnap',    'µsnap($x)',               'µ.snap('],
   ['µplay',    "µplay(@_shadow, 'anim')", 'µ.play('],
-  ['µminmax',  'µminmax($x, 0, 10)',      'µ.minmax('],
   ['µinspect', 'µinspect($x)',            'µ.inspect('],
 ]
 
@@ -94,24 +93,17 @@ describe('sucre universel µfoo → µ.foo dans les expressions HTML (cleanJs/cl
     })
   }
 
-  // µinspect/µminmax portent, en plus du préfixe, un remodelage d'arguments (comme le
+  // µinspect porte, en plus du préfixe, un remodelage d'arguments (comme le
   // script, transpiler/index.ts) : la clé d'état passe en CHAÎNE, jamais la valeur
   // courante — sans ce remodelage, l'appel pointé serait quand même DIFFORME au runtime.
   it("µinspect($x) → µ.inspect('x') (clé en chaîne, pas la valeur courante — cleanJs)", () => {
     assert.equal(cleanJs('µinspect($x)'), "µ.inspect('x')")
   })
 
-  it("µminmax($x, 0, 10) → µ.minmax(_mjsThis, 'x', 0, 10) (instance + clé — cleanJs)", () => {
-    assert.equal(cleanJs('µminmax($x, 0, 10)'), "µ.minmax(_mjsThis, 'x', 0, 10)")
-  })
-
   it("µinspect($x) : la clé 'x' apparaît bien dans la version interpolation (cleanJsExpr)", () => {
     assert.match(cleanJsExpr('µinspect($x)'), /µ\.inspect\(\s*['"]x['"]\s*\)/)
   })
 
-  it("µminmax($x, 0, 10) : instance _mjsThis + clé 'x' dans la version interpolation (cleanJsExpr)", () => {
-    assert.match(cleanJsExpr('µminmax($x, 0, 10)'), /µ\.minmax\(\s*_mjsThis,\s*['"]x['"]/)
-  })
 })
 
 describe('non-régression — sucre déjà fonctionnel ou hors périmètre, inchangé', () => {
@@ -149,7 +141,6 @@ describe('transpile() — expression HTML NON-handler, sortie compilée', () => 
   const cas: Array<[label: string, src: string, prefixe: string, litteral: string]> = [
     ['attribut de prop enfant', '<script>\n$result = {}\n</script>\n<@child weatherData={µraw($result)}>', 'µ.raw(', 'µraw('],
     ['interpolation de texte', '<script>\n$x = 1\n</script>\n<p>{µsnap($x)}</p>', 'µ.snap(', 'µsnap('],
-    ['interpolation de texte minmax', '<script>\n$x = 1\n</script>\n<p>{µminmax($x, 0, 10)}</p>', 'µ.minmax(', 'µminmax('],
     ['interpolation de texte inspect', '<script>\n$x = 1\n</script>\n<p>{µinspect($x)}</p>', 'µ.inspect(', 'µinspect('],
   ]
   for (const [label, src, prefixe, litteral] of cas) {

@@ -32,14 +32,14 @@ describe('template {…} — Civet par défaut', () => {
     assert.match(output, /\$\.todos\.filter\(function\(t\) \{ return !t\.done \}\)/, 'flèche Coffee → function(), `not` → `!`, tout compilé nativement par Civet')
   })
 
-  it("(c) ternaire COLLÉ `a?'b':'c'` (+ variante numérique `a?1:2`) : throw avec l'erreur orientante « échec de compilation Civet » + indice « ajoute des espaces »", async () => {
+  it("(c) ternaire COLLÉ `a?'b':'c'` (+ variante numérique `a?1:2`) : throw avec l'erreur orientante « échec de compilation Civet » + indice « ajoutez des espaces »", async () => {
     await assert.rejects(
       transpile(`<p>{$ok?'a':'b'}</p>`, { moduleName: 'tc-ternaire-colle' }),
       (err: any) => {
         assert.match(err.message, /\[ModularJS\] interpolation : échec de compilation Civet/, 'préfixe orientant attendu')
         assert.match(err.message, /« tc-ternaire-colle »/, 'nom du module cité (best-effort, cf. state.moduleName)')
         assert.match(err.message, /« \$ok\?'a':'b' »/, "l'expression source (avant toute passe) est citée telle qu'écrite par l'utilisateur")
-        assert.match(err.message, /ajoute des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus (même schéma que les handlers)')
+        assert.match(err.message, /ajoutez des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus (même schéma que les handlers)')
         return true
       }
     )
@@ -49,7 +49,7 @@ describe('template {…} — Civet par défaut', () => {
       transpile(`<p>{$a?1:2}</p>`, { moduleName: 'tc-ternaire-colle-numerique' }),
       (err: any) => {
         assert.match(err.message, /\[ModularJS\] interpolation : échec de compilation Civet/, 'préfixe orientant attendu')
-        assert.match(err.message, /ajoute des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus')
+        assert.match(err.message, /ajoutez des espaces.*a \?\? b/s, 'indice ternaire collé + équivalence ?? attendus')
         return true
       }
     )

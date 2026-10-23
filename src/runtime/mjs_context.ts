@@ -10,6 +10,16 @@
 // `µsetContext`/`µ.setContext`/`µ.getContext` (transpiler/index.ts) ne compile aucun appel
 // `this._mjs_setContext`/`_mjs_getRCtx`/etc. — ces méthodes peuvent alors manquer sans risque.
 if (µ.Element) {
+  // le parent d'un nœud (l'hôte, pour la racine d'une ombre), lu sans rien lire SUR lui : l'accesseur du prototype est appelé avec le nœud
+  // pour cible, et un contexte ne se cherche que sur un composant — lue sur un <form>, une propriété (son parent, une donnée posée dessus)
+  // est d'abord cherchée parmi ses champs, liste que le navigateur refait après la mise à niveau de chaque champ associé : mille lecteurs
+  // d'un contexte placés entre les mille cases d'un formulaire la faisaient refaire mille fois. Seule la racine d'une ombre passe à son hôte :
+  // le `host` d'un lien (<a>, <area>) est celui de son adresse, une chaîne — un lecteur resté dans un lien retiré de la page s'arrête à lui
+  var _mjsCtxParent = Object.getOwnPropertyDescriptor(Node.prototype, 'parentNode').get;
+  var _mjsCtxUp = function(n) {
+    return _mjsCtxParent.call(n) || (n.nodeType === 11 ? n.host : null);
+  };
+
   µ.Element.prototype._mjs_setContext = function(key, value) {
     if (this._mjs_contexts == null) {
       this._mjs_contexts = new Map();
@@ -18,17 +28,12 @@ if (µ.Element) {
   };
 
   µ.Element.prototype._mjs_getContext = function(key) {
-    var current, parent;
-    current = this;
+    var current = this;
     while (current) {
-      if (current._mjs_contexts && current._mjs_contexts.has(key)) {
+      if (current instanceof µ.Element && current._mjs_contexts && current._mjs_contexts.has(key)) {
         return current._mjs_contexts.get(key);
       }
-      parent = current.parentNode || current.host || (current.getRootNode && current.getRootNode().host);
-      if (!parent) {
-        break;
-      }
-      current = parent;
+      current = _mjsCtxUp(current);
     }
     return void 0;
   };
@@ -43,12 +48,24 @@ if (µ.Element) {
   // et ne passe PLUS par les universal deps : dispatch par clé statique, voir
   // mjs_store_globals.ts (_mjs_storeSubscribe/_mjs_storeNotifyKey).
   µ.Element.prototype._mjs_setRCtx = function(key, value) {
+    var k, next, raw;
     if (this._mjs_rctx == null) {
       this._mjs_rctx = new Map();
     }
-    var proxy = µ.state(value);
+    var proxy = this._mjs_rctx.get(key);
+    if (proxy) {
+      // réaffectation (`§§theme = {…}`) : le MÊME objet réactif prend le nouveau contenu, champ par champ — chaque
+      // écriture prévient ses lecteurs, déjà abonnés à lui. Un objet neuf laissait les consommateurs montés sur
+      // l'ancien, avec l'ancienne valeur. Même forme que `µ.state` : un objet copié, une valeur simple dans `value`
+      raw = µ._mjs_toRaw(proxy);
+      next = value === void 0 ? {} : typeof value === 'object' ? { ...value } : { value: value };
+      for (k in next) proxy[k] = next[k];
+      for (k in raw) if (!(k in next)) delete proxy[k];
+      return proxy;
+    }
+    proxy = µ.state(value);
     this._mjs_rctx.set(key, proxy);
-    // ré-affectation de contexte : invalide les caches de résolution §§ en aval
+    // contexte posé : invalide les caches de résolution §§ en aval
     µ._mjs_rctxEpoch++;
     return proxy;
   };
@@ -58,7 +75,7 @@ if (µ.Element) {
   // jour par connectedCallback/disconnectedCallback/_mjs_setRCtx) ; sinon
   // reparcours normal, inchangé.
   µ.Element.prototype._mjs_getRCtx = function(key) {
-    var cache, current, entry, parent;
+    var cache, current, entry;
     cache = this._mjs_rctx_cache;
     entry = cache && cache.get(key);
     if (entry && entry.epoch === µ._mjs_rctxEpoch) {
@@ -66,14 +83,10 @@ if (µ.Element) {
     }
     current = this;
     while (current) {
-      if (current._mjs_rctx && current._mjs_rctx.has(key)) {
+      if (current instanceof µ.Element && current._mjs_rctx && current._mjs_rctx.has(key)) {
         return this._mjs_rctxRemember(key, current._mjs_rctx.get(key));
       }
-      parent = current.parentNode || current.host || (current.getRootNode && current.getRootNode().host);
-      if (!parent) {
-        break;
-      }
-      current = parent;
+      current = _mjsCtxUp(current);
     }
     // l'échec (void 0) se mémorise aussi : le parcours raté jusqu'à la racine
     // est le plus coûteux

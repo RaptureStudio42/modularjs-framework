@@ -100,12 +100,51 @@ function scanTemplateLiteral(html: string, openIdx: number): number {
   return -1
 }
 
+// minuscules ASCII seulement, même longueur que le texte : une position trouvée dans la copie vaut dans le texte
+// d'origine. `toLowerCase()` change des longueurs (`'İ'.toLowerCase()` fait deux unités) et décalait tout ce qui
+// suit — un « İstanbul » écrit avant `<@window>` faisait refuser une balise bien fermée. Les noms cherchés sont ASCII
+export function asciiLower(s: string): string {
+  return s.replace(/[A-Z]+/g, m => m.toLowerCase())
+}
+
+// accolades d'attribut sans fin dans `unclosedText` : positions (juste après la `{`) d'où la lecture ne revient
+// jamais au niveau de la balise. Ce qui se lit dans une accolade ne dépend que du texte et de cette position : une
+// balise suivante qui retombe sur l'une d'elles sait d'avance qu'elle ne se referme pas, sans relire tout le reste
+// du texte (un gabarit en cours de frappe, tout sur une ligne, coûtait un temps quadratique)
+let unclosedText   = ''
+let unclosedBraces = new Set<number>()
+// positions lues au niveau de la balise (hors accolade) par une lecture qui n'a pas trouvé son `>` : la suite de la lecture ne
+// dépend que du texte et de la position, une autre balise qui y passe ne le trouvera pas non plus (des balises sans `>`, tout un
+// texte, coûtaient chacune une lecture jusqu'à la fin)
+let sansFin: Uint8Array | null = null
+
 export function findMacroTagEnd(html: string, from: number): number {
+  if (html !== unclosedText) {
+    unclosedText   = html
+    unclosedBraces = new Set()
+    sansFin        = null
+  }
+  // accolades ouvertes, de l'extérieure à l'intérieure : quand la lecture échoue, aucune ne se refermait
+  const open: number[] = []
+  // positions lues au niveau de la balise par cette lecture
+  const lues: number[] = []
+  const fail = (): number => {
+    for (const o of open) unclosedBraces.add(o)
+    if (lues.length > 0) {
+      sansFin ??= new Uint8Array(html.length)
+      for (const p of lues) sansFin[p] = 1
+    }
+    return -1
+  }
   let depth = 0
   let i = from
   let strDelim: string | null = null   // guillemet ACTIF en profondeur > 0, ou null hors chaîne
   while (i < html.length) {
     const c = html[i]
+    if (depth === 0) {
+      if (sansFin !== null && sansFin[i] === 1) return fail()
+      lues.push(i)
+    }
     if (strDelim !== null) {
       if (c === '\\') { i += 2; continue }
       if (html.slice(i, i + strDelim.length) === strDelim) { i += strDelim.length; strDelim = null; continue }
@@ -128,7 +167,7 @@ export function findMacroTagEnd(html: string, from: number): number {
       if (delim !== null) {
         if (delim === '`') {
           const end = scanTemplateLiteral(html, i)
-          if (end < 0) return -1   // gabarit jamais refermé : même repli que looksLikeOpenTag plus bas
+          if (end < 0) return fail()   // gabarit jamais refermé : même repli que looksLikeOpenTag plus bas
           i = end
           continue
         }
@@ -137,7 +176,7 @@ export function findMacroTagEnd(html: string, from: number): number {
       // commentaires DANS l'expression d'attribut : `//`/`/* … */` ignorés au même titre qu'une
       // chaîne — leurs `{`/`}`/`>` internes ne doivent PAS compter dans la profondeur de la balise.
       // AVANT : `/* } > */` refermait l'accolade PUIS la balise elle-même au mauvais endroit — un
-      // résidu de texte fuyait dans le HTML rendu, et <@img> y perdait carrément son `src`.
+      // résidu de texte fuyait dans le HTML rendu, et <@@img> y perdait carrément son `src`.
       if (c === '/' && html[i + 1] === '/') {
         const nl = html.indexOf('\n', i)
         i = nl === -1 ? html.length : nl
@@ -145,18 +184,29 @@ export function findMacroTagEnd(html: string, from: number): number {
       }
       if (c === '/' && html[i + 1] === '*') {
         const end = html.indexOf('*/', i + 2)
-        if (end === -1) return -1   // commentaire jamais refermé : même repli que le gabarit plus haut
+        if (end === -1) return fail()   // commentaire jamais refermé : même repli que le gabarit plus haut
         i = end + 2
         continue
       }
     }
     // balise ouverte détectée EN PROFONDEUR (accolade d'attribut jamais refermée) : signal de
     // fin de scan, l'appelant lève déjà `macro-balise-non-fermee` sur un -1.
-    if (depth > 0 && c === '<' && looksLikeOpenTag(html, i)) return -1
-    if (c === '{') { depth++; i++; continue }
-    if (c === '}') { depth = Math.max(0, depth - 1); i++; continue }
+    if (depth > 0 && c === '<' && looksLikeOpenTag(html, i)) return fail()
+    if (c === '{') {
+      if (unclosedBraces.has(i + 1)) return fail()
+      depth++
+      open.push(i + 1)
+      i++
+      continue
+    }
+    if (c === '}') {
+      if (depth > 0) open.pop()
+      depth = Math.max(0, depth - 1)
+      i++
+      continue
+    }
     if (c === '>' && depth === 0) return i
     i++
   }
-  return -1
+  return fail()
 }

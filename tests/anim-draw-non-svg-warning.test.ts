@@ -1,7 +1,7 @@
 // animations/draw.ts sur un nœud NON-SVG : no-op total et
 // silencieux (aucun `getTotalLength`, `len` reste à 0, rien ne se voit, aucune
-// erreur ni avertissement). Correctif : µ.warn explicite UNE fois (« @transition.
-// draw ne s'applique qu'à un tracé SVG »), nœud laissé visible (le no-op en
+// erreur ni avertissement). Correctif : µ.warn explicite UNE fois (« [ModularJS]
+// *draw ne s'applique qu'à un tracé SVG »), nœud laissé visible (le no-op en
 // lui-même est inoffensif et reste inchangé — seul le silence est corrigé).
 
 import assert from 'node:assert/strict'
@@ -38,7 +38,7 @@ describe('animations/draw.ts — nœud non-SVG', function () {
     const { intro } = factory({})
     const cfg = intro(node)
     assert.equal(warned.length, 1, 'un seul warn')
-    assert.match(warned[0][0], /@transition\.draw ne s'applique qu'à un tracé SVG/, 'le message exact attendu')
+    assert.match(warned[0][0], /^\[ModularJS\] \*draw ne s'applique qu'à un tracé SVG/, 'le message exact attendu')
     assert.equal(cfg.duration, 800, 'no-op inchangé par ailleurs : durée par défaut, len=0')
     assert.deepEqual(cfg.css(0.5, 0.5), { strokeDasharray: '0', strokeDashoffset: '0' }, 'css() reste un no-op inoffensif (aucun effet visuel sur un non-SVG)')
   })

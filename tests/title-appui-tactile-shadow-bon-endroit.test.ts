@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { assertAbsent } from './helpers/dom-assert.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -86,7 +87,7 @@ $x = 0
     const bubbleInDocument = document.querySelector('.mjs-title')
 
     assert.ok(bubbleInShadow, 'AVANT le fix : la bulle naissait dans document.body, jamais dans le shadow')
-    assert.equal(bubbleInDocument, null, 'AVANT le fix : une bulle apparaissait en repli document.body même avec Popover disponible')
+    assertAbsent(bubbleInDocument, 'AVANT le fix : une bulle apparaissait en repli document.body même avec Popover disponible')
     assert.equal(bubbleInShadow.textContent, 'Info du composant')
 
     const touchEnd = new window.Event('touchend', { bubbles: true, composed: true })

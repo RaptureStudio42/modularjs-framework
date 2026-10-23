@@ -24,6 +24,7 @@ function stripEsm(s: string): string {
 const INIT_SRC         = stripEsm(readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_init.ts'), 'utf-8'))
 const THEME_SRC         = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_theme.ts'), 'utf-8')
 const RUNES_SRC         = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_runes.ts'), 'utf-8')
+const STATE_SRC         = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_state.ts'), 'utf-8')
 const STORE_GLOBALS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_store_globals.ts'), 'utf-8')
 
 // mock CONTRÔLABLE de matchMedia('(prefers-color-scheme: dark)') — remplace l'implémentation
@@ -49,7 +50,7 @@ function installMatchMediaMock(win: any, initialMatches: boolean) {
 function loadTheme(beforeEval?: (win: any) => void): { window: any; document: any; µ: any } {
   const window: any = new Window({ url: 'http://localhost/' })
   if (beforeEval) beforeEval(window)
-  window.eval(`${INIT_SRC}\n${THEME_SRC}\n${RUNES_SRC}\n${STORE_GLOBALS_SRC}\nglobalThis.µ = µ;`)
+  window.eval(`${INIT_SRC}\n${THEME_SRC}\n${RUNES_SRC}\n${STATE_SRC}\n${STORE_GLOBALS_SRC}\nglobalThis.µ = µ;`)
   return { window, document: window.document, µ: window.µ }
 }
 

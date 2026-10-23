@@ -11,7 +11,7 @@
 // (via `_mjs_mjsPurgeSubtreeState`), jamais quand le nœud est seulement dying.
 //
 // Ce test reproduit le scénario exact : {if $show} contenant
-// <section @out.fade> avec un {for} imbriqué. `µ._mjs_playTransition` est stubbée
+// <section @out=*fade> avec un {for} imbriqué. `µ._mjs_playTransition` est stubbée
 // en promesse jamais résolue → la section reste `_mjs_dying` pendant toute la
 // fenêtre du test ; on toggle OFF puis ON (revive) et on vérifie qu'il n'y a
 // PAS de duplication des <li>.
@@ -31,7 +31,7 @@ toggle = -> $show = not $show
 </script>
 <div>
   {if $show}
-    <section @out.fade>
+    <section @out=*fade>
       {for k in $kids}<li>{k}</li>{end}
     </section>
   {end}
@@ -74,7 +74,7 @@ describe('runtime — {for} imbriqué : revive d\'un {if} pendant l\'outro (pas 
     win.eval(`${coreCode}\nglobalThis.µ = µ;\n${compCode}`)
 
     // `fade` est tree-shaké hors du bundle isolé du test → on stubbe `µ.anim.fade`.
-    // Le codegen `@out.fade` lit `out_cfg.outro` pour poser `node._mjs_outro`, il
+    // Le codegen `@out=*fade` lit `out_cfg.outro` pour poser `node._mjs_outro`, il
     // faut donc une clé `.outro` truthy (le contenu importe peu : `_mjs_playTransition`
     // est stubbée juste après).
     win.eval(`µ.anim = µ.anim || {}; µ.anim.fade = function(){ return { outro: { duration: 200, css: function(t){ return 'opacity:'+t } } }; };`)

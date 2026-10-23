@@ -44,7 +44,7 @@ describe('transpiler/directives', () => {
   it('@import avec virgule résiduelle entre les noms → erreur explicite orientant vers l\'espace', () => {
     assert.throws(
       () => extractDirectives(`@import $count, helper 'shared/store'\n<p/>`),
-      /virgule interdite entre les noms.*sépare-les par un espace \(@import nomA nomB 'shared\/store'\)/s,
+      /virgule interdite entre les noms.*séparez-les par un espace \(@import nomA nomB 'shared\/store'\)/s,
     )
   })
 
@@ -174,15 +174,6 @@ $x = 0
     assert.doesNotMatch(output, /µ\.inspect\(\$\.x/)
   })
 
-  it('µ.minmax($x, ...) → µ.minmax(_mjsThis, "x", ...)', async () => {
-    const src = `<script lang="coffee">
-$x = 0
-µ.minmax($x, 0, 100)
-</script>
-<p>{$x}</p>`
-    const { output } = await transpile(src, { moduleName: 'foo' })
-    assert.match(output, /minmax\(_mjsThis,\s*['"]x['"]/)
-  })
 })
 
 describe('transpiler/sections — lang explicite', () => {
@@ -328,7 +319,8 @@ describe('codegen impératif', () => {
     assert.doesNotMatch(output, /mjs-l-t=|mjs\/marker/)
     // L'updateFn assigne via `node.data` (impératif, équivalent nodeValue,
     // Text.data slot natif spécialisé V8, plus rapide que nodeValue).
-    assert.match(output, /const\s+n\w+\s*=\s*__nodes\[/)
+    // la ref du nœud texte est une variable locale du tplFn, lue par la closure de mise à jour
+    assert.match(output, /const\s+_nref_\w+\s*=\s*__nodes\[/)
     assert.match(output, /\.data\s*=/)
   })
 
@@ -350,8 +342,9 @@ describe('codegen impératif', () => {
     const { output } = await transpile(src, { moduleName: 'foo' })
     // Le bind émet un assignement direct via µ._set (impératif).
     assert.match(output, /µ\._set\([^)]*['"]name['"]/, `output:\n${output.slice(0, 500)}`)
-    // Doit aussi binder node.value (writeback) ET enregistrer l'event listener 'input'.
-    assert.match(output, /node\.value\s*=\s*\$\.name/, `output:\n${output.slice(0, 500)}`)
+    // Doit aussi binder node.value (writeback, champ vide pour une variable vide) ET enregistrer
+    // l'event listener 'input'.
+    assert.match(output, /_mjs_bv = \$\.name == null \? '' : \$\.name;[\s\S]*?node\.value = _mjs_bv/, `output:\n${output.slice(0, 500)}`)
     assert.match(output, /_mjs_bindEvents\(\{"input":/, `output:\n${output.slice(0, 500)}`)
   })
 
@@ -360,8 +353,15 @@ describe('codegen impératif', () => {
     const { output } = await transpile(src, { moduleName: 'foo' })
     // _mjs_updFor reçoit : id, iterable, tplFn, keyFn, updateFn
     assert.match(output, /this\._mjs_updFor\(['"]for\d+['"]/)
-    // L'updateFn reçoit __nodes (les nodes du clone) et fait des assignations.
-    // L'ordre dépend de la signature : (item, index) ou (index, item) selon source.
+    // hors imbrication, la mise à jour d'une ligne est la closure rendue par le tplFn :
+    // aucune seconde copie globale `(__nodes, item, index) =>` n'est émise
+    assert.match(output, /const _mjs_updFn = \(\$?\w+,\s*\$?\w+\)\s*=>/)
+    assert.doesNotMatch(output, /\(__nodes,\s*\$?\w+,\s*\$?\w+\)\s*=>/)
+  })
+
+  it('{for} imbriqué : garde sa fonction de mise à jour globale, seule à servir après la création', async () => {
+    const src = `<script lang="coffee">$list = []</script>\n{for $row in $list}<ul>{for $c in $row.cells}<li>{$c}</li>{end}</ul>{end}`
+    const { output } = await transpile(src, { moduleName: 'foo' })
     assert.match(output, /\(__nodes,\s*\$?\w+,\s*\$?\w+\)\s*=>/)
   })
 })
@@ -444,8 +444,9 @@ describe('Filtered Dispatch — @class{item.X === $extern}', () => {
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @class{row.id === $selected}="danger"></div>{end}`
+{for row in $rows by id}<div @class{row.id === $selected}="danger"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd' })
+    // boucle à clé filtrée sur sa clé (`by id`, `row.id`) : une ligne par valeur, index de nœuds
     // L'index inverse doit être créé lazy par row, dans l'entrée
     // `_mjs_filt['selected__danger__<lid>']` (suffixe `__<lid>` — distingue 2 nœuds
     // d'une même row partageant le même (var, classe) ; voir
@@ -455,18 +456,35 @@ $rows = []
     // l'index stocke le NŒUD (pas une closure) → zéro alloc par ligne.
     // La propriété de clé reste gardée via _mjs_filterFns.
     assert.doesNotMatch(output, /const __f = \(\)\s*=>/)
-    assert.match(output, /__idx\.set\(__k,\s*n[a-zA-Z0-9_$]+\)/)
+    assert.match(output, /__idx\.set\(__k,\s*_mjs_n[a-zA-Z0-9_$]+\)/)
     assert.match(output, /_mjs_filterFns/)
     // Un effect filtered est enregistré pour la var externe `selected`.
     assert.match(output, /\(this\._mjs_filt \?\?= \{\}\)\['selected__danger__\w+'\]/)
-    assert.match(output, /__fe\.prev = curr/)
+    assert.match(output, /__fe\.prev = _mjs_curr/)
     // l'effect toggle la classe DIRECTEMENT sur le nœud récupéré (prev →
     // retire, curr → ajoute), au lieu d'appeler une closure.
-    assert.match(output, /idx\.get\(prev\)/)
+    assert.match(output, /_mjs_idx\.get\(_mjs_prev\)/)
     assert.match(output, /classList\.toggle\('danger', false\)/)
     assert.match(output, /classList\.toggle\('danger', true\)/)
-    assert.match(output, /idx\.get\(curr\)/)
+    assert.match(output, /_mjs_idx\.get\(_mjs_curr\)/)
     // L'effect doit être abonné à `selected` dans _mjs_effectsByVar.
+    assert.match(output, /"selected":\s*\[_mjs_eff/)
+  })
+
+  it("sans `by` : plusieurs lignes peuvent porter la valeur, l'index garde la fonction de chaque ligne", async () => {
+    const src = `<script lang="coffee">$selected = -1
+$rows = []
+</script>
+{for row in $rows}<div @class{row.id === $selected}="danger"></div>{end}`
+    const { output } = await transpile(src, { moduleName: 'fd_sans_by' })
+    assert.match(output, /\['selected__danger__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
+    // une fonction par ligne, rangée sous sa valeur (un Set quand la valeur en porte plusieurs), et non plus le nœud
+    assert.match(output, /const __f = \(_mjs_match\) => \{/)
+    assert.match(output, /µ\._mjs_filtPut\(__fe, __k, __f\)/)
+    assert.doesNotMatch(output, /__idx\.set\(__k,\s*_mjs_n[a-zA-Z0-9_$]+\)/)
+    // l'effet rappelle toutes les lignes de l'ancienne valeur (false) puis de la nouvelle (true)
+    assert.match(output, /µ\._mjs_filtCall\(_mjs_idx\.get\(_mjs_prev\), false\)/)
+    assert.match(output, /µ\._mjs_filtCall\(_mjs_idx\.get\(_mjs_curr\), true\)/)
     assert.match(output, /"selected":\s*\[_mjs_eff/)
   })
 
@@ -561,15 +579,16 @@ describe('Filtered Dispatch étendu — @style.X / data-X', () => {
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
+{for row in $rows by id}<div @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_style1' })
+    // boucle à clé filtrée sur sa clé (`by id`, `row.id`) : une ligne par valeur, appel direct de sa fonction
     // L'index inverse doit être créé pour la prop `color`. Le filterKey est
     // `<extern>__style_<prop>` (avec `style_` en préfixe pour distinguer
     // des filtered @class).
     assert.match(output, /\['selected__style_color__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
     // L'effet enregistré tire la fn enregistrée avec un booléen (match ou non).
-    assert.match(output, /\.get\(prev\); if \(f\) f\(false\)/)
-    assert.match(output, /\.get\(curr\); if \(f\) f\(true\)/)
+    assert.match(output, /\.get\(_mjs_prev\); if \(_mjs_f\) _mjs_f\(false\)/)
+    assert.match(output, /\.get\(_mjs_curr\); if \(_mjs_f\) _mjs_f\(true\)/)
     // Le set DOM appelle bien style.setProperty pour les 2 branches.
     assert.match(output, /style\.setProperty\('color', String\('red'\)\)/)
     assert.match(output, /style\.setProperty\('color', String\('black'\)\)/)

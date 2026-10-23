@@ -148,11 +148,11 @@ describe('mjs_for/if/key/await.ts — détachés du cœur, build RÉEL', functio
     assert.equal(core.includes(MARK_KEY), false)
   })
 
-  it('projet qui n\'écrit aucun bloc, mais utilise <@select> (module du cœur, {for}+{if} réels) : mjs_for.ts ET mjs_if.ts EMBARQUÉS', async function () {
-    const { outDir } = await buildProject({ runtime: [] }, { 'hop.mjs': '<@select/>\n' })
+  it('projet qui n\'écrit aucun bloc, mais utilise <@@select> (module du cœur, {for}+{if} réels) : mjs_for.ts ET mjs_if.ts EMBARQUÉS', async function () {
+    const { outDir } = await buildProject({ runtime: [] }, { 'hop.mjs': '<@@select/>\n' })
     const core = coreContent(outDir)
-    assert.ok(core.includes(MARK_FOR), '<@select> écrit {for} : doit être détecté transitivement')
-    assert.ok(core.includes(MARK_IF), '<@select> écrit {if} : doit être détecté transitivement')
+    assert.ok(core.includes(MARK_FOR), '<@@select> écrit {for} : doit être détecté transitivement')
+    assert.ok(core.includes(MARK_IF), '<@@select> écrit {if} : doit être détecté transitivement')
     assert.equal(core.includes(MARK_KEY), false)
     assert.equal(core.includes(MARK_AWAIT), false)
   })

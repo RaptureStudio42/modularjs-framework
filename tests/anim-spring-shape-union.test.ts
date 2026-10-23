@@ -15,6 +15,7 @@
 // différence de forme = un µ.warn UNIQUE (pas un par frame).
 
 import assert from 'node:assert/strict'
+import { poserMessages } from './helpers/messages-stub.js'
 
 // µ COMPLET posé par CE fichier — cf. le commentaire détaillé
 // dans anim-transition-error-handling.test.ts : le `||` seul ne protège que
@@ -25,6 +26,7 @@ import assert from 'node:assert/strict'
 ;(globalThis as any).µ = (globalThis as any).µ || { _mjs_interpolatorSet: new WeakSet(), Ticker: { add() {} } }
 await import('../src/runtime/mjs_spring.js')
 const µ = (globalThis as any).µ
+poserMessages(µ)
 
 function settle(s: any, max = 5000) { let i = 0; while (i++ < max && s._mjs_step()) {} return i }
 

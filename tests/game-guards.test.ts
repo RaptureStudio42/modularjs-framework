@@ -14,16 +14,16 @@ function fakeClient(id: string, identityId?: string): any {
 
 describe('correctifs game.ts', () => {
   describe('peerIdOf — identité vide/blanche', () => {
-    it("identity.id === '' → repli sur l'id de connexion (pas de collision)", () => {
+    it("identity.id === '' → repli sur l'id de connexion, préfixé `anon:` (pas de collision)", () => {
       const a = fakeClient('conn-a', '')
       const b = fakeClient('conn-b', '')
-      assert.equal(peerIdOf(a), 'conn-a')
-      assert.equal(peerIdOf(b), 'conn-b')
+      assert.equal(peerIdOf(a), 'anon:conn-a')
+      assert.equal(peerIdOf(b), 'anon:conn-b')
     })
 
     it("identity.id === '   ' (blanche) → même repli", () => {
       const c = fakeClient('conn-c', '   ')
-      assert.equal(peerIdOf(c), 'conn-c')
+      assert.equal(peerIdOf(c), 'anon:conn-c')
     })
 
     it('deux connexions sans identité stable obtiennent deux sièges distincts', () => {

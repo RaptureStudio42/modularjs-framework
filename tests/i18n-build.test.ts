@@ -4,7 +4,7 @@
 //
 // Couvre :
 //   1. validation stricte du bloc `i18n` (mjs.config.json) — clés connues,
-//      `placeholder` ∈ auto|key|wait, `hash` booléen ;
+//      `placeholder` ∈ wait|key|*skeleton|*loader, `hash` booléen ;
 //   2. règle croisée `sourceDir/i18n/` ↔ `i18n.default` (erreur / warning) ;
 //   3. scan + émission (racine embarquée, fragments de section écrits) ;
 //   4. obfuscation prod (hash aléatoire par build, `hash:false`, dev toujours
@@ -93,7 +93,7 @@ describe('mjs.config.json — clé `i18n` (validation stricte)', () => {
 
   it('throw sur placeholder invalide', () => {
     const root = tmp({ i18n: { default: 'fr', placeholder: 'inline' } })
-    assert.throws(() => findConfig(root), /i18n\.placeholder invalide/)
+    assert.throws(() => findConfig(root), /i18n\.placeholder.*inline.*wait, key, \*skeleton, \*loader/s)
   })
 
   it('throw sur hash non booléen', () => {
@@ -126,7 +126,7 @@ describe('bundler — i18n/ présent ↔ i18n.default (règle croisée)', functi
       const stats = await bundler.compile()
       assert.ok(stats.errors.length > 0, 'devrait échouer')
       assert.ok(
-        stats.errors.some(e => /i18n\/ présent : précise i18n\.default/.test(e.message)),
+        stats.errors.some(e => /i18n\/ présent : précisez i18n\.default/.test(e.message)),
         stats.errors.map(e => e.message).join('\n'),
       )
     } finally {
@@ -166,7 +166,7 @@ describe('bundler — scan + émission (racine + fragments)', function () {
       assert.ok(data, 'µ._i18nData doit être émis')
       assert.equal(data.dev, true)
       assert.equal(data.default, 'fr')
-      assert.equal(data.placeholder, 'auto')
+      assert.equal(data.placeholder, 'wait')
       assert.deepEqual(data.root.fr, { bonjour: 'Bonjour', au_revoir: 'Au revoir' })
       assert.deepEqual(data.root.en, { bonjour: 'Hello', au_revoir: 'Goodbye' })
       assert.ok(data.sections.fr.panier, 'section fr.panier attendue')
@@ -220,7 +220,7 @@ describe('bundler — scan + émission (racine + fragments)', function () {
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
       const content = readFileSync(join(root, 'bundle.js'), 'utf-8')
-      assert.ok(!content.includes('_i18nData'), 'aucune trace de µ._i18nData sans i18n/')
+      assert.ok(!/_i18nData\s*=/.test(content), 'aucune donnée i18n (µ._i18nData = …) sans i18n/ ; le nom peut figurer dans le texte d\'un message de la table des libellés')
     } finally {
       await bundler.close()
     }
@@ -231,7 +231,7 @@ describe('bundler — obfuscation prod (hash md5 du contenu, stable si contenu i
   this.timeout(20000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('prod (forceMinify) : noms de fragments hachés (32 hex) + mapping cohérent', async () => {
+  it('prod (forceMinify) : noms de fragments hachés (12 hex) + mapping cohérent', async () => {
     const { srcDir, outDir, root } = mkProject()
     seedI18nDict(srcDir)
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), i18n: { default: 'fr' }, forceMinify: true })
@@ -240,7 +240,7 @@ describe('bundler — obfuscation prod (hash md5 du contenu, stable si contenu i
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
       const data = readI18nData(join(root, 'bundle.js'), outDir)
       assert.equal(data.dev, false)
-      const m = data.sections.fr.panier.match(/\/i18n\/fr\/([a-f0-9]{32})\.json$/)
+      const m = data.sections.fr.panier.match(/\/i18n\/fr\/([a-f0-9]{12})\.json$/)
       assert.ok(m, `nom haché attendu, reçu : ${data.sections.fr.panier}`)
       assert.ok(existsSync(join(outDir, 'i18n', 'fr', `${m![1]}.json`)))
     } finally {

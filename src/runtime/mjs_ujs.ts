@@ -161,13 +161,13 @@ var _confirmCfgWarned = false;
     }
     if (!_confirmCfgWarned) {
       _confirmCfgWarned = true;
-      µ.warn('[ModularJS] µ.config.confirm = true mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli sur window.confirm.');
+      µ.warn(µ._mjs_msg('ujsConfirmNoModal', null, 'µ.config.confirm = true mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli sur window.confirm.'));
     }
     return typeof window.confirm === 'function' ? window.confirm(text) : true;
   }
   if (v != null && v !== false && !_confirmCfgWarned) {
     _confirmCfgWarned = true;
-    µ.warn('[ModularJS] µ.config.confirm attend désormais true/false (l\'ancien \'sweetalert2\'/objet n\'existe plus) — repli sur window.confirm.');
+    µ.warn(µ._mjs_msg('ujsConfirmValue', null, 'µ.config.confirm attend désormais true/false (l\'ancien \'sweetalert2\'/objet n\'existe plus) — repli sur window.confirm.'));
   }
   return typeof window.confirm === 'function' ? window.confirm(text) : true;
 };
@@ -202,7 +202,7 @@ var _confirmCfgWarned = false;
   // location.href — une destination `javascript:`/`data:`/`blob:`… EXÉCUTAIT le script au lieu de
   // naviguer (prouvé Chromium, régression).
   if (url && url.protocol !== 'http:' && url.protocol !== 'https:') {
-    µ.warn('[µ.UJS] navigation dure refusée, protocole non http/https : '+ destination);
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsHardNavProtocol', { destination: destination }, 'navigation dure refusée, protocole non http/https : {destination}'));
     return;
   }
   if (href === window.location.href) { return window.location.reload(); }
@@ -220,7 +220,7 @@ var _confirmCfgWarned = false;
 // >>> extrait-test _mjs_deepFind
 µ._mjs_deepFind = function(node, selector, depth) {
   if (!node || depth > 50) { return null; }
-  if (typeof node.matches === 'function' && node.matches(selector)) { return node; }
+  if (µ._mjs_matches(node, selector)) { return node; }
   var kids = node.children, i, found;
   if (kids) {
     for (i = 0; i < kids.length; i++) {
@@ -261,7 +261,9 @@ var _confirmCfgWarned = false;
     }
   }
   if (target && typeof target.focus === 'function') {
-    target.focus({ preventScroll: true });
+    // le `focus` de la balise, jamais celui d'un composant du même nom (`@focus = ->` reçoit son propre argument)
+    if (typeof HTMLElement === 'function' && target instanceof HTMLElement) { HTMLElement.prototype.focus.call(target, { preventScroll: true }); }
+    else { target.focus({ preventScroll: true }); }
   }
 };
 // <<< extrait-test _mjs_focusAfterSwap
@@ -284,6 +286,21 @@ var _confirmCfgWarned = false;
 // l'avertissement, lui, ne compte QUE pour le document COURANT (celui
 // réellement affiché), jamais pour une réponse parsée hors-document.
 // >>> extrait-test helpers-navigation
+// remplacement insensible à une méthode `replaceWith` du composant (cf. mjs_element.ts)
+µ._mjs_swap = µ._mjs_swap || function(cur, nn) {
+  if (typeof Node !== 'function' || !(cur instanceof Node)) return cur.replaceWith(nn);
+  var p = cur.parentNode;
+  if (p) Node.prototype.replaceChild.call(p, nn, cur);
+};
+// `matches`/`closest` de la balise, insensibles à une méthode du composant du même nom (cf. mjs_element.ts)
+µ._mjs_matches = µ._mjs_matches || function(n, sel) {
+  if (typeof Element === 'function' && n instanceof Element) return Element.prototype.matches.call(n, sel);
+  return !!n && typeof n.matches === 'function' && n.matches(sel);
+};
+µ._mjs_closest = µ._mjs_closest || function(n, sel) {
+  if (typeof Element === 'function' && n instanceof Element) return Element.prototype.closest.call(n, sel);
+  return n && typeof n.closest === 'function' ? n.closest(sel) : null;
+};
 // >>> extrait-test _mjs_navMountZone
 µ._mjs_navMountZone = function(doc, target) {
   var el;
@@ -296,7 +313,7 @@ var _confirmCfgWarned = false;
   }
   if (doc === document && !Object.prototype.hasOwnProperty.call(µ._mjs_navTargetWarned, target)) {
     µ._mjs_navTargetWarned[target] = true;
-    µ.warn("[µ.UJS] cible de navigation '" + target + "' introuvable dans la page — contenu de <body> remplacé.");
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsTargetMissing', { target: target }, 'cible de navigation \'{target}\' introuvable dans la page — contenu de <body> remplacé.'));
   }
   return { zone: doc.body, mode: 'body', target: null };
 };
@@ -364,7 +381,7 @@ var _confirmCfgWarned = false;
   if (raw == null || raw === '' || raw === 'update') { return 'update'; }
   if (!Object.prototype.hasOwnProperty.call(µ._mjs_navMethodWarned, raw)) {
     µ._mjs_navMethodWarned[raw] = true;
-    µ.warn("[µ.UJS] method '" + raw + "' inconnu dans la fiche de navigation — 'update' appliqué.");
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsUnknownMethod', { raw: raw }, 'method \'{raw}\' inconnu dans la fiche de navigation — \'update\' appliqué.'));
   }
   return 'update';
 };
@@ -383,7 +400,7 @@ var _confirmCfgWarned = false;
   if (raw == null || raw === '') { return 'cache-first'; }
   if (!Object.prototype.hasOwnProperty.call(µ._mjs_navCacheWarned, raw)) {
     µ._mjs_navCacheWarned[raw] = true;
-    µ.warn("[µ.UJS] cache '" + raw + "' inconnu dans la fiche de navigation — 'cache-first' appliqué.");
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsUnknownCache', { raw: raw }, 'cache \'{raw}\' inconnu dans la fiche de navigation — \'cache-first\' appliqué.'));
   }
   return 'cache-first';
 };
@@ -468,6 +485,12 @@ var _confirmCfgWarned = false;
     window.location.reload();
     return;
   }
+  // même garde de protocole que µ._mjs_hardNav (défense en profondeur) : une destination `javascript:`/`data:`…
+  // exécuterait du code au lieu de naviguer
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsHardNavProtocol', { destination: dest }, 'navigation dure refusée, protocole non http/https : {destination}'));
+    return;
+  }
   sameDoc = u.origin === window.location.origin && u.pathname === window.location.pathname && u.search === window.location.search;
   if (!sameDoc) {
     window.location.assign(u.href);
@@ -489,14 +512,23 @@ var _confirmCfgWarned = false;
 // <<< extrait-test _mjs_navNoUjs
 
 // `@noUJS` + `@method` sur le MÊME élément — combinaison contradictoire et SILENCIEUSE :
-// l'opt-out rend la main au navigateur, qui ne sait suivre un lien qu'en GET ; le verbe est perdu
+// l'opt-out rend la main au navigateur, qui ne sait suivre un lien qu'en GET ; un autre verbe que `get` est perdu
 // sans trace. Averti UNE FOIS PAR ÉLÉMENT (drapeau porté par le nœud, pas par une clé globale :
 // deux liens distincts méritent chacun leur avertissement), juste avant le retour de l'opt-out.
 // >>> extrait-test _mjs_navWarnNoUjsMethod
-µ._mjs_navWarnNoUjsMethod = function(el) {
-  if (!el || el._mjs_mjsNoUjsMethodWarned || typeof el.getAttribute !== 'function' || !el.getAttribute('mjs-method')) { return; }
+// `e` : l'événement d'un lien que le navigateur suivrait lui-même (vers une autre origine, clic avec Ctrl, Maj,
+// Alt ou Cmd, clic du milieu, attribut `target` ou `download`) — parti en GET, sans le verbe : le geste est
+// retenu à chaque fois (`preventDefault`), l'avertissement une fois par lien. `get`, quelle que soit sa casse, est le
+// verbe même du navigateur, rien de perdu, avec ou sans `e` : le geste, ou la navigation native de `@noUJS`, suit son
+// cours, comme sur un lien ordinaire, sans avertissement
+µ._mjs_navWarnNoUjsMethod = function(el, e) {
+  if (!el || typeof el.getAttribute !== 'function' || !el.getAttribute('mjs-method')) { return; }
+  if (el.getAttribute('mjs-method').toLowerCase() === 'get') { return; }
+  if (e) { e.preventDefault(); }
+  if (el._mjs_mjsNoUjsMethodWarned) { return; }
   el._mjs_mjsNoUjsMethodWarned = true;
-  µ.warn('[µ.UJS] @method="' + el.getAttribute('mjs-method') + '" ignoré — @noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retire l\'un des deux.');
+  if (e) { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsMethodNative', { method: el.getAttribute('mjs-method') }, '@method="{method}" : lien non suivi — vers une autre origine, avec une touche Ctrl, Maj, Alt ou Cmd, au clic du milieu, avec `target` ou `download`, le navigateur le suivrait lui-même, en GET, sans le verbe. Seul un clic simple sur un lien de la même origine, sans `target` ni `download`, envoie la requête.')); }
+  else { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsMethodNoUjs', { method: el.getAttribute('mjs-method') }, '@method="{method}" ignoré — @noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retirez l\'un des deux.')); }
 };
 // <<< extrait-test _mjs_navWarnNoUjsMethod
 
@@ -629,7 +661,7 @@ var _confirmCfgWarned = false;
   for (i = 0; i < existants.length; i++) {
     el = existants[i];
     key = µ._mjs_navHeadKeyOf(el);
-    if (!key) { continue; } // hors périmètre : jamais touché (styles/scripts/viewport/csrf-token/mjs-cache…)
+    if (!key) { continue; } // hors périmètre : jamais touché (styles/scripts/viewport/mjs-cache… ; le jeton CSRF a sa recopie à part, µ._mjs_navCsrf)
     if (Object.prototype.hasOwnProperty.call(table, key)) {
       entry = table[key];
       attrName = el.tagName === 'LINK' ? 'href' : 'content';
@@ -655,10 +687,62 @@ var _confirmCfgWarned = false;
   }
 };
 
+// FICHE DU FICHIER DE PAGE (`render.startup: 'bundle'`) d'un document reçu : le manifeste ne la lit qu'au
+// démarrage ; à l'arrivée par un lien interne, c'est ici qu'elle repointe `µ.paths` sur le fichier de page
+// (déjà préchargé par son lien), AVANT que le contenu ne soit installé et que l'Autoloader ne voie les
+// balises. Valeurs posées telles quelles (même forme que le manifeste, préfixe factorisé inclus). Un nom
+// de la page quittée absent de celle-ci garde le fichier de la précédente : déjà en cache, importé une
+// seule fois, les composants déjà définis y sont ignorés. Fiche absente ou abîmée : aucun effet.
+// >>> extrait-test _mjs_navPageFile
+µ._mjs_navPageFile = function(doc) {
+  var tag, fiche, prev;
+  try {
+    tag = doc && doc.getElementById('__mjs_page');
+    fiche = tag && JSON.parse(tag.textContent);
+    if (!µ.paths || !fiche || typeof fiche.file !== 'string' || !Array.isArray(fiche.names)) { return; }
+    // le HTML reçu ne peut désigner qu'un fichier de page du site : un chemin fait de lettres, chiffres,
+    // `_ . - /` seulement, qui commence par un seul `/` ou par un nom — donc ni schéma (`http:`, `data:`),
+    // ni `//hôte`, ni blanc ou tabulation en tête (l'analyseur d'adresses les retire), ni antislash
+    if (!/^(?!\/\/)[\w.\/-]*mjs_page-[\w.-]+\.js$/.test(fiche.file)) { return; }
+    // l'ancien chemin de chaque nom est gardé : si le fichier de page n'arrive pas (404), le
+    // composant se recharge par son fichier séparé (cf. Autoloader.load)
+    prev = µ._mjs_pagePrev || (µ._mjs_pagePrev = {});
+    fiche.names.forEach(function(n) {
+      if (typeof n !== 'string') { return; }
+      if (!(n in prev)) { prev[n] = µ.paths[n]; }
+      µ.paths[n] = fiche.file;
+    });
+  } catch (e) {}
+};
+// <<< extrait-test _mjs_navPageFile
+
+// JETON CSRF de la page reçue (`<meta name="csrf-token">` et `csrf-param`, lus dans son <head> seulement)
+// recopié dans la page : une connexion ou une déconnexion faite par la navigation fait tourner le jeton du
+// serveur, et µ.ajax (donc les liens @method et les formulaires sans champ de jeton) le relit ici à chaque
+// requête. Du protocole, pas de la tête pilotée : hors `µ.config.navHead`. Absent de la page reçue : celui
+// de la page reste.
+µ._mjs_navCsrf = function(doc) {
+  var names = ['csrf-param', 'csrf-token'], i, got, val, el;
+  if (!doc || !doc.head || !document.head) { return; }
+  for (i = 0; i < names.length; i++) {
+    got = doc.head.querySelector('meta[name="' + names[i] + '"]');
+    val = got ? got.getAttribute('content') : null;
+    if (val == null) { continue; }
+    el = document.head.querySelector('meta[name="' + names[i] + '"]');
+    if (!el) {
+      el = document.createElement('meta');
+      el.setAttribute('name', names[i]);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('content', val);
+  }
+};
+
 // Applique le <head> du document PARSÉ `doc` (réponse HTML d'une navigation, cf. les 3 sites de swap
 // et µ._mjs_navRevalidate plus bas) au `document` COURANT. Opt-out puis gardes AVANT tout, TITRE ensuite,
 // MÉTADONNÉES en dernier (réconciliation PAR CLÉ, cf. µ._mjs_navHeadReconcile juste au-dessus).
 µ._mjs_navApplyHead = function(doc) {
+  try { µ._mjs_navCsrf(doc); } catch (e) {} // AVANT la désactivation : le jeton suit toujours
   if (µ.config && µ.config.navHead === false) { return; } // désactivation globale, cf. bandeau
   try {
     var t, table, kids, i, key, node;
@@ -820,7 +904,7 @@ var _confirmCfgWarned = false;
     document.dispatchEvent(new CustomEvent('mjs:before-cache', { detail: { path: path, zone: zone }, bubbles: true, cancelable: false }));
   } catch (e) {}
   for (i = 0; i < nodes.length; i++) { if (nodes[i].nodeType === 1) { nodes[i]._mjs_page_cached = true; } }
-  if (policy === 'revalidate') { nodes._mjs_mjsCachePolicy = 'revalidate'; }
+  if (policy === 'revalidate') { nodes._mjs_mjsCachePolicy = 'revalidate'; nodes._mjs_mjsRecu = µ._mjs_navRecu; }
   // photo prise MAINTENANT, pendant que la page à archiver est ENCORE affichée (seule fenêtre où
   // `document.title`/`document.head` décrivent encore CETTE page, avant que la navigation ne les remplace).
   // posée INCONDITIONNELLEMENT, plus seulement « si elle dit
@@ -849,14 +933,15 @@ var _confirmCfgWarned = false;
 // couperait un fetch de navigation réel qui serait par ailleurs en vol).
 // >>> extrait-test _mjs_navRevalidate
 µ._mjs_navRevalidate = function(zone, path) {
-  var seq;
+  var seq, recu;
   if (typeof µ._mjs_ajaxRequest !== 'function') { return; }
   seq = µ._mjs_navSeq;
+  recu = µ._mjs_navRecu; // la page restaurée telle que reçue (posée par la restauration, juste avant cet appel)
   µ._mjs_ajaxRequest({
     method: 'GET',
     url: path,
     success: function(html, finalUrl, _schemaNom, nav) {
-      var doc, parser, zoneInfo, newRoot, freshTarget, differs, newNodes, _fresh, _asked;
+      var doc, parser, zoneInfo, newRoot, freshTarget, differs, newNodes, _fresh, _asked, _print;
       if (seq !== µ._mjs_navSeq || !zone) { return; } // navigation plus récente : réponse jetée
       if (!html || typeof html !== 'string') { return; } // réponse JSON/vide : hors périmètre de cette comparaison HTML
       // REDIRECTION SUIVIE — `fetch` suit nativement un 302 : la réponse peut être une AUTRE page
@@ -883,19 +968,25 @@ var _confirmCfgWarned = false;
       zoneInfo = µ._mjs_navMountZone(doc, freshTarget);
       newRoot = zoneInfo.zone;
       if (!newRoot) { return; }
+      newNodes = Array.prototype.slice.call(newRoot.childNodes);
+      _print = newNodes.map(function(n) { return n.outerHTML || n.nodeValue; }).join('');
       // signature bon marché (PAS d'arbres DOM comparés) : X-MJS-Version PRIORITAIRE si présent des
       // deux côtés (build changé depuis le chargement de cette page ⇒ considéré différent sans même
-      // comparer le HTML) ; à défaut, innerHTML du contenant reçu vs affiché.
+      // comparer le HTML) ; à défaut, la page reçue maintenant contre celle reçue la fois précédente — jamais
+      // contre le DOM vivant : un composant qui pose un attribut sur sa balise (prop reflétée, `theme`) rendait
+      // la comparaison toujours fausse et remontait la page à chaque retour (repli sur le DOM vivant sans empreinte)
       if (nav && nav.version && µ.version && nav.version !== µ.version) {
         differs = true;
       } else {
-        differs = newRoot.innerHTML !== zone.innerHTML;
+        differs = typeof recu === 'string' ? _print !== recu : newRoot.innerHTML !== zone.innerHTML;
       }
       if (!differs) { return; } // identique : rien ne bouge, aucun clignotement
-      newNodes = Array.prototype.slice.call(newRoot.childNodes);
       µ._mjs_navTransplantPermanents(zone, newNodes); // 3e site de vidage — sans ça, un rafraîchissement de FOND détruisait le permanent en silence
+      if (µ._mjs_navI18nSeed) { µ._mjs_navI18nSeed(doc); }
+      µ._mjs_navPageFile(doc);
       µ._mjs_navApplyHead(doc); // APRÈS le test `differs` : un rafraîchissement de fond qui ne change rien ne touche pas non plus la tête
       µ._mjs_zoneFill(zone, newNodes);
+      µ._mjs_navRecu = _print;
       // L'entrée de cache de ce chemin pointe encore les nœuds qu'on vient de DÉTACHER : on la
       // retire plutôt que de la laisser mentir jusqu'au prochain départ. Le prochain retour arrière
       // redemandera la page au serveur — c'est exactement ce que `revalidate` promet.
@@ -954,7 +1045,7 @@ var _confirmCfgWarned = false;
       }
       if (Object.prototype.hasOwnProperty.call(µ._mjs_navScriptWarned, sig)) { continue; }
       µ._mjs_navScriptWarned[sig] = true;
-      µ.warn('[µ.UJS] <script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplace-le dans un composant MJS (µmount), ou pose @noUJS sur les liens qui mènent à cette page. Script : ' + sig);
+      µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsScriptSwapped', { sig: sig }, '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez @noUJS sur les liens qui mènent à cette page. Script : {sig}'));
     }
   } catch (e) {}
 };
@@ -1006,7 +1097,7 @@ var _confirmCfgWarned = false;
 µ._mjs_navWarnPermanentNoId = function(el) {
   if (!el || el._mjs_mjsPermanentNoIdWarned) { return; }
   el._mjs_mjsPermanentNoIdWarned = true;
-  µ.warn('[µ.UJS] [mjs-permanent] sans id ignoré — un appariement entre deux navigations exige un id stable sur cet élément.');
+  µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsPermanentNoId', null, '[mjs-permanent] sans id ignoré — un appariement entre deux navigations exige un id stable sur cet élément.'));
 };
 // <<< extrait-test _mjs_navWarnPermanentNoId
 // AVERTI UNE FOIS PAR ID (clé globale, pas un drapeau de nœud : c'est l'ID qui est en cause, pas
@@ -1016,17 +1107,18 @@ var _confirmCfgWarned = false;
 µ._mjs_navWarnPermanentDupId = function(id) {
   if (Object.prototype.hasOwnProperty.call(µ._mjs_navPermanentDupWarned, id)) { return; }
   µ._mjs_navPermanentDupWarned[id] = true;
-  µ.warn("[µ.UJS] [mjs-permanent] id '" + id + "' porté par PLUSIEURS éléments — un seul peut traverser la navigation, les autres partent avec la page quittée. Un id doit être unique dans le document.");
+  µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsPermanentDupId', { id: id }, '[mjs-permanent] id \'{id}\' porté par PLUSIEURS éléments — un seul peut traverser la navigation, les autres partent avec la page quittée. Un id doit être unique dans le document.'));
 };
 // >>> extrait-test _mjs_navTransplantPermanents
 µ._mjs_navTransplantPermanents = function(zone, nodes) {
-  var permanents, found, i, j, vivant, id, entrant, transplantes;
+  var permanents, found, i, j, vivant, id, entrant, transplantes, places;
   if (!zone || !nodes || !nodes.length) { return; }
+  places = []; // [parent, suivant, copie reçue] : la place que chaque vivant quitte dans l'arbre qui part
   permanents = [];
   // `zone` elle-même peut porter l'attribut (pas seulement ses descendants). Ordre du DOCUMENT
   // (querySelectorAll) : un ANCÊTRE permanent est donc toujours traité avant ses descendants
   // permanents — la garde `entrant === vivant` juste dessous en dépend.
-  if (typeof zone.matches === 'function' && zone.matches('[mjs-permanent]')) { permanents.push(zone); }
+  if (µ._mjs_matches(zone, '[mjs-permanent]')) { permanents.push(zone); }
   if (typeof zone.querySelectorAll === 'function') {
     found = zone.querySelectorAll('[mjs-permanent]');
     for (i = 0; i < found.length; i++) { permanents.push(found[i]); }
@@ -1045,50 +1137,31 @@ var _confirmCfgWarned = false;
     // ID DUPLIQUÉ entre deux nœuds vivants — l'homologue trouvé est un permanent qu'on vient de poser :
     // sans cette garde, ce second nœud évinçait le premier, déjà transplanté, du document.
     if (transplantes.indexOf(entrant) !== -1) { µ._mjs_navWarnPermanentDupId(id); continue; }
-    entrant.replaceWith(vivant); // no-op DOM silencieux si `entrant` est une racine sans parent (cf. boucle sous)
+    if (vivant.parentNode) { places.push([vivant.parentNode, vivant.nextSibling, entrant]); }
+    µ._mjs_swap(entrant, vivant); // no-op DOM silencieux si `entrant` est une racine sans parent (cf. boucle sous)
     for (j = 0; j < nodes.length; j++) { if (nodes[j] === entrant) { nodes[j] = vivant; } } // racine du tableau : l'entrée elle-même
     transplantes.push(vivant);
+  }
+  // la copie reçue reprend la place quittée dans l'arbre qui part (archivé au cache de pages) : un Précédent servi
+  // par le cache y retrouve l'élément par son id et le rend au vivant, même imbriqué dans une enveloppe (enfant
+  // direct du contenant, le tableau archivé le tient déjà). Posée en microtâche, une fois cet arbre sorti de la
+  // page par l'installation synchrone qui suit — jamais dans un arbre affiché, où elle serait connectée
+  // (composant monté, <iframe> chargée) : si l'arbre y est encore, la place reste vide
+  if (places.length) {
+    Promise.resolve().then(function() {
+      var k, s;
+      for (k = 0; k < places.length; k++) {
+        s = places[k];
+        if (s[0].isConnected || s[2].parentNode || typeof s[0].insertBefore !== 'function') { continue; }
+        try { s[0].insertBefore(s[2], (s[1] && s[1].parentNode === s[0]) ? s[1] : null); } catch (e) {}
+      }
+    });
   }
 };
 // <<< extrait-test _mjs_navTransplantPermanents
 
-// BARRE DE PROGRESSION RETARDÉE — OPT-IN via `µ.config.navProgress` (mjs_init.ts) : absent ou
-// `false` = zéro ligne exécutée, zéro élément inséré, repli identique au comportement sans cette fonctionnalité.
-// `true` = seuil 500ms ; un NOMBRE = ce seuil en ms. Une navigation plus rapide que le seuil (cache,
-// réseau local) n'affiche RIEN — un clignotement de quelques dizaines de ms est pire que son absence.
-// Élément stylable en CSS SEUL (classe `mjs-nav-progress`, jamais de style posé depuis ce fichier) :
-// l'apparence appartient à l'application (exemple docs/21-navigation.md).
-// Timer + élément GLOBAUX, pas un par navigation (même régime que `µ.nav.active`, un booléen partagé,
-// pas un compteur) : deux navigations qui s'enchaînent (la 2e abandonne la 1re, cf. `_mjs_abortStaleNav`
-// en tête de fichier) ne doivent jamais empiler deux timers ni deux éléments — `_mjs_navProgressStart` ne
-// fait rien si l'un des deux existe déjà.
-µ._mjs_navProgressTimer = null;
-µ._mjs_navProgressEl = null;
-µ._mjs_navProgressStart = function() {
-  var cfg, delay;
-  cfg = µ.config && µ.config.navProgress;
-  if (!cfg) { return; }
-  if (µ._mjs_navProgressTimer || µ._mjs_navProgressEl) { return; } // déjà armé ou déjà affiché : rien à empiler
-  delay = typeof cfg === 'number' ? cfg : 500;
-  µ._mjs_navProgressTimer = setTimeout(function() {
-    µ._mjs_navProgressTimer = null;
-    µ._mjs_navProgressEl = document.createElement('div');
-    µ._mjs_navProgressEl.className = 'mjs-nav-progress';
-    µ._mjs_navProgressEl.setAttribute('role', 'progressbar');
-    µ._mjs_navProgressEl.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(µ._mjs_navProgressEl);
-  }, delay);
-};
-// Appelée à CHAQUE fin de navigation (succès, échec, abandon, repli natif — partout où
-// `µ.nav.active` repasse à `false`) : annule le timer s'il n'a pas encore sonné, retire l'élément
-// s'il a eu le temps d'apparaître. Idempotente (aucun des deux n'existe forcément).
-µ._mjs_navProgressStop = function() {
-  if (µ._mjs_navProgressTimer) { clearTimeout(µ._mjs_navProgressTimer); µ._mjs_navProgressTimer = null; }
-  if (µ._mjs_navProgressEl) {
-    if (µ._mjs_navProgressEl.parentNode) { µ._mjs_navProgressEl.parentNode.removeChild(µ._mjs_navProgressEl); }
-    µ._mjs_navProgressEl = null;
-  }
-};
+// BARRE DE NAVIGATION : µ._mjs_navProgressStart/Stop vivent dans mjs_nav_progress.ts (partagés avec le
+// routeur), présents dès que ce module l'est.
 
 // Installe un TABLEAU de nœuds (contenu HTML échangé, cf. les 3 sites de swap plus bas) dans le
 // contenant résolu par µ._mjs_navMountZone. Quatre valeurs de `method` :
@@ -1118,10 +1191,15 @@ var _confirmCfgWarned = false;
     µ._mjs_navDropHibernation();
     return null;
   }
+  // page 'revalidate' : empreinte du contenu REÇU, prise avant que ses composants n'y touchent — la revalidation
+  // la compare à la page redemandée (µ._mjs_navRevalidate), jamais au DOM vivant
+  µ._mjs_navRecu = cache === 'revalidate' ? Array.prototype.map.call(nodes, function(n) { return n.outerHTML || n.nodeValue; }).join('') : null;
   if (method === 'replace' && zoneInfo.zone !== document.body && zoneInfo.zone.parentNode) {
     _parent = zoneInfo.zone.parentNode; // capturé AVANT le replaceWith : zoneInfo.zone se détache juste après
     µ._mjs_navTransplantPermanents(zoneInfo.zone, nodes); // AVANT que le contenant ne cède sa place
-    zoneInfo.zone.replaceWith.apply(zoneInfo.zone, nodes);
+    // le `replaceWith` de la balise, jamais celui d'un composant du même nom (`@replaceWith = ->` laissait la zone en place)
+    if (typeof Element === 'function' && zoneInfo.zone instanceof Element) { Element.prototype.replaceWith.apply(zoneInfo.zone, nodes); }
+    else { zoneInfo.zone.replaceWith.apply(zoneInfo.zone, nodes); }
     µ._mjs_navContainer = false; // plus de contenant stable : cette page ne se cache pas
     µ._mjs_navTrackZone(µ._mjs_navFirstEl(nodes), 'replaced'); // le 1er ÉLÉMENT, pas nodes[0] (peut être du texte)
     µ._mjs_navCachePolicy = cache || 'cache-first'; // la page qui vient de s'installer, à côté du suivi de zone
@@ -1129,7 +1207,7 @@ var _confirmCfgWarned = false;
   }
   if (method === 'replace' && zoneInfo.zone === document.body && !µ._mjs_navReplaceBodyWarned) {
     µ._mjs_navReplaceBodyWarned = true;
-    µ.warn("[µ.UJS] method 'replace' sans target : <body> n'est jamais remplacé — contenu remplacé à la place.");
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsReplaceNoTarget', null, 'method \'replace\' sans target : <body> n\'est jamais remplacé — contenu remplacé à la place.'));
   }
   if (method === 'append') {
     µ._mjs_zoneAppend(zoneInfo.zone, nodes);
@@ -1154,6 +1232,38 @@ var _confirmCfgWarned = false;
 };
 // <<< extrait-test _mjs_navInstallInZone
 
+// Restauration d'une page du cache, commune au retour arrière / avant (popstate) et au clic : `seq` = numéro de la
+// navigation qui la demande, `zone` = contenant visé (capturé AVANT hibernation), `nodes` = entrée du cache, `path` =
+// page restaurée, `fin` = la suite (routeur, mjs:load), rappelée en DERNIÈRE ligne — une transition de vue
+// (µ._mjs_vtWrapSwap) peut différer tout ce corps, la suite attend l'installation réelle.
+µ._mjs_navSwapCache = function(seq, zone, nodes, path, fin) {
+  // swap PÉRIMÉ sous transition de vue : cf. bandeau de `swap` dans µ._mjs_navApplyJson.
+  if (seq !== µ._mjs_navSeq) { return; }
+  var i;
+  µ._mjs_navRestoreHead(nodes._mjs_mjsHead); // même ordre que le chemin réseau : tête d'abord, contenu ensuite
+  µ._mjs_navTransplantPermanents(zone, nodes); // ce site vide `zone` en court-circuitant µ._mjs_navInstallNodes
+  µ._mjs_zoneFill(zone, nodes);
+  // Fin d'hibernation : sans ce reset, l'arbre restauré gardait le flag à
+  // vie et ses composants échappaient À JAMAIS à la destruction différée.
+  for (i = 0; i < nodes.length; i++) { if (nodes[i].nodeType === 1) { nodes[i]._mjs_page_cached = false; } }
+  µ._mjs_navTrackZone(null, null); // le contenant survit, plus rien à suivre
+  µ._mjs_navCachePolicy = nodes._mjs_mjsCachePolicy || 'cache-first'; // la politique de CETTE page revit avec elle
+  µ._mjs_navRecu = nodes._mjs_mjsRecu; // et son empreinte reçue (revalidation)
+  µ._mjs_lastUjsPath = path;
+  µ._mjs_restoreScroll(path);
+  // Accessibilité : cache-hit = swap synchrone, focus quand même déplacé
+  // (cf. `_mjs_focusAfterSwap` plus haut) — l'origine du contenu (cache ou
+  // réseau) n'a pas à changer le comportement pour un lecteur d'écran.
+  // APRÈS `_mjs_restoreScroll` (ordre voulu : `{preventScroll:true}` empêche déjà
+  // tout scroll parasite du focus, mais la restauration de position reste
+  // l'étape qui « termine » la navigation, le focus la clôt).
+  if (typeof µ._mjs_focusAfterSwap === 'function') { µ._mjs_focusAfterSwap(µ._mjs_navFirstEl(nodes)); }
+  // 'revalidate' : le cache-hit reste immédiat (rien ci-dessus n'attend le réseau), une
+  // vérification part en fond APRÈS l'affichage (jamais avant, zéro régression de vitesse).
+  if (nodes._mjs_mjsCachePolicy === 'revalidate') { µ._mjs_navRevalidate(zone, path); }
+  fin();
+};
+
 // RÉSOLUTION CROISÉE DU CONTENANT (chemin HTML UNIQUEMENT) — le chemin HTML a DEUX documents :
 // la page affichée et la réponse parsée. Le contenant doit exister des DEUX côtés. Absent de la
 // RÉPONSE (gabarit différent : page de connexion, page legacy, erreur…), remplir le contenant courant
@@ -1168,7 +1278,7 @@ var _confirmCfgWarned = false;
   if (target && newInfo.mode !== 'target') {
     if (!Object.prototype.hasOwnProperty.call(µ._mjs_navRespTargetWarned, target)) {
       µ._mjs_navRespTargetWarned[target] = true;
-      µ.warn("[µ.UJS] cible de navigation '" + target + "' introuvable dans la page reçue — contenu de <body> remplacé (des deux côtés).");
+      µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsTargetMissingReceived', { target: target }, 'cible de navigation \'{target}\' introuvable dans la page reçue — contenu de <body> remplacé (des deux côtés).'));
     }
     target = null;
     newInfo = µ._mjs_navMountZone(doc, null);
@@ -1200,8 +1310,8 @@ var _confirmCfgWarned = false;
 µ._mjs_navShowNotFound = function(matchPath, target, method, cache) {
   var mode, msg, rt, label, zoneInfo, box, h, p, code, style;
   mode = (µ.config && µ.config.routeNotFound) || 'error';
-  if (mode === 'silent') { µ.log("[µ.UJS] Aucune page ne correspond à '" + matchPath + "'."); return false; }
-  msg = "[µ.UJS] Aucune page ne correspond à '" + matchPath + "'.";
+  if (mode === 'silent') { µ._mjs_logger()?.('[µ.UJS] ' + µ._mjs_txt('ujsNoPage', { matchPath: matchPath }, 'Aucune page ne correspond à \'{matchPath}\'.')); return false; }
+  msg = '[µ.UJS] ' + µ._mjs_txt('ujsNoPage', { matchPath: matchPath }, 'Aucune page ne correspond à \'{matchPath}\'.');
   if (mode === 'warn') { µ.warn(msg); return false; }
   µ.error(msg);
   rt = µ.Router;
@@ -1236,6 +1346,9 @@ var _confirmCfgWarned = false;
   } else {
     style = document.createElement('style');
     style.textContent = µ._mjs_routeErrorCss;
+    // marquée pour la règle qui la cache (cf. _mjs_routeErrorCss) : une règle de la page qui rend
+    // visibles les enfants (`* { display: block }`) afficherait sinon son CSS en texte
+    style.setAttribute('data-mjs-route-error-css', '');
     // style FRÈRE du texte dans `box` (jamais dans le textContent) — rendu identique, mais `box`
     // s'installe seul (plus de fragment) : la zone reste traçable à la navigation suivante.
     box.appendChild(style);
@@ -1259,7 +1372,7 @@ var _navFlashModalWarned = false;
   if (attr === 'popup' || attr === 'console' || attr === 'silent') { return attr; }
   if (attr && !_navFlashAttrWarned) {
     _navFlashAttrWarned = true;
-    µ.warn('[µ.UJS] mjs-flash="'+ attr +'" : valeur non reconnue (popup/console/silent attendus) — politique globale utilisée.');
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsFlashUnknown', { attr: attr }, 'mjs-flash="{attr}" : valeur non reconnue (popup/console/silent attendus) — politique globale utilisée.'));
   }
   cfg = µ.config && µ.config.flash;
   if (cfg === false) { return false; }
@@ -1284,7 +1397,7 @@ var _navFlashModalWarned = false;
   }
   if (!_navFlashModalWarned) {
     _navFlashModalWarned = true;
-    µ.warn('[µ.UJS] flash/error à afficher mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli console/alert.');
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsFlashNoModal', null, 'flash/error à afficher mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli console/alert.'));
   }
   // `typeof window.alert === 'function'` — défensif, MÊME garde que µ.confirm plus haut
   // (`typeof window.confirm === 'function'`) : environnement sans alert (SSR, sandbox de test) →
@@ -1322,13 +1435,13 @@ var _navFlashModalWarned = false;
 µ._mjs_navRunCallback = function(originEl, detail) {
   var callbackEl, nom, target;
   if (!originEl || !originEl.isConnected || typeof originEl.closest !== 'function') { return; }
-  callbackEl = (typeof originEl.hasAttribute === 'function' && originEl.hasAttribute('mjs-callback')) ? originEl : originEl.closest('[mjs-callback]');
+  callbackEl = (typeof originEl.hasAttribute === 'function' && originEl.hasAttribute('mjs-callback')) ? originEl : µ._mjs_closest(originEl, '[mjs-callback]');
   if (!callbackEl) { return; }
   nom = callbackEl.getAttribute('mjs-callback');
   if (!nom) { return; }
   target = µ._mjs_navCallbackClimb(callbackEl, nom);
   if (!target) {
-    µ.warn('[µ.UJS] @callback="'+ nom +'" : aucune méthode « '+ nom +' » trouvée sur '+ callbackEl.tagName.toLowerCase() +' ni ses ancêtres — rappel ignoré.');
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsCallbackMissing', { nom: nom, tag: callbackEl.tagName.toLowerCase() }, '@callback="{nom}" : aucune méthode « {nom} » trouvée sur {tag} ni ses ancêtres — rappel ignoré.'));
     return;
   }
   // un rappel qui LÈVE traversait la fonction : le swap DOM avait déjà eu lieu, mais
@@ -1462,7 +1575,7 @@ var _navFlashModalWarned = false;
       // REJETTE pourtant un blob: (même « même origine ») avec SecurityError natif non catché
       // (confirmé sur Chromium réel) — l'ancien contrôle ne vivait QUE dans la branche
       // « origine différente » juste en dessous, jamais atteinte dans ce cas.
-      if (liveOrigin && destProtocol !== 'http:' && destProtocol !== 'https:') { µ.warn('[µ.UJS] navigation abandonnée, url hors origine et protocole non http/https : '+ dest); return; }
+      if (liveOrigin && destProtocol !== 'http:' && destProtocol !== 'https:') { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsHardNavOutside', { dest: dest }, 'navigation abandonnée, url hors origine et protocole non http/https : {dest}')); return; }
       if (liveOrigin && destOrigin !== liveOrigin) {
         return µ._mjs_hardNav(dest);
       }
@@ -1530,7 +1643,7 @@ var _navFlashModalWarned = false;
   if (opts.push) {
     // même garde de protocole, testée EN PREMIER, que la branche 404 ci-dessus
     // (code dupliqué, même régression blob: même origine, confirmé sur Chromium réel).
-    if (liveOrigin && destProtocol !== 'http:' && destProtocol !== 'https:') { µ.warn('[µ.UJS] navigation abandonnée, url hors origine et protocole non http/https : '+ dest); return; }
+    if (liveOrigin && destProtocol !== 'http:' && destProtocol !== 'https:') { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsHardNavOutside', { dest: dest }, 'navigation abandonnée, url hors origine et protocole non http/https : {dest}')); return; }
     if (liveOrigin && destOrigin !== liveOrigin) {
       return µ._mjs_hardNav(dest);
     }
@@ -1608,7 +1721,7 @@ var _navFlashModalWarned = false;
   if (typeof µ._mjs_ajaxRequest !== 'function') {
     // module runtime 'ajax' absent de la sélection (mjs.config.json `runtime`) :
     // aucune requête ne peut partir — averti une fois, jamais un throw muet.
-    µ.error("[µ.UJS] navigation ujs : module runtime 'ajax' absent (µ._mjs_ajaxRequest introuvable).");
+    µ.error('[µ.UJS] ' + µ._mjs_txt('ujsNoAjax', null, 'navigation ujs : module runtime \'ajax\' absent (µ._mjs_ajaxRequest introuvable).'));
     return;
   }
   return µ._mjs_ajaxRequest({
@@ -1647,7 +1760,8 @@ var _navFlashModalWarned = false;
 // Enveloppe `swap` (fonction SYNCHRONE : replaceWith + restauration de scroll +
 // focus, TOUT ce qui existe déjà à chaque point d'appel, ORDRE INTERNE inchangé)
 // dans `document.startViewTransition` si la garde d'environnement ET la résolution
-// sont actives ; sinon exécute `swap` directement — chemin historique inchangé.
+// sont actives ; sinon exécute `swap` directement — chemin historique inchangé. Un rideau
+// joue même sans l'API (vrai DOM) ; un préréglage natif, sans elle, exécute `swap` directement.
 // Résolution en CHAÎNE (préréglage) → µ._mjs_vtApplyPreset AVANT de démarrer la
 // transition (mjs_vt_presets.ts, chargé avant mjs_router/mjs_ujs — ordre CANONICAL,
 // bundler/index.ts). `µ.Router._mjs_vtEnabled` : garde D'ENVIRONNEMENT PARTAGÉE avec le
@@ -1671,6 +1785,9 @@ var _navFlashModalWarned = false;
   };
   // rideaux « à travers le noir » : mêmes règles que le routeur
   if (typeof µ._mjs_vtCurtainRun === 'function' && typeof resolved === 'string' && µ._mjs_vtCurtainRun(resolved, swapGuarded)) { return; }
+  // navigateur sans l'API View Transitions : permutation directe, silencieuse (seuls les rideaux jouent sans elle) ;
+  // le drapeau de réentrance reste levé, la vue du routeur ne lance pas sa propre transition, comme avec l'API
+  if (typeof document.startViewTransition !== 'function') { return swapGuarded(); }
   if (typeof µ._mjs_vtApplyPreset === 'function') { µ._mjs_vtApplyPreset(resolved); }
   // couche de lévitation : mêmes hooks que le routeur (cf. mjs_vt_presets.ts)
   var hoist = (typeof µ._mjs_vtHoistStart === 'function') ? µ._mjs_vtHoistStart() : null;
@@ -1732,7 +1849,17 @@ window.addEventListener('popstate', function(e) {
   // /c → /b#footnote sortait immédiatement : aucun swap, `_mjs_lastUjsPath`/`_mjs_navSeq`
   // intacts → contenu de /c sous l'URL /b#footnote, toute la chaîne pageCache
   // corrompue. On ne sort que si la page est identique (vrai ancrage en page).
-  if (destHash && !destHash.startsWith('#/') && destination === µ._mjs_lastUjsPath) { return; }
+  // Seule la position change alors, et le défilement natif est coupé : elle revient ici — celle gardée au départ de
+  // cette entrée (clic sur une autre ancre), sinon l'ancre elle-même, comme le navigateur seul.
+  if (destHash && !destHash.startsWith('#/') && destination === µ._mjs_lastUjsPath) {
+    var _anchorEl;
+    if (µ._mjs_scrollPos && µ._mjs_scrollPos.has(destination + destHash)) { µ._mjs_restoreScroll(destination + destHash); }
+    else {
+      try { _anchorEl = document.getElementById(decodeURIComponent(destHash.slice(1))); } catch (e2) { _anchorEl = null; }
+      if (_anchorEl && typeof _anchorEl.scrollIntoView === 'function') { _anchorEl.scrollIntoView(); }
+    }
+    return;
+  }
   // Ancre non-route EXCLUE du chemin routé (sinon `_mjs_getMatchPath` prendrait
   // `footnote` pour une route et viderait les vues) ; une vraie route hash
   // (`#/…`) est conservée.
@@ -1752,11 +1879,20 @@ window.addEventListener('popstate', function(e) {
   var _navCtrl = typeof µ._mjs_abortStaleNav === 'function' ? µ._mjs_abortStaleNav() : null;
   // Navigation hash pure (même page) : le routeur interne suffit.
   if (leavingPath === destination) {
-    if ((ref = µ.Router) == null) { return; }
-    // slash final posé à la main : nettoie l'URL AVANT de router — sinon `_mjs_updateUrlStore`
-    // mémorise la forme sale et le listener hashchange sautera son navigate (même matchPath)
-    if (ref._mjs_canonicalizeUrl) { ref._mjs_canonicalizeUrl(); destHash = window.location.hash; fullDest = destination + (destHash.startsWith('#/') ? destHash : ''); }
-    return ref.navigate(fullDest, false);
+    if ((ref = µ.Router) != null) {
+      // slash final posé à la main : nettoie l'URL AVANT de router — sinon `_mjs_updateUrlStore`
+      // mémorise la forme sale et le listener hashchange sautera son navigate (même matchPath)
+      if (ref._mjs_canonicalizeUrl) { ref._mjs_canonicalizeUrl(); destHash = window.location.hash; fullDest = destination + (destHash.startsWith('#/') ? destHash : ''); }
+      ref.navigate(fullDest, false);
+    }
+    // `history.scrollRestoration` est coupé pour toute la page (plus haut) : la position de la route
+    // retrouvée, gardée à son départ (clic sur un lien `#/…`, µ.Router.navigate) sous l'adresse complète
+    // (`#` seul pour l'entrée sans fragment, jamais confondue avec la clé de page), revient ici ; une
+    // entrée jamais quittée par ces chemins garde le défilement en place, comme avant ; sans routeur aussi (entrée
+    // sans fragment quittée par une ancre ordinaire, cf. le clic)
+    var _hashKey = window.location.pathname + window.location.search + (window.location.hash || '#');
+    if (µ._mjs_scrollPos && µ._mjs_scrollPos.has(_hashKey)) { µ._mjs_restoreScroll(_hashKey); }
+    return;
   }
   // le contenu du contenant est hiberné à chaque départ, contenant compris quand c'est
   // <body> (avant : <body> en était exclu du pageCache). La page QUITTÉE est cachée à son
@@ -1783,40 +1919,14 @@ window.addEventListener('popstate', function(e) {
     // quoi la garde de fraîcheur de `_swapPopCache` juste en dessous comparerait `undefined` à
     // `µ._mjs_navSeq` et se croirait TOUJOURS périmée (plus aucun cache-hit ne swapperait).
     seq = µ._mjs_navSeq;
-    var _swapPopCache = function() {
-      // swap PÉRIMÉ sous transition de vue : cf. bandeau de `swap` dans µ._mjs_navApplyJson.
-      if (seq !== µ._mjs_navSeq) { return; }
-      var _cni;
-      µ._mjs_navRestoreHead(cachedNodes._mjs_mjsHead); // même ordre que le chemin réseau : tête d'abord, contenu ensuite
-      µ._mjs_navTransplantPermanents(_cacheZone, cachedNodes); // ce site vide `_cacheZone` en court-circuitant µ._mjs_navInstallNodes
-      µ._mjs_zoneFill(_cacheZone, cachedNodes);
-      // Fin d'hibernation : sans ce reset, l'arbre restauré gardait le flag à
-      // vie et ses composants échappaient À JAMAIS à la destruction différée.
-      for (_cni = 0; _cni < cachedNodes.length; _cni++) { if (cachedNodes[_cni].nodeType === 1) { cachedNodes[_cni]._mjs_page_cached = false; } }
-      µ._mjs_navTrackZone(null, null); // le contenant survit, plus rien à suivre
-      µ._mjs_navCachePolicy = cachedNodes._mjs_mjsCachePolicy || 'cache-first'; // la politique de CETTE page revit avec elle
-      µ._mjs_lastUjsPath = destination;
-      µ._mjs_restoreScroll(destination);
-      // Accessibilité : cache-hit = swap synchrone, focus quand même déplacé
-      // (cf. `_mjs_focusAfterSwap` plus haut) — l'origine du contenu (cache ou
-      // réseau) n'a pas à changer le comportement pour un lecteur d'écran.
-      // APRÈS `_mjs_restoreScroll` (ordre voulu : `{preventScroll:true}` empêche déjà
-      // tout scroll parasite du focus, mais la restauration de position reste
-      // l'étape qui « termine » la navigation, le focus la clôt).
-      if (typeof µ._mjs_focusAfterSwap === 'function') { µ._mjs_focusAfterSwap(µ._mjs_navFirstEl(cachedNodes)); }
-      // 'revalidate' : le cache-hit reste immédiat (rien ci-dessus n'attend le réseau), une
-      // vérification part en fond APRÈS l'affichage (jamais avant, zéro régression de vitesse).
-      if (cachedNodes._mjs_mjsCachePolicy === 'revalidate') { µ._mjs_navRevalidate(_cacheZone, destination); }
-      // DERNIÈRE ligne de `_swapPopCache` : cf. bandeau
-      // `_finPopCache` ci-dessous.
-      _finPopCache();
-    };
+    // restauration commune avec le clic (µ._mjs_navSwapCache), close par `_finPopCache`
+    var _swapPopCache = function() { µ._mjs_navSwapCache(seq, _cacheZone, cachedNodes, destination, _finPopCache); };
     // µ._mjs_vtWrapSwap peut DIFFÉRER `_swapPopCache` (rappel de
     // document.startViewTransition, asynchrone) : la queue ci-dessous (navigate + mjs:load), avant
     // posée juste APRÈS l'appel à µ._mjs_vtWrapSwap, s'exécutait alors AVANT l'installation réelle —
     // `_cacheZone` était déjà correct (capturé plus haut, avant hibernation) mais le MOMENT était
     // faux : le routeur se resynchronisait sur l'ancien DOM, `mjs:load` partait trop tôt.
-    // `_finPopCache` se rappelle désormais en DERNIÈRE ligne de `_swapPopCache` : sans transition de
+    // `_finPopCache` se rappelle désormais en DERNIÈRE ligne de la restauration : sans transition de
     // vue (`_mjs_vtWrapSwap` appelle `_swapPopCache()` SYNCHRONEMENT), l'ordre observable reste IDENTIQUE
     // à aujourd'hui. Valeur de retour de `ref.navigate(...)` : n'est plus propagée jusqu'à
     // l'appelant (traverserait désormais une fermeture potentiellement asynchrone) — sans effet,
@@ -1844,14 +1954,14 @@ window.addEventListener('popstate', function(e) {
     // plus haut) — chaque app affiche ainsi sa barre/spinner SEULEMENT quand
     // une requête est réellement en vol.
     if (µ.nav) { µ.nav.active = true; µ.nav.href = fullDest; }
-    µ._mjs_navProgressStart(); // armé indépendamment de µ.nav (opt-in propre, cf. sa déclaration)
+    if (typeof µ._mjs_navProgressStart === 'function') { µ._mjs_navProgressStart(); } // armé indépendamment de µ.nav (la barre de navigation, mjs_nav_progress.ts)
     return µ._mjs_navRequest('GET', fullDest, void 0, function(html, finalUrl, _schemaNom, nav) {
       var doc, liveRoot, newRoot, parser, ref1, newNodes, _navTarget, _navMethod, _navCache, liveInfo, _zones, _installedZone;
       if (seq !== µ._mjs_navSeq) {
         return; // une navigation plus récente a gagné
       }
       if (µ.nav) { µ.nav.active = false; µ.nav.href = null; }
-      µ._mjs_navProgressStop();
+      if (typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); }
       if (html && typeof html === 'object') {
         // chemin JSON du protocole de navigation : l'historique a déjà
         // bougé (popstate), aucun push ici — même en cas de redirection
@@ -1931,6 +2041,8 @@ window.addEventListener('popstate', function(e) {
           // gère replace/append/update + suivi de zone) — plus jamais figé sur <body>.
           // valeur RETOURNÉE : le contenant EFFECTIF après installation (liveInfo.zone se
           // détache en method:'replace', cf. µ._mjs_navInstallNodes) — capturée ici pour detail.zone plus bas.
+          if (µ._mjs_navI18nSeed) { µ._mjs_navI18nSeed(doc); }
+          µ._mjs_navPageFile(doc);
           µ._mjs_navApplyHead(doc); // tête d'abord (synchrone) : un <@head><title> qui arrive tirera ensuite dans sa microtâche et gagnera
           _installedZone = µ._mjs_navInstallNodes(liveInfo, newNodes, _navMethod, _navCache);
           // on ne TOUCHE PAS l'URL
@@ -1972,7 +2084,7 @@ window.addEventListener('popstate', function(e) {
       // récente a déjà l'URL et le DOM) n'a aucune raison d'imposer un full reload.
       if (seq !== µ._mjs_navSeq) { return; }
       if (µ.nav) { µ.nav.active = false; µ.nav.href = null; }
-      µ._mjs_navProgressStop();
+      if (typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); }
       // Échec réseau au pop : sans repli, l'URL pointait une page jamais
       // affichée. Le reload laisse le navigateur trancher (cache HTTP, erreur).
       return window.location.reload();
@@ -2052,12 +2164,17 @@ window.addEventListener('hashchange', function() {
 // `clickTarget.closest(...)` si la relance CLIC n'a pas de `.click` exploitable.
 // >>> extrait-test _mjs_ujsConfirmRefire
 µ._mjs_ujsConfirmRefire = function(confirmEl, form, clickTarget, submitter) {
-  var saved, target, realSubmitter, isSubmitBtn;
+  var saved, target, realSubmitter, isSubmitBtn, cliquer;
+  // le `click` de la balise, jamais celui d'un composant du même nom (`@click = ->` : le clic accepté n'était jamais rejoué)
+  cliquer = function(n) {
+    if (typeof HTMLElement === 'function' && n instanceof HTMLElement) { HTMLElement.prototype.click.call(n); }
+    else { n.click(); }
+  };
   saved = confirmEl.getAttribute('mjs-confirm');
   confirmEl.removeAttribute('mjs-confirm');
   try {
     if (clickTarget && typeof clickTarget.click === 'function') {
-      clickTarget.click();
+      cliquer(clickTarget);
     }
     else {
       target = form || (confirmEl.tagName === 'FORM' ? confirmEl : null);
@@ -2067,7 +2184,7 @@ window.addEventListener('hashchange', function() {
           // englobant le bouton d'envoi) : `.form` existe mais requestSubmit(confirmEl) lève une
           // TypeError native AVANT tout dispatch — validé comme un VRAI bouton de soumission avant
           // de le passer, sinon repli sur submitter/realSubmitter/bare (comme non form-associated).
-          isSubmitBtn = typeof confirmEl.matches === 'function' && confirmEl.matches('button, input[type="submit"], input[type="image"]');
+          isSubmitBtn = µ._mjs_matches(confirmEl, 'button, input[type="submit"], input[type="image"]');
           try {
             if (confirmEl !== target && confirmEl.form === target && isSubmitBtn) { target.requestSubmit(confirmEl); }
             else if (submitter) {
@@ -2075,7 +2192,7 @@ window.addEventListener('hashchange', function() {
               // vérifié par le navigateur comme soumissionnaire de CE <form> — aucun re-test `.form`.
               target.requestSubmit(submitter);
             }
-            else if (clickTarget && typeof clickTarget.closest === 'function' && (realSubmitter = clickTarget.closest('button, input[type="submit"], input[type="image"]')) && realSubmitter.form === target) {
+            else if (clickTarget && (realSubmitter = µ._mjs_closest(clickTarget, 'button, input[type="submit"], input[type="image"]')) && realSubmitter.form === target) {
               // repli : bouton retrouvé depuis la cible du clic d'origine (relance CLIC sans `.click`
               // exploitable) — `.form === target` vérifie qu'il appartient bien à CE formulaire.
               target.requestSubmit(realSubmitter);
@@ -2085,15 +2202,15 @@ window.addEventListener('hashchange', function() {
           catch (reqErr) {
             // repli ultime (cas non prévu) : jamais une exception qui fuit hors du `.then()`
             // appelant (promesse orpheline, formulaire jamais soumis en silence) — averti, pas avalé.
-            µ.warn('[µ.UJS] @confirm : requestSubmit('+ (confirmEl.tagName || '?').toLowerCase() +') a échoué après acceptation, repli sur requestSubmit() nu — '+ reqErr);
+            µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsConfirmRetry', { tag: (confirmEl.tagName || '?').toLowerCase(), reqErr: reqErr }, '@confirm : requestSubmit({tag}) a échoué après acceptation, repli sur requestSubmit() nu — {reqErr}'));
             // GARDE MUETTE : le repli lui-même peut échouer
             // (2e échec) — jamais un `catch` vide, averti nommément plutôt qu'avalé en silence.
-            try { target.requestSubmit(); } catch (e) { µ.warn('[µ.UJS] @confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — '+ e); }
+            try { target.requestSubmit(); } catch (e) { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsConfirmRetryFailed', { e: e }, '@confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — {e}')); }
           }
         }
         else if (typeof target.submit === 'function') { target.submit(); }
       }
-      else if (typeof confirmEl.click === 'function') { confirmEl.click(); }
+      else if (typeof confirmEl.click === 'function') { cliquer(confirmEl); }
     }
   }
   finally {
@@ -2109,7 +2226,8 @@ window.addEventListener('hashchange', function() {
 // >>> extrait-test _mjs_ujsOnClick
 µ._mjs_ujsOnClick = function(e) {
   var cachedNodes, currentPath, currentRoot, destPath, destination, evPaths, fullDest, isHashRoute, isSamePage, link, ref, ref3, ref4, seq, target;
-  // preventDefault ANTÉRIEUR seulement (document ou DOM léger) — les handlers de composant courent après le pont shadow (capture, :2151)
+  // action déjà prévenue — y compris par un gestionnaire du composant : la prise en charge du lien
+  // n'a lieu qu'à la remontée, une fois ces gestionnaires joués (pont shadow, µ._mjs_ujsShadowAttach)
   if (e.defaultPrevented) {
     return;
   }
@@ -2153,9 +2271,18 @@ window.addEventListener('hashchange', function() {
   // vrai bouton — ait pu jouer µ.confirm : la suppression partait sans aucune popup. L'idempotence
   // shadow OUVERT ci-dessus reste garantie : le 1er passage qui TROUVE le porteur marque l'événement.
   if (!e._mjs_mjsConfirmGated) {
-    var _confirmEl = typeof target.closest === 'function' ? target.closest('[mjs-confirm]') : null;
+    var _confirmEl = µ._mjs_closest(target, '[mjs-confirm]');
     if (_confirmEl && typeof _confirmEl.hasAttribute === 'function' && _confirmEl.hasAttribute('mjs-confirm')) {
       e._mjs_mjsConfirmGated = true;
+      // lien `@method` que le navigateur suivrait lui-même (Ctrl, Maj, Alt ou Cmd, `target`, `download`, autre origine ;
+      // le clic du milieu n'arrive pas ici, cf. µ._mjs_ujsOnAuxClick) : le geste ne fait rien, AVANT la question — après
+      // « oui », la relance d'un clic simple aurait envoyé la requête que le geste ne demandait pas ; `get` n'a rien à
+      // perdre, la question est posée comme sur un lien ordinaire
+      var _methodLink = µ._mjs_closest(target, 'a');
+      if (_methodLink && typeof _methodLink.getAttribute === 'function' && _methodLink.getAttribute('mjs-method') && _methodLink.getAttribute('mjs-method').toLowerCase() !== 'get' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (_methodLink.target && _methodLink.target !== '_self') || _methodLink.hasAttribute('download') || (_methodLink.origin !== window.location.origin && (_methodLink.protocol === 'http:' || _methodLink.protocol === 'https:')))) {
+        µ._mjs_navWarnNoUjsMethod(_methodLink, e);
+        return;
+      }
       // pending : modale déjà ouverte pour CET élément, clics avalés sans re-appeler µ.confirm
       if (_confirmEl._mjs_mjsConfirmPending) {
         e.preventDefault();
@@ -2181,15 +2308,31 @@ window.addEventListener('hashchange', function() {
         e.stopImmediatePropagation();
         return;
       }
+      // accepté sur l'instant : si ce clic part en envoi (bouton d'envoi, Entrée dans un champ), la question de
+      // cet envoi est déjà répondue — l'envoi qui suit, dans la même tâche, ne la repose pas (µ._mjs_ujsOnSubmit)
+      _confirmEl._mjs_mjsAccepted = true;
+      setTimeout(function() { _confirmEl._mjs_mjsAccepted = false; }, 0);
     }
+  }
+  // appel de la phase de capture (µ._mjs_ujsConfirmClick) : la confirmation seule — le lien attend la
+  // remontée, après les gestionnaires, pour qu'un `.prevent` le retienne
+  if (e._mjs_ujsGateOnly) {
+    // le lien, lu AVANT les gestionnaires : l'un d'eux peut retirer de la page la balise cliquée (une icône du
+    // lien, basculée par `{if}`) — la remontée ne retrouverait plus le lien depuis elle
+    e._mjs_link = { from: target, link: µ._mjs_closest(target, 'a') };
+    return;
   }
   // Modificateurs restants (bouton déjà filtré plus haut) — APRÈS la gate
   // @confirm : un clic-molette/ctrl-clic sur un lien confirmé doit quand même
-  // déclencher la popup avant que le navigateur n'ouvre son propre onglet.
+  // déclencher la popup avant que le navigateur n'ouvre son propre onglet
+  // (sauf sur un lien `@method` d'un autre verbe que `get`, retenu avant la question, cf. la gate plus haut).
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+    µ._mjs_navWarnNoUjsMethod(e._mjs_link && e._mjs_link.link || µ._mjs_closest(target, 'a'), e);
     return;
   }
-  link = target.closest('a');
+  // le lien lu à la capture par la racine la plus proche de la vraie cible (dans une ombre fermée, le document ne voit
+  // que l'hôte) ; sinon le plus proche de la cible vue d'ici
+  link = e._mjs_link && e._mjs_link.link || µ._mjs_closest(target, 'a');
   if (!link) {
     return;
   }
@@ -2199,15 +2342,20 @@ window.addEventListener('hashchange', function() {
   }
   // `origin` (pas `host`) : un lien http: depuis une page https: partagerait
   // le host mais le fetch serait bloqué mixed-content → navigation avalée.
+  // le navigateur suivrait lui-même un lien http(s) vers une autre origine, en GET : un lien `@method` est retenu, averti
+  // (sauf `get`, suivi comme un lien ordinaire)
   if (link.origin !== window.location.origin) {
+    if (link.protocol === 'http:' || link.protocol === 'https:') { µ._mjs_navWarnNoUjsMethod(link, e); }
     return;
   }
   // Tout target nommé (_blank, iframe nommée…) doit suivre le comportement
   // natif — seul `_self` (ou rien) se fait intercepter.
   if (link.target && link.target !== '_self') {
+    µ._mjs_navWarnNoUjsMethod(link, e);
     return;
   }
   if (link.hasAttribute('download')) {
+    µ._mjs_navWarnNoUjsMethod(link, e);
     return;
   }
   if (link.protocol === 'javascript:' || link.protocol === 'mailto:') {
@@ -2223,8 +2371,10 @@ window.addEventListener('hashchange', function() {
   // Verbe inconnu → warning puis repli sur la navigation normale ci-dessous
   // (PAS de preventDefault dans ce cas : les branches same-page/cross-page
   // gèrent leur propre interception, comme si `mjs-method` était absent).
+  // `get`, quelle que soit sa casse : le verbe même d'un lien, reconnu — la navigation normale, sans avertissement
+  // (lien préchargeable, cf. µ._mjs_isPreloadableLink)
   var _methodAttr = typeof link.getAttribute === 'function' ? link.getAttribute('mjs-method') : null;
-  if (_methodAttr) {
+  if (_methodAttr && _methodAttr.toUpperCase() !== 'GET') {
     var _verb = _methodAttr.toUpperCase();
     if (_verb === 'DELETE' || _verb === 'POST' || _verb === 'PUT' || _verb === 'PATCH') {
       e.preventDefault();
@@ -2246,7 +2396,10 @@ window.addEventListener('hashchange', function() {
         }
       });
     }
-    µ.warn('[µ.UJS] mjs-method="'+ _methodAttr +'" : verbe HTTP non reconnu (delete/post/put/patch) — navigation normale.');
+    // la passe à blanc d'une coupure n'avertit pas : si MJS ne prend pas le lien (il rejouerait, donc avertirait), elle
+    // garde l'avertissement pour le dire elle-même
+    if (e._mjs_ujsDry) { e._mjs_ujsDryWarn = _methodAttr; }
+    else { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsVerbUnknown', { verb: _methodAttr }, 'mjs-method="{verb}" : verbe HTTP non reconnu (get/delete/post/put/patch attendus) — navigation normale.')); }
   }
   // pathname ET search : un lien `?page=2` depuis `?page=1` est une VRAIE
   // navigation — avant (pathname seul), l'URL était poussée mais aucun fetch
@@ -2255,6 +2408,9 @@ window.addEventListener('hashchange', function() {
   if (isSamePage) {
     isHashRoute = link.hash.startsWith('#/');
     if (link.hash && !isHashRoute) {
+      // ancre ordinaire, suivie par le navigateur lui-même : la position quittée est gardée pour le Précédent
+      // (défilement natif coupé, cf. popstate)
+      if (typeof µ._mjs_saveScroll === 'function') { µ._mjs_saveScroll(window.location.pathname + window.location.search + (window.location.hash || '#')); }
       return;
     }
     e.preventDefault();
@@ -2280,6 +2436,8 @@ window.addEventListener('hashchange', function() {
     if (destination === window.location.pathname + window.location.search + window.location.hash) {
       return;
     }
+    // position de la route quittée, rendue au Précédent (cf. popstate) : le défilement natif est coupé
+    if (typeof µ._mjs_saveScroll === 'function') { µ._mjs_saveScroll(window.location.pathname + window.location.search + (window.location.hash || '#')); }
     window.history.pushState({}, '', destination);
     return (ref = µ.Router) != null ? ref.navigate(destination, false) : void 0;
   } else {
@@ -2353,34 +2511,13 @@ window.addEventListener('hashchange', function() {
     // encore affiché de A sous la clé de B (pageCache empoisonné).
     if (_cacheZone && µ.pageCache.has(destPath)) {
       cachedNodes = µ.pageCache.get(destPath);
-      var _swapClickCache = function() {
-        // swap PÉRIMÉ sous transition de vue : `seq`
-        // capturé plus haut (avant la résolution cache, synchrone) ; cf. bandeau de `swap`
-        // dans µ._mjs_navApplyJson.
-        if (seq !== µ._mjs_navSeq) { return; }
-        var _cci;
-        µ._mjs_navRestoreHead(cachedNodes._mjs_mjsHead); // même ordre que le chemin réseau : tête d'abord, contenu ensuite
-        µ._mjs_navTransplantPermanents(_cacheZone, cachedNodes); // ce site vide `_cacheZone` en court-circuitant µ._mjs_navInstallNodes
-        µ._mjs_zoneFill(_cacheZone, cachedNodes);
-        for (_cci = 0; _cci < cachedNodes.length; _cci++) { if (cachedNodes[_cci].nodeType === 1) { cachedNodes[_cci]._mjs_page_cached = false; } }
-        µ._mjs_navTrackZone(null, null); // le contenant survit, plus rien à suivre
-        µ._mjs_navCachePolicy = cachedNodes._mjs_mjsCachePolicy || 'cache-first'; // la politique de CETTE page revit avec elle
-        µ._mjs_lastUjsPath = destPath;
-        µ._mjs_restoreScroll(destPath);
-        // Accessibilité : cache-hit = swap synchrone, focus quand même déplacé —
-        // APRÈS la restauration de scroll (ordre voulu, cf. commentaire de _mjs_focusAfterSwap).
-        if (typeof µ._mjs_focusAfterSwap === 'function') { µ._mjs_focusAfterSwap(µ._mjs_navFirstEl(cachedNodes)); }
-        // 'revalidate' : cache-hit immédiat (rien ci-dessus n'attend le réseau), vérification
-        // en fond APRÈS l'affichage (jamais avant, zéro régression de vitesse).
-        if (cachedNodes._mjs_mjsCachePolicy === 'revalidate') { µ._mjs_navRevalidate(_cacheZone, destPath); }
-        // DERNIÈRE ligne de `_swapClickCache` : cf. bandeau
-        // `_finClickCache` ci-dessous.
-        _finClickCache();
-      };
+      // restauration commune avec le retour arrière / avant (µ._mjs_navSwapCache), close par `_finClickCache` ;
+      // `seq` capturé plus haut (avant la résolution cache, synchrone)
+      var _swapClickCache = function() { µ._mjs_navSwapCache(seq, _cacheZone, cachedNodes, destPath, _finClickCache); };
       // µ._mjs_vtWrapSwap peut DIFFÉRER `_swapClickCache` (rappel de
       // document.startViewTransition, asynchrone) : la queue ci-dessous (navigate + mjs:load), avant
       // posée juste APRÈS l'appel à µ._mjs_vtWrapSwap, s'exécutait alors AVANT l'installation réelle.
-      // `_finClickCache` se rappelle désormais en DERNIÈRE ligne de `_swapClickCache` : sans
+      // `_finClickCache` se rappelle désormais en DERNIÈRE ligne de la restauration : sans
       // transition de vue (`_mjs_vtWrapSwap` appelle `_swapClickCache()` SYNCHRONEMENT), l'ordre
       // observable reste IDENTIQUE à aujourd'hui.
       var _finClickCache = function() {
@@ -2400,7 +2537,7 @@ window.addEventListener('hashchange', function() {
     // ci-dessous (pas le cache-hit synchrone au-dessus) — chaque app affiche
     // ainsi sa barre/spinner SEULEMENT quand une requête est réellement en vol.
     if (µ.nav) { µ.nav.active = true; µ.nav.href = destination; }
-    µ._mjs_navProgressStart(); // armé indépendamment de µ.nav (opt-in propre, cf. sa déclaration)
+    if (typeof µ._mjs_navProgressStart === 'function') { µ._mjs_navProgressStart(); } // armé indépendamment de µ.nav (la barre de navigation, mjs_nav_progress.ts)
     // `µ._mjs_ajaxGet` : sert d'abord le HTML PRÉCHARGÉ (survol/eager) s'il existe →
     // clic instantané ; sinon fetch réseau normal.
     return µ._mjs_ajaxGet(destination, function(html, finalUrl, _schemaNom, nav) {
@@ -2409,7 +2546,7 @@ window.addEventListener('hashchange', function() {
         return; // une navigation plus récente a gagné — callback périmé jeté
       }
       if (µ.nav) { µ.nav.active = false; µ.nav.href = null; }
-      µ._mjs_navProgressStop();
+      if (typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); }
       // redirection serveur
       // suivie par fetch (`finalUrl` = response.url) : aligner l'URL affichée
       // ET `_mjs_lastUjsPath` sur la destination FINALE. Sans ça, un lien /admin
@@ -2512,6 +2649,8 @@ window.addEventListener('hashchange', function() {
           // gère replace/append/update + suivi de zone) — plus jamais figé sur <body>.
           // valeur RETOURNÉE : le contenant EFFECTIF après installation (liveInfo.zone se
           // détache en method:'replace', cf. µ._mjs_navInstallNodes) — capturée ici pour detail.zone plus bas.
+          if (µ._mjs_navI18nSeed) { µ._mjs_navI18nSeed(doc); }
+          µ._mjs_navPageFile(doc);
           µ._mjs_navApplyHead(doc); // tête d'abord (synchrone) : un <@head><title> qui arrive tirera ensuite dans sa microtâche et gagnera
           _installedZone = µ._mjs_navInstallNodes(liveInfo, newNodes, _navMethod, _navCache);
           µ._mjs_lastUjsPath = finalPath;
@@ -2560,7 +2699,7 @@ window.addEventListener('hashchange', function() {
       // vers A (dernière intention B perdue, SPA rechargée pour rien).
       if (seq !== µ._mjs_navSeq) { return; }
       if (µ.nav) { µ.nav.active = false; µ.nav.href = null; }
-      µ._mjs_navProgressStop();
+      if (typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); }
       // Échec réseau (4xx/5xx/timeout) : l'URL a déjà été poussée au clic —
       // sans repli, elle pointait une page jamais affichée, en silence
       // (_mjs_hardNav : même url déjà poussée → reload, pas de réassignation muette).
@@ -2569,8 +2708,170 @@ window.addEventListener('hashchange', function() {
   }
 };
 // <<< extrait-test _mjs_ujsOnClick
+// la balise est-elle dans un composant léger (sans ombre : ses nœuds sont ceux de la page) ?
+µ._mjs_ujsInLight = function(n) {
+  for (; n && n.nodeType === 1; n = n.parentNode) {
+    if (n._mjs_isLight === true) { return true; }
+  }
+  return false;
+};
+// la balise est-elle glissée (slot) dans un composant à ombre ? Elle est alors dans la page, mais le composant l'enveloppe
+µ._mjs_ujsInShadowHost = function(n) {
+  for (; n && n.nodeType === 1; n = n.parentNode) {
+    if (n._shadow) { return true; }
+  }
+  return false;
+};
+// un écouteur NATIF peut couper la propagation d'un clic ou d'un envoi de formulaire (`stopPropagation()` sur le
+// lien ou le formulaire, sous lui ou sur un de ses conteneurs, en remontée ou posé en capture) : l'écouteur de
+// remontée de la navigation ne le verrait jamais, et le navigateur rechargerait la page, ou enverrait lui-même
+// le formulaire. Le dernier écouteur de chaque nœud du chemin — derrière ceux de la page, donc après eux,
+// `preventDefault` natif compris — prend alors le lien ou l'envoi lui-même dès qu'il voit `cancelBubble`
+µ._mjs_ujsCut = function(e) {
+  if (!e._mjs_ujsWatch || !e.cancelBubble || e._mjs_ujsTaken) { return; }
+  e._mjs_ujsTaken = true;
+  µ._mjs_ujsRun(e);
+};
+// l'action que MJS ferait de cet événement, jouée une fois : la navigation du lien, ou l'envoi du formulaire
+µ._mjs_ujsRun = function(e) {
+  if (e.type === 'submit') { µ._mjs_ujsOnSubmit(e); }
+  else { µ._mjs_ujsOnClick(e); }
+};
+// une coupure posée sur un nœud que la surveillance ne voit pas (la racine, ou au-dessus d'elle) : d'autres écouteurs du
+// même nœud jouent encore, et le dernier mot de l'auteur sur `defaultPrevented` n'est pas dit. Une première passe
+// (la prise de MJS appelle `preventDefault()` juste avant d'agir : il lève alors une sentinelle, sans rien faire) dit
+// si MJS prendrait le lien ou l'envoi ; si oui, l'action native est retenue, et MJS ne joue qu'une fois la
+// propagation finie, sauf si un écouteur de l'auteur a appelé `preventDefault()` entre-temps. Si MJS ne le prend pas
+// (modificateur, cible nommée, formulaire à lui), la première passe a déjà tout dit, le navigateur agit comme avant
+µ._mjs_ujsHold = function(e) {
+  var native = Event.prototype.preventDefault, sentinel = {}, intercepted = false, eventPath;
+  if (!e.cancelBubble || e._mjs_ujsTaken) { return; }
+  e._mjs_ujsTaken = true;
+  if (e.defaultPrevented || !e.cancelable) { µ._mjs_ujsRun(e); return; }
+  e.preventDefault = function() { throw sentinel; };
+  e._mjs_ujsDry = true;
+  try {
+    µ._mjs_ujsRun(e);
+  }
+  catch (thrown) {
+    if (thrown !== sentinel) { throw thrown; }
+    intercepted = true;
+  }
+  finally {
+    delete e.preventDefault;
+    delete e._mjs_ujsDry;
+  }
+  if (!intercepted) {
+    // MJS ne prend pas le lien : personne ne rejouera, l'avertissement du verbe inconnu se dit ici, une fois
+    if (e._mjs_ujsDryWarn) { µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsVerbUnknown', { verb: e._mjs_ujsDryWarn }, 'mjs-method="{verb}" : verbe HTTP non reconnu (get/delete/post/put/patch attendus) — navigation normale.')); }
+    return;
+  }
+  eventPath = e.composedPath().slice();
+  native.call(e);
+  // un écouteur `passive: true` ignore `preventDefault()` : le navigateur agira seul, MJS ne rejoue pas
+  if (!e.defaultPrevented) { return; }
+  e.preventDefault = function() {
+    e._mjs_ujsAuthor = true;
+    return native.apply(this, arguments);
+  };
+  // l'événement est fini quand MJS joue : il lui faut son chemin, et un `defaultPrevented` qui ne dit que l'auteur
+  e.composedPath = function() { return eventPath.slice(); };
+  Object.defineProperty(e, 'defaultPrevented', { configurable: true, get: function() { return e._mjs_ujsAuthor === true; } });
+  // `returnValue` dit l'inverse de `defaultPrevented` ; lui assigner `false` retient l'action, comme le natif
+  Object.defineProperty(e, 'returnValue', { configurable: true, get: function() { return e._mjs_ujsAuthor !== true; }, set: function(v) { if (v === false) { e.preventDefault(); } } });
+  // `defaultPrevented` ne dit que l'auteur : s'il a retenu l'action entre-temps, MJS n'agit pas
+  setTimeout(function() { µ._mjs_ujsRun(e); }, 0);
+};
+// ce que ces écouteurs ne voient pas : `stopImmediatePropagation()` saute le reste des écouteurs du nœud, les
+// leurs compris, et une coupure posée sur un nœud qu'ils ne surveillent pas (la racine, ou au-dessus d'elle :
+// `_mjs_ujsWatched` liste les nœuds surveillés) ne passe devant aucun d'eux. Ces appels sont enveloppés, sur CET
+// événement ; la coupure à fond est prise dans la microtâche qui suit l'écouteur de l'auteur (le reste des écouteurs
+// du nœud est sauté : son dernier mot sur `defaultPrevented` est dit), la coupure simple sur un nœud non surveillé
+// passe par µ._mjs_ujsHold (les autres écouteurs du nœud jouent encore). Une microtâche qui tourne après l'envoi
+// (clic ou `requestSubmit()` fabriqué par un script, ou par la touche Entrée sous Firefox) trouve `cancelBubble`
+// remis à zéro : elle ne fait rien, le navigateur a déjà agi
+µ._mjs_ujsWatchStop = function(e) {
+  var stop = e.stopPropagation, stopNow = e.stopImmediatePropagation;
+  e.stopPropagation = function() {
+    stop.apply(this, arguments);
+    if (e._mjs_ujsWatched.indexOf(e.currentTarget) < 0) { queueMicrotask(function() { µ._mjs_ujsHold(e); }); }
+  };
+  e.stopImmediatePropagation = function() {
+    stopNow.apply(this, arguments);
+    queueMicrotask(function() { µ._mjs_ujsCut(e); });
+  };
+};
+// pose l'écouteur de µ._mjs_ujsCut (en capture et en remontée, une seule fois) sur chaque nœud du chemin de
+// l'événement (un clic, ou un envoi de formulaire) jusqu'à `boundary` (exclue : son écouteur de remontée est celui de
+// la navigation) — posé deux fois sur un nœud, il ne compte qu'une fois ; un événement qui n'est pas surveillé
+// (`_mjs_ujsWatch`) le laisse sans effet
+µ._mjs_ujsWatchPath = function(e, boundary) {
+  var eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [], i;
+  e._mjs_ujsWatch = true;
+  if (!e._mjs_ujsWatched) {
+    e._mjs_ujsWatched = [];
+    µ._mjs_ujsWatchStop(e);
+  }
+  for (i = 0; i < eventPath.length && eventPath[i] !== boundary; i++) {
+    eventPath[i].addEventListener(e.type, µ._mjs_ujsCut, { once: true });
+    eventPath[i].addEventListener(e.type, µ._mjs_ujsCut, { once: true, capture: true });
+    e._mjs_ujsWatched.push(eventPath[i]);
+  }
+};
+// écouteur de CAPTURE : la seule confirmation @confirm de µ._mjs_ujsOnClick, avant tout gestionnaire —
+// le lien, lui, est pris en charge à la remontée (cf. µ._mjs_ujsShadowAttach). Un gestionnaire qui coupe la
+// remontée (`.stop`) empêcherait la navigation de voir le lien : le routeur du composant la joue alors
+// lui-même (mjs_element.ts, `_mjs_bindEvents`, `e._mjs_afterStop`), comme pour un formulaire. Un écouteur
+// natif qui la coupe (`stopPropagation()` en remontée ou posé en capture, `stopImmediatePropagation()`) est
+// surveillé (µ._mjs_ujsWatchPath, µ._mjs_ujsWatchStop) sur la racine d'une ombre, et dans un composant léger de
+// la page — le lien d'une page ordinaire reste à son écouteur de remontée
+µ._mjs_ujsConfirmClick = function(e) {
+  var boundary = e.currentTarget;
+  e._mjs_ujsGateOnly = true;
+  try {
+    µ._mjs_ujsOnClick(e);
+  }
+  finally {
+    e._mjs_ujsGateOnly = false;
+  }
+  e._mjs_afterStop = µ._mjs_ujsOnClick;
+  if (boundary && !e.defaultPrevented && e._mjs_link && e._mjs_link.link && e._mjs_link.from === µ.realTarget(e) && (boundary !== document || µ._mjs_ujsInLight(e._mjs_link.from))) {
+    µ._mjs_ujsWatchPath(e, boundary);
+  }
+};
+// capture du pont shadow : la même confirmation, posée sur la racine de l'ombre (seul endroit où un shadow
+// fermé laisse voir la vraie cible)
+µ._mjs_ujsShadowClick = function(e) {
+  µ._mjs_ujsConfirmClick(e);
+};
+// la confirmation, en capture sur le document : avant l'écouteur propre d'un bouton servi par le back
+// et avant le routeur d'un composant léger (délégation en capture sur sa balise) — à la remontée,
+// l'action était déjà partie ; le lien, lui, reste pris en charge à la remontée
+document.addEventListener('click', µ._mjs_ujsConfirmClick, true);
 document.addEventListener('click', µ._mjs_ujsOnClick);
+// clic du milieu : un `auxclick`, jamais un `click` — le navigateur ouvrirait le lien dans un onglet, en GET ; un lien
+// `@method` y est retenu, averti, sauf `get` (µ._mjs_navWarnNoUjsMethod). Posé aussi sur la racine d'une ombre
+// (µ._mjs_ujsShadowAttach) : dans une ombre fermée, le document ne voit que l'hôte
+µ._mjs_ujsOnAuxClick = function(e) {
+  if (e.button === 1) { µ._mjs_navWarnNoUjsMethod(µ._mjs_closest(µ.realTarget(e), 'a'), e); }
+};
+document.addEventListener('auxclick', µ._mjs_ujsOnAuxClick);
 
+// la valeur du champ `_method` d'un formulaire sans construire de `FormData`, dans le même ordre : le premier contrôle de
+// ce nom qui serait envoyé (ni désactivé, ni case décochée, ni fichier, jamais un bouton), puis le bouton qui envoie
+// (`submitter`), que `FormData` ne connaît pas non plus et qu'on lui ajoute en dernier
+µ._mjs_ujsMethodField = function(form, submitter) {
+  var els = form.elements, i, el;
+  for (i = 0; els && i < els.length; i++) { // eslint-disable-line no-unmodified-loop-condition -- els est une garde de nullité, invariante par construction : la sortie se fait par i, incrémenté à chaque tour
+    el = els[i];
+    if (el.name !== '_method' || el.disabled || el.type === 'file') { continue; }
+    if (el.type === 'submit' || el.type === 'button' || el.type === 'reset' || el.type === 'image') { continue; }
+    if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) { continue; }
+    return el.value;
+  }
+  if (submitter && submitter.name === '_method') { return submitter.value; }
+  return null;
+};
 // Nommé (au lieu d'anonyme) — même raison que µ._mjs_ujsOnClick ci-dessus :
 // réutilisé tel quel par le PONT SHADOW (µ._mjs_ujsShadowAttach, plus bas).
 // >>> extrait-test _mjs_ujsOnSubmit
@@ -2584,7 +2885,7 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
   if (e.defaultPrevented) {
     return;
   }
-  form = µ.realTarget(e).closest('form');
+  form = µ._mjs_closest(µ.realTarget(e), 'form');
   if (!form) {
     return;
   }
@@ -2602,7 +2903,7 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
   // le pont INTERNE (seul à voir le vrai porteur) n'ait joué µ.confirm.
   if (!e._mjs_mjsConfirmGated) {
     var _confirmSrc = (e.submitter && typeof e.submitter.closest === 'function') ? e.submitter : form;
-    var _confirmEl = typeof _confirmSrc.closest === 'function' ? _confirmSrc.closest('[mjs-confirm]') : null;
+    var _confirmEl = µ._mjs_closest(_confirmSrc, '[mjs-confirm]');
     // mémorisé ICI (avant tout `await`/thenable, cf.
     // µ._mjs_ujsConfirmRefire) — le vrai soumissionnaire de CETTE soumission, retransmis au replay.
     var _confirmSubmitter = e.submitter;
@@ -2614,7 +2915,10 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
         e.stopImmediatePropagation();
         return;
       }
-      var _res = typeof µ.confirm === 'function' ? µ.confirm(_confirmEl.getAttribute('mjs-confirm'), _confirmEl) : true;
+      // déjà répondue par le clic accepté qui a déclenché cet envoi (même tâche, cf. µ._mjs_ujsOnClick) : pas de
+      // seconde question — cette réponse ne vaut que pour cet envoi
+      var _res = _confirmEl._mjs_mjsAccepted ? true : (typeof µ.confirm === 'function' ? µ.confirm(_confirmEl.getAttribute('mjs-confirm'), _confirmEl) : true);
+      _confirmEl._mjs_mjsAccepted = false;
       // thenable (modale asynchrone) : bloque la soumission d'origine, relance sur résolution vraie
       if (_res && typeof _res.then === 'function') {
         e.preventDefault();
@@ -2637,6 +2941,11 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
       // soumission native CONFIRMÉE ; sinon `e.preventDefault()` inconditionnel plus bas, à sa
       // place habituelle, comme si @confirm n'avait jamais existé).
     }
+  }
+  // appel de la phase de capture (µ._mjs_ujsConfirmSubmit) : la confirmation seule — l'envoi attend la
+  // remontée, après les gestionnaires du composant, pour qu'un `@submit.prevent` le retienne
+  if (e._mjs_ujsGateOnly) {
+    return;
   }
   if (µ._mjs_navNoUjs(form)) {
     return;
@@ -2692,15 +3001,19 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
       return;
     }
   }
-  payload = new FormData(form);
-  if (submitter && submitter.name) {
-    payload.append(submitter.name, submitter.value);
+  // la passe à blanc d'une coupure ne construit aucun `FormData` (il joue l'événement `formdata`, un effet de bord) :
+  // le champ `_method` est lu sur les contrôles du formulaire
+  if (!e._mjs_ujsDry) {
+    payload = new FormData(form);
+    if (submitter && submitter.name) {
+      payload.append(submitter.name, submitter.value);
+    }
   }
   // payload.get('_method') peut rendre un File (input file nommé "_method") :
   // ne retenir la valeur que si c'est une chaîne, jamais method.toUpperCase() sur un objet.
   // ordre : `_method` (champ, override explicite du verbe,
   // INCHANGÉ) > `formmethod` du bouton soumissionnaire > `method` du <form> > GET.
-  var _m = payload.get('_method');
+  var _m = payload ? payload.get('_method') : µ._mjs_ujsMethodField(form, submitter);
   var _methodFromAttr = false;
   if (typeof _m === 'string' && _m) {
     method = _m;
@@ -2729,7 +3042,7 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
   if (method === 'DIALOG') {
     if (!_methodFromAttr) {
       e.preventDefault();
-      µ.error('[µ.UJS] _method=dialog n\'a pas de sens : dialog est un attribut method/formmethod, pas un verbe HTTP');
+      µ.error('[µ.UJS] ' + µ._mjs_txt('ujsMethodDialog', null, '_method=dialog n\'a pas de sens : dialog est un attribut method/formmethod, pas un verbe HTTP'));
       return;
     }
     return;
@@ -2748,6 +3061,14 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
   var _submitButtons = [];
   var _busyForm = null;
   if (!(typeof form.hasAttribute === 'function' && form.hasAttribute('mjs-no-disable')) && typeof form.querySelectorAll === 'function') {
+    // envoi déjà en vol pour un formulaire qui modifie (POST, PUT, PATCH, DELETE) : ignoré — les boutons désactivés
+    // n'arrêtent ni la touche Entrée d'un formulaire sans bouton ni un `requestSubmit()`, la requête serait partie deux
+    // fois. Un GET (recherche en direct, `requestSubmit()` à chaque frappe) part à chaque fois : il abandonne celui en
+    // vol, la dernière réponse gagne
+    if (form._mjs_mjsBusy && method !== 'GET') {
+      return;
+    }
+    form._mjs_mjsBusy = true;
     var _btnList = form.querySelectorAll("button[type='submit'], button:not([type]), input[type='submit']");
     for (var _bi = 0; _bi < _btnList.length; _bi++) {
       _submitButtons.push(_btnList[_bi]);
@@ -2762,13 +3083,43 @@ document.addEventListener('click', µ._mjs_ujsOnClick);
   // (chemin PARTAGÉ avec le lien mjs-method, cf. handler de clic plus haut).
   return µ._mjs_navDispatch(url, method, payload, {
     el: submitter || form, // élément d'origine (veilleur flash/error + @callback), lu par closure dans done/fail
+    form: form, // la réussite ou l'échec de l'envoi lui est dit (effets `on: success|error`)
     restoreBusy: function() {
       for (var _bj = 0; _bj < _submitButtons.length; _bj++) { _submitButtons[_bj].disabled = false; }
+      if (_busyForm) { _busyForm._mjs_mjsBusy = false; }
       if (_busyForm && typeof _busyForm.removeAttribute === 'function') { _busyForm.removeAttribute('aria-busy'); }
     }
   });
 };
 // <<< extrait-test _mjs_ujsOnSubmit
+// écouteur de CAPTURE, comme pour un lien : la seule confirmation @confirm de µ._mjs_ujsOnSubmit, avant
+// tout gestionnaire (un refus empêche aussi le `@submit` du composant) — l'envoi, lui, est pris en charge
+// à la remontée, une fois les gestionnaires joués : `e.defaultPrevented` dit alors si l'un d'eux l'a
+// retenu. Un gestionnaire qui coupe la remontée (`.stop`) cacherait la soumission à la navigation : le
+// routeur du composant la lui rend (mjs_element.ts, `_mjs_bindEvents`, `e._mjs_afterStop`). Un écouteur natif
+// qui la coupe (`stopPropagation()` en remontée ou posé en capture, `stopImmediatePropagation()`) est
+// surveillé comme pour un lien (µ._mjs_ujsWatchPath, µ._mjs_ujsWatchStop) sur la racine d'une ombre, dans
+// un composant léger de la page, et pour un formulaire de la page glissé (slot) dans un composant à ombre (la coupure
+// peut alors venir de l'hôte, du body ou du document, avant le pont de l'ombre ; une coupure en capture sur `window`
+// joue avant toute écoute de MJS : le navigateur envoie le formulaire) — le formulaire d'une page ordinaire reste à
+// son écouteur de remontée, donc au navigateur quand un écouteur le coupe. Rappelée par cette surveillance, µ._mjs_ujsOnSubmit garde ses refus :
+// `preventDefault()` de l'auteur, formulaire que la navigation ne prend pas
+µ._mjs_ujsConfirmSubmit = function(e) {
+  var boundary = e.currentTarget, form;
+  e._mjs_ujsGateOnly = true;
+  try {
+    µ._mjs_ujsOnSubmit(e);
+  }
+  finally {
+    e._mjs_ujsGateOnly = false;
+  }
+  e._mjs_afterStop = µ._mjs_ujsOnSubmit;
+  form = µ._mjs_closest(µ.realTarget(e), 'form');
+  if (boundary && form && !e.defaultPrevented && (boundary !== document || µ._mjs_ujsInLight(form) || µ._mjs_ujsInShadowHost(form))) {
+    µ._mjs_ujsWatchPath(e, boundary);
+  }
+};
+document.addEventListener('submit', µ._mjs_ujsConfirmSubmit, true);
 document.addEventListener('submit', µ._mjs_ujsOnSubmit);
 
 // PONT SHADOW (retargeting) — un listener document-level ne voit JAMAIS la
@@ -2786,24 +3137,62 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
 // `_mjs_mjsUjsBound` sur le root : idempotent, un composant qui recrée/réadopte
 // son shadow n'accumule pas 2 paires de listeners.
 //
-// CAPTURE, pas bulle (3ᵉ argument `true`) — DÉTERMINANT : `_mjs_bindEvents`
-// (mjs_element.ts, délégation @click/@submit du composant) enregistre TOUJOURS
-// ses propres listeners délégués en phase CAPTURE (`opts = true`, cf. son
-// commentaire). Sur un ANCÊTRE du nœud réellement cliqué (le shadow root ici),
-// la phase CAPTURE s'exécute TOUJOURS avant la phase BULLE, quel que soit
-// l'ORDRE d'enregistrement — un pont posé en bulle (défaut) se serait donc
-// exécuté APRÈS `_mjs_bindEvents`, bien trop tard pour qu'un refus @confirm
-// (`stopImmediatePropagation`) empêche le handler du composant de tourner
-// (constaté empiriquement : sans ce `true`, `remove()` s'exécutait quand même
-// malgré un refus). En capture ET posé AVANT (constructor, cf. mjs_element.ts),
-// le pont gagne la course dans la MÊME phase que `_mjs_bindEvents`.
+// CAPTURE, pas bulle (3ᵉ argument `true`) — DÉTERMINANT : le routeur du composant
+// (`_mjs_bindEvents`, mjs_element.ts, délégation @click/@submit) est UN écouteur par
+// type, posé aux DEUX phases de sa racine, qui route chaque événement dans l'une ou
+// l'autre. Sur un ANCÊTRE du nœud réellement cliqué (le shadow root ici), la phase
+// CAPTURE s'exécute TOUJOURS avant la phase BULLE, et dans une même phase les
+// écouteurs jouent dans l'ordre où ils ont été posés : en capture ET posé AVANT
+// (constructor, cf. mjs_element.ts), le pont passe avant le routeur dans les deux
+// cas, assez tôt pour qu'un refus @confirm (`stopImmediatePropagation`) empêche le
+// handler du composant de tourner (constaté : posé en bulle, `remove()` s'exécutait
+// quand même malgré un refus).
+//
+// CLIC EN DEUX TEMPS — la capture ne porte QUE la confirmation (µ._mjs_ujsShadowClick) : la prise en
+// charge du lien y passait aussi, avant les gestionnaires du composant, et un `@click.prevent` sur un
+// `<a href="#/…">` arrivait trop tard (adresse déjà poussée). Le lien est lu à la REMONTÉE, sur ce même
+// shadow root (seul endroit où un shadow fermé le laisse voir), une fois les gestionnaires joués :
+// `e.defaultPrevented` dit alors si l'un d'eux l'a retenu. Un gestionnaire qui coupe la remontée
+// (`.stop`) n'arrête pas la navigation pour autant : le routeur du composant la relance lui-même
+// (mjs_element.ts, `_mjs_bindEvents`). La soumission suit le même partage (µ._mjs_ujsConfirmSubmit) :
+// la question en capture, l'envoi à la remontée — un `@submit.prevent` le retient.
 µ._mjs_ujsShadowAttach = function(root) {
   if (!root || root._mjs_mjsUjsBound) {
     return;
   }
   root._mjs_mjsUjsBound = true;
-  root.addEventListener('click', µ._mjs_ujsOnClick, true);
-  root.addEventListener('submit', µ._mjs_ujsOnSubmit, true);
+  root.addEventListener('click', µ._mjs_ujsShadowClick, true);
+  root.addEventListener('click', µ._mjs_ujsShadowLate);
+  root.addEventListener('auxclick', µ._mjs_ujsOnAuxClick);
+  root.addEventListener('submit', µ._mjs_ujsConfirmSubmit, true);
+  root.addEventListener('submit', µ._mjs_ujsShadowLate);
+};
+// remontée sur la racine d'une ombre. Comme l'action par défaut du navigateur, qui attend la fin de la propagation, la
+// navigation ne décide qu'une fois joués tous les écouteurs : un événement qui sort de l'ombre (un clic, un formulaire
+// de la page glissé dans le composant) est pris par l'écouteur de remontée du document — un `@click.prevent` que le
+// parent pose sur la balise de l'enfant retient ainsi le lien écrit dans l'enfant. Le lien a été lu à la capture
+// (`e._mjs_link`, depuis la racine qui voit la vraie cible), et la surveillance des coupures natives
+// (µ._mjs_ujsWatchPath) s'étend aux nœuds qui restent jusqu'au document. Celui qui reste dans l'ombre (l'envoi d'un
+// formulaire du composant, qui ne la traverse pas) est pris ici, derrière les gestionnaires du composant
+µ._mjs_ujsShadowLate = function(e) {
+  var p = e.composedPath(), i = p.indexOf(e.currentTarget), d = p.indexOf(document);
+  if (d < 0) {
+    µ._mjs_ujsRun(e);
+    return;
+  }
+  for (i++; e._mjs_ujsWatch && i < d; i++) {
+    p[i].addEventListener(e.type, µ._mjs_ujsCut, { once: true });
+    e._mjs_ujsWatched.push(p[i]);
+  }
+};
+// le routeur d'un composant (mjs_element.ts, `_mjs_bindEvents`) écoute aussi à la remontée sur cette racine, posé après
+// ce pont : l'écouteur de remontée repasse derrière lui, la navigation lit l'action une fois les gestionnaires du
+// composant joués
+µ._mjs_ujsLate = function(root, type) {
+  if ((type === 'click' || type === 'submit') && root._mjs_mjsUjsBound) {
+    root.removeEventListener(type, µ._mjs_ujsShadowLate);
+    root.addEventListener(type, µ._mjs_ujsShadowLate);
+  }
 };
 
 // Chemin PARTAGÉ soumission de formulaire / lien mjs-method : construit et
@@ -2864,7 +3253,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
   navCtrl = typeof µ._mjs_abortStaleNav === 'function' ? µ._mjs_abortStaleNav() : null;
   navSignal = navCtrl ? navCtrl.signal : void 0;
   if (µ.nav) { µ.nav.active = true; µ.nav.href = url; }
-  µ._mjs_navProgressStart(); // armé indépendamment de µ.nav (opt-in propre, cf. sa déclaration)
+  if (typeof µ._mjs_navProgressStart === 'function') { µ._mjs_navProgressStart(); } // armé indépendamment de µ.nav (la barre de navigation, mjs_nav_progress.ts)
   // mjs:visit, non annulable : ce chemin (soumission/@method) ne lit jamais le cache.
   µ._mjs_navEmit('visit', { path: emitPath, url: emitUrl, via: via, cached: false }, false);
   var _restoreBusy = function() {
@@ -2874,7 +3263,34 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
   // verbe non supporté, plus bas) : y accrocher µ._mjs_navProgressStop ici couvre tous ces sites d'un coup.
   var _restoreNav = function() {
     if (µ.nav) { µ.nav.active = false; µ.nav.href = null; }
-    µ._mjs_navProgressStop();
+    if (typeof µ._mjs_navProgressStop === 'function') { µ._mjs_navProgressStop(); }
+  };
+  // formulaire GET dont la réponse n'installe rien (« ne bouge pas », 204, réponse non reconnue, échec) : la page
+  // affichée reste, donc l'adresse poussée au geste revient sur elle — son adresse complète, fragment
+  // compris, quand elle concorde avec `_curPath`, comme au clic — et la photo prise au départ pour le
+  // cache cesse de marquer hibernés des nœuds toujours affichés (`_curPath`/`_getFromUrl` : branche GET, plus bas)
+  var _undoGet = function() {
+    var back;
+    if (method !== 'GET' && method !== 'HEAD') { return; }
+    if (typeof µ._mjs_navDropHibernation === 'function') { µ._mjs_navDropHibernation(); }
+    back = (typeof _getFromUrl === 'string' && _getFromUrl.split('#')[0] === _curPath) ? _getFromUrl : _curPath;
+    if (typeof back !== 'string' || !back) { return; }
+    try { window.history.replaceState({}, '', back); } catch (e) { /* adresse laissée telle quelle */ }
+  };
+  // envoi qui modifie le serveur (verbe autre que GET/HEAD) : `µ.pageCache` (pages hibernées) et `µ._mjs_preloadCache`
+  // (HTML préchargé au survol/eager) sont figés au contenu lu AVANT la mutation. Exemple concret : DELETE d'un post
+  // depuis sa page de détail, retour vers `/posts` — si `/posts` est encore en cache (visitée juste avant), le post
+  // supprimé y restait listé indéfiniment (contenu obsolète resservi, sans aucun nouveau fetch). Aucune granularité
+  // possible (pas de tag de dépendance page↔ressource dans ce framework) : on purge tout par sécurité, au prix d'un
+  // simple re-fetch au prochain accès — même politique que Turbo/Rails-UJS après un submit non-GET. `pageCache` reste
+  // sûr à vider : `.clear()` (LRUCache, mjs_page_cache.ts) passe par onEvict pour chaque entrée (sinon les arbres DOM
+  // hibernés qu'il contient fuiraient leurs timers). Une seule aide pour les cinq sorties de `done`/`fail` (fiche JSON,
+  // page installée, rien d'installé, 422, échec) : un correctif posé ici vaut pour toutes
+  var _purgeCaches = function() {
+    if (method === 'GET' || method === 'HEAD') { return; }
+    if (µ.pageCache && µ.pageCache.clear) { µ.pageCache.clear(); }
+    if (µ._mjs_preloadCache && µ._mjs_preloadCache.clear) { µ._mjs_preloadCache.clear(); }
+    if (µ._mjs_preloaded && µ._mjs_preloaded.clear) { µ._mjs_preloaded.clear(); }
   };
   var done = function(html, finalUrl, _schemaNom, nav) {
     var liveRoot, doc, newRoot, parser, stale, absUrl, shouldPush, newNodes, _navTarget, _navMethod, _navCache, liveInfo, _zones, _swapped, _installedZone, loadPaths;
@@ -2916,11 +3332,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
         }
       };
       µ._mjs_navApplyJson(html, finalUrl, { push: shouldPush, via: via, el: opts.el, seq: seq, onSwapped: _onJsonSwapped });
-      if (method !== 'GET' && method !== 'HEAD') {
-        µ.pageCache.clear();
-        µ._mjs_preloadCache.clear();
-        µ._mjs_preloaded.clear();
-      }
+      _purgeCaches();
       return;
     } else if (µ._mjs_navReloadAsked(nav && nav.reload)) {
       // X-MJS-Reload (chemin HTML/texte) : AVANT tout parse — la page s'en va, le corps de la
@@ -2950,6 +3362,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       // la réponse pour CETTE navigation (les nœuds affichés restent affichés, pas hibernés pour rien).
       _restoreNav();
       µ._mjs_navDropHibernation();
+      _undoGet(); // formulaire GET : l'adresse poussée au geste revient sur la page affichée
       return;
     } else if (html && typeof html === 'string' && html.includes('<html')) {
       // target/method voyagent désormais aussi sur le chemin HTML (en-têtes X-MJS-Target/
@@ -2985,25 +3398,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
         // cf. plus bas dans `done`) s'exécuterait une SECONDE fois pour cette branche.
         var _finSubmit = function() {
           if (!stale) { _restoreNav(); }
-          // cache de page/préchargement JAMAIS
-          // invalidé après une mutation : `µ.pageCache` (pages hibernées) et
-          // `µ._mjs_preloadCache` (HTML préchargé au survol/eager) sont tous deux
-          // figés au contenu lu AVANT la mutation. Exemple concret : DELETE d'un
-          // post depuis sa page de détail, retour vers `/posts` — si `/posts` est
-          // encore en cache (visitée juste avant), le post supprimé y restait
-          // listé indéfiniment (contenu obsolète resservi depuis le cache, sans
-          // aucun nouveau fetch). Aucune granularité possible ici (pas de tag de
-          // dépendance page↔ressource dans ce framework) : on purge tout par
-          // sécurité, au prix d'un simple re-fetch au prochain accès — même
-          // politique que Turbo/Rails-UJS après un submit non-GET. `pageCache`
-          // reste sûr à vider : `.clear()` (mjs_init.ts) passe désormais par
-          // onEvict pour chaque entrée (sinon les arbres DOM hibernés qu'il
-          // contient fuiraient leurs timers, cf. commentaire d'onEvict plus haut).
-          if (method !== 'GET' && method !== 'HEAD') {
-            µ.pageCache.clear();
-            µ._mjs_preloadCache.clear();
-            µ._mjs_preloaded.clear();
-          }
+          _purgeCaches(); // mutation : caches vidés (cf. `_purgeCaches`)
           // PRG (Post/Redirect/Get) cassé :
           // `fetch` suit les redirections NATIVEMENT ; `finalUrl` (= `response.url`,
           // cf. mjs_ajax.ts) reflète la destination RÉELLE après tout redirect
@@ -3052,6 +3447,8 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
           // gère replace/append/update + suivi de zone) — plus jamais figé sur <body>.
           // valeur RETOURNÉE : le contenant EFFECTIF après installation (liveInfo.zone se
           // détache en method:'replace', cf. µ._mjs_navInstallNodes) — capturée pour l'émission finale plus bas.
+          if (µ._mjs_navI18nSeed) { µ._mjs_navI18nSeed(doc); }
+          µ._mjs_navPageFile(doc);
           µ._mjs_navApplyHead(doc); // tête d'abord (synchrone) : un <@head><title> qui arrive tirera ensuite dans sa microtâche et gagnera
           _installedZone = µ._mjs_navInstallNodes(liveInfo, newNodes, _navMethod, _navCache);
           if (typeof µ._mjs_focusAfterSwap === 'function') { µ._mjs_focusAfterSwap(µ._mjs_navFirstEl(newNodes)); }
@@ -3079,7 +3476,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
         // <body> exploitable (page courante ou réponse serveur mal formée) :
         // sans ce warn, le submit "réussissait" en silence sans rien afficher
         // de nouveau — aucune trace pour comprendre pourquoi.
-        µ.warn('[µ.UJS] Réponse HTML du submit reçue, mais aucun <body> exploitable (page courante ou réponse serveur) — aucun contenu mis à jour.');
+        µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsSubmitNoBody', null, 'Réponse HTML du submit reçue, mais aucun <body> exploitable (page courante ou réponse serveur) — aucun contenu mis à jour.'));
       }
     } else if (html != null) {
       // réponse non-HTML (JSON, texte,
@@ -3088,28 +3485,11 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       // debug les plus frustrants — un warn coûte rien et pointe direct la
       // cause (serveur mal configuré pour ce endpoint, ou usage volontaire
       // d'un endpoint JSON qui devrait alors porter @noUJS).
-      µ.warn('[µ.UJS] Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, pose @noUJS sur le <form>.');
+      µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsSubmitNotHtml', null, 'Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, posez @noUJS sur le <form>.'));
     }
-    if (!stale) { _restoreNav(); }
-    // cache de page/préchargement JAMAIS
-    // invalidé après une mutation : `µ.pageCache` (pages hibernées) et
-    // `µ._mjs_preloadCache` (HTML préchargé au survol/eager) sont tous deux
-    // figés au contenu lu AVANT la mutation. Exemple concret : DELETE d'un
-    // post depuis sa page de détail, retour vers `/posts` — si `/posts` est
-    // encore en cache (visitée juste avant), le post supprimé y restait
-    // listé indéfiniment (contenu obsolète resservi depuis le cache, sans
-    // aucun nouveau fetch). Aucune granularité possible ici (pas de tag de
-    // dépendance page↔ressource dans ce framework) : on purge tout par
-    // sécurité, au prix d'un simple re-fetch au prochain accès — même
-    // politique que Turbo/Rails-UJS après un submit non-GET. `pageCache`
-    // reste sûr à vider : `.clear()` (mjs_init.ts) passe désormais par
-    // onEvict pour chaque entrée (sinon les arbres DOM hibernés qu'il
-    // contient fuiraient leurs timers, cf. commentaire d'onEvict plus haut).
-    if (method !== 'GET' && method !== 'HEAD') {
-      µ.pageCache.clear();
-      µ._mjs_preloadCache.clear();
-      µ._mjs_preloaded.clear();
-    }
+    // ici, rien n'a été installé (204, réponse non reconnue, page sans <body>)
+    if (!stale) { _restoreNav(); _undoGet(); }
+    _purgeCaches(); // mutation : caches vidés (cf. `_purgeCaches`)
     // PRG (Post/Redirect/Get) cassé :
     // `fetch` suit les redirections NATIVEMENT ; `finalUrl` (= `response.url`,
     // cf. mjs_ajax.ts) reflète la destination RÉELLE après tout redirect
@@ -3188,12 +3568,9 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     // mjs_store_globals.ts, module toujours présent mais lu défensivement ici).
     if (err.body && typeof err.body === 'object' && st === 422) {
       _restoreBusy();
-      if (seq === µ._mjs_navSeq) { _restoreNav(); }
-      if (method !== 'GET' && method !== 'HEAD') {
-        if (µ.pageCache && µ.pageCache.clear) { µ.pageCache.clear(); }
-        if (µ._mjs_preloadCache && µ._mjs_preloadCache.clear) { µ._mjs_preloadCache.clear(); }
-        if (µ._mjs_preloaded && µ._mjs_preloaded.clear) { µ._mjs_preloaded.clear(); }
-      }
+      // formulaire GET refusé : la page affichée reste, l'adresse poussée au geste revient sur elle (`_undoGet`)
+      if (seq === µ._mjs_navSeq) { _restoreNav(); _undoGet(); }
+      _purgeCaches();
       // veilleur flash/error : CONSOMME props.flash/props.error AVANT µ._mjs_resMerge (jamais
       // props.errors, pluriel — laissé intact pour le composant). `opts.el` lu par CLOSURE (posé par
       // les 2 call-sites de µ._mjs_navDispatch, cf. son bandeau) — jamais de callback ici (@callback = succès
@@ -3203,13 +3580,11 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       return;
     }
     _restoreBusy();
-    if (seq === µ._mjs_navSeq) { _restoreNav(); }
-    if (method !== 'GET' && method !== 'HEAD') {
-      if (µ.pageCache && µ.pageCache.clear) { µ.pageCache.clear(); }
-      if (µ._mjs_preloadCache && µ._mjs_preloadCache.clear) { µ._mjs_preloadCache.clear(); }
-      if (µ._mjs_preloaded && µ._mjs_preloaded.clear) { µ._mjs_preloaded.clear(); }
-    }
-    µ.warn('[µ.UJS] Submit en échec (statut ' + (st || '?') + ') — aucune page de repli HTML complète dans la réponse.');
+    // échec (panne réseau, erreur sans page HTML) d'un formulaire GET : rien n'a été installé, même retour de
+    // l'adresse et de la photo de la page affichée qu'une réponse « ne bouge pas » ou 204
+    if (seq === µ._mjs_navSeq) { _restoreNav(); _undoGet(); }
+    _purgeCaches();
+    µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsSubmitFailed', { status: (st || '?') }, 'Submit en échec (statut {status}) — aucune page de repli HTML complète dans la réponse.'));
     // échec TRANSPORT (ni 422, ni page d'erreur HTML complète, ni réponse reconnue) :
     // affichage utilisateur EN PLUS du warn console ci-dessus, par le même canal que le veilleur
     // (respecte @flash/mjs-flash et µ.config.flash — silent/console/false s'appliquent tel quel).
@@ -3219,13 +3594,27 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       µ._mjs_navFlashShow('error', ((typeof µ._mjs_label === 'function' && µ._mjs_label('ujs', 'sendFailed')) || 'Échec de l\'envoi — le serveur n\'a pas répondu.') + (st ? ' (' + st + ')' : ''), µ._mjs_navFlashPolicy(opts.el));
     }
   };
+  // la réussite ou l'échec de l'envoi, dit au formulaire (ou au lien @method) : les effets `on: success` /
+  // `on: error` de ses balises l'écoutent (µ._mjs_fxOnResult, mjs_fx.ts). Dit à la réponse, avant son
+  // affichage (qui peut remplacer le formulaire) ; une page d'erreur réaffichée par `fail` reste un échec
+  var _tell = function(ok, data) {
+    if (typeof µ._mjs_fxTell === 'function') { µ._mjs_fxTell(opts.form || opts.el, ok, data); }
+  };
+  var _done = function(html, finalUrl, schemaNom, nav) {
+    _tell(true, html);
+    return done(html, finalUrl, schemaNom, nav);
+  };
+  var _fail = function(err) {
+    _tell(false, err);
+    return fail(err);
+  };
   // FIX CRITIQUE : `µ.ajax.get`/`delete` ont la signature (url, success,
   // error, always) — SANS paramètre data. L'ancien appel uniforme
   // `ajaxFunction(url, payload, done)` passait le FormData en `success` :
   // un formulaire GET partait SANS ses champs et son callback atterrissait
   // en `error` → recherche/filtre/pagination par formulaire silencieusement
   // morts. On sérialise les champs en query string pour GET, et DELETE part
-  // sans corps (REST : l'identifiant voyage dans l'URL).
+  // sans corps (REST : l'identifiant voyage dans l'URL ; exception plus bas : formulaire à champ `_method`).
   if (method === 'GET' || method === 'HEAD') {
     // qs/getUrl calculés en TÊTE de fonction désormais (before-visit/visit en ont besoin
     // avant même de savoir si cette navigation aura lieu) — cf. le bloc juste après `opts = opts || {}`.
@@ -3241,6 +3630,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     var _curMz = µ._mjs_navMountZone(document, null);
     var _curRoot = _curMz.zone;
     var _curPath = µ._mjs_lastUjsPath;
+    var _getFromUrl = window.location.pathname + window.location.search + window.location.hash; // pour `_undoGet`
     try { window.history.pushState({}, '', getUrl); } catch (e) {}
     // le contenu du contenant est hiberné, contenant compris quand c'est <body>
     // (avant : <body> en était exclu du pageCache). Simple PHOTOGRAPHIE (lecture de
@@ -3251,16 +3641,28 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     // qui tombe en panne réseau ne repassait JAMAIS par `_restoreNav` — µ.nav.active restait à `true`
     // à vie, et depuis, la barre de progression restait à l'écran. `fail` garde déjà les verbes
     // non mutants hors de la purge de cache, il est sûr sur ce chemin.
-    return µ._mjs_navRequest('GET', getUrl, void 0, done, fail, void 0, void 0, navSignal);
+    // `_restoreBusy` en `always` (aux trois requêtes de cette fonction) : une requête abandonnée par une
+    // navigation plus récente ne passe ni par `done` ni par `fail` (chemin muet de `_request`) ; sans lui,
+    // le lien @method restait `aria-disabled` à vie et les boutons du formulaire grisés. Idempotent.
+    // Jamais `_restoreNav` ici : µ.nav appartient à la navigation gagnante
+    return µ._mjs_navRequest('GET', getUrl, void 0, _done, _fail, _restoreBusy, void 0, navSignal);
   }
-  if (method === 'DELETE') {
-    return µ._mjs_navRequest('DELETE', url, void 0, done, fail, void 0, void 0, navSignal);
+  // DELETE part sans corps (l'identifiant voyage dans l'adresse) — sauf un formulaire (verbe venu d'un
+  // champ `_method` ou de son attribut `method="delete"`) qui porte d'autres champs (paramètres, jeton
+  // `authenticity_token` du formulaire, motif saisi) : le formulaire natif les envoyait, ils partent dans
+  // le corps, préparé comme celui de POST/PUT/PATCH plus bas. Un lien @method n'a que `_method` : toujours sans corps.
+  var _deleteBody = false;
+  if (method === 'DELETE' && payload && typeof payload.forEach === 'function') {
+    payload.forEach(function(_v, k) { if (k !== '_method') { _deleteBody = true; } });
   }
-  // Verbes supportés à ce point (GET/HEAD/DELETE déjà traités ci-dessus) :
-  // POST/PUT/PATCH seulement — µ._mjs_navRequest parle directement à _request
+  if (method === 'DELETE' && !_deleteBody) {
+    return µ._mjs_navRequest('DELETE', url, void 0, _done, _fail, _restoreBusy, void 0, navSignal);
+  }
+  // Verbes supportés à ce point (GET/HEAD/DELETE sans corps déjà traités ci-dessus) :
+  // POST/PUT/PATCH et DELETE avec corps — µ._mjs_navRequest parle directement à _request
   // (pas de dispatch via µ.ajax[method], canal PUBLIC désormais court-circuité
   // par le canal interne) : la validation du verbe reste donc EXPLICITE ici.
-  if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
+  if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH' && method !== 'DELETE') {
     µ.error(`[µ.UJS] Unsupported HTTP verb: ${method}`);
     _restoreBusy();
     if (seq === µ._mjs_navSeq) { _restoreNav(); }
@@ -3295,7 +3697,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
   }
   // (method, url, data, success, error, always, timeout, signal) — même canal
   // interne que GET/DELETE ci-dessus (µ._mjs_navRequest, pose X-MJS-Nav).
-  return µ._mjs_navRequest(method, url, payload, done, fail, void 0, void 0, navSignal);
+  return µ._mjs_navRequest(method, url, payload, _done, _fail, _restoreBusy, void 0, navSignal);
 };
 // <<< extrait-test _mjs_navDispatch
 
@@ -3351,7 +3753,16 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
 // abandonner) — uniquement transmis au fetch réseau de repli.
 // >>> extrait-test _mjs_ajaxGet
 µ._mjs_ajaxGet = function(url, cb, errCb, signal) {
+  var entry;
+  // HTML préchargé servi une seule fois (retiré à l'usage avec sa clé anti-doublon : le survol suivant précharge de
+  // nouveau), et seulement s'il a été reçu il y a moins de 10 s : passé ce délai la page a pu changer, le clic la
+  // redemande au serveur
   if (µ._mjs_preloadCache.has(url)) {
+    entry = µ._mjs_preloadCache.get(url);
+    µ._mjs_preloadCache.delete(url);
+    µ._mjs_preloaded.delete('page:' + url);
+  }
+  if (entry !== void 0 && !(entry && entry.t && Date.now() - entry.t > 10000)) {
     // le HTML préchargé mémorise
     // AUSSI sa destination finale (`response.url`) : un lien redirigé au
     // préchargement (survol) doit pouvoir être réconcilié au clic exactement
@@ -3362,7 +3773,6 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     // Sans ça, une page préchargée ignorait `version`/`reload`/`target`/`method`/`cache` du
     // serveur : la garde « bundle périmé » ne jouait pas dessus. Entrée « chaîne brute » (ancienne,
     // ou posée à la main) : `nav` retombe à `void 0`, toléré tel quel par les appelants.
-    var entry = µ._mjs_preloadCache.get(url);
     var html = (entry && typeof entry === 'object') ? entry.html : entry;
     var finalUrl = (entry && typeof entry === 'object') ? entry.url : void 0;
     var nav = (entry && typeof entry === 'object') ? entry.nav : void 0;
@@ -3435,6 +3845,12 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
   if (trigger === 'hover' && mode !== 'hover' && mode !== 'on') { return; }
   if (trigger === 'eager' && mode !== 'on') { return; }
   const key = type + ':' + (isView ? link.hash : link.href);
+  // entrée périmée (reçue il y a plus de 10 s, cf. µ._mjs_ajaxGet) : retirée avec sa clé, ce survol précharge de nouveau
+  const old = !isView && µ._mjs_preloadCache.has(link.href) ? µ._mjs_preloadCache.get(link.href) : null;
+  if (old && old.t && Date.now() - old.t > 10000) {
+    µ._mjs_preloadCache.delete(link.href);
+    µ._mjs_preloaded.delete(key);
+  }
   if (µ._mjs_preloaded.has(key)) { return; }
   if (isView) {
     µ._mjs_preloaded.add(key);
@@ -3466,7 +3882,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       if (typeof html === 'string' && html.indexOf('mjs-cache') !== -1 && typeof DOMParser !== 'undefined' && µ._mjs_navCacheOf(new DOMParser().parseFromString(html, 'text/html'), null) === 'no-cache') { return; }
       // On mémorise (html, url FINALE) : le clic pourra réconcilier une
       // redirection serveur même sur un lien servi depuis le cache de préchargement.
-      µ._mjs_preloadCache.set(link.href, { html: html, url: finalUrl, nav: nav });
+      µ._mjs_preloadCache.set(link.href, { html: html, url: finalUrl, nav: nav, t: Date.now() });
     }, function() {
       µ._mjs_preloaded.delete(key);   // échec réseau → autorise une nouvelle tentative
     });
@@ -3515,7 +3931,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
 // Survol : un seul listener délégué. L'anti-doublon rend l'appel répété (à chaque
 // entrée de souris) quasi gratuit.
 document.addEventListener('pointerover', function(e) {
-  const link = µ.realTarget(e).closest('a');
+  const link = µ._mjs_closest(µ.realTarget(e), 'a');
   if (link) { µ._mjs_preloadLink(link, 'hover'); }
 });
 

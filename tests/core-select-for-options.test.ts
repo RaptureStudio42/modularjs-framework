@@ -1,8 +1,8 @@
 // module cœur select alimenté par un `{for}` : des options qui arrivent APRÈS la construction,
 // des valeurs numériques, `multiple={false}`, des options sans valeur.
 //
-// Pannes relevées dans une application (paquet 2.4.3) : un `<@select value=!{$x}>` dont les
-// `<@option value={m.id}>` venaient d'un `{for}` affichait « Camille, Alex » après un clic, comme
+// Pannes relevées dans une application (paquet 2.4.3) : un `<@@select value=!{$x}>` dont les
+// `<@@option value={m.id}>` venaient d'un `{for}` affichait « Camille, Alex » après un clic, comme
 // un choix multiple, et la variable liée ne recevait rien d'utile. Cause : le premier relevé des
 // options lisait leurs attributs AVANT qu'elles les aient posés — toutes les valeurs valaient
 // null, et `null == null` cochait tout. Le relevé suit désormais les attributs des options ;
@@ -36,24 +36,24 @@ const HOST = [
   '$choixb  = 18',
   '@charger = -> $membres = [{id: 17, name: "Camille"}, {id: 18, name: "Alex"}]',
   '</script>',
-  '<div id="a"><@select value=!{$choix} multiple={false} placeholder="Choisir">',
+  '<div id="a"><@@select value=!{$choix} multiple={false} placeholder="Choisir">',
   '  {for m in $membres by id}',
-  '    <@option value={m.id}>{m.name}</@option>',
+  '    <@@option value={m.id}>{m.name}</@@option>',
   '  {end}',
-  '</@select></div>',
-  '<div id="b"><@select value=!{$choixb}>',
+  '</@@select></div>',
+  '<div id="b"><@@select value=!{$choixb}>',
   '  {for m in $membres by id}',
-  '    <@option value={m.id}>{m.name}</@option>',
+  '    <@@option value={m.id}>{m.name}</@@option>',
   '  {end}',
-  '</@select></div>',
-  '<div id="c"><@select placeholder="Aucun">',
-  '  <@option>Sans valeur 1</@option>',
-  '  <@option>Sans valeur 2</@option>',
-  '</@select></div>',
-  '<div id="d"><@select>',
-  '  <@option value="x">Premier</@option>',
-  '  <@option value="x">Doublon</@option>',
-  '</@select></div>',
+  '</@@select></div>',
+  '<div id="c"><@@select placeholder="Aucun">',
+  '  <@@option>Sans valeur 1</@@option>',
+  '  <@@option>Sans valeur 2</@@option>',
+  '</@@select></div>',
+  '<div id="d"><@@select>',
+  '  <@@option value="x">Premier</@@option>',
+  '  <@@option value="x">Doublon</@@option>',
+  '</@@select></div>',
   '<button class="charger" @click={@charger()}>charger</button>',
 ].join('\n')
 
@@ -74,7 +74,7 @@ async function buildAndMount(): Promise<{ window: any; hote: any }> {
     assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`)
     return f!
   }
-  const code = [pick(/^mjs_core-/), pick(/^select-/), pick(/^option-/), pick(/^hote-/)]
+  const code = [pick(/^mjs_core-/), pick(/^core-select-/), pick(/^core-option-/), pick(/^hote-/)]
     .map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
     .join('\n')
 
@@ -95,12 +95,12 @@ async function tick(ms = 40) {
   await new Promise((r) => setTimeout(r, ms))
 }
 
-describe('mjs-select — options venues d\'un {for}, valeurs typées, choix simple', function () {
+describe('mjs-core-select — options venues d\'un {for}, valeurs typées, choix simple', function () {
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
 
   let window: any, hote: any
-  const sel     = (id: string) => hote._shadow.querySelector(`#${id} mjs-select`)
+  const sel     = (id: string) => hote._shadow.querySelector(`#${id} mjs-core-select`)
   const libelle = (id: string) => sel(id)._shadow.querySelector('.select-label').textContent.trim()
   const lignes  = (id: string) => sel(id)._shadow.querySelectorAll('.select-option')
 
@@ -132,7 +132,7 @@ describe('mjs-select — options venues d\'un {for}, valeurs typées, choix simp
   it('des options arrivées APRÈS la construction ({for} vide puis rempli) : toutes posées et listées', async () => {
     click(window, hote._shadow.querySelector('.charger'))
     await tick(120)
-    assert.equal(sel('a').querySelectorAll('mjs-option').length, 2, 'les deux <mjs-option> dans le select')
+    assert.equal(sel('a').querySelectorAll('mjs-core-option').length, 2, 'les deux <mjs-core-option> dans le select')
     click(window, sel('a')._shadow.querySelector('.select-btn'))
     await tick()
     assert.equal(lignes('a').length, 2, 'les deux lignes dans le panneau')

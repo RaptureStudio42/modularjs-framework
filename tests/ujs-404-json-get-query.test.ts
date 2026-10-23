@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -30,6 +31,7 @@ function extractHelpersBlock(): string {
   return extractMarked(UJS_SRC, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock())(µ, document, window)
 }
 function extractClickBody(): string {
@@ -60,6 +62,7 @@ function extractVtWrapSwapStatement(): string {
   return extractMarked(UJS_SRC, '_mjs_vtWrapSwap')
 }
 function installVt(µ: any, doc: any) {
+  poserMessages(µ)
   new Function('µ', 'document', extractVtResolvePageStatement() + '\n' + extractVtWrapSwapStatement())(µ, doc)
 }
 function extractFinalPathForStatement(): string {
@@ -155,6 +158,7 @@ function setupMu(doc: any, win: any, realPageCache: Map<string, any>) {
   }
   installHelpers(µ, doc, win)
   installVt(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'window', extractFinalPathForStatement())(µ, win)
   return µ
 }
@@ -236,6 +240,7 @@ describe('404 JSON (module:null) doit écrire µ._mjs_lastUjsPath comme un swap 
     const µ = setupMu(doc, win, realPageCache)
     let captured: any
     µ._mjs_ajaxRequest = (o: any) => { captured = o }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('/search', 'GET', new FakeFormData([['q', 'zzz']]), {})
@@ -302,6 +307,7 @@ function runSubmitDispatch(opts: { formAttrs?: Record<string, string>, submitter
   const win: any = { location: { href: opts.docHref, origin: 'http://x' }, history: { pushState() {} } }
   const doc: any = { URL: opts.docHref, body: {}, querySelector: () => null, dispatchEvent: () => true }
   installHelpers(µ, doc, win)
+  poserMessages(µ)
   new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, class {})
   const handler = makeSubmitHandler()
   const form = makeSubForm(opts.formAttrs || {})

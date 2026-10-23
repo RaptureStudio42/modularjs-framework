@@ -39,7 +39,7 @@ function poisonValue(depth = 200): unknown {
 describe('MJS-WS — streams.ts, garde de profondeur/sérialisation', () => {
   it('add() refuse une valeur trop imbriquée (throw catalogué), jamais stockée', async () => {
     const { app } = await startApp()
-    const flux = app.stream('etat-partie')
+    const flux = app.stream('etat-partie', { public: true })
     flux.add('sain', { score: 10 })
 
     assert.throws(() => flux.add('empoisonnee', poisonValue()), /non sérialisable|trop imbriquée/)
@@ -51,7 +51,7 @@ describe('MJS-WS — streams.ts, garde de profondeur/sérialisation', () => {
 
   it('update()/reset() refusent aussi — l\'état n\'est PAS muté par une tentative refusée', async () => {
     const { app } = await startApp()
-    const flux = app.stream('f2')
+    const flux = app.stream('f2', { public: true })
     flux.add('e1', { n: 0 })
 
     assert.throws(() => flux.update('e1', { deep: poisonValue() }))
@@ -63,7 +63,7 @@ describe('MJS-WS — streams.ts, garde de profondeur/sérialisation', () => {
 
   it('un flux JAMAIS empoisonné reste consultable pour un NOUVEL abonné (AVANT le fix : restait MUET)', async () => {
     const { transport, app } = await startApp()
-    const flux = app.stream('etat-partie-2')
+    const flux = app.stream('etat-partie-2', { public: true })
     flux.add('sain', { score: 10 })
     try { flux.add('empoisonnee', poisonValue()) } catch { /* refusé — attendu */ }
 
@@ -81,7 +81,7 @@ describe('MJS-WS — streams.ts, garde de profondeur/sérialisation', () => {
 
   it('une valeur légitime (peu profonde, quelconque) reste acceptée sans erreur', async () => {
     const { app } = await startApp()
-    const flux = app.stream('f3')
+    const flux = app.stream('f3', { public: true })
     assert.doesNotThrow(() => flux.add('e1', { x: 10, y: 20, meta: { owner: 'a', tags: ['x', 'y'] } }))
     assert.deepEqual(flux.snapshot(), { e1: { x: 10, y: 20, meta: { owner: 'a', tags: ['x', 'y'] } } })
     await app.stop()

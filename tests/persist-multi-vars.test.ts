@@ -93,7 +93,7 @@ describe('@persist — virgule résiduelle (ancienne écriture) rejetée par le 
     ].join('\n')
     await assert.rejects(
       () => transpile(src, { moduleName: 'mjs-persist-virgule' }),
-      /n'est pas un nom de variable valide.*sépare les variables par un espace \(@persist \$a \$b\)/s,
+      /n'est pas un nom de variable valide.*séparez les variables par un espace \(@persist \$a \$b\)/s,
     )
   })
 })

@@ -1,7 +1,7 @@
 // HASHED_OUTPUT_RE matche N'IMPORTE QUELLE
 // extension au motif `nom-8hex.ext` — pruneOrphans() retire donc tout fichier d'outputDir qui
 // matche cette FORME et n'est pas dans emittedThisCompile, SANS savoir si le bundler l'a un jour
-// produit. docs/32-cli-et-configuration.md:264 promet noir sur blanc : « Jamais touchés : … et
+// produit. docs/32-cli-et-configuration.md:377 promet noir sur blanc : « Jamais touchés : … et
 // tout fichier étranger au build. » Faux pour un fichier dont le NOM ressemble par coïncidence à
 // une sortie hachée (rapport-deadbeef.pdf déposé à la main).
 //
@@ -13,12 +13,21 @@
 // jamais une purge au hasard.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, unlinkSync, readdirSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 
 const comp = (lettre: string) => ['<script>', '  $x = 1', '</script>', `<p>{$x} ${lettre}</p>`].join('\n')
+
+// consigne des noms au registre des sorties (`.mjs-outputs.json`, clé `files`), comme l'aurait fait le build qui les a
+// écrits : le ménage ne retire que ce que ce registre liste, jamais un fichier sur la seule forme de son nom
+function consigner(dossier: string, ...noms: string[]): void {
+  const chemin   = join(dossier, '.mjs-outputs.json')
+  const registre = JSON.parse(readFileSync(chemin, 'utf-8'))
+  registre.files = [...new Set([...(registre.files ?? []), ...noms])].sort()
+  writeFileSync(chemin, JSON.stringify(registre, null, 2) + '\n')
+}
 
 function makeProject(prefix: string) {
   const root   = mjsTmp(prefix)
@@ -75,7 +84,7 @@ describe('bundler — pruneOrphans() ne purge jamais une extension étrangère a
     const bundler1 = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     const stats1 = await bundler1.compile()
     assert.equal(stats1.errors.length, 0, stats1.errors.map(e => e.message).join('\n'))
-    const bJs = readdirSync(outDir).find(f => /^b-[a-f0-9]{8}\.js$/.test(f))
+    const bJs = readdirSync(outDir).find(f => /^b-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(bJs, `attendu un b-<hash>.js après le 1er build : ${readdirSync(outDir).join(', ')}`)
     await bundler1.close()
 
@@ -112,5 +121,35 @@ describe('bundler — pruneOrphans() ne purge jamais une extension étrangère a
     assert.ok(existsSync(join(outDir, zombie)), 'rien ne doit être purgé quand le registre est illisible — même un vrai zombie survit plutôt que de deviner')
 
     await bundler.close()
+  })
+
+  it('après un build de production (fichiers de messages en .json au registre), un .json du projet au nom hachage-compatible survit ; un ancien fichier de messages ne reste pas', async function () {
+    const { srcDir, outDir } = makeProject('prune-json-projet')
+    writeFileSync(join(srcDir, 'a.mjs'), comp('a'))
+    const manifest = join(outDir, 'bundle.js')
+
+    const bundler1 = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest, env: 'prod' })
+    const stats1 = await bundler1.compile()
+    assert.equal(stats1.errors.length, 0, stats1.errors.map(e => e.message).join('\n'))
+    assert.ok(readdirSync(outDir).some(f => /^mjs_err-fr-[0-9a-z]{5}\.json$/.test(f)), `attendu un fichier de messages : ${readdirSync(outDir).join(', ')}`)
+    await bundler1.close()
+
+    const duProjet = 'catalogue-1a2b3c4d.json'
+    const perime   = 'mjs_err-fr-00000000.json'
+    writeFileSync(join(outDir, duProjet), '{"produits":[]}')
+    writeFileSync(join(outDir, perime), '{}')
+    // l'ancien fichier de messages, écrit par un build précédent : consigné au registre comme ce build l'aurait fait
+    consigner(outDir, perime)
+
+    const bundler2 = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest, env: 'prod' })
+    const stats2 = await bundler2.compile()
+    assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))
+    const { removed, skipped } = bundler2.pruneOrphans()
+    assert.equal(skipped, undefined, `la purge doit avoir tourné : ${skipped}`)
+    assert.ok(!removed.includes(duProjet) && existsSync(join(outDir, duProjet)), `un .json du projet ne doit jamais être purgé. removed=${removed.join(', ')}`)
+    // l'ancienne empreinte d'un fichier réécrit part dès le build, avant la purge
+    assert.ok(!existsSync(join(outDir, perime)), `un ancien fichier de messages ne doit pas rester : ${readdirSync(outDir).join(', ')}`)
+
+    await bundler2.close()
   })
 })

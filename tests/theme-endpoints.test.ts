@@ -15,13 +15,19 @@ import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 
 after(() => sweepRegistered())
 
-// registre RÉALISTE (même forme que .mjs-theme-vars.json) — 1 variable, 1 déclaration.
+// registre RÉALISTE (même forme que .mjs-theme-vars.json) — une déclaration, et une valeur par défaut lue par un composant (`read: true`).
 const SAMPLE_REGISTRY = {
   accent: {
     declarations: [
       { value: '#3b82f6', declaredBy: 'framework', kind: 'framework', variant: '', file: 'mjs_init.ts', line: 66, doc: '' },
     ],
     readBy: ['mjs-card'],
+  },
+  'check-size': {
+    declarations: [
+      { value: '20px', declaredBy: 'core-checkbox', kind: 'module', variant: '', file: 'src/core-modules/checkbox.mjs', line: 0, doc: '', read: true },
+    ],
+    readBy: ['core-checkbox'],
   },
 }
 

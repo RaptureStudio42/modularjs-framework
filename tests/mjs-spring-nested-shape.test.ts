@@ -11,10 +11,12 @@
 // Même mécanique de chargement que anim-spring-shape-union.test.ts (cf. son en-tête).
 
 import assert from 'node:assert/strict'
+import { poserMessages } from './helpers/messages-stub.js'
 
 ;(globalThis as any).µ = (globalThis as any).µ || { _mjs_interpolatorSet: new WeakSet(), Ticker: { add() {} } }
 await import('../src/runtime/mjs_spring.js')
 const µ = (globalThis as any).µ
+poserMessages(µ)
 
 function settle(s: any, max = 5000) { let i = 0; while (i++ < max && s._mjs_step()) {} return i }
 

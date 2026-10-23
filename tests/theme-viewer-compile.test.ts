@@ -15,6 +15,7 @@
 
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { localizeViewerSource } from '../src/server/viewer-page.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { transpile } from '../src/transpiler/index.js'
@@ -26,7 +27,7 @@ describe('theme-viewer.mjs — la page de l\'atelier compile et ses handlers exi
   let js = ''
 
   before(async () => {
-    const src: string = readFileSync(SOURCE, 'utf8')
+    const src: string = localizeViewerSource(readFileSync(SOURCE, 'utf8'))
     const out: any    = await transpile(src, { moduleName: 'mjs-theme-viewer' })
     js = typeof out === 'string' ? out : (out.output ?? out.js ?? out.code ?? '')
   })
@@ -39,7 +40,7 @@ describe('theme-viewer.mjs — la page de l\'atelier compile et ses handlers exi
   it('aucun handler ne synthétise un appel vers une fonction absente du composant', () => {
     // le générateur n'émet `nom(e, el)` que pour la forme NUE d'un événement ; le nom doit alors
     // être une méthode du composant. On relit le source pour savoir ce qu'il déclare vraiment.
-    const src       = readFileSync(SOURCE, 'utf8')
+    const src       = localizeViewerSource(readFileSync(SOURCE, 'utf8'))
     const synthese  = [...js.matchAll(/return ([A-Za-z_$][\w$]*)\(e, el\)/g)].map((m) => m[1])
     const absents   = synthese.filter((nom) => {
       const declare = new RegExp(`(^|\\n)\\s*(@)?${nom}\\s*(:?=|\\()`).test(src)

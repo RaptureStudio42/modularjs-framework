@@ -7,7 +7,7 @@
 // correctif) :
 //   1. findFiles() — symlink de DOSSIER dans sourceDir, pointant vers un dossier externe.
 //   2. resolveOneAsset()/µasset() — symlink de FICHIER dans sourceDir, pointant vers un fichier externe.
-//   3. <@img src="…"> — même défaut, filet dédié à cette balise.
+//   3. <@@img src="…"> — même défaut, filet dédié à cette balise.
 //
 // Correctif : realpathSync(sourceDir) comparé au réel de la cible, aux 3 points de contrôle —
 // erreur nommée (catalogue fr/en), rien écrit dans outputDir. Un symlink INTERNE (cible sous
@@ -75,18 +75,18 @@ describe('bundler — confinement sourceDir par symlink (réel via realpathSync)
     await bundler.close()
   })
 
-  it('(3) <@img src="…"> : même défaut sur son filet dédié → erreur nommée, rien copié', async function () {
+  it('(3) <@@img src="…"> : même défaut sur son filet dédié → erreur nommée, rien copié', async function () {
     const { srcDir, dehors, outDir, manifest } = makeProject('symlink-img-escape')
     const png1x1 = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415478da6360000002000155ffed7e0000000049454e44ae426082', 'hex')
     writeFileSync(join(dehors, 'photo-secrete.png'), png1x1)
     symlinkSync(join(dehors, 'photo-secrete.png'), join(srcDir, 'lien-photo.png'))
-    writeFileSync(join(srcDir, 'app.mjs'), '<@img src="lien-photo.png" alt="">')
+    writeFileSync(join(srcDir, 'app.mjs'), '<@@img src="lien-photo.png" alt="">')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     const stats = await bundler.compile()
 
     assert.ok(stats.errors.length > 0,
-      'AVANT le fix : <@img src="lien-photo.png"> copiait le contenu externe dans outputDir sans un mot')
+      'AVANT le fix : <@@img src="lien-photo.png"> copiait le contenu externe dans outputDir sans un mot')
     const msg = stats.errors.map(e => e.message).join('\n')
     assert.match(msg, /lien-photo\.png/, `l'erreur doit nommer le lien référencé : ${msg}`)
     assert.ok(!readdirSync(outDir).some(f => /^lien-photo-/.test(f)),

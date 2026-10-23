@@ -1,4 +1,4 @@
-// `µimage('chemin'[, largeurs])` et le module cœur `<@img>`.
+// `µimage('chemin'[, largeurs])` et le module cœur `<@@img>`.
 //
 // DEUX NIVEAUX, testés séparément parce qu'ils n'ont pas les mêmes exigences :
 //   • les DIMENSIONS natives, lues dans l'en-tête du fichier, SANS aucune dépendance —
@@ -13,20 +13,9 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { readImageSize } from '../src/bundler/image.js'
 import { findConfig } from '../src/bundler/config.js'
+import { setMessagesLang } from '../src/messages/index.js'
 import { mjsTmp } from './helpers/tmp.js'
-
-/** Un PNG minimal, VALIDE, de dimensions choisies (en-tête réel : signature + IHDR). */
-function pngDe(largeur: number, hauteur: number): Buffer {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  const ihdr = Buffer.alloc(25)
-  ihdr.writeUInt32BE(13, 0)
-  ihdr.write('IHDR', 4)
-  ihdr.writeUInt32BE(largeur, 8)
-  ihdr.writeUInt32BE(hauteur, 12)
-  ihdr[16] = 8   // profondeur
-  ihdr[17] = 6   // RVBA
-  return Buffer.concat([signature, ihdr])
-}
+import { validPng } from './helpers/valid-png.js'
 
 function projet(prefix: string) {
   const root   = mjsTmp(prefix)
@@ -38,7 +27,7 @@ function projet(prefix: string) {
 
 describe('bundler/image — dimensions natives, sans aucune dépendance', () => {
   it('lit un PNG', () => {
-    assert.deepEqual(readImageSize(pngDe(1920, 1080)), { width: 1920, height: 1080 })
+    assert.deepEqual(readImageSize(validPng(1920, 1080)), { width: 1920, height: 1080 })
   })
 
   it('lit un GIF', () => {
@@ -71,7 +60,7 @@ describe("µimage — résolution au build", function () {
 
   it('rend un objet avec l\'URL hachée ET les dimensions natives', async () => {
     const p = projet('image')
-    writeFileSync(join(p.srcDir, 'hero.png'), pngDe(1600, 900))
+    writeFileSync(join(p.srcDir, 'hero.png'), validPng(1600, 900))
     writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\nphoto = µimage(\'hero.png\')\n</script>\n\n<img src={photo.src} width={photo.width} height={photo.height}>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     const stats = await bundler.compile()
@@ -113,7 +102,7 @@ describe("µimage — résolution au build", function () {
 
   it("deux appels au MÊME fichier avec des largeurs différentes sont deux entrées distinctes", async () => {
     const p = projet('image-largeurs')
-    writeFileSync(join(p.srcDir, 'hero.png'), pngDe(1600, 900))
+    writeFileSync(join(p.srcDir, 'hero.png'), validPng(1600, 900))
     writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\npetit = µimage(\'hero.png\', 320)\ngrand = µimage(\'hero.png\', 320, 640)\n</script>\n<p>x</p>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     const stats = await bundler.compile()
@@ -125,13 +114,13 @@ describe("µimage — résolution au build", function () {
 
   it("l'image est suivie comme DÉPENDANCE : la modifier invalide le composant", async () => {
     const p = projet('image-dep')
-    writeFileSync(join(p.srcDir, 'hero.png'), pngDe(1600, 900))
+    writeFileSync(join(p.srcDir, 'hero.png'), validPng(1600, 900))
     writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\nphoto = µimage(\'hero.png\')\n</script>\n<p>x</p>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     await bundler.compile()
     const avant = readdirSync(p.outDir).find(f => /^page-/.test(f))!
 
-    writeFileSync(join(p.srcDir, 'hero.png'), pngDe(800, 400))   // une AUTRE image, mêmes noms
+    writeFileSync(join(p.srcDir, 'hero.png'), validPng(800, 400))   // une AUTRE image, mêmes noms
     await bundler.compile()
     const apres = readdirSync(p.outDir).find(f => /^page-/.test(f) && f !== avant)
     assert.ok(apres, `changer l'image doit recompiler le composant (avant : ${avant}, dossier : ${readdirSync(p.outDir).join(', ')})`)
@@ -142,19 +131,19 @@ describe("µimage — résolution au build", function () {
   })
 })
 
-describe('<@img> — le module cœur', function () {
+describe('<@@img> — le module cœur', function () {
   this.timeout(60000)
 
   after(async () => { await terminateSharedWorkerPool() })
 
   it('se compile et entre au manifeste dès qu\'un composant l\'emploie', async () => {
     const p = projet('img-tag')
-    writeFileSync(join(p.srcDir, 'hero.png'), pngDe(1600, 900))
-    writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\n$photo = µimage(\'hero.png\')\n</script>\n\n<@img src={$photo.src} srcset={$photo.srcset} width={$photo.width} height={$photo.height} alt="Une photo"></@img>')
+    writeFileSync(join(p.srcDir, 'hero.png'), validPng(1600, 900))
+    writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\n$photo = µimage(\'hero.png\')\n</script>\n\n<@@img src={$photo.src} srcset={$photo.srcset} width={$photo.width} height={$photo.height} alt="Une photo"></@@img>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
-    assert.ok(Object.keys(stats.manifest).includes('img'), `le module cœur doit être au manifeste :\n${Object.keys(stats.manifest).join(', ')}`)
+    assert.ok(Object.keys(stats.manifest).includes('core-img'), `le module cœur doit être au manifeste :\n${Object.keys(stats.manifest).join(', ')}`)
     await bundler.close()
   })
 
@@ -166,7 +155,7 @@ describe('<@img> — le module cœur', function () {
     writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\n$alt = \'Une photo\'\n</script>\n\n<@image src="hero.png" alt={$alt}></@image>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     const stats = await bundler.compile()
-    assert.ok(stats.errors.length > 0, 'un <@image> doit désormais échouer : la balise a été renommée en <@img>')
+    assert.ok(stats.errors.length > 0, 'un <@image> doit désormais échouer : la balise a été renommée en <@@img>')
     assert.match(stats.errors.map(e => e.message).join('\n'), /<@image>/)
     assert.ok(!Object.keys(stats.manifest).includes('image'), `l'ancien nom ne doit plus entrer au manifeste :\n${Object.keys(stats.manifest).join(', ')}`)
     await bundler.close()
@@ -187,8 +176,7 @@ describe('µimage — les variantes (exigent sharp)', function () {
       this.skip()
     }
     const p = projet('image-variantes')
-    // une VRAIE image encodée par sharp lui-même : notre PNG d'en-tête minimal n'a pas
-    // de données de pixels, aucun encodeur ne saurait le redimensionner
+    // source encodée par sharp lui-même, pas par validPng : ce test ne dépend que de l'encodeur qu'il éprouve
     const vraiPng: Buffer = await sharp({ create: { width: 1200, height: 800, channels: 3, background: '#3b82f6' } }).png().toBuffer()
     writeFileSync(join(p.srcDir, 'hero.png'), vraiPng)
     writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\nphoto = µimage(\'hero.png\')\n</script>\n<p>x</p>')
@@ -200,6 +188,29 @@ describe('µimage — les variantes (exigent sharp)', function () {
     assert.ok(emis.some(f => /^hero-640-[a-f0-9]{8}\.webp$/.test(f)), `variante 640 absente : ${emis.join(', ')}`)
     const compile = readFileSync(join(p.outDir, emis.find(f => /^page-/.test(f))!), 'utf-8')
     assert.match(compile, /320w/, compile.slice(0, 400))
+    await bundler.close()
+  })
+
+  // une image que sharp ne sait pas décoder (en-tête seul) ne passe pas telle quelle : le build échoue
+  // l'erreur (message bundler.index.img-variante-echec) nomme l'image, la largeur et le format, jamais le seul message interne de sharp (sa phrase change d'une version à l'autre)
+  it('une image abîmée fait ÉCHOUER le build, en nommant l\'image, la largeur de la variante et le format', async function () {
+    const { resolveSharp } = await import('../src/bundler/image.js')
+    if (!(await resolveSharp())) this.skip()
+    setMessagesLang('fr')
+    // signature + IHDR de 1600 x 900, ni IDAT ni IEND : readImageSize en lit la taille donc des variantes sont demandées, sharp la refuse
+    const p       = projet('image-abimee')
+    const png     = validPng(1600, 900)
+    const damaged = png.subarray(0, png.indexOf('IDAT') - 4)   // coupé avant le bloc IDAT (4 octets de longueur précèdent son type)
+    writeFileSync(join(p.srcDir, 'hero.png'), damaged)
+    writeFileSync(join(p.srcDir, 'page.mjs'), '<script>\nphoto = µimage(\'hero.png\')\n</script>\n<p>x</p>')
+    const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, image: { widths: [480], formats: ['webp'] } })
+    const stats   = await bundler.compile()
+    assert.ok(stats.errors.length > 0, 'une image que sharp ne sait pas décoder doit faire échouer le build, pas passer telle quelle')
+    const message = stats.errors.map(e => e.message).join('\n')
+    assert.match(message, /échec de génération d'une variante/, `le message doit être celui de la variante, pas le texte brut de sharp :\n${message}`)
+    assert.match(message, /µimage\('hero\.png'\)/, `l'image doit être nommée :\n${message}`)
+    assert.match(message, /480px/, `la largeur de la variante doit être nommée :\n${message}`)
+    assert.match(message, /\.webp/, `le format de la variante doit être nommé :\n${message}`)
     await bundler.close()
   })
 })

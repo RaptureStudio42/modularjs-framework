@@ -1,6 +1,6 @@
 # 25 · Protocole MJS-WS — spécification de référence
 
-> Référence **bas niveau** du protocole `µ:` (et de son extension `µgame:*`) porté par [23 · MJS-WS](23-mjs-ws.md) — assez précise pour écrire un client MJS-WS dans un **autre** langage, dans l'esprit du protocole DDP de Meteor (« ce que le fil transporte, octet par octet »). Si tu écris une appli MJS ordinaire, tu n'as **pas** besoin de cette page : le client `µsocket` ([20 · Temps réel](20-temps-reel.md)) et le serveur `mjsWs` ([23 · MJS-WS](23-mjs-ws.md)) parlent déjà ce protocole l'un à l'autre. Cette page rassemble et précise ce qui est autrement éparpillé entre [20 · Temps réel §7](20-temps-reel.md), [23 · MJS-WS](23-mjs-ws.md) et [24 · MJS-Server](24-mjs-server.md) — vérifié contre le code source (`src/mjs-ws/`, `src/mjs-server/`, `src/schema/core.ts`), jamais contre les docs elles-mêmes.
+> Référence **bas niveau** du protocole `µ:` (et de son extension `µgame:*`) porté par [23 · MJS-WS](23-mjs-ws.md) — assez précise pour écrire un client MJS-WS dans un **autre** langage, dans l'esprit du protocole DDP de Meteor (« ce que le fil transporte, octet par octet »). Si vous écrivez une appli MJS ordinaire, vous n'avez **pas** besoin de cette page : le client `µsocket` ([20 · Temps réel](20-temps-reel.md)) et le serveur `mjsWs` ([23 · MJS-WS](23-mjs-ws.md)) parlent déjà ce protocole l'un à l'autre. Cette page rassemble et précise ce qui est autrement éparpillé entre [20 · Temps réel §7](20-temps-reel.md), [23 · MJS-WS](23-mjs-ws.md) et [24 · MJS-Server](24-mjs-server.md) — vérifié contre le code source (`src/mjs-ws/`, `src/mjs-server/`, `src/schema/core.ts`), jamais contre les docs elles-mêmes.
 
 ## Sommaire
 
@@ -30,7 +30,7 @@
 
 **Encodage.** Par défaut, toutes les trames sont du JSON UTF-8 envoyé en trame WebSocket **texte** (`JSON.stringify`/`JSON.parse`, personnalisables via `opts.parse`/`opts.serialize` — cf. [23 §1](23-mjs-ws.md#options), mais alors les **deux** côtés doivent s'accorder). Les trames de **contrôle** `µ:` restent **toujours** JSON, quel que soit le codec (§4) — le hello ne peut pas dépendre d'un schéma pas encore synchronisé. Seuls les messages **applicatifs** pub/sub (jamais les requêtes, jamais les deltas de flux, jamais `µgame:*`) peuvent voyager en trame WebSocket **binaire** à la place, si le `t` a un schéma déclaré ET que `ws.codec ≠ 'json'` — cf. §4 pour l'enveloppe binaire complète.
 
-> ⚠️ **Pourquoi `µgame:*` est exclu — et où l'exclusion est tenue.** Elle ne tient **pas** à l'enveloppe : le choke point d'encodage (`sendRaw`) n'écarte que les types de **contrôle** `µ:` et les deltas de flux (repérés par leur `seq` de premier niveau, que les trames de jeu portent dans `p`). C'est une **garde explicite** de MJS-Server (§3) qui refuse le préfixe : `app.schema('µgame:…', …)` et une clé `µgame:` dans `opts.schemas` lèvent au démarrage. Motif : la charge d'une trame de jeu porte sa vue dans `view` (ou `delta`) — un **objet**, la seule forme que µschema v1 ne sait pas décrire (scalaires, `list()`, `bits()` — §4). Or un champ d'un type inattendu s'encode en valeur **zéro** sans lever : sans la garde, la trame partirait bien en binaire et l'état du jeu arriverait **vide**, en silence. Pour envoyer de l'état de jeu en binaire, il faut donc un type applicatif **à toi** (préfixe libre) dont la charge est **plate**, envoyé par `app.send` à côté de `µgame:state`.
+> ⚠️ **Pourquoi `µgame:*` est exclu — et où l'exclusion est tenue.** Elle ne tient **pas** à l'enveloppe : le choke point d'encodage (`sendRaw`) n'écarte que les types de **contrôle** `µ:` et les deltas de flux (repérés par leur `seq` de premier niveau, que les trames de jeu portent dans `p`). C'est une **garde explicite** de MJS-Server (§3) qui refuse le préfixe : `app.schema('µgame:…', …)` et une clé `µgame:` dans `opts.schemas` lèvent au démarrage. Motif : la charge d'une trame de jeu porte sa vue dans `view` (ou `delta`) — un **objet**, la seule forme que µschema v1 ne sait pas décrire (scalaires, `list()`, `bits()` — §4). Or un champ d'un type inattendu s'encode en valeur **zéro** sans lever : sans la garde, la trame partirait bien en binaire et l'état du jeu arriverait **vide**, en silence. Pour envoyer de l'état de jeu en binaire, il faut donc un type applicatif **à vous** (préfixe libre) dont la charge est **plate**, envoyé par `app.send` à côté de `µgame:state`.
 
 **Transport.** Le protocole ci-dessous est indépendant du transport WebSocket concret — `mjsWs` l'expose au-dessus de `ws`, `uWebSockets.js`, ou tout transport maison implémentant `MjsWsTransport` (cf. [23 §12](23-mjs-ws.md#transport-facade)). Tout ce qui suit ne suppose rien de plus qu'une connexion full-duplex qui délivre des messages **texte** ou **binaires** dans l'ordre d'émission.
 
@@ -59,11 +59,11 @@ Premier message **obligatoire** de toute connexion — tout autre `t` reçu avan
 
 Déclenche, dans l'ordre : `opts.auth` (ou le proxy) → si `session` est fourni ET l'auth accueillie, tentative de reprise ([23 §8](23-mjs-ws.md#reprise-session)) qui court-circuite le reste sur succès → sinon `opts.welcome` → `µ:welcome` (§1.2, toujours envoyé sauf coupure en cours de route) → `µ:schema` (§1.2) si `schemaHash` diverge du registre serveur.
 
-> ⚠️ **`resub`/`rooms` sont informatifs — le serveur `mjsWs` actuel ne les exploite pas.** La resynchronisation réelle passe par les messages **dédiés** que le client renvoie lui-même, explicitement, juste après avoir reçu `µ:welcome` : `µ:sub-stream` (ou `µ:resync` si ce flux avait déjà une séquence en cours, cf. §2) par flux repris, `µ:join` par salon, `µ:sub-presence` pour la présence. Un client tiers peut donc omettre `resub`/`rooms` sans rien perdre côté `mjsWs` — ils documentent une **intention** (utile à un futur serveur, ou à un serveur maison qui choisirait de les exploiter), pas un contrat consommé aujourd'hui.
+> ⚠️ **`resub`/`rooms` sont informatifs — le serveur `mjsWs` actuel ne les exploite pas.** La resynchronisation réelle passe par les messages **dédiés** que le client renvoie lui-même, explicitement, juste après avoir reçu `µ:welcome` : `µ:join` par salon d'abord, puis `µ:sub-stream` (ou `µ:resync` si ce flux avait déjà une séquence en cours, cf. §2) par flux repris, et `µ:sub-presence` pour la présence — un flux réservé à un salon, demandé avant d'y entrer, peut être refusé. Un client tiers peut donc omettre `resub`/`rooms` sans rien perdre côté `mjsWs` — ils documentent une **intention** (utile à un futur serveur, ou à un serveur maison qui choisirait de les exploiter), pas un contrat consommé aujourd'hui.
 
 #### `µ:ping` — battement
 
-`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`).
+`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`), et l'échantillon `intervallesPing` de l'état du serveur ([23 §10](23-mjs-ws.md#etat-serveur)) : un **intervalle entre deux pings**, pas un aller-retour — l'aller-retour se mesure côté client, au `µ:pong`.
 
 #### `µ:refresh` — rafraîchit le jeton en vol
 
@@ -78,7 +78,7 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:sub-stream` — abonnement à un flux
 
-`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse.
+`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse. Un flux fermé (déclaré sans `public`, `room` ni `canSubscribe` : un flux est fermé par défaut), un flux dont la garde refuse ce client (`canSubscribe`, `room` — [23 §5](23-mjs-ws.md#flux)), ou un flux écrit par le pont mais jamais déclaré par ce processus, répond `µ:error { message }` (accès refusé), sans abonnement.
 
 #### `µ:resync` — rattrapage après un trou
 
@@ -86,15 +86,15 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:sub-presence` — abonnement à la présence
 
-`p = { room?: string }` — `room` absent (ou de type différent de `string`) = présence **globale** ; sinon présence du salon nommé (être **abonné** à la présence d'un salon ne rend pas **membre** de ce salon, cf. `µ:join` ci-dessous). Déclenche un `µ:presence { op: 'reset' }` immédiat (§1.2).
+`p = { room?: string }` — `room` absent (ou de type différent de `string`) = présence **globale** ; sinon présence du salon nommé (être **abonné** à la présence d'un salon ne rend pas **membre** de ce salon, cf. `µ:join` ci-dessous). Déclenche un `µ:presence { op: 'reset' }` immédiat (§1.2). La présence d'un salon n'est servie qu'à ses **membres** par défaut : celle d'un salon ouvert (`app.room(nom, { presence: 'public' })`) à tous, et la garde `rooms.canSeePresence`, si elle est posée, décide seule ([23 §4](23-mjs-ws.md#salons-presence)). Un refus répond `µ:error { message, code: 'presence-denied', room }`, sans abonnement ; un membre qui quitte un salon dont la présence lui était réservée (`µ:leave`, exclusion, déconnexion) en est désabonné. La présence **globale** est fermée par défaut : servie à tous les clients si le serveur l'ouvre (`mjsWs({ presence: 'public' })`), à personne sinon — refus `µ:error { message, code: 'presence-denied' }`, **sans** `room`, sans abonnement.
 
 #### `µ:join` — rejoindre un salon
 
-`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche la garde `opts.rooms.join` (fonction ou proxy, [23 §7.11](23-mjs-ws.md#pont), async autorisée) puis, si acceptée : adhésion, delta de présence `join` (**seulement** si c'est la 1ʳᵉ connexion de cette identité dans ce salon — agrégation multi-onglets, [23 §4](23-mjs-ws.md#salons-presence)), et rejeu de l'historique du salon s'il en a un ([23 §4.1](23-mjs-ws.md#salons-presence)). Un `µ:join` en double (déjà membre) est un no-op silencieux. Un refus (`false`/`throw` de la garde) répond `µ:error { message }`, throttlé à 1/s. **Jamais de `µ:ack`**, même si la trame portait un `id`.
+`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche la garde `opts.rooms.join` (fonction ou proxy, [23 §7.11](23-mjs-ws.md#pont), async autorisée) puis, si acceptée : adhésion, delta de présence `join` (**seulement** si c'est la 1ʳᵉ connexion de cette identité dans ce salon — agrégation multi-onglets, [23 §4](23-mjs-ws.md#salons-presence)), et rejeu de l'historique du salon s'il en a un ([23 §4.1](23-mjs-ws.md#salons-presence)). Si cette connexion avait quitté ce salon en suivant un flux qui lui est réservé (ou dont la garde `canSubscribe` l'avait alors refusée), ce flux lui est rendu sans `µ:sub-stream` : `reset` au `seq` courant, puis les deltas ([23 §5](23-mjs-ws.md#flux)) — sauf un flux `salon/…` (le client du framework le redemande lui-même) et au-delà des 50 derniers salons quittés par cette connexion. Un `µ:join` en double (déjà membre) est un no-op silencieux. Un refus (`false`/`throw` de la garde, nom trop long, plafond de salons) répond `µ:error { message, code: 'join-denied', room }`, throttlé à 1/s — `room` nomme le salon refusé : le client n'oublie que lui. **Jamais de `µ:ack`**, même si la trame portait un `id`.
 
 #### `µ:leave` — quitter un salon
 
-`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche le retrait + delta de présence `leave` (dernière connexion de cette identité dans ce salon). Client-initié : contrairement à un `kick` serveur, **aucun `µ:left` n'est renvoyé à l'émetteur** — il sait déjà qu'il part. `µ:leave` d'un non-membre est un no-op silencieux.
+`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche le retrait + delta de présence `leave` (dernière connexion de cette identité dans ce salon). Client-initié : contrairement à un `kick` serveur, **aucun `µ:left` n'est renvoyé à l'émetteur** — il sait déjà qu'il part. `µ:leave` d'un non-membre est un no-op silencieux. Les flux réservés à ce salon cessent aussitôt d'être envoyés à cette connexion, sans trame, comme ceux dont la garde `canSubscribe`, qui avait lu l'appartenance à ce salon, la refuse désormais (ils lui sont rendus à son retour, cf. `µ:join`).
 
 #### *(requête applicative)* — **sans** préfixe `µ:`
 
@@ -107,7 +107,7 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 `p` = fusion de trois sources, dans cet ordre : le retour libre de `opts.welcome(client)` (`{}` si absent, ou si `welcome()` a levé — l'erreur est loguée, jamais fatale) ; **puis** `schemaHash` (`string`) SI le registre µschema serveur n'est pas vide (§4) ; **puis**, **seulement** si `opts.resume` est actif côté serveur ([23 §8](23-mjs-ws.md#reprise-session)) : `session: { id: string, key: string }` (clé **tournée** à chaque welcome — y compris une reprise) et `resumed: boolean` (`true` = ce welcome clôt une reprise réussie). Sans `opts.resume`, `session`/`resumed` sont **absents** — pas même `resumed: false` — comportement byte-identique à avant l'existence de la reprise.
 
-Obligatoire — envoyé quoi qu'il arrive dès l'authentification acceptée (sauf coupure de la connexion **pendant** `opts.welcome()`, cas limite où rien n'est envoyé à personne). Déclenche côté client : état → `open`, la file d'attente hors-ligne est rejouée, le heartbeat démarre, et le client renvoie lui-même ses abonnements (`µ:sub-stream`/`µ:resync`/`µ:join`/`µ:sub-presence`, cf. note ⚠️ du hello en §1.1).
+Obligatoire — envoyé quoi qu'il arrive dès l'authentification acceptée (sauf coupure de la connexion **pendant** `opts.welcome()`, cas limite où rien n'est envoyé à personne). Déclenche côté client : état → `open`, la file d'attente hors-ligne est rejouée, le heartbeat démarre, et le client renvoie lui-même ses abonnements (`µ:join` d'abord, puis `µ:sub-stream`/`µ:resync`/`µ:sub-presence`, cf. note ⚠️ du hello en §1.1).
 
 #### `µ:denied` — authentification refusée
 
@@ -131,15 +131,19 @@ Une seule trame `µ:ack` par requête, jamais plus. `id` est le **seul** lien en
 
 #### `µ:error` — erreur non fatale
 
-Trois formes possibles, **jamais** combinées dans la même trame :
+Six formes possibles, **jamais** combinées dans la même trame :
 
 | Forme | Quand |
 |---|---|
-| `{ message: string }` | forme **générique** — type inconnu, débit dépassé, `µ:join`/`µ:refresh` refusé, `welcome()`/`on()` qui a levé, désaccord µschema en mode strict (§4)… tous les cas non listés ci-dessous |
+| `{ message: string, type: string }` | un message applicatif d'un **type inconnu** (ni `serve()` ni `on()` pour lui) — `type` le nomme : le client y reconnaît le paquet d'un effet en direct qui manque au serveur (`follow:…` → `followPackage`) et le dit en console |
+| `{ message: string, code: 'join-denied', room: string }` | un `µ:join` refusé (garde `rooms.join`, nom trop long, plafond de salons) — `room` nomme le salon : le client l'oublie, lui seul, et ne le rejoint plus aux reconnexions |
+| `{ message: string, code: 'presence-denied', room: string }` | un `µ:sub-presence` de salon refusé (présence réservée aux membres, garde `rooms.canSeePresence`) — `room` nomme le salon ; aucun abonnement |
+| `{ message: string, code: 'presence-denied' }` | un `µ:sub-presence` **global** (sans `room`) refusé : présence globale fermée (option `presence` du serveur absente) ; aucun abonnement |
+| `{ message: string }` | forme **générique** — débit dépassé, `µ:refresh` refusé, `welcome()`/`on()` qui a levé, désaccord µschema en mode strict (§4)… tous les cas non listés ci-dessous |
 | `{ code: 'token-expired' }` | l'échéance du jeton authentifié est dépassée ([23 §7.9](23-mjs-ws.md#pont)) — précède **toujours** une fermeture serveur **sans** `µ:bye` (reconnexion possible avec un jeton neuf) |
 | `{ code: 'refresh-denied' }` | un `µ:refresh` a échoué — la connexion n'est **pas** affectée, elle continue de vivre jusqu'à son échéance courante |
 
-Jamais fatal en lui-même — alimente `lastError` côté client, rien de plus. Plusieurs causes protocolaires partagent la **même** forme générique `{message}` avec un **texte** différent (throttlé à 1/s pour la plupart — débit, `join` refusé, désaccord µschema) : un client tiers doit traiter `message` comme un texte **d'affichage**, jamais comme une clé de branchement (seuls les **deux** `code` ci-dessus sont des valeurs stables destinées à être testées par égalité).
+Jamais fatal en lui-même — alimente `lastError` côté client, rien de plus. Plusieurs causes protocolaires partagent la **même** forme générique `{message}` avec un **texte** différent (throttlé à 1/s pour la plupart — débit, désaccord µschema) : un client tiers doit traiter `message` comme un texte **d'affichage**, jamais comme une clé de branchement (seuls les `code` ci-dessus, le `room` d'un `join` ou d'une présence refusés et le `type` d'un type inconnu sont des valeurs stables destinées à être testées par égalité).
 
 #### `µ:presence` — delta de présence
 
@@ -236,7 +240,7 @@ Source de vérité côté serveur : `app.stream(nom)` ([23 §5](23-mjs-ws.md#flu
 | Tous les deltas `from+1 … seq` sont encore dans le journal | **Rejeu** de **ces** deltas **seuls**, avec leurs `seq` **d'origine** (jamais renumérotés) — un récepteur qui ignore tout `seq ≤` son dernier vu peut donc recevoir un doublon sans risque |
 | Trou plus large que ce que couvre le journal | `reset` complet |
 
-Un `µ:sub-stream`/`µ:resync` vers un nom de flux **jamais** déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement `{ op: 'reset', values: {} }` au `seq: 0` — jamais une création fantôme, jamais un silence qui laisserait le récepteur sans réponse.
+Un `µ:sub-stream`/`µ:resync` vers un nom de flux **jamais** déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement `{ op: 'reset', values: {} }` au `seq: 0` — jamais une création fantôme, jamais un silence qui laisserait le récepteur sans réponse. Un flux écrit par le pont (`POST /stream`) mais jamais déclaré par ce processus répond `µ:error` (accès refusé), comme un flux dont la garde refuse, ou un flux déclaré sans accès : aucun flux n'est public par défaut (`public: true` l'ouvre).
 
 ### Hors de portée de µschema
 
@@ -277,7 +281,7 @@ Une reconnexion sur la **même** identité (déjà assise) via `code` est **idem
 
 #### `µgame:leave` — quitter la partie (vide le siège)
 
-`p = { game: string }`. Réponse `µ:ack.p = { ok: true }`. Contrairement à une simple déconnexion (qui **garde** le siège, en attente de reconnexion), `µgame:leave` vide le siège immédiatement — déclenche `µgame:left` et `µgame:seat` (3.2) vers les autres sièges.
+`p = { game: string }`. Réponse `µ:ack.p = { ok: true }`. Sans `game`, `p = { type: string }` quitte la **file publique** de ce type (le joueur renonce avant d'être apparié) : son ticket part, même réponse — rien à faire s'il n'y est plus. Contrairement à une simple déconnexion (qui **garde** le siège, en attente de reconnexion), `µgame:leave` vide le siège immédiatement — déclenche `µgame:left` et `µgame:seat` (3.2) vers les autres sièges.
 
 #### `µgame:resync` — vue fraîche complète (reconnexion)
 
@@ -317,12 +321,13 @@ Diffusée par microtâche (mode événementiel, `tick: 0` — les mutations d'un
 
 #### `µgame:end` — fin de partie
 
-`p = { game: string, result: any }` — **deux** origines, cycle de vie **différent** après l'envoi :
+`p = { game: string, result: any }` — **trois** origines, cycle de vie **différent** après l'envoi (la fin « entrée refusée » d'un joueur de la file publique porte deux champs de plus, `type: string` et `queue: true`, voir la dernière ligne) :
 
 | Origine | `result` | Après l'envoi |
 |---|---|---|
-| `game.end(result)` (applicatif) | l'argument **tel quel** | la partie survit encore `def.emptyTtl` ms — un dernier `µgame:resync` peut encore voir l'issue avant destruction |
-| Annulation (fenêtre `seatTtl` expirée sans confirmation, [24 §6](24-mjs-server.md#appariement)) | `{ cancelled: true, reason: 'seat-expired' }` — v1 n'a qu'**une** seule raison connue | destruction **immédiate**, aucune grâce — un `µgame:resync` ultérieur trouve la partie introuvable |
+| `game.end(result)` (applicatif) | l'argument **tel quel** | la partie survit encore `def.endTtl` ms (`def.emptyTtl` si `endTtl` n'est pas déclaré) — un `µgame:resync` reçoit encore sa réponse habituelle avant destruction ; elle ne porte ni `ended` ni `result` : l'issue n'y figure que si le `state` ou la `view` de l'appli la contient |
+| Annulation (fenêtre `seatTtl` expirée sans confirmation sur une partie non finie, [24 §6](24-mjs-server.md#appariement)) | `{ cancelled: true, reason: 'seat-expired' }` — v1 n'a qu'**une** seule raison connue | destruction **immédiate**, aucune grâce — un `µgame:resync` ultérieur trouve la partie introuvable |
+| Entrée refusée (`hooks.onJoin` refuse le joueur, [24 §4](24-mjs-server.md#les-coups) et [§6](24-mjs-server.md#appariement)) | `{ refused: true, reason: 'join-refused' }` — v1 n'a qu'**une** seule raison connue | envoyée au **seul refusé**, qui ne reçoit plus aucune trame de la partie ; la partie ne finit pas pour les autres : elle continue (refus d'un joueur déjà assis : `p = { game, result }`, avec l'identifiant d'une partie que son client connaît, et cette fin part toujours **après** la réponse de sa requête `µgame:play`), ou n'a jamais été annoncée et disparaît sans bruit (refus d'un joueur de la file publique : `game` est alors un identifiant que le client n'a jamais vu, et la trame est `p = { game, type, queue: true, result }`, où `type` est le type de jeu de la file et `queue: true` dit qu'elle vient de la file). Côté client, la poignée de `sock.game()` passe en statut `'finished'` avec ce `result` ([24 §6](24-mjs-server.md#appariement)) : pour un refus de la file, c'est la poignée la plus ancienne encore en file **pour ce type de jeu** ; une fin « entrée refusée » sans `queue: true` n'est jamais rattachée à une poignée en file. Un `onJoin` qui rejette avant la réponse de sa requête n'envoie aucune fin : la requête échoue ([24 §4](24-mjs-server.md#les-coups)) |
 
 #### `µgame:left` — un **autre** siège est parti
 
@@ -390,7 +395,7 @@ sens     id    x = 300 (i16 LE)  y = -20 (i16 LE, complément at deux : 0xFFEC)
 
 ### Garde d'évolution — **ajout-seul**
 
-Un schéma déjà déclaré est **immuable** (mêmes champs, mêmes types, **même** ordre). Le ré-affirmer À **l'identique** (rechargement à chaud d'un entry) est un no-op silencieux, id inchangé ; le ré-affirmer sous une forme **différente** lève une erreur claire au boot. Fais évoluer ton protocole en déclarant un schéma à un **nom neuf**, jamais en mutant un schéma existant.
+Un schéma déjà déclaré est **immuable** (mêmes champs, mêmes types, **même** ordre). Le ré-affirmer À **l'identique** (rechargement à chaud d'un entry) est un no-op silencieux, id inchangé ; le ré-affirmer sous une forme **différente** lève une erreur claire au boot. Faites évoluer votre protocole en déclarant un schéma à un **nom neuf**, jamais en mutant un schéma existant.
 
 ### Hash du registre — FNV-1a 32 bits
 
@@ -449,11 +454,12 @@ Tout ce qui précède (§1-§4) ne couvre **que** la connexion WebSocket. Un sec
 
 ### La chaîne canonique
 
-Chaque requête **signée** (tout le pont **sauf** `GET /health`, et le proxy de décisions, [23 §7.11](23-mjs-ws.md#pont)) porte deux en-têtes :
+Chaque requête **signée** (tout le pont **sauf** `GET /health`, et le proxy de décisions, [23 §7.11](23-mjs-ws.md#pont)) porte ces en-têtes :
 
 | En-tête | Contenu |
 |---|---|
 | `x-mjs-ws-timestamp` | heure UNIX EN **secondes** au moment de la signature |
+| `x-mjs-ws-nonce` | sur les commandes de votre back vers le pont : une chaîne **neuve** de 8 à 64 caractères, exigée par défaut ([23 §7.10](23-mjs-ws.md#pont)) ; les webhooks n'en portent pas |
 | `x-mjs-ws-signature` | HMAC-SHA256 **hexadécimal** de la chaîne canonique, avec le secret partagé |
 
 Chaîne canonique du pont admin/webhooks — champs encodés en **longueur-préfixée** (`{longueur}:{champ}`, injectif) et concaténés, `direction` en premier champ ([23 §7.2](23-mjs-ws.md#pont)) :
@@ -462,21 +468,23 @@ Chaîne canonique du pont admin/webhooks — champs encodés en **longueur-préf
 {lp(direction)}{lp(timestamp)}{lp(MÉTHODE)}{lp(chemin+query)}{lp(corps brut)}[{lp(nonce)}]
 ```
 
-`direction` vaut `'in'` (commande admin, ton back → le pont) ou `'out'` (webhook, le pont → ton back) — **jamais** interchangeables, **même** secret partagé ; `{MÉTHODE}` en **majuscules** ; `{chemin+query}` tel qu'il apparaît dans l'URL (jamais domaine ni port) ; `{corps brut}` = le JSON envoyé **texte pour texte** (jamais re-sérialisé — l'ordre des clés compte), chaîne **vide** pour un `GET`. Le nonce optionnel ([23 §7.10](23-mjs-ws.md#pont)) s'ajoute en **dernier** champ.
+`direction` vaut `'in'` (commande admin, votre back → le pont) ou `'out'` (webhook, le pont → votre back) — **jamais** interchangeables, **même** secret partagé ; `{MÉTHODE}` en **majuscules** ; `{chemin+query}` tel qu'il apparaît dans l'URL (jamais domaine ni port) ; `{corps brut}` = le JSON envoyé **texte pour texte** (jamais re-sérialisé — l'ordre des clés compte), chaîne **vide** pour un `GET`. Le nonce ([23 §7.10](23-mjs-ws.md#pont)) s'ajoute en **dernier** champ des commandes de votre back (`'in'`), exigé par défaut ; les webhooks (`'out'`) n'en portent pas.
+
+**Les longueurs se comptent en unités UTF-16**, comme `String.length` en JavaScript — ni en octets, ni en caractères : `é` compte 1, un émoji comme `🎉` compte 2. Une longueur en octets fait refuser toute requête dont le corps porte un accent (`401`). En Ruby : `champ.encode('UTF-16LE').bytesize / 2`.
 
 ### Vérification et fenêtre anti-rejeu
 
-Comparaison en temps **constant** (`crypto.timingSafeEqual` ou équivalent — jamais une comparaison de chaînes naïve, qui fuiterait la validité par le temps de réponse). Fenêtre anti-rejeu par défaut : `|now − timestamp| > 300s` → `401`, même avec une signature juste. Un nonce optionnel ([23 §7.10](23-mjs-ws.md#pont)) ferme cette fenêtre complètement (chaque requête devient à usage unique).
+Comparaison en temps **constant** (`crypto.timingSafeEqual` ou équivalent — jamais une comparaison de chaînes naïve, qui fuiterait la validité par le temps de réponse). Fenêtre anti-rejeu par défaut : `|now − timestamp| > 300s` → `401`, même avec une signature juste. Le nonce, exigé par défaut sur les commandes de votre back ([23 §7.10](23-mjs-ws.md#pont)), ferme cette fenêtre : chaque requête ne sert qu'une fois (`bridge.nonce: false` le retire, la fenêtre seule protège alors du rejeu).
 
 ### Qui signe quoi
 
 | Sens | Signataire | Vérificateur | `direction` |
 |---|---|---|---|
-| Ton back → pont (`/broadcast`, `/send`, `/room/send`, `/room/kick`, `/stream`, `/presence`) | ton back | le pont | `'in'` |
-| Pont → ton back (webhooks, [23 §7.5](23-mjs-ws.md#pont)) | le pont | ton back | `'out'` |
-| `mjsWs` → ton back (proxy de décisions `auth`/`rooms.join`, [23 §7.11](23-mjs-ws.md#pont)) | `mjsWs` | ton back | — (chaîne **historique**, pas de `direction` — cf. [23 §7.11](23-mjs-ws.md#pont)) |
+| Votre back → pont (`/broadcast`, `/send`, `/room/send`, `/room/kick`, `/stream`, `/presence`) | votre back | le pont | `'in'` |
+| Pont → votre back (webhooks, [23 §7.5](23-mjs-ws.md#pont)) | le pont | votre back | `'out'` |
+| `mjsWs` → votre back (proxy de décisions `auth`/`rooms.join`, [23 §7.11](23-mjs-ws.md#pont)) | `mjsWs` | votre back | — (chaîne **historique**, pas de `direction` — cf. [23 §7.11](23-mjs-ws.md#pont)) |
 
-**Même** algorithme longueur-préfixée pour les **deux** premiers sens (pont admin/webhooks) — seul `direction` change entre eux ; le proxy de décisions (3e ligne) reste sur la chaîne **historique** `'.'`-jointe, secret et canal séparés (`bridge.secret`/`webhooks.secret` ≠ secret du proxy). Ton back doit donc savoir signer (requêtes sortantes) ET vérifier (requêtes entrantes) — les **deux** formats s'il utilise le pont ET le proxy. Recettes par langage : jetons JWT ([23 §7.6](23-mjs-ws.md#pont), Ruby/PHP/Python sans dépendance + gem `jwt`), pont depuis Rails ([23 §7.7](23-mjs-ws.md#pont)), trois recettes combinées bout en bout ([23 §7.12](23-mjs-ws.md#pont)).
+**Même** algorithme longueur-préfixée pour les **deux** premiers sens (pont admin/webhooks) — seul `direction` change entre eux ; le proxy de décisions (3e ligne) reste sur la chaîne **historique** `'.'`-jointe, secret et canal séparés (`bridge.secret`/`webhooks.secret` ≠ secret du proxy). Votre back doit donc savoir signer (requêtes sortantes) ET vérifier (requêtes entrantes) — les **deux** formats s'il utilise le pont ET le proxy. Recettes par langage : jetons JWT ([23 §7.6](23-mjs-ws.md#pont), Ruby/PHP/Python sans dépendance + gem `jwt`), pont depuis Rails ([23 §7.7](23-mjs-ws.md#pont)), trois recettes combinées bout en bout ([23 §7.12](23-mjs-ws.md#pont)).
 
 ### Ce qui reste **hors** du pont
 

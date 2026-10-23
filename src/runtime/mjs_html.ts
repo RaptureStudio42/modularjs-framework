@@ -14,7 +14,8 @@ if (µ.Element) {
     // pendant l'iteration.
     const node = this._mjs_nodes[id];
     if (!node || node._mjs_pooled) return;
-    const strVal = typeof val === 'string' ? val : String(val);
+    // null et undefined n'affichent rien, comme `{…}`
+    const strVal = typeof val === 'string' ? val : val == null ? '' : String(val);
     if (node._mjs_h === strVal) return;
     // Snapshot children avant destroy (destroy mute la live list).
     let __c = node.firstChild;
@@ -24,7 +25,7 @@ if (µ.Element) {
       // `.catch` défensif — même raison que mjs_if.ts/mjs_key.ts : jamais
       // attendue ici, un rejet resterait sinon non géré.
       this._mjs_destroyNodeAndChildren(__children[__ci]).catch(function(err) {
-        return µ.error('[ModularJS] destruction de contenu {@html} en erreur :', err);
+        return µ.error(µ._mjs_msg('htmlDestroy', null, 'destruction de contenu {@html} en erreur :'), err);
       });
     }
     node.innerHTML = strVal;

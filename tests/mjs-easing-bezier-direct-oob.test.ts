@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME_DIR = join(__dirname, '..', 'src', 'runtime')
@@ -22,6 +23,7 @@ function load(win: any) {
   g.CSSStyleSheet = win.CSSStyleSheet
   const warns: string[] = []
   const µ: any = { log() {}, warn(m: any) { warns.push(String(m)) }, error() {}, anim: {}, _csp: false, debug: true }
+  poserMessages(µ)
   new Function('µ', EASING_SRC)(µ)
   return { µ, warns }
 }
@@ -67,6 +69,7 @@ describe('µ.easing.bezier(x1, y1, x2, y2) appelé DIRECTEMENT — x1/x2 hors [0
     g.CSSStyleSheet = win.CSSStyleSheet
     const warns: string[] = []
     const µ: any = { log() {}, warn(m: any) { warns.push(String(m)) }, error() {}, anim: {}, _csp: false, debug: false }
+    poserMessages(µ)
     new Function('µ', EASING_SRC)(µ)
     const fn = µ.easing.bezier(-5, 0, 5, 1)
     assert.equal(fn, µ.easing.cubicOut)

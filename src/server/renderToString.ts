@@ -23,6 +23,7 @@ import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import { Bundler } from '../bundler/index.js'
 import type { I18nConfig, resolveBundlerOpts } from '../bundler/config.js'
+import type { LintToggles } from '../diagnostics.js'
 // (SSRF) — défense en profondeur : `isBlockedForwardTarget`
 // est réappliquée ICI, au point de consommation, PAS seulement dans
 // computeForwardedOrigin (render-request.ts) — un appelant qui invoque
@@ -31,10 +32,12 @@ import type { I18nConfig, resolveBundlerOpts } from '../bundler/config.js'
 // `computeForwardedOrigin` ne doit PAS pouvoir router happy-dom vers une cible
 // interne. Cf. forward-origin.ts pour le détail des plages bloquées.
 import { isBlockedForwardTarget } from './forward-origin.js'
-import { writeHashedAsset } from './ssr-head.js'
+import { ecrireFeuilleRendu, creerPlanFeuilles, sansImport } from './sorties-rendu.js'
 import { lightHostCss } from './light-host-css.js'
 import { openRenderCompileDir } from './render-compile-dir.js'
+import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from './happy-dom-version.js'
 import { t } from '../messages/index.js'
+import { buildSeedRoot } from './i18n-seed-root.js'
 
 export interface SSRRendererOptions {
   /** Répertoire contenant les composants `.mjs` source. */
@@ -73,9 +76,9 @@ export interface SSRRendererOptions {
   /** Même famille d'incohérence CSR/SSR que les trois clés ci-dessus, trouvée en
    *  testant `css: 'lazy'` : sans cette transmission, le Bundler interne du
    *  rendu serveur compile TOUJOURS en `'bundle'`, quel que soit le mode du projet —
-   *  le HTML servi ne s'en trouvait pas faux (aucun mode n'inline les feuilles
-   *  partagées), mais le rendu serveur écrivait ses propres artefacts de style dans
-   *  `outputDir`, dans un mode que le projet n'avait pas choisi. */
+   *  le HTML servi ne s'en trouvait pas faux, mais le rendu serveur écrivait
+   *  ses propres artefacts de style dans `outputDir`, dans un mode que le projet n'avait pas choisi.
+   *  (En `'lazy'`, les feuilles partagées sont différées : absentes du registre, donc du fragment.) */
   css?: 'bundle' | 'split' | 'lazy'
   /** Mode strict « politique de sécurité de contenu » (clé `csp`, défaut `false`) : le HTML rendu
    *  ne contient alors AUCUN `<style>` ni `<script>` en ligne — les feuilles passent par des
@@ -86,6 +89,13 @@ export interface SSRRendererOptions {
   maxStateVars?: number
   /** Lint d'accessibilité (`lint.a11y`, transmis au Bundler → transpiler ; défaut `true`). */
   a11y?: boolean
+  /** Coupe individuellement les AUTRES types d'avertissement de build (`lint.<type>`, hors
+   *  `a11y`/`maxStateVars` ci-dessus) — cf. src/diagnostics.ts, même transmission Bundler →
+   *  transpiler que les deux clés ci-dessus. */
+  lint?: LintToggles
+  /** Le terminal accepte-t-il la couleur, transmis au Bundler construit ici — cf.
+   *  resolveColorsEnabled (src/diagnostics.ts). Absent : le Bundler le recalcule lui-même. */
+  colorsEnabled?: boolean
   /** Environnement du build (`mjs build --prod`). Défaut : développement. Ce renderer
    *  RECOMPILE — dans le vrai dossier de sortie quand l'appelant lui en donne un : sans
    *  cette clé, il repasserait le build de l'appelant en développement. */
@@ -228,6 +238,9 @@ export interface SSRRenderer {
    *  un appel par section RÉELLEMENT consultée par un composant, indépendant du cache mémoire
    *  interne (chemin, mtime) qui évite seulement la relecture PHYSIQUE d'un fichier inchangé. */
   i18nLoadCount: number
+  /** Le `Bundler` de CE renderer, dont le dernier `compile()` fait foi pour les chemins hachés du dossier de sortie
+   *  (cf. `latestBundler` de bundler/startup.ts). */
+  readonly bundler: Bundler
 }
 
 // Retire la syntaxe ESM pour permettre l'éval dans happy-dom (pas de loader
@@ -311,7 +324,10 @@ function declaredNames(decl: any): string[] {
   return names
 }
 
-export const stripEsm = (s: string): string => {
+// `opts.bridgeCore` : un import du cœur sous un nom court (`import{µ as o}`, build minifié) laisse
+// `var o = µ;` à sa place — pour un appelant qui évalue ce fichier après le cœur (harnais de test) ;
+// sans lui, l'import disparaît sans rien laisser, comme toujours
+export const stripEsm = (s: string, opts: { bridgeCore?: boolean } = {}): string => {
   let ast: any
   try {
     ast = acorn.parse(s, { ecmaVersion: 'latest', sourceType: 'module' })
@@ -324,7 +340,12 @@ export const stripEsm = (s: string): string => {
   const edits: Edit[] = []
   findImportMetaUrlEdits(ast, edits)
   for (const node of ast.body) {
-    if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration') {
+    if (node.type === 'ImportDeclaration') {
+      const bridges = opts.bridgeCore ? node.specifiers.filter((sp: any) => sp.type === 'ImportSpecifier' && sp.imported.name === 'µ' && sp.local.name !== 'µ').map((sp: any) => `var ${sp.local.name} = µ;`) : []
+      edits.push({ start: node.start, end: node.end, text: bridges.join('') })
+      continue
+    }
+    if (node.type === 'ExportAllDeclaration') {
       edits.push({ start: node.start, end: node.end, text: '' })
       continue
     }
@@ -703,9 +724,58 @@ export async function settleRender(el: any, maxMs: number): Promise<boolean> {
 // code qui n'a pas été compilé avec ce bundle — elles ne rendent rien, et le `<style>` du
 // `<template shadowrootmode>` comme le mode light partiraient en silence. `baseCss` est rendu BRUT
 // (le trim appartient à chaque point d'usage).
-function ssrInfo(node: any): { baseCss: string; isLight: boolean; nodes: any; awaitStates: any; renderScheduled: boolean } {
+function ssrInfo(node: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any; awaitStates: any; renderScheduled: boolean } {
   const info: any = ssrCoreOf(node)._ssrInfo(node)
-  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), isLight: info.isLight === true, nodes: info.nodes, awaitStates: info.awaitStates, renderScheduled: info.renderScheduled === true }
+  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes, awaitStates: info.awaitStates, renderScheduled: info.renderScheduled === true }
+}
+
+// Texte d'une feuille du registre du cœur (`µ.CSS`). Le rendu serveur note le texte reçu par
+// `replaceSync` (cf. `noterTexteFeuilles`) : c'est le texte compilé, à l'octet. Une feuille bâtie
+// autrement (moteur navigateur) se relit par ses règles.
+export function texteFeuille(feuilleCss: any): string {
+  if (typeof feuilleCss.__mjsTexte === 'string') return feuilleCss.__mjsTexte
+  try { return Array.from(feuilleCss.cssRules).map((r: any) => r.cssText).join('') } catch { return '' }
+}
+
+// Feuilles du THÈME que le navigateur adopte dans chaque racine d'ombre, juste après la remise à zéro
+// (thème clair/sombre embarqué, puis thèmes de l'application) : leurs variables servent à tout
+// élément `theme="…"` écrit dans la racine. Le cœur ne les nomme qu'en `_mjs_*`, que la minification
+// raccourcit : on les retrouve parmi les feuilles que le DOCUMENT adopte, la première par son
+// contenu (la variable `--mjs-surface`), l'autre est celle qui la suit. Aucune (module du thème
+// absent) : rien à écrire. Le texte d'une feuille vide n'écrit rien.
+function feuillesTheme(node: any): { css: string; tag: string }[] {
+  const doc: any = node.ownerDocument
+  const adoptees: any[] = doc && doc.adoptedStyleSheets ? Array.from(doc.adoptedStyleSheets) : []
+  const i = adoptees.findIndex(f => texteFeuille(f).includes('--mjs-surface'))
+  if (i < 0) return []
+  const liste: { css: string; tag: string }[] = []
+  const embarquee = texteFeuille(adoptees[i]).trim()
+  if (embarquee) liste.push({ css: embarquee, tag: 'partagee-theme' })
+  const appli = adoptees[i + 1] ? texteFeuille(adoptees[i + 1]).trim() : ''
+  if (appli) liste.push({ css: appli, tag: 'partagee-theme-appli' })
+  return liste
+}
+
+// Les feuilles partagées d'une racine d'ombre : celles que le montage adopte avant la feuille
+// propre (remise à zéro, thème, héritées d'une vue, déclarées par `@css`), dans le MÊME ordre que le
+// navigateur, pour que la page ait la même mise en page avant et après le démarrage du JavaScript.
+// Une feuille absente du registre (vide, ou différée par `css: 'lazy'`) n'écrit rien. Chaque racine
+// porte les siennes : une racine d'ombre ne voit pas les feuilles d'une autre. Les `@import` sont
+// retirés du texte : le navigateur adopte ces feuilles par `replaceSync`, qui les ignore.
+function feuillesPartagees(node: any, feuille: FeuilleBalise): string {
+  const registre: any = ssrCoreOf(node).CSS
+  if (!registre) return ''
+  const noms        = ssrInfo(node).sheets
+  const apresReset  = noms[0] === 'mjs_reset' ? 1 : 0
+  const themes      = feuillesTheme(node)
+  let out = ''
+  const ecrire = (css: string, tag: string): void => { if (css) out += feuille(css, tag) }
+  noms.forEach((nom, i) => {
+    if (i === apresReset) for (const t of themes) ecrire(t.css, t.tag)
+    ecrire(registre[nom] ? sansImport(texteFeuille(registre[nom])).trim() : '', 'partagee-' + String(nom).replace(/[^\w-]/g, '_'))
+  })
+  if (noms.length <= apresReset) for (const t of themes) ecrire(t.css, t.tag)
+  return out
 }
 
 // Le cœur, vu d'un nœud, quel que soit le moteur : happy-dom le pose en `µ` dans la fenêtre de son
@@ -729,6 +799,106 @@ function markSsrTree(node: any): void {
   if (node.setAttribute && node.tagName && String(node.tagName).toUpperCase().startsWith('MJS-')) node.setAttribute('mjs-ssr', '')
   if (node._shadow && node._shadow !== node) { for (const child of Array.from(node._shadow.children) as any[]) markSsrTree(child) }
   if (node.children) { for (const child of Array.from(node.children) as any[]) markSsrTree(child) }
+}
+
+// Champs de formulaire : un champ lié à une variable (`value={$x}`, `checked={$ok}`) en reçoit l'état par sa PROPRIÉTÉ, que la
+// sérialisation du HTML (`outerHTML`, `getHTML()`) n'écrit pas — elle ne lit que les ATTRIBUTS. La page sortait avec `value=""` : les
+// curseurs au milieu de leur course, puis sautant à leur place au démarrage. `reflectFieldState` recopie l'état courant d'UN élément
+// dans ses attributs, juste avant de sérialiser : `value` d'un champ de saisie, `checked` d'une case ou d'un bouton radio, `selected`
+// des options d'une liste, texte d'une zone de texte. Seul l'écart est écrit : un champ dont l'état est déjà celui que son balisage dit
+// à la lecture (la valeur d'un champ neuf, l'option que le navigateur choisit seul…) n'est pas touché, et la page garde ses octets.
+// JAMAIS la valeur d'un mot de passe ni d'un fichier. Partagée TELLE QUELLE avec le moteur navigateur (sa source est injectée dans la
+// page, comme `collectAwaitStates`) : aucune dépendance hors de ce corps, que des propriétés standard du DOM.
+export function reflectFieldState(el: any): void {
+  const tag = el.localName
+  if (tag === 'input') {
+    const type = String(el.type).toLowerCase()
+    if (type === 'password' || type === 'file') return
+    if (type === 'checkbox' || type === 'radio') {
+      // la propriété `value` d'une case est son attribut (« on » à défaut) : seul l'état coché est à recopier
+      if (el.checked !== el.hasAttribute('checked')) {
+        if (el.checked) el.setAttribute('checked', '')
+        else el.removeAttribute('checked')
+      }
+      return
+    }
+    // une valeur égale à l'attribut est celle que le parseur relira (la valeur d'un champ est toujours une valeur admise)
+    const value = String(el.value)
+    if (value === (el.getAttribute('value') ?? '')) return
+    // sinon, la valeur que dit le balisage seul : celle de ce même champ relu par le parseur, dans un gabarit inerte (le navigateur
+    // ramène une valeur hors limites dans ses bornes, donne un milieu au curseur, retire les espaces d'un courriel…)
+    const template = el.ownerDocument.createElement('template')
+    template.innerHTML = el.cloneNode(false).outerHTML
+    if (value !== template.content.firstChild.value) el.setAttribute('value', value)
+  }
+  else if (tag === 'textarea') {
+    // le parseur d'un navigateur normalise les sauts de ligne du texte et retire le premier : une valeur qui commence par un saut de
+    // ligne s'écrit donc avec un saut de plus. La valeur d'un champ, elle, ne porte jamais de retour chariot dans un navigateur ; happy-dom
+    // la rend telle qu'elle a été écrite : `\r\nsuite` s'écrirait sans le saut de plus et le navigateur relirait `suite`
+    const value = String(el.value).replace(/\r\n?/g, '\n')
+    const text  = String(el.defaultValue).replace(/\r\n?/g, '\n')
+    if (value !== (text.charCodeAt(0) === 10 ? text.slice(1) : text)) el.textContent = (value.charCodeAt(0) === 10 ? '\n' : '') + value
+  }
+  else if (tag === 'select') {
+    // le choix de chaque option est relevé AVANT d'écrire le moindre attribut
+    const options: any[]    = Array.from(el.options)
+    const chosen: boolean[] = options.map(option => option.selected === true)
+    const marked: boolean[] = options.map(option => option.hasAttribute('selected'))
+    // le choix que dit le balisage seul : les `selected` écrits (hors choix multiple, le dernier l'emporte), à défaut — liste
+    // déroulante — la première option qui n'est pas désactivée, celle que le navigateur choisit seul
+    let implied: boolean[] = marked
+    if (!el.hasAttribute('multiple')) {
+      let winner = marked.lastIndexOf(true)
+      if (winner < 0 && !(parseInt(el.getAttribute('size'), 10) > 1)) winner = options.findIndex(option => !option.hasAttribute('disabled') && !(option.parentNode.localName === 'optgroup' && option.parentNode.hasAttribute('disabled')))
+      implied = options.map((_, i) => i === winner)
+    }
+    if (chosen.every((on, i) => on === implied[i])) return
+    options.forEach((option, i) => {
+      if (chosen[i] === marked[i]) return
+      if (chosen[i]) option.setAttribute('selected', '')
+      else option.removeAttribute('selected')
+    })
+  }
+}
+
+// `reflectFieldState` sur chaque élément de l'arbre rendu : light DOM ET chaque shadow (même patron d'accès que `markSsrTree`)
+function reflectFieldsTree(node: any): void {
+  if (!node) return
+  reflectFieldState(node)
+  if (node._shadow && node._shadow !== node) { for (const child of Array.from(node._shadow.children) as any[]) reflectFieldsTree(child) }
+  if (node.children) { for (const child of Array.from(node.children) as any[]) reflectFieldsTree(child) }
+}
+
+// Hydratation 'markers' : étiquette les nœuds réactifs du composant `node`, puis de proche en proche ceux de chaque sous-composant à
+// shadow propre (un sous-composant `mjs-light` n'en a pas : ses nœuds vivent dans la racine d'ombre de son parent). Chaque composant se
+// reprend par ses propres marqueurs ; sans eux, un sous-composant est rebâti au client.
+// Élément → attribut `mjs-h="<key>"` ; nœud texte → commentaire `<!--mjs-h:<key>-->` juste avant.
+function etiqueterReprise(node: any, doc: any): void {
+  const propre: boolean = !!(node._shadow && node._shadow !== node)
+  const info: any       = propre ? ssrInfo(node) : null
+  const nodes: any      = info && !info.isLight ? info.nodes : null
+  if (nodes) {
+    for (const key of Object.keys(nodes)) {
+      const n: any = nodes[key]
+      if (!n) continue
+      if (n.nodeType === 1 && n.setAttribute) {
+        n.setAttribute('mjs-h', key)
+      } else if (n.nodeType === 3 && n.parentNode) {
+        // un nœud texte vide (ancre d'un bloc, interpolation vide) ne s'écrit pas en HTML : `mjs-e` dit au client d'en poser un à la place du commentaire
+        n.parentNode.insertBefore(doc.createComment((n.data === '' ? 'mjs-e:' : 'mjs-h:') + key), n)
+      }
+    }
+    // le parseur du navigateur fusionne deux nœuds texte voisins en un seul : un texte repris que suit un autre texte (« Bonjour {$nom}! ») ne s'en distinguerait plus au client, qui réécrirait aussi ce qui le suit. Un commentaire vide les sépare, le client le laisse en place
+    for (const key of Object.keys(nodes)) {
+      const n: any = nodes[key]
+      if (!n || n.nodeType !== 3 || n.data === '' || !n.parentNode) continue
+      let following: any = n.nextSibling
+      while (following && following.nodeType === 3 && following.data === '') following = following.nextSibling
+      if (following && following.nodeType === 3) n.parentNode.insertBefore(doc.createComment(''), n.nextSibling)
+    }
+  }
+  if (propre) { for (const child of Array.from(node._shadow.children) as any[]) etiqueterReprise(child, doc) }
+  if (node.children) { for (const child of Array.from(node.children) as any[]) etiqueterReprise(child, doc) }
 }
 
 // true si CE noeud ou un de ses descendants est un composant MJS à shadow root propre — détermine
@@ -790,7 +960,7 @@ function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen
   const isLight = (node.hasAttribute && node.hasAttribute('mjs-light')) || (node.constructor && node.constructor.mjsLight === true)
   if (hasOwnShadow && !isLight) {
     const nestedCss = ssrInfo(node).baseCss.trim()
-    const nestedStyleTag = feuille(nestedCss, tagName)
+    const nestedStyleTag = feuillesPartagees(node, feuille) + feuille(nestedCss, tagName)
     let shadowContent = ''
     // NOUVELLE frontière <template> physique : dédoublonnage propre à ELLE
     const nestedSeen = new Set<string>()
@@ -839,6 +1009,92 @@ export function serializeShadow(el: any, shadowMode: 'open' | 'closed' = 'open',
   return out
 }
 
+// Retient le texte que reçoit chaque `replaceSync` de la fenêtre de rendu : une feuille construite
+// ne rend pas son texte brut, seulement ses règles reformatées. À poser AVANT l'évaluation du cœur
+// et des feuilles partagées.
+export function noterTexteFeuilles(window: any): void {
+  const proto: any = window.CSSStyleSheet && window.CSSStyleSheet.prototype
+  if (!proto || typeof proto.replaceSync !== 'function') return
+  const noter = (feuille: any, texte: string | undefined): void => { Object.defineProperty(feuille, '__mjsTexte', { value: texte, configurable: true }) }
+  const { replaceSync, insertRule, deleteRule } = proto
+  proto.replaceSync = function (this: any, css: string) {
+    noter(this, String(css))
+    return replaceSync.call(this, css)
+  }
+  // feuille changée après coup (le thème embarqué ajoute sa règle du thème en cercle) : une règle ajoutée en fin s'ajoute au
+  // texte noté ; ajoutée ailleurs, ou retirée, le texte noté est oublié et la feuille se relit par ses règles (cf. texteFeuille)
+  if (typeof insertRule === 'function') {
+    proto.insertRule = function (this: any, regle: string, index?: number) {
+      const enFin = index !== undefined && index >= this.cssRules.length
+      const rang  = insertRule.call(this, regle, index)
+      noter(this, enFin && typeof this.__mjsTexte === 'string' ? this.__mjsTexte + '\n' + regle : undefined)
+      return rang
+    }
+  }
+  if (typeof deleteRule === 'function') {
+    proto.deleteRule = function (this: any, index: number) {
+      deleteRule.call(this, index)
+      noter(this, undefined)
+    }
+  }
+}
+
+// Une valeur de propriété de style n'ajoute jamais une déclaration et n'avale jamais la suivante. Le navigateur refuse à l'écriture
+// (`setProperty`, `style.x = …`) un `;` ou un `!` hors chaîne et hors parenthèse, une parenthèse ou un crochet mal appariés, une chaîne
+// coupée par un saut de ligne ; le DOM simulé du rendu (happy-dom) écrivait tout tel quel dans l'attribut `style`, et la page reçue
+// appliquait la déclaration ajoutée (`red; background-image: url(…)` y faisait partir une requête). Un peu plus strict que le navigateur,
+// sans perte pour une vraie valeur : une accolade hors parenthèse, une chaîne, un commentaire ou une parenthèse laissés ouverts, un `\`
+// final sont refusés aussi. Un `;` dans une chaîne ou dans `url(data:…;base64,…)` reste permis, comme au navigateur.
+export function isSafeStyleValue(value: string): boolean {
+  const closers: string[] = []
+  let quote = ''
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]
+    if (c === '\\') {
+      if (i === value.length - 1) return false
+      i++
+      continue
+    }
+    if (quote) {
+      if (c === quote) quote = ''
+      else if (c === '\n' || c === '\r' || c === '\f') return false
+      continue
+    }
+    if (c === '/' && value[i + 1] === '*') {
+      const end = value.indexOf('*/', i + 2)
+      if (end < 0) return false
+      i = end + 1
+      continue
+    }
+    if (c === '"' || c === "'") quote = c
+    else if (c === '(') closers.push(')')
+    else if (c === '[') closers.push(']')
+    else if (c === '{') {
+      if (!closers.length) return false
+      closers.push('}')
+    }
+    else if (c === ')' || c === ']' || c === '}') {
+      if (closers.pop() !== c) return false
+    }
+    else if ((c === ';' || c === '!') && !closers.length) return false
+  }
+  return !quote && !closers.length
+}
+
+const STYLE_GUARD = Symbol.for('mjs.ssr.styleGuard')
+
+// `setProperty` du DOM simulé — `style.x = …` y passe aussi — applique la règle du navigateur : une valeur refusée ne change rien
+export function guardStyleValues(Declaration: any): void {
+  const proto = Declaration && Declaration.prototype
+  if (!proto || typeof proto.setProperty !== 'function' || proto[STYLE_GUARD]) return
+  const setProperty = proto.setProperty
+  proto.setProperty = function (this: any, name: string, value: unknown, priority?: string) {
+    if (value != null && !isSafeStyleValue(String(value))) return
+    return setProperty.call(this, name, value, priority)
+  }
+  proto[STYLE_GUARD] = true
+}
+
 /**
  * Crée un renderer SSR : compile UNE fois les composants, puis permet de
  * rendre plusieurs fois (chaque rendu dans une Window happy-dom isolée).
@@ -883,7 +1139,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // seulement quand elles sont RENSEIGNÉES : les laisser telles quelles écraserait la
   // valeur résolue par un `undefined` (un appelant qui passe `bundlerOpts` ne renseigne
   // pas les clés héritées). D'où le filtrage avant le dernier spread.
-  const explicites: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, i18n: opts.i18n, env: opts.env }
+  const explicites: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env }
   for (const k of Object.keys(explicites)) if (explicites[k] === undefined) delete explicites[k]
 
   const bundler = new Bundler({
@@ -931,9 +1187,11 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // sortie (celui que sert le back, jamais le dossier de travail de cette compilation) et un
   // `<link>` qui le désigne — un `<style>` en ligne y serait refusé par `style-src`. Le fichier est
   // CONTENU-ADRESSÉ : deux instances d'un même composant retombent sur le même nom, écrit une fois.
-  const feuille: FeuilleBalise = cspStrict
-    ? (css, tag) => css ? `<link rel="stylesheet" href="${writeHashedAsset(atelier.assetsDir, bundler.urlPrefix, 'mjs_ssr_style_' + tag, '.css', css)}">` : ''
-    : feuilleEnLigne
+  const baliseLien = (css: string, tag: string): string => css ? `<link rel="stylesheet" href="${ecrireFeuilleRendu(atelier.assetsDir, bundler.urlPrefix, tag, css)}">` : ''
+  const feuille: FeuilleBalise = cspStrict ? baliseLien : feuilleEnLigne
+  // Hors mode strict, avec un dossier de sortie à nous : les feuilles partagées passent par un plan
+  // par rendu (cf. sorties-rendu.ts) qui choisit, feuille par feuille, la forme en ligne ou liée
+  const planPossible = !cspStrict && !ownsTempDir
 
   // Charge le core + TOUS les composants compilés (un composant racine peut en
   // référencer d'autres). ESM stripé pour l'éval.
@@ -958,6 +1216,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // Portée par fichier (Option A) : chaque module/composant part dans sa propre
   // IIFE, ses imports résolus en destructuration locale depuis les namespaces
   // `_mjsF_*`. Le core (`µ`) est global (évalué séparément ci-dessus).
+  // `mjs_group-<nom>-<empreinte>.js` (groupe de fichiers, clé `bundles`) est écarté pour la même raison.
   // `mjs_page-<slug>-<empreinte>.js` ÉCARTÉ comme `bundle.js` : ce n'est pas une unité mais
   // l'ASSEMBLAGE des composants d'une page prérendue (cf. bundler/startup.ts), dont chaque unité est
   // déjà chargée ici une par une. L'évaluer en plus rejouerait les mêmes `customElements.define` et,
@@ -974,7 +1233,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // par leur PRÉFIXE `mjs_`, cf. runtimeIds plus bas) : l'un ou l'autre suffit à admettre un fichier.
   const emittedBasenames = new Set(Object.values(stats.manifest as Record<string, string>).map(p => p.split('/').pop() || ''))
   const files = jsFiles.filter(f =>
-    f !== coreFile && f !== 'bundle.js' && !/^mjs_page-[^/]*-[a-f0-9]{8}\.js$/.test(f) &&
+    f !== coreFile && f !== 'bundle.js' && !/^mjs_(?:page|group)-[^/]*-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f) &&
     (/^mjs_/.test(f) || emittedBasenames.has(f)))
   const idByFile = new Map(files.map(f => [f, fileToId(f)]))
   // Résout une URL d'import (`/assets/.../x-hash.js`) vers l'id du fichier cible ;
@@ -1064,7 +1323,18 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     abandon()
     throw new Error(t('server.ssr-happydom-manquant'))
   }
+  // happy-dom plus ancien que la version exigée : refus net (version trouvée, version exigée, commande pour monter) plutôt
+  // que des rendus qui varient d'un passage à l'autre — cf. happy-dom-version.ts
+  const outdated = outdatedHappyDomVersion()
+  if (outdated !== null) {
+    await bundler.close()
+    abandon()
+    throw new Error(t('server.ssr-happydom-trop-ancien', { found: outdated, required: HAPPY_DOM_MINIMUM }))
+  }
   const { Window } = HappyDOM
+  // une valeur de style liée (`--x={…}`, `@style.prop={…}`) n'ajoute jamais une déclaration au `style` écrit dans la page (cf. isSafeStyleValue) ;
+  // posé une fois sur la classe que partagent toutes les fenêtres happy-dom du processus
+  guardStyleValues(HappyDOM.CSSStyleDeclaration)
 
   async function renderToString(tag: string, options: RenderOptions = {}): Promise<RenderResult> {
     const { props = {}, store, shadowMode = 'open', settleMs = 1000, ssrMode = 'replace', forwardedUrl, forwardedCookie, light: lightRoot = false } = options
@@ -1092,7 +1362,20 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     // requête entrante à forwarder (prérendu, forwardOrigin désactivé/refusé, ou
     // défaut sûr sans autorisation d'hôte), on reste sur localhost — comportement
     // HISTORIQUE inchangé.
-    const window: any = new Window({ url: safeForwardedUrl || 'http://localhost/' })
+    // aucune ressource chargée par la fenêtre de rendu : une feuille liée, un script externe, la page
+    // d'un cadre ou d'une fenêtre ouverte par `window.open` partiraient en vraies requêtes du serveur
+    // à CHAQUE rendu, hors de toute garde
+    // (forwardOrigin et le refus des cibles internes ne couvrent que le proxy du moteur navigateur) —
+    // le rendu serveur n'en a besoin d'aucune
+    const window: any = new Window({
+      url: safeForwardedUrl || 'http://localhost/',
+      settings: {
+        disableCSSFileLoading: true,
+        disableJavaScriptFileLoading: true,
+        disableIframePageLoading: true,
+        navigation: { disableChildFrameNavigation: true, disableChildPageNavigation: true },
+      },
+    })
     const document = window.document
     // Cookies de la requête entrante → document.cookie AVANT tout eval/fetch de
     // l'app : SONDE empirique (happy-dom 20.9, cf. RenderOptions.forwardedCookie) —
@@ -1183,7 +1466,10 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           i18nSectionsLine = `if (typeof µ._i18nLang === 'function') { ${langLines.join(' ')} }\nµ._i18nLoadSync = window.__mjsI18nLoadSync;`
           ;(window as any).__mjsI18nLoadSync = i18nLoadSync
         }
-        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${i18nDataLine}\n${i18nSectionsLine}\nµ._isServer = true;\nµ.server = true;\n${componentCode}`)
+        noterTexteFeuilles(window)
+        // thèmes de l'application : le navigateur les reçoit par le manifeste (`µ._themeCss`), la fenêtre de rendu n'évalue pas le manifeste
+        const themeLine = bundler.themeCss ? `µ._themeCss = ${JSON.stringify(bundler.themeCss)}; if (typeof µ._themeAdopt === 'function') { µ._themeAdopt(); }\n` : ''
+        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${i18nDataLine}\n${i18nSectionsLine}\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
       } catch (e: any) {
         throw new Error(t('server.ssr-eval-echec', { message: e.message }))
       }
@@ -1327,7 +1613,11 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
               any = true
             }
           }
-          return any ? { lang: ${JSON.stringify(effectiveLang)}, sections: sections } : null
+          var root = (${buildSeedRoot.toString()})(µ._i18nUsedRoot, µ._i18nLangs)
+          if (!any && !root) { return null }
+          var seed = { lang: ${JSON.stringify(effectiveLang)}, sections: sections }
+          if (root) { seed.root = root }
+          return seed
         })()`,
         '__mjs_i18n',
       ) : ''
@@ -1364,20 +1654,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       if (_mode && !light) {
         // 'markers' : marqueurs persistants sur les nœuds réactifs. 'positional' /
         // 'diff' : aucun marqueur (HTML propre), l'alignement se fait côté client.
-        const hydrateNodes: any = ssrInfo(el).nodes
-        if (_mode === 'a' && hydrateNodes) {
-          const doc: any = window.document
-          const nodes: any = hydrateNodes
-          for (const key of Object.keys(nodes)) {
-            const n: any = nodes[key]
-            if (!n) continue
-            if (n.nodeType === 1 && n.setAttribute) {
-              n.setAttribute('mjs-h', key)
-            } else if (n.nodeType === 3 && n.parentNode) {
-              n.parentNode.insertBefore(doc.createComment('mjs-h:' + key), n)
-            }
-          }
-        }
+        if (_mode === 'a') etiqueterReprise(el, window.document)
         // (mode `csp`) — un `<script>` en ligne est bloqué par `script-src` sans
         // 'unsafe-inline' : le flag voyage alors par un ATTRIBUT du nœud racine (relu par
         // mjs_init.ts au boot) au lieu d'un script inline. `csp: false` (défaut) : chemin
@@ -1392,6 +1669,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
 
       let shadowHtml: string
       let html: string
+      // plan des feuilles partagées de CE rendu : un repère par racine, résolu une fois le fragment entier connu
+      const plan = planPossible ? creerPlanFeuilles(css => feuilleEnLigne(css, ''), baliseLien) : null
+      const feuilleRendu: FeuilleBalise = plan ? (css, tag) => tag.startsWith('partagee-') ? plan.marquer(css, tag) : feuille(css, tag) : feuille
       const warnings = compileWarnings.slice()
       // Clé(s) omises pendant la sérialisation du store/i18n (cf. serializeGlobal ci-dessus).
       if (globalSerializeWarnings.length) warnings.push(...globalSerializeWarnings)
@@ -1432,6 +1712,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // (cf. `markSsrTree`). La racine porte l'attribut par sa chaîne d'attributs, seule source de
       // sa balise sérialisée.
       markSsrTree(el)
+      // l'état courant des champs passe dans leurs attributs, seule chose que la sérialisation écrit (cf. `reflectFieldState`)
+      reflectFieldsTree(el)
       attrs += ' mjs-ssr'
       if (light) {
         // Mode light : le contenu est directement dans l'élément (pas de shadow) — la récursion
@@ -1445,13 +1727,13 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         const rewriteHost = (window.µ && typeof window.µ._lightHostCss === 'function') ? window.µ._lightHostCss : lightHostCss
         const lightCss = css ? String(rewriteHost(css, tag)) : ''
         const styleTag = feuille(lightCss, tag)
-        shadowHtml = serializeShadow(el, sm, feuille)
+        shadowHtml = serializeShadow(el, sm, feuilleRendu)
         html = `<${tag}${attrs}>${styleTag}${shadowHtml}</${tag}>`
       } else {
         // Walk récursif (cf. `serializeShadow`) : un sous-composant à shadow propre
         // réinjecte son PROPRE <template shadowrootmode> + sa feuille, à tout niveau de composition
         // — et par le MÊME émetteur que la racine, donc en `<link>` sous le mode strict.
-        shadowHtml = serializeShadow(el, sm, feuille)
+        shadowHtml = serializeShadow(el, sm, feuilleRendu)
         // Un CSS contenant `</style`
         // (ex. `content:"</style>"`) refermait PRÉMATURÉMENT la balise → tout le
         // reste du template avalé comme texte. On neutralise la séquence (`<\/style`
@@ -1460,7 +1742,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         // (mode `csp`) — un `<style>` en ligne DANS un `<template shadowrootmode>` est BLOQUÉ
         // par `style-src` sans 'unsafe-inline' (vérifié en navigateur) ; un `<link>`, lui,
         // s'applique dans une racine d'ombre — prouvé. `csp: false` (défaut) : chemin INCHANGÉ.
-        const styleTag = feuille(css, tag)
+        const styleTag = feuillesPartagees(el, feuilleRendu) + feuille(css, tag)
         html = `<${tag}${attrs}><template shadowrootmode="${sm}">${styleTag}${shadowHtml}</template></${tag}>`
         // `shadowMode:'closed'` produit un
         // DSD `<template shadowrootmode="closed">` que le NAVIGATEUR attache tel
@@ -1480,6 +1762,12 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         if (shadowMode === 'closed') {
           warnings.push(t('server.ssr-shadow-closed', { tag }))
         }
+      }
+
+      if (plan) {
+        const brut = html
+        html       = plan.finir(brut)
+        shadowHtml = plan.finir(shadowHtml, brut)
       }
 
       // `html.includes('mjs-fatal-error')` = FAUX POSITIF : une page dont la
@@ -1513,7 +1801,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     abandon()
   }
 
-  return { renderToString, close, get i18nLoadCount() { return i18nLoadCount } }
+  return { renderToString, close, bundler, get i18nLoadCount() { return i18nLoadCount } }
 }
 
 export interface RenderToStringOptions extends SSRRendererOptions, RenderOptions {
@@ -1543,6 +1831,8 @@ export async function renderToString(opts: RenderToStringOptions): Promise<Rende
     csp: opts.csp,
     maxStateVars: opts.maxStateVars,
     a11y: opts.a11y,
+    lint: opts.lint,
+    colorsEnabled: opts.colorsEnabled,
     i18n: opts.i18n,
     env: opts.env,
     bundlerOpts: opts.bundlerOpts,

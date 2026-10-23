@@ -32,21 +32,28 @@ const ROUTER = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_router.
 // un AUTRE realm), donc un simple `??=` ne le remplacerait jamais ; et un
 // autre fichier de test du même process Mocha peut avoir déjà posé SA propre
 // Window avant celui-ci (même piège que documenté dans les fichiers socket/
-// crossfade de ce tour).
+// crossfade de ce tour). Crochets posés DANS chaque describe (appel en tête) : à la racine du fichier, ils
+// couraient après chaque test de tous les fichiers du process
 let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any
-beforeEach(() => {
-  __prevWindow = (globalThis as any).window
-  __prevDocument = (globalThis as any).document
-  __prevCustomEvent = (globalThis as any).CustomEvent
-})
-afterEach(() => {
-  ;(globalThis as any).window = __prevWindow
-  ;(globalThis as any).document = __prevDocument
-  ;(globalThis as any).CustomEvent = __prevCustomEvent
-})
+function globalsRendusParTest() {
+  beforeEach(() => {
+    __prevWindow = (globalThis as any).window
+    __prevDocument = (globalThis as any).document
+    __prevCustomEvent = (globalThis as any).CustomEvent
+  })
+  afterEach(async () => {
+    // navigate() et initComponent() diffèrent d'une tâche le contrôle « aucune route » (setTimeout, faute de
+    // requestAnimationFrame ici) : il passe avant que la fenêtre du test ne soit rendue, sinon il lit `window` une
+    // fois rendu et lève hors de tout test
+    await new Promise((r) => setTimeout(r, 0))
+    ;(globalThis as any).window = __prevWindow
+    ;(globalThis as any).document = __prevDocument
+    ;(globalThis as any).CustomEvent = __prevCustomEvent
+  })
+}
 
 function makeRouter(win: any) {
-  const µ: any = { log() {}, warn() {}, error() {} }
+  const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
   const g: any = globalThis
   g.window = win
   g.document = win.document
@@ -56,6 +63,8 @@ function makeRouter(win: any) {
 }
 
 describe("routeur — navigate() : garde de ré-entrance (redirect dans @urlChange)", function () {
+  globalsRendusParTest()
+
   it("un @urlChange qui redirige (garde d'authentification) ne fait PAS recevoir aux composants suivants un chemin PÉRIMÉ", function () {
     const win: any = new Window({ url: 'http://localhost/' })
     const Router = makeRouter(win)
@@ -122,7 +131,7 @@ describe("routeur — navigate() : garde de ré-entrance (redirect dans @urlChan
 
 // ── la garde de ré-entrance manquait à initComponent (montage) ──
 function makeRouterMu(win: any) {
-  const µ: any = { log() {}, warn() {}, error() {}, state: (o: any) => ({ ...o }) }
+  const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log }, state: (o: any) => ({ ...o }) }
   const g: any = globalThis
   g.window = win
   g.document = win.document
@@ -132,6 +141,8 @@ function makeRouterMu(win: any) {
 }
 
 describe("routeur — initComponent() : garde de ré-entrance (redirect dans @urlChange AU MONTAGE)", function () {
+  globalsRendusParTest()
+
   it("un redirect au montage (garde d'auth) n'est PAS écrasé par le matchPath périmé d'initComponent", function () {
     const win: any = new Window({ url: 'http://localhost/#/admin' })
     const µ = makeRouterMu(win)
@@ -198,6 +209,8 @@ function makeSpyWin(url: string) {
 }
 
 describe("routeur — to(route, {replace:true}) : redirect sans piéger le Précédent (DURCISSEMENT)", function () {
+  globalsRendusParTest()
+
   it("replace:true → replaceState (pas pushState)", function () {
     const { win, calls } = makeSpyWin('http://localhost/#/admin')
     const Router = makeRouter(win)

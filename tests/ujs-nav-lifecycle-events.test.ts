@@ -59,9 +59,11 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
+const NAV_PROGRESS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_nav_progress.ts'), 'utf-8')
 
 // ────────────────────────────────────────────────────────────────────────────
 // EXTRACTION — marqueurs explicites dans la source (tests/helpers/extract-marked.ts), remplace
@@ -71,7 +73,12 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
+  // la barre de navigation (mjs_nav_progress.ts), toujours là avec mjs_ujs.ts — ses minuteries ne
+  // sonnent jamais ici : aucune barre dans le document factice
+  poserMessages(µ)
+  new Function('µ', 'document', 'setTimeout', 'clearTimeout', 'CSSStyleSheet', NAV_PROGRESS_SRC)(µ, document, () => 1, () => {}, undefined)
 }
 function extractClickBody(src: string): string {
   return extractMarkedBody(src, '_mjs_ujsOnClick')
@@ -213,6 +220,7 @@ describe('mjs_ujs — mjs:before-visit, clic cross-page', function () {
       _mjs_ajaxRequest: () => Promise.resolve(),
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/b', 'http://x/b#/section', '#/section')
@@ -245,6 +253,7 @@ describe('mjs_ujs — mjs:before-visit, clic cross-page', function () {
     })
     installHelpers(µ, doc, win)
     µ._mjs_navHibernate = (...a: any[]) => hibernateCalls.push(a) // espion posé APRÈS installHelpers
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/b', 'http://x/b')
@@ -298,6 +307,7 @@ describe('mjs_ujs — mjs:before-visit, µ._mjs_navDispatch', function () {
       _mjs_ajaxRequest: (opts: any) => { fetchCalls.push(opts); return Promise.resolve() },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { restoreBusy: () => restoreBusyCalls.push(1) })
@@ -316,6 +326,7 @@ describe('mjs_ujs — mjs:before-visit, µ._mjs_navDispatch', function () {
     const win: any = { location: { pathname: '/x', search: '', origin: 'http://x', host: 'x', href: 'http://x/x' } }
     const µ: any = baseMu({ realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_ajaxRequest: () => Promise.resolve() })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link: any = { hasAttribute: () => false, origin: 'http://x', target: '', protocol: 'http:', pathname: '/posts/1', search: '', hash: '', href: 'http://x/posts/1', getAttribute: (k: string) => (k === 'mjs-method' ? 'delete' : null), setAttribute() {}, removeAttribute() {}, closest: function (this: any) { return this } }
@@ -348,6 +359,7 @@ describe('mjs_ujs — mjs:visit', function () {
         Router: { navigate() {} },
       })
       installHelpers(µ, doc, win)
+      poserMessages(µ)
       new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
       const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
       const link = makeCrossLink('/b', 'http://x/b')
@@ -465,6 +477,7 @@ describe('mjs_ujs — mjs:load, clic', function () {
       Router: { navigate() {} },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/b', 'http://x/b')
@@ -564,6 +577,7 @@ describe('mjs_ujs — mjs:load — PAS émis', function () {
       _mjs_resSet() {},
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), {})
@@ -588,6 +602,7 @@ describe('mjs_ujs — mjs:load — PAS émis', function () {
       _mjs_ajaxRequest: (opts: any) => { capturedError = opts.error; return Promise.resolve() },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     µ._mjs_hardNav = () => {} // repli dur réel non pertinent ici (window.location) : neutralisé
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
@@ -629,6 +644,7 @@ describe('mjs_ujs — mjs:load, premier chargement', function () {
     const µ: any = baseMu()
     installHelpers(µ, doc, win)
 
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractInitialLoadBlock(UJS_SRC))(µ, doc, win)
 
     assert.deepEqual(events, [], "jamais synchrone à l'import")
@@ -652,6 +668,7 @@ describe('mjs_ujs — mjs:load, premier chargement', function () {
     const µ: any = baseMu()
     installHelpers(µ, doc, win)
 
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractInitialLoadBlock(UJS_SRC))(µ, doc, win)
 
     assert.deepEqual(events, [], 'rien avant DOMContentLoaded')
@@ -686,6 +703,7 @@ describe("mjs_ujs — un écouteur qui jette n'empêche jamais la navigation", f
       _mjs_ajaxRequest: () => Promise.resolve(),
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/b', 'http://x/b')
@@ -708,6 +726,7 @@ describe("mjs_ujs — un écouteur qui jette n'empêche jamais la navigation", f
       _mjs_ajaxRequest: () => Promise.resolve(),
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/b', 'http://x/b')
@@ -746,6 +765,7 @@ describe("mjs_ujs — un écouteur qui jette n'empêche jamais la navigation", f
 describe("mjs_ujs — µ._mjs_navRevalidate n'émet aucun des 3 événements de cycle", function () {
   const WIN_REVAL: any = { location: { href: 'http://x/' } }
   function installRevalidate(µ: any, window: any, document: any, DOMParserCtor: any) {
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'DOMParser', extractRevalidateStatement(UJS_SRC))(µ, window, document, DOMParserCtor)
   }
 
@@ -799,6 +819,7 @@ describe("mjs_ujs — detail.path/url SANS l'origine", function () {
     const win: any = { location: { pathname: '/x', search: '', origin: 'http://mon-site.example', host: 'mon-site.example', href: 'http://mon-site.example/x' } }
     const µ: any = baseMu({ realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_ajaxRequest: () => Promise.resolve() })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link: any = { hasAttribute: () => false, origin: 'http://mon-site.example', target: '', protocol: 'http:', pathname: '/produits/42', search: '', hash: '', href: 'http://mon-site.example/produits/42', getAttribute: (k: string) => (k === 'mjs-method' ? 'delete' : null), setAttribute() {}, removeAttribute() {}, closest: function (this: any) { return this } }
@@ -817,6 +838,7 @@ describe("mjs_ujs — detail.path/url SANS l'origine", function () {
     const win: any = { location: { href: 'http://mon-site.example/produits/42', origin: 'http://mon-site.example', host: 'mon-site.example' }, history: { pushState() {} } }
     const µ: any = baseMu({ _mjs_navSeq: 0, _mjs_ajaxRequest: () => Promise.resolve() })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     // µ._mjs_ujsOnSubmit calcule `url = form.getAttribute('action') || window.location.href` — un
@@ -884,6 +906,7 @@ describe('mjs_ujs — µ._mjs_navDispatch : garde GET/HEAD du calcul de getUrl',
       _mjs_ajaxRequest: (opts: any) => { capturedPayload = opts.data; return Promise.resolve() },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', 'File', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FormData, URL, class {}, File)
     const payload = new FormData()
     payload.append('titre', 'bonjour')
@@ -923,7 +946,9 @@ describe('mjs_ujs — mjs:load, clic réseau HTML : detail.path après une redir
     installHelpers(µ, doc, win)
     // µ._mjs_finalPathFor RÉEL : n'annule PAS la détection de redirection (contrairement au test 9,
     // qui neutralise cette fonction — c'est précisément l'angle mort visé par ce test-ci).
+    poserMessages(µ)
     new Function('µ', 'window', extractFinalPathForStatement(UJS_SRC))(µ, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     const link = makeCrossLink('/panier/ajouter', 'http://x/panier/ajouter')
@@ -959,6 +984,7 @@ describe('mjs_ujs — mjs:load, µ._mjs_navDispatch : PRG (POST → redirection 
     })
     installHelpers(µ, doc, win)
     class DP { parseFromString() { return { body: { childNodes: [freshNode] } } } }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, DP)
 
     µ._mjs_navDispatch('http://x/commandes', 'POST', new FakeFormData(), {})
@@ -1092,6 +1118,7 @@ describe("mjs_ujs — mjs:load, µ._mjs_navDispatch branche JSON : µ.nav retomb
       pageCache: { clear() {} }, _mjs_preloadCache: { clear() {} }, _mjs_preloaded: { clear() {} },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/produits', 'POST', new FakeFormData(), {})
@@ -1196,6 +1223,7 @@ describe('mjs_ujs — mjs:load, µ._mjs_navDispatch : `_swapped` protégé — A
       pageCache: { clear() {} }, _mjs_preloadCache: { clear() {} }, _mjs_preloaded: { clear() {} },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), {})
@@ -1224,6 +1252,7 @@ describe('mjs_ujs — mjs:load, µ._mjs_navDispatch : `_swapped` protégé — A
     installHelpers(µ, doc, win)
     // parseFromString SANS <body> exploitable (même patron que NoBodyParser, tests/ujs-submit-non-html-response-warns.test.ts).
     class NoBodyParser { parseFromString() { return { body: null } } }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, NoBodyParser)
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), {})
@@ -1248,6 +1277,7 @@ describe('mjs_ujs — mjs:load, µ._mjs_navDispatch : `_swapped` protégé — A
       pageCache: { clear() {} }, _mjs_preloadCache: { clear() {} }, _mjs_preloaded: { clear() {} },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), {})

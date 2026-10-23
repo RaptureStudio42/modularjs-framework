@@ -38,15 +38,26 @@ export class TokenBucket {
   }
 }
 
+// dernier parcours de chaque carte : quand, et la taille qu'il lui a laissée
+const derniersParcours = new WeakMap<Map<string, TokenBucket>, { at: number, size: number }>()
+const PARCOURS_INTERVALLE_MS = 10_000
+
 /**
  * Purge paresseuse d'une carte de seaux PAR IP — ne fait rien tant que `buckets.size <= max`
  * (coût nul dans le cas courant) ; au-delà, retire toutes les entrées `isIdle()` (seau REVENU
  * plein, donc sans jeton consommé récemment). Un seau qui vient de consommer reste, même au-delà
  * du plafond — seule l'inactivité vide une entrée, jamais son ancienneté brute.
+ * Le parcours ne se refait qu'après PARCOURS_INTERVALLE_MS, ou quand la carte a doublé depuis le
+ * précédent : un parcours complet à CHAQUE adresse nouvelle laissait des IPv6 tournantes bloquer
+ * la boucle (coût proportionnel au nombre d'adresses récentes, par requête). Amorti : constant.
  */
 export function pruneIdleBuckets(buckets: Map<string, TokenBucket>, max = 1000): void {
   if (buckets.size <= max) return
+  const now    = Date.now()
+  const dernier = derniersParcours.get(buckets)
+  if (dernier && now - dernier.at < PARCOURS_INTERVALLE_MS && buckets.size < 2 * Math.max(dernier.size, max)) return
   for (const [ip, bucket] of buckets) {
     if (bucket.isIdle()) buckets.delete(ip)
   }
+  derniersParcours.set(buckets, { at: now, size: buckets.size })
 }

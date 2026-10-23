@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const AJAX_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ajax.ts'), 'utf-8')
@@ -62,6 +63,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async (_url: string, _opts: any) =>
       makeFakeResponse({ url: 'https://x/posts/42', body: '<html><body id="app-root">ok</body></html>' })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let receivedUrl: any
@@ -80,6 +82,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async () =>
       makeFakeResponse({ status: 422, url: 'https://x/posts', body: '<html>form + erreurs</html>', contentType: 'text/html' })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let err: any
@@ -103,6 +106,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
       const fakeDocument = { querySelector: () => null }
       const fakeFetch = async () =>
         makeFakeResponse({ status: 422, url: 'https://x/posts', body: cas.body, contentType: cas.contentType, headers: { 'X-MJS-Version': 'v9' } })
+      poserMessages(µ)
       new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
       let err: any
@@ -118,6 +122,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async (_url: string, _opts: any) =>
       makeFakeResponse({ url: 'https://x/posts/42', body: '<html><body>ok</body></html>', headers: { 'X-MJS-Version': 'v7' } })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let receivedNav: any
@@ -131,6 +136,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     const µ: any = { log() {}, warn() {}, error() {} }
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async () => makeFakeResponse({ url: 'https://x/posts', body: '<html></html>' })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let receivedNav: any = 'INITIAL'
@@ -144,6 +150,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     const µ: any = { log() {}, warn() {}, error() {} }
     const fakeDocument = { querySelector: () => null }
     const fakeFetch = async () => makeFakeResponse({ url: 'https://x/posts', body: '<html></html>', headers: { 'X-MJS-Version': 'v7' } })
+    poserMessages(µ)
     new Function('µ', 'fetch', 'document', AJAX_SRC)(µ, fakeFetch, fakeDocument)
 
     let receivedBody: any, receivedUrl: any
@@ -210,7 +217,9 @@ describe("mjs_ujs — submit ajax : PRG (redirect POST→GET reflété dans l'UR
       if (m === 'get' || m === 'delete') return µ.ajax[m](opts.url, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
       return µ.ajax[m](opts.url, opts.data, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
     }
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FormDataCtor, URLCtor, DOMParserCtor)
     const body = extractSubmitBody(UJS_SRC)
     return new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', body)

@@ -101,7 +101,7 @@ describe('bundler — pruneOrphans() muet sur un registre {extensions:[]}', func
 
   it("cli.ts (case 'build') consulte bien `skipped` (déstructuration + dispatch), pas seulement { removed, failed }", function () {
     const src = readFileSync(join(repoRoot, 'src', 'cli.ts'), 'utf-8')
-    assert.match(src, /const \{ removed, failed, skipped \} = bundler\.pruneOrphans\(\)/,
+    assert.match(src, /const \{ removed, failed, skipped \} = (?:bundler|dernier)\.pruneOrphans\(\)/,
       "AVANT le fix : seuls { removed, failed } étaient déstructurés — `skipped` (registre illisible, cache) n'atteignait jamais l'affichage")
     assert.match(src, /cli\.build-purge-registre-illisible/)
     assert.match(src, /cli\.build-purge-registre-vide/)

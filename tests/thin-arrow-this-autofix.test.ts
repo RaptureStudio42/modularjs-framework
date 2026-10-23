@@ -171,22 +171,23 @@ describe('correctif auto this→_mjsThis dans une flèche fine top-level nue (th
       output = res.output
     })
 
-    it('flèche fine assignée à un nom nu : this réécrit en (this ?? _mjsThis)', () => {
-      assert.match(output, /let saveViaCall = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
-      assert.match(output, /let saveOriginal = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
-      assert.match(output, /let saveBareRef = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
+    // `§§` s'émet sur `_mjsThis` (le composant du script, quel que soit l'appelant) : aucun `this` à réécrire
+    it('flèche fine assignée à un nom nu : §§ vise le composant (_mjsThis)', () => {
+      assert.match(output, /let saveViaCall = function\(\) \{ return _mjsThis\._mjs_getRCtx/)
+      assert.match(output, /let saveOriginal = function\(\) \{ return _mjsThis\._mjs_getRCtx/)
+      assert.match(output, /let saveBareRef = function\(\) \{ return _mjsThis\._mjs_getRCtx/)
     })
 
-    it('flèche fine imbriquée : this réécrit aussi dans le corps imbriqué', () => {
-      assert.match(output, /let innerNested = function\(\) \{ return \(this \?\? _mjsThis\)\._mjs_getRCtx/)
+    it('flèche fine imbriquée : même chose dans le corps imbriqué', () => {
+      assert.match(output, /let innerNested = function\(\) \{ return _mjsThis\._mjs_getRCtx/)
     })
 
-    it('vraie méthode d\'instance (this.saveMethod = function(){...}) : this INCHANGÉ, jamais _mjsThis', () => {
-      assert.match(output, /this\.saveMethod = function\(\) \{ return this\._mjs_getRCtx\('theme'\)\.valeur = 'via-method' \}/)
+    it('vraie méthode d\'instance (this.saveMethod = function(){...}) : §§ vise aussi le composant', () => {
+      assert.match(output, /this\.saveMethod = function\(\) \{ return _mjsThis\._mjs_getRCtx\('theme'\)\.valeur = 'via-method' \}/)
     })
 
-    it('flèche épaisse (saveThick) : this INCHANGÉ, jamais _mjsThis', () => {
-      assert.match(output, /let saveThick = \(\) => this\._mjs_getRCtx\('theme'\)\.valeur = 'via-thick'/)
+    it('flèche épaisse (saveThick) : §§ vise aussi le composant', () => {
+      assert.match(output, /let saveThick = \(\) => _mjsThis\._mjs_getRCtx\('theme'\)\.valeur = 'via-thick'/)
     })
   })
 })

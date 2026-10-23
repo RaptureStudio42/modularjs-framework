@@ -6,8 +6,9 @@
 // (Rails…), on réutilise plutôt `createRenderHandler` en sidecar/middleware.
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
-import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs'
-import { join, resolve, relative, isAbsolute, extname, sep } from 'node:path'
+import { readFileSync, existsSync, statSync, realpathSync, openSync, readSync, closeSync, type Stats } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { join, resolve, relative, isAbsolute, extname, sep, dirname, basename } from 'node:path'
 import type { MjsConfig } from '../bundler/config.js'
 import { createRenderHandler, type RenderHandler, type RenderResponse } from './render-request.js'
 import { resolvePage } from './render-routes.js'
@@ -16,11 +17,13 @@ import { escapeJsonForScript } from './renderToString.js'
 import { createJournal, type Journal, type RecordServerFn } from './journal.js'
 import { handleMutatingRequest, navExtras } from './action-pipeline.js'
 import { TokenBucket, pruneIdleBuckets } from './token-bucket.js'
-import { getViewerScript, isViewerAllowed, viewerScriptElement, warnIfJournalViewerOpenInProd, isProdEnv, JOURNAL_VIEWER, THEME_VIEWER } from './viewer-page.js'
+import { getViewerScript, isViewerAllowed, setViewerPageHeaders, isSecureRequest, viewerScriptElement, warnIfJournalViewerOpenInProd, isProdEnv, JOURNAL_VIEWER, THEME_VIEWER } from './viewer-page.js'
 import { buildSsrHead } from './ssr-head.js'
-import { deriveUrlPrefix } from '../bundler/index.js'
+import { deriveUrlPrefix, bundleNeighborFiles, MARQUE_SORTIE, CLE_MARQUE_SORTIE, VALEUR_MARQUE_SORTIE } from '../bundler/index.js'
 import { readBuildVersion } from './build-version.js'
 import { t } from '../messages/index.js'
+import { shortFingerprint } from '../bundler/fingerprint.js'
+import { createAddressResolver } from '../mjs-ws/trust-proxy.js'
 
 // Exportée : réutilisée telle quelle par render-browser.ts (interception page.route
 // du moteur navigateur — mêmes types MIME que le serveur HTTP, une seule source) ET par
@@ -33,6 +36,23 @@ export const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon',
   '.wasm': 'application/wasm',
+}
+
+/**
+ * `/__mjs/<nom>` : un fichier que le build a écrit à côté du manifeste. Le manifeste est servi sous un chemin virtuel
+ * (`/__mjs/bundle.js`) ; un fichier unique coupé en morceaux importe ses voisins par un chemin relatif (`./chunk-….js`), qui se
+ * lit donc sous `/__mjs/`. Seuls les noms que le registre du build consigne (`bundleNeighborFiles`) sont servis — jamais un autre
+ * fichier du dossier du manifeste, jamais un chemin. Rend vrai quand la réponse est partie.
+ */
+export function serveBundleNeighbor(manifestPath: string | null, nom: string, method: string | undefined, res: ServerResponse): boolean {
+  if (!manifestPath || (method !== 'GET' && method !== 'HEAD')) return false
+  if (!bundleNeighborFiles(manifestPath).includes(nom)) return false
+  let contenu: Buffer
+  try { contenu = readFileSync(join(dirname(manifestPath), nom)) } catch { return false }
+  res.statusCode = 200
+  res.setHeader('Content-Type', nom.endsWith('.map') ? 'application/json' : 'text/javascript')
+  res.end(method === 'HEAD' ? undefined : contenu)
+  return true
 }
 
 export interface RenderServerOptions { port?: number; host?: string; /** environnement du build (`mjs serve --prod`) — le rendu par requête RECOMPILE dans le vrai dossier de sortie */ env?: 'dev' | 'prod' }
@@ -49,6 +69,41 @@ export interface RunningServer { server: Server; port: number; close(): Promise<
 // pour test direct (le seul appelant actuel reçoit un `pathname` déjà
 // normalisé par `new URL()`, qui élimine `..` en amont — ce garde-fou reste
 // une défense en profondeur pour tout futur appelant moins prudent).
+// empreintes déjà vérifiées, par fichier : taille et date de modification d'alors, verdict ; au plus VERDICTS_MAX (cf.
+// isServableFile), le plus ancien sort
+const empreintesVerifiees = new Map<string, { cle: string, ok: boolean }>()
+
+/** Vrai si ce fichier porte l'empreinte que le build écrit juste avant l'extension, donc ne change jamais sous ce nom (cache d'un
+ *  an) : `<base>-<5 caractères base 36>`, empreinte courte du contenu (bundler/fingerprint.ts), ou `<base>-<8 hexadécimaux>`, début
+ *  du md5 du contenu (images, fichiers copiés, feuilles du rendu). L'une et l'autre ne sont crues qu'après vérification sur le
+ *  contenu même, avec ou sans la ligne `sourceMappingURL` que le build ajoute après l'avoir calculée : un nom d'auteur qui leur
+ *  ressemble (`main-style.css`, `photo-2024a.jpg`, `facture-20241019.pdf`) n'est jamais immuable, et une empreinte sans chiffre
+ *  (`mjs_core-hymif.js`) l'est. Les morceaux d'un fichier unique, nommés par le build d'après le nom que leur donne esbuild (lui-même
+ *  tiré de leur contenu), sont crus sur le registre des sorties qui les consigne (`.mjs-outputs.json`, clé `chunks`). Une carte
+ *  `.map` garde le nom de son script même quand elle change : jamais immuable. Verdict mémorisé tant que le fichier garde sa taille
+ *  et sa date, 4096 verdicts au plus (le plus ancien sort). */
+export function isBuildFingerprinted(file: string): boolean {
+  const nom = basename(file)
+  if (nom.endsWith('.map')) return false
+  const m = nom.match(/-([a-f0-9]{8})\.[0-9a-z]+$/) ?? nom.match(/-([0-9a-z]{5})\.[0-9a-z]+$/)
+  if (!m) return false
+  const empreinte = m[1].length === 8 ? (c: Buffer): string => createHash('md5').update(c).digest('hex').slice(0, 8) : shortFingerprint
+  try {
+    const st  = statSync(file)
+    const cle = st.size + ':' + st.mtimeMs
+    const vu  = empreintesVerifiees.get(file)
+    if (vu && vu.cle === cle) return vu.ok
+    const contenu = readFileSync(file)
+    const fin     = Buffer.from(`\n//# sourceMappingURL=${nom}.map\n`)
+    const ok      = empreinte(contenu) === m[1] || (contenu.length > fin.length && contenu.subarray(contenu.length - fin.length).equals(fin) && empreinte(contenu.subarray(0, contenu.length - fin.length)) === m[1]) || (m[1].length === 8 && bundleNeighborFiles(file).includes(nom))
+    if (!vu && empreintesVerifiees.size >= VERDICTS_MAX) empreintesVerifiees.delete(empreintesVerifiees.keys().next().value as string)
+    empreintesVerifiees.set(file, { cle, ok })
+    return ok
+  } catch {
+    return false
+  }
+}
+
 export function isWithinDir(base: string, target: string): boolean {
   const rel = relative(base, target)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
@@ -67,6 +122,197 @@ export function isRealPathWithin(base: string, target: string): boolean {
     const realFile = realpathSync(target)
     return realFile === realBase || realFile.startsWith(realBase.endsWith(sep) ? realBase : realBase + sep)
   } catch { return false }
+}
+
+// Racine du PROJET servie par `mjs dev` sans bloc `render` : ce qu'un navigateur charge sort, les
+// SECRETS d'une appli voisine (Rails, Node…) jamais. Liste FERMÉE de ce qui est refusé, quelle que
+// soit l'extension : segment caché (`.git`, `.env`…), dossiers privés (à toute profondeur ; `app/` et
+// `server/` à la racine, sources de l'appli et du serveur), fichiers de configuration du projet, à la
+// racine même tout `.json` et les entrées serveur (`ws.js`, `serveur.js`, `server.mjs`, entrées
+// déclarées dans la configuration), fichiers serveur `*.server.*`, extensions des clés, de la
+// configuration, des sources serveur, des journaux, bases et sauvegardes, fichier sans extension
+// (`Gemfile`, `id_rsa`). Noms comparés comme les lit un disque insensible à la casse (macOS, Windows) :
+// sans la casse, sans les points et espaces de fin que Windows ignore ; `:` (flux NTFS), `~` (noms
+// courts 8.3, sauvegardes) et l'antislash (séparateur Windows) refusés.
+const PRIVATE_DIRS = new Set(['config', 'log', 'logs', 'tmp', 'db', 'storage', 'node_modules'])
+const ROOT_PRIVATE_DIRS = new Set(['app', 'server'])
+const PRIVATE_FILES = new Set(['mjs.config.json', 'package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'composer.json', 'composer.lock', 'tsconfig.json', 'jsconfig.json'])
+// à la racine même : entrées que `mjs ws` et `mjs serveur` cherchent sans `.server.` (leurs variantes `.civet` sont déjà des
+// sources serveur) et entrée usuelle d'une appli Node, pendant du dossier `server/`
+const ROOT_SERVER_FILES = new Set(['ws.js', 'serveur.js', 'server.js', 'server.mjs'])
+const SECRET_EXTENSIONS = new Set([
+  // clés et certificats privés
+  '.key', '.pem', '.p8', '.p12', '.pfx', '.jks', '.keystore', '.ppk', '.gpg', '.pgp', '.kdbx', '.enc',
+  // configuration
+  '.env', '.yml', '.yaml', '.toml', '.ini', '.conf', '.cfg', '.cnf', '.config', '.properties', '.lock', '.tfvars', '.tfstate',
+  // sources serveur
+  '.rb', '.erb', '.rake', '.ru', '.gemspec', '.haml', '.slim', '.php', '.phtml', '.py', '.pyc', '.pl', '.pm', '.cgi', '.go', '.rs', '.java', '.kt', '.scala', '.cs', '.ex', '.exs', '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.ts', '.mts', '.cts', '.cjs', '.civet', '.coffee',
+  // journaux, bases, sauvegardes
+  '.log', '.sql', '.sqlite', '.sqlite3', '.db', '.dump', '.bak', '.backup', '.old', '.orig', '.save', '.swp',
+])
+
+/** Vrai si ce chemin sous la racine du projet (segments de l'URL décodée, ou du chemin réel) peut
+ *  être servi par `mjs dev` — et par les deux serveurs quand le dossier de sortie est la racine du projet (cf. isProjectFileRefused).
+ *  Exportée pour test direct. */
+export function isBrowserResource(segments: string[]): boolean {
+  const noms = segments.flatMap(s => s.split('\\')).filter(Boolean).map(s => s.toLowerCase().replace(/[. ]+$/, ''))
+  if (noms.length === 0) return false
+  if (noms.some(s => s === '' || s.startsWith('.') || s.includes(':') || s.includes('~') || PRIVATE_DIRS.has(s))) return false
+  if (noms.length > 1 && ROOT_PRIVATE_DIRS.has(noms[0])) return false
+  const nom = noms[noms.length - 1]
+  if (PRIVATE_FILES.has(nom) || /^tsconfig\..*\.json$/.test(nom) || /\.server\.[^.]+$/.test(nom)) return false
+  const ext = extname(nom)
+  // à la racine même : aucun JSON (`secrets.json`, `credentials.json`…), aucune entrée serveur ; un JSON que la page charge vit dans un dossier
+  if (noms.length === 1 && (ext === '.json' || ROOT_SERVER_FILES.has(nom))) return false
+  return ext !== '' && !SECRET_EXTENSIONS.has(ext)
+}
+
+// une liste de pré-cache plus lourde n'est pas lue
+const MAX_PRECACHE_OCTETS = 4 * 1024 * 1024
+
+// sortie que le build écrit lui-même, reconnue à son contenu : nom qui porte l'empreinte vérifiée du contenu (cœur, fichiers de
+// messages, images…), marque des sorties à nom fixe en première ligne (manifeste, feuilles de variante ; jamais un `.json`), ou
+// `mjs-precache.json` réduit à `version` et `assets` (marqué ou non : la forme qu'il a quand la sortie n'est pas dans les sources)
+function isBuildOutput(fichier: string): boolean {
+  if (isBuildFingerprinted(fichier)) return true
+  try {
+    if (basename(fichier) === 'mjs-precache.json') {
+      if (statSync(fichier).size > MAX_PRECACHE_OCTETS) return false
+      const lu = JSON.parse(readFileSync(fichier, 'utf-8'))
+      if (lu === null || typeof lu !== 'object' || Array.isArray(lu)) return false
+      const cles = Object.keys(lu).filter(k => !(k === CLE_MARQUE_SORTIE && lu[k] === VALEUR_MARQUE_SORTIE)).sort().join(',')
+      return cles === 'assets,version' && typeof lu.version === 'string' && Array.isArray(lu.assets) && lu.assets.every((a: unknown) => typeof a === 'string')
+    }
+    if (extname(fichier).toLowerCase() === '.json') return false
+    const tete = Buffer.alloc(MARQUE_SORTIE.length + 2)
+    const fd   = openSync(fichier, 'r')
+    let lus: number
+    try {
+      lus = readSync(fd, tete, 0, tete.length, 0)
+    } finally {
+      closeSync(fd)
+    }
+    const debut = tete.subarray(0, lus).toString('latin1')
+    return debut === MARQUE_SORTIE || debut === MARQUE_SORTIE + '\r' || debut === MARQUE_SORTIE + '\r\n' || debut.startsWith(MARQUE_SORTIE + '\n')
+  } catch {
+    return false
+  }
+}
+
+/** Entrées serveur déclarées dans la configuration (`ws.entry`, `serveur.entry`, `render.entry`, résolues depuis `base`, le dossier
+ *  de mjs.config.json), rangées n'importe où sous n'importe quel nom : comparées au fichier demandé par leur chemin réel, sans la
+ *  casse (cf. isBrowserResource). */
+export function isDeclaredServerEntry(fichierReel: string, config: MjsConfig | null | undefined, base: string): boolean {
+  return [config?.ws?.entry, config?.serveur?.entry, config?.render?.entry].some((entree) => {
+    if (typeof entree !== 'string' || entree === '') return false
+    let chemin = resolve(base, entree)
+    try { chemin = realpathSync.native(chemin) } catch { /* absente : comparée telle que déclarée */ }
+    return chemin.toLowerCase() === fichierReel.toLowerCase()
+  })
+}
+
+/** `mjs dev` et `mjs serve` : vrai si ce fichier du dossier servi `dossier` ne doit pas sortir, parce que ce dossier est la racine du
+ *  projet ou la contient (`"outputDir": "."`) et porte donc aussi les secrets de l'appli. Même règle que la racine du projet servie
+ *  par `mjs dev` (cf. isBrowserResource), sur le chemin réel, plus les entrées serveur déclarées ; les sorties que le build écrit
+ *  lui-même restent servies (cf. isBuildOutput). Un dossier de sortie dédié (`public/modularjs`) reste servi tel quel. Chemin
+ *  illisible : refusé. */
+export function isProjectFileRefused(fichier: string, dossier: string, projectRoot: string | null, config: MjsConfig | null | undefined, configDir: string | null | undefined): boolean {
+  if (!projectRoot || !isRealPathWithin(dossier, projectRoot)) return false
+  try {
+    const reel   = realpathSync.native(fichier)
+    const projet = realpathSync.native(projectRoot)
+    const base   = isRealPathWithin(projet, reel) ? projet : realpathSync.native(dossier)
+    if (isDeclaredServerEntry(reel, config, configDir ?? projectRoot)) return true
+    if (isBrowserResource(relative(base, reel).split(sep))) return false
+    const ext = extname(reel).toLowerCase()
+    return ext === '' || SECRET_EXTENSIONS.has(ext) || !isBuildOutput(reel)
+  } catch {
+    return true
+  }
+}
+
+// verdicts favorables déjà rendus, par chemin demandé (cf. verdictGarde) : au plus VERDICTS_MAX, le plus ancien sort
+const VERDICTS_MAX   = 4096
+const verdictsServis = new Map<string, VerdictGarde>()
+// un numéro par objet de configuration : un verdict ne passe jamais d'une configuration à une autre
+const numerosConfig = new WeakMap<object, number>()
+let configsVues     = 0
+
+interface IdentiteFichier { dev: number, ino: number, size: number, mtimeMs: number, ctimeMs: number }
+// endroit réel du chemin demandé et du dossier servi, liens résolus
+interface EndroitReel { reel: string, base: string }
+type VerdictGarde = IdentiteFichier & EndroitReel
+
+function memeFichier(a: IdentiteFichier, b: IdentiteFichier): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs
+}
+
+// chemins réels du fichier demandé et du dossier servi, par la forme native (un appel système chacun) ; irrésoluble : null
+function endroitReel(fichier: string, dossier: string): EndroitReel | null {
+  try { return { reel: realpathSync.native(fichier), base: realpathSync.native(dossier) } } catch { return null }
+}
+
+function memeEndroit(a: EndroitReel | null, b: EndroitReel | null): boolean {
+  return a !== null && b !== null && a.reel === b.reel && a.base === b.base
+}
+
+function numeroConfig(config: MjsConfig | null | undefined): number {
+  if (!config) return 0
+  let numero = numerosConfig.get(config) ?? 0
+  if (numero === 0) { numero = ++configsVues; numerosConfig.set(config, numero) }
+  return numero
+}
+
+/** Verdict gardé d'un fichier ordinaire `fichier`, demandé sous le dossier servi `dossier` : `controle` (des dizaines de µs, ses
+ *  chemins réels résolus par la forme JavaScript) ne tourne qu'à la première demande, et de nouveau dès que le chemin ne mène plus au
+ *  même endroit réel ou au même fichier inchangé. À chaque demande sont relus, en 5 µs environ : l'identité du fichier (appareil, inode, taille, dates de modification et de changement d'état, par
+ *  un seul stat qui suit les liens), et les chemins réels du fichier et du dossier servi (forme native). Un lien posé après coup sur
+ *  le fichier ou sur un dossier du chemin, le dossier servi compris, mène à un autre fichier ou à un autre endroit réel — même un
+ *  dossier déplacé hors du dossier servi puis remplacé par un lien vers lui, qui garde le même fichier ; un fichier réécrit ou
+ *  remplacé (sortie reconstruite, `mjs dev` qui recompile) change de dates : tout est alors vérifié de nouveau. Un verdict n'est
+ *  gardé que si rien n'a bougé pendant sa vérification ; un refus ne l'est jamais. Absent, dossier, illisible : faux. */
+function verdictGarde(cle: string, fichier: string, dossier: string, controle: () => boolean): boolean {
+  let avant: Stats | undefined
+  try { avant = statSync(fichier, { throwIfNoEntry: false }) } catch { return false }
+  if (!avant || !avant.isFile()) return false
+  const vu = verdictsServis.get(cle)
+  if (vu && memeFichier(vu, avant) && memeEndroit(vu, endroitReel(fichier, dossier))) return true
+  if (vu) verdictsServis.delete(cle)
+  const endroit = endroitReel(fichier, dossier)
+  try {
+    if (!controle()) return false
+  } catch {
+    return false
+  }
+  let apres: Stats | undefined
+  try { apres = statSync(fichier, { throwIfNoEntry: false }) } catch { apres = undefined }
+  if (endroit && apres && memeFichier(apres, avant) && memeEndroit(endroit, endroitReel(fichier, dossier))) {
+    if (verdictsServis.size >= VERDICTS_MAX) verdictsServis.delete(verdictsServis.keys().next().value as string)
+    verdictsServis.set(cle, { dev: avant.dev, ino: avant.ino, size: avant.size, mtimeMs: avant.mtimeMs, ctimeMs: avant.ctimeMs, reel: endroit.reel, base: endroit.base })
+  }
+  return true
+}
+
+/** Vrai si `fichier`, demandé sous le dossier servi `dossier`, est un fichier ordinaire qui peut sortir : dans ce dossier par son
+ *  texte (cf. isWithinDir) et par son chemin réel (cf. isRealPathWithin), et pas un secret du projet quand ce dossier est la racine
+ *  du projet (cf. isProjectFileRefused ; `projectRoot` nul : sans objet). Verdict gardé par chemin demandé (cf. verdictGarde). */
+export function isServableFile(fichier: string, dossier: string, projectRoot: string | null, config: MjsConfig | null | undefined, configDir: string | null | undefined): boolean {
+  const cle = dossier + '\0' + (projectRoot ?? '') + '\0' + (configDir ?? '') + '\0' + numeroConfig(config) + '\0' + fichier
+  return verdictGarde(cle, fichier, dossier, () => isWithinDir(dossier, fichier) && isRealPathWithin(dossier, fichier) && !isProjectFileRefused(fichier, dossier, projectRoot, config, configDir))
+}
+
+/** `mjs dev` qui sert la racine du projet `projectRoot` (sans bloc `render`) : vrai si `fichier` est un fichier ordinaire qui peut
+ *  sortir — dans la racine par son chemin réel (un lien posé dans la racine et pointant ailleurs en sort sans jamais écrire `..`),
+ *  ressource de navigateur sur ce chemin réel (cf. isBrowserResource : un lien vers `config/`, un nom que le disque lit autrement,
+ *  casse ou nom court 8.3 sous Windows, ne la contournent pas), et aucune entrée serveur déclarée dans la configuration, quel que
+ *  soit son nom. Verdict gardé par chemin demandé, comme celui d'isServableFile (cf. verdictGarde). */
+export function isProjectRootFileServable(fichier: string, projectRoot: string, config: MjsConfig | null | undefined, configDir: string | null | undefined): boolean {
+  const cle = '\0racine\0' + projectRoot + '\0' + (configDir ?? '') + '\0' + numeroConfig(config) + '\0' + fichier
+  return verdictGarde(cle, fichier, projectRoot, () => {
+    if (!isRealPathWithin(projectRoot, fichier)) return false
+    const reel = realpathSync.native(fichier)
+    return isBrowserResource(relative(realpathSync.native(projectRoot), reel).split(sep)) && !isDeclaredServerEntry(reel, config, configDir ?? projectRoot)
+  })
 }
 
 /** Shell HTML minimal : enveloppe le rendu d'une page + charge le bundle client.
@@ -171,6 +417,9 @@ export async function startRenderServer(
 ): Promise<RunningServer> {
   const port = opts.port ?? 3000
   const host = opts.host ?? '127.0.0.1'
+  // hôte IPv6 (`::1`, `::`) : entre crochets dans une URL — `http://::1` est invalide, et chaque
+  // requête répondait 500
+  const hoteUrl = host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host
   const outputDir = resolve(configDir, config.outputDir || 'dist')
   // Manifeste servi sous `/__mjs/bundle.js` : celui que le projet déclare, sinon le défaut du
   // bundler (`public/modularjs/bundle.js`, relatif à la racine du projet) — `mjs build` et
@@ -200,13 +449,15 @@ export async function startRenderServer(
   warnIfJournalViewerOpenInProd(journalCfg?.viewer, opts.env) // une fois au démarrage, cf. viewer-page.ts
   const journalServerEnabled = journalCfg?.server !== false
   const journalClientEnabled = journalCfg?.client === true
-  const journalStore: Journal = createJournal({ dir: join(configDir, 'log'), maxEntries: journalCfg?.maxEntries, maxBytes: journalCfg?.maxBytes })
+  const journalStore: Journal = createJournal({ dir: join(configDir, 'log'), maxEntries: journalCfg?.maxEntries, maxBytes: journalCfg?.maxBytes, maxDays: journalCfg?.maxDays })
   const recordServer: RecordServerFn = journalServerEnabled
     ? (input) => journalStore.record('server', { ...input, version: readBuildVersion(manifestPath) })
     : () => {}
   // seau à jetons PAR IP (POST /__mjs/errors, étage 2) — état propre à CE serveur (jamais partagé entre
   // deux instances, ex. deux tests concurrents) ; ~10 jetons, recharge 30/min (0.5/s).
   const errorsRateLimit = new Map<string, TokenBucket>()
+  // adresse du visiteur derrière un proxy de confiance (`journal.trustProxy`), sinon celle de la socket
+  const adresseVisiteur = createAddressResolver(journalCfg?.trustProxy)
 
   const handler: RenderHandler = await createRenderHandler(config, configDir, recordServer, opts.env)
   // Chargeurs de props/actions `.server.mjs` (cf. serve-entry.ts) : couture posée par
@@ -220,7 +471,7 @@ export async function startRenderServer(
       // (jamais `req.url` brut) pour le champ `url` des deux réponses JSON du protocole plus bas :
       // sans cette normalisation ici aussi, un client recevait `//p/42` (lu comme protocole-relatif).
       const reqUrl = (req.url || '/').replace(/^\/{2,}/, '/')
-      const url = new URL(reqUrl, 'http://' + host)
+      const url = new URL(reqUrl, 'http://' + hoteUrl)
       // Un pourcentage malformé (`/%zz`) fait JETER `decodeURIComponent` (URIError) :
       // sans ce filet, seul le catch global (bas de fichier) l'attrapait → 500 silencieux
       // pour ce qui n'est qu'une requête mal formée, jamais une erreur serveur réelle.
@@ -250,6 +501,8 @@ export async function startRenderServer(
         res.setHeader('Content-Type', 'text/javascript')
         res.end(readFileSync(manifestPath)); return
       }
+      // fichiers voisins du manifeste (fichier unique coupé en morceaux) : seulement ceux que le build a consignés
+      if (pathname.startsWith('/__mjs/') && serveBundleNeighbor(manifestPath, pathname.slice('/__mjs/'.length), req.method, res)) return
       // Journal d'erreurs : POST (dépôt client, étage 2) + GET page/.json + DELETE (purge, étage 3).
       // POST suit SA PROPRE porte (`journal.client`) ; les 3 autres suivent la RÈGLE VIEWER
       // (isViewerAllowed) — refus TOUJOURS un 404 indistinct, jamais un 403 (cf. viewer-page.ts).
@@ -257,7 +510,7 @@ export async function startRenderServer(
         if (journalClientEnabled) {
           // a. seau à jetons par IP — même défense que bridge.ts:clientIp (jamais X-Forwarded-For,
           // trivialement falsifiable par l'appelant lui-même).
-          const ip = req.socket.remoteAddress ?? 'inconnue'
+          const ip = adresseVisiteur(req.socket.remoteAddress, req.headers) ?? 'inconnue'
           let bucket = errorsRateLimit.get(ip)
           if (!bucket) {
             pruneIdleBuckets(errorsRateLimit)   // purge avant croissance, cf. token-bucket.ts
@@ -298,7 +551,7 @@ export async function startRenderServer(
         if (req.method === 'GET' || req.method === 'DELETE') {
           // `opts.env` manquait ICI aussi (même bogue que warnIfJournalViewerOpenInProd
           // plus haut) : un `--prod` sans NODE_ENV laissait cette route ouverte en production réelle.
-          if (!isViewerAllowed(journalCfg?.viewer, url, opts.env)) {
+          if (!isViewerAllowed(journalCfg?.viewer, url, opts.env, req.headers.cookie)) {
             res.statusCode = 404; res.end('Not Found'); return
           }
           if (pathname === '/__mjs/errors.json' && req.method === 'GET') {
@@ -309,8 +562,9 @@ export async function startRenderServer(
           }
           if (pathname === '/__mjs/errors' && req.method === 'GET') {
             try {
-              const script = await getViewerScript(manifestPath, JOURNAL_VIEWER)
+              const script = await getViewerScript(manifestPath, JOURNAL_VIEWER, outputDir)
               res.statusCode = 200
+              setViewerPageHeaders(res, journalCfg?.viewer, url, isSecureRequest(req, journalCfg?.trustProxy))
               res.setHeader('Content-Type', 'text/html; charset=utf-8')
               res.end(shell('', '/__mjs/bundle.js', config.i18n?.default || 'fr', viewerScriptElement(script, JOURNAL_VIEWER)))
             } catch (e: any) {
@@ -348,7 +602,7 @@ export async function startRenderServer(
         }
         if (pathname === '/__mjs/theme' && req.method === 'GET') {
           try {
-            const script = await getViewerScript(manifestPath, THEME_VIEWER)
+            const script = await getViewerScript(manifestPath, THEME_VIEWER, outputDir)
             res.statusCode = 200
             res.setHeader('Content-Type', 'text/html; charset=utf-8')
             res.end(shell('', '/__mjs/bundle.js', config.i18n?.default || 'fr', viewerScriptElement(script, THEME_VIEWER)))
@@ -370,8 +624,12 @@ export async function startRenderServer(
       // même donnée disponible sans aucune garde de production — même politique que server/index.ts
       // (serveProjectRoot, dotfile jamais servi)
       const hidden = rel.split('/').some((s) => s.startsWith('.'))
-      if (rel && !hidden && isWithinDir(outputDir, asset) && existsSync(asset) && statSync(asset).isFile() && isRealPathWithin(outputDir, asset)) {
+      // `outputDir` qui est la racine du projet (ou la contient) : ses secrets ne sortent pas, les sorties du build si (même garde que `mjs dev`) ;
+      // verdict gardé tant que le chemin mène au même fichier inchangé (cf. isServableFile)
+      if (rel && !hidden && isServableFile(asset, outputDir, configDir, config, configDir)) {
         res.setHeader('Content-Type', MIME[extname(asset)] || 'application/octet-stream')
+        // nommé par son contenu : jamais modifié sous ce nom, cache d'un an ; tout autre fichier revalidé
+        res.setHeader('Cache-Control', isBuildFingerprinted(asset) ? 'public, max-age=31536000, immutable' : 'no-cache')
         res.end(readFileSync(asset)); return
       }
       // Verbes MUTANTS (POST/PUT/PATCH/DELETE) : pipeline PARTAGÉ avec `mjs dev`

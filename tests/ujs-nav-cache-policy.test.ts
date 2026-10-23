@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -29,6 +30,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 // µ._mjs_navRevalidate vit DANS le bloc helpers ci-dessus (donc déjà défini par installHelpers), mais SANS
@@ -39,6 +41,7 @@ function installHelpers(µ: any, document: any, window: any) {
 // il lui faut donc une base pour résoudre les URL relatives, comme tout code navigateur.
 const WIN_REVAL: any = { location: { href: 'http://x/' } }
 function installRevalidate(µ: any, window: any, document: any, DOMParserCtor: any) {
+  poserMessages(µ)
   new Function('µ', 'window', 'document', 'DOMParser', extractMarked(UJS_SRC, '_mjs_navRevalidate'))(µ, window, document, DOMParserCtor)
 }
 function extractAjaxGetStatement(src: string): string {
@@ -385,6 +388,7 @@ describe('mjs_ujs — bout-en-bout (clic, protocole JSON) : wiring cache:"no-cac
       paths: { b: 'yyy.js' },
     })
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickHandler = new Function('e', 'µ', 'window', 'document', 'DOMParser', extractClickBody(UJS_SRC))
     function makeLink(dest: string) {

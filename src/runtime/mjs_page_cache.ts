@@ -1,6 +1,6 @@
-// mjs_page_cache — cache de pages/vues hibernées (routeur + UJS) et libellés du runtime
-// (router/ujs/modal) : DÉTACHÉ du cœur (mjs_init.ts en portait ces symboles), DÉTECTÉ PAR
-// CONFIG SEULE (jamais par scan) — signal = module `router` OU `ujs` OU `modal` sélectionné.
+// mjs_page_cache — cache de pages/vues hibernées (routeur + UJS) : DÉTACHÉ du cœur
+// (mjs_init.ts en portait ces symboles), DÉTECTÉ PAR CONFIG SEULE (jamais par scan) — signal =
+// module `router` OU `ujs` OU `modal` sélectionné.
 //
 // `µ.LRUCache`/`µ._mjs_isPageCached`/`µ._mjs_destroyEvictedTree`/`µ._mjs_routeErrorCss` ne servent QU'à
 // router+ujs : `µ.pageCache`/`µ._mjs_scrollPos`/`µ._mjs_preloadCache` (mjs_ujs.ts) et `instCache`
@@ -10,18 +10,13 @@
 // deux n'a de repli si l'autre est absent, cf. l'historique : « mjs_ujs.ts peut tourner SANS
 // mjs_router.ts, une source unique posée sur le seul module garanti présent »).
 //
-// `µ._mjs_label`/`µ._mjs_labelLang` sont EN PLUS lus par `mjs_modal.ts` (`_mjs_label('modal'|'toast', …)`,
-// guardé `typeof µ._mjs_label === 'function'` — sans ce fichier, 'modal' SEUL continuerait de
-// fonctionner mais perdrait la traduction projet des libellés toast/modale, repli sur le texte
-// fixe) : 'modal' rejoint donc router/ujs comme signal, plutôt qu'un fichier séparé pour 2
-// fonctions qui partagent déjà la même doctrine (faux positif accepté sur LRUCache si SEUL
-// 'modal' est sélectionné — jamais l'inverse).
-
 // Feuille du panneau « route introuvable » — partagée entre mjs_router.ts (_mjs_showNoMatch,
 // routeur hash/<@view>) et mjs_ujs.ts (_mjs_navShowNotFound, navigation JSON) : mêmes classes
 // `mjs-route-error*`, injectées par un `<style>` FRÈRE du panneau (jamais adoptedStyleSheets,
-// jamais de shadow — cf. leurs call-sites).
-µ._mjs_routeErrorCss = '.mjs-route-error{margin:2rem auto;max-width:34rem;padding:1.25rem 1.5rem;border:1px solid var(--mjs-route-error-border, #d9534f);border-radius:var(--mjs-route-error-radius, 8px);background:var(--mjs-route-error-bg, rgba(217,83,79,.08));color:var(--mjs-route-error-fg, #d9534f);font:15px/1.6 system-ui,sans-serif;text-align:center}.mjs-route-error strong{display:block;font-size:1.25rem;margin-bottom:.4rem}.mjs-route-error p{margin:0 0 .6rem}.mjs-route-error code{font:13px/1.5 ui-monospace,monospace;opacity:.85;word-break:break-all}.mjs-route-error-list{margin-top:.8rem;font-size:12px;opacity:.75}';
+// jamais de shadow — cf. leurs call-sites). Sa 1re règle cache le `<style>` qui la porte (marqué
+// `data-mjs-route-error-css`), `!important` compris : une règle de page qui rend visibles tous les
+// enfants d'une zone (`> * { display: block }`) affichait son CSS en texte sous le message.
+µ._mjs_routeErrorCss = '[data-mjs-route-error-css]{display:none!important}.mjs-route-error{margin:2rem auto;max-width:34rem;padding:1.25rem 1.5rem;border:1px solid var(--mjs-route-error-border, #d9534f);border-radius:var(--mjs-route-error-radius, 8px);background:var(--mjs-route-error-bg, rgba(217,83,79,.08));color:var(--mjs-route-error-fg, #d9534f);font:15px/1.6 system-ui,sans-serif;text-align:center}.mjs-route-error strong{display:block;font-size:1.25rem;margin-bottom:.4rem}.mjs-route-error p{margin:0 0 .6rem}.mjs-route-error code{font:13px/1.5 ui-monospace,monospace;opacity:.85;word-break:break-all}.mjs-route-error-list{margin-top:.8rem;font-size:12px;opacity:.75}';
 
 // Vrai si le nœud vit dans un sous-arbre PARQUÉ par le pageCache d'ujs
 // (hibernation : il sera réinséré tel quel — ne pas invoquer onDestroy).
@@ -63,32 +58,6 @@
   }
 };
 
-// libellés du runtime (src/runtime-labels.ts) posés par le manifest en TOUTES langues
-// (`µ._runtimeLabels = { fr: {…}, en: {…} }`) : la langue se choisit ICI, à l'affichage, jamais au build —
-// un site basculé en anglais montrait des toasts « Succès »/« Erreur ».
-// CORRECTIF d'ordre : la langue DEMANDÉE au store (`µlang`, µ._mjs_storeRaw.__mjsLang)
-// prime désormais sur la langue EFFECTIVE du module i18n (µ._mjs_i18nEffectiveLang, mjs_i18n.ts) — un toast
-// tiré dans le MÊME TICK qu'un clic « EN » sortait encore en français, `µ._mjs_i18nEffectiveLang()` restant
-// sur l'ancienne langue tant que le swap asynchrone n'a pas fini d'assurer les fragments de la
-// langue cible. Ordre complet : store (`__mjsLang`) → langue effective i18n
-// → `<html lang>` → langue de repli du build (`µ._runtimeLabelsLang` = i18n.default du projet, sinon
-// clé `lang` du CLI). Langue inconnue de la table (de, es…) → repli sur celle du build, puis en, puis
-// fr. `µ._mjs_label` consulte D'ABORD le dictionnaire du PROJET (`µ._mjs_i18nLookup`, mjs_i18n.ts) sur la clé
-// racine réservée `mjs.<groupe>.<clé>` (`mjs.toast.success`, `mjs.modal.cancel`…) — une chaîne trouvée
-// là l'emporte sur cette table entière, cf. docs/29-i18n.md « Libellés du framework ».
-µ._mjs_labelLang = function() {
-  var l = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || (typeof µ._mjs_i18nEffectiveLang === 'function' && µ._mjs_i18nEffectiveLang()) || (typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || µ._runtimeLabelsLang || '';
-  return String(l).toLowerCase().split('-')[0];
-};
-µ._mjs_label = function(group, key) {
-  var fromProject = typeof µ._mjs_i18nLookup === 'function' ? µ._mjs_i18nLookup('mjs.' + group + '.' + key) : undefined;
-  if (typeof fromProject === 'string') { return fromProject; }
-  var all = µ._runtimeLabels;
-  if (!all) { return undefined; }
-  var tbl = all[µ._mjs_labelLang()] || all[µ._runtimeLabelsLang] || all.en || all.fr;
-  return (tbl && tbl[group]) ? tbl[group][key] : undefined;
-};
-
 // >>> extrait-test LRUCache
 µ.LRUCache = (function() {
   // Cache LRU (Least Recently Used) — protège les caches globaux d'une
@@ -121,24 +90,33 @@
     }
 
     set(key, val) {
-      var oldest, evicted;
-      if (this._map.has(key)) {
+      var oldest, old = this._map.get(key);
+      if (old !== void 0) {
         this._map.delete(key);
       }
       this._map.set(key, val);
+      // clé reprise par une autre valeur (même adresse photographiée deux fois) : l'ancienne sort du cache
+      // comme à l'éviction, moins ce que la nouvelle garde — une page revenue du cache puis photographiée de
+      // nouveau a les mêmes nœuds dans une liste neuve, elle reste parquée
+      if (old !== void 0 && old !== val) {
+        this._mjs_evict(key, Array.isArray(old) && Array.isArray(val) ? old.filter((x) => val.indexOf(x) < 0) : old);
+      }
       if (this._map.size > this.maxSize) {
         // Évince la clé la plus ancienne (en tête, ordre d'insertion)
         oldest = this._map.keys().next().value;
-        evicted = this._map.get(oldest);
+        old = this._map.get(oldest);
         this._map.delete(oldest);
-        // Hook d'éviction : indispensable quand les valeurs exigent un
-        // teardown (pageCache : arbres DOM hibernés dont la destruction a
-        // été sautée — sans ce hook, leurs timers fuyaient à vie).
-        if (typeof this.onEvict === 'function') {
-          try { this.onEvict(oldest, evicted); } catch (e) { µ.warn('[LRUCache] onEvict en erreur :', e); }
-        }
+        this._mjs_evict(oldest, old);
       }
       return this;
+    }
+
+    // Hook d'éviction : indispensable quand les valeurs exigent un teardown (pageCache : arbres DOM hibernés
+    // dont la destruction a été sautée — sans ce hook, leurs timers fuyaient à vie)
+    _mjs_evict(key, val) {
+      if (typeof this.onEvict === 'function') {
+        try { this.onEvict(key, val); } catch (e) { µ.warn('[LRUCache] ' + µ._mjs_txt('lruEvictError', null, 'onEvict en erreur :'), e); }
+      }
     }
 
     delete(key) {
@@ -154,9 +132,7 @@
       if (had) {
         val = this._map.get(key);
         this._map.delete(key);
-        if (typeof this.onEvict === 'function') {
-          try { this.onEvict(key, val); } catch (e) { µ.warn('[LRUCache] onEvict en erreur :', e); }
-        }
+        this._mjs_evict(key, val);
       }
       return had;
     }

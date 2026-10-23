@@ -63,7 +63,7 @@ describe('slots indexés (Chromium réel) — `_mjs_injectSlots` joint à l\'usa
 
     const files    = readdirSync(outDir).filter((f) => f.endsWith('.js'))
     const coreFile = files.find((f) => /^mjs_core-/.test(f))!
-    const comps    = files.filter((f) => /^(onglets|boite)-[a-f0-9]{8}\.js$/.test(f)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
+    const comps    = files.filter((f) => /^(onglets|boite)-[0-9a-z]{5}\.js$/.test(f)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
     assert.equal(comps.length, 2, `composants attendus dans : ${files.join(', ')}`)
     const script   = `${stripEsm(readFileSync(join(outDir, coreFile), 'utf-8'))}\nglobalThis.µ = µ;\n${comps.join('\n')}`
     const pageHtml = `<!doctype html><html><head><meta charset="utf-8"></head><body><mjs-onglets><p class="c">un</p><p class="c">deux</p><p class="c" slot="0">garde</p></mjs-onglets><mjs-boite><p class="d">libre</p></mjs-boite><script>${script}</script></body></html>`

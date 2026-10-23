@@ -1,7 +1,8 @@
 // sock.account — élévation : un µ:denied EXPLICITE qui arrive APRÈS que le filet timeout (5 s,
 // réduit ici pour le test) ait déjà réglé la promesse d'élévation doit quand même restaurer
 // opts.auth à sa valeur d'origine — sinon toute reconnexion ultérieure retenterait indéfiniment un
-// jeton que le serveur a pourtant explicitement refusé.
+// jeton que le serveur a pourtant explicitement refusé. La connexion repart alors d'elle-même en
+// invité, avec cette valeur d'origine.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -68,11 +69,9 @@ describe("sock.account — élévation : refus tardif (après le filet timeout)"
 
     assert.equal((s as any).opts.auth, originalAuth, "un refus tardif restaure l'identité précédente")
 
-    // une reconnexion explicite ultérieure ne doit pas retenter le jeton refusé
-    const nBefore = MockWS.instances.length
-    s.connect()
-    assert.equal(MockWS.instances.length, nBefore + 1)
+    // la connexion repart d'elle-même en invité : son hello ne retente pas le jeton refusé
     const wsAfter = last()
+    assert.notEqual(wsAfter, wsElevate, 'la connexion ne repart pas en invité après le refus')
     wsAfter._mjs_open()
     assert.equal(wsAfter.sent[0].t, 'µ:hello')
     assert.deepEqual(wsAfter.sent[0].p.auth, originalAuth(), "le hello rejoué utilise l'identité restaurée, pas le jeton refusé")

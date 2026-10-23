@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -32,6 +33,7 @@ class MockWS {
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
   ;(globalThis as any).WebSocket = MockWS
+  poserMessages(µ)
   new Function('µ', src)(µ)
   return µ
 }
@@ -77,6 +79,7 @@ describe('µ.socket — URL invalide : pas de reconnexion infinie', () => {
     ;(globalThis as any).WebSocket = class {
       constructor() { created++; throw new Error('SyntaxError: URL invalide') }
     } as any
+    poserMessages(µ)
     new Function('µ', src)(µ)
 
     const s = µ.socket('ws://[invalid')

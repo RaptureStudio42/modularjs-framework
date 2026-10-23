@@ -2,7 +2,7 @@
 // happy-dom, patron calqué sur tests/ujs-shadow-confirm.test.ts (bundler réel,
 // core + chunks des composants chargés dans une vraie Window happy-dom,
 // interaction via dispatchEvent, traversée du shadow fermé via `el._shadow`).
-// Le gabarit hôte utilise <@select>/<@option> (raccourci résolu par le CŒUR,
+// Le gabarit hôte utilise <@@select>/<@@option> (raccourci résolu par le CŒUR,
 // catalogue src/core-modules/ sans override — le projet n'a pas de select/option
 // homonyme) — même mécanisme que core-select-build.test.ts, mais ici pour
 // piloter des instances vivantes.
@@ -14,114 +14,115 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
 
 const HOST = `<script>
   $dynList = [{ code: 'a', label: 'Alpha' }, { code: 'b', label: 'Beta' }]
 </script>
 
 <div id="sel-basic">
-  <@select name="basic" placeholder="Choisir un pays">
-    <@option value="fr" icon="🇫🇷">France</@option>
-    <@option value="de" icon="🇩🇪">Allemagne</@option>
-    <@option value="us" icon="🇺🇸">États-Unis</@option>
-  </@select>
+  <@@select name="basic" placeholder="Choisir un pays">
+    <@@option value="fr" icon="🇫🇷">France</@@option>
+    <@@option value="de" icon="🇩🇪">Allemagne</@@option>
+    <@@option value="us" icon="🇺🇸">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-search">
-  <@select name="search" search empty-label="Rien trouvé" search-placeholder="Cherchez…">
-    <@option value="fr">France</@option>
-    <@option value="de">Allemagne</@option>
-    <@option value="us">États-Unis</@option>
-  </@select>
+  <@@select name="search" search empty-label="Rien trouvé" search-placeholder="Cherchez…">
+    <@@option value="fr">France</@@option>
+    <@@option value="de">Allemagne</@@option>
+    <@@option value="us">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-match-fuzzy">
-  <@select name="mf" search match="fuzzy">
-    <@option value="fr">France</@option>
-    <@option value="be">Belgique</@option>
-    <@option value="de">Allemagne</@option>
-    <@option value="us">États-Unis</@option>
-  </@select>
+  <@@select name="mf" search match="fuzzy">
+    <@@option value="fr">France</@@option>
+    <@@option value="be">Belgique</@@option>
+    <@@option value="de">Allemagne</@@option>
+    <@@option value="us">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-match-starts">
-  <@select name="ms" search match="starts">
-    <@option value="fr">France</@option>
-    <@option value="be">Belgique</@option>
-    <@option value="de">Allemagne</@option>
-    <@option value="us">États-Unis</@option>
-  </@select>
+  <@@select name="ms" search match="starts">
+    <@@option value="fr">France</@@option>
+    <@@option value="be">Belgique</@@option>
+    <@@option value="de">Allemagne</@@option>
+    <@@option value="us">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-match-starts-fuzzy">
-  <@select name="msf" search match="starts-fuzzy">
-    <@option value="fr">France</@option>
-    <@option value="be">Belgique</@option>
-    <@option value="de">Allemagne</@option>
-    <@option value="us">États-Unis</@option>
-  </@select>
+  <@@select name="msf" search match="starts-fuzzy">
+    <@@option value="fr">France</@@option>
+    <@@option value="be">Belgique</@@option>
+    <@@option value="de">Allemagne</@@option>
+    <@@option value="us">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-multi">
-  <@select name="multi" multiple>
-    <@option value="fr">France</@option>
-    <@option value="de">Allemagne</@option>
-    <@option value="us">États-Unis</@option>
-  </@select>
+  <@@select name="multi" multiple>
+    <@@option value="fr">France</@@option>
+    <@@option value="de">Allemagne</@@option>
+    <@@option value="us">États-Unis</@@option>
+  </@@select>
 </div>
 
 <div id="sel-multi-icons">
-  <@select name="multi-icons" multiple>
-    <@option value="fr">France</@option>
-    <@option value="de">Allemagne</@option>
-  </@select>
+  <@@select name="multi-icons" multiple>
+    <@@option value="fr">France</@@option>
+    <@@option value="de">Allemagne</@@option>
+  </@@select>
 </div>
 
 <div id="sel-multi-icons-custom">
-  <@select name="multi-icons-custom" multiple icon-checked="☑" icon-unchecked="☐">
-    <@option value="fr">France</@option>
-    <@option value="de">Allemagne</@option>
-  </@select>
+  <@@select name="multi-icons-custom" multiple icon-checked="☑" icon-unchecked="☐">
+    <@@option value="fr">France</@@option>
+    <@@option value="de">Allemagne</@@option>
+  </@@select>
 </div>
 
 <div id="sel-multi-icons-xss">
-  <@select name="multi-icons-xss" multiple icon-checked="<b>x</b>">
-    <@option value="fr">France</@option>
-  </@select>
+  <@@select name="multi-icons-xss" multiple icon-checked="<b>x</b>">
+    <@@option value="fr">France</@@option>
+  </@@select>
 </div>
 
 <div id="sel-default">
-  <@select name="def"></@select>
+  <@@select name="def"></@@select>
 </div>
 
 <form id="sel-form">
-  <@select name="pays">
-    <@option value="fr">France</@option>
-    <@option value="de">Allemagne</@option>
-  </@select>
+  <@@select name="pays">
+    <@@option value="fr">France</@@option>
+    <@@option value="de">Allemagne</@@option>
+  </@@select>
 </form>
 
 <div id="sel-dyn">
-  <@select name="dyn">
+  <@@select name="dyn">
     {for d in $dynList by code}
-      <@option value={d.code}>{d.label}</@option>
+      <@@option value={d.code}>{d.label}</@@option>
     {end}
-  </@select>
+  </@@select>
 </div>
 
 <div id="sel-geo">
-  <@select name="geo" placeholder="Test géométrie">
-    <@option value="a">Option A</@option>
-  </@select>
+  <@@select name="geo" placeholder="Test géométrie">
+    <@@option value="a">Option A</@@option>
+  </@@select>
 </div>
 
 <div id="sel-wrapped">
-  <@select name="wrapped" placeholder="Choisir">
+  <@@select name="wrapped" placeholder="Choisir">
     <div class="opt-group">
-      <@option value="fr">France</@option>
-      <@option value="de">Allemagne</@option>
+      <@@option value="fr">France</@@option>
+      <@@option value="de">Allemagne</@@option>
     </div>
-  </@select>
+  </@@select>
 </div>
 `
 
@@ -134,7 +135,7 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
   let FIRST_BASIC_LABEL = ''
 
   function sel(id: string): any {
-    return hote._shadow.querySelector(`#${id} mjs-select`)
+    return hote._shadow.querySelector(`#${id} mjs-core-select`)
   }
   function btn(id: string): any {
     return sel(id)._shadow.querySelector('.select-btn')
@@ -170,8 +171,8 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
     document = window.document
     const files = readdirSync(outDir)
     const coreFile = files.find((f: string) => /^mjs_core-/.test(f))
-    const selFile  = files.find((f: string) => /^select-/.test(f))
-    const optFile  = files.find((f: string) => /^option-/.test(f))
+    const selFile  = files.find((f: string) => /^core-select-/.test(f))
+    const optFile  = files.find((f: string) => /^core-option-/.test(f))
     const hoteFile = files.find((f: string) => /^hote-/.test(f))
     assert.ok(coreFile && selFile && optFile && hoteFile, 'core + select + option + hote compilés')
 
@@ -184,6 +185,7 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
 
     const code = [coreFile, selFile, optFile, hoteFile].map((f: string) => stripEsm(readFileSync(join(outDir, f!), 'utf-8'))).join('\n')
     window.eval(`${code}\nglobalThis.µ = µ;`)
+    window.eval(libellesDuManifeste(join(root, 'bundle.js')))
 
     document.body.innerHTML = '<mjs-hote></mjs-hote>'
     await new Promise((r) => setTimeout(r, 80))
@@ -591,37 +593,37 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
   })
 
   describe('ARIA', () => {
-    it('bouton : role=combobox, aria-haspopup=listbox, aria-controls pointe le panneau', async () => {
+    it('bouton : role=combobox, aria-haspopup=listbox, aria-controls pointe la liste du panneau', async () => {
       const b = btn('sel-default')
       assert.equal(b.getAttribute('role'), 'combobox')
       assert.equal(b.getAttribute('aria-haspopup'), 'listbox')
       click(b)
       await tick()
-      const panel = sel('sel-default')._shadow.querySelector('.select-panel')
-      assert.equal(b.getAttribute('aria-controls'), panel.id)
+      const liste = sel('sel-default')._shadow.querySelector('.select-panel [role=listbox]')
+      assert.equal(b.getAttribute('aria-controls'), liste.id)
       key(wrapper('sel-default'), 'Escape')
       await tick()
     })
 
-    it('panneau : role=listbox ; lignes : role=option', async () => {
+    it('liste du panneau : role=listbox ; lignes : role=option', async () => {
       click(btn('sel-basic'))
       await tick()
-      assert.equal(sel('sel-basic')._shadow.querySelector('.select-panel').getAttribute('role'), 'listbox')
+      assert.equal(sel('sel-basic')._shadow.querySelector('.select-panel .select-list').getAttribute('role'), 'listbox')
       for (const row of Array.from(options('sel-basic')) as any[]) assert.equal(row.getAttribute('role'), 'option')
       key(wrapper('sel-basic'), 'Escape')
       await tick()
     })
 
-    it('multiple : le panneau porte aria-multiselectable="true" ; simple : "false"', async () => {
+    it('multiple : la liste du panneau porte aria-multiselectable="true" ; simple : "false"', async () => {
       click(btn('sel-multi'))
       await tick()
-      assert.equal(sel('sel-multi')._shadow.querySelector('.select-panel').getAttribute('aria-multiselectable'), 'true')
+      assert.equal(sel('sel-multi')._shadow.querySelector('.select-panel [role=listbox]').getAttribute('aria-multiselectable'), 'true')
       key(wrapper('sel-multi'), 'Escape')
       await tick()
 
       click(btn('sel-basic'))
       await tick()
-      assert.equal(sel('sel-basic')._shadow.querySelector('.select-panel').getAttribute('aria-multiselectable'), 'false')
+      assert.equal(sel('sel-basic')._shadow.querySelector('.select-panel [role=listbox]').getAttribute('aria-multiselectable'), 'false')
       key(wrapper('sel-basic'), 'Escape')
       await tick()
     })
@@ -637,7 +639,7 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
     })
 
     it('search-placeholder par défaut = « Rechercher… » (composant search sans surcharge, monté et interrogé à l\'exécution)', async () => {
-      const HOST2 = '<@select name="s2" search></@select>'
+      const HOST2 = '<@@select name="s2" search></@@select>'
       const root = mjsTmp('core-select-default-labels')
       const srcDir = join(root, 'src')
       const outDir = join(root, 'out')
@@ -656,16 +658,17 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
         .replace(/\bexport\s+default\s+/g, '')
         .replace(/\bexport\s+/g, '')
         .replace(/import\.meta\.url/g, "'http://localhost/'")
-      const code2 = ['mjs_core-', 'select-', 'option-', 'hote2-']
+      const code2 = ['mjs_core-', 'core-select-', 'core-option-', 'hote2-']
         .map((prefix) => files2.find((f: string) => f.startsWith(prefix)))
         .filter((f): f is string => !!f)
         .map((f: string) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
         .join('\n')
       win2.eval(`${code2}\nglobalThis.µ = µ;`)
+      win2.eval(libellesDuManifeste(join(root, 'bundle.js')))
       doc2.body.innerHTML = '<mjs-hote2></mjs-hote2>'
       await new Promise((r) => setTimeout(r, 80))
       const hote2 = doc2.body.firstElementChild
-      const sel2 = hote2._shadow.querySelector('mjs-select')
+      const sel2 = hote2._shadow.querySelector('mjs-core-select')
       sel2._shadow.querySelector('.select-btn').dispatchEvent(new win2.MouseEvent('click', { bubbles: true, cancelable: true, composed: true }))
       await new Promise((r) => setTimeout(r, 30))
       const input2 = sel2._shadow.querySelector('.select-search')
@@ -678,7 +681,7 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
   describe('formulaire réel', () => {
     it('new FormData(form) porte la valeur sélectionnée sous la clé name', async () => {
       const form = hote._shadow.querySelector('#sel-form form') ?? hote._shadow.querySelector('form')
-      const formSel = hote._shadow.querySelector('#sel-form mjs-select')
+      const formSel = hote._shadow.querySelector('#sel-form mjs-core-select')
       click(formSel._shadow.querySelector('.select-btn'))
       await tick()
       click(formSel._shadow.querySelectorAll('.select-option')[1])
@@ -756,10 +759,10 @@ describe('core-select/core-option — comportement runtime (happy-dom, bundler r
   })
 
   describe('options nichées dans un wrapper intermédiaire (pas enfants directs du <slot>)', () => {
-    it('un <div> entre <@select> et les <@option> : les options sont quand même détectées (descendants du slot assigné, pas seulement enfants directs)', async () => {
+    it('un <div> entre <@@select> et les <@@option> : les options sont quand même détectées (descendants du slot assigné, pas seulement enfants directs)', async () => {
       click(btn('sel-wrapped'))
       await tick()
-      assert.equal(options('sel-wrapped').length, 2, 'les <@option> nichées dans le <div class="opt-group"> doivent être rendues')
+      assert.equal(options('sel-wrapped').length, 2, 'les <@@option> nichées dans le <div class="opt-group"> doivent être rendues')
       assert.match(sel('sel-wrapped')._shadow.querySelector('.select-panel').textContent, /France/)
       assert.match(sel('sel-wrapped')._shadow.querySelector('.select-panel').textContent, /Allemagne/)
       key(wrapper('sel-wrapped'), 'Escape')

@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -53,6 +54,7 @@ function extractSubmitBody(src: string): string {
 // via `new Function`, cf. µ._mjs_navMountZone/µ._mjs_navApplyJson qui les référencent
 // bare, jamais un global implicite dans ce harnais).
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 
@@ -92,6 +94,7 @@ describe('mjs_ujs — protocole de navigation JSON', function () {
       _mjs_ajaxRequest: (opts: any) => { capturedOptions.push(opts); return Promise.resolve() },
     }
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', extractAjaxGetStatement(UJS_SRC))(µ)
     const clickBody = extractClickBody(UJS_SRC)
     const handler = new Function('e', 'µ', 'window', 'document', 'DOMParser', clickBody)
@@ -215,6 +218,7 @@ describe('mjs_ujs — protocole de navigation JSON', function () {
       pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
     }
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { restoreBusy: () => restoreBusyCalls.push(1) })
@@ -243,8 +247,10 @@ describe('mjs_ujs — protocole de navigation JSON', function () {
       pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
     }
     // la VRAIE fusion, extraite de mjs_store_globals.ts (pas un espion)
+    poserMessages(µ)
     new Function('µ', extractMarked(GLOBALS_SRC, '_mjs_resMerge'))(µ)
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, class {})
 
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { restoreBusy: () => restoreBusyCalls.push(1) })
@@ -270,6 +276,7 @@ describe('mjs_ujs — protocole de navigation JSON', function () {
       pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
     }
     installHelpers(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FakeFormData, URL, DP)
     const submitHandler = new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractSubmitBody(UJS_SRC))
 

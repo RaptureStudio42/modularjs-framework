@@ -12,19 +12,25 @@
 
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import type { AddressInfo } from 'node:net'
 import { peerIdOf } from './rooms.js'
+import { WRITTEN_BY_BRIDGE } from './streams.js'
 // limite de débit — seau à jetons réutilisé TEL QUEL depuis guard.ts (lecture seule,
 // aucune primitive dupliquée) ; cf. la section « limite de débit » plus bas pour l'assemblage.
 import { TokenBucket } from './guard.js'
-import type { MjsWsApp, MjsWsClient, MjsWsLogFn } from './core.js'
+import { safeEqual } from './package-helpers.js'
+import type { MjsWsApp, MjsWsBroadcastOpts, MjsWsClient, MjsWsLogFn } from './core.js'
+import type { MjsWsRemoteInfo } from './transport.js'
+import { addressForLimits } from './transport.js'
 // état/métriques — cf. stats.ts (registre + formateur Prometheus), stats-page.ts (page /state)
 import { toPrometheusText } from './stats.js'
 import type { MjsWsStatsRegistry } from './stats.js'
 import { renderStatsPage } from './stats-page.js'
 import { t } from '../messages/index.js'
+import type { MsgKey } from '../messages/index.js'
+import { hostHeaderName } from '../host-header.js'
 
 // --- options utilisateur (opts.bridge de mjsWs()) ---------------------------------------
 
@@ -40,12 +46,15 @@ export interface MjsWsBridgeWebhooksOptions {
   events: string[]
   /** Délai avant abandon d'UNE tentative, ms (défaut 5000). */
   timeoutMs?: number
+  /** En-têtes du visiteur recopiés en plus dans `meta.headers` des webhooks connect/disconnect (noms, sans tenir compte de la
+   *  casse) — par défaut seule une courte liste d'en-têtes sans secret part, cf. WEBHOOK_HEADERS. Un nom listé part tel quel. */
+  forwardHeaders?: string[]
 }
 
 // limite de débit — [capacité, fenêtreMs] par seau ; défauts appliqués par
 // resolveBridgeOptions si la clé (ou l'objet entier) est absente. cf. docs/23-mjs-ws.md « Limite de débit ».
 export interface MjsWsBridgeRateLimitOptions {
-  /** seau général PAR IP, toutes routes sauf GET /health — défaut [120, 10000] (120 req/10 s, éclatement = capacité). */
+  /** seau général PAR IP, requêtes sans signature (GET /health exempté) — défaut [120, 10000] (120 req/10 s, éclatement = capacité). */
   perIp?: [number, number]
   /** seau des échecs de signature PAR IP, PLUS STRICT — défaut [10, 60000] (10×401/60 s, au-delà 429 sans vérification HMAC). */
   fails?: [number, number]
@@ -62,16 +71,15 @@ export interface MjsWsBridgeOptions {
   webhooks?: MjsWsBridgeWebhooksOptions
   /**
    * Limite de débit par IP — ACTIVE PAR DÉFAUT, `false` pour désactiver. Seau général
-   * sur TOUTES les routes SAUF `GET /health`, + seau séparé plus strict sur les échecs de
+   * sur les requêtes SANS signature (`GET /health` exempté), + seau séparé plus strict sur les échecs de
    * signature (401) — au-delà, 429 immédiat SANS vérification HMAC. cf. docs/23-mjs-ws.md « Limite de débit ».
    */
   rateLimit?: MjsWsBridgeRateLimitOptions | false
   /**
-   * Nonce anti-rejeu — défaut `false` (COMPATIBILITÉ stricte : les recettes
-   * documentées, docs/23-mjs-ws.md §7.3, marchent SANS changement tant que cette option reste
-   * absente). `true` exige un en-tête `x-mjs-ws-nonce` (8-64 caractères) sur CHAQUE requête
-   * signée, suffixé à la chaîne canonique — ferme la fenêtre de rejeu ±300 s (§7.2) à un usage
-   * strictement unique par nonce. cf. docs/23-mjs-ws.md « Nonce anti-rejeu (optionnel) ».
+   * Nonce anti-rejeu — ACTIF PAR DÉFAUT, `false` pour désactiver. Exige un en-tête `x-mjs-ws-nonce`
+   * (8-64 caractères) sur CHAQUE requête signée, suffixé à la chaîne canonique — ferme la fenêtre
+   * de rejeu ±300 s (§7.2) à un usage strictement unique par nonce ; `false` rend la fenêtre seule.
+   * cf. docs/23-mjs-ws.md « Nonce anti-rejeu ».
    */
   nonce?: boolean
 }
@@ -83,6 +91,8 @@ export interface MjsWsResolvedBridgeWebhooks {
   secret: string
   events: Set<string>
   timeoutMs: number
+  /** `forwardHeaders` en minuscules — absent : la liste permise seule */
+  forwardHeaders?: ReadonlySet<string>
 }
 
 // limite de débit — forme RÉSOLUE (défauts déjà appliqués) d'un seau ; `null` au
@@ -98,23 +108,39 @@ export interface MjsWsResolvedBridgeOptions {
   secret: string
   webhooks?: MjsWsResolvedBridgeWebhooks
   rateLimit: MjsWsResolvedRateLimit | null
-  /** nonce anti-rejeu — TOUJOURS résolu (comme rateLimit ci-dessus), défaut false */
+  /** nonce anti-rejeu — TOUJOURS résolu (comme rateLimit ci-dessus), défaut true */
   nonce: boolean
 }
 
-// résout 'env:NOM_VAR' → process.env.NOM_VAR — même règle pour le secret du pont et celui
-// des webhooks (si absent côté webhooks, celui du pont est réutilisé, DÉJÀ résolu ici)
+// longueur conseillée d'un secret de signature, même règle que le secret des jetons (token.ts) : en deçà, il se devine
+// hors ligne à partir d'une seule requête signée interceptée. Un secret court passe, avec un avertissement unique pour
+// tout le processus
+const SECRET_MIN_LENGTH = 32
+let shortSecretWarned   = false
+
+function warnShortSecret(secret: string, label: string): void {
+  if (secret.length >= SECRET_MIN_LENGTH || shortSecretWarned) return
+  shortSecretWarned = true
+  console.warn(t('ws.bridge.secret-court', { label, length: secret.length, min: SECRET_MIN_LENGTH }))
+}
+
+/** un secret littéral, ou 'env:NOM_VAR' → process.env.NOM_VAR ; vide, ou variable absente ou vide : une erreur — `manquant` et
+ *  `envAbsent`, les messages de l'appelant (le pont, le proxy de décision : proxy.ts) */
+export function resolveSecretRef(raw: string | undefined, label: string, manquant: MsgKey, envAbsent: MsgKey): string {
+  if (raw == null || raw === '') throw new Error(t(manquant, { label }))
+  if (raw.indexOf('env:') !== 0) return raw
+  const varName = raw.slice(4)
+  const value   = process.env[varName]
+  if (!value) throw new Error(t(envAbsent, { label, varName }))
+  return value
+}
+
+// même règle pour le secret du pont et celui des webhooks (si absent côté webhooks, celui du pont est réutilisé, DÉJÀ
+// résolu ici) ; un secret court est signalé
 function resolveSecretValue(raw: string | undefined, label: string): string {
-  if (raw == null || raw === '') {
-    throw new Error(t('ws.bridge.secret-manquant', { label }))
-  }
-  if (raw.indexOf('env:') === 0) {
-    const varName = raw.slice(4)
-    const value   = process.env[varName]
-    if (!value) throw new Error(t('ws.bridge.secret-env-absent', { label, varName }))
-    return value
-  }
-  return raw
+  const value = resolveSecretRef(raw, label, 'ws.bridge.secret-manquant', 'ws.bridge.secret-env-absent')
+  warnShortSecret(value, label)
+  return value
 }
 
 // limite de débit — défauts : 120 req/10 s par IP (seau général), 10×401/60 s (seau
@@ -148,6 +174,8 @@ export function resolveBridgeOptions(userBridge: MjsWsBridgeOptions, wsPort: num
       events:    new Set(wh.events),
       timeoutMs: wh.timeoutMs ?? 5000,
     }
+    const extra = resolveForwardHeaders(wh.forwardHeaders)
+    if (extra) webhooks.forwardHeaders = extra
   }
 
   // limite de débit — ACTIVE PAR DÉFAUT (userBridge.rateLimit absent = objet vide,
@@ -157,9 +185,9 @@ export function resolveBridgeOptions(userBridge: MjsWsBridgeOptions, wsPort: num
     fails: resolveRateLimitBucket(userBridge.rateLimit?.fails, DEFAULT_BRIDGE_RATE_LIMIT_FAILS),
   }
 
-  // nonce anti-rejeu — défaut false, MÊME philosophie que rateLimit ci-dessus
-  // (résolu ici une fois pour toutes, jamais relu depuis userBridge ailleurs)
-  const nonce = userBridge.nonce ?? false
+  // nonce anti-rejeu — ACTIF PAR DÉFAUT, seul un `false` EXPLICITE le coupe, MÊME philosophie que
+  // rateLimit ci-dessus (résolu ici une fois pour toutes, jamais relu depuis userBridge ailleurs)
+  const nonce = userBridge.nonce !== false
 
   return { port, host, secret, webhooks, rateLimit, nonce }
 }
@@ -216,15 +244,6 @@ export function signCanonical(secret: string, canonical: string): string {
   return createHmac('sha256', secret).update(canonical).digest('hex')
 }
 
-// comparaison à temps constant — longueur d'abord (timingSafeEqual lève sinon, ce qui
-// planterait le handler au lieu de répondre proprement 401)
-export function safeEqualHex(expectedHex: string, givenHex: string): boolean {
-  const a = Buffer.from(expectedHex, 'hex')
-  const b = Buffer.from(givenHex, 'hex')
-  if (a.length === 0 || a.length !== b.length) return false
-  return timingSafeEqual(a, b)
-}
-
 export const REPLAY_WINDOW_S = 300   // ± 5 min autour de maintenant — au-delà, 401 anti-rejeu
 
 // nonce anti-rejeu — gabarit de longueur, cf. docs/23-mjs-ws.md « Nonce anti-rejeu »
@@ -255,7 +274,9 @@ function verifyIncomingSignature(
 
   if (nonce) {
     const n = nonce.value
-    if (n == null || n.length < NONCE_MIN_LEN || n.length > NONCE_MAX_LEN) {
+    // en-tête absent : une recette d'avant le nonce par défaut — le message dit quoi ajouter
+    if (n == null) return t('ws.bridge.nonce-manquant', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
+    if (n.length < NONCE_MIN_LEN || n.length > NONCE_MAX_LEN) {
       return t('ws.bridge.nonce-requis', { min: NONCE_MIN_LEN, max: NONCE_MAX_LEN })
     }
   }
@@ -263,7 +284,7 @@ function verifyIncomingSignature(
   // direction 'in' — une signature calculée côté back pour un webhook ('out') ne
   // vérifie plus ici, cf. canonicalString ci-dessus « Séparation de domaine »
   const expected = signCanonical(secret, canonicalString(tsNum, method, pathWithQuery, rawBody, nonce?.value, 'in'))
-  if (!safeEqualHex(expected, sig)) return t('ws.bridge.signature-invalide')
+  if (!safeEqual(expected, sig, 'hex')) return t('ws.bridge.signature-invalide')
   return null
 }
 
@@ -316,6 +337,17 @@ export interface MjsWsBridgeContext {
    * reste sciemment local-only — cf. core.ts pour le pourquoi).
    */
   publishSend?: (target: { client?: string; user?: string }, type: string, p: unknown) => void
+  /** `/room/kick {client}` : propage l'expulsion d'UNE connexion (son id) aux autres processus — absente hors cluster */
+  publishKickConnexion?: (room: string, clientId: string, reason: string | undefined) => void
+  /**
+   * destinataires LOCAUX d'un `/send` — une connexion par son id (`client`), ou toutes les connexions d'un utilisateur
+   * (`user`, MÊME résolution que app.sendUser) — par les index du serveur (core.ts::ciblesLocales) : le coût suit les
+   * connexions de la cible, jamais le nombre total de connectés.
+   */
+  ciblesLocales: (clientId: string | undefined, user: string | undefined) => MjsWsClient[]
+  /** connexions LOCALES désignées par un `except` : ses personnes (`identity.id`, ou `anon:` suivi de l'id de connexion —
+   *  MÊME résolution que peerIdOf) et ses connexions (par leur id seul), par les index du serveur (core.ts::connexionsDesIds) */
+  connexionsDesIds: (recu: MjsWsExceptRecu) => MjsWsClient[]
   /** état/métriques (stats.ts) — registre TOUJOURS peuplé (écriture : compteurs pont ci-dessous) ; lecture d'un instantané via `app.stats()` (déjà dans `app`). */
   stats: MjsWsStatsRegistry
   /** GET /stats, /metrics, /state actifs seulement si true (option `stats` de mjsWs(), désactivée par défaut) — le registre tourne quand même dans les deux cas. */
@@ -339,13 +371,18 @@ export interface MjsWsBridgeEngine {
 function isStr(x: unknown): x is string { return typeof x === 'string' && x.length > 0 }
 function isPlainObject(x: unknown): x is Record<string, unknown> { return typeof x === 'object' && x !== null && !Array.isArray(x) }
 
-// 'except' (broadcast/room-send) : absente, une chaîne, ou un tableau de chaînes — id de
-// connexion OU id agrégé (identity.id), MÊME résolution que /room/kick et /send (peerIdOf)
-function parseIdList(x: unknown): string[] | null {
-  if (x === undefined) return []
-  if (typeof x === 'string') return [x]
-  if (Array.isArray(x) && x.every(v => typeof v === 'string')) return x as string[]
-  return null
+// 'except' (broadcast/room-send) : absente, une personne (chaîne : identity.id, ou `anon:` suivi de l'id de connexion —
+// peerIdOf), une seule connexion (`{ client: id }`, comme /room/kick), ou un tableau des deux mélangés. Jamais une chaîne
+// pour une connexion : un compte peut porter l'id d'une connexion
+function parseExcept(x: unknown): MjsWsExceptRecu | null {
+  const recu: MjsWsExceptRecu = { personnes: [], connexions: [] }
+  if (x === undefined) return recu
+  for (const v of Array.isArray(x) ? x : [x]) {
+    if (typeof v === 'string') recu.personnes.push(v)
+    else if (isPlainObject(v) && typeof v.client === 'string' && Object.keys(v).length === 1) recu.connexions.push(v.client)
+    else return null
+  }
+  return recu
 }
 
 // Bogue comblé — valide la charge (p/value/values) à L'ENTRÉE plutôt que de
@@ -354,8 +391,7 @@ function parseIdList(x: unknown): string[] | null {
 // 170 000 niveaux) : SANS cette garde, les 4 endpoints de push répondent `{ok:true}` alors qu'AUCUN
 // client n'a rien reçu. MÊME plafond que streams.ts::MAX_VALUE_DEPTH, dupliqué ICI (module
 // indépendant, cf. le commentaire de tête de proxy.ts sur la duplication délibérée entre fichiers
-// mjs-ws) — profondeur D'ABORD (borne la récursion avant tout JSON.stringify d'une structure
-// potentiellement énorme), sérialisable ensuite (`try`, pour les autres cas — BigInt, etc.).
+// mjs-ws) — la profondeur est la SEULE borne utile ici, cf. isSerializablePayload plus bas.
 const MAX_PAYLOAD_DEPTH = 64
 
 function isTooDeep(value: unknown, limit: number, depth = 0): boolean {
@@ -369,58 +405,44 @@ function isTooDeep(value: unknown, limit: number, depth = 0): boolean {
   return false
 }
 
-// MÊME règle que
-// streams.ts::isSerializableEntry (dupliquée à dessein, cf. commentaire de tête ci-dessus) : JSON.
-// stringify seul laisse passer Map/Set/fonction/Symbol NICHÉ(E) sans jamais lever, la valeur
-// disparaît en silence à l'encodage ({}). `undefined` NICHÉ (clé objet/élément de tableau) est
-// REFUSÉ pour la MÊME raison — MAIS `p`/`value`/`values` omis À LA RACINE (donc `undefined` au
-// premier niveau) reste ACCEPTÉ, comportement historique inchangé (cf. tests/mjs-ws-bridge.test.ts
-// « requête bien signée → 200 » avec `{type:'x'}`, sans `p`). En pratique une charge HTTP naît d'un
-// JSON.parse : elle ne peut JAMAIS porter de Map/Set/fonction/Symbol/BigInt (aucun littéral JSON
-// pour ces types) NI d'`undefined` NICHÉ (idem) — cette walk reste donc, pour tout appelant HTTP
-// réel, un filet SANS effet observable aujourd'hui ; postée ici par symétrie stricte avec
-// streams.ts, pour un futur appelant NON-HTTP de cette fonction. Date tolérée (toJSON natif,
-// fidèle), tout AUTRE toJSON refusé.
+// la charge (p/value/values) naît TOUJOURS d'un JSON.parse du corps : ni Map, ni Set, ni fonction,
+// ni Symbol, ni BigInt, ni `undefined` niché, rien que JSON.stringify refuse ou perde — sauf la
+// profondeur (RangeError à l'envoi, cf. plus haut), seule bornée ici. Ni parcours de plus, ni
+// sérialisation « pour voir » avant celle de l'envoi. `p`/`value`/`values` omis à la racine reste
+// accepté, comportement historique inchangé (cf. tests/mjs-ws-bridge.test.ts « requête bien signée
+// → 200 » avec `{type:'x'}`, sans `p`).
 function isSerializablePayload(value: unknown): boolean {
-  if (isTooDeep(value, MAX_PAYLOAD_DEPTH)) return false
-  function hasLossyValue(v: unknown, nested: boolean): boolean {
-    if (nested && v === undefined) return true
-    if (typeof v === 'function' || typeof v === 'bigint' || typeof v === 'symbol') return true
-    if (v instanceof Map || v instanceof Set) return true
-    if (v === null || typeof v !== 'object') return false
-    if (v instanceof Date) return false
-    if (typeof (v as { toJSON?: unknown }).toJSON === 'function') return true
-    if (Array.isArray(v)) { for (const item of v) if (hasLossyValue(item, true)) return true; return false }
-    for (const k in v as Record<string, unknown>) if (hasLossyValue((v as Record<string, unknown>)[k], true)) return true
-    return false
-  }
-  if (hasLossyValue(value, false)) return false
-  try { JSON.stringify(value); return true }
-  catch { return false }
+  return !isTooDeep(value, MAX_PAYLOAD_DEPTH)
 }
 
-// exportée — réutilisée par core.ts (cluster) pour résoudre localement les ids
-// (connexion OU peer) reçus d'un AUTRE process (except/target d'un broadcast, room.send, send
-// ciblé…) : MÊME résolution ici et côté cluster, une seule implémentation.
-export function resolveClients(app: MjsWsApp, ids: string[]): MjsWsClient[] {
-  if (ids.length === 0) return []
-  const wanted = new Set(ids)
-  const out: MjsWsClient[] = []
-  for (const c of app.clients) if (wanted.has(c.id) || wanted.has(peerIdOf(c))) out.push(c)
-  return out
+// option interne d'`app.broadcast` et de `room().send` (jamais documentée) : l'`except` tel que reçu par le pont, ses
+// personnes et ses connexions à part. Les connexions résolues ici n'existent que dans CE processus ; relayées aux autres
+// processus (cf. core.ts, idsExclus), l'id d'un compte y exclut aussi ses onglets servis ailleurs
+export const EXCEPT_RECU: unique symbol = Symbol('except reçu par le pont')
+
+/** un `except` par identifiants : des personnes (`identity.id`, ou `anon:` suivi de l'id de connexion), des connexions */
+export interface MjsWsExceptRecu {
+  personnes: string[]
+  connexions: string[]
+}
+
+// options d'envoi d'un `except` reçu : les connexions locales désignées (par les index, cf. connexionsDesIds), plus
+// l'`except` reçu pour les autres processus — même quand aucun onglet du compte n'est servi ici
+function exceptRecu(ctx: MjsWsBridgeContext, recu: MjsWsExceptRecu): MjsWsBroadcastOpts | undefined {
+  if (recu.personnes.length === 0 && recu.connexions.length === 0) return undefined
+  return { except: ctx.connexionsDesIds(recu), [EXCEPT_RECU]: recu } as MjsWsBroadcastOpts
 }
 
 // --- endpoints ----------------------------------------------------------------------------
 
 function handleBroadcast(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
   if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-requis') }); return }
-  const ids = parseIdList(payload.except)
-  if (ids === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
+  const recu = parseExcept(payload.except)
+  if (recu === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
   if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
-  const except = resolveClients(ctx.app, ids)
   // `app.broadcast` renvoie désormais `boolean` — `false` UNIQUEMENT si la
   // charge n'a pas pu être sérialisée à l'envoi, résiduel après la validation d'entrée ci-dessus
-  const delivered = ctx.app.broadcast(payload.type, payload.p, except.length > 0 ? { except } : undefined)
+  const delivered = ctx.app.broadcast(payload.type, payload.p, exceptRecu(ctx, recu))
   if (!delivered) { ctx.onLog('error', t('ws.bridge.echec-envoi')); sendJson(res, 500, { ok: false, error: t('ws.bridge.echec-envoi') }); return }
   sendJson(res, 200, { ok: true })
 }
@@ -437,13 +459,11 @@ function handleSend(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse):
 
   let sent = 0
   let echecEnvoi = false
-  for (const c of ctx.app.clients) {
-    const hit = hasClient ? c.id === target : peerIdOf(c) === target
-    if (!hit) continue
+  // par les index (cf. MjsWsBridgeContext.ciblesLocales) — un id de connexion désigne au plus une connexion
+  for (const c of ctx.ciblesLocales(hasClient ? target : undefined, hasUser ? target : undefined)) {
     // `app.send` renvoie désormais `boolean` — cf. handleBroadcast ci-dessus
     if (!ctx.app.send(c, payload.type, payload.p)) echecEnvoi = true
     sent++
-    if (hasClient) break   // id de connexion — au plus une correspondance possible
   }
   // cluster — un autre process peut détenir d'autres connexions (client|user)
   ctx.publishSend?.({ client: hasClient ? target : undefined, user: hasUser ? target : undefined }, payload.type, payload.p)
@@ -454,17 +474,16 @@ function handleSend(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse):
 function handleRoomSend(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse): void {
   if (!isStr(payload?.room)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.room-requis') }); return }
   if (!isStr(payload?.type)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.type-requis') }); return }
-  const ids = parseIdList(payload.except)
-  if (ids === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
+  const recu = parseExcept(payload.except)
+  if (recu === null) { sendJson(res, 400, { ok: false, error: t('ws.bridge.except-invalide') }); return }
   if (!isSerializablePayload(payload.p)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
-  const except = resolveClients(ctx.app, ids)
   try {
     // MÊME sémantique que room().send actuel — type VERBATIM, le pont ne préfixe rien (cf. docs/23-mjs-ws.md §4)
     // room().send() (rooms.ts, hors périmètre de ce module) reste `void` — CONTRAIREMENT à
     // app.broadcast/send ci-dessus, aucun signal d'échec d'encodage
     // résiduel n'est disponible ICI (accroche rooms.ts à poser) ; ce
     // try/catch reste un filet pour un throw IMPRÉVU (aucun aujourd'hui), pas un vrai signal.
-    ctx.app.room(payload.room).send(payload.type, payload.p, except.length > 0 ? { except } : undefined)
+    ctx.app.room(payload.room).send(payload.type, payload.p, exceptRecu(ctx, recu))
   } catch (err) {
     ctx.onLog('error', t('ws.bridge.echec-envoi'), { err })
     sendJson(res, 500, { ok: false, error: t('ws.bridge.echec-envoi') })
@@ -481,11 +500,15 @@ function handleRoomKick(ctx: MjsWsBridgeContext, payload: any, res: ServerRespon
   const target = hasClient ? payload.client : payload.user
   if (!isStr(target)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.client-user-chaine') }); return }
 
-  // comptage AVANT le kick (même prédicat que room.kick — id de connexion OU id agrégé) : .kick() ne retourne rien
+  // {client} : CETTE connexion, par son id ; {user} : toutes les connexions de cette personne (peerIdOf — `anon:` suivi
+  // de l'id de connexion pour un visiteur sans compte), jamais l'un pour l'autre : un compte peut porter l'id d'une
+  // connexion. Comptage AVANT le kick : .kick() ne retourne rien
   const roomHandle = ctx.app.room(payload.room)
-  const kicked = Array.from(roomHandle.clients).filter(c => c.id === target || peerIdOf(c) === target).length
-  roomHandle.kick(target, payload.reason)
-  sendJson(res, 200, { ok: true, kicked })
+  const cibles     = Array.from(roomHandle.clients).filter(c => hasClient ? c.id === target : peerIdOf(c) === target)
+  if (!hasClient) roomHandle.kick(target, payload.reason)
+  else if (cibles.length > 0) roomHandle.kick(cibles[0], payload.reason)
+  else ctx.publishKickConnexion?.(payload.room, target, payload.reason)   // servie par un autre processus
+  sendJson(res, 200, { ok: true, kicked: cibles.length })
 }
 
 const STREAM_OPS = new Set(['add', 'update', 'remove', 'reset'])
@@ -494,30 +517,33 @@ function handleStream(ctx: MjsWsBridgeContext, payload: any, res: ServerResponse
   if (!isStr(payload?.name)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.name-requis') }); return }
   if (!STREAM_OPS.has(payload?.op)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.op-invalide') }); return }
 
-  const s = ctx.app.stream(payload.name)   // créé à la volée si nouveau — repris tel quel si déjà déclaré (opts ignorées dans ce cas, cf. streams.ts)
+  // la charge se vérifie AVANT de toucher au flux : une écriture refusée ne crée rien
   switch (payload.op) {
     case 'add':
       if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-add') }); return }
       if (payload.value === undefined) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-requis-add') }); return }
       if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
-      s.add(payload.id, payload.value)
       break
     case 'update':
       if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-update') }); return }
       if (!isPlainObject(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.value-objet-update') }); return }
       if (!isSerializablePayload(payload.value)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
-      s.update(payload.id, payload.value)
       break
     case 'remove':
       if (!isStr(payload.id)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.id-requis-remove') }); return }
-      s.remove(payload.id)
       break
     case 'reset':
       if (!isPlainObject(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.values-objet-reset') }); return }
       if (!isSerializablePayload(payload.values)) { sendJson(res, 400, { ok: false, error: t('ws.bridge.charge-non-serialisable', { depth: MAX_PAYLOAD_DEPTH }) }); return }
-      s.reset(payload.values)
       break
   }
+
+  // créé à la volée si nouveau, mais écrit, pas déclaré : servi seulement une fois déclaré par le code (cf. streams.ts)
+  const s = ctx.app.stream(payload.name, WRITTEN_BY_BRIDGE)
+  if (payload.op === 'add') s.add(payload.id, payload.value)
+  else if (payload.op === 'update') s.update(payload.id, payload.value)
+  else if (payload.op === 'remove') s.remove(payload.id)
+  else s.reset(payload.values)
   sendJson(res, 200, { ok: true })
 }
 
@@ -551,8 +577,46 @@ function handleState(ctx: MjsWsBridgeContext, res: ServerResponse): void {
   res.end(html)
 }
 
+// --- carte de chaleur (heatmap.ts) — la page d'admin et ses données, là seulement où le paquet est
+// installé (sinon MÊME 404 qu'un chemin inconnu) ; même règle de signature que /state (STATS_ROUTES).
+// Écrites en flux (des dizaines de Mo au plafond par défaut) : chaque morceau part dès qu'il est sérialisé, la
+// main rendue au serveur temps réel entre deux, et un client qui lit lentement fait attendre la suite (la
+// vidange du flux) — d'un seul trait, la boucle gelait plus de 600 ms à chaque requête ; gardée entière en
+// texte, la carte nourrissait le ramasse-miettes. Un client parti : l'écriture s'arrête. Un client qui ne lit plus rien pendant
+// CLIENT_ARRETE_MS (le serveur du pont n'a aucun délai de réponse) : sa réponse est coupée, jamais tenue sans fin
+const CLIENT_PARTI     = new Error('client parti')
+const CLIENT_ARRETE_MS = 30000
+async function handleHeatmap(ctx: MjsWsBridgeContext, res: ServerResponse, json: boolean): Promise<void> {
+  const write = (ctx.app as any)._heatmapWrite
+  if (typeof write !== 'function') { sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route: json ? 'GET /heatmap.json' : 'GET /heatmap' }) }); return }
+  res.writeHead(200, { 'content-type': json ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8' })
+  const envoi = (morceau: string): void | Promise<void> => {
+    if (res.destroyed) throw CLIENT_PARTI
+    if (res.write(morceau)) return
+    return new Promise<void>(ok => {
+      const delai = setTimeout(() => res.destroy(), CLIENT_ARRETE_MS)
+      const fin   = (): void => { clearTimeout(delai); res.off('drain', fin); res.off('close', fin); ok() }
+      res.on('drain', fin)
+      res.on('close', fin)
+    })
+  }
+  try { await write(!json, envoi) }
+  catch (err) {
+    if (err === CLIENT_PARTI) return
+    throw err
+  }
+  res.end()
+}
+
+// une carte qui échoue en cours de route : le journal le dit ; la réponse commencée est coupée (jamais un JSON tronqué pris pour entier)
+function heatmapFailed(ctx: MjsWsBridgeContext, res: ServerResponse, err: unknown): void {
+  ctx.onLog('error', t('ws.bridge.erreur-interne'), { err })
+  if (!res.headersSent) sendJson(res, 500, { ok: false, error: t('ws.bridge.erreur-interne') })
+  else res.destroy()
+}
+
 // --- limite de débit par IP — seau général + seau (plus strict) des échecs de
-// signature, réutilisent TokenBucket (guard.ts, LECTURE SEULE) ---------------------------------
+// signature, réutilisent TokenBucket (guard.ts) ------------------------------------------------
 // TokenBucket n'expose qu'un take() CONSOMMATEUR (aucun « peek ») : le seau-échecs ne peut donc
 // pas se pré-vérifier sans se consommer lui-même. On dérive un verrou `failBlockedUntil` (horloge),
 // posé au moment où un take() de comptage échoue (le 401 QUI FAIT DÉBORDER le seau) — il couvre
@@ -575,6 +639,8 @@ interface IpBucketEntry {
 export interface MjsWsBridgeRateLimiter {
   /** true = admis (jeton général consommé) ; false = seau général épuisé → 429. */
   admitGeneral(ip: string, now?: number): boolean
+  /** rend le jeton général d'une requête dont la signature est vérifiée (cf. handleRequest). */
+  refundGeneral(ip: string, now?: number): void
   /** true = IP actuellement en pénalité (trop d'échecs de signature récents) → 429 immédiat, AUCUNE vérification HMAC. */
   isFailBlocked(ip: string, now?: number): boolean
   /** à appeler après un 401 CONFIRMÉ — true = encore dans le budget (401 normal), false = dépassé (429, IP verrouillée pour la fenêtre). */
@@ -601,8 +667,10 @@ export function createBridgeRateLimiter(config: MjsWsResolvedRateLimit): MjsWsBr
     }
   }
 
-  function touch(ip: string, now: number): IpBucketEntry {
+  function touch(address: string, now: number): IpBucketEntry {
     sweep(now)
+    // une IPv6 compte pour son préfixe /56, comme toutes les limites par adresse (cf. transport.ts::addressForLimits)
+    const ip  = addressForLimits(address) ?? address
     let entry = map.get(ip)
     if (entry) {
       entry.lastSeen = now
@@ -621,6 +689,7 @@ export function createBridgeRateLimiter(config: MjsWsResolvedRateLimit): MjsWsBr
 
   return {
     admitGeneral(ip, now = Date.now()) { return touch(ip, now).general.take(1) },
+    refundGeneral(ip, now = Date.now()) { touch(ip, now).general.give(1) },
     isFailBlocked(ip, now = Date.now()) { return now < touch(ip, now).failBlockedUntil },
     recordFailure(ip, now = Date.now()) {
       const entry  = touch(ip, now)
@@ -632,7 +701,7 @@ export function createBridgeRateLimiter(config: MjsWsResolvedRateLimit): MjsWsBr
   }
 }
 
-// --- nonce anti-rejeu (optionnel — ws.bridge.nonce) — store PARTAGÉ -----------------------------
+// --- nonce anti-rejeu (actif par défaut — ws.bridge.nonce) — store PARTAGÉ ----------------------
 // un nonce, une fois VU, n'est plus jamais retouché (contrairement à un seau de débit qui se
 // rafraîchit à chaque accès) : le revoir EST la fraude détectée, pas un événement à prolonger.
 //
@@ -646,9 +715,10 @@ export function createBridgeRateLimiter(config: MjsWsResolvedRateLimit): MjsWsBr
 // SIGNÉ (ms) et retient le nonce jusqu'à CETTE échéance à lui, pas une fenêtre uniforme depuis la
 // réception. La correction ne dépend PLUS de l'ordre de la Map (l'échéance n'est plus monotone avec
 // l'ordre d'insertion, contrairement à avant) : chaque `checkAndRecord` compare directement
-// l'échéance du nonce concerné ; un balayage complet, opportuniste, reste au passage pour ne pas
-// garder indéfiniment les entrées déjà expirées (coût négligeable — trafic admin, jamais un flux de
-// données).
+// l'échéance du nonce concerné ; un balayage complet, opportuniste, purge les entrées déjà expirées
+// — au plus une fois par seconde (NONCE_SWEEP_EVERY_MS), jamais à chaque requête : un back qui
+// pousse beaucoup ne paie plus un parcours de toute la table par requête (coût quadratique), et la
+// rétention d'un nonce échu ne s'allonge que d'une seconde au plus.
 
 export interface MjsWsBridgeNonceStore {
   /** true = nonce inédit DANS SA FENÊTRE (ACCEPTÉ, désormais enregistré jusqu'à `signedTsMs +
@@ -658,12 +728,18 @@ export interface MjsWsBridgeNonceStore {
   readonly size: number
 }
 
+const NONCE_SWEEP_EVERY_MS = 1000
+
 export function createBridgeNonceStore(): MjsWsBridgeNonceStore {
   const expiresAt = new Map<string, number>()   // nonce → échéance (ms epoch) = horodatage SIGNÉ + fenêtre
+  let lastSweep   = -Infinity
 
   // purge OPPORTUNISTE, complète — cf. commentaire de tête : l'échéance suit le ts signé de CHAQUE
   // requête, plus l'ordre d'insertion de la Map (ne serait plus fiable pour un arrêt anticipé).
+  // Horloge qui recule (réglage NTP) : purge tout de suite, jamais suspendue jusqu'à son retour.
   function sweep(now: number): void {
+    if (now >= lastSweep && now - lastSweep < NONCE_SWEEP_EVERY_MS) return
+    lastSweep = now
     for (const [nonce, exp] of expiresAt) if (exp < now) expiresAt.delete(nonce)
   }
 
@@ -695,11 +771,22 @@ function clientIp(req: IncomingMessage): string {
 const KNOWN_ROUTES = new Set([
   'GET /health', 'POST /broadcast', 'POST /send', 'POST /room/send', 'POST /room/kick',
   'POST /stream', 'GET /presence', 'GET /stats', 'GET /metrics', 'GET /state',
+  'GET /heatmap', 'GET /heatmap.json',
 ])
 // /stats, /metrics, /state — signature EXEMPTÉE uniquement si le host effectif du pont
 // est loopback (isLoopbackHost) : outil de dev local. Dès que le pont écoute ailleurs, ces 3
 // endpoints redeviennent signés comme tout le reste — AUCUNE exception au-delà du loopback.
-const STATS_ROUTES = new Set(['GET /stats', 'GET /metrics', 'GET /state'])
+const STATS_ROUTES = new Set(['GET /stats', 'GET /metrics', 'GET /state', 'GET /heatmap', 'GET /heatmap.json'])
+
+// voie non signée (STATS_ROUTES en boucle locale) — parade au rebinding DNS : une page étrangère
+// qui fait pointer SON nom de domaine vers 127.0.0.1 envoie ce nom dans Host. Seuls les noms de la
+// machine elle-même passent (localhost, 127.0.0.1, [::1], ou le host d'écoute) ; le port reste
+// libre (un tunnel ssh garde son nom local). Host absent ou malformé : refusé. Lecture de l'en-tête commune avec le
+// serveur de développement (host-header.ts) ; `listenHost` est ici 127.0.0.1 ou ::1 (cf. isLoopbackHost)
+function isLocalHostHeader(header: string | undefined, listenHost: string): boolean {
+  const name = hostHeaderName(header)
+  return name === 'localhost' || name === '127.0.0.1' || name === '::1' || name === listenHost
+}
 
 // 401 (signature invalide/absente OU nonce rejoué) — CRÉDITE le seau-échecs (limite
 // de débit) : CHOKE POINT unique pour tout refus adjacent à la signature, jamais
@@ -732,12 +819,17 @@ async function handleRequest(
 
   if (method === 'GET' && url.pathname === '/health') { sendText(res, 200, 'ok'); return }   // SEUL endpoint non signé ET jamais limité (sonde d'orchestrateur — hors /stats-/metrics-/state en loopback, cf. plus bas)
 
-  const now = Date.now()
-  const ip  = clientIp(req)
+  const now           = Date.now()
+  const ip            = clientIp(req)
+  const skipSignature = STATS_ROUTES.has(route) && isLoopbackHost(resolved.host)
 
-  // limite de débit — seau général PAR IP, TOUTES les routes restantes (/health exempté
-  // ci-dessus) ; AVANT toute lecture de corps (ne dépense rien — mémoire/CPU — pour un flux déjà bloqué).
-  if (limiter && !limiter.admitGeneral(ip, now)) {
+  // limite de débit — AVANT toute lecture de corps (ne dépense rien — mémoire/CPU — pour un flux déjà bloqué). Toute requête
+  // prend un jeton du seau général PAR IP ; celle dont la signature est VÉRIFIÉE le rend aussitôt (cf. plus bas) : un back qui
+  // signe n'est pas limité par lui, quel que soit son débit, mais un en-tête de signature, jamais vérifié à ce stade, ne
+  // dispense de rien. Une signature fausse se paie en plus au seau-échecs, plus strict : IP déjà en pénalité → 429 immédiat,
+  // AUCUNE vérification HMAC tentée
+  const signed = !skipSignature && firstHeader(req.headers['x-mjs-ws-signature']) !== undefined
+  if (limiter && (!limiter.admitGeneral(ip, now) || (!skipSignature && limiter.isFailBlocked(ip, now)))) {
     ctx.stats.pont.rateLimited++
     sendJson(res, 429, { ok: false, error: 'rate-limited' })
     return
@@ -748,27 +840,27 @@ async function handleRequest(
   // narrowing natif des unions discriminées (cf. bundler/config.ts, même angle mort connu)
   if (!bodyResult.ok) {
     const bad = bodyResult as { ok: false; status: number; error: string }
+    // corps trop gros ou illisible sous un en-tête de signature : un échec compté, comme une signature fausse
+    if (signed && limiter && !limiter.recordFailure(ip, now)) {
+      ctx.stats.pont.rateLimited++
+      sendJson(res, 429, { ok: false, error: 'rate-limited' })
+      return
+    }
     sendJson(res, bad.status, { ok: false, error: bad.error })
     return
   }
   const rawBody = bodyResult.body
 
-  const skipSignature = STATS_ROUTES.has(route) && isLoopbackHost(resolved.host)
-
-  // seau-échecs — IP déjà en pénalité → 429 immédiat, AUCUNE vérification HMAC tentée
-  // (cf. docs/23-mjs-ws.md « Limite de débit ») ; seulement pertinent là où une signature SERAIT
-  // vérifiée (skipSignature = rien à vérifier ici, cf. /stats-/metrics-/state en loopback plus bas).
-  if (!skipSignature && limiter && limiter.isFailBlocked(ip, now)) {
-    ctx.stats.pont.rateLimited++
-    sendJson(res, 429, { ok: false, error: 'rate-limited' })
+  if (skipSignature && !isLocalHostHeader(req.headers.host, resolved.host)) {
+    sendJson(res, 403, { ok: false, error: t('ws.bridge.hote-refuse') })
     return
   }
 
   if (!skipSignature) {
     // nonce anti-rejeu (ws.bridge.nonce) — extrait AVANT verifyIncomingSignature :
     // suffixé à la chaîne canonique (cf. canonicalString), donc requis pour même CALCULER la
-    // signature attendue quand l'option est active. Chaîne BYTE-IDENTIQUE à avant si `resolved.nonce`
-    // est false (défaut) — nonceHeader reste alors `undefined`, jamais lu ni exigé.
+    // signature attendue quand l'option est active (défaut). Chaîne sans nonce si `resolved.nonce`
+    // est false (`nonce: false` explicite) — nonceHeader reste alors `undefined`, jamais lu ni exigé.
     const nonceHeader = resolved.nonce ? firstHeader(req.headers['x-mjs-ws-nonce']) : undefined
     const sigError = verifyIncomingSignature(
       resolved.secret, method, req.url ?? '/', rawBody, req.headers, undefined,
@@ -787,6 +879,8 @@ async function handleRequest(
         return
       }
     }
+    // signature vérifiée : le jeton général pris à l'arrivée est rendu
+    if (limiter) limiter.refundGeneral(ip, now)
   }
 
   let payload: any = {}
@@ -806,6 +900,8 @@ async function handleRequest(
       case 'GET /stats':       handleStats(ctx, res); return
       case 'GET /metrics':     handleMetrics(ctx, res); return
       case 'GET /state':        handleState(ctx, res); return
+      case 'GET /heatmap':      void handleHeatmap(ctx, res, false).catch(err => heatmapFailed(ctx, res, err)); return
+      case 'GET /heatmap.json': void handleHeatmap(ctx, res, true).catch(err => heatmapFailed(ctx, res, err)); return
       default: sendJson(res, 404, { ok: false, error: t('ws.bridge.chemin-inconnu', { route }) })
     }
   } catch (err) {
@@ -821,12 +917,48 @@ async function handleRequest(
 const WEBHOOK_QUEUE_MAX       = 1000
 const WEBHOOK_INFLIGHT_MAX    = 4
 const WEBHOOK_RETRY_DELAYS_MS = [2000, 10000]   // délai AVANT chaque retentative — l'essai initial part sans délai (0/2/10 s)
+const WEBHOOK_FULL_WARN_MS    = 60 * 1000       // file pleine : un avertissement au plus par minute, avec le compte des perdus
 
-interface WebhookJob { event: string; payload: unknown }
+// corps déjà sérialisé à l'émission (cf. emit) — une charge que JSON refuse n'entre jamais en file ;
+// `attempt` = rang de la prochaine tentative (0 = la première)
+interface WebhookJob { event: string; body: string; attempt: number }
 
-function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }
+// en-têtes du visiteur recopiés dans un webhook connect/disconnect : une courte liste d'en-têtes utiles et sans secret,
+// plus ceux que l'appli ajoute (webhooks.forwardHeaders). Une liste de noms interdits laissait toujours passer ce qu'elle
+// ne nommait pas — l'identité posée par un proxy d'authentification (Remote-User, X-Forwarded-Groups, X-Userinfo, le
+// certificat client…) partait vers l'URL du webhook (http possible) et ses journaux. Cookie, Authorization,
+// Sec-WebSocket-Protocol (où l'on met souvent le jeton) et tout le reste ne partent pas ; l'adresse et l'origine du
+// visiteur restent dans `meta` (address, origin)
+const WEBHOOK_HEADERS = new Set(['host', 'origin', 'user-agent', 'accept-language', 'x-request-id', 'x-forwarded-proto', 'sec-websocket-version'])
 
-function postJson(target: URL, body: string, ts: number, sig: string, timeoutMs: number): Promise<boolean> {
+// nom d'en-tête HTTP (jeton de la RFC 9110)
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+// webhooks.forwardHeaders — une liste de noms d'en-têtes, comparés en minuscules ; tout autre valeur refusée à la déclaration
+function resolveForwardHeaders(raw: unknown): Set<string> | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw) || !raw.every(nom => typeof nom === 'string' && HEADER_NAME.test(nom))) {
+    let received: string
+    try { received = JSON.stringify(raw) ?? String(raw) }
+    catch { received = String(raw) }
+    throw new Error(t('ws.bridge.webhooks-forward-headers-invalide', { received }))
+  }
+  return new Set(raw.map(nom => nom.toLowerCase()))
+}
+
+// copie de la méta pour le webhook — client.meta reste entière (opts.auth lit le cookie)
+function webhookMeta(meta: MjsWsRemoteInfo, extra: ReadonlySet<string> | undefined): MjsWsRemoteInfo {
+  const headers = meta?.headers
+  if (!headers) return meta
+  const kept: Record<string, string | string[] | undefined> = {}
+  for (const name in headers) {
+    const nom = name.toLowerCase()
+    if (WEBHOOK_HEADERS.has(nom) || (extra !== undefined && extra.has(nom))) kept[name] = headers[name]
+  }
+  return { ...meta, headers: kept }
+}
+
+function postJson(target: URL, body: string, ts: number, sig: string, timeoutMs: number, signal: AbortSignal): Promise<boolean> {
   return new Promise((resolvePromise, reject) => {
     const requester = target.protocol === 'https:' ? httpsRequest : httpRequest
     const req = requester(target, {
@@ -838,6 +970,7 @@ function postJson(target: URL, body: string, ts: number, sig: string, timeoutMs:
         'x-mjs-ws-signature': sig,
       },
       timeout: timeoutMs,
+      signal,   // app.stop() interrompt la requête en vol (cf. createWebhookSender.stop)
     }, (res) => {
       res.resume()   // corps de réponse du back ignoré — fire-and-forget
       const status = res.statusCode ?? 0
@@ -857,46 +990,101 @@ function createWebhookSender(webhooks: MjsWsResolvedBridgeWebhooks | undefined, 
   const queue: WebhookJob[] = []
   let inflight = 0
   let stopped  = false
+  // ce que stop() coupe : les retentatives en attente (minuterie → l'événement) et les requêtes en vol
+  const retries  = new Map<ReturnType<typeof setTimeout>, WebhookJob>()
+  const requetes = new Set<AbortController>()
+  // file pleine — perdus depuis le dernier avertissement, dernier événement perdu, prochain avertissement permis
+  let perdus        = 0
+  let dernierPerdu  = ''
+  let prochainAvert = 0
+
+  // une livraison en échec attend sa retentative HORS des places en vol : un back tombé une seconde n'immobilise plus les
+  // WEBHOOK_INFLIGHT_MAX places pendant les pauses (2 s, puis 10 s), les événements suivants partent. La pause finie,
+  // l'événement repasse en tête de file ; en attente, il compte dans la borne de la file (cf. emit)
+  function planRetry(job: WebhookJob, ms: number): void {
+    const timer = setTimeout(() => {
+      retries.delete(timer)
+      if (stopped) return
+      queue.unshift(job)
+      pump()
+    }, ms)
+    retries.set(timer, job)
+  }
 
   function pump(): void {
     while (!stopped && inflight < WEBHOOK_INFLIGHT_MAX && queue.length > 0) {
       const job = queue.shift()!
       inflight++
-      void deliver(job, 0).finally(() => { inflight--; pump() })
+      void deliver(job)
+        .catch(err => onLog('error', t('ws.bridge.erreur-interne-non-geree'), { err }))
+        .finally(() => { inflight--; pump() })
     }
   }
 
-  async function deliver(job: WebhookJob, attempt: number): Promise<void> {
-    const body = JSON.stringify(job.payload)
+  async function deliver(job: WebhookJob): Promise<void> {
     const ts   = Math.floor(Date.now() / 1000)
     // direction 'out' — une signature captée sur une commande admin ('in') ne
     // vérifie plus côté back pour un webhook, cf. canonicalString ci-dessus « Séparation de domaine »
-    const sig  = signCanonical(wh.secret, canonicalString(ts, 'POST', target.pathname + target.search, body, undefined, 'out'))
+    const sig  = signCanonical(wh.secret, canonicalString(ts, 'POST', target.pathname + target.search, job.body, undefined, 'out'))
     try {
-      const okStatus = await postJson(target, body, ts, sig, wh.timeoutMs)
+      const controller = new AbortController()
+      requetes.add(controller)
+      let okStatus: boolean
+      try { okStatus = await postJson(target, job.body, ts, sig, wh.timeoutMs, controller.signal) }
+      finally { requetes.delete(controller) }
       if (!okStatus) throw new Error(t('ws.bridge.reponse-http-non-2xx'))
       stats.pont.webhooksEnvoyes++
     } catch (err) {
       stats.pont.webhooksEchoues++
       if (stopped) return
-      if (attempt < WEBHOOK_RETRY_DELAYS_MS.length) {
-        await sleep(WEBHOOK_RETRY_DELAYS_MS[attempt])
-        if (!stopped) { await deliver(job, attempt + 1) }
+      if (job.attempt < WEBHOOK_RETRY_DELAYS_MS.length) {
+        planRetry({ ...job, attempt: job.attempt + 1 }, WEBHOOK_RETRY_DELAYS_MS[job.attempt])
         return
       }
       stats.pont.webhooksAbandonnes++
-      onLog('warn', t('ws.bridge.webhook-abandonne', { event: job.event, tentative: attempt + 1 }), { err: err instanceof Error ? err.message : String(err), url: wh.url })
+      onLog('warn', t('ws.bridge.webhook-abandonne', { event: job.event, tentative: job.attempt + 1 }), { err: err instanceof Error ? err.message : String(err), url: wh.url })
     }
+  }
+
+  // file pleine : la première perte se dit tout de suite, les suivantes se comptent — une ligne au plus
+  // par minute avec leur nombre, le reste du compte à l'arrêt ; jamais une ligne par message perdu
+  function signalerPerte(event: string): void {
+    perdus++
+    dernierPerdu = event
+    const now = Date.now()
+    if (now < prochainAvert) return
+    if (perdus === 1) onLog('warn', t('ws.bridge.file-webhooks-pleine', { max: WEBHOOK_QUEUE_MAX, event }), { max: WEBHOOK_QUEUE_MAX, event, perdus })
+    else onLog('warn', t('ws.bridge.file-webhooks-pleine-compte', { max: WEBHOOK_QUEUE_MAX, event, perdus }), { max: WEBHOOK_QUEUE_MAX, event, perdus })
+    perdus        = 0
+    prochainAvert = now + WEBHOOK_FULL_WARN_MS
   }
 
   return {
     emit(event: string, payload: unknown): void {
       if (stopped || !wh.events.has(event)) return
-      if (queue.length >= WEBHOOK_QUEUE_MAX) { onLog('warn', t('ws.bridge.file-webhooks-pleine', { max: WEBHOOK_QUEUE_MAX, event })); return }
-      queue.push({ event, payload })
+      if (queue.length + retries.size >= WEBHOOK_QUEUE_MAX) { signalerPerte(event); return }
+      // sérialisé ICI, sous garde : une identité que JSON refuse (BigInt d'une colonne de base,
+      // objet cyclique d'un ORM) perd son webhook, jamais le processus
+      let body: string
+      try { body = JSON.stringify(payload) }
+      catch (err) {
+        stats.pont.webhooksAbandonnes++
+        onLog('error', t('ws.bridge.webhook-non-serialisable', { event }), { event, err: err instanceof Error ? err.message : String(err) })
+        return
+      }
+      queue.push({ event, body, attempt: 0 })
       pump()
     },
-    stop(): void { stopped = true },
+    stop(): void {
+      stopped = true
+      for (const timer of retries.keys()) clearTimeout(timer)
+      retries.clear()
+      for (const controller of requetes) controller.abort()
+      if (perdus > 0) {
+        onLog('warn', t('ws.bridge.file-webhooks-pleine-compte', { max: WEBHOOK_QUEUE_MAX, event: dernierPerdu, perdus }), { max: WEBHOOK_QUEUE_MAX, event: dernierPerdu, perdus })
+        perdus = 0
+      }
+    },
   }
 }
 
@@ -908,7 +1096,7 @@ export function createBridge(resolved: MjsWsResolvedBridgeOptions, ctx: MjsWsBri
   // par IP, éviction paresseuse, cf. createBridgeRateLimiter ci-dessus) ; `null` = désactivée.
   const limiter = resolved.rateLimit ? createBridgeRateLimiter(resolved.rateLimit) : null
   // nonce anti-rejeu — MÊME principe que limiter ci-dessus : un seul store pour la
-  // durée de vie du pont, `null` = désactivé (défaut, cf. resolveBridgeOptions)
+  // durée de vie du pont, `null` = désactivé (`nonce: false`, cf. resolveBridgeOptions)
   const nonceStore = resolved.nonce ? createBridgeNonceStore() : null
   let server: ReturnType<typeof createServer> | null = null
 
@@ -944,11 +1132,11 @@ export function createBridge(resolved: MjsWsResolvedBridgeOptions, ctx: MjsWsBri
     },
 
     notifyConnect(client) {
-      webhooks.emit('connect', { event: 'connect', at: Date.now(), client: { id: client.id, identity: client.identity, meta: client.meta } })
+      webhooks.emit('connect', { event: 'connect', at: Date.now(), client: { id: client.id, identity: client.identity, meta: webhookMeta(client.meta, resolved.webhooks?.forwardHeaders) } })
     },
 
     notifyDisconnect(client, reason) {
-      const p: Record<string, unknown> = { event: 'disconnect', at: Date.now(), client: { id: client.id, identity: client.identity, meta: client.meta } }
+      const p: Record<string, unknown> = { event: 'disconnect', at: Date.now(), client: { id: client.id, identity: client.identity, meta: webhookMeta(client.meta, resolved.webhooks?.forwardHeaders) } }
       if (reason !== undefined) p.reason = reason
       webhooks.emit('disconnect', p)
     },

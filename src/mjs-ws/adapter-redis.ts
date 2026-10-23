@@ -1,10 +1,14 @@
 // mjs-ws/adapter-redis — implémentation RÉELLE de MjsWsAdapter sur un mini-client
 // Redis RESP écrit À LA MAIN, node:net + node:tls + node:crypto SEULS (ZÉRO dépendance npm —
 // pas de paquet `redis`/`ioredis`). Deux connexions séparées, comme Redis l'exige : `_sub` (dédiée
-// SUBSCRIBE + réception des push `message`), `_cmd` (PING/PUBLISH/INCR/DEL/SET EX/GET/KEYS —
+// SUBSCRIBE + réception des push `message`), `_cmd` (PING/PUBLISH/INCR/DEL/SET EX/GET/SCAN —
 // une connexion en mode abonné ne peut plus parler qu'un sous-ensemble de commandes). Chacune
 // reconnecte seule, à backoff (1/2/5/10 s), et re-déclare ses abonnements après une reconnexion
-// (Redis oublie l'état d'abonnement d'une connexion qui tombe). AUCUN import dynamique ici —
+// (Redis oublie l'état d'abonnement d'une connexion qui tombe). Une commande sans réponse au bout de
+// COMMAND_TIMEOUT_MS (30 s) n'attend pas pour toujours : la connexion est fermée, les commandes en
+// attente échouent, et la reconnexion ci-dessus reprend. Même sort pour une connexion qui n'est pas
+// prête READY_TIMEOUT_MS (30 s) après son ouverture (socket jamais connecté, poignée de main TLS
+// figée, AUTH/SELECT sans réponse). AUCUN import dynamique ici —
 // node:net/node:tls/node:crypto sont des builtins Node, jamais « absents » comme le paquet
 // optionnel `ws` (cf. transport-ws.ts) : la paresse porte sur la CONNEXION (aucun socket ouvert
 // avant `.start()`), pas sur le chargement du module.
@@ -51,7 +55,9 @@ interface ParseStep { value: RespValue; next: number }
 // récursif — une ligne d'en-tête (`+`/`-`/`:`/`$`/`*`) DOIT être entièrement présente pour
 // avancer ; `$`/`*` ont en plus besoin de leur CORPS (peut arriver dans un AUTRE chunk TCP) —
 // retourne `null` (jamais une exception) tant que le tampon ne contient pas une valeur COMPLÈTE.
-function tryParseOne(buf: Buffer, offset: number): ParseStep | null {
+// `hint.need` reçoit alors la taille de tampon qu'il faut au moins atteindre quand c'est le corps d'un `$`
+// annoncé qui manque (0 si on ne le sait pas encore) — cf. RespParser
+function tryParseOne(buf: Buffer, offset: number, hint?: { need: number }): ParseStep | null {
   if (offset >= buf.length) return null
   const type = buf[offset]
   const lineEnd = buf.indexOf('\r\n', offset + 1)
@@ -77,7 +83,7 @@ function tryParseOne(buf: Buffer, offset: number): ParseStep | null {
     // à la première longueur bulk mal formée reçue du pair Redis. Prouvé par repro.
     if (!Number.isFinite(len) || len < 0) throw new Error(t('ws.adapter-redis.longueur-bulk-invalide', { line }))
     const need = afterLine + len + 2
-    if (buf.length < need) return null
+    if (buf.length < need) { if (hint) hint.need = need; return null }
     return { value: buf.toString('utf8', afterLine, afterLine + len), next: need }
   }
 
@@ -88,7 +94,7 @@ function tryParseOne(buf: Buffer, offset: number): ParseStep | null {
     const items: RespValue[] = []
     let cursor = afterLine
     for (let i = 0; i < n; i++) {
-      const sub = tryParseOne(buf, cursor)
+      const sub = tryParseOne(buf, cursor, hint)
       if (!sub) return null   // élément pas encore complet — attend la suite du tableau aussi
       items.push(sub.value)
       cursor = sub.next
@@ -99,19 +105,32 @@ function tryParseOne(buf: Buffer, offset: number): ParseStep | null {
   throw new Error(t('ws.adapter-redis.octet-inattendu', { hex: type.toString(16) }))
 }
 
-/** parseur incrémental — `push(chunk)` retourne les valeurs COMPLÈTES désormais disponibles */
+/** parseur incrémental — `push(chunk)` retourne les valeurs COMPLÈTES désormais disponibles. Les tronçons
+ *  s'empilent sans copie tant que le corps annoncé d'une valeur n'est pas arrivé en entier : le tampon n'est
+ *  recollé (une seule fois) et réanalysé qu'à ce moment-là — linéaire, même pour un message de plusieurs Mo
+ *  reçu en centaines de tronçons TCP (recoller et tout réanalyser à chaque tronçon était quadratique) */
 export class RespParser {
-  private _buf: Buffer = Buffer.alloc(0)
+  private _chunks: Buffer[] = []
+  private _size = 0
+  private _need = 0   // taille à atteindre avant qu'une nouvelle analyse puisse aboutir (0 = inconnue)
 
   push(chunk: Buffer): RespValue[] {
-    this._buf = this._buf.length === 0 ? chunk : Buffer.concat([this._buf, chunk])
+    this._chunks.push(chunk)
+    this._size += chunk.length
+    if (this._size < this._need) return []
+    let buf = this._chunks.length === 1 ? this._chunks[0] : Buffer.concat(this._chunks, this._size)
     const out: RespValue[] = []
+    const hint = { need: 0 }
     for (;;) {
-      const step = tryParseOne(this._buf, 0)
+      hint.need = 0
+      const step = tryParseOne(buf, 0, hint)
       if (!step) break
       out.push(step.value)
-      this._buf = this._buf.subarray(step.next)
+      buf = buf.subarray(step.next)
     }
+    this._chunks = buf.length === 0 ? [] : [buf]
+    this._size   = buf.length
+    this._need   = hint.need
     return out
   }
 }
@@ -121,13 +140,15 @@ export class RespParser {
 export interface ParsedRedisUrl {
   host: string
   port: number
+  /** utilisateur ACL (Redis 6 et plus) — `redis://utilisateur:motDePasse@…` */
+  username?: string
   password?: string
   db?: number
   /** `true` pour `rediss://` (TLS), `false` pour `redis://` — cf. `planConnect` pour le câblage réel */
   tls: boolean
 }
 
-/** parse `redis://[[:motDePasse]@]hôte[:port][/base]` — `rediss://` distingué (`tls: true`, cf. `planConnect`) */
+/** parse `redis://[[utilisateur]:motDePasse@]hôte[:port][/base]` — `rediss://` distingué (`tls: true`, cf. `planConnect`) */
 export function parseRedisUrl(raw: string): ParsedRedisUrl {
   let u: URL
   try { u = new URL(raw) }
@@ -137,6 +158,7 @@ export function parseRedisUrl(raw: string): ParsedRedisUrl {
   }
   const host     = u.hostname || '127.0.0.1'
   const port     = u.port ? parseInt(u.port, 10) : 6379
+  const username = u.username ? decodeURIComponent(u.username) : undefined
   const password = u.password ? decodeURIComponent(u.password) : undefined
   const path     = u.pathname.replace(/^\//, '')
   let db: number | undefined
@@ -145,7 +167,10 @@ export function parseRedisUrl(raw: string): ParsedRedisUrl {
     if (!Number.isFinite(n) || String(n) !== path) throw new Error(t('ws.adapter-redis.url-base-invalide', { raw, path }))
     db = n
   }
-  return { host, port, password, db, tls: u.protocol === 'rediss:' }
+  const parsed: ParsedRedisUrl = { host, port, password, db, tls: u.protocol === 'rediss:' }
+  // clé posée seulement quand l'URL nomme un utilisateur : une URL sans nom donne le même objet qu'avant
+  if (username !== undefined) parsed.username = username
+  return parsed
 }
 
 // --- une connexion Redis (rôle 'command' OU 'subscriber') — reconnecte seule, à backoff -----
@@ -157,6 +182,32 @@ export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000]
 export function backoffDelayMs(attempt: number): number {
   return RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)]
 }
+
+// délai maximum d'UNE commande sans réponse, en ms — Redis répond dans l'ordre des requêtes : une commande qui ne reçoit rien (serveur
+// gelé, réseau coupé à moitié, socket resté ouvert) décalerait la réponse de toutes les suivantes. Passé ce délai la connexion est FERMÉE
+// (la reconnexion à backoff reprend, comme après une coupure) et toutes les commandes en attente échouent, cf. _onCommandTimeout. Sans
+// cette borne, chaque commande envoyée à un Redis muet restait dans `_pending` tant que le socket vivait : la liste grossissait sans fin.
+// 30 s, comme une écriture du serveur de jeu : un Redis sain répond en quelques millisecondes, une borne plus courte fermerait à tort une
+// connexion seulement lente
+const COMMAND_TIMEOUT_MS = 30000
+
+// délai maximum pour qu'une connexion devienne PRÊTE (socket connecté, poignée de main TLS finie, AUTH/SELECT répondus), en ms, compté depuis son
+// OUVERTURE, pas depuis son dernier progrès. Un socket qui ne se connecte jamais (poignée de main TLS figée sous rediss:// : le noyau ne ferme rien
+// tant que la connexion TCP vit) ne produit ni 'connect', ni 'error', ni 'close' : sans cette borne, les commandes de send() restaient dans
+// `_readyWaiters` pour toujours, une de plus à chaque appel. Passé ce délai la connexion est FERMÉE (la reconnexion à backoff reprend) et les
+// commandes en attente échouent, cf. _onReadyTimeout. 30 s, comme une commande : un Redis sain est prêt en quelques millisecondes, une borne plus
+// courte fermerait à tort une connexion seulement lente
+const READY_TIMEOUT_MS = 30000
+
+// les erreurs posées par un délai dépassé (commande sans réponse, connexion pas prête) : le délai a déjà averti, AUTH/SELECT ne les rapporte pas comme un refus
+const TIMED_OUT_ERRORS = new WeakSet<Error>()
+
+// un avertissement au plus par minute et par canal pour les messages ignorés, cf. RedisAdapter._ignore
+const IGNORED_WARN_MS = 60000
+
+// clés examinées par lot de SCAN (listLeases) : assez pour peu d'allers-retours, assez peu pour que chaque lot
+// reste bref pour Redis
+const SCAN_COUNT = 1000
 
 // --- rediss:// — TLS réel (node:tls), jamais du texte en clair sous ce schéma ---------------
 
@@ -183,6 +234,8 @@ type RedisConnRole = 'command' | 'subscriber'
 interface RedisConnOpts {
   host: string
   port: number
+  /** utilisateur ACL — AUTH part alors avec le nom et le mot de passe, cf. _auth */
+  username?: string
   password?: string
   db?: number
   /** `true`/objet d'options TLS transmissibles (ca/rejectUnauthorized/cert/key…), ou absent — cf.
@@ -217,6 +270,7 @@ export class RedisConnection {
   private _backoffAttempt = 0
   private _stopped = false
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private _readyTimer: ReturnType<typeof setTimeout> | null = null   // échéance de la connexion ouverte — cf. READY_TIMEOUT_MS
   private _ready = false   // AUTH/SELECT terminés — cf. le getter ready ci-dessous
   private _everConnected = false   // posé APRÈS la 1re réussite — distingue 1re connexion / reconnexion
   private _reconnectCount = 0
@@ -245,6 +299,8 @@ export class RedisConnection {
     socket.on('data', (chunk: Buffer) => this._onData(chunk))
     socket.on('error', (err) => this._opts.onLog('warn', `[mjs-ws/adapter-redis] erreur socket (${this._opts.role}) : ${errMessage(err)}`))
     socket.on('close', () => this._onClose())
+    // l'échéance part avec la connexion et se retire dès qu'elle est prête, fermée ou arrêtée — jamais unref() : le socket qui s'ouvre retient déjà le process
+    this._readyTimer = setTimeout(() => this._onReadyTimeout(), READY_TIMEOUT_MS)
   }
 
   /** résout dès que AUTH/SELECT (s'il y en a) ont réussi — immédiat si déjà `_ready`. */
@@ -253,19 +309,36 @@ export class RedisConnection {
     return new Promise((resolve, reject) => { this._readyWaiters.push({ resolve, reject }) })
   }
 
+  // AUTH avec le nom de l'URL (ACL de Redis 6 et plus) quand il y en a un. Un Redis antérieur (AUTH à un seul argument)
+  // répond « wrong number of arguments » : réessai avec le mot de passe seul, comme avant, et un avertissement. Un nom ou
+  // un mot de passe refusé (WRONGPASS) n'est jamais réessayé sans le nom
+  private async _auth(password: string): Promise<void> {
+    const username = this._opts.username
+    if (!username) { await this._raw(['AUTH', password]); return }
+    try { await this._raw(['AUTH', username, password]) }
+    catch (err) {
+      if (!(err instanceof Error) || !/wrong number of arguments/i.test(err.message)) throw err
+      this._opts.onLog('warn', t('ws.adapter-redis.auth-sans-utilisateur', { role: this._opts.role, username }))
+      await this._raw(['AUTH', password])
+    }
+  }
+
   private async _onSocketConnected(): Promise<void> {
     this._backoffAttempt = 0
     try {
-      if (this._opts.password) await this._raw(['AUTH', this._opts.password])
+      if (this._opts.password) await this._auth(this._opts.password)
       if (this._opts.db != null) await this._raw(['SELECT', String(this._opts.db)])
       // compteur reconnexions — la 2e réussite ou plus est une VRAIE reconnexion,
       // jamais la 1re connexion initiale (cf. _everConnected, posé une fois pour toutes ensuite)
       if (this._everConnected) this._reconnectCount++
       this._everConnected = true
+      this._clearReadyTimer()
       this._ready = true
       for (const w of this._readyWaiters.splice(0)) w.resolve()   // débloque les send() en attente — dans l'ORDRE d'appel
       this._opts.onConnected()
     } catch (err) {
+      // un délai dépassé (poignée de main muette) a déjà été rejeté et avertit lui-même, cf. _onReadyTimeout : ce n'est pas un refus d'AUTH/SELECT
+      if (err instanceof Error && TIMED_OUT_ERRORS.has(err)) return
       const message = t('ws.adapter-redis.auth-echec', { role: this._opts.role, err: errMessage(err) })
       this._opts.onLog('error', message)
       // AUTH/SELECT refusé (mot de passe faux, base inexistante…) — un Redis réel NE COUPE PAS la
@@ -321,6 +394,7 @@ export class RedisConnection {
   }
 
   private _onClose(): void {
+    this._clearReadyTimer()
     this._socket = null
     this._ready  = false
     // parseur neuf à CHAQUE nouvelle connexion — un fragment retenu de l'ancienne (trame RESP
@@ -336,13 +410,48 @@ export class RedisConnection {
     this._reconnectTimer = setTimeout(() => { this._reconnectTimer = null; this._open() }, delay)
   }
 
-  /** commande FIFO — résout/rejette dans l'ORDRE de réception (Redis répond dans l'ordre des requêtes) */
+  /** commande FIFO — résout/rejette dans l'ORDRE de réception (Redis répond dans l'ordre des requêtes). Sa minuterie (COMMAND_TIMEOUT_MS)
+   *  est posée avec elle et retirée dès qu'elle est réglée — réponse, coupure, arrêt ou délai —, jamais laissée armée derrière une commande
+   *  réglée : elle fermerait la connexion suivante. Jamais unref() : la commande attend sur un socket ouvert, qui retient déjà le process */
   private _raw(args: Array<string | number>): Promise<RespValue> {
     return new Promise((resolve, reject) => {
       if (!this._socket) { reject(new Error(t('ws.adapter-redis.connexion-indisponible', { role: this._opts.role }))); return }
-      this._pending.push({ resolve, reject })
+      const timer = setTimeout(() => this._onCommandTimeout(), COMMAND_TIMEOUT_MS)
+      this._pending.push({ resolve: (v) => { clearTimeout(timer); resolve(v) }, reject: (err) => { clearTimeout(timer); reject(err) } })
       this._socket.write(encodeCommand(args))
     })
+  }
+
+  // une commande est restée COMMAND_TIMEOUT_MS sans réponse : l'ordre des réponses n'est plus sûr. Toutes les commandes en attente échouent
+  // avec le même message, PUIS la connexion est fermée : destroy() déclenche 'close', et _onClose relance la reconnexion à backoff comme après
+  // n'importe quelle coupure (les commandes déjà rejetées ici ne sont pas rejetées une seconde fois). L'avertissement vient en dernier : un
+  // journal qui lève ne laisse pas la connexion ouverte
+  private _onCommandTimeout(): void {
+    const waiting = this._pending.splice(0)
+    const err     = new Error(t('ws.adapter-redis.commande-sans-reponse', { role: this._opts.role, delai: COMMAND_TIMEOUT_MS / 1000 }))
+    for (const p of waiting) p.reject(err)
+    this._socket?.destroy()
+    this._opts.onLog('warn', t('ws.adapter-redis.commande-delai-depasse', { role: this._opts.role, nb: waiting.length, delai: COMMAND_TIMEOUT_MS / 1000 }))
+  }
+
+  private _clearReadyTimer(): void {
+    if (this._readyTimer) { clearTimeout(this._readyTimer); this._readyTimer = null }
+  }
+
+  // la connexion n'est pas devenue prête READY_TIMEOUT_MS après son ouverture : socket jamais connecté, poignée de main TLS figée, ou AUTH/SELECT
+  // sans réponse. Les commandes de send() qui attendent et les AUTH/SELECT en vol échouent avec le même message, PUIS la connexion est fermée :
+  // destroy() déclenche 'close', et _onClose relance la reconnexion à backoff comme après n'importe quelle coupure (les commandes déjà rejetées ici
+  // ne sont pas rejetées une seconde fois). L'avertissement vient en dernier, et ne compte que les commandes de l'appelant, pas AUTH/SELECT
+  private _onReadyTimeout(): void {
+    this._readyTimer = null
+    const waiting = this._readyWaiters.splice(0)
+    const pending = this._pending.splice(0)
+    const err     = new Error(t('ws.adapter-redis.connexion-pas-prete', { role: this._opts.role, delai: READY_TIMEOUT_MS / 1000 }))
+    TIMED_OUT_ERRORS.add(err)
+    for (const w of waiting) w.reject(err)
+    for (const p of pending) p.reject(err)
+    this._socket?.destroy()
+    this._opts.onLog('warn', t('ws.adapter-redis.connexion-delai-depasse', { role: this._opts.role, nb: waiting.length, delai: READY_TIMEOUT_MS / 1000 }))
   }
 
   // attend AUTH/SELECT AVANT d'écrire quoi que ce soit — AVANT, une commande partait dès que
@@ -357,6 +466,7 @@ export class RedisConnection {
   stop(): void {
     this._stopped = true
     if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null }
+    this._clearReadyTimer()
     if (this._socket) { this._socket.destroy(); this._socket = null }
     const err = new Error(t('ws.adapter-redis.adaptateur-arrete', { role: this._opts.role }))
     for (const p of this._pending.splice(0)) p.reject(err)
@@ -393,7 +503,7 @@ export class RedisAdapter implements MjsWsAdapter {
     this._onLog    = opts.onLog ?? (() => {})
     const parsed   = parseRedisUrl(opts.url)
     const tls      = parsed.tls ? (opts.tlsOptions ?? true) : undefined
-    const shared   = { host: parsed.host, port: parsed.port, password: parsed.password, db: parsed.db, tls, onLog: this._onLog }
+    const shared   = { host: parsed.host, port: parsed.port, username: parsed.username, password: parsed.password, db: parsed.db, tls, onLog: this._onLog }
     this._cmd = new RedisConnection({ ...shared, role: 'command', onConnected: () => {} })
     this._sub = new RedisConnection({
       ...shared, role: 'subscriber',
@@ -416,15 +526,33 @@ export class RedisAdapter implements MjsWsAdapter {
   get ignoresOrigin(): number { return this._ignoresOrigin }
   get reconnexions(): number { return this._cmd.reconnectCount + this._sub.reconnectCount }
 
+  // appelé depuis l'écouteur `data` du socket : rien ne doit en sortir en exception (elle ferait tomber le
+  // process, et chaque process abonné recevrait le même message). Un message non JSON, ou dont un rappel lève
+  // (forme inattendue : autre appli sur le même Redis, outil d'admin, version voisine), est ignoré
   private _deliver(channel: string, body: string): void {
     let envelope: { origin?: string; payload?: unknown } | null = null
     try { envelope = JSON.parse(body) }
-    catch { this._onLog('warn', t('ws.adapter-redis.message-non-json', { channel })); return }
+    catch (err) { this._ignore(channel, errMessage(err)); return }
     if (!envelope || typeof envelope.origin !== 'string') return
     if (envelope.origin === this.processId) { this._ignoresOrigin++; return }   // jamais ses propres messages (écho pub/sub) — compté
     const hs = this._handlers.get(channel)
     if (!hs) return
-    for (const h of hs) h(envelope.payload, envelope.origin)
+    for (const h of hs) {
+      try { h(envelope.payload, envelope.origin) }
+      catch (err) { this._ignore(channel, errMessage(err)) }
+    }
+  }
+
+  // avertissement regroupé : le premier message ignoré d'un canal est signalé tout de suite, les suivants
+  // comptés et signalés au plus une fois par minute — un éditeur qui inonde le canal ne noie pas le journal
+  private _ignored = new Map<string, { n: number; at: number }>()
+
+  private _ignore(channel: string, cause: string): void {
+    const now  = Date.now()
+    const seen = this._ignored.get(channel)
+    if (seen && now - seen.at < IGNORED_WARN_MS) { seen.n++; return }
+    this._ignored.set(channel, { n: 0, at: now })
+    this._onLog('warn', t('ws.adapter-redis.messages-ignores', { channel, n: (seen?.n ?? 0) + 1, cause }))
   }
 
   async start(): Promise<void> {
@@ -473,8 +601,18 @@ export class RedisAdapter implements MjsWsAdapter {
     await this._cmd.send(['DEL', key])
   }
 
+  // SCAN lot après lot, jamais KEYS : KEYS parcourt toute la base d'un bloc et fige Redis pendant ce temps (sur un
+  // Redis partagé avec des sessions, des files de tâches…, un coût proportionnel à TOUTES ses clés, toutes les 3 s
+  // et pour chaque process) ; SCAN rend la main entre deux lots. Une clé peut revenir d'un lot à l'autre : dédoublonnée
   async listLeases(prefix: string): Promise<string[]> {
-    const v = await this._cmd.send(['KEYS', prefix + '*'])
-    return Array.isArray(v) ? v.map(String) : []
+    const keys = new Set<string>()
+    let cursor = '0'
+    do {
+      const v = await this._cmd.send(['SCAN', cursor, 'MATCH', prefix + '*', 'COUNT', SCAN_COUNT])
+      if (!Array.isArray(v) || !Array.isArray(v[1])) break
+      cursor = String(v[0])
+      for (const k of v[1]) keys.add(String(k))
+    } while (cursor !== '0')
+    return Array.from(keys)
   }
 }

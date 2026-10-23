@@ -89,9 +89,11 @@ export function readImageSize(buf: Buffer): ImageSize | null {
     // lui-même. On isole d'abord la balise OUVRANTE (jusqu'à son `>`, hors guillemets) et on ne
     // cherche plus que DEDANS.
     const balise = svgOpeningTag(debut) ?? ''
-    const w = balise.match(/\bwidth\s*=\s*["']([\d.]+)/i)
-    const h = balise.match(/\bheight\s*=\s*["']([\d.]+)/i)
-    if (w && h) return { width: Math.round(Number(w[1])), height: Math.round(Number(h[1])) }
+    // l'attribut ENTIER (précédé d'un blanc : `stroke-width` n'est pas `width`), et seulement une taille en
+    // pixels, nombre nu ou `px` : `100%`, `10em`… ne sont pas des pixels, le `viewBox` donne alors la taille
+    const w = balise.match(/\swidth\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
+    const h = balise.match(/\sheight\s*=\s*(["'])\s*(\d*\.?\d+)\s*(?:px)?\s*\1/i)
+    if (w && h) return { width: Math.round(Number(w[2])), height: Math.round(Number(h[2])) }
     const vb = balise.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)/i)
     if (vb) return { width: Math.round(Number(vb[1])), height: Math.round(Number(vb[2])) }
     return null
@@ -123,6 +125,57 @@ export function readImageSize(buf: Buffer): ImageSize | null {
       if (longueur < 2) return null           // longueur invalide (elle s'inclut elle-même)
       i += longueur
     }
+  }
+
+  return null
+}
+
+/** L'animation d'une image, lue dans ses octets sans la décoder : `gif` (au moins deux images), `webp` (animé), `apng` (un bloc
+ *  `acTL` avant les données), `avif` (une suite d'images, marque `avis`) ; `null` pour une image fixe, un format inconnu ou
+ *  un fichier illisible. Ne lève jamais : chaque lecture est bornée au fichier. */
+export function animatedKind(buf: Buffer): 'gif' | 'webp' | 'apng' | 'avif' | null {
+  const n = buf.length
+
+  // GIF — on saute les blocs (extensions 0x21, images 0x2C), dès la deuxième image il est animé
+  if (n >= 13 && buf.toString('ascii', 0, 4) === 'GIF8') {
+    let i      = 13 + ((buf[10] & 0x80) ? 3 << ((buf[10] & 7) + 1) : 0)
+    let images = 0
+    const blocs = () => { while (i < n && buf[i] !== 0) i += buf[i] + 1; i++ }
+    while (i < n) {
+      if (buf[i] === 0x21) {
+        i += 2
+        blocs()
+      }
+      else if (buf[i] === 0x2c) {
+        if (++images > 1) return 'gif'
+        if (i + 10 > n) return null
+        i += 11 + ((buf[i + 9] & 0x80) ? 3 << ((buf[i + 9] & 7) + 1) : 0)
+        blocs()
+      }
+      else return null
+    }
+    return null
+  }
+
+  // WebP — l'en-tête étendu (VP8X) porte le drapeau d'animation
+  if (n >= 21 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    return buf.toString('ascii', 12, 16) === 'VP8X' && (buf[20] & 0x02) !== 0 ? 'webp' : null
+  }
+
+  // PNG animé — un bloc acTL avant les données de l'image (blocs : longueur, type, données, somme)
+  if (n >= 8 && buf.readUInt32BE(0) === 0x89504e47) {
+    for (let i = 8; i + 8 <= n; i += 12 + buf.readUInt32BE(i)) {
+      const type = buf.toString('ascii', i + 4, i + 8)
+      if (type === 'acTL') return 'apng'
+      if (type === 'IDAT' || type === 'IEND') return null
+    }
+    return null
+  }
+
+  // AVIF — la boîte ftyp : marque principale, version, puis les marques compatibles ; `avis` annonce une suite d'images
+  if (n >= 16 && buf.toString('ascii', 4, 8) === 'ftyp') {
+    const fin = Math.min(n, buf.readUInt32BE(0))
+    for (let i = 8; i + 4 <= fin; i += i === 8 ? 8 : 4) if (buf.toString('ascii', i, i + 4) === 'avis') return 'avif'
   }
 
   return null
@@ -176,17 +229,23 @@ export interface GeneratedVariant {
 export async function generateVariants(req: VariantRequest): Promise<GeneratedVariant[] | null> {
   const sharp = await resolveSharp()
   if (!sharp) return null
+  // une image animée garde son animation : sharp ne lit que la première image d'un fichier sauf demande (`animated`), et seul
+  // le WebP les réécrit (l'AVIF, le PNG et le JPEG les empileraient en hauteur) ; un PNG ou un AVIF animé, que sharp ne
+  // lit pas image par image, n'a aucune variante — le fichier d'origine passe seul
+  const animation = animatedKind(req.bytes)
+  if (animation === 'apng' || animation === 'avif') return []
+  const formats = animation ? req.formats.filter(f => f === 'webp') : req.formats
   const sorties: GeneratedVariant[] = []
   const vues = new Set<string>()
   for (const largeur of req.widths) {
-    for (const format of req.formats) {
+    for (const format of formats) {
       // try/catch PAR VARIANTE (largeur × format) : sharp peut refuser une combinaison précise
       // (largeur invalide, format non supporté pour ce contenu…) sans que les AUTRES variantes
       // de la même image en pâtissent — le message NOMME l'image, la largeur et le format
       // demandés, jamais le seul message interne brut de sharp.
       let sortie: any
       try {
-        const pipeline = sharp(req.bytes).resize({ width: largeur, withoutEnlargement: true })
+        const pipeline = sharp(req.bytes, animation ? { animated: true } : undefined).resize({ width: largeur, withoutEnlargement: true })
         sortie = await (format === 'avif' ? pipeline.avif({ quality: req.quality })
                      : format === 'webp' ? pipeline.webp({ quality: req.quality })
                      : format === 'png'  ? pipeline.png()

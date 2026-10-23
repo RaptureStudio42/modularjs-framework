@@ -13,6 +13,7 @@ import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -21,6 +22,7 @@ const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }

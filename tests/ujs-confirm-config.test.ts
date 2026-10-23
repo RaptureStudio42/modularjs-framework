@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -51,11 +52,13 @@ function makeClickHandler() {
 // installe le VRAI µ.confirm par défaut (routeur de config) sur le µ/window donnés —
 // fermeture fraîche à chaque appel, cf. note d'hygiène en tête de fichier.
 function installConfirmDefault(µ: any, win: any) {
+  poserMessages(µ)
   new Function('µ', 'window', extractConfirmDefaultBlock())(µ, win)
 }
 // relance partagée @confirm : gréffée sur LE µ du handler, jamais le vrai module
 // (isolation, cf. en-tête) — nécessaire pour les scénarios thenable (Swal/classe custom).
 function withConfirmRefire(µ: any) {
+  poserMessages(µ)
   new Function('µ', extractConfirmRefireStatement())(µ)
   return µ
 }

@@ -38,18 +38,20 @@
 // FIRE-AND-FORGET (aucun ack, aucune Promise) : un refus serveur arrive en `µ:error {message:
 // 'lobby-*'}`, exposé via `sock.lastError` — MÊME mécanique que chat (cf. mjs-ws/lobby.ts tête de
 // fichier pour la liste des codes).
-// `.close()` — quitte le hall (`µ:leave`) et purge le store local (minuteurs compris).
+// `.close()` — quitte le hall (`µ:leave`) et arrête ses minuteurs ; ce que le store local a reçu reste.
 //
 // Plusieurs halls, plusieurs poignées — chaque `sock.lobby(hall)` reste INDÉPENDANTE (aucun
 // singleton, MÊME choix que sock.chat()/sock.game()) : présence/invitations/annonces dupliquées en
-// mémoire par poignée, mais l'adhésion `sock.room()` sous-jacente EST partagée par nom de hall —
-// fermer UNE poignée quitte le hall pour de bon, même si une AUTRE poignée du même nom reste ouverte
-// (limite déjà assumée par sock.room() lui-même, cf. mjs_chat.ts).
+// mémoire par poignée, mais l'adhésion `sock.room()` sous-jacente EST partagée par nom de hall, et
+// compte ses poignées — fermer UNE poignée ne quitte le hall qu'au départ de la dernière (cf. mjs_chat.ts).
 //
-// Reconnexion — AUCUNE logique dédiée, MÊME choix que mjs_chat.ts : `sock.room()` rejoint le hall à
-// nouveau automatiquement, mais `lobby:enter` n'est PAS re-demandé (`.me`/`.members` figés depuis
-// le 1er accès) — sans incidence en usage normal (identité stable pendant la session, cf. mjs-ws/
-// comptes.ts « une élévation change l'id ⇒ reconnexion complète », hors zone de ce module).
+// Composant — ouverte dans un composant, la poignée le suit (cf. mjs_socket.ts::_mjs_ownHandle) : fermée
+// à sa destruction (minuteurs compris), rouverte s'il revient dans la page (hall rejoint, lobby:enter
+// redemandé, expirations des invitations et annonces gardées reposées) ; fermée par close(), elle le reste.
+//
+// Reconnexion — `sock.room()` rejoint le hall à nouveau automatiquement, et `lobby:enter` est
+// redemandé à chaque welcome (cf. _lobbyEnter) : `.me`/`.members` suivent l'identité de la connexion
+// (une élévation de compte change l'id ⇒ reconnexion complète, cf. mjs_accounts.ts).
 
 if (typeof MjsSocket !== 'undefined') {
 
@@ -84,10 +86,8 @@ if (typeof MjsSocket !== 'undefined') {
 
   // minuteur d'expiration LOCAL — MÊME idiome que mjs_chat.ts::_mjs_typers (setTimeout, jamais
   // négatif) ; `registre` = h._mjs_inviteTimers OU h._annonceTimers, `withdraw(id)` ôte l'entrée du store.
-  // `_mjs_safeKey` (mjs_socket.ts, même fichier concaténé) — anti-pollution de prototype, id VENU DU
-  // RÉSEAU utilisé comme clé d'objet brut (MÊME garde que mjs_chat.ts::_mjs_typers).
+  // registres sans prototype (cf. lobby()) : un id VENU DU RÉSEAU (`constructor`, `__proto__`…) y est une clé comme les autres.
   function _lobbyArmExpiry(registry, id, expireAt, remove) {
-    if (!_mjs_safeKey(id)) { return; }
     var existing = registry[id];
     if (existing) { clearTimeout(existing); }
     var delay = expireAt - Date.now();
@@ -95,14 +95,20 @@ if (typeof MjsSocket !== 'undefined') {
     registry[id] = setTimeout(function() { delete registry[id]; remove(id); }, delay);
   }
 
+  // expiration d'une invitation (`key` 'invitations') ou d'une annonce ('listings') : posée à son arrivée, reposée à la
+  // réouverture de la poignée (cf. lobby())
+  function _lobbyArm(h, key, registry, id, expireAt) {
+    _lobbyArmExpiry(registry, id, expireAt, function(id) {
+      h.state[key] = h.state[key].filter(function(x) { return x.id !== id; });
+    });
+  }
+
   function _lobbyOnInvitation(h, frame) {
     if (!frame || frame.hall !== h._mjs_hall || typeof frame.id !== 'string') { return; }
     var next = h.state.invitations.filter(function(x) { return x.id !== frame.id; });
     next.push({ id: frame.id, from: frame.from, note: frame.note, expiresAt: frame.expiresAt });
     h.state.invitations = next;
-    _lobbyArmExpiry(h._mjs_inviteTimers, frame.id, frame.expiresAt, function(id) {
-      h.state.invitations = h.state.invitations.filter(function(x) { return x.id !== id; });
-    });
+    _lobbyArm(h, 'invitations', h._mjs_inviteTimers, frame.id, frame.expiresAt);
   }
 
   function _lobbyOnReplied(h, frame) {
@@ -115,13 +121,11 @@ if (typeof MjsSocket !== 'undefined') {
     var next = h.state.listings.filter(function(x) { return x.id !== frame.id; });
     next.push({ id: frame.id, from: frame.from, title: frame.title, code: frame.code, seats: frame.seats, meta: frame.meta, expiresAt: frame.expiresAt });
     h.state.listings = next;
-    _lobbyArmExpiry(h._mjs_listingTimers, frame.id, frame.expiresAt, function(id) {
-      h.state.listings = h.state.listings.filter(function(x) { return x.id !== id; });
-    });
+    _lobbyArm(h, 'listings', h._mjs_listingTimers, frame.id, frame.expiresAt);
   }
 
   function _lobbyOnWithdrawn(h, frame) {
-    if (!frame || frame.hall !== h._mjs_hall || typeof frame.id !== 'string' || !_mjs_safeKey(frame.id)) { return; }
+    if (!frame || frame.hall !== h._mjs_hall || typeof frame.id !== 'string') { return; }
     var t = h._mjs_listingTimers[frame.id];
     if (t) { clearTimeout(t); delete h._mjs_listingTimers[frame.id]; }
     h.state.listings = h.state.listings.filter(function(x) { return x.id !== frame.id; });
@@ -136,11 +140,13 @@ if (typeof MjsSocket !== 'undefined') {
   // _mjs_ensureLobbyWiring plus bas) : le serveur traite déjà lobby:enter comme un rafraîchissement
   // idempotent en cas de reconnexion (« crée ou rafraîchit la présence », cf. mjs-ws/lobby.ts,
   // app.serve('lobby:enter', …)) — SANS ce rejeu, .members/.me restaient figés depuis le tout
-  // premier accès, jamais mis à jour après une coupure.
+  // premier accès, jamais mis à jour après une coupure. `_mjs_asking` : une seule demande en route
+  // par poignée, levé à la réponse comme au rejet (une demande coupée en route repart au welcome suivant).
   function _lobbyEnter(self, h) {
+    h._mjs_asking = true;
     self.request('lobby:enter', { hall: h._mjs_hall }, { waitForOpen: true }).then(
-      function(res) { h._mjs_entered = true; h.state.me = res.me; h.state.members = res.members || []; },
-      function() {}   // hors-ligne/refus — le store reste sur sa dernière valeur connue, jamais de crash
+      function(res) { h._mjs_asking = false; h.state.me = res.me; h.state.members = res.members || []; },
+      function() { h._mjs_asking = false; }   // hors-ligne/refus — le store reste sur sa dernière valeur connue, jamais de crash
     );
   }
 
@@ -163,13 +169,13 @@ if (typeof MjsSocket !== 'undefined') {
     this.on('lobby:listing',    function(p) { self._mjs_lobbyDispatch(p, _lobbyOnListing); });
     this.on('lobby:withdrawn',    function(p) { self._mjs_lobbyDispatch(p, _lobbyOnWithdrawn); });
     this.on('lobby:applicant',   function(p) { self._mjs_lobbyDispatch(p, _lobbyOnApplicant); });
-    // reconnexion — rejoue lobby:enter pour chaque poignée déjà entrée UNE 1re fois, à CHAQUE
-    // nouveau welcome (cf. _lobbyEnter juste au-dessus) : `_mjs_entered` évite un double appel sur
-    // le tout premier welcome (déjà couvert par l'appel initial de lobby(), en vol via
-    // waitForOpen), une poignée qui n'a jamais fini d'entrer n'a rien à rafraîchir.
+    // reconnexion — rejoue lobby:enter pour chaque poignée sans demande en route, à CHAQUE nouveau
+    // welcome (cf. _lobbyEnter juste au-dessus) : `_mjs_asking` évite un double appel sur le tout
+    // premier welcome (l'appel initial de lobby() part alors avec les requêtes qui attendaient
+    // l'ouverture), et une entrée coupée en route (élévation d'un compte) est redemandée.
     this.on('welcome', function() {
       var i, lobbies = self._mjs_lobbies;
-      for (i = 0; i < lobbies.length; i++) { if (lobbies[i]._mjs_entered) { _lobbyEnter(self, lobbies[i]); } }
+      for (i = 0; i < lobbies.length; i++) { if (!lobbies[i]._mjs_asking) { _lobbyEnter(self, lobbies[i]); } }
     });
   };
 
@@ -182,12 +188,33 @@ if (typeof MjsSocket !== 'undefined') {
     var h = {
       state: state,
       _mjs_hall: hallName,
-      _mjs_entered: false,   // passe à true dès la 1re réponse de lobby:enter — cf. _lobbyEnter
-      _mjs_inviteTimers: {},
-      _mjs_listingTimers: {},
-      _mjs_room: this.room('lobby:' + hallName)
+      _mjs_asking: false,    // lobby:enter en route — cf. _lobbyEnter
+      _mjs_inviteTimers: Object.create(null),
+      _mjs_listingTimers: Object.create(null)
     };
-    this._mjs_lobbies.push(h);
+    // ouverture : à l'appel, puis au retour dans la page du composant qui l'a ouverte (cf. _mjs_ownHandle) — les
+    // invitations et annonces gardées reprennent leur expiration (échue pendant la fermeture : retirée aussitôt)
+    var ouvrir = function() {
+      var i, l;
+      h._mjs_room = self.room('lobby:' + hallName);
+      self._mjs_lobbies.push(h);
+      for (i = 0, l = state.invitations; i < l.length; i++) { _lobbyArm(h, 'invitations', h._mjs_inviteTimers, l[i].id, l[i].expiresAt); }
+      for (i = 0, l = state.listings; i < l.length; i++) { _lobbyArm(h, 'listings', h._mjs_listingTimers, l[i].id, l[i].expiresAt); }
+      // `waitForOpen` (dans _lobbyEnter) : sock.lobby() est typiquement appelé avant même que la
+      // connexion ne soit ouverte (montage de composant) — MÊME raison que mjs_chat.ts::chat:me. Redemandée
+      // à la réouverture même si une entrée d'avant la fermeture est encore en route : partie avant le
+      // départ du hall, elle ne vaut plus
+      _lobbyEnter(self, h);
+    };
+    // fermeture : close(), ou destruction de ce composant
+    var fermer = function() {
+      var i = self._mjs_lobbies.indexOf(h), id;
+      if (i === -1) { return false; }
+      self._mjs_lobbies.splice(i, 1);
+      for (id in h._mjs_inviteTimers)  { if (h._mjs_inviteTimers[id])  { clearTimeout(h._mjs_inviteTimers[id]); } }
+      for (id in h._mjs_listingTimers) { if (h._mjs_listingTimers[id]) { clearTimeout(h._mjs_listingTimers[id]); } }
+      h._mjs_room.leave();
+    };
 
     state.status    = function(statut, texte) { self.send('lobby:status', { hall: hallName, status: statut, text: texte }); };
     state.invite   = function(identityId, note) { self.send('lobby:invite', { hall: hallName, identityId: identityId, note: note }); };
@@ -205,17 +232,10 @@ if (typeof MjsSocket !== 'undefined') {
       self.send('lobby:join', { hall: hallName, id: id });
     };
     state.block   = function(identityId) { self.send('lobby:block', { hall: hallName, identityId: identityId }); };
-    state.close    = function() {
-      var i = self._mjs_lobbies.indexOf(h), id;
-      if (i !== -1) { self._mjs_lobbies.splice(i, 1); }
-      for (id in h._mjs_inviteTimers)  { if (_mjs_safeKey(id) && h._mjs_inviteTimers[id])  { clearTimeout(h._mjs_inviteTimers[id]); } }
-      for (id in h._mjs_listingTimers) { if (_mjs_safeKey(id) && h._mjs_listingTimers[id]) { clearTimeout(h._mjs_listingTimers[id]); } }
-      h._mjs_room.leave();
-    };
+    state.close    = function() { h._mjs_shut = true; fermer(); };
 
-    // `waitForOpen` (dans _lobbyEnter) : sock.lobby() est typiquement appelé avant même que la
-    // connexion ne soit ouverte (montage de composant) — MÊME raison que mjs_chat.ts::chat:me.
-    _lobbyEnter(self, h);
+    ouvrir();
+    this._mjs_ownHandle(h, fermer, ouvrir);
 
     return state;
   };

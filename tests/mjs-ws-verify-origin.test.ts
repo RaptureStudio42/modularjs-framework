@@ -270,6 +270,6 @@ describe('mjs.config.json — section `ws.verifyOrigin` (validation stricte, pat
 
   it("throw sur clé inconnue, avec suggestion orthographique ('verifyOrigim' → 'verifyOrigin') — non-régression Levenshtein", () => {
     const root = writeConfig({ ws: { verifyOrigim: ['https://exemple.com'] } })
-    assert.throws(() => findConfig(root), /ws\.verifyOrigim : clé inconnue.*tu voulais dire 'verifyOrigin'/)
+    assert.throws(() => findConfig(root), /ws\.verifyOrigim : clé inconnue.*vouliez-vous dire 'verifyOrigin'/)
   })
 })

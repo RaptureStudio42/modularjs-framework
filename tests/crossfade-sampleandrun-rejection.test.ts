@@ -25,7 +25,7 @@
 // contenu EST la valeur assignée à `µ.anim.crossfade` par le bundler,
 // cf. `compileUsedAnimations` dans src/bundler/index.ts : `µ.anim.crossfade =
 // <src>;`) — on reproduit ce même branchement ici avec `new Function` plutôt
-// que de deviner une syntaxe `@out.NOM` (qui référence `µ.anim.NOM`, hors
+// que de deviner une syntaxe `@out=*NOM` (qui référence `µ.anim.NOM`, hors
 // sujet ici).
 
 import assert from 'node:assert/strict'

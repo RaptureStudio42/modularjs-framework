@@ -4,11 +4,20 @@
 // Chaque adapter compile son input vers du **JS standard** que le lexer
 // ModularJS post-traite ensuite avec le sucre `$/§/§§/@@/@x`.
 
+import type { LintToggles } from '../diagnostics.js'
+
 export type SupportedLang = 'civet' | 'coffee' | 'ts' | 'js'
 
 export interface CompileSourceOpts {
   fileName?: string
   bare?: boolean
+  /** coupe le seul avertissement de cette famille (Coffee déprécié, type `legacy`) — cf.
+   *  src/diagnostics.ts. Reçu par TOUS les adapters (même s'ils n'en émettent aucun) : un
+   *  paramètre PAR APPEL, jamais un état partagé entre deux compilations concurrentes. */
+  lint?: LintToggles
+  /** le terminal accepte-t-il la couleur — calculé une fois par le thread principal, cf.
+   *  resolveColorsEnabled (src/diagnostics.ts). */
+  colorsEnabled?: boolean
 }
 
 /** Retour d'un adapter : le JS, plus sa carte de source v3 (JSON stringifié) si le

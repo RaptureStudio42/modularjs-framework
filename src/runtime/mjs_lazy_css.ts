@@ -46,7 +46,7 @@ if (µ._mjs_lazyCssCache == null) {
       }
       if (!µ._mjs_lazyCssMissing.has(url)) {
         µ._mjs_lazyCssMissing.add(url);
-        µ.warn(`[ModularJS] Feuille partagée '${name}' introuvable (${url}) — le composant s'affichera sans elle.`);
+        µ.warn(µ._mjs_msg('lazyCss', { name: name, url: url }, 'Feuille partagée \'{name}\' introuvable ({url}) — le composant s\'affichera sans elle.'));
       }
       return null;
     }

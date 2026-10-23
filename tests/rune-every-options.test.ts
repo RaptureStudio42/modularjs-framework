@@ -302,7 +302,7 @@ describe('µevery × transition d\'entrée : le tir du montage anime, le 1er ren
   after(async () => { await terminateSharedWorkerPool() })
 
   it('un `{key}` changé par le tir de montage joue bien sa transition d\'entrée', async function () {
-    const win = await monterComposant('anime', '<script>\n  $i =: -1\n\n  µevery 400, ->\n    $i = $i + 1\n</script>\n\n{key $i}\n  <p @in.fade>{$i}</p>\n{end}')
+    const win = await monterComposant('anime', '<script>\n  $i =: -1\n\n  µevery 400, ->\n    $i = $i + 1\n</script>\n\n{key $i}\n  <p @in=*fade>{$i}</p>\n{end}')
     const doc: any = win.document
     const µ: any   = (win as any).µ
     const intros: string[] = []
@@ -321,7 +321,7 @@ describe('µevery × transition d\'entrée : le tir du montage anime, le 1er ren
   // CONTRE-ÉPREUVE — la règle de base tient toujours : ce que le PREMIER rendu peint
   // n'anime pas (sinon toute la page clignoterait au chargement).
   it('sans µevery, le 1er rendu ne joue AUCUNE transition d\'entrée', async function () {
-    const win = await monterComposant('calme', '<script>\n  $i = 0\n</script>\n\n{key $i}\n  <p @in.fade>{$i}</p>\n{end}')
+    const win = await monterComposant('calme', '<script>\n  $i = 0\n</script>\n\n{key $i}\n  <p @in=*fade>{$i}</p>\n{end}')
     const doc: any = win.document
     const µ: any   = (win as any).µ
     const intros: string[] = []

@@ -24,6 +24,7 @@ import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, firefox } from 'playwright'
+import { assertDistFrais } from '../helpers/dist-frais.js'
 
 const __dirname     = dirname(fileURLToPath(import.meta.url))
 const MODULARJS_ROOT = join(__dirname, '..', '..')
@@ -82,33 +83,33 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   }
 }
 
-const CORE_TAGS = ['mjs-select', 'mjs-field', 'mjs-checkbox', 'mjs-radio', 'mjs-switch', 'mjs-code']
+const CORE_TAGS = ['mjs-core-select', 'mjs-core-field', 'mjs-core-checkbox', 'mjs-core-radio', 'mjs-core-switch', 'mjs-core-code']
 
-// bordure calculée de l'input email de mjs-field (démo `email`), comparée à une sonde
-// qui lit la MÊME variable CSS depuis le MÊME point d'héritage (enfant de <mjs-field>, comme
-// l'input réel — un enfant de document.body ne verrait jamais --mjs-field-*-color, posée sur
-// :host, scoped à cet arbre). `border-color` est en `transition: .18s ease` (règle de base du
+// bordure calculée de l'input email de mjs-core-field (démo `email`), comparée à une sonde
+// qui lit la MÊME variable CSS, avec le MÊME défaut que le module (`var(--mjs-field-*-color, défaut)`),
+// depuis le MÊME point d'héritage (enfant de <mjs-core-field>, comme l'input réel : une valeur posée
+// par le thème au-dessus du champ y est vue). `border-color` est en `transition: .18s ease` (règle de base du
 // module) : un délai FIXE s'est montré flaky en vrai (piège débusqué, mesure attrapée en
 // plein milieu de l'animation) — on POLL jusqu'à convergence, marge large sur l'environnement.
-async function measureFieldBorder(page: any, varName: string): Promise<{ actual: string; expected: string }> {
-  const expected = await page.evaluate((varName: string) => {
-    const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-field')
+async function measureFieldBorder(page: any, varName: string, fallback: string): Promise<{ actual: string; expected: string }> {
+  const expected = await page.evaluate(({ varName, fallback }: { varName: string; fallback: string }) => {
+    const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-field')
     const probe = document.createElement('div')
     field.appendChild(probe)
-    probe.style.borderColor = `var(${varName})`
+    probe.style.borderColor = `var(${varName}, ${fallback})`
     const v = getComputedStyle(probe).borderColor
     probe.remove()
     return v
-  }, varName)
+  }, { varName, fallback })
   try {
     await page.waitForFunction((expected: string) => {
-      const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-field')
+      const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-field')
       const input: any = field.querySelector('input[name=email]')
       return getComputedStyle(input).borderColor === expected
     }, expected, { timeout: 2000 })
   } catch { /* pas convergé dans les temps : l'assertion appelante rapportera actual ≠ expected */ }
   const actual = await page.evaluate(() => {
-    const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-field')
+    const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-field')
     const input: any = field.querySelector('input[name=email]')
     return getComputedStyle(input).borderColor
   })
@@ -122,6 +123,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
   let baseUrl = ''
 
   before(async function () {
+    assertDistFrais(MODULARJS_ROOT)
     const port = await freePort()
     baseUrl = `http://127.0.0.1:${port}/sortie`
     mkdirSync(OUT_DIR, { recursive: true })
@@ -164,7 +166,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         await page.goto(`${baseUrl}/index.html`, { waitUntil: 'load' })
         await page.waitForFunction(() => {
           const d: any = document.querySelector('mjs-demo')
-          const sel: any = d && d._shadow && d._shadow.querySelector('mjs-select')
+          const sel: any = d && d._shadow && d._shadow.querySelector('mjs-core-select')
           const btn = sel && sel._shadow && sel._shadow.querySelector('.select-btn')
           return !!btn
         }, null, { timeout: 20000 })
@@ -191,37 +193,37 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
 
       it('SELECT — aria-expanded fermé/ouvert, recherche, choix, FormData', async function () {
         const closed = await page.evaluate(() => {
-          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')._shadow.querySelector('.select-btn')
+          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')._shadow.querySelector('.select-btn')
           return { present: btn.hasAttribute('aria-expanded'), value: btn.getAttribute('aria-expanded') }
         })
         assert.equal(closed.present, true, 'aria-expanded doit être PRÉSENT à l\'état fermé (correctif aria-*)')
         assert.equal(closed.value, 'false', 'aria-expanded doit valoir la chaîne "false", pas être absent')
 
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')._shadow.querySelector('.select-btn').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')._shadow.querySelector('.select-btn').click()
         })
         await page.waitForFunction(() => {
-          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')._shadow.querySelector('.select-btn')
+          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')._shadow.querySelector('.select-btn')
           return btn.getAttribute('aria-expanded') === 'true'
         })
         await page.waitForFunction(() => {
-          const sel: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')
+          const sel: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')
           const search = sel._shadow.querySelector('.select-search')
           return !!search && sel._shadow.activeElement === search
         })
 
         await page.keyboard.type('Belgique')
         await page.waitForFunction(() => {
-          const sel: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')
+          const sel: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')
           const opts = Array.from(sel._shadow.querySelectorAll('.select-option')) as any[]
           return opts.length === 1 && opts[0].textContent.includes('Belgique')
         })
 
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')._shadow.querySelector('.select-option').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')._shadow.querySelector('.select-option').click()
         })
         await page.waitForFunction(() => {
-          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-select')._shadow.querySelector('.select-btn')
+          const btn: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-select')._shadow.querySelector('.select-btn')
           return btn.getAttribute('aria-expanded') === 'false' && btn.textContent.includes('Belgique')
         })
 
@@ -241,12 +243,12 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
       it('SELECT MULTIPLE — liaison two-way TABLEAU inter-composants (pas de gel), 2 clics réels, état + visuel', async function () {
         await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           el._shadow.querySelector('.select-btn').click()
         })
         await page.waitForFunction(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           return el._shadow.querySelector('.select-btn').getAttribute('aria-expanded') === 'true'
         }, null, { timeout: 8000 })
 
@@ -254,12 +256,12 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         // déclencherait DÈS cette première mutation d'objet two-way.
         await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           ;(el._shadow.querySelectorAll('.select-option')[0] as any).click()
         })
         await page.waitForFunction(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           const opt = el._shadow.querySelectorAll('.select-option')[0]
           return opt.classList.contains('selected') && opt.getAttribute('aria-selected') === 'true'
         }, null, { timeout: 8000 })
@@ -268,12 +270,12 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         // MÊME liaison two-way : le terrain exact de la boucle infinie.
         await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           ;(el._shadow.querySelectorAll('.select-option')[1] as any).click()
         })
         await page.waitForFunction(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           const opts = el._shadow.querySelectorAll('.select-option')
           return opts[0].classList.contains('selected') && opts[1].classList.contains('selected')
         }, null, { timeout: 8000 })
@@ -284,7 +286,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         // basculé une classe CSS.
         const state = await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           return {
             child: Array.from(el._state.value as any[]),
             parent: Array.from(d._state.langues as any[]),
@@ -297,7 +299,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         // régression) + libellé du bouton à jour.
         const stillOpenAndLabelled = await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           const btn = el._shadow.querySelector('.select-btn')
           return { open: btn.getAttribute('aria-expanded') === 'true', label: btn.textContent.trim() }
         })
@@ -306,12 +308,12 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
 
         await page.evaluate(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           el._shadow.querySelector('.select-btn').click()
         })
         await page.waitForFunction(() => {
           const d: any = document.querySelector('mjs-demo')
-          const el = d._shadow.querySelectorAll('mjs-select')[1]
+          const el = d._shadow.querySelectorAll('mjs-core-select')[1]
           return el._shadow.querySelector('.select-btn').getAttribute('aria-expanded') === 'false'
         }, null, { timeout: 8000 })
       })
@@ -321,7 +323,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
           ;(window as any).µ._mjs_resMerge({ errors: { email: msg } })
         }, FIELD_ERROR)
         await page.waitForFunction((msg: string) => {
-          const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-field')
+          const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-field')
           const box = field._shadow.querySelector('.field')
           const err = field._shadow.querySelector('[part=error]')
           return !!box && box.classList.contains('has-error') && !!err && err.textContent === msg
@@ -335,29 +337,29 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         // en `transition: .18s ease` (règle de base du module) : un `waitForFunction` (pas
         // un délai fixe, constaté FLAKY en vrai) attend que la couleur
         // ait CONVERGÉ vers sa cible avant de figer la mesure finale de l'assertion.
-        const errorBorder = await measureFieldBorder(page, '--mjs-field-error-color')
+        const errorBorder = await measureFieldBorder(page, '--mjs-field-error-color', '#e5484d')
         assert.equal(errorBorder.actual, errorBorder.expected, `bordure d'état erreur : attendu ${errorBorder.expected} (--mjs-field-error-color), mesuré ${errorBorder.actual}`)
 
         await page.evaluate(() => {
           ;(window as any).µ._mjs_resMerge({ errors: {} })
         })
         await page.waitForFunction(() => {
-          const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-field')
+          const field: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-field')
           const box = field._shadow.querySelector('.field')
           const ok = field._shadow.querySelector('[part=ok]')
           return !!box && !box.classList.contains('has-error') && box.classList.contains('has-ok') && !!ok && ok.textContent === 'Adresse valide'
         })
 
-        const okBorder = await measureFieldBorder(page, '--mjs-field-ok-color')
+        const okBorder = await measureFieldBorder(page, '--mjs-field-ok-color', '#2e9e5b')
         assert.equal(okBorder.actual, okBorder.expected, `bordure d'état succès : attendu ${okBorder.expected} (--mjs-field-ok-color), mesuré ${okBorder.actual}`)
         assert.notEqual(okBorder.actual, errorBorder.actual, 'les 2 états doivent porter des couleurs de bordure différentes')
       })
 
       it('CHECKBOX/SWITCH — coché/décoché + FormData ; RADIO — exclusivité de groupe', async function () {
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-checkbox')._shadow.querySelector('input.native').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-checkbox')._shadow.querySelector('input.native').click()
         })
-        await page.waitForFunction(() => !!document.querySelector('mjs-demo')._shadow.querySelector('mjs-checkbox').querySelector('input[type=hidden]'))
+        await page.waitForFunction(() => !!document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-checkbox').querySelector('input[type=hidden]'))
         let fd = await page.evaluate(() => {
           const form: any = document.querySelector('mjs-demo')._shadow.querySelector('#demo-form')
           return new FormData(form).get('terms')
@@ -365,9 +367,9 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         assert.equal(fd, 'on', 'checkbox cochée : FormData doit porter "on"')
 
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-checkbox')._shadow.querySelector('input.native').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-checkbox')._shadow.querySelector('input.native').click()
         })
-        await page.waitForFunction(() => !document.querySelector('mjs-demo')._shadow.querySelector('mjs-checkbox').querySelector('input[type=hidden]'))
+        await page.waitForFunction(() => !document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-checkbox').querySelector('input[type=hidden]'))
         fd = await page.evaluate(() => {
           const form: any = document.querySelector('mjs-demo')._shadow.querySelector('#demo-form')
           return new FormData(form).get('terms')
@@ -375,9 +377,9 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         assert.equal(fd, null, 'checkbox décochée : absente de FormData')
 
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-switch')._shadow.querySelector('input.native').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-switch')._shadow.querySelector('input.native').click()
         })
-        await page.waitForFunction(() => !!document.querySelector('mjs-demo')._shadow.querySelector('mjs-switch').querySelector('input[type=hidden]'))
+        await page.waitForFunction(() => !!document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-switch').querySelector('input[type=hidden]'))
         fd = await page.evaluate(() => {
           const form: any = document.querySelector('mjs-demo')._shadow.querySelector('#demo-form')
           return new FormData(form).get('alerts')
@@ -385,9 +387,9 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         assert.equal(fd, 'on', 'switch activé : FormData doit porter "on"')
 
         await page.evaluate(() => {
-          document.querySelector('mjs-demo')._shadow.querySelector('mjs-switch')._shadow.querySelector('input.native').click()
+          document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-switch')._shadow.querySelector('input.native').click()
         })
-        await page.waitForFunction(() => !document.querySelector('mjs-demo')._shadow.querySelector('mjs-switch').querySelector('input[type=hidden]'))
+        await page.waitForFunction(() => !document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-switch').querySelector('input[type=hidden]'))
         fd = await page.evaluate(() => {
           const form: any = document.querySelector('mjs-demo')._shadow.querySelector('#demo-form')
           return new FormData(form).get('alerts')
@@ -395,11 +397,11 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         assert.equal(fd, null, 'switch désactivé : absent de FormData')
 
         await page.evaluate(() => {
-          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-radio')
+          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-core-radio')
           radios[1]._shadow.querySelector('input.native').click()
         })
         await page.waitForFunction(() => {
-          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-radio')
+          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-core-radio')
           return radios[1]._shadow.querySelector('input.native').checked === true && radios[0]._shadow.querySelector('input.native').checked === false
         })
         fd = await page.evaluate(() => {
@@ -409,11 +411,11 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
         assert.equal(fd, 'm', 'le 2ᵉ radio (M) coché : FormData doit porter "m"')
 
         await page.evaluate(() => {
-          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-radio')
+          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-core-radio')
           radios[2]._shadow.querySelector('input.native').click()
         })
         await page.waitForFunction(() => {
-          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-radio')
+          const radios: any = document.querySelector('mjs-demo')._shadow.querySelectorAll('mjs-core-radio')
           return radios[2]._shadow.querySelector('input.native').checked === true && radios[1]._shadow.querySelector('input.native').checked === false
         })
         fd = await page.evaluate(() => {
@@ -468,7 +470,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
 
       it('CODE — bouton collant dans l\'angle du bloc, suit le défilement de la boîte, clic réel pose la classe ok', async function () {
         const atRest = await page.evaluate(() => {
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-code')
           const pre = host.querySelector('pre')
           const btn = host._shadow.querySelector('button.copy')
           const preRect = pre.getBoundingClientRect()
@@ -489,7 +491,7 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
 
         const scrolled = await page.evaluate(() => {
           const box: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-box')
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-code')
           const btn = host._shadow.querySelector('button.copy')
           const boxRect = box.getBoundingClientRect()
           const btnRect = btn.getBoundingClientRect()
@@ -501,23 +503,23 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
           document.querySelector('mjs-demo')._shadow.querySelector('.code-box').scrollIntoView({ block: 'center' })
         })
         const point = await page.evaluate(() => {
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-code')
           const btn = host._shadow.querySelector('button.copy')
           const r = btn.getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
         })
         await page.mouse.click(point.x, point.y)
         await page.waitForFunction(() => {
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('mjs-core-code')
           const btn = host._shadow.querySelector('button.copy')
           return btn.classList.contains('ok')
         }, null, { timeout: 3000 })
       })
 
-      it('CODE forme courte — <@code>texte</@code> : le module pose lui-même le cadre, bouton dans l\'angle, clic réel', async function () {
+      it('CODE forme courte — <@@code>texte</@@code> : le module pose lui-même le cadre, bouton dans l\'angle, clic réel', async function () {
         const shape = await page.evaluate(() => {
           const wrap: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-short')
-          const host: any = wrap.querySelector('mjs-code')
+          const host: any = wrap.querySelector('mjs-core-code')
           const box = host._shadow.querySelector('pre.box')
           const btn = host._shadow.querySelector('button.copy')
           const cs = getComputedStyle(box)
@@ -547,13 +549,13 @@ describe('smoke navigateur réel (Chromium + Firefox) : modules cœur + @title',
           document.querySelector('mjs-demo')._shadow.querySelector('.code-short').scrollIntoView({ block: 'center' })
         })
         const point = await page.evaluate(() => {
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-short mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-short mjs-core-code')
           const r = host._shadow.querySelector('button.copy').getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
         })
         await page.mouse.click(point.x, point.y)
         await page.waitForFunction(() => {
-          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-short mjs-code')
+          const host: any = document.querySelector('mjs-demo')._shadow.querySelector('.code-short mjs-core-code')
           return host._shadow.querySelector('button.copy').classList.contains('ok')
         }, null, { timeout: 3000 })
       })

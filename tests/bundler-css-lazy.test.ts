@@ -55,13 +55,13 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
     const emis = readdirSync(p.outDir)
-    assert.ok(emis.some(f => /^mjs_style_theme-[a-f0-9]{8}\.css$/.test(f)), `theme.css haché absent : ${emis.join(', ')}`)
-    assert.ok(emis.some(f => /^mjs_style_grid-[a-f0-9]{8}\.css$/.test(f)), `grid.css haché absent : ${emis.join(', ')}`)
+    assert.ok(emis.some(f => /^mjs_style_theme-[0-9a-z]{5}\.css$/.test(f)), `theme.css haché absent : ${emis.join(', ')}`)
+    assert.ok(emis.some(f => /^mjs_style_grid-[0-9a-z]{5}\.css$/.test(f)), `grid.css haché absent : ${emis.join(', ')}`)
 
     const table = lazyTable(p.manifest)
     assert.ok(table, 'le manifeste doit publier µ._cssLazy')
     assert.deepEqual(Object.keys(table!), ['grid', 'theme'], 'la table doit être triée, comme µ.paths')
-    assert.match(basename(table!.theme), /^mjs_style_theme-[a-f0-9]{8}\.css$/)
+    assert.match(basename(table!.theme), /^mjs_style_theme-[0-9a-z]{5}\.css$/)
     assert.match(readFileSync(join(p.outDir, basename(table!.theme)), 'utf-8'), /color:\s*teal/)
 
     await bundler.close()
@@ -75,7 +75,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
-    const compFile = readdirSync(p.outDir).find(f => /^comp-[a-f0-9]{8}\.js$/.test(f))!
+    const compFile = readdirSync(p.outDir).find(f => /^comp-[0-9a-z]{5}\.js$/.test(f))!
     const compSrc  = readFileSync(join(p.outDir, compFile), 'utf-8')
     assert.ok(!/mjs_style_theme/.test(compSrc), `le JS du composant ne doit contenir aucun chemin de feuille :\n${compSrc.slice(0, 400)}`)
     const manifestSrc = readFileSync(p.manifest, 'utf-8')
@@ -93,7 +93,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
     assert.ok(bundler.splitRootHashedPath, 'mjs_root doit produire son propre module eager')
-    assert.match(basename(bundler.splitRootHashedPath!), /^mjs_style_root-[a-f0-9]{8}\.js$/)
+    assert.match(basename(bundler.splitRootHashedPath!), /^mjs_style_root-[0-9a-z]{5}\.js$/)
     // styles/animations partent en `Promise.all([import(...), ...])` (cf. writeManifest,
     // bundler/index.ts) — recherche de l'appel `import(...)`, peu importe s'il est SEUL
     // (`await import(x);`) ou un ÉLÉMENT du tableau `Promise.all`.
@@ -111,7 +111,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
-    assert.ok(readdirSync(p.outDir).some(f => /^mjs_style_oubliee-[a-f0-9]{8}\.css$/.test(f)), 'le fichier doit exister sur disque')
+    assert.ok(readdirSync(p.outDir).some(f => /^mjs_style_oubliee-[0-9a-z]{5}\.css$/.test(f)), 'le fichier doit exister sur disque')
     // son URL reste dans la table (un `<@view css={…}>` calculé peut encore la nommer à
     // l'exécution) mais RIEN ne l'importe : aucune requête ne part tant que personne ne
     // la demande — c'est le sens même du mode
@@ -153,9 +153,9 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
       const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, ...(css ? { css } : {}) })
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
-      const sortie = readdirSync(p.outDir).map(f => f.replace(/-[a-f0-9]{8}\./, '-<hash>.')).sort()
+      const sortie = readdirSync(p.outDir).map(f => f.replace(/-[0-9a-z]{5}\./, '-<hash>.')).sort()
       await bundler.close()
-      return { manifest: readFileSync(p.manifest, 'utf-8').replace(/[a-f0-9]{8}/g, '<hash>'), sortie }
+      return { manifest: readFileSync(p.manifest, 'utf-8').replace(/-[0-9a-z]{5}\.js/g, '-<hash>.js'), sortie }
     }
     const sansCle = await build(undefined)
     const bundle  = await build('bundle')
@@ -218,7 +218,7 @@ async function loadLazyHarness(extraComponents: Record<string, string> = {}) {
   assert.ok(lazyLine, 'le manifeste doit publier µ._cssLazy')
   sources.push(lazyLine)
   for (const nom of ['lazy-demo', ...Object.keys(extraComponents)]) {
-    const f = files.find((x: string) => new RegExp(`^${nom}-[a-f0-9]{8}\\.js$`).test(x))!
+    const f = files.find((x: string) => new RegExp(`^${nom}-[0-9a-z]{5}\\.js$`).test(x))!
     assert.ok(f, `sortie du build inattendue pour ${nom} : ${files.join(', ')}`)
     sources.push(stripEsm(readFileSync(join(p.outDir, f), 'utf-8')))
   }
@@ -241,7 +241,7 @@ describe("mjs_element — css: 'lazy' au montage", function () {
     await new Promise(r => setTimeout(r, 120))
 
     assert.equal(fetchCalls.length, 1, `une seule requête attendue : ${fetchCalls.join(', ')}`)
-    assert.match(fetchCalls[0], /mjs_style_theme-[a-f0-9]{8}\.css$/)
+    assert.match(fetchCalls[0], /mjs_style_theme-[0-9a-z]{5}\.css$/)
     assert.ok(window.µ.CSS['theme'], 'la feuille doit être posée dans le registre µ.CSS')
     const el: any = document.body.firstElementChild
     assert.ok(el._shadow.adoptedStyleSheets.includes(window.µ.CSS['theme']), 'la feuille doit être adoptée dans le shadow du composant')

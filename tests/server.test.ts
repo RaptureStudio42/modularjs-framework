@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { mjsTmp } from './helpers/tmp.js'
 import { StaticServer } from '../src/server/index.js'
 
@@ -14,6 +15,9 @@ async function fetchText(url: string): Promise<{ status: number; body: string; h
   return { status: res.status, body, headers }
 }
 
+// fichier empreint : le début du md5 de son contenu, comme les sorties du build (vérifié sur le contenu avant le cache d'un an)
+const EMPREINT = `app-${createHash('md5').update("console.log('hello');").digest('hex').slice(0, 8)}.js`
+
 describe('StaticServer', () => {
   let server: StaticServer
   let rootDir: string
@@ -21,7 +25,7 @@ describe('StaticServer', () => {
 
   before(async () => {
     rootDir = mjsTmp('server')
-    writeFileSync(join(rootDir, 'app-12345678.js'), `console.log('hello');`)
+    writeFileSync(join(rootDir, EMPREINT), `console.log('hello');`)
     writeFileSync(join(rootDir, 'plain.js'), `console.log('plain');`)
     mkdirSync(join(rootDir, 'sub'))
     writeFileSync(join(rootDir, 'sub', 'nested.js'), `// nested`)
@@ -37,7 +41,7 @@ describe('StaticServer', () => {
   })
 
   it('sert un fichier hashé avec cache immutable', async () => {
-    const r = await fetchText(`http://127.0.0.1:${port}/modularjs/app-12345678.js`)
+    const r = await fetchText(`http://127.0.0.1:${port}/modularjs/${EMPREINT}`)
     assert.equal(r.status, 200)
     assert.match(r.body, /hello/)
     assert.match(r.headers['cache-control'] ?? '', /immutable/)
@@ -73,12 +77,12 @@ describe('StaticServer', () => {
   })
 
   it('CORS header présent (requête sans Origin, ex. curl/serveur-à-serveur : non concerné par CORS)', async () => {
-    const r = await fetchText(`http://127.0.0.1:${port}/modularjs/app-12345678.js`)
+    const r = await fetchText(`http://127.0.0.1:${port}/modularjs/${EMPREINT}`)
     assert.equal(r.headers['access-control-allow-origin'], '*')
   })
 
   it('405 sur POST', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/modularjs/app-12345678.js`, {
+    const res = await fetch(`http://127.0.0.1:${port}/modularjs/${EMPREINT}`, {
       method: 'POST',
     })
     assert.equal(res.status, 405)
@@ -91,14 +95,14 @@ describe('StaticServer', () => {
   // origine qu'elle "est" 127.0.0.1. Fix : seules les origines locales
   // (localhost/127.0.0.1/[::1], port variable) obtiennent le header.
   it("une requête avec Origin LOCAL (autre port, ex. dashboard) reçoit le header, avec CETTE origine précise", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/modularjs/app-12345678.js`, {
+    const res = await fetch(`http://127.0.0.1:${port}/modularjs/${EMPREINT}`, {
       headers: { Origin: 'http://localhost:5173' },
     })
     assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173')
   })
 
   it("une requête avec Origin ÉTRANGER (site tiers) ne reçoit PAS le header (AVANT le fix : '*' quand même)", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/modularjs/app-12345678.js`, {
+    const res = await fetch(`http://127.0.0.1:${port}/modularjs/${EMPREINT}`, {
       headers: { Origin: 'http://evil.example.com' },
     })
     assert.equal(res.headers.get('access-control-allow-origin'), null)

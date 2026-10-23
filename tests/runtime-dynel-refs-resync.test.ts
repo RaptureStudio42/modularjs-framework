@@ -113,7 +113,7 @@ $t = 'A'
     await new Promise((r) => setTimeout(r, 50))
     const p2: any = el._shadow.querySelector('p')
     assert.ok(p2, 'un nouveau <p> doit avoir remplacé le <span>')
-    assert.notEqual(p2, oldP, 'le nouveau <p> doit être une AUTRE instance que le <p> initial')
+    assert.ok(p2 !== oldP, 'le nouveau <p> doit être une AUTRE instance que le <p> initial')
     assert.match(p2.getAttribute('style') || '', /color:\s*blue/, 'le nouveau <p> hérite de la couleur courante')
     assert.equal(oldSpan.isConnected, false, 'l\'ancien <span> doit être détaché du DOM')
     assert.equal(Object.values(el._mjs_nodes || {}).includes(oldSpan), false, 'l\'ancien <span> ne doit plus être référencé dans component._mjs_nodes')
@@ -149,7 +149,7 @@ $c = 'red'
     el._shadow.querySelector('#c2').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 50))
     const div2: any = el._shadow.querySelector('div[style]') || el._shadow.querySelector('div')
-    assert.equal(div2, div1, 'jamais remplacé : même référence de nœud avant/après la mutation')
+    assert.ok(div2 === div1, 'jamais remplacé : même référence de nœud avant/après la mutation')
     assert.match(div2.getAttribute('style') || '', /color:\s*blue/, 'la couleur doit suivre $c sur le nœud jamais remplacé')
 
     window.close?.()

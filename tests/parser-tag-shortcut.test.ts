@@ -1,6 +1,6 @@
-// Test neuf — parser/index.ts : raccourci UNIQUE `<@nom>`
-// réécrit en `<mjs-nom>` (résolu par le bundler EN PROJET PUIS EN CŒUR),
-// `<@mjs-nom>` (ancienne notation dédiée au cœur) est désormais une ERREUR DE
+// Test neuf — parser/index.ts : `<@nom>` (composant du projet) réécrit en
+// `<mjs-nom>`, `<@@nom>` (bibliothèque cœur) réécrit en `<mjs-core-nom>`,
+// `<@mjs-nom>` (ancienne notation dédiée au cœur) est une ERREUR DE
 // MIGRATION, balises littérales `mjs-*`/`mjs-core-*` collectées SANS
 // réécriture, les 12 réservées restent INTACTES. Ces tests portent
 // UNIQUEMENT sur resolveTagName (parser/index.ts) — la RÉSOLUTION des
@@ -40,6 +40,42 @@ describe('parser — raccourci-dev <@nom> → <mjs-nom>', () => {
   })
 })
 
+describe('parser — bibliothèque cœur <@@nom> → <mjs-core-nom>', () => {
+  it('<@@select></@@select> → mjs-core-select + tagRef raccourci-coeur', () => {
+    const refs: TagRef[] = []
+    const root = parse('<@@select></@@select>', refs)
+    assert.equal(root.children[0].name, 'mjs-core-select')
+    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }])
+  })
+
+  it('imbriqués : <@@select><@@option>a</@@option></@@select>', () => {
+    const refs: TagRef[] = []
+    const root = parse('<@@select><@@option value="a">a</@@option></@@select>', refs)
+    assert.equal(root.children[0].name, 'mjs-core-select')
+    assert.equal(root.children[0].children[0].name, 'mjs-core-option')
+    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }, { name: 'option', kind: 'raccourci-coeur', attrs: { names: ['value'], spread: false, texts: { value: 'a' } } }])
+  })
+
+  it('forme nue <@@option value="a"> sans fermante : vide, ses frères restent au niveau du parent', () => {
+    const root = parse('<div><@@option value="a"><p>b</p></div>')
+    assert.deepEqual(root.children[0].children.map((c: any) => c.name), ['mjs-core-option', 'p'])
+  })
+
+  it('<@@code-bloc/> (multi-tiret) → mjs-core-code-bloc', () => {
+    const refs: TagRef[] = []
+    const root = parse('<@@code-bloc/>', refs)
+    assert.equal(root.children[0].name, 'mjs-core-code-bloc')
+    assert.deepEqual(refs, [{ name: 'code-bloc', kind: 'raccourci-coeur', attrs: { names: [], spread: false, texts: {} } }])
+  })
+
+  it('<@select> (un seul @) reste un composant du projet : mjs-select, raccourci-dev', () => {
+    const refs: TagRef[] = []
+    const root = parse('<@select></@select>', refs)
+    assert.equal(root.children[0].name, 'mjs-select')
+    assert.deepEqual(refs, [{ name: 'select', kind: 'raccourci-dev' }])
+  })
+})
+
 describe('parser — <@mjs-nom> RETIRÉE → erreur de migration (raccourci-mjs-retire)', () => {
   it('<@mjs-tst/> → node.name mjs-tst (PLAT, l\'émission n\'a plus d\'importance) + tagRef raccourci-mjs-retire, name "tst" (SANS le préfixe mjs-)', () => {
     const refs: TagRef[] = []
@@ -68,13 +104,15 @@ describe('parser — balises littérales mjs-*/mjs-core-* (écrites à la main, 
     const refs: TagRef[] = []
     const root = parse('<mjs-core-x></mjs-core-x>', refs)
     assert.equal(root.children[0].name, 'mjs-core-x')
-    assert.deepEqual(refs, [{ name: 'x', kind: 'litteral-coeur' }])
+    assert.deepEqual(refs, [{ name: 'x', kind: 'litteral-coeur', attrs: { names: [], spread: false, texts: {} } }])
   })
 
-  it('balise ordinaire (div, my-widget) : jamais de tagRef', () => {
+  it('balise ordinaire (div) : jamais de tagRef ; élément personnalisé nu (my-widget) : relevé `balise-nue`, jamais réécrit', () => {
     const refs: TagRef[] = []
-    parse('<div><my-widget></my-widget></div>', refs)
-    assert.deepEqual(refs, [])
+    const ast = parse('<div><my-widget layout="x"></my-widget></div>', refs)
+    // le bundler n'avertit que si un composant du projet porte ce nom (écrit sans préfixe, il resterait vide)
+    assert.deepEqual(refs, [{ name: 'my-widget', kind: 'balise-nue' }])
+    assert.equal(ast.children[0].children[0].name, 'my-widget')
   })
 })
 

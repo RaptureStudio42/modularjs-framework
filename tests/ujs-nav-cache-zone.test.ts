@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -42,26 +43,38 @@ function makeNode(tag: string, connected = true) {
 }
 
 function install(µ: any, doc: any) {
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navCacheZone'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'zoneFill'))(µ, doc)
   // µ._mjs_navInstallInZone délègue désormais à µ._mjs_navInstallNodes (méthode 'replace'/'append'/
   // 'update' PARTAGÉE avec le chemin HTML), qui elle-même s'appuie sur µ._mjs_navFirstEl (1er nœud ÉLÉMENT,
   // suivi de zone) et µ._mjs_zoneAppend/µ._mjs_navDropHibernation (branche 'append', jamais exercée par CE
   // fichier mais requise pour que la fonction existe — même défense que les autres extractions ici).
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navFirstEl'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navDropHibernation'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'zoneAppend'))(µ, doc)
   // µ._mjs_navInstallNodes appelle désormais aussi µ._mjs_navTransplantPermanents (modes 'replace'/
   // 'update', AVANT l'installation) ; requise pour que la fonction existe, même défense que les autres
   // extractions ici — aucun nœud de CE fichier ne porte `mjs-permanent`/`matches`/`querySelectorAll`,
   // le transplant y reste donc un no-op silencieux (boucle vide, cf. sa propre suite de tests dédiée :
   // tests/ujs-nav-permanent.test.ts).
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navFindByIdIn'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navFindById'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navWarnPermanentNoId'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navTransplantPermanents'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navInstallNodes'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navInstallInZone'))(µ, doc)
+  poserMessages(µ)
   new Function('µ', 'document', extractFn(UJS_SRC, 'navTrackZone'))(µ, doc)
 }
 

@@ -10,10 +10,11 @@
 //   {for m in salon.messages}{m.from.name} : {m.text}{/for}
 //   <input @input={salon.typing()} @keydown.enter={salon.send($texte); $texte = ''}>
 //   {if salon.typingUsers.length}{salon.typingUsers.join(', ')} écrit…{/if}
-//   salon.close()                                     # µ:leave + purge locale
+//   salon.close()                                     # quitte le salon, les messages reçus restent
 //
 // `.me` — {id, name} résolus CÔTÉ SERVEUR (requête chat:me, cf. mjs-ws/chat.ts) — `null` tant
-// que la réponse n'est pas encore revenue (1er tick réactif après le join).
+// que la réponse n'est pas encore revenue (1er tick réactif après le join) ; redemandés à chaque
+// welcome, ils suivent l'identité de la connexion (élévation d'un compte, déconnexion).
 // `.messages` — ordonnés par `ts` SERVEUR, dédupliqués par `id` (rejeu d'historique au join ET à
 // la reconnexion, cf. mjs-ws/rooms.ts::replayHistory) ; un retrait (modération) filtre le message
 // visé, qu'il ait déjà été affiché ou qu'il arrive APRÈS coup (id retenu en tombstone LOCAL, cf.
@@ -35,15 +36,18 @@
 // section « Modération v1 » resterait inatteignable depuis sock.chat() — rejetés
 // serveur ('chat-denied') si l'identité appelante n'est pas `moderators` (chatPackage(opts)).
 //
-// Reconnexion — AUCUNE logique dédiée ici : `sock.room()` (mjs_socket.ts::_mjs_onWelcome) rejoint à
-// nouveau automatiquement, le salon MJS-WS rejoue son historique à CHAQUE `µ:join` (donc aussi
-// après reconnexion) — la dédup par id absorbe les doublons.
+// Reconnexion — `sock.room()` (mjs_socket.ts::_mjs_onWelcome) rejoint à nouveau automatiquement,
+// le salon MJS-WS rejoue son historique à CHAQUE `µ:join` (donc aussi après reconnexion) — la dédup
+// par id absorbe les doublons ; seule `.me` est redemandée (cf. _chatMe).
 //
 // Plusieurs poignées, même salon — chaque `sock.chat(name)` reste INDÉPENDANTE (aucun singleton,
 // MÊME choix que sock.game(), cf. mjs_game.ts tête de fichier) : messages/typingUsers dupliqués en
-// mémoire, mais l'adhésion `sock.room()` sous-jacente EST partagée (`_mjs_rooms[name]`, mjs_socket.ts) —
-// fermer UNE poignée (`close()`) quitte le salon pour de bon (µ:leave), même si une AUTRE poignée
-// du même nom reste ouverte sur ce socket — même limite déjà assumée par sock.room() lui-même.
+// mémoire, mais l'adhésion `sock.room()` sous-jacente EST partagée (`_mjs_rooms[name]`, mjs_socket.ts),
+// qui compte ses poignées — fermer UNE poignée (`close()`) ne quitte le salon (µ:leave) qu'au départ de
+// la dernière : une autre poignée du même nom (discussion ou simple room()) y reste.
+//
+// Composant — ouverte dans un composant, la poignée le suit (cf. mjs_socket.ts::_mjs_ownHandle) : fermée
+// à sa destruction, rouverte s'il revient dans la page ; fermée par close(), elle le reste.
 
 if (typeof MjsSocket !== 'undefined') {
 
@@ -52,7 +56,7 @@ if (typeof MjsSocket !== 'undefined') {
 
   function _chatSyncTypingUsers(h) {
     var out = [], id;
-    for (id in h._mjs_typers) { if (_mjs_safeKey(id)) { out.push(h._mjs_typers[id].name); } }
+    for (id in h._mjs_typers) { out.push(h._mjs_typers[id].name); }
     h.state.typingUsers = out;
   }
 
@@ -101,7 +105,6 @@ if (typeof MjsSocket !== 'undefined') {
   function _chatOnTyping(h, frame) {
     if (!frame || frame.room !== h._mjs_room_name || !frame.from) { return; }
     var id = frame.from.id;
-    if (!_mjs_safeKey(id)) { return; }
     var existing = h._mjs_typers[id];
     if (existing && existing.timer) { clearTimeout(existing.timer); }
     h._mjs_typers[id] = {
@@ -109,6 +112,20 @@ if (typeof MjsSocket !== 'undefined') {
       timer: setTimeout(function() { delete h._mjs_typers[id]; _chatSyncTypingUsers(h); }, MJS_CHAT_TYPING_TTL_MS)
     };
     _chatSyncTypingUsers(h);
+  }
+
+  // identité résolue SERVEUR — `waitForOpen` : sock.chat() est typiquement appelé avant même que
+  // la connexion ne soit ouverte (montage de composant), une requête SANS ce réglage échouerait
+  // systématiquement en 'offline' (cf. mjs_socket.ts::request) plutôt que d'attendre le welcome.
+  // Redemandée à CHAQUE welcome (cf. _mjs_ensureChatWiring) : elle suit l'élévation d'un compte, la
+  // déconnexion, le retour en invité, et une demande coupée en route (élévation lancée pendant
+  // qu'elle attendait sa réponse) repart. `_mjs_asking` : une seule demande en route par poignée.
+  function _chatMe(self, h) {
+    h._mjs_asking = true;
+    self.request('chat:me', {}, { waitForOpen: true }).then(
+      function(p) { h._mjs_asking = false; h.state.me = { id: p.id, name: p.name }; },
+      function() { h._mjs_asking = false; }   // hors-ligne/refus — .me garde sa valeur, jamais de crash
+    );
   }
 
   // une trame chat:* est diffusée à TOUTES les poignées ouvertes sur ce socket (filtrage PAR
@@ -127,6 +144,12 @@ if (typeof MjsSocket !== 'undefined') {
     this.on('chat:message', function(p) { self._mjs_chatDispatch(p, _chatOnMessage); });
     this.on('chat:removed', function(p) { self._mjs_chatDispatch(p, _chatOnRemoved); });
     this.on('chat:typing',  function(p) { self._mjs_chatDispatch(p, _chatOnTyping); });
+    // au tout premier welcome, la demande faite par chat() part avec les requêtes qui attendaient
+    // l'ouverture (déjà en route : pas de doublon)
+    this.on('welcome', function() {
+      var chats = self._mjs_chats, i;
+      for (i = 0; i < chats.length; i++) { if (!chats[i]._mjs_asking) { _chatMe(self, chats[i]); } }
+    });
   };
 
   MjsSocket.prototype.chat = function(name, opts) {
@@ -138,32 +161,39 @@ if (typeof MjsSocket !== 'undefined') {
     var h = {
       state:      state,
       _mjs_room_name: name,
-      _mjs_seenIds:   {},
-      _mjs_retired:   {},
+      // tables lues avec un id venu du serveur : sans prototype, un message ou un auteur d'id `toString`, `constructor` ou
+      // `__proto__` n'y trouve rien d'hérité
+      _mjs_seenIds:   Object.create(null),
+      _mjs_retired:   Object.create(null),
       _mjs_order:     [],
-      _mjs_typers:    {},
-      _mjs_room:      this.room(prefix + name)
+      _mjs_typers:    Object.create(null)
     };
-    this._mjs_chats.push(h);
+    // ouverture : à l'appel, puis au retour dans la page du composant qui l'a ouverte (cf. _mjs_ownHandle) — les messages
+    // gardés absorbent le rejeu d'historique du salon par leur id
+    var ouvrir = function() {
+      h._mjs_room = self.room(prefix + name);
+      self._mjs_chats.push(h);
+      _chatMe(self, h);
+    };
+    // fermeture : close(), ou destruction de ce composant — les frappes en cours partent avec leurs minuteries
+    var fermer = function() {
+      var i = self._mjs_chats.indexOf(h), id;
+      if (i === -1) { return false; }
+      self._mjs_chats.splice(i, 1);
+      for (id in h._mjs_typers) { if (h._mjs_typers[id].timer) { clearTimeout(h._mjs_typers[id].timer); } }
+      h._mjs_typers = Object.create(null);
+      _chatSyncTypingUsers(h);
+      h._mjs_room.leave();
+    };
 
     state.send   = function(text) { self.send('chat:send', { room: name, text: text }); };
     state.typing = function() { self.send('chat:typing', { room: name }); };
     state.remove = function(id) { self.send('chat:remove', { room: name, id: id }); };
     state.mute   = function(identityId, durationMs) { self.send('chat:mute', { room: name, identityId: identityId, durationMs: durationMs }); };
-    state.close  = function() {
-      var i = self._mjs_chats.indexOf(h), id;
-      if (i !== -1) { self._mjs_chats.splice(i, 1); }
-      for (id in h._mjs_typers) { if (h._mjs_typers[id].timer) { clearTimeout(h._mjs_typers[id].timer); } }
-      h._mjs_room.leave();
-    };
+    state.close  = function() { h._mjs_shut = true; fermer(); };
 
-    // identité résolue SERVEUR — `waitForOpen` : sock.chat() est typiquement appelé avant même que
-    // la connexion ne soit ouverte (montage de composant), une requête SANS ce réglage échouerait
-    // systématiquement en 'offline' (cf. mjs_socket.ts::request) plutôt que d'attendre le welcome.
-    this.request('chat:me', {}, { waitForOpen: true }).then(
-      function(p) { state.me = { id: p.id, name: p.name }; },
-      function() {}   // hors-ligne/refus — .me reste null, jamais de crash
-    );
+    ouvrir();
+    this._mjs_ownHandle(h, fermer, ouvrir);
 
     return state;
   };

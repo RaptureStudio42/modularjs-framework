@@ -49,24 +49,24 @@ describe('mjs_destroy_hooks.ts — détaché du cœur, build RÉEL', function ()
   })
 
   // fixture corrigée : `@transition={{…}}` SANS point (`.nom`) n'est PAS la syntaxe
-  // MJS de la directive transition (docs/10-transitions.md : toujours `@transition.nom`,
-  // `@transition.fly={ y: 200, duration: 2000 }`…) — le générateur la route comme un simple
+  // MJS de la directive transition (docs/10-transitions.md : toujours `@transition=*nom`,
+  // `@transition=*fly(up, distance: 200, duration: 2000ms)`…) — le générateur la route comme un simple
   // écouteur DOM générique nommé « transition » (`@xxx={…}` quelconque), qui ne pose JAMAIS
   // `hasDestroyHooks`. Avec l'ancien scan TEXTUEL (regex `@transition\b`, sans exiger le
   // point), ce test passait par un FAUX POSITIF texte — révélé en scannant le code
-  // COMPILÉ (qui, lui, ne ment jamais). Corrigé avec la forme documentée `@transition.fade`.
-  it('@transition.fade (forme nommée SANS paramètres) seul : PRÉSENT', async function () {
+  // COMPILÉ (qui, lui, ne ment jamais). Corrigé avec la forme documentée `@transition=*fade`.
+  it('@transition=*fade (forme nommée SANS paramètres) seul : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @transition.fade>x</p>{end}'].join('\n'),
+      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @transition=*fade>x</p>{end}'].join('\n'),
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })
 
-  // même correctif de fixture : `@in.nom`/`@out.nom` (docs/10-transitions.md), jamais
+  // même correctif de fixture : `@in=*nom`/`@out=*nom` (docs/10-transitions.md), jamais
   // `@in`/`@out` seuls.
-  it('@in.fade / @out.fade seuls : PRÉSENT', async function () {
+  it('@in=*fade / @out=*fade seuls : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @in.fade @out.fade>x</p>{end}'].join('\n'),
+      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @in=*fade @out=*fade>x</p>{end}'].join('\n'),
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })

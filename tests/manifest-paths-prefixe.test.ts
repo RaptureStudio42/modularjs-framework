@@ -53,8 +53,8 @@ describe('bundler — writeManifest() : préfixe factorisé de µ.paths', functi
       assert.match(src, /^\s*µ\.pathsPrefix = "\/assets\/mjs\/";$/m, 'préfixe commun publié une seule fois')
       const paths = extractConst(src, 'µPaths')
       assert.deepEqual(Object.keys(paths).sort(), ['a', 'b'], 'les CLÉS ne changent pas (µ.paths lu par mjs_ujs.ts)')
-      assert.match(paths.a, /^a-[a-f0-9]{8}\.js$/, `suffixe seul attendu, reçu : ${paths.a}`)
-      assert.match(paths.b, /^b-[a-f0-9]{8}\.js$/, `suffixe seul attendu, reçu : ${paths.b}`)
+      assert.match(paths.a, /^a-[0-9a-z]{5}\.js$/, `suffixe seul attendu, reçu : ${paths.a}`)
+      assert.match(paths.b, /^b-[0-9a-z]{5}\.js$/, `suffixe seul attendu, reçu : ${paths.b}`)
       assert.equal(src.includes('"/assets/mjs/a-'), false, 'plus aucune URL entière dans la table')
     } finally {
       await bundler.close()

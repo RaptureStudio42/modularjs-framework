@@ -201,7 +201,7 @@ describe('mjs_modal — inputValidator(value) : message si non-null (bloque), nu
     const r = await p
     assert.equal(r.isConfirmed, true)
     const msgEl = box(document) // déjà retiré du DOM après fermeture
-    assert.equal(msgEl, null)
+    assertAbsent(msgEl, 'boîte retirée du DOM après la fermeture')
   })
 
   it('validator ASYNCHRONE (Promise<string|null>) : awaited, boutons désactivés PENDANT la résolution', async function () {

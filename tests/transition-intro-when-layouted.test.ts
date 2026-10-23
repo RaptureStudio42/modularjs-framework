@@ -41,7 +41,7 @@ $items = ['a', 'b']
 </script>
 
 {for item in $items}
-  <div @transition.slide>{item}</div>
+  <div @transition=*slide>{item}</div>
 {end}
 `)
     const bundler = new Bundler({
@@ -66,9 +66,9 @@ $items = ['a', 'b']
     // le browser n'a pas flushé le retrait). On accepte un flash potentiel
     // d'1 frame (rare car _mjs_whenLayouted tire SYNC quand le node est déjà
     // layouté, ce qui est le cas le plus courant).
-    assert.match(code, /µ\._mjs_whenLayouted\s*\(\s*node\s*,/,
+    assert.match(code, /µ\._mjs_whenLayouted\s*\(\s*_mjs_node\s*,/,
       "l'intro doit être différée via µ._mjs_whenLayouted")
-    assert.match(code, /µ\._mjs_whenLayouted\s*\(\s*node\s*,\s*\(\s*\)\s*=>\s*\{[^}]*µ\._mjs_playTransition/,
+    assert.match(code, /µ\._mjs_whenLayouted\s*\(\s*_mjs_node\s*,\s*\(\s*\)\s*=>\s*\{[^}]*µ\._mjs_playTransition/,
       "µ._mjs_playTransition doit être appelé DANS le callback de _mjs_whenLayouted")
     assert.doesNotMatch(code, /node\.style\.opacity\s*=\s*['"]0['"]/,
       "pas de masquage opacity:0 inline (pollue getComputedStyle au sampling)")
@@ -121,6 +121,14 @@ describe('runtime — tous les sites d\'intro doivent être wrappés dans _mjs_w
 })
 
 describe('runtime — µ._mjs_whenLayouted : microtask au 1er appel (jamais sync), plus de gate offsetHeight', function () {
+  // le requestAnimationFrame factice d'un essai revient toujours, même quand `whenLayouted` ne rappelle jamais (essai échoué au
+  // délai) : sinon il reste posé pour tous les essais suivants du process, ceux des autres fichiers compris
+  let rafAvant: { present: boolean, valeur: any }
+  beforeEach(() => { rafAvant = { present: 'requestAnimationFrame' in globalThis, valeur: (globalThis as any).requestAnimationFrame } })
+  afterEach(() => {
+    if (rafAvant.present) (globalThis as any).requestAnimationFrame = rafAvant.valeur
+    else delete (globalThis as any).requestAnimationFrame
+  })
   // La VRAIE définition (source) doit garder les invariants du fix.
   it('source : microtask au 1er appel, plus de gate offsetHeight', function () {
     const path = join(

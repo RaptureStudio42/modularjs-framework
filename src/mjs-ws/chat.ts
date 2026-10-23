@@ -41,12 +41,12 @@
 // `partie`, hors zone de ce paquet) : à combler par une itération future si un vrai stockage est requis.
 
 import { randomBytes } from 'node:crypto'
-import type { MjsWsApp, MjsWsClient, MjsWsLogFn, MjsWsLogLevel } from './core.js'
+import type { MjsWsApp, MjsWsClient, MjsWsLogFn } from './core.js'
 import { definePackage } from './packages.js'
 import type { MjsPackage } from './packages.js'
 import { peerIdOf } from './rooms.js'
 import type { MjsWsJoinFn } from './rooms.js'
-import { TokenBucket } from './guard.js'
+import { defaultLogOf, nameOf, perRoomBuckets } from './package-helpers.js'
 import { t } from '../messages/index.js'
 
 /** contexte transmis à `opts.onMessage` — `text` déjà VALIDÉ (trimé, forme/longueur) avant l'appel. */
@@ -102,32 +102,9 @@ const DEFAULT_HISTORY            = 100
 const DEFAULT_DUPLICATES_WITHIN  = 30000
 const TYPING_THROTTLE_MS         = 3000
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[mjs-ws:chat] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
-
 // balayage mémoire OPPORTUNISTE (durcissement — cf. opportunisticSweep
 // plus bas) — détail d'implémentation INTERNE, jamais une option `opts.*` documentée (docs/26-chat.md §7)
 const SWEEP_EVERY_N_ACTIONS = 50
-
-// name — `identity.name` si c'est une chaîne non vide, sinon repli `peerIdOf(client)` (lui-même
-// `identity.id` puis `client.id`) — id/name TOUJOURS résolus SERVEUR, jamais depuis une charge
-// client (même esprit que peerIdOf, rooms.ts/sessions.ts).
-//
-// `identity.name` est la convention d'identité PARTAGÉE par les paquets : lobby.ts::nameOf lit le
-// MÊME champ, accounts.ts l'ÉMET dans le jeton. Elle se renomme d'un seul tenant — jamais dans un
-// paquet isolé, sous peine d'un chat qui lirait un champ pendant que le reste en écrit un autre.
-function nameOf(client: MjsWsClient): string {
-  const identity = client.identity
-  if (identity && typeof identity === 'object') {
-    const name = (identity as Record<string, unknown>).name
-    if (typeof name === 'string' && name) return name
-  }
-  return peerIdOf(client)
-}
 
 // id court, unique — 12 caractères hex (même primitive que stats.ts processId, cf. randomBytes)
 function genId(): string {
@@ -149,11 +126,12 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   const history          = opts.history ?? DEFAULT_HISTORY
   const duplicatesOn     = !!opts.duplicates
   const duplicatesWithin = (typeof opts.duplicates === 'object' ? opts.duplicates.within : undefined) ?? DEFAULT_DUPLICATES_WITHIN
-  const onLog            = opts.onLog ?? defaultLog
+  const onLog            = opts.onLog ?? defaultLogOf('chat')
 
   // débit — 1 seau PAR (salon, identité), PARTAGÉ entre connexions d'une même identité (2 onglets
   // = même quota — compatible sessionExclusive/anti-triche sans rien faire de spécial)
-  const buckets = new Map<string, Map<string, TokenBucket>>()
+  const seaux   = perRoomBuckets(burst, rate)
+  const buckets = seaux.buckets
   // frappe — throttle ~3s PAR (salon, identité) — SÉPARÉ du débit ci-dessus, jamais journalisé
   const lastTypingAt = new Map<string, Map<string, number>>()
   // mute — échéance ms epoch PAR (salon, identité), mémoire PROCESS v1 (cf. tête de fichier —
@@ -166,13 +144,7 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
 
   function fullNameOf(room: string): string { return prefix + room }
 
-  function bucketOf(fullName: string, identityId: string): TokenBucket {
-    let perRoom = buckets.get(fullName)
-    if (!perRoom) { perRoom = new Map(); buckets.set(fullName, perRoom) }
-    let b = perRoom.get(identityId)
-    if (!b) { b = new TokenBucket(burst, rate); perRoom.set(identityId, b) }
-    return b
-  }
+  const bucketOf = seaux.bucketOf
 
   function isMuted(fullName: string, identityId: string): boolean {
     const perRoom = mutedUntil.get(fullName)
@@ -231,9 +203,9 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   // zéro au prochain arrivant est sans enjeu pour un seau, et un timestamp de throttle n'a AUCUNE
   // valeur à survivre au vidage (fenêtre de ~3 s, cf. TYPING_THROTTLE_MS) — même sous-arbre par
   // salon, même sort, la sous-map entière part avec la clé, jamais un registre conservé pour un salon mort.
-  function sweepBucketsOfEmptyRooms(app: MjsWsApp): void {
-    for (const fullName of buckets.keys()) if (app.room(fullName).size === 0) buckets.delete(fullName)
-    for (const fullName of lastTypingAt.keys()) if (app.room(fullName).size === 0) lastTypingAt.delete(fullName)
+  function sweepBucketsOfEmptyRooms(estVide: (fullName: string) => boolean): void {
+    seaux.sweep(estVide)
+    for (const fullName of lastTypingAt.keys()) if (estVide(fullName)) lastTypingAt.delete(fullName)
   }
 
   // mutes — AUCUN rapport avec le vidage d'un salon (on ne démute pas quelqu'un parce que le salon
@@ -251,10 +223,10 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
   // anti-doublon — sous-map d'un salon SANS MEMBRE entièrement réclamée (même sort que
   // buckets/lastTypingAt ci-dessus, aucun enjeu à survivre au vidage) ; ENTRÉES EXPIRÉES balayées
   // PARTOUT, salon vide ou pas (même esprit que sweepExpiredMutes) — sous-maps devenues vides réclamées.
-  function sweepDuplicates(app: MjsWsApp): void {
+  function sweepDuplicates(estVide: (fullName: string) => boolean): void {
     const now = Date.now()
     for (const [fullName, perRoom] of duplicates) {
-      const emptyRoom = app.room(fullName).size === 0
+      const emptyRoom = estVide(fullName)
       for (const [identityId, perText] of perRoom) {
         if (emptyRoom) { perRoom.delete(identityId); continue }
         for (const [text, ts] of perText) if (now - ts >= duplicatesWithin) perText.delete(text)
@@ -270,9 +242,16 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
     actionsSinceSweep++
     if (actionsSinceSweep < SWEEP_EVERY_N_ACTIONS) return
     actionsSinceSweep = 0
-    sweepBucketsOfEmptyRooms(app)
+    // chaque salon lu une seule fois par balayage (un `app.room()` crée ses poignées à chaque appel)
+    const vides = new Map<string, boolean>()
+    const estVide = (fullName: string): boolean => {
+      let vide = vides.get(fullName)
+      if (vide === undefined) { vide = app.room(fullName).size === 0; vides.set(fullName, vide) }
+      return vide
+    }
+    sweepBucketsOfEmptyRooms(estVide)
     sweepExpiredMutes()
-    sweepDuplicates(app)
+    sweepDuplicates(estVide)
   }
 
   // garde composite — membre du salon (µ:join bas niveau déjà accepté) ET canJoin (si fourni,
@@ -310,8 +289,8 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       const room = p?.room
       if (typeof room !== 'string' || !room) return   // salon malformé — trame hors protocole, ignorée silencieusement
       const fullName = fullNameOf(room)
-      opportunisticSweep(app)   // mémoire bornée — cf. son commentaire de tête
       if (!(await isAllowed(app, fullName, client))) throw new Error('chat-denied')
+      opportunisticSweep(app)   // mémoire bornée, après la garde : seules les actions des membres comptent
 
       const identityId = peerIdOf(client)
       if (isMuted(fullName, identityId)) throw new Error('chat-muted')
@@ -358,8 +337,8 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       const room = p?.room
       if (typeof room !== 'string' || !room) return
       const fullName = fullNameOf(room)
-      opportunisticSweep(app)   // mémoire bornée — cf. son commentaire de tête
       if (!(await isAllowed(app, fullName, client))) return   // best-effort, jamais d'erreur pour un indicateur
+      opportunisticSweep(app)   // mémoire bornée, après la garde : seules les actions des membres comptent
       const identityId = peerIdOf(client)
       if (isMuted(fullName, identityId)) return
 
@@ -373,7 +352,10 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       // diffusion MANUELLE (jamais room.send) — l'indicateur de frappe est ÉPHÉMÈRE, il ne doit
       // JAMAIS entrer dans le journal d'historique du salon (cf. tête de fichier) ; `.clients` reste
       // une accroche LIVE (core.ts), jamais un instantané figé.
+      // charge encodée une seule fois pour tout le salon (accroche interne du moteur) ; absente, un envoi par membre
       const payload = { room, from: { id: identityId, name: nameOf(client) } }
+      const fanOut  = (app as any)._fanOut as ((targets: Iterable<MjsWsClient>, type: string, p: unknown, skip?: Set<MjsWsClient>) => void) | undefined
+      if (fanOut) { fanOut(app.room(fullName).clients, 'chat:typing', payload, new Set([client])); return }
       for (const member of app.room(fullName).clients) {
         if (member !== client) member.send('chat:typing', payload)
       }
@@ -384,8 +366,8 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       const id   = p?.id
       if (typeof room !== 'string' || !room || typeof id !== 'string' || !id) return
       const fullName = fullNameOf(room)
-      opportunisticSweep(app)   // mémoire bornée — cf. son commentaire de tête
       if (!(await isAllowed(app, fullName, client))) throw new Error('chat-denied')
+      opportunisticSweep(app)   // mémoire bornée, après la garde : seules les actions des membres comptent
       if (!(await isModerator(client))) throw new Error('chat-denied')
       // journalisé (si historique actif) — un retrait est TOUJOURS diffusé APRÈS son message, donc
       // jamais évincé du journal AVANT lui (anneau append-only, cf. tête de fichier) : un rejoueur
@@ -401,8 +383,8 @@ export function chatPackage(opts: MjsWsChatOptions = {}): MjsPackage {
       if (typeof identityId !== 'string' || !identityId) return
       if (typeof durationMs !== 'number' || !isFinite(durationMs) || durationMs <= 0) return
       const fullName = fullNameOf(room)
-      opportunisticSweep(app)   // mémoire bornée — cf. son commentaire de tête
       if (!(await isAllowed(app, fullName, client))) throw new Error('chat-denied')
+      opportunisticSweep(app)   // mémoire bornée, après la garde : seules les actions des membres comptent
       if (!(await isModerator(client))) throw new Error('chat-denied')
       let perRoom = mutedUntil.get(fullName)
       if (!perRoom) { perRoom = new Map(); mutedUntil.set(fullName, perRoom) }

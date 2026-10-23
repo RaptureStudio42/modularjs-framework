@@ -19,6 +19,8 @@
 // GET / DEL / KEYS Redis (cf. son commentaire de tête pour le détail du protocole RESP).
 
 import { randomBytes } from 'node:crypto'
+import type { MjsWsLogFn } from './core.js'
+import { t } from '../messages/index.js'
 
 // --- la façade -----------------------------------------------------------------------------
 
@@ -56,6 +58,8 @@ export interface MjsWsAdapter {
 interface MemorySubscriber {
   processId: string
   handler: MjsWsAdapterHandler
+  /** adaptateur abonné : c'est son journal qui signale un rappel qui lève */
+  owner: MemoryAdapter
 }
 
 interface MemoryLease {
@@ -83,19 +87,28 @@ export interface MemoryAdapterOpts {
   prefix?: string
   /** horloge injectable — simule un bail expiré SANS vrai délai (cf. mjs-ws-adapter.test.ts) */
   now?: () => number
+  /** journal — un rappel de `subscribe` qui lève y est signalé (regroupé par canal, comme l'adaptateur Redis) ; défaut : la console */
+  onLog?: MjsWsLogFn
 }
+
+// avertissements regroupés : le premier rappel qui lève sur un canal est signalé tout de suite, les suivants comptés et
+// signalés au plus une fois par minute (même règle que l'adaptateur Redis)
+const IGNORED_WARN_MS = 60000
 
 export class MemoryAdapter implements MjsWsAdapter {
   readonly processId: string
   readonly prefix: string
   private _bus: MemoryAdapterBusState
   private _now: () => number
+  private _onLog: MjsWsLogFn
+  private _ignored = new Map<string, { n: number; at: number }>()
 
   constructor(opts: MemoryAdapterOpts = {}) {
     this.processId = opts.processId ?? randomBytes(8).toString('hex')
     this.prefix    = opts.prefix ?? 'mjs-ws'
     this._bus      = opts.bus ?? new MemoryAdapterBusState()
     this._now      = opts.now ?? (() => Date.now())
+    this._onLog    = opts.onLog ?? ((level, message) => { if (level === 'error') console.error(message); else console.warn(message) })
   }
 
   async start(): Promise<void> {}
@@ -109,7 +122,7 @@ export class MemoryAdapter implements MjsWsAdapter {
   subscribe(channel: string, handler: MjsWsAdapterHandler): void {
     let subs = this._bus.subscribers.get(channel)
     if (!subs) { subs = new Set(); this._bus.subscribers.set(channel, subs) }
-    subs.add({ processId: this.processId, handler })
+    subs.add({ processId: this.processId, handler, owner: this })
   }
 
   publish(channel: string, message: unknown): void {
@@ -122,8 +135,22 @@ export class MemoryAdapter implements MjsWsAdapter {
       // asynchrone (microtask) — même politique que MemoryTransport.send() : jamais de callback
       // synchrone depuis publish(), pour ne pas masquer les bugs d'ordonnancement qu'un VRAI
       // aller-retour réseau (Redis) révélerait. Un abonné parti entre-temps (stop()) est ignoré.
-      queueMicrotask(() => { if (subs.has(s)) handler(message, origin) })
+      // un rappel qui lève est rattrapé comme par l'adaptateur Redis : il ne fait pas tomber le processus, les autres
+      // rappels reçoivent le message
+      queueMicrotask(() => {
+        if (!subs.has(s)) return
+        try { handler(message, origin) }
+        catch (err) { s.owner._ignore(channel, err instanceof Error ? err.message : String(err)) }
+      })
     }
+  }
+
+  private _ignore(channel: string, cause: string): void {
+    const now  = Date.now()
+    const seen = this._ignored.get(channel)
+    if (seen && now - seen.at < IGNORED_WARN_MS) { seen.n++; return }
+    this._ignored.set(channel, { n: 0, at: now })
+    this._onLog('warn', t('ws.adapter.rappel-a-leve', { channel, n: (seen?.n ?? 0) + 1, cause }))
   }
 
   async incr(key: string): Promise<number> {

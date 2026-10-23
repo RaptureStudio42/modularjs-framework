@@ -113,20 +113,20 @@ describe('processGlobalMacros', () => {
     assert.match(r.setup, /µ\._updDynEl\(@, '0', \(\$tag\)\)/)
   })
 
-  it('<@module $comp> (composant dynamique) → placeholder mjs-mod + µeffect _updModule', () => {
+  it('<@module $comp> (composant dynamique) → repère mjs-mod portant l\'expression du composant, sans effet posé au niveau du composant', () => {
     const r = processGlobalMacros(`<@module $comp>\n  <p>fallback</p>\n</@module>`)
-    assert.match(r.html, /<div mjs-mod="0">/)
+    assert.match(r.html, /<div mjs-mod="0" mjs-comp=\{\$comp\}>/)
     assert.match(r.html, /<p>fallback<\/p>/)        // enfants (slots) intacts
     assert.doesNotMatch(r.html, /<@module/)
     assert.doesNotMatch(r.html, /<\/@module>/)
-    assert.match(r.setup, /µeffect =>/)
-    assert.match(r.setup, /µ\._updModule\(@, '0', \(\$comp\)\)/)
+    // l'effet vit dans le générateur (bindingModule), dans la portée du nœud : une ligne de {for} y voit sa variable
+    assert.doesNotMatch(r.setup, /_updModule/)
   })
 
   it('<@module $comp class="x"> → attrs statiques reportés sur le placeholder', () => {
     const r = processGlobalMacros(`<@module $comp class="x">hi</@module>`)
-    assert.match(r.html, /<div mjs-mod="0" class="x">/)
-    assert.match(r.setup, /µ\._updModule\(@, '0', \(\$comp\)\)/)
+    assert.match(r.html, /<div mjs-mod="0" mjs-comp=\{\$comp\} class="x">/)
+    assert.doesNotMatch(r.setup, /_updModule/)
   })
 
   it('µdebug $x → se réécrit en effet réactif (log + debugger)', () => {

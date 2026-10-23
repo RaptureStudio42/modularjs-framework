@@ -32,6 +32,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // _updDynEl/_updModule vivent désormais dans mjs_dynamic.ts (DÉTACHÉ de mjs_runes.ts, cf.
@@ -60,6 +61,7 @@ function makeRunes(): { µ: any; document: any; warnCalls: any[][] } {
   const document: any = window.document
   const warnCalls: any[][] = []
   const µ: any = { log() {}, error() {}, warn(...args: any[]) { warnCalls.push(args) } }
+  poserMessages(µ)
   new Function('µ', 'document', runesSrc)(µ, document)
   new Function('µ', 'document', dynamicSrc)(µ, document)
   return { µ, document, warnCalls }
@@ -714,6 +716,7 @@ function makeEasing(): { µ: any; window: any; document: any; warnCalls: any[][]
   const document: any = window.document
   const warnCalls: any[][] = []
   const µ: any = { debug: false, log() {}, warn(...args: any[]) { warnCalls.push(args) }, error() {} }
+  poserMessages(µ)
   new Function('µ', 'document', easingSrc)(µ, document)
   return { µ, window, document, warnCalls }
 }

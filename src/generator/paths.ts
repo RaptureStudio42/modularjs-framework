@@ -30,7 +30,8 @@
 // cache template. La fonction est JIT-inlinée par V8 après quelques exécutions.
 
 import { t } from '../messages/index.js'
-import { decodeHtmlEntities } from './utils.js'
+import { decodeHtmlEntities, attrSur } from './utils.js'
+import { readHtmlComment } from '../mask.js'
 
 export type NodeKind = 'text' | 'html' | 'el' | 'textslot'
 
@@ -76,12 +77,51 @@ function isRawTextTag(tag: string, stack: { tag: string }[]): boolean {
 // namespace de création pour `tagName`, vu LUI-MÊME
 // et la pile d'ancêtres : `<svg>`/`<math>` engagent leur PROPRE namespace (pas
 // seulement celui de leurs enfants). Le mode CLONE (`µ._mjs_cloneTpl`, runtime) est
-// déjà protégé par `_mjs_svgTagRe` — ce mode IMPÉRATIF (`generateCreateFnBodyImperative`,
+// protégé par `_mjs_svgTagRe` et par foreignWrapTag (plus bas) — ce mode IMPÉRATIF (`generateCreateFnBodyImperative`,
 // seul appelant) ne l'était pas : `document.createElement` posait un SVG en
 // namespace HTML (HTMLUnknownElement, jamais affiché) dès qu'une branche
 // `{await}` forçait ce mode.
 export const SVG_NS  = 'http://www.w3.org/2000/svg'
 export const MATH_NS = 'http://www.w3.org/1998/Math/MathML'
+
+// éléments SVG dont le nom porte des majuscules : la table « adjust SVG tag names » du standard HTML (analyse des contenus étrangers), qui rétablit la
+// casse depuis les minuscules. Le navigateur la rejoue sur tout élément SVG qu'il lit dans du HTML ; ce mode impératif nomme lui-même ses éléments
+// (createElementNS) et dans l'espace de noms SVG la casse compte : `lineargradient` n'est qu'un élément inconnu, sans dégradé ni découpe ni filtre
+const SVG_TAG_NAMES = new Map(['altGlyph', 'altGlyphDef', 'altGlyphItem', 'animateColor', 'animateMotion', 'animateTransform', 'clipPath', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix', 'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feImage', 'feMerge', 'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence', 'foreignObject', 'glyphRef', 'linearGradient', 'radialGradient', 'textPath'].map((nom): [string, string] => [nom.toLowerCase(), nom]))
+
+// attributs des éléments SVG dont le nom porte des majuscules : la table « adjust SVG attributes » du standard HTML ; l'analyseur HTML du navigateur passe tout nom d'attribut
+// en minuscules, puis rétablit la casse de ceux-là sur un élément SVG ; ce mode impératif pose lui-même ses attributs et sur un élément SVG la casse compte : un `viewbox` n'est
+// qu'un attribut inconnu (le dessin n'est pas mis à l'échelle), un `gradientunits` laisse les unités par défaut du dégradé
+const SVG_ATTR_NAMES = new Map(['attributeName', 'attributeType', 'baseFrequency', 'baseProfile', 'calcMode', 'clipPathUnits', 'diffuseConstant', 'edgeMode', 'filterUnits', 'glyphRef', 'gradientTransform', 'gradientUnits', 'kernelMatrix', 'kernelUnitLength', 'keyPoints', 'keySplines', 'keyTimes', 'lengthAdjust', 'limitingConeAngle', 'markerHeight', 'markerUnits', 'markerWidth', 'maskContentUnits', 'maskUnits', 'numOctaves', 'pathLength', 'patternContentUnits', 'patternTransform', 'patternUnits', 'pointsAtX', 'pointsAtY', 'pointsAtZ', 'preserveAlpha', 'preserveAspectRatio', 'primitiveUnits', 'refX', 'refY', 'repeatCount', 'repeatDur', 'requiredExtensions', 'requiredFeatures', 'specularConstant', 'specularExponent', 'spreadMethod', 'startOffset', 'stdDeviation', 'stitchTiles', 'surfaceScale', 'systemLanguage', 'tableValues', 'targetX', 'targetY', 'textLength', 'viewBox', 'viewTarget', 'xChannelSelector', 'yChannelSelector', 'zoomAndPan'].map((nom): [string, string] => [nom.toLowerCase(), nom]))
+
+// attributs « étrangers » : la table « adjust foreign attributes » du standard HTML, nom qualifié en minuscules → espace de noms ; l'analyseur HTML les pose dans leur espace de noms
+// (le `xlink:href` d'un `<use>` n'est lu que dans celui de XLink : sans lui l'icône n'apparaît pas) et `setAttribute` ne sait pas le faire, c'est `setAttributeNS` ; les autres noms
+// qualifiés (`xml:base`, `xmlns:foo`…) restent des attributs sans espace de noms, comme pour l'analyseur
+const XLINK_NS = 'http://www.w3.org/1999/xlink'
+const XML_NS   = 'http://www.w3.org/XML/1998/namespace'
+const XMLNS_NS = 'http://www.w3.org/2000/xmlns/'
+const FOREIGN_ATTR_NS = new Map([
+  ['xlink:actuate', XLINK_NS], ['xlink:arcrole', XLINK_NS], ['xlink:href', XLINK_NS], ['xlink:role', XLINK_NS], ['xlink:show', XLINK_NS], ['xlink:title', XLINK_NS], ['xlink:type', XLINK_NS],
+  ['xml:lang', XML_NS], ['xml:space', XML_NS],
+  ['xmlns', XMLNS_NS], ['xmlns:xlink', XMLNS_NS]
+])
+
+// attributs MathML : la table « adjust MathML attributes » du standard HTML, qui n'a qu'une entrée
+const MATH_ATTR_NAMES = new Map([['definitionurl', 'definitionURL']])
+
+// l'attribut tel que l'analyseur HTML le poserait sur un élément de l'espace de noms `ns` (SVG_NS, MATH_NS, ou null pour un élément HTML) : son nom, avec la casse du standard,
+// et son espace de noms (null = aucun) ; les attributs étrangers ne se déplacent que sur un élément SVG, HTML garde le nom écrit
+export function adjustAttr(ns: string | null, attrName: string): { name: string, ns: string | null } {
+  const lower = attrName.toLowerCase()
+  if (ns === SVG_NS) {
+    const foreignNs = FOREIGN_ATTR_NS.get(lower)
+    if (foreignNs) return { name: lower, ns: foreignNs }
+    return { name: SVG_ATTR_NAMES.get(lower) ?? attrName, ns: null }
+  }
+  if (ns === MATH_NS) return { name: MATH_ATTR_NAMES.get(lower) ?? attrName, ns: null }
+  return { name: attrName, ns: null }
+}
+
 function foreignNamespace(tagName: string, stack: { tag: string }[]): string | null {
   if (tagName === 'svg') return SVG_NS
   if (tagName === 'math') return MATH_NS
@@ -114,6 +154,8 @@ const TABLE_SECTIONS = new Set(['thead', 'tbody', 'tfoot'])
 // balises que le parseur ouvrirait AVANT `tag`, vu le parent courant
 function implicitTableWrap(tag: string, parent: string): string[] {
   if (tag === 'tr' && parent === 'table') return ['tbody']
+  // `<col>` posé directement dans un `<table>` : le navigateur ouvre un `<colgroup>` autour
+  if (tag === 'col' && parent === 'table') return ['colgroup']
   if (tag === 'td' || tag === 'th') {
     if (parent === 'table') return ['tbody', 'tr']
     if (TABLE_SECTIONS.has(parent)) return ['tr']
@@ -126,7 +168,7 @@ function implicitTableWrap(tag: string, parent: string): string[] {
 const TABLE_CLOSERS = new Set(['thead', 'tbody', 'tfoot', 'caption', 'colgroup'])
 
 // un élément de FLOW CONTENT (liste HTML5 « p
-// end tag can be omitted ») ouvert alors qu'un `<p>` est l'élément COURANT
+// end tag can be omitted », plus `<li>`, `<dd>`, `<dt>` qui le referment aussi) ouvert alors qu'un `<p>` est l'élément COURANT
 // referme ce `<p>` D'OFFICE dans tout navigateur conforme — le `<div>` devient
 // un FRÈRE du `<p>`, pas un enfant. Le chemin calculé ici visait un enfant qui
 // n'existe jamais dans l'arbre réel : CRASH au montage. Plutôt
@@ -134,10 +176,10 @@ const TABLE_CLOSERS = new Set(['thead', 'tbody', 'tfoot', 'caption', 'colgroup']
 // pour `<tbody>`/`<tr>`, un calcul de chemins totalement différent), on REFUSE
 // la compilation : geste d'auteur presque toujours involontaire.
 const P_CLOSING_TAGS = new Set([
-  'address', 'article', 'aside', 'blockquote', 'details', 'dialog', 'div', 'dl',
+  'address', 'article', 'aside', 'blockquote', 'center', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt',
   'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4',
-  'h5', 'h6', 'header', 'hgroup', 'hr', 'main', 'menu', 'nav', 'ol', 'p', 'pre',
-  'section', 'table', 'ul',
+  'h5', 'h6', 'header', 'hgroup', 'hr', 'li', 'listing', 'main', 'menu', 'nav', 'ol', 'p', 'plaintext', 'pre',
+  'search', 'section', 'summary', 'table', 'ul', 'xmp',
 ])
 
 // numéro de ligne (1-based) du caractère d'index `pos` dans `html` — pour nommer
@@ -149,23 +191,297 @@ function computeLine(html: string, pos: number): number {
   return line
 }
 
+// lignes du fichier `.mjs` portées jusqu'ici : le générateur fait précéder chaque balise et chaque texte du gabarit d'une
+// marque `\u0000<ligne>\u0000` (marqueLigne), retirée avant toute lecture (retireLignes) — un message cite alors la ligne du
+// fichier, pas celle du morceau de gabarit lu (un bloc `{if}`/`{for}` est construit à part, sans les lignes qui le précèdent)
+const MARQUE_LIGNE_RE = /\u0000(\d+)\u0000/g
+
+export interface LignesDuGabarit { positions: number[], lignes: number[] }
+
+export function marqueLigne(ligne: number | undefined): string {
+  return ligne === undefined ? '' : `\u0000${ligne}\u0000`
+}
+
+// HTML sans ses marques, et la ligne du fichier de chaque position marquée (null : aucune marque)
+export function retireLignes(html: string): { html: string, lignes: LignesDuGabarit | null } {
+  if (!html.includes('\u0000')) return { html, lignes: null }
+  const positions: number[] = []
+  const lignes: number[]    = []
+  let retire = 0
+  const propre = html.replace(MARQUE_LIGNE_RE, (marque: string, ligne: string, at: number) => {
+    positions.push(at - retire)
+    lignes.push(Number(ligne))
+    retire += marque.length
+    return ''
+  })
+  return { html: propre, lignes: { positions, lignes } }
+}
+
+// le gabarit racine sort du générateur sans ses marques (compile, cf. retenirLignesRacine) et revient ici par le transpileur :
+// ses lignes sont gardées à part, retrouvées par son texte
+let racine: { html: string, lignes: LignesDuGabarit } | null = null
+
+export function retenirLignesRacine(html: string): string {
+  const lu = retireLignes(html)
+  racine = lu.lignes === null ? null : { html: lu.html, lignes: lu.lignes }
+  return lu.html
+}
+
+// ligne du fichier de ce qui commence en `pos` : celle de la dernière marque posée avant ; sans marque, la ligne comptée
+// dans le morceau
+function ligneDuFichier(html: string, lignes: LignesDuGabarit | null, pos: number): number {
+  if (lignes === null || lignes.positions.length === 0 || lignes.positions[0] > pos) return computeLine(html, pos)
+  let bas  = 0
+  let haut = lignes.positions.length - 1
+  while (bas < haut) {
+    const milieu = (bas + haut + 1) >> 1
+    if (lignes.positions[milieu] <= pos) bas = milieu
+    else haut = milieu - 1
+  }
+  return lignes.lignes[bas]
+}
+
 // la garde `checkFlowInsideP` ne regardait QUE le SOMMET de
 // pile (`stack[stack.length - 1].tag === 'p'`) : `<p>a<b>x<div>y</div>z</b>b</p>`
 // passait (l'élément COURANT à l'ouverture du `<div>` est `<b>`, pas `<p>`)
 // alors qu'un navigateur conforme referme le `<p>` ET le `<b>` (« button scope »,
 // arbre éclaté, chemins faux). On refuse dès qu'un `<p>`
-// existe N'IMPORTE OÙ dans la pile ouverte : approximation acceptée (le
-// navigateur ne referme pas forcément tout ce qui est au-dessus du `<p>` dans
-// tous les cas exotiques, mais aucun de ces cas n'est un DOM qu'on veut générer
-// ici quand même). Helper COMMUN aux deux marcheurs — `extractPaths` posait déjà
+// est ouvert dans la pile en deçà de la portée « button » du standard : un `<button>`,
+// une cellule, un `<template>`… arrêtent la recherche, le navigateur ne referme pas un `<p>`
+// situé au-delà (`<p>Texte <button><div>…</div></button></p>` garde sa `<div>`). Helper COMMUN
+// aux deux marcheurs — `extractPaths` posait déjà
 // la garde (au sommet seul, corrigé ici) ; `generateCreateFnBodyImperative` ne
 // la posait PAS DU TOUT (atteint par `{await}{success}` contenant un `{for}`,
 // qui force le mode impératif — le même DOM éclaté passait sans erreur).
-function checkFlowInsideP(stack: { tag: string }[], tagName: string, line: number): void {
+// La ligne n'est calculée qu'au moment de lever : recomptée à chaque balise ouvrante, elle
+// rendait le coût quadratique sur la taille du gabarit.
+const P_SCOPE_STOP = new Set([
+  'button', 'td', 'th', 'caption', 'table', 'html', 'marquee', 'object', 'applet', 'template',
+  'foreignobject', 'desc', 'title', 'mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml',
+])
+
+function checkFlowInsideP(stack: { tag: string }[], tagName: string, line: () => number): void {
   if (!P_CLOSING_TAGS.has(tagName)) return
   for (let k = stack.length - 1; k >= 0; k--) {
-    if (stack[k].tag === 'p') throw new Error(t('generator.p-contenu-interdit', { tag: tagName, ligne: line }))
+    if (P_SCOPE_STOP.has(stack[k].tag)) return
+    if (stack[k].tag === 'p') throw new Error(t('generator.p-contenu-interdit', { tag: tagName, ligne: line() }))
   }
+}
+
+// fermetures implicites du standard HTML : ouvrir un `<li>` referme le `<li>` encore ouvert, de même
+// `<dt>`/`<dd>`, une cellule `<td>`/`<th>`, une rangée `<tr>`, une `<option>`/`<optgroup>` — le navigateur
+// en fait des FRÈRES, jamais un élément imbriqué dans le précédent. Rend le nombre de niveaux à refermer
+// avant d'ouvrir `tag`. La recherche d'un `<li>`/`<dt>`/`<dd>` s'arrête au premier élément « spécial » du
+// standard (hors address, div, p) : une liste imbriquée garde ses propres éléments
+const LIST_ITEM_STOP = new Set([
+  'applet', 'article', 'aside', 'blockquote', 'body', 'button', 'caption', 'center', 'colgroup', 'dd',
+  'details', 'dir', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frameset', 'h1',
+  'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'html', 'li', 'listing', 'main', 'marquee',
+  'menu', 'nav', 'noscript', 'object', 'ol', 'pre', 'search', 'section', 'select', 'summary', 'table',
+  'tbody', 'td', 'template', 'tfoot', 'th', 'thead', 'tr', 'ul', 'mi', 'mo', 'mn', 'ms', 'mtext',
+  'annotation-xml', 'foreignobject', 'desc',
+])
+// éléments « spéciaux » du standard qui restent ouverts : une fermante d'élément ordinaire (`</span>`) ne remonte pas
+// au-delà
+const SPECIAL_TAGS = new Set([...LIST_ITEM_STOP, 'address', 'div', 'p', 'iframe', 'noembed', 'noframes', 'plaintext', 'xmp'])
+// bornes de la portée par défaut du standard (« has an element in scope ») : la recherche d'un élément ouvert s'y arrête
+const SCOPE_STOP = new Set([
+  'applet', 'caption', 'html', 'table', 'td', 'th', 'marquee', 'object', 'template', 'foreignobject', 'desc', 'title',
+  'mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml',
+])
+// éléments de mise en forme du standard, et les bornes de leur liste (un `<a>` ouvert au-delà n'est plus vu)
+const FORMATTING_TAGS    = new Set(['a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's', 'small', 'strike', 'strong', 'tt', 'u'])
+const FORMATTING_MARKERS = new Set(['applet', 'caption', 'html', 'marquee', 'object', 'td', 'template', 'th'])
+const HEADINGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+// refermés d'office dans un `<ruby>` avant `<rb>`/`<rtc>`/`<rp>`/`<rt>` (« generate implied end tags » du standard)
+const IMPLIED_END_TAGS = new Set(['dd', 'dt', 'li', 'optgroup', 'option', 'p', 'rb', 'rp', 'rt', 'rtc'])
+const TABLE_STRUCTURE  = new Set(['caption', 'col', 'colgroup', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr'])
+
+function implicitCloseCount(stack: { tag: string }[], tag: string): number {
+  const top = stack.length - 1
+  if (tag === 'li' || tag === 'dt' || tag === 'dd') {
+    for (let k = top; k >= 1; k--) {
+      const ouvert = stack[k].tag
+      if (tag === 'li' ? ouvert === 'li' : (ouvert === 'dt' || ouvert === 'dd')) return stack.length - k
+      if (LIST_ITEM_STOP.has(ouvert)) return 0
+    }
+    return 0
+  }
+  if (tag === 'option' || tag === 'optgroup') {
+    let n = stack[top].tag === 'option' ? 1 : 0
+    if (tag === 'optgroup' && top - n >= 1 && stack[top - n].tag === 'optgroup') n++
+    return n
+  }
+  if (TABLE_STRUCTURE.has(tag)) return tableCloseCount(stack, tag)
+  // un `<button>` (un `<a>`) encore ouvert se referme : les deux sont frères — un `<a>` mal imbriqué (bloc ou mise en
+  // forme entre les deux) est refusé avant, par checkNesting
+  if (tag === 'button' || tag === 'a') {
+    for (let k = top; k >= 1; k--) {
+      if (stack[k].tag === tag) return stack.length - k
+      if ((tag === 'a' ? FORMATTING_MARKERS : SCOPE_STOP).has(stack[k].tag)) return 0
+    }
+    return 0
+  }
+  // un titre ouvert juste en dessous d'un autre titre se referme
+  if (HEADINGS.has(tag)) return HEADINGS.has(stack[top].tag) ? 1 : 0
+  if (tag === 'rb' || tag === 'rtc' || tag === 'rp' || tag === 'rt') {
+    if (!hasInScope(stack, 'ruby')) return 0
+    let n = 0
+    while (top - n >= 1 && IMPLIED_END_TAGS.has(stack[top - n].tag) && !(stack[top - n].tag === 'rtc' && (tag === 'rp' || tag === 'rt'))) n++
+    return n
+  }
+  // un `<colgroup>` ne garde que des `<col>` : toute autre balise le referme
+  return stack[top].tag === 'colgroup' && tag !== 'col' && tag !== 'template' ? 1 : 0
+}
+
+function hasInScope(stack: { tag: string }[], tag: string): boolean {
+  for (let k = stack.length - 1; k >= 1; k--) {
+    if (stack[k].tag === tag) return true
+    if (SCOPE_STOP.has(stack[k].tag)) return false
+  }
+  return false
+}
+
+// tableau : une cellule referme la cellule ouverte (et ce qu'elle contient encore), une rangée la rangée, une section
+// (`<thead>`, `<tbody>`, `<tfoot>`, `<caption>`, `<colgroup>`) la section ouverte, comme le fait le navigateur ; la
+// recherche ne sort ni du tableau le plus proche ni d'un `<template>`
+function tableCloseCount(stack: { tag: string }[], tag: string): number {
+  for (let k = stack.length - 1; k >= 1; k--) {
+    const ouvert = stack[k].tag
+    if (ouvert === 'template' || ouvert === 'html') return 0
+    if (ouvert === 'table') return stack.length - 1 - k
+    if (tag === 'td' || tag === 'th') {
+      if (ouvert === 'td' || ouvert === 'th') return stack.length - k
+      if (ouvert === 'tr' || TABLE_SECTIONS.has(ouvert)) return stack.length - 1 - k
+    }
+    else if (tag === 'tr') {
+      if (ouvert === 'tr') return stack.length - k
+      if (TABLE_SECTIONS.has(ouvert)) return stack.length - 1 - k
+    }
+    else if (tag === 'col' && ouvert === 'colgroup') return stack.length - 1 - k
+    else if (TABLE_SECTIONS.has(ouvert) || ouvert === 'caption' || ouvert === 'colgroup') return stack.length - k
+  }
+  return 0
+}
+
+// fermante `</tag>` : nombre de niveaux qu'elle referme, 0 quand le navigateur l'ignore — aucun élément de ce nom ouvert
+// dans sa portée (fermante orpheline, ou en double après une fermeture implicite : `<li>a<li>b</li></li>`, que le
+// compilateur écrit en refermant chaque balise). Avant, elle refermait TOUT jusqu'à la racine : la suite du gabarit
+// changeait de parent et ses chemins visaient des nœuds absents. Une fermante de tableau ne sort pas du tableau,
+// `</li>` pas d'une liste, `</p>` pas d'un `<button>`, une fermante d'élément ordinaire pas d'un élément spécial ;
+// `</h2>` referme le titre ouvert, quel que soit son niveau
+function endTagCloseCount(stack: { tag: string }[], tag: string): number {
+  const special = SPECIAL_TAGS.has(tag)
+  const tableau = tag === 'table' || TABLE_STRUCTURE.has(tag)
+  for (let k = stack.length - 1; k >= 1; k--) {
+    const ouvert = stack[k].tag
+    if (ouvert === tag || (HEADINGS.has(tag) && HEADINGS.has(ouvert))) return stack.length - k
+    if (tableau ? (ouvert === 'table' || ouvert === 'template' || ouvert === 'html') : special ? (SCOPE_STOP.has(ouvert) || (tag === 'li' && (ouvert === 'ol' || ouvert === 'ul')) || (tag === 'p' && ouvert === 'button')) : SPECIAL_TAGS.has(ouvert)) return 0
+  }
+  return 0
+}
+
+// balises HTML qui font sortir du contenu SVG/MathML : le navigateur referme les éléments étrangers ouverts jusqu'au
+// premier élément HTML ou point d'intégration (`<foreignObject>`, `<desc>`, `<title>`, `<mi>`…) — `<svg><span>` pose le
+// `<span>` APRÈS le `<svg>`, pas dedans
+const FOREIGN_BREAKOUT = new Set([
+  'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl', 'dt', 'em', 'embed', 'h1', 'h2', 'h3',
+  'h4', 'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing', 'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 'ruby', 's',
+  'small', 'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt', 'u', 'ul', 'var',
+])
+const INTEGRATION_POINTS = new Set(['foreignobject', 'desc', 'title', 'mi', 'mo', 'mn', 'ms', 'mtext'])
+
+function foreignBreakoutCount(stack: { tag: string }[], tag: string, tagInner: string): number {
+  if (!FOREIGN_BREAKOUT.has(tag) && !(tag === 'font' && /\s(?:color|face|size)(?=[\s=/]|$)/i.test(tagInner))) return 0
+  if (!stack.some(s => FOREIGN_ROOTS.has(s.tag))) return 0
+  let n = 0
+  for (let k = stack.length - 1; k >= 1 && !INTEGRATION_POINTS.has(stack[k].tag) && foreignNamespace(stack[k].tag, stack.slice(0, k)); k--) n++
+  return n
+}
+
+// vrai si une balise ouvrante s'insère en contenu SVG/MathML (élément courant étranger, hors point d'intégration) : les
+// règles HTML (fermetures implicites, `<image>`, tableaux…) ne s'y appliquent pas
+function inForeignContent(stack: { tag: string }[], root: string | null): boolean {
+  if (INTEGRATION_POINTS.has(stack[stack.length - 1].tag)) return false
+  const ns = foreignNamespace('', stack)
+  return !!(ns === null ? root : ns)
+}
+
+// vrai si l'élément courant est SVG/MathML (point d'intégration compris) : `<![CDATA[` y ouvre une section de texte,
+// fermée par `]]>` — ailleurs c'est un commentaire
+function currentIsForeign(stack: { tag: string }[], root: string | null): boolean {
+  const ns = foreignNamespace(stack[stack.length - 1].tag, stack.slice(0, -1))
+  return !!(ns === null ? root : ns)
+}
+
+// `<html>`, `<head>`, `<body>`, `<frameset>` dans un gabarit : le navigateur les ignore, leur contenu va au parent
+const IGNORED_TAGS = new Set(['body', 'frameset', 'head', 'html'])
+
+// un tableau ne garde que ses rangées, cellules, sections, `<caption>`, `<col>`/`<colgroup>`, `<template>`, `<script>`,
+// `<style>` et `<input type="hidden">` : tout autre élément (composant compris) ou texte placé directement dans un
+// `<table>`, `<tbody>`, `<thead>`, `<tfoot>` ou `<tr>` est retiré du tableau par le navigateur, qui le pose AVANT lui
+// (« foster parenting » du standard) — l'arbre réel n'est plus celui du gabarit : refusé à la construction
+const TABLE_CONTEXT = new Set(['table', 'tbody', 'thead', 'tfoot', 'tr'])
+const TABLE_CONTENT = new Set(['caption', 'col', 'colgroup', 'script', 'style', 'tbody', 'td', 'template', 'tfoot', 'th', 'thead', 'tr'])
+
+function checkTableContent(stack: { tag: string }[], tagName: string, tagInner: string, line: () => number): void {
+  const parent = stack[stack.length - 1].tag
+  if (!TABLE_CONTEXT.has(parent) || TABLE_CONTENT.has(tagName)) return
+  if (tagName === 'input' && /\stype\s*=\s*(['"]?)hidden\1(?=[\s/]|$)/i.test(tagInner)) return
+  // un <form> reste dans le tableau, vide et refermé sur place ; son contenu sort du formulaire
+  if (tagName === 'form') throw new Error(t('generator.hors-tableau-form', { parent, ligne: line() }))
+  throw new Error(t('generator.hors-tableau', { tag: tagName, parent, ligne: line() }))
+}
+
+// texte (hors blancs) posé directement dans un tableau : retiré du tableau par le navigateur, comme un élément
+function checkTableText(stack: { tag: string }[], textChunk: string, line: () => number): void {
+  const parent = stack[stack.length - 1].tag
+  if (!(TABLE_CONTEXT.has(parent) || parent === 'colgroup') || isPureWhitespace(textChunk) || textChunk.includes('${')) return
+  throw new Error(t('generator.texte-hors-tableau', { parent, ligne: line() }))
+}
+
+// `<form>` dans un `<form>`, `<select>` dans un `<select>`, `<a>` dans un `<a>` à travers un bloc ou une mise en forme :
+// le navigateur ignore le second `<form>`, referme le premier `<select>` en ignorant le second, déplace les éléments
+// pris entre les deux `<a>` — un arbre que le gabarit ne dit pas : refusé à la construction
+function checkNesting(stack: { tag: string }[], tagName: string, line: () => number): void {
+  if (tagName !== 'form' && tagName !== 'select' && tagName !== 'a') return
+  for (let k = stack.length - 1; k >= 1; k--) {
+    const ouvert = stack[k].tag
+    if (ouvert === tagName) {
+      let refus = tagName !== 'a'
+      for (let j = k + 1; j < stack.length && !refus; j++) refus = SPECIAL_TAGS.has(stack[j].tag) || FORMATTING_TAGS.has(stack[j].tag)
+      if (refus) throw new Error(t('generator.imbrication-refusee', { tag: tagName, ligne: line() }))
+      return
+    }
+    if (ouvert === 'template' || (tagName === 'a' && FORMATTING_MARKERS.has(ouvert))) return
+  }
+}
+
+// le contenu d'un `<template>` part dans `template.content`, hors de l'arbre du composant : une valeur, un
+// bloc ou un gestionnaire posé dedans viserait un nœud que le chemin calculé ne peut pas atteindre (plantage
+// au montage) — refusé à la construction. Un `<template>` entièrement statique reste permis
+const DYNAMIC_IN_TEMPLATE_RE = /\$\{|type\s*=\s*['"]mjs\/marker['"]|\smjs-(?:l-)?id\s*=/
+
+function checkTemplateStatic(html: string, from: number, line: () => number): void {
+  const balise = /<(\/?)template(?=[\s/>])/gi
+  balise.lastIndex = from
+  let depth = 1
+  let end   = html.length
+  let m: RegExpExecArray | null
+  while ((m = balise.exec(html)) !== null) {
+    depth += m[1] ? -1 : 1
+    if (depth === 0) { end = m.index; break }
+  }
+  if (DYNAMIC_IN_TEMPLATE_RE.test(html.slice(from, end))) throw new Error(t('generator.template-dynamique', { ligne: line() }))
+}
+
+// `<?…>`, `<!…>` (hors DOCTYPE) et `<![CDATA[…]]>` hors SVG/MathML : le navigateur en fait un COMMENTAIRE,
+// un nœud de plus que le chemin doit compter. Un DOCTYPE ne laisse aucun nœud ; un CDATA en SVG/MathML
+// devient du texte (compté par les marcheurs, cf. currentIsForeign)
+function declarationMakesComment(html: string, i: number, foreign: boolean): boolean {
+  if (html[i + 1] === '?') return true
+  if (/^<!doctype/i.test(html.slice(i, i + 9))) return false
+  return !(foreign && html.startsWith('<![CDATA[', i))
 }
 
 // Tags block-level dans lesquels le whitespace inter-balises n'est
@@ -269,22 +585,26 @@ function isInsideQuotedSpan(pos: number, spans: [number, number][]): boolean {
 // dans les BLOCK_CONTAINERS (même principe qu'en mode impératif). Réduit la taille
 // du DOM cloné et accélère le parse HTML interne du browser.
 // ============================================================================
-export function extractPaths(html: string, opts: { stripWhitespace?: boolean } = {}): PathInfo {
+export function extractPaths(html: string, opts: { stripWhitespace?: boolean, lignes?: LignesDuGabarit | null } = {}): PathInfo {
   const stripWs = opts.stripWhitespace ?? false
+  const lignesFichier = opts.lignes ?? null
   const out: string[] = []
   const paths: Record<string, number[]> = {}
   const kinds: Record<string, NodeKind> = {}
 
-  const stack: { tag: string; myIndex: number; nextChild: number; implicit?: boolean }[] = [
+  // `lastText` : le dernier enfant compté à ce niveau est un texte — un texte qui le suit sans nœud entre eux
+  // (`a < b` lu en deux morceaux, section CDATA) s'y soude dans le navigateur, sans nœud de plus
+  const stack: { tag: string; myIndex: number; nextChild: number; implicit?: boolean; lastText?: boolean }[] = [
     { tag: '#root', myIndex: -1, nextChild: 0 },
   ]
 
-  const recordIndex = (): number[] => {
+  const recordIndex = (texte = false): number[] => {
     const p: number[] = []
     for (let s = 1; s < stack.length; s++) p.push(stack[s].myIndex)
     const top = stack[stack.length - 1]
     p.push(top.nextChild)
     top.nextChild += 1
+    top.lastText = texte
     return p
   }
 
@@ -311,17 +631,27 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
     _mjs_prevI = i
 
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4)
-      if (end === -1) { out.push(html.slice(i)); i = len; break }
+      const comment = readHtmlComment(html, i)
+      if (comment === null) { out.push(html.slice(i)); i = len; break }
       recordIndex()
-      out.push(html.slice(i, end + 3))
-      i = end + 3
+      out.push(html.slice(i, comment.end))
+      i = comment.end
       continue
     }
 
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      // `<![CDATA[…]]>` sous un élément SVG/MathML : un texte, fermé par `]]>`
+      if (html.startsWith('<![CDATA[', i) && currentIsForeign(stack, null)) {
+        const fin = html.indexOf(']]>', i + 9)
+        const stop = fin === -1 ? len : fin + 3
+        if ((fin === -1 ? len : fin) > i + 9 && !stack[stack.length - 1].lastText) recordIndex(true)
+        out.push(html.slice(i, stop))
+        i = stop
+        continue
+      }
       const end = html.indexOf('>', i)
       if (end === -1) { out.push(html.slice(i)); i = len; break }
+      if (declarationMakesComment(html, i, !!foreignNamespace('', stack))) recordIndex()
       out.push(html.slice(i, end + 1))
       i = end + 1
       continue
@@ -331,12 +661,14 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
       const end = html.indexOf('>', i)
       if (end === -1) { out.push(html.slice(i)); i = len; break }
       const tagName = html.slice(i + 2, end).trim().toLowerCase()
-      while (stack.length > 1 && stack[stack.length - 1].tag !== tagName) {
+      const n = endTagCloseCount(stack, tagName)
+      // `</p>` sans `<p>` ouvert : le navigateur pose un `<p>` vide
+      if (n === 0 && tagName === 'p') recordIndex()
+      for (let k = n; k > 0; k--) {
         // un niveau ouvert d'office (tbody/tr implicite) se referme d'office
         const dropped = stack.pop()!
-        if (dropped.implicit) out.push(`</${dropped.tag}>`)
+        if (dropped.implicit && k > 1) out.push(`</${dropped.tag}>`)
       }
-      if (stack.length > 1) stack.pop()
       out.push(html.slice(i, end + 1))
       i = end + 1
       continue
@@ -384,14 +716,28 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
       const tagInner = selfClosing ? rawTag.slice(0, -1).trimEnd() : rawTag
 
       const nameMatch = tagInner.match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-      const tagName = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      const nomLu = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      // balise HTML dans un SVG/MathML : les éléments étrangers se referment avant elle (cf. foreignBreakoutCount)
+      for (let n = foreignBreakoutCount(stack, nomLu, tagInner); n > 0; n--) out.push(`</${stack.pop()!.tag}>`)
+      const etranger = inForeignContent(stack, null)
+      // hors SVG/MathML, `<image>` est lu `<img>` ; `<html>`, `<head>`, `<body>` sont ignorés (cf. IGNORED_TAGS)
+      const tagName = nomLu === 'image' && !etranger ? 'img' : nomLu
+      if (IGNORED_TAGS.has(tagName) && !etranger) { i = j + 1; continue }
       const isVoid = VOID_TAGS.has(tagName)
       const isScript = tagName === 'script'
 
       // <p> ne peut pas contenir un
       // élément de flow content : le navigateur referme le <p> tout seul avant
       // celui-ci, où qu'il soit dans la pile ouverte (cf. checkFlowInsideP plus haut).
-      checkFlowInsideP(stack, tagName, computeLine(html, i))
+      // Avant elle, les fermetures implicites (cf. implicitCloseCount), écrites en clair dans le HTML
+      // émis : tout analyseur (navigateur, DOM des tests) bâtit alors les mêmes frères
+      if (!etranger) {
+        checkNesting(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+        for (let n = implicitCloseCount(stack, tagName); n > 0; n--) out.push(`</${stack.pop()!.tag}>`)
+        checkFlowInsideP(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+        checkTableContent(stack, tagName, tagInner, () => ligneDuFichier(html, lignesFichier, i))
+      }
+      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => ligneDuFichier(html, lignesFichier, i))
 
       if (isScript) {
         const typeMatch = tagInner.match(/\btype\s*=\s*['"]mjs\/marker['"]/)
@@ -518,6 +864,7 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
     const end = next === -1 ? len : next
     const textChunk = html.slice(i, end)
     if (textChunk.length > 0) {
+      checkTableText(stack, textChunk, () => ligneDuFichier(html, lignesFichier, i + Math.max(0, textChunk.search(/\S/))))
       // Strip whitespace-only chunks dans block containers.
       // Cohérent avec le mode impératif. Réduit le DOM cloné.
       //
@@ -533,7 +880,8 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
           continue
         }
       }
-      recordIndex()
+      // collé au texte précédent (cf. `lastText`) : même nœud, pas de rang de plus
+      if (!stack[stack.length - 1].lastText) recordIndex(true)
       out.push(textChunk)
     }
     i = end
@@ -552,17 +900,14 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean } =
 // dans le texte brut (`</textareaBoom>`) : le contenu raw-text se refermait
 // au milieu du mot, et le build échouait plus loin avec un message indirect
 // au lieu de fermer proprement sur la VRAIE balise fermante.
+// Recherche dans le gabarit lui-même, jamais dans `html.toLowerCase()` : aucune copie du gabarit entier à
+// chaque balise raw-text, et une position juste — `'İ'.toLowerCase()` fait deux unités, tout ce qui suivait
+// un « İ » glissait d'autant et la vraie balise fermante n'était plus reconnue. Drapeau `i` sans `u` : seules
+// les lettres ASCII se confondent, comme dans un nom de balise HTML
 function findCloseRawText(html: string, start: number, closeTag: string): number {
-  const lower  = html.toLowerCase()
-  const needle = closeTag.toLowerCase()
-  let from = start
-  for (;;) {
-    const idx = lower.indexOf(needle, from)
-    if (idx === -1) return -1
-    const after = html[idx + needle.length]
-    if (after === undefined || after === '>' || after === '/' || /\s/.test(after)) return idx
-    from = idx + 1
-  }
+  const re = new RegExp(closeTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/]|$)', 'gi')
+  re.lastIndex = start
+  return re.exec(html)?.index ?? -1
 }
 
 /**
@@ -590,15 +935,15 @@ export function serializePaths(info: PathInfo): string {
 // si la fn doit en recevoir (`item`, `index`).
 //
 // Output : string JS de la forme
-//   `(item, index) => { const _f = document.createDocumentFragment();
-//                       const _n0 = document.createElement('div');
-//                       _n0.setAttribute('class', 'foo');
-//                       const _n1 = document.createTextNode('hello ');
-//                       _n0.appendChild(_n1);
+//   `(item, index) => { const _mjs_fr = document.createDocumentFragment();
+//                       const _mjs_e0 = document.createElement('div');
+//                       _mjs_e0.setAttribute('class', 'foo');
+//                       const _mjs_e1 = document.createTextNode('hello ');
+//                       _mjs_e0.appendChild(_mjs_e1);
 //                       const t1 = document.createTextNode('');
-//                       _n0.appendChild(t1);
-//                       _f.appendChild(_n0);
-//                       return { fragment: _f, refs: { t1 } }; }`
+//                       _mjs_e0.appendChild(t1);
+//                       _mjs_fr.appendChild(_mjs_e0);
+//                       return { fragment: _mjs_fr, refs: { t1 } }; }`
 //
 // Notes :
 //   - Les `${expr}` dans les attributs deviennent des template literals dans le
@@ -709,11 +1054,29 @@ function shortestAccess(direct: string, base: string, idxs: number[], compact: b
   return byteLen(court) + 2 < byteLen(direct) ? court : direct
 }
 
-function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false): CreateFnInfo {
+// balises que `µ._mjs_cloneTpl` (runtime, mjs_init.ts) sait lire DANS un <svg> quand le HTML
+// s'ouvre sur l'une d'elles — copie exacte de son motif `µ._mjs_svgTagRe`, pour savoir ici si le
+// runtime rattrape déjà l'espace de noms d'un contenu de bloc. Le runtime part en texte brut et n'importe rien du
+// compilateur : tests/motif-svg-du-runtime-et-du-generateur-d-accord.test.ts garde les deux motifs identiques
+export const RUNTIME_SVG_HEAD_RE = /^\s*<(?:circle|ellipse|line|path|polygon|polyline|rect|g|text|tspan|textPath|use|defs|symbol|marker|linearGradient|radialGradient|stop|clipPath|mask|pattern|image|foreignObject|filter|fe[A-Z][a-zA-Z]*|view|switch)\b/
+
+// balise dans laquelle lire le contenu d'un bloc ({for}/{if}/{key}/{await}) posé dans un <svg> ou un
+// <math> : construit à part, sans sa balise englobante, il naîtrait en HTML (HTMLUnknownElement,
+// jamais dessiné). Le runtime ne rattrape que le contenu SVG qui s'ouvre sur une balise connue ; un
+// marqueur de bloc imbriqué en tête, un `<a>`, du MathML passent par leur balise d'origine. Aucun
+// élément (texte seul) : rien à faire
+function foreignWrapTag(cleanHtml: string, foreignNs: string | null): string | null {
+  if (!foreignNs || !/<[a-zA-Z]/.test(cleanHtml)) return null
+  if (foreignNs === SVG_NS) return RUNTIME_SVG_HEAD_RE.test(cleanHtml) ? null : 'svg'
+  if (foreignNs === MATH_NS) return 'math'
+  return null
+}
+
+function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false, foreignNs: string | null = null, lignesFichier: LignesDuGabarit | null = null): CreateFnInfo {
   // Utilise extractPaths pour obtenir le HTML propre + paths.
   // Strip whitespace-only text nodes dans les block containers, cohérent
   // avec le mode impératif. Réduit le DOM cloné et accélère le parse.
-  const info = extractPaths(html, { stripWhitespace: true })
+  const info = extractPaths(html, { stripWhitespace: true, lignes: lignesFichier })
   // Élagage des refs mortes : seules les refs consommées (keepRefs)
   // donnent lieu à une navigation + une entrée refs[id]. ATTENTION : les
   // placeholders 'text'/'textslot' restent TOUJOURS extraits — leur marker
@@ -730,18 +1093,27 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   // Clone du template via helper runtime µ._mjs_cloneTpl (parse once, clone × N).
   // L'argument est la string HTML littérale (la clé de cache est cette string).
   // Le helper retourne un DocumentFragment cloné.
-  const tplHtmlLiteral = JSON.stringify(info.cleanHtml)
-  lines.push(`const _f = µ._mjs_cloneTpl(${tplHtmlLiteral});`)
+  // contenu d'un bloc dans un <svg>/<math> : lu dans sa balise d'origine, puis ses nœuds en sont
+  // sortis (cf. foreignWrapTag) — les chemins restent comptés depuis `_f`
+  const wrapTag = foreignWrapTag(info.cleanHtml, foreignNs)
+  if (wrapTag) {
+    const wrappedLiteral = chaineJs(`<${wrapTag}>${info.cleanHtml}</${wrapTag}>`)
+    lines.push(`const _mjs_fr = document.createDocumentFragment(); { const _mjs_w = µ._mjs_cloneTpl(${wrappedLiteral}).firstChild; while (_mjs_w.firstChild) _mjs_fr.appendChild(_mjs_w.firstChild); }`)
+  }
+  else {
+    const tplHtmlLiteral = chaineJs(info.cleanHtml)
+    lines.push(`const _mjs_fr = µ._mjs_cloneTpl(${tplHtmlLiteral});`)
+  }
 
   if (refIds.length === 0) {
-    lines.push(`return { fragment: _f, refs: {} };`)
+    lines.push(`return { fragment: _mjs_fr, refs: {} };`)
     return { body: lines.join('\n'), refIds, tplHtml: info.cleanHtml }
   }
 
   // Walker : pour chaque id, walk childNodes via path.
   // Pour les text placeholders, on remplace le commentaire `<!--$-->` par un
   // text node vide.
-  lines.push(`const refs = {};`)
+  lines.push(`const _mjs_refs = {};`)
 
   // Path prefix sharing : factoriser les chaînes `.childNodes[X]` partagées.
   // Au lieu de générer `_f.childNodes[0].childNodes[0].childNodes[0]` à chaque
@@ -777,24 +1149,24 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
     // Le parent : si idxs.length === 1, c'est _f ; sinon, le prefix précédent.
     let parentVar: string
     if (idxs.length === 1) {
-      parentVar = '_f'
+      parentVar = '_mjs_fr'
     } else {
       const parentKey = idxs.slice(0, -1).join(',')
-      parentVar = prefixVar.get(parentKey) ?? '_f'
+      parentVar = prefixVar.get(parentKey) ?? '_mjs_fr'
       if (!prefixVar.has(parentKey)) {
         // Parent pas factorisé : on inline le chemin complet.
-        parentVar = '_f' + idxs.slice(0, -1).map(j => `.childNodes[${j}]`).join('')
+        parentVar = '_mjs_fr' + idxs.slice(0, -1).map(j => `.childNodes[${j}]`).join('')
       }
     }
     const lastIdx = idxs[idxs.length - 1]
-    const v = `_p${pCounter++}`
+    const v = `_mjs_p${pCounter++}`
     // Solid-style firstChild/nextSibling pour petits index.
     // childNodes[N] traverse la NodeList interne (LinkedList walk). Pour N petit,
     // firstChild + nextSibling chain est plus rapide (slot natif Node).
     // Parent pas factorisé : `parentVar` porte DÉJÀ tout le chemin depuis `_f` — la forme compacte,
     // elle, repart de `_f` avec la liste complète des index.
     const parentIsVar = prefixVar.has(idxs.slice(0, -1).join(','))
-    lines.push(`const ${v} = ${shortestAccess(childAccessExpr(parentVar, lastIdx), parentIsVar ? parentVar : '_f', parentIsVar ? [lastIdx] : idxs, compactPaths)};`)
+    lines.push(`const ${v} = ${shortestAccess(childAccessExpr(parentVar, lastIdx), parentIsVar ? parentVar : '_mjs_fr', parentIsVar ? [lastIdx] : idxs, compactPaths)};`)
     prefixVar.set(pkey, v)
   }
 
@@ -814,32 +1186,32 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
       }
     }
     // Chain firstChild/nextSibling au lieu de childNodes[N].
-    let expr = '_f'
+    let expr = '_mjs_fr'
     for (const j of path) expr = childAccessExpr(expr, j)
-    return shortestAccess(expr, '_f', path, compactPaths)
+    return shortestAccess(expr, '_mjs_fr', path, compactPaths)
   }
 
   for (const id of refIds) {
     const path = info.paths[id]
     const kind = info.kinds[id]
-    const access = path.length === 0 ? '_f' : buildAccess(path)
+    const access = path.length === 0 ? '_mjs_fr' : buildAccess(path)
     const idKey = JSON.stringify(id)
     if (kind === 'textslot') {
       // Le placeholder est DÉJÀ un text node (espace) dans le clone —
       // navigation directe, zéro createTextNode/replaceChild par ligne.
-      lines.push(`refs[${idKey}] = ${access};`)
+      lines.push(`_mjs_refs[${idKey}] = ${access};`)
     } else if (kind === 'text') {
       // Le marker était un commentaire `<!--$-->`. On le remplace par un text node.
       // Même remplacement des deux côtés : `µ._tm` (runtime mjs_dom.ts) tient les quatre
       // instructions du bloc en un appel, réservé aux corps construits une seule fois.
-      if (compactPaths) lines.push(`refs[${idKey}] = µ._tm(${access});`)
-      else lines.push(`{ const _c = ${access}; const _t = document.createTextNode(''); _c.parentNode.replaceChild(_t, _c); refs[${idKey}] = _t; }`)
+      if (compactPaths) lines.push(`_mjs_refs[${idKey}] = µ._tm(${access});`)
+      else lines.push(`{ const _mjs_c = ${access}; const _mjs_t = document.createTextNode(''); _mjs_c.parentNode.replaceChild(_mjs_t, _mjs_c); _mjs_refs[${idKey}] = _mjs_t; }`)
     } else {
       // 'el' ou 'html' : l'élément réel (placeholder span pour html).
-      lines.push(`refs[${idKey}] = ${access};`)
+      lines.push(`_mjs_refs[${idKey}] = ${access};`)
     }
   }
-  lines.push(`return { fragment: _f, refs };`)
+  lines.push(`return { fragment: _mjs_fr, refs: _mjs_refs };`)
 
   return {
     body: lines.join('\n'),
@@ -871,12 +1243,14 @@ export interface GenerateCreateFnBodyOpts {
    * (effet post-montage) et reste À L'IDENTIQUE. */
   splitSelectPostUpdates?: boolean
   /** namespace AMBIANT (SVG_NS/MATH_NS) dans
-   * lequel cette fonction est appelée, quand l'appelant (compileAwait) sait
-   * que le fragment produit sera inséré dans un `<svg>`/`<math>` qui vit HORS
+   * lequel cette fonction est appelée, quand l'appelant (compileFor/compileIf/compileKey/
+   * compileAwait) sait que le fragment produit sera inséré dans un `<svg>`/`<math>` qui vit HORS
    * de `html` (ex. le contenu d'une branche `{await}` : le `<svg>` englobant
    * est dans le template STATIQUE, jamais vu par CE `html`-là). Sans ce relais,
    * `foreignNamespace` (pile LOCALE à cet appel) ne peut jamais savoir que la
-   * racine du fragment est elle-même déjà « dans » un contexte SVG/MathML. */
+   * racine du fragment est elle-même déjà « dans » un contexte SVG/MathML. Lu par les DEUX
+   * modes : l'impératif crée ses éléments par createElementNS, le clone lit son HTML dans la
+   * balise d'origine quand le runtime ne le ferait pas (cf. foreignWrapTag). */
   foreignNsRoot?: string | null
   /** si true, les accès aux nœuds s'écrivent `µ._p(_f,2,0)` et les marqueurs texte
    * `refs['s-if1'] = µ._tm(…)` (runtime mjs_dom.ts) dès que c'est plus court que la chaîne de
@@ -893,16 +1267,19 @@ export interface GenerateCreateFnBodyOpts {
  *
  * Critère auto : pas d'interpolations `${...}` dans le HTML → cloneNode possible.
  */
-export function generateCreateFnBody(html: string, opts: GenerateCreateFnBodyOpts = {}): CreateFnInfo {
+export function generateCreateFnBody(htmlMarque: string, opts: GenerateCreateFnBodyOpts = {}): CreateFnInfo {
+  const lu     = retireLignes(htmlMarque)
+  const html   = lu.html
+  const lignes = lu.lignes ?? (racine !== null && racine.html === html ? racine.lignes : null)
   // Mode hybride : si pas d'interpolations runtime → cloneNode.
   // Sinon on émet le mode impératif createElement classique.
   if (!opts.forceImperative && (opts.forceClone || !hasInterpolations(html))) {
-    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false)
+    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false, opts.foreignNsRoot ?? null, lignes)
   }
-  return generateCreateFnBodyImperative(html, opts.splitSelectPostUpdates ?? false, opts.foreignNsRoot ?? null)
+  return generateCreateFnBodyImperative(html, opts.splitSelectPostUpdates ?? false, opts.foreignNsRoot ?? null, lignes)
 }
 
-function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: boolean, foreignNsRoot: string | null = null): CreateFnInfo {
+function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: boolean, foreignNsRoot: string | null = null, lignesFichier: LignesDuGabarit | null = null): CreateFnInfo {
   const lines: string[] = []
   const refIds: string[] = []
   // actif seulement si `splitSelectPostUpdates` :
@@ -915,7 +1292,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
   const postUpdates: string[] = []
   // Compteur de variables locales _n0, _n1, _n2, ... pour éviter collisions.
   let nodeCounter = 0
-  const newVar = (): string => `_n${nodeCounter++}`
+  const newVar = (): string => `_mjs_e${nodeCounter++}`
   // compteur DÉDIÉ pour l'id synthétique d'un <select> sans
   // autre binding (cf. plus bas) : `nodeCounter` n'incrémente QUE via `newVar()`,
   // jamais appelé pour CET élément précis (son `primaryVar` vient de l'id tout
@@ -933,14 +1310,14 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
   // ses enfants) — mécanisme HISTORIQUE, actif seulement quand
   // `splitSelectPostUpdates` est false (défaut, cas root — cf. plus haut).
   const stack: { varName: string; tag: string; implicit?: boolean; deferredLines?: string[] }[] = [
-    { varName: '_f', tag: '#root' },
+    { varName: '_mjs_fr', tag: '#root' },
   ]
   const popStackFrame = (): void => {
     const frame = stack.pop()
     if (frame && frame.deferredLines && frame.deferredLines.length > 0) lines.push(...frame.deferredLines)
   }
 
-  lines.push(`const _f = document.createDocumentFragment();`)
+  lines.push(`const _mjs_fr = document.createDocumentFragment();`)
 
   let i = 0
   const len = html.length
@@ -963,15 +1340,15 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
 
     // ──────── Commentaire `<!--...-->` ────────
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4)
-      if (end === -1) {
+      const comment = readHtmlComment(html, i)
+      if (comment === null) {
         // Mal formé : on traite comme texte.
         const textChunk = html.slice(i)
         appendTextNode(lines, stack[stack.length - 1].varName, textChunk, newVar)
         i = len
         break
       }
-      const inner = html.slice(i + 4, end)
+      const inner = comment.data
       // Émettre un commentaire DOM. Sauf si c'est `<!--$-->` (placeholder
       // historique de paths.ts) : on émet quand même un commentaire pour préserver
       // la structure (mais ces cas ne devraient plus arriver via le nouveau
@@ -980,15 +1357,30 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       const v = newVar()
       lines.push(`const ${v} = document.createComment(${JSON.stringify(inner)});`)
       lines.push(`${parent}.appendChild(${v});`)
-      i = end + 3
+      i = comment.end
       continue
     }
 
     // ──────── Doctype / instructions ────────
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      // `<![CDATA[…]]>` sous un élément SVG/MathML : un texte, fermé par `]]>` (cf. extractPaths)
+      if (html.startsWith('<![CDATA[', i) && currentIsForeign(stack, foreignNsRoot)) {
+        const fin = html.indexOf(']]>', i + 9)
+        const texte = html.slice(i + 9, fin === -1 ? len : fin)
+        if (texte.length > 0) appendTextNode(lines, stack[stack.length - 1].varName, texte, newVar)
+        i = fin === -1 ? len : fin + 3
+        continue
+      }
       const end = html.indexOf('>', i)
       if (end === -1) { i = len; break }
-      // Ignoré : un DOCTYPE n'a pas de représentation DOM dans un fragment.
+      // un DOCTYPE n'a pas de représentation DOM dans un fragment ; `<?…>`, `<!…>` et un CDATA hors
+      // SVG/MathML deviennent le commentaire qu'en fait le navigateur (cf. declarationMakesComment)
+      const ns = foreignNamespace('', stack)
+      if (declarationMakesComment(html, i, !!(ns === null ? foreignNsRoot : ns))) {
+        const v = newVar()
+        lines.push(`const ${v} = document.createComment(${JSON.stringify(html.slice(i + (html[i + 1] === '?' ? 1 : 2), end))});`)
+        lines.push(`${stack[stack.length - 1].varName}.appendChild(${v});`)
+      }
       i = end + 1
       continue
     }
@@ -998,10 +1390,14 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       const end = html.indexOf('>', i)
       if (end === -1) { i = len; break }
       const tagName = html.slice(i + 2, end).trim().toLowerCase()
-      while (stack.length > 1 && stack[stack.length - 1].tag !== tagName) {
-        popStackFrame()
+      const n = endTagCloseCount(stack, tagName)
+      // `</p>` sans `<p>` ouvert : le navigateur pose un `<p>` vide (cf. extractPaths)
+      if (n === 0 && tagName === 'p') {
+        const v = newVar()
+        lines.push(`const ${v} = document.createElement('p');`)
+        lines.push(`${stack[stack.length - 1].varName}.appendChild(${v});`)
       }
-      if (stack.length > 1) popStackFrame()
+      for (let k = n; k > 0; k--) popStackFrame()
       i = end + 1
       continue
     }
@@ -1050,15 +1446,26 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       const tagInner = selfClosing ? rawTag.slice(0, -1).trimEnd() : rawTag
 
       const nameMatch = tagInner.match(/^([a-zA-Z][a-zA-Z0-9_-]*)/)
-      const tagName = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      const nomLu = (nameMatch ? nameMatch[1] : '').toLowerCase()
+      // mêmes lectures qu'extractPaths : sortie du SVG/MathML, `<image>` lu `<img>`, `<html>`/`<head>`/`<body>` ignorés
+      for (let n = foreignBreakoutCount(stack, nomLu, tagInner); n > 0; n--) popStackFrame()
+      const etranger = inForeignContent(stack, foreignNsRoot)
+      const tagName = nomLu === 'image' && !etranger ? 'img' : nomLu
+      if (IGNORED_TAGS.has(tagName) && !etranger) { i = j + 1; continue }
       const isVoid = VOID_TAGS.has(tagName)
       const isScript = tagName === 'script'
 
       // même garde que extractPaths : ce mode
       // impératif (atteint dès qu'une branche `{await}` voisine un `{for}`, cf.
       // compileAwait) n'était PAS DU TOUT protégé — un `<p>…<div>flow</div>…</p>`
-      // y compilait sans erreur.
-      checkFlowInsideP(stack, tagName, computeLine(html, i))
+      // y compilait sans erreur. Fermetures implicites d'abord, comme dans extractPaths.
+      if (!etranger) {
+        checkNesting(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+        for (let n = implicitCloseCount(stack, tagName); n > 0; n--) popStackFrame()
+        checkFlowInsideP(stack, tagName, () => ligneDuFichier(html, lignesFichier, i))
+        checkTableContent(stack, tagName, tagInner, () => ligneDuFichier(html, lignesFichier, i))
+      }
+      if (tagName === 'template' && !selfClosing) checkTemplateStatic(html, j + 1, () => ligneDuFichier(html, lignesFichier, i))
 
       // ──────── Cas spécial : marker `<script type='mjs/marker' mjs-t='X'>` ────────
       if (isScript) {
@@ -1171,8 +1578,11 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       const maskedForLightCheck = cleanedTagInner.replace(/"[^"]*"|'[^']*'/g, (q) => q[0] + q.slice(1, -1).replace(/[^\n]/g, ' ') + q[0])
       const isLightDomInstance = primaryNs === null && /(^|\s)mjs-light(\s|$)/.test(maskedForLightCheck)
       if (isLightDomInstance) lines.push(`µ._mjs_lightNext = ${JSON.stringify(tagName)};`)
+      // dans l'espace de noms SVG la casse compte : le nom en minuscules (`tagName`, celui de la pile) reprend sa casse du standard
+      // (SVG_TAG_NAMES), comme le fait l'analyseur HTML du navigateur — jamais pour un élément HTML ni MathML
+      const createName = primaryNs === SVG_NS ? (SVG_TAG_NAMES.get(tagName) ?? tagName) : tagName
       lines.push(primaryNs
-        ? `const ${primaryVar} = document.createElementNS(${JSON.stringify(primaryNs)}, ${JSON.stringify(tagName)});`
+        ? `const ${primaryVar} = document.createElementNS(${JSON.stringify(primaryNs)}, ${JSON.stringify(createName)});`
         : `const ${primaryVar} = document.createElement(${JSON.stringify(tagName)});`)
       if (isLightDomInstance) lines.push(`µ._mjs_lightNext = null;`)
 
@@ -1189,7 +1599,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       // root, cf. `GenerateCreateFnBodyOpts.splitSelectPostUpdates`).
       const deferredValueSink: string[] | undefined = tagName === 'select' ? [] : undefined
       const deferredElVar = (deferredValueSink && splitSelectPostUpdates) ? `__nodes[${JSON.stringify(foundIds[0])}]` : undefined
-      emitAttributes(lines, primaryVar, cleanedTagInner.slice(tagName.length), deferredValueSink, deferredElVar)
+      emitAttributes(lines, primaryVar, cleanedTagInner.slice(nomLu.length), deferredValueSink, deferredElVar, primaryNs)
       if (splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) postUpdates.push(...deferredValueSink)
 
       // 5. Refs.
@@ -1207,7 +1617,10 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
 
       // 7. Si non-void, on ouvre un niveau.
       if (!isVoid && !selfClosing) {
-        stack.push({ varName: primaryVar, tag: tagName, deferredLines: (!splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) ? deferredValueSink : undefined })
+        // le contenu d'un `<template>` va dans `template.content`, là où le navigateur le range — ajouté à l'élément
+        // lui-même, il restait hors du contenu que lit `template.content`
+        const contenant = tagName === 'template' && !primaryNs ? primaryVar + '.content' : primaryVar
+        stack.push({ varName: contenant, tag: tagName, deferredLines: (!splitSelectPostUpdates && deferredValueSink && deferredValueSink.length > 0) ? deferredValueSink : undefined })
 
         // Cas raw-text (script, style, textarea, title) : on consomme jusqu'à
         // </tag> sans parser le contenu.
@@ -1219,14 +1632,14 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
           const closeIdx = findCloseRawText(html, rawStart, closeTag)
           if (closeIdx === -1) {
             const textChunk = html.slice(rawStart)
-            if (textChunk.length > 0) appendTextNode(lines, primaryVar, textChunk, newVar)
+            if (textChunk.length > 0) appendTextNode(lines, primaryVar, textChunk, newVar, tagName === 'textarea' || tagName === 'title')
             i = len
             popStackFrame()
             break
           }
           if (closeIdx > rawStart) {
             const textChunk = html.slice(rawStart, closeIdx)
-            appendTextNode(lines, primaryVar, textChunk, newVar)
+            appendTextNode(lines, primaryVar, textChunk, newVar, tagName === 'textarea' || tagName === 'title')
           }
           const endClose = html.indexOf('>', closeIdx)
           // Même garde anti-boucle-infinie que extractPaths : `</tag` sans
@@ -1264,6 +1677,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
     const end = next === -1 ? len : next
     const textChunk = html.slice(i, end)
     if (textChunk.length > 0) {
+      checkTableText(stack, textChunk, () => ligneDuFichier(html, lignesFichier, i + Math.max(0, textChunk.search(/\S/))))
       // Skip les text nodes purement whitespace si le parent est un
       // conteneur block-level (BLOCK_CONTAINERS). Économise N createTextNode
       // + N appendChild par instance de template. Sur 1000 rows × ~8 text nodes
@@ -1276,7 +1690,7 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
       if (BLOCK_CONTAINERS.has(parent.tag) && isPureWhitespace(textChunk) && /[\n\r]/.test(textChunk) && !stackKeepsWhitespace(stack)) {
         // Skip — pas d'émission de createTextNode/appendChild.
       } else {
-        appendTextNode(lines, parent.varName, textChunk, newVar)
+        appendTextNode(lines, parent.varName, textChunk, newVar, true)
       }
     }
     i = end
@@ -1295,16 +1709,12 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
   }
 
   // Construction du retour final.
+  // nom de variable toujours préfixé (`_mjs_r_…`, cf. jsIdentifier) : jamais égal à l'id, la clé est donc
+  // toujours écrite en entier
   const refsObj = refIds.length > 0
-    ? `{ ${refIds.map(id => {
-        const safe = jsIdentifier(id)
-        // Si id contient un tiret ou démarre par chiffre, on doit le quoter.
-        return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(id) && id === safe
-          ? id
-          : `'${id}': ${safe}`
-      }).join(', ')} }`
+    ? `{ ${refIds.map(id => `'${id}': ${jsIdentifier(id)}`).join(', ')} }`
     : `{}`
-  lines.push(`return { fragment: _f, refs: ${refsObj} };`)
+  lines.push(`return { fragment: _mjs_fr, refs: ${refsObj} };`)
 
   return {
     body: lines.join('\n'),
@@ -1317,19 +1727,23 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
 // valide pour utilisation comme nom de variable locale.
 function jsIdentifier(id: string): string {
   // Remplace les caractères non-alpha-numeric par _.
-  return '_r_' + id.replace(/[^a-zA-Z0-9_$]/g, '_')
+  return '_mjs_r_' + id.replace(/[^a-zA-Z0-9_$]/g, '_')
 }
 
 /**
  * Émet un createTextNode + appendChild pour un chunk de texte.
  * Si le chunk contient `${...}` (template literal interpolations), on les
  * préserve dans un template literal source.
+ * `decode` : texte qu'un navigateur lirait en décodant ses entités (texte courant, `<textarea>`, `<title>`,
+ * jamais `<script>`/`<style>`) — `createTextNode` ne décode rien, le décodage se fait donc ici, sur le seul
+ * texte statique, comme le fait le mode clone par l'analyseur HTML du navigateur.
  */
 function appendTextNode(
   lines: string[],
   parentVar: string,
   textChunk: string,
   newVar: () => string,
+  decode = false,
 ): void {
   const v = newVar()
   if (textChunk.includes('${')) {
@@ -1338,9 +1752,9 @@ function appendTextNode(
     // runtime. On émet un template literal qui sera évalué à chaque appel.
     // On doit toutefois ré-escape les `\` (backticks et `${` dans le texte non-
     // template auraient déjà été échappés par escapeTpl ; on les laisse).
-    lines.push(`const ${v} = document.createTextNode(\`${escapeForTpl(textChunk)}\`);`)
+    lines.push(`const ${v} = document.createTextNode(\`${escapeForTpl(textChunk, decode ? 'texte' : false)}\`);`)
   } else {
-    lines.push(`const ${v} = document.createTextNode(${JSON.stringify(textChunk)});`)
+    lines.push(`const ${v} = document.createTextNode(${JSON.stringify(decode ? decodeHtmlEntities(textChunk, true) : textChunk)});`)
   }
   lines.push(`${parentVar}.appendChild(${v});`)
 }
@@ -1405,8 +1819,11 @@ function bareInterpExpr(value: string): string | null {
  * dans `body`). `deferredElVar` — variable/expression à utiliser pour
  * CES lignes-là au lieu de `elVar` : `postUpdates` s'exécute hors du scope de
  * cette fonction, `elVar` (variable locale) y serait invisible.
+ * `foreign` — espace de noms de l'élément quand il est créé en espace de noms SVG ou MathML (null pour
+ * HTML) : aucun attribut ne s'y écrit en propriété, et leur nom (casse SVG, `definitionURL`) et leur
+ * espace de noms (`xlink:href`, `xml:lang`…) sont ceux que donnerait l'analyseur HTML (cf. `emitAttrSet`).
  */
-function emitAttributes(lines: string[], elVar: string, tagAttrs: string, deferredValueSink?: string[], deferredElVar?: string): void {
+function emitAttributes(lines: string[], elVar: string, tagAttrs: string, deferredValueSink?: string[], deferredElVar?: string, foreign: string | null = null): void {
   // Parser caractère par caractère.
   let i = 0
   const n = tagAttrs.length
@@ -1433,7 +1850,7 @@ function emitAttributes(lines: string[], elVar: string, tagAttrs: string, deferr
 
     if (i >= n || tagAttrs[i] !== '=') {
       // Boolean attribute (ex `disabled`).
-      emitAttrSet(sink, sinkElVar, attrName, null)
+      emitAttrSet(sink, sinkElVar, attrName, null, foreign, isDeferred)
       continue
     }
     i++ // skip '='
@@ -1474,27 +1891,36 @@ function emitAttributes(lines: string[], elVar: string, tagAttrs: string, deferr
       value = tagAttrs.slice(start, i)
     }
 
-    emitAttrSet(sink, sinkElVar, attrName, value)
+    emitAttrSet(sink, sinkElVar, attrName, value, foreign, isDeferred)
   }
 }
 
-// Optim : pour les attributs courants, utiliser la propriété native du
-// DOM (className, id, etc.) au lieu de setAttribute. Plus rapide car évite la
-// parsing de la string et la conversion vers DOMTokenList.
-const PROP_ATTRS = new Set([
-  'class', 'id', 'value', 'type', 'name', 'placeholder', 'title', 'alt',
-  'href', 'src', 'role', 'for',
-])
-
+// Optim : `class` et `id` statiques se posent par la propriété native (`className`, `id`), que TOUT
+// élément HTML reflète en attribut. Les autres (`placeholder`, `name`, `value`, `title`, `href`…) passent
+// par `setAttribute`, comme les pose le mode clone : en propriété, un élément qui ne la reflète pas
+// (`<div placeholder>`, balise de composant) restait sans attribut, et `<input value>` sans valeur par
+// défaut (`form.reset()` vidait le champ). Seule exception, `value` d'un `<select>` (`selectValue`) : la
+// propriété choisit l'option, l'attribut n'existe pas sur ce tag.
+// Jamais sur un élément SVG ou MathML (`foreign`) : `className` n'y a qu'un accesseur de
+// lecture (écrire lève une TypeError) — `setAttribute` y est le seul geste juste.
 function emitAttrSet(
   lines: string[],
   elVar: string,
   attrName: string,
   value: string | null,
+  foreign: string | null = null,
+  selectValue = false,
 ): void {
+  // sur un élément SVG ou MathML l'attribut prend le nom et l'espace de noms que lui donnerait l'analyseur HTML (le chemin clone) : `viewbox` → `viewBox`, `xlink:href`
+  // posé dans l'espace de noms de XLink. `setAttribute` crée un attribut sans espace de noms, que `<use>` ne lit pas : un attribut qui en a un se pose par `setAttributeNS`
+  const adj   = adjustAttr(foreign, attrName)
+  attrName    = adj.name
+  const write = (val: string): string => adj.ns
+    ? `${elVar}.setAttributeNS(${JSON.stringify(adj.ns)}, ${JSON.stringify(attrName)}, ${val});`
+    : `${elVar}.setAttribute(${JSON.stringify(attrName)}, ${val});`
   if (value === null) {
     // Boolean attr (ex `disabled`, `checked` empty).
-    lines.push(`${elVar}.setAttribute(${JSON.stringify(attrName)}, '');`)
+    lines.push(write(`''`))
     return
   }
   const hasInterp = value.includes('${')
@@ -1528,14 +1954,18 @@ function emitAttrSet(
   // donc rien à inverser ; `escapeForTpl` (voir sa JSDoc) ne s'applique QUE
   // quand on émet la forme "chaîne" ci-dessous, jamais à la forme nue.
   if (hasInterp) {
+    // la fonction qui pose la valeur cherche l'attribut par son nom qualifié (`setAttribute` retrouve alors celui qui existe, avec son espace de noms) : un attribut qui en a
+    // un est déclaré ici, vide, comme le fait pour lui le gabarit de la racine (`xlink:href=''`), et la valeur calculée vient ensuite le remplir
+    if (adj.ns) lines.push(write(`''`))
     const bareExpr = bareInterpExpr(value)
     if (bareExpr !== null) {
-      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, (${bareExpr}));`)
+      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, (${bareExpr})${attrSur(attrName)});`)
     } else {
       // texte + interpolations mêlés (`class="a ${d.c}"`) ou expression complexe :
       // valeur TOUJOURS une chaîne (jamais false/null) — même choix que root/`{for}`
       // pour une prop booléenne mêlée, une chaîne non vide y reste "vraie".
-      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, \`${escapeForTpl(value)}\`);`)
+      // texte fixe décodé : ce chemin ne repasse jamais par l'analyseur HTML (cf. plus bas)
+      lines.push(`µ._mjs_updAttrNode(${elVar}, ${JSON.stringify(attrName)}, \`${escapeForTpl(value, true).replace(FERMANTE_SCRIPT_RE, '<\\/$1')}\`${attrSur(attrName)});`)
     }
     return
   }
@@ -1545,13 +1975,21 @@ function emitAttrSet(
   // pour TOUS les attributs statiques (pas seulement mjs-confirm, cf. escapeVtAttrValue
   // dans transpiler/index.ts, qui pose ces entités pour la forme objet de @confirm).
   value = decodeHtmlEntities(value)
-  // Pour les attributs "props directes", on assigne via propriété.
-  if (PROP_ATTRS.has(attrName)) {
-    const prop = attrName === 'class' ? 'className' : attrName === 'for' ? 'htmlFor' : attrName
-    lines.push(`${elVar}.${prop} = ${JSON.stringify(value)};`)
+  // `class`, `id` (et `value` d'un `<select>`) : par propriété, cf. plus haut
+  if (!foreign && (attrName === 'class' || attrName === 'id' || (selectValue && attrName === 'value'))) {
+    const prop = attrName === 'class' ? 'className' : attrName
+    lines.push(`${elVar}.${prop} = ${chaineJs(value)};`)
     return
   }
-  lines.push(`${elVar}.setAttribute(${JSON.stringify(attrName)}, ${JSON.stringify(value)});`)
+  lines.push(write(chaineJs(value)))
+}
+
+// un `</script>` écrit dans une valeur d'attribut part dans une chaîne du JavaScript produit : écrit `<\/script>` (même
+// valeur), il ne referme pas la balise <script> d'une page où ce code serait mis en ligne
+const FERMANTE_SCRIPT_RE = /<\/(script)/gi
+
+function chaineJs(texte: string): string {
+  return JSON.stringify(texte).replace(FERMANTE_SCRIPT_RE, '<\\/$1')
 }
 
 /**
@@ -1562,21 +2000,25 @@ function emitAttrSet(
  * texte STATIQUE autour des fenêtres `${...}` (qui vient déjà d'un HTML transité par
  * escapeTpl, `\``/`\\`/`\$\{` échappés) a besoin du retrait de double-escape ci-dessous.
  */
-function escapeForTpl(s: string): string {
+// `decode` : `true` pour un attribut, `'texte'` pour un nœud texte (entités historiques sans `;`, cf. decodeHtmlEntities)
+function escapeForTpl(s: string, decode: boolean | 'texte' = false): string {
   let out = ''
   let i = 0
   const n = s.length
+  // texte statique entre deux fenêtres : entités décodées sur demande (cf. appendTextNode), puis échappé ;
+  // un `${` que seul le décodage fait apparaître (`&#36;&#123;`) reste du texte (`\${`)
+  const statique = (seg: string): string => (decode ? decodeHtmlEntities(seg, decode === 'texte') : seg).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
+  let debut = 0
   while (i < n) {
     if (s[i] === '$' && s[i + 1] === '{') {
       const close = scanInterpWindow(s, i)
       const end   = close === -1 ? n : close + 1
-      out += s.slice(i, end)  // fenêtre ${...} VERBATIM : jamais rééchappée
+      out += statique(s.slice(debut, i)) + s.slice(i, end)  // fenêtre ${...} VERBATIM : jamais rééchappée
       i = end
+      debut = i
       continue
     }
-    const ch = s[i]
-    out += ch === '\\' ? '\\\\' : ch === '`' ? '\\`' : ch
     i++
   }
-  return out
+  return out + statique(s.slice(debut))
 }

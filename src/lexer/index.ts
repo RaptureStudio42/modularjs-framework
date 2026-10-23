@@ -7,7 +7,7 @@
 // externalVars : noms `$foo` à préserver tels quels (imports cross-module)
 // moduleMode   : si true, tous les `$foo` restent littéraux (modules .coffee externes)
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_OUT, MU_LAYOUT_WRITE_BODY, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, ouvreUneRegex, scanRegexLiteral, PORTEE_OUVRE_UNE_REGEX } from '../sigils.js'
 import { t } from '../messages/index.js'
 
 // regex ancrées du scanner — bâties UNE fois sur les corps partagés (sigils.ts,
@@ -24,6 +24,8 @@ const RE_MU_PASCAL  = new RegExp(`^${MU_PASCAL_BODY}`)
 const RE_MU_SHORT   = new RegExp(`^${MU_SHORT_BODY}`)
 const RE_MU_LANG    = new RegExp(`^${MU_LANG_BODY}`)
 const RE_MU_THEME   = new RegExp(`^${MU_THEME_BODY}`)
+const RE_MU_LAYOUT  = new RegExp(`^${MU_LAYOUT_BODY}`)
+const RE_MU_LAYOUT_WRITE = new RegExp(`^${MU_LAYOUT_WRITE_BODY}`)
 const RE_MU_HOOKS   = new RegExp(`^${MU_HOOKS_BODY}`)
 
 // µderived $var = expr, $a, $b — PRÉ-PASSE (pas un branchement scanner : pas
@@ -42,7 +44,57 @@ const RE_OLD_HOOK = new RegExp(`^@(${MU_HOOKS})(?=[ \\t]*(?:->|=>|\\([^)\\n]*\\)
 export interface TokenizeOpts {
   externalVars?: string[]
   moduleMode?: boolean
+  // position des erreurs : nom du texte compilé (`<module>.script`, comme pour Civet) et ligne du fichier où
+  // commence ce texte ; sans nom, une erreur garde son message seul
+  fileName?: string
+  firstLine?: number
+  // colonne du fichier où commence ce texte (contenu d'une interpolation) ; 1 sans précision
+  firstColumn?: number
 }
+
+// situe — préfixe `<fichier>:<ligne>:<colonne>` d'une erreur du lexeur, même forme que celles de Civet ; `pos` est
+// l'offset de la faute dans `texte`, dont les lignes sont celles de la source (les pré-passes n'en ajoutent ni
+// n'en retirent)
+function situe(err: Error, texte: string, pos: number, opts: TokenizeOpts): Error {
+  if (!opts.fileName) return err
+  const { firstLine, firstColumn } = situeDans(opts, texte, pos)
+  return new Error(`${opts.fileName}:${firstLine}:${firstColumn} ${err.message}`, { cause: err })
+}
+
+// options d'un texte qui commence à l'offset `pos` de `texte` (contenu d'une interpolation) : sa ligne et sa colonne
+// dans le fichier, pour que ses erreurs citent la place de la faute et non `1:1`
+function situeDans(opts: TokenizeOpts, texte: string, pos: number): TokenizeOpts {
+  const avant = texte.slice(0, pos)
+  const sauts = avant.match(/\n/g)?.length ?? 0
+  return { ...opts, firstLine: (opts.firstLine ?? 1) + sauts, firstColumn: sauts > 0 ? pos - avant.lastIndexOf('\n') : (opts.firstColumn ?? 1) + pos }
+}
+
+// crochet mal écrit (`µmounted ->`, `µonDestroy ->`, `µdestory ->`) : le crochet de cycle de vie dont le nom est
+// contenu dans `nom`, en est le début (4 lettres au moins) ou n'en diffère que d'une faute ; `null` sinon — toute
+// autre rune ou fonction µ passe
+const CROCHETS = MU_HOOKS.split('|')
+
+function crochetProche(nom: string): string | null {
+  if (CROCHETS.includes(nom)) return null
+  const bas = nom.toLowerCase()
+  for (const crochet of CROCHETS) {
+    const c = crochet.toLowerCase()
+    if (bas.includes(c) || (bas.length >= 4 && c.startsWith(bas)) || uneFaute(bas, c)) return crochet
+  }
+  return null
+}
+
+// vrai si `a` et `b` diffèrent d'une seule faute : une lettre en trop, en moins ou changée, deux voisines inversées
+function uneFaute(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  if (a.length > b.length) return a.slice(i + 1) === b.slice(i)
+  if (a.length < b.length) return a.slice(i) === b.slice(i + 1)
+  return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2))
+}
+
+const RE_CROCHET_SILHOUETTE = /^µ\.?([a-zA-Z_][a-zA-Z0-9_]*)(?=[ \t]*(?:->|=>|\([^)\n]*\)[ \t]*(?:->|=>)))/
 
 // masque strings/heredocs/commentaires (MÊMES formes que la règle 3.1
 // du scanner) par des jetons inertes `NUL+N+NUL` (ni `;`, ni `\n`, ni `§`),
@@ -105,7 +157,7 @@ function scanInertAt(src: string, i: number): number {
 // scanTemplateAt — backtick ouvrant en `i` : avance jusqu'au backtick fermant du MÊME
 // niveau, en traversant les interpolations (elles-mêmes porteuses de backticks, de
 // chaînes et d'accolades imbriquées)
-function scanTemplateAt(src: string, i: number): number {
+export function scanTemplateAt(src: string, i: number): number {
   let j = i + 1
   while (j < src.length) {
     const c = src[j]
@@ -151,6 +203,115 @@ function scanInterpAt(src: string, i: number): number {
   return -1
 }
 
+// scanDoubleQuoteAt — guillemet double ouvrant en `i` (chaîne d'une ligne, pas un `"""`) : rend l'offset
+// APRÈS le guillemet fermant du MÊME niveau, ou -1 si la ligne ne le referme pas. Une interpolation `#{…}`
+// refermée sur la ligne est traversée d'un bloc, elle peut porter ses propres guillemets
+// (`"Bonjour #{ if $ok then "oui" else "non" }"`) ; non refermée, elle se lit comme du texte.
+// Lecteur PARTAGÉ : le lexeur (règle 3.1) et les deux conversions Coffee `"…#{X}…"` → gabarit
+// (transpiler/index.ts pour le <script>, generator/utils.ts pour le gabarit)
+export function scanDoubleQuoteAt(src: string, i: number): number {
+  let ligne: string | null = null
+  let j = i + 1
+  while (j < src.length) {
+    const c = src[j]
+    if (c === '\\') {
+      if (j + 1 >= src.length || /[\n\r\u2028\u2029]/.test(src[j + 1])) return -1   //pas de chaîne sur deux lignes
+      j += 2
+      continue
+    }
+    if (c === '\n') return -1
+    if (c === '"') return j + 1
+    if (c === '#' && src[j + 1] === '{') {
+      if (ligne === null) { const fin = src.indexOf('\n', j); ligne = fin < 0 ? src : src.slice(0, fin) }
+      const e = scanInterpAt(ligne, j + 2)
+      if (e > 0) { j = e; continue }
+    }
+    j++
+  }
+  return -1
+}
+
+// gabarit `` `…${X}…` `` d'une chaîne Coffee `"…#{X}…"` (corps sans ses guillemets) : `` ` `` et `${` du texte
+// échappés, un échappement recopié d'un bloc ; le code de chaque interpolation (lue au niveau, scanInterpAt) repasse
+// par la conversion — une chaîne interpolée écrite DANS une interpolation devient gabarit elle aussi, comme au premier
+// niveau. Une interpolation vide ou jamais refermée reste du texte
+function toTemplateLiteral(body: string): string {
+  let out = ''
+  let j   = 0
+  while (j < body.length) {
+    const c = body[j]
+    if (c === '\\') { out += body.slice(j, j + 2); j += 2; continue }
+    if (c === '#' && body[j + 1] === '{') {
+      const e = scanInterpAt(body, j + 2)
+      if (e > j + 3) { out += '${' + convertCoffeeInterpolations(body.slice(j + 2, e - 1)) + '}'; j = e; continue }
+    }
+    if (c === '$' && body[j + 1] === '{') { out += '\\${'; j += 2; continue }
+    out += c === '`' ? '\\`' : c
+    j++
+  }
+  return '`' + out + '`'
+}
+
+// conversion Coffee `"…#{X}…"` → gabarit `` `…${X}…` `` (Civet ne lit pas `#{}`), SOURCE UNIQUE : Pass 3 du <script>
+// (transpiler/index.ts) et expressions du gabarit (generator/utils.ts). Double-quote seulement (Coffee n'interpole pas
+// les single-quotes) ; scan contexte-aware : commentaires, chaînes simples, gabarits natifs et heredocs `'''` intacts
+export function convertCoffeeInterpolations(src: string): string {
+  let res = ''
+  let i = 0
+  const n = src.length
+  while (i < n) {
+    const ch = src[i]
+    if (ch === '/' && src[i + 1] === '/') {
+      const e = src.indexOf('\n', i)
+      const end = e === -1 ? n : e
+      res += src.slice(i, end); i = end; continue
+    }
+    if (ch === '/' && src[i + 1] === '*') {
+      const e = src.indexOf('*/', i + 2)
+      const end = e === -1 ? n : e + 2
+      res += src.slice(i, end); i = end; continue
+    }
+    if (src.startsWith("'''", i)) {
+      const e = src.indexOf("'''", i + 3)
+      const end = e === -1 ? n : e + 3
+      res += src.slice(i, end); i = end; continue
+    }
+    if (ch === "'") {
+      let j = i + 1
+      while (j < n && src[j] !== "'" && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
+      if (j < n && src[j] === "'") { res += src.slice(i, j + 1); i = j + 1 } else { res += src.slice(i, j); i = j }
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < n && src[j] !== '`') { if (src[j] === '\\') j++; j++ }
+      const end = Math.min(j + 1, n)
+      res += src.slice(i, end); i = end; continue
+    }
+    if (src.startsWith('"""', i)) {
+      const e = src.indexOf('"""', i + 3)
+      if (e === -1) { res += src.slice(i); break }
+      const body = src.slice(i + 3, e)
+      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, e + 3)
+      i = e + 3; continue
+    }
+    if (ch === '"') {
+      // une interpolation `#{…}` peut porter ses propres guillemets (scanDoubleQuoteAt) ; sinon, lecture d'avant
+      let j = scanDoubleQuoteAt(src, i) - 1
+      if (j < 0) {
+        j = i + 1
+        while (j < n && src[j] !== '"' && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
+        if (j >= n || src[j] === '\n') { res += src.slice(i, j); i = j; continue }
+      }
+      const body = src.slice(i + 1, j)
+      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, j + 1)
+      i = j + 1; continue
+    }
+    res += ch; i++
+  }
+  return res
+}
+
 // inertRanges — toutes les plages inertes de `src`, dans l'ordre, sans recouvrement
 function inertRanges(src: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
@@ -192,6 +353,50 @@ function maskInert(src: string): { masked: string; slots: string[] } {
 
 function unmaskInert(src: string, slots: string[]): string {
   return slots.length === 0 ? src : src.replace(UNMASK_RE, (_m, id) => slots[+id])
+}
+
+// finValeurContexte — fin de la valeur d'un setter de contexte (`§x = v`, `§§x = v`), lue sur une vue
+// MASQUÉE (chaînes et commentaires neutralisés) : un `if`/`unless` postfixe, ou le `then`/`else` d'un `if`
+// qui englobe le setter, n'appartiennent pas à la valeur — avalés dans l'appel émis, ils donnaient un code
+// que Civet refuse (`this._mjs_setContext('theme', 'dark' if $.sombre)`). Un `if … then … else …` écrit
+// COMME valeur, un mot entre parenthèses, une propriété (`p.then`) et tout ce qui suit une flèche (corps de
+// fonction) restent dans la valeur. `brut` (même longueur que `masque`) dit si une valeur précède le
+// mot-clé : dans une vue masquée à longueur égale, une chaîne n'est plus que des blancs. Rend l'index du
+// mot-clé qui termine la valeur, ou la longueur de `masque`
+const MOTS_AVANT_VALEUR = new Set([ 'if', 'unless', 'then', 'else', 'and', 'or', 'not', 'is', 'isnt', 'in', 'of', 'instanceof', 'return', 'typeof', 'new', 'await', 'yield', 'void', 'delete' ])
+
+export function finValeurContexte(masque: string, brut: string = masque): number {
+  let profondeur = 0
+  let si = 0
+  for (const m of masque.matchAll(/[A-Za-z_$][\w$]*|->|=>|[()[\]{}]/g)) {
+    const mot = m[0]
+    const pos = m.index!
+    if (mot === '(' || mot === '[' || mot === '{') { profondeur++; continue }
+    if (mot === ')' || mot === ']' || mot === '}') { profondeur--; continue }
+    if (profondeur !== 0 || masque[pos - 1] === '.' || masque[pos - 1] === '@') continue
+    if (mot === '->' || mot === '=>') return masque.length
+    if (mot === 'if' || mot === 'unless') {
+      if (apresUneValeur(brut, pos)) return pos
+      si++
+    }
+    else if (mot === 'then') {
+      if (si === 0) return pos
+    }
+    else if (mot === 'else') {
+      if (si === 0) return pos
+      si--
+    }
+  }
+  return masque.length
+}
+
+// vrai si une valeur se termine juste avant `pos` (mot, nombre, chaîne, fermante, chaîne masquée en
+// emplacement `\0n\0`) : le `if`/`unless` qui suit est alors postfixe
+function apresUneValeur(brut: string, pos: number): boolean {
+  const avant = brut.slice(0, pos).trimEnd()
+  const mot   = avant.match(/[A-Za-z_$][\w$]*$/)
+  if (mot) return !MOTS_AVANT_VALEUR.has(mot[0])
+  return /[\w$'"`)\]}\u0000]$/.test(avant)
 }
 
 // splitTrailingMaskedComment — un commentaire masqué en TOUTE FIN de capture (§/§§, règles 1
@@ -238,11 +443,15 @@ export function maskInertSameLength(src: string): string {
 // `<marker>{ ... }` (`#{...}` pour Coffee/Civet, `${...}` pour les template
 // literals). Les parties littérales restent intactes ; seul le code des
 // interpolations passe par `tokenize` (récursif). Gère les `{}` imbriqués.
-function interpolateSigils(str: string, marker: string, opts: TokenizeOpts): string {
+// `texte` / `origine` : le texte où `str` commence, à cet offset — de quoi situer une erreur levée dans une interpolation
+function interpolateSigils(str: string, marker: string, opts: TokenizeOpts, texte: string, origine: number): string {
   let out = ''
   let j = 0
   while (j < str.length) {
-    if (str[j] === marker && str[j + 1] === '{' && str[j - 1] !== '\\') {
+    // un échappement se recopie d'un bloc : dans `C:\\${$y}`, l'antislash est échappé et l'interpolation
+    // reste du code ; `\${…}` est une interpolation échappée, du texte
+    if (str[j] === '\\') { out += str.slice(j, j + 2); j += 2; continue }
+    if (str[j] === marker && str[j + 1] === '{') {
       let depth = 1
       let k = j + 2
       // comptage des `{}` CONSCIENT des zones inertes (chaînes, commentaires,
@@ -265,8 +474,10 @@ function interpolateSigils(str: string, marker: string, opts: TokenizeOpts): str
         else if (ch === '}') { depth--; if (depth === 0) break }
         k++
       }
+      // jamais refermée : recopiée telle quelle, sans `}` ajoutée — le compilateur du langage signale l'oubli
+      if (depth > 0) { out += str.slice(j); break }
       const inner = str.slice(j + 2, k)
-      out += marker + '{' + tokenize(inner, opts) + '}'
+      out += marker + '{' + tokenize(inner, opts.fileName ? situeDans(opts, texte, origine + j + 2) : opts) + '}'
       j = k + 1
     } else {
       out += str[j]
@@ -276,9 +487,64 @@ function interpolateSigils(str: string, marker: string, opts: TokenizeOpts): str
   return out
 }
 
+// valeur de départ d'une écriture composée : `§§x` rend l'objet réactif du contexte, où une valeur simple posée par
+// `§§x = 1` est rangée sous `value` (µ.state) — le calcul part de cette valeur, pas de l'objet (« [object Object]1 »),
+// et `||=` voit un texte vide comme vide ; un contexte qui tient un objet est pris tel quel
+function lectureContexte(cible: string, lecture: string, nom: string): string {
+  const lu = `${cible}.${lecture}('${nom}')`
+  if (lecture !== '_mjs_getRCtx') return lu
+  return `((_c) => _c && typeof _c === 'object' && Object.keys(_c).join() === 'value' ? _c.value : _c)(${lu})`
+}
+
+// écriture d'un contexte `§x = v` → `<cible>.<appel>('x', v)`, commune au <script> et aux gestionnaires du gabarit
+// (generator/utils.ts). Affectation composée, comme sur une variable : `§x += v` vaut `§x = §x + (v)` (de même -= *= /=
+// %= **= |= &= ^= <<= >>= >>>=), `§x ||= v` vaut `§x || (§x = v)` (de même &&= ??=), l'écriture n'a lieu que si
+// l'opérateur la demande
+export function ecritureContexte(cible: string, appel: string, lecture: string, nom: string, op: string | undefined, valeur: string): string {
+  const lu = lectureContexte(cible, lecture, nom)
+  if (op === '||' || op === '&&' || op === '??') return `${lu} ${op} ${cible}.${appel}('${nom}', ${valeur})`
+  return `${cible}.${appel}('${nom}', ${op ? `${lu} ${op} (${valeur})` : valeur})`
+}
+
+// setters `§x = v` / `§§x = v` du <script> (vue masquée) → ecritureContexte ; une valeur coupée
+// (finValeurContexte) laisse la suite à relire : le passage se répète tant qu'il a coupé quelque chose
+function rewriteSetter(code: string, re: RegExp, appel: string, lecture: string, cible: string, slots: string[]): string {
+  let coupe = true
+  while (coupe) {
+    coupe = false
+    code = code.replace(re, (_m, name, op, expr) => {
+      const fin  = finValeurContexte(expr)
+      const tete = fin < expr.length ? expr.slice(0, fin).trimEnd() : expr
+      if (fin < expr.length) coupe = true
+      const { code: realExpr, tail } = splitTrailingMaskedComment(tete, slots)
+      return `${ecritureContexte(cible, appel, lecture, name, op, realExpr)}${tail}${expr.slice(tete.length)}`
+    })
+  }
+  return code
+}
+
+// incrément et décrément d'un contexte, comme sur une variable : `§x++` et `++§x` valent `§x += 1`, `§x--` et `--§x`
+// valent `§x -= 1` (de même `§§x`) — laissés au getter, ils donnaient `this._mjs_getContext('x')++`, que Civet refusait.
+// Commun au <script> et aux gestionnaires du gabarit (generator/utils.ts)
+export function incrementContexteRe(marque: string): RegExp {
+  return new RegExp(`(?<![\\w.§])${marque}([a-zA-Z_]\\w*)(\\+\\+|--)|(\\+\\+|--)${marque}([a-zA-Z_]\\w*)`, 'g')
+}
+
+export function rewriteIncrement(code: string, marque: string, appel: string, lecture: string, cible: string): string {
+  return code.replace(incrementContexteRe(marque), (_m, nomApres, opApres, opAvant, nomAvant) => {
+    const nom = nomApres ?? nomAvant
+    const op  = (opApres ?? opAvant) === '++' ? '+' : '-'
+    return `${cible}.${appel}('${nom}', ${lectureContexte(cible, lecture, nom)} ${op} 1)`
+  })
+}
+
 export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   const externalVars = opts.externalVars ?? []
   const moduleMode = opts.moduleMode ?? false
+  // receveur des contextes § / §§ : le composant dont le script les porte (`_mjsThis`, capturé à l'init), quel que
+  // soit l'appelant — `this` valait l'état dans une fonction rangée dans l'état (`$go = -> §x = 1`, appelée `$go()`).
+  // Un module n'a pas de composant : `this` y reste
+  const cible = moduleMode ? 'this' : '_mjsThis'
 
   let code = codeRaw
 
@@ -294,7 +560,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   const inert = maskInert(code)
   code = inert.masked
 
-  // 1. setContext : `§foo = expr` → `this._mjs_setContext('foo', expr)`
+  // 1. setContext : `§foo = expr` → `_mjsThis._mjs_setContext('foo', expr)`
   // Le lookbehind exclut AUSSI `§` : sans ça, `§§foo` (contexte réactif) était
   // mangé ici (le 2e § est précédé d'un non-word) et le cas 3.3 (fallback §§
   // contexte réactif) du scanner était du code mort (bug V1 porté,
@@ -302,56 +568,54 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   // Un commentaire masqué en fin de ligne (`§foo = expr   # note`) sortait
   // de l'expression APRÈS la `)` : au démasquage le `#`/`//` avalait cette `)`, Civet partait en
   // erreur sur la ligne suivante. splitTrailingMaskedComment isole ce commentaire AVANT la `)`.
-  code = code.replace(
-    /(?<![\w.§])§([a-zA-Z_]\w*)\s*=(?!=|>)\s*(.+?)(?=\n|;|$)/g,
-    (_m, name, expr) => {
-      const { code: realExpr, tail } = splitTrailingMaskedComment(expr, inert.slots)
-      return `this._mjs_setContext('${name}', ${realExpr})${tail}`
-    }
-  )
+  // La valeur s'arrête avant un `if`/`unless` postfixe ou le `then`/`else` d'un `if` englobant
+  // (finValeurContexte) ; la suite se relit alors, elle peut porter un autre setter (`else §x = 2`).
+  // Une affectation composée (`§total += 1`) passe par le setter avec son opérateur : laissée au getter, elle
+  // donnait `this._mjs_getContext('total') += 1`, que Civet refusait sur un message obscur.
+  // `§x++`, `--§x` : réécrits d'abord, sur le contexte (`§§x++` plus bas, avec les contextes réactifs)
+  code = rewriteIncrement(code, '§', '_mjs_setContext', '_mjs_getContext', cible)
+  code = rewriteSetter(code, /(?<![\w.§])§([a-zA-Z_]\w*)\s*(\*\*|\|\||&&|\?\?|>>>|<<|>>|[-+*/%|&^])?=(?!=|>)\s*(.+?)(?=\n|;|$)/g, '_mjs_setContext', '_mjs_getContext', cible, inert.slots)
 
-  // 2. getContext : `§foo` → `this._mjs_getContext('foo')`
+  // 2. getContext : `§foo` → `_mjsThis._mjs_getContext('foo')`
   code = code.replace(
     /(?<![\w.§])§([a-zA-Z_]\w*)/g,
-    (_m, name) => `this._mjs_getContext('${name}')`
+    (_m, name) => `${cible}._mjs_getContext('${name}')`
   )
 
   // 2-bis. §§ CONTEXTE RÉACTIF de sous-arbre — TOUJOURS (plus aucune résolution
   //   vers un singleton importé : celui-ci se consomme désormais en `µ$$x`,
   //   jamais en `§§x` — cf. lintSingletonConsume). Setter `§§foo = expr` →
-  //   `this._mjs_setRCtx('foo', expr)` (déclaration sur l'ancêtre) ; getter
-  //   `§§foo` → `this._mjs_getRCtx('foo')` (remonte l'arbre + abonne).
+  //   `_mjsThis._mjs_setRCtx('foo', expr)` (déclaration sur l'ancêtre) ; getter
+  //   `§§foo` → `_mjsThis._mjs_getRCtx('foo')` (remonte l'arbre + abonne).
   //   Ces `§§` échappent aux règles § (1/2) : leur lookbehind exclut un `§` devant.
   // Même correctif que la règle 1 ci-dessus (commentaire de fin de ligne isolé
   // AVANT la `)`, jamais capturé DANS l'expression).
-  code = code.replace(
-    /(?<![\w.§])§§([a-zA-Z_]\w*)\s*=(?!=|>)\s*(.+?)(?=\n|;|$)/g,
-    (_m, name, expr) => {
-      const { code: realExpr, tail } = splitTrailingMaskedComment(expr, inert.slots)
-      return `this._mjs_setRCtx('${name}', ${realExpr})${tail}`
-    }
-  )
+  code = rewriteIncrement(code, '§§', '_mjs_setRCtx', '_mjs_getRCtx', cible)
+  code = rewriteSetter(code, /(?<![\w.§])§§([a-zA-Z_]\w*)\s*(\*\*|\|\||&&|\?\?|>>>|<<|>>|[-+*/%|&^])?=(?!=|>)\s*(.+?)(?=\n|;|$)/g, '_mjs_setRCtx', '_mjs_getRCtx', cible, inert.slots)
   code = code.replace(
     /(?<![\w.§])§§([a-zA-Z_]\w*)/g,
-    (_m, name) => `this._mjs_getRCtx('${name}')`
+    (_m, name) => `${cible}._mjs_getRCtx('${name}')`
   )
 
   // 2-ter. µderived $var = expr, $a, $b, … → dérivé à DÉPENDANCES FORCÉES. Réduit à
   // `$var = µ._mjs_forceDeps(expr, $a, $b, …)` — marqueur reconnu et EFFACÉ par
   // l'analyzer pour un JS final sans artefact. `expr` et les `$a`/`$b` restent
   // verbatim : le scanner du dessous les convertira normalement.
-  code = code.replace(RE_MU_DERIVED_STMT, (_m, varName, tail) => {
+  code = code.replace(RE_MU_DERIVED_STMT, (_m, varName, tail, offset: number, texte: string) => {
+    // une faute se situe sur le texte démasqué : un littéral sur plusieurs lignes n'y est plus qu'un jeton
+    const avant    = unmaskInert(texte.slice(0, offset), inert.slots)
+    const refus    = (err: Error): Error => situe(err, avant, avant.length, opts)
     const segments = splitTopLevelCommas(tail).map((s) => s.trim())
     const realExpr = segments[0] ?? ''
-    if (!realExpr) throw new Error(t('lexer.derived-expr-vide', { varName }))
+    if (!realExpr) throw refus(new Error(t('lexer.derived-expr-vide', { varName })))
     // `realExpr` sort de la vue MASQUÉE (maskInert, tout en haut de
     // tokenize) : un `await` DANS une chaîne/un commentaire a déjà été remplacé par un jeton
     // NUL, il ne peut plus matcher ici — seul un VRAI mot-clé await déclenche ce refus.
-    if (/\bawait\b/.test(realExpr)) throw new Error(t('transpiler.derived-await-interdit', { varName }))
+    if (/\bawait\b/.test(realExpr)) throw refus(new Error(t('transpiler.derived-await-interdit', { varName })))
     const forcedDeps = segments.slice(1)
     for (const dep of forcedDeps) {
       if (!/^\$[a-zA-Z_][a-zA-Z0-9_]*$/.test(dep)) {
-        throw new Error(t('lexer.derived-dep-invalide', { varName, dep }))
+        throw refus(new Error(t('lexer.derived-dep-invalide', { varName, dep })))
       }
     }
     const depsArg = forcedDeps.length > 0 ? `, ${forcedDeps.join(', ')}` : ''
@@ -363,6 +627,11 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   code = unmaskInert(code, inert.slots)
 
   // 3. Scanner caractère par caractère — gère strings/comments comme contextes inertes
+  // La sortie s'assemble par morceaux : à chaque `/` de code (règle 3.1a), la part déjà jugée rejoint
+  // `morceaux` et `result` n'en garde que la queue que lit ouvreUneRegex (blancs de fin + PORTEE_OUVRE_UNE_REGEX
+  // caractères : la parenthèse d'une condition `if (…)` se cherche jusque-là).
+  // Relire une sortie de toute la taille du script à chaque `/` l'aplatissait : coût quadratique
+  const morceaux: string[] = []
   let result = ''
   let i = 0
   const n = code.length
@@ -399,7 +668,19 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     if (code[i] === '`') {
       const e = scanTemplateAt(code, i)
       if (e !== -1) {
-        result += interpolateSigils(code.slice(i, e), '$', opts)
+        result += interpolateSigils(code.slice(i, e), '$', opts, code, i)
+        i = e
+        continue
+      }
+    }
+
+    // Chaîne `"…"` : lue au NIVEAU, elle aussi (scanDoubleQuoteAt) — l'alternative `"…"` de la grande
+    // regex ci-dessous s'arrêtait au premier guillemet d'une interpolation : `"Bonjour #{ if $ok then
+    // "oui" else "non" }"` s'affichait « Bonjour }oui ». Non refermée sur la ligne : repli sur la regex
+    if (code[i] === '"' && !code.startsWith('"""', i)) {
+      const e = scanDoubleQuoteAt(code, i)
+      if (e !== -1) {
+        result += interpolateSigils(code.slice(i, e), '#', opts, code, i)
         i = e
         continue
       }
@@ -417,7 +698,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
       // ReferenceError au runtime. Les chaînes simples (`'...'`, `'''...'''`)
       // et les commentaires passent inertes (pas d'interpolation).
       if (c0 === '"') {
-        result += interpolateSigils(tok, '#', opts)
+        result += interpolateSigils(tok, '#', opts, code, i)
       } else {
         result += tok
       }
@@ -432,15 +713,21 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // regex, en position de VALEUR il divise — `scanRegexLiteral` rend -1 si aucun `/` fermant
     // n'apparaît avant la fin de ligne (une division ne se referme jamais), et ce `/` retombe
     // alors sur les règles suivantes (code normal, division comprise).
-    if (code[i] === '/' && ouvreUneRegex(result)) {
-      const fin = scanRegexLiteral(code, i)
-      if (fin !== -1) { result += code.slice(i, fin); i = fin; continue }
+    if (code[i] === '/') {
+      let k = result.length
+      while (k > 0 && /\s/.test(result[k - 1])) k--
+      k = Math.max(0, k - PORTEE_OUVRE_UNE_REGEX)
+      if (k > 0) { morceaux.push(result.slice(0, k)); result = result.slice(k) }
+      if (ouvreUneRegex(result)) {
+        const fin = scanRegexLiteral(code, i)
+        if (fin !== -1) { result += code.slice(i, fin); i = fin; continue }
+      }
     }
 
     // 3.1b &$xxx RETIRÉ : le « vault » a fusionné dans le store global `$$`.
     //      Erreur explicite plutôt que laisser `&` + `$x` produire `&$.x`.
     m = rest.match(/^&\$([a-zA-Z0-9_]+)/)
-    if (m) throw vaultRemovedError(m[1])
+    if (m) throw situe(vaultRemovedError(m[1]), code, i, opts)
 
     // 3.1c &xxx → µ.url.params.xxx : PARAM DE ROUTE, lecture réactive. `µ.url`
     //      est maintenu par le routeur, donc `&id` ≡ `µ.url.params.id` — SANS
@@ -481,12 +768,15 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // 1er caractère restreint à `[a-zA-Z_]` (pas de chiffre en tête) :
     // `$$9lives` produisait `µ.store.9lives` (accès membre illégal → SyntaxError
     // lointaine). Le token non conforme reste littéral (identifiant JS valide).
+    // Précédé d'un point, c'est la propriété `$$x` d'un objet (`obj.$$x`), pas le store : laissée telle quelle,
+    // comme `obj.$x` (règle 3.8) ; de deux, une plage ou une décomposition (`[1..$$n]`, `[...$$l]`) : le store
     m = rest.match(/^\$\$([a-zA-Z_][a-zA-Z0-9_]*)/)
+    if (m && code[i - 1] === '.' && code[i - 2] !== '.') { result += m[0]; i += m[0].length; continue }
     if (m) {
       // Garde : un singleton importé (`@import µ$$X` → `$X` ∈ externalVars) se
       // consomme en `µ$$X`, PAS en `$$X` (qui est le store GLOBAL). Sinon lecture
       // silencieuse du mauvais store → erreur de compilation explicite.
-      if (externalVars.includes(`$${m[1]}`)) throw importedSingletonError(m[1])
+      if (externalVars.includes(`$${m[1]}`)) throw situe(importedSingletonError(m[1]), code, i, opts)
       result += `µ.store.${m[1]}`; i += m[0].length; continue
     }
 
@@ -499,7 +789,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // avant, ce fallback acceptait un chiffre en tête et divergeait de cleanJs.
     m = rest.match(/^§§([a-zA-Z_]\w*)/)
     if (m) {
-      result += `this._mjs_getRCtx('${m[1]}')`
+      result += `${cible}._mjs_getRCtx('${m[1]}')`
       i += m[0].length
       continue
     }
@@ -509,7 +799,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     //         qu'un caractère qui atteint Civet tel quel (message cryptique). Corps
     //         PARTAGÉ (sigils.ts), même garde que RE_RAW_ACCESS_MALFORME (règle 3.5).
     m = rest.match(RE_BARE_SECTION)
-    if (m) throw bareSectionError(m[0])
+    if (m) throw situe(bareSectionError(m[0]), code, i, opts)
 
     // 3.4 @@xxx → _mjsThis.xxx  (pas de chiffre en tête → `@@2fa` reste littéral)
     m = rest.match(/^@@([a-zA-Z_][a-zA-Z0-9_]*)/)
@@ -570,11 +860,11 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
 
       // Ancienne forme `µwrite $x = v` / `µwrite($x) = v` (RETIRÉE) :
       // message dédié plutôt que la garde générique plus bas.
-      if (RE_RAW_WRITE_OLD_FORME_PAREN.test(rest) || RE_RAW_WRITE_OLD_FORME.test(rest)) throw rawWriteAncienneFormeError()
+      if (RE_RAW_WRITE_OLD_FORME_PAREN.test(rest) || RE_RAW_WRITE_OLD_FORME.test(rest)) throw situe(rawWriteAncienneFormeError(), code, i, opts)
 
       // …et ce qui reste est une faute de forme : refus BRUYANT plutôt qu'un
       // identifiant littéral qui casse au navigateur avec un build vert.
-      if (RE_RAW_ACCESS_MALFORME.test(rest)) throw rawAccessFormeError()
+      if (RE_RAW_ACCESS_MALFORME.test(rest)) throw situe(rawAccessFormeError(), code, i, opts)
     }
 
     // 3.6-pré Garde-fou hooks : l'ancienne forme `@mount ->` (appel de la
@@ -584,7 +874,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     //      `@mount(x)`) : seule la silhouette hook est bloquée.
     m = rest.match(RE_OLD_HOOK)
     if (m) {
-      throw new Error(t('lexer.hook-arobase-retire', { hook: m[1] }))
+      throw situe(new Error(t('lexer.hook-arobase-retire', { hook: m[1] })), code, i, opts)
     }
 
     // 3.6 @xxx → this.xxx  (pas de chiffre en tête → `@2fa` reste littéral)
@@ -623,7 +913,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
       const varName = `$${m[1]}`
       if (!(moduleMode || externalVars.includes(varName))) {
         const preview = rest.slice(m[0].length).match(/^[ \t]*([^\n;]*)/)?.[1]?.trim() || '...'
-        throw new Error(t('lexer.symbole-declare-civet', { varName, preview }))
+        throw situe(new Error(t('lexer.symbole-declare-civet', { varName, preview })), code, i, opts)
       }
     }
 
@@ -633,7 +923,9 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     //     singleton sur le SOURCE du dev (pas ici : le lexer tourne aussi sur du
     //     code déjà routé `µ$$`→`$xxx`).
     // 1er caractère `[a-zA-Z_]` (pas de chiffre) — `$9` reste littéral.
-    m = rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)/)
+    // Précédé d'un point, c'est une propriété (`obj.$x`, `evt.$el`) : laissée telle quelle, comme dans le
+    // gabarit (cleanJs) ; de deux, une plage ou une décomposition (`[1..$n]`, `[...$items]`) : la variable
+    m = code[i - 1] === '.' && code[i - 2] !== '.' ? null : rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)/)
     if (m) {
       const varName = `$${m[1]}`
       result += (moduleMode || externalVars.includes(varName)) ? varName : `$.${m[1]}`
@@ -652,12 +944,24 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
 
     // 3.8c-pré Hooks de cycle de vie : µmount/µawake/µsleep/µdestroy/
     //      µurlChange/µfailed + callback → enregistrement via l'API interne
-    //      unique. `µmount ->` devient `this._mjs_hook 'mount', ->` (appel
+    //      unique. `µmount ->` devient `_mjsThis._mjs_hook 'mount', ->` (appel
     //      implicite Coffee — la sortie du lexer repasse par Civet). DOIT
     //      précéder 3.8c : `µurlChange` contient `µurl` (le lookahead de
     //      MU_SHORT_BODY protège déjà, l'ordre rend l'intention lisible).
+    //      Receveur `cible`, comme `§` : `this` valait l'état dans une fonction rangée dans l'état
+    //      (`$armer = -> µdestroy -> …`, appelée `$armer()`), le crochet n'était rangé nulle part
     m = rest.match(RE_MU_HOOKS)
-    if (m) { result += `this._mjs_hook '${m[1]}',`; i += m[0].length; continue }
+    if (m) { result += `${cible}._mjs_hook '${m[1]}',`; i += m[0].length; continue }
+
+    // 3.8c-bis Crochet mal écrit dans la silhouette d'un crochet (flèche directe, ou (args) puis flèche) :
+    //      `µmounted ->` (déjà `µ.mounted ->` après le sucre µfoo → µ.foo du transpileur) se construisait, puis
+    //      levait à l'exécution (« µ.mounted is not a function »). Seuls les noms proches d'un des six
+    //      crochets sont refusés (crochetProche) ; le message propose le plus proche
+    if (code[i] === 'µ' && !(avant === '.' || /[a-zA-Z0-9_$]/.test(avant))) {
+      m = rest.match(RE_CROCHET_SILHOUETTE)
+      const proche = m && crochetProche(m[1])
+      if (proche) throw situe(new Error(t('lexer.crochet-inconnu', { nom: m![1], proche })), code, i, opts)
+    }
 
     // 3.8c µxxx (minuscules, allowlist) → µ.xxx : GLOBALES du framework en
     //      forme courte — µurl (URL réactive maintenue par le routeur),
@@ -682,6 +986,17 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     m = rest.match(RE_MU_THEME)
     if (m) { result += MU_THEME_OUT; i += m[0].length; continue }
 
+    // 3.8f µlayout → le modèle choisi (la prop `layout`, « default » sans rien) : lu seulement, et
+    //      seulement par une instance — un module (partagé, ou importé) n'a pas de modèle
+    m = rest.match(RE_MU_LAYOUT)
+    if (m) {
+      if (moduleMode) throw situe(new Error(t('lexer.mu-layout-module')), code, i, opts)
+      if (RE_MU_LAYOUT_WRITE.test(rest) || /(?:\+\+|--[ \t]*)$/.test(result)) throw situe(new Error(t('lexer.mu-layout-ecrit')), code, i, opts)
+      result += MU_LAYOUT_OUT
+      i += m[0].length
+      continue
+    }
+
     // 3.9 Identifier classique (préservé tel quel)
     m = rest.match(/^[a-zA-Z_$][a-zA-Z0-9_$]*/)
     if (m) { result += m[0]; i += m[0].length; continue }
@@ -691,5 +1006,5 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     i += 1
   }
 
-  return result
+  return morceaux.join('') + result
 }

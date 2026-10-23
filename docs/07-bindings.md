@@ -26,11 +26,17 @@ Le binding le plus simple : `<input value=!{$x}>`. Frapper dans le champ écrit 
 <details>
 <summary>🎓 <b>Pour débutants</b> — « two-way », ça change quoi&nbsp;?</summary>
 
-Avec un binding **one-way** (`value={$name}`), MJS écrit `$name` dans le champ — mais si tu tapes au clavier, la variable `$name` **ne bouge pas**. Tu devrais écouter l'événement `@input` et réaffecter `$name` toi-même.
+Avec un binding **one-way** (`value={$name}`), MJS écrit `$name` dans le champ — mais si vous tapez au clavier, la variable `$name` **ne bouge pas**. Vous devriez écouter l'événement `@input` et réaffecter `$name` vous-même.
 
-Le `!` (`value=!{$name}`) fait les **deux** d'un coup : MJS pose l'écouteur pour toi, et tient la variable et le champ synchronisés en permanence. Tu déclares le lien une fois, MJS gère la circulation dans les deux sens.
+Le `!` (`value=!{$name}`) fait les **deux** d'un coup : MJS pose l'écouteur pour vous, et tient la variable et le champ synchronisés en permanence. Vous déclarez le lien une fois, MJS gère la circulation dans les deux sens.
 
 </details>
+
+**Un bouton « réinitialiser » revient au premier affichage.** Pour une case `checked={…}` et une option `selected={…}`, l'état de départ du formulaire — celui où `form.reset()` revient — est la valeur liée au premier rendu.
+
+**Le champ garde ce que vous tapez.** Avec ou sans `!`, un champ lié (`value={…}`, une case `checked={…}`, une option `selected={…}`) n'est réécrit que quand sa valeur liée change — jamais parce qu'autre chose se redessine dans le composant (une ligne de `{for}`, un compteur, la langue). Si votre gestionnaire refuse une frappe sans changer la variable, la lettre tapée reste donc affichée : pour la retirer, écrivez dans le champ vous-même (`e.target.value = $name`), ou laissez le garde des types (`*guard`, cf. [37 · Types](37-types.md)) corriger le champ quand on le quitte. Un `<select>` fait exception : il se réécrit à chaque rendu, ses options pouvant arriver après sa valeur.
+
+**Un champ nombre garde sa frappe en cours.** Un champ `type="number"` lié (`value=!{$n}`) dont la saisie est incomplète (`1.`, `-`, `1e`) n'écrit rien : ni la variable, ni le champ. Un champ nombre lié se comporte comme un champ natif : une saisie que le navigateur refuse (`-`, `1e`, `1,5` dans Firefox) reste dans le champ à la sortie (focus ailleurs, touche Entrée) et la validation native bloque l'envoi ; seul le code la remplace : une écriture de la variable, même avec la valeur qu'elle a déjà (`$n = 3` quand `$n` vaut 3), réécrit le champ et débloque le formulaire, sauf pendant que vous tapez dans ce champ (il a le focus) : votre frappe reste. Un champ dont la saisie est valide n'est jamais réécrit par une écriture de la même valeur. Cette reprise vaut pour une variable nommée simplement (`value=!{$n}`). Vidé, il reste vide tant qu'on l'édite, et la variable prend 0 (avec `.int` ou `.float`, elle garde sa valeur). Avec `.number`, `.int` ou `.float` sur un champ texte, un texte qui n'est pas un nombre (`.`, `-`, `abc`) reste dans le champ et la variable ne reçoit jamais `NaN`.
 
 ## Cases à cocher — `checked=!`
 
@@ -82,14 +88,14 @@ Casts reconnus (le suffixe vient **toujours** sur le nom, jamais sur l'accolade)
 
 > ⚠️ Le suffixe se met sur le **nom de l'attribut** : `value.number=!{$n}` ✓. Les formes `value=!.number{$n}` ou `value=!{$n}.number` sont **incorrectes** et ne compilent pas comme un cast. Sur `type="number"`/`"range"`, `value=!{$a}` **sans** `.number` donne déjà un nombre ; sur les autres types, il reste une chaîne : `"3" + "5"` donnerait `"35"`.
 
-Les mêmes suffixes valent sur une liaison de **composant** (`<mon-champ value.number=!{$n}>`) : le composant reçoit la propriété `value`, et c'est la valeur qu'il **remonte** qui est convertie. La conversion ne joue en effet que dans ce sens-là, ici comme sur une balise native — descendante, la valeur vient de ton modèle, elle est déjà du bon type ; montante, elle vient de ce que quelqu'un a tapé.
+Les mêmes suffixes valent sur une liaison de **composant** (`<mon-champ value.number=!{$n}>`) : le composant reçoit la propriété `value`, et c'est la valeur qu'il **remonte** qui est convertie. La conversion ne joue en effet que dans ce sens-là, ici comme sur une balise native — descendante, la valeur vient de votre modèle, elle est déjà du bon type ; montante, elle vient de ce que quelqu'un a tapé.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi mon nombre se comporte comme du texte&nbsp;?</summary>
 
-En HTML, la valeur d'un champ est une chaîne de caractères — sauf sur `type="number"` et `type="range"`, que MJS convertit d'office en nombre. Sur les autres types, si tu lies `value=!{$a}` puis que tu fais `$a + $b`, tu obtiens une concaténation (`"1" + "2"` = `"12"`) au lieu d'une addition.
+En HTML, la valeur d'un champ est une chaîne de caractères — sauf sur `type="number"` et `type="range"`, que MJS convertit d'office en nombre. Sur les autres types, si vous liez `value=!{$a}` puis que vous faites `$a + $b`, vous obtenez une concaténation (`"1" + "2"` = `"12"`) au lieu d'une addition.
 
-Le suffixe `.number` dit à MJS : « quand tu remontes la valeur du champ vers la variable, convertis-la d'abord en nombre ». Du coup `$a` contient bien `1` (le nombre), et `$a + $b` fait `3`.
+Le suffixe `.number` dit à MJS : « quand vous remontez la valeur du champ vers la variable, convertissez-la d'abord en nombre ». Du coup `$a` contient bien `1` (le nombre), et `$a + $b` fait `3`.
 
 </details>
 
@@ -124,7 +130,7 @@ Quand plusieurs entrées partagent **une même variable**, on les lie avec **`@g
 
 Les casts s'appliquent aussi : `@group.number=!{$scoops}` remonterait des nombres au lieu de chaînes.
 
-> ⚠️ La `value` de chaque entrée est posée en **one-way** (`value={number}`), c'est `@group` qui porte le `=!`. Ne mets pas `value=!` sur des radios groupées.
+> ⚠️ La `value` de chaque entrée est posée en **one-way** (`value={number}`), c'est `@group` qui porte le `=!`. Ne mettez pas `value=!` sur des radios groupées.
 
 ## Listes déroulantes — `<select>`
 
@@ -150,7 +156,7 @@ Sur un `<select>`, `value=!{$x}` lie l'option choisie. Avec l'attribut `multiple
 </select>
 ```
 
-> ⚠️ La valeur d'une `<option>` est une **chaîne** (`"1"`, pas `1`). Pour comparer à un identifiant numérique, force la conversion à la lecture (`questions.find (x)-> x.id == +$selectedId`) ou pose un cast `value.number=!{$selectedId}`.
+> ⚠️ La valeur d'une `<option>` est une **chaîne** (`"1"`, pas `1`). Pour comparer à un identifiant numérique, forcez la conversion à la lecture (`questions.find (x)-> x.id == +$selectedId`) ou posez un cast `value.number=!{$selectedId}`.
 
 ## Zone de texte & contenu riche
 
@@ -177,24 +183,28 @@ Pour du HTML éditable, **`@html=!{$html}`** lie l'`innerHTML` du nœud dans les
 
 ```html
 <script>
-  $html = '<p>Écris du <strong>texte</strong> !</p>'
+  $html = '<p>Écrivez du <strong>texte</strong> !</p>'
 </script>
 
 <div @html=!{$html} contenteditable></div>
 <pre>{$html}</pre>
 ```
 
+`@html=!` n'écrit le nœud que si la valeur a changé depuis la dernière fois : un HTML que le navigateur relit autrement (balise non fermée, attributs sans guillemets, `<img src=x onerror=…>`) est posé une fois par valeur, pas à chaque mise à jour de la page, et le curseur d'un `contenteditable` ne bouge pas. Ce que vous tapez remonte vers la variable tel que le navigateur le relit (`<p>un</p>` pour `<p>un`).
+
 > ⚠️ Le HTML brut expose au **XSS** : `@html=!` pose l'`innerHTML` sans la moindre sanitisation, exactement comme `{{ }}` ci-dessous — un contenu utilisateur (commentaire relu depuis la base, par exemple) n'y va jamais sans nettoyage côté serveur.
+
+`@html=!` convient à une zone `contenteditable` brute. Pour un vrai éditeur de texte riche — barre d'outils, listes à cocher, collage nettoyé, HTML propre et identique d'un navigateur à l'autre, champ de formulaire —, utilisez `<@@editor>` : voir [30 · Modules cœur](30-modules-coeur.md#editor-et-toolbar--éditeur-de-texte-riche).
 
 ### HTML brut en affichage — `{{ expr }}`
 
-`@html=!` **édite** du HTML (deux sens). Pour seulement **afficher** du HTML sans l'échapper, utilise l'interpolation à **double accolade** `{{ expr }}` — le simple `{ expr }` échappe toujours le texte :
+`@html=!` **édite** du HTML (deux sens). Pour seulement **afficher** du HTML sans l'échapper, utilisez l'interpolation à **double accolade** `{{ expr }}` — le simple `{ expr }` échappe toujours le texte :
 
 ```html
 <div>{{ $articleHtml }}</div>
 ```
 
-> ⚠️ Le HTML brut expose au **XSS**. N'utilise `{{ }}` que sur du contenu de confiance, jamais une saisie utilisateur non assainie.
+> ⚠️ Le HTML brut expose au **XSS**. N'utilisez `{{ }}` que sur du contenu de confiance, jamais une saisie utilisateur non assainie.
 
 ## Bindings sur une propriété d'objet
 
@@ -239,12 +249,7 @@ On peut aussi lier directement les propriétés d'une instance de classe : `valu
 Sur un élément média, plusieurs propriétés sont bindables. La plupart sont **read-write** ; `duration` est **read-only** (le navigateur la fournit, on ne peut pas l'imposer).
 
 ```html
-<audio
-  src={$src}
-  currentTime=!{$time}
-  duration=!{$duration}
-  paused=!{$paused}
-></audio>
+<audio src={$src} currentTime=!{$time} duration=!{$duration} paused=!{$paused}></audio>
 
 <button @click={$paused = !$paused}>{$paused ? '▶' : '⏸'}</button>
 ```
@@ -262,18 +267,31 @@ Sur un élément média, plusieurs propriétés sont bindables. La plupart sont 
 
 ```html
 <!-- parent -->
+<script>
+  $pin = ''
+</script>
+
 <@tuto-keypad value=!{$pin} @submit>
 ```
 
 ```html
 <!-- enfant tuto-keypad.mjs -->
 <script>
-  $value ?= ''                      # prop ordinaire, bindable depuis le parent
   select = (digit)-> $value += digit
 </script>
 ```
 
-Chaque écriture de `$value` côté enfant remonte vers `$pin` côté parent. La référence à **l'instance** du composant (pour appeler ses méthodes) passe par `@this`, traité au chapitre [Directives DOM](09-directives-dom.md).
+Le parent gagne toujours : c'est lui qui initialise sa variable (`$pin = ''`), et une valeur par défaut écrite dans le `<script>` de l'enfant ne remonte **jamais** dans `$pin`, même quand `$pin` est vide. Chaque écriture que l'enfant fait ensuite (un clic, son `µmount`, une minuterie, même quand le parent est détaché du document) remonte vers `$pin` côté parent, avec son type : un nombre reste un nombre. La référence à **l'instance** du composant (pour appeler ses méthodes) passe par `@this`, traité au chapitre [Directives DOM](09-directives-dom.md).
+
+Dans un `{for}`, chaque ligne lie son composant à **son** élément :
+
+```html
+{for groupe in $menu by id}
+  <@tuto-liste valeur=!{groupe.lignes} />
+{end}
+```
+
+Inverser, déplacer, ajouter ou retirer des groupes ne mêle jamais leurs lignes : chaque enfant écrit dans l'élément de sa ligne. Cela vaut aussi pour ce qu'un enfant écrit à son réveil (son `µawake`, rejoué à chaque arrivée dans le DOM, donc quand sa ligne change de place) : l'écriture attend que la liste soit remise en ordre, puis remonte vers la ligne où l'enfant se trouve alors, jamais vers la place qu'il vient de quitter. Si le parent change la valeur de cette ligne au même moment, c'est la valeur du parent qui reste.
 
 > 🔗 Voir aussi : [Directives DOM](09-directives-dom.md) → `@this=!{ref}` (référence au nœud / à l'instance, **sans `$`**) et `@attach` (actions DOM).
 

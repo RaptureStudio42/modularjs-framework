@@ -56,6 +56,19 @@ describe('cli.ts — contextAlias/runtimeDir/urlPrefix transmis au Bundler (opti
     assert.match(bundlerCall, /urlPrefix:\s*cfgOpts\.urlPrefix/, "AVANT le fix : urlPrefix documenté mais jamais transmis")
   })
 
+  // Toute clé que resolveBundlerOpts() rend part au Bundler — sauf celles que la CLI lit elle-même
+  // (serveur de dev, rendu, minification, CSP…). Le 29/09, `effects` (thème en cercle, effets
+  // économes, squelettes) était résolue mais jamais transmise : réglage mort en `mjs build`/`mjs dev`,
+  // pendant que les tests, qui construisent le Bundler directement, restaient verts.
+  it('le littéral passé à `new Bundler({...})` transmet chaque clé de resolveBundlerOpts() (hors clés lues par la CLI elle-même)', function () {
+    const resolveReturn = extractBalanced(CONFIG_SRC, /export function resolveBundlerOpts[^{]*\{[\s\S]*?return \(?\{/)
+    const returnKeys = [...resolveReturn.matchAll(/^\s*(\w+):/gm)].map(m => m[1])
+    const bundlerCall = extractBalanced(CLI_SRC, /new Bundler\(\{/)
+    const LUES_PAR_LA_CLI = new Set(['devPort', 'devHost', 'render'])
+    const mortes = returnKeys.filter((k) => !LUES_PAR_LA_CLI.has(k) && !new RegExp(`\\b${k}\\s*[:,]|\\b${k}\\s*$`, 'm').test(bundlerCall))
+    assert.deepEqual(mortes, [], `clés résolues depuis mjs.config.json mais jamais transmises au Bundler : ${mortes.join(', ')}`)
+  })
+
   it('le littéral de repli (pas de mjs.config.json trouvé) déclare TOUTES les clés que resolveBundlerOpts() retourne', function () {
     const resolveReturn = extractBalanced(CONFIG_SRC, /export function resolveBundlerOpts[^{]*\{[\s\S]*?return \(?\{/)
     const returnKeys = [...resolveReturn.matchAll(/^\s*(\w+):/gm)].map(m => m[1])

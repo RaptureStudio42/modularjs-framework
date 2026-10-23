@@ -19,16 +19,67 @@
 //   collectCoreCalls(js)                → ce que CETTE unité réclame au cœur
 //   missingCoreSymbols(coreJs, appels)  → ce que le cœur produit ne rend pas
 
+import * as acorn from 'acorn'
 import { CORE_HELPER_NAMES, blankNonCode } from './minify.js'
+import { INDICE_NOMS_PUBLICS } from './features.js'
 
-// le périmètre surveillé, et RIEN d'autre — deux familles, toutes deux réservées au framework :
+// le périmètre surveillé, et RIEN d'autre — trois familles, toutes réservées au framework :
 //   - le préfixe `_mjs_` : réservé au générateur (cf. assertNoStringIndexedMjsAccess, minify.ts,
 //     qui mangle exactement `/^_mjs_/`), jamais écrit par une application ;
 //   - les seize helpers courts de CORE_HELPER_NAMES (`µ._p(`, `µ._set(`, `µ._esc(`…), réservés au
-//     même titre puisque le mangling se les réserve déjà.
-// Une méthode d'application (`this.recharger()`, `@_monHelper`) n'entre dans aucune des deux :
+//     même titre puisque le mangling se les réserve déjà ;
+//   - les fonctions publiques que le cœur n'embarque que si le relevé des briques (features.ts) voit une
+//     unité s'en servir : `µ.Store`, `µ.interpolate`, `µ.Ticker`, `µ.every`, `µ.inspect`, `µ.play`, `µ.effect`.
+// Une méthode d'application (`this.recharger()`, `@_monHelper`) n'entre dans aucune des trois :
 // aucun build sain ne peut être bloqué par un nom que l'utilisateur a choisi.
 const SHORT_HELPERS = new Set<string>(CORE_HELPER_NAMES)
+
+// les fonctions publiques, relevées sur les jetons d'acorn (jamais sur le texte : une mention en
+// chaîne, en gabarit ou en commentaire — la prose d'une page de documentation — ne réclame rien) et
+// sous la même forme que le relevé des briques : `µ.every`, `µ.inspect`, `µ.play` et `µ.effect` seulement
+// appelés, les trois autres dès qu'ils sont écrits, après un point ou un chaînage optionnel (`µ?.Store`).
+// Le nom réclamé garde son `µ.` : missingCoreSymbols y reconnaît une fonction publique, dont elle exige
+// la DÉFINITION
+const PUBLIQUES        = new Set(['Store', 'interpolate', 'Ticker'])
+const APPELEES         = new Set(['every', 'inspect', 'play', 'effect'])
+
+function publicCalls(js: string): string[] {
+  // le même indice que le relevé des briques, commentaires compris entre les jetons (`µ /* c */ .Store`)
+  if (!INDICE_NOMS_PUBLICS.test(js)) return []
+  const types = acorn.tokTypes
+  // les mêmes lectures que le relevé des briques (features.ts, maskStringLiterals) : un programme en module,
+  // en script, puis les jetons seuls (repères d'import d'une sortie de transpile() lue hors du bundler)
+  const lectures: Array<(onToken: (jeton: acorn.Token) => void) => void> = [
+    (onToken) => { acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', onToken }) },
+    (onToken) => { acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'script', onToken }) },
+    (onToken) => { for (const jeton of acorn.tokenizer(js, { ecmaVersion: 'latest', sourceType: 'script' })) onToken(jeton) },
+  ]
+  for (const lire of lectures) {
+    const noms               = new Set<string>()
+    let avant: acorn.Token[] = []
+    let appelAttendu         = ''
+    try {
+      lire((jeton) => {
+        if (appelAttendu && jeton.type === types.parenL) noms.add('µ.' + appelAttendu)
+        appelAttendu = ''
+        const [avantPoint, point] = avant
+        if (jeton.type === types.name && (point?.type === types.dot || point?.type === types.questionDot) && avantPoint?.type === types.name && js.slice(avantPoint.start, avantPoint.end) === 'µ') {
+          const nom = js.slice(jeton.start, jeton.end)
+          if (APPELEES.has(nom)) appelAttendu = nom
+          else if (PUBLIQUES.has(nom)) noms.add('µ.' + nom)
+        }
+        avant = [point, jeton]
+      })
+    }
+    catch {
+      continue
+    }
+    return [...noms]
+  }
+  // un code qu'acorn ne lit d'aucune façon : rien de réclamé (le relevé des briques, lui, n'y masque rien et
+  // embarque à la moindre mention) — jamais un refus sur une lecture incertaine
+  return []
+}
 
 // un APPEL, jamais une simple mention : le nom doit être suivi d'une parenthèse ouvrante. C'est ce
 // qui écarte les propriétés que l'unité se pose à ELLE-MÊME (`this._mjs_fallback = (err, reset) =>`,
@@ -50,6 +101,7 @@ export function collectCoreCalls(js: string): Set<string> {
     const nom = m[1]
     if (nom.startsWith('_mjs_') || SHORT_HELPERS.has(nom)) noms.add(nom)
   }
+  for (const nom of publicCalls(js)) noms.add(nom)
   return noms
 }
 
@@ -63,18 +115,27 @@ export function collectCoreCalls(js: string): Set<string> {
  * et une garde qui se trompe en refusant coûte plus cher que le bug qu'elle attrape. Un nom absent
  * de TOUT le texte du cœur, lui, est absent sans discussion — c'était exactement le cas de
  * `_updList`, qui ne survivait que dans deux commentaires.
+ *
+ * Seule exception, les fonctions publiques (`µ.Store`…) : d'autres modules du cœur les NOMMENT sans
+ * les définir (`µ.Ticker.add(…)` dans mjs_spring.ts et mjs_smooth.ts), une mention ne prouve donc
+ * rien. Le cœur doit porter leur affectation, `µ.X = …`, la forme de leurs fichiers
+ * (mjs_store.ts, mjs_interpolate.ts, mjs_ticker.ts, mjs_every.ts, mjs_inspect.ts, mjs_play.ts, mjs_effect.ts).
  */
 export function missingCoreSymbols(coreJs: string, appels: Iterable<string>): string[] {
   const code = blankNonCode(coreJs)
   const noms = [...appels]
   if (noms.length === 0) return []
-  // UN SEUL passage sur le texte du cœur (jusqu'au Mo) plutôt qu'une expression régulière PAR
-  // symbole relancée sur le texte ENTIER (jusqu'à ~150 fois sur un gros projet, mesuré ~80ms
-  // pour 42 noms sur un cœur de 1,2 Mo) : une alternance couvre tous les noms d'un coup, chacun
-  // gardant sa PROPRE frontière (`(?<![\w$])`/`(?![\w$])`, cf. le commentaire ci-dessus).
-  const alternance = noms.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  const trouves    = new Set<string>()
-  for (const m of code.matchAll(new RegExp(`(?<![\\w$])(?:${alternance})(?![\\w$])`, 'g'))) trouves.add(m[0])
-  const manquants = noms.filter(nom => !trouves.has(nom))
+  const internes  = noms.filter(nom => !nom.startsWith('µ.'))
+  const manquants = noms.filter(nom => nom.startsWith('µ.') && !new RegExp(`(?<![\\w$.])µ\\.${nom.slice(2).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=(?!=)`).test(code))
+  if (internes.length > 0) {
+    // UN SEUL passage sur le texte du cœur (jusqu'au Mo) plutôt qu'une expression régulière PAR
+    // symbole relancée sur le texte ENTIER (jusqu'à ~150 fois sur un gros projet, mesuré ~80ms
+    // pour 42 noms sur un cœur de 1,2 Mo) : une alternance couvre tous les noms d'un coup, chacun
+    // gardant sa PROPRE frontière (`(?<![\w$])`/`(?![\w$])`, cf. le commentaire ci-dessus).
+    const alternance = internes.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+    const trouves    = new Set<string>()
+    for (const m of code.matchAll(new RegExp(`(?<![\\w$])(?:${alternance})(?![\\w$])`, 'g'))) trouves.add(m[0])
+    manquants.push(...internes.filter(nom => !trouves.has(nom)))
+  }
   return manquants.sort()
 }

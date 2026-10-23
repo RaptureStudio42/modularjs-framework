@@ -30,6 +30,7 @@
 // `simulate`/`view` qui suit une reprise) — aucune magie de repopulation automatique ici.
 
 import { t } from '../messages/index.js'
+import { putOwn } from '../mjs-ws/guard.js'
 
 // plafond défensif du nombre de cellules parcourues PAR CÔTÉ dans .query() (cf. « GARDE » en tête
 // de fichier) — (2×256+1)² ≈ 263 000 cellules au pire, borné quel que soit le rayon FINI demandé ;
@@ -126,8 +127,9 @@ export function createSpace(cell: number, onWarn?: (msg: string) => void): MjsSe
     },
 
     _snapshot() {
+      // rangée par putOwn : une entité `__proto__` y reste une clé propre (l'affectation changerait le prototype de la copie)
       const copy: Record<string, { x: number; y: number }> = {}
-      for (const [id, pos] of positions) copy[id] = { x: pos.x, y: pos.y }
+      for (const [id, pos] of positions) putOwn(copy, id, { x: pos.x, y: pos.y })
       return copy
     },
 

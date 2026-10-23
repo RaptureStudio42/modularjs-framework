@@ -40,11 +40,11 @@ describe('Bundler.compile()', () => {
 
     assert.equal(stats.errors.length, 0)
     assert.ok(stats.manifest.foo.startsWith(`${bundler.urlPrefix}/foo-`))
-    assert.match(stats.manifest.foo, /\/foo-[a-f0-9]{8}\.js$/)
+    assert.match(stats.manifest.foo, /\/foo-[0-9a-z]{5}\.js$/)
 
     // Le fichier hashé existe
     const files = readdirSync(outDir)
-    const fooFile = files.find(f => /^foo-[a-f0-9]{8}\.js$/.test(f))
+    const fooFile = files.find(f => /^foo-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(fooFile, 'foo-<hash>.js should exist')
 
     // Le contenu reflète la compilation
@@ -113,7 +113,7 @@ describe('Bundler.compile()', () => {
     await bundler.compile()
     const files = readdirSync(outDir)
     assert.ok(
-      files.some(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f)),
+      files.some(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f)),
       'mjs_core-<hash>.js doit exister'
     )
   })
@@ -153,7 +153,7 @@ describe('Bundler.compile()', () => {
     await bundler.compile()
 
     const files = fs.readdirSync(outDir)
-    const stylesFile = files.find((f: string) => /^mjs_styles-[a-f0-9]{8}\.js$/.test(f))
+    const stylesFile = files.find((f: string) => /^mjs_styles-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(stylesFile, 'mjs_styles-<hash>.js doit exister')
 
     const content = fs.readFileSync(join(outDir, stylesFile!), 'utf-8')
@@ -274,7 +274,7 @@ describe('Bundler.compile()', () => {
 
     const files = fs.readdirSync(outDir)
     assert.ok(!files.some(f => /\.js\.map$/.test(f)), 'aucun .map ne doit être émis en prod sous le défaut')
-    const fooJs = files.find(f => /^foo-[a-f0-9]{8}\.js$/.test(f))
+    const fooJs = files.find(f => /^foo-[0-9a-z]{5}\.js$/.test(f))
     const content = fs.readFileSync(join(outDir, fooJs!), 'utf-8')
     assert.doesNotMatch(content, /sourceMappingURL/, 'pas de sourceMappingURL en prod sous le défaut')
   })
@@ -317,12 +317,12 @@ describe('Bundler.compile()', () => {
     const { srcDir, outDir, manifest } = makeProject()
     writeFileSync(join(srcDir, 'fancy.mjs'), `
 <script lang="coffee">$show = true</script>
-{if $show}<div @transition.fade>x</div>{end}
+{if $show}<div @transition=*fade>x</div>{end}
 `)
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     await bundler.compile()
     const files = readdirSync(outDir)
-    const animFile = files.find(f => /^mjs_anims-[a-f0-9]{8}\.js$/.test(f))
+    const animFile = files.find(f => /^mjs_anims-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(animFile, 'mjs_anims-<hash>.js doit exister')
 
     const content = readFileSync(join(outDir, animFile!), 'utf-8')

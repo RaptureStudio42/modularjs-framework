@@ -31,6 +31,7 @@ import MagicString from 'magic-string'
 import { t } from '../messages/index.js'
 import { maskInertSameLength } from '../lexer/index.js'
 import { maskHtmlComments } from '../mask.js'
+import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 
 export interface AnalyzeSnippetResult {
   deps: string[]
@@ -211,9 +212,14 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
   // disponible. (Idiome du tuto officiel 15-1.)
   let readsReactiveSource = false
   let hasAwait = false
+  // cible d'une affectation simple (`$a = $b = 0` : `$.b` est ÉCRIT, jamais lu) — comptée en lecture, elle faisait
+  // de `$a` un dérivé qui écrivait `$b` et valait le retour de l'écriture (même motif que pureWriteTargets, plus bas)
+  const ecrits = new Set<any>()
+  walk.simple(node, { AssignmentExpression(a: any) { if (a.operator === '=') ecrits.add(a.left) } })
   walk.ancestor(node, {
     AwaitExpression() { hasAwait = true },
     MemberExpression(c: any, _s: any, ancestors: any[]) {
+      if (ecrits.has(c)) return
       if (c.object.type === 'Identifier' && c.object.name === '$' && !c.computed) {
         if (c.property.type === 'Identifier') deps.add(c.property.name)
       }
@@ -363,7 +369,7 @@ function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies:
 // Analyzer.analyzeAndBuild (methodReads exposé, APRÈS filtre externalVars) —
 // une seule implémentation du point-fixe.
 // ============================================================================
-function resolveMethodReadsPointFixe(methods: Record<string, string[]>): Record<string, string[]> {
+function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { lint?: LintToggles; colorsEnabled?: boolean } = {}): Record<string, string[]> {
   // Object.create(null), même remède que
   // `dependencies` plus bas (analyze()) : `out[k] = …` où `k === '__proto__'` sur un `{}`
   // ordinaire ne crée jamais de clé réelle (le setter hérité de Object.prototype.__proto__
@@ -378,8 +384,9 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>): Record<
     changed = false
     safety += 1
     if (safety > 100) {
+      const line = typedLine('reactivity', t('analyzer.resolve-dependance-non-convergent'), diag.lint)
       // eslint-disable-next-line no-console
-      console.warn(t('analyzer.resolve-dependance-non-convergent'))
+      if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
       break
     }
     for (const [name, reads] of Object.entries(out)) {
@@ -407,7 +414,9 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>): Record<
 // ============================================================================
 // analyze(jsCode) : full script analysis (state + computed + modifiedCode)
 // ============================================================================
-export function analyze(jsCode: string): AnalyzerOutput {
+// `preAst` : l'AST de `jsCode` déjà analysé ; absent ou `null` (analyse échouée en amont), le texte est relu — et l'erreur
+// d'analyse levée comme avant
+export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
   const stateVariables = new Set<string>()
   // Object.create(null) sur TOUS les dicts de ce
   // fichier indexés par un nom UTILISATEUR (méthode/état/computed) : un `{}` ordinaire
@@ -432,10 +441,13 @@ export function analyze(jsCode: string): AnalyzerOutput {
   const pendingEffectWarnings: { reads: Set<string>; writes: Set<string>; calledMethods: Set<string> }[] = []
 
   let ast: acorn.Node
-  try {
-    ast = acorn.parse(jsCode, { ecmaVersion: 'latest', sourceType: 'module' })
-  } catch (e: any) {
-    throw new Error(`[analyzer] parse error: ${e.message}`)
+  if (preAst) ast = preAst
+  else {
+    try {
+      ast = acorn.parse(jsCode, { ecmaVersion: 'latest', sourceType: 'module' })
+    } catch (e: any) {
+      throw new Error(`[analyzer] parse error: ${e.message}`)
+    }
   }
 
   const ms = new MagicString(jsCode)
@@ -517,8 +529,9 @@ export function analyze(jsCode: string): AnalyzerOutput {
         // ce qui matche `/^_mjs_/`, donc le state user `$._mjs_foo` serait
         // manglé avec le risque de collision.
         if (typeof varName === 'string' && varName.startsWith('_mjs_')) {
+          const line = typedLine('naming', t('analyzer.prefixe-mjs-reserve', { varName, nomCourt: varName.slice(5) }), diag.lint)
           // eslint-disable-next-line no-console
-          console.warn(t('analyzer.prefixe-mjs-reserve', { varName, nomCourt: varName.slice(5) }))
+          if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
         }
 
         // Snapshot : `=:` côté lexer wrappe le RHS dans `µ.snap(...)`.
@@ -669,17 +682,23 @@ export function analyze(jsCode: string): AnalyzerOutput {
   // pas dans le CallExpression handler ci-dessus) : un effet qui APPELLE une
   // méthode lisant la MÊME $var qu'il écrit doit warner aussi.
   if (pendingEffectWarnings.length > 0) {
-    const methodsResolved = resolveMethodReadsPointFixe(methodsRaw)
+    const methodsResolved = resolveMethodReadsPointFixe(methodsRaw, diag)
     for (const { reads, writes, calledMethods } of pendingEffectWarnings) {
       const allReads = new Set(reads)
       for (const m of calledMethods) {
         const sub = methodsResolved[m]
         if (sub) for (const r of sub) allReads.add(r)
       }
+      // une variable lue par un dérivé (`$e = $n + 1` lu par `$n = $e`) relance l'effet comme une lecture directe
+      const aSuivre = [...allReads]
+      for (let i = 0; i < aSuivre.length; i++) {
+        for (const r of dependencies[aSuivre[i]] ?? []) { if (!allReads.has(r)) { allReads.add(r); aSuivre.push(r) } }
+      }
       const looped = Array.from(writes).filter(w => allReads.has(w))
       if (looped.length > 0) {
+        const line = typedLine('reactivity', t('analyzer.effect-lit-ecrit-boucle', { liste: looped.map(v => '$' + v).join(', ') }), diag.lint)
         // eslint-disable-next-line no-console
-        console.warn(t('analyzer.effect-lit-ecrit-boucle', { liste: looped.map(v => '$' + v).join(', ') }))
+        if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
       }
     }
   }
@@ -742,6 +761,13 @@ export class Analyzer {
    * donné, on stocke l'UNION des state vars dont il dépend transitivement
    * (closure des computeds inclus). Le runtime n'a plus besoin que de cette liste. */
   private batchVarsCache: Map<string, string[]> = new Map()
+  // reçus au constructeur, PAR INSTANCE (jamais un état partagé entre deux compilations
+  // concurrentes — une instance par compile, cf. transpiler/index.ts) : coupure/couleur des
+  // avertissements `naming`/`reactivity` émis pendant l'analyse.
+  private lint?: LintToggles
+  private colorsEnabled = false
+  // cycles réactifs déjà signalés : un par nom, jamais répété d'une passe de resolveDependencyGraph à l'autre
+  private cyclesSignales = new Set<string>()
   private externalVars: string[] = []
   // miroirs Set des `includes` chauds (`stateVars`/`externalVars` testés
   // en boucles snippets×deps). Les arrays publics restent la façade ; ces Set
@@ -765,17 +791,20 @@ export class Analyzer {
   // périmètre — generator/, jamais analyzer/).
   static RESERVED_STATE_NAMES: string[] = ['__proto__', 'constructor', 'prototype']
 
-  constructor(jsScriptCode: string, externalVars: string[] = []) {
+  // `preAst` : l'AST du script déjà analysé par le transpileur (partagé, jamais modifié ici)
+  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null) {
     this.externalVars = externalVars
     this.externalVarsSet = new Set(externalVars)
-    this.analyzeAndBuild(jsScriptCode)
+    this.lint = lint
+    this.colorsEnabled = colorsEnabled
+    this.analyzeAndBuild(jsScriptCode, preAst)
   }
 
   // ------------------------------------------------------------------------
   // Analyse principale + registre de présence des vars
   // ------------------------------------------------------------------------
-  private analyzeAndBuild(jsScriptCode: string): void {
-    const out = analyze(jsScriptCode)
+  private analyzeAndBuild(jsScriptCode: string, preAst?: acorn.Node | null): void {
+    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled }, preAst)
     this.modifiedCode = out.modifiedCode
 
     this.stateVars = out.state.filter(v => !this.externalVarsSet.has(`$${v}`))
@@ -797,7 +826,7 @@ export class Analyzer {
       methodsFiltered[k] = v.filter(d => !this.externalVarsSet.has(`$${d}`))
     }
     this.methodNames = new Set(Object.keys(methodsFiltered))
-    this.methodReads = resolveMethodReadsPointFixe(methodsFiltered)
+    this.methodReads = resolveMethodReadsPointFixe(methodsFiltered, { lint: this.lint, colorsEnabled: this.colorsEnabled })
 
     this.allDependencies = [...this.stateVars]
     this.resolveDependencyGraph()
@@ -872,11 +901,64 @@ export class Analyzer {
       }
       return out
     }
+    // fin de l'expression `{…}` ouverte en `i` (même lecture des chaînes que blank)
+    const finAccolade = (s: string, i: number): number => {
+      let profondeur = 0
+      let chaine     = ''
+      for (let k = i; k < s.length; k++) {
+        const c = s[k]
+        if (chaine) {
+          if (c === '\\') k++
+          else if (c === chaine) chaine = ''
+        }
+        else if (c === '"' || c === "'" || c === '`') chaine = c
+        else if (c === '{') profondeur++
+        else if (c === '}' && --profondeur === 0) return k + 1
+      }
+      return s.length
+    }
+    // fin de la balise ouverte en `i` : son `>`, hors valeurs entre guillemets et hors `{…}`
+    const finBalise = (s: string, i: number): number => {
+      let k = i + 1
+      while (k < s.length) {
+        const c = s[k]
+        if (c === '>') return k + 1
+        if (c === '{') { k = finAccolade(s, k); continue }
+        if (c === '"' || c === "'") {
+          const f = s.indexOf(c, k + 1)
+          k = f < 0 ? s.length : f + 1
+          continue
+        }
+        k++
+      }
+      return s.length
+    }
+    // le TEXTE est verbatim partout, pas seulement dans <pre>/<code> : seuls les `{…}` et l'intérieur des balises
+    // (attributs, sous toutes leurs formes, gardés tels quels) portent du code — un `$constructor` cité dans un <p>
+    // faisait échouer la construction, « 5 $US » déclarait un état fantôme `US`
+    const blankHorsBalises = (s: string): string => {
+      let out   = ''
+      let texte = 0
+      let i     = 0
+      while (i < s.length) {
+        if (s[i] === '{') { i = finAccolade(s, i); continue }
+        if (s[i] === '<' && /[a-zA-Z@\/]/.test(s[i + 1] ?? '')) {
+          const fin = finBalise(s, i)
+          out += blank(s.slice(texte, i)) + s.slice(i, fin)
+          texte = i = fin
+          continue
+        }
+        i++
+      }
+      return out + blank(s.slice(texte))
+    }
     const withoutPreCode = htmlRaw
       .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, blank)
       .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, blank)
-    const withoutComments = maskHtmlComments(withoutPreCode)
-    const regex = /(?<![\w.\$])\$([a-zA-Z_][a-zA-Z0-9_]*)/g
+    const withoutComments = blankHorsBalises(maskHtmlComments(withoutPreCode))
+    // nom ENTIER, lettres accentuées comprises : `$prénom` déclarait aussi une variable fantôme `pr` (une première
+    // lettre accentuée, `$âge`, est refusée à la construction, cf. refuseEtatAccentue dans sigils.ts)
+    const regex = /(?<![\p{L}\p{N}_.$])\$([\p{L}_][\p{L}\p{M}\p{N}_]*)/gu
     let m: RegExpExecArray | null
     while ((m = regex.exec(withoutComments)) !== null) found.add(m[1])
 
@@ -999,8 +1081,9 @@ export class Analyzer {
         // coupure de sécurité : sur un graphe pathologique (>100 niveaux
         // de chaînage), la closure transitive reste INCOMPLÈTE → certains effets
         // ne se réabonnent pas. Improbable, mais ne plus le taire.
+        const line = typedLine('reactivity', t('analyzer.resolve-dependance-non-convergent'), this.lint)
         // eslint-disable-next-line no-console
-        console.warn(t('analyzer.resolve-dependance-non-convergent'))
+        if (line !== null) printDiagnostic(line, this.colorsEnabled)
         break
       }
       for (const [func, deps] of Object.entries(this.computedDeps)) {
@@ -1011,9 +1094,13 @@ export class Analyzer {
           if (sub) for (const x of sub) newDeps.add(x)
         }
         if (newDeps.has(func)) {
-          // Cycle réactif détecté
-          // eslint-disable-next-line no-console
-          console.warn(t('analyzer.cycle-reactif-detecte', { func }))
+          // cycle réactif : signalé une fois par nom (la fermeture refait des passes tant qu'un autre nom grandit)
+          if (!this.cyclesSignales.has(func)) {
+            this.cyclesSignales.add(func)
+            const line = typedLine('reactivity', t('analyzer.cycle-reactif-detecte', { func }), this.lint)
+            // eslint-disable-next-line no-console
+            if (line !== null) printDiagnostic(line, this.colorsEnabled)
+          }
           newDeps.delete(func)
         }
         if (newDeps.size > initialSize) {

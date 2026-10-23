@@ -1,7 +1,7 @@
 // findMacroTagEnd — un commentaire `//`/`/* … */` DANS l'expression d'un attribut
 // (`{ … }`) n'était jamais reconnu comme tel : ses `{`/`}`/`>` internes comptaient dans la
 // profondeur de la balise. `/* } > */` refermait donc l'accolade PUIS la balise elle-même
-// au mauvais endroit — un résidu de texte fuyait dans le HTML rendu, et <@img> y perdait
+// au mauvais endroit — un résidu de texte fuyait dans le HTML rendu, et <@@img> y perdait
 // carrément son `src` (le vrai `src="…"`, situé APRÈS le commentaire, tombait hors de la
 // balise tronquée).
 
@@ -46,9 +46,9 @@ describe('findMacroTagEnd — témoin, sans commentaire : comportement inchangé
   })
 })
 
-describe('scanImgTags — <@img> avec un commentaire } > dans un attribut AVANT src', () => {
+describe('scanImgTags — <@@img> avec un commentaire } > dans un attribut AVANT src', () => {
   it('le src RÉEL, situé après le commentaire, est retrouvé (plus null)', () => {
-    const html = '<@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
+    const html = '<@@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `tag.text: ${JSON.stringify(tags[0].text)}`)
@@ -60,7 +60,7 @@ describe('scanImgTags — <@img> avec un commentaire } > dans un attribut AVANT 
   // vérifié). Ici la liste COMPLÈTE des attributs lus est vérifiée : exactement `alt` et `src`,
   // aucun résidu du commentaire ne doit apparaître comme un attribut à part.
   it('exactement 2 attributs lus (alt, src) — aucun résidu du commentaire comme attribut fantôme', () => {
-    const html = '<@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
+    const html = '<@@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
     const tags = scanImgTags(html)
     assert.deepEqual(tags[0].attrs, [
       { name: 'alt', raw: 'alt={ /* } > */ "photo" }' },
@@ -69,7 +69,7 @@ describe('scanImgTags — <@img> avec un commentaire } > dans un attribut AVANT 
   })
 
   it('aucun résidu de balise ne fuit dans le HTML qui suit', () => {
-    const html = '<@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
+    const html = '<@@img alt={ /* } > */ "photo" } src="hero.png"> texte après'
     const tags = scanImgTags(html)
     assert.equal(html.slice(tags[0].end), ' texte après')
   })
@@ -82,7 +82,7 @@ describe('scanImgTags — parseAttrs (accolade d\'attribut) ignore aussi les com
   // ci-dessus) ne se refermait JAMAIS : le test existant ne le couvrait pas, et passait par
   // chance sur un cas différent.
   it('/* { */ (accolade OUVRANTE non appariée) : src n\'est plus perdu', () => {
-    const html = '<@img title={/* { */ "x"} src="hero.png">'
+    const html = '<@@img title={/* { */ "x"} src="hero.png">'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `attrs: ${JSON.stringify(tags[0].attrs)}`)
@@ -93,7 +93,7 @@ describe('scanImgTags — parseAttrs (accolade d\'attribut) ignore aussi les com
   })
 
   it('commentaire de ligne `//` contenant une accolade et un guillemet : src retrouvé', () => {
-    const html = '<@img title={ // { "\n  "x"} src="hero.png">'
+    const html = '<@@img title={ // { "\n  "x"} src="hero.png">'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `attrs: ${JSON.stringify(tags[0].attrs)}`)
@@ -102,7 +102,7 @@ describe('scanImgTags — parseAttrs (accolade d\'attribut) ignore aussi les com
   it('gabarit (backtick) contenant une accolade FERMANTE non appariée : lue comme une chaîne, src retrouvé', () => {
     // accolade DÉSÉQUILIBRÉE exprès (un seul `}`, sans `{` partenaire) : sans lecture du
     // gabarit comme une chaîne, la profondeur retombe à 0 ICI, bien avant la vraie fin de balise
-    const html = '<@img title={`x}y`} src="hero.png">'
+    const html = '<@@img title={`x}y`} src="hero.png">'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `attrs: ${JSON.stringify(tags[0].attrs)}`)
@@ -113,7 +113,7 @@ describe('scanImgTags — parseAttrs (accolade d\'attribut) ignore aussi les com
   })
 
   it('gabarit avec interpolation imbriquée `${ {a:1} }` : src retrouvé', () => {
-    const html = '<@img title={`x${ {a:1} }y`} src="hero.png">'
+    const html = '<@@img title={`x${ {a:1} }y`} src="hero.png">'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `attrs: ${JSON.stringify(tags[0].attrs)}`)

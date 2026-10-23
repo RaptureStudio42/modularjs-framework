@@ -141,7 +141,9 @@ describe('cli.ts — la garde du build : rien à construire = refus, jamais un p
     assert.match(stderr, /lien symbolique/, `le message doit nommer le lien symbolique évadé : ${stderr}`)
     const manifeste = join(root, 'public', 'modularjs', 'bundle.js')
     if (existsSync(manifeste)) {
-      assert.doesNotMatch(readFileSync(manifeste, 'utf-8'), /card/,
+      // le composant lui-même : sa clé dans la table des fichiers ou son fichier (le mot « card » seul
+      // apparaît dans des textes de messages du manifeste de développement, sans rapport)
+      assert.doesNotMatch(readFileSync(manifeste, 'utf-8'), /["']card["']\s*:|card-[0-9a-z]+\.js/,
         "AVANT le fix : card.mjs (atteint via le lien évadé, HORS sourceDir) se retrouvait publié au manifeste")
     }
   })

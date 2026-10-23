@@ -51,13 +51,13 @@ async function construire(p: Projet, js: JsMode, env: 'dev' | 'prod', extra: Rec
 
 function lireComposant(p: Projet, nom: string): string {
   const fichiers = readdirSync(p.outDir)
-  const f        = fichiers.find(f => new RegExp(`^${nom}-[a-f0-9]{8}\\.js$`).test(f))
+  const f        = fichiers.find(f => new RegExp(`^${nom}-[0-9a-z]{5}\\.js$`).test(f))
   assert.ok(f, `${nom}-*.js attendu dans la sortie (trouvés : ${fichiers.join(', ')})`)
   return readFileSync(join(p.outDir, f!), 'utf-8')
 }
 
 function lireCoeur(p: Projet): string {
-  const f = readdirSync(p.outDir).find(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f))
+  const f = readdirSync(p.outDir).find(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f))
   assert.ok(f, 'mjs_core-*.js attendu dans la sortie')
   return readFileSync(join(p.outDir, f!), 'utf-8')
 }
@@ -146,8 +146,13 @@ describe('définition d\'un composant — forme émise (aide du cœur µ._def)',
     const code = readFileSync(join(p.outDir, 'bundle.js'), 'utf-8')
     assert.equal((code.match(/\._def\(/g) ?? []).length, 3, "un appel à l'aide du cœur par composant du projet")
     assert.equal(/customElements\.define\("mjs-(hop|autre|tiers)"/.test(code), false, 'aucune balise de composant ne doit être enregistrée depuis son propre code')
-    // le message reste écrit une seule fois (dans l'aide), accents échappés par le minifieur
-    assert.equal((code.match(/d\\xE9j\\xE0 d\\xE9fini par un autre bundle|déjà défini par un autre bundle/g) ?? []).length, 1, 'le message de collision ne doit apparaître qu\'une fois dans tout le fichier')
+    // le message n'est jamais recopié par composant : la clé n'est appelée qu'une fois, dans l'aide du
+    // cœur ; le texte n'est plus dans le fichier de départ (il vit dans le fichier de messages de la
+    // langue), une seule fois lui aussi
+    assert.equal((code.match(/domDefined/g) ?? []).length, 1, "la clé du message de collision ne doit être appelée qu'une fois, dans l'aide du cœur")
+    assert.equal(/d\\xE9j\\xE0 d\\xE9fini par un autre bundle|déjà défini par un autre bundle/.test(code), false, 'le texte de collision ne doit plus être dans le fichier de départ de production')
+    const messages = readdirSync(p.outDir).filter((f) => /^mjs_err-fr-.*\.json$/.test(f)).map((f) => readFileSync(join(p.outDir, f), 'utf-8')).join('')
+    assert.equal((messages.match(/déjà défini par un autre bundle/g) ?? []).length, 1, 'le texte de collision vit une seule fois, dans le fichier de messages français')
   })
 })
 

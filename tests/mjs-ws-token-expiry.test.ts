@@ -176,7 +176,7 @@ describe('MJS-WS — suivi d\'expiration + rafraîchissement du jeton (boucle co
       writeFileSync(join(root, 'mjs.config.json'), JSON.stringify(config))
       return root
     }
-    assert.throws(() => findConfig(write({ ws: { token: { sweep: 5000, slak: 3000 } } })), /ws\.token\.slak : clé inconnue — tu voulais dire 'slack' \?/)
+    assert.throws(() => findConfig(write({ ws: { token: { sweep: 5000, slak: 3000 } } })), /ws\.token\.slak : clé inconnue — vouliez-vous dire 'slack' \?/)
     assert.throws(() => findConfig(write({ ws: { token: 'oui' } })), /'ws\.token' doit être un objet/)
     assert.throws(() => findConfig(write({ ws: { token: { sweep: 0 } } })), /ws\.token\.sweep doit être un entier > 0/)
     assert.throws(() => findConfig(write({ ws: { token: { slack: 12.5 } } })), /ws\.token\.slack doit être un entier > 0/)

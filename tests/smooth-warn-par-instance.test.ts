@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const runtimeSrc = readFileSync(join(__dirname, '../src/runtime/mjs_smooth.ts'), 'utf8')
@@ -18,6 +19,7 @@ function makeMu(warnSpy?: (m: any) => void): { µ: any; tasks: any[] } {
     warn: warnSpy || (() => {}),
     Ticker: { _mjs_tasks: new Set<any>(), add: (t: any) => { tasks.push(t); µ.Ticker._mjs_tasks.add(t) } },
   }
+  poserMessages(µ)
   new Function('µ', runtimeSrc)(µ)
   return { µ, tasks }
 }

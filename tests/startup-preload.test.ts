@@ -172,7 +172,7 @@ describe('démarrage des pages prérendues — préchargement', function () {
     const p = fixture('startup-preload-2', renderBase())
     const { report } = await construire(p)
     const hrefs = liens(fragment(report, '/about'))
-    const noms  = hrefs.map(h => basename(h).replace(/-[a-f0-9]{8}\.js$/, '')).sort()
+    const noms  = hrefs.map(h => basename(h).replace(/-[0-9a-z]{5}\.js$/, '')).sort()
     assert.deepEqual(noms, ['about', 'aside'], `unités de /about : ${noms.join(', ')}`)
   })
 
@@ -215,7 +215,7 @@ describe('démarrage des pages prérendues — préchargement', function () {
     assert.equal(noms.includes('fantome'), false, `ensemble de démarrage : ${noms.join(', ')}`)
     assert.equal(noms.includes('brut'), false, `ensemble de démarrage : ${noms.join(', ')}`)
     const hrefs = liens(fragment(report, '/'))
-    assert.equal(hrefs.some(h => /\/(attribut|fantome|brut)-[a-f0-9]{8}\.js$/.test(h)), false, `liens : ${hrefs.join(' ')}`)
+    assert.equal(hrefs.some(h => /\/(attribut|fantome|brut)-[0-9a-z]{5}\.js$/.test(h)), false, `liens : ${hrefs.join(' ')}`)
   })
 
   it('deux noms de manifeste pour un seul fichier (alias de dossier) : un seul lien', async () => {

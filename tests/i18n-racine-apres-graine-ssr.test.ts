@@ -70,4 +70,22 @@ describe('i18n — racine après une graine SSR posée AVANT µ._i18nData réel'
     assert.equal(µ.t('sec.p_1'), 'Bonjour', 'la graine SSR reste servie (non-régression)')
     assert.equal(µ.t('landing.titre'), 'Accueil', "clé racine : ne doit plus rendre le placeholder ⟦landing.titre⟧")
   })
+
+  // La graine d'une page rendue ne porte que les clés racine LUES, en arbre partiel (`landing: {haut}`, sans `landing.bas`). Une clé voisine, lue
+  // plus tard par le navigateur (un clic, une branche que le serveur n'a pas rendue), vient du fichier de langue : le remplissage descend donc dans
+  // un nœud présent des deux côtés pour y ajouter ce qui manque, à toute profondeur. Un remplissage qui s'arrête au premier niveau perd `landing.bas`.
+  it('graine à racine partielle : une clé voisine lue plus tard, à un ou plusieurs niveaux, vient du fichier de langue', async function () {
+    const graine = { lang: 'fr', sections: { fr: {} }, root: { fr: { landing: { haut: 'Haut graine' }, a: { b: { c: 'C graine' } } } } }
+    const µ = makeMuSeedBeforeData(
+      { __mjs_i18n: { textContent: JSON.stringify(graine) } },
+      { dev: true, default: 'fr', placeholder: 'wait', root: { fr: { landing: { haut: 'Haut fichier', bas: 'Bas fichier' }, a: { b: { c: 'C fichier', d: 'D fichier' }, e: 'E fichier' }, autre: 'Autre' } }, sections: {} },
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(µ.t('landing.haut'), 'Haut graine', 'ce que la graine porte n\'est pas remplacé')
+    assert.equal(µ.t('landing.bas'), 'Bas fichier', 'clé voisine d\'un niveau : lecture tardive')
+    assert.equal(µ.t('a.b.c'), 'C graine', 'trois niveaux : la graine garde sa clé')
+    assert.equal(µ.t('a.b.d'), 'D fichier', 'trois niveaux : clé voisine lue plus tard')
+    assert.equal(µ.t('a.e'), 'E fichier', 'deux niveaux : clé voisine lue plus tard')
+    assert.equal(µ.t('autre'), 'Autre', 'clé racine absente de la graine')
+  })
 })

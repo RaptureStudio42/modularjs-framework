@@ -9,19 +9,22 @@
 // Ce banc compile la fixture `fixture-transitions/` DEUX fois (`mjs build --dev`, puis `--prod`,
 // minifié, noms raccourcis) et, pour chaque build et chaque moteur, joue TOUS les cas qui
 // pourraient casser en silence :
-//   - chaque animation intégrée (fade, fly, slide, scale, blur, elastic_*, typewriter, draw, iris,
-//     volet, zoom, zoomOut, swipe, bars, blocks) en entrée ET en sortie ;
-//   - les appariées dans un {key} (reveal, flip, cube, turn) ;
-//   - `µanim.create` en forme css et en forme tick, `@in`/`@out` dissociés, `.shared`, `.global`
-//     + `@childtransition="all"`, les 4 événements de transition, {key} + typewriter ;
-//   - le cross-fade `µanim.crossfade` entre deux listes, `@flip`, `µinterpolate`, `µspring` ;
+//   - chaque transition intégrée (*fade, *fly — un mot, un angle, une courbe élastique —, *slide,
+//     *scale — un point d'origine —, *blur, *typewriter, *draw, *iris, *volet, *swipe, *bars,
+//     *blocks, *shatter) en entrée ET en sortie ;
+//   - les appariées dans un {key} (*reveal, *flip, *cube, *turn) ;
+//   - `µanim.create` en forme css et en forme tick, `@in`/`@out` dissociés, les effets de l'appli
+//     (fichier `*.effects.mjs` : un effet réglé, un effet CSS), `.shared`, `.global`
+//     + `@childtransition="all"`, les 4 événements de transition, {key} + *typewriter ;
+//   - le cross-fade `*crossfade` entre deux listes, `@flip`, `µinterpolate`, `µspring` ;
 //   - la transition de PAGE `@viewTransition.cube` du routeur (`document.startViewTransition`
 //     espionné avant tout script, comme dans script/landing_browser_smoke.mjs du site) ;
 //   - et, sur la SORTIE compilée, la présence de chaque animation intégrée utilisée — la garde
 //     muette du build (une anim non détectée = « personne n'en a besoin », cf. bundler/features.ts).
 //
-// Signal d'une transition : `getAnimations({ subtree: true })` sur le nœud (WAAPI — fade/fly/css…)
-// ou, en mode tick (typewriter, typer), la longueur du texte qui progresse. Le premier rendu
+// Signal d'une transition : `getAnimations({ subtree: true })` sur le nœud (WAAPI — fade/fly/css…),
+// en mode tick (typewriter, typer), la longueur du texte qui progresse, et pour *shatter, le calque
+// de tuiles posé juste avant la balise, cachée le temps du jeu. Le premier rendu
 // n'anime jamais (règle documentée, docs/10) : chaque cas démarre VISIBLE, le 1er clic joue la
 // sortie, le 2e l'entrée.
 //
@@ -36,6 +39,7 @@ import { createServer } from 'node:http'
 import { dirname, extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, firefox } from 'playwright'
+import { assertDistFrais } from '../helpers/dist-frais.js'
 
 const __dirname      = dirname(fileURLToPath(import.meta.url))
 const MODULARJS_ROOT = join(__dirname, '..', '..')
@@ -50,21 +54,24 @@ const MIME: Record<string, string> = {
   '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
 }
 
-// animations INTÉGRÉES que la fixture référence par `@transition.x`/`@in.x`/`@out.x` — chacune doit
+// animations INTÉGRÉES que la fixture pose par `@transition=*x`/`@in=*x`/`@out=*x` — chacune doit
 // se retrouver dans la sortie compilée sous la forme `anim.x =` (nom PUBLIC, jamais raccourci)
-const BUILTINS = ['fade', 'fly', 'slide', 'scale', 'blur', 'elastic_fly', 'elastic_scale', 'typewriter', 'draw', 'iris', 'volet', 'zoom', 'zoomOut', 'swipe', 'bars', 'blocks', 'reveal', 'flip', 'cube', 'turn', 'crossfade', 'create']
+const BUILTINS = ['fade', 'fly', 'slide', 'scale', 'blur', 'typewriter', 'draw', 'iris', 'volet', 'swipe', 'bars', 'blocks', 'shatter', 'reveal', 'flip', 'cube', 'turn', 'crossfade', 'create']
 
-// cas {if} à un seul nœud racine : sortie puis entrée, signal WAAPI (`anim`) ou texte (`tick`) ;
-// `outro: false` = nœud IMBRIQUÉ dans son bloc (le tracé SVG sous <svg>) : seule l'entrée est exigée
-type ToggleCase = { id: string; signal: 'anim' | 'tick'; outro?: boolean }
+// cas {if} à un seul nœud racine : sortie puis entrée, signal WAAPI (`anim`), texte (`tick`) ou
+// calque de tuiles (`eclats`) ; `outro: false` = nœud IMBRIQUÉ dans son bloc (le tracé SVG sous
+// <svg>) : seule l'entrée est exigée
+type ToggleCase = { id: string; signal: 'anim' | 'tick' | 'eclats'; outro?: boolean }
 const TOGGLES: ToggleCase[] = [
-  { id: 'fade', signal: 'anim' }, { id: 'fly', signal: 'anim' }, { id: 'slide', signal: 'anim' },
-  { id: 'scale', signal: 'anim' }, { id: 'blur', signal: 'anim' }, { id: 'elastic_fly', signal: 'anim' },
-  { id: 'elastic_scale', signal: 'anim' }, { id: 'typewriter', signal: 'tick' }, { id: 'draw', signal: 'anim', outro: false },
-  { id: 'iris', signal: 'anim' }, { id: 'volet', signal: 'anim' }, { id: 'zoom', signal: 'anim' },
-  { id: 'zoomOut', signal: 'anim' }, { id: 'swipe', signal: 'anim' }, { id: 'bars', signal: 'anim' },
-  { id: 'blocks', signal: 'anim' }, { id: 'spin', signal: 'anim' }, { id: 'typer', signal: 'tick' },
-  { id: 'inout', signal: 'anim' }, { id: 'shared', signal: 'anim' }, { id: 'events', signal: 'anim' },
+  { id: 'fade', signal: 'anim' }, { id: 'fly', signal: 'anim' }, { id: 'fly_angle', signal: 'anim' },
+  { id: 'fly_elastic', signal: 'anim' }, { id: 'slide', signal: 'anim' }, { id: 'scale', signal: 'anim' },
+  { id: 'scale_origin', signal: 'anim' }, { id: 'scale_elastic', signal: 'anim' }, { id: 'blur', signal: 'anim' },
+  { id: 'typewriter', signal: 'tick' }, { id: 'draw', signal: 'anim', outro: false }, { id: 'iris', signal: 'anim' },
+  { id: 'iris_corner', signal: 'anim' }, { id: 'volet', signal: 'anim' }, { id: 'swipe', signal: 'anim' },
+  { id: 'swipe_angle', signal: 'anim' }, { id: 'bars', signal: 'anim' }, { id: 'blocks', signal: 'anim' },
+  { id: 'shatter', signal: 'eclats' }, { id: 'toupie', signal: 'anim' }, { id: 'typer', signal: 'tick' },
+  { id: 'inout', signal: 'anim' }, { id: 'maison', signal: 'anim' }, { id: 'shared', signal: 'anim' },
+  { id: 'events', signal: 'anim' },
 ]
 const DECKS = ['reveal', 'flip', 'cube', 'turn']
 
@@ -127,6 +134,7 @@ describe('banc navigateur réel : transitions, animations et transitions de vue 
   let port = 0
 
   before(async function () {
+    assertDistFrais(MODULARJS_ROOT)
     port   = await freePort()
     server = await serveFixture(port)
   })
@@ -203,6 +211,13 @@ describe('banc navigateur réel : transitions, animations et transitions de vue 
             const sh: any = (window as any).__root(document.querySelector(host))
             return sh.querySelector(sel)?.textContent.trim() ?? null
           }, [HOST, sel])
+          // *shatter : la balise cachée, et juste avant elle le calque de ses tuiles
+          const eclats = (sel: string) => page.evaluate(([host, sel]: string[]) => {
+            const sh: any = (window as any).__root(document.querySelector(host))
+            const el = sh.querySelector(sel)
+            const calque = el && el.previousElementSibling
+            return !!el && el.style.visibility === 'hidden' && !!calque && calque.getAttribute('aria-hidden') === 'true' && calque.querySelectorAll('i').length > 0
+          }, [HOST, sel])
           const attendre = async (pred: () => Promise<boolean>, ms: number, quoi: string) => {
             const fin = Date.now() + ms
             while (Date.now() < fin) { if (await pred()) return; await page.waitForTimeout(40) }
@@ -222,6 +237,7 @@ describe('banc navigateur réel : transitions, animations et transitions de vue 
               if (c.outro !== false) {
                 assert.equal(sortie.n, 1, `${c.id} : le nœud a disparu SANS jouer sa sortie`)
                 if (c.signal === 'anim') assert.ok(sortie.animes >= 1, `${c.id} : aucune animation WAAPI pendant la sortie`)
+                else if (c.signal === 'eclats') assert.ok(await eclats(sel), `${c.id} : ni tuiles ni balise cachée pendant la sortie`)
                 else assert.ok(sortie.textes[0].length < pleinTexte.length, `${c.id} : le texte ne raccourcit pas pendant la sortie`)
               }
               await attendre(async () => (await etat(sel)).n === 0, 2000, `${c.id} : le nœud devrait être retiré après sa sortie`)
@@ -230,8 +246,9 @@ describe('banc navigateur réel : transitions, animations et transitions de vue 
               const entree = await etat(sel)
               assert.equal(entree.n, 1, `${c.id} : le nœud n'est pas revenu`)
               if (c.signal === 'anim') assert.ok(entree.animes >= 1, `${c.id} : aucune animation WAAPI pendant l'entrée`)
+              else if (c.signal === 'eclats') assert.ok(await eclats(sel), `${c.id} : ni tuiles ni balise cachée pendant l'entrée`)
               else assert.ok(entree.textes[0].length < pleinTexte.length, `${c.id} : le texte ne se tape pas lettre à lettre à l'entrée`)
-              await attendre(async () => { const e = await etat(sel); return e.n === 1 && e.animes === 0 && e.textes[0] === pleinTexte }, 2000, `${c.id} : l'entrée devrait se terminer sur le texte complet, sans animation résiduelle`)
+              await attendre(async () => { const e = await etat(sel); return e.n === 1 && e.animes === 0 && e.textes[0] === pleinTexte && !(await eclats(sel)) }, 2000, `${c.id} : l'entrée devrait se terminer sur le texte complet, sans animation résiduelle`)
             })
           }
 
@@ -272,7 +289,7 @@ describe('banc navigateur réel : transitions, animations et transitions de vue 
             }
           })
 
-          it('{key} + @in.typewriter : le nouveau message se tape lettre à lettre', async function () {
+          it('{key} + @in=*typewriter : le nouveau message se tape lettre à lettre', async function () {
             await clic('#btn-keyed')
             await pause(60)
             const e = await etat('[data-deck="keyed"] [data-case="keyed"]')

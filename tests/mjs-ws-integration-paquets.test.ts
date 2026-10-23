@@ -145,13 +145,16 @@ function joinHall(s: any, hall = 'hall', prefixe = 'lobby:'): void { s.room(pref
 function joinSalon(s: any, salon: string, prefixe = 'chat:'): void { s.room(prefixe + salon) }
 
 // mémoire bornée du paquet Lobby — fait franchir le seuil de balayage GLOBAL
-// (BALAYAGE_TOUTES_LES_ACTIONS = 50, lobby.ts), MÊME technique que tests/mjs-ws-lobby.test.ts::
-// declencherBalayageGlobal — nécessaire au scénario 3e (retrait d'annonce d'un identité éjectée,
-// jamais poussé en LIVE, seulement au prochain passage de balayage).
+// (SWEEP_EVERY_N_ACTIONS = 50, lobby.ts), MÊME technique que tests/mjs-ws-lobby.test.ts::
+// declencherBalayageGlobal (un client membre de son hall 'bruit' : seule l'action d'un membre compte) —
+// nécessaire au scénario 3e (retrait d'annonce d'un identité éjectée, jamais poussé en LIVE, seulement
+// au prochain passage de balayage).
 async function declencherBalayageLobby(transport: MemoryTransport): Promise<void> {
   const s = connectAnonyme(transport, 'memory://bruit-integration-lobby')
   await tick()
-  for (let i = 0; i < 80; i++) s.send('lobby:block', { hall: 'bruit', identityId: 'x' })
+  joinHall(s, 'bruit')
+  await s.request('lobby:enter', { hall: 'bruit' })
+  for (let i = 0; i < 70; i++) s.send('lobby:block', { hall: 'bruit', identityId: 'x' })
   await tick()
   s.destroy(); await tick()
 }

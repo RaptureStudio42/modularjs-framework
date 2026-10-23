@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { assertAbsent } from './helpers/dom-assert.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -60,7 +61,7 @@ describe('mjs_modal — µ.modal.wait (modale d\'attente)', function () {
   it('focus initial sur la boîte (tabindex="-1", zéro bouton/input — même repli que showConfirmButton:false)', function () {
     const { document, µ } = loadModal()
     µ.modal.wait()
-    assert.equal(document.activeElement, box(document))
+    assert.ok(document.activeElement === box(document), 'le focus est sur la boîte')
   })
 
   it('allowOutsideClick:false — clic backdrop ne ferme PAS', async function () {
@@ -91,7 +92,7 @@ describe('mjs_modal — µ.modal.wait (modale d\'attente)', function () {
     const handle = µ.modal.wait()
     assert.ok(box(document), 'ouverte avant close()')
     handle.close()
-    assert.equal(box(document), null, 'fermée après close()')
+    assertAbsent(box(document), 'fermée après close()')
   })
 
   it("close() résout la modale sous-jacente avec {isConfirmed:false, isDenied:false, isDismissed:true, value:undefined, dismiss:'close'}", async function () {

@@ -20,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 function loadRareRunes(win: any) {
   const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf-8')
     .replace(/export\s*\{[^}]*\}/, '')
-  const rareRunesSrc = readFileSync(join(__dirname, '../src/runtime/mjs_rare_runes.ts'), 'utf-8')
+  const rareRunesSrc = readFileSync(join(__dirname, '../src/runtime/mjs_play.ts'), 'utf-8')
   const sandbox = `
     ${initSrc}
     ${rareRunesSrc}

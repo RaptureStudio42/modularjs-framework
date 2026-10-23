@@ -15,7 +15,8 @@ describe('paths.ts — échappement d\'un attribut texte + expression mêlés', 
       '{await $p}{success d}<p class="cible" title=\'pré-{d.replace(/\\s/, "_")}\'></p>{end}',
     ].join('\n')
     const { output } = await transpile(source, { moduleName: 'escapeMixed' })
-    const line = output.split('\n').find((l) => l.includes('_mjs_updAttrNode') && l.includes('title'))
+    // le dernier argument `1` (nom sans risque) n'est pas la valeur
+    const line = output.split('\n').find((l) => l.includes('_mjs_updAttrNode') && l.includes('title'))?.replace(/, 1\);\s*$/, ');')
     assert.ok(line, 'la ligne de pose de l\'attribut title doit être présente')
     const expr   = line!.slice(line!.indexOf(', "title", ') + ', "title", '.length, line!.lastIndexOf(');'))
     const actual = Function('d', `return (${expr});`)('a b')
@@ -28,7 +29,8 @@ describe('paths.ts — échappement d\'un attribut texte + expression mêlés', 
       '{await $p}{success d}<p class="cible" title=\'{d.replace(/\\s/, "_")}\'></p>{end}',
     ].join('\n')
     const { output } = await transpile(source, { moduleName: 'escapeBare' })
-    const line = output.split('\n').find((l) => l.includes('_mjs_updAttrNode') && l.includes('title'))
+    // le dernier argument `1` (nom sans risque) n'est pas la valeur
+    const line = output.split('\n').find((l) => l.includes('_mjs_updAttrNode') && l.includes('title'))?.replace(/, 1\);\s*$/, ');')
     assert.ok(line)
     const expr   = line!.slice(line!.indexOf(', "title", ') + ', "title", '.length, line!.lastIndexOf(');'))
     const actual = Function('d', `return (${expr});`)('a b')

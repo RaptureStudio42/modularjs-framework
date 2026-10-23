@@ -9,7 +9,7 @@ Deux couches, complémentaires, pour parler au **serveur** (à ne pas confondre 
 
 ## `µ.ajax` — requêtes HTTP
 
-`µ.ajax.get/post/put/patch/delete` enrobent `fetch` avec les conventions du framework : en-tête `Accept` négocié (JSON préféré, HTML accepté — pour supporter aussi bien une API qu'une page complète), `X-Requested-With: XMLHttpRequest`, et jeton **CSRF** relu et posé automatiquement sur toute méthode mutante.
+`µ.ajax.get/post/put/patch/delete` enrobent `fetch` avec les conventions du framework : en-tête `Accept` négocié (JSON préféré, HTML accepté — pour supporter aussi bien une API qu'une page complète), `X-Requested-With: XMLHttpRequest` vers l'origine de la page (jamais vers une autre origine : cet en-tête non standard y forcerait une requête préalable `OPTIONS`, que bien des API publiques refusent), et jeton **CSRF** relu et posé automatiquement sur toute méthode mutante.
 
 ```js
 µ.ajax.get('/api/produits', (json)-> $produits = json)
@@ -17,9 +17,9 @@ Deux couches, complémentaires, pour parler au **serveur** (à ne pas confondre 
 µ.ajax.delete('/api/produits/42', -> $produits = $produits.filter (p)-> p.id != 42)
 ```
 
-Signature commune : `(url, [data,] success, error, always, timeout, signal)` — `data` seulement pour `post`/`put`/`patch` (sérialisé en JSON, sauf `FormData` passé tel quel). `error(err)` reçoit `{ status, body, url }` sur une réponse non-2xx. `timeout` (ms, optionnel) borne la requête ; `signal` (`AbortSignal`, optionnel) permet un abandon piloté par l'appelant — c'est ce que la couche UJS utilise pour tuer une navigation périmée.
+Signature commune : `(url, [data,] success, error, always, timeout, signal)` — `data` seulement pour `post`/`put`/`patch` (sérialisé en JSON, sauf `FormData`, `URLSearchParams`, un fichier ou des octets — `Blob`, `File`, `ArrayBuffer`, `Uint8Array`… — passés tels quels, sans `Content-Type` JSON). `error(err)` reçoit `{ status, body, url }` sur toute réponse non-2xx, même sans corps (un `head :forbidden` de Rails) ou au corps JSON illisible (`body` porte alors le texte reçu). `timeout` (ms, optionnel) borne la requête ; `signal` (`AbortSignal`, optionnel) permet un abandon piloté par l'appelant — c'est ce que la couche UJS utilise pour tuer une navigation périmée.
 
-**CSRF automatique** : sur toute méthode ≠ `GET`/`HEAD`, le jeton est relu à **chaque requête** depuis `<meta name="csrf-token" content="…">` (convention Rails) et posé en en-tête `X-CSRF-Token` — relecture systématique (pas de mémoïsation) pour rester valide après une rotation de session (login/logout en SPA sans rechargement). Le jeton n'est **jamais** transmis vers une autre origine — un appel `µ.ajax` direct sur un hôte tiers (`µ.ajax.post('https://tiers.example/…')`) ne le reçoit pas, avec un avertissement en console.
+**CSRF automatique** : sur toute méthode ≠ `GET`/`HEAD`, le jeton est relu à **chaque requête** depuis `<meta name="csrf-token" content="…">` (convention Rails) et posé en en-tête `X-CSRF-Token` — relecture systématique (pas de mémoïsation) pour rester valide après une rotation de session (login/logout en SPA sans rechargement). Le jeton n'est **jamais** transmis vers une autre origine — un appel `µ.ajax` direct sur un hôte tiers (`µ.ajax.post('https://tiers.example/…')`) ne le reçoit pas, avec un avertissement en console. Le jeton suit la navigation : chaque page HTML reçue (clic, envoi de formulaire, `Précédent` redemandé au serveur) qui porte un `<meta name="csrf-token">` (et `<meta name="csrf-param">`) dans son `<head>` remplace celui de la page — après une connexion ou une déconnexion faite sans rechargement (le serveur fait alors tourner son jeton), `µ.ajax`, les liens `@method` et les formulaires partent avec le nouveau. Une page reçue sans cette balise laisse celle de la page en place.
 
 ## Interception des liens et formulaires
 
@@ -28,13 +28,19 @@ Dès que le runtime UJS est chargé (module `ujs`, cf. [aide-mémoire → runtim
 Deux modes de réponse coexistent, et le déclencheur est un simple en-tête de requête. **Sans l'en-tête `X-MJS-Nav`** — le cas que couvre cette section — le serveur répond en HTML et le client remplace le contenu de `<body>` par le fragment reçu (détail juste en dessous). **Avec cet en-tête**, un serveur qui le reconnaît répond en JSON et le client monte le composant désigné dans le contenant que porte la fiche : voir plus bas « Le protocole serveur » pour ce second mode, sa négociation, son contrat de réponse et son volet client.
 
 - **Liens** — un clic sur `<a href="/produits">` (même origine, cible `_self`, pas de `download`, pas `mailto:`/`javascript:`) déclenche un `pushState` **immédiat** puis un `fetch` de la page ; en mode HTML, le contenu de `<body>` est **remplacé** par celui de la réponse. Un lien vers un `#ancre` non-route défile normalement (pas intercepté).
-- **Formulaires** — une soumission (`GET`/`POST`/`PUT`/`PATCH`/`DELETE` via un champ caché `_method`) suit le même chemin : requête ajax, puis en mode HTML remplacement du contenu de `<body>` par la réponse. Un bouton soumissionnaire (celui qui a réellement déclenché l'envoi) portant `formaction`/`formtarget`/`formmethod` prend le pas sur les attributs `action`/`target`/`method` du formulaire pour cette soumission précise ; repli sur ceux du formulaire en l'absence de ces attributs sur le bouton, ou pour une soumission par la touche Entrée. `method="dialog"`/`formmethod="dialog"`, elle, n'est **jamais** interceptée : cette méthode HTML n'envoie rien au réseau, elle ferme le `<dialog>` englobant — MJS laisse le navigateur s'en charger nativement (`@confirm` continue de jouer avant, comme pour toute autre soumission). Ce défaut natif ne vaut que pour l'attribut `method`/`formmethod` : un champ caché `_method=dialog`, lui, n'est pas une méthode HTML et est refusé explicitement, jamais traité comme un repli vers la fermeture native.
+- **Formulaires** — une soumission (`GET`/`POST`/`PUT`/`PATCH`/`DELETE` via un champ caché `_method`) suit le même chemin : requête ajax, puis en mode HTML remplacement du contenu de `<body>` par la réponse. Un `DELETE` venu du champ `_method` garde les autres champs du formulaire dans son corps (paramètres, `authenticity_token`), comme le formulaire natif ; un lien `@method="delete"`, qui n'a que ce verbe, part sans corps. Un formulaire `GET` dont la réponse n'installe rien (`X-MJS-Method: none`, `204`) ou dont la requête échoue (panne réseau, erreur sans page HTML, refus `422` en JSON) laisse l'adresse sur la page affichée. Un bouton soumissionnaire (celui qui a réellement déclenché l'envoi) portant `formaction`/`formtarget`/`formmethod` prend le pas sur les attributs `action`/`target`/`method` du formulaire pour cette soumission précise ; repli sur ceux du formulaire en l'absence de ces attributs sur le bouton, ou pour une soumission par la touche Entrée. `method="dialog"`/`formmethod="dialog"`, elle, n'est **jamais** interceptée : cette méthode HTML n'envoie rien au réseau, elle ferme le `<dialog>` englobant — MJS laisse le navigateur s'en charger nativement (`@confirm` continue de jouer avant, comme pour toute autre soumission). Ce défaut natif ne vaut que pour l'attribut `method`/`formmethod` : un champ caché `_method=dialog`, lui, n'est pas une méthode HTML et est refusé explicitement, jamais traité comme un repli vers la fermeture native.
+- **`<form method="delete">`** — le verbe peut aussi venir de l'attribut `method` du formulaire, que le HTML seul ne connaît pas : un `DELETE` ainsi déclaré garde lui aussi les autres champs du formulaire dans son corps, comme avec le champ `_method` ; sans aucun champ, il part sans corps.
+- **L'ordre, pour un lien comme pour un formulaire** — la question de `@confirm` d'abord (un refus arrête tout, votre gestionnaire compris), puis votre gestionnaire (`@click`, `@submit`), puis la navigation. Un `.prevent` dans votre gestionnaire (ou `e.preventDefault()`) retient donc le lien ou l'envoi : `<form action="/inscription" method="post" @submit.prevent={verifier()}>` ne part jamais tout seul, c'est `verifier()` qui décide. `.stop` ne coupe pas la navigation.
+- **Un écouteur qui coupe la propagation** — un écouteur natif de la page qui coupe la propagation d'un clic sur un lien ou de l'envoi d'un formulaire d'un composant (`stopPropagation()` en remontée ou en capture, `stopImmediatePropagation()`, sur le nœud, un conteneur ou le document) ne rend pas le lien ou le formulaire au navigateur : la navigation de MJS le prend quand même, sauf si un écouteur appelle `preventDefault()`, auquel cas il reste à l'auteur. Quand la coupure est posée sur le document, MJS ne décide qu'après le dernier écouteur de ce nœud. Limites : un envoi lancé par script (`requestSubmit()`, `bouton.click()`) coupé par `stopImmediatePropagation()` ou au niveau du document est envoyé par le navigateur ; sous Firefox, la touche Entrée dans un champ suit la même limite ; une coupure en capture sur `window` passe avant MJS. Le lien ou le formulaire d'une page ordinaire, hors composant, reste au navigateur. Un formulaire de la page glissé dans un composant à ombre est repris comme un formulaire du composant (pas un lien). Un lien d'un composant à ombre fermée dont un écouteur de votre page coupe la propagation en capture sur le document est suivi par le navigateur : MJS ne voit pas ce lien. Coupez en remontée, ou dans le composant.
 - **Le contenant** — une navigation remplace le **contenu** d'un contenant, jamais le contenant lui-même par défaut. En mode HTML, ce contenant est `<body>`, sauf si la réponse porte les en-têtes `X-MJS-Target` (sélecteur CSS) et `X-MJS-Method` — appliqués exactement comme les clés `target`/`method` de la fiche JSON, alimentés côté `mjs serve` par les réglages globaux `render.target`/`render.method` : c'est la page qui arrive qui décide de son contenant. Le `<title>` et une partie ciblée du `<head>` suivent, eux, la navigation indépendamment du contenant visé — cf. « Le `<head>` suit la navigation » plus bas. En mode JSON, le contenant se désigne par la clé `target` de la fiche — détail complet, avec `method`, au paragraphe « Le protocole serveur » plus bas.
-- **Opt-out** — la directive **`@noUJS`** (directive nue, sans valeur ; attribut compilé `mjs-no-ujs`) sur un `<a>` ou un `<form>` désactive l'interception pour cet élément précis : le navigateur reprend la navigation native (rechargement complet), utile pour un téléchargement, un endpoint qui répond du JSON brut, ou une page dont les scripts doivent réellement s'exécuter. `@confirm` continue de jouer sur un élément qui porte `@noUJS` : la confirmation est demandée, puis la navigation native suit. `@method`, lui, n'a plus de sens sur un élément `@noUJS` (une navigation native ne sait faire qu'un `GET`) : porter les deux fait perdre le verbe, MJS l'avertit en console une fois par élément concerné.
+- **Opt-out** — la directive **`@noUJS`** (directive nue, sans valeur ; attribut compilé `mjs-no-ujs`) sur un `<a>` ou un `<form>` désactive l'interception pour cet élément précis : le navigateur reprend la navigation native (rechargement complet), utile pour un téléchargement, un endpoint qui répond du JSON brut, ou une page dont les scripts doivent réellement s'exécuter. `@confirm` continue de jouer sur un élément qui porte `@noUJS` : la confirmation est demandée, puis la navigation native suit. `@method`, lui, n'a plus de sens sur un élément `@noUJS` (une navigation native ne sait faire qu'un `GET`) : porter les deux fait perdre le verbe, MJS l'avertit en console une fois par élément concerné — sauf `@method="get"`, quelle que soit sa casse : la navigation native fait ce `GET`, rien n'est perdu, aucun avertissement.
+- **Lien `@method` suivi par le navigateur** — avec Ctrl, Maj, Alt ou Cmd (nouvel onglet, nouvelle fenêtre, téléchargement), au clic du milieu, sur un lien qui porte `target` (autre que `_self`) ou `download`, ou vers une autre origine, le navigateur suivrait le lien lui-même, en `GET`, sans le verbe de `@method`. MJS retient le geste : rien ne part, ni navigation ni requête, et la console de développement dit pourquoi, une fois par lien. Sur un lien qui porte aussi `@confirm`, le geste est retenu avant la question : elle n'est pas posée. Seul un clic simple envoie la requête, après la question s'il y en a une. Exception : `@method="get"`, quelle que soit sa casse — le verbe même du navigateur, rien n'est perdu : sous ces gestes, le lien se comporte comme un lien ordinaire, le navigateur l'ouvre (onglet, fenêtre, téléchargement, page quittée) sans avertissement, et `@confirm` y pose sa question comme sur un lien ordinaire. Tout autre verbe, même inconnu, reste retenu. Limite : « Ouvrir dans un nouvel onglet », dans le menu contextuel du navigateur, échappe à la page — l'onglet s'ouvre en `GET`. Pour une action, préférez un formulaire.
 - **Nouveau build (mode HTML)** — une réponse HTML peut porter l'en-tête `X-MJS-Version` ; une valeur différente de celle du bundle déjà chargé (`µ.version`) déclenche un rechargement complet plutôt qu'un remplacement de contenu — même règle que le champ `version` de la fiche JSON (cf. « Le protocole serveur » plus bas). `mjs serve` pose cet en-tête sur toutes ses réponses HTML.
 - **Avertissement `<script>`** — un `<script>` présent dans le contenu échangé n'est jamais ré-exécuté par le navigateur (règle du DOM, pas un choix de MJS) : le client émet un avertissement en console à chaque script distinct détecté dans le contenu qui arrive (une fois par script — les `<script type="application/json">` et assimilés, non exécutables, n'en déclenchent aucun, un script dont le `src` est déjà chargé dans la page non plus). C'est le signal d'un anti-pattern classique en branchant MJS sur un site existant : le remède est de déplacer ce code dans un composant MJS (`µmount`), ou de poser `@noUJS` sur les liens qui mènent à cette page.
 
 Soumettre un `<form>` **désactive automatiquement** ses boutons de soumission (+ pose `aria-busy="true"` sur le formulaire) le temps de la requête — restauré dans tous les cas (succès, erreur, 422). Opt-out : `mjs-no-disable` sur le `<form>`.
+
+Tant que sa requête est en vol, une nouvelle soumission d'un formulaire qui modifie (`POST`, `PUT`, `PATCH`, `DELETE`) est ignorée : la touche Entrée d'un formulaire sans bouton ou un `requestSubmit()` lancé par un script ne la font pas partir une seconde fois au serveur. Un formulaire `GET` (une recherche en direct, soumise par `requestSubmit()` à chaque frappe) n'a pas cette garde : chaque soumission part, abandonne celle encore en vol, et la dernière réponse gagne. `mjs-no-disable` lève aussi la garde : chaque soumission part alors.
 
 ```html
 <a href="/export.csv" mjs-no-ujs download>Exporter en CSV</a>
@@ -53,13 +59,28 @@ La convention **Post/Redirect/Get** est suivie : après un `POST`/`PUT`/`PATCH`/
 
 En mode HTML, une réponse **422** (validation échouée, convention Rails/Turbo) est traitée comme un **succès de rendu** : le corps HTML reçu (le formulaire re-affiché avec ses erreurs) remplace la zone de montage, sans navigation — l'utilisateur corrige son formulaire sans avoir rien perdu. En mode protocole, la même situation reste un **422** mais le corps est le JSON du protocole, avec les erreurs ajoutées aux `props` de la page : cf. « Le protocole serveur » → *Formulaires*, plus bas, pour le détail exact.
 
+### Un effet à la réussite, ou à l'échec
+
+Un effet réglé `on: success` ou `on: error`, posé sur le formulaire, son bouton ou une balise à l'intérieur, se joue à la réponse du serveur : réponse acceptée (2xx) ou refus (422, page d'erreur), réseau coupé compris. Il part avant l'affichage de la réponse — il sert un formulaire qui reste à l'écran (réponse `method: none`, refus en JSON).
+
+```html
+<form action="/inscription" method="post" *shake(on: error)>
+  …
+  <button *confetti(on: success)>S'inscrire</button>
+</form>
+```
+
+Détails : [38 · Effets](38-effets.md), « Réussite et échec ».
+
 ### Cache de pages — `µ.pageCache`
 
 Les pages déjà visitées sont mises en cache (LRU, 10 entrées) : un retour arrière (`Précédent` du navigateur) ou un re-clic sur un lien déjà visité **restaure instantanément** le DOM caché, sans requête réseau. Le cache est **purgé automatiquement** après toute soumission mutante (`POST`/`PUT`/`PATCH`/`DELETE`) — un contenu obsolète après une suppression/création ne reste jamais affiché. Le cache fonctionne quel que soit le contenant, `<body>` compris : le **contenu** du contenant est mis en hibernation au départ, puis restauré tel quel dans ce même contenant. Une seule exception ne participe pas au cache : une page montée avec `method: "replace"` — son contenant a cédé sa place, il n'y a plus de contenant stable où reposer le contenu quitté ; elle est simplement re-demandée au serveur. Une page montée avec `method: "append"` participe au cache comme les autres, et c'est ce qu'on attend d'elle : ce qui est archivé, c'est l'état **accumulé** du contenant — un fil ou une pagination infinie retrouve au retour arrière tout ce qui avait été chargé. Ce que l'`append` fait en revanche, c'est retirer du cache l'entrée de la page qu'il vient de compléter : son contenu n'a jamais été détaché, il est toujours à l'écran.
 
-La position de **scroll** est sauvegardée par page et restaurée à la reprise (cache-hit ou re-fetch) ; le **focus** est déplacé après chaque swap vers le nouveau contenu (`[autofocus]` > premier `<h1>` > le conteneur) — accessibilité pour un lecteur d'écran, qui ne suit pas un remplacement de DOM silencieux.
+La position de **scroll** est sauvegardée par page et restaurée à la reprise (cache-hit ou re-fetch), et dans une même page par route hash : un `Précédent` d'une fiche `#/item` vers la liste `#/list` quittée par un lien ou par `µ.Router.navigate` la retrouve à sa position — dès que la navigation est chargée, le défilement natif du navigateur est coupé pour toute la page ; le **focus** est déplacé après chaque swap vers le nouveau contenu (`[autofocus]` > premier `<h1>` > le conteneur) — accessibilité pour un lecteur d'écran, qui ne suit pas un remplacement de DOM silencieux.
 
-> ⚠️ **À la déconnexion, appelle `µ.pageCache.clear()`.** Le cache garde l'arbre **vivant** des pages
+Entre les ancres ordinaires d'une même page (`<a href="#section">`, suivies par le navigateur lui-même), `Précédent` et `Suivant` rendent aussi la position de chaque entrée : celle qu'elle avait quand l'utilisateur l'a quittée par une autre ancre, sinon l'ancre elle-même, comme le navigateur seul.
+
+> ⚠️ **À la déconnexion, appelez `µ.pageCache.clear()`.** Le cache garde l'arbre **vivant** des pages
 > visitées : après une déconnexion, un `Précédent` les ressort **sans aucune requête** — nom, adresse,
 > montants, fil de messages, tout ce qui était affiché reste lisible, et le serveur n'a jamais
 > l'occasion de refuser puisqu'on ne lui demande rien. Les *actions*, elles, sont bien refusées (le
@@ -86,6 +107,8 @@ La page qu'on affiche choisit ce qu'il advient d'elle une fois quittée, parmi t
 | `cache-first` *(défaut)* | La page hiberne normalement (cf. ci-dessus) : le retour arrière restitue le DOM archivé, sans requête. |
 | `revalidate` | La page hiberne normalement, MAIS le retour arrière affiche le DOM archivé **immédiatement** (même vitesse qu'un `cache-first`) puis lance une vérification en fond, silencieuse (pas de barre de progression, pas de nouvelle entrée d'historique) : si la réponse diffère du contenu affiché, il est remplacé ; sinon rien ne bouge, aucun clignotement. La comparaison reste bon marché — une version de build ou le HTML du contenant, jamais un diff d'arbres DOM. |
 | `no-cache` | La page n'est **jamais** archivée : le retour arrière re-demande toujours la page au serveur. La position de **scroll**, elle, reste mémorisée comme pour toute page — seul le DOM n'est pas conservé. |
+
+La vérification `revalidate` compare la page reçue à celle reçue la fois précédente pour la même adresse, jamais au DOM affiché : ce qu'un composant pose sur sa balise (prop reflétée, `theme`, état) ne passe pas pour un changement du serveur, et la page n'est remplacée que si le serveur en envoie vraiment une autre.
 
 Trois canaux annoncent cette politique, avec une précédence fixe :
 
@@ -162,7 +185,7 @@ Pas émis sur `Précédent`/`Suivant` : le navigateur a déjà changé l'URL qua
 
 `detail` : `path`, `url`, `via`, `zone` (le contenant qui a effectivement reçu le contenu — en mode `replace`, celui qui a accueilli le module, pas le contenant visé qui lui a cédé sa place), et `initial` — booléen.
 
-`mjs:load` est aussi émis au premier chargement de la page, avec `initial: true` et `via: 'initial'` : un écouteur unique suffit alors à couvrir la première page et toutes les suivantes — c'est ce qui rend une mesure d'audience branchable en trois lignes, sans traiter le premier affichage à part. Pour ne réagir qu'aux navigations, teste `e.detail.initial`.
+`mjs:load` est aussi émis au premier chargement de la page, avec `initial: true` et `via: 'initial'` : un écouteur unique suffit alors à couvrir la première page et toutes les suivantes — c'est ce qui rend une mesure d'audience branchable en trois lignes, sans traiter le premier affichage à part. Pour ne réagir qu'aux navigations, testez `e.detail.initial`.
 
 ```js
 document.addEventListener('mjs:load', (e)->
@@ -206,32 +229,35 @@ Le transplant est un déplacement, pas une reconstruction : les hooks de démont
 {end}
 ```
 
-`µnav.active` est la primitive : elle suffit à construire n'importe quelle barre ou spinner à la main. Pour le cas courant — une barre discrète qui n'apparaît que si la navigation prend du temps — MJS pose lui-même l'élément, à condition de l'activer :
+`µnav.active` est la primitive : elle suffit à construire n'importe quelle barre ou spinner à la main. Pour le cas courant, MJS pose **de lui-même** une barre de navigation : un trait de lumière qui court en haut de la page quand une navigation dure plus d'une demi-seconde — un lien, un formulaire, et une page du routeur dont le composant n'est pas encore arrivé (cf. [17 · Router](17-router.md)). Rien à écrire.
+
+- Une navigation plus rapide que le seuil (cache, réseau local) n'affiche **rien** : pas de clignotement.
+- La barre part à la fin de la navigation (succès, échec, abandon) ; côté routeur, quand le code des composants de la page est arrivé (ou que le chargement renonce, avec son erreur en console).
+- Deux navigations qui s'enchaînent ne créent jamais deux barres.
+- « Réduire les animations » (réglage du système) : un trait fixe, qui ne court pas.
+
+Le réglage, dans votre code, avant le montage :
 
 ```js
-µ.config.navProgress = true   // seuil par défaut : 500ms
-µ.config.navProgress = 700    // ou un seuil personnalisé, en ms
+µ.config.navProgress = 700                           // le seuil, en ms (défaut : 500)
+µ.config.navProgress = { delay: 300, place: 'bottom' } // le seuil, et la barre en bas de la page
+µ.config.navProgress = false                         // pas de barre
 ```
 
-Sans cette clé (ou à `false`), rien n'est inséré, rien ne tourne. Une fois activée, un `<div class="mjs-nav-progress" role="progressbar" aria-hidden="true"></div>` est inséré dans `<body>` seulement si la navigation dépasse le seuil — une navigation plus rapide (cache, réseau local) n'affiche jamais rien, l'élément est retiré dès la fin de la navigation (succès, échec, abandon). Deux navigations qui s'enchaînent ne créent jamais deux éléments.
+L'allure se règle en CSS, par ses variables — ou en variables de thème (`$$nav-progress-color`) :
 
-L'apparence est **entièrement en CSS**, la classe est le seul contrat :
+| Variable | Défaut | Ce qu'elle règle |
+|---|---|---|
+| `--mjs-nav-progress-color` | `#58a6ff` | la couleur du trait et de sa lueur |
+| `--mjs-nav-progress-height` | `3px` | l'épaisseur |
+| `--mjs-nav-progress-speed` | `1.2s` | le temps d'une course d'un bord à l'autre |
+| `--mjs-nav-progress-zindex` | `2147483000` | le plan (au-dessus de tout) |
 
 ```css
-.mjs-nav-progress {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, dodgerblue, transparent);
-  animation: mjs-nav-progress-glisse 1.2s linear infinite;
-}
-@keyframes mjs-nav-progress-glisse {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100%); }
-}
+:root { --mjs-nav-progress-color: #e11d48; --mjs-nav-progress-height: 2px; }
 ```
+
+La barre est un `<div class="mjs-nav-progress" role="progressbar" aria-hidden="true">` posé dans `<body>` (avec `data-place="bottom"` en bas). Ses règles par défaut n'ont aucun poids (`:where(…)`) : une règle de votre CSS sur `.mjs-nav-progress` l'emporte toujours, pour la dessiner tout autrement.
 
 ### Abandon des navigations périmées
 
@@ -247,7 +273,7 @@ Une navigation échange le contenu d'un contenant (cf. ci-dessus) — mais sans 
 - tout `<meta property="…">` dont la propriété commence par `og:`, `twitter:` ou `article:` ;
 - `<link rel="canonical">`.
 
-Cette liste est **fermée**. Tout le reste du `<head>` reste **intouché**, en particulier `<meta charset>`, `<meta name="viewport">`, tout `<meta http-equiv>`, `<meta name="csrf-token">`, `<meta name="mjs-cache">`, `<style>`, `<script>`, `<link rel="stylesheet">`, `<link rel="icon">`, `<base>`.
+Cette liste est **fermée**. Tout le reste du `<head>` reste **intouché**, en particulier `<meta charset>`, `<meta name="viewport">`, tout `<meta http-equiv>`, `<meta name="mjs-cache">`, `<style>`, `<script>`, `<link rel="stylesheet">`, `<link rel="icon">`, `<base>`. Le jeton CSRF (`<meta name="csrf-token">`, `<meta name="csrf-param">`) n'est pas dans cette liste : il suit à part la page reçue, même avec `µ.config.navHead = false` — c'est du protocole, cf. « CSRF automatique » plus haut.
 
 ### Pourquoi styles et scripts n'en font pas partie
 
@@ -267,7 +293,7 @@ Chaque balise pilotée a une clé — le `name`, la `property`, ou `canonical`. 
 | présente seulement côté page reçue | la balise est **ajoutée** |
 | présente seulement côté page affichée | la balise est **retirée** — sinon l'`og:image` d'une fiche produit traînerait sur la page contact |
 
-Une réponse dont le `<head>` est **vide** n'applique rien du tout : un `<head>` vide veut dire « aucune information », pas « efface tout ». Un `<title>` absent ou vide dans la page reçue laisse le titre affiché **inchangé** — MJS n'efface jamais un titre.
+Une réponse dont le `<head>` est **vide** n'applique rien du tout : un `<head>` vide veut dire « aucune information », pas « effacez tout ». Un `<title>` absent ou vide dans la page reçue laisse le titre affiché **inchangé** — MJS n'efface jamais un titre.
 
 ### Retour arrière et rafraîchissement de fond
 
@@ -310,6 +336,24 @@ et porte ses propres liens dans son HTML figé, en tête de fragment — premiè
 manifeste. La clé qui règle cela, jusqu'à l'assemblage des composants d'une page en un seul fichier,
 est [`render.startup`](32-cli-et-configuration.md#renderstartup).
 
+## Charger d'avance un composant et sa descendance — `µ.Autoloader.preload`
+
+`µ.Autoloader.load(nom)` charge un composant, et lui seul. `µ.Autoloader.preload(nom)` charge d'avance, **sans rien exécuter** (liens `<link rel="modulepreload">`), le fichier du composant **et** ceux de toute sa descendance : les composants que son gabarit écrit, les modules qu'il importe, ses fichiers d'effets. Un onglet dont les cartes sont des composants se prépare ainsi au survol, et le clic les trouve déjà en cache.
+
+```html
+<script>
+@chauffer = -> µ.Autoloader.preload('onglet')
+</script>
+
+<button @mouseover=@chauffer>Onglet</button>
+```
+
+Le nom s'écrit comme pour `load` : avec ou sans le préfixe `mjs-`, casse indifférente. Un fichier déjà demandé — par un appel précédent ou par un lien déjà présent dans la page — n'est pas redemandé, pas plus qu'un composant déjà défini ; un nom inconnu ne fait rien et ne lève aucune erreur. Avec un groupe de fichiers (clé [`bundles`](32-cli-et-configuration.md#bundles)), tous les composants du groupe partagent un même fichier : un seul lien le précharge.
+
+La fonction n'existe que si le build la juge utile, et il la juge utile dès que le code de votre application (composants, modules, fichiers `.civet`) mentionne `Autoloader` **et** le mot `preload`, où que ce soit : un alias (`A = µ.Autoloader` puis `A.preload('onglet')`), une extraction (`{ preload } = µ.Autoloader`), un appel optionnel (`µ.Autoloader.preload?.('onglet')`) ou un appel rangé dans un module sont tous reconnus. La règle est volontairement large : il lui arrive de livrer la fonction à une application qui ne s'en sert pas (un composant qui écrit `Autoloader` d'un côté et `preload` de l'autre, sans rapport), et cela coûte environ 1,2 Ko de texte (350 octets compressés), uniquement dans le manifeste. Une application qui ne mentionne jamais les deux n'en porte aucun octet.
+
+Un appel écrit ailleurs que dans un composant ou un module (le gabarit HTML de votre serveur, un fichier JavaScript servi à part, la console du navigateur) reste invisible au build, et n'a de toute façon pas `µ` sous la main en production : `window.µ` n'est exposé qu'en développement, un script de page ne l'y trouve pas. Si votre application ne contient alors nulle part l'appel, la fonction n'existe pas en production. Pour la garder, écrivez l'appel dans un composant ou un module qui sert de relais (`@chauffer = -> µ.Autoloader.preload(nom)`), puis déclenchez ce composant depuis votre page : le build lit le code compilé, pas les commentaires.
+
 ## Composant introuvable après un déploiement — `µ.config.staleReload`
 
 Chaque reconstruction du site change le nom haché des fichiers de composants, et les anciens disparaissent du dossier servi. Un onglet resté ouvert avant la reconstruction — ou un visiteur arrivé pendant un déploiement — garde en mémoire l'ancien manifeste (`µ.paths`). Le prochain composant chargé à la demande par l'autoloader pointe alors un fichier qui n'existe plus : le navigateur refuse d'exécuter la réponse 404 de l'`import()`, le composant n'apparaît jamais, et la zone qui devait l'accueillir reste muette.
@@ -327,6 +371,8 @@ Ce mécanisme réagit à un **import qui échoue**, quelle que soit la cause du 
 ## Préchargement au survol
 
 La navigation UJS partage son moteur avec le préchargement des liens (`@preload`, section dédiée dans [Router (client)](17-router.md)) : un lien préchargé au survol (`hover`, le défaut serveur est `off` — opt-in explicite) a déjà son HTML en cache au moment du clic, rendant la navigation perçue comme instantanée. Le HTML préchargé porte les mêmes en-têtes de navigation qu'un clic normal : la page servie depuis ce cache suit donc les mêmes règles de nouveau build, de contenant, de méthode d'installation et de politique de cache qu'une page qui vient d'être demandée au serveur à l'instant du clic.
+
+Le HTML préchargé n'est resservi qu'une fois, et seulement s'il a été reçu il y a moins de 10 secondes : passé ce délai, la page a pu changer au serveur, et le clic la redemande comme pour un lien jamais survolé ; un nouveau survol la précharge de nouveau.
 
 ## Le protocole serveur
 
@@ -363,7 +409,7 @@ Le corps JSON :
 | `cache` | chaîne, optionnel | politique de cache de la page pour `µ.pageCache` (cf. « Cache de pages » plus haut) : `'cache-first'` (défaut), `'revalidate'` ou `'no-cache'` ; absent → `'cache-first'` (pile MJS : `render.cache`, réglage global) |
 | `reload` | booléen ou chaîne, optionnel | rechargement complet de la page plutôt qu'une installation de contenu ; valeurs sans effet : absent, `0`, `false` (cf. « Les cinq issues d'une réponse » plus bas) |
 
-**404.** `module` à `null` signale qu'aucune route ne correspond à l'URL demandée : réponds avec le statut **404** et ce même JSON — le client affiche alors son panneau **Page introuvable** (le même que pour une route interne sans preneur, cf. [Router](17-router.md)).
+**404.** `module` à `null` signale qu'aucune route ne correspond à l'URL demandée : répondez avec le statut **404** et ce même JSON — le client affiche alors son panneau **Page introuvable** (le même que pour une route interne sans preneur, cf. [Router](17-router.md)).
 
 **Version.** `version` est aussi renvoyé en en-tête **`X-MJS-Version`** : un client qui constate un décalage entre deux navigations sait qu'un nouveau build est disponible.
 
@@ -387,6 +433,8 @@ Une soumission est un `POST` en **`application/x-www-form-urlencoded`** ou en **
 | `Origin` d'un autre hôte | **403** | garde same-origin, POST uniquement — élargissable, cf. juste dessous |
 
 La garde d'origine se règle par `render.allowedOrigins` (dans `mjs.config.json`). Absente, elle est **stricte** : un `Origin` présent doit désigner le même hôte que la requête. Un `Origin` **absent** ne bloque jamais rien — beaucoup de clients légitimes n'en envoient pas sur un `POST` classique.
+
+Sous `mjs dev`, une page locale passe aussi : son origine est `localhost` ou l'un de ses sous-domaines (`app.localhost`), `127.0.0.1` ou `[::1]`, sur n'importe quel port (une autre appli de la machine). Le nom de la machine, `<nom>.local` et les adresses du réseau n'en font pas une page locale : une page servie sous ces noms passe de même origine seulement. Passe aussi la page d'un tunnel qui a réécrit l'en-tête `Host` en `localhost`, quand son nom **exact** est déclaré dans `dev.allowedHosts` ; ni une entrée `.domaine` (sur un domaine partagé, elle admettrait aussi les pages de ses autres utilisateurs) ni `true` (qui admettrait toutes les pages) n'ouvrent une origine autre que `Host`, et le 403 dit le nom à écrire quand une entrée `.domaine` le couvre (cf. [32 · CLI & configuration](32-cli-et-configuration.md)). `mjs serve` n'applique aucune de ces deux ouvertures.
 
 | `render.allowedOrigins` | Effet |
 |---|---|
@@ -437,7 +485,7 @@ render json: { module: nil, props: { flash: 'Article ajouté au panier' }, metho
 
 Ce veilleur agit à **chaque** point où un sac de `props` serveur peut entrer dans le store : le chemin nominal (page ou fiche appliquée), `method: 'none'`, un **422** (le formulaire refusé garde `errors` dans `props`/`µres` pour l'affichage inline — inchangé par ce mécanisme), et le **premier chargement HTML** d'une page (props du chargeur exposées façon flash de session, à la Post/Redirect/Get). Un **échec de transport** — le serveur ne répond pas — déclenche lui aussi un message, synthétique cette fois, sur le même canal : « Échec de l'envoi — le serveur n'a pas répondu. » (le statut HTTP suit entre parenthèses s'il est connu).
 
-Sur ce même 422, évite d'envoyer aussi une clé `error` globale en plus des `errors` par champ : les deux s'affichent en même temps — la modale du veilleur **et** les messages en affichage inline sous les champs — pour une seule et même faute. Les `errors` par champ suffisent ; réserve `error` aux échecs qui n'ont pas de champ précis à blâmer.
+Sur ce même 422, évitez d'envoyer aussi une clé `error` globale en plus des `errors` par champ : les deux s'affichent en même temps — la modale du veilleur **et** les messages en affichage inline sous les champs — pour une seule et même faute. Les `errors` par champ suffisent ; réservez `error` aux échecs qui n'ont pas de champ précis à blâmer.
 
 **Réglages**, du global au particulier :
 
@@ -489,17 +537,19 @@ Le protocole MJS ne donne pas d'ordres au navigateur : il décrit un **état**. 
 
 Les trois premières lignes sont détaillées plus haut. Les deux dernières complètent le vocabulaire.
 
-### `X-MJS-Reload` — « j'ai traité, recharge tout »
+### `X-MJS-Reload` — « j'ai traité, rechargez tout »
 
 En-tête HTTP `X-MJS-Reload` sur la réponse (mode HTML), ou champ `reload: true` de la fiche (mode JSON) — valeurs reconnues : n'importe quelle valeur non vide, sauf `0` et `false`.
 
 Effet : rechargement complet de la page. Si la réponse a redirigé ailleurs, le client va à cette destination ; sinon il recharge l'adresse courante. Aucun contenu n'est échangé, aucune entrée d'historique n'est ajoutée par MJS, et l'événement `mjs:load` n'est **pas** émis — la page s'en va.
 
+Comme toute navigation complète de MJS, ce rechargement ne part que vers une adresse `http(s)` : une destination `javascript:` ou `data:` est refusée, avec un avertissement en console.
+
 Cas d'usage : une action qui change quelque chose de global — déconnexion, changement de langue, bascule de rôle, purge de cache applicatif — où réécrire un morceau de page serait plus fragile que de repartir propre.
 
 `mjs serve` ne pose jamais cet en-tête : c'est un vocabulaire pour les backs applicatifs.
 
-### `X-MJS-Method: none` — « j'ai traité, ne bouge pas »
+### `X-MJS-Method: none` — « j'ai traité, ne bougez pas »
 
 En-tête `X-MJS-Method: none` (mode HTML), ou `method: 'none'` dans la fiche (mode JSON), à côté des trois valeurs existantes `update` (défaut), `replace` et `append`.
 

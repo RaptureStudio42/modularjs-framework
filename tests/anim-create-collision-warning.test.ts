@@ -21,6 +21,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CREATE_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'animations', 'create.ts'), 'utf-8')
@@ -36,6 +37,7 @@ describe('µanim.create — collision de nom signalée', function () {
   it("1er enregistrement d'un nom : AUCUN warning", () => {
     const warnings: string[] = []
     const µ: any = { anim: {}, warn: (...args: any[]) => warnings.push(args.join(' ')) }
+    poserMessages(µ)
     const create = loadCreateFactory(µ)
 
     create('myFade', { duration: 200 })
@@ -47,6 +49,7 @@ describe('µanim.create — collision de nom signalée', function () {
   it('2e enregistrement SOUS LE MÊME nom : un warning explicite (AVANT le fix : silence total)', () => {
     const warnings: string[] = []
     const µ: any = { anim: {}, warn: (...args: any[]) => warnings.push(args.join(' ')) }
+    poserMessages(µ)
     const create = loadCreateFactory(µ)
 
     create('myFade', { duration: 200 })
@@ -63,6 +66,7 @@ describe('µanim.create — collision de nom signalée', function () {
     // Simule une animation BUILT-IN déjà enregistrée (fade/fly/scale/…) avant
     // que le code utilisateur n'appelle µanim.create.
     const µ: any = { anim: { fade: () => {} }, warn: (...args: any[]) => warnings.push(args.join(' ')) }
+    poserMessages(µ)
     const create = loadCreateFactory(µ)
 
     create('fade', { duration: 300 })
@@ -74,6 +78,7 @@ describe('µanim.create — collision de nom signalée', function () {
   it('deux noms DIFFÉRENTS : aucun warning (pas de faux positif)', () => {
     const warnings: string[] = []
     const µ: any = { anim: {}, warn: (...args: any[]) => warnings.push(args.join(' ')) }
+    poserMessages(µ)
     const create = loadCreateFactory(µ)
 
     create('myFade', { duration: 200 })

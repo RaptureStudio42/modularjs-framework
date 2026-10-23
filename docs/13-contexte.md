@@ -22,7 +22,9 @@ Dans le `<script>` d'un composant **ancêtre**, `§clé = valeur` enregistre une
 
 Tout composant instancié dans la descendance de ce `Formulaire` — à n'importe quelle profondeur — pourra lire `§theme`.
 
-> ⌨️ **Clavier sans `§` ?** Le symbole `§` n'est pas en accès direct sur les claviers QWERTY US/UK. Active l'option `contextAlias: true` dans `mjs.config.json` (désactivée par défaut) pour écrire les formes **ASCII** : `__context.theme` ≡ `§theme` (contexte) et `__shared.x` ≡ `§§x` (partagé). `§`/`§§` restent les formes canoniques. *(Le store, lui, s'écrit déjà en ASCII : `$$x` / `µ$$x`.)*
+**Depuis une fonction aussi.** `§clé` et `§clé = valeur` visent toujours le contexte du composant dont le `<script>` les porte, d'où que la fonction soit appelée : `$ouvrir = -> §panneau = 'ouvert'`, rangée dans l'état et appelée `$ouvrir()` depuis un gestionnaire, écrit le contexte du composant. Les formes longues `µsetContext 'panneau', 'ouvert'` et `µ.getContext('panneau')` suivent la même règle (dans un `<script module>`, sans composant, elles visent `this`). Dans le `<script>`, une affectation composée s'écrit comme sur une variable : `§total += 1` vaut `§total = §total + 1` (de même `-=`, `*=`, `/=`, `%=`, `**=`, `|=`, `&=`, `^=`, `<<=`, `>>=`, `>>>=`), `§total++` et `++§total` valent `§total += 1` (`§total--` et `--§total` : `§total -= 1`), `§nom ||= 'invité'` n'écrit que si `§nom` est vide (de même `&&=` et `??=`) ; un gestionnaire du gabarit suit les mêmes règles (`@click={§total += 1}`, `@click={§total++}`). `§§` les suit aussi, dans le `<script>` comme dans un gestionnaire : une valeur simple posée par `§§total = 1` se lit `§§total.value`, et `§§total += 1`, `§§total++` ou `§§nom ||= 'invité'` calculent sur cette valeur ; un contexte qui tient un objet est pris tel quel.
+
+> ⌨️ **Clavier sans `§` ?** Le symbole `§` n'est pas en accès direct sur les claviers QWERTY US/UK. Activez l'option `contextAlias: true` dans `mjs.config.json` (désactivée par défaut) pour écrire les formes **ASCII** : `__context.theme` ≡ `§theme` (contexte) et `__shared.x` ≡ `§§x` (partagé). `§`/`§§` restent les formes canoniques. *(Le store, lui, s'écrit déjà en ASCII : `$$x` / `µ$$x`.)*
 
 ## Lire un contexte — `§clé`
 
@@ -44,7 +46,7 @@ La lecture traverse **transparemment** les niveaux intermédiaires : pas de prop
 <details>
 <summary>🎓 <b>Pour débutants</b> — prop, contexte ou store&nbsp;?</summary>
 
-- **Prop** : tu passes une valeur d'un parent à *son enfant direct*, explicitement (`<@champ theme={…}>`). Clair, mais pénible si la donnée doit descendre de cinq niveaux (chaque niveau doit la relayer).
+- **Prop** : vous passez une valeur d'un parent à *son enfant direct*, explicitement (`<@champ theme={…}>`). Clair, mais pénible si la donnée doit descendre de cinq niveaux (chaque niveau doit la relayer).
 - **Contexte (`§`)** : un ancêtre *pose* la valeur, n'importe quel descendant la *lit*, sans relais intermédiaire. Scopé à cet ancêtre : deux sous-arbres peuvent avoir chacun leur `§theme`.
 - **Store (`µ$$`, `µStore`)** : une valeur unique, globale à toute l'appli, indépendante de l'arborescence.
 
@@ -98,7 +100,7 @@ La valeur de contexte n'est pas limitée à une chaîne : on y met souvent un ob
 
 > ℹ️ Le markup de `grille.mjs` se termine par `<@slot>` sans fermante : sans repli à délimiter, la balise nue suffit en fin de composant — même idiome que `<@slot/>`.
 
-> ⚠️ Lis le contexte de façon défensive avec `?.` (`§canvas?.addItem(draw)`) : si aucun ancêtre n'a posé la clé, `§canvas` est *absent* (ne plante pas, mais l'appel direct le ferait). Pose toujours `§clé` dans l'ancêtre **avant** que les descendants ne le lisent — typiquement en l'affectant à la racine du `<script>` du parent, ce qui s'exécute à la construction, donc avant le montage des enfants.
+> ⚠️ Lisez le contexte de façon défensive avec `?.` (`§canvas?.addItem(draw)`) : si aucun ancêtre n'a posé la clé, `§canvas` est *absent* (ne plante pas, mais l'appel direct le ferait). Posez toujours `§clé` dans l'ancêtre **avant** que les descendants ne le lisent — typiquement en l'affectant à la racine du `<script>` du parent, ce qui s'exécute à la construction, donc avant le montage des enfants.
 
 ## `§` (contexte) vs `§§` (partagé)
 
@@ -111,9 +113,10 @@ C'est la distinction à ne **jamais** confondre :
 
 - `§foo` (un seul symbole) = contexte d'arbre, *parent → descendants*. Deux ancêtres distincts peuvent poser chacun leur `§foo` sans interférer.
 - `§§foo` (deux symboles) = **même portée** (parent → descendants), mais **réactif** : les lecteurs se ré-abonnent et re-rendent quand la valeur change. ⚠️ Ce n'est **pas** un état global indépendant de l'arborescence : `§§foo` remonte la chaîne des ancêtres (`_mjs_getRCtx`) — deux composants sans ancêtre déclarant commun **ne partagent rien** via `§§`.
+- Le fournisseur change la valeur d'un `§§foo` de deux façons, que les lecteurs déjà montés suivent toutes deux : en modifiant un champ (`§§theme.c = 'green'`) ou en le réaffectant (`§§theme = {c: 'blue'}`). La réaffectation remplit le **même** objet réactif avec le nouveau contenu, champ par champ (un champ absent de la nouvelle valeur disparaît) : un descendant qui a gardé `§§theme` dans une variable voit lui aussi la nouvelle valeur.
 - **Aucune exception** : `§§X` reste **toujours** un contexte de sous-arbre, jamais un accès direct à un store global. Pour un singleton exporté par un module (`export µ$$X`), l'import et la consommation se font avec le **même** symbole `µ$$X` (`@import µ$$X 'chemin'`, puis `µ$$X` dans le composant) — jamais `§§X` : voir [Stores](14-stores.md).
 
-Le contexte (`§`/`§§`) est le bon choix pour partager quelque chose **qui a du sens localement dans un sous-arbre** (un thème de section, une config de formulaire multi-étapes). Pour un **véritable état d'application global** (utilisateur connecté, panier), utilise le **store** `$$x` (→ `µ.store`) ou un singleton `µ$$x` importé — **pas** `§§` nu.
+Le contexte (`§`/`§§`) est le bon choix pour partager quelque chose **qui a du sens localement dans un sous-arbre** (un thème de section, une config de formulaire multi-étapes). Pour un **véritable état d'application global** (utilisateur connecté, panier), utilisez le **store** `$$x` (→ `µ.store`) ou un singleton `µ$$x` importé — **pas** `§§` nu.
 
 > 🔗 Voir aussi : [Stores](14-stores.md) → le symbole store léger `µ$$` (déclaré ET consommé avec ce même symbole), le store zéro-import `$$`, et la classe `µStore`.
 

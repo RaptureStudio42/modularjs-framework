@@ -14,6 +14,13 @@
 // donc manquer sans risque. Si au moins un composant le détecte, CE fichier doit être présent —
 // filet défensif quand même côté mjs_element.ts (mêmes gestes que son propre fast-path) au cas
 // où un bug de détection manquerait un émetteur.
+// retrait insensible à une méthode `remove` du composant (cf. mjs_element.ts)
+µ._mjs_rm = µ._mjs_rm || function(n) {
+  if (typeof Node !== 'function' || !(n instanceof Node)) return n.remove();
+  var p = n.parentNode;
+  if (p) Node.prototype.removeChild.call(p, n);
+};
+
 if (µ.Element) {
   µ.Element.prototype._mjs_destroyWithHooks = async function(node, waitOut) {
     var elements, timeoutId, transitions;
@@ -34,47 +41,48 @@ if (µ.Element) {
     // FAST PATH : le node n'a ni transitions/teardowns à orchestrer, ni descendants
     // taggés `.global`, ni cascade outro à attendre. C'est le cas par défaut sur
     // un destroy de masse (1000+ items dans le bench officiel) → on évite N
-    // querySelectorAll coûteux et le pipeline transitions/teardowns.
-    if (!waitOut && !node._mjs_outro && !node._mjs_td && !node._mjs_ref_td) {
+    // querySelectorAll coûteux et le pipeline transitions/teardowns. Un effet `*nom`
+    // compte, posé (`_mjs_fxOff`) ou encore en attente de son fichier ou de son
+    // composant (`_mjs_fxWait`) : l'attente part avec le nœud, sinon elle ne tombe
+    // qu'à l'arrivée de ce qu'elle attend — jamais, pour un composant qui n'arrive pas
+    if (!waitOut && !node._mjs_outro && !node._mjs_td && !node._mjs_ref_td && !node._mjs_fxOff && !node._mjs_fxWait) {
       // Détection rapide des descendants concernés : si aucun n'est `.global`,
       // pas besoin de scanner finement. On utilise `querySelector` (early-exit)
       // au lieu de `querySelectorAll` (matérialise toutes les correspondances).
-      if (!node.querySelector || !node._mjs_has_globals_cache) {
-        if (node.querySelector) {
-          // On parcourt rapidement les descendants pour détecter `._mjs_global`.
-          // Optim : on regarde si N'IMPORTE QUEL descendant a un teardown ou
-          // une outro/global. La grande majorité des items de bench n'ont rien.
-          var __scan = node.firstElementChild;
-          var __hasFx = false;
-          while (__scan) {
-            if (__scan._mjs_global || __scan._mjs_outro || __scan._mjs_td || __scan._mjs_ref_td) { __hasFx = true; break; }
-            // descente DFS sur ce sous-arbre
-            if (__scan.firstElementChild) {
-              __scan = __scan.firstElementChild;
-              continue;
-            }
-            while (__scan && !__scan.nextElementSibling && __scan !== node) {
-              __scan = __scan.parentElement;
-            }
-            if (!__scan || __scan === node) break;
-            __scan = __scan.nextElementSibling;
+      if (node.querySelector) {
+        // On parcourt rapidement les descendants pour détecter `._mjs_global`.
+        // Optim : on regarde si N'IMPORTE QUEL descendant a un teardown ou
+        // une outro/global. La grande majorité des items de bench n'ont rien.
+        var __scan = node.firstElementChild;
+        var __hasFx = false;
+        while (__scan) {
+          if (__scan._mjs_global || __scan._mjs_outro || __scan._mjs_td || __scan._mjs_ref_td || __scan._mjs_fxOff || __scan._mjs_fxWait) { __hasFx = true; break; }
+          // descente DFS sur ce sous-arbre
+          if (__scan.firstElementChild) {
+            __scan = __scan.firstElementChild;
+            continue;
           }
-          if (!__hasFx) {
-            node._mjs_dead = true;
-            // Mort définitive (pas d'outro/td, aucun descendant à effet
-            // ⇒ retrait synchrone, pas de revive possible).
-            this._mjs_mjsPurgeSubtreeState(node);
-            node.remove();
-            return;
+          while (__scan && !__scan.nextElementSibling && __scan !== node) {
+            __scan = __scan.parentElement;
           }
-        } else {
-          // Pas de descendants (text node, etc.) — déjà géré plus haut, mais
-          // ceinture+bretelles.
+          if (!__scan || __scan === node) break;
+          __scan = __scan.nextElementSibling;
+        }
+        if (!__hasFx) {
           node._mjs_dead = true;
-          this._mjs_mjsPurgeSubtreeState(node); // mort définitive
-          node.remove();
+          // Mort définitive (pas d'outro/td, aucun descendant à effet
+          // ⇒ retrait synchrone, pas de revive possible).
+          this._mjs_mjsPurgeSubtreeState(node);
+          µ._mjs_rm(node);
           return;
         }
+      } else {
+        // Pas de descendants (text node, etc.) — déjà géré plus haut, mais
+        // ceinture+bretelles.
+        node._mjs_dead = true;
+        this._mjs_mjsPurgeSubtreeState(node); // mort définitive
+        µ._mjs_rm(node);
+        return;
       }
     }
     // waitOut = cascade demandée par l'ancêtre (mjs-childtransition).
@@ -102,7 +110,7 @@ if (µ.Element) {
         // dans un `{if}` gardait son `setInterval` actif sur DOM détaché,
         // accumulant un teardown fantôme de plus à chaque réouverture/
         // fermeture du bloc (fuite + effet de bord actif indéfiniment).
-        if (__el._mjs_global || __el._mjs_td || __el._mjs_ref_td) elements.push(__el);
+        if (__el._mjs_global || __el._mjs_td || __el._mjs_ref_td || __el._mjs_fxOff || __el._mjs_fxWait) elements.push(__el);
       }
     }
     // for-let-i au lieu de forEach (évite alloc closure × 4 passes).
@@ -118,11 +126,13 @@ if (µ.Element) {
       if (el._mjs_td) {
         const __td = el._mjs_td;
         el._mjs_td = null;
+        // nettoyée : ressuscitée pendant sa sortie, la balise reprend son attache au rendu suivant
+        el._mjs_att = 0;
         if (__ats) __ats.delete(__td);
         try {
           __td();
         } catch (err) {
-          µ.error('[ModularJS] nettoyage (@attach/@this=!) en erreur :', err);
+          µ.error(µ._mjs_msg('destroyAttach', null, 'nettoyage (@attach/@this=!) en erreur :'), err);
         }
       }
       if (el._mjs_ref_td) {
@@ -132,9 +142,12 @@ if (µ.Element) {
         try {
           __refTd();
         } catch (err) {
-          µ.error('[ModularJS] nettoyage (ref) en erreur :', err);
+          µ.error(µ._mjs_msg('destroyRef', null, 'nettoyage (ref) en erreur :'), err);
         }
       }
+      // effets `*nom` du nœud (mjs_fx.ts) : chacun se retire aussi de `_mjs_attachments` ; ceux qui
+      // attendent leur fichier ou leur composant n'attendent plus
+      if (el._mjs_fxOff || el._mjs_fxWait) µ._mjs_fxClear(el);
     }
     for (let __ei = 0, __eln = elements.length; __ei < __eln; __ei++) {
       const el = elements[__ei];
@@ -169,7 +182,7 @@ if (µ.Element) {
       clearTimeout(timeoutId);
       for (let __ri = 0, __rln = __results.length; __ri < __rln; __ri++) {
         if (__results[__ri].status === 'rejected') {
-          µ.error('[ModularJS] transition de sortie en erreur :', __results[__ri].reason);
+          µ.error(µ._mjs_msg('destroyOut', null, 'transition de sortie en erreur :'), __results[__ri].reason);
         }
       }
     }
@@ -201,6 +214,10 @@ if (µ.Element) {
     this._mjs_mjsPurgeSubtreeState(node);
     for (let __ei = 0, __eln = elements.length; __ei < __eln; __ei++) {
       elements[__ei]._mjs_dead = true;
+      // effet reposé pendant la sortie (`@out=*scramble` se rejoue sur la balise) : il part avec
+      // elle, sinon sa poignée, inscrite dans le composant, retient la balise retirée ; un effet
+      // demandé pendant la sortie et encore en attente part aussi
+      if (elements[__ei]._mjs_fxOff || elements[__ei]._mjs_fxWait) µ._mjs_fxClear(elements[__ei]);
     }
     for (let __ei = 0, __eln = elements.length; __ei < __eln; __ei++) {
       const el = elements[__ei];
@@ -208,6 +225,6 @@ if (µ.Element) {
         if (typeof el._mjs_cb_outroend === "function") el._mjs_cb_outroend();
       } catch (error1) { /* ignore */ }
     }
-    return node.remove();
+    return µ._mjs_rm(node);
   };
 }

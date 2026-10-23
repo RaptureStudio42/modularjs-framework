@@ -5,39 +5,30 @@
 // SEULE différence : `setup(app)` reçoit une app construite par `mjsServer()` (qui expose
 // `.game()`), pas `mjsWs()`. Cf. docs/24-mjs-server.md §2 « Démarrer ».
 //
-// Briques RÉUTILISÉES telles quelles depuis cli/ws.ts (génériques, exportées pour l'occasion,
-// AUCUN changement de comportement de `mjs ws`) : RESERVED_ENTRY_KEYS, CliLogger/createLogger,
-// errText, describeTransport, importEntryModule (compilation dialecte Civet + grammaire @import
-// déléguée à cli/server-entry.ts, import via une URL file:// cache-bustée),
-// WATCHED_EXT/RELOAD_DEBOUNCE_MS. Briques DUPLIQUÉES (spécifiques à MJS-Server) : résolution
-// d'entry (défauts propres, AUCUNE collision avec ceux de `mjs ws` — les deux commandes
-// coexistent dans un même projet), contrat d'entry (typé MjsServerApp/MjsServerOptions),
-// plan de fusion entry/config (+ `antiTriche`, propre à MJS-Server), boot/rechargement/arrêt
-// (appellent TOUJOURS `mjsServer()`, jamais `mjsWs()`).
+// Briques PARTAGÉES avec cli/ws.ts (une seule logique pour les deux commandes) : contrat d'entry (readEntryContractOf),
+// plan de fusion entry/config (buildRunPlanOf, + `antiCheat`, propre à MJS-Server), bannière (printEntryBanner), lancement,
+// rechargement à chaud et arrêt (runEntryServer, qui importe l'entry par importEntryModule). Propres à MJS-Server : résolution
+// d'entry (défauts propres, AUCUNE collision avec ceux de `mjs ws` — les deux commandes coexistent dans un même projet), port par
+// défaut, ligne anti-triche de la bannière, fabrique (TOUJOURS `mjsServer()`, jamais `mjsWs()`).
 //
 // Résolution de l'entry : --entry > mjs.config.json `serveur.entry` > défauts
 // `serveur.server.mjs` > `server/serveur.server.mjs` > `serveur.js` > `serveur.civet` >
-// `server/serveur.js` > `server/serveur.civet`, relatifs à --root.
+// `server/serveur.js` > `server/serveur.civet`, relatifs à la racine du projet (dossier de mjs.config.json, à défaut --root).
 //
 // Contrat de l'entry : `export default` = OBJET, clés acceptées = options de mjsServer()
 // (= options mjsWs() + `persist`/`antiTriche`) sauf port/host/onLog (réservées au CLI, ignorées
 // avec un warn — MÊME liste que `mjs ws`), plus `setup(app)` optionnelle (sync ou async), reçoit
 // l'app construite par `mjsServer()`.
 
-import { existsSync, watch as fsWatch } from 'node:fs'
-import { resolve, dirname, relative } from 'node:path'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { mjsServer } from '../mjs-server/index.js'
 import type { MjsServerApp, MjsServerOptions } from '../mjs-server/index.js'
-import { DEFAULT_LIMITS, DEFAULT_HEARTBEAT, DEFAULT_TOKEN, resolveBridgeOptions, resolveResumeOptions, isLoopbackHost, isProxyOptions } from '../mjs-ws/index.js'
-import type { MjsWsLimits, MjsWsTokenOptions } from '../mjs-ws/index.js'
+import type { MjsWsLimits } from '../mjs-ws/index.js'
 import type { MjsConfig, ServeurConfig } from '../bundler/config.js'
-import {
-  RESERVED_ENTRY_KEYS, createLogger, errText, describeTransport, importEntryModule,
-  WATCHED_EXT, RELOAD_DEBOUNCE_MS,
-} from './ws.js'
+import { readEntryContractOf, buildRunPlanOf, SHARED_PLAN_KEYS, printEntryBanner, runEntryServer } from './ws.js'
 import type { CliLogger } from './ws.js'
 import { t } from '../messages/index.js'
-import { gardeArret, SHUTDOWN_GRACE_MS } from './dev-lock.js'
 
 // --- squelette imprimé quand aucune entry n'est trouvée ---------------------
 
@@ -96,28 +87,7 @@ export interface ServeurEntryContract {
  *  règle que readEntryContract (cli/ws.ts) : RESERVED_ENTRY_KEYS (port/host/onLog) réutilisée
  *  telle quelle, `setup` doit être une fonction si présente. */
 export function readServeurEntryContract(mod: any, entryPath: string, warn: (message: string) => void): ServeurEntryContract {
-  const dflt = mod ? mod.default : undefined
-  if (dflt === undefined || dflt === null || typeof dflt !== 'object' || Array.isArray(dflt)) {
-    const got = dflt === undefined ? t('cli.aucun-export-defaut') : (Array.isArray(dflt) ? t('cli.un-tableau') : typeof dflt)
-    throw new Error(t('cli.entry-doit-export-default', { produit: 'mjs serveur', entryPath, recu: got }))
-  }
-
-  const options: Record<string, unknown> = {}
-  for (const key of Object.keys(dflt)) {
-    if (key === 'setup') continue   // traité séparément ci-dessous
-    if (RESERVED_ENTRY_KEYS.includes(key)) { warn(t('cli.entry-cle-ignoree', { cle: key })); continue }
-    options[key] = (dflt as any)[key]
-  }
-
-  let setup: ((app: MjsServerApp) => unknown) | undefined
-  if (dflt.setup !== undefined) {
-    if (typeof dflt.setup !== 'function') {
-      throw new Error(t('cli.entry-setup-doit-etre-fonction', { produit: 'mjs serveur', entryPath, recu: typeof dflt.setup }))
-    }
-    setup = dflt.setup
-  }
-
-  return { options: options as MjsServerOptions, setup }
+  return readEntryContractOf<MjsServerOptions, MjsServerApp>('mjs serveur', mod, entryPath, warn)
 }
 
 // --- priorités port/host/heartbeat/limits/antiTriche : entry > config > défauts CLI ---------
@@ -145,130 +115,19 @@ export function buildServeurRunPlan(
   warn: (message: string) => void,
   cliHost?: string,
 ): ServeurRunPlan {
-  const options: MjsServerOptions = { ...contract.options }
-
-  if (serveurConfig?.transport !== undefined) {
-    if (options.transport !== undefined) warn(t('cli.entry-config-doublon', { champ: 'transport', chemin: 'serveur.transport' }))
-    else options.transport = serveurConfig.transport
-  }
-  if (serveurConfig?.codec !== undefined) {
-    if (options.codec !== undefined) warn(t('cli.entry-config-doublon', { champ: 'codec', chemin: 'serveur.codec' }))
-    else options.codec = serveurConfig.codec
-  }
-  if (serveurConfig?.heartbeat !== undefined) {
-    if (options.heartbeat !== undefined) warn(t('cli.entry-config-doublon', { champ: 'heartbeat', chemin: 'serveur.heartbeat' }))
-    else options.heartbeat = serveurConfig.heartbeat
-  }
-  if (serveurConfig?.limits !== undefined) {
-    if (options.limits !== undefined) warn(t('cli.entry-config-doublon', { champ: 'limits', chemin: 'serveur.limits' }))
-    else options.limits = serveurConfig.limits
-  }
-  if (serveurConfig?.token !== undefined) {
-    if (options.token !== undefined) warn(t('cli.entry-config-doublon', { champ: 'token', chemin: 'serveur.token' }))
-    else options.token = serveurConfig.token
-  }
-  if (serveurConfig?.bridge !== undefined) {
-    if (options.bridge !== undefined) warn(t('cli.entry-config-doublon', { champ: 'bridge', chemin: 'serveur.bridge' }))
-    else options.bridge = serveurConfig.bridge as MjsServerOptions['bridge']
-  }
-  if (serveurConfig?.resume !== undefined) {
-    if (options.resume !== undefined) warn(t('cli.entry-config-doublon', { champ: 'resume', chemin: 'serveur.resume' }))
-    else options.resume = serveurConfig.resume
-  }
-  if (serveurConfig?.adapter !== undefined) {
-    if (options.adapter !== undefined) warn(t('cli.entry-config-doublon', { champ: 'adapter', chemin: 'serveur.adapter' }))
-    else options.adapter = serveurConfig.adapter as MjsServerOptions['adapter']
-  }
-  if (serveurConfig?.stats !== undefined) {
-    if (options.stats !== undefined) warn(t('cli.entry-config-doublon', { champ: 'stats', chemin: 'serveur.stats' }))
-    else options.stats = serveurConfig.stats
-  }
-  if (serveurConfig?.sessionExclusive !== undefined) {
-    if (options.sessionExclusive !== undefined) warn(t('cli.entry-config-doublon', { champ: 'sessionExclusive', chemin: 'serveur.sessionExclusive' }))
-    else options.sessionExclusive = serveurConfig.sessionExclusive
-  }
-  if (serveurConfig?.verifyOrigin !== undefined) {
-    if (options.verifyOrigin !== undefined) warn(t('cli.entry-config-doublon', { champ: 'verifyOrigin', chemin: 'serveur.verifyOrigin' }))
-    else options.verifyOrigin = serveurConfig.verifyOrigin
-  }
-  if (serveurConfig?.ban !== undefined) {
-    if (options.ban !== undefined) warn(t('cli.entry-config-doublon', { champ: 'ban', chemin: 'serveur.ban' }))
-    else options.ban = serveurConfig.ban
-  }
-  // antiTriche (propre à MJS-Server) — MÊME règle que les clés héritées ci-dessus :
-  // pas de fusion clé à clé, l'entry prime EN BLOC si les deux sont posés, avec un warn.
-  if (serveurConfig?.antiCheat !== undefined) {
-    if (options.antiCheat !== undefined) warn(t('cli.entry-config-doublon', { champ: 'antiCheat', chemin: 'serveur.antiCheat' }))
-    else options.antiCheat = serveurConfig.antiCheat as MjsServerOptions['antiCheat']
-  }
-
-  // résolus AVANT l'appel à mjsServer() : passthrough (mjsServer()/mjsWs() appliquent les MÊMES
-  // défauts, cf. buildRunPlan cli/ws.ts) — permet à la bannière d'afficher les valeurs EFFECTIVES.
-  const heartbeat = options.heartbeat ?? DEFAULT_HEARTBEAT
-  const limits: MjsWsLimits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) }
-  options.heartbeat = heartbeat
-  options.limits = limits
-
-  const port = cliPort ?? serveurConfig?.port ?? DEFAULT_SERVEUR_PORT
-  // MÊME borne que ws.port-hors-plage (cli/ws.ts) — sinon --port échappe à
-  // toute validation et retombe sur un RangeError Node brut au moment de lier le transport
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t('cli.serveur.port-hors-plage', { valeur: port }))
-  // défaut loopback, MÊME règle que buildRunPlan (cli/ws.ts) — sans ce repli,
-  // `mjs serveur` écoutait sur TOUTES les interfaces (host undefined transmis tel quel au
-  // transport) : qui veut exposer le serveur le dit avec `--host ::`, jamais un silence
-  const host = (cliHost ?? serveurConfig?.host ?? '').trim() || '127.0.0.1'
-
-  return { options, setup: contract.setup, port, host, heartbeat, limits }
+  // antiCheat (propre à MJS-Server) : MÊME règle que les clés héritées, l'entry prime EN BLOC
+  return buildRunPlanOf(contract, serveurConfig, 'serveur', [...SHARED_PLAN_KEYS, 'antiCheat'], DEFAULT_SERVEUR_PORT, cliPort, warn, cliHost)
 }
 
 // --- bannière ------------------------------------------------------------------
 
 function printBanner(logger: CliLogger, entryPath: string, root: string, plan: ServeurRunPlan): void {
-  const rel = relative(root, entryPath) || entryPath
-  logger.info(`MJS-Server — entry ${rel}`)
-  logger.info(`transport : ${describeTransport(plan.options.transport)}`)
-  logger.info(`codec ws : ${plan.options.codec ?? 'auto'}`)
-  logger.info(t('cli.banniere-port', { port: plan.port, hote: plan.host ? ` (${plan.host})` : '' }))
-  logger.info(t('cli.banniere-heartbeat', { etat: plan.heartbeat === 0 ? t('cli.desactive') : `${plan.heartbeat} ms` }))
-  logger.info(t('cli.banniere-limites', { rate: plan.limits.rate, burst: plan.limits.burst, kickAfter: plan.limits.kickAfter, maxPayload: plan.limits.maxPayload, maxBuffered: plan.limits.maxBuffered, maxConnections: plan.limits.maxConnections ?? t('cli.illimite'), maxConnectionsPerIp: plan.limits.maxConnectionsPerIp ?? t('cli.illimite') }))
-  const authOpt = plan.options.auth
-  const joinOpt = plan.options.rooms?.join
-  if (isProxyOptions(authOpt)) logger.info(`auth : proxy ${authOpt.url}`)
-  if (isProxyOptions(joinOpt)) logger.info(t('cli.banniere-salons-proxy', { url: joinOpt.url }))
-  if (plan.options.token) {
-    const token: MjsWsTokenOptions = { ...DEFAULT_TOKEN, ...plan.options.token }
-    logger.info(t('cli.banniere-jeton', { sweep: token.sweep / 1000, marge: token.slack / 1000 }))
-  }
-  if (plan.options.bridge) {
-    const bridge = resolveBridgeOptions(plan.options.bridge, plan.port)
-    logger.info(t('cli.banniere-pont', { host: bridge.host, port: bridge.port }))
-    logger.info(bridge.webhooks
-      ? t('cli.banniere-webhooks-actifs', { url: bridge.webhooks.url, evenements: Array.from(bridge.webhooks.events).join(', ') })
-      : t('cli.banniere-webhooks-desactives'))
-    logger.info(bridge.rateLimit
-      ? t('cli.banniere-rate-limit-actif', { capacite: bridge.rateLimit.perIp.capacity, fenetre: bridge.rateLimit.perIp.windowMs / 1000, echecsCapacite: bridge.rateLimit.fails.capacity, echecsFenetre: bridge.rateLimit.fails.windowMs / 1000 })
-      : t('cli.banniere-rate-limit-desactive'))
-    if (plan.options.stats && isLoopbackHost(bridge.host)) {
-      logger.info(t('cli.banniere-etat', { host: bridge.host, port: bridge.port }))
+  printEntryBanner(logger, 'MJS-Server', entryPath, root, plan, plan.host ? ` (${plan.host})` : '', () => {
+    if (plan.options.antiCheat?.movesPerIdentity) {
+      const [n, fenetre] = plan.options.antiCheat.movesPerIdentity
+      logger.info(t('cli.serveur.anti-triche', { n, fenetre: fenetre / 1000 }))
     }
-  }
-  if (plan.options.resume) {
-    const resume = resolveResumeOptions(plan.options.resume)!
-    logger.info(t('cli.banniere-reprise-session', { grace: resume.grace / 1000, maxBuffered: resume.maxBuffered, maxBytes: resume.maxBytes }))
-  }
-  if (plan.options.adapter) {
-    const a = plan.options.adapter as { redis?: string; prefix?: string }
-    const prefix = a.prefix ?? 'mjs-ws'
-    logger.info(typeof a.redis === 'string'
-      ? t('cli.banniere-multi-processus-redis', { redis: a.redis, prefixe: prefix })
-      : t('cli.banniere-multi-processus-custom', { prefixe: prefix }))
-  }
-  // anti-triche (propre à MJS-Server) — mention SEULEMENT si armé (opt-in strict).
-  if (plan.options.antiCheat?.movesPerIdentity) {
-    const [n, fenetre] = plan.options.antiCheat.movesPerIdentity
-    logger.info(t('cli.serveur.anti-triche', { n, fenetre: fenetre / 1000 }))
-  }
-  logger.info(t('cli.ctrl-c-arreter'))
+  })
 }
 
 // --- commande -----------------------------------------------------------------
@@ -302,126 +161,12 @@ export async function runServeurCommand(
   config: MjsConfig | undefined,
   injections: ServeurCommandInjections = {},
 ): Promise<ServeurRunHandle> {
-  const logger    = createLogger()
   const entryPath = resolveServeurEntryPath(args.root, args.entry, config?.serveur?.entry)
   const transport = injections.transport
-
-  async function boot(): Promise<MjsServerApp> {
-    const mod      = await importEntryModule(entryPath, args.root)
-    const contract = readServeurEntryContract(mod, entryPath, logger.warn)
-    const plan     = buildServeurRunPlan(contract, config?.serveur, args.port, logger.warn, args.host)
-    // MÊME règle que boot() de cli/ws.ts : l'injection de TEST prime TOUJOURS, sinon
-    // plan.options.transport (résolu depuis l'entry/la config) passe tel quel.
-    const app      = mjsServer({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
-    if (plan.setup) await plan.setup(app)
-    await app.listen()
-    printBanner(logger, entryPath, args.root, plan)
-    return app
-  }
-
-  let currentApp = await boot()
-
-  // rechargement à chaud — MÊME machinerie (sérialisation par génération) que cli/ws.ts, cf. son
-  // commentaire détaillé : dupliquée ici (fermetures propres à currentApp/mjsServer,
-  // pas extraite en fonction générique — choix délibéré, propre à ce fichier).
-  let reloadGeneration = 0
-  let reloadRunning    = false
-  let reloadPending    = false
-  // MÊME garde que cli/ws.ts (cf. son commentaire détaillé) : posé par shutdown(), un
-  // rechargement qui le voit APRÈS avoir démarré son NOUVEAU serveur le referme aussitôt sans
-  // jamais l'exposer — sans lui, un import lent encore en vol au moment d'un Ctrl-C finissait par
-  // (re)brancher un serveur sur le port/transport APRÈS que l'arrêt se soit déjà annoncé terminé.
-  let shuttingDown     = false
-  // Rechargement EN VOL — attendu par shutdown() avant de fermer `currentApp` (même raison que
-  // cli/ws.ts).
-  let reloadInFlight: Promise<void> | null = null
-
-  function scheduleReload(): void {
-    if (shuttingDown) return   // arrêt déjà demandé : aucun nouveau cycle de rechargement
-    reloadGeneration++
-    if (reloadRunning) { reloadPending = true; return }
-    runReloadLoop()
-  }
-
-  function runReloadLoop(): void {
-    reloadRunning = true
-    const myGeneration = reloadGeneration
-    reloadInFlight = reload(myGeneration).finally(() => {
-      reloadRunning = false
-      if (reloadPending && !shuttingDown) { reloadPending = false; runReloadLoop() }
-    })
-  }
-
-  async function reload(myGeneration: number): Promise<void> {
-    let mod: any
-    try {
-      mod = await importEntryModule(entryPath, args.root)
-    } catch (err) {
-      if (myGeneration === reloadGeneration) {
-        logger.error(t('cli.reload-import-echec', { erreur: errText(err) }))
-      }
-      return
-    }
-    if (myGeneration !== reloadGeneration) return   // import périmé — jeté même réussi
-    let contract: ServeurEntryContract
-    try {
-      contract = readServeurEntryContract(mod, entryPath, logger.warn)
-    } catch (err) {
-      logger.error(t('cli.reload-echec-generique', { erreur: errText(err) }))
-      return
-    }
-    try {
-      const plan = buildServeurRunPlan(contract, config?.serveur, args.port, logger.warn, args.host)
-      await currentApp.stop()
-      const app = mjsServer({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog: logger.log })
-      if (plan.setup) await plan.setup(app)
-      await app.listen()
-      // Un arrêt a été demandé PENDANT cet import/listen : ce nouveau serveur ne doit JAMAIS
-      // devenir `currentApp` ni rester en écoute — refermé aussitôt, sans le moindre message.
-      if (shuttingDown) { await app.stop().catch(() => {}); return }
-      currentApp = app
-      logger.info(t('cli.redemarre', { chemin: relative(args.root, entryPath) || entryPath }))
-    } catch (err) {
-      logger.error(t('cli.reload-echec-fatal', { erreur: errText(err) }))
-    }
-  }
-
-  let watcher: ReturnType<typeof fsWatch> | null = null
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null
-  if (injections.watch ?? true) {
-    const dir = dirname(entryPath)
-    watcher = fsWatch(dir, { persistent: true, recursive: false }, (_event, filename) => {
-      if (!filename || !WATCHED_EXT.test(filename)) return
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => { debounceTimer = null; scheduleReload() }, RELOAD_DEBOUNCE_MS)
-    })
-  }
-
-  async function shutdown(): Promise<void> {
-    shuttingDown = true
-    if (watcher) { watcher.close(); watcher = null }
-    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null }
-    // Un rechargement EN VOL doit finir de décider du sort de SON serveur (cf. `if (shuttingDown)`
-    // dans reload() ci-dessus) avant qu'on ferme `currentApp`.
-    if (reloadInFlight) await reloadInFlight.catch(() => {})
-    await currentApp.stop()
-    // écouteurs retirés APRÈS la fermeture, jamais avant (même raison que cli/ws.ts : tsx sortait
-    // aussitôt en 130 quand il ne voyait plus aucun écouteur)
-    process.off('SIGINT', onSignal)
-    process.off('SIGTERM', onSignal)
-  }
-  // un seul arrêt ordonné (le même Ctrl+C reçu deux fois attend le premier), sortie bornée par
-  // SHUTDOWN_GRACE_MS ; un 2e Ctrl+C plus d'une seconde après sort aussitôt (cf. gardeArret)
-  const onSignal = gardeArret((): void => {
-    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref()
-    void shutdown().then(() => process.exit(0))
-  }, () => process.exit(0))
-  process.on('SIGINT', onSignal)
-  process.on('SIGTERM', onSignal)
-
-  return {
-    get app() { return currentApp },
-    entryPath,
-    stop: shutdown,
-  }
+  return runEntryServer(args.root, entryPath, injections.watch, {
+    readContract: readServeurEntryContract,
+    buildPlan:    (contract: ServeurEntryContract, warn) => buildServeurRunPlan(contract, config?.serveur, args.port, warn, args.host),
+    create:       (plan: ServeurRunPlan, onLog) => mjsServer({ ...plan.options, transport: transport ?? plan.options.transport, port: plan.port, host: plan.host, onLog }),
+    banner:       (logger, plan: ServeurRunPlan) => printBanner(logger, entryPath, args.root, plan),
+  })
 }

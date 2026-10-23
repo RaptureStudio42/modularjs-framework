@@ -4,14 +4,24 @@
 // à venir SANS toucher cette façade). La persistance DURE reste chez l'appli hôte quand elle
 // passe par le pont (persist-bridge.ts pousse, ne stocke jamais lui-même).
 //
-// CONTRAT (duck-typing STRICT — seules ces 3 fonctions sont vérifiées, `flush` est optionnel) :
+// CONTRAT (duck-typing STRICT — seules ces 3 fonctions sont vérifiées, `flush` et `writeTimeoutMs` sont optionnels) :
 //   load()             → Promise<{id, données}[]>  — lu UNE FOIS au boot, avant que le serveur
 //                         n'accepte la moindre connexion (cf. index.ts, app.listen())
 //   save(id, données)  → void | Promise<void>       — écrit/remplace l'entrée `id` (`données` =
-//                         partie.serialize(), cf. game.ts) — jamais attendu par l'appelant
+//                         partie.serialize(), cf. game.ts) — jamais attendu par la partie
 //   remove(id)         → void | Promise<void>       — supprime l'entrée `id`, no-op si absente
+//   promesse rendue = fin de l'écriture : le moteur s'y enchaîne (une écriture en vol par partie, cf.
+//   « sérialisation par id ») — les adaptateurs fournis la rendent tous ; `void` = aucune attente
+//   sans réponse dans WRITE_TIMEOUT_MS (30 s, ou le délai que l'adaptateur déclare + 1 s, cf. writeTimeoutMs),
+//   une écriture est ABANDONNÉE : un warn nomme la partie, et la sauvegarde de la partie continue sans l'attendre ;
+//   si elle finit par répondre APRÈS une écriture plus récente qui avait abouti, elle a pu la remplacer dans le
+//   stockage : l'état courant de la partie est réécrit (cf. lateArrival)
 //   flush()?           → void | Promise<void>       — vidange/synchronisation finale, appelée par
-//                         app.stop() APRÈS la rafale de sauvegardes en attente
+//                         app.stop() APRÈS la rafale de sauvegardes en attente ; sans réponse dans
+//                         WRITE_TIMEOUT_MS (30 s, ou le délai de l'adaptateur + 1 s), un warn le dit et l'arrêt continue sans l'attendre
+//   writeTimeoutMs?    → number (ms)                — délai global d'UNE écriture, si l'adaptateur a le sien (le pont :
+//                         son totalTimeoutMs) : le moteur l'attend aussi, plus une seconde de marge pour que l'adaptateur
+//                         abandonne le premier ; absent, nul, négatif ou non fini → 30 s
 //
 // ENCODAGE — `données` devient du TEXTE par encodeSnapshot()/decodeSnapshot() (ci-dessous), JAMAIS
 // par une colonne typée du moteur : la règle et sa raison à la section « encodage du snapshot ».
@@ -27,6 +37,9 @@
 // mutation CONTINUE (chaque coup réarme le débounce avant qu'il n'expire), un débounce pur ne sauve
 // JAMAIS — snapshotEvery force un save des parties encore sales à intervalle fixe, garantissant une
 // borne supérieure de fraîcheur même dans ce cas.
+// plafond du débounce, actif même sans snapshotEvery : une partie sale est sauvée au plus tard
+// MAX_WAIT_DEBOUNCES débounces après sa 1re mutation non sauvée (partie d'action : la boucle de tick
+// signale une mutation toutes les 100 ms, sous les 150 ms par défaut, et n'était jamais sauvée)
 //
 // CYCLE DE VIE — matchmaking.ts est le SEUL appelant (ownership des Game, cf. son commentaire de
 // tête) : armGame() posée après CHAQUE create()/restauration, forgetGame() posée dans
@@ -40,6 +53,7 @@
 import type { MjsWsLogFn } from '../mjs-ws/index.js'
 import type { Game, MjsServerGameSnapshot } from './game.js'
 import { t } from '../messages/index.js'
+import { keyUnknown } from './util.js'
 
 // --- le contrat -------------------------------------------------------------------------------
 
@@ -48,11 +62,15 @@ export interface MjsServerPersistAdapter {
   save(id: string, data: MjsServerGameSnapshot): void | Promise<void>
   remove(id: string): void | Promise<void>
   flush?(): void | Promise<void>
+  /** ms — délai global d'UNE écriture, si l'adaptateur a le sien (le pont : totalTimeoutMs) ; le moteur l'attend aussi, plus
+   *  une seconde de marge, pour une écriture comme pour flush() ; absent ou inutilisable (≤ 0, non fini) → 30 s */
+  writeTimeoutMs?: number
 }
 
 export interface MjsServerPersistOptions {
   adapter: MjsServerPersistAdapter
-  /** ms — regroupe les saves rapprochés d'UNE MÊME partie, défaut 150 */
+  /** ms — regroupe les saves rapprochés d'UNE MÊME partie, défaut 150 ; sous mutation continue,
+   *  sauvée quand même au plus tard 10 débounces après la 1re mutation non sauvée */
   debounce?: number
   /** ms — plancher périodique (parties encore sales), défaut 0 = désactivé (débounce pur) */
   snapshotEvery?: number
@@ -68,14 +86,72 @@ export interface MjsServerResolvedPersist {
 }
 
 export const DEFAULT_PERSIST_DEBOUNCE = 150
+// plafond de la sauvegarde différée, en débounces (150 ms par défaut → sauvée au plus tard 1,5 s après
+// sa 1re mutation non sauvée) — une mutation isolée part toujours au bout d'UN débounce
+const MAX_WAIT_DEBOUNCES = 10
+// délai maximum d'UNE écriture (save ou remove) sans réponse de l'adaptateur, en ms — 30 s, soit le délai global PAR DÉFAUT du
+// pont (persist-bridge.ts), qui le règle avec totalTimeoutMs : un adaptateur qui a son propre délai le déclare (writeTimeoutMs)
+// et le moteur le suit (cf. writeDelay) ; sans lui, une écriture qui ne répond jamais (requête SQL
+// restée pendante, Redis muet) gelait pour toujours les sauvegardes de sa partie — chaque écriture
+// attend la précédente — et le remove() d'une partie finie ne partait jamais. Borne aussi le flush() final
+// de l'arrêt (cf. stop()), et les adaptateurs la reprennent pour le leur : exportée, un seul délai
+export const WRITE_TIMEOUT_MS = 30000
+// marge ajoutée au délai que déclare un adaptateur : il abandonne le premier (un pont réglé à 30 s rend sa main, échec dit, avant que
+// le moteur ne tranche), le moteur ne coupe qu'une écriture qu'aucune borne de l'adaptateur n'a su finir
+const WRITE_GRACE_MS = 1000
+// plus grand délai qu'une minuterie accepte (2^31 - 1 ms, environ 24,8 jours) — au-delà Node la ramène à 1 ms
+const MAX_TIMER_MS = 2147483647
+
+/** délai d'une écriture pour cet adaptateur : le sien (writeTimeoutMs) plus la marge, sinon WRITE_TIMEOUT_MS — jamais une valeur
+ *  que setTimeout lirait mal (nulle, négative, NaN, infinie, du texte) */
+function writeDelay(adapter: MjsServerPersistAdapter): number {
+  const own = adapter.writeTimeoutMs
+  if (typeof own !== 'number' || !Number.isFinite(own) || own <= 0) return WRITE_TIMEOUT_MS
+  return Math.min(own + WRITE_GRACE_MS, MAX_TIMER_MS)
+}
+
+// --- les écritures en vol d'un adaptateur — ce que flush() attend à l'arrêt ----------------------
+// Chacune n'est suivie que WRITE_TIMEOUT_MS depuis son départ : c'est le moment où le moteur abandonne une écriture sans réponse et
+// repart avec la suivante. Garder pour toujours la promesse abandonnée retenait une promesse de plus à chaque tentative sous une
+// panne muette (une par délai et par partie, 120 par heure et par partie). Passé le délai, l'écriture est LÂCHÉE : elle peut toujours
+// aboutir plus tard (le moteur rattrape alors son arrivée, cf. lateArrival), mais ni la liste ni flush() ne l'attendent plus, et
+// flush() la compte parmi celles restées sans réponse. La minuterie est retirée dès la réponse, jamais laissée armée derrière une
+// écriture qui a répondu ; jamais unref() : flush() attend ces minuteries, et une minuterie qui ne retient pas le process le
+// laisserait sortir avant la fin de l'arrêt (rien d'autre ne retient un process dont l'écriture ne répond jamais)
+
+export class PendingWrites {
+  private _tracked = new Set<Promise<boolean>>()
+
+  /** écritures suivies en ce moment (celles de moins de WRITE_TIMEOUT_MS qui n'ont pas répondu) */
+  get size(): number { return this._tracked.size }
+
+  /** suit `write` : elle sort de la liste dès qu'elle répond (réussie ou non), ou lâchée au bout de WRITE_TIMEOUT_MS sans réponse */
+  track(write: Promise<unknown>): void {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const followed = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), WRITE_TIMEOUT_MS)
+      const answered = () => { clearTimeout(timer); resolve(true) }
+      write.then(answered, answered)
+    })
+    this._tracked.add(followed)
+    void followed.then(() => { this._tracked.delete(followed) })
+  }
+
+  /** attend les écritures suivies, au plus WRITE_TIMEOUT_MS depuis le départ de chacune — rend combien sont restées sans réponse */
+  async settle(): Promise<number> {
+    const outcomes = await Promise.all(Array.from(this._tracked))
+    return outcomes.filter(answered => !answered).length
+  }
+}
 
 // --- encodage du snapshot — LE point de passage texte de TOUS les adaptateurs ------------------
 // RÈGLE : un adaptateur écrit du TEXTE et encode LUI-MÊME — jamais une colonne typée du moteur
 // (`JSON` MySQL, `JSONB` Postgres…). Un type délégué au moteur se lit différemment selon le
 // moteur : le MÊME schéma a rendu du Hash sous MySQL et de la String sous MariaDB (leçon
 // vécue — `t.json` = alias LONGTEXT côté MariaDB). Texte + encodage explicite =
-// indépendant du moteur, donc infaillible. C'est aussi pourquoi le DDL de persist-sql.ts déclare
-// `data TEXT` et pourquoi `dialect` ne sert QU'À la syntaxe des paramètres bind.
+// indépendant du moteur, donc infaillible. C'est aussi pourquoi le DDL de persist-sql.ts déclare une
+// colonne texte (`data TEXT`, LONGTEXT sous MySQL/MariaDB pour sa taille) et pourquoi `dialect` ne sert qu'à la syntaxe des
+// paramètres bind et à cette taille, jamais au typage.
 // Les 3 adaptateurs de stockage (sql/redis/file) passent par cette paire — un cas particulier à
 // traiter un jour (valeur cyclique, Date, très gros payload) se traite ICI, une fois, pour les
 // trois. persist-bridge.ts n'en est pas : il n'encode pas un état mais une ENVELOPPE HTTP
@@ -90,37 +166,6 @@ export function encodeSnapshot(data: MjsServerGameSnapshot): string {
  *  l'appelant journalise et saute l'entrée, jamais un crash de boot (cf. load() des adaptateurs) */
 export function decodeSnapshot(raw: unknown): MjsServerGameSnapshot {
   return JSON.parse(String(raw)) as MjsServerGameSnapshot
-}
-
-// --- suggestion orthographique — MÊME algorithme que game.ts (Levenshtein ≤ 2), réimplémenté ici
-// à l'identique (~15 lignes) pour la MÊME raison que game.ts : importer depuis un module voisin
-// pour 15 lignes serait un couplage disproportionné, cf. son commentaire de tête ---
-
-function levenshtein(a: string, b: string): number {
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
-  for (let i = 0; i <= a.length; i++) dp[i][0] = i
-  for (let j = 0; j <= b.length; j++) dp[0][j] = j
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1])
-    }
-  }
-  return dp[a.length][b.length]
-}
-
-function suggestKey(key: string, validKeys: Iterable<string>): string | null {
-  let best: string | null = null
-  let bestDist = Infinity
-  for (const k of validKeys) { const d = levenshtein(key, k); if (d < bestDist) { bestDist = d; best = k } }
-  return best !== null && bestDist <= 2 ? best : null
-}
-
-function keyUnknown(prefix: string, k: string, known: Iterable<string>): Error {
-  const suggestion = suggestKey(k, known)
-  const hint = suggestion ? t('serveur.cle-inconnue-suggestion', { suggestion: suggestion }) : ''
-  return new Error(t('serveur.cle-inconnue', { prefix: prefix, k: k, hint: hint, clesValides: Array.from(known).join(', ') }))
 }
 
 const KNOWN_PERSIST_KEYS = new Set(['adapter', 'debounce', 'snapshotEvery'])
@@ -191,7 +236,9 @@ export interface MjsServerPersistEngine {
    *  matchmaking.ts, construit la Game et retourne `false` si le type est inconnu (log ici) */
   loadAtBoot(restore: (data: MjsServerGameSnapshot) => boolean): Promise<void>
   /** app.stop() — rafale finale des débounces en attente, PUIS attend aussi toute sauvegarde déjà en
-   *  vol (cf. « sérialisation par id »), PUIS flush() de l'adaptateur */
+   *  vol (cf. « sérialisation par id ») et le remove() d'une partie finie juste avant ou pendant l'arrêt, PUIS flush() de
+   *  l'adaptateur, attendu au plus WRITE_TIMEOUT_MS (ou le délai de l'adaptateur + 1 s) ; une fois lancé, plus aucune sauvegarde
+   *  n'est programmée, et une écriture abandonnée qui répond n'en relance plus aucune, elle prévient */
   stop(): Promise<void>
 }
 
@@ -213,7 +260,44 @@ export interface MjsServerPersistEngine {
 // `tailChains` porte la chaîne résiduelle d'un id tout juste OUBLIÉ, tant qu'elle n'est pas éteinte :
 // armGame() s'y raccroche si elle existe, pour que ses propres save/remove restent TOUJOURS après
 // ceux de la vie précédente du même id.
-interface Entry { game: Game; handle: ReturnType<typeof setTimeout> | null; dirty: boolean; chain: Promise<void>; saveQueued: boolean }
+// `dirtySince` : instant (horloge monotone, performance.now() — l'heure murale peut sauter, en avant
+// comme en arrière) de la 1re mutation non sauvée, point de départ du plafond (cf. MAX_WAIT_DEBOUNCES)
+// UNE SEULE ÉCRITURE EN VOL PAR PARTIE tient jusqu'au délai (WRITE_TIMEOUT_MS) : passé ce délai l'écriture est ABANDONNÉE, la suivante
+// part, et l'abandonnée peut encore aboutir plus tard, par-dessus — c'est le rôle de `lastDone` : chaque écriture lancée reçoit un
+// rang croissant (`stamp`), et `lastDone` retient le rang le plus élevé qui a abouti pour cette partie, à temps ou tard ; une
+// écriture abandonnée qui répond alors que `lastDone` dépasse son rang a pu remplacer un état plus récent (cf. lateArrival)
+// `life` : numéro de vie de l'entrée — un identifiant recréé (forgetGame puis armGame) en reçoit un neuf, ce qui distingue la sauvegarde tardive de l'ANCIENNE partie.
+// `launched` : rang le plus élevé LANCÉ pour cette entrée (abouti ou non) — un stockage qui exécute dans le désordre a pu laisser une
+// écriture abandonnée s'exécuter après une plus récente déjà partie, sans réponse encore. `correcting` : la prochaine sauvegarde lancée est une
+// réécriture de rattrapage — la tardive d'une réécriture ne se rattrape que sur ce qui a ABOUTI après elle (jamais sur ce qui est seulement
+// parti), faute de quoi les réécritures se relanceraient les unes les autres tant que le stockage est lent
+interface Entry { game: Game; handle: ReturnType<typeof setTimeout> | null; dirty: boolean; dirtySince: number; chain: Promise<void>; saveQueued: boolean; lastDone: number; life: number; launched: number; correcting: boolean }
+
+// DÉLAI MAXIMUM D'UNE ÉCRITURE — `write` en course contre `delay` (WRITE_TIMEOUT_MS, ou le délai de l'adaptateur, cf. writeDelay) :
+// rend la main quand l'écriture finit ou, sans réponse à temps, après `onSilence()` (qui prévient) ; l'écriture est alors
+// ABANDONNÉE — plus attendue, mais pas morte : sa réponse tardive, réussie ou non (on ne sait pas ce que le stockage a reçu), appelle
+// `onLate()`, qui rattrape son arrivée (cf. lateArrival) — Promise.race écoute les deux côtés : le rejet tardif d'une écriture
+// abandonnée n'est jamais un unhandledRejection (Node tue le process dessus), et une erreur de `onLate` (un onLog qui lève) non plus.
+// La minuterie est retirée dès la course finie, jamais laissée armée derrière une écriture qui a répondu ; jamais unref() : stop()
+// attend cette promesse, et une minuterie qui ne retient pas le process le laisserait sortir avant la fin de l'arrêt
+// `Promise.resolve().then(write)` — PAS `Promise.resolve(write())` : ce dernier évalue write() pour
+// CONSTRUIRE l'argument, AVANT que le .catch() de l'appelant ne soit posé — un throw SYNCHRONE de
+// l'adaptateur traverse alors le filet tel quel (stop() rejette ; un appel par timer devient un
+// uncaughtException, process tué). Ici le throw se produit DANS le callback .then(), donc DEVIENT un rejet
+// de la promesse retournée, capté par le .catch() de l'appelant
+// le flush() final de stop() passe par la même course : `write` est alors le flush() de l'adaptateur, abandonné de la même façon
+// (SANS .catch() : un rejet de flush() remonte à stop() comme avant, la borne ne l'avale pas ; sans `onLate` : un flush() qui répond tard n'écrit rien)
+function boundedWrite(write: () => void | Promise<void>, onSilence: () => void, delay: number, onLate?: () => void): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let abandoned = false
+  const silence = new Promise<void>(resolve => { timer = setTimeout(() => { abandoned = true; onSilence(); resolve() }, delay) })
+  const done    = Promise.resolve().then(write)
+  if (onLate) {
+    const late = () => { if (abandoned) onLate() }
+    done.then(late, late).catch(() => {})
+  }
+  return Promise.race([done, silence]).finally(() => clearTimeout(timer))
+}
 
 /** `resolved === null` (opts.persist absent) → retourne `null` tout de suite, AUCUNE Map ni timer
  *  créés — zéro coût, cf. commentaire de tête. */
@@ -225,30 +309,104 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
   // consommée (et retirée) par armGame() ; nettoyée toute seule si jamais réclamée (pas de fuite).
   const tailChains = new Map<string, Promise<void>>()
   let snapshotTimer: ReturnType<typeof setInterval> | null = null
+  // délai d'une écriture pour CET adaptateur (le sien s'il en déclare un, cf. writeDelay), et son écriture en secondes pour les warns
+  const writeMs  = writeDelay(resolved.adapter)
+  const writeSec = writeMs / 1000
+  // rang de la prochaine écriture lancée (save ou remove, toutes parties) — comparé seulement entre écritures d'une même partie
+  let stamp   = 0
+  // numéro de la prochaine vie d'entrée (un par armGame)
+  let lifeSeq = 0
+  // vrai dès que stop() commence : plus aucune sauvegarde programmée (cf. scheduleSave), plus aucune réécriture (cf. lateArrival)
+  let stopped = false
 
-  // `Promise.resolve().then(...)` — PAS `Promise.resolve(adapter.save(...))` : ce dernier évalue
-  // adapter.save() pour CONSTRUIRE l'argument, AVANT que le .catch() ne soit posé — un throw
-  // SYNCHRONE de l'adaptateur traverse alors le filet tel quel (stop() rejette ; un appel par timer
-  // devient un uncaughtException, process tué). Ici le throw se produit DANS le callback .then(),
-  // donc DEVIENT un rejet de la promesse retournée, capté par le .catch() qui suit.
+  // l'écriture passe par boundedWrite : un throw SYNCHRONE de l'adaptateur y devient un rejet, capté par le
+  // .catch() d'ici ; une écriture sans réponse en writeMs est abandonnée (warn), la chaîne repart, et sa réponse tardive est rattrapée
   function runSave(e: Entry): Promise<void> {
     e.dirty = false
     e.saveQueued = true
     e.chain = e.chain.then(() => {
       if (!e.saveQueued) return undefined   // coalescé/annulé entre-temps (maillon déjà consommé, ou remove passé devant)
       e.saveQueued = false
-      return Promise.resolve().then(() => resolved.adapter.save(e.game.id, e.game.serialize()))
-        .catch(err => { onLog('warn', t('serveur.persist-save-echoue', { id: e.game.id }), { err: err instanceof Error ? err.message : String(err) }) })
+      const id         = e.game.id
+      const rank       = ++stamp
+      const life       = e.life
+      const correction = e.correcting
+      e.correcting = false
+      e.launched   = rank
+      // `lastDone` note ce qui a ABOUTI (à temps ou tard) : la comparaison de lateArrival en dépend
+      const save = () => Promise.resolve(resolved.adapter.save(id, e.game.serialize())).then(() => { if (rank > e.lastDone) e.lastDone = rank })
+      return boundedWrite(save, () => { onLog('warn', t('serveur.persist-save-sans-reponse', { id: id, delai: writeSec })) }, writeMs, () => lateArrival(id, rank, 'save', life, correction))
+        .catch(err => { onLog('warn', t('serveur.persist-save-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) }) })
     })
     return e.chain
   }
 
+  // le remove passe lui aussi par boundedWrite, abandonné et rattrapé comme une sauvegarde
+  function runRemove(id: string, life: number): Promise<void> {
+    const rank = ++stamp
+    return boundedWrite(() => resolved.adapter.remove(id), () => { onLog('warn', t('serveur.persist-remove-sans-reponse', { id: id, delai: writeSec })) }, writeMs, () => lateArrival(id, rank, 'remove', life, false))
+      .catch(err => onLog('warn', t('serveur.persist-remove-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) }))
+  }
+
+  // remove(id) accroché derrière `after`, et publié comme suite de la chaîne de cet id pour un armGame() du MÊME id qui suivrait
+  // avant qu'elle ne s'éteigne (partie recréée) — auto-nettoyage une fois éteinte, SAUF si un armGame() l'a déjà consommée
+  // entre-temps (elle n'est alors plus la valeur courante de tailChains)
+  function chainRemove(id: string, after: Promise<void>, life: number): Promise<void> {
+    const suite = after.then(() => runRemove(id, life))
+    tailChains.set(id, suite)
+    void suite.finally(() => { if (tailChains.get(id) === suite) tailChains.delete(id) })
+    return suite
+  }
+
+  // UNE ÉCRITURE ABANDONNÉE VIENT DE RÉPONDRE (`rank` : son rang, `life` : la vie de l'identifiant qui l'a lancée) — réussie ou non, on ne
+  // sait pas ce que le stockage a reçu. Si une écriture plus récente de la même partie avait ABOUTI avant elle (`lastDone` dépasse `rank`),
+  // ou seulement été LANCÉE (`launched` : un stockage peut exécuter dans le désordre, bien après le délai), elle a pu la remplacer : la
+  // sauvegarde est reprogrammée avec l'état COURANT de la partie (relu à l'exécution, cf. runSave), pour que le stockage finisse toujours sur
+  // le plus récent. Rien de plus récent n'avait été lancé (écriture seule) : ce qu'elle a écrit est le dernier état connu, aucune réécriture.
+  // Aucune boucle de réécriture sous un stockage lent : la tardive d'une réécriture de rattrapage (`correction`) ne compte que ce qui a
+  // ABOUTI après elle, pas ce qui est seulement parti — chaque écriture d'origine déclenche au plus une réécriture. Un identifiant recréé :
+  // la sauvegarde tardive d'une AUTRE vie (`life` différente de celle de l'entrée vivante) a pu remettre l'ancienne ligne alors que la partie
+  // vivante n'a encore rien écrit — l'état de la partie vivante est réécrit par-dessus.
+  // Une sauvegarde déjà programmée (débounce, plafond, ou en attente derrière l'écriture en vol) part de toute façon APRÈS : pas de
+  // doublon. Un id recréé : l'entrée vivante est la NOUVELLE vie, qu'un remove tardif de l'ancienne a pu effacer. Plus d'entrée
+  // vivante (partie finie) : un remove tardif est conforme, mais une sauvegarde tardive a pu recréer la ligne après le remove, la
+  // suppression est renvoyée (derrière la chaîne de l'id, comme tout remove). Après stop() : plus rien ne repart, l'arrêt prévient.
+  // L'écriture repart AVANT l'avertissement : un journal qui lève ne la fait pas perdre
+  function lateArrival(id: string, rank: number, kind: 'save' | 'remove', life: number, correction: boolean): void {
+    const live = entries.get(id)
+    if (!live) {
+      if (kind === 'remove') return
+      if (stopped) { onLog('warn', t('serveur.persist-ecriture-tardive-arret', { id: id })); return }
+      chainRemove(id, tailChains.get(id) ?? Promise.resolve(), life)
+      onLog('warn', t('serveur.persist-save-tardive-partie-finie', { id: id }))
+      return
+    }
+    // dépassée : une écriture plus récente a abouti, ou (sauf pour une réécriture de rattrapage) seulement été lancée — un stockage peut les exécuter
+    // dans le désordre. Fantôme : la sauvegarde d'une AUTRE vie de l'identifiant a pu remettre sa ligne alors que la partie vivante n'a rien écrit
+    const exceeded = (correction ? live.lastDone : live.launched) > rank || live.lastDone > rank
+    const ghost    = kind === 'save' && live.life !== life
+    if (!exceeded && !ghost) return
+    if (stopped) { onLog('warn', t('serveur.persist-ecriture-tardive-arret', { id: id })); return }
+    if (live.dirty || live.saveQueued) return
+    live.correcting = true
+    void runSave(live)
+    onLog('warn', t(kind === 'save' ? 'serveur.persist-save-tardive' : 'serveur.persist-remove-tardive', { id: id }))
+  }
+
   function scheduleSave(game: Game): void {
+    // arrêt commencé : une sauvegarde programmée maintenant partirait après flush(), avec l'état d'une partie déjà détruite
+    // (minuteries vidées) à la place de celui de la rafale finale
+    if (stopped) return
     const e = entries.get(game.id)
     if (!e) return   // partie non suivie — ne devrait pas arriver, armGame() couvre fraîche+restaurée
+    // horloge monotone : l'heure murale (Date.now) saute sur une correction NTP ou une reprise de machine virtuelle
+    const now = performance.now()
+    if (!e.dirty) e.dirtySince = now
     e.dirty = true
     if (e.handle) clearTimeout(e.handle)
-    e.handle = setTimeout(() => { e.handle = null; void runSave(e) }, resolved.debounce)
+    // réarmé à chaque mutation, mais jamais au-delà du plafond compté depuis la 1re mutation non sauvée
+    const delay = Math.min(resolved.debounce, Math.max(0, e.dirtySince + resolved.debounce * MAX_WAIT_DEBOUNCES - now))
+    e.handle    = setTimeout(() => { e.handle = null; void runSave(e) }, delay)
   }
 
   if (resolved.snapshotEvery > 0) {
@@ -267,7 +425,7 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
       // (cf. tailChains ci-dessus) — sinon repart d'une chaîne neuve (id inédit ou vie précédente déjà éteinte)
       const inherited = tailChains.get(game.id)
       if (inherited !== undefined) tailChains.delete(game.id)
-      entries.set(game.id, { game, handle: null, dirty: false, chain: inherited ?? Promise.resolve(), saveQueued: false })
+      entries.set(game.id, { game, handle: null, dirty: false, dirtySince: 0, chain: inherited ?? Promise.resolve(), saveQueued: false, lastDone: 0, life: ++lifeSeq, launched: 0, correcting: false })
       game._onMutate = () => scheduleSave(game)
     },
 
@@ -275,19 +433,11 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
       const e = entries.get(id)
       if (e?.handle) clearTimeout(e.handle)
       entries.delete(id)
-      const runRemove = (): Promise<void> => Promise.resolve().then(() => resolved.adapter.remove(id))
-        .catch(err => onLog('warn', t('serveur.persist-remove-echoue', { id: id }), { err: err instanceof Error ? err.message : String(err) }))
       if (e) {
         e.saveQueued = false   // annule la sauvegarde coalescée en attente — le remove doit gagner
-        e.chain = e.chain.then(runRemove)
-        // publie la suite de la chaîne pour un armGame() du MÊME id qui suivrait avant qu'elle ne
-        // s'éteigne (partie recréée) — auto-nettoyage une fois éteinte, SAUF si un armGame() l'a
-        // déjà consommée entre-temps (elle n'est alors plus la valeur courante de tailChains)
-        const suite = e.chain
-        tailChains.set(id, suite)
-        void suite.finally(() => { if (tailChains.get(id) === suite) tailChains.delete(id) })
+        e.chain      = chainRemove(id, e.chain, e.life)
       } else {
-        void runRemove()   // aucune entry (jamais armée / déjà oubliée) — MÊME comportement qu'avant
+        void runRemove(id, 0)   // aucune entry (jamais armée / déjà oubliée) — MÊME comportement qu'avant
       }
     },
 
@@ -299,7 +449,15 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
         onLog('warn', t('serveur.persist-load-echoue'), { err: err instanceof Error ? err.message : String(err) })
         return
       }
-      for (const { data } of brut) {
+      // un adaptateur maison qui rend autre chose qu'un tableau ({}, null, une chaîne…) : même sort qu'un load() qui échoue — le
+      // `for…of` ci-dessous levait (boot cassé) ou parcourait une chaîne caractère par caractère
+      if (!Array.isArray(brut)) {
+        onLog('warn', t('serveur.persist-load-pas-un-tableau', { recu: brut === null ? 'null' : typeof brut }))
+        return
+      }
+      for (const entry of brut) {
+        // entrée elle-même `null` (adaptateur maison) : même avertissement qu'une donnée illisible, jamais un boot cassé
+        const data = entry?.data
         try {
           // `data` peut être `null` (colonne SQL NULL, fichier `null` JSON valide,
           // cf. decodeSnapshot) — `data?.id`/`data?.type` : sinon CETTE ligne lève à son tour, hors
@@ -312,15 +470,23 @@ export function createPersistEngine(resolved: MjsServerResolvedPersist | null, o
     },
 
     async stop(): Promise<void> {
+      stopped = true   // une écriture abandonnée qui répond pendant l'arrêt ne relance rien (cf. lateArrival)
       if (snapshotTimer) { clearInterval(snapshotTimer); snapshotTimer = null }
-      const pending: Array<Promise<void>> = []
       for (const e of entries.values()) {
         if (e.handle) { clearTimeout(e.handle); e.handle = null }
         if (e.dirty) runSave(e)
-        pending.push(e.chain)   // TOUJOURS — attend aussi une sauvegarde déjà EN VOL (dirty déjà remis à false par runSave), pas seulement celles encore en attente
       }
-      await Promise.allSettled(pending)
-      await resolved.adapter.flush?.()
+      // attend TOUTES les chaînes : une sauvegarde déjà EN VOL (dirty déjà remis à false par runSave) comme celles de la rafale, et le
+      // remove() d'une partie finie (tailChains) — juste avant l'arrêt, ou pendant cette attente (repris tant qu'il en naît) : rien ne
+      // part vers l'adaptateur après son flush(), où le stockage est peut-être déjà fermé (Redis)
+      const awaited = new Set<Promise<void>>()
+      let pending: Array<Promise<void>>
+      do {
+        pending = [...Array.from(entries.values(), e => e.chain), ...tailChains.values()].filter(chain => !awaited.has(chain))
+        for (const chain of pending) awaited.add(chain)
+        await Promise.allSettled(pending)
+      } while (pending.length > 0)
+      await boundedWrite(() => resolved.adapter.flush?.(), () => { onLog('warn', t('serveur.persist-flush-sans-reponse', { delai: writeSec })) }, writeMs)
     },
   }
 }

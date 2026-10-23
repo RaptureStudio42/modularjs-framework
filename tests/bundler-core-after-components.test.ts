@@ -1,7 +1,7 @@
 // refonte « cœur après composants ». compile() compile désormais TOUTES les unités en mémoire d'abord
 // (le cœur est INCONNU, `coreHashedPath` vide), déduit les briques du cœur du CODE COMPILÉ
 // (collectUsedFeatures(), src/bundler/features.ts), construit le cœur, PUIS écrit composants/
-// modules/manifeste externe en résolvant un REPÈRE provisoire (`-ZZZZZZZZ.`, même longueur
+// modules/manifeste externe en résolvant un REPÈRE provisoire (`-ZZZZZ.`, même longueur
 // qu'un vrai hash md5) vers le chemin réel. scanRuntimeFeatures() (balayage textuel de
 // sourceDir) est supprimé — remplacé par la lecture des signaux dans les unités compilées.
 //
@@ -47,16 +47,16 @@ function coreContent(outDir: string): string {
   return readFileSync(join(outDir, coreFile!), 'utf-8')
 }
 
-// aucun repère `-ZZZZZZZZ.` nulle part : ni dans un fichier de outputDir, ni dans bundle.js.
+// aucun repère `-ZZZZZ.` nulle part : ni dans un fichier de outputDir, ni dans bundle.js.
 function assertNoPlaceholderAnywhere(outDir: string, manifestPath: string): void {
   for (const f of readdirSync(outDir)) {
     if (!/\.(js|css|json)$/.test(f)) continue
     const content = readFileSync(join(outDir, f), 'utf-8')
-    assert.equal(content.includes('-ZZZZZZZZ.'), false, `${f} contient encore un repère non résolu`)
+    assert.equal(content.includes('-ZZZZZ.'), false, `${f} contient encore un repère non résolu`)
   }
   if (existsSync(manifestPath)) {
     const bundleJs = readFileSync(manifestPath, 'utf-8')
-    assert.equal(bundleJs.includes('-ZZZZZZZZ.'), false, 'bundle.js contient encore un repère non résolu')
+    assert.equal(bundleJs.includes('-ZZZZZ.'), false, 'bundle.js contient encore un repère non résolu')
   }
 }
 
@@ -247,7 +247,7 @@ describe('compile() : le cœur se décide APRÈS les composants (code compilé, 
     const hop1 = readdirSync(outDir).find((f) => /^hop-/.test(f))!
     const hop1Content = readFileSync(join(outDir, hop1), 'utf-8')
     assert.ok(hop1Content.includes(theme1.replace(/\.js$/, '')), 'hop doit importer le chemin RÉEL de la feuille, jamais un repère')
-    assert.equal(hop1Content.includes('-ZZZZZZZZ.'), false)
+    assert.equal(hop1Content.includes('-ZZZZZ.'), false)
 
     writeFileSync(join(stylesDir, 'theme.sass'), '.p\n  color: blue\n')
     const stats2 = await bundler.compile()

@@ -1,17 +1,17 @@
-// La garde « sérialisable » (isSerializableEntry/streams.ts,
-// isSerializablePayload/bridge.ts) s'appuyait sur `try { JSON.stringify(value) }` — or
-// JSON.stringify ne LÈVE PAS pour une Map/Set/fonction/Symbol/`undefined` niché(e) : la valeur
-// était acceptée puis disparaissait en silence à l'encodage ({} ou clé absente). Correctif :
-// parcours DÉDIÉ (même règle, même message catalogué) refusant aussi ces cas.
+// La garde « sérialisable » des flux (isSerializableEntry, streams.ts) s'appuyait sur `try { JSON.stringify(value) }` —
+// or JSON.stringify ne LÈVE PAS pour une Map, un Set, une fonction, un Symbol ou un `undefined` niché : la valeur était
+// acceptée puis disparaissait en silence à l'encodage ({} ou clé absente). Correctif : parcours DÉDIÉ (même règle, même
+// message catalogué) refusant aussi ces cas. Le pont HTTP (isSerializablePayload, bridge.ts) ne reçoit que du JSON déjà
+// lu, où rien de tout cela ne peut figurer : sa garde ne contrôle que la profondeur
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 
 function lp(field: string): string { return field.length +':'+ field }
-function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number): string {
-  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body]
+function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number, nonce: string): string {
+  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body, nonce]
   const canonical = fields.map(lp).join('')
   return createHmac('sha256', secret).update(canonical).digest('hex')
 }
@@ -121,10 +121,11 @@ describe('garde « sérialisable » stricte (streams.ts + bridge.ts)', () => {
     async function post(port: number, path: string, body: any): Promise<{ status: number; json: any }> {
       const bodyStr = JSON.stringify(body)
       const ts      = Math.floor(Date.now() / 1000)
-      const sig     = sign(SECRET, 'POST', path, bodyStr, ts)
+      const nonce   = randomBytes(16).toString('hex')   // neuf à chaque requête : le pont l'exige par défaut
+      const sig     = sign(SECRET, 'POST', path, bodyStr, ts, nonce)
       const res  = await fetch('http://127.0.0.1:'+ port + path, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig },
+        headers: { 'content-type': 'application/json', 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig },
         body: bodyStr,
       })
       const text = await res.text()
@@ -135,7 +136,7 @@ describe('garde « sérialisable » stricte (streams.ts + bridge.ts)', () => {
 
     // une charge HTTP naît d'un JSON.parse : elle ne peut JAMAIS porter de Map/Set/fonction/Symbol/
     // BigInt (aucun n'a de littéral JSON) — {} est donc INDISCERNABLE d'une Map vidée à l'écriture,
-    // la garde du pont reste limitée à la profondeur (déjà en place) et à l'`undefined` (ci-dessous)
+    // la garde du pont se limite donc à la profondeur
     it('POST /stream (add) — value = {} (équivalent d\'une Map une fois passée en JSON) reste ACCEPTÉ : le pont ne peut pas distinguer un objet vide d\'une Map vidée', async () => {
       const { app, bridgePort } = await startApp()
       const { status, json } = await post(bridgePort, '/stream', { name: 'p-map-equiv', op: 'add', id: 'e1', value: {} })
@@ -146,10 +147,10 @@ describe('garde « sérialisable » stricte (streams.ts + bridge.ts)', () => {
 
     // `p` OMIS (undefined) À LA RACINE reste ACCEPTÉ — comportement historique protégé par
     // tests/mjs-ws-bridge.test.ts (« requête bien signée → 200 » envoie `{type:'x'}`, sans `p`) :
-    // le refus d'`undefined` ne s'applique donc QU'EN position NICHÉE (clé objet/élément de
-    // tableau), jamais à la racine — et un `undefined` NICHÉ ne peut de toute façon JAMAIS naître
-    // d'un JSON.parse (aucun littéral JSON pour ce type) : cette branche reste un filet sans effet
-    // observable via HTTP aujourd'hui (posée par symétrie stricte avec streams.ts).
+    // la garde « sérialisable » du pont ne regarde que la profondeur, jamais un `undefined` : un
+    // `undefined` NICHÉ ne peut JAMAIS naître d'un JSON.parse (aucun littéral JSON pour ce type).
+    // streams.ts, lui, refuse un `undefined` niché : `app.stream(…).add()` reçoit aussi les valeurs
+    // du code du serveur, pas seulement celles d'un JSON.parse
     it('POST /broadcast — `p` OMIS (undefined À LA RACINE) reste ACCEPTÉ, comportement historique inchangé', async () => {
       const { app, bridgePort } = await startApp()
       const { status, json } = await post(bridgePort, '/broadcast', { type: 'annonce' })

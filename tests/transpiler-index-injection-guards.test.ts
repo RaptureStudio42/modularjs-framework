@@ -91,7 +91,7 @@ describe('injection JS via moduleName/tagName non échappé', function () {
   it('témoin — nom de module normal, sortie inchangée', async () => {
     const r = await transpile('<script>$x=1</script><p>{$x}</p>', { moduleName: 'temoinnormal' })
     assert.equal(r.data.moduleName, 'temoinnormal')
-    assert.match(r.output, /this\._mjs_modName = "temoinnormal"/)
+    assert.match(r.output, /this\._mjs_modName = 'temoinnormal'/)
     assert.match(r.output, /µ\._def\("mjs-temoinnormal"/)
   })
 })

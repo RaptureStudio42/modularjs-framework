@@ -51,7 +51,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
     mutators = MJS_STORE_MUTATORS;
     proxy = new Proxy(target, {
       get: (obj, prop, receiver) => {
-        var component, originalMethod, val;
+        var component, val;
         // fast-path symbole EN TÊTE (cf. mjs_runes.ts) : accès à la
         // cible BRUTE pour µ._mjs_toRaw — sans lui, un composant qui reçoit une
         // valeur issue du store ne la reconnaît jamais comme une enveloppe
@@ -106,6 +106,8 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         // inchangé pour un objet plain (receiver = proxy, nécessaire aux getters `this`-sensibles
         // définis par l'utilisateur, ex. champs privés `#x`).
         val = Reflect.get(obj, prop, isBuiltIn ? obj : receiver);
+        // propriété figée (objet gelé…) : sa valeur, telle quelle — règle des Proxy, cf. µ._mjs_fixed (mjs_init.ts)
+        if ((typeof val === 'function' || typeof val === 'object' && val !== null) && µ._mjs_fixed(obj, prop)) return val;
         // AVANT : `!isBuiltIn` bloquait le wrap récursif dès que le CONTENEUR (obj) était lui-même
         // une collection native — `store.data.list[0]` rendait donc l'objet BRUT (aucun proxy
         // interposé), et `store.data.list[0].n = 99` mutait en silence (zéro trap, zéro
@@ -119,11 +121,12 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         }
         if (typeof val === 'function') {
           if (isBuiltIn) {
-            originalMethod = val.bind(obj);
             if (mutators.has(prop)) {
               return (...args) => {
                 var result;
-                result = originalMethod(...args);
+                // la donnée rangée reste brute : un élément ou une valeur tenus par leur enveloppe sont déballés
+                // (la clé d'une Map reste telle quelle, `get` la retrouve)
+                result = val.apply(obj, args.map((a, i) => i || !(obj instanceof Map) ? µ._mjs_toRaw(a) : a));
                 // époque de mutation du brut (cf. mjs_element.ts).
                 µ._mjs_bumpEpoch(obj);
                 this._mjs_notifyMutation(byRoot, rootKey, prop);
@@ -133,18 +136,11 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
                 return result === obj ? proxy : result;
               };
             }
-            // `Map.get(k)` rend la valeur INTERNE brute par un appel natif, HORS du trap `get`
-            // ci-dessus (l'accès indexé `arr[i]`, lui, PASSE par ce trap et bénéficie déjà du
-            // wrap ci-dessus) : un élément objet stocké dans un Map en ressortait donc TOUJOURS
-            // brut, même après le fix de la lecture indexée. Même défaut que list[0] avant fix,
-            // prouvé par exécution le 23/09/2026.
-            if (prop === 'get' && obj instanceof Map) {
-              return (...args) => {
-                var r = originalMethod(...args);
-                return (typeof r === 'object' && r !== null) ? this._mjs_buildProxy(r, rootKey) : r;
-              };
-            }
-            return originalMethod;
+            // méthode qui ne modifie pas la collection (µ._mjs_readFn, mjs_init.ts, commune avec l'état d'un
+            // composant et µ.state) : l'élément rendu, passé au rappel ou sorti d'une Map / d'un Set (`get`,
+            // `forEach`, `values`, `for…of`…) est enveloppé comme une lecture par indice ; une liste retrouve
+            // l'objet poussé, tenu brut ou par son enveloppe
+            return µ._mjs_readFn(obj, prop, val, proxy, (x) => (typeof x === 'object' && x !== null) ? this._mjs_buildProxy(x, rootKey) : x);
           }
           return val.bind(receiver);
         }
@@ -155,7 +151,9 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
         // parité avec µ._storeSet (mjs_store_globals.ts) : une
         // clé __proto__/constructor/prototype venue d'un `{...$data}` réseau ne doit pas remplacer
         // le PROTOTYPE de l'état.
-        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn('[ModularJS] µ.Store : clé refusée (« ' + prop + ' ») — mutation ignorée.'); return true; }
+        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn(µ._mjs_msg('storeKey', { prop: prop }, 'µ.Store : clé refusée (« {prop} ») — mutation ignorée.')); return true; }
+        // donnée brute rangée, jamais une enveloppe (`store.data.list = store.data.list.filter(…)`)
+        value = µ._mjs_rawIn(value);
         if (Reflect.get(obj, prop, receiver) === value) {
           return true;
         }
@@ -191,7 +189,7 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       deleteProperty: (obj, prop) => {
         var had, success;
         // symétrique du trap `set` ci-dessus.
-        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn('[ModularJS] µ.Store : clé refusée (« ' + prop + ' ») — mutation ignorée.'); return true; }
+        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn(µ._mjs_msg('storeKey', { prop: prop }, 'µ.Store : clé refusée (« {prop} ») — mutation ignorée.')); return true; }
         had = Object.prototype.hasOwnProperty.call(obj, prop);
         success = Reflect.deleteProperty(obj, prop);
         if (success && had && !µ._mjs_rawSet.has(obj)) {
@@ -245,13 +243,13 @@ const MJS_STORE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       // contournait le trap `set` ci-dessus (chemin d'écriture DIFFÉRENT du Proxy) : même garde,
       // même message.
       defineProperty: (obj, prop, desc) => {
-        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn('[ModularJS] µ.Store : clé refusée (« ' + prop + ' ») — mutation ignorée.'); return false; }
+        if (typeof prop === 'string' && !µ._mjs_safeKey(prop)) { µ.warn(µ._mjs_msg('storeKey', { prop: prop }, 'µ.Store : clé refusée (« {prop} ») — mutation ignorée.')); return false; }
         return Reflect.defineProperty(obj, prop, desc);
       },
       // `Object.setPrototypeOf(store.data, evil)` changeait
       // le PROTOTYPE en un seul appel, hors de portée du trap `set` (pas une écriture de clé).
       setPrototypeOf: (obj, proto) => {
-        µ.warn('[ModularJS] store : changement de prototype refusé');
+        µ.warn(µ._mjs_msg('storeProto', null, 'store : changement de prototype refusé'));
         return false;
       }
     });

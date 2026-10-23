@@ -11,7 +11,7 @@
 if (µ.Element) {
   // _mjs_updKey prend une createFn qui retourne {fragment, refs}.
   µ.Element.prototype._mjs_updKey = function(id, val, createFn) {
-    var built, childMode, e, firstNew, n, outroNodes, ref, s, t;
+    var built, childMode, e, firstNew, n, outroNodes, range, ref, s, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
     if (!(s && e)) {
@@ -30,16 +30,23 @@ if (µ.Element) {
     childMode = (ref = s.parentNode) != null ? typeof ref.getAttribute === "function" ? ref.getAttribute('mjs-childtransition') : void 0 : void 0;
     n = s.nextSibling;
     outroNodes = []; // accroche d'appariement, lue par les sorties de reveal/flip/cube/turn
+    // plage figée avant de détruire, nœuds déjà détachés ignorés : le nettoyage d'un effet retire
+    // parfois un FRÈRE de sa balise (cf. mjs_if.ts `_mjs_updIf`), la marche ne doit pas s'y arrêter
+    range = [];
     while (n && n !== e) {
-      t = n;
+      range.push(n);
       n = n.nextSibling;
+    }
+    for (let __ni = 0, __nln = range.length; __ni < __nln; __ni++) {
+      t = range[__ni];
+      if (!t.parentNode) continue;
       if (!t._mjs_dying) {
         // `.catch` défensif : jamais attendue ici (asynchrone, fire-and-
         // forget par design), un rejet resterait sinon non géré et la
         // structure sortante ne serait jamais retirée (doublon avec la
         // nouvelle clé, cf. mjs_if.ts _mjs_updIf pour le même choix).
         this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error('[ModularJS] destruction de l\'ancienne clé {key} en erreur :', err);
+          return µ.error(µ._mjs_msg('keyDestroy', null, 'destruction de l\'ancienne clé {key} en erreur :'), err);
         });
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }

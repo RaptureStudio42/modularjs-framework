@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { createHarness } from '../../src/testing/index.js'
 
 const srcDir = process.argv[2]
+const outDir = process.argv[3]
 mkdirSync(srcDir, { recursive: true })
 writeFileSync(join(srcDir, 'ticker.mjs'), `
 <script lang="coffee">
@@ -17,7 +18,8 @@ writeFileSync(join(srcDir, 'ticker.mjs'), `
 </script>
 <p>ticker</p>
 `)
-const app = await createHarness({ sourceDir: srcDir })
+// sorties dans le dossier temporaire donné par le test : sans lui, la construction irait dans `public/modularjs` du dossier courant
+const app = await createHarness({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js') })
 await app.mount('ticker')
 await app.destroy()
 console.log('MJS_LOT3_S21_TESTING_DONE')

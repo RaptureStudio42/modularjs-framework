@@ -4,6 +4,7 @@
 // d'essais neuf. Un envoi pendant l'abandon est écarté, avec un seul avertissement par socket.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const src = readFileSync(new URL('../src/runtime/mjs_socket.ts', import.meta.url), 'utf8')
 
@@ -21,6 +22,7 @@ class MockWS {
 function makeMu(warns: string[] = []): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: (m: string) => { warns.push(m) }, log: () => {} }
   ;(globalThis as any).WebSocket = MockWS
+  poserMessages(µ)
   new Function('µ', src)(µ)
   return µ
 }

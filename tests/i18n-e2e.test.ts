@@ -69,7 +69,7 @@ function readLangFile(outDir: string, url: string): any {
 function makeLangImportStub(outDir: string) {
   const langues: string[] = []
   const fn = async (url: string) => {
-    langues.push(String(url).split('/').pop()!.replace(/^mjs_i18n-/, '').replace(/-[a-f0-9]{8}\.js$/, ''))
+    langues.push(String(url).split('/').pop()!.replace(/^mjs_i18n-/, '').replace(/-[0-9a-z]{5}\.js$/, ''))
     return { default: readLangFile(outDir, url) }
   }
   return { fn, langues }
@@ -266,16 +266,16 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
   })
 
   describe('(e) modes placeholder', () => {
-    it("auto : dev → '⟦clé⟧' sur clé manquante, prod → chaîne vide", async () => {
+    it("*skeleton : dev → '⟦clé⟧' sur clé manquante, prod → chaîne vide", async () => {
       const { insert: insertDev } = await setupProject({
-        automissing: ["@i18n 'panier'", '<p class="v">{µt(\'inconnue\')}</p>'].join('\n'),
+        automissing: ["@i18n 'panier'", '@i18nPlaceholder *skeleton', '<p class="v">{µt(\'inconnue\')}</p>'].join('\n'),
       })
       const elDev = insertDev('automissing')
       await new Promise(r => setTimeout(r, 80))
       assert.equal(elDev._shadow.querySelector('p.v').textContent.trim(), '⟦panier.inconnue⟧', 'dev : placeholder visible')
 
       const { insert: insertProd } = await setupProject({
-        automissing: ["@i18n 'panier'", '<p class="v">{µt(\'inconnue\')}</p>'].join('\n'),
+        automissing: ["@i18n 'panier'", '@i18nPlaceholder *skeleton', '<p class="v">{µt(\'inconnue\')}</p>'].join('\n'),
       }, { forceMinify: true })
       const elProd = insertProd('automissing')
       await new Promise(r => setTimeout(r, 80))
@@ -383,10 +383,10 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
 
     // CONTRE-ÉPREUVE — sans `wait` au config, le comportement d'origine tient :
     // le rendu part tout de suite, placeholder compris.
-    it("auto par CONFIG : le rendu part tout de suite, sans attendre le fragment", async () => {
+    it("*skeleton par CONFIG : le rendu part tout de suite, sans attendre le fragment", async () => {
       const { window, insert, outDir } = await setupProject(
         { autoview: ["@i18n 'panier'", '<p class="n">{$n}</p>', '<script>', '  $n = 3', '</script>'].join('\n') },
-        { i18n: { default: 'fr', placeholder: 'auto' } },
+        { i18n: { default: 'fr', placeholder: '*skeleton' } },
       )
       let resolveFetch: (v: any) => void = () => {}
       const fetchGate = new Promise((r) => { resolveFetch = r })
@@ -438,6 +438,21 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
     assert.equal(el._shadow.querySelector('p.v').textContent.trim(), 'Résumé du panier')
   })
 
+  it('(h2) PROD, noms courts : le même composant monté trouve ses textes en fr puis en en (fragments à 12 hex)', async () => {
+    const { window, insert, readManifest, outDir } = await setupProject({
+      panierhashcourt: ["@i18n 'panier'", '<p class="resume">{µt(\'resume\')}</p>'].join('\n'),
+    }, { forceMinify: true })
+    const data = readManifest()
+    const en = readLangFile(outDir, data.files.en)
+    assert.match(en.sections.panier, /^[a-f0-9]{12}$/, 'nom court aussi pour la langue en')
+    const el = insert('panierhashcourt')
+    await new Promise(r => setTimeout(r, 80))
+    assert.equal(el._shadow.querySelector('p.resume').textContent.trim(), 'Résumé du panier')
+    window.µ.store.__mjsLang = 'en'
+    await new Promise(r => setTimeout(r, 80))
+    assert.equal(el._shadow.querySelector('p.resume').textContent.trim(), 'Cart summary')
+  })
+
   it('(h) chaîne build→runtime PROD : hash actif, manifest pointe les noms hachés, le runtime fetche le bon chemin', async () => {
     const { insert, calls, readManifest, outDir } = await setupProject({
       panierhash: ["@i18n 'panier'", '<p class="resume">{µt(\'resume\')}</p>'].join('\n'),
@@ -447,7 +462,7 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
     // `prefix/<langue>/<nom>.json`, exactement comme le fait le runtime.
     const fr = readLangFile(outDir, data.files.fr)
     const hashedUrl = `${data.prefix}/fr/${fr.sections.panier}.json`
-    assert.match(hashedUrl, /\/i18n\/fr\/[a-f0-9]{32}\.json$/, 'le fichier de langue pointe un nom haché')
+    assert.match(hashedUrl, /\/i18n\/fr\/[a-f0-9]{12}\.json$/, 'le fichier de langue pointe un nom haché')
 
     const el = insert('panierhash')
     await new Promise(r => setTimeout(r, 80))

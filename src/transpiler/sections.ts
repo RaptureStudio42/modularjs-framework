@@ -6,7 +6,8 @@ import { dedent } from '../generator/state.js'
 import { maskInertSameLength, maskHtmlComments } from '../mask.js'
 import { t } from '../messages/index.js'
 import { parseVtValue, suggestKey } from '../bundler/config.js'
-import { findMacroTagEnd } from './macro-tag.js'
+import { findMacroTagEnd, asciiLower } from './macro-tag.js'
+import { tagReader } from './tag-reader.js'
 
 export interface ScriptSection {
   raw: string
@@ -61,6 +62,15 @@ export interface RoutesSection {
   entries: [string, string][]
 }
 
+/** Un bloc `<vars>` du composant (types et valeurs permises de ses variables, props et stores),
+ * ou un bloc `<types>` d'un fichier `*.types.mjs` (règles nommées) : lignes brutes, lues par
+ * transpiler/var-types.ts. */
+export interface TypesSection {
+  raw: string
+  /** ligne 1-based du `.mjs` où débute le contenu du bloc (après la balise ouvrante) */
+  startLine: number
+}
+
 export interface SectionsResult {
   module: ScriptSection
   script: ScriptSection
@@ -68,6 +78,12 @@ export interface SectionsResult {
   layouts: LayoutSection[]
   themes: ThemeSection[]
   routes: RoutesSection[]
+  /** le bloc `<vars>`, toujours avant le `<script>` ; null s'il n'y en a pas */
+  vars: TypesSection | null
+  /** les blocs `<types>` — leur place est un fichier `*.types.mjs`, jamais un composant */
+  types: TypesSection[]
+  /** les blocs `<effects>` — leur place est un fichier `*.effects.mjs`, jamais un composant */
+  effects: TypesSection[]
   html: string
   /** ligne 1-based du `.mjs` où DÉBUTE le HTML rendu ci-dessus : les blocs retirés laissent un
    * commentaire de MÊME hauteur (cf. boucle de découpe), seul le `.trim()` final décale. Sert à
@@ -253,6 +269,252 @@ function maskStyleInertSameLength(src: string): string {
   return src.replace(STYLE_INERT_RE, (tok) => tok.replace(/[^\n]/g, ' '))
 }
 
+// lecteur des littéraux de STYLE_INERT_RE : le premier qui commence à `de` ou après, [début, fin) — même résultat que
+// l'expression, sans relire tout le texte à chaque appel : la fin déjà cherchée d'un `/*` ou d'un `url(` est gardée (un `/*`
+// ou un `url(` jamais refermés relisaient le texte jusqu'au bout à chacun de leurs appels : temps quadratique)
+const FIN_DE_LIGNE = new Set(['\n', '\r', ' ', ' '])
+
+function lecteurLitteraux(scan: string): (de: number) => [number, number] | null {
+  const n = scan.length
+  // premier `*/` à partir d'une position de [deCom, finCom] : finCom (-1 : aucun après deCom)
+  let deCom  = -1
+  let finCom = -1
+  const finCommentaire = (x: number): number => {
+    if (deCom === -1 || x < deCom || (finCom !== -1 && x > finCom)) {
+      deCom  = x
+      finCom = scan.indexOf('*/', x)
+    }
+    return finCom
+  }
+  // `)` qui ferme un `url(` lu à partir d'une position de [deUrl, arretUrl] : finUrl (-1 : aucune) ; un `\` y garde le
+  // caractère qui suit, sauf une fin de ligne. Une position lue juste après `url(` ne tombe jamais au milieu d'un `\x`
+  let deUrl    = -1
+  let arretUrl = -1
+  let finUrl   = -1
+  const fermeUrl = (x: number): number => {
+    if (deUrl === -1 || x < deUrl || x > arretUrl) {
+      let i = x
+      finUrl = -1
+      while (i < n) {
+        const c = scan[i]
+        if (c === ')') { finUrl = i; break }
+        if (c === '\\') {
+          if (i + 1 >= n || FIN_DE_LIGNE.has(scan[i + 1])) break
+          i += 2
+          continue
+        }
+        i++
+      }
+      deUrl    = x
+      arretUrl = Math.min(i, n)
+    }
+    return finUrl
+  }
+  // fin (après le guillemet) d'une chaîne d'une ligne ouverte en `p`, -1 sans guillemet fermant
+  const finChaine = (p: number): number => {
+    const q = scan[p]
+    for (let i = p + 1; i < n; i++) {
+      const c = scan[i]
+      if (c === q) return i + 1
+      if (c === '\n') return -1
+      if (c === '\\') {
+        if (i + 1 >= n || FIN_DE_LIGNE.has(scan[i + 1])) return -1
+        i++
+      }
+    }
+    return -1
+  }
+  return (de: number): [number, number] | null => {
+    for (let p = de; p < n; p++) {
+      const c = scan[p]
+      if (c === '\'' || c === '"') {
+        const fin = finChaine(p)
+        if (fin !== -1) return [p, fin]
+      }
+      else if (c === '/') {
+        const c1 = scan[p + 1]
+        if (c1 === '*') {
+          const fin = finCommentaire(p + 2)
+          if (fin !== -1) return [p, fin + 2]
+        }
+        else if (c1 === '/') {
+          const fin = scan.indexOf('\n', p)
+          return [p, fin === -1 ? n : fin]
+        }
+      }
+      else if ((c === 'u' || c === 'U') && scan[p + 3] === '(' && scan.slice(p + 1, p + 3).toLowerCase() === 'rl') {
+        const fin = fermeUrl(p + 4)
+        if (fin !== -1) return [p, fin + 1]
+      }
+    }
+    return null
+  }
+}
+
+// maskStylesCss — vue CSS/SASS où seuls les styles sont lus comme du CSS : le texte du gabarit n'en est pas, et un `/*`
+// ou un `url(` non refermés écrits dans le HTML AVANT un <style> (texte d'un paragraphe, démo de code) masquaient tout
+// jusqu'à leur fin, balise comprise — le composant valide était refusé (« un </style> orphelin »). Lecture continue,
+// comme avant ; une balise <style> en tête de ligne, hors des scripts, qu'un littéral a avalée relance la lecture à
+// partir d'elle. <theme>, <routes>, <vars>, <types> et <effects> se cherchent dans cette même vue : même relance à leur balise
+// (suivie d'un blanc ou de `>`) ; l'une d'elles jamais refermée ne coupe pas la lecture de la suite
+// Une relance relit les littéraux à partir de la balise : le texte n'est plus masqué en entier à chaque relance (2 000 styles avalés
+// coûtaient deux secondes), les littéraux de la lecture en cours sont lus au fil des besoins et le texte masqué se compose à la fin,
+// chaque tronçon lu depuis sa relance — même résultat
+function maskStylesCss(scan: string, scriptMatches: RegExpMatchArray[], caseInsensitive: boolean): string {
+  const open = new RegExp(String.raw`^[ \t]*<(style|(?:theme|routes|vars|types|effects)(?=[\s>]))`, caseInsensitive ? 'gmi' : 'gm')
+  // positions d'où la lecture des littéraux repart, la première au début du texte
+  const relances = [0]
+  const litteral = lecteurLitteraux(scan)
+  // position d'où la lecture en cours cherche son prochain littéral
+  let suite = 0
+  // littéraux de la lecture en cours, dans l'ordre : début, fin, début, fin…
+  let lus: number[] = []
+  let fini = false
+  // [a, b) touche-t-il un littéral de la lecture en cours (a après sa relance)
+  const masque = (a: number, b: number): boolean => {
+    while (!fini && (lus.length === 0 || lus[lus.length - 1] <= a)) {
+      const l = litteral(suite)
+      if (l === null) fini = true
+      else {
+        lus.push(l[0], l[1])
+        suite = l[1]
+      }
+    }
+    let bas  = 0
+    let haut = lus.length / 2
+    while (bas < haut) {
+      const milieu = (bas + haut) >> 1
+      if (lus[milieu * 2 + 1] <= a) bas = milieu + 1
+      else haut = milieu
+    }
+    return bas < lus.length / 2 && lus[bas * 2] < b
+  }
+  let pos = 0
+  for (;;) {
+    open.lastIndex = pos
+    const m = open.exec(scan)
+    if (!m) break
+    const balise = '<' + m[1]
+    const at     = m.index + m[0].length - balise.length
+    const script = scriptMatches.find(s => s.indices![0][0] <= at && at < s.indices![0][1])
+    if (script) {
+      pos = script.indices![0][1]
+      continue
+    }
+    if (masque(at, at + balise.length)) {
+      relances.push(at)
+      suite = at
+      lus   = []
+      fini = false
+    }
+    const close = new RegExp('</' + m[1] + '>', caseInsensitive ? 'gi' : 'g')
+    close.lastIndex = at
+    let c = close.exec(scan)
+    while (c !== null && masque(c.index, c.index + c[0].length)) {
+      close.lastIndex = c.index + 1
+      c = close.exec(scan)
+    }
+    if (!c) {
+      if (m[1].toLowerCase() === 'style') break
+      pos = at + balise.length
+      continue
+    }
+    pos = c.index + c[0].length
+  }
+  const morceaux: string[] = []
+  for (let k = 0; k < relances.length; k++) {
+    const debut = relances[k]
+    const fin   = k + 1 < relances.length ? relances[k + 1] : scan.length
+    let curseur = debut
+    for (let l = litteral(debut); l !== null && l[0] < fin; l = litteral(l[1])) {
+      const bout = Math.min(fin, l[1])
+      morceaux.push(scan.slice(curseur, l[0]), scan.slice(l[0], bout).replace(/[^\n]/g, ' '))
+      curseur = bout
+    }
+    morceaux.push(scan.slice(curseur, fin))
+  }
+  return morceaux.join('')
+}
+
+// masqueValeursAttributs — valeurs d'attribut des balises ouvrantes du HTML blanchies (même longueur) : entre guillemets sur une
+// ligne, nues (jusqu'au blanc ou au `>`, comme les lit le navigateur : `title=a</script>b` vaut `a</script`), et le contenu
+// des accolades `{…}`, chaînes comprises.
+// Lecture stricte d'une balise : son nom, puis des attributs séparés par des blancs — `nom` (réglages `(…)` d'un effet compris),
+// `nom=valeur` ou `{…}`, la valeur entre guillemets, entre accolades ou nue — jusqu'à `>` ou `/>`. Une balise qui ne s'y plie pas
+// n'est pas lue : un reste de script échappé de l'extraction (`if a <b then c` puis `</script>` à la ligne) n'est pas une balise
+const NOM_ATTRIBUT_RE = /[^\s"'<>/=(){}`]+/y
+const REGLAGES_RE     = /\((?:[^()<>\n]|\([^()<>\n]*\))*\)/y
+const EGAL_RE         = /\s*=\s*/y
+const VALEUR_NUE_RE   = /[^\s>]+/y
+
+export function masqueValeursAttributs(html: string): string {
+  const lecteur = tagReader(html)
+  const valeurs: [number, number][] = []
+  const balise  = /<[A-Za-z@][\w:.@-]*/g
+  const lit = (re: RegExp, i: number): number => {
+    re.lastIndex = i
+    return re.test(html) ? re.lastIndex : -1
+  }
+  for (let m = balise.exec(html); m !== null; m = balise.exec(html)) {
+    const trouvees: [number, number][] = []
+    let i = m.index + m[0].length
+    let fin = -1
+    for (;;) {
+      const blanc = i
+      while (i < html.length && /\s/.test(html[i])) i++
+      if (html[i] === '>') { fin = i; break }
+      if (html.startsWith('/>', i)) { fin = i + 1; break }
+      if (i === blanc) break
+      if (html[i] === '{') {
+        const ferme = lecteur.braceEnd(i + 1)
+        if (ferme === -1) break
+        trouvees.push([i + 1, ferme])
+        i = ferme + 1
+        continue
+      }
+      i = lit(NOM_ATTRIBUT_RE, i)
+      if (i === -1) break
+      if (html[i] === '(') {
+        i = lit(REGLAGES_RE, i)
+        if (i === -1) break
+      }
+      const egal = lit(EGAL_RE, i)
+      if (egal === -1) continue
+      i = egal
+      const q = html[i]
+      if (q === '"' || q === '\'') {
+        const ferme = html.indexOf(q, i + 1)
+        if (ferme === -1) break
+        if (!html.slice(i + 1, ferme).includes('\n')) trouvees.push([i + 1, ferme])
+        i = ferme + 1
+      }
+      else if (q === '{') {
+        const ferme = lecteur.braceEnd(i + 1)
+        if (ferme === -1) break
+        trouvees.push([i + 1, ferme])
+        i = ferme + 1
+      }
+      else {
+        const debut = i
+        i = lit(VALEUR_NUE_RE, i)
+        if (i === -1) break
+        trouvees.push([debut, i])
+      }
+    }
+    if (fin === -1) continue
+    valeurs.push(...trouvees)
+    balise.lastIndex = fin + 1
+  }
+  const morceaux: string[] = []
+  let curseur = 0
+  for (const [debut, fin] of valeurs) {
+    morceaux.push(html.slice(curseur, debut), ' '.repeat(fin - debut))
+    curseur = fin
+  }
+  morceaux.push(html.slice(curseur))
+  return morceaux.join('')
+}
+
 // blankRange — neutralise [start,end) en espaces même-longueur (préserve les `\n`)
 function blankRange(src: string, start: number, end: number): string {
   return src.slice(0, start) + src.slice(start, end).replace(/[^\n]/g, ' ') + src.slice(end)
@@ -265,6 +527,28 @@ const SCRIPT_MODULE_RE_SRC = String.raw`^[ \t]*<script([^>]*?)\bmodule\b([^>]*)>
 const SCRIPT_RE_SRC        = String.raw`^[ \t]*<script([^>]*)>([\s\S]*?)</script>`
 const STYLE_RE_SRC         = String.raw`^[ \t]*<style([^>]*)>([\s\S]*?)</style>`
 
+// maskScriptsCivet — vue Civet où seuls les scripts sont lus comme du code : le texte du gabarit n'en est pas, et un
+// `###` (commentaire bloc) ou un accent grave isolé écrits dans le HTML AVANT un <script> masquaient tout jusqu'au
+// suivant, balise comprise — le composant valide était refusé (« un </script> orphelin »). Lecture continue, comme
+// avant ; une balise <script> en tête de ligne qu'un littéral du HTML a avalée relance la lecture à partir d'elle
+function maskScriptsCivet(scan: string, caseInsensitive: boolean): string {
+  const open  = new RegExp(String.raw`^[ \t]*<script`, caseInsensitive ? 'gmi' : 'gm')
+  const close = new RegExp('</script>', caseInsensitive ? 'gi' : 'g')
+  let masked  = maskInertSameLength(scan)
+  let pos     = 0
+  for (;;) {
+    open.lastIndex = pos
+    const m = open.exec(scan)
+    if (!m) return masked
+    const at = m.index + m[0].length - '<script'.length
+    if (masked.slice(at, at + '<script'.length) !== scan.slice(at, at + '<script'.length)) masked = masked.slice(0, at) + maskInertSameLength(scan.slice(at))
+    close.lastIndex = at
+    const c = close.exec(masked)
+    if (!c) return masked
+    pos = c.index + c[0].length
+  }
+}
+
 // findScriptMatches — repère les blocs <script module>/<script> sur la vue Civet masquée
 // (littéraux/commentaires Civet puis commentaires HTML) — SEULE recherche de cette borne,
 // partagée avec extractDirectives (transpiler/directives.ts) : avant, celui-ci réimplémentait sa
@@ -275,7 +559,7 @@ const STYLE_RE_SRC         = String.raw`^[ \t]*<style([^>]*)>([\s\S]*?)</style>`
 // la compilation n'a pas encore tranché ; extractSections, lui, reste strictement en minuscules
 // (défaut `false`, comportement inchangé).
 export function findScriptMatches(scan: string, caseInsensitive = false): { moduleScripts: RegExpMatchArray[], scripts: RegExpMatchArray[] } {
-  const maskedCivet = maskHtmlComments(maskInertSameLength(scan))
+  const maskedCivet = maskHtmlComments(maskScriptsCivet(scan, caseInsensitive))
   const flags = caseInsensitive ? 'gmdi' : 'gmd'
   const moduleScripts = [...maskedCivet.matchAll(new RegExp(SCRIPT_MODULE_RE_SRC, flags))]
   const moduleRe = caseInsensitive ? /\bmodule\b/i : /\bmodule\b/
@@ -293,10 +577,10 @@ export interface StyleMatchResult {
 }
 
 // findStyleMatches — repère les blocs <style> (base ET `name=`) sur une vue CSS/SASS
-// (maskStyleInertSameLength), plages des scripts déjà trouvés neutralisées, puis commentaires
+// (maskStylesCss), plages des scripts déjà trouvés neutralisées, puis commentaires
 // HTML masqués — MÊME vérité que findScriptMatches, partagée avec extractDirectives.
 export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[], caseInsensitive = false): StyleMatchResult {
-  let maskedStyle = maskStyleInertSameLength(scan)
+  let maskedStyle = maskStylesCss(scan, scriptMatches, caseInsensitive)
   for (const m of scriptMatches) {
     const [start, end] = m.indices![0]
     maskedStyle = blankRange(maskedStyle, start, end)
@@ -322,7 +606,7 @@ export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[]
 // balise jamais refermée sera signalée par `macro-balise-non-fermee`, plus
 // tard, quand macros.ts la retraite sous sa forme écouteur/contenu).
 function maskHeadFailedBlocks(src: string, masks: string[]): string {
-  const lower = src.toLowerCase()
+  const lower = asciiLower(src)
   let out = ''
   let pos = 0
   for (;;) {
@@ -517,6 +801,8 @@ export function extractSections(content: string, opts: {
       const forbidden = findRelocatedStyleAttrToken(attrs)
       if (forbidden) throw new Error(t('transpiler.style-attr-sur-layout', { attribut: forbidden, nom }))
       if (!THEME_NAME_RE.test(nom))                 throw new Error(t('transpiler.layout-name-invalide', { nom }))
+      // « default » : le composant lui-même, sans modèle ({? default}, layout="default")
+      if (nom === 'default')                        throw new Error(t('transpiler.layout-default'))
       if (layouts.some(ly => ly.name === nom))      throw new Error(t('transpiler.layout-double', { nom }))
       layouts.push({ raw, lang, name: nom })
     }
@@ -569,6 +855,43 @@ export function extractSections(content: string, opts: {
     routes.push({ raw, target, entries: parseRoutesLines(raw, target) })
   }
 
+  // 3-quinquies. <vars> (composant) et <types> (fichier *.types.mjs) — des lignes de règles, même
+  // masquage que <routes> plus les plages des <routes> déjà trouvés neutralisées. Aucun attribut ;
+  // un seul <vars>, toujours AVANT le <script> : la règle d'une variable se lit avant le code qui
+  // l'écrit.
+  let maskedVars = maskedRoutes
+  for (const m of allRoutesBlocks) {
+    const [start, end] = m.indices![0]
+    maskedVars = blankRange(maskedVars, start, end)
+  }
+  const allVars = [...maskedVars.matchAll(/^[ \t]*<vars\b([^>]*)>([\s\S]*?)<\/vars>/gmd)]
+  for (const m of allVars) {
+    const [start, end] = m.indices![0]
+    maskedVars = blankRange(maskedVars, start, end)
+  }
+  const allTypes = [...maskedVars.matchAll(/^[ \t]*<types\b([^>]*)>([\s\S]*?)<\/types>/gmd)]
+  // <effects> (fichier *.effects.mjs) : les effets de l'appli, lus par effects/project.ts
+  let maskedEffects = maskedVars
+  for (const m of allTypes) {
+    const [start, end] = m.indices![0]
+    maskedEffects = blankRange(maskedEffects, start, end)
+  }
+  const allEffects = [...maskedEffects.matchAll(/^[ \t]*<effects\b([^>]*)>([\s\S]*?)<\/effects>/gmd)]
+  if (allVars.length > 1) throw new Error(t('transpiler.vars-double', { n: allVars.length }))
+  const typesSection = (m: RegExpMatchArray, tag: string): TypesSection => {
+    const idx = m.indices!
+    if (scan.slice(...idx[1]).trim() !== '') throw new Error(t('transpiler.section-sans-attribut', { tag, attributs: scan.slice(...idx[1]).trim() }))
+    return { raw: dedent(scan.slice(...idx[2])), startLine: lineOfOffset(scan, idx[2][0]) }
+  }
+  const vars  = allVars.length > 0 ? typesSection(allVars[0], 'vars') : null
+  const types = allTypes.map(m => typesSection(m, 'types'))
+  const effects = allEffects.map(m => typesSection(m, 'effects'))
+  if (allVars.length > 0) {
+    const debutVars   = allVars[0].indices![0][0]
+    const premierCode = [...allModuleScripts, ...allScripts].map(m => m.indices![0][0]).filter(o => o < debutVars)
+    if (premierCode.length > 0) throw new Error(t('transpiler.vars-apres-script', { ligne: lineOfOffset(scan, debutVars) }))
+  }
+
   // 4. HTML : tout sauf les <script>/<style>/<theme>/<routes> déjà repérés (au plus
   //    1 script et les doublons ont déjà levé throw ci-dessus). Retrait par PLAGES d'offsets
   //    (jamais une regex ré-exécutée sur `scan` — même piège que le bug corrigé),
@@ -588,7 +911,7 @@ export function extractSections(content: string, opts: {
   // top-level à une seule ligne laisse un décalage résiduel d'1 ligne pour ce qui le suit (le
   // séparateur `\n` d'origine, lui, est mangé par le `.trim()` final, cf. plus bas) — seuls les
   // blocs MULTI-LIGNES (le cas réel de la quasi-totalité des `<script>`/`<style>`) sont couverts.
-  const cuts = [...allModuleScripts, ...allScripts, ...allStyles, ...allThemes, ...allRoutesBlocks].map(m => m.indices![0]).sort((a, b) => a[0] - b[0])
+  const cuts = [...allModuleScripts, ...allScripts, ...allStyles, ...allThemes, ...allRoutesBlocks, ...allVars, ...allTypes, ...allEffects].map(m => m.indices![0]).sort((a, b) => a[0] - b[0])
   let html = ''
   let cursor = 0
   for (const [start, end] of cuts) {
@@ -646,8 +969,11 @@ export function extractSections(content: string, opts: {
   // peut plus amorcer un faux commentaire qui avalerait un `</script>` réel). Un `</script>`
   // trouvé ICI, dans le HTML résiduel, ne peut donc jamais venir d'un bloc rendu inerte : il
   // signale toujours la vraie fuite d'extraction que ce garde-fou existe pour attraper.
+  // Un `</script>` écrit dans la VALEUR d'un attribut (`title="a </script> b"`, HTML valide) n'est pas une fuite : les valeurs
+  // entre guillemets des balises bien formées ne sont pas lues (masqueValeursAttributs), seulement quand une balise est en vue
   const htmlHorsCommentaires = maskHtmlComments(html)
-  const orphanTag = htmlHorsCommentaires.match(/<\/(?:script|style|theme|routes)>/i)
+  const ORPHELIN_RE = /<\/(?:script|style|theme|routes|vars|types|effects)>/i
+  const orphanTag = ORPHELIN_RE.test(htmlHorsCommentaires) ? masqueValeursAttributs(htmlHorsCommentaires).match(ORPHELIN_RE) : null
   if (orphanTag) {
     throw new Error(t('transpiler.balise-orpheline-html', { balise: orphanTag[0] }))
   }
@@ -658,5 +984,5 @@ export function extractSections(content: string, opts: {
   const htmlStartLine = lineOfOffset(htmlRestored, htmlRestored.length - htmlRestored.trimStart().length)
   html = htmlRestored.trim()
 
-  return { module: moduleSection, script, style, layouts, themes, routes, html, htmlStartLine, warnings }
+  return { module: moduleSection, script, style, layouts, themes, routes, vars, types, effects, html, htmlStartLine, warnings }
 }

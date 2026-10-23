@@ -5,12 +5,13 @@
 // maxPayload/idleTimeout câblés, drapeau anti-usage-après-close ; (b) mjs-ws/index.ts —
 // resolveTransport (chaîne 'ws'/'uws'/instance/invalide) ; (c) mjs.config.json — ws.transport
 // (validation stricte, patron ws.*) ; (d) SMOKE RÉEL contre le VRAI paquet uWebSockets.js SI
-// résolu (MJS_UWS_PATH ou node_modules/uWebSockets.js local, sinon SAUTÉ, rapporté).
+// résolu (MJS_UWS_PATH, sinon le paquet que trouve le transport, sinon SAUTÉ, rapporté).
 
 import assert from 'node:assert/strict'
 import { writeFileSync, readFileSync, rmSync, existsSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 import { mjsWs, resolveTransport, WsTransport, MemoryTransport, DEFAULT_LIMITS } from '../src/mjs-ws/index.js'
 import { UwsTransport } from '../src/mjs-ws/transport-uws.js'
 import type { MjsWsConnection } from '../src/mjs-ws/transport.js'
@@ -19,6 +20,14 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const clientSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
+
+// point d'entrée de uWebSockets.js tel que l'import du transport le trouve (même dossier de départ), null s'il
+// manque — résolution seule, le paquet n'est pas chargé ; décide du cas « paquet absent » (a) comme du smoke réel (e)
+function resolveUwsEntry(): string | null {
+  try { return createRequire(join(__dirname, '../src/mjs-ws/transport-uws.ts')).resolve('uWebSockets.js') }
+  catch { return null }
+}
+const UWS_RESOLVED = resolveUwsEntry()
 
 const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
@@ -227,29 +236,54 @@ function makeFakeUwsModule(opts: { unixFails?: boolean; unixVanishes?: boolean }
 }
 
 // --- même technique que tests/mjs-ws-cli.test.ts : VRAI client µ.socket, branché ICI sur le faux uWS ---
+// chaque connexion ouverte est retenue, pour être fermée à la fin de son test (cf. afterEach de la boucle complète)
+const clientsOuverts: any[] = []
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
   new Function('µ', clientSrc)(µ)
+  const ouvrir = µ.socket
+  µ.socket = (...a: any[]) => { const s = ouvrir(...a); clientsOuverts.push(s); return s }
   return µ
 }
+
+// `globalThis.WebSocket` posé par un essai revient à sa valeur d'avant après lui, même quand il échoue (après la fermeture des
+// connexions de l'essai) : sinon les fichiers suivants du process ouvrent leurs connexions sur le faux module de ce fichier
+const webSocketAvant: Array<{ present: boolean, valeur: any }> = []
+function poserWebSocket(valeur: any): void {
+  webSocketAvant.push({ present: 'WebSocket' in globalThis, valeur: (globalThis as any).WebSocket })
+  ;(globalThis as any).WebSocket = valeur
+}
+afterEach(() => {
+  const avant = webSocketAvant[0]
+  webSocketAvant.length = 0
+  if (!avant) return
+  if (avant.present) (globalThis as any).WebSocket = avant.valeur
+  else delete (globalThis as any).WebSocket
+})
 
 /** branche `globalThis.WebSocket` sur le faux module — expose aussi le dernier bout SERVEUR
  *  connecté (getLastServer), utile pour piloter bufferedAmount depuis le test (backpressure). */
 function makeClient(fakeUws: ReturnType<typeof makeFakeUwsModule>): { µ: any; getLastServer: () => FakeUwsSocket } {
   let lastClient: FakeClientSocket | null = null
-  ;(globalThis as any).WebSocket = function(url: string, protocols?: any) {
+  poserWebSocket(function(url: string, protocols?: any) {
     lastClient = fakeUws._connectClient({ url, protocols })
     return lastClient
-  }
+  })
   return { µ: makeMu(), getLastServer: () => lastClient!._server! }
 }
 
 // ============================================================================================
 // (a) paquet absent — message d'erreur exact (ModularJS ne dépend PAS de uWebSockets.js)
+// paquet installé sur le chemin de Node : le transport le charge et écoute pour de vrai, le cas ne se voit pas — sauté
 // ============================================================================================
 
 describe("mjs-ws/transport-uws — paquet uWebSockets.js absent (aucune injection)", () => {
-  it("start() sans uwsModule injecté → rejette avec le message français exact", async () => {
+  it('start() sans uwsModule injecté → rejette avec le message français exact', async function () {
+    if (UWS_RESOLVED) {
+      console.log(`    (uWebSockets.js installé (${UWS_RESOLVED}) — le cas « paquet absent » ne se voit pas, SAUTÉ)`)
+      this.skip()
+      return
+    }
     const transport = new UwsTransport({ port: 9999 })
     await assert.rejects(
       transport.start(),
@@ -267,6 +301,9 @@ describe("mjs-ws/transport-uws — paquet uWebSockets.js absent (aucune injectio
 
 describe('mjs-ws/transport-uws — boucle complète (faux module uWS injecté, VRAI client µ.socket)', function () {
   this.timeout(10000)
+  // une connexion encore ouverte quand le serveur s'arrête programme une reconnexion qui part pendant les fichiers suivants,
+  // sur leur WebSocket : fermée ici, même si le test échoue
+  afterEach(() => { while (clientsOuverts.length) clientsOuverts.pop().destroy() })
 
   it("hello→welcome→request→ack à travers l'adaptateur uWS", async () => {
     const fakeUws    = makeFakeUwsModule()
@@ -473,7 +510,7 @@ describe('mjs.config.json — ws.transport (validation stricte, patron ws.*)', (
 
   it("'wss' (faute plausible) → erreur AVEC suggestion orthographique", () => {
     const root = writeConfig({ ws: { transport: 'wss' } })
-    assert.throws(() => findConfig(root), /ws\.transport invalide.*tu voulais dire/s)
+    assert.throws(() => findConfig(root), /ws\.transport invalide.*vouliez-vous dire/s)
   })
 
   it('valeur hors-sujet (ex. \'redis\') → erreur claire, sans suggestion forcée', () => {
@@ -507,7 +544,7 @@ describe('mjs.config.json — ws.codec (validation stricte, patron ws.*)', () =>
 
   it("'binry' (faute plausible) → erreur AVEC suggestion orthographique", () => {
     const root = writeConfig({ ws: { codec: 'binry' } })
-    assert.throws(() => findConfig(root), /ws\.codec invalide.*tu voulais dire/s)
+    assert.throws(() => findConfig(root), /ws\.codec invalide.*vouliez-vous dire/s)
   })
 
   it('type non-string (nombre) → erreur claire, jamais une exception Node brute', () => {
@@ -624,12 +661,13 @@ describe('mjs-ws/transport-uws — écoute sur une socket unix (socketPath)', ()
 })
 
 // ============================================================================================
-// (e) SMOKE RÉEL — VRAI paquet uWebSockets.js, SI résolu (MJS_UWS_PATH ou repli local)
+// (e) SMOKE RÉEL — VRAI paquet uWebSockets.js, SI résolu (MJS_UWS_PATH, paquet que trouve le transport ou repli local)
 // ============================================================================================
 
 // MJS_UWS_PATH pointe vers le DOSSIER du paquet uWebSockets.js (contenant ESM_wrapper.mjs) ;
-// à défaut, repli sur un éventuel node_modules/uWebSockets.js du projet.
-const UWS_DIR = process.env.MJS_UWS_PATH ?? join(__dirname, '../node_modules/uWebSockets.js')
+// à défaut, le dossier du paquet que trouve le transport (uws.js, son point d'entrée require, vit à la racine, à côté
+// d'ESM_wrapper.mjs), sinon le repli sur un éventuel node_modules/uWebSockets.js du projet
+const UWS_DIR        = process.env.MJS_UWS_PATH ?? (UWS_RESOLVED ? dirname(UWS_RESOLVED) : join(__dirname, '../node_modules/uWebSockets.js'))
 const REAL_UWS_ENTRY = join(UWS_DIR, 'ESM_wrapper.mjs')
 
 describe('mjs-ws/transport-uws — SMOKE RÉEL (uWebSockets.js, si présent)', function () {
@@ -649,7 +687,7 @@ describe('mjs-ws/transport-uws — SMOKE RÉEL (uWebSockets.js, si présent)', f
     await app.listen()
     try {
       const { default: RealWebSocket } = await import('ws')
-      ;(globalThis as any).WebSocket = RealWebSocket
+      poserWebSocket(RealWebSocket)
       const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
       new Function('µ', clientSrc)(µ)
       const s = µ.socket(`ws://127.0.0.1:${port}/`)
@@ -686,7 +724,7 @@ describe('mjs-ws/transport-uws — SMOKE RÉEL (uWebSockets.js, si présent)', f
       assert.equal(statSync(sockPath).isSocket(), true, 'le bind doit poser une VRAIE socket, pas un fichier')
       assert.equal(statSync(sockPath).mode & 0o777, 0o660)
       const { default: RealWebSocket } = await import('ws')
-      ;(globalThis as any).WebSocket = RealWebSocket
+      poserWebSocket(RealWebSocket)
       const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
       new Function('µ', clientSrc)(µ)
       const s = µ.socket(`ws+unix://${sockPath}:/`)

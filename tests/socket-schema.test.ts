@@ -11,6 +11,7 @@ import { mjsWs, list, bits } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
 import { creerRegistre, defSchema, encode, serialiserDefinitions } from '../src/schema/core.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const socketSrc = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
@@ -24,6 +25,7 @@ const tick = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 
 function makeMu(): any {
   const µ: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+  poserMessages(µ)
   new Function('µ', clientSrc)(µ)
   return µ
 }
@@ -208,6 +210,7 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
 
     const warnings: any[] = []
     const µx: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: (...a: any[]) => warnings.push(a), log: () => {} }
+    poserMessages(µx)
     new Function('µ', clientSrc)(µx)
     µx.schema('x', { n: 'u8' })   // registre CLIENT non vide (id 0 = 'x') — nécessaire pour distinguer « pas de registre » de « id hors registre »
     ;(globalThis as any).WebSocket = function(url: string, protocols?: any) { return transport.connect({ url, protocols }) }
@@ -312,6 +315,7 @@ describe('µ.schema — client (mjs_schema.ts, vrai serveur MJS-WS MemoryTranspo
     const sockFake = { opts: {}, _mjs_dispatch: (nom: string, msg: any) => dispatched.push({ nom: nom, p: msg.p }) }
 
     const µx: any = { state: (i: any) => ({ ...i }), error: () => {}, warn: () => {}, log: () => {} }
+    poserMessages(µx)
     new Function('µ', clientSrc)(µx)
 
     // simule le DÉBUT d'un remplacement de registre (comme le ferait µ._mjs_mjschemaOnPush juste avant de recharger)

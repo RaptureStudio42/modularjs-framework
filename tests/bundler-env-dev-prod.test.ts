@@ -40,8 +40,8 @@ async function bâtir(etiquette: string, opts: Record<string, unknown>) {
 // les bandeaux `// === mjs_xxx.ts ===` de la concaténation ne survivent pas à esbuild
 const estMinifie = (core: string) => !/\/\/ === mjs_element\.ts ===/.test(core)
 // `µ` lui-même est un `var` de haut niveau : esbuild le renomme en minifiant. On cherche donc
-// la PROPRIÉTÉ (jamais manglée : seuls les `_mjs_*` passent par le mangleCache), pas `µ.devPanel`.
-const aLePanneau = (core: string) => /\.devPanel\s*=\s*function/.test(core)
+// la PROPRIÉTÉ (jamais manglée : seuls les `_mjs_*` passent par le mangleCache), pas `µ.console`.
+const aLePanneau = (core: string) => /\.console\s*=\s*function/.test(core)
 
 describe('bundler — `env` dit dev ou prod, `minify` ne dit que la minification', function () {
   this.timeout(60000)
@@ -113,7 +113,7 @@ describe('bundler — `env` dit dev ou prod, `minify` ne dit que la minification
     }
 
     assert.ok((await hache(undefined)).includes('salut.json'), "défaut 'auto' en dév : noms clairs")
-    assert.ok((await hache(true)).some(n => /^[a-f0-9]{32}\.json$/.test(n)), 'hash: true doit hacher même en dév')
+    assert.ok((await hache(true)).some(n => /^[a-f0-9]{12,32}\.json$/.test(n)), 'hash: true doit hacher même en dév')
   })
 
   it('rien de demandé, aucun NODE_ENV → dév (le défaut)', async () => {

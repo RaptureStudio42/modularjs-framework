@@ -34,15 +34,15 @@ describe('<@element>/<@module> accept="…" — compilation (macros.ts)', functi
     assert.equal(rEl.errors.length, 0)
 
     const rMod = processGlobalMacros('<@module $comp>x</@module>')
-    assert.equal(rMod.html, '<div mjs-mod="0">x</div>')
-    assert.equal(rMod.setup, '\nµeffect =>\n  µ._updModule(@, \'0\', ($comp))')
+    assert.equal(rMod.html, '<div mjs-mod="0" mjs-comp={$comp}>x</div>')
+    assert.equal(rMod.setup, '')
     assert.equal(rMod.errors.length, 0)
   })
 
   it('(e4) <@module $comp accept="script"> : 4e argument [\'script\']', () => {
     const r = processGlobalMacros('<@module $comp accept="script">x</@module>')
-    assert.match(r.setup, /µ\._updModule\(@, '0', \(\$comp\), \['script'\]\)/)
-    assert.doesNotMatch(r.html, /accept/)
+    assert.match(r.html, /<div mjs-mod="0" mjs-comp=\{\$comp\} mjs-accept="script">/, 'la liste voyage en attribut fixe, lu par le générateur')
+    assert.doesNotMatch(r.html, /(?<!mjs-)accept/)
     assert.equal(r.errors.length, 0, JSON.stringify(r.errors))
   })
 
@@ -148,7 +148,7 @@ describe('<@element>/<@module> — accept dupliqué', () => {
     const r = processGlobalMacros('<@module $comp accept="a" accept="b">x</@module>')
     assert.equal(r.errors.length, 1, JSON.stringify(r.errors))
     assert.doesNotMatch(r.html, /accept/)
-    assert.match(r.setup, /µ\._updModule\(@, '0', \(\$comp\)\)/)
+    assert.match(r.html, /<div mjs-mod="0" mjs-comp=\{\$comp\}>/, 'accept invalide (doublon) ⇒ aucun mjs-accept')
   })
 
   it('triplé (3 occurrences) : purge quand même TOUTES les occurrences', () => {

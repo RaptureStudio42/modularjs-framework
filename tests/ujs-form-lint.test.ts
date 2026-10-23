@@ -1,7 +1,7 @@
 // Lint « <form> sans action ni méthode » (lint.ujsForm) — le pont UJS intercepte TOUT
-// <form> (contrat conservé), même avec un
-// @submit.prevent (le pont shadow capture AVANT le _mjs_bindEvents du composant, cf.
-// src/runtime/mjs_ujs.ts ~2634 µ._mjs_ujsShadowAttach) : simple AVERTISSEMENT console
+// <form> (contrat conservé) ; un @submit.prevent retient l'envoi (le gestionnaire du composant joue
+// AVANT la navigation, comme sur un lien, cf. src/runtime/mjs_ujs.ts µ._mjs_ujsShadowAttach) : le
+// formulaire est alors local, rien à signaler. Simple AVERTISSEMENT console
 // (jamais bloquant), ACTIVÉ PAR DÉFAUT. Configurable par le bloc
 // "lint": { "ujsForm": false } de mjs.config.json (validation stricte, même patron
 // que lint.a11y).
@@ -59,8 +59,15 @@ describe('checkUjsForm — contrôles unitaires (fonction pure)', () => {
     assert.deepEqual(checkUjsForm('<form @noUJS></form>', 'mod'), [])
   })
 
-  it('(e) <form @submit.prevent={f()}> : avertit QUAND MÊME — le pont shadow capture avant _mjs_bindEvents, .prevent n\'y change rien', () => {
-    assert.equal(checkUjsForm('<form @submit.prevent={f()}></form>', 'mod').length, 1)
+  it('(e) <form @submit.prevent={f()}> : silence — le gestionnaire joue avant l\'envoi et le retient', () => {
+    assert.deepEqual(checkUjsForm('<form @submit.prevent={f()}></form>', 'mod'), [])
+    assert.deepEqual(checkUjsForm('<form @submit.stop.prevent={f()}></form>', 'mod'), [])
+    assert.deepEqual(checkUjsForm('<form @submit.prevent.emit.saved={$brouillon}></form>', 'mod'), [])
+  })
+
+  it('(e) <form @submit={f()}> sans .prevent, ou un événement émis nommé « prevent » : avertit — rien ne retient l\'envoi', () => {
+    assert.equal(checkUjsForm('<form @submit={f()}></form>', 'mod').length, 1)
+    assert.equal(checkUjsForm('<form @submit.emit.prevent={$x}></form>', 'mod').length, 1)
   })
 
   it('(f) <form> à l\'intérieur d\'un <pre>/<code> d\'exemple : silence (RÈGLE ZÉRO)', () => {
@@ -99,6 +106,11 @@ describe('transpiler — câblage lint.ujsForm', function () {
 
   it('@noUJS posé dans la SOURCE : silence après compilation (la directive est déjà réécrite en mjs-no-ujs quand le lint tourne)', async () => {
     const w = await warningsFor('<form @noUJS @submit={f()}></form>', 'noujs-source')
+    assert.equal(w.filter(m => m.includes('@noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
+  })
+
+  it('@submit.prevent posé dans la SOURCE : silence après compilation', async () => {
+    const w = await warningsFor('<script>\n$n = 0\n</script>\n<form @submit.prevent={$n++}><button>ok</button></form>', 'prevent-source')
     assert.equal(w.filter(m => m.includes('@noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
   })
 

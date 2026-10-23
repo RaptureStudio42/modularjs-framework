@@ -25,9 +25,27 @@
 // le module importe le cœur (cf. la ligne `import { µ }` posée par injectTemplate) — le symbole
 // configuré (`sigil: 'mjs'`) est réécrit en `µ` bien avant.
 
+// Signes qu'un composant peut faire apparaître dans son ombre une balise `mjs-*` pas encore définie :
+// balise de composant ou de module (`<mjs-`, `<metamjs-`, `mjs-el=`, `mjs-mod=`, `<@`), `<slot>`,
+// `{{html}}`/innerHTML, `{failed}`, tout code qui écrit du DOM (append, insert, replace, cloneNode,
+// createElement…), accès à l'ombre, import d'un code tiers. Cherchés dans le code ÉMIS (gabarit,
+// effets, script, module) : au moindre signe, le guetteur reste. Sans signe, le gabarit est fermé.
+const SIGNES_BALISE_POSSIBLE = /mjs-|<@|<slot|_updModule|_updDyn|_mjs_updHtml|innerHTML|outerHTML|insertAdjacent|createElement|createContextualFragment|DOMParser|importNode|cloneNode|append|prepend|replaceChildren|replaceWith|insertBefore|\.after\(|\.before\(|shadow|failed|\bimport\b|\brequire\b|µ\.[a-zA-Z_]*(?:render|mount|html|slot)/i
+
+// Ligne du constructeur qui branche `µ.Autoloader.observe` sur l'ombre. Vide pour un gabarit fermé
+// (aucun signe ci-dessus, aucun hook de nœud, aucun slot indexé) : rien n'y apparaîtra jamais. Le contenu
+// glissé dans un `<slot>` vit dans le DOM du parent (gardé par le guetteur du parent ou du document), pas
+// dans l'ombre. Un composant léger n'a pas d'ombre — son hôte EST la racine, contenu glissé compris :
+// il garde son guetteur, décidé à l'exécution (`_mjs_isLight`).
+export function autoloaderLine(codes: string[], gardeSure: boolean): string {
+  if (gardeSure || codes.some((c) => SIGNES_BALISE_POSSIBLE.test(c))) {
+    return '\n\n    µ?.Autoloader?.observe?.(this._shadow);'
+  }
+  return '\n\n    if(this._mjs_isLight) µ?.Autoloader?.observe?.(this._shadow);'
+}
+
 export const jsTemplate = `
-const _dir_[[CLASS]] = new URL('.', import.meta.url).href;
-[[STORE_DECLARE_LINE]]
+[[STORE_DECLARE_LINE]][[TYPES_DECL]]
 
 // Fonction de construction du DOM, retourne {fragment, refs}.
 // fragment = DocumentFragment prêt à appendChild
@@ -54,18 +72,14 @@ class [[CLASS]] extends µ.Element {
   constructor() {
     super();
 
-    this._mjs_var_bits = [[VAR_BITS]];[[STATE_METHOD_CLASH_LINE]]
+    this._mjs_var_bits = [[VAR_BITS]];[[STATE_METHOD_CLASH_LINE]][[TYPES_LINE]]
     this._mjs_computedDeps = [[COMPUTED_DEPS]];
     this._mjs_baseCss = \`[[BASE_CSS]]\`;
-    this._mjs_dir = _dir_[[CLASS]];
-    this._mjs_modName = "[[MOD_NAME]]";
     this._mjs_preload = [[PRELOAD]];
     this._mjs_viewTransition = [[VIEWTRANSITION]];
     this._mjs_viewTransitionPriority = [[VIEWTRANSITION_PRIORITY]];
 
-    this._mjs_mount(() => __create_[[CLASS]]());
-
-    µ?.Autoloader?.observe?.(this._shadow);[[DYNAMIC_SLOTS_LINE]]
+    this._mjs_mount(() => __create_[[CLASS]]());[[AUTOLOADER_LINE]][[DYNAMIC_SLOTS_LINE]]
 
     // Préchargement « eager » : scanne le shadow pour les liens à précharger dès
     // l'apparition (no-op si l'eager n'est pas actif — cf. µ._mjs_maybeScanEager).
@@ -127,5 +141,5 @@ class [[CLASS]] extends µ.Element {
     }).call(this, $);
   }
 }
-µ._def("[[TAG_NAME]]", [[CLASS]]);
+[[FORM_ASSOCIATED_LINE]]µ._def("[[TAG_NAME]]", [[CLASS]]);
 `.trim()

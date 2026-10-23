@@ -174,7 +174,7 @@ describe('rewriteMuImport : erreurs (chemin non littéral / mauvaise extension)'
   it("µimport('style.css') → même erreur côté cleanJs", () => {
     assert.throws(
       () => cleanJs(`µimport('style.css')`, []),
-      /\[ModularJS\] µimport ne charge que des modules ES « \.js » .*style\.css/
+      /\[ModularJS\] µimport ne charge qu'un module .*« \.js ».*« \.civet ».*« \.coffee ».*style\.css/
     )
   })
 })

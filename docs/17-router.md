@@ -56,9 +56,9 @@ Le `<script>` peut **compléter** la table posée par le bloc :
 </script>
 ```
 
-**Réassigner** `this.routes` (`@routes = …`) dans le `<script>` alors qu'un bloc `<routes>` est présent reste **autorisé** : le script s'exécute après le bloc, sa table **remplace** celle du bloc, en tout ou en partie. C'est le geste à faire quand tu veux reprendre la main entièrement — sur une table calculée à partir d'une source de données, par exemple.
+**Réassigner** `this.routes` (`@routes = …`) dans le `<script>` alors qu'un bloc `<routes>` est présent reste **autorisé** : le script s'exécute après le bloc, sa table **remplace** celle du bloc, en tout ou en partie. C'est le geste à faire quand vous voulez reprendre la main entièrement — sur une table calculée à partir d'une source de données, par exemple.
 
-Comme l'écrasement est invisible à la lecture, la compilation émet un **avertissement** (non bloquant) pour le signaler. Si ton intention était seulement d'**ajouter** des routes à la table du bloc, écris `@routes['cible']['/x'] = 'composant'` (ci-dessus) : pas d'écrasement, pas d'avertissement.
+Comme l'écrasement est invisible à la lecture, la compilation émet un **avertissement** (non bloquant) pour le signaler. Si votre intention était seulement d'**ajouter** des routes à la table du bloc, écrivez `@routes['cible']['/x'] = 'composant'` (ci-dessus) : pas d'écrasement, pas d'avertissement.
 
 **Quand utiliser lequel** : `<routes>` pour une table écrite à la main, connue à l'avance (le cas courant) ; `@routes` reste réservé aux tables **calculées** — construites en boucle depuis une source de données (un sommaire de documentation qui fabrique ses ~300 routes, par exemple).
 
@@ -76,7 +76,7 @@ Comme l'écrasement est invisible à la lecture, la compilation émet un **avert
 <@view app-view>
 ```
 
-La navigation se fait par des **liens à hash** : `<a href="#/about">`. Le routeur les intercepte (le `#` ne déclenche aucun rechargement serveur) et procède à l'échange de vue.
+La navigation se fait par des **liens à hash** : `<a href="#/about">`. Le routeur les intercepte (le `#` ne déclenche aucun rechargement serveur) et procède à l'échange de vue. Seul un fragment qui commence par `/` est une route : une ancre ordinaire (`/docs#installation`) dans l'adresse d'une page routée reste une ancre — la vue de la route `/` reste affichée.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi un <code>#</code> dans les liens&nbsp;?</summary>
@@ -232,6 +232,10 @@ Trois modes : **`off`** (jamais), **`hover`** (au survol du lien), **`on`** (dè
 
 > 🔗 La couche de préchargement HTML (`page`) partage son moteur avec la navigation UJS (interception de liens, zone de montage, cache de pages) — détails au chapitre [Navigation (UJS)](21-navigation.md).
 
+## La barre de navigation
+
+Quand une page change et que le code de son composant n'est pas encore arrivé (premier passage sur cette page, réseau lent), un trait de lumière court en haut de la page, après une demi-seconde ; il part quand le composant est là. Une page déjà chargée n'en montre aucun. C'est la même barre que celle des liens et formulaires : réglage `µ.config.navProgress` (le seuil, la place, `false` pour s'en passer) et allure en CSS — cf. [21 · Navigation](21-navigation.md).
+
 ## L'URL réactive — `µurl`
 
 Le routeur maintient un objet réactif dédié, **`µurl`** (forme courte de `µ.url`, namespace framework — pas votre store `$$`). Lisible partout, sans import : tout composant qui lit un champ au rendu se re-rend quand il change.
@@ -260,11 +264,11 @@ Navigation programmatique : **`µRouter.to '/produits/42'`** — jamais de `#`, 
 
 Quand le routeur client permute une vue (`<@view>`), `@viewTransition` enveloppe la permutation dans `document.startViewTransition` : le navigateur photographie l'**avant** et l'**après**, puis anime le passage — un fondu croisé par défaut, zéro CSS à écrire.
 
-> 🔗 À ne pas confondre avec `@transition` ([Transitions & animations](10-transitions.md)) : cette directive anime l'entrée/sortie d'un **élément** au gré d'un `{if}`/`{for}`/`{key}`. `@viewTransition` opère un cran au-dessus, au niveau de la **page** entière — c'est la permutation de vue elle-même qui est animée, pas un nœud isolé.
+> 🔗 À ne pas confondre avec `@transition=*effet` ([Transitions & animations](10-transitions.md)) : cette directive anime l'entrée/sortie d'un **élément** au gré d'un `{if}`/`{for}`/`{key}`. `@viewTransition` opère un cran au-dessus, au niveau de la **page** entière — c'est la permutation de vue elle-même qui est animée, pas un nœud isolé.
 
 ### Les niveaux de réglage
 
-Le réglage se fait en cascade — le plus précis l'emporte. Aux niveaux **composant routeur** et **page routée**, `@viewTransition` est un attribut du `<style>` de base (celui sans `name=`), pas une directive de racine — sa valeur suit une syntaxe **objet**, calquée sur `@transition.fly={ y: 200, duration: 2000 }` — mini-grammaire **texte** (pas du JS évalué) :
+Le réglage se fait en cascade — le plus précis l'emporte. Aux niveaux **composant routeur** et **page routée**, `@viewTransition` est un attribut du `<style>` de base (celui sans `name=`), pas une directive de racine — sa valeur suit une syntaxe **objet** `{ clé: valeur }` — une mini-grammaire **texte** (pas du JS évalué) :
 
 ```
 <style @viewTransition[.<nom>[={ direction: …, duration: …, priority: … }]]>
@@ -331,9 +335,9 @@ Un nom de préréglage accepte un bloc d'options `={ … }`, en paires `clé: va
 | `duration` | `dur` | un **nombre nu**, en millisecondes (comme `setTimeout` — aucune unité) | **remplace** la durée par défaut du préréglage — un facteur (`duration demandée ÷ durée par défaut de la base`) met à l'échelle **proportionnellement** chaque jeton temporel du CSS généré (durées ET délais de cascade `bars`/`blocks`) ; pour les rideaux, les minuteries internes (couverture/révélation) suivent le même facteur |
 | `priority` | `p` | entier ≥ 0 | façon `z-index`, défaut `1` — cf. *Priorité départ/arrivée* ci-dessous ; à égalité, la page de **départ** gagne |
 
-> ⚠️ **Aucun raccourci `nom:direction`.** La direction s'écrit **uniquement** via la clé d'option — `@viewTransition.cube:left` est une **erreur de compilation** (« la direction ne s'écrit plus dans le nom »), aux quatre positions où la directive s'écrit, nom de morph compris : écris `@viewTransition.cube={ dir: left }`.
+> ⚠️ **Aucun raccourci `nom:direction`.** La direction s'écrit **uniquement** via la clé d'option — `@viewTransition.cube:left` est une **erreur de compilation** (« la direction ne s'écrit plus dans le nom »), aux quatre positions où la directive s'écrit, nom de morph compris : écrivez `@viewTransition.cube={ dir: left }`.
 >
-> ⚠️ **Le NOM du préréglage n'est vérifié à aucun niveau** — ni sur `<style>`, ni sur `<@view>`, ni sur une balise. `µ._vtPresets` est un dictionnaire que l'appli peut garnir à son démarrage (`µ._vtPresets.diamant = '…'`), et un nom qui n'existe pas encore au build existera peut-être au runtime : le refuser fermerait la porte à un préréglage maison. Un nom qu'on ne retrouve pas à l'animation donne un `µ.warn` de console et aucune transition. Toute clé `direction`/`dir`, `duration`/`dur`, `priority`/`p` — ou la même option posée deux fois (forme courte **et** longue) — est aussi une erreur (avec suggestion de proximité sur une faute de frappe, ex. `duraction` → « tu voulais dire 'duration'/'dur' ? »).
+> ⚠️ **Le NOM du préréglage n'est vérifié à aucun niveau** — ni sur `<style>`, ni sur `<@view>`, ni sur une balise. `µ._vtPresets` est un dictionnaire que l'appli peut garnir à son démarrage (`µ._vtPresets.diamant = '…'`), et un nom qui n'existe pas encore au build existera peut-être au runtime : le refuser fermerait la porte à un préréglage maison. Un nom qu'on ne retrouve pas à l'animation donne un `µ.warn` de console et aucune transition. Toute clé `direction`/`dir`, `duration`/`dur`, `priority`/`p` — ou la même option posée deux fois (forme courte **et** longue) — est aussi une erreur (avec suggestion de proximité sur une faute de frappe, ex. `duraction` → « vouliez-vous dire 'duration'/'dur' ? »).
 
 ### Priorité départ/arrivée — quand les deux pages ne sont pas d'accord
 
@@ -379,16 +383,26 @@ Sur une balise **ordinaire** (pas une `<@view>`), `@viewTransition.nom` donne un
 <img src="…" @viewTransition.hero>   <!-- photo-page.mjs — l'image pleine page -->
 ```
 
-Naviguer de la galerie vers la photo anime la vignette qui grossit jusqu'à occuper toute la vue. `@viewTransition.nom` ne prend qu'une étiquette **fixe** — pour un nom **calculé** ou **conditionnel**, passe par l'attribut de style natif `@style.view-transition-name` :
+Naviguer de la galerie vers la photo anime la vignette qui grossit jusqu'à occuper toute la vue. `@viewTransition.nom` ne prend qu'une étiquette **fixe**. Pour une **liste** — une photo par produit, et la page de chaque produit —, l'effet `*shared` donne à chaque balise le nom de sa clé :
+
+```html
+{for p in $produits by id}<img src={p.photo} *shared(p.id)>{end}   <!-- liste-page.mjs -->
+<img src={$produit.photo} *shared($produit.id)>                     <!-- produit-page.mjs -->
+<h1 *shared($produit.id, group: titre)>{$produit.nom}</h1>           <!-- un 2ᵉ élément de la même fiche -->
+```
+
+Vous cliquez sur un produit : sa vignette glisse et grandit jusqu'à sa place dans la page du produit, le reste fond. La clé est un nombre ou un mot, fixe ou variable ; `group` sépare deux éléments de la même fiche (la photo, le titre). Le morph a lieu pendant une transition de page : `@viewTransition` doit être actif pour cette navigation (cf. plus haut). Détails : [38 · Effets](38-effets.md).
+
+Pour un nom **conditionnel**, ou un nom écrit à la main, l'attribut de style natif `@style.view-transition-name` reste possible :
 
 ```html
 <img src={item.thumb} @style.view-transition-name={'p-' + item.id}>       <!-- nom calculé, un par item d'un {for} -->
 <img src={item.thumb} @style.view-transition-name{$featured}="hero">      <!-- nom posé seulement si $featured -->
 ```
 
-> ⚠️ Sur une balise ordinaire, l'étiquette se pose **après le point** : `@viewTransition.hero`. La forme à guillemets `@viewTransition="hero"`, la forme calculée `@viewTransition={expr}` et la forme conditionnelle `@viewTransition{cond}="nom"` sont refusées à la compilation — passe par `@style.view-transition-name` pour un nom calculé ou conditionnel.
+> ⚠️ Sur une balise ordinaire, l'étiquette se pose **après le point** : `@viewTransition.hero`. La forme à guillemets `@viewTransition="hero"`, la forme calculée `@viewTransition={expr}` et la forme conditionnelle `@viewTransition{cond}="nom"` sont refusées à la compilation — passez par `@style.view-transition-name` pour un nom calculé ou conditionnel.
 
-> ⚙️ **Sous le capot — couche de lévitation.** Le navigateur ignore un `view-transition-name` posé **dans un shadow tree** (transition document, noms *tree-scoped*) — or tout composant MJS vit en shadow. Le moteur lève donc automatiquement chaque élément nommé dans une couche `#mjs-vt-hoist` au-dessus du `body` (DOM lumière) le temps des deux captures : fantôme visuellement identique (clone + styles calculés recopiés), original masqué, nettoyage à `ready`. Fidèle pour du contenu concret (images, blocs, texte) ; un **sous-composant MJS imbriqué** dans l'élément nommé n'est pas répliqué (shadow fermé, non clonable) — nommez l'élément de contenu, pas un composant entier.
+> ⚙️ **Sous le capot — couche de lévitation.** Le navigateur ignore un `view-transition-name` posé **dans un shadow tree** (transition document, noms *tree-scoped*) — or tout composant MJS vit en shadow. Le moteur lève donc automatiquement chaque élément nommé dans une couche `#mjs-vt-hoist` au-dessus du `body` (DOM lumière) le temps des deux captures : fantôme visuellement identique (clone + styles calculés recopiés), original masqué, nettoyage à `ready`. Fidèle pour du contenu concret (images, blocs, texte) ; un **sous-composant MJS imbriqué** dans l'élément nommé n'est pas répliqué (shadow fermé, non clonable) : le fantôme montre à sa place une boîte vide du même style, sans le monter une seconde fois — de même pour un cadre, une vidéo ou un son, jamais rechargés ; un élément intégré personnalisé (`<button is="…">`) est recopié comme un élément ordinaire de la même balise, son contenu visible, sans être monté — nommez l'élément de contenu, pas un composant entier.
 
 ### Bibliothèque de préréglages
 
@@ -409,7 +423,7 @@ Au-delà de la forme **nue** `@viewTransition` (fondu natif — réservée à l'
 | `bars` | **rideau bandes** — 8 bandes tombent en cascade, puis continuent leur course | ✓ (défaut `down`) |
 | `blocks` | **rideau damier** — vague diagonale de tuiles qui s'effondrent | — |
 
-> ⚙️ **Pourquoi des « rideaux » ?** Le cliché d'une page vivante est **indivisible** : impossible de la découper en bandes/tuiles comme flux le faisait avec des *images* (`background-position` par bloc) — et les masques/découpes se peignent mal sur les pseudo-éléments de transition avec du contenu composité. Les rideaux contournent tout : de **vrais éléments DOM** au-dessus du `body` couvrent l'écran (masques, cascades et délais y sont fiables à 100 %), la permutation se fait **sous le noir**, puis le rideau révèle — la grammaire des écrans de combat. Pendant un rideau, il n'y a **pas** de transition View Transitions (donc pas de morph d'élément partagé : il serait invisible sous le noir).
+> ⚙️ **Pourquoi des « rideaux » ?** Le cliché d'une page vivante est **indivisible** : impossible de la découper en bandes/tuiles comme flux le faisait avec des *images* (`background-position` par bloc) — et les masques/découpes se peignent mal sur les pseudo-éléments de transition avec du contenu composité. Les rideaux contournent tout : de **vrais éléments DOM** au-dessus du `body` couvrent l'écran (masques, cascades et délais y sont fiables à 100 %), la permutation se fait **sous le noir**, puis le rideau révèle — la grammaire des écrans de combat. Pendant un rideau, il n'y a **pas** de transition View Transitions (donc pas de morph d'élément partagé : il serait invisible sous le noir). Un rideau n'a donc pas besoin de l'API : il joue sur **tous** les navigateurs, même ceux qui n'ont pas `document.startViewTransition`.
 
 ```json
 { "viewTransition": "slide={ dir: left }" }
@@ -438,7 +452,7 @@ Chaque tuile porte un nom **unique et apparié** des deux côtés de la navigati
 
 ### Valeurs par défaut
 
-Tout ce que `@viewTransition` applique **sans que tu précises rien** :
+Tout ce que `@viewTransition` applique **sans que vous précisiez rien** :
 
 | Réglage | Valeur par défaut | Détail |
 |---|---|---|
@@ -465,12 +479,14 @@ Tout ce que `@viewTransition` applique **sans que tu précises rien** :
 
 > 💡 La durée par défaut d'un **rideau** (iris/swipe/bars/blocks) est le **cycle complet** — couverture + révélation (ex. `bars` = 620 ms de couverture + 640 ms de révélation = 1260 ms). `duration:` sur un rideau met à l'échelle les **deux** phases par le même facteur, cf. *Options* ci-dessus.
 
+> 🌐 **Famille et navigateur.** Un **rideau** est du DOM ordinaire : il joue sur tous les navigateurs. Un préréglage **pseudo** anime les pseudo-éléments de l'API View Transitions : sur un navigateur qui ne l'a pas, la permutation se fait directement, sans animation (cf. *Accessibilité* ci-dessous).
+
 ### Accessibilité
 
-`@viewTransition` respecte deux préférences **avant** de jamais démarrer une transition — la même garde d'environnement (`_mjs_vtEnabled`) protège tous les niveaux (routeur `<@view>` **et** transitions de page `@pageTransition` sur un lien, cf. section suivante) :
+`@viewTransition` vérifie deux choses **avant** de jamais démarrer une transition, à tous les niveaux (routeur `<@view>` **et** transitions de page `@pageTransition` sur un lien, cf. section suivante) :
 
-- **`prefers-reduced-motion: reduce`** — dès que l'utilisateur (système ou navigateur) demande de réduire les animations, MJS **n'enveloppe jamais** la permutation dans `startViewTransition` : le changement de vue/page se fait directement, comme si `@viewTransition` était absent. Aucune configuration à faire — c'est automatique et prioritaire sur tout réglage `@viewTransition` actif.
-- **Dégradé gracieux** — sur un navigateur qui n'implémente pas `document.startViewTransition` (API récente), même chemin : permutation directe, silencieuse, **sans erreur ni avertissement**. Le site reste 100 % fonctionnel, juste sans l'animation.
+- **`prefers-reduced-motion: reduce`** — dès que l'utilisateur (système ou navigateur) demande de réduire les animations, MJS **n'enveloppe jamais** la permutation dans `startViewTransition` et **ne joue aucun rideau** : le changement de vue/page se fait directement, comme si `@viewTransition` était absent (une seule garde d'environnement, `_mjs_vtEnabled`, partagée par les deux niveaux). Aucune configuration à faire — c'est automatique et prioritaire sur tout réglage `@viewTransition` actif.
+- **Dégradé gracieux** — sur un navigateur qui n'implémente pas `document.startViewTransition` (API récente), les **rideaux** (`iris`, `swipe`, `bars`, `blocks`), du DOM ordinaire, jouent quand même ; les préréglages qui reposent sur l'API (fondu natif, `fade`, `slide`, `cube`…) font une permutation directe, silencieuse, **sans erreur ni avertissement**. Le site reste 100 % fonctionnel, juste sans cette animation.
 
 Dans les deux cas, aucun code à écrire : ces deux gardes sont vérifiées automatiquement à chaque navigation, quel que soit le préréglage demandé.
 
@@ -515,7 +531,7 @@ Le navigateur expose la transition via des **pseudo-éléments standards**, anim
 
 ### Bon à savoir
 
-- **Dégradé gracieux** : navigateur sans `startViewTransition` → permutation directe, sans erreur.
+- **Dégradé gracieux** : navigateur sans `startViewTransition` → les rideaux jouent quand même ; un préréglage natif fait une permutation directe, sans erreur.
 - **Accessibilité** : `prefers-reduced-motion: reduce` → MJS n'enveloppe pas, permutation directe.
 - **Même composant, autre paramètre** (`/posts/42` → `/posts/77`) : ce n'est pas une permutation de vue (le composant se met à jour via `µurl`) → pas de transition de page. Une `<@view>` qui résout encore le même module ne participe pas non plus au choix de la transition (une autre vue de la page qui change, elle, joue la sienne).
 - **Jamais côté serveur** : le SSR ignore `@viewTransition`, c'est un mécanisme purement client.

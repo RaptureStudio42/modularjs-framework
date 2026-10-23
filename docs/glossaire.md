@@ -23,8 +23,17 @@
 | attribut | attribute | attribut HTML posé sur la balise |
 | liaison two-way | two-way binding | `value=!{$x}` |
 | état | state | les `$x` d'un composant |
+| type | type | ce qu'une variable, une prop ou un store accepte — sa ligne dans le bloc `<vars>` (`$volume  int 0..100`) |
+| valeurs permises / interdites | allowed / forbidden values | ce qu'une règle accepte (avant le `!`) et refuse (après le `!`) |
+| règle nommée | named rule | `Percent  int 0..100` dans un fichier `*.types.mjs`, valable dans toute l'appli |
+| conversion | cast | une valeur changée de type sans perte de sens : `'42'` → `42`, `50.7` → `51` dans un `int` |
+| valeur ramenée | value brought back | un nombre hors de sa plage, remplacé par la borne la plus proche |
+| effet | effect | une allure ou un mouvement posé en un mot sur une balise : `*neon`, `*tilt(15)` — à ne pas confondre avec un reffet (`µeffect`) |
+| réglage | setting | ce qui ajuste un effet, entre ses parenthèses : `*neon(color: #f0f)` |
+| réglage principal | main setting | le réglage d'un effet qui s'écrit sans son nom : `*neon(#f0f)` règle `color` |
+| valeur refusée | refused value | une écriture qui n'a pas lieu : la variable garde sa valeur d'avant |
 | valeur dérivée | derived value | une valeur recalculée à partir d'autres |
-| effet | effect | `µeffect` — du code rejoué quand ses dépendances changent |
+| reffet | reactive effect | `µeffect` — un effet réactif : du code rejoué quand ses dépendances changent ; « effet », seul, désigne un `*nom` |
 | store | store | conteneur d'état partagé (`$$`, `µ$$`, `µStore`) |
 | contexte | context | `§` (figé) et `§§` (réactif de sous-arbre) |
 | snippet | snippet | fragment de HTML paramétré, réutilisable dans le composant |
@@ -33,7 +42,8 @@
 | thème nommé | named theme | `<theme name="gold">` + `theme="gold"` — une palette alternative du composant |
 | variable de thème | theme variable | `$$nom` en contexte de style, compilée en `var(--mjs-nom)` |
 | **variant** | **variant** | `<style name="banner">` + `layout="banner"` — un jeu de **règles de mise en page** du composant, sorti en fichier à part et chargé à la demande |
-| module cœur | core module | `<@select>`, `<@field>`, `<@color>`… — la bibliothèque livrée avec le framework |
+| modèle | model | ce que choisit `layout="x"` : un variant (le style), un détail lu par `µlayout`, ou un fichier à lui (`carte.compacte.mjs`) |
+| module cœur | core module | `<@@select>`, `<@@field>`, `<@@color>`… — la bibliothèque livrée avec le framework |
 | élément spécial | special element | `<@window>`, `<@head>`, `<@element>`, `<@failed>`, `<@view>`, `<@slot>`, `<@fill>` |
 | routeur | router | le routeur client (`@routes`, `<@view>`) |
 | rendu côté serveur | server-side rendering (SSR) | le HTML produit avant l'envoi au navigateur |

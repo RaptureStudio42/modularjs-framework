@@ -19,6 +19,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { setMessagesLang } from '../src/messages/index.js'
+import { RUNTIME_LABELS } from '../src/runtime-labels.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -65,7 +66,7 @@ function coreContent(outDir: string): string {
 
 function readRuntimeLabels(manifestPath: string): any {
   const content = readFileSync(manifestPath, 'utf-8')
-  const m = content.match(/µ\._runtimeLabels = (\{.*?\});/)
+  const m = content.match(/µ\._runtimeLabels = (\{.*\});$/m)
   assert.ok(m, 'µ._runtimeLabels doit être émis dans le manifest')
   return JSON.parse(m![1])
 }
@@ -105,8 +106,10 @@ describe('mjs_modal — µ._runtimeLabels : émission INCONDITIONNELLE du manife
   // `µ._runtimeLabelsLang` (langue de repli du build : `i18n.default` du projet, sinon la clé
   // `lang` du CLI) — le choix de la langue AFFICHÉE se fait au runtime, via µ._mjs_label
   // (mjs_init.ts, cf. tests/runtime-labels-langue-affichee.test.ts).
-  const FR = { modal: { ok: 'OK', cancel: 'Annuler', deny: 'Non' }, router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' }, toast: { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' }, ujs: { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' } }
-  const EN = { modal: { ok: 'OK', cancel: 'Cancel', deny: 'No' }, router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' }, toast: { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' }, ujs: { sendFailed: 'Sending failed — the server did not respond.' } }
+  // seuls les groupes que le build lit partent au manifeste : ici l'hôte n'écrit ni effet à libellé ni module
+  // cœur, donc ni `fx` ni `core` (cf. tests/bundler-detection-libelles-manifeste.test.ts)
+  const FR = { modal: { ok: 'OK', cancel: 'Annuler', deny: 'Non' }, router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' }, toast: { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' }, ujs: { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' }, err: RUNTIME_LABELS.fr.err, dev: RUNTIME_LABELS.fr.dev }
+  const EN = { modal: { ok: 'OK', cancel: 'Cancel', deny: 'No' }, router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' }, toast: { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' }, ujs: { sendFailed: 'Sending failed — the server did not respond.' }, err: RUNTIME_LABELS.en.err, dev: RUNTIME_LABELS.en.dev }
 
   it('lang absente (défaut fr) : µ._runtimeLabels sert les DEUX langues, µ._runtimeLabelsLang vaut "fr"', async function () {
     const { manifestPath } = await buildProject({})
@@ -126,11 +129,11 @@ describe('mjs_modal — µ._runtimeLabels : émission INCONDITIONNELLE du manife
     assert.ok(manifest.includes('µ._runtimeLabelsLang = "en";'), 'langue de repli en suit la clé lang du CLI')
   })
 
-  it("runtime:'core' (module 'modal' ABSENT du bundle) : µ._runtimeLabels quand même émis — inconditionnel, contrairement à µ._i18nData", async function () {
+  it("runtime:'core' (module 'modal' ABSENT du bundle) : µ._runtimeLabels quand même émis, sans les groupes de modal/router/ujs — contrairement à µ._i18nData, la table existe toujours", async function () {
     const { manifestPath } = await buildProject({ runtime: 'core' })
     const labels = readRuntimeLabels(manifestPath)
-    assert.deepEqual(labels.fr, FR)
-    assert.deepEqual(labels.en, EN)
+    assert.deepEqual(labels.fr, { err: RUNTIME_LABELS.fr.err, dev: RUNTIME_LABELS.fr.dev })
+    assert.deepEqual(labels.en, { err: RUNTIME_LABELS.en.err, dev: RUNTIME_LABELS.en.dev })
   })
 
   it("i18n:{default:'en'} SANS lang : µ._runtimeLabelsLang suit la langue du PROJET, pas celle du CLI", async function () {

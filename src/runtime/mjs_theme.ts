@@ -43,6 +43,64 @@
 
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_themeSheet];
 
+// THÈME EN CERCLE — une bascule de thème qui suit un clic (ou Entrée, Espace sur l'élément actif) se
+// propage en cercle depuis ce point, par une transition de vue (View Transitions) : l'ancien thème
+// reste en photo, le nouveau s'ouvre par-dessus en 500 ms. D'un coup sinon : bascule venue du
+// système ou du code (aucun geste depuis 1,5 s), navigateur sans View Transitions, « réduire les
+// animations », ou `"effects": { "theme": "none" }` (µ._fxConf, posé par le manifeste). Ses deux
+// règles ne valent que sous l'attribut `mjs-theme-circle`, posé le temps du cercle : les transitions
+// de page (@viewTransition) ne changent pas.
+// (un navigateur sans View Transitions refuse le sélecteur : la règle n'y sert à rien)
+try {
+  µ._mjs_themeSheet.insertRule(':root[mjs-theme-circle]::view-transition-old(root),:root[mjs-theme-circle]::view-transition-new(root){animation:none;mix-blend-mode:normal}', µ._mjs_themeSheet.cssRules.length);
+}
+catch (e) { /* sélecteur inconnu */ }
+var _mjsThemeGeste = null;
+document.addEventListener('pointerdown', function(e) { _mjsThemeGeste = { x: e.clientX, y: e.clientY, t: Date.now() }; }, true);
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') { return; }
+  // l'élément actif, jusque dans les composants (shadow root fermé : `_shadow`) ; mesuré seulement si
+  // le thème bascule (µ._mjs_themeSwap) : taper des espaces dans un champ ne force aucune mise en page
+  var a = document.activeElement;
+  for (var sh = a && (a.shadowRoot || a._shadow); sh && sh.activeElement; sh = a.shadowRoot || a._shadow) { a = sh.activeElement; }
+  if (!a || !a.getBoundingClientRect) { return; }
+  _mjsThemeGeste = { el: a, t: Date.now() };
+}, true);
+µ._mjs_themeSwap = function(value, set) {
+  var html = document.documentElement;
+  var g    = _mjsThemeGeste;
+  _mjsThemeGeste = null;
+  var rond = !!g && Date.now() - g.t <= 1500 && !(µ._fxConf && µ._fxConf.theme === 'none') && typeof document.startViewTransition === 'function' && html.dataset.mjsTheme !== value;
+  // (le système n'est interrogé qu'en dernier : le boot ne le consulte pas)
+  if (!rond || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    set();
+    return;
+  }
+  // une touche : le centre de l'élément actif, mesuré maintenant
+  if (g.el) {
+    var b = g.el.getBoundingClientRect();
+    g = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }
+  // le rayon qui atteint le coin le plus loin du point
+  var r   = Math.ceil(Math.hypot(Math.max(g.x, window.innerWidth - g.x), Math.max(g.y, window.innerHeight - g.y)));
+  var at  = ' at ' + Math.round(g.x) + 'px ' + Math.round(g.y) + 'px)';
+  var fin = function() { html.removeAttribute('mjs-theme-circle'); };
+  html.setAttribute('mjs-theme-circle', '');
+  var vt;
+  try {
+    vt = document.startViewTransition(set);
+  }
+  catch (e) {
+    fin();
+    set();
+    return;
+  }
+  vt.ready.then(function() {
+    html.animate({ clipPath: ['circle(0px' + at, 'circle(' + r + 'px' + at] }, { duration: 500, easing: 'ease-in-out', pseudoElement: '::view-transition-new(root)' });
+  }, function() {});
+  vt.finished.then(fin, fin);
+};
+
 // Thèmes de l'APPLICATION (fichiers `*.theme.mjs`) — leur CSS agrégé arrive par le manifeste
 // dans `µ._themeCss`, sur sa propre feuille : les variables du framework ci-dessus restent lisibles
 // tels quels, et un thème d'app qui redéclare l'un d'eux le recouvre simplement (le manifeste

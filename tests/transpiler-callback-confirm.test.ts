@@ -238,28 +238,28 @@ describe('transpiler — @confirm forme EXPRESSION', () => {
     const src = `<script lang="coffee">\n$message = 'Vraiment ?'\n</script>\n<button @confirm={$message}>Suppr</button>`
     const { output } = await transpile(src, { moduleName: 'coe1' })
     assert.match(output, /mjs-confirm=''/, 'slot vide dans le template statique, pas de texte figé')
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.message\)/, 'câblage réactif, même mécanisme que mjs-title={expr}')
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.message(?:, 1)?\)/, 'câblage réactif, même mécanisme que mjs-title={expr}')
   })
 
   it('@confirm={ $message } (espaces autour) → même passe-plat', async () => {
     const src = `<script lang="coffee">\n$message = 'Vraiment ?'\n</script>\n<button @confirm={ $message }>Suppr</button>`
     const { output } = await transpile(src, { moduleName: 'coe2' })
     assert.match(output, /mjs-confirm=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.message\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.message(?:, 1)?\)/)
   })
 
   it('@confirm={$a || $b} (expression logique) → passe-plat réactif', async () => {
     const src = `<script lang="coffee">\n$a = ''\n$b = 'Sûr ?'\n</script>\n<button @confirm={$a || $b}>Suppr</button>`
     const { output } = await transpile(src, { moduleName: 'coe3' })
     assert.match(output, /mjs-confirm=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.a \|\| \$\.b\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\$\.a \|\| \$\.b(?:, 1)?\)/)
   })
 
   it('@confirm={maFonction()} (appel de fonction) → passe-plat réactif', async () => {
     const src = `<script lang="coffee">\nmaFonction = -> 'Vraiment ?'\n</script>\n<button @confirm={maFonction()}>Suppr</button>`
     const { output } = await transpile(src, { moduleName: 'coe4' })
     assert.match(output, /mjs-confirm=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*maFonction\(\)\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*maFonction\(\)(?:, 1)?\)/)
   })
 
   it("@confirm={ text: 'Sûr ?' } (une SEULE clé, forme objet) → comportement INCHANGÉ, toujours l'objet strict", async () => {

@@ -57,7 +57,11 @@
 // navigateur sait faire nativement. `adoptedStyleSheets` reste hors du périmètre de
 // `getHTML()` (comme de `innerHTML`) : le CSS scopé de CHAQUE composant rencontré
 // est inliné comme un VRAI nœud `<style>` (1er enfant de son shadow) avant l'appel
-// — capturé alors naturellement, à tous les niveaux.
+// — capturé alors naturellement, à tous les niveaux. Même principe pour les champs de
+// formulaire : un champ lié à une variable reçoit son état par PROPRIÉTÉ (`value`,
+// `checked`, `selected`), invisible à `getHTML()` qui ne lit que les attributs — le parcours
+// d'avant sérialisation recopie donc l'état courant de chaque champ dans ses attributs
+// (`reflectFieldState`, partagée avec le moteur happy-dom, jamais pour un mot de passe).
 //
 // POOL — un navigateur Chromium (processus) coûte cher à lancer (~200-500ms) ; une
 // PAGE beaucoup moins. `browserPool.size` emplacements (contexte + page) sont donc
@@ -66,21 +70,22 @@
 // entre deux rendus qui partagent l'emplacement). Une re-NAVIGATION (pas une
 // recréation) suffit à repartir d'un état JS vierge (nouveau Realm) entre deux
 // rendus du MÊME emplacement — c'est elle qui fait le gros du travail d'isolation ;
-// `localStorage`/`sessionStorage` (qui SURVIVENT à une navigation, même origine)
-// sont vidés explicitement en plus. `keepAlive:false` désactive la réutilisation du
+// ce qui SURVIT à une navigation (même origine) est effacé en plus : après chaque rendu,
+// tout le stockage de l'origine (IndexedDB, Cache Storage, service workers, localStorage,
+// cookies, cf. `remettreANeuf`), et `window.name` à chaque nouvelle page. `keepAlive:false` désactive la réutilisation du
 // PROCESSUS navigateur lui-même (fermé + relancé à chaque rendu — coûteux, isolation
 // maximale). `maxAgeMs` recycle un emplacement trop ancien (hygiène mémoire sur un
 // serveur longue durée).
 
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { resolve, join, extname } from 'node:path'
 import { createRequire } from 'node:module'
 import type { MjsConfig, RenderEngine, RenderBrowserPoolConfig } from '../bundler/config.js'
 import { resolveBundlerOpts } from '../bundler/config.js'
 import { Bundler } from '../bundler/index.js'
-import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, type RenderOptions, type RenderResult } from './renderToString.js'
-import { isWithinDir, isRealPathWithin, MIME } from './render-server.js'
-import { writeHashedAsset } from './ssr-head.js'
+import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, type RenderOptions, type RenderResult } from './renderToString.js'
+import { isServableFile, MIME } from './render-server.js'
+import { ecrireFeuilleRendu, feuillesALier, sansImport } from './sorties-rendu.js'
 import { openRenderCompileDir } from './render-compile-dir.js'
 import { t, type MsgKey } from '../messages/index.js'
 // (SSRF) — même défense en profondeur que renderToString.ts
@@ -89,6 +94,7 @@ import { t, type MsgKey } from '../messages/index.js'
 // DIRECTEMENT à `renderPage` (API publique) sans passer par
 // `computeForwardedOrigin`. Cf. forward-origin.ts pour le détail des plages.
 import { isBlockedForwardTarget } from './forward-origin.js'
+import { buildSeedRoot } from './i18n-seed-root.js'
 
 // Alias LOCAUX — jamais `import type … from 'playwright'` : même en ABSENCE du
 // paquet (npm i -D playwright non lancé), ce fichier doit rester typable
@@ -211,9 +217,48 @@ function mjsSsrSafeCss(css: any): string {
 // esbuild mangleProps) : cette page charge le bundle TEL QUEL, les nommer depuis ce code injecté ne
 // rendrait rien — le `<style>` du `<template shadowrootmode>` comme le mode light partiraient en
 // silence. `baseCss` est rendu BRUT (le trim appartient à chaque point d'usage).
-function mjsSsrInfo(el: any): { baseCss: string; isLight: boolean; nodes: any } {
+function mjsSsrInfo(el: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any } {
   const info = (window as any).__mjsCore._ssrInfo(el)
-  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), isLight: info.isLight === true, nodes: info.nodes }
+  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes }
+}
+
+// Feuilles partagées d'une racine d'ombre (remise à zéro, thème, héritées d'une vue, déclarées par
+// `@css`), dans l'ordre où le montage les adopte AVANT la feuille propre : le fragment les emporte,
+// sinon la page prérendue change de géométrie quand le JavaScript les adopte. Le texte est celui que
+// la feuille a reçu (cf. `mjsSsrNoteSheetText`), `@import` retirés comme `replaceSync` les ignore ;
+// une feuille retouchée ensuite se relit par ses règles.
+// Une feuille absente du registre (vide, différée) n'écrit rien. Le thème (clair/sombre embarqué,
+// puis thème de l'application) se retrouve parmi les feuilles adoptées par le document : la première
+// par la variable `--mjs-surface`, l'autre est celle qui la suit.
+function mjsSsrSharedCss(el: any): { css: string; tag: string }[] {
+  const registre = (window as any).__mjsCore.CSS
+  const list: { css: string; tag: string }[] = []
+  if (!registre) return list
+  const texte = (feuille: any): string => {
+    if (typeof feuille.__mjsTexte === 'string') return sansImport(feuille.__mjsTexte)
+    try { return Array.from(feuille.cssRules).map((r: any) => r.cssText).join('') } catch (_e) { return '' }
+  }
+  const adoptees: any[] = Array.from((document as any).adoptedStyleSheets || [])
+  let iTheme = -1
+  for (let k = 0; k < adoptees.length && iTheme < 0; k++) if (texte(adoptees[k]).indexOf('--mjs-surface') > -1) iTheme = k
+  const themes: { css: string; tag: string }[] = []
+  if (iTheme > -1) {
+    const embarquee = texte(adoptees[iTheme])
+    if (embarquee.trim() !== '') themes.push({ css: embarquee, tag: 'partagee-theme' })
+    const appli = adoptees[iTheme + 1] ? texte(adoptees[iTheme + 1]) : ''
+    if (appli.trim() !== '') themes.push({ css: appli, tag: 'partagee-theme-appli' })
+  }
+  const noms = mjsSsrInfo(el).sheets
+  const apresReset = noms[0] === 'mjs_reset' ? 1 : 0
+  for (let i = 0; i <= noms.length; i++) {
+    if (i === apresReset) for (let t = 0; t < themes.length; t++) list.push(themes[t])
+    if (i === noms.length) break
+    const feuille = registre[noms[i]]
+    if (!feuille) continue
+    const css = texte(feuille)
+    if (css.trim() !== '') list.push({ css, tag: 'partagee-' + String(noms[i]).replace(/[^\w-]/g, '_') })
+  }
+  return list
 }
 
 // Marque chaque élément `mjs-*` de l'arbre rendu (attribut `mjs-ssr`, vide) : c'est ce que le
@@ -227,13 +272,40 @@ function mjsSsrMarkTree(el: any): void {
 
 // Marque un nœud réactif pour l'hydratation 'markers' — même convention que
 // renderToString.ts (attribut `mjs-h` sur élément, commentaire `mjs-h:<clé>` juste
-// avant un nœud texte).
+// avant un nœud texte, commentaire `mjs-e:<clé>` quand ce nœud texte est vide : il ne
+// s'écrit pas en HTML, le client en pose un à la place du commentaire).
 function mjsSsrMarkNode(n: any, key: string): void {
   if (n.nodeType === 1 && n.setAttribute) {
     n.setAttribute('mjs-h', key)
   } else if (n.nodeType === 3 && n.parentNode) {
-    n.parentNode.insertBefore(document.createComment('mjs-h:' + key), n)
+    n.parentNode.insertBefore(document.createComment((n.data === '' ? 'mjs-e:' : 'mjs-h:') + key), n)
   }
+}
+
+// Retient le texte que reçoit chaque `replaceSync` (même parade que `noterTexteFeuilles`,
+// renderToString.ts) : une feuille construite ne rend que ses règles telles que le navigateur les
+// AFFICHE, et Chromium en réécrit (`opacity 0s linear 1s` devient `opacity linear 1s`, qui change de
+// sens une fois relu). Posée via `context.addInitScript`, AVANT le cœur. Une feuille retouchée après
+// (`insertRule`, `deleteRule`, `replace`) perd ce texte et se relit par ses règles.
+function mjsSsrNoteSheetText(): void {
+  const proto: any = (window as any).CSSStyleSheet && (window as any).CSSStyleSheet.prototype
+  if (!proto || typeof proto.replaceSync !== 'function') return
+  const origine = proto.replaceSync
+  proto.replaceSync = function (this: any, css: any) {
+    const r = origine.call(this, css)
+    Object.defineProperty(this, '__mjsTexte', { value: String(css), configurable: true, writable: true })
+    return r
+  }
+  // une fonction passée en argument, jamais une fonction nommée : esbuild (`keepNames`, celui de tsx) enveloppe une fonction
+  // nommée dans un appel `__name(…)` que ce texte, envoyé seul à la page, ne définit pas
+  ;['insertRule', 'deleteRule', 'replace'].forEach(function (nom: string): void {
+    const f = proto[nom]
+    if (typeof f !== 'function') return
+    proto[nom] = function (this: any, ...args: any[]) {
+      if (Object.prototype.hasOwnProperty.call(this, '__mjsTexte')) this.__mjsTexte = undefined
+      return f.apply(this, args)
+    }
+  })
 }
 
 // Force TOUT Shadow DOM attaché dans cette page à 'open' — cf. en-tête de fichier
@@ -259,6 +331,8 @@ function mjsSsrCollectCss(root: any): { css: string; tag: string }[] {
     if (!el) return
     const isShadow = !!(el._shadow && el._shadow !== el)
     if (isShadow) {
+      const partagees = mjsSsrSharedCss(el)
+      for (let k = 0; k < partagees.length; k++) list.push(partagees[k])
       const css = mjsSsrInfo(el).baseCss
       if (css.trim() !== '') list.push({ css, tag: String(el.tagName).toLowerCase() })
     } else {
@@ -297,8 +371,10 @@ function mjsSsrOrphanLightCss(el: any, vus: any, marquer?: boolean): string {
 // que `collectAwaitStates` : `_shadow !== el` évite de redescendre deux fois en
 // mode light, où `_shadow === el`) : inline le CSS scopé de chaque shadow
 // rencontré (adoptedStyleSheets invisible à `getHTML()`, comme à `innerHTML` — cf.
-// en-tête de fichier), pose les marqueurs 'markers' si demandé, et collecte tous
-// les ShadowRoot pour un SEUL appel `getHTML()` final à la racine (les shadows
+// en-tête de fichier), pose les marqueurs 'markers' si demandé, recopie l'état de chaque
+// champ de formulaire dans ses attributs (`reflectFieldState`, de renderToString.ts : la
+// sérialisation n'écrit que les attributs, jamais la valeur posée par propriété), et collecte
+// tous les ShadowRoot pour un SEUL appel `getHTML()` final à la racine (les shadows
 // imbriqués y sont alors inclus nativement, cf. en-tête de fichier SÉRIALISATION).
 // (mode `csp`) — `cssUrls` (undefined hors csp, chemin INCHANGÉ) : au lieu de créer un
 // `<style>` en ligne (BLOQUÉ par `style-src` sans 'unsafe-inline', vérifié en navigateur),
@@ -312,21 +388,30 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
     if (!el) return
     const isShadow = !!(el._shadow && el._shadow !== el)
     mjsSsrMarkTree(el)
+    reflectFieldState(el)
     if (isShadow) {
       shadowRoots.push(el._shadow)
+      // feuilles partagées d'abord, feuille propre en dernier (même cascade que le montage) :
+      // chacune est posée AVANT le premier enfant d'origine, dans l'ordre de `mjsSsrCollectCss`
       const css = mjsSsrInfo(el).baseCss
-      if (css.trim() !== '' && !el._shadow.querySelector('style[data-mjs-ssr], link[data-mjs-ssr]')) {
-        if (cssUrls) {
-          const linkEl = document.createElement('link')
-          linkEl.setAttribute('data-mjs-ssr', '')
-          linkEl.setAttribute('rel', 'stylesheet')
-          linkEl.setAttribute('href', cssUrls[cssIndex++])
-          el._shadow.insertBefore(linkEl, el._shadow.firstChild)
-        } else {
-          const styleEl = document.createElement('style')
-          styleEl.setAttribute('data-mjs-ssr', '')
-          styleEl.textContent = mjsSsrSafeCss(css)
-          el._shadow.insertBefore(styleEl, el._shadow.firstChild)
+      const feuilles = mjsSsrSharedCss(el)
+      if (css.trim() !== '') feuilles.push({ css, tag: String(el.tagName).toLowerCase() })
+      if (feuilles.length > 0 && !el._shadow.querySelector('style[data-mjs-ssr], link[data-mjs-ssr]')) {
+        const premier = el._shadow.firstChild
+        for (let f = 0; f < feuilles.length; f++) {
+          const url = cssUrls ? cssUrls[cssIndex++] : ''
+          if (url) {
+            const linkEl = document.createElement('link')
+            linkEl.setAttribute('data-mjs-ssr', '')
+            linkEl.setAttribute('rel', 'stylesheet')
+            linkEl.setAttribute('href', url)
+            el._shadow.insertBefore(linkEl, premier)
+          } else {
+            const styleEl = document.createElement('style')
+            styleEl.setAttribute('data-mjs-ssr', '')
+            styleEl.textContent = mjsSsrSafeCss(feuilles[f].css)
+            el._shadow.insertBefore(styleEl, premier)
+          }
         }
       }
     } else {
@@ -335,11 +420,12 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
       // mjsSsrOrphanLightCss. Posée en premier enfant, même place que dans un shadow.
       const orphelin = mjsSsrOrphanLightCss(el, vus, true)
       if (orphelin !== '' && !el.querySelector('style[data-mjs-ssr], link[data-mjs-ssr]')) {
-        if (cssUrls) {
+        const url = cssUrls ? cssUrls[cssIndex++] : ''
+        if (url) {
           const linkEl = document.createElement('link')
           linkEl.setAttribute('data-mjs-ssr', '')
           linkEl.setAttribute('rel', 'stylesheet')
-          linkEl.setAttribute('href', cssUrls[cssIndex++])
+          linkEl.setAttribute('href', url)
           el.insertBefore(linkEl, el.firstChild)
         } else {
           const styleEl = document.createElement('style')
@@ -352,6 +438,14 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
     const hydrateNodes = mjsSsrInfo(el).nodes
     if (hydrateMode === 'a' && hydrateNodes) {
       for (const key in hydrateNodes) { if (hydrateNodes[key]) mjsSsrMarkNode(hydrateNodes[key], key) }
+      // le parseur du navigateur fusionne deux nœuds texte voisins en un seul : un texte repris que suit un autre texte (« Bonjour {$nom}! ») ne s'en distinguerait plus au client, qui réécrirait aussi ce qui le suit. Un commentaire vide les sépare, le client le laisse en place
+      for (const key in hydrateNodes) {
+        const t = hydrateNodes[key]
+        if (!t || t.nodeType !== 3 || t.data === '' || !t.parentNode) continue
+        let following = t.nextSibling
+        while (following && following.nodeType === 3 && following.data === '') following = following.nextSibling
+        if (following && following.nodeType === 3) t.parentNode.insertBefore(document.createComment(''), t.nextSibling)
+      }
     }
     if (isShadow) { for (let i = 0; i < el._shadow.children.length; i++) walk(el._shadow.children[i]) }
     if (el.children) { for (let j = 0; j < el.children.length; j++) walk(el.children[j]) }
@@ -388,7 +482,7 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
 const NAME_HELPER_SHIM = 'var __name = function(fn){ return fn };\n'
 
 function pageHelperScript(): string {
-  const fns = [ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, mjsSsrSafeCss, mjsSsrInfo, mjsSsrOrphanLightCss, mjsSsrMarkTree, mjsSsrMarkNode, mjsSsrCollectCss, mjsSsrPrepareAndSerialize]
+  const fns = [ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, sansImport, mjsSsrSafeCss, mjsSsrInfo, mjsSsrSharedCss, mjsSsrOrphanLightCss, mjsSsrMarkTree, mjsSsrMarkNode, mjsSsrCollectCss, mjsSsrPrepareAndSerialize]
   const decls = fns.map(f => f.toString()).join('\n')
   const names = fns.map(f => f.name).join(', ')
   return NAME_HELPER_SHIM + decls + '\nwindow.__mjsSsr = { ' + names + ' };\n'
@@ -398,7 +492,6 @@ function pageHelperScript(): string {
 // 4. AMORÇAGE DE PAGE (bootstrap HTML + interception réseau)
 // ============================================================================
 const BOOT_ORIGIN = 'http://mjs-render.invalid'
-const BOOT_HOST = new URL(BOOT_ORIGIN).hostname   // 'mjs-render.invalid' — cf. renderPage (cookies de contexte)
 const BOOT_PATH = '/__mjs_ssr_boot__.html'
 const BUNDLE_PATH = '/__mjs/bundle.js'   // même convention que render-server.ts (chemin fixe, hors outputDir)
 
@@ -448,6 +541,7 @@ function bootHtml(helperSrc: string, coreUrl: string): string {
     'import ' + JSON.stringify(BUNDLE_PATH) + ';\n' +
     'await window.__mjsBundleReady;\n' +
     'µ.server = true;\n' +
+    'µ._i18nTrackRoot = true;\n' +
     'window.__mjsCore = µ;\n' +
     'window.__mjsBootDone = true;\n' +
     '</script>\n</head><body></body></html>\n'
@@ -469,6 +563,17 @@ function bootHtml(helperSrc: string, coreUrl: string): string {
 // rendu, pas un délai qui repartirait de zéro à chaque requête proxifiée.
 interface ForwardOriginCtx { origin: string; cookie?: string; signal?: AbortSignal }
 
+/** Adresse amont du proxy `render.forwardOrigin` pour un chemin demandé par la page, ou `null` dès
+ *  qu'elle quitterait l'origine de confiance : une barre inverse (`/\hote`, venue de `/%5Chote`), un
+ *  double slash (`/api/..//hote`, `/%2F%2Fhote`) changent l'HÔTE d'une adresse relative — le proxy
+ *  serait parti vers un serveur arbitraire, interne compris, avec le cookie du visiteur. Exportée
+ *  pour test direct. */
+export function adresseAmontDuProxy(pathname: string, search: string, origin: string): URL | null {
+  let amont: URL
+  try { amont = new URL(pathname + search, origin) } catch { return null }
+  return amont.origin === origin ? amont : null
+}
+
 /** Sert les dossiers de sortie + le bundle + la page d'amorçage sur l'origine FACTICE ; pour
  *  tout le reste, si `forwardBox.current` est posé (render.forwardOrigin actif
  *  pour CE rendu, cf. renderPage), PROXY vers l'origine réelle — sinon abandonné
@@ -476,13 +581,35 @@ interface ForwardOriginCtx { origin: string; cookie?: string; signal?: AbortSign
  *  réseau depuis cette page hors du proxy explicitement voulu). */
 function routeHandler(
   outputDirs: string[], urlPrefix: string, manifestPath: string, helperSrc: string, coreUrl: string,
-  forwardBox: { current: ForwardOriginCtx | null },
+  forwardBox: { current: ForwardOriginCtx | null }, log: (msg: string) => void, config: MjsConfig, configDir: string,
 ) {
+  // une levée dans ce rappel de Playwright (fichier illisible, supprimé entre deux lectures par un
+  // build concurrent) devenait un rejet jamais rattrapé qui tuait le processus Node : la ressource
+  // répond 500 (ou la requête est abandonnée si la réponse ne peut plus partir), le rendu continue
   return async (route: any): Promise<void> => {
+    try {
+      await servir(route)
+    } catch (e: any) {
+      let url = '?'
+      try { url = route.request().url() } catch { /* page déjà fermée */ }
+      log(t('server.browser-route-echec', { url, erreur: e?.message || String(e) }))
+      await route.fulfill({ status: 500, body: 'Internal Server Error' }).catch(() => route.abort().catch(() => {}))
+    }
+  }
+
+  async function servir(route: any): Promise<void> {
     const req = route.request()
     const target = new URL(req.url())
     if (target.origin !== BOOT_ORIGIN) { await route.abort(); return }
-    const pathname = decodeURIComponent(target.pathname)
+    // pourcentage malformé (`/%zz`, `<img src="/%E0%A4%A">`) : `decodeURIComponent` lève, et une levée
+    // dans ce rappel de Playwright devenait un rejet jamais rattrapé qui tuait le processus Node
+    let pathname: string
+    try {
+      pathname = decodeURIComponent(target.pathname)
+    } catch {
+      await route.fulfill({ status: 400, body: 'Bad Request' })
+      return
+    }
     if (pathname === BOOT_PATH) {
       await route.fulfill({ status: 200, contentType: 'text/html', body: bootHtml(helperSrc, coreUrl) })
       return
@@ -496,15 +623,21 @@ function routeHandler(
       return
     }
     // Assets compilés (imports du bundle/de l'Autoloader) — même logique que
-    // render-server.ts (urlPrefix strip + isWithinDir + MIME), réutilisée telle
-    // quelle (isWithinDir/MIME importées) : une seule source pour ce garde-fou.
+    // render-server.ts (urlPrefix strip + isServableFile + MIME), réutilisée telle
+    // quelle (isServableFile/MIME importées) : une seule source pour ce garde-fou, et son
+    // verdict gardé tant que le chemin mène au même endroit réel, au même fichier inchangé.
+    // Même refus que `mjs serve`, la page rendue partant au visiteur : aucun segment caché
+    // (`.env`, `.mangle-cache.json`…), et un dossier de sortie qui est la racine du projet (ou la
+    // contient) ne laisse pas sortir ses fichiers privés (`mjs.config.json`, `config/`, clés, entrées
+    // serveur…), les sorties du build si (cf. isProjectFileRefused).
     const rel = (urlPrefix && pathname.startsWith(urlPrefix) ? pathname.slice(urlPrefix.length) : pathname).replace(/^\/+/, '')
+    const hidden = rel.split('/').some((s) => s.startsWith('.'))
     // Deux dossiers quand la compilation est détournée (`js: 'bundle'`, cf. render-compile-dir.ts) :
     // d'abord celui où CE rendu vient de compiler, puis le VRAI dossier de sortie — un fichier que
     // le projet y pose à la main (données, mock, fichier statique) reste servi comme il l'était.
     for (const dir of outputDirs) {
       const asset = join(dir, rel)
-      if (rel && isWithinDir(dir, asset) && existsSync(asset) && statSync(asset).isFile() && isRealPathWithin(dir, asset)) {
+      if (rel && !hidden && isServableFile(asset, dir, configDir, config, configDir)) {
         await route.fulfill({ status: 200, contentType: MIME[extname(asset)] || 'application/octet-stream', body: readFileSync(asset) })
         return
       }
@@ -520,8 +653,13 @@ function routeHandler(
     // boîte est remise à jour à CHAQUE appel de renderPage, cf. sa définition).
     const fwd = forwardBox.current
     if (fwd) {
+      const upstream = adresseAmontDuProxy(pathname, target.search, fwd.origin)
+      if (!upstream) {
+        // chemin qui changerait d'hôte : aucune requête, le cookie du visiteur ne part nulle part
+        await route.fulfill({ status: 404, body: 'Not Found: ' + pathname })
+        return
+      }
       try {
-        const upstream = new URL(pathname + target.search, fwd.origin)
         // Garde-fou — SANS `signal`, un back
         // forwardOrigin qui ne répond jamais laissait ce `fetch()` pendre à vie,
         // bloquant le `finally{ release(slot) }` de `renderPage` (cf. son
@@ -529,13 +667,31 @@ function routeHandler(
         // MÊME budget que le plafond global du rendu (renderTimeoutMs) — une
         // échéance qui expire ici fait rejeter `fetch()` (AbortError), capturé
         // par le catch ci-dessous (502 propre), jamais un pendu silencieux.
-        const proxied = await fetch(upstream, {
-          headers: {
-            accept: req.headers()['accept'] || '*/*',
-            ...(fwd.cookie ? { cookie: fwd.cookie } : {}),
-          },
-          signal: fwd.signal,
-        })
+        // la garde n'a vu que l'adresse de départ : `fetch` ne suit aucune redirection seul (une
+        // redirection ouverte de l'origine de confiance menait au réseau interne). Une redirection
+        // sur la MÊME origine est suivie ici, au plus 5 fois ; vers ailleurs : refusée. Jamais rendue
+        // à la page : la requête redirigée du navigateur ne repasse pas par ce proxy
+        let adresse = upstream
+        let proxied: Response
+        for (let saut = 0; ; saut++) {
+          proxied = await fetch(adresse, {
+            headers: {
+              accept: req.headers()['accept'] || '*/*',
+              ...(fwd.cookie ? { cookie: fwd.cookie } : {}),
+            },
+            signal: fwd.signal,
+            redirect: 'manual',
+          })
+          if (proxied.status < 300 || proxied.status >= 400 || !proxied.headers.has('location')) break
+          let suivante: URL | null = null
+          try { suivante = new URL(proxied.headers.get('location')!, adresse) } catch { /* adresse illisible : refusée */ }
+          await proxied.arrayBuffer().catch(() => {})
+          if (!suivante || suivante.origin !== upstream.origin || saut >= 5) {
+            await route.fulfill({ status: 502, body: 'Bad Gateway (proxy render.forwardOrigin) : redirection refusée' })
+            return
+          }
+          adresse = suivante
+        }
         const body = Buffer.from(await proxied.arrayBuffer())
         await route.fulfill({
           status: proxied.status,
@@ -551,6 +707,41 @@ function routeHandler(
       return
     }
     await route.fulfill({ status: 404, body: 'Not Found: ' + pathname })
+  }
+}
+
+// Cookies de la requête entrante posés dans le contexte de la page : nom fait de caractères ASCII
+// visibles, sans `=`, `;` ni `,` ; valeur sans caractère de contrôle. Une paire hors de ces règles
+// (`=x`, nom vide, octet de contrôle) est écartée : Chromium la refusait, ou l'acceptait puis
+// refusait tout nettoyage suivant de l'emplacement — un en-tête forgé cassait l'emplacement pour
+// tous les visiteurs suivants. Chromium refuse aussi sur l'origine de rendu (`http://`) les noms à
+// préfixe `__Host-`, `__Secure-`, `__Http-` (réservés à https, casse ignorée) et une paire de plus de
+// 4 096 octets : écartées d'avance, la page voit les autres au lieu d'un rendu en erreur.
+const NOM_COOKIE_RE     = /^[\x21-\x2b\x2d-\x3a\x3c\x3e-\x7e]+$/
+const VALEUR_COOKIE_RE  = /^[^\x00-\x1f\x7f]*$/
+const PREFIXE_COOKIE_RE = /^__(?:host|secure|http)-/i
+const TAILLE_COOKIE_MAX = 4096
+
+function cookiesDuVisiteur(entete: string): { name: string; value: string; url: string }[] {
+  const cookies: { name: string; value: string; url: string }[] = []
+  for (const brut of entete.split(';')) {
+    const pair = brut.trim()
+    if (!pair) continue
+    const eq    = pair.indexOf('=')
+    const name  = (eq === -1 ? pair : pair.slice(0, eq)).trim()
+    const value = eq === -1 ? '' : pair.slice(eq + 1).trim()
+    if (NOM_COOKIE_RE.test(name) && VALEUR_COOKIE_RE.test(value) && !PREFIXE_COOKIE_RE.test(name) && Buffer.byteLength(name + value) <= TAILLE_COOKIE_MAX) cookies.push({ name, value, url: BOOT_ORIGIN })
+  }
+  return cookies
+}
+
+// Pose les cookies du visiteur ; une paire que Chromium refuserait encore (règle qu'il serait seul à
+// connaître) est écartée seule, sans faire échouer le rendu ni condamner l'emplacement.
+async function poserCookies(context: PwBrowserContext, cookies: { name: string; value: string; url: string }[]): Promise<void> {
+  try {
+    await context.addCookies(cookies)
+  } catch {
+    for (const c of cookies) await context.addCookies([c]).catch(() => {})
   }
 }
 
@@ -627,6 +818,8 @@ export interface BrowserRenderer {
   renderPage(tag: string, options?: RenderOptions): Promise<RenderResult>
   /** Ferme le pool (contextes + pages), le navigateur et le bundler. */
   close(): Promise<void>
+  /** Le `Bundler` de CE renderer (dernier `compile()` du dossier de sortie, cf. `latestBundler`). */
+  readonly bundler: Bundler
 }
 
 interface PoolSlot {
@@ -641,6 +834,8 @@ interface PoolSlot {
    *  l'avertissement de popup fermée) — même patron mutable que `forwardBox`
    *  ci-dessus, mis à jour à CHAQUE `renderPage` (slot POOLED, réutilisé). */
   activeTag: { current: string | null }
+  /** Session CDP de la page, ouverte à la première remise à neuf (cf. `remettreANeuf`). */
+  cdp: any | null
 }
 
 /**
@@ -816,7 +1011,11 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       const forwardBox: { current: ForwardOriginCtx | null } = { current: null }
       const activeTag: { current: string | null } = { current: null }
       await context.addInitScript(mjsSsrForceOpenShadow)
-      await context.route('**/*', routeHandler([...new Set([atelier.outputDir, atelier.assetsDir])], bundler.urlPrefix, atelier.manifestPath, helperSrc, coreUrl, forwardBox))
+      await context.addInitScript(mjsSsrNoteSheetText)
+      // `window.name` appartient à l'onglet et survit à la navigation vers la page d'amorçage (même
+      // origine) : sans ce script, le nom posé pendant le rendu d'un visiteur se lisait au suivant
+      await context.addInitScript(() => { if (window.top === window) window.name = '' })
+      await context.route('**/*', routeHandler([...new Set([atelier.outputDir, atelier.assetsDir])], bundler.urlPrefix, atelier.manifestPath, helperSrc, coreUrl, forwardBox, log, config, configDir))
       const page: PwPage = await context.newPage()
       // Popup (window.open) jamais suivie ni fermée par Playwright : posé APRÈS
       // `newPage()` (une page créée AVANT cet appel ne déclenche jamais cet écouteur, sondé
@@ -828,7 +1027,7 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
         log(t('server.browser-popup-fermee', { tag: activeTag.current || '?' }))
         popup.close().catch(() => { /* best-effort */ })
       })
-      return { context, page, createdAt: Date.now(), forwardBox, activeTag }
+      return { context, page, createdAt: Date.now(), forwardBox, activeTag, cdp: null }
     } catch (e) {
       // BORNÉ et signalé, même voie que `teardownSlot` : un `context.close()` qui ne se règle pas
       // laissait cette promesse — et ce contexte — en vol à vie, sans un mot. `bootSlot()` n'est plus
@@ -993,6 +1192,27 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     if (waiter) acquireCore().then(waiter.resolve, waiter.reject)
   }
 
+  // Remise à neuf d'un emplacement après chaque rendu, hors du chemin de la réponse : la page quitte
+  // le document rendu (ses connexions IndexedDB, minuteurs et requêtes en vol s'arrêtent avec lui),
+  // puis tout le stockage de l'origine d'amorçage est effacé — IndexedDB, Cache Storage, service
+  // workers, localStorage, cookies. Rend `false` sur un échec ou passé `renderTimeoutMs` : un
+  // emplacement qui ne se laisse pas remettre à neuf est démonté, jamais rendu au réservoir.
+  async function remettreANeuf(slot: PoolSlot): Promise<boolean> {
+    let timer!: ReturnType<typeof setTimeout>
+    const travail = (async () => {
+      await slot.page.goto('about:blank', { timeout: renderTimeoutMs })
+      if (!slot.cdp) slot.cdp = await slot.context.newCDPSession(slot.page)
+      await slot.cdp.send('Storage.clearDataForOrigin', { origin: BOOT_ORIGIN, storageTypes: 'all' })
+      return true
+    })().catch(() => false)
+    const delai = new Promise<boolean>(r => { timer = setTimeout(() => r(false), renderTimeoutMs) })
+    try {
+      return await Promise.race([travail, delai])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async function renderPage(tag: string, options: RenderOptions = {}): Promise<RenderResult> {
     const { props = {}, store, shadowMode = 'open', settleMs = 1000, ssrMode = 'replace', forwardedUrl, forwardedCookie, light: lightRoot = false } = options
     const slot = await acquire()
@@ -1055,6 +1275,7 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       })
     }
     slot.page.on('pageerror', onPageError)
+    let emplacementSain = true
 
     // Garde-fou — `bootRender` porte TOUT le
     // corps du rendu (identique à la version précédente, aucune étape
@@ -1066,34 +1287,37 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     // ci-dessus — même budget).
     const bootRender = async (): Promise<RenderResult> => {
       await slot.page.goto(BOOT_ORIGIN + BOOT_PATH, { timeout: 30000 })
-      // Hygiène entre deux rendus du MÊME emplacement pooled — la navigation
-      // remet à zéro le Realm JS, mais pas localStorage/sessionStorage (persistent
-      // par origine). Cf. en-tête de fichier, section POOL.
-      await slot.page.evaluate(() => {
-        try { localStorage.clear() } catch { /* ignore */ }
-        try { sessionStorage.clear() } catch { /* ignore */ }
-      })
-      // Cookies de contexte, MÊME hygiène que localStorage/sessionStorage ci-dessus
-      // (un slot pooled sert PLUSIEURS rendus successifs, potentiellement pour des
-      // requêtes/utilisateurs différents) : on retire D'ABORD tout cookie posé pour
-      // l'origine FACTICE d'amorçage par un rendu ANTÉRIEUR de ce même slot, puis on
-      // repose ceux du rendu COURANT (s'il y en a). Domaine = hôte de l'origine
-      // FACTICE (`mjs-render.invalid`), PAS celui de l'origine réelle : la page ne
-      // navigue JAMAIS vers cette dernière (cf. en-tête de fichier, section
-      // AMORÇAGE) — des cookies qui y seraient scopés seraient invisibles à
-      // `document.cookie` ET jamais attachés par Chromium aux fetch relatifs de la
-      // page (qui ciblent tous `mjs-render.invalid`). Ceci couvre la visibilité
-      // `document.cookie` CÔTÉ PAGE ; le PROXY lui-même (routeHandler) transmet le
-      // cookie indépendamment, en-tête HTTP explicite sur son propre fetch Node.
-      await slot.context.clearCookies({ domain: BOOT_HOST })
-      if (forwardedCookie) {
-        const pairs = forwardedCookie.split(';').map(p => p.trim()).filter(Boolean)
-        await slot.context.addCookies(pairs.map((pair) => {
-          const eq = pair.indexOf('=')
-          const name = eq === -1 ? pair : pair.slice(0, eq)
-          const value = eq === -1 ? '' : pair.slice(eq + 1)
-          return { name, value, url: BOOT_ORIGIN }
-        }))
+      // un échec de l'hygiène ci-dessous laisse l'emplacement dans un état inconnu : jamais rendu au
+      // réservoir (cf. le `finally` plus bas)
+      try {
+        // Hygiène entre deux rendus du MÊME emplacement pooled — la navigation
+        // remet à zéro le Realm JS, mais pas localStorage/sessionStorage (persistent
+        // par origine). Cf. en-tête de fichier, section POOL.
+        await slot.page.evaluate(() => {
+          try { localStorage.clear() } catch { /* ignore */ }
+          try { sessionStorage.clear() } catch { /* ignore */ }
+        })
+        // Cookies de contexte, MÊME hygiène que localStorage/sessionStorage ci-dessus
+        // (un slot pooled sert PLUSIEURS rendus successifs, potentiellement pour des
+        // requêtes/utilisateurs différents) : on retire D'ABORD tout cookie posé pour
+        // l'origine FACTICE d'amorçage par un rendu ANTÉRIEUR de ce même slot, puis on
+        // repose ceux du rendu COURANT (s'il y en a). Domaine = hôte de l'origine
+        // FACTICE (`mjs-render.invalid`), PAS celui de l'origine réelle : la page ne
+        // navigue JAMAIS vers cette dernière (cf. en-tête de fichier, section
+        // AMORÇAGE) — des cookies qui y seraient scopés seraient invisibles à
+        // `document.cookie` ET jamais attachés par Chromium aux fetch relatifs de la
+        // page (qui ciblent tous `mjs-render.invalid`). Ceci couvre la visibilité
+        // `document.cookie` CÔTÉ PAGE ; le PROXY lui-même (routeHandler) transmet le
+        // cookie indépendamment, en-tête HTTP explicite sur son propre fetch Node.
+        // Sans filtre de domaine : le contexte n'appartient qu'à cet emplacement et la page n'atteint
+        // que l'origine d'amorçage. La forme filtrée effaçait TOUT puis réinjectait les autres cookies,
+        // et c'est cette réinjection qui échouait sur un cookie invalide.
+        await slot.context.clearCookies()
+        const cookies = forwardedCookie ? cookiesDuVisiteur(forwardedCookie) : []
+        if (cookies.length > 0) await poserCookies(slot.context, cookies)
+      } catch (e) {
+        emplacementSain = false
+        throw e
       }
       await slot.page.waitForFunction(() => (window as any).__mjsBootDone === true, undefined, { timeout: 10000 })
 
@@ -1170,14 +1394,24 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       // calcule les URLs hashées correspondantes, `mjsSsrPrepareAndSerialize` les repose ensuite
       // en `<link>` au MÊME ordre. `csp: false` (défaut) : `cssUrls` reste `undefined`, chemin
       // INCHANGÉ (`<style>` en ligne comme avant).
+      // Hors mode strict, même passage pour les feuilles PARTAGÉES : celles que la règle de
+      // sorties-rendu.ts désigne (répétées assez de fois pour que le surcoût compte) reçoivent
+      // une URL, les autres une chaîne vide — la page les laisse en `<style>` en ligne.
       let cssUrls: string[] | undefined
+      const ecrire = (c: { css: string; tag: string }): string => ecrireFeuilleRendu(atelier.assetsDir, bundler.urlPrefix, c.tag, c.css)
+      const cssList: { css: string; tag: string }[] = await slot.page.evaluate(() => {
+        return (window as any).__mjsSsr.mjsSsrCollectCss(document.body.firstElementChild)
+      })
       if (config.csp === true) {
-        const cssList: { css: string; tag: string }[] = await slot.page.evaluate(() => {
-          return (window as any).__mjsSsr.mjsSsrCollectCss(document.body.firstElementChild)
-        })
         // nom de fichier par BALISE, comme le moteur happy-dom (renderToString.ts) : une feuille se
         // reconnaît dans le dossier de sortie sans avoir à l'ouvrir
-        cssUrls = cssList.map(c => writeHashedAsset(atelier.assetsDir, bundler.urlPrefix, 'mjs_ssr_style_' + c.tag, '.css', c.css))
+        cssUrls = cssList.map(ecrire)
+      }
+      else {
+        const compte = new Map<string, number>()
+        for (const c of cssList) if (c.tag.startsWith('partagee-')) compte.set(c.css, (compte.get(c.css) ?? 0) + 1)
+        const liees = feuillesALier(compte)
+        if (liees.size > 0) cssUrls = cssList.map(c => c.tag.startsWith('partagee-') && liees.has(c.css) ? ecrire(c) : '')
       }
 
       const serialized = await slot.page.evaluate(({ mode, urls }: any) => {
@@ -1220,7 +1454,13 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       // chemin RÉEL pour ce couple langue/section (`core._i18nData.sections[entryLang]
       // [section]`) : l'alias de repli n'en a pas sous SA langue (celle qui manquait), seule
       // l'entrée `defLang/section` (qui, elle, en a un) passe le filtre.
-      const i18nJson: string | null = await slot.page.evaluate(() => {
+      // clés racine lues par la page (`µ.t`, cf. i18n-seed-root.ts) : fonction évaluée dans la page par son texte
+      // (`evaluate` d'une expression n'est pas arrêté par la CSP de la page)
+      // un relevé qui échoue ne fait pas échouer le rendu, mais il se dit : sans lui la graine sort sans ses textes racine
+      let racine: any = null
+      try { racine = await slot.page.evaluate(`(${buildSeedRoot.toString()})(window.__mjsCore._i18nUsedRoot, window.__mjsCore._i18nLangs)`) }
+      catch (e: any) { warnings.push(t('server.browser-releve-racine-echec', { tag, err: String(e?.message ?? e).split('\n')[0] })) }
+      const i18nJson: string | null = await slot.page.evaluate((root: any) => {
         try {
           const core = (window as any).__mjsCore
           const lang = (core.store && core.store.__mjsLang !== undefined) ? core.store.__mjsLang : (core._i18nData && core._i18nData.default)
@@ -1239,9 +1479,12 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
             sections[entryLang][section] = entry.data
             any = true
           })
-          return any ? JSON.stringify({ lang, sections }) : null
+          if (!any && !root) { return null }
+          const graine: any = { lang, sections }
+          if (root) { graine.root = root }
+          return JSON.stringify(graine)
         } catch { return null }
-      })
+      }, racine)
 
       // Une `pageerror` (exception NON interceptée par la page, cf. `onPageError`
       // ci-dessus) était jusqu'ici rangée dans `warnings` sans jamais faire échouer CE rendu :
@@ -1347,17 +1590,17 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     } finally {
       clearTimeout(renderTimer!)
       slot.page.off('pageerror', onPageError)
-      // Chemin nominal (rendu dans les temps) : `release()` habituel, slot
-      // remis en `idle` comme avant — AUCUN ralentissement du cas commun (la
-      // course ne coûte qu'une Promise + un setTimeout aussitôt annulé).
-      // Chemin timeout : JAMAIS `release()` — `reclaimSlot()` (cf. son
-      // commentaire : état du slot inconnu, ne doit jamais revenir en `idle`).
+      // Chemin nominal (rendu dans les temps) : remise à neuf (cf. `remettreANeuf`) puis
+      // `release()` habituel — en tâche de fond, la réponse n'attend pas ; seul le rendu suivant
+      // sur CE slot attend qu'il soit propre. Remise à neuf en échec, hygiène de début de rendu en
+      // échec ou chemin timeout : JAMAIS `release()` — `reclaimSlot()` (cf. son commentaire : état
+      // du slot inconnu, ne doit jamais revenir en `idle`).
       // `.catch` : un échec de démontage (best-effort, cf. `teardownSlot`) ne
       // doit jamais faire déborder CE `finally`.
-      if (timedOut) {
+      if (timedOut || !emplacementSain) {
         reclaimSlot(slot).catch(() => {})
       } else {
-        release(slot)
+        remettreANeuf(slot).then((propre) => propre ? release(slot) : reclaimSlot(slot)).catch(() => {})
       }
     }
   }
@@ -1428,5 +1671,5 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
     atelier.cleanup()
   }
 
-  return { renderPage, close }
+  return { renderPage, close, bundler }
 }

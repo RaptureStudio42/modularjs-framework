@@ -40,10 +40,14 @@ describe('cli.ts — parseArgs avertit sur flag/argument inconnu', function () {
       "AVANT le fix : --minify (ou toute autre typo de flag) était silencieusement ignoré, sans AUCUN warning")
   })
 
-  it('un argument non reconnu (commande mal orthographiée) déclenche un warning', function () {
-    const { stderr, status } = runCli(['--help', 'buidl'])
-    assert.equal(status, 0, `stderr:\n${stderr}`)
-    assert.match(stderr, /Argument non reconnu ignoré.*buidl/)
+  // une commande mal tapée n'est plus un simple avertissement : refusée, code 1 (cf.
+  // cli-commande-inconnue-et-racine-absente.test.ts) — `--help` garde la priorité
+  it('une commande mal orthographiée est refusée (code 1), sauf si --help est demandé', function () {
+    const refus = runCli(['buidl'])
+    assert.equal(refus.status, 1, `stderr:\n${refus.stderr}`)
+    assert.match(refus.stderr, /Commande inconnue : buidl/)
+    const aide = runCli(['--help', 'buidl'])
+    assert.equal(aide.status, 0, `stderr:\n${aide.stderr}`)
   })
 
   it('les flags CONNUS ne déclenchent AUCUN warning (pas de faux positif)', function () {

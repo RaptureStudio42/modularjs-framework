@@ -14,23 +14,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts'), 'utf-8')
-
-// Globals posés/restaurés PAR TEST (jamais un `??=` qui suppose être seul à
-// les poser) — même précaution que router-navigate-reentrance.test.ts.
-let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any
-beforeEach(() => {
-  __prevWindow = (globalThis as any).window
-  __prevDocument = (globalThis as any).document
-  __prevCustomEvent = (globalThis as any).CustomEvent
-})
-afterEach(() => {
-  ;(globalThis as any).window = __prevWindow
-  ;(globalThis as any).document = __prevDocument
-  ;(globalThis as any).CustomEvent = __prevCustomEvent
-})
 
 function makeRouter(win: any) {
   const µ: any = { log() {}, warn() {}, error() {} }
@@ -38,11 +25,30 @@ function makeRouter(win: any) {
   g.window = win
   g.document = win.document
   g.CustomEvent = win.CustomEvent
+  poserMessages(µ)
   new Function('µ', ROUTER)(µ)
   return µ.Router
 }
 
 describe('routeur — navigate() : 1 navigation = 1 entrée d\'historique, même avec 2 jeux de routes', function () {
+  // Globals posés/restaurés PAR TEST (jamais un `??=` qui suppose être seul à
+  // les poser) — même précaution que router-navigate-reentrance.test.ts ; crochets DANS le describe :
+  // posés à la racine du fichier, ils couraient après chaque test de tous les fichiers du process
+  let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any
+  beforeEach(() => {
+    __prevWindow = (globalThis as any).window
+    __prevDocument = (globalThis as any).document
+    __prevCustomEvent = (globalThis as any).CustomEvent
+  })
+  afterEach(async () => {
+    // navigate() diffère d'une tâche le contrôle « aucune route » (setTimeout, faute de requestAnimationFrame ici) :
+    // il passe avant que la fenêtre du test ne soit rendue, sinon il lit `window` une fois rendu et lève hors de tout test
+    await new Promise((r) => setTimeout(r, 0))
+    ;(globalThis as any).window = __prevWindow
+    ;(globalThis as any).document = __prevDocument
+    ;(globalThis as any).CustomEvent = __prevCustomEvent
+  })
+
   it('composant avec 2 @routes (app-content, app-code) : chaque navigate() ajoute UNE SEULE entrée, pas une par jeu de routes', function () {
     const win: any = new Window({ url: 'http://localhost/' })
     const Router = makeRouter(win)

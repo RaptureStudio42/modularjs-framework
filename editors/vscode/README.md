@@ -1,6 +1,7 @@
 # ModularJS pour VS Code
 
-Coloration syntaxique des composants ModularJS. Un fichier `.mjs` du framework n'est pas un
+Coloration syntaxique des composants ModularJS, et, pour les 117 effets `*nom`, complétion pendant la
+frappe et aide au survol. Un fichier `.mjs` du framework n'est pas un
 module JavaScript de Node : c'est un composant qui réunit un script Civet, un gabarit, des
 variables de thème et un style SASS. Sans cette extension, l'éditeur le lit comme du
 JavaScript et le souligne en erreurs de la première à la dernière ligne.
@@ -14,10 +15,18 @@ JavaScript et le souligne en erreurs de la première à la dernière ligne.
   `(:an)` et `(fr)`, joker `*`, noms de composants et commentaires `#` ;
 - la table **calculée** `@routes = {…}` d'un `<script>`, et l'ajout ciblé
   `@routes['vue']['/x'] = 'x-page'` : mêmes couleurs de chemin, mêmes noms de composants ;
-- le gabarit : balises, balises-directives `<@view>`, `<@slot>`…, attributs ;
-- les directives d'attribut `@click={…}`, `@transition.fly={…}`, les liaisons `value=!{…}` ;
+- le bloc `<vars>` d'un composant et le bloc `<types>` d'un fichier `*.types.mjs` : types,
+  plages, valeurs permises et interdites, formes `/…/`, champs d'objet, règles nommées ;
+- le gabarit : balises, balises-directives `<@view>`, `<@slot>`…, composants du projet `<@panier>`
+  et modules cœur `<@@select>` (même couleur de balise), attributs ;
+- les directives d'attribut `@click={…}`, les liaisons `value=!{…}` ;
+- les effets `*neon`, `*tilt(15, glare: true)` : l'effet, chacun de ses réglages ; les transitions
+  `@in=*fly(up)`, `@out=*fade`, `@transition.global=*slide` ;
+- le bloc `<effects>` d'un fichier `*.effects.mjs` : `*titre = *scramble(20)`, `*halo(size: 12px) =`
+  puis ses déclarations CSS, `$size`, `@keyframes` et ses étapes ;
 - les directives de premier niveau `@import`, `@css`, `@persist`, `@routes` ;
-- les blocs de gabarit `{if}`, `{elsif}`, `{else}`, `{end}`, `{for … in …}`, `{await}` ;
+- les blocs de gabarit `{if}`, `{elsif}`, `{else}`, `{end}`, `{for … in …}`, `{await}`, et le bloc
+  court d'un modèle `{? timer}`, `{? chrono, minuteur}` (le `?` et les noms des modèles) ;
 - les symboles : `$x` (état local), `$$x` (global et variables de thème), `§x` et `§§x`
   (contexte), `µx` (runes du framework), `@x` et `@@x` (l'instance).
 
@@ -150,6 +159,97 @@ Trois règles la délimitent, et elles comptent :
 Le banc `tests/vscode-grammar-routes-parity.test.ts` tient les deux bouts : il tokenise chaque forme
 avec le vrai moteur de VS Code, la passe à `parseRoutesLines`, et échoue au moindre écart.
 
+## Les blocs `<vars>` et `<types>`
+
+Le bloc `<vars>` d'un composant dit ce que chaque variable accepte (`$volume  int 0..100`) ; le
+bloc `<types>` d'un fichier `*.types.mjs` nomme des règles valables dans toute l'appli
+(`Percent  int 0..100`). Chaque morceau d'une règle a sa couleur :
+
+| ce qui est écrit | scope TextMate | rôle |
+| --- | --- | --- |
+| `vars`, `types` | `entity.name.tag.vars.html`, `entity.name.tag.types.html` | la balise, comme `<routes>` |
+| `$volume`, `$$cart` en tête de ligne | les scopes de `$x` et `$$x` du `<script>` | la variable, la prop ou le store réglé |
+| `Percent` en tête de ligne d'un `<types>` | `entity.name.type.alias.modularjs` | la règle nommée définie |
+| `Percent`, `Nick` dans une règle | `entity.name.type.modularjs` | une règle nommée citée |
+| `int`, `float`, `string`, `bool` | `support.type.primitive.modularjs` | le type |
+| `0`, `-10`, `0.5` · `..` | `constant.numeric.modularjs` · `keyword.operator.range.modularjs` | une plage |
+| `'red'`, `"blue"` · `true`, `null` | `string.quoted.*.modularjs` · `constant.language.modularjs` | une valeur permise ou interdite |
+| `\|` · `!` | `keyword.operator.union.modularjs` · `keyword.operator.negation.modularjs` | un choix · le début des interdits |
+| `/^[a-z]+$/i` | `string.regexp.modularjs` | une forme de texte, drapeaux compris |
+| `volume:`, `bass?:` | `variable.other.property.modularjs`, `?` en `keyword.operator.optional.modularjs` | un champ d'objet ; `?` = facultatif |
+| `[]` · `{ }` | `meta.brace.square.modularjs` · `punctuation.definition.block.*.modularjs` | une liste · un objet |
+| `#` hors d'une valeur | `comment.line.number-sign.vars.modularjs` (`….types.…`) | commentaire jusqu'en fin de ligne |
+
+Un `#` dans une valeur (`'#'`) ou dans la classe d'une forme (`/^[#a-z]+$/`) reste à sa place, comme
+pour le compilateur. La balise ouvrante commence sa ligne, comme `<routes>`. Le seul rouge est
+un attribut sur la balise (`<vars lang="x">`) : le compilateur le refuse aussi. Le reste de ce que
+le compilateur refuse — une plage sans `int` ni `float`, une règle nommée inconnue — demande de
+lire la règle entière ou les autres fichiers : il ne se voit qu'au build.
+
+Le banc `tests/vscode-grammar-vars-types.test.ts` tokenise un bloc complet avec le vrai moteur de
+VS Code et vérifie chaque couleur.
+
+## Les effets `*nom(…)`
+
+Un effet se pose en un mot sur une balise (`<h1 *neon(#f0f, flicker: true)>`) ; ses réglages
+s'écrivent entre parenthèses.
+
+| ce qui est écrit | scope TextMate | rôle |
+| --- | --- | --- |
+| `*` · `neon` | `punctuation.definition.effect.modularjs` · `entity.name.function.effect.modularjs` | l'effet |
+| `(` `)` | `punctuation.definition.arguments.*.modularjs` | ses réglages (le tout en `meta.effect.modularjs`) |
+| `flicker:` | `variable.parameter.effect.modularjs` | un réglage nommé |
+| `#f0f` · `true` · `15`, `200ms` · `'zoom'` | `constant.other.color…` · `constant.language.boolean…` · `constant.numeric…` · `string.quoted.*.modularjs` | une valeur |
+| `$couleur`, `$$accent` | les scopes de `$x` et `$$x` du `<script>` | une variable, suivie par l'effet |
+| `[` `]` | `punctuation.definition.list.*.modularjs` | une liste (`[#f0f, #0ff]`, `[Coder., 'Web']`), en `meta.list.effect.modularjs` |
+
+Des parenthèses dans une valeur (`rgb(0, 255, 255)`) ou les crochets d'une liste ne referment pas l'effet, et une étoile dans le
+texte d'une balise n'est pas un effet. Le rouge ne couvre que ce que le compilateur refuse aussi :
+`*neon=…` (les réglages vont entre parenthèses) et une valeur calculée `{…}` entre les parenthèses.
+Un effet inconnu ou une valeur hors de sa règle ne se voient qu'au build, qui dit quoi écrire.
+
+Une transition, `@in=*fly(up, distance: 60)`, `@out=*fade`, `@transition.global=*slide(x)` : la
+directive (et ses modificateurs `.global`, `.shared`) prend la couleur d'un attribut, l'effet celle
+d'un effet posé. En rouge, `@in.fly` — le nom de l'effet après un point, que le build refuse.
+
+Le squelette d'une attente, `{await $profil *skeleton(radius: 8)}`, a la couleur d'un effet posé ; ailleurs dans une
+expression `{…}`, une étoile reste une multiplication.
+
+Le bloc `<effects>` d'un fichier `*.effects.mjs` :
+
+| ce qui est écrit | scope TextMate | rôle |
+| --- | --- | --- |
+| `*titre`, `*halo(color: #0ff)` en tête de ligne | `meta.effect.definition.modularjs` (étoile et nom comme un effet posé) | l'effet défini, ses réglages et leur défaut |
+| `=` | `keyword.operator.assignment.modularjs` | la définition |
+| `*scramble(20, on: click)` après le `=` | les scopes d'un effet posé | l'effet réglé |
+| `box-shadow:` | `support.type.property-name.css` | une déclaration CSS |
+| `$size` | `variable.parameter.effect.modularjs` | un réglage, dans une valeur |
+| `@keyframes` · `50%`, `from`, `to` | `keyword.control.at-rule.keyframes.css` · `entity.other.keyframe-offset.css` | l'animation et ses étapes |
+
+Un attribut sur `<effects>`, et `;`, `{`, `}` dans une valeur, passent en rouge : le compilateur les
+refuse aussi.
+
+Le banc `tests/vscode-grammar-effets.test.ts` tokenise ces formes avec le vrai moteur de VS Code.
+
+## La complétion et l'aide au survol des effets
+
+Pendant la frappe, l'extension propose :
+
+- après `*` : les 117 effets, avec leur famille et ce qu'ils font (`*ne` → `neon`, `*fly` après
+  `@in=`) ;
+- entre les parenthèses de `*nom(` : ses réglages pas encore écrits, chacun avec sa règle et son
+  défaut (`*neon(` → `color`, `where`, `size`…) — la première valeur sans nom compte pour le réglage
+  principal ; au début, les mots permis du principal (`*loader(` → `bloom`…) ;
+- après `réglage:` : ses mots permis (`*lift(on: ` → `hover`, `view`, `click`, `always`).
+
+Au survol d'un effet : sa famille, ce qu'il fait, son réglage principal et le tableau de ses réglages
+(règle, défaut). Au survol d'un réglage entre les parenthèses : sa règle et son défaut. Un effet
+donné en réglage (`*delta(fx: *scramble(`) se complète comme les autres.
+
+Les effets viennent du catalogue du framework et du chapitre 38 de sa documentation, recopiés dans
+`effects.json`. Un effet ajouté ou un réglage changé : `node --import tsx/esm script/vscode-effects.mjs`
+le régénère (le test `tests/vscode-effects.test.ts` échoue tant qu'il n'est pas à jour).
+
 ## Les autres blocs — ce qui a été vérifié
 
 Le même examen a été passé à `<theme>`, `<style name="…">` et aux macros `<@…>` : une règle du
@@ -169,12 +269,16 @@ motif TextMate.
 
 ## Installation
 
-Sans passer par la place de marché — copiez le dossier dans les extensions de votre éditeur,
-puis relancez-le :
+Sans passer par la place de marché — copiez le CONTENU du dossier dans les extensions de votre
+éditeur, puis relancez-le ; la même commande met à jour une installation existante :
 
 ```
-cp -r editors/vscode ~/.vscode/extensions/modularjs-syntax
+mkdir -p ~/.vscode/extensions/modularjs-syntax
+cp -r editors/vscode/. ~/.vscode/extensions/modularjs-syntax/
 ```
+
+`cp -r editors/vscode ~/.vscode/extensions/modularjs-syntax` (sans le `/.`) ne met rien à jour
+quand le dossier existe déjà : il range une copie à l'intérieur, que l'éditeur ne lit pas.
 
 (Sous VS Codium : `~/.vscode-oss/extensions/`. Sous Windows :
 `%USERPROFILE%\.vscode\extensions\`.)
@@ -200,6 +304,6 @@ vous écrivez là gagne.
 
 ## Ce que l'extension ne fait pas
 
-Elle colore, elle ne comprend pas : ni complétion, ni navigation vers la définition, ni
+Hors des effets, elle colore sans comprendre : ni complétion, ni navigation vers la définition, ni
 diagnostics. Les erreurs de compilation restent celles du compilateur — `mjs dev` les affiche
 au terminal et dans le journal d'erreurs (`/__mjs/errors`).

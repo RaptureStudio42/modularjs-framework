@@ -52,10 +52,9 @@ describe('mjs_destroy_hooks.ts — un teardown qui lève ne bloque plus le retra
     const errorCalls: any[] = []
     µ.error = (...a: any[]) => { errorCalls.push(a) }
 
-    const node: any = win.document.createElement('div')
-    let removedCalled = false
-    const origRemove = node.remove.bind(node)
-    node.remove = () => { removedCalled = true; return origRemove() }
+    const parent: any = win.document.createElement('section')
+    const node: any   = win.document.createElement('div')
+    parent.appendChild(node)
     node._mjs_td = () => { throw new Error('nettoyage utilisateur') }
     const owner = { _mjs_mjsPurgeSubtreeState: () => {} }
 
@@ -63,7 +62,7 @@ describe('mjs_destroy_hooks.ts — un teardown qui lève ne bloque plus le retra
       µ.Element.prototype._mjs_destroyWithHooks.call(owner, node, false),
       'AVANT le fix : cette promesse rejetait avec l\'erreur du teardown',
     )
-    assert.equal(removedCalled, true, 'AVANT le fix : node.remove() n\'était jamais atteint')
+    assert.equal(node.parentNode === parent, false, 'AVANT le fix : le nœud n\'était jamais retiré de son parent')
     assert.equal(node._mjs_dead, true, 'le nœud doit être marqué mort définitivement')
     assert.equal(errorCalls.length, 1, 'le teardown en erreur doit être rapporté une fois par µ.error')
     assert.match(String(errorCalls[0][1]?.message ?? errorCalls[0][1]), /nettoyage utilisateur/)

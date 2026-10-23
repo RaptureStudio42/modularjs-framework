@@ -43,8 +43,8 @@ describe('handlers — les variables ordinaires du <script>', function () {
 
   it('la variable de boucle reste LOCALE, même si le <script> porte un homonyme', async function () {
     const batch = await batchInline("<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}\n  <button @click={console.log(item)}>x</button>\n{end}\n")
-    assert.match(batch, /let item = __arr_0\[__idx_0\]/, 'le squelette DOIT garder sa propre déclaration')
-    assert.match(batch, /let index = __idx_0/)
+    assert.match(batch, /let item = _mjs_ra_0\[_mjs_ri_0\]/, 'le squelette DOIT garder sa propre déclaration')
+    assert.match(batch, /let index = _mjs_ri_0/)
   })
 
   it('une locale de travail du handler reste une locale', async function () {
@@ -98,21 +98,21 @@ describe('handlers — les variables ordinaires du <script>', function () {
     // puisque cette écriture-là serait perdue
     it('le nom d\'un {const} reste LOCAL au handler, même si le <script> a un homonyme', async function () {
       const batch = await batchInline("<script>\n  label = 'du script'\n  $items = [{ nom: 'premier' }]\n</script>\n{for i, item in $items}\n  {const label = item.nom}\n  <button @click={console.log(label)}>{label}</button>\n{end}\n")
-      assert.match(batch, /let label = __cst_\d+/, 'la copie locale est recréée depuis le {const}')
+      assert.match(batch, /let label = _mjs_cst_\d+/, 'la copie locale est recréée depuis le {const}')
       await assert.rejects(
         batchInline("<script>\n  label = 'du script'\n  $items = [{ nom: 'premier' }]\n</script>\n{for i, item in $items}\n  {const label = item.nom}\n  <button @click={label = 'ECRASE'}>{label}</button>\n{end}\n"),
-        /réaffecte « label », posé par le gabarit/,
+        /réaffecte « label », posé par le HTML du composant/,
       )
     })
 
     it('… de même pour l\'argument d\'un {success} / {error}', async function () {
       const succes = await batchInline("<script>\n  data = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{success data}\n  <button @click={console.log(data)}>y</button>\n{end}\n")
-      assert.match(succes, /let data = __aw_\d+/)
+      assert.match(succes, /let data = _mjs_aw_\d+/)
       const erreur = await batchInline("<script>\n  err = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{error err}\n  <button @click={console.log(err)}>y</button>\n{end}\n")
-      assert.match(erreur, /let err = __aw_\d+/)
+      assert.match(erreur, /let err = _mjs_aw_\d+/)
       await assert.rejects(
         batchInline("<script>\n  data = 'du script'\n  $p = Promise.resolve(1)\n</script>\n{await $p}\n  <p>…</p>\n{success data}\n  <button @click={data = 'x'}>y</button>\n{end}\n"),
-        /réaffecte « data », posé par le gabarit/,
+        /réaffecte « data », posé par le HTML du composant/,
       )
     })
 

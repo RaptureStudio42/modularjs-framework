@@ -69,7 +69,7 @@
         try {
           lightEntry.sheet.replaceSync(lightCss);
         } catch (errLight) {
-          µ.warn('[ModularJS] _hotCss : replaceSync a échoué pour la feuille légère <' + tag + '> :', errLight);
+          µ.warn(µ._mjs_msg('dev.hotcssLight', { tag: tag }, '_hotCss : replaceSync a échoué pour la feuille légère <{tag}> :'), errLight);
           applied = false;
           continue;
         }
@@ -95,7 +95,7 @@
     try {
       sheet.replaceSync(css);
     } catch (err) {
-      µ.warn('[ModularJS] _hotCss : replaceSync a échoué pour <' + tag + '> :', err);
+      µ.warn(µ._mjs_msg('dev.hotcssTag', { tag: tag }, '_hotCss : replaceSync a échoué pour <{tag}> :'), err);
       applied = false;
       continue;
     }
@@ -108,7 +108,7 @@
     try {
       target.replaceSync(sharedSheets[name]);
     } catch (err2) {
-      µ.warn('[ModularJS] _hotCss : replaceSync a échoué pour la feuille partagée « ' + name + ' » :', err2);
+      µ.warn(µ._mjs_msg('dev.hotcssShared', { name: name }, '_hotCss : replaceSync a échoué pour la feuille partagée « {name} » :'), err2);
       applied = false;
     }
   }
@@ -117,7 +117,7 @@
       try {
         µ._mjs_rootStyleSheet.replaceSync(payload.root);
       } catch (err3) {
-        µ.warn('[ModularJS] _hotCss : replaceSync a échoué pour mjs_root :', err3);
+        µ.warn(µ._mjs_msg('dev.hotcssRoot', null, '_hotCss : replaceSync a échoué pour mjs_root :'), err3);
         applied = false;
       }
     } else {

@@ -1,6 +1,6 @@
 // i18n `placeholder: wait` + liaison two-way vers un composant enfant qui EXIGE sa
 // prop au montage (`µmount ->` garde, cf. src/core-modules/color.mjs) : cas réel
-// (`showcase-theme-editor.mjs`, `<@color value=!{$panel} editable>`) — le PREMIER rendu réel du
+// (`showcase-theme-editor.mjs`, `<@@color value=!{$panel} editable>`) — le PREMIER rendu réel du
 // parent n'arrive qu'à la résolution du fragment i18n (gel `_mjs_i18n_hold`, mjs_element.ts), donc
 // APRÈS que le parent soit déjà CONNECTÉ (shadow root déjà attaché au document) : la création de
 // l'enfant lors de ce rendu différé l'insère directement dans un arbre DÉJÀ LIVE.

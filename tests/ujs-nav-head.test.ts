@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
 import { assertAbsent } from './helpers/dom-assert.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -38,6 +39,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 function extractClickBody(src: string): string {
@@ -183,7 +185,7 @@ describe('mjs_ujs — µ._mjs_navApplyHead : titre + métadonnées, cas 1 à 12'
     const doc = parse(win, '<html><head><title>T</title><meta name="description" content="après"></head><body>ok</body></html>')
     µ._mjs_navApplyHead(doc)
     const after = document.head.querySelector('meta[name="description"]')
-    assert.equal(after, before, 'même nœud DOM, jamais retiré/recréé')
+    assert.ok(after === before, 'même nœud DOM, jamais retiré/recréé')
     assert.equal(after.getAttribute('content'), 'après')
   })
 
@@ -212,7 +214,7 @@ describe('mjs_ujs — µ._mjs_navApplyHead : titre + métadonnées, cas 1 à 12'
     const doc = parse(win, '<html><head><title>T</title><link rel="canonical" href="/b"></head><body>ok</body></html>')
     µ._mjs_navApplyHead(doc)
     const after = document.head.querySelector('link[rel="canonical"]')
-    assert.equal(after, before)
+    assert.ok(after === before, 'même nœud DOM, jamais retiré/recréé')
     assert.equal(after.getAttribute('href'), '/b')
   })
 
@@ -322,6 +324,7 @@ describe('mjs_ujs — µ._mjs_navApplyHead : câblage réel sur les 3 sites HTML
     document.body.innerHTML = '<p>anciens résultats</p>'
     let capturedSuccess: any
     µ._mjs_ajaxRequest = (opts: any) => { capturedSuccess = opts.success; return Promise.resolve() }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, document, FakeFormData, URL, win.DOMParser)
     const submitHandler = new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractSubmitBody(UJS_SRC))
     const form: any = { hasAttribute: () => false, getAttribute: (k: string) => (k === 'action' ? '/search' : k === 'method' ? 'POST' : null), target: '', action: 'http://x/search', closest: function (this: any) { return this } }
@@ -342,6 +345,7 @@ describe('mjs_ujs — µ._mjs_navApplyHead : câblage réel sur les 3 sites HTML
     // µ._mjs_navRevalidate vit dans le bloc helpers mais SANS DOMParser en portée (comme le vrai fichier
     // navigateur, où DOMParser est global) — réinstallation CIBLÉE avec DOMParser injecté, même
     // technique que tests/ujs-nav-cache-policy.test.ts (installRevalidate).
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'DOMParser', extractNavRevalidateStatement(UJS_SRC))(µ, win, document, win.DOMParser)
     µ._mjs_navRevalidate(zone, '/a')
     assert.ok(typeof capturedSuccess === 'function')
@@ -356,6 +360,7 @@ describe('mjs_ujs — µ._mjs_navApplyHead : câblage réel sur les 3 sites HTML
     const zone = document.body
     let capturedSuccess: any
     µ._mjs_ajaxRequest = (opts: any) => { capturedSuccess = opts.success; return Promise.resolve() }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'DOMParser', extractNavRevalidateStatement(UJS_SRC))(µ, win, document, win.DOMParser)
     µ._mjs_navRevalidate(zone, '/a')
     capturedSuccess('<html><head><title>Titre différent (ignoré)</title></head><body><p>identique</p></body></html>', 'http://x/a')
@@ -419,6 +424,7 @@ describe('mjs_ujs — µ._mjs_navDispatch : cas 15 — 422 JSON, document.title 
     µ._mjs_resSet = () => {}
     let capturedError: any
     µ._mjs_ajaxRequest = (opts: any) => { capturedError = opts.error; return Promise.resolve() }
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, document, FakeFormData, URL, win.DOMParser)
     µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { restoreBusy: () => {} })
     assert.ok(typeof capturedError === 'function')

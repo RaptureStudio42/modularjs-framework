@@ -1,10 +1,10 @@
 <script>
-token := new URLSearchParams(location.search).get('token') ?? ''
-
-withToken = (u) ->
-  return u unless token
-  sep = u.includes('?') ? '&' : '?'
-  u + sep + 'token=' + encodeURIComponent(token)
+oterJeton = ->
+  params := new URLSearchParams(location.search)
+  return unless params.has('token')
+  params.delete('token')
+  reste := params.toString()
+  history.replaceState(null, '', location.pathname + (if reste then '?' + reste else '') + location.hash)
 
 formatDate = (ms) ->
   return '' unless ms
@@ -21,7 +21,7 @@ marquerEchec = (err) ->
 
 refresh = ->
   $echec = false
-  fetch(withToken('/__mjs/errors.json')).then((r) -> r.json()).then((data) -> $entries = data ?? []).catch(marquerEchec)
+  fetch('/__mjs/errors.json').then((r) -> r.json()).then((data) -> $entries = data ?? []).catch(marquerEchec)
 
 toggle = (sig) ->
   $expanded[sig] = not $expanded[sig]
@@ -32,37 +32,38 @@ toggleKey = (e, sig) ->
   toggle(sig)
 
 doPurge = (source) ->
-  label = source ? ('les entrées ' + source) : 'TOUTES les entrées'
-  return unless window.confirm('Purger ' + label + ' du journal ?')
+  question = if source then ⟪journal.purger-source-question⟫.replace('{source}', source) else ⟪journal.purger-tout-question⟫
+  return unless window.confirm(question)
   qs = source ? ('?source=' + source) : ''
-  fetch(withToken('/__mjs/errors' + qs), { method: 'DELETE' }).then((-> refresh())).catch((err) -> µ.error(err))
+  fetch('/__mjs/errors' + qs, { method: 'DELETE' }).then((-> refresh())).catch((err) -> µ.error(err))
 
 $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
 
 µmount ->
+  oterJeton()
   refresh()
 </script>
 
 <div class="panneau">
   <div class="barre">
-    <h1>Journal d'erreurs</h1>
+    <h1>⟪journal.titre⟫</h1>
     <div class="filtres">
-      <button @class{$filter == 'all'}="actif" @click={$filter = 'all'}>Tous</button>
-      <button @class{$filter == 'server'}="actif" @click={$filter = 'server'}>Serveur</button>
-      <button @class{$filter == 'client'}="actif" @click={$filter = 'client'}>Client</button>
+      <button @class{$filter == 'all'}="actif" @click={$filter = 'all'}>⟪journal.tous⟫</button>
+      <button @class{$filter == 'server'}="actif" @click={$filter = 'server'}>⟪journal.serveur⟫</button>
+      <button @class{$filter == 'client'}="actif" @click={$filter = 'client'}>⟪journal.client⟫</button>
     </div>
     <div class="actions">
-      <button @click={refresh()}>Rafraîchir</button>
-      <button class="danger" @click={doPurge('server')}>Purger serveur</button>
-      <button class="danger" @click={doPurge('client')}>Purger client</button>
-      <button class="danger" @click={doPurge(null)}>Purger tout</button>
+      <button @click={refresh()}>⟪journal.rafraichir⟫</button>
+      <button class="danger" @click={doPurge('server')}>⟪journal.purger-serveur⟫</button>
+      <button class="danger" @click={doPurge('client')}>⟪journal.purger-client⟫</button>
+      <button class="danger" @click={doPurge(null)}>⟪journal.purger-tout⟫</button>
     </div>
   </div>
 
   {if $echec}
-    <p class="vide echec">Chargement impossible — réessaie avec « Rafraîchir ».</p>
+    <p class="vide echec">⟪journal.echec⟫</p>
   {elsif $filtered.length == 0}
-    <p class="vide">Aucune erreur — tout va bien.</p>
+    <p class="vide">⟪journal.vide⟫</p>
   {else}
     <div class="liste">
       {for ent in $filtered by signature}
@@ -73,7 +74,7 @@ $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
             <span class="message">{ent.message}</span>
             {if ent.version}<span class="version">{ent.version}</span>{end}
           </div>
-          <div class="dates">premier {formatDate(ent.premier)} — dernier {formatDate(ent.dernier)}{if ent.url} — {ent.url}{end}</div>
+          <div class="dates">⟪journal.premier⟫ {formatDate(ent.premier)} — ⟪journal.dernier⟫ {formatDate(ent.dernier)}{if ent.url} — {ent.url}{end}</div>
           {if $expanded[ent.signature]}
             <pre class="pile">{ent.pile}</pre>
           {end}

@@ -1,4 +1,4 @@
-// transpiler/img-tag — <@img src="…"> : repérage, attributs, largeurs.
+// transpiler/img-tag — <@@img src="…"> : repérage, attributs, largeurs.
 
 import assert from 'node:assert/strict'
 import { scanImgTags, parseWidths, isResolvableSrc } from '../src/transpiler/img-tag.js'
@@ -9,14 +9,14 @@ describe('scanImgTags — parseAttrs lit les chaînes consciemment (accolades co
   // profondeur à tort — ici elle ne referme JAMAIS, et tout le reste de la balise (dont src) est
   // avalé dans la valeur de `title`.
   it('title={"{"} src="hero.png" : src n\'est plus perdu', () => {
-    const html = '<@img title={"{"} src="hero.png" alt="x"> reste'
+    const html = '<@@img title={"{"} src="hero.png" alt="x"> reste'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png', `attrs: ${JSON.stringify(tags[0].attrs)}`)
   })
 
   it('title={"}"} : une accolade fermante littérale ne coupe pas l\'attribut en deux', () => {
-    const html = '<@img title={"}"} src="hero.png"> reste'
+    const html = '<@@img title={"}"} src="hero.png"> reste'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].attrs.length, 2, `attrs: ${JSON.stringify(tags[0].attrs)}`)
@@ -24,13 +24,13 @@ describe('scanImgTags — parseAttrs lit les chaînes consciemment (accolades co
   })
 
   it('aucun résidu de balise ne fuit dans le HTML qui suit', () => {
-    const html = '<@img title={"{"} src="hero.png" alt="x"> reste'
+    const html = '<@@img title={"{"} src="hero.png" alt="x"> reste'
     const tags = scanImgTags(html)
     assert.equal(html.slice(tags[0].end), ' reste')
   })
 
   it('témoin — accolade { } SANS guillemets à l\'intérieur reste inchangé (non-régression)', () => {
-    const html = '<@img title={ f({a:1}) } src="hero.png"> reste'
+    const html = '<@@img title={ f({a:1}) } src="hero.png"> reste'
     const tags = scanImgTags(html)
     assert.equal(tags.length, 1)
     assert.equal(tags[0].src, 'hero.png')

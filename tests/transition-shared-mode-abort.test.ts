@@ -1,5 +1,5 @@
 // le mode `.shared`
-// (`@transition.name.shared`, @keyframes CSS partagé — cf. mjs_easing.ts
+// (`@transition.shared=*name`, @keyframes CSS partagé — cf. mjs_easing.ts
 // `_runSharedTransition`/`µ.anim._mjs_runShared`) ne posait JAMAIS
 // `node._mjs_transition_state`. Or `µ._mjs_runTransition` n'interrompt une
 // transition PRÉCÉDENTE sur le même node QUE via `prev.abort()`, où `prev =

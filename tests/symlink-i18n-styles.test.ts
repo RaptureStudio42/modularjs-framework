@@ -1,5 +1,5 @@
 // le confinement realpath couvre
-// findFiles()/resolveOneAsset()/<@img src> mais PAS scanI18n()/parseI18nFile() (sourceDir/i18n/*.yml
+// findFiles()/resolveOneAsset()/<@@img src> mais PAS scanI18n()/parseI18nFile() (sourceDir/i18n/*.yml
 // lu en readFileSync brut) ni bundleSharedStyles() (stylesheetsDir = sourceDir/styles par défaut,
 // lui aussi readFileSync brut) — un lien posé DANS l'un de ces deux dossiers et pointant HORS de
 // sourceDir/stylesheetsDir voit son contenu RÉEL publié tel quel (bundle.js pour l'i18n,
@@ -100,10 +100,10 @@ describe('bundler — confinement realpath étendu à i18n/styles partagées', f
     assert.equal(stats.errors.length, 0, `un symlink interne (i18n/styles) ne doit jamais échouer : ${stats.errors.map(e => e.message).join('\n')}`)
     // le dictionnaire ne vit plus dans le manifeste mais dans le fichier de SA langue
     // (`mjs_i18n-fr-<hash>.js`, cf. scanI18n) : c'est là qu'on vérifie qu'il est publié.
-    const fichierFr = readdirSync(outDir).find(f => /^mjs_i18n-fr-[a-f0-9]{8}\.js$/.test(f))
+    const fichierFr = readdirSync(outDir).find(f => /^mjs_i18n-fr-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(fichierFr, `fichier de langue fr attendu dans ${outDir} : ${readdirSync(outDir).join(', ')}`)
     assert.match(readFileSync(join(outDir, fichierFr!), 'utf-8'), /bonjour/, 'le dictionnaire i18n atteint via le lien interne doit être publié normalement')
-    assert.ok(readdirSync(outDir).some(f => /^mjs_styles-[a-f0-9]{8}\.js$/.test(f)), 'mjs_styles-<hash>.js doit exister (feuille partagée atteinte via lien interne)')
+    assert.ok(readdirSync(outDir).some(f => /^mjs_styles-[0-9a-z]{5}\.js$/.test(f)), 'mjs_styles-<hash>.js doit exister (feuille partagée atteinte via lien interne)')
 
     await bundler.close()
   })

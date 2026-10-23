@@ -14,7 +14,7 @@
 //     c'est une constante `:=` — réaffecter une constante depuis un gestionnaire est une faute,
 //     elle se dit à la compilation) ;
 //   · un gestionnaire DANS le bloc garde le nom LOCAL au handler — c'est ce que fait le
-//     squelette de reconstruction (`item = __arr_0[__idx_0]`, posé en tête de handler), et un
+//     squelette de reconstruction (`item = _mjs_ra_0[_mjs_ri_0]`, posé en tête de handler), et un
 //     `{const}`/argument de branche homonyme d'une var du `<script>` ne doit pas l'écraser.
 
 import assert from 'node:assert/strict'
@@ -103,7 +103,7 @@ describe('gestionnaires — portée des noms que le gabarit introduit', function
         "<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}<button @click={console.log(item)}>{item}</button>{end}\n<button @click={item = 'hors'}>go</button>\n",
       )
       assert.equal(
-        (batch.match(/let item = __arr_0\[__idx_0\]/g) ?? []).length, 1,
+        (batch.match(/let item = _mjs_ra_0\[_mjs_ri_0\]/g) ?? []).length, 1,
         'le gestionnaire DANS la boucle garde SA reconstruction, celui de dehors n\'en a pas',
       )
     })
@@ -121,7 +121,7 @@ describe('gestionnaires — portée des noms que le gabarit introduit', function
         "<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}<button @click={console.log(item)}>x</button>{end}\n<button @click={item = 'clic'}>go</button>\n",
         { templateLang: 'js' },
       )
-      assert.match(batch, /item = __arr_0\[__idx_0\]/, 'la reconstruction de la boucle reste locale')
+      assert.match(batch, /item = _mjs_ra_0\[_mjs_ri_0\]/, 'la reconstruction de la boucle reste locale')
       assert.match(batch, /return item = 'clic'/, 'le gestionnaire de dehors écrit la var du <script>')
       assert.equal(
         (batch.match(/^\s*var .*\bitem\b/gm) ?? []).length, 1,

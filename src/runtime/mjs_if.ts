@@ -110,7 +110,7 @@ if (µ.Element) {
           })(node);
         } catch (error1) {
           err = error1;
-          µ.error("[ModularJS] Échec re-intro:", err);
+          µ.error(µ._mjs_msg('ifReintro', null, 'Échec re-intro:'), err);
         }
       }
     }
@@ -120,7 +120,7 @@ if (µ.Element) {
   // _mjs_updIf prend une createFn qui retourne {fragment, refs}.
   // Plus de parse HTML, plus de cache template, plus de walk paths.
   µ.Element.prototype._mjs_updIf = function(id, createFn) {
-    var built, childMode, destroyCount, dyingCount, e, firstNew, n, outroNodes, ref, ref1, s, t;
+    var built, childMode, destroyCount, dyingCount, e, firstNew, n, outroNodes, range, ref, ref1, s, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
     if (!(s && e)) {
@@ -139,9 +139,17 @@ if (µ.Element) {
     dyingCount = 0;
     destroyCount = 0;
     outroNodes = []; // accroche d'appariement, lue par les sorties de reveal/flip/cube/turn
+    // la plage entre les ancres est figée AVANT de détruire : le nettoyage d'un effet retire parfois
+    // un FRÈRE de sa balise (le reflet de *reflect, la bulle de *guard) ; lire `nextSibling` en
+    // marchant s'arrêterait sur ce nœud parti et laisserait en place les balises suivantes
+    range = [];
     while (n && n !== e) {
-      t = n;
+      range.push(n);
       n = n.nextSibling;
+    }
+    for (let __ni = 0, __nln = range.length; __ni < __nln; __ni++) {
+      t = range[__ni];
+      if (!t.parentNode) continue; // déjà détaché : frère d'un effet nettoyé plus tôt dans la plage
       if (t._mjs_dying) {
         dyingCount++;
       } else {
@@ -152,7 +160,7 @@ if (µ.Element) {
         // ne devrait plus en produire, mais {if} ne doit dépendre de rien côté
         // appelant pour rester sans fuite).
         this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error('[ModularJS] destruction de branche {if} en erreur :', err);
+          return µ.error(µ._mjs_msg('ifDestroy', null, 'destruction de branche {if} en erreur :'), err);
         });
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }
@@ -194,7 +202,7 @@ if (µ.Element) {
   // Au lieu d'écrire dans this._mjs_nodes (global), on écrit dans __nodes (local item).
   // createFn() retourne {fragment, refs} ; on merge refs dans __nodes.
   µ.Element.prototype._mjs_updItemIf = function(startNode, endNode, createFn, __nodes) {
-    var built, childMode, n, ref, t;
+    var built, childMode, n, range, ref, t;
     if (!(startNode && endNode)) {
       return;
     }
@@ -205,14 +213,20 @@ if (µ.Element) {
     childMode = startNode.parentNode && startNode.parentNode.getAttribute
       ? startNode.parentNode.getAttribute('mjs-childtransition')
       : null;
+    // plage figée avant de détruire, nœuds déjà détachés ignorés (même raison que `_mjs_updIf`)
+    range = [];
     n = startNode.nextSibling;
     while (n && n !== endNode) {
-      t = n;
+      range.push(n);
       n = n.nextSibling;
+    }
+    for (let __ni = 0, __nln = range.length; __ni < __nln; __ni++) {
+      t = range[__ni];
+      if (!t.parentNode) continue;
       if (!t._mjs_dying) {
         // `.catch` défensif — même raison que `_mjs_updIf` ci-dessus.
         this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error('[ModularJS] destruction de branche {if}/{key} imbriquée en erreur :', err);
+          return µ.error(µ._mjs_msg('ifDestroyNested', null, 'destruction de branche {if}/{key} imbriquée en erreur :'), err);
         });
       }
     }

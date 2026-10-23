@@ -5,6 +5,11 @@ import * as acorn from 'acorn'
 import { applyPathTracking } from '../src/generator/path-tracker.js'
 import { transformReactiveWrites } from '../src/generator/transform-reactive.js'
 
+// une variable qui garde un objet de l'état LOCAL n'est jamais suivie (l'enveloppe de l'état prévient
+// l'objet tenu, même après `$a = $b`) : le suivi des alias, ses témoins et ses pièges se vérifient sur le
+// magasin, `µ.store.x`, qui n'a pas d'enveloppe
+const auMagasin = (src: string) => src.replaceAll('$.', 'µ.store.')
+
 describe('applyPathTracking', () => {
 
   describe('mutations profondes directes', () => {
@@ -25,14 +30,19 @@ describe('applyPathTracking', () => {
   })
 
   describe('alias trackés', () => {
-    it('let obj = $.box; obj.x = 1 → deepSet via alias', () => {
-      const out = applyPathTracking(`let obj = $.box; obj.x = 1;`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["box", "x"\], 1\)/)
+    it('état local : let obj = $.box; obj.x = 1 reste tel quel (l\'enveloppe de l\'état prévient l\'objet tenu)', () => {
+      const src = `let obj = $.box; obj.x = 1; let p = $.list[0]; p.y = 2;`
+      assert.equal(applyPathTracking(src), src)
     })
 
-    it('alias transitif : let a = $.box; let b = a; b.y = 2', () => {
-      const out = applyPathTracking(`let a = $.box; let b = a; b.y = 2;`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["box", "y"\], 2\)/)
+    it('magasin : let obj = µ.store.box; obj.x = 1 → écrit dans l\'objet que l\'alias tient, puis prévient la clé', () => {
+      const out = applyPathTracking(`let obj = µ.store.box; obj.x = 1;`)
+      assert.match(out, /µ\._mjs_storeSetOn\("box", obj, "x", 1\)/)
+    })
+
+    it('alias transitif : let a = µ.store.box; let b = a; b.y = 2', () => {
+      const out = applyPathTracking(`let a = µ.store.box; let b = a; b.y = 2;`)
+      assert.match(out, /µ\._mjs_storeSetOn\("box", b, "y", 2\)/)
     })
   })
 
@@ -47,9 +57,9 @@ describe('applyPathTracking', () => {
       assert.match(out, /µ\._mjs_deepDelete\(_mjsThis, \["flag"\]\)/)
     })
 
-    it('via alias : let o = $.box; delete o.w', () => {
-      const out = applyPathTracking(`let o = $.box; delete o.w;`)
-      assert.match(out, /µ\._mjs_deepDelete\(_mjsThis, \["box", "w"\]\)/)
+    it('via alias du magasin : let o = µ.store.box; delete o.w', () => {
+      const out = applyPathTracking(`let o = µ.store.box; delete o.w;`)
+      assert.match(out, /µ\._mjs_storeDeleteOn\("box", o, "w"\)/)
     })
 
     it('clé dynamique littérale/identifiant : delete $.map[k]', () => {
@@ -84,9 +94,9 @@ describe('applyPathTracking', () => {
       assert.match(out, /µ\._mjs_deepCall\(_mjsThis, \["myMap"\], 'set', \['k', 'v'\]\)/)
     })
 
-    it('via alias : let arr = $.list; arr.push(x)', () => {
-      const out = applyPathTracking(`let arr = $.list; arr.push(99);`)
-      assert.match(out, /µ\._mjs_deepCall\(_mjsThis, \["list"\], 'push', \[99\]\)/)
+    it('via alias du magasin : let arr = µ.store.list; arr.push(x)', () => {
+      const out = applyPathTracking(`let arr = µ.store.list; arr.push(99);`)
+      assert.match(out, /µ\._mjs_storeCallOn\("list", arr, 'push', \[99\]\)/)
     })
   })
 
@@ -165,18 +175,22 @@ describe('applyPathTracking', () => {
     it('paramètre de fonction shadowant un alias → PAS de _mjs_deepSet', () => {
       const out = applyPathTracking(`const box = $.box; function f(box){ box.x = 1 }`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`const box = $.box; function f(box){ box.x = 1 }`)), /_mjs_storeDeep/)
     })
     it('paramètre de callback (forEach) shadowant → PAS de _mjs_deepSet', () => {
       const out = applyPathTracking(`const row = $.row; $.items.forEach((row) => { row.sel = true })`)
       assert.doesNotMatch(out, /row.*sel.*_mjs_deepSet|_mjs_deepSet.*\["row"/)
+      assert.doesNotMatch(applyPathTracking(`const row = µ.store.row; µ.store.items.forEach((row) => { row.sel = true })`), /_mjs_storeDeepSet\("row"/)
     })
     it('réassignation nue de l\'alias (t = {}) → PAS de _mjs_deepSet ensuite', () => {
       const out = applyPathTracking(`let t = $.box; t = {}; t.x = 1`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`let t = $.box; t = {}; t.x = 1`)), /_mjs_storeDeep/)
     })
     it('déstructuration const {items} = $.data → PAS d\'alias suivi', () => {
       const out = applyPathTracking(`const { items } = $.data; items.push(5)`)
       assert.doesNotMatch(out, /_mjs_deepCall|_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`const { items } = $.data; items.push(5)`)), /_mjs_storeDeep/)
     })
     it('clé littérale "__dyn:…" reste une STRING quotée (pas du code injecté)', () => {
       // L'ancien préfixe string __dyn: était forgeable : `p.slice(6)` émettait
@@ -187,8 +201,8 @@ describe('applyPathTracking', () => {
       assert.doesNotMatch(out, /,\s*alert\(1\)\s*,/) // PAS d'expression nue exécutable
     })
     it('le vrai alias non-shadowé reste suivi (non-régression)', () => {
-      const out = applyPathTracking(`const box = $.box; box.width = 9`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["box", "width"\], 9\)/)
+      const out = applyPathTracking(`const box = µ.store.box; box.width = 9`)
+      assert.match(out, /µ\._mjs_storeSetOn\("box", box, "width", 9\)/)
     })
   })
 
@@ -214,27 +228,41 @@ describe('applyPathTracking', () => {
   // l'évolution ultérieure de `i`. Seul l'ALIASING d'un index dynamique est
   // désactivé : un accès direct non aliasé reste tracké (aucun décalage
   // temporel possible, `i` y est lu au même endroit que l'original).
-  describe('alias à index DYNAMIQUE : jamais tracké', () => {
+  // magasin : la variable vise l'OBJET qu'elle tient (`µ._mjs_storeSetOn("list", it, …)`), aucun chemin rejoué —
+  // le `i` d'après ne détourne rien non plus
+  describe('alias à index DYNAMIQUE : jamais rejoué par son chemin (état local : filet Proxy, magasin : objet tenu)', () => {
     it("répro exacte : it=$.list[i]; i++; it.x=1 → PAS de _mjs_deepSet (le Proxy du filet mute le bon élément)", () => {
       const out = applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`)
+      assert.equal(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)).includes('_mjs_storeDeepSet'), false)
+      // magasin : l'alias vise l'objet qu'il tient, jamais le chemin rejoué avec le `i` d'après
+      assert.match(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)), /µ\._mjs_storeSetOn\("list", it, "x", 1\)/)
       assert.equal(out.includes('_mjs_deepSet'), false,
         "AVANT le fix : émettait _mjs_deepSet(_mjsThis, ['list', i, 'x'], 1) — " +
         "'i' réévalué APRÈS i++, mutation du MAUVAIS élément de la liste")
     })
 
-    it('alias à index dynamique + mutation directe (sans i++) : toujours PAS de _mjs_deepSet (cohérence, pas de tracking à moitié)', () => {
+    it('alias à index dynamique + mutation directe (sans i++) : PAS de _mjs_deepSet ; magasin : l\'objet tenu', () => {
       const out = applyPathTracking(`let it = $.list[i]; it.x = 1;`)
       assert.equal(out.includes('_mjs_deepSet'), false)
+      const magasin = applyPathTracking(auMagasin(`let it = $.list[i]; it.x = 1;`))
+      assert.match(magasin, /let it = µ\.store\.list\[i\]; µ\._mjs_storeSetOn\("list", it, "x", 1\)/)
+      assert.equal(magasin.includes('_mjs_storeDeepSet'), false)
     })
 
-    it('alias à index dynamique + méthode mutative : PAS de _mjs_deepCall', () => {
+    it('alias à index dynamique + méthode mutative : PAS de _mjs_deepCall ; magasin : l\'objet tenu', () => {
       const out = applyPathTracking(`let it = $.list[i]; it.push(1);`)
       assert.equal(out.includes('_mjs_deepCall'), false)
+      const magasin = applyPathTracking(auMagasin(`let it = $.list[i]; it.push(1);`))
+      assert.match(magasin, /µ\._mjs_storeCallOn\("list", it, 'push', \[1\]\)/)
+      assert.equal(magasin.includes('_mjs_storeDeepCall'), false)
     })
 
-    it('alias à index dynamique + delete : PAS de _mjs_deepDelete', () => {
+    it('alias à index dynamique + delete : PAS de _mjs_deepDelete ; magasin : l\'objet tenu', () => {
       const out = applyPathTracking(`let it = $.list[i]; delete it.x;`)
       assert.equal(out.includes('_mjs_deepDelete'), false)
+      const magasin = applyPathTracking(auMagasin(`let it = $.list[i]; delete it.x;`))
+      assert.match(magasin, /µ\._mjs_storeDeleteOn\("list", it, "x"\)/)
+      assert.equal(magasin.includes('_mjs_storeDeepDelete'), false)
     })
 
     it('accès DIRECT (non aliasé) à index dynamique : reste tracké normalement (pas de régression — aucun décalage temporel possible)', () => {
@@ -243,13 +271,16 @@ describe('applyPathTracking', () => {
     })
 
     it('alias à index STATIQUE (littéral) : reste tracké normalement (seul le DYNAMIQUE est concerné)', () => {
-      const out = applyPathTracking(`let it = $.list[0]; it.x = 1;`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["list", 0, "x"\], 1\)/)
+      const out = applyPathTracking(`let it = µ.store.list[0]; it.x = 1;`)
+      assert.match(out, /µ\._mjs_storeSetOn\("list", it, "x", 1\)/)
     })
 
-    it('alias transitif VIA un alias à index dynamique : la chaîne entière reste non trackée', () => {
+    it('alias transitif VIA un alias à index dynamique : état local non tracké ; magasin : l\'objet que tient le second alias', () => {
       const out = applyPathTracking(`let row = $.list[i]; let cell = row.cells; cell.value = 5;`)
       assert.equal(out.includes('_mjs_deepSet'), false)
+      const magasin = applyPathTracking(auMagasin(`let row = $.list[i]; let cell = row.cells; cell.value = 5;`))
+      assert.match(magasin, /let row = µ\.store\.list\[i\]; let cell = row\.cells; µ\._mjs_storeSetOn\("list", cell, "value", 5\)/)
+      assert.equal(magasin.includes('_mjs_storeDeepSet'), false)
     })
   })
 
@@ -322,31 +353,35 @@ describe('applyPathTracking', () => {
     it('[box] = [{}] (ArrayPattern) → PAS de _mjs_deepSet après réassignation', () => {
       const out = applyPathTracking(`let box = $.box; [box] = [{}]; box.w = 1;`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`let box = $.box; [box] = [{}]; box.w = 1;`)), /_mjs_storeDeepSet/)
     })
 
     it('({box} = {box: {}}) (ObjectPattern) → PAS de _mjs_deepSet après réassignation', () => {
       const out = applyPathTracking(`let box = $.box; ({box} = {box: {}}); box.w = 1;`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`let box = $.box; ({box} = {box: {}}); box.w = 1;`)), /_mjs_storeDeepSet/)
     })
 
     it('[box = {}] = [] (AssignmentPattern) → PAS de _mjs_deepSet après réassignation', () => {
       const out = applyPathTracking(`let box = $.box; [box = {}] = []; box.w = 1;`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`let box = $.box; [box = {}] = []; box.w = 1;`)), /_mjs_storeDeepSet/)
     })
 
     it('[[box]] = [[{}]] (motif imbriqué) → PAS de _mjs_deepSet après réassignation', () => {
       const out = applyPathTracking(`let box = $.box; [[box]] = [[{}]]; box.w = 1;`)
       assert.doesNotMatch(out, /_mjs_deepSet/)
+      assert.doesNotMatch(applyPathTracking(auMagasin(`let box = $.box; [[box]] = [[{}]]; box.w = 1;`)), /_mjs_storeDeepSet/)
     })
 
     it('témoin : réassignation nue (sans motif) reste trackée normalement', () => {
-      const out = applyPathTracking(`let box = $.box; box.w = 1;`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["box", "w"\], 1\)/)
+      const out = applyPathTracking(`let box = µ.store.box; box.w = 1;`)
+      assert.match(out, /µ\._mjs_storeSetOn\("box", box, "w", 1\)/)
     })
 
     it('témoin : une cible MEMBRE dans le motif ([$.a] = [1]) ne taint pas box', () => {
-      const out = applyPathTracking(`let box = $.box; [$.a] = [1]; box.w = 1;`)
-      assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["box", "w"\], 1\)/)
+      const out = applyPathTracking(`let box = µ.store.box; [$.a] = [1]; box.w = 1;`)
+      assert.match(out, /µ\._mjs_storeSetOn\("box", box, "w", 1\)/)
     })
   })
 

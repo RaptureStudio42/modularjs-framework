@@ -38,9 +38,9 @@ describe('bundler — mjs-precache.json', function () {
     const precache = lire(p.outDir)
     assert.match(precache.version, /^[a-f0-9]{8}$/, `la version doit être l'identifiant de build : ${precache.version}`)
     assert.equal(precache.version, bundler.lastBuildId, 'et c\'est exactement celui du manifeste')
-    assert.ok(precache.assets.some((a: string) => /\/mjs_core-[a-f0-9]{8}\.js$/.test(a)), `le runtime doit y être :\n${precache.assets.join('\n')}`)
-    assert.ok(precache.assets.some((a: string) => /\/page-[a-f0-9]{8}\.js$/.test(a)), 'les composants aussi')
-    assert.ok(precache.assets.some((a: string) => /\/autre-[a-f0-9]{8}\.js$/.test(a)))
+    assert.ok(precache.assets.some((a: string) => /\/mjs_core-[0-9a-z]{5}\.js$/.test(a)), `le runtime doit y être :\n${precache.assets.join('\n')}`)
+    assert.ok(precache.assets.some((a: string) => /\/page-[0-9a-z]{5}\.js$/.test(a)), 'les composants aussi')
+    assert.ok(precache.assets.some((a: string) => /\/autre-[0-9a-z]{5}\.js$/.test(a)))
     assert.deepEqual(precache.assets, [...precache.assets].sort(), 'la liste doit être triée : un diff git ne doit pas bouger pour rien')
 
     await bundler.close()

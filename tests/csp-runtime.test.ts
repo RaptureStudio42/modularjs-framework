@@ -16,6 +16,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { extractMarked } from './helpers/extract-marked.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME_DIR = join(__dirname, '..', 'src', 'runtime')
@@ -74,6 +75,7 @@ describe('csp runtime — mjs_easing.ts (.shared keyframes)', function () {
     g.document = win.document
     g.CSSStyleSheet = win.CSSStyleSheet
     const µ: any = { log() {}, warn() {}, error() {}, anim: {}, _csp: csp }
+    poserMessages(µ)
     new Function('µ', src)(µ)
     return µ
   }
@@ -141,6 +143,7 @@ describe('csp runtime — mjs_router.ts (panneau 404)', function () {
     g.document = win.document
     g.CSSStyleSheet = win.CSSStyleSheet
     const µ: any = { log() {}, warn() {}, error() {}, config: {}, _mjs_routeErrorCss: '.mjs-route-error{color:red}', _csp: csp }
+    poserMessages(µ)
     new Function('µ', src)(µ)
     const viewNode: any = win.document.createElement('metamjs-view')
     viewNode.id = 'main'
@@ -159,7 +162,7 @@ describe('csp runtime — mjs_router.ts (panneau 404)', function () {
     const { µ, viewNode } = scene(false)
     µ.Router._mjs_checkNoMatch('/nimportequoi')
     assert.ok(viewNode.querySelector('style'), 'le <style> historique est présent')
-    assert.equal(µ.Router._mjs_routeErrorSheetAdopted, false)
+    assert.equal(µ.Router._mjs_routeErrorSheet, null)
   })
 
   it('sous µ._csp vrai : aucun <style>, feuille constructible adoptée UNE FOIS sur document', () => {
@@ -175,8 +178,8 @@ describe('csp runtime — mjs_router.ts (panneau 404)', function () {
 
   it('SABOTAGE — retirer la garde fait rougir l\'assertion "aucun <style>"', () => {
     const sabotaged = ROUTER_SRC.replace(
-      "if (µ._csp) {\n      if (!this._mjs_routeErrorSheetAdopted) {",
-      "if (false) {\n      if (!this._mjs_routeErrorSheetAdopted) {"
+      "if (µ._csp) {\n      // adoptée par la racine du panneau",
+      "if (false) {\n      // adoptée par la racine du panneau"
     )
     assert.notEqual(sabotaged, ROUTER_SRC, 'le remplacement doit avoir trouvé sa cible')
     const { µ, viewNode } = scene(true, sabotaged)
@@ -216,6 +219,7 @@ describe('csp runtime — mjs_ujs.ts (panneau 404, _mjs_navShowNotFound)', funct
     g.CSSStyleSheet = win.CSSStyleSheet
     const block = extractMarked(src, 'helpers-navigation')
     const µ: any = { log() {}, warn() {}, error() {}, config: {}, _mjs_routeErrorCss: '.mjs-route-error{color:red}', _csp: csp, Router: null }
+    poserMessages(µ)
     new Function('µ', 'document', 'window', block)(µ, win.document, win)
     return { µ, win }
   }
@@ -310,6 +314,7 @@ describe('csp runtime — mjs_vt_presets.ts (@viewTransition)', function () {
     g.getComputedStyle = typeof win.getComputedStyle === 'function' ? win.getComputedStyle.bind(win) : g.getComputedStyle
     g.requestAnimationFrame = typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame.bind(win) : (cb: any) => setTimeout(cb, 16)
     const µ: any = { log() {}, warn() {}, error() {}, _csp: csp }
+    poserMessages(µ)
     new Function('µ', src)(µ)
     return µ
   }
@@ -519,8 +524,8 @@ describe('csp runtime — mjs_element.ts (mode mjs-light)', function () {
     // le bundle PARTAGÉ `mjs_core-*.js` — pas dans le fichier compilé du composant `csplightsab-*.js`
     const compiledCore = readFileSync(join(outDir, coreFile!), 'utf-8')
     const sabotagedCore = compiledCore.replace(
-      "if (µ._csp) {\n            var lightStyleSheet",
-      "if (false) {\n            var lightStyleSheet"
+      "if (µ._csp) {\n              adopt(document);",
+      "if (false) {\n              adopt(document);"
     )
     assert.notEqual(sabotagedCore, compiledCore, 'le remplacement doit avoir trouvé sa cible dans le bundle compilé')
     window.eval([

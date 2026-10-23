@@ -52,13 +52,13 @@ interface Scope {
 let localesGabarit: ReadonlySet<string> = new Set()
 
 // valeur du squelette qui recrée un nom du gabarit en tête d'un gestionnaire (generator/attributes,
-// squelettePortee) : `__arr_N[…]` (variable de boucle), `__idx_N` (index), `__cst_N` (`{const}`),
-// `__aw_N` (valeur `{await}`). Une liaison ainsi posée n'est qu'une copie : toute AUTRE écriture
+// squelettePortee) : `_mjs_ra_N[…]` (variable de boucle), `_mjs_ri_N` (index), `_mjs_cst_N` (`{const}`),
+// `_mjs_aw_N` (valeur `{await}`). Une liaison ainsi posée n'est qu'une copie : toute AUTRE écriture
 // serait perdue ; ces affectations-là, elles, sont le squelette même.
 function estInitSquelette(node: any): boolean {
   if (!node) return false
-  if (node.type === 'Identifier') return /^__(idx|cst|aw)_\d+$/.test(node.name)
-  return node.type === 'MemberExpression' && node.object.type === 'Identifier' && /^__arr_\d+$/.test(node.object.name)
+  if (node.type === 'Identifier') return /^_mjs_(ri|cst|aw)_\d+$/.test(node.name)
+  return node.type === 'MemberExpression' && node.object.type === 'Identifier' && /^_mjs_ra_\d+$/.test(node.object.name)
 }
 
 function newFunctionScope(parent: Scope | null): Scope {
@@ -337,7 +337,7 @@ const VISITORS = {
   AssignmentExpression(node: any, st: any, c: any) {
     const scope = st.scope
     const line  = node.loc.start.line
-    // le squelette lui-même (`index = __idx_1` d'une boucle imbriquée au même nom d'index) : permis
+    // le squelette lui-même (`index = _mjs_ri_1` d'une boucle imbriquée au même nom d'index) : permis
     if (node.operator === '=' && estInitSquelette(node.right)) {
       c(node.left, { scope }, 'Pattern')
       c(node.right, { scope }, 'Expression')
@@ -385,15 +385,18 @@ function decrireErreurAnalyse(js: string, err: any): ErreurAnalyse {
 // `locauxDuGabarit` : noms que le gabarit met en portée des gestionnaires analysés — leur copie
 // posée par le squelette (cf. estInitSquelette) est traitée comme une constante : la réaffecter
 // ailleurs n'écrirait qu'une copie locale, perdue (violation `gabarit: true`).
-export function analyserConstReassign(js: string, constantesExternes: Iterable<string> = [], locauxDuGabarit: Iterable<string> = []): { violation: ConstReassignment | null; analysable: boolean; erreur?: ErreurAnalyse } {
+export function analyserConstReassign(js: string, constantesExternes: Iterable<string> = [], locauxDuGabarit: Iterable<string> = [], preAst?: acorn.Node): { violation: ConstReassignment | null; analysable: boolean; erreur?: ErreurAnalyse } {
   const externes = [...constantesExternes]
   if (!js) return { violation: null, analysable: true }
   let ast: acorn.Node
-  try {
-    ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
-  }
-  catch (e: any) {
-    return { violation: null, analysable: false, erreur: decrireErreurAnalyse(js, e) }
+  if (preAst) ast = preAst
+  else {
+    try {
+      ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+    }
+    catch (e: any) {
+      return { violation: null, analysable: false, erreur: decrireErreurAnalyse(js, e) }
+    }
   }
   let englobante: Scope | null = null
   if (externes.length > 0) {
@@ -416,12 +419,15 @@ export function analyserConstReassign(js: string, constantesExternes: Iterable<s
 
 // même analyse, réduite à la violation — pour les appelants qui ne distinguent pas l'échec
 // d'analyse d'une absence de violation (le texte vient d'être compilé, donc validé ailleurs).
-export function findConstReassignment(js: string, constantesExternes: Iterable<string> = []): ConstReassignment | null {
+// `preAst` : l'AST de `js` déjà analysé AVEC les positions de ligne (`locations`), pour ne pas relire le texte ; `null` :
+// analyse déjà tentée et échouée en amont (même réponse qu'un échec ici : rien d'analysable)
+export function findConstReassignment(js: string, constantesExternes: Iterable<string> = [], preAst?: acorn.Node | null): ConstReassignment | null {
   const externes = [...constantesExternes]
   // raccourci de PERF, propre à ces appelants-là (textes entiers : bundle, module compilé) —
   // aucun `const` dans le texte ni autour, donc aucune constante à réaffecter, inutile de parser
   // (cf. le même garde-fou dans generator/transform-reactive.ts et effect-deps.ts).
   if (!js) return null
   if (externes.length === 0 && !js.includes('const')) return null
-  return analyserConstReassign(js, externes).violation
+  if (preAst === null) return null
+  return analyserConstReassign(js, externes, [], preAst).violation
 }

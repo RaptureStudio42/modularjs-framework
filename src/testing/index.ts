@@ -21,12 +21,14 @@
 // DÉPENDANCE OPTIONNELLE — `happy-dom` fournit le DOM simulé. Le framework ne l'impose
 // à personne (même patron que `playwright` pour le moteur de rendu navigateur) : elle
 // est déclarée en pair optionnel, et son absence donne un message qui dit quoi installer.
+// Une version trop ancienne (avant 20.11.2) est refusée de même, comme au rendu serveur.
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { Bundler, terminateSharedWorkerPool } from '../bundler/index.js'
+import { Bundler } from '../bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../bundler/config.js'
-import { stripEsm } from '../server/renderToString.js'
+import { stripEsm, ssrScopeFile, fileToId, topoSortFiles } from '../server/renderToString.js'
+import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from '../server/happy-dom-version.js'
 import { t } from '../messages/index.js'
 
 export interface HarnessOptions {
@@ -144,39 +146,107 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     await bundler.close()
     throw new Error(t('testing.happy-dom-absent'))
   }
+  // happy-dom plus ancien que la version exigée : refus net (version trouvée, version exigée, commande pour monter) plutôt que
+  // des tests qui réussissent ou échouent au hasard — cf. server/happy-dom-version.ts
+  const outdated = outdatedHappyDomVersion()
+  if (outdated !== null) {
+    await bundler.close()
+    throw new Error(t('testing.happy-dom-trop-ancien', { found: outdated, required: HAPPY_DOM_MINIMUM }))
+  }
 
   const window: any   = new HappyDOM.Window({ url: opts.url ?? 'http://localhost/' })
   const document: any = window.document
   const outDir        = bundler.outputDir
   const fichiers      = existsSync(outDir) ? readdirSync(outDir) : []
+  // fenêtre et compilateur fermés — en fin de tests, ou quand le chargement échoue : sans quoi le pool de threads du
+  // compilateur garde le processus de test en vie
+  const fermer = async () => {
+    // Garde-fou — même motif que renderToString.ts : `window.close()`
+    // (API DOM standard) est un NO-OP sur une Window happy-dom créée nue — `window.happyDOM.close()`
+    // est la VRAIE API de nettoyage (annule les tâches en cours ET ferme), sans quoi un
+    // `setInterval`/`setTimeout` posé par un `µeffect` pendant le montage fuit indéfiniment.
+    try { await window.happyDOM?.close?.() } catch { /* happy-dom peut refuser de fermer deux fois */ }
+    await bundler.close()
+  }
 
-  const lire = (fichier: string) => stripEsm(readFileSync(join(outDir, fichier), 'utf-8'))
+  // un build minifié importe le cœur sous un nom court (`import{µ as o}`) : ce nom rejoint le cœur global
+  const lire = (fichier: string) => stripEsm(readFileSync(join(outDir, fichier), 'utf-8'), { bridgeCore: true })
+  // chaque fichier dans sa propre portée, comme un module ES dans le navigateur : minifiés, les fichiers
+  // tirent leurs noms courts du même alphabet (`r`, `o`…) — côte à côte dans la portée globale, la
+  // fonction d'un composant écrasait la variable du cœur qui porte µ. Et en mode STRICT, comme un module :
+  // en non strict, une écriture refusée (objet gelé, propriété sans setter) passait en silence là où la
+  // page lève une TypeError
+  const evaluer = (code: string) => window.eval(`(function () {\n'use strict';\n${code}\n})();`)
 
   // 1. le cœur du runtime, puis `µ` en global — même amorce que le rendu serveur
-  const coreFile = fichiers.find(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f))
+  const coreFile = fichiers.find(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f))
   if (!coreFile) {
-    await bundler.close()
+    await fermer()
     throw new Error(t('testing.runtime-introuvable', { dossier: outDir }))
   }
-  window.eval(`${lire(coreFile)}\nglobalThis.µ = µ;`)
+  try {
+    evaluer(`${lire(coreFile)}\nglobalThis.µ = µ;`)
+  } catch (e) {
+    await fermer()
+    throw e
+  }
+
+  // 1b. les libellés du runtime (nom du bouton de *spoiler, commande de *flipcard, textes de *guard, des modules cœur…), tels que le
+  //     manifeste les pose dans la page juste après le cœur : toutes les langues, et celle du projet en repli. La langue affichée suit
+  //     celle de la page simulée (`document.documentElement.lang`), le français par défaut
+  const manifeste = existsSync(bundler.manifestPath) ? readFileSync(bundler.manifestPath, 'utf-8') : ''
+  const libelles  = manifeste.split('\n').filter(l => /^\s*µ\._runtimeLabels(?:Lang)? = /.test(l)).join('\n')
+  if (libelles !== '') {
+    try {
+      evaluer(libelles)
+    } catch (e) {
+      await fermer()
+      throw e
+    }
+  }
 
   // 2. les feuilles partagées émises en module (modes 'bundle' et 'split' ; en 'lazy'
   //    ce sont de vrais `.css` que le runtime ira chercher lui-même)
-  for (const f of fichiers.filter(f => /^mjs_styles?(_[a-zA-Z0-9_]+)?-[a-f0-9]{8}\.js$/.test(f))) {
-    try { window.eval(lire(f)) } catch { /* une feuille qui refuse ne doit pas tuer le harnais */ }
+  for (const f of fichiers.filter(f => /^mjs_styles?(_[a-zA-Z0-9_]+)?-[0-9a-z]{5}\.js$/.test(f))) {
+    try { evaluer(lire(f)) } catch { /* une feuille qui refuse ne doit pas tuer le harnais */ }
+  }
+
+  // 2b. le code de chaque effet du projet (un fichier par effet, importé par les composants qui
+  //     l'écrivent — l'import retiré ici, le fichier chargé d'avance) ; un effet qui refuse ne doit
+  //     pas tuer le harnais : le composant qui le pose le dira à son montage
+  for (const f of fichiers.filter(f => /^mjs_fx_[a-z0-9_]+-[0-9a-z]{5}\.js$/.test(f))) {
+    try { evaluer(lire(f)) } catch { /* cf. ci-dessus */ }
   }
 
   // 3. les composants. Par défaut TOUS : un composant imbriqué dans celui qu'on teste se
   //    monte alors sans rien avoir à déclarer. Chacun dans SON eval, pour qu'un composant
-  //    fautif n'emporte pas les autres — l'erreur ressort au montage, nommée.
-  const interne  = (nom: string) => nom.startsWith('__')
-  const noms     = Object.keys(stats.manifest).filter(n => !interne(n)).sort()
-  const aCharger = opts.only ? noms.filter(n => opts.only!.includes(n)) : noms
-  const echecs   = new Map<string, string>()
-  for (const nom of aCharger) {
-    const fichier = basename(String(stats.manifest[nom]))
-    if (!fichiers.includes(fichier)) continue
-    try { window.eval(lire(fichier)) } catch (e: any) { echecs.set(nom, e?.message ?? String(e)) }
+  //    fautif n'emporte pas les autres — l'erreur ressort au montage, nommée. Chaque fichier
+  //    garde sa portée comme un module ES, à la façon du rendu serveur (ssrScopeFile) : ce qu'il
+  //    importe d'un autre fichier du projet (`@import` d'un module) lui arrive, la cible chargée
+  //    avant lui ; avec `only`, les fichiers importés suivent
+  const interne   = (nom: string) => nom.startsWith('__')
+  const noms      = Object.keys(stats.manifest).filter(n => !interne(n)).sort()
+  const aCharger  = opts.only ? noms.filter(n => opts.only!.includes(n)) : noms
+  const echecs    = new Map<string, string>()
+  const fichierDe = (nom: string) => basename(String(stats.manifest[nom]))
+  const presents  = noms.filter(n => fichiers.includes(fichierDe(n)))
+  const nomDeId   = new Map(presents.map(n => [fileToId(fichierDe(n)), n]))
+  const idDe      = new Map(presents.map(n => [fichierDe(n), fileToId(fichierDe(n))]))
+  const resoudre  = (url: string) => idDe.get(url.split('/').pop() || '') ?? null
+  const portees   = new Map<string, { code: string, deps: string[] }>()
+  const ids       = presents.filter(n => aCharger.includes(n)).map(n => idDe.get(fichierDe(n))!)
+  const vus       = new Set(ids)
+  for (let i = 0; i < ids.length; i++) {
+    const p = ssrScopeFile(readFileSync(join(outDir, fichierDe(nomDeId.get(ids[i])!)), 'utf-8'), ids[i], resoudre)
+    portees.set(ids[i], p)
+    for (const d of p.deps) if (!vus.has(d)) { vus.add(d); ids.push(d) }
+  }
+  let ordre = ids
+  // import circulaire (refusé par le rendu serveur) : l'ordre des noms reste, l'échec ressort au montage du composant touché
+  try { ordre = topoSortFiles(ids, new Map(ids.map(id => [id, portees.get(id)!.deps])), new Map(ids.map(id => [id, fichierDe(nomDeId.get(id)!)]))) } catch { /* cf. ci-dessus */ }
+  for (const id of ordre) {
+    // la constante d'un eval reste dans l'eval : posée sur la fenêtre, pour les fichiers qui l'importent
+    try { window.eval(`'use strict';\n${portees.get(id)!.code}\nglobalThis.${id} = ${id};`) } catch (e: any) { echecs.set(nomDeId.get(id)!, e?.message ?? String(e)) }
   }
 
   async function mount(nom: string, props: Record<string, any> = {}): Promise<MountedComponent> {
@@ -229,17 +299,20 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
         cible.dispatchEvent(new window.Event('input', { bubbles: true, composed: true }))
         await nextTick()
       },
-      // Après le montage, un parent change une prop scalaire en changeant l'ATTRIBUT —
+      // Après le montage, un parent change une prop texte en changeant l'ATTRIBUT —
       // c'est l'observateur du composant qui la voit passer, exactement comme dans une
-      // vraie page. Une valeur qu'un attribut ne saurait porter (objet, tableau,
-      // fonction) passe par l'écriture d'état du runtime, qui est ce que le compilateur
-      // émet dans ce cas.
+      // vraie page. Toute autre valeur (nombre, booléen, objet, tableau, fonction) passe par
+      // l'écriture d'état du runtime, qui est ce que le compilateur émet quand un parent passe
+      // une expression (`count={$n}`) : elle arrive avec son type — un nombre devenait du
+      // texte par l'attribut, un attribut vide ou retiré ne rendait jamais un vrai booléen.
       async set(props) {
         for (const [cle, valeur] of Object.entries(props)) {
-          const scalaire = valeur === null || ['string', 'number', 'boolean'].includes(typeof valeur)
+          const scalaire = valeur === null || typeof valeur === 'string'
           if (scalaire && typeof el.setAttribute === 'function') {
-            if (valeur === null || valeur === false) el.removeAttribute(cle)
-            else el.setAttribute(cle, valeur === true ? '' : String(valeur))
+            // l'attribut que le composant observe : `startValue` → `start-value` (le DOM abaisse les majuscules)
+            const attribut = cle.replace(/[A-Z]/g, m => '-' + m.toLowerCase())
+            if (valeur === null) el.removeAttribute(attribut)
+            else el.setAttribute(attribut, String(valeur))
           }
           else if (typeof el._set === 'function') el._set(cle, valeur)
           else el[cle] = valeur
@@ -247,7 +320,13 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
         await nextTick()
       },
       tick: nextTick,
-      destroy() { el.remove() },
+      // retrait par la méthode NATIVE du nœud, prise au prototype (comme `µ._mjs_rm` du runtime) : `@remove = ->` du
+      // composant masque `el.remove()`, qui appellerait la méthode de l'auteur et laisserait le composant dans la page ;
+      // et `µ._mjs_rm` lui-même porte un nom raccourci dans un projet minifié, que le harnais ne peut pas nommer
+      destroy() {
+        const parent = el.parentNode
+        if (parent) window.Node.prototype.removeChild.call(parent, el)
+      },
     }
     return api
   }
@@ -258,14 +337,8 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     document,
     µ: window.µ,
     components: aCharger,
-    async destroy() {
-      // Garde-fou — même motif que renderToString.ts : `window.close()`
-      // (API DOM standard) est un NO-OP sur une Window happy-dom créée nue — `window.happyDOM.close()`
-      // est la VRAIE API de nettoyage (annule les tâches en cours ET ferme), sans quoi un
-      // `setInterval`/`setTimeout` posé par un `µeffect` pendant le montage fuit indéfiniment.
-      try { await window.happyDOM?.close?.() } catch { /* happy-dom peut refuser de fermer deux fois */ }
-      await bundler.close()
-      await terminateSharedWorkerPool()
-    },
+    // le pool de threads est partagé par tout le processus : seule la part de ce harnais est rendue (bundler.close),
+    // un autre Bundler qui compile encore le garde
+    destroy: fermer,
   }
 }

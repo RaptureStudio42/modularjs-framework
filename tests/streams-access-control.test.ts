@@ -88,9 +88,9 @@ describe('MJS-WS — streams.ts, garde d\'accès', () => {
     await app.stop()
   })
 
-  it('sans canSubscribe/room : comportement HISTORIQUE inchangé (flux public)', async () => {
+  it('sans canSubscribe/room, ouvert par { public: true } : servi à tout client', async () => {
     const { transport, app } = await startApp()
-    const flux = app.stream('public')
+    const flux = app.stream('public', { public: true })
     flux.add('e1', { x: 1 })
     await tick()
 

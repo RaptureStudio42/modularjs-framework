@@ -78,12 +78,18 @@ describe('heuristique Linguist .mjs — ModularJS contre JavaScript ordinaire', 
       })
     }
 
-    it('le seul motif de tête (\\A\\s*<) suffit déjà à tous les reconnaître', () => {
+    it('les deux motifs de tête (\\A\\s*<, ou @formAssociated puis un bloc) suffisent déjà à tous les reconnaître', () => {
       // preuve du raisonnement qui justifie d'avoir retiré les motifs <script>/<style>/<theme>
-      // par LIGNE : le premier bloc d'un composant réel est toujours son tout premier octet
-      const motifDeTete = motifs[0]
-      const manques      = fichiers.filter((chemin) => !motifDeTete.test(readFileSync(chemin, 'utf8')))
-      assert.deepEqual(manques, [], `fichiers qui ne commencent pas par un chevron : ${manques.join(', ')}`)
+      // par LIGNE : le premier bloc d'un composant réel est son tout premier octet, ou suit la
+      // directive @formAssociated écrite seule en tête (modules de saisie du cœur)
+      const motifDeTete      = motifs[0]
+      const motifDeDirective = motifs.find((motif) => motif.source.includes('@formAssociated'))
+      assert.ok(motifDeDirective, 'motif de @formAssociated introuvable')
+      const manques = fichiers.filter((chemin) => {
+        const contenu = readFileSync(chemin, 'utf8')
+        return !motifDeTete.test(contenu) && !motifDeDirective.test(contenu)
+      })
+      assert.deepEqual(manques, [], `fichiers qui ne commencent ni par un chevron ni par @formAssociated : ${manques.join(', ')}`)
     })
   })
 
@@ -98,6 +104,7 @@ describe('heuristique Linguist .mjs — ModularJS contre JavaScript ordinaire', 
       '@import':  '@import trapFocus \'tuto/attachments.module.civet\'\n\n<script>\n</script>\n',
       '@routes':  '<script>\n  @routes =\n    \'app-view\':\n      \'/posts/(:id)\': \'post-page\'\n</script>\n',
       '@preload': '<script>\n  @preload on\n</script>\n',
+      '@formAssociated': '@formAssociated\n\n<script>\n</script>\n',
     }
 
     for(const [nom, contenu] of Object.entries(positifs)) {
@@ -152,6 +159,15 @@ export function load () {}
       'commentaire qui mentionne « @display » qui continue après la valeur': `
 // @display block is only a suggestion here, see the full docs for details
 export function style () {}
+`,
+      'décorateur @formAssociated sur une classe, seul sur sa ligne': `
+@formAssociated
+class Champ extends HTMLElement {}
+export default Champ
+`,
+      'décorateur @formAssociated en tête, suivi d\'une comparaison': `@formAssociated
+export class Champ {}
+const petit = 1 < 2
 `,
       'commentaire qui mentionne « @i18n » sans section entre guillemets': `
 // @i18n is intentionally unsupported in this legacy module

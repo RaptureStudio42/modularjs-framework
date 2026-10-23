@@ -17,12 +17,18 @@
 // du projet). MJS V2 est 100% standalone : ces paths peuvent pointer où tu
 // veux selon ton hébergement (Rails, Express, nginx, hébergement statique).
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs'
-import { resolve, dirname, join, basename, sep } from 'node:path'
+import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs'
+import { resolve, dirname, join, basename, sep, win32 } from 'node:path'
 import type { SupportedLang } from '../languages/index.js'
 import { setMessagesLang, t } from '../messages/index.js'
 import { isBlockedForwardTarget } from '../server/forward-origin.js'
+import { parseTrustProxy } from '../trust-proxy-rules.js'
 import { FALLBACK_MODE, isBuildPrerenderable, normalizeMode, startupSlug } from '../server/render-routes.js'
+import { parsePlaceholder, PLACEHOLDER_CONFIG } from '../effects/placeholder.js'
+import { LINT_TYPES, resolveColorsEnabled, typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
+
+/** Un groupe de `bundles` : liste de racines, ou objet `{ roots, except }` (composants laissés en fichiers séparés). */
+export type BundleGroupConfig = string[] | { roots: string[]; except?: string[] }
 
 export interface MjsConfig {
   sourceDir?: string
@@ -46,6 +52,14 @@ export interface MjsConfig {
   urlPrefix?: string
   /** Répertoire des styles partagés (référencés par `@css name` dans .mjs). */
   stylesheetsDir?: string
+  /**
+   * Dossiers d'images EN PLUS de `sourceDir` : `µimage`, `µasset` (et ses alias) et `<@@img>` y cherchent une image que
+   * `sourceDir` ne porte pas, pour tout serveur (Rails : `["app/assets/images"]`). Chemins relatifs au dossier de
+   * mjs.config.json comme les autres clés, chacun doit exister. Ordre de recherche : `sourceDir`, puis chaque dossier de la
+   * liste ; un même nom dans deux dossiers sert depuis le premier et le build avertit. Le code (.mjs, .civet, .coffee, .js)
+   * reste sous `sourceDir`. Tout se joue au build : rien de plus n'est envoyé aux visiteurs.
+   */
+  assetDirs?: string[]
   /**
    * Répertoire du runtime MJS (mjs_*.coffee) si différent de l'emplacement
    * auto-détecté (cf. `Bundler.locateRuntimeDir`). Accepté par KNOWN_KEYS (validation) mais jamais déclaré ici
@@ -97,6 +111,16 @@ export interface MjsConfig {
    * désactive. Cf. Bundler.pruneOrphans. */
   prune?: boolean
   /**
+   * Groupes de fichiers : `{ "<nom>": ["<composant racine>", …] }`. En production, chaque groupe
+   * assemble ses composants racines ET toute leur descendance (table des dépendances du manifeste)
+   * en un seul fichier `mjs_group-<nom>-<empreinte>.js` : charger l'un de ses composants charge le
+   * groupe, une fois. Restent externes les modules, le cœur, les feuilles, les animations, les
+   * fichiers de langue et les fichiers d'effets. Aucun regroupement en développement. Un composant
+   * ne peut appartenir qu'à un groupe. Forme objet `{ "roots": [...], "except": [...] }` : les
+   * composants de `except`, et la descendance qu'eux seuls atteignent, restent en fichiers séparés.
+   */
+  bundles?: Record<string, BundleGroupConfig>
+  /**
    * Émission des cartes de source (`.map`), qui font retomber un point d'arrêt sur la ligne
    * du `.mjs` au lieu du JavaScript compilé. `'dev'` (défaut) : en développement seulement,
    * là où la carte sert · `'prod'` : en build de production seulement · `'always'` : les
@@ -128,6 +152,8 @@ export interface MjsConfig {
   dev?: {
     port?: number
     host?: string
+    /** Noms d'hôte acceptés en plus des siens (tunnel, proxy) : nom exact, `.domaine` pour ce domaine et ses sous-domaines, ou `true` pour tout permettre. */
+    allowedHosts?: string[] | true
   }
   /** Rendu piloté par la config — les PAGES (niveau 1). La nav in-app `#/…` reste client. */
   render?: RenderConfig
@@ -159,10 +185,38 @@ export interface MjsConfig {
    */
   logLevel?: LogLevelConfig
   /**
+   * Quand télécharger, en production, le fichier des messages du framework (`mjs_err-<langue>-<empreinte>.json`) :
+   * `"demand"` (défaut) = au premier message réellement écrit dans la console ou à la première erreur du
+   * framework non attrapée ; `"idle"` = d'avance, pour la langue courante, une fois la page affichée et au
+   * repos (`requestIdleCallback`, repli `setTimeout`), une seule fois, sans retarder le premier affichage.
+   * Un échec reste silencieux et suit la règle de nouvel essai habituelle (pas avant 30 s). Sans effet
+   * en développement, où les messages sont dans le manifeste.
+   */
+  messages?: 'demand' | 'idle'
+  /**
+   * Types et valeurs permises (bloc `<vars>` des composants) — ce que fait, en DÉVELOPPEMENT, une
+   * valeur ramenée dans sa plage ou refusée : `"warn"` (défaut : un avertissement dans la console
+   * du navigateur, le code continue) ou `"error"` (une erreur qui arrête la fonction à l'écriture
+   * fautive). En production, rien ne s'affiche : la valeur est ramenée ou refusée, c'est tout.
+   */
+  types?: 'warn' | 'error'
+  /**
+   * Effets que MJS pose de lui-même. `theme` : une bascule de thème (`µtheme = 'dark'`) qui suit un
+   * clic se propage en cercle depuis le point cliqué (`'circle'`, défaut) ou se fait d'un coup
+   * (`'none'`). `lite` : les effets lourds (particules, fumée…) se calment d'eux-mêmes
+   * quand l'appareil peine (`'auto'`, défaut), tout le temps (`'on'`) ou jamais (`'off'`). Émis au
+   * manifeste (`µ._fxConf`) seulement quand la clé est écrite. `skeleton` : `['await']` (défaut),
+   * `'components'` ; les barres des textes traduits se règlent par `i18n.placeholder` et `i18n.timeout`.
+   */
+  effects?: EffectsConfig
+  /**
    * Sélection des modules runtime du bundle `mjs_core.js`. Deux familles :
    * - les modules OPTIONNELS (easing, spring, smooth, vault, ajax, socket, game, router,
    *   ujs, flip…) : choix EXPLICITE, jamais d'auto-détection. `'all'` (défaut) les prend
-   *   tous, `'core'` aucun, un tableau ceux qu'il nomme ; une faute de frappe LÈVE ;
+   *   tous, `'core'` aucun, un tableau ceux qu'il nomme ; une faute de frappe LÈVE.
+   *   Seul `easing` fait exception : il porte le moteur qui joue les transitions, donc il
+   *   est joint dès qu'une source écrit `@in`, `@out` ou `@transition`, quelle que soit la
+   *   valeur ;
    * - les éléments du cœur DÉTECTÉS (`DETECTED_CORE_MODULES` : title, store, interpolate,
    *   blocs {for}/{if}/{key}/{await}, balises globales et dynamiques, runes rares, cycle de
    *   vie, contexte §/§§, émission d'événement, variantes de mise en page, chemin lent de
@@ -170,6 +224,8 @@ export interface MjsConfig {
    *   joints que si une source du projet (ou un module du framework qu'il utilise) s'en
    *   sert, si la CONFIGURATION l'exige (css: 'lazy', router/ujs/modal sélectionné…), ou si
    *   le tableau les nomme.
+   * Un tableau qui ne cite QUE des effets (`['fx_neon']` : leur code au cœur plutôt que dans leur
+   * propre fichier) les ajoute sans rien retirer : les modules optionnels restent ceux du défaut.
    * Seuls init, runes, autoloader et element sont toujours là. Généralise l'ancien flag
    * interne `minimalRuntime` (≡ `'core'`).
    */
@@ -234,15 +290,19 @@ export interface MjsConfig {
    * bundle) et `<sourceDir>/i18n/<langue>/<section>.yml|.yaml|.json`
    * (fragments émis en JSON statique, fetchés par le runtime au 1er montage).
    * `default` (code langue, requis DÈS que `i18n/` existe dans `sourceDir`) ;
-   * `placeholder` : comportement le temps qu'un fragment charge (`'auto'`
-   * défaut, `'key'` affiche la clé brute, `'wait'` n'affiche rien) ;
+   * `placeholder` : ce que fait un module le temps que ses textes chargent (`'wait'`
+   * défaut : il reste caché puis paraît d'un coup ; `'key'` affiche la clé brute ;
+   * `'*skeleton'` des barres grises à la place de chaque texte ; `'*loader(bloom)'` un
+   * indicateur de chargement à la place du module, qui reste caché comme en `'wait'`) ;
    * `hash` : obfuscation des noms de fragments (booléen, défaut `true`,
    * EFFECTIVE EN PROD SEULEMENT — cf. `Bundler.isProd()`). `persist`
    * (booléen, défaut `false`) : mémorise la langue choisie EXPLICITEMENT via
    * `localStorage`. `detect` (booléen, défaut `false`) : devine la langue
    * initiale via `Intl`/`navigator` au 1er chargement. `urlParam` (booléen,
    * défaut `false`) : reflète la langue dans `?lang=` (écrit à la bascule,
-   * lu au boot en priorité) — recharger `?lang=en` repart en anglais.
+   * lu au boot en priorité) — recharger `?lang=en` repart en anglais. `timeout` (une durée : 800,
+   * `"800ms"`, `"1.5s"` ; défaut 3 s) : le délai de secours de `'wait'`, au bout duquel un module
+   * dont les textes manquent paraît avec des barres grises (en développement, la clé de chaque texte).
    * `source` (code langue, FACULTATIF — absente = comportement d'aujourd'hui, opt-in) : active le
    * contrôle d'empreinte (cf. docs/29-i18n.md § Contrôle d'empreinte) — une traduction dont le
    * sceau `__source` ne correspond plus à l'empreinte de cette langue source n'est pas servie.
@@ -268,6 +328,28 @@ export interface MjsConfig {
    */
   journal?: JournalConfig
 }
+
+/** Param `effects` : les effets que MJS pose de lui-même (cf. `MjsConfig.effects`). */
+export interface EffectsConfig {
+  theme?: 'circle' | 'none'
+  lite?: 'auto' | 'on' | 'off'
+  /** les chargements qui montrent un squelette d'eux-mêmes : `await` (un {await} sans branche
+   *  d'attente), `components` (la balise d'un composant dont le code arrive) — défaut `['await']`, `[]` : aucun.
+   *  Les barres des textes traduits ne passent pas par ici : cf. `i18n.placeholder` (`*skeleton`) et `i18n.timeout` */
+  skeleton?: Array<'await' | 'components'>
+  /** *guard d'office sur tout champ lié à une variable typée (`<input value=!{$age}>`) — défaut
+   *  `true` ; `false` : ces champs-là sans effet ni bulle (la frappe jamais réécrite, la valeur ramenée
+   *  à la sortie du champ) ; `{ delay }` : la pause après la dernière frappe avant que le garde ne
+   *  prévienne, pour tous (défaut 1 s ; un nombre de millisecondes, ou `"800ms"`, `"1.5s"`) */
+  guard?: boolean | { delay?: number | string }
+  /** la part du débit des effets en direct (*follow, *cursors, *heatmap) : leurs messages par seconde,
+   *  à eux tous, sur une connexion — défaut 4 ; le serveur MJS WS en permet 40 par défaut à un visiteur,
+   *  le reste est pour l'appli. Un entier de 1 à 1000 */
+  rate?: number
+}
+
+// les valeurs permises de chaque clé de `effects` (skeleton : une liste de ces mots ; rate : un nombre)
+const EFFECTS_VALUES: Record<string, string[]> = { theme: ['circle', 'none'], lite: ['auto', 'on', 'off'], skeleton: ['await', 'components'], guard: ['true', 'false'], rate: [] }
 
 /**
  * Param `runtime` : `'all'` (tout), `'core'` (cœur seul), ou un tableau de
@@ -308,14 +390,15 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * `title` (bulles `@title`, mjs_title.ts) — embarqué seulement si une source du projet en pose
  * un usage (scan textuel, `bundler/index.ts` → `scanRuntimeFeatures`) ; `vt_presets`
  * (préréglages `@viewTransition`, mjs_vt_presets.ts) — embarqué seulement si `router` OU `ujs`
- * est sélectionné (règle de config pure, aucun scan) ; `store` (classe `µStore`/`µ.Store`,
+ * est sélectionné (règle de config pure, aucun scan), comme `nav_progress` (la barre de navigation,
+ * mjs_nav_progress.ts) ; `store` (classe `µStore`/`µ.Store`,
  * mjs_store.ts) et `interpolate` (`µinterpolate`/`µ.interpolate`, mjs_interpolate.ts) — MÊME
  * règle que `title` (scan textuel, les deux sigils confondus).
  *
  * Runes et balises globales détachées plus récemment, même doctrine — signal détaillé dans
  * le bandeau de `scanRuntimeFeatures` (bundler/index.ts) : `head` (`<@head>`, mjs_head.ts) ; `body`
  * (`<@body>`/`<@html>`, mjs_body.ts) ; `dynamic` (`<@element>`/`<@module>`, mjs_dynamic.ts) ;
- * `rare_runes` (µplay/µminmax/µinspect/µraw/µsnap/µimport, mjs_rare_runes.ts) ; `on` (µon,
+ * `rare_runes` (µplay/µinspect/µraw/µsnap/µimport, mjs_rare_runes.ts) ; `on` (µon,
  * mjs_on.ts) ; `effect` (µeffect, mjs_effect.ts — AUSSI forcé par `@persist`/`µdebug $x`/
  * `<@head>`/`<@body>`/`<@html>`/`<@element>`/`<@module>`/`<@window scrollX|scrollY>`, qui
  * s'appuient dessus en silence) ; `every` (µevery, mjs_every.ts) ; `ticker` (`µ.Ticker`,
@@ -346,8 +429,8 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * `lazy_css` (`µ._mjs_fetchLazyCss`, mjs_lazy_css.ts) : DÉTECTÉ PAR CONFIG SEULE (`css: 'lazy'`),
  * jamais par scan — le bundler n'écrit `µ._cssLazy` au manifeste que dans ce mode.
  *
- * `page_cache` (`µ.LRUCache`/`µ._mjs_isPageCached`/`µ._mjs_destroyEvictedTree`/`µ._mjs_routeErrorCss`/
- * `µ._mjs_label`/`µ._mjs_labelLang`, mjs_page_cache.ts) : DÉTECTÉ PAR CONFIG SEULE — module `router` OU
+ * `page_cache` (`µ.LRUCache`/`µ._mjs_isPageCached`/`µ._mjs_destroyEvictedTree`/`µ._mjs_routeErrorCss`,
+ * mjs_page_cache.ts) : DÉTECTÉ PAR CONFIG SEULE — module `router` OU
  * `ujs` OU `modal` sélectionné (ni scan ni forçage par un autre module détecté).
  *
  * `context` (`_mjs_setContext`/`_mjs_getContext`/`_mjs_setRCtx`/`_mjs_getRCtx`/
@@ -429,12 +512,42 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * aucun scan ; listé ici pour la demande EXPLICITE (`runtime: [..., 'autoloader']`, qui le remet
  * dans un fichier unique — par exemple une page qui insère des balises servies par un autre
  * build).
+ *
+ * `form_reset` (`µ._mjs_formReset`, mjs_form_reset.ts — la remise à zéro d'un formulaire, écrite une fois pour les modules de saisie du cœur :
+ * case, interrupteur, radio, nombre, jauge, bouton rotatif, liste, champ, éditeur) : DÉTECTÉ PAR SCAN de l'appel littéral `_mjs_formReset(` que ces
+ * modules écrivent à leur montage. Une application sans module de saisie n'en paie pas un octet ; avec un seul, le fichier part, quelle que soit
+ * la sélection `runtime` (il ne dépend pas de `ujs`).
+ *
+ * `form_associated` (`µ._mjs_formClass`, mjs_form_associated.ts — le socle des composants associés au formulaire : validité, `<label for>`,
+ * `<fieldset disabled>`, écrit une fois pour tous) : DÉTECTÉ PAR SCAN de l'appel littéral `_mjs_formClass(` que le compilateur écrit dans le
+ * fichier d'un composant qui déclare `@formAssociated` (case, interrupteur, radio du cœur, ou un composant de l'application). Sans composant
+ * déclaré, pas un octet.
+ *
+ * `clone` (`µ.clone`, mjs_clone.ts — la rune `µclone el` : une copie vivante d'un composant, qui monte avec une copie de son état) : DÉTECTÉ
+ * PAR SCAN du mot `clone` écrit par le projet ; jamais appelé par le cœur, qui n'y gagne aucun octet (l'état copié passe par le registre des
+ * props retenues jusqu'au montage, `µ._mjs_pending`).
  */
 export const DETECTED_CORE_MODULES = [
-  'title', 'vt_presets', 'store', 'interpolate',
+  'title', 'vt_presets', 'nav_progress', 'store', 'interpolate',
   'head', 'body', 'dynamic', 'rare_runes', 'on', 'effect', 'every', 'ticker', 'failed',
-  'for', 'if', 'key', 'await', 'emit', 'lazy_css', 'page_cache', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'autoloader', 'hydrate', 'deep', 'textpool', 'esc', 'for_nested', 'alias',
+  'for', 'if', 'key', 'await', 'emit', 'lazy_css', 'page_cache', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'autoloader', 'hydrate', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone',
+  'fx',
+  // un effet par fichier runtime (mjs_fx_<nom>.ts) — un test de bundler-features-scan réclame chaque effet du catalogue
+  'fx_glitch', 'fx_neon', 'fx_tilt', 'fx_ripple', 'fx_gradient', 'fx_scramble', 'fx_stagger', 'fx_bounce', 'fx_outline', 'fx_underline', 'fx_highlight', 'fx_split', 'fx_rainbow', 'fx_count', 'fx_marquee', 'fx_extrude', 'fx_unveil', 'fx_skeleton', 'fx_pulse', 'fx_shake', 'fx_float', 'fx_spin', 'fx_lift', 'fx_zoom', 'fx_shine', 'fx_confetti', 'fx_particles', 'fx_noise',
+  'fx_loader', 'fx_longshadow', 'fx_wave', 'fx_dissolve', 'fx_spotlight', 'fx_magnet', 'fx_beam', 'fx_grid', 'fx_parallax', 'fx_pixels', 'fx_goo', 'fx_smoke', 'fx_border', 'fx_glass', 'fx_clay', 'fx_stack', 'fx_iso',
+  'fx_annotate', 'fx_tracking', 'fx_cycle', 'fx_circular', 'fx_sparkles', 'fx_attention', 'fx_orbit', 'fx_dock', 'fx_kenburns', 'fx_filter',
+  'fx_delta', 'fx_autosize', 'fx_lang', 'fx_cursors', 'fx_gauge', 'fx_guard', 'fx_offline', 'fx_flash', 'fx_react', 'fx_follow', 'fx_heatmap',
+  'fx_blend', 'fx_hologram', 'fx_mesh', 'fx_liquid', 'fx_chromatic', 'fx_crt', 'fx_matrix', 'fx_scrollprogress', 'fx_flipcard', 'fx_path', 'fx_weight', 'fx_spoiler', 'fx_scratch', 'fx_peel', 'fx_reflect',
+  'fx_shared', 'fx_scrub', 'fx_toolscroll', 'fx_travel', 'fx_gallery', 'fx_pointer', 'fx_physics', 'fx_pile', 'fx_velocity', 'fx_focus', 'fx_sprite', 'fx_sticky', 'fx_fluid', 'fx_behind', 'fx_backlight', 'fx_toolup', 'fx_toolroots', 'fx_toolbox', 'fx_toolwatch', 'fx_toollag', 'fx_toolsmooth', 'fx_toolregister', 'fx_toolvisible', 'fx_toolsplit', 'fx_toolsvg', 'fx_toolgauge', 'fx_toolkeep',
+  'fx_tooltext', 'fx_toolwebkit', 'fx_toolcolor', 'fx_toolfonts', 'fx_toollabel', 'fx_toolbeat',
+  // les transitions (`@in=*fade`, `*fly(on: view)`…) : un fichier pour toutes ; les effets CSS de l'appli
+  'fx_transition', 'fx_custom',
 ] as const
+
+// les modules des effets fondus dans un autre avant la 3.0 : celui qui porte maintenant l'effet (le refus d'un module inconnu le nomme)
+const REPLACED_FX_MODULES: Record<string, string> = {
+  fx_aurora: 'fx_mesh', fx_shimmer: 'fx_shine', fx_wiggle: 'fx_attention', fx_lens: 'fx_filter', fx_knockout: 'fx_gradient', fx_texture: 'fx_gradient', fx_typing: 'fx_cycle',
+}
 
 /**
  * Préréglages `runtime` — « paquets activables » CLIENT au-dessus des modules
@@ -665,7 +778,7 @@ export function parseVtValue(raw: string): VtParseResult {
       const key = VT_OPTION_KEY_ALIASES[rawKey]
       if (!key) {
         const suggestion = suggestVtOptionKey(rawKey)
-        const hint = suggestion ? ` — tu voulais dire '${suggestion.long}'/'${suggestion.short}' ?` : ''
+        const hint = suggestion ? ` — vouliez-vous dire '${suggestion.long}'/'${suggestion.short}' ?` : ''
         const validList = VT_OPTION_KEYS.map(k => `${k}/${VT_OPTION_SHORT[k]}`).join(', ')
         return { ok: false, error: t('bundler.config.vt-option-cle-inconnue', { cle: rawKey, hint, valides: validList }) }
       }
@@ -766,6 +879,91 @@ export interface LintConfig {
    *  transpiler/ujs-form.ts. Avertissement orientant, jamais bloquant. Défaut
    *  appliqué (transpiler) : `true` (activé) — `false` désactive tout le contrôle. */
   ujsForm?: boolean
+  /** Une variable de thème `$$x` déclarée par PLUSIEURS modules — rappel (le partage est
+   *  parfois voulu), pas un défaut. Défaut `true` — `false` coupe. */
+  themeShared?: boolean
+  /** Une variable de thème `$$x` LUE mais jamais déclarée par aucun module. Défaut `true` —
+   *  `false` coupe. */
+  themeUnknown?: boolean
+  /** Un module runtime optionnel sélectionné dont le partenaire habituel manque (ex. `ujs`
+   *  sans `router` : l'interception reste posée mais inerte). Rappel d'ergonomie, pas un
+   *  défaut. Défaut `true` — `false` coupe. */
+  runtimeHint?: boolean
+  /** Une entrée de `runtime[]` ignorée — nom inconnu, ou préréglage pas encore implémenté
+   *  (`RUNTIME_PRESETS`). Défaut `true` — `false` coupe. */
+  runtimeModule?: boolean
+  /** Dossier `i18n/` absent alors que `i18n` est configuré, sceau de contrôle d'empreinte
+   *  manquant/périmé, traduction en retard sur sa source — cf. docs/29-i18n.md. Défaut
+   *  `true` — `false` coupe. */
+  i18n?: boolean
+  /** Une feuille de style partagée (mode `css: 'split'`/`'lazy'`) compilée mais jamais
+   *  réclamée par un module (`@css`) ni une vue (`<@view css="…">`). Défaut `true` —
+   *  `false` coupe. */
+  cssSplit?: boolean
+  /** `@font-face`/`@import` dans le CSS COMPILÉ d'un composant — piège Shadow DOM (feuille
+   *  construite, ni l'un ni l'autre ne marche à l'exécution), cf. transpiler/index.ts
+   *  (cssTrapWarnings). Défaut `true` — `false` coupe. */
+  cssTrap?: boolean
+  /** Deux fichiers distincts publient la même clé de manifeste (basename ou tag) — le
+   *  second écrase le premier. Défaut `true` — `false` coupe. */
+  collision?: boolean
+  /** Un alias `<mjs-nom>` ambigu entre plusieurs sources, ou une balise dev inconnue.
+   *  Défaut `true` — `false` coupe. */
+  tagAlias?: boolean
+  /** Une animation référencée (`@viewTransition`, `µanim`) sans fichier correspondant dans
+   *  le dossier `animations/` du runtime. Défaut `true` — `false` coupe. */
+  animation?: boolean
+  /** Un composant qui échoue à compiler — repêché (ancienne sortie conservée, `dev`/`serve`)
+   *  ou non (`build`). Défaut `true` — `false` coupe. */
+  componentFailure?: boolean
+  /** `mjs-precache.json` n'a pas pu être écrit (build par ailleurs valide, seule la liste de
+   *  pré-cache manque). Défaut `true` — `false` coupe. */
+  precache?: boolean
+  /** Avertissement du RENDU pendant le prérendu du BUILD (`render.routes` en mode
+   *  `prerender`) — store non stabilisé, prop invalide, shadow fermé… Ne couvre PAS les
+   *  erreurs fatales ni le rendu par requête (`mjs serve`, hors build). Défaut `true` —
+   *  `false` coupe. */
+  prerender?: boolean
+  /** Le paquet `sharp` (peer dependency optionnelle) est absent : `µimage` garde l'image
+   *  d'origine, sans variantes générées. Défaut `true` — `false` coupe. */
+  image?: boolean
+  /** Un `#= require`/`require_tree` (manifest externe façon Rails) introuvable sur le
+   *  disque. Défaut `true` — `false` coupe. */
+  require?: boolean
+  /** `<@include name>` compilé sans chemin de fichier connu (baseDir absent) : le partial ne
+   *  peut pas être résolu, la directive est retirée. Défaut `true` — `false` coupe. */
+  include?: boolean
+  /** Le `<script>` d'un composant RÉASSIGNE `@routes` alors qu'un bloc `<routes>` existe déjà
+   *  — la table déclarative est remplacée, pas fusionnée. Défaut `true` — `false` coupe. */
+  routes?: boolean
+  /** Balise mal fermée, jeton de flux (`{end}`/`{else}`…) orphelin en toute fin de document,
+   *  interpolation Civet `#{…}` collée dans un attribut STATIQUE (ne s'exécute jamais). Défaut
+   *  `true` — `false` coupe. */
+  syntax?: boolean
+  /** `µeffect` qui lit ET écrit la même variable (boucle potentielle), cycle entre computeds,
+   *  dépendances qui ne convergent pas (garde-fou 100 passes), expression de template dont les
+   *  dépendances ne peuvent pas être analysées, référence DOM `@this=!{$x}` rendue réactive par
+   *  mégarde (`$` en trop, coûteux sur un hot-path). Défaut `true` — `false` coupe. */
+  reactivity?: boolean
+  /** Une variable d'état `$_mjs_x` empiète sur le préfixe réservé aux props internes du
+   *  framework. Défaut `true` — `false` coupe. */
+  naming?: boolean
+  /** `µ.emit(nom, e)` — l'objet événement natif passé BRUT au lieu d'être déballé. Défaut
+   *  `true` — `false` coupe. */
+  events?: boolean
+  /** Usage déprécié : `@onUrlChange`/`this.onUrlChange` (forme legacy encore acceptée), ou un
+   *  `<script lang="coffee">` (adaptateur conservé, migration vers Civet conseillée). Défaut
+   *  `true` — `false` coupe. */
+  legacy?: boolean
+  /** Config ACCEPTÉE mais sans effet utile en pratique : un hôte de confiance
+   *  (`render.forwardOrigin.trustedHosts`) bloqué quand même par la défense en profondeur
+   *  anti-SSRF, une route `light: true` alors que son mode ne rend jamais au serveur (`csr`).
+   *  Défaut `true` — `false` coupe. */
+  config?: boolean
+  /** Un composant sans HTML (script ou style seuls, ou un commentaire) : il ne rend rien.
+   *  Défaut `true` — `false` coupe, `"error"` en fait une erreur de build (seule clé qui
+   *  accepte cette valeur). */
+  emptyComponent?: boolean | 'error'
 }
 
 /** Niveaux de verbosité de la console, du plus bavard au plus muet. */
@@ -890,7 +1088,7 @@ export interface WsConfig {
       fails?: [number, number]
     }
     /**
-     * Nonce anti-rejeu (src/mjs-ws/bridge.ts) — défaut `false`. `true` exige un
+     * Nonce anti-rejeu (src/mjs-ws/bridge.ts) — actif par défaut, `false` le désactive. Exige un
      * en-tête `x-mjs-ws-nonce` (8-64 caractères) sur chaque requête signée, suffixé à la chaîne
      * canonique — ferme la fenêtre de rejeu ±300 s à un usage strictement unique par nonce.
      */
@@ -977,7 +1175,7 @@ export interface WsConfig {
   verifyOrigin?: string[]
   /**
    * Mise au banc (src/mjs-ws/core.ts) — ACTIVE par défaut : 3 expulsions pour abus en 1 min → 5 min
-   * de refus, par compte ET par IP. `false` désactive, `true` = défauts, objet = réglages fins
+   * de refus du fautif (son compte, sans compte son IP). `false` désactive, `true` = défauts, objet = réglages fins
    * (`after`, `within`/`duration` en ms, `by` : `'account'` | `'ip'` | `'both'`). MÊME règle que
    * sessionExclusive/verifyOrigin : définissable ICI ou dans l'entry (`ban`), l'ENTRY prime EN BLOC
    * en cas de doublon (cf. cli/ws.ts buildRunPlan). Cf. docs/23-mjs-ws.md « Qui compte pour qui ».
@@ -1014,6 +1212,9 @@ export interface ServeurConfig extends WsConfig {
      *  `null` (désactive) ; absent = défaut TOUJOURS actif de matchmaking.ts (contrairement à
      *  movesPerIdentity, opt-in). Cf. mjs-server/index.ts `MjsServerAntiTricheOptions.codePerIp`. */
     codePerIp?: [number, number] | null
+    /** parties privées en cours d'un même créateur — entier ≥ 1 ou `null` (désactive) ; absent = défaut TOUJOURS actif (5). Cf.
+     *  mjs-server/index.ts `MjsServerAntiCheatOptions.privateGamesPerCreator`. */
+    privateGamesPerCreator?: number | null
   }
 }
 
@@ -1029,8 +1230,8 @@ export interface LanguagesConfig {
 /**
  * i18n façon Rails — cf. le JSDoc de `MjsConfig.i18n` pour la sémantique
  * complète. `default` : code langue (chaîne non vide), requis dès que
- * `<sourceDir>/i18n/` existe. `placeholder` : `'auto'` (défaut) / `'key'` /
- * `'wait'`. `hash` : `'auto'` (défaut, haché en prod seulement), `true` (toujours), `false` (jamais).
+ * `<sourceDir>/i18n/` existe. `placeholder` : `'wait'` (défaut) / `'key'` /
+ * `'*skeleton'` / `'*loader(…)'` (une chaîne, jamais un objet). `hash` : `'auto'` (défaut, haché en prod seulement), `true` (toujours), `false` (jamais).
  * `persist` : booléen, défaut `false` — mémorise le choix de langue EXPLICITE
  * (bascule utilisateur) via `localStorage`. `detect` : booléen, défaut
  * `false` — devine la langue au 1er chargement via `Intl`/`navigator`.
@@ -1038,10 +1239,11 @@ export interface LanguagesConfig {
  * à la bascule via `replaceState`, lu au boot EN PRIORITÉ sur persist/detect :
  * recharger `?lang=en` repart en anglais). Langue par défaut = `?lang=` retiré.
  * `source` : code langue, FACULTATIF — active le contrôle d'empreinte des traductions.
+ * `timeout` : le délai de secours de l'attente `wait` (une durée : 800, "800ms", "1.5s" ; 3 s par défaut).
  */
 export interface I18nConfig {
   default?: string
-  placeholder?: 'auto' | 'key' | 'wait'
+  placeholder?: string
   /** `'auto'` (défaut) : fragments hachés en production, noms clairs en développement.
    *  `true` : hachés TOUJOURS (un site servi localement garde alors un cache honnête).
    *  `false` : jamais. */
@@ -1050,6 +1252,32 @@ export interface I18nConfig {
   detect?: boolean
   urlParam?: boolean
   source?: string
+  /** le délai de secours de l'attente `wait` : au bout de ce temps sans leurs textes, un module traduit paraît quand même, avec
+   *  des barres grises (en développement, la clé de chaque texte). Une durée — un nombre de millisecondes (≥ 0), ou `"800ms"`, `"1.5s"` ; défaut 3 s */
+  timeout?: number | string
+}
+
+/** plus grand délai qu'une minuterie accepte (2^31 - 1 ms, environ 24,8 jours) : au-delà, le navigateur la déclenche aussitôt */
+const MAX_TIMER_MS = 2147483647
+
+/** plafond de la pause de `*guard` (`effects.guard.delay`) : 24 h */
+const MAX_GUARD_DELAY_MS = 86400000
+
+/** Une durée de mjs.config.json (`effects.guard.delay`, `i18n.timeout`) : un nombre de millisecondes ≥ 0, ou "800ms" / "1.5s".
+ *  Rend les millisecondes, ou `null` si la valeur n'en est pas une. */
+export function dureeEnMs(v: unknown): number | null {
+  if (typeof v === 'number') return isFinite(v) && v >= 0 ? v : null
+  const m = typeof v === 'string' ? /^(\d+(?:\.\d+)?)(ms|s)$/.exec(v) : null
+  return m ? parseFloat(m[1]) * (m[2] === 's' ? 1000 : 1) : null
+}
+
+/** Plafond d'une durée de la config : `i18n.timeout` ne dépasse pas celui d'une minuterie (2^31 - 1 ms, au-delà elle part aussitôt),
+ *  `effects.guard.delay` 24 h. Un seul contrôle pour mjs.config.json (`findConfig`) et pour l'API (`new Bundler(...)`) ;
+ *  une valeur qui n'est pas une durée n'est pas l'affaire d'ici. */
+export function verifierPlafondDuree(cle: 'i18n.timeout' | 'effects.guard.delay', v: unknown): void {
+  const ms  = v === undefined ? null : dureeEnMs(v)
+  const max = cle === 'i18n.timeout' ? MAX_TIMER_MS : MAX_GUARD_DELAY_MS
+  if (ms !== null && Math.round(ms) > max) throw new Error(t(cle === 'i18n.timeout' ? 'bundler.config.i18n-timeout-trop-long' : 'bundler.config.effects-guard-delay-trop-long', { valeur: JSON.stringify(v) }))
 }
 
 /** Journal d'erreurs 3 étages — cf. le JSDoc de `MjsConfig.journal` pour la sémantique. */
@@ -1059,6 +1287,10 @@ export interface JournalConfig {
   viewer?: boolean | string
   maxEntries?: number
   maxBytes?: number
+  /** durée de vie d'une entrée, en jours depuis sa dernière occurrence (défaut 30) */
+  maxDays?: number
+  /** proxy inverse de confiance, mêmes valeurs que `trustProxy` de MJS-WS : l'adresse du visiteur (seau de POST /__mjs/errors) lue dans X-Forwarded-For / X-Real-IP */
+  trustProxy?: false | 'loopback' | string[]
 }
 
 /**
@@ -1248,14 +1480,16 @@ export interface RenderConfig {
 const KNOWN_KEYS = new Set([
   'sourceDir', 'outputDir', 'manifestPath', 'manifestExternal', 'urlPrefix',
   'defaultScriptLang', 'languages', 'minify', 'dev',
-  'stylesheetsDir', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'runtime', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
-  'varPrefix', 'defaultTheme', 'image', 'csp', 'sourceMap', 'prune',
+  'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'runtime', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
+  'varPrefix', 'defaultTheme', 'image', 'csp', 'sourceMap', 'prune', 'effects', 'bundles',
 ])
 const KNOWN_IMAGE_KEYS = new Set(['widths', 'formats', 'quality'])
+// la plus grande largeur d'image acceptée dans `image.widths`, en pixels
+const IMAGE_WIDTH_MAX = 10000
 const VALID_IMAGE_FORMATS = new Set(['avif', 'webp', 'jpeg', 'png'])
 // un préfixe de variable finit en `--<prefix>-nom` : pas d'espace, pas de tiret aux bouts
 const VAR_PREFIX_RE = /^[a-z][a-z0-9-]*$/
-const KNOWN_DEV_KEYS = new Set(['port', 'host'])
+const KNOWN_DEV_KEYS = new Set(['port', 'host', 'allowedHosts'])
 const VALID_LANGS = new Set(['civet', 'coffee', 'ts', 'js'])
 const VALID_SIGILS = new Set(['µ', 'mjs'])
 const VALID_CSS_MODES = new Set(['bundle', 'split', 'lazy'])
@@ -1275,21 +1509,23 @@ const KNOWN_RENDER_QUEUE_KEYS = new Set(['concurrency', 'maxQueue'])
 const KNOWN_ROUTE_KEYS = new Set(['component', 'mode', 'settleMs', 'engine', 'startup', 'light'])
 const KNOWN_PRELOAD_KEYS = new Set(['view', 'page'])
 const VALID_PRELOAD_MODES = new Set(['off', 'hover', 'on'])
-const KNOWN_LINT_KEYS = new Set(['maxStateVars', 'a11y', 'ujsForm'])
+// dérivé de LINT_TYPES (src/diagnostics.ts) — source UNIQUE de la liste des types de lint,
+// jamais un second tableau maintenu ici à la main
+const KNOWN_LINT_KEYS = new Set<string>(LINT_TYPES)
+const VALID_MESSAGES_MODES = new Set(['demand', 'idle'])
 const VALID_LOG_LEVELS = new Set<LogLevelName>(['log', 'warn', 'error', 'silent'])
 const KNOWN_LOG_LEVEL_KEYS = new Set(['dev', 'prod'])
 const KNOWN_LANGUAGES_KEYS = new Set(['script', 'template'])
 const VALID_TEMPLATE_LANGS = new Set(['civet', 'js'])
-const KNOWN_I18N_KEYS = new Set(['default', 'placeholder', 'hash', 'persist', 'detect', 'urlParam', 'source'])
-const VALID_I18N_PLACEHOLDERS = new Set(['auto', 'key', 'wait'])
-const KNOWN_JOURNAL_KEYS = new Set(['server', 'client', 'viewer', 'maxEntries', 'maxBytes'])
+const KNOWN_I18N_KEYS = new Set(['default', 'placeholder', 'hash', 'persist', 'detect', 'urlParam', 'source', 'timeout'])
+const KNOWN_JOURNAL_KEYS = new Set(['server', 'client', 'viewer', 'maxEntries', 'maxBytes', 'maxDays', 'trustProxy'])
 const KNOWN_WS_KEYS = new Set(['entry', 'transport', 'port', 'host', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'])
 // section `serveur` (mjs serveur, cli/server.ts) — MÊMES clés que KNOWN_WS_KEYS (mjsServer()
 // accepte exactement les mêmes options que mjsWs()) + `antiCheat` (entièrement propre
 // à MJS-Server, cf. `ServeurConfig`). `persist` volontairement ABSENT (adaptateurs à fonctions,
 // non JSON-ables — reste ENTRY-ONLY, cf. le JSDoc de `ServeurConfig`).
 const KNOWN_SERVEUR_KEYS = new Set([...KNOWN_WS_KEYS, 'antiCheat'])
-const KNOWN_SERVEUR_ANTITRICHE_KEYS = new Set(['movesPerIdentity', 'codePerIp'])
+const KNOWN_SERVEUR_ANTITRICHE_KEYS = new Set(['movesPerIdentity', 'codePerIp', 'privateGamesPerCreator'])
 const VALID_WS_TRANSPORTS = new Set(['ws', 'uws'])
 const VALID_WS_CODECS = new Set(['auto', 'binary', 'json'])
 // session exclusive par identité (sessionExclusive — 2 modes) — les 2 formes CHAÎNE
@@ -1308,7 +1544,7 @@ const VALID_WS_BAN_BY = new Set(['account', 'ip', 'both'])
 const NULLABLE_WS_LIMITS_KEYS = new Set(['maxConnections', 'maxConnectionsPerIp', 'maxRoomsPerClient', 'maxPresencePerClient', 'maxQueued'])
 const KNOWN_WS_TOKEN_KEYS = new Set(['sweep', 'slack'])
 const KNOWN_WS_BRIDGE_KEYS = new Set(['port', 'host', 'secret', 'webhooks', 'rateLimit', 'nonce'])
-const KNOWN_WS_BRIDGE_WEBHOOKS_KEYS = new Set(['url', 'secret', 'events', 'timeoutMs'])
+const KNOWN_WS_BRIDGE_WEBHOOKS_KEYS = new Set(['url', 'secret', 'events', 'timeoutMs', 'forwardHeaders'])
 const KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS = new Set(['perIp', 'fails'])
 const KNOWN_WS_RESUME_KEYS = new Set(['grace', 'maxBuffered', 'maxBytes'])
 const KNOWN_WS_ADAPTER_KEYS = new Set(['redis', 'prefix', 'antiEntropy'])
@@ -1335,10 +1571,91 @@ export function normalizeUrlPrefix(prefix: string): string {
 }
 
 /**
+ * Valide `assetDirs` : une liste de chemins de dossiers qui existent, relatifs au dossier qui porte mjs.config.json
+ * (`path` est le chemin du fichier lui-même). L'erreur nomme la clé, la place du chemin fautif dans la liste et sa valeur.
+ */
+function validateAssetDirs(dirs: unknown, path: string): void {
+  if (!Array.isArray(dirs)) {
+    throw new Error(t('bundler.config.asset-dirs-doit-etre-liste', { valeur: JSON.stringify(dirs), type: typeof dirs }))
+  }
+  const racine = dirname(path)
+  dirs.forEach((dossier, index) => {
+    if (typeof dossier !== 'string' || dossier.trim() === '') {
+      throw new Error(t('bundler.config.asset-dirs-element-invalide', { index, valeur: JSON.stringify(dossier), type: typeof dossier }))
+    }
+    const chemin = resolve(racine, dossier)
+    if (!existsSync(chemin)) throw new Error(t('bundler.config.asset-dirs-dossier-absent', { index, dossier, chemin }))
+    if (!statSync(chemin).isDirectory()) throw new Error(t('bundler.config.asset-dirs-pas-un-dossier', { index, dossier, chemin }))
+  })
+}
+
+// les extensions des fichiers source d'une application (composants, modules) : jamais celle du manifeste
+// produit, qui est du JavaScript
+const SOURCE_EXTENSIONS = ['.mjs', '.civet', '.coffee']
+
+// disque insensible à la casse (macOS, Windows) : `App/Modularjs` y désigne le dossier `app/modularjs`
+function formeSurDisque(chemin: string): string {
+  return process.platform === 'darwin' || process.platform === 'win32' ? chemin.toLowerCase() : chemin
+}
+
+/**
+ * `chemin` est-il `dossier` lui-même ou un chemin dedans, sur le disque : chemins réels (liens symboliques suivis, chemin
+ * pas encore créé compris, cf. cheminReel) et, sur macOS et Windows, sans la casse.
+ */
+export function cheminDansDossier(chemin: string, dossier: string): boolean {
+  const c = formeSurDisque(cheminReel(chemin))
+  const d = formeSurDisque(cheminReel(dossier))
+  return c === d || c.startsWith(d.endsWith(sep) ? d : d + sep)
+}
+
+/**
+ * `manifestPath` est ÉCRIT à chaque construction : s'il désigne un fichier source de l'application, ce
+ * fichier est remplacé par le manifeste produit, sans retour. Confusion courante avec `manifestExternal`
+ * (le manifeste que l'on écrit soi-même, `app/modularjs/manifest.civet`) : la construction lisait ce
+ * fichier comme manifeste externe, puis l'écrasait. Refusés : une extension de fichier source, le fichier
+ * de `manifestExternal`, et un chemin dans le dossier des sources quand les fichiers produits vont ailleurs
+ * (`outputDir` hors de `sourceDir` — un projet qui construit sous son dossier des sources, `sourceDir: "."`
+ * par exemple, y garde son manifeste). Dans ce dernier cas, le manifeste côtoie les fichiers de l'auteur : le
+ * constructeur ne remplace un fichier existant que s'il porte la marque des fichiers qu'il produit, contrôle fait
+ * au build, avant toute écriture (cf. Bundler.refusSortiesAuteur) — jamais ici, qui ne regarde que les chemins.
+ * Chemins ABSOLUS et définitifs (mjs.config.json à la lecture, drapeaux `--manifest`/`--output` dans cli.ts),
+ * comparés sur le disque (cf. cheminDansDossier) : un lien symbolique vers le dossier des sources, ou une autre
+ * casse sur macOS et Windows, mènent aux mêmes fichiers.
+ */
+export function refusManifestPath(o: { manifestPath: string, sourceDir: string, outputDir: string, manifestExternal?: string }): { raison: 'extension', extension: string } | { raison: 'externe' } | { raison: 'sources' } | null {
+  const extension = SOURCE_EXTENSIONS.find(ext => o.manifestPath.toLowerCase().endsWith(ext))
+  if (extension !== undefined) return { raison: 'extension', extension }
+  if (o.manifestExternal !== undefined && formeSurDisque(cheminReel(o.manifestExternal)) === formeSurDisque(cheminReel(o.manifestPath))) return { raison: 'externe' }
+  if (cheminDansDossier(o.manifestPath, o.sourceDir) && !cheminDansDossier(o.outputDir, o.sourceDir)) return { raison: 'sources' }
+  return null
+}
+
+function validateManifestPath(config: any, path: string): void {
+  const racine    = dirname(path)
+  const sourceDir = config.sourceDir ?? 'app/modularjs'
+  const outputDir = config.outputDir ?? 'public/modularjs'
+  const refus     = refusManifestPath({
+    manifestPath:     resolve(racine, config.manifestPath),
+    sourceDir:        resolve(racine, sourceDir),
+    outputDir:        resolve(racine, outputDir),
+    manifestExternal: typeof config.manifestExternal === 'string' ? resolve(racine, config.manifestExternal) : undefined,
+  })
+  if (refus?.raison === 'extension') {
+    throw new Error(t('bundler.config.manifestpath-extension-source', { valeur: config.manifestPath, extension: refus.extension }))
+  }
+  if (refus?.raison === 'externe') {
+    throw new Error(t('bundler.config.manifestpath-egal-externe', { valeur: config.manifestPath }))
+  }
+  if (refus?.raison === 'sources') {
+    throw new Error(t('bundler.config.manifestpath-dans-sources', { valeur: config.manifestPath, sourceDir, outputDir }))
+  }
+}
+
+/**
  * Valide la shape du config et lève si une clé inconnue / invalide est trouvée.
  */
 function validateConfig(config: any, path: string): void {
-  if (typeof config !== 'object' || config === null) {
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
     throw new Error(t('bundler.config.doit-etre-objet-racine', { chemin: path }))
   }
   // `env` a existé un jour comme clé de config : un projet qui la porte encore doit
@@ -1368,7 +1685,11 @@ function validateConfig(config: any, path: string): void {
   // `varPrefix` et `defaultTheme` finissent tous deux en sélecteur ou en nom de custom
   // property : un espace ou une majuscule y produirait un CSS silencieusement mort
   for (const k of ['varPrefix', 'defaultTheme'] as const) {
-    if (config[k] !== undefined && !VAR_PREFIX_RE.test(String(config[k]))) {
+    // une chaîne, pas seulement sa forme écrite : `["dark"]` s'écrit `dark` mais n'est égal à aucun nom de thème
+    if (config[k] !== undefined && typeof config[k] !== 'string') {
+      throw new Error(t('bundler.config.doit-etre-chaine', { cle: k, valeur: JSON.stringify(config[k]), type: typeof config[k] }))
+    }
+    if (config[k] !== undefined && !VAR_PREFIX_RE.test(config[k])) {
       throw new Error(t('bundler.config.valeur-invalide-simple', { cle: k, valeur: String(config[k]), valides: 'minuscules, chiffres et tirets (ex. mjs, app, light)' }))
     }
   }
@@ -1381,6 +1702,9 @@ function validateConfig(config: any, path: string): void {
       throw new Error(t('bundler.config.doit-etre-chaine', { cle: k, valeur: JSON.stringify(config[k]), type: typeof config[k] }))
     }
   }
+  if (config.manifestPath !== undefined) validateManifestPath(config, path)
+  // assetDirs : une liste de dossiers d'images qui existent, en plus de sourceDir
+  if (config.assetDirs !== undefined) validateAssetDirs(config.assetDirs, path)
   // `urlPrefix` n'était vérifié que pour son TYPE
   // (chaîne) ci-dessus, jamais pour sa FORME : un slash final (`'/app/'`) survivait tel quel
   // jusqu'au Bundler, qui compose CHAQUE URL d'asset en `${urlPrefix}/${fichier}` → `'/app//x'`,
@@ -1404,6 +1728,7 @@ function validateConfig(config: any, path: string): void {
   if (config.prune !== undefined && typeof config.prune !== 'boolean') {
     throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'prune', valeur: JSON.stringify(config.prune), type: typeof config.prune }))
   }
+  if (config.bundles !== undefined) validateBundlesConfig(config.bundles)
   if (config.sourceMap !== undefined && (typeof config.sourceMap !== 'string' || !VALID_SOURCE_MAP_MODES.has(config.sourceMap))) {
     throw new Error(t('bundler.config.source-map-mode-invalide', { valeur: JSON.stringify(config.sourceMap), valides: Array.from(VALID_SOURCE_MAP_MODES).join(', ') }))
   }
@@ -1473,9 +1798,25 @@ function validateConfig(config: any, path: string): void {
     if (config.dev.host !== undefined && typeof config.dev.host !== 'string') {
       throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'dev.host', valeur: JSON.stringify(config.dev.host), type: typeof config.dev.host }))
     }
+    // un hôte vide fait écouter le serveur de développement sur toutes les adresses de la machine (`::`), pas en local
+    if (typeof config.dev.host === 'string' && config.dev.host.trim() === '') {
+      throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: 'dev.host', valeur: JSON.stringify(config.dev.host), type: 'string' }))
+    }
+    // noms acceptés en plus des siens par le serveur de développement : `true`, ou des noms d'hôte nus
+    // (ni `http://`, ni port, ni chemin), `.domaine` pour un domaine et ses sous-domaines, IPv6 admise
+    const hotes = config.dev.allowedHosts
+    if (hotes !== undefined && hotes !== true) {
+      if (!Array.isArray(hotes)) throw new Error(t('bundler.config.dev-allowed-hosts-invalide', { valeur: JSON.stringify(hotes) }))
+      for (const nom of hotes) {
+        const n = typeof nom === 'string' ? nom.trim() : ''
+        if (!/^\.?[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/i.test(n) && !/^\[?[0-9a-f.]*:[0-9a-f.]*:[0-9a-f:.]*\]?$/i.test(n)) {
+          throw new Error(t('bundler.config.dev-allowed-hosts-invalide', { valeur: JSON.stringify(nom) }))
+        }
+      }
+    }
   }
   if (config.render !== undefined) {
-    validateRenderConfig(config.render, path)
+    validateRenderConfig(config.render, path, config.lint)
     // `js: 'bundle'` fusionne DÉJÀ tout le projet dans un fichier unique : un fichier de page en
     // plus n'aurait rien à assembler et dupliquerait des composants déjà livrés. Les deux clés sont
     // légitimes séparément, jamais ensemble — refusé ici (seul point où les deux sont en portée)
@@ -1521,8 +1862,44 @@ function validateConfig(config: any, path: string): void {
   if (config.logLevel !== undefined) {
     validateLogLevelConfig(config.logLevel, path)
   }
+  if (config.messages !== undefined && !VALID_MESSAGES_MODES.has(config.messages)) {
+    throw new Error(t('bundler.config.messages-invalide', { valeur: typeof config.messages === 'string' ? config.messages : JSON.stringify(config.messages), valides: Array.from(VALID_MESSAGES_MODES).join(', ') }))
+  }
+  if (config.types !== undefined && config.types !== 'warn' && config.types !== 'error') {
+    throw new Error(t('bundler.config.types-invalide', { valeur: JSON.stringify(config.types) }))
+  }
+  if (config.effects !== undefined) {
+    const e = config.effects
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new Error(t('bundler.config.effects-objet', { valeur: JSON.stringify(e) }))
+    for (const [k, v] of Object.entries(e)) {
+      // `constructor`, `toString`, `__proto__` : des noms que tout objet hérite, jamais un réglage
+      const permis = Object.prototype.hasOwnProperty.call(EFFECTS_VALUES, k) ? EFFECTS_VALUES[k] : undefined
+      if (!permis) throw new Error(t('bundler.config.effects-cle', { cle: k, valides: Object.keys(EFFECTS_VALUES).join(', ') }))
+      if (k === 'skeleton') {
+        if (!Array.isArray(v)) throw new Error(t('bundler.config.effects-liste', { cle: k, valeur: JSON.stringify(v), valides: permis.map(x => '"' + x + '"').join(', ') }))
+        if (v.includes('i18n')) throw new Error(t('bundler.config.effects-skeleton-i18n'))
+        for (const x of v) if (!permis.includes(x)) throw new Error(t('bundler.config.effects-element', { cle: k, valeur: String(x), valides: permis.map(y => '"' + y + '"').join(', ') }))
+        continue
+      }
+      // rate : des messages par seconde, un entier de 1 à 1000
+      if (k === 'rate') {
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 1000) throw new Error(t('bundler.config.effects-rate', { valeur: JSON.stringify(v) }))
+        continue
+      }
+      // guard : un booléen, ou { delay } — une durée (800, "800ms", "1.5s")
+      if (k === 'guard') {
+        if (typeof v === 'boolean') continue
+        if (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).some(x => x !== 'delay')) throw new Error(t('bundler.config.effects-guard', { valeur: JSON.stringify(v) }))
+        const d = (v as { delay?: unknown }).delay
+        if (d !== undefined && dureeEnMs(d) === null) throw new Error(t('bundler.config.effects-guard-delay', { valeur: JSON.stringify(d) }))
+        verifierPlafondDuree('effects.guard.delay', d)
+        continue
+      }
+      if (!permis.includes(v as string)) throw new Error(t('bundler.config.effects-valeur', { cle: k, valeur: JSON.stringify(v), valides: permis.map(x => '"' + x + '"').join(', ') }))
+    }
+  }
   if (config.runtime !== undefined) {
-    validateRuntimeConfig(config.runtime, path)
+    validateRuntimeConfig(config.runtime, path, config.lint)
   }
   if (config.image !== undefined) {
     validateImageConfig(config.image, path)
@@ -1534,7 +1911,7 @@ function validateConfig(config: any, path: string): void {
     validateWsConfig(config.ws, path)
   }
   if (config.serveur !== undefined) {
-    validateServeurConfig(config.serveur, path)
+    validateWsConfig(config.serveur, path, 'serveur')
   }
   if (config.languages !== undefined) {
     validateLanguagesConfig(config.languages, path)
@@ -1571,7 +1948,7 @@ function validateConfig(config: any, path: string): void {
  * Refuse aussi un nom de module CŒUR (toujours inclus) pour éviter la fausse
  * impression de pouvoir le retirer.
  */
-function validateRuntimeConfig(runtime: any, path: string): void {
+function validateRuntimeConfig(runtime: any, path: string, lint?: LintToggles): void {
   if (typeof runtime === 'string') {
     if (runtime !== 'all' && runtime !== 'core') {
       throw new Error(t('bundler.config.runtime-invalide-chaine', { valeur: runtime, modules: OPTIONAL_RUNTIME_MODULES.join(', ') }))
@@ -1590,7 +1967,13 @@ function validateRuntimeConfig(runtime: any, path: string): void {
   // explicitement en `js: 'bundle'` — accepté juste en dessous, avec les DETECTED_CORE_MODULES.
   const CORE = new Set(['init', 'runes', 'element'])
   const { modules: expanded, warnings } = expandRuntimePresets(runtime as string[])
-  for (const w of warnings) console.warn(w)
+  // thread PRINCIPAL uniquement (la validation de config tourne AVANT tout Bundler/worker) :
+  // couleur calculée directement ici, jamais transmise par des options
+  const colorsEnabled = resolveColorsEnabled()
+  for (const w of warnings) {
+    const line = typedLine('runtimeModule', w, lint)
+    if (line !== null) printDiagnostic(line, colorsEnabled)
+  }
   for (const m of expanded) {
     // 'title'/'vt_presets' : ni CŒUR strict ni optionnel classique, cf.
     // DETECTED_CORE_MODULES — acceptés ICI avant les deux autres checks, une faute de frappe
@@ -1600,7 +1983,8 @@ function validateRuntimeConfig(runtime: any, path: string): void {
       throw new Error(t('bundler.config.runtime-module-core', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', ') }))
     }
     if (!(OPTIONAL_RUNTIME_MODULES as readonly string[]).includes(m)) {
-      throw new Error(t('bundler.config.runtime-module-inconnu', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', '), presets: Object.keys(RUNTIME_PRESETS).join(', ') }))
+      const nouveau = Object.hasOwn(REPLACED_FX_MODULES, m) ? t('bundler.config.runtime-module-remplace', { module: m, nouveau: REPLACED_FX_MODULES[m] }) : ''
+      throw new Error(t('bundler.config.runtime-module-inconnu', { module: m, modules: OPTIONAL_RUNTIME_MODULES.join(', '), presets: Object.keys(RUNTIME_PRESETS).join(', ') }) + nouveau)
     }
   }
 }
@@ -1649,6 +2033,37 @@ function validateCssConfig(css: any, _path: string): void {
   }
 }
 
+// nom d'un groupe : il entre dans le nom du fichier émis (`mjs_group-<nom>-<empreinte>.js`)
+const BUNDLE_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
+
+const KNOWN_BUNDLE_KEYS = new Set(['roots', 'except'])
+
+function validateBundlesConfig(bundles: any): void {
+  if (typeof bundles !== 'object' || bundles === null || Array.isArray(bundles)) throw new Error(t('bundler.config.bundles-objet', { valeur: JSON.stringify(bundles) }))
+  for (const [nom, groupe] of Object.entries(bundles)) {
+    if (!BUNDLE_NAME_RE.test(nom)) throw new Error(t('bundler.config.bundles-nom', { nom }))
+    let liste: any = groupe
+    if (typeof groupe === 'object' && groupe !== null && !Array.isArray(groupe)) {
+      for (const k of Object.keys(groupe)) {
+        if (!KNOWN_BUNDLE_KEYS.has(k)) throw new Error(t('bundler.config.bundles-cle-inconnue', { nom, cle: k, valides: Array.from(KNOWN_BUNDLE_KEYS).join(', ') }))
+      }
+      liste = (groupe as any).roots
+      const except = (groupe as any).except
+      if (except !== undefined) {
+        if (!Array.isArray(except)) throw new Error(t('bundler.config.bundles-except', { nom, valeur: JSON.stringify(except) }))
+        for (const exclu of except) {
+          if (typeof exclu !== 'string' || exclu.trim() === '') throw new Error(t('bundler.config.bundles-except', { nom, valeur: JSON.stringify(exclu) }))
+        }
+      }
+    }
+    if (!Array.isArray(liste)) throw new Error(t('bundler.config.bundles-liste', { nom, valeur: JSON.stringify(groupe) }))
+    if (liste.length === 0) throw new Error(t('bundler.config.bundles-vide', { nom }))
+    for (const racine of liste) {
+      if (typeof racine !== 'string' || racine.trim() === '') throw new Error(t('bundler.config.bundles-element', { nom, valeur: JSON.stringify(racine) }))
+    }
+  }
+}
+
 function validateJsConfig(js: any, _path: string): void {
   if (typeof js !== 'string' || !VALID_JS_MODES.has(js)) {
     throw new Error(t('bundler.config.js-mode-invalide', { valeur: js, valides: Array.from(VALID_JS_MODES).join(', ') }))
@@ -1673,6 +2088,15 @@ function validateImageConfig(image: any, path: string): void {
     if (!Array.isArray(image.widths) || image.widths.length === 0 || image.widths.some((w: any) => typeof w !== 'number' || !Number.isInteger(w) || w < 1)) {
       throw new Error(t('bundler.config.image-widths-invalide', { valeur: JSON.stringify(image.widths) }))
     }
+    // une largeur en double produirait deux fois la même variante ; au-delà de IMAGE_WIDTH_MAX, ce n'est plus une largeur d'écran
+    const doublon = image.widths.find((w: number, i: number) => image.widths.indexOf(w) !== i)
+    if (doublon !== undefined) {
+      throw new Error(t('bundler.config.image-widths-doublon', { valeur: JSON.stringify(image.widths), largeur: doublon }))
+    }
+    const demesuree = image.widths.find((w: number) => w > IMAGE_WIDTH_MAX)
+    if (demesuree !== undefined) {
+      throw new Error(t('bundler.config.image-widths-trop-grande', { valeur: JSON.stringify(image.widths), largeur: demesuree, max: IMAGE_WIDTH_MAX }))
+    }
   }
   if (image.formats !== undefined) {
     if (!Array.isArray(image.formats) || image.formats.length === 0 || image.formats.some((f: any) => !VALID_IMAGE_FORMATS.has(f))) {
@@ -1687,9 +2111,10 @@ function validateImageConfig(image: any, path: string): void {
 }
 
 /**
- * Valide le bloc `lint` (seuils des avertissements de compilation). Strict
- * comme le reste du config : clé inconnue = échec immédiat, `maxStateVars`
- * = entier ≥ 0 (`0` désactive l'avertissement), `a11y` = booléen strict.
+ * Valide le bloc `lint` (un type par avertissement de build, cf. src/diagnostics.ts). Strict
+ * comme le reste du config : clé inconnue = échec immédiat, `maxStateVars` = entier ≥ 0 (`0`
+ * désactive l'avertissement), tout autre type = booléen strict (`false` le coupe, tout le
+ * reste reste actif par défaut).
  */
 function validateLintConfig(lint: any, path: string): void {
   if (typeof lint !== 'object' || lint === null || Array.isArray(lint)) {
@@ -1705,14 +2130,14 @@ function validateLintConfig(lint: any, path: string): void {
       throw new Error(t('bundler.config.lint-max-state-vars-invalide', { valeur: JSON.stringify(lint.maxStateVars), type: typeof lint.maxStateVars }))
     }
   }
-  if (lint.a11y !== undefined) {
-    if (typeof lint.a11y !== 'boolean') {
-      throw new Error(t('bundler.config.lint-a11y-invalide', { valeur: JSON.stringify(lint.a11y), type: typeof lint.a11y }))
-    }
+  // seule clé qui accepte aussi "error" : l'avertissement devient une erreur de build
+  if (lint.emptyComponent !== undefined && typeof lint.emptyComponent !== 'boolean' && lint.emptyComponent !== 'error') {
+    throw new Error(t('bundler.config.lint-empty-component-invalide', { valeur: JSON.stringify(lint.emptyComponent) }))
   }
-  if (lint.ujsForm !== undefined) {
-    if (typeof lint.ujsForm !== 'boolean') {
-      throw new Error(t('bundler.config.lint-ujs-form-invalide', { valeur: JSON.stringify(lint.ujsForm), type: typeof lint.ujsForm }))
+  for (const type of LINT_TYPES) {
+    if (type === 'maxStateVars' || type === 'emptyComponent') continue  // validés ci-dessus
+    if (lint[type] !== undefined && typeof lint[type] !== 'boolean') {
+      throw new Error(t('bundler.config.lint-type-invalide', { cle: type, valeur: JSON.stringify(lint[type]), type: typeof lint[type] }))
     }
   }
 }
@@ -1744,91 +2169,94 @@ function validateLogLevelConfig(value: any, path: string): void {
   }
 }
 
+// validateWsConfig() et ses sous-blocs : le bloc `ws` et le bloc `serveur` (`p`, préfixe des clés dans les messages) ont la même
+// forme, `antiCheat` en plus pour `serveur` (cf. validateServeurAntiCheatConfig) — une seule famille de fonctions
 /**
  * Valide le bloc `ws` (démarrage de `mjs ws`, cf. cli/ws.ts). MÊME patron
  * strict que `validateRuntimeConfig`/`validateLintConfig` ci-dessus : clé
  * inconnue ou type faux = échec immédiat, avec suggestion orthographique sur
  * les fautes de frappe (`suggestKey`, cf. plus haut).
  */
-function validateWsConfig(ws: any, path: string): void {
+function validateWsConfig(ws: any, path: string, p: 'ws' | 'serveur' = 'ws'): void {
+  const connues = p === 'ws' ? KNOWN_WS_KEYS : KNOWN_SERVEUR_KEYS
   if (typeof ws !== 'object' || ws === null || Array.isArray(ws)) {
-    throw new Error(t('bundler.config.ws-doit-etre-objet', { chemin: path }))
+    throw new Error(t(p === 'ws' ? 'bundler.config.ws-doit-etre-objet' : 'bundler.config.serveur-doit-etre-objet', { chemin: path }))
   }
   for (const k of Object.keys(ws)) {
-    if (!KNOWN_WS_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_KEYS)
+    if (!connues.has(k)) {
+      const suggestion = suggestKey(k, connues)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.${k}`, hint, valides: Array.from(KNOWN_WS_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.${k}`, hint, valides: Array.from(connues).join(', ') }))
     }
   }
   if (ws.entry !== undefined && typeof ws.entry !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'ws.entry', valeur: JSON.stringify(ws.entry), type: typeof ws.entry }))
+    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.entry`, valeur: JSON.stringify(ws.entry), type: typeof ws.entry }))
   }
   if (ws.transport !== undefined) {
     if (typeof ws.transport !== 'string' || !VALID_WS_TRANSPORTS.has(ws.transport)) {
       const suggestion = typeof ws.transport === 'string' ? suggestKey(ws.transport, VALID_WS_TRANSPORTS) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.transport-invalide', { cle: 'ws.transport', valeur: JSON.stringify(ws.transport), hint, valides: Array.from(VALID_WS_TRANSPORTS).join(', ') }))
+      throw new Error(t('bundler.config.transport-invalide', { cle: `${p}.transport`, valeur: JSON.stringify(ws.transport), hint, valides: Array.from(VALID_WS_TRANSPORTS).join(', ') }))
     }
   }
   if (ws.host !== undefined && typeof ws.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'ws.host', valeur: JSON.stringify(ws.host), type: typeof ws.host }))
+    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.host`, valeur: JSON.stringify(ws.host), type: typeof ws.host }))
   }
   if (ws.codec !== undefined) {
     if (typeof ws.codec !== 'string' || !VALID_WS_CODECS.has(ws.codec)) {
       const suggestion = typeof ws.codec === 'string' ? suggestKey(ws.codec, VALID_WS_CODECS) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.codec-invalide', { cle: 'ws.codec', valeur: JSON.stringify(ws.codec), hint, valides: Array.from(VALID_WS_CODECS).join(', ') }))
+      throw new Error(t('bundler.config.codec-invalide', { cle: `${p}.codec`, valeur: JSON.stringify(ws.codec), hint, valides: Array.from(VALID_WS_CODECS).join(', ') }))
     }
   }
   if (ws.port !== undefined) {
     if (typeof ws.port !== 'number' || !Number.isInteger(ws.port) || ws.port < 1 || ws.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: 'ws.port', valeur: JSON.stringify(ws.port) }))
+      throw new Error(t('bundler.config.port-hors-plage', { cle: `${p}.port`, valeur: JSON.stringify(ws.port) }))
     }
   }
   if (ws.heartbeat !== undefined) {
     if (typeof ws.heartbeat !== 'number' || !Number.isInteger(ws.heartbeat) || ws.heartbeat <= 0) {
-      throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: 'ws.heartbeat', valeur: JSON.stringify(ws.heartbeat), type: typeof ws.heartbeat }))
+      throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: `${p}.heartbeat`, valeur: JSON.stringify(ws.heartbeat), type: typeof ws.heartbeat }))
     }
   }
   if (ws.limits !== undefined) {
     if (typeof ws.limits !== 'object' || ws.limits === null || Array.isArray(ws.limits)) {
-      throw new Error(t('bundler.config.limits-doit-etre-objet', { cle: 'ws.limits', chemin: path }))
+      throw new Error(t('bundler.config.limits-doit-etre-objet', { cle: `${p}.limits`, chemin: path }))
     }
     for (const k of Object.keys(ws.limits)) {
       if (!KNOWN_WS_LIMITS_KEYS.has(k)) {
         const suggestion = suggestKey(k, KNOWN_WS_LIMITS_KEYS)
         const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.limits.${k}`, hint, valides: Array.from(KNOWN_WS_LIMITS_KEYS).join(', ') }))
+        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.limits.${k}`, hint, valides: Array.from(KNOWN_WS_LIMITS_KEYS).join(', ') }))
       }
     }
     for (const k of KNOWN_WS_LIMITS_KEYS) {
       const v = (ws.limits as any)[k]
-      if (k === 'rateBy') { validateRateBy(v, 'ws.limits.rateBy'); continue }
+      if (k === 'rateBy') { validateRateBy(v, `${p}.limits.rateBy`); continue }
       // plafonds de connexions/salons — `null` EXPLICITE = illimité, valide
       // SEULEMENT pour les clés de NULLABLE_WS_LIMITS_KEYS ; toutes les autres n'acceptent
       // jamais null (même règle qu'avant).
       if (v === null && NULLABLE_WS_LIMITS_KEYS.has(k)) continue
       if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
         const suffix = NULLABLE_WS_LIMITS_KEYS.has(k) ? t('bundler.config.limite-nullable-suffixe') : ''
-        throw new Error(t('bundler.config.limits-cle-invalide', { cle: `ws.limits.${k}`, suffixe: suffix, valeur: JSON.stringify(v), type: typeof v }))
+        throw new Error(t('bundler.config.limits-cle-invalide', { cle: `${p}.limits.${k}`, suffixe: suffix, valeur: JSON.stringify(v), type: typeof v }))
       }
     }
   }
   if (ws.token !== undefined) {
-    validateWsTokenConfig(ws.token, path)
+    validateWsTokenConfig(ws.token, path, p)
   }
   if (ws.resume !== undefined) {
-    validateWsResumeConfig(ws.resume, path)
+    validateWsResumeConfig(ws.resume, path, p)
   }
   if (ws.bridge !== undefined) {
-    validateWsBridgeConfig(ws.bridge, path)
+    validateWsBridgeConfig(ws.bridge, path, p)
   }
   if (ws.adapter !== undefined) {
-    validateWsAdapterConfig(ws.adapter, path)
+    validateWsAdapterConfig(ws.adapter, path, p)
   }
   if (ws.stats !== undefined && typeof ws.stats !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'ws.stats', valeur: JSON.stringify(ws.stats), type: typeof ws.stats }))
+    throw new Error(t('bundler.config.doit-etre-booleen', { cle: `${p}.stats`, valeur: JSON.stringify(ws.stats), type: typeof ws.stats }))
   }
   // session exclusive par identité (sessionExclusive — 2 modes) — élargi (MÊME patron
   // strict que ws.codec plus haut) : booléen `true`/`false` OU une des 2 chaînes de
@@ -1839,7 +2267,7 @@ function validateWsConfig(ws: any, path: string): void {
     if (typeof se !== 'boolean' && !(typeof se === 'string' && VALID_SESSION_EXCLUSIVE.has(se))) {
       const suggestion = typeof se === 'string' ? suggestKey(se, VALID_SESSION_EXCLUSIVE) : null
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.session-exclusive-invalide', { cle: 'ws.sessionExclusive', valeur: JSON.stringify(se), hint, valides: Array.from(VALID_SESSION_EXCLUSIVE).join(', ') }))
+      throw new Error(t('bundler.config.session-exclusive-invalide', { cle: `${p}.sessionExclusive`, valeur: JSON.stringify(se), hint, valides: Array.from(VALID_SESSION_EXCLUSIVE).join(', ') }))
     }
   }
   // vérification d'origine (verifyOrigin) — SEULE la forme allowlist existe en JSON (cf.
@@ -1848,10 +2276,13 @@ function validateWsConfig(ws: any, path: string): void {
   if (ws.verifyOrigin !== undefined) {
     const vo = ws.verifyOrigin
     if (!Array.isArray(vo) || vo.length === 0 || vo.some((o: unknown) => typeof o !== 'string' || o.length === 0)) {
-      throw new Error(t('bundler.config.verify-origin-invalide', { cle: 'ws.verifyOrigin', valeur: JSON.stringify(vo) }))
+      throw new Error(t('bundler.config.verify-origin-invalide', { cle: `${p}.verifyOrigin`, valeur: JSON.stringify(vo) }))
     }
   }
-  if (ws.ban !== undefined) validateBanConfig(ws.ban, 'ws.ban')
+  if (p === 'serveur' && ws.antiCheat !== undefined) {
+    validateServeurAntiCheatConfig(ws.antiCheat, path)
+  }
+  if (ws.ban !== undefined) validateBanConfig(ws.ban, `${p}.ban`)
 }
 
 // débit partagé — `ws.limits.rateBy` / `serveur.limits.rateBy` : une des 4 chaînes, sinon échec
@@ -1899,28 +2330,28 @@ function validateBanConfig(ban: any, cle: string): void {
  * exacte de l'URL (schéma, host, port, base) n'est vérifiée qu'au runtime par adapter-redis.ts
  * (parseRedisUrl), au moment où mjsWs() construit réellement l'adaptateur.
  */
-function validateWsAdapterConfig(adapter: any, path: string): void {
+function validateWsAdapterConfig(adapter: any, path: string, p: 'ws' | 'serveur'): void {
   if (typeof adapter !== 'object' || adapter === null || Array.isArray(adapter)) {
-    throw new Error(t('bundler.config.adapter-doit-etre-objet', { cle: 'ws.adapter', chemin: path }))
+    throw new Error(t('bundler.config.adapter-doit-etre-objet', { cle: `${p}.adapter`, chemin: path }))
   }
   for (const k of Object.keys(adapter)) {
     if (!KNOWN_WS_ADAPTER_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_ADAPTER_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.adapter.${k}`, hint, valides: Array.from(KNOWN_WS_ADAPTER_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.adapter.${k}`, hint, valides: Array.from(KNOWN_WS_ADAPTER_KEYS).join(', ') }))
     }
   }
   if (typeof adapter.redis !== 'string' || adapter.redis === '') {
-    throw new Error(t('bundler.config.adapter-redis-requis', { cle: 'ws.adapter.redis' }))
+    throw new Error(t('bundler.config.adapter-redis-requis', { cle: `${p}.adapter.redis` }))
   }
   if (adapter.prefix !== undefined && (typeof adapter.prefix !== 'string' || adapter.prefix === '')) {
-    throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: 'ws.adapter.prefix', valeur: JSON.stringify(adapter.prefix), type: typeof adapter.prefix }))
+    throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: `${p}.adapter.prefix`, valeur: JSON.stringify(adapter.prefix), type: typeof adapter.prefix }))
   }
   // anti-entropie de présence (cf. src/mjs-ws/adapter.ts attachPresenceAntiEntropy) — MÊME
   // patron que ws.heartbeat (entier > 0) mais avec `false` en soupape de désactivation
   if (adapter.antiEntropy !== undefined && adapter.antiEntropy !== false) {
     if (typeof adapter.antiEntropy !== 'number' || !Number.isInteger(adapter.antiEntropy) || adapter.antiEntropy <= 0) {
-      throw new Error(t('bundler.config.entier-ou-false-invalide', { cle: 'ws.adapter.antiEntropy', valeur: JSON.stringify(adapter.antiEntropy), type: typeof adapter.antiEntropy }))
+      throw new Error(t('bundler.config.entier-ou-false-invalide', { cle: `${p}.adapter.antiEntropy`, valeur: JSON.stringify(adapter.antiEntropy), type: typeof adapter.antiEntropy }))
     }
   }
 }
@@ -1933,21 +2364,21 @@ function validateWsAdapterConfig(adapter: any, path: string): void {
  * COMMUTATEUR de fonctionnalité, juste un réglage fin — l'activation réelle du balayage reste
  * data-driven au runtime (cf. le JSDoc de `WsConfig.token`).
  */
-function validateWsTokenConfig(token: any, path: string): void {
+function validateWsTokenConfig(token: any, path: string, p: 'ws' | 'serveur'): void {
   if (typeof token !== 'object' || token === null || Array.isArray(token)) {
-    throw new Error(t('bundler.config.token-doit-etre-objet', { cle: 'ws.token', valeur: JSON.stringify(token), type: typeof token, chemin: path }))
+    throw new Error(t('bundler.config.token-doit-etre-objet', { cle: `${p}.token`, valeur: JSON.stringify(token), type: typeof token, chemin: path }))
   }
   for (const k of Object.keys(token)) {
     if (!KNOWN_WS_TOKEN_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_TOKEN_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.token.${k}`, hint, valides: Array.from(KNOWN_WS_TOKEN_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.token.${k}`, hint, valides: Array.from(KNOWN_WS_TOKEN_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_TOKEN_KEYS) {
     const v = (token as any)[k]
     if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `ws.token.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${p}.token.${k}`, valeur: JSON.stringify(v), type: typeof v }))
     }
   }
 }
@@ -1958,22 +2389,22 @@ function validateWsTokenConfig(token: any, path: string): void {
  * orthographique, type faux = échec immédiat. `true` = défauts, `false` ≡ absent (accepté
  * pour couper explicitement), objet = réglages fins — entiers > 0 seulement.
  */
-function validateWsResumeConfig(resume: any, path: string): void {
+function validateWsResumeConfig(resume: any, path: string, p: 'ws' | 'serveur'): void {
   if (typeof resume === 'boolean') return
   if (typeof resume !== 'object' || resume === null || Array.isArray(resume)) {
-    throw new Error(t('bundler.config.resume-doit-etre-objet', { cle: 'ws.resume', valeur: JSON.stringify(resume), type: typeof resume, chemin: path }))
+    throw new Error(t('bundler.config.resume-doit-etre-objet', { cle: `${p}.resume`, valeur: JSON.stringify(resume), type: typeof resume, chemin: path }))
   }
   for (const k of Object.keys(resume)) {
     if (!KNOWN_WS_RESUME_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_RESUME_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.resume.${k}`, hint, valides: Array.from(KNOWN_WS_RESUME_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.resume.${k}`, hint, valides: Array.from(KNOWN_WS_RESUME_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_RESUME_KEYS) {
     const v = (resume as any)[k]
     if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `ws.resume.${k}`, valeur: JSON.stringify(v), type: typeof v }))
+      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `${p}.resume.${k}`, valeur: JSON.stringify(v), type: typeof v }))
     }
   }
 }
@@ -1985,61 +2416,61 @@ function validateWsResumeConfig(resume: any, path: string): void {
  * (validation de FORME) — cf. le JSDoc de `WsConfig.bridge` : l'obligation réelle est
  * tranchée par bridge.ts, au moment où mjsWs() est réellement appelé.
  */
-function validateWsBridgeConfig(bridge: any, path: string): void {
+function validateWsBridgeConfig(bridge: any, path: string, p: 'ws' | 'serveur'): void {
   if (typeof bridge !== 'object' || bridge === null || Array.isArray(bridge)) {
-    throw new Error(t('bundler.config.bridge-doit-etre-objet', { cle: 'ws.bridge', chemin: path }))
+    throw new Error(t('bundler.config.bridge-doit-etre-objet', { cle: `${p}.bridge`, chemin: path }))
   }
   for (const k of Object.keys(bridge)) {
     if (!KNOWN_WS_BRIDGE_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.bridge.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_KEYS).join(', ') }))
     }
   }
   if (bridge.port !== undefined) {
     if (typeof bridge.port !== 'number' || !Number.isInteger(bridge.port) || bridge.port < 1 || bridge.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: 'ws.bridge.port', valeur: JSON.stringify(bridge.port) }))
+      throw new Error(t('bundler.config.port-hors-plage', { cle: `${p}.bridge.port`, valeur: JSON.stringify(bridge.port) }))
     }
   }
   if (bridge.host !== undefined && typeof bridge.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'ws.bridge.host', valeur: JSON.stringify(bridge.host), type: typeof bridge.host }))
+    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.host`, valeur: JSON.stringify(bridge.host), type: typeof bridge.host }))
   }
   if (bridge.secret !== undefined && typeof bridge.secret !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'ws.bridge.secret', valeur: JSON.stringify(bridge.secret), type: typeof bridge.secret }))
+    throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.secret`, valeur: JSON.stringify(bridge.secret), type: typeof bridge.secret }))
   }
   if (bridge.webhooks !== undefined) {
     const wh = bridge.webhooks
     if (typeof wh !== 'object' || wh === null || Array.isArray(wh)) {
-      throw new Error(t('bundler.config.webhooks-doit-etre-objet', { cle: 'ws.bridge.webhooks', chemin: path }))
+      throw new Error(t('bundler.config.webhooks-doit-etre-objet', { cle: `${p}.bridge.webhooks`, chemin: path }))
     }
     for (const k of Object.keys(wh)) {
       if (!KNOWN_WS_BRIDGE_WEBHOOKS_KEYS.has(k)) {
         const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_WEBHOOKS_KEYS)
         const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.bridge.webhooks.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_WEBHOOKS_KEYS).join(', ') }))
+        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.webhooks.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_WEBHOOKS_KEYS).join(', ') }))
       }
     }
     if (typeof wh.url !== 'string' || wh.url === '') {
-      throw new Error(t('bundler.config.webhooks-url-requis', { cle: 'ws.bridge.webhooks.url' }))
+      throw new Error(t('bundler.config.webhooks-url-requis', { cle: `${p}.bridge.webhooks.url` }))
     }
     if (wh.secret !== undefined && typeof wh.secret !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'ws.bridge.webhooks.secret', valeur: JSON.stringify(wh.secret), type: typeof wh.secret }))
+      throw new Error(t('bundler.config.doit-etre-chaine', { cle: `${p}.bridge.webhooks.secret`, valeur: JSON.stringify(wh.secret), type: typeof wh.secret }))
     }
     if (!Array.isArray(wh.events) || wh.events.length === 0 || !wh.events.every((e: unknown) => typeof e === 'string' && e.length > 0)) {
-      throw new Error(t('bundler.config.webhooks-events-invalide', { cle: 'ws.bridge.webhooks.events' }))
+      throw new Error(t('bundler.config.webhooks-events-invalide', { cle: `${p}.bridge.webhooks.events` }))
     }
     if (wh.timeoutMs !== undefined) {
       if (typeof wh.timeoutMs !== 'number' || !Number.isInteger(wh.timeoutMs) || wh.timeoutMs <= 0) {
-        throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: 'ws.bridge.webhooks.timeoutMs', valeur: JSON.stringify(wh.timeoutMs), type: typeof wh.timeoutMs }))
+        throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: `${p}.bridge.webhooks.timeoutMs`, valeur: JSON.stringify(wh.timeoutMs), type: typeof wh.timeoutMs }))
       }
     }
   }
   if (bridge.rateLimit !== undefined) {
-    validateWsBridgeRateLimitConfig(bridge.rateLimit, path)
+    validateWsBridgeRateLimitConfig(bridge.rateLimit, path, p)
   }
   // nonce anti-rejeu — simple booléen, MÊME patron que guardProcess/stats (racine)
   if (bridge.nonce !== undefined && typeof bridge.nonce !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: 'ws.bridge.nonce', valeur: JSON.stringify(bridge.nonce), type: typeof bridge.nonce }))
+    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `${p}.bridge.nonce`, valeur: JSON.stringify(bridge.nonce), type: typeof bridge.nonce }))
   }
 }
 
@@ -2049,16 +2480,16 @@ function validateWsBridgeConfig(bridge: any, path: string): void {
  * sinon un objet `{ perIp?, fails? }` — clé inconnue = échec immédiat avec suggestion
  * orthographique, chaque seau présent doit être un tuple `[capacité, fenêtreMs]` de 2 entiers > 0.
  */
-function validateWsBridgeRateLimitConfig(rateLimit: any, path: string): void {
+function validateWsBridgeRateLimitConfig(rateLimit: any, path: string, p: 'ws' | 'serveur'): void {
   if (rateLimit === false) return
   if (typeof rateLimit !== 'object' || rateLimit === null || Array.isArray(rateLimit)) {
-    throw new Error(t('bundler.config.ratelimit-doit-etre-objet', { cle: 'ws.bridge.rateLimit', valeur: JSON.stringify(rateLimit), type: typeof rateLimit, chemin: path }))
+    throw new Error(t('bundler.config.ratelimit-doit-etre-objet', { cle: `${p}.bridge.rateLimit`, valeur: JSON.stringify(rateLimit), type: typeof rateLimit, chemin: path }))
   }
   for (const k of Object.keys(rateLimit)) {
     if (!KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS.has(k)) {
       const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS)
       const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `ws.bridge.rateLimit.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS).join(', ') }))
+      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `${p}.bridge.rateLimit.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS).join(', ') }))
     }
   }
   for (const k of KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS) {
@@ -2066,7 +2497,7 @@ function validateWsBridgeRateLimitConfig(rateLimit: any, path: string): void {
     if (v === undefined) continue
     const valid = Array.isArray(v) && v.length === 2 && v.every((n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0)
     if (!valid) {
-      throw new Error(t('bundler.config.ratelimit-tuple-invalide', { cle: `ws.bridge.rateLimit.${k}`, valeur: JSON.stringify(v) }))
+      throw new Error(t('bundler.config.ratelimit-tuple-invalide', { cle: `${p}.bridge.rateLimit.${k}`, valeur: JSON.stringify(v) }))
     }
   }
 }
@@ -2079,111 +2510,9 @@ function validateWsBridgeRateLimitConfig(rateLimit: any, path: string): void {
 // KNOWN_WS_BRIDGE_KEYS, KNOWN_WS_BRIDGE_WEBHOOKS_KEYS, KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS,
 // KNOWN_WS_RESUME_KEYS, KNOWN_WS_ADAPTER_KEYS, VALID_WS_TRANSPORTS, VALID_WS_CODECS,
 // VALID_SESSION_EXCLUSIVE, NULLABLE_WS_LIMITS_KEYS) sont RÉUTILISÉES telles quelles (pure
-// donnée, aucun texte 'ws.' dedans) — seuls les MESSAGES d'erreur sont dupliqués avec le bon
-// préfixe, jamais la logique de validation elle-même.
+// donnée, aucun texte 'ws.' dedans) — et la validation elle-même est celle de `ws` (validateWsConfig,
+// appelée avec le préfixe `serveur`) ; seul `antiCheat` est propre à cette section.
 // ──────────────────────────────────────────────────────────────────────────
-
-/**
- * Valide le bloc `serveur` (démarrage de `mjs serveur`, cf. cli/server.ts). MÊME patron strict
- * que `validateWsConfig` : clé inconnue ou type faux = échec immédiat, avec suggestion
- * orthographique sur les fautes de frappe.
- */
-function validateServeurConfig(serveur: any, path: string): void {
-  if (typeof serveur !== 'object' || serveur === null || Array.isArray(serveur)) {
-    throw new Error(t('bundler.config.serveur-doit-etre-objet', { chemin: path }))
-  }
-  for (const k of Object.keys(serveur)) {
-    if (!KNOWN_SERVEUR_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_SERVEUR_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.${k}`, hint, valides: Array.from(KNOWN_SERVEUR_KEYS).join(', ') }))
-    }
-  }
-  if (serveur.entry !== undefined && typeof serveur.entry !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'serveur.entry', valeur: JSON.stringify(serveur.entry), type: typeof serveur.entry }))
-  }
-  if (serveur.transport !== undefined) {
-    if (typeof serveur.transport !== 'string' || !VALID_WS_TRANSPORTS.has(serveur.transport)) {
-      const suggestion = typeof serveur.transport === 'string' ? suggestKey(serveur.transport, VALID_WS_TRANSPORTS) : null
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.transport-invalide', { cle: 'serveur.transport', valeur: JSON.stringify(serveur.transport), hint, valides: Array.from(VALID_WS_TRANSPORTS).join(', ') }))
-    }
-  }
-  if (serveur.host !== undefined && typeof serveur.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'serveur.host', valeur: JSON.stringify(serveur.host), type: typeof serveur.host }))
-  }
-  if (serveur.codec !== undefined) {
-    if (typeof serveur.codec !== 'string' || !VALID_WS_CODECS.has(serveur.codec)) {
-      const suggestion = typeof serveur.codec === 'string' ? suggestKey(serveur.codec, VALID_WS_CODECS) : null
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.codec-invalide', { cle: 'serveur.codec', valeur: JSON.stringify(serveur.codec), hint, valides: Array.from(VALID_WS_CODECS).join(', ') }))
-    }
-  }
-  if (serveur.port !== undefined) {
-    if (typeof serveur.port !== 'number' || !Number.isInteger(serveur.port) || serveur.port < 1 || serveur.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: 'serveur.port', valeur: JSON.stringify(serveur.port) }))
-    }
-  }
-  if (serveur.heartbeat !== undefined) {
-    if (typeof serveur.heartbeat !== 'number' || !Number.isInteger(serveur.heartbeat) || serveur.heartbeat <= 0) {
-      throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: 'serveur.heartbeat', valeur: JSON.stringify(serveur.heartbeat), type: typeof serveur.heartbeat }))
-    }
-  }
-  if (serveur.limits !== undefined) {
-    if (typeof serveur.limits !== 'object' || serveur.limits === null || Array.isArray(serveur.limits)) {
-      throw new Error(t('bundler.config.limits-doit-etre-objet', { cle: 'serveur.limits', chemin: path }))
-    }
-    for (const k of Object.keys(serveur.limits)) {
-      if (!KNOWN_WS_LIMITS_KEYS.has(k)) {
-        const suggestion = suggestKey(k, KNOWN_WS_LIMITS_KEYS)
-        const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.limits.${k}`, hint, valides: Array.from(KNOWN_WS_LIMITS_KEYS).join(', ') }))
-      }
-    }
-    for (const k of KNOWN_WS_LIMITS_KEYS) {
-      const v = (serveur.limits as any)[k]
-      if (k === 'rateBy') { validateRateBy(v, 'serveur.limits.rateBy'); continue }
-      if (v === null && NULLABLE_WS_LIMITS_KEYS.has(k)) continue
-      if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-        const suffix = NULLABLE_WS_LIMITS_KEYS.has(k) ? t('bundler.config.limite-nullable-suffixe') : ''
-        throw new Error(t('bundler.config.limits-cle-invalide', { cle: `serveur.limits.${k}`, suffixe: suffix, valeur: JSON.stringify(v), type: typeof v }))
-      }
-    }
-  }
-  if (serveur.token !== undefined) {
-    validateServeurTokenConfig(serveur.token, path)
-  }
-  if (serveur.resume !== undefined) {
-    validateServeurResumeConfig(serveur.resume, path)
-  }
-  if (serveur.bridge !== undefined) {
-    validateServeurBridgeConfig(serveur.bridge, path)
-  }
-  if (serveur.adapter !== undefined) {
-    validateServeurAdapterConfig(serveur.adapter, path)
-  }
-  if (serveur.stats !== undefined && typeof serveur.stats !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'serveur.stats', valeur: JSON.stringify(serveur.stats), type: typeof serveur.stats }))
-  }
-  if (serveur.sessionExclusive !== undefined) {
-    const se = serveur.sessionExclusive
-    if (typeof se !== 'boolean' && !(typeof se === 'string' && VALID_SESSION_EXCLUSIVE.has(se))) {
-      const suggestion = typeof se === 'string' ? suggestKey(se, VALID_SESSION_EXCLUSIVE) : null
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.session-exclusive-invalide', { cle: 'serveur.sessionExclusive', valeur: JSON.stringify(se), hint, valides: Array.from(VALID_SESSION_EXCLUSIVE).join(', ') }))
-    }
-  }
-  if (serveur.verifyOrigin !== undefined) {
-    const vo = serveur.verifyOrigin
-    if (!Array.isArray(vo) || vo.length === 0 || vo.some((o: unknown) => typeof o !== 'string' || o.length === 0)) {
-      throw new Error(t('bundler.config.verify-origin-invalide', { cle: 'serveur.verifyOrigin', valeur: JSON.stringify(vo) }))
-    }
-  }
-  if (serveur.antiCheat !== undefined) {
-    validateServeurAntiCheatConfig(serveur.antiCheat, path)
-  }
-  if (serveur.ban !== undefined) validateBanConfig(serveur.ban, 'serveur.ban')
-}
 
 /**
  * Valide `serveur.antiCheat` (mjs-server/index.ts `MjsServerAntiTricheOptions`) —
@@ -2219,162 +2548,10 @@ function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
       throw new Error(t('bundler.config.code-per-ip-invalide', { valeur: JSON.stringify(cpi) }))
     }
   }
-}
-
-/**
- * Valide `serveur.adapter` — MÊME logique que `validateWsAdapterConfig`, messages `serveur.`.
- */
-function validateServeurAdapterConfig(adapter: any, path: string): void {
-  if (typeof adapter !== 'object' || adapter === null || Array.isArray(adapter)) {
-    throw new Error(t('bundler.config.adapter-doit-etre-objet', { cle: 'serveur.adapter', chemin: path }))
-  }
-  for (const k of Object.keys(adapter)) {
-    if (!KNOWN_WS_ADAPTER_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_ADAPTER_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.adapter.${k}`, hint, valides: Array.from(KNOWN_WS_ADAPTER_KEYS).join(', ') }))
-    }
-  }
-  if (typeof adapter.redis !== 'string' || adapter.redis === '') {
-    throw new Error(t('bundler.config.adapter-redis-requis', { cle: 'serveur.adapter.redis' }))
-  }
-  if (adapter.prefix !== undefined && (typeof adapter.prefix !== 'string' || adapter.prefix === '')) {
-    throw new Error(t('bundler.config.chaine-non-vide-invalide', { cle: 'serveur.adapter.prefix', valeur: JSON.stringify(adapter.prefix), type: typeof adapter.prefix }))
-  }
-  if (adapter.antiEntropy !== undefined && adapter.antiEntropy !== false) {
-    if (typeof adapter.antiEntropy !== 'number' || !Number.isInteger(adapter.antiEntropy) || adapter.antiEntropy <= 0) {
-      throw new Error(t('bundler.config.entier-ou-false-invalide', { cle: 'serveur.adapter.antiEntropy', valeur: JSON.stringify(adapter.antiEntropy), type: typeof adapter.antiEntropy }))
-    }
-  }
-}
-
-/**
- * Valide `serveur.token` — MÊME logique que `validateWsTokenConfig`, messages `serveur.`.
- */
-function validateServeurTokenConfig(token: any, path: string): void {
-  if (typeof token !== 'object' || token === null || Array.isArray(token)) {
-    throw new Error(t('bundler.config.token-doit-etre-objet', { cle: 'serveur.token', valeur: JSON.stringify(token), type: typeof token, chemin: path }))
-  }
-  for (const k of Object.keys(token)) {
-    if (!KNOWN_WS_TOKEN_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_TOKEN_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.token.${k}`, hint, valides: Array.from(KNOWN_WS_TOKEN_KEYS).join(', ') }))
-    }
-  }
-  for (const k of KNOWN_WS_TOKEN_KEYS) {
-    const v = (token as any)[k]
-    if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `serveur.token.${k}`, valeur: JSON.stringify(v), type: typeof v }))
-    }
-  }
-}
-
-/**
- * Valide `serveur.resume` — MÊME logique que `validateWsResumeConfig`, messages `serveur.`.
- */
-function validateServeurResumeConfig(resume: any, path: string): void {
-  if (typeof resume === 'boolean') return
-  if (typeof resume !== 'object' || resume === null || Array.isArray(resume)) {
-    throw new Error(t('bundler.config.resume-doit-etre-objet', { cle: 'serveur.resume', valeur: JSON.stringify(resume), type: typeof resume, chemin: path }))
-  }
-  for (const k of Object.keys(resume)) {
-    if (!KNOWN_WS_RESUME_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_RESUME_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.resume.${k}`, hint, valides: Array.from(KNOWN_WS_RESUME_KEYS).join(', ') }))
-    }
-  }
-  for (const k of KNOWN_WS_RESUME_KEYS) {
-    const v = (resume as any)[k]
-    if (v !== undefined && (typeof v !== 'number' || !Number.isInteger(v) || v <= 0)) {
-      throw new Error(t('bundler.config.entier-positif-invalide', { cle: `serveur.resume.${k}`, valeur: JSON.stringify(v), type: typeof v }))
-    }
-  }
-}
-
-/**
- * Valide `serveur.bridge` — MÊME logique que `validateWsBridgeConfig`, messages `serveur.`.
- */
-function validateServeurBridgeConfig(bridge: any, path: string): void {
-  if (typeof bridge !== 'object' || bridge === null || Array.isArray(bridge)) {
-    throw new Error(t('bundler.config.bridge-doit-etre-objet', { cle: 'serveur.bridge', chemin: path }))
-  }
-  for (const k of Object.keys(bridge)) {
-    if (!KNOWN_WS_BRIDGE_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.bridge.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_KEYS).join(', ') }))
-    }
-  }
-  if (bridge.port !== undefined) {
-    if (typeof bridge.port !== 'number' || !Number.isInteger(bridge.port) || bridge.port < 1 || bridge.port > 65535) {
-      throw new Error(t('bundler.config.port-hors-plage', { cle: 'serveur.bridge.port', valeur: JSON.stringify(bridge.port) }))
-    }
-  }
-  if (bridge.host !== undefined && typeof bridge.host !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'serveur.bridge.host', valeur: JSON.stringify(bridge.host), type: typeof bridge.host }))
-  }
-  if (bridge.secret !== undefined && typeof bridge.secret !== 'string') {
-    throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'serveur.bridge.secret', valeur: JSON.stringify(bridge.secret), type: typeof bridge.secret }))
-  }
-  if (bridge.webhooks !== undefined) {
-    const wh = bridge.webhooks
-    if (typeof wh !== 'object' || wh === null || Array.isArray(wh)) {
-      throw new Error(t('bundler.config.webhooks-doit-etre-objet', { cle: 'serveur.bridge.webhooks', chemin: path }))
-    }
-    for (const k of Object.keys(wh)) {
-      if (!KNOWN_WS_BRIDGE_WEBHOOKS_KEYS.has(k)) {
-        const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_WEBHOOKS_KEYS)
-        const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-        throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.bridge.webhooks.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_WEBHOOKS_KEYS).join(', ') }))
-      }
-    }
-    if (typeof wh.url !== 'string' || wh.url === '') {
-      throw new Error(t('bundler.config.webhooks-url-requis', { cle: 'serveur.bridge.webhooks.url' }))
-    }
-    if (wh.secret !== undefined && typeof wh.secret !== 'string') {
-      throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'serveur.bridge.webhooks.secret', valeur: JSON.stringify(wh.secret), type: typeof wh.secret }))
-    }
-    if (!Array.isArray(wh.events) || wh.events.length === 0 || !wh.events.every((e: unknown) => typeof e === 'string' && e.length > 0)) {
-      throw new Error(t('bundler.config.webhooks-events-invalide', { cle: 'serveur.bridge.webhooks.events' }))
-    }
-    if (wh.timeoutMs !== undefined) {
-      if (typeof wh.timeoutMs !== 'number' || !Number.isInteger(wh.timeoutMs) || wh.timeoutMs <= 0) {
-        throw new Error(t('bundler.config.entier-positif-ms-invalide', { cle: 'serveur.bridge.webhooks.timeoutMs', valeur: JSON.stringify(wh.timeoutMs), type: typeof wh.timeoutMs }))
-      }
-    }
-  }
-  if (bridge.rateLimit !== undefined) {
-    validateServeurBridgeRateLimitConfig(bridge.rateLimit, path)
-  }
-  if (bridge.nonce !== undefined && typeof bridge.nonce !== 'boolean') {
-    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: 'serveur.bridge.nonce', valeur: JSON.stringify(bridge.nonce), type: typeof bridge.nonce }))
-  }
-}
-
-/**
- * Valide `serveur.bridge.rateLimit` — MÊME logique que `validateWsBridgeRateLimitConfig`,
- * messages `serveur.`.
- */
-function validateServeurBridgeRateLimitConfig(rateLimit: any, path: string): void {
-  if (rateLimit === false) return
-  if (typeof rateLimit !== 'object' || rateLimit === null || Array.isArray(rateLimit)) {
-    throw new Error(t('bundler.config.ratelimit-doit-etre-objet', { cle: 'serveur.bridge.rateLimit', valeur: JSON.stringify(rateLimit), type: typeof rateLimit, chemin: path }))
-  }
-  for (const k of Object.keys(rateLimit)) {
-    if (!KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS.has(k)) {
-      const suggestion = suggestKey(k, KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS)
-      const hint = suggestion ? t('bundler.config.suggestion-hint', { suggestion }) : ''
-      throw new Error(t('bundler.config.cle-inconnue-hint', { cle: `serveur.bridge.rateLimit.${k}`, hint, valides: Array.from(KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS).join(', ') }))
-    }
-  }
-  for (const k of KNOWN_WS_BRIDGE_RATE_LIMIT_KEYS) {
-    const v = (rateLimit as any)[k]
-    if (v === undefined) continue
-    const valid = Array.isArray(v) && v.length === 2 && v.every((n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0)
-    if (!valid) {
-      throw new Error(t('bundler.config.ratelimit-tuple-invalide', { cle: `serveur.bridge.rateLimit.${k}`, valeur: JSON.stringify(v) }))
+  if (antiCheat.privateGamesPerCreator !== undefined && antiCheat.privateGamesPerCreator !== null) {
+    const pgc = antiCheat.privateGamesPerCreator
+    if (!Number.isInteger(pgc) || pgc < 1) {
+      throw new Error(t('bundler.config.private-games-per-creator-invalide', { valeur: JSON.stringify(pgc) }))
     }
   }
 }
@@ -2420,9 +2597,7 @@ function validateI18nConfig(i18n: any, path: string): void {
   if (i18n.default !== undefined && (typeof i18n.default !== 'string' || i18n.default.length === 0)) {
     throw new Error(t('bundler.config.i18n-default-invalide', { valeur: JSON.stringify(i18n.default) }))
   }
-  if (i18n.placeholder !== undefined && !VALID_I18N_PLACEHOLDERS.has(i18n.placeholder)) {
-    throw new Error(t('bundler.config.i18n-placeholder-invalide', { valeur: i18n.placeholder, valides: Array.from(VALID_I18N_PLACEHOLDERS).join(', ') }))
-  }
+  if (i18n.placeholder !== undefined) parsePlaceholder(i18n.placeholder, PLACEHOLDER_CONFIG)
   if (i18n.hash !== undefined && typeof i18n.hash !== 'boolean' && i18n.hash !== 'auto') {
     throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.hash', defaut: 'auto', valeur: JSON.stringify(i18n.hash) }))
   }
@@ -2435,6 +2610,10 @@ function validateI18nConfig(i18n: any, path: string): void {
   if (i18n.urlParam !== undefined && typeof i18n.urlParam !== 'boolean') {
     throw new Error(t('bundler.config.booleen-defaut-invalide', { cle: 'i18n.urlParam', defaut: 'false', valeur: JSON.stringify(i18n.urlParam) }))
   }
+  if (i18n.timeout !== undefined && dureeEnMs(i18n.timeout) === null) {
+    throw new Error(t('bundler.config.i18n-timeout-invalide', { valeur: JSON.stringify(i18n.timeout) }))
+  }
+  verifierPlafondDuree('i18n.timeout', i18n.timeout)
   if (i18n.source !== undefined && (typeof i18n.source !== 'string' || i18n.source.length === 0)) {
     throw new Error(t('bundler.config.i18n-source-invalide', { valeur: JSON.stringify(i18n.source) }))
   }
@@ -2469,6 +2648,15 @@ function validateJournalConfig(journal: any, path: string): void {
   }
   if (journal.maxBytes !== undefined && (typeof journal.maxBytes !== 'number' || !Number.isInteger(journal.maxBytes) || journal.maxBytes <= 0)) {
     throw new Error(t('bundler.config.entier-positif-invalide', { cle: 'journal.maxBytes', valeur: JSON.stringify(journal.maxBytes), type: typeof journal.maxBytes }))
+  }
+  if (journal.maxDays !== undefined && (typeof journal.maxDays !== 'number' || !Number.isInteger(journal.maxDays) || journal.maxDays <= 0)) {
+    throw new Error(t('bundler.config.entier-positif-invalide', { cle: 'journal.maxDays', valeur: JSON.stringify(journal.maxDays), type: typeof journal.maxDays }))
+  }
+  // mêmes valeurs et mêmes refus que `trustProxy` de MJS-WS (`true`, plage trop large…), jamais ignorés en silence
+  try {
+    parseTrustProxy(journal.trustProxy)
+  } catch (e: any) {
+    throw new Error(t('bundler.config.journal-trust-proxy-invalide', { chemin: path, erreur: e && e.message ? e.message : String(e) }))
   }
 }
 
@@ -2531,7 +2719,7 @@ function canonicalTrustedHost(h: string): string | null {
  * il reste listé, un AVERTISSEMENT signale juste qu'il n'activera jamais rien à
  * l'exécution (défense en profondeur du forwarding, TOUJOURS active).
  */
-function validateForwardOrigin(fo: any): void {
+function validateForwardOrigin(fo: any, lint?: LintToggles): void {
   if (typeof fo === 'boolean') return
   if (typeof fo === 'string') {
     if (!fo) {
@@ -2576,7 +2764,8 @@ function validateForwardOrigin(fo: any): void {
       // un tableau `warnings` renvoyé à l'appelant comme `expandRuntimePresets`). Sans ce signal, le
       // dev croit avoir autorisé un hôte qui n'activera jamais rien.
       if (isBlockedForwardTarget(canonique)) {
-        console.warn(t('bundler.config.forward-origin-trusted-host-interne', { index: i, valeur: JSON.stringify(h) }))
+        const line = typedLine('config', t('bundler.config.forward-origin-trusted-host-interne', { index: i, valeur: JSON.stringify(h) }), lint)
+        if (line !== null) printDiagnostic(line, resolveColorsEnabled())
       }
     }
     return
@@ -2612,7 +2801,15 @@ function cheminReel(chemin: string): string {
   }
 }
 
-function validateRenderConfig(render: any, path: string): void {
+// une clé de route devient un chemin de fichier sous `render.outDir` au prérendu (`/blog` → `blog.html`,
+// cf. server/prerender.ts urlToFile) : un segment `..`, une barre inverse (séparateur sous Windows) ou
+// un chemin absolu le feraient écrire hors de ce dossier
+function routeHorsDossier(url: string): boolean {
+  const chemin = url.replace(/^\/+/, '')
+  return url.includes('\\') || chemin.split('/').includes('..') || win32.isAbsolute(chemin)
+}
+
+function validateRenderConfig(render: any, path: string, lint?: LintToggles): void {
   if (typeof render !== 'object' || render === null || Array.isArray(render)) {
     throw new Error(t('bundler.config.render-doit-etre-objet', { chemin: path }))
   }
@@ -2663,6 +2860,9 @@ function validateRenderConfig(render: any, path: string): void {
     }
     for (const url of Object.keys(render.routes)) {
       const route = render.routes[url]
+      if (routeHorsDossier(url)) {
+        throw new Error(t('bundler.config.route-hors-dossier', { url }))
+      }
       if (typeof route !== 'object' || route === null || Array.isArray(route)) {
         throw new Error(t('bundler.config.route-doit-etre-objet', { url }))
       }
@@ -2696,7 +2896,8 @@ function validateRenderConfig(render: any, path: string): void {
       // reste valide, même canal direct que l'hôte interne de `forwardOrigin` plus bas) : sans
       // lui, le dev croit avoir demandé un fragment léger là où aucun fragment n'est produit.
       if (route.light === true && normalizeMode(route.mode ?? render.default ?? FALLBACK_MODE) === 'csr') {
-        console.warn(t('bundler.config.route-light-sans-effet-csr', { url }))
+        const line = typedLine('config', t('bundler.config.route-light-sans-effet-csr', { url }), lint)
+        if (line !== null) printDiagnostic(line, resolveColorsEnabled())
       }
     }
     // Nom du fichier de page (cf. startupSlug) : deux routes PRÉRENDUES qui en demandent un et
@@ -2728,6 +2929,10 @@ function validateRenderConfig(render: any, path: string): void {
       if (typeof l !== 'string' || !l) {
         throw new Error(t('bundler.config.locale-item-invalide', { valeur: JSON.stringify(l), type: typeof l }))
       }
+      // une langue devient un sous-dossier de `render.outDir` au prérendu (`<outDir>/<langue>/…`) : même règle qu'une clé de route
+      if (routeHorsDossier(l)) {
+        throw new Error(t('bundler.config.locale-hors-dossier', { valeur: l }))
+      }
     }
   }
   if (render.engine !== undefined) {
@@ -2740,7 +2945,7 @@ function validateRenderConfig(render: any, path: string): void {
     validateRenderQueueConfig(render.renderQueue, path)
   }
   if (render.forwardOrigin !== undefined) {
-    validateForwardOrigin(render.forwardOrigin)
+    validateForwardOrigin(render.forwardOrigin, lint)
   }
   // `allowedOrigins`/`entry` sont dans KNOWN_RENDER_KEYS depuis le début
   // (seule leur PRÉSENCE était vérifiée) mais jamais typés, contrairement à `forwardOrigin`
@@ -2859,7 +3064,8 @@ export function findConfig(startDir: string = process.cwd()): {
       try {
         const raw = readFileSync(candidate, 'utf-8')
         const config = JSON.parse(raw)
-        setMessagesLang((config as { lang?: unknown }).lang)
+        // `null` n'a pas de `lang` : le message « doit être un objet » de validateConfig, pas une erreur de lecture
+        setMessagesLang((config as { lang?: unknown } | null)?.lang)
         validateConfig(config, candidate)
         return { config: config as MjsConfig, configDir: dir }
       } catch (e: any) {
@@ -2889,6 +3095,7 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     manifestPath:     r(config.manifestPath),
     manifestExternal: r(config.manifestExternal),
     stylesheetsDir:   r(config.stylesheetsDir),
+    assetDirs:        config.assetDirs?.map(d => resolve(configDir, d)),
     // cf. le commentaire de MjsConfig.runtimeDir :
     // validé par KNOWN_KEYS mais jamais résolu/retourné ici, donc jamais transmis
     // au Bundler. Option silencieusement inerte.
@@ -2909,9 +3116,17 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     preload:          config.preload,
     viewTransition:   config.viewTransition,
     logLevel:         config.logLevel,
+    messages:         config.messages,
+    types:            config.types,
+    effects:          config.effects,
+    bundles:          config.bundles,
     maxStateVars:     config.lint?.maxStateVars,
     a11y:             config.lint?.a11y,
     ujsForm:          config.lint?.ujsForm,
+    // bloc ENTIER (tous les AUTRES types, cf. src/diagnostics.ts) — a11y/ujsForm/maxStateVars
+    // ci-dessus restent en plus résolus individuellement (comportement inchangé), ce bag ne
+    // sert qu'aux types qui n'ont pas leur propre champ dédié
+    lint:             config.lint,
     // `minify` ne DÉCIDE PAS de l'environnement : `'auto'` (défaut) suit le
     // mode du build, `true`/`false` forcent. L'environnement, lui, vient de la COMMANDE
     // (`mjs build --prod`) et n'est donc PAS résolu ici (cf. `Bundler.isProd`).
@@ -2930,6 +3145,8 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     csp: config.csp,
     sourceMap: config.sourceMap,
     image: config.image,
+    // `"prune": false` : ni purge des orphelins ni retrait des anciennes empreintes (cf. Bundler.prune)
+    prune: config.prune,
     i18n: config.i18n,
     // le Bundler n'en lit QUE les modes, pour embarquer ou non le module d'hydratation
     // (cf. BundlerOpts.render) ; aucun chemin à résoudre ici, le prérendu et le serveur de

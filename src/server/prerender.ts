@@ -11,13 +11,16 @@
 // client — ils sont SIGNALÉS dans le rapport (jamais de silence).
 
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, unlinkSync, rmdirSync, openSync, readSync, closeSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
 import { resolveBundlerOpts, type MjsConfig, type RenderEngine } from '../bundler/config.js'
 import { stripStartupHeader } from '../bundler/startup.js'
+import type { Bundler } from '../bundler/index.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
 import { resolvePage, isBuildPrerenderable } from './render-routes.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
 import { t } from '../messages/index.js'
+import { readHtmlComment } from '../mask.js'
+import { typedLine, paintDiagnostic, resolveColorsEnabled } from '../diagnostics.js'
 
 // Ferme une liste de ressources ASYNCHRONES de façon INDÉPENDANTE et BEST-EFFORT — chacune dans
 // son propre try/catch, jamais un `if (a) await a.close(); if (b) await b.close();` où l'échec du
@@ -43,6 +46,10 @@ export interface PrerenderReport {
   // mode non buildable) : seul le premier doit faire échouer `mjs build` (cf. cli.ts). Absent/false
   // pour les deux skips attendus (comportement historique, jamais de faux positif sur eux).
   skipped: { url: string; reason: string; fatal?: boolean }[]
+  /** Le `Bundler` du DERNIER renderer créé par cette passe : son `compile()` est le dernier à avoir écrit le dossier de
+   *  sortie, son manifeste fait foi pour les chemins hachés (cf. `latestBundler` de bundler/startup.ts). Non énumérable : absent
+   *  de toute sérialisation du rapport. Absent quand rien n'a été rendu. */
+  bundler?: Bundler
 }
 
 /**
@@ -184,9 +191,11 @@ export function collectTags(html: string): string[] {
   while (i < html.length) {
     const lt = html.indexOf('<', i)
     if (lt < 0) break
+    // commentaire lu avec les bornes du navigateur (`<!-->` et `<!--->` vides, `--!>` qui referme) ; jamais refermé, il
+    // couvre la fin de la page
     if (html.startsWith('<!--', lt)) {
-      const fin = html.indexOf('-->', lt + 4)
-      i = fin < 0 ? html.length : fin + 3
+      const commentaire = readHtmlComment(html, lt)
+      i = commentaire === null ? html.length : commentaire.end
       continue
     }
     nomRe.lastIndex = lt
@@ -238,6 +247,9 @@ export async function prerenderPages(
   overrides: PrerenderOverrides = {},
 ): Promise<PrerenderReport> {
   const render = config.render
+  // thread PRINCIPAL uniquement (prerenderPages tourne toujours ici, jamais dans un worker) —
+  // calculé une fois, jamais redéterminé plus bas.
+  const colorsEnabled = resolveColorsEnabled()
   // Garde-fou — `overrides.outputDir` (donc
   // `--output` CLI) prime sur `config.outputDir` : cf. PrerenderOverrides pour
   // le pourquoi. `manifestPath` ci-dessous suit la MÊME priorité, transmis
@@ -337,6 +349,8 @@ export async function prerenderPages(
     await closeQuietly(happyRenderer, browserRenderer)
     throw e
   }
+  const dernier = (browserRenderer ?? happyRenderer)?.bundler
+  if (dernier) Object.defineProperty(report, 'bundler', { value: dernier, enumerable: false, writable: true, configurable: true })
 
   // Prérendu multi-langue OPT-IN : `render.locales` avec ≥ 2 entrées déclenche
   // une passe par langue (store.__mjsLang), écrite dans un sous-dossier
@@ -350,8 +364,18 @@ export async function prerenderPages(
         ? locales.map(lang => ({ lang, file: join(outDir, lang, urlToFile(url)) }))
         : [{ file: join(outDir, urlToFile(url)) }]
       for (const { lang, file } of targets) {
-        attendus.add(file)
         const langTag = lang ? ` [${lang}]` : ''
+        // jamais d'écriture hors de `render.outDir` — clé de route ou langue venue d'un appel direct,
+        // sans la validation de la configuration : ni fragment écrit, ni fichier de même nom supprimé
+        // sur un échec de rendu (cf. plus bas)
+        const versFichier = relative(outDir, file)
+        if (versFichier === '..' || versFichier.startsWith('..' + sep) || isAbsolute(versFichier)) {
+          const reason = t('server.prerender-hors-dossier', { url, file, outDir })
+          report.skipped.push({ url, reason, fatal: true })
+          log(`   ✗ ${url}${langTag} : ${reason}`)
+          continue
+        }
+        attendus.add(file)
         try {
           // `light` : racine montée SANS Shadow DOM (clé de route `light`, cf. bundler/config.ts) —
           // simple transit, le rendu décide seul de ce qu'il en fait.
@@ -363,7 +387,13 @@ export async function prerenderPages(
           // (shadowMode:'closed', rendu non stabilisé, compilation…) étaient
           // ignorés (destructuration `{ html, sharedScript }`) : aucun signal au
           // build. On les remonte via le `log` du rapport (jamais de silence).
-          for (const w of warnings) log(`   ⚠️  ${url}${langTag} : ${w}`)
+          // Étiquetés `[lint.prerender]` ICI (pas dans renderToString.ts/render-browser.ts :
+          // les MÊMES clés servent aussi le rendu par requête hors build, jamais concerné) —
+          // coupables via `lint.prerender: false`, colorés (thread principal, jamais un worker).
+          for (const w of warnings) {
+            const line = typedLine('prerender', w, config.lint)
+            if (line !== null) log(`   ⚠️  ${url}${langTag} : ${paintDiagnostic(line, colorsEnabled)}`)
+          }
           mkdirSync(dirname(file), { recursive: true })
           const banner = `${prerenderBanner(url, lang)}\n`
           const out = banner + (sharedScript ? sharedScript + '\n' : '') + html + '\n'

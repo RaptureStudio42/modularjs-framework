@@ -22,7 +22,7 @@
   } else if (dirRaw === 'left' || dirRaw === 'right' || dirRaw === 'up' || dirRaw === 'down') {
     direction = dirRaw;
   } else {
-    µ.warn("[ModularJS] @transition.bars : direction invalide '"+ dirRaw +"' — repli 'down'.");
+    µ.warn("[ModularJS] *bars : direction invalide '"+ dirRaw +"' — repli 'down'.");
     direction = 'down';
   }
   count = opts.count != null ? Math.max(1, Math.round(opts.count)) : 8;

@@ -9,9 +9,11 @@
 
 import assert from 'node:assert/strict'
 
-;(globalThis as any).µ = (globalThis as any).µ || { _mjs_interpolatorSet: new WeakSet(), Ticker: { add() {} }, warn() {} }
+;(globalThis as any).µ = (globalThis as any).µ || { _mjs_interpolatorSet: new WeakSet(), Ticker: { add() {} }, warn() {}, _mjs_msg: (_cle: string, _vars: any, texte: string) => texte }
 await import('../src/runtime/mjs_interpolate.js')
 const µ = (globalThis as any).µ
+// un µ posé par un fichier de test précédent peut ne pas porter le traducteur de messages
+µ._mjs_msg ||= (_cle: string, _vars: any, texte: string) => texte
 
 describe('µ.interpolate — garde NaN/Infinity', () => {
   it('value = NaN est IGNORÉ (pas de corruption)', () => {

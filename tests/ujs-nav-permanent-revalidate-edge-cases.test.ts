@@ -24,6 +24,7 @@ import { Window } from 'happy-dom'
 import { findConfig } from '../src/bundler/config.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -38,6 +39,7 @@ describe('mjs-permanent — cas limites', function () {
     const doc = win.document
     const warns: string[] = []
     const µ: any = { warn: (m: string) => warns.push(m), version: null }
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractHelpersBlock())(µ, doc, win)
     return { win, doc, µ, warns }
   }
@@ -55,11 +57,11 @@ describe('mjs-permanent — cas limites', function () {
     µ._mjs_navTransplantPermanents(zone, nodes)
     zone.replaceChildren(...nodes)
 
-    assert.equal(doc.getElementById('outer'), outerLive, 'le permanent extérieur est le nœud VIVANT')
-    assert.equal(doc.getElementById('inner'), innerLive, "le permanent intérieur est le nœud VIVANT, pas celui de la page reçue")
+    assert.ok(doc.getElementById('outer') === outerLive, 'le permanent extérieur est le nœud VIVANT')
+    assert.ok(doc.getElementById('inner') === innerLive, "le permanent intérieur est le nœud VIVANT, pas celui de la page reçue")
     assert.equal(innerLive.textContent, 'vivant')
     assert.ok(doc.body.contains(innerLive), "le permanent intérieur n'a PAS quitté le document")
-    assert.equal(innerLive.parentNode, outerLive, 'il est resté dans son ancêtre permanent')
+    assert.ok(innerLive.parentNode === outerLive, 'il est resté dans son ancêtre permanent')
   })
 
   it("permanent imbriqué : aucun avertissement (ce n'est ni une erreur ni un id manquant)", function () {
@@ -110,8 +112,10 @@ describe('µ._mjs_navRevalidate — trous de couverture', function () {
     const win: any = new Window({ url: 'http://x/liste' })
     const doc = win.document
     const µ: any = { warn() {}, version: null, _mjs_navSeq: 1 }
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractHelpersBlock())(µ, doc, win)
     // µ._mjs_navRevalidate a besoin de DOMParser (global navigateur) : ré-extraction ciblée avec injection.
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'DOMParser', extractMarked(UJS_SRC, '_mjs_navRevalidate'))(µ, win, doc, win.DOMParser)
     const deleted: string[] = []
     µ.pageCache = { delete: (p: string) => { deleted.push(p); return true } }
@@ -129,7 +133,7 @@ describe('µ._mjs_navRevalidate — trous de couverture', function () {
 
     µ._mjs_navRevalidate(doc.body, '/liste')
 
-    assert.equal(doc.getElementById('player'), live, 'le nœud VIVANT est toujours celui du document')
+    assert.ok(doc.getElementById('player') === live, 'le nœud VIVANT est toujours celui du document')
     assert.equal(live.textContent, 'vivant', "il n'a pas été recréé depuis la réponse de fond")
     assert.equal(doc.body.querySelector('p').textContent, 'b', 'le reste du contenant a bien été rafraîchi')
   })

@@ -1,6 +1,6 @@
 <script>
-  $label       = 'Copier le code'
-  $copiedLabel = 'Copié !'
+  $label       = null
+  $copiedLabel = null
   $copied      = false
   $offset      = '0px'
   $block       = false
@@ -9,6 +9,11 @@
   watcher      = null
   timer        = null
 
+  # libellés par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
+  tr = (key, lang)-> µ._mjs_label('core', key)
+
+  $copyText   = $label ?? tr('codeCopy', µlang)
+  $copiedText = $copiedLabel ?? tr('codeCopied', µlang)
 
   nodes = -> slotRef?.assignedNodes({ flatten: true }) ?? []
 
@@ -100,7 +105,7 @@
     clearTimeout(timer) if timer
 </script>
 
-<pre class="box" @class{$block}="block" @class{$frameless}="frameless" part="box"><span class="anchor" --mjs-code-offset={$offset}><button type="button" class="copy" part="button" @class{$copied}="ok" aria-label={$copied ? $copiedLabel : $label} title={$label} @click={copy()}>{if $copied}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>{else}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>{end}</button></span><code class="src" part="code"><slot @this=!{slotRef}></slot></code></pre>
+<pre class="box" @class{$block}="block" @class{$frameless}="frameless" part="box"><span class="anchor" --mjs-code-offset={$offset}><button type="button" class="copy" part="button" @class{$copied}="ok" aria-label={$copied ? $copiedText : $copyText} title={$copyText} @click={copy()}>{if $copied}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>{else}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>{end}</button></span><code class="src" part="code"><slot @this=!{slotRef}></slot></code></pre>
 
 <style>
   :host

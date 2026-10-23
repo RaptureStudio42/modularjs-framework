@@ -72,11 +72,11 @@ $isExpanded = true
     assert.deepEqual(errors, [])
     assert.doesNotMatch(code!, /['"]@open['"]/,
       'AVANT le fix : node.setAttribute(\'@open\', …) — le "@" jamais retiré, un attribut BIDON, "open" natif jamais affecté')
-    assert.match(code!, /node\.open\s*!==\s*!!\$\.isExpanded/,
+    assert.match(code!, /_mjs_node\.open\s*!==\s*!!\$\.isExpanded/,
       "AVANT le fix : node.setAttribute('open', …) — écrit la CHAÎNE 'false' quand isExpanded=false, ne RETIRE jamais l'attribut (toujours ouvert)")
     assert.match(code!, /_mjs_bindEvents\(\{"toggle":/,
       "AVANT le fix : écoutait 'input', un événement que <details> ne déclenche JAMAIS — le sens DOM→modèle du two-way ne se déclenchait jamais")
-    assert.match(code!, /µ\._set\(_mjsThis,\s*'isExpanded',\s*el\.open\)/,
+    assert.match(code!, /µ\._set\(_mjsThis,\s*'isExpanded',\s*_mjs_el\.open\)/,
       "la lecture DOM→modèle doit utiliser la PROPRIÉTÉ el.open (booléen propre), pas el.getAttribute('open') (chaîne '' au lieu de true)")
   })
 

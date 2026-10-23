@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -28,6 +29,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 function extractClickBody(src: string): string {
@@ -174,6 +176,7 @@ describe('mjs_ujs — X-MJS-Target/X-MJS-Method en mode HTML : contenu remplacé
     class DP { parseFromString() { return resp.doc } }
     // `_mjs_navDispatch` crée son propre `new DOMParser()` DANS `done` (fermeture liée à SON installation,
     // pas à celle du handler submit) : DP doit être fourni ICI aussi, pas seulement au submitHandler.
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, live.doc, FakeFormData, URL, DP)
     const submitHandler = new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractSubmitBody(UJS_SRC))
     const form: any = { hasAttribute: () => false, getAttribute: (k: string) => (k === 'action' ? '/search' : k === 'method' ? 'GET' : null), target: '', action: 'http://x/search', closest: function (this: any) { return this } }

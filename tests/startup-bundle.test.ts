@@ -27,7 +27,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 
 interface Projet { root: string; srcDir: string; outDir: string }
 
-const PAGE_RE  = /^mjs_page-index-[a-f0-9]{8}\.js$/
+const PAGE_RE  = /^mjs_page-index-[0-9a-z]{5}\.js$/
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // accueil : 3 composants rendus + 1 enfant d'un `{if}` faux + 1 module `@import`-é ;
@@ -274,20 +274,20 @@ describe('démarrage des pages prérendues — fichier de page', function () {
 
     // le cœur est importé par URL, son code n'est pas recopié : témoin propre au cœur (clé de
     // sessionStorage de la garde « bundle périmé » de l'Autoloader), absente de tout composant
-    assert.match(code, /import\s*\{[^}]*\}\s*from\s*"\/out\/mjs_core-[a-f0-9]{8}\.js"/, 'le cœur reste un import externe')
+    assert.match(code, /import\s*\{[^}]*\}\s*from\s*"\/out\/mjs_core-[0-9a-z]{5}\.js"/, 'le cœur reste un import externe')
     assert.ok(coeur.includes('mjs-stale-reload'), 'témoin du cœur présent dans le cœur')
     assert.equal(code.includes('mjs-stale-reload'), false, 'le code du cœur n\'est pas recopié dans le fichier de page')
     assert.ok(code.length < coeur.length / 4, `le fichier de page (${code.length} o) doit rester bien plus petit que le cœur (${coeur.length} o)`)
 
     // le module reste externe (instance unique)
-    assert.match(code, /from\s*"\/out\/shared\.module-[a-f0-9]{8}\.js"/, 'le module reste un import externe')
+    assert.match(code, /from\s*"\/out\/shared\.module-[0-9a-z]{5}\.js"/, 'le module reste un import externe')
 
     // fragment : 1 lien de page + 1 lien par module, et la fiche du fichier de page
     const texte = readFileSync(fragment(report, '/'), 'utf-8')
     const hrefs = liens(texte)
     assert.equal(hrefs.length, 2, `2 liens attendus (page + module), vus : ${hrefs.join(' ')}`)
     assert.equal(hrefs[0], `/out/${basename(pageFile)}`, 'le fichier de page passe en premier')
-    assert.match(hrefs[1], /^\/out\/shared\.module-[a-f0-9]{8}\.js$/, 'le module de la fermeture garde son lien')
+    assert.match(hrefs[1], /^\/out\/shared\.module-[0-9a-z]{5}\.js$/, 'le module de la fermeture garde son lien')
     assert.equal(hrefs.some(h => /\/out\/(card|badge|home|later)-/.test(h)), false, 'aucun lien vers un fichier séparé de la page')
 
     // `file` dans la MÊME forme que les valeurs de µ.paths (préfixe factorisé → basename seul)
@@ -315,12 +315,12 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     }
     assert.equal(window.__prefix, '/out/', 'le préfixe factorisé reste celui du manifeste')
     // le module, lui, garde son propre fichier
-    assert.match(window.__paths['shared.module'], /^shared\.module-[a-f0-9]{8}\.js$/)
+    assert.match(window.__paths['shared.module'], /^shared\.module-[0-9a-z]{5}\.js$/)
     // le bloc de préchargement du manifeste tourne dans ce prologue : il ne doit poser AUCUN lien
     // vers un fichier séparé de la page (la table vient d'être repointée sur le fichier de page)
     const poses = [...window.document.head.querySelectorAll('link[rel="modulepreload"]')].map((l: any) => l.getAttribute('href'))
     assert.ok(poses.length > 0, `le manifeste doit poser des liens (vus : ${poses.join(' ')})`)
-    assert.deepEqual(poses.filter(h => /\/out\/(card|badge|home|later)-[a-f0-9]{8}\.js$/.test(h)), [], `aucun fichier séparé de la page, vus : ${poses.join(' ')}`)
+    assert.deepEqual(poses.filter(h => /\/out\/(card|badge|home|later)-[0-9a-z]{5}\.js$/.test(h)), [], `aucun fichier séparé de la page, vus : ${poses.join(' ')}`)
     assert.ok(poses.includes(`/out/${pageFile}`), `le fichier de page doit être préchargé par le manifeste aussi (vus : ${poses.join(' ')})`)
   })
 
@@ -359,7 +359,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
       assert.deepEqual(erreurs, [], `erreurs de page : ${erreurs.join(' | ')}`)
       assert.deepEqual([...new Set(vus)], ['mjs-badge', 'mjs-card', 'mjs-home'], `balises définies et montées : ${vus.join(', ')}`)
       assert.ok(jsDemandes.includes(`/out/${pageFile}`), `le fichier de page doit être demandé (vues : ${jsDemandes.join(' ')})`)
-      const separes = jsDemandes.filter(u => /\/out\/(card|badge|home|later)-[a-f0-9]{8}\.js$/.test(u))
+      const separes = jsDemandes.filter(u => /\/out\/(card|badge|home|later)-[0-9a-z]{5}\.js$/.test(u))
       assert.deepEqual(separes, [], `aucun fichier séparé de composant ne doit être demandé, vus : ${separes.join(' ')}`)
     }
     finally {
@@ -394,7 +394,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     const { report } = await construire(p)
     const texte = readFileSync(fragment(report, '/solo'), 'utf-8')
     assert.equal(liens(texte).length, 1, 'le seul composant est simplement préchargé')
-    assert.match(liens(texte)[0], /^\/out\/solo-[a-f0-9]{8}\.js$/)
+    assert.match(liens(texte)[0], /^\/out\/solo-[0-9a-z]{5}\.js$/)
     assert.equal(texte.includes('__mjs_page'), false, 'aucune fiche de fichier de page')
     assert.deepEqual(readdirSync(p.outDir).filter(f => /^mjs_page-solo-/.test(f)), [])
   })
@@ -437,14 +437,14 @@ describe('démarrage des pages prérendues — fichier de page', function () {
   it('le fichier de page porte le nom de l\'URL de la route, jamais celui du fragment', async () => {
     const p = fixtureDeuxRoutes('startup-bundle-slug', { '/': { component: 'mjs-home' }, '/a/index': { component: 'mjs-other' } })
     const { report } = await construire(p)
-    const noms = readdirSync(p.outDir).filter(f => /^mjs_page-/.test(f)).map(f => f.replace(/-[a-f0-9]{8}\.js$/, '')).sort()
+    const noms = readdirSync(p.outDir).filter(f => /^mjs_page-/.test(f)).map(f => f.replace(/-[0-9a-z]{5}\.js$/, '')).sort()
     assert.deepEqual(noms, ['mjs_page-a-index', 'mjs_page-index'], `fichiers de page : ${noms.join(' ')}`)
     const accueil = fiche(readFileSync(fragment(report, '/'), 'utf-8'))
     const autre   = fiche(readFileSync(fragment(report, '/a/index'), 'utf-8'))
     assert.deepEqual(accueil.names, ['badge', 'card', 'home'])
     assert.deepEqual(autre.names, ['extra', 'other', 'zebre'])
-    assert.match(accueil.file, /^mjs_page-index-[a-f0-9]{8}\.js$/)
-    assert.match(autre.file, /^mjs_page-a-index-[a-f0-9]{8}\.js$/)
+    assert.match(accueil.file, /^mjs_page-index-[0-9a-z]{5}\.js$/)
+    assert.match(autre.file, /^mjs_page-a-index-[0-9a-z]{5}\.js$/)
   })
 
   it('deux routes qui donnent le même nom de fichier de page : configuration refusée', () => {
@@ -495,5 +495,54 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     assert.deepEqual(fiche(texte).names, ['badge', 'card', 'home'], 'la fiche ne déclare que ce que la page affiche')
     const definis = [...readFileSync(fichierDePage(p), 'utf-8').matchAll(/\._def\("(mjs-[a-z-]+)"/g)].map(m => m[1]).sort()
     assert.deepEqual(definis, ['mjs-badge', 'mjs-card', 'mjs-home'], `assemblés : ${definis.join(', ')}`)
+  })
+})
+
+// fichier de page + carte des sources, et clés sœurs — pourquoi ces essais existent.
+//
+// 1. `sourceMap: 'prod'` (ou 'always') faisait échouer `mjs build --prod` dès qu'un fichier de page
+//    était assemblé : esbuild refuse une carte externe sans fichier de sortie. Le fichier de page suit
+//    la règle des autres sorties : `<nom>-<empreinte>.js` + `.js.map` à côté, commentaire
+//    `sourceMappingURL` en dernière ligne, carte qui désigne les vraies sources `.mjs`.
+// 2. Un composant rangé dans `x-y/x-y-zed.mjs` a deux clés au manifeste (`zed`, `x-y-zed`) pour un seul
+//    fichier. La fiche de la page ne nommait que la clé écrite dans le gabarit : l'autre clé gardait le
+//    fichier séparé, donc une balise écrite autrement plus tard chargeait le même code une seconde fois.
+describe('démarrage des pages prérendues — fichier de page, carte des sources et clés sœurs', function () {
+  this.timeout(180000)
+  after(async () => { await terminateSharedWorkerPool() })
+
+  for (const mode of ['prod', 'always']) {
+    it(`sourceMap: '${mode}' : le fichier de page et sa carte sont écrits, la carte désigne les vraies sources`, async () => {
+      const p = fixture('startup-bundle-carte-' + mode, renderBundle(), { sourceMap: mode })
+      const { startup } = await construire(p)
+      assert.equal(startup.pageFiles.length, 1, 'un fichier de page émis')
+      const page = fichierDePage(p)
+      const code = readFileSync(page, 'utf-8')
+      assert.ok(code.trimEnd().endsWith(`//# sourceMappingURL=${basename(page)}.map`), `renvoi à la carte, fin : ${code.slice(-120)}`)
+      assert.ok(existsSync(`${page}.map`), 'la carte du fichier de page est écrite à côté')
+      const sources = (JSON.parse(readFileSync(`${page}.map`, 'utf-8')).sources as string[]).join(' ')
+      for (const nom of ['home', 'card', 'badge']) assert.ok(sources.includes(`${nom}.mjs`), `la carte désigne ${nom}.mjs, vus : ${sources}`)
+    })
+  }
+
+  it('la purge connaît la carte du fichier de page : par la vraie CLI, elle survit au build suivant', () => {
+    const p = fixture('startup-bundle-carte-purge', renderBundle(), { sourceMap: 'prod' })
+    buildCli(p)
+    const page = fichierDePage(p)
+    assert.ok(existsSync(`${page}.map`), 'carte écrite par le premier build')
+    buildCli(p)
+    assert.ok(existsSync(page) && existsSync(`${page}.map`), 'fichier de page et carte intacts après le second build')
+  })
+
+  it('un composant à deux clés : la fiche nomme les deux, le fichier de page ne l\'assemble qu\'une fois', async () => {
+    const p = fixture('startup-bundle-alias', renderBundle())
+    mkdirSync(join(p.srcDir, 'x-y'), { recursive: true })
+    writeFileSync(join(p.srcDir, 'x-y', 'x-y-zed.mjs'), '<p class="zed">zed</p>\n')
+    writeFileSync(join(p.srcDir, 'home.mjs'), '<h1 class="t">accueil</h1>\n<mjs-card></mjs-card>\n<mjs-x-y-zed></mjs-x-y-zed>\n')
+    const { report } = await construire(p)
+    const texte = readFileSync(fragment(report, '/'), 'utf-8')
+    assert.deepEqual(fiche(texte).names, ['card', 'home', 'x-y-zed', 'zed'], 'les deux clés du même fichier suivent le fichier de page')
+    const definis = [...readFileSync(fichierDePage(p), 'utf-8').matchAll(/\._def\("(mjs-[a-z-]+)"/g)].map(m => m[1]).sort()
+    assert.equal(definis.filter(d => /zed/.test(d)).length, 1, `défini une seule fois, assemblés : ${definis.join(', ')}`)
   })
 })

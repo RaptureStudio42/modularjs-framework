@@ -28,7 +28,7 @@ function fixtureProjet(prefixe: string): string {
   const root = mjsTmp(prefixe)
   mkdirSync(join(root, 'src'), { recursive: true })
   writeFileSync(join(root, 'src', 'app.mjs'), '<p>app</p>\n')
-  writeFileSync(join(root, 'gros.bin'), Buffer.alloc(TAILLE, 7))
+  writeFileSync(join(root, 'gros.mp4'), Buffer.alloc(TAILLE, 7))
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'public/modularjs' }, null, 2))
   return root
 }
@@ -95,7 +95,7 @@ describe("cli.ts — 'mjs dev' sans rendu serveur : arrêt SIGINT et serveur HTT
       const sock      = connect(port, '127.0.0.1')
       const morceaux: Buffer[] = []
       let signale     = false
-      sock.on('connect', () => sock.write(`GET /gros.bin HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`))
+      sock.on('connect', () => sock.write(`GET /gros.mp4 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`))
       sock.on('data', (d: Buffer) => {
         morceaux.push(d)
         if (signale) return

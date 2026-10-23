@@ -1,33 +1,25 @@
-// animations/draw.coffee — port direct de Svelte draw (SVG paths).
+// animations/draw.ts — un tracé SVG se dessine d'un bout à l'autre : son trait devient un tiret aussi long que lui, décalé de sa
+// longueur puis ramené à zéro ; il s'efface de même à la sortie
+// seul un tracé SVG sait donner sa longueur (getTotalLength) : tout autre nœud reçoit un avertissement à chaque jeu et reste tel quel
+// un trait aux bouts ronds ou carrés déborde du tracé de son épaisseur : elle s'ajoute à la longueur
+// options : duration (800 ; ou une fonction de la longueur du tracé), speed (px par ms : la durée vaut alors longueur / speed quand
+// duration n'est pas écrite), delay (0), easing (ease-in-out)
 (function(opts = {}) {
-  var duration, setup, speed;
-  speed = opts.speed;
-  duration = opts.duration;
-  setup = function(node) {
-    var finalDuration, len, ref, ref1, ref2, ref3, style;
-    // sur un non-SVG, `len` restait à 0 : no-op TOTAL et
-    // silencieux, aucune erreur ni avertissement. Le no-op reste inoffensif
-    // (aucun effet visuel de strokeDasharray/strokeDashoffset hors SVG) : on ne
-    // le change pas, on arrête juste de le taire.
-    if (typeof node.getTotalLength !== 'function') {
-      µ.warn('@transition.draw ne s\'applique qu\'à un tracé SVG.');
-    }
-    len = (ref = typeof node.getTotalLength === "function" ? node.getTotalLength() : void 0) != null ? ref : 0;
+  var setup = function(node) {
+    var len = 0;
+    var style, d;
+    if (typeof node.getTotalLength === 'function') len = node.getTotalLength() ?? 0;
+    else µ.warn('[ModularJS] *draw ne s\'applique qu\'à un tracé SVG.');
     style = window.getComputedStyle(node);
-    if (style.strokeLinecap !== 'butt') {
-      len += parseInt(style.strokeWidth, 10) || 0;
-    }
-    finalDuration = duration != null ? typeof duration === 'function' ? duration(len) : duration : speed != null ? len / speed : 800;
+    if (style.strokeLinecap !== 'butt') len += parseInt(style.strokeWidth, 10) || 0;
+    d = opts.duration;
     return {
-      delay: (ref1 = opts.delay) != null ? ref1 : 0,
-      duration: finalDuration,
-      easing: µ.easing.resolve((ref2 = opts.easing) != null ? ref2 : µ.easing.cubicInOut),
-      steps: (ref3 = opts.steps) != null ? ref3 : 60,
+      delay: opts.delay ?? 0,
+      duration: d != null ? typeof d === 'function' ? d(len) : d : opts.speed != null ? len / opts.speed : 800,
+      easing: µ.easing.resolve(opts.easing ?? µ.easing.cubicInOut),
+      steps: opts.steps ?? 60,
       css: function(t, u) {
-        return {
-          strokeDasharray: `${len}`,
-          strokeDashoffset: `${u * len}`
-        };
+        return { strokeDasharray: `${len}`, strokeDashoffset: `${u * len}` };
       }
     };
   };

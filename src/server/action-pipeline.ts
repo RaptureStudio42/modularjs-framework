@@ -45,8 +45,9 @@ export function navExtras(render: RenderConfig | undefined): { target?: string, 
 // `body[champ] = v` : comme la valeur est toujours une chaîne, c'est un no-op PAR SPEC (aucune
 // pollution réelle), mais la valeur soumise est perdue SANS AUCUNE TRACE. `constructor`/`prototype`
 // n'ont pas ce problème de setter (propriétés de données normales) mais écraseraient une clé sans
-// avertir non plus. Refus explicite des 3, même garde que `µ._mjs_guardPath`/`µ._mjs_safeKey`
-// (runtime/mjs_init.ts:559-576).
+// avertir non plus. Refus explicite des 3, comme `µ._mjs_safeKey` (runtime/mjs_init.ts) pour une clé unique
+// venue d'une source non fiable ; les écritures profondes du navigateur (`$o.a[k] = v`, `$$o.a[k] = v`), elles,
+// ne refusent aucun nom.
 function isUnsafeFieldName(champ: string): boolean {
   return champ === '__proto__' || champ === 'constructor' || champ === 'prototype'
 }
@@ -80,7 +81,9 @@ function parseMultipart(buffer: Buffer, boundary: string, pathname: string): Rec
     const nextCrlf = findDelimAfterCrlf(buffer, delimAfterCrlf, pos)
     const next = nextCrlf === -1 ? -1 : nextCrlf + 2   // +2 : repositionne sur le '--' (comme avant), après le CRLF
     const fin = next === -1 ? buffer.length : next
-    const headerEnd = buffer.indexOf('\r\n\r\n', pos)
+    // fin des en-têtes cherchée dans la partie courante seulement (vue sans copie) : chercher
+    // jusqu'au bout du corps à chaque partie rendait l'analyse quadratique
+    const headerEnd = buffer.subarray(0, fin).indexOf('\r\n\r\n', pos)
     if (headerEnd !== -1 && headerEnd < fin) {
       const headers = buffer.toString('utf-8', pos, headerEnd)
       const dispo = headers.match(/Content-Disposition\s*:\s*([^\r\n]+)/i)
@@ -118,6 +121,10 @@ export interface ActionPipelineDeps {
   entry: ServeEntry
   recordServer: RecordServerFn
   manifestPath: string | null
+  // `mjs dev` seulement : sa garde d'origine (createDevOriginCheck, hmr.ts), consultée après le same-origin et `render.allowedOrigins` —
+  // true : admise ; une chaîne : refusée, message du 403 (le nom exact à déclarer quand un tunnel a réécrit Host) ; absent (`mjs serve`),
+  // la garde reste le same-origin et `render.allowedOrigins`
+  devOrigin?: (origin: string, host: string | undefined) => true | string | false
 }
 
 // pipeline partagé entre `mjs serve` (render-server.ts) et `mjs dev` (server/index.ts) :
@@ -129,11 +136,15 @@ export interface ActionPipelineDeps {
 // action en échec ⇒ 500, retour `{errors}` ⇒ 422, retour `{redirect}` ⇒ 303).
 export async function handleMutatingRequest(req: IncomingMessage, res: ServerResponse, pathname: string, reqUrl: string, deps: ActionPipelineDeps): Promise<boolean> {
   if (!req.method || !MUTATING_METHODS.has(req.method)) return false
-  const { config, entry, recordServer, manifestPath } = deps
+  const { config, entry, recordServer, manifestPath, devOrigin } = deps
 
   // a. garde same-origin — décision de sécurité par défaut : Origin ABSENT ne bloque rien
   // (nombreux clients légitimes ne l'envoient pas sur un POST classique) ; PRÉSENT et
   // différent du Host de la requête → 403 (repli sûr contre un formulaire tiers/CSRF).
+  // en `mjs dev`, la garde de développement (devOrigin) admet en plus une origine de la boucle locale (localhost,
+  // ses sous-domaines, 127.0.0.1, [::1], tout port), la même origine que Host écrit dans une autre casse, et un
+  // nom exact de `dev.allowedHosts` (un tunnel qui a réécrit Host en localhost) ; consultée en dernier, après
+  // render.allowedOrigins, elle ne dit rien au terminal pour une origine que la liste admet (cf. devOriginVerdict, hmr.ts).
   // configurable via render.allowedOrigins : `false` coupe le contrôle en entier ;
   // un tableau élargit à ces origines EN PLUS du same-origin (comparaison sur l'origine
   // normalisée protocole://host:port, jamais une sous-chaîne) ; le joker `["*"]` accepte
@@ -157,7 +168,14 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
           allowed = originOrigin !== '' && allowedOrigins.some((o) => { try { return new URL(o).origin === originOrigin } catch { return false } })
         }
       }
-      if (!allowed) { res.statusCode = 403; res.end('Forbidden'); return true }
+      const dev = allowed ? false : devOrigin?.(origin, req.headers.host) ?? false
+      if (dev === true) allowed = true
+      if (!allowed) {
+        res.statusCode = 403
+        if (typeof dev === 'string') res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+        res.end(typeof dev === 'string' ? dev : 'Forbidden')
+        return true
+      }
     }
   }
 

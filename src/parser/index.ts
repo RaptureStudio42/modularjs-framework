@@ -4,8 +4,36 @@
 // Port à l'identique. Output AST identique à V1.
 
 import { t } from '../messages/index.js'
+import { aliasExample } from '../effects/aliases-mjs.js'
+import { unknownEffectError } from '../effects/catalog.js'
+import { settingsComment } from '../effects/settings-comment.js'
 import { RESERVED_SYMBOL_NAMES } from '../generator/reserved-symbols.js'
 import { ouvreUneRegex } from '../sigils.js'
+import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
+
+/** coupure/couleur transmises PAR APPEL — jamais un état partagé entre deux parses
+ *  concurrentes, cf. src/diagnostics.ts. */
+export interface ParseDiag {
+  lint?: LintToggles
+  colorsEnabled?: boolean
+  /** un {await} sans branche d'attente prend le squelette de sa branche {success} (défaut : oui ;
+   *  non si la clé `effects.skeleton` de mjs.config.json ne cite pas `await`) */
+  autoSkeleton?: boolean
+  /** les modèles en fichier de chaque composant (`carte.compacte.mjs` → `{ carte: ['compacte'] }`),
+   *  ceux du projet (`dev`) et ceux de la bibliothèque cœur (`core`) : `<@carte layout="compacte">`
+   *  devient `<mjs-carte--compacte>` */
+  models?: { dev?: Record<string, string[]>, core?: Record<string, string[]> }
+  /** les variables typées (`$age`, `$$volume`) dont un champ lié (`<input value=!{$age}>`) reçoit
+   *  *guard d'office */
+  guarded?: string[]
+  /** le *guard d'office sans spectacle (`silent: true`) : la clé `effects.guard` de mjs.config.json
+   *  vaut false */
+  guardSilent?: boolean
+  /** la ligne du fichier où commence le HTML (1 par défaut) : le HTML d'un composant est rogné en tête, ses lignes
+   *  vides ne comptent plus. Ajoutée à toutes les lignes que le parseur cite (erreurs, avertissements) et pose sur
+   *  ses nœuds (`Node.line`) : ce sont celles du fichier */
+  firstLine?: number
+}
 
 export type NodeType = 'root' | 'tag' | 'text' | 'expr' | 'if' | 'for' | 'await' | 'key' | 'const'
 
@@ -18,15 +46,17 @@ export interface Attr {
   expr?: string
 }
 
-// référence à un composant repérée pendant le parsing (raccourci `@x`,
+// référence à un composant repérée pendant le parsing (raccourci `@x` ou `@@x`,
 // ou balise littérale `mjs-x`/`mjs-core-x` écrite à la main dans le gabarit).
 // Collectée par `resolveTagName` ci-dessous, consommée par la post-passe de
 // validation du bundler (bundler/index.ts, APRÈS le manifeste complet) —
 // jamais résolue ICI, le parseur ne connaît pas les autres fichiers.
-// Notation UNIQUE `<@x>` (résolution projet PUIS cœur, bundler/index.ts) :
-// `raccourci-coeur` disparaît, remplacé par `raccourci-mjs-retire` — l'ancienne
-// forme `<@mjs-x>` est désormais une ERREUR DE MIGRATION (pas une résolution).
-export type TagRefKind = 'raccourci-dev' | 'raccourci-mjs-retire' | 'litteral-dev' | 'litteral-coeur'
+// Deux espaces de noms séparés : `<@x>` désigne un composant du PROJET
+// (`raccourci-dev`), `<@@x>` un module de la bibliothèque CŒUR (`raccourci-coeur`,
+// balise `mjs-core-x`) ; l'ancienne forme `<@mjs-x>` est une ERREUR DE MIGRATION.
+// `balise-nue` : une balise au nom d'élément personnalisé écrite sans `mjs-` ni `@` (`<enfant-simple>`), laissée telle
+// quelle — le bundler avertit si un composant du projet porte ce nom (jamais enregistrée, elle resterait vide)
+export type TagRefKind = 'raccourci-dev' | 'raccourci-coeur' | 'raccourci-mjs-retire' | 'litteral-dev' | 'litteral-coeur' | 'balise-nue'
 
 export interface TagRef {
   name: string
@@ -35,6 +65,21 @@ export interface TagRef {
   // balise précise (posée par parseDom, après resolveTagName ET parseAttrs). Absent si
   // l'attribut est absent, dynamique (`layout={expr}`, non vérifiable au build) ou booléen.
   layoutLiteral?: string
+  // module CŒUR seulement (`raccourci-coeur`, `litteral-coeur`) : ce que CETTE balise écrit. Le bundler
+  // y lit si un attribut est posé quelque part dans l'appli (Bundler.coreAttrWritten). Absent des
+  // références au projet : leurs attributs n'intéressent personne au build.
+  attrs?: TagRefAttrs
+}
+
+// ce que la balise d'un module cœur écrit : les NOMS de ses attributs, tels qu'écrits, quelle que soit la forme de la
+// valeur (`other`, `other="42"`, `other={$x}`, `other=!{$x}`), et la présence d'un étalement `{...p}` — ce qu'il pose
+// ne se sait pas au build
+export interface TagRefAttrs {
+  names: string[]
+  spread: boolean
+  // le TEXTE écrit de chaque attribut, nom en minuscules : la valeur entre guillemets ou nue (`toolbar="bold italic"`), `''` quand l'attribut est écrit sans valeur
+  // (`answer`), `null` quand le build ne peut pas la lire (valeur calculée `{…}`, texte interpolé). Absent d'une référence relevée avant son ajout
+  texts?: Record<string, string | null>
 }
 
 export interface Branch {
@@ -57,7 +102,7 @@ export class Node {
   content: string | null = null
   branches: Branch[] = []
   _is_raw?: boolean
-  line?: number  // ligne d'origine (tag/text/expr) — lue par hoistFillBlocks pour ses messages
+  line?: number  // ligne d'origine dans le fichier (tag/text/expr, cf. ParseDiag.firstLine) — lue par hoistFillBlocks et par le générateur pour leurs messages
 
   constructor(type: NodeType) {
     this.type = type
@@ -82,7 +127,8 @@ const IMPLICIT_CLOSE_TAGS = new Set(['p', 'li', 'dt', 'dd', 'rt', 'rp', 'optgrou
                                       'caption', 'colgroup', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'])
 
 const RESERVED_TEMPLATE_NAMES = [
-  'node', 'el', 'e', 'dirty', 'this', 'arguments',
+  // `el` et `e` : les noms que le gabarit donne à l'élément et à l'évènement d'un gestionnaire
+  'el', 'e', 'dirty', 'this', 'arguments',
   '__nodes', '__idx',
   // identifiants émis par le tplFn d'un {for} : un item/index ainsi nommé
   // collisionnerait avec le code généré (redéclaration / clash de paramètre).
@@ -134,14 +180,17 @@ export class Scanner {
   str: string
   pos: number
   last: RegExpExecArray | null
+  // la ligne du fichier où commence `str` (1 par défaut) : `lineAt` compte à partir d'elle
+  firstLine: number
   // cache paresseux des offsets de saut de ligne, UN par instance : `str`
   // ne change jamais après construction (cf. `lineAt` plus bas, seul lecteur).
   _lineOffsets: number[] | null = null
 
-  constructor(str: string) {
+  constructor(str: string, firstLine = 1) {
     this.str = str
     this.pos = 0
     this.last = null
+    this.firstLine = firstLine
   }
 
   eos(): boolean { return this.pos >= this.str.length }
@@ -221,7 +270,11 @@ function avaleRegex(scanner: Scanner): string {
   return res + (drapeaux ?? '')
 }
 
-export function extractBalanced(scanner: Scanner, closeChar: string): string {
+// `settings` : les réglages d'un effet (`*nom(…)`, `@in=*nom(…)`) — du CSS, des mots, des listes, jamais du JavaScript : une barre
+// oblique n'y ouvre jamais une regex (`hsl(210 50% 20% / .4)`, `calc(100% / 2)`, `url(/a.png)`) ; chaînes et commentaires y sont lus comme ailleurs.
+// `echecs` : positions d'accolades ouvrantes dont la lecture ne se referme jamais (connues de l'appelant) ; la lecture qui en compte une
+// s'arrête et lève aussitôt, elle ne se refermerait pas non plus
+export function extractBalanced(scanner: Scanner, closeChar: string, settings = false, echecs?: Set<number>): string {
   const openChar  = closeChar === '}' ? '{' : '('
   const startPos  = scanner.pos                             // position de l'OUVERTURE (convertie en ligne SEULEMENT si on lève)
   let balance = 1
@@ -232,6 +285,8 @@ export function extractBalanced(scanner: Scanner, closeChar: string): string {
   // rétrospectif `res[-1] !== '\\'`, faux dès qu'un `\\` LITTÉRAL précède la
   // quote : `'c:\\'` était jugé non fermé → tout le HTML suivant avalé).
   let skipNext = false
+  // dans un commentaire `#` (jusqu'à la fin de la ligne) : cf. plus bas
+  let diese = false
 
   while (!scanner.eos()) {
     const ch = scanner.getch()
@@ -248,14 +303,44 @@ export function extractBalanced(scanner: Scanner, closeChar: string): string {
       // dans l'interpolation gérés pareil qu'au premier niveau), `}` la referme.
       if (stringChar === '`' && ch === '$' && scanner.peek(1) === '{') {
         scanner.getch()                                        // consomme le `{`
-        const corps = extractBalanced(scanner, '}')
+        const corps = extractBalanced(scanner, '}', settings, echecs)
         res += '${' + corps + '}'
         continue
+      }
+      // `"…#{…}…"` : l'interpolation est traversée d'un bloc, comme au lexeur (scanDoubleQuoteAt) — ses guillemets et ses accolades sont
+      // les siens (`{"#{"}"}#{$x}"}`). Jamais refermée sur sa ligne, elle reste du texte, lu comme avant
+      if (stringChar === '"' && ch === '#' && scanner.peek(1) === '{') {
+        const avant = scanner.pos
+        scanner.getch()                                        // consomme le `{`
+        try {
+          const corps = extractBalanced(scanner, '}', settings, echecs)
+          if (!corps.includes('\n')) {
+            res += '#{' + corps + '}'
+            continue
+          }
+        }
+        catch {
+          // pas d'interpolation refermée : le `#` est un caractère de la chaîne
+        }
+        scanner.pos = avant
       }
       res += ch
       if (ch === stringChar) { inString = false; stringChar = null }
       continue
     }
+
+    // hors chaîne, un `#` ouvre un commentaire Coffee/Civet jusqu'à la fin de la ligne (sauf `#nom`, champ
+    // privé ou symbole, et `#{`) : ses guillemets n'ouvrent pas de chaîne — une apostrophe (`# c'est tout`)
+    // faisait refuser la construction, « chaîne non fermée » ; ses accolades comptent comme avant. Jamais
+    // dans les réglages d'un effet, où `#fff` est une couleur
+    if (diese) {
+      if (ch === '\n') diese = false
+      if (ch === openChar) balance += 1
+      else if (ch === closeChar) { balance -= 1; if (balance === 0) break }
+      res += ch
+      continue
+    }
+    if (ch === '#' && !settings && !/[a-zA-Z_{]/.test(scanner.peek(1) ?? '')) { diese = true; res += ch; continue }
 
     // hors chaîne : un `/` peut ouvrir un commentaire ou une regex — sans ça, un guillemet dedans
     // (`/['"]/g`, `/* isn't */`) ouvrait une chaîne FANTÔME qui ne se refermait jamais et avalait
@@ -263,11 +348,14 @@ export function extractBalanced(scanner: Scanner, closeChar: string): string {
     if (ch === '/') {
       const suivant = scanner.peek(1)
       if (suivant === '/' || suivant === '*') { res += ch + avaleCommentaire(scanner, suivant === '*', closeChar); continue }
-      if (ouvreUneRegex(res)) { res += ch + avaleRegex(scanner); continue }
+      if (!settings && ouvreUneRegex(res)) { res += ch + avaleRegex(scanner); continue }
     }
 
     if (ch === '"' || ch === "'" || ch === '`') { inString = true; stringChar = ch; res += ch; continue }
-    if (ch === openChar) balance += 1
+    if (ch === openChar) {
+      balance += 1
+      if (echecs !== undefined && echecs.has(scanner.pos - 1)) break
+    }
     else if (ch === closeChar) { balance -= 1; if (balance === 0) break }
     res += ch
   }
@@ -281,6 +369,26 @@ export function extractBalanced(scanner: Scanner, closeChar: string): string {
   if (balance !== 0) throw new Error(t('parser.delimiteur-non-ferme', { ligne: lineAt(scanner, startPos), ouvrant: openChar, fermant: closeChar, extrait: apercuExpr(res) }))
 
   return res
+}
+
+// les réglages d'un effet (`*nom(…)`, `@in=*nom(…)`), l'ouvrante déjà lue : lus d'abord sans regex (une barre oblique n'en ouvre jamais) ; si cette lecture échoue
+// (expression ou chaîne non fermée), relus à l'ancienne façon, regex reconnues : ce qui se construisait avant se construit encore (`images: [/img/*.png]`,
+// `$a.replace(/'/g, '')`, que le catalogue refuse ensuite à sa façon). Quand la première lecture réussit, elle l'emporte : c'est elle qui corrige la couleur à barre
+// oblique et la lecture de travers. Si les deux échouent, l'erreur est celle de la première
+export function extractSettings(scanner: Scanner): string {
+  const start = scanner.pos
+  try {
+    return extractBalanced(scanner, ')', true)
+  }
+  catch (first) {
+    scanner.pos = start
+    try {
+      return extractBalanced(scanner, ')')
+    }
+    catch {
+      throw first
+    }
+  }
 }
 
 // aperçu du texte avalé pour le message d'erreur : une ligne, borné
@@ -304,6 +412,8 @@ function lineOffsets(scanner: Scanner): number[] {
   return scanner._lineOffsets
 }
 
+// la ligne du FICHIER : le HTML d'un composant est rogné en tête avant d'être analysé, `scanner.firstLine` dit
+// où il commence (1 pour un texte analysé seul)
 function lineAt(scanner: Scanner, pos: number): number {
   const offsets = lineOffsets(scanner)
   // recherche du premier offset >= pos (borne inférieure) : sa position dans le
@@ -315,7 +425,7 @@ function lineAt(scanner: Scanner, pos: number): number {
     if (offsets[mid] < pos) lo = mid + 1
     else hi = mid
   }
-  return lo + 1
+  return lo + scanner.firstLine
 }
 
 function currentLine(scanner: Scanner): number {
@@ -337,17 +447,37 @@ function rejectReservedName(kind: string, name: string | null | undefined, line:
   if (RESERVED_SYMBOL_NAMES.has(clean)) throw new Error(t('parser.symbole-reserve-template', { ligne: line, nom: clean, kind }))
   if (!RESERVED_TEMPLATE_NAMES.includes(clean) && !RESERVED_PREFIX_RE.test(clean)) return
   const altMap: Record<string, string> = {
-    'node': 'n', 'el': 'item', 'e': 'evt', 'dirty': 'flag', 'this': 'self'
+    'el': 'item', 'e': 'evt', 'dirty': 'flag', 'this': 'self'
   }
   const alt = altMap[clean] ?? `${clean}_`
   throw new Error(t('parser.nom-reserve', { ligne: line, bloc: kind, nom: clean, alt, listeNoms: RESERVED_TEMPLATE_NAMES.join(', ') }))
 }
 
+// la forme développée d'un bloc de modèle `{? a, b}` (cf. expandLayoutBlocks)
+const LAYOUT_BLOCK_EXPR = /^\(µlayout is '[A-Za-z][\w-]*'(?: or µlayout is '[A-Za-z][\w-]*')*\)$/
+
+// jeton de branche qui n'appartient pas au bloc en cours (`{else}` dans un `{for}`, `{success}` dans un `{if}`…) :
+// sans ce refus il disparaissait, et son contenu se fondait dans le bloc (« vide » après chaque élément d'un `{for}`)
+const JETONS_DE_BRANCHE: Record<string, string> = { else: '{else}', elsif: '{elsif …}', success: '{success …}', error: '{error …}' }
+function refuseJetonEtranger(res: string | undefined, bloc: string, ligneBloc: number, scanner: Scanner): void {
+  if (res !== undefined && Object.prototype.hasOwnProperty.call(JETONS_DE_BRANCHE, res)) {
+    throw new Error(t('parser.jeton-flux-hors-bloc', { jeton: JETONS_DE_BRANCHE[res], bloc, ligneBloc, ligne: currentLine(scanner) }))
+  }
+}
+
 function raiseUnclosedBlock(kind: string, expr: string, line: number): never {
+  // un bloc de modèle se cite tel qu'écrit : `{? a, b}`, jamais `{if (µlayout is 'a' or …)}`
+  if (kind === 'if' && LAYOUT_BLOCK_EXPR.test(expr)) {
+    kind = '?'
+    expr = [...expr.matchAll(/'([^']*)'/g)].map(m => m[1]).join(', ')
+  }
   let hint = ''
   switch (kind) {
     case 'if':
       hint = t('parser.astuce-if-ternaire')
+      break
+    case '?':
+      hint = t('parser.astuce-bloc-modele-end')
       break
     case 'for':
       hint = t('parser.astuce-for-end')
@@ -369,7 +499,7 @@ function raiseUnclosedBlock(kind: string, expr: string, line: number): never {
 // attributes". Utilisé UNIQUEMENT pour un attribut NU (pas de `=`) : réécrit en
 // {type:'dynamic', expr:'true'} (même chemin de génération que `disabled={expr}`) au lieu de
 // {type:'boolean'} (marqueur inerte). Liste NEUVE, à ne pas confondre avec MJS_BOOLEAN_PROPS
-// (generator/attributes/index.ts, generator/compile.ts) : cette dernière décide
+// (exportée par generator/attributes/index.ts, importée par generator/compile.ts) : cette dernière décide
 // property-vs-attribute pour LE CODEGEN d'un attribut déjà dynamique/two-way — un problème
 // différent, ne pas y toucher, ne pas essayer de les fusionner.
 const MJS_NATIVE_BOOLEAN_ATTRS = new Set([
@@ -378,6 +508,47 @@ const MJS_NATIVE_BOOLEAN_ATTRS = new Set([
   'ismap', 'itemscope', 'loop', 'multiple', 'muted', 'nomodule', 'novalidate',
   'open', 'playsinline', 'readonly', 'required', 'reversed', 'selected',
 ])
+
+// un point derrière un effet n'est le nom d'aucun alias, et un attribut ne commence pas par un point : séparé de l'effet par un blanc
+// (`*filter .net`) ou collé à ses réglages (`*filter.net(blur: 3).x`), il est refusé — l'alias se colle à son effet, avant les réglages. Un
+// point qui n'a pas un effet pour voisin n'est pas lu ici. Un effet inconnu (`*fadee .x`) n'est pas repris sur son point : la pose le refuse
+// d'abord, par son nom (`transition` : sur @in / @out, seul un nom proche d'un effet connu l'est)
+function strayDot(scanner: Scanner, name: string, settings: boolean, transition = false): void {
+  const m = (settings ? /^(\s*)(\.[\w.-]*)/ : /^(\s+)(\.[\w.-]*)/).exec(scanner.rest())
+  if (!m || unknownEffectError(name, transition)) return
+  throw new Error(t(settings ? 'effets.point-reglages' : 'effets.point-espace', { nom: name, blanc: m[1] ? ' ' : '', point: m[2], exemple: aliasExample(name.split('.')[0]), ligne: currentLine(scanner) }))
+}
+
+// un effet écrit sans réglages collés : rien à lire — sauf une parenthèse séparée de son nom par un
+// blanc (`*neon (#0ff)`), refusée : ses réglages étaient perdus et versés en attributs parasites ; ni un point séparé de lui par un blanc
+function detachedSettings(scanner: Scanner, name: string, transition = false): string {
+  if (scanner.check(/\s+\(/)) throw new Error(t('effets.espace', { nom: name, ligne: currentLine(scanner) }))
+  strayDot(scanner, name, false, transition)
+  return ''
+}
+
+// les réglages d'un effet (`*nom(…)`, `@in=*nom(…)`), l'ouvrante déjà lue, sans commentaire : il se lirait comme une valeur et ferait perdre les
+// réglages qui le suivent. Le message cite la ligne du commentaire
+function readEffectSettings(scanner: Scanner, name: string): string {
+  const from     = scanner.pos
+  const settings = extractSettings(scanner)
+  const found    = settingsComment(settings)
+  if (found) throw new Error(t('effets.commentaire', { nom: name, ligne: lineAt(scanner, from + found.at), commentaire: found.text }))
+  return settings
+}
+
+// la valeur non quotée d'un style conditionnel (`@style.color{$on}=red`, `@style.width{$big}={$n}px`, `@style.color{$on}={$on ? 'red' : 'blue'}`) : un groupe
+// `{…}` se lit équilibré, comme ailleurs — espaces et guillemets compris, une accolade dans une chaîne n'y ferme rien —, le reste s'arrête au premier blanc ou à `>` ;
+// le `/` d'un `/>` n'en fait pas partie (un `/` interne, d'une URL, si)
+function readUnquotedValue(scanner: Scanner): string {
+  let val = ''
+  while (true) {
+    if (scanner.scan(/\{/)) val += '{' + extractBalanced(scanner, '}') + '}'
+    else if (scanner.scan(/((?:[^\s>\/{]|\/(?!>))+)/)) val += scanner.group(1)
+    else break
+  }
+  return val
+}
 
 function parseAttrs(scanner: Scanner, node: Node): void {
   // filet générique anti-duplication : un NOM d'attribut vu deux fois sur
@@ -421,6 +592,25 @@ function parseAttrs(scanner: Scanner, node: Node): void {
       continue
     }
 
+    // effet `*nom` ou `*nom(réglages)` : les réglages restent bruts ici, le générateur les
+    // vérifie et les convertit (effects/catalog.ts) ; un nom en majuscules y devient un effet
+    // inconnu, jamais un attribut. Le nom pointé d'un alias se lit en entier, mal formé compris
+    // (`*filter.`, `*filter..x`, `*filter.net.x`) : le générateur dit alors ce qui est écrit, au lieu
+    // de laisser un attribut parasite (`.`, `.x`) et de perdre les réglages en silence
+    if (scanner.scan(/\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)/)) {
+      const name = `*${scanner.group(1)}`
+      checkAttrDuplicate(name)
+      const written = scanner.scan(/\(/)
+      const val     = written ? readEffectSettings(scanner, name.slice(1)) : detachedSettings(scanner, name.slice(1))
+      if (written) strayDot(scanner, name.slice(1), true)
+      if (scanner.check(/\s*=/)) throw new Error(t('effets.egal', { nom: name.slice(1), ligne: currentLine(scanner) }))
+      node.attrs.push({ type: 'static', name, val })
+      continue
+    }
+
+    // une étoile et un point, sans nom d'effet entre eux (`*.net`) : l'effet manque, et ce n'est pas un attribut
+    if (scanner.scan(/\*(\.[\w.-]*)/)) throw new Error(t('effets.point-sans-effet', { point: scanner.group(1), ligne: currentLine(scanner) }))
+
     if (scanner.scan(/@(class|style\.[a-zA-Z0-9\-]+)\{/)) {
       const prefix = scanner.group(1)!
       const expr = extractBalanced(scanner, '}')
@@ -432,10 +622,13 @@ function parseAttrs(scanner: Scanner, node: Node): void {
           node.attrs.push({ type: 'static', name, val: scanner.group(1) })
         } else if (scanner.scan(/'([^']*)'/)) {
           node.attrs.push({ type: 'static', name, val: scanner.group(1) })
+        } else if (prefix !== 'class') {
+          // la valeur non quotée d'un style : voir readUnquotedValue (un groupe `{…}` se lit en entier, espaces et guillemets compris)
+          const val = readUnquotedValue(scanner)
+          if (val !== '') node.attrs.push({ type: 'static', name, val })
         } else if (scanner.scan(/((?:[^\s>\/]|\/(?!>))+)/)) {
-          // une valeur non quotée s'arrêtait à `>` mais avalait le `/`
-          // d'un `/>` : `<img src=x/>` → val `"x/"`. On exclut le seul `/`
-          // IMMÉDIATEMENT suivi de `>` (auto-fermeture) ; un `/` interne (URL
+          // le nom d'une classe est littéral : seule la valeur d'un style se calcule. Une valeur non quotée s'arrêtait à `>` mais avalait le `/`
+          // d'un `/>` : `<img src=x/>` → val `"x/"`. On exclut le seul `/` IMMÉDIATEMENT suivi de `>` (auto-fermeture) ; un `/` interne (URL
           // `http://…`) reste dans la valeur.
           node.attrs.push({ type: 'static', name, val: scanner.group(1) })
         }
@@ -453,13 +646,24 @@ function parseAttrs(scanner: Scanner, node: Node): void {
       const name = scanner.group(1)!
       checkAttrDuplicate(name)
       if (scanner.scan(/\s*=\s*/)) {
+        // une transition, effet déclenché par le cycle de vie : `@in=*fly(up, duration: 2s)` — la
+        // valeur est l'effet et ses réglages bruts, vérifiés par le générateur (effects/catalog.ts) ; le nom d'un alias
+        // d'effet (`@in=*fade.lent`) s'écrit avec son point, comme sur une balise
+        if (/^@(?:in|out|transition)(?:\.\w+)*$/.test(name) && scanner.scan(/\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)/)) {
+          const effet = scanner.group(1)!
+          const written  = scanner.scan(/\(/)
+          const reglages = written ? readEffectSettings(scanner, effet) : detachedSettings(scanner, effet, true)
+          if (written) strayDot(scanner, effet, true, true)
+          node.attrs.push({ type: 'static', name, val: `*${effet}(${reglages})` })
+          continue
+        }
         if (scanner.scan(/\{/)) {
           const val = extractBalanced(scanner, '}')
           node.attrs.push({ type: 'dynamic', name, expr: val })
         } else if (scanner.scan(/"([^"]*)"/)) {
-          node.attrs.push({ type: 'static', name, val: scanner.group(1) })
+          node.attrs.push({ type: 'static', name, val: sansEffetEntreGuillemets(name, scanner.group(1)!) })
         } else if (scanner.scan(/'([^']*)'/)) {
-          node.attrs.push({ type: 'static', name, val: scanner.group(1) })
+          node.attrs.push({ type: 'static', name, val: sansEffetEntreGuillemets(name, scanner.group(1)!) })
         } else if (scanner.scan(/((?:[^\s>\/]|\/(?!>))+)/)) {
           // une valeur non quotée s'arrêtait à `>` mais avalait le `/`
           // d'un `/>` : `<img src=x/>` → val `"x/"`. On exclut le seul `/`
@@ -495,21 +699,90 @@ function parseAttrs(scanner: Scanner, node: Node): void {
 // ============================================================================
 let currentBranchArg: string | null = null
 let currentElsifExpr: string | null = null
+// le squelette d'office des {await} de l'analyse en cours (cf. ParseDiag.autoSkeleton)
+let autoSkeleton = true
+// la balise de contenu étranger qui entoure la position courante (`svg`, `math`), null en HTML — un
+// <foreignObject> rouvre du HTML, comme au générateur : la zone du squelette (un <div> et ses barres)
+// n'a pas sa place ailleurs qu'en HTML
+let foreignTag: string | null = null
+// dans le contenu d'un `<textarea>` ou d'un `<title>` HTML (pas celui d'un dessin) : le navigateur y lit du texte, un `<!--`
+// n'y ouvre aucun commentaire
+let texteSeul: string | null = null
+// `{? timer}` — un détail du HTML propre à un modèle (layout), écrit court : réécrit en
+// `{if (µlayout is 'timer')}` avant tout le reste (la prop `layout`, les modèles connus, le lexer le
+// voient comme écrit à la main ; les lignes ne bougent pas). Dans le bloc, un autre `{? chrono}` est
+// la branche suivante (`{elsif …}`) ; `{else}`, les autres modèles ; plusieurs noms, séparés par des
+// virgules ; `default` : sans layout. Un `{? …}` dans un autre bloc ({if}, {for}…) en ouvre un nouveau ;
+// un bloc jamais refermé dans ce texte lève ici, à sa ligne (`firstLine` : celle du texte dans son fichier) —
+// chaque fichier passe ici avant d'être recollé, la faute d'un partiel inclus est citée dans le partiel
+export function expandLayoutBlocks(html: string, firstLine = 1): string {
+  if (!html.includes('{?')) return html
+  const pile: Array<{ kind: string, noms?: string[], index?: number }> = []
+  const re = /<!--(?:-?>|[\s\S]*?--!?>)|\{(if|for|await|key)\s|\{end\}|\{\?([^}]*)\}/g
+  let out = ''
+  let i = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    if (m[0].startsWith('<!--')) continue
+    if (m[1]) {
+      pile.push({ kind: m[1] })
+      continue
+    }
+    if (m[0] === '{end}') {
+      pile.pop()
+      continue
+    }
+    const noms = m[2].split(',').map(x => x.trim())
+    if (noms.some(x => !/^[A-Za-z][\w-]*$/.test(x))) {
+      const ligne = firstLine + (html.slice(0, m.index).match(/\n/g)?.length ?? 0)
+      throw new Error(t('parser.bloc-modele-nom', { ecrit: m[0], ligne }))
+    }
+    // entre parenthèses : la forme développée se reconnaît pour être citée telle qu'écrite (cf.
+    // raiseUnclosedBlock) ; les retours à la ligne d'un `{? a,\n b}` restent dans l'expression, que le
+    // parseur rogne — les lignes qui suivent ne bougent pas
+    const cond  = '(' + noms.map(x => `µlayout is '${x}'`).join(' or ') + ')'
+    const sauts = m[0].replace(/[^\n]/g, '')
+    const suite = pile[pile.length - 1]?.kind === 'layout'
+    if (!suite) pile.push({ kind: 'layout', noms, index: m.index })
+    out += html.slice(i, m.index) + (suite ? `{elsif ${cond}${sauts}}` : `{if ${cond}${sauts}}`)
+    i = m.index + m[0].length
+  }
+  // le dernier bloc resté ouvert est un bloc de modèle : cité tel qu'écrit, à sa première ouverture ; un {if} ou
+  // un {for} resté ouvert, lui, est dit par le parseur
+  const openBlock = pile[pile.length - 1]
+  if (openBlock?.kind === 'layout') raiseUnclosedBlock('?', openBlock.noms!.join(', '), firstLine + (html.slice(0, openBlock.index).match(/\n/g)?.length ?? 0))
+  return out + html.slice(i)
+}
 
-type ChildrenParser = (container: Node[]) => string | undefined
+// les modèles en fichier de l'analyse en cours (cf. ParseDiag.models)
+let fileModels: { dev: Record<string, string[]>, core: Record<string, string[]> } = { dev: {}, core: {} }
 
-function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenParser): boolean | string {
+// les variables typées dont un champ lié se garde de lui-même (cf. ParseDiag.guarded), et comment
+let guarded     = new Set<string>()
+let guardSilent = false
+const GUARD_FIELDS = new Set(['input', 'textarea', 'select'])
+const GUARD_BIND   = /^!(?:\.\w+)?\{\s*(\$\$?[A-Za-z_]\w*)\s*\}$/
+
+// `inAwait` : vrai pour les enfants lus directement au niveau des branches d'un `{await}` (attente, `{success}`, `{error}`), faux plus bas — dans une balise, un `{if}`, un `{for}`
+// ou un `{key}` de la branche — comme hors de tout `{await}` : c'est lui qui dit que `{success}` / `{error}` sans nom ouvrent une branche (cf. parseFlow)
+type ChildrenParser = (container: Node[], inAwait?: boolean) => string | undefined
+
+function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenParser, inAwait = false): boolean | string {
   if (scanner.scan(/\{await\s+/)) {
     const startLine = currentLine(scanner)
     const node = new Node('await')
     node.line = startLine  // même geste que tag/expr : posée sur LE NŒUD lui-même, plus de nearestLine côté générateur
     node.expr = extractBalanced(scanner, '}').trim()
+    // `{await $profil *skeleton(réglages)}` : l'attente prend la forme du contenu à venir (cf. poseSkeleton)
+    const sk = /^([\s\S]*?)\s+\*skeleton(?:\(([\s\S]*)\))?$/.exec(node.expr)
+    const skeleton = sk ? sk[2] ?? '' : null
+    if (sk) node.expr = sk[1].trim()
     let currentBranch: Branch = { type: 'pending', children: [] }
     node.branches.push(currentBranch)
     let sawEnd = false
     while (!scanner.eos()) {
       const posBefore = scanner.pos
-      const res = parseChildren(currentBranch.children)
+      const res = parseChildren(currentBranch.children, true)
       if (res === 'success') {
         currentBranch = { type: 'success', arg: currentBranchArg ?? undefined, children: [] }
         node.branches.push(currentBranch)
@@ -519,13 +792,19 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
       } else if (res === 'end') {
         sawEnd = true
         break
-      }
+      } else refuseJetonEtranger(res, '{await}', startLine, scanner)
       // garde-fou anti-boucle infinie : une fermante orpheline dans le
       // bloc (`{await …}</div>{end}`) fait remonter `'close_tag'` SANS consommer
       // → `scanner.pos` fige. Toute non-progression = bloc non fermé.
       if (scanner.pos === posBefore) break
     }
     if (!sawEnd) raiseUnclosedBlock('await', node.expr, startLine)
+    if (skeleton !== null) {
+      if (foreignTag) throw new Error(t('parser.squelette-svg', { balise: foreignTag, ligne: startLine }))
+      poseSkeleton(node, skeleton, startLine)
+    }
+    // sans branche d'attente écrite : le squelette de {success}, d'office — jamais en SVG ni en MathML
+    else if (autoSkeleton && !foreignTag && node.branches.some(b => b.type === 'success') && !node.branches[0].children.some(c => c.type !== 'text' || (c.content ?? '').trim() !== '')) poseSkeleton(node, '', startLine)
     container.push(node)
     return true
   }
@@ -542,6 +821,13 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
     currentBranchArg = extractBalanced(scanner, '}').trim()
     rejectReservedName('error', currentBranchArg, line)
     return 'error'
+  }
+
+  // `{success}` et `{error}` collés, sans nom : au niveau des branches d'un `{await}` ils ouvrent la branche, sans valeur nommée, comme `{success }` ;
+  // ailleurs ils restent l'affichage d'une variable de ce nom (parseDom)
+  if (inAwait && scanner.scan(/\{(success|error)\}/)) {
+    currentBranchArg = ''
+    return scanner.group(1)!
   }
 
   if (scanner.scan(/\{if\s+/)) {
@@ -564,7 +850,7 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
       } else if (res === 'end') {
         sawEnd = true
         break
-      }
+      } else refuseJetonEtranger(res, '{if}', startLine, scanner)
       // voir {await} : une fermante orpheline (`{if $x}</div>{end}`)
       // remontait `'close_tag'` sans avancer → boucle infinie 100 % CPU.
       if (scanner.pos === posBefore) break
@@ -581,6 +867,12 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
 
   if (scanner.scan(/\{else\}/)) return 'else'
   if (scanner.scan(/\{end\}/)) return 'end'
+  // `{/if}`, `{/for}`… (fermeture d'autres outils) : un bloc se ferme par `{end}` — lu comme une expression, le `/` y ouvrait
+  // une regex qui avalait la suite du HTML, et l'erreur parlait d'une « expression non fermée », loin de la faute
+  if (scanner.check(/\{\/(?:if|for|each|await|key)\}/)) {
+    const ligne = currentLine(scanner)
+    throw new Error(t('parser.fermeture-bloc-slash', { ecrit: scanner.scan(/\{\/\w+\}/), ligne }))
+  }
 
   // `{key}` aligné sur `{if}` : (a) l'expr passe par `extractBalanced`
   // (l'ancien `\{key\s+(.+?)\}` tronquait `{key f({a:1})}` au 1er `}`), (b) le
@@ -597,6 +889,7 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
       const posBefore = scanner.pos
       const res = parseChildren(node.children)
       if (res === 'end') { sawEnd = true; break }
+      refuseJetonEtranger(res, '{key}', startLine, scanner)
       if (scanner.pos === posBefore) break
     }
     if (!sawEnd) raiseUnclosedBlock('key', node.expr, startLine)
@@ -633,8 +926,16 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
     // µ admis dans la classe de caractères (au même titre que $) : un item/index
     // ainsi nommé matche la syntaxe et passe par rejectReservedName ci-dessous, plutôt que de
     // tomber dans le message de syntaxe générique
-    const m = expr.match(/^(?:([a-zA-Z0-9_$µ]+)\s*,\s*)?([a-zA-Z0-9_$µ]+)\s+in\s+(.+?)(?:\s+by\s+([a-zA-Z0-9_$µ]+))?$/)
+    // `[\s\S]` : un parcours écrit sur plusieurs lignes (`$items.filter((i) ->⏎ i.ok)`) passe, comme un `{if}`
+    const m = expr.match(/^(?:([a-zA-Z0-9_$µ]+)\s*,\s*)?([a-zA-Z0-9_$µ]+)\s+in\s+([\s\S]+?)(?:\s+by\s+([a-zA-Z0-9_$µ]+))?$/)
     if (m) {
+      // `by` attend le nom d'un champ de l'élément : `by x.id` restait collé au parcours (« $l by x.id ») et la
+      // construction échouait plus loin, sur un message de Civet sans rapport
+      const byChemin = m[4] ? null : /\s+by\s+([a-zA-Z_$µ][\w$µ]*(?:\.[a-zA-Z_$µ][\w$µ]*)+)\s*$/.exec(m[3])
+      if (byChemin) {
+        const reste = byChemin[1].startsWith(m[2] + '.') ? byChemin[1].slice(m[2].length + 1) : ''
+        throw new Error(t('parser.for-by-chemin', { expr, cle: byChemin[1], champ: /^[\w$µ]+$/.test(reste) ? reste : 'id', ligne: startLine }))
+      }
       const node = new Node('for')
       node.line = startLine  // cf. commentaire jumeau sur {await} plus haut
       // Si l'ITEM s'appelle `index` (sans index explicite), le compteur
@@ -656,6 +957,7 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
         const posBefore = scanner.pos
         const res = parseChildren(node.children)
         if (res === 'end') { sawEnd = true; break }
+        refuseJetonEtranger(res, '{for}', startLine, scanner)
         // fermante orpheline dans le {for} : `'close_tag'` sans progrès.
         if (scanner.pos === posBefore) break
       }
@@ -672,6 +974,125 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
   }
 
   return false
+}
+
+// ============================================================================
+// Squelette d'attente — `{await $profil *skeleton}` : pendant l'attente, la forme du contenu à venir,
+// tirée de la branche {success} au build. Les balises restent (leur classe, leur style : la mise en
+// page tient) ; chaque texte ou valeur devient une barre qui scintille (courte, moyenne, longue ; un
+// titre ; trois lignes pour une valeur seule dans un paragraphe, une barre longue seule dans un bloc
+// ou une case) ; une image garde sa boîte ; un
+// composant devient un bloc ; un {for}, trois fois son contenu ; un {if}, sa première branche. Le
+// tout dans une zone sans boîte (`mjs-skel-zone`) qui porte l'effet *skeleton et ses réglages
+// (couleurs, vitesse, arrondi — runtime/mjs_fx_skeleton.ts).
+// ============================================================================
+const SKEL_KEEP  = /^(class|style|role|width|height|colspan|rowspan|data-[\w-]+)$/
+const SKEL_MEDIA = new Set(['picture', 'video', 'canvas', 'svg', 'iframe', 'object', 'embed', 'audio'])
+const SKEL_FIELD = new Set(['input', 'textarea', 'select'])
+// la directive d'une transition à proposer à la place de l'ancienne écriture : son nom et ses modificateurs
+// `.global` / `.shared`, dans l'ordre où ils sont écrits ; le nom d'une ancienne animation (`@in.fly.shared`
+// → `@in.shared`) ne reste pas
+export function transitionDirective(name: string): string {
+  const [base, ...suite] = name.split('.')
+  return base + suite.filter(m => m === 'global' || m === 'shared').map(m => '.' + m).join('')
+}
+
+// une transition entre guillemets (`@in="*fly(up)"`, `@out='*fade'`) : un effet s'écrit sans eux —
+// une seule écriture, `@in=*fly(up)` (`@in.global="*fly"` donne `@in.global=*fly` : le modificateur reste)
+function sansEffetEntreGuillemets(name: string, val: string): string {
+  if (/^@(?:in|out|transition)(?:\.\w+)*$/.test(name) && /^\s*\*[A-Za-z]/.test(val)) throw new Error(t('transitions.guillemets', { directive: transitionDirective(name), effet: val.trim() }))
+  return val
+}
+
+const SKEL_LINES = new Set(['p', 'dd', 'blockquote', 'figcaption'])
+const SKEL_WIDE  = new Set(['div', 'li', 'td', 'th', 'section', 'article', 'dt'])
+const SKEL_TITLE = /^h[1-6]$/
+
+function skelBar(kind: string, line?: number): Node {
+  const i = new Node('tag')
+  i.name  = 'i'
+  i.line  = line
+  i.attrs = [{ type: 'static', name: 'mjs-skel', val: kind }]
+  if (kind === 'lines') for (let k = 0; k < 3; k++) i.children.push(skelBar('line', line))
+  return i
+}
+
+function skeletonOf(nodes: Node[], parent: string | null): Node[] {
+  const out: Node[] = []
+  const pleins = nodes.filter(n => !(n.type === 'text' && !(n.content ?? '').trim()) && n.type !== 'const')
+  for (const n of nodes) {
+    if (n.type === 'text') {
+      const txt = (n.content ?? '').trim()
+      if (txt) out.push(skelBar(txt.length <= 6 ? 's' : txt.length <= 24 ? 'm' : 'l', n.line))
+      else {
+        const w = new Node('text')
+        w.content = n.content
+        out.push(w)
+      }
+    }
+    else if (n.type === 'expr') {
+      const seul = pleins.length === 1 && !!parent
+      out.push(skelBar(parent && SKEL_TITLE.test(parent) ? 'title' : seul && SKEL_LINES.has(parent!) ? 'lines' : seul && SKEL_WIDE.has(parent!) ? 'l' : 'm', n.line))
+    }
+    else if (n.type === 'tag') {
+      const name = n.name ?? ''
+      if (name.includes('-') || name.startsWith('@')) out.push(skelBar('block', n.line))
+      else if (SKEL_FIELD.has(name)) out.push(skelBar('m', n.line))
+      else if (SKEL_MEDIA.has(name)) out.push(skelBar('media', n.line))
+      else {
+        const c = new Node('tag')
+        c.name  = name
+        c.line  = n.line
+        // les attributs FIXES seulement : une valeur mêlée d'interpolation (`class="a {d.c}"`) lit la
+        // valeur à venir, absente pendant l'attente
+        c.attrs = n.attrs.filter(a => (a.type === 'boolean' || (a.type === 'static' && !/[{}]/.test(a.val ?? ''))) && !!a.name && SKEL_KEEP.test(a.name)).map(a => ({ ...a }))
+        // une image garde sa boîte (sa classe la dimensionne), sans ce qu'elle montre
+        if (name === 'img') c.attrs.push({ type: 'static', name: 'mjs-skel', val: 'media' })
+        else c.children = skeletonOf(n.children, name)
+        out.push(c)
+      }
+    }
+    else if (n.type === 'if') out.push(...skeletonOf(n.branches[0]?.children ?? [], parent))
+    else if (n.type === 'for') for (let k = 0; k < 3; k++) out.push(...skeletonOf(n.children, parent))
+    else if (n.type === 'await') out.push(...skeletonOf((n.branches.find(b => b.type === 'success') ?? n.branches[0])?.children ?? [], parent))
+    else if (n.type === 'key') out.push(...skeletonOf(n.children, parent))
+  }
+  return out
+}
+
+const SKEL_VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'])
+const skelEsc   = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+function skelSerialize(nodes: Node[]): string {
+  let out = ''
+  for (const n of nodes) {
+    if (n.type === 'text') out += skelEsc(n.content ?? '')
+    else if (n.type === 'tag' && n.name) {
+      const attrs = n.attrs.map(a => a.type === 'boolean' ? ' ' + a.name : ' ' + a.name + '="' + skelEsc(a.val ?? '') + '"').join('')
+      out += SKEL_VOID.has(n.name) ? `<${n.name}${attrs}>` : `<${n.name}${attrs}>${skelSerialize(n.children)}</${n.name}>`
+    }
+  }
+  return out
+}
+
+/** la silhouette d'un gabarit de composant, en HTML (le squelette d'un composant dont le code arrive,
+ *  rangé au manifeste par le build) : les balises et leurs attributs fixes, une barre par texte, les
+ *  composants en blocs — cf. skeletonOf */
+export function skeletonHtml(template: string, firstLine = 1): string {
+  const racine = parse(template, undefined, { firstLine })
+  return skelSerialize(skeletonOf(racine.children, null)).replace(/>\s+</g, '><').trim()
+}
+
+function poseSkeleton(node: Node, settings: string, line: number): void {
+  const pending = node.branches.find(b => b.type === 'pending')!
+  const success = node.branches.find(b => b.type === 'success')
+  if (pending.children.some(c => c.type !== 'text' || (c.content ?? '').trim() !== '')) throw new Error(t('parser.squelette-attente-ecrite', { ligne: line }))
+  if (!success) throw new Error(t('parser.squelette-sans-success', { ligne: line }))
+  const zone = new Node('tag')
+  zone.name  = 'div'
+  zone.line  = line
+  zone.attrs = [{ type: 'boolean', name: 'mjs-skel-zone' }, { type: 'static', name: 'aria-hidden', val: 'true' }, { type: 'static', name: '*skeleton', val: settings }]
+  zone.children = skeletonOf(success.children, null)
+  pending.children = [zone]
 }
 
 // ============================================================================
@@ -693,8 +1114,14 @@ function parseFlow(scanner: Scanner, container: Node[], parseChildren: ChildrenP
 export const AT_RESERVED_NAMES = ['include', 'slot', 'head', 'body', 'html', 'document',
                                    'window', 'element', 'module', 'failed', 'view', FILL_DIRECTIVE]
 
-// resolveTagName — réécrit `<@nom>` en `<mjs-nom>` (raccourci-dev, résolu par
-// le bundler EN PROJET PUIS EN CŒUR), en enregistrant
+// le texte écrit de chaque attribut d'une référence à un module cœur (cf. TagRefAttrs.texts) ; un attribut écrit sans valeur est le texte vide
+function attrTexts(attrs: Attr[]): Record<string, string | null> {
+  return Object.fromEntries(attrs.flatMap(a => a.name ? [[a.name.toLowerCase(), a.type === 'boolean' ? '' : a.type === 'static' && !/[{}&]/.test(a.val ?? '') ? (a.val ?? '') : null]] : []))
+}
+
+// resolveTagName — réécrit `<@nom>` en `<mjs-nom>` (raccourci-dev, un composant du
+// PROJET) et `<@@nom>` en `<mjs-core-nom>` (raccourci-coeur, un module de la
+// bibliothèque cœur), en enregistrant
 // chaque référence dans `tagRefs` (push, pas de retour — la post-passe du
 // bundler résout APRÈS avoir vu tous les fichiers). `<@mjs-nom>` (ancienne
 // notation dédiée au cœur, RETIRÉE) est une ERREUR DE MIGRATION — kind
@@ -705,6 +1132,12 @@ export const AT_RESERVED_NAMES = ['include', 'slot', 'head', 'body', 'html', 'do
 function resolveTagName(rawName: string, tagRefs?: TagRef[]): string {
   if (rawName === '@view') return 'metamjs-view'
   if (rawName === '@slot') return 'slot'
+
+  if (rawName.startsWith('@@')) {
+    const nom = rawName.slice(2)
+    tagRefs?.push({ name: nom, kind: 'raccourci-coeur' })
+    return `mjs-core-${nom}`
+  }
 
   if (rawName.startsWith('@')) {
     const bare = rawName.slice(1)
@@ -738,16 +1171,30 @@ function resolveTagName(rawName: string, tagRefs?: TagRef[]): string {
 // comptage — pas un vrai parseur XML, jamais prétendu l'être ailleurs dans ce fichier.
 function willClose(scanner: Scanner, resolvedName: string): boolean {
   const savedPos = scanner.pos
+  // aucune fermante qui se résoudrait en ce nom plus loin (`</mjs-x`, `</@mjs-x`, `</@x`, `</@@x`) : le parcours
+  // ne trouverait rien — sans ce pré-test, chaque raccourci nu relisait tout le reste du gabarit (temps quadratique)
+  const formes = ['</' + resolvedName, '</@' + resolvedName]
+  if (resolvedName.startsWith('mjs-')) formes.push('</@' + resolvedName.slice(4))
+  if (resolvedName.startsWith('mjs-core-')) formes.push('</@@' + resolvedName.slice(9))
+  if (!formes.some(f => scanner.str.indexOf(f, savedPos) >= 0)) return false
   let depth = 1
   let found = false
   while (!scanner.eos()) {
     const posBefore = scanner.pos
+    // un commentaire et une expression `{…}` ne portent aucune balise (`{$n<3 ? …}`, `<!-- <div a a> -->`) ;
+    // expression mal fermée : abandon prudent, comme une balise malformée
+    if (scanner.scan(/<!--(?:-?>|[\s\S]*?--!?>)/)) continue
+    if (scanner.scan(/\{/)) {
+      try { extractBalanced(scanner, '}') }
+      catch { break }
+      continue
+    }
     if (scanner.scan(/<\/([a-zA-Z0-9\-@]+)\s*>/)) {
       if (resolveTagName(scanner.group(1)!) === resolvedName) {
         depth -= 1
         if (depth === 0) { found = true; break }
       }
-    } else if (scanner.scan(/<(@[a-zA-Z0-9-]+|[a-zA-Z0-9-]+)/)) {
+    } else if (scanner.scan(/<(@@?[a-zA-Z0-9-]+|[a-zA-Z][a-zA-Z0-9-]*)/)) {
       const name2 = resolveTagName(scanner.group(1)!)
       const tmp = new Node('tag')
       tmp.name = name2
@@ -761,7 +1208,7 @@ function willClose(scanner: Scanner, resolvedName: string): boolean {
       } else {
         break  // tag malformée : abandon prudent (void par défaut côté appelant)
       }
-    } else if (!scanner.scan(/[^<]+/)) {
+    } else if (!scanner.scan(/[^<{]+/)) {
       scanner.getch()
     }
     if (scanner.pos === posBefore) break  // garde anti-boucle infinie
@@ -770,7 +1217,17 @@ function willClose(scanner: Scanner, resolvedName: string): boolean {
   return found
 }
 
-function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenParser, tagRefs?: TagRef[]): boolean | string {
+function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenParser, tagRefs?: TagRef[], diag: ParseDiag = {}): boolean | string {
+  // dans un <textarea> ou un <title> HTML, le navigateur ne lit que du texte jusqu'à sa fermante : une balise écrite
+  // dedans (`<b x={$v}>`, `</b>`) est un texte, gardé tel qu'écrit (sa valeur `{…}` n'est pas lue), sans élément ni liaison
+  if (texteSeul !== null && scanner.check(/<\/?[a-zA-Z@]/) && !scanner.check(new RegExp(`</${texteSeul}[\\s/>]`, 'i'))) {
+    const node = new Node('text')
+    node.line    = currentLine(scanner)
+    node.content = scanner.scan(/<\/?[^<>]*>?/)!
+    container.push(node)
+    return true
+  }
+
   // `\s*` avant `>` : le pré-check refusait tout blanc (`</div >`) alors
   // que la consommation en aval (ligne ~512) le tolère → progression nulle →
   // « ERREUR DE PARSING FATALE » cryptique. On aligne les deux.
@@ -820,7 +1277,9 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
     return true
   }
 
-  if (scanner.scan(/<(@[a-zA-Z0-9-]+|[a-zA-Z0-9-]+)/)) {
+  // un nom de balise ordinaire commence par une lettre : `<- Retour`, `{$n}<5 ans` sont du texte (TEXT_RUN_RE), comme
+  // dans le navigateur
+  if (scanner.scan(/<(@@?[a-zA-Z0-9-]+|[a-zA-Z][a-zA-Z0-9-]*)/)) {
     const node = new Node('tag')
     const rawName = scanner.group(1)!
     const tagLine = currentLine(scanner)
@@ -830,13 +1289,53 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
     // empilée (balise composant, pas une réservée), on lui pose la valeur littérale de
     // layout=/template= une fois les attributs connus (pose APRÈS parseAttrs, ci-dessous).
     const tagRefsLenBefore = tagRefs?.length ?? 0
+    // un modèle en fichier choisi par une valeur calculée : posé plus bas, lu par pushTag
+    let choix: ModelChoice | null = null
     node.name = resolveTagName(rawName, tagRefs)
+    // le nom qui referme la balise (un modèle en fichier renomme `node.name` juste en dessous)
+    const nomResolu = node.name
 
     parseAttrs(scanner, node)
 
+    // *guard d'office : un champ lié à une variable typée (`<input value=!{$age}>`) le reçoit comme
+    // s'il était écrit — un *guard écrit garde ses réglages ; `effects.guard: false` le rend muet (la
+    // frappe reste à l'abri, la valeur ramenée à la sortie, sans effet ni bulle)
+    if (guarded.size > 0 && GUARD_FIELDS.has(node.name) && !node.attrs.some(a => a.name === '*guard')) {
+      const lien = node.attrs.find(a => a.name === 'value' && GUARD_BIND.test(a.val ?? ''))
+      if (lien && guarded.has(GUARD_BIND.exec(lien.val!)![1])) node.attrs.push({ type: 'static', name: '*guard', val: guardSilent ? 'silent: true' : '' })
+    }
+
     if (tagRefs && tagRefs.length > tagRefsLenBefore) {
+      const ref        = tagRefs[tagRefs.length - 1]
       const layoutAttr = node.attrs.find(a => a.type === 'static' && (a.name === 'layout' || a.name === 'template'))
-      if (layoutAttr) tagRefs[tagRefs.length - 1].layoutLiteral = layoutAttr.val
+      if (layoutAttr) ref.layoutLiteral = layoutAttr.val
+      // un modèle dans son propre fichier (`carte.compacte.mjs`) : la balise devient la sienne,
+      // choisie en dur seulement (une valeur calculée ne peut pas changer de composant)
+      const coeur   = ref.kind === 'raccourci-coeur' || ref.kind === 'litteral-coeur'
+      const modeles = (coeur ? fileModels.core : fileModels.dev)[ref.name.toLowerCase()]
+      // un module cœur : les attributs écrits sur la balise, relevés avant que le choix d'un modèle en fichier ne retire `layout` (les références de modèle ci-dessous les reprennent)
+      if (coeur) ref.attrs = { names: node.attrs.flatMap(a => a.name ? [a.name] : []), spread: node.attrs.some(a => a.type === 'spread'), texts: attrTexts(node.attrs) }
+      if (modeles) {
+        const calcule = node.attrs.find(a => (a.name === 'layout' || a.name === 'template') && (a.type === 'dynamic' || (a.type === 'static' && /[{}]/.test(a.val ?? ''))))
+        // choisi par une valeur calculée (`layout={$vue}`) : le compilateur écrit le {if} — la balise
+        // de chaque modèle, sinon le composant de base (cf. pushTag) ; chaque modèle entre au bundle
+        if (calcule && calcule.type === 'dynamic') {
+          choix = { expr: calcule.expr ?? '', attr: calcule, modeles }
+          for (const x of modeles) tagRefs!.push({ ...ref, name: `${ref.name}--${x}`, layoutLiteral: undefined })
+        }
+        else if (calcule) throw new Error(t('parser.modele-fichier-calcule', { tag: rawName, nom: ref.name, modeles: modeles.join(', '), premier: modeles[0], ligne: tagLine }))
+        if (layoutAttr && modeles.includes(layoutAttr.val ?? '')) {
+          node.name         = `${node.name}--${layoutAttr.val}`
+          node.attrs        = node.attrs.filter(a => a !== layoutAttr)
+          ref.name          = `${ref.name}--${layoutAttr.val}`
+          ref.layoutLiteral = undefined
+        }
+      }
+    }
+    // balise nue au nom d'élément personnalisé : relevée APRÈS le bloc ci-dessus (ni `layout`, ni modèle, ni attributs),
+    // jamais réécrite
+    else if (tagRefs && rawName[0] !== '@' && rawName.includes('-')) {
+      tagRefs.push({ name: rawName, kind: 'balise-nue' })
     }
 
     if (rawName === '@view') {
@@ -890,18 +1389,18 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
       if (rawName === '@view') {
         throw new Error(t('parser.view-auto-fermeture-interdite', { nom: node.attrs[0]?.val ?? '', ligne: tagLine }))
       }
-      container.push(node)
+      pushTag(container, node, choix)
     } else if (isVoid) {
       scanner.scan(/\s*>/)
-      container.push(node)
+      pushTag(container, node, choix)
     } else if (scanner.scan(/\s*>/)) {
-      // forme NUE d'un raccourci `<@x>` (hors 12 réservées) SANS fermante
+      // forme NUE d'un raccourci `<@x>` ou `<@@x>` (hors 12 réservées) SANS fermante
       // à venir (comptage équilibré, willClose ci-dessus) : VOID, comme
       // l'autofermant — aucun enfant avalé, les frères suivants restent au
       // niveau du PARENT (ni parseChildren, ni recherche d'un `</x>`).
       const isShortcutTag = rawName.startsWith('@') && !AT_RESERVED_NAMES.includes(rawName.slice(1))
-      if (isShortcutTag && !willClose(scanner, node.name)) {
-        container.push(node)
+      if (isShortcutTag && !willClose(scanner, nomResolu)) {
+        pushTag(container, node, choix)
         return true
       }
       // MÊME carve-out que ci-dessus pour `<@slot …>`, exclu de
@@ -911,15 +1410,29 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
       // cassé par le garde-fou balise-non-fermee, qui ne distinguait pas @slot des autres
       // réservées. `<@slot>` PORTEUR de repli (`<@slot>texte`) reste soumis à l'erreur juste en
       // dessous : le HTML impose une fermante pour délimiter où le repli s'arrête.
-      if (rawName === '@slot' && scanner.check(/(?:\s|<!--[\s\S]*?-->)*$/) && !willClose(scanner, node.name)) {   // blanc OU commentaire (padding des sections retirées) jusqu'à EOF
-        container.push(node)
+      if (rawName === '@slot' && scanner.check(/(?:\s|<!--(?:-?>|[\s\S]*?--!?>))*$/) && !willClose(scanner, nomResolu)) {   // blanc OU commentaire (padding des sections retirées) jusqu'à EOF
+        pushTag(container, node, choix)
         return true
       }
-      const res = parseChildren(node.children)
+      // entrer dans un <svg>/<math> ou un <foreignObject> change le contenu des enfants, jusqu'à la fermante
+      const lower     = node.name.toLowerCase()
+      const enclosing = foreignTag
+      const texteAvant = texteSeul
+      if (lower === 'svg' || lower === 'math') foreignTag = lower
+      else if (lower === 'foreignobject') foreignTag = null
+      if (texteSeul === null && foreignTag === null && (lower === 'textarea' || lower === 'title')) texteSeul = lower
+      let res: string | undefined
+      try {
+        res = parseChildren(node.children)
+      }
+      finally {
+        foreignTag = enclosing
+        texteSeul  = texteAvant
+      }
       if (res === 'close_tag') {
         const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const escapedRaw = escapeRegex(rawName)
-        const escapedNew = escapeRegex(node.name)
+        const escapedNew = escapeRegex(nomResolu)
         const consumed = scanner.scan(new RegExp(`<\\/(?:${escapedRaw}|${escapedNew})\\s*>`))
         // la fermante rencontrée ne correspond PAS à ce tag (sinon `consumed` ne serait pas
         // null) : ni consommée ni signalée — elle remonte telle quelle vers l'ancêtre qui,
@@ -930,28 +1443,68 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
         // ancêtre (`<div><@slot></div>`) est l'idiome documenté, pas une faute
         if (consumed === null && !IMPLICIT_CLOSE_TAGS.has(node.name.toLowerCase()) && rawName !== '@slot') {
           const m = scanner.rest().match(/^<\/([a-zA-Z0-9\-@]+)\s*>/)
-          console.warn(t('parser.fermeture-mal-appariee', {
-            attendu: node.name, trouve: m ? m[1] : '?', ligneOuverture: tagLine, ligneFermeture: currentLine(scanner)
-          }))
+          const line = typedLine('syntax', t('parser.fermeture-mal-appariee', {
+            attendu: nomResolu, trouve: m ? m[1] : '?', ligneOuverture: tagLine, ligneFermeture: currentLine(scanner)
+          }), diag.lint)
+          if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
         }
       } else {
-        // `parseChildren` ne peut rendre que 'close_tag' ou `undefined`
-        // (fin de boucle sur `scanner.eos()`, cf. sa propre implémentation dans `parse()`) : ce
-        // `else` est donc TOUJOURS le cas EOF-sans-fermante. Avant ce garde-fou, `container.push`
+        // un jeton de branche (`<div>{else}</div>`) remonte jusqu'ici : il est nommé, plutôt qu'une balise dite
+        // non fermée
+        refuseJetonEtranger(res, `<${nomResolu}>`, tagLine, scanner)
+        // reste 'end' ou `undefined` (fin de boucle sur `scanner.eos()`, cf. sa propre implémentation dans
+        // `parse()`) : ce `else` est donc le cas EOF-sans-fermante. Avant ce garde-fou, `container.push`
         // suivait tel quel — la balise ouvrante partait avec TOUT LE RESTE DU DOCUMENT comme
         // descendants, sans un mot (même famille que parser.balise-fermante-orpheline, le cas
         // SYMÉTRIQUE : fermante sans ouvrante). Lève ICI, au niveau le plus PROFOND (cette balise
         // est la première dont le `parseChildren` local touche l'EOF) : la pile d'appel remonte
         // sans que les balises ouvrantes ENGLOBANTES n'aient la moindre chance de lever à leur
         // tour — le message cite donc naturellement la balise la plus profonde non fermée.
-        throw new Error(t('parser.balise-non-fermee', { nom: node.name, ligne: tagLine }))
+        throw new Error(t('parser.balise-non-fermee', { nom: nomResolu, ligne: tagLine }))
       }
-      container.push(node)
+      pushTag(container, node, choix)
+    } else {
+      // ni `/>` ni `>` : balise ouvrante jamais terminée (`<div class="x"` en dernière ligne, `>` oublié) — elle
+      // disparaissait sans un mot
+      throw new Error(t('parser.balise-ouvrante-non-terminee', { nom: rawName, ligne: tagLine }))
     }
     return true
   }
 
   return false
+}
+
+// un modèle en fichier choisi par une valeur calculée (`layout={$vue}`) : l'expression, l'attribut qui
+// la porte, les modèles du composant
+interface ModelChoice { expr: string, attr: Attr, modeles: string[] }
+
+// pose une balise ; un modèle en fichier choisi par une valeur calculée devient un {if} : la balise du
+// modèle dans chaque branche (sans l'attribut `layout`), le composant de base à la fin (avec, pour ses
+// styles nommés et µlayout) — reposée quand la valeur change
+function pushTag(container: Node[], node: Node, choix: ModelChoice | null): void {
+  if (!choix) {
+    container.push(node)
+    return
+  }
+  const si = new Node('if')
+  si.line  = node.line
+  for (const x of choix.modeles) {
+    const copie = cloneNode(node)
+    copie.name  = `${node.name}--${x}`
+    copie.attrs = copie.attrs.filter((a, k) => node.attrs[k] !== choix.attr)
+    si.branches.push({ expr: `(${choix.expr}) is '${x}'`, children: [copie] })
+  }
+  si.branches.push({ expr: null, children: [node] })
+  container.push(si)
+}
+
+function cloneNode(n: Node): Node {
+  const c = new Node(n.type)
+  Object.assign(c, n)
+  c.attrs    = n.attrs.map(a => ({ ...a }))
+  c.children = n.children.map(cloneNode)
+  c.branches = n.branches.map(b => ({ ...b, children: b.children.map(cloneNode) }))
+  return c
 }
 
 // parseComment — commentaire HTML `<!-- … -->` : bloc INERTE, consommé SANS produire de
@@ -960,11 +1513,41 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
 // contenu s'affichait dans le DOM, marqueurs compris, et une `{` dedans ouvrait une VRAIE
 // expression compilée. Multi-lignes : rien à compter à la main, `currentLine`/`lineAt`
 // lisent `scanner.pos` sur la source ENTIÈRE (offsets déjà indexés, cf. lineOffsets).
-function parseComment(scanner: Scanner): boolean {
+//
+// Dans un `<textarea>` ou un `<title>` HTML, le navigateur ne lit aucun commentaire : `<!-- … -->` y est un texte, gardé tel
+// qu'écrit (une valeur `{…}` n'y est pas lue, comme dans un commentaire), jusqu'au `-->` sans dépasser la fermante de la
+// balise ; un `<!--` sans fin y est un texte de quatre caractères
+function parseComment(scanner: Scanner, container: Node[]): boolean {
   if (!scanner.check(/<!--/)) return false
   const startLine = currentLine(scanner)
-  if (scanner.scan(/<!--[\s\S]*?-->/)) return true
+  const debut     = scanner.pos
+  const lu        = scanner.scan(/<!--(?:-?>|[\s\S]*?--!?>)/)
+  if (texteSeul !== null) {
+    if (lu === null || lu.toLowerCase().includes('</' + texteSeul)) scanner.pos = debut + 4
+    const node = new Node('text')
+    node.content = scanner.str.slice(debut, scanner.pos)
+    node.line    = startLine
+    container.push(node)
+    return true
+  }
+  if (lu) return true
   throw new Error(t('parser.commentaire-non-ferme', { ligne: startLine }))
+}
+
+// `<![CDATA[…]]>` dans un `<svg>` ou un `<math>` : un texte pour le navigateur, jusqu'au `]]>` — un `<` n'y ouvre aucune
+// balise, une accolade aucune valeur. Il part tel qu'écrit dans le gabarit, refermé ; sans `]]>`, il avalerait toute la
+// suite du composant : refusé
+function parseCdata(scanner: Scanner, container: Node[]): boolean {
+  if (foreignTag === null || !scanner.check(/<!\[CDATA\[/)) return false
+  const startLine = currentLine(scanner)
+  const fin       = scanner.str.indexOf(']]>', scanner.pos + 9)
+  if (fin === -1) throw new Error(t('parser.cdata-non-fermee', { ligne: startLine }))
+  const node = new Node('text')
+  node.content = scanner.str.slice(scanner.pos, fin + 3)
+  node.line    = startLine
+  container.push(node)
+  scanner.pos = fin + 3
+  return true
 }
 
 // le texte est la majorité du volume d'un template ; l'ancienne boucle
@@ -977,10 +1560,12 @@ function parseComment(scanner: Scanner): boolean {
 // AVANT que ce run ne démarre) se faisait avaler tel quel PAR CE RUN — `parseComment`
 // n'avait alors plus jamais la main dessus, un `<!--` non refermé ne levait rien.
 const TEXT_RUN_RE = /(?:[^{<]|<(?!\/?[a-zA-Z@]|!--))+/
+// dans un <svg> ou un <math>, le texte s'arrête aussi à un `<![CDATA[` (cf. parseCdata)
+const TEXT_RUN_FOREIGN_RE = /(?:[^{<]|<(?!\/?[a-zA-Z@]|!--|!\[CDATA\[))+/
 
 function parseText(scanner: Scanner, container: Node[]): boolean {
   const startPos = scanner.pos
-  const txt = scanner.scan(TEXT_RUN_RE)
+  const txt = scanner.scan(foreignTag === null ? TEXT_RUN_RE : TEXT_RUN_FOREIGN_RE)
   if (txt !== null && txt !== '') {
     const node = new Node('text')
     node.content = txt
@@ -1084,7 +1669,7 @@ function stampSlot(children: Node[], nom: string): void {
     if (node.type === 'text') {
       // un commentaire HTML `<!-- … -->` SEUL (rien d'autre autour) est du blanc au
       // même titre qu'un espace : retiré, jamais refusé « texte nu ».
-      const sansCommentaires = (node.content ?? '').replace(/<!--[\s\S]*?-->/g, '')
+      const sansCommentaires = (node.content ?? '').replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '')
       if (sansCommentaires.trim() === '') { children.splice(i, 1); i -= 1; continue }
       throw new Error(t('parser.fill-texte-nu', { directive: FILL_DIRECTIVE, nom, ligne }))
     }
@@ -1116,15 +1701,29 @@ function stampSlot(children: Node[], nom: string): void {
 // ============================================================================
 // Entrypoint
 // ============================================================================
-export function parse(html: string, tagRefs?: TagRef[]): Node {
-  const scanner = new Scanner(html.trim())
+// pile d'appels épuisée : un gabarit imbriqué sur des milliers de niveaux (balises dans des balises, blocs
+// dans des blocs), l'analyse et la génération descendant d'un appel par niveau
+export function pileDebordee(e: unknown): boolean {
+  return e instanceof RangeError && /call stack/i.test(e.message)
+}
 
-  const parseChildren: ChildrenParser = (container: Node[]) => {
+export function parse(html: string, tagRefs?: TagRef[], diag: ParseDiag = {}): Node {
+  const firstLine = diag.firstLine ?? 1
+  const scanner   = new Scanner(expandLayoutBlocks(html.trim(), firstLine).trim(), firstLine)
+  autoSkeleton = diag.autoSkeleton !== false
+  foreignTag   = null
+  texteSeul    = null
+  fileModels   = { dev: diag.models?.dev ?? {}, core: diag.models?.core ?? {} }
+  guarded      = new Set(diag.guarded ?? [])
+  guardSilent  = diag.guardSilent === true
+
+  const parseChildren: ChildrenParser = (container: Node[], inAwait = false) => {
     while (!scanner.eos()) {
       const posBefore = scanner.pos
-      const status = parseFlow(scanner, container, parseChildren) ||
-                     parseComment(scanner) ||
-                     parseDom(scanner, container, parseChildren, tagRefs) ||
+      const status = parseFlow(scanner, container, parseChildren, inAwait) ||
+                     parseComment(scanner, container) ||
+                     parseCdata(scanner, container) ||
+                     parseDom(scanner, container, parseChildren, tagRefs, diag) ||
                      parseText(scanner, container)
       if (typeof status === 'string') return status
       if (scanner.pos === posBefore) {
@@ -1136,7 +1735,15 @@ export function parse(html: string, tagRefs?: TagRef[]): Node {
   }
 
   const root = new Node('root')
-  const res = parseChildren(root.children)
+  let res: string | undefined
+  try {
+    res = parseChildren(root.children)
+  }
+  catch (e) {
+    // un appel par niveau d'imbrication : pile épuisée, la ligne où l'analyse s'est arrêtée
+    if (pileDebordee(e)) throw new Error(t('parser.imbrication-trop-profonde', { ligne: currentLine(scanner) }))
+    throw e
+  }
   // une fermante orpheline au NIVEAU RACINE faisait remonter
   // `'close_tag'` que `parse()` IGNORAIT : tout ce qui suivait la fermante
   // disparaissait du composant en silence (motif « build vert, markup perdu »).
@@ -1158,7 +1765,8 @@ export function parse(html: string, tagRefs?: TagRef[]): Node {
   if (typeof res === 'string' && FLOW_TOKENS[res]) {
     const vars = { jeton: FLOW_TOKENS[res], ligne: currentLine(scanner) }
     if (!scanner.eos()) throw new Error(t('parser.jeton-flux-orphelin', vars))
-    console.warn(t('parser.jeton-flux-orphelin-fin', vars))
+    const line = typedLine('syntax', t('parser.jeton-flux-orphelin-fin', vars), diag.lint)
+    if (line !== null) printDiagnostic(line, diag.colorsEnabled ?? false)
   }
   hoistFillBlocks(root)
   return root

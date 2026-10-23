@@ -1,58 +1,66 @@
-// Régression — le FLASH d'intro des transitions CSS (mode `css(t,u)` via WAAPI)
-// ne doit PLUS jamais revenir.
-//
-// Bug vécu (leçon tuto `transitions-css`) : en recochant la case, l'élément
-// était peint dans son état NATUREL (texte blanc, scale 1) ~1 frame AVANT que
-// l'animation `spin` ne démarre (depuis scale 0). Cause : la branche css de
-// `µ._mjs_runTransition` faisait UN SEUL `node.animate(keyframes, {duration, delay,
-// fill:'forwards'})` → WAAPI ne pose pas le frame de départ avant le 1er paint.
-//
-// Fix (mécanisme Svelte à l'identique, cf. sveltejs/svelte#14732) : on crée
-// d'abord une animation "bidon" de la durée du `delay` (même 0), dont les
-// keyframes ne contiennent QUE le frame de départ `startFrame`, avec
-// `fill:'forwards'`. Elle finit aussitôt et fige son dernier frame → l'élément
-// est épinglé à t1 DÈS sa création, donc AVANT le 1er paint. On bascule sur la
-// vraie animation à son `finished`.
-//
-// Comme `transition-intro-when-layouted.test.ts`, on lit la source de
-// `mjs_easing.ts` et on garantit la structure (l'exécuter exigerait un vrai
-// navigateur — WAAPI n'existe pas sous happy-dom).
+// pas de flash d'intro sur les transitions css : en recochant une case, l'élément ne doit jamais être peint dans son état naturel
+// une image AVANT que l'animation ne démarre (texte blanc, échelle 1 avant un départ à l'échelle 0). Le navigateur ne tient le node
+// qu'au premier affichage de l'animation : le moteur pose donc d'abord une animation d'attente (image de départ seule, durée = délai,
+// remplissage conservé), puis la vraie. L'animation native manque à happy-dom : le node est une doublure dont animate() est notée ;
+// les valeurs lues dans de vrais navigateurs sont dans transition-moteur-navigateur-browser.test.ts
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { poserMessages } from './helpers/messages-stub.js'
 
-describe('régression — pas de flash d\'intro sur les transitions CSS (WAAPI)', function () {
-  const path = join(
-    import.meta.dirname ?? new URL('.', import.meta.url).pathname,
-    '..', 'src', 'runtime', 'mjs_easing.ts',
-  )
-  const src = readFileSync(path, 'utf-8')
+const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'runtime', 'mjs_easing.ts'), 'utf-8')
 
-  it('calcule le frame de départ startFrame = cfg.css(t1, 1 - t1)', function () {
-    assert.match(src, /startFrame\s*=\s*cfg\.css\(\s*t1\s*,\s*1\s*-\s*t1\s*\)/,
-      'doit isoler le frame de départ pour l\'animation bidon')
+function charger() {
+  const µ: any = { debug: false, Ticker: { add() {} }, _mjs_interpolatorSet: new WeakSet(), warn() {}, log() {} }
+  poserMessages(µ)
+  new Function('µ', SRC)(µ)
+  return µ
+}
+
+function faireNode() {
+  const calls: any[] = []
+  const node: any = { style: {}, calls }
+  node.animate = (keyframes: any, opts: any) => {
+    let fin: () => void = () => {}
+    const finished = new Promise<void>((res) => { fin = res })
+    const anim: any = { keyframes, opts, finished, finir: () => fin(), cancel() {}, effect: { getComputedTiming: () => ({ progress: 0 }) } }
+    calls.push(anim)
+    return anim
+  }
+  return node
+}
+
+describe('régression : pas de flash d\'intro sur les transitions css', function () {
+  const cfg = (delay: number) => ({ css: (t: number, u: number) => ({ opacity: t, reste: u }), delay, duration: 200, easing: 'linear' })
+
+  it('l\'image de départ (t1) est posée tout de suite, deux fois, en animation d\'attente de la durée du délai avec remplissage', function () {
+    const µ = charger()
+    const node = faireNode()
+    µ._mjs_runTransition(node, cfg(70), 'in')
+    assert.equal(node.calls.length, 1, 'rien d\'autre que l\'attente avant la fin de celle-ci')
+    assert.deepEqual(node.calls[0].keyframes, [{ opacity: 0, reste: 1 }, { opacity: 0, reste: 1 }])
+    assert.deepEqual(node.calls[0].opts, { duration: 70, fill: 'forwards' })
   })
 
-  it('crée l\'animation "bidon" fill:forwards (duration: delay) AVANT la vraie animation', function () {
-    // node.animate([startFrame, startFrame], { duration: delay, fill: 'forwards' })
-    assert.match(
-      src,
-      /node\.animate\(\s*\[\s*startFrame\s*,\s*startFrame\s*\]\s*,\s*\{[^}]*duration:\s*delay[^}]*fill:\s*['"]forwards['"]/,
-      "doit créer l'anim bidon node.animate([startFrame, startFrame], {duration: delay, fill:'forwards'})",
-    )
-    const dummyIdx = src.search(/node\.animate\(\s*\[\s*startFrame\s*,\s*startFrame\s*\]/)
-    const mainIdx = src.search(/node\.animate\(\s*keyframes\s*,/)
-    assert.ok(dummyIdx >= 0, 'anim bidon présente')
-    assert.ok(mainIdx >= 0, 'vraie animation (keyframes) présente')
-    assert.ok(dummyIdx < mainIdx, "l'anim bidon doit PRÉCÉDER la vraie animation")
+  it('la vraie animation vient après, sans délai (porté par l\'attente), et part de la même image', async function () {
+    const µ = charger()
+    const node = faireNode()
+    µ._mjs_runTransition(node, cfg(70), 'in')
+    node.calls[0].finir()
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    assert.equal(node.calls.length, 2)
+    assert.deepEqual(node.calls[1].opts, { duration: 200, fill: 'forwards' })
+    assert.equal('delay' in node.calls[1].opts, false)
+    assert.deepEqual(node.calls[1].keyframes[0], { opacity: 0, reste: 1, offset: 0 })
   })
 
-  it('la vraie animation ne reçoit plus `delay` (porté par la bidon) — fin de l\'anti-pattern', function () {
-    assert.doesNotMatch(
-      src,
-      /node\.animate\(\s*keyframes\s*,\s*\{[^}]*\bdelay\b/,
-      "le `delay` ne doit plus être passé à la vraie animation (sinon le flash revient)",
-    )
+  it('une sortie est tenue à 1 dès le départ', function () {
+    const µ = charger()
+    const node = faireNode()
+    µ._mjs_runTransition(node, cfg(0), 'out')
+    assert.deepEqual(node.calls[0].keyframes[0], { opacity: 1, reste: 0 })
+    assert.deepEqual(node.calls[0].opts, { duration: 0, fill: 'forwards' })
   })
 })

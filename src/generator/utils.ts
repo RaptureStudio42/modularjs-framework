@@ -42,10 +42,12 @@
 // en SYNCHRONE (des centaines de fois depuis des callbacks de `.replace()`),
 // aucun point d'`await` possible dans leur pile d'appel.
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_MINMAX_ARG_PAREN_BODY, MU_MINMAX_ARG_PAREN_OUT, MU_MINMAX_ARG_NU_BODY, MU_RUNE_STORE_BODY, cheminInspectPlat, cheminSegments, cleMinmaxChemin, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
-import { maskInertSameLength } from '../lexer/index.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_WRITE_BODY, MU_LAYOUT_PREFIX_WRITE_BODY, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_RUNE_STORE_BODY, MU_MINMAX_RETIRE_BODY, cheminInspectPlat, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { maskInertSameLength, finValeurContexte, ecritureContexte, incrementContexteRe, rewriteIncrement, convertCoffeeInterpolations } from '../lexer/index.js'
 import { createRequire } from 'node:module'
+import * as acorn from 'acorn'
 import { t } from '../messages/index.js'
+import { entiteNommee } from './entites-html.js'
 
 // regex globales des runes µ — bâties UNE fois sur les corps partagés
 // (sigils.ts, source unique lexer↔cleanJs) ; seule la GARDE (lookbehind)
@@ -62,18 +64,19 @@ const RE_MU_PASCAL_G  = new RegExp(`(?<![\\w.µ])${MU_PASCAL_BODY}`, 'g')
 const RE_MU_SHORT_G   = new RegExp(`(?<![\\w.µ])${MU_SHORT_BODY}`, 'g')
 const RE_MU_LANG_G    = new RegExp(`(?<![\\w.µ])${MU_LANG_BODY}`, 'g')
 const RE_MU_THEME_G   = new RegExp(`(?<![\\w.µ])${MU_THEME_BODY}`, 'g')
+const RE_MU_LAYOUT_G  = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_BODY}`, 'g')
+const RE_MU_LAYOUT_WRITE_G = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_WRITE_BODY}`, 'g')
+const RE_MU_LAYOUT_PREFIX_WRITE_G = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_PREFIX_WRITE_BODY}`, 'g')
 const RE_MU_HOOKS_G   = new RegExp(`(?<![\\w.µ])${MU_HOOKS_BODY}`, 'g')
 const RE_MU_DERIVED_G = new RegExp(`(?<![\\w.µ])${MU_DERIVED_BODY}`, 'g')
 const RE_MU_EVERY_G   = new RegExp(`(?<![\\w.µ])${MU_EVERY_BODY}`, 'g')
 // sucre universel µfoo → µ.foo (runes hors liste blanche MU_SHORT_BODY — µraw/µsnap/
-// µplay/µminmax/µinspect, mjs_rare_runes.ts) : même garde de tête que les RE_MU_*_G
+// µplay/µinspect, mjs_rare_runes.ts) : même garde de tête que les RE_MU_*_G
 // ci-dessus, corps PARTAGÉ avec le script (transpiler/index.ts, MU_UNIVERSAL_RE).
 const RE_MU_UNIVERSAL_G     = new RegExp(`(?<![\\w.µ])${MU_UNIVERSAL_BODY}`, 'g')
-// remodelage d'arguments de µ.inspect/µ.minmax — mêmes corps que le script (aucune
-// garde de tête supplémentaire : ils ciblent la forme DÉJÀ pointée `µ.inspect`/
-// `µ.minmax`, avec leurs propres gardes internes).
+// remodelage d'arguments de µ.inspect — même corps que le script (aucune garde de tête
+// supplémentaire : il cible la forme DÉJÀ pointée `µ.inspect`, avec ses propres gardes internes).
 const RE_MU_INSPECT_ARG_G   = new RegExp(MU_INSPECT_ARG_BODY, 'g')
-const RE_MU_MINMAX_ARG_PAREN_G = new RegExp(MU_MINMAX_ARG_PAREN_BODY, 'g')
 
 // Applique `fn` uniquement aux segments de CODE (hors littéraux '…', "…", `…`).
 // Les regex de sucre ne doivent JAMAIS réécrire le contenu des chaînes :
@@ -154,22 +157,35 @@ function mapCodeSegments(src: string, fn: (code: string) => string): string {
   return res
 }
 
-// rewriteMasked — applique `build(name, rhs)` à CHAQUE occurrence de `re` (groupe 1 =
-// nom, groupe 2 = RHS) trouvée sur une VUE MASQUÉE de `raw` (chaînes/gabarits/
+// rewriteMasked — applique `build(name, op, rhs)` à CHAQUE occurrence de `re` (groupe 1 =
+// nom, groupe 2 = opérateur d'une affectation composée, groupe 3 = RHS) trouvée sur une VUE MASQUÉE de `raw` (chaînes/gabarits/
 // commentaires neutralisés en espaces MÊME LONGUEUR, `maskInertSameLength`) — jamais à
 // l'intérieur d'un littéral. Les offsets restant alignés sur `raw`, `name`/`rhs` sont
 // relus dans `raw` via `m.indices` (drapeau `d`) : toujours le texte RÉEL, y compris
 // quand le RHS EST une chaîne littérale (`'fr'`), qui n'apparaît qu'en espaces dans la
 // vue masquée. Même technique que transpiler/sections.ts (maskInertSameLength + `d`).
-function rewriteMasked(raw: string, re: RegExp, build: (name: string, rhs: string) => string): string {
+// Le RHS s'arrête avant un `if`/`unless` postfixe ou le `then`/`else` d'un `if` qui englobe le setter
+// (finValeurContexte, lexer/index.ts, partagé avec le <script>) ; la suite se relit alors : elle peut
+// porter un autre setter (`if $ok then §x = 1 else §x = 2`).
+function rewriteMasked(raw: string, re: RegExp, build: (name: string, op: string | undefined, rhs: string) => string): string {
   const masked = maskInertSameLength(raw)
   let out    = ''
   let cursor = 0
-  for (const m of masked.matchAll(re)) {
+  re.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(masked)) !== null) {
     const idx = m.indices!
-    const [start, end] = idx[0]
-    out += raw.slice(cursor, start) + build(raw.slice(...idx[1]), raw.slice(...idx[2]))
-    cursor = end
+    const [start, end]       = idx[0]
+    const [rhsStart, rhsEnd] = idx[3]
+    let fin = end
+    const coupe = rhsStart + finValeurContexte(masked.slice(rhsStart, rhsEnd), raw.slice(rhsStart, rhsEnd))
+    if (coupe < rhsEnd) {
+      fin = coupe
+      while (fin > rhsStart && /\s/.test(raw[fin - 1])) fin--
+      re.lastIndex = fin
+    }
+    out += raw.slice(cursor, start) + build(raw.slice(...idx[1]), m[2], raw.slice(rhsStart, fin))
+    cursor = fin
   }
   return out + raw.slice(cursor)
 }
@@ -193,11 +209,28 @@ function rewriteMasked(raw: string, re: RegExp, build: (name: string, rhs: strin
 // (`'theme', ')` au lieu de `'theme', 'dark')`). Le RHS est donc capturé DEPUIS le `=`,
 // espace de séparation compris, puis `.trim()` ôte cet unique espace de tête — les
 // espaces internes d'une chaîne (`'  fr  '`) restent, eux, intacts.
+// Affectation composée (`§x += v`, `§x ||= v`), incrément et décrément (`§x++`, `--§x`) : la règle du <script>
+// (ecritureContexte, rewriteIncrement, lexer/index.ts) — laissés au getter, ils donnaient
+// `this._mjs_getContext('x') += 1`, que Civet refusait
 function applyContextSetters(raw: string, _externalVars: string[]): string {
-  const avecRCtx = rewriteMasked(raw, /(?<![\w.§])§§([a-zA-Z_][a-zA-Z0-9_$]*)\s*=(?!=|>)(.+?)(?=\n|;|$)/gd,
-    (name, rhs) => `this._mjs_setRCtx('${name}', ${rhs.trim()})`)
-  return rewriteMasked(avecRCtx, /(?<![\w.§])§([a-zA-Z_]\w*)\s*=(?!=|>)(.+?)(?=\n|;|$)/gd,
-    (name, rhs) => `this._mjs_setContext('${name}', ${rhs.trim()})`)
+  const avecIncr = incrementsContexte(incrementsContexte(raw, '§§', '_mjs_setRCtx', '_mjs_getRCtx'), '§', '_mjs_setContext', '_mjs_getContext')
+  const avecRCtx = rewriteMasked(avecIncr, /(?<![\w.§])§§([a-zA-Z_][a-zA-Z0-9_$]*)\s*(\*\*|\|\||&&|\?\?|>>>|<<|>>|[-+*/%|&^])?=(?!=|>)(.+?)(?=\n|;|$)/gd,
+    (name, op, rhs) => ecritureContexte('this', '_mjs_setRCtx', '_mjs_getRCtx', name, op, rhs.trim()))
+  return rewriteMasked(avecRCtx, /(?<![\w.§])§([a-zA-Z_]\w*)\s*(\*\*|\|\||&&|\?\?|>>>|<<|>>|[-+*/%|&^])?=(?!=|>)(.+?)(?=\n|;|$)/gd,
+    (name, op, rhs) => ecritureContexte('this', '_mjs_setContext', '_mjs_getContext', name, op, rhs.trim()))
+}
+
+// `§x++`, `--§x`… cherchés sur la vue masquée (jamais dans une chaîne ni un commentaire), réécrits par la règle du
+// <script> ; un incrément ne contient que des signes de code, le masquage (même longueur) laisse ses positions intactes
+function incrementsContexte(raw: string, marque: string, appel: string, lecture: string): string {
+  const masked = maskInertSameLength(raw)
+  let out    = ''
+  let cursor = 0
+  for (const m of masked.matchAll(incrementContexteRe(marque))) {
+    out += raw.slice(cursor, m.index) + rewriteIncrement(m[0], marque, appel, lecture, 'this')
+    cursor = m.index! + m[0].length
+  }
+  return out + raw.slice(cursor)
 }
 
 // Passe GRAMMAIRE — idiomes Coffee/Civet historiques, traduits par regex.
@@ -239,27 +272,30 @@ function applyGrammarRegex(seg: string): string {
   res = res.replace(/(?<![\w.\$])\bis\b(?!\s*[:)\]},;])/g, '===')
   res = res.replace(/(?<![\w.\$])\bisnt\b(?!\s*[:)\]},;])/g, '!==')
 
-  // unless cond → !(cond) ; MAIS `expr unless cond` (postfix, idiome Coffee/
-  // Civet natif : « fais expr sauf si cond ») doit envelopper le préfixe, pas
-  // juste la partie après « unless » — sinon le préfixe intact + le `!(cond)`
-  // produit du JS juxtaposé invalide (`$n++ unless
-  // $locked` → `$.n++ !($.locked)`, SyntaxError).
-  // Forme émise : `(!(cond) && (pre))` — VALIDE en JS ET en CoffeeScript
-  // (cleanJs alimente AUSSI les inlines d'événements
-  // recompilés en Coffee, où le ternaire `?:` et `void` n'existent pas → tout
-  // handler `@event={… unless …}` échouait à la compilation). `pre` s'exécute
-  // (effet) seulement si cond est faux, exactement comme le ternaire ; la
-  // valeur devient `false` (vs `undefined`) quand cond vrai — sans usage connu.
-  // Capture un préfixe optionnel (non-greedy, borné au segment de code
-  // COURANT — un préfixe qui traverse une chaîne littérale voisine, coupée
-  // par mapCodeSegments en un autre segment, n'est pas couvert : limite
-  // assumée).
-  res = res.replace(/^([\s\S]*?)(?<![\w.\$])unless\s+(.+)$/, (_m, prefix, cond) => {
-    const pre = prefix.trim()
-    return pre ? `(!(${cond}) && (${pre}))` : `!(${cond})`
-  })
-
   return res
+}
+
+// unless cond → !(cond) ; MAIS `expr unless cond` (postfix, idiome Coffee/
+// Civet natif : « fais expr sauf si cond ») doit envelopper le préfixe, pas
+// juste la partie après « unless » — sinon le préfixe intact + le `!(cond)`
+// produit du JS juxtaposé invalide (`$n++ unless
+// $locked` → `$.n++ !($.locked)`, SyntaxError).
+// Forme émise : `(!(cond) && (pre))` — VALIDE en JS ET en CoffeeScript
+// (cleanJs alimente AUSSI les inlines d'événements
+// recompilés en Coffee, où le ternaire `?:` et `void` n'existent pas → tout
+// handler `@event={… unless …}` échouait à la compilation). `pre` s'exécute
+// (effet) seulement si cond est faux, exactement comme le ternaire ; la
+// valeur devient `false` (vs `undefined`) quand cond vrai — sans usage connu.
+// Sur l'expression ENTIÈRE, vue masquée (chaînes et commentaires en espaces de même longueur), avant le
+// découpage par chaînes : fait segment par segment, un préfixe ou une condition qui contient une chaîne
+// (`$msg = 'oui' unless $bloque`, `alert('x') unless $ok`) n'était vu qu'en partie — `'oui'($.bloque)`
+// au clic, ou un échec de Civet sans rapport. Préfixe et condition sont relus dans le texte réel
+function rewriteUnless(raw: string): string {
+  const m = /^([\s\S]*?)(?<![\w.$])unless\s+(.+)$/d.exec(maskInertSameLength(raw))
+  if (!m) return raw
+  const pre  = raw.slice(...m.indices![1]).trim()
+  const cond = raw.slice(...m.indices![2])
+  return pre ? `(!(${cond}) && (${pre}))` : `!(${cond})`
 }
 
 // Passe SYMBOLES — sucre MJS ($x/@x/§x/µXxx/µread…), TOUJOURS appliquée quel
@@ -309,8 +345,8 @@ function sansCommentaires(code: string): string {
   return out.join('\n')
 }
 
-// inspectArgHorsCommentaire/minmaxArgHorsCommentaire — enveloppent MU_INSPECT_ARG_OUT/
-// MU_MINMAX_ARG_PAREN_OUT (sigils.ts, corps PARTAGÉ avec le script) : un match qui COMMENCE
+// inspectArgHorsCommentaire — enveloppe MU_INSPECT_ARG_OUT (sigils.ts, corps PARTAGÉ avec le
+// script) : un match qui COMMENCE
 // dans un commentaire est laissé EXACTEMENT tel quel, jamais l'occasion de lever une erreur
 // pour une forme simplement CITÉE en prose (`// µinspect($x.foo) est refusé`). `offset`/
 // `chaine` : les DEUX arguments supplémentaires que `.replace(regex, fn)` passe déjà à `fn`
@@ -330,23 +366,18 @@ function inspectArgHorsCommentaire(m: string, nomParen: string | undefined, chem
   if (masque[offset] !== chaine[offset]) return m
   return MU_INSPECT_ARG_OUT(m, nomParen, cheminReel(cheminParen), nomNu, cheminReel(cheminNu))
 }
-function minmaxArgHorsCommentaire(m: string, nom: string, chemin: string | undefined, offset: number, chaine: string): string {
-  const masque = maskInertSameLength(chaine)
-  if (masque[offset] !== chaine[offset]) return m
-  return MU_MINMAX_ARG_PAREN_OUT(m, nom, cheminReel(chemin))
-}
 // un « chemin » fait seulement de commentaires (`µinspect($x /* suivi */)`) n'en est pas un :
 // rien n'y est exécuté, l'argument reste la variable entière
 function cheminReel(chemin: string | undefined): string | undefined {
   return chemin && maskInertSameLength(chemin).trim() !== '' ? chemin : undefined
 }
 
-// reecritOuRejetteRuneChemin — µinspect(...)/µminmax(...) : un chemin/appel/indexation dont la
+// reecritOuRejetteRuneChemin — µinspect(...) : un chemin/appel/indexation dont la
 // clé est une chaîne littérale (`$x['a']`, `$x.foo('a')`) échappe encore à
-// inspectArgHorsCommentaire/minmaxArgHorsCommentaire plus bas : ceux-ci tournent PAR SEGMENT
+// inspectArgHorsCommentaire plus haut : celui-ci tourne PAR SEGMENT
 // (mapCodeSegments a déjà isolé la chaîne comme littéral INERTE avant d'appeler applySymbolRegex),
 // coupant l'appel en morceaux disjoints (`µinspect($x[` / `'a'` / `])`) — aucun des deux ne
-// correspond plus au corps ENTIER de MU_INSPECT_ARG_BODY/MU_MINMAX_ARG_PAREN_BODY (sigils.ts,
+// correspond plus au corps ENTIER de MU_INSPECT_ARG_BODY (sigils.ts,
 // gabarit LISTE BLANCHE argTermineOuChemin) : une forme INVALIDE ressortirait intacte, une forme
 // VALIDE (chemin FIXE, cf. cheminInspectPlat) ne serait jamais réécrite. Scan donc AVANT ce
 // découpage, sur le texte ENTIER (`pre`, juste avant mapCodeSegments) — vue MASQUÉE
@@ -357,14 +388,16 @@ function cheminReel(chemin: string | undefined): string | undefined {
 // comment-safe PAR CONSTRUCTION, aucun besoin du détour offset/chaine des deux fonctions
 // ci-dessus. Le nom et le chemin RÉELS (guillemets compris) sont relus dans `raw` via
 // `m.indices` — pour un message d'erreur fidèle (chemin invalide) OU pour la réécriture (chemin
-// valide : µinspect filtre son affichage, µminmax borne une propriété, cf. sigils.ts). Rend le
+// valide : µinspect filtre son affichage, cf. sigils.ts). Rend le
 // texte reconstruit segment par segment (identique à `raw` sauf aux positions réécrites) ; lève à
 // la PREMIÈRE forme invalide
 // rencontrée (l'exception interrompt tout le reste, aucun risque de double message avec
 // applySymbolRegex/inspectArgHorsCommentaire plus loin — ceux-ci ne revoient plus jamais un
 // µinspect(...) à chemin, déjà tranché ici).
-export function reecritOuRejetteRuneChemin(raw: string, formeNue = false): string {
+export function reecritOuRejetteRuneChemin(raw: string): string {
   const masque = maskInertSameLength(raw)
+  // µminmax n'existe plus (V3) : la marche à suivre plutôt que `µ.minmax is not a function` au navigateur
+  if (new RegExp(MU_MINMAX_RETIRE_BODY).test(masque)) throw new Error(t('transpiler.minmax-retire'))
   // un store (`$$x`) n'est pas l'état d'un composant : refus clair, jamais un appel à la valeur
   for (const m of masque.matchAll(new RegExp(MU_RUNE_STORE_BODY, 'g'))) {
     throw new Error(t('transpiler.rune-store', { rune: m[1], nom: m[2] }))
@@ -380,28 +413,6 @@ export function reecritOuRejetteRuneChemin(raw: string, formeNue = false): strin
     const plat = cheminInspectPlat(chemin)
     if (plat === undefined) throw new Error(t('transpiler.rune-inspect-chemin', { nom: raw.slice(...nomIdx), chemin }))
     remplacements.push([idx[0][0], idx[0][1], `µ.inspect('${raw.slice(...nomIdx)}', '${plat}')`])
-  }
-  for (const m of masque.matchAll(new RegExp(MU_MINMAX_ARG_PAREN_BODY, 'gd'))) {
-    const idx    = m.indices!
-    const nom    = raw.slice(...idx[1])
-    const chemin = cheminApresNom(raw, masque, idx[1][1], idx[2])
-    if (!chemin) continue
-    const segments = cheminSegments(chemin)
-    if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
-    remplacements.push([idx[0][0], idx[0][1], `µ.minmax(_mjsThis, ${cleMinmaxChemin(nom, segments)}`])
-  }
-  // forme sans parenthèses (`µminmax $x['cle'], 0, 10`) : <script> seulement — sa sortie nue n'est
-  // valide qu'une fois recompilée par Civet (cf. transpiler/index.ts, forme sans chemin)
-  if (formeNue) {
-    for (const m of masque.matchAll(new RegExp(MU_MINMAX_ARG_NU_BODY, 'gd'))) {
-      const idx    = m.indices!
-      const nom    = raw.slice(...idx[1])
-      const chemin = cheminApresNom(raw, masque, idx[1][1], idx[2])
-      if (!chemin) continue
-      const segments = cheminSegments(chemin)
-      if (segments === undefined) throw new Error(t('transpiler.rune-minmax-chemin', { nom, chemin }))
-      remplacements.push([idx[0][0], idx[0][1], `µ.minmax _mjsThis, ${cleMinmaxChemin(nom, segments)}`])
-    }
   }
   remplacements.sort((a, b) => a[0] - b[0])
   let out     = ''
@@ -429,7 +440,7 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   // `@@` AVANT `@name` : sinon le 2e `@` de `@@x` était capturé par la
   // règle `@name` (son lookbehind « pas un mot » est satisfait par `@`)
   // → sortie `@this.x` au lieu de `_mjsThis.x`.
-  res = res.replace(/(?<![\w.])@@/g, '_mjsThis.')
+  res = res.replace(/(?<!\w|(?<!\.)\.)@@/g, '_mjsThis.')
 
   // `µread $x`/`µwrite $x` (et statisation $$ : `µread $$x`/`µwrite $$x` →
   // accès BRUT au store, groupe 1 = '$') — DOIT passer ICI, AVANT la règle
@@ -459,6 +470,9 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   if (hookCite) throw new Error(t('generator.hook-cycle-vie-interpolation', { nom: hookCite[1] }))
   RE_MU_DERIVED_G.lastIndex = 0
   if (RE_MU_DERIVED_G.test(sansCommentaires(res))) throw new Error(t('generator.derived-hors-script'))
+  RE_MU_LAYOUT_WRITE_G.lastIndex = 0
+  RE_MU_LAYOUT_PREFIX_WRITE_G.lastIndex = 0
+  if (RE_MU_LAYOUT_WRITE_G.test(sansCommentaires(res)) || RE_MU_LAYOUT_PREFIX_WRITE_G.test(sansCommentaires(res))) throw new Error(t('lexer.mu-layout-ecrit'))
 
   const rawAccessOut = (_m: string, dollar: string, name: string) =>
     (dollar ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + name
@@ -496,7 +510,7 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     //     (`&amp;` finit par `;` → non-match, sans backtracking).
     .replace(/(?<![\w)\]"'\x60&.])&([a-zA-Z_]\w*)(?![\w;])/g,
       (_m: string, name: string) => `µ.url.params.${name}`)
-    .replace(/(?<![\w.])\$\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) => {
+    .replace(/(?<!\w|(?<!\.)\.)\$\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) => {
       // Un singleton importé (`$X` ∈ externalVars, via `@import µ$$X`) se
       // consomme en `µ$$X`, pas en `$$X` (= store GLOBAL, autre espace).
       if (externalVars.includes(`$${name}`)) throw importedSingletonError(name)
@@ -506,9 +520,9 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     // vers un singleton importé, cf. applyContextSetters) — setter `§§foo = expr`
     // → `_mjs_setRCtx`, getter `§§foo` → `_mjs_getRCtx` (remonte l'arbre + abonne).
     // §§ getter (le setter `§§x = …` est traité en pré-passe, cf. applyContextSetters)
-    .replace(/(?<![\w.§])§§([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) =>
+    .replace(/(?<![\w§]|(?<!\.)\.)§§([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) =>
       `this._mjs_getRCtx('${name}')`)
-    .replace(/(?<![\w.@])@([a-zA-Z_][a-zA-Z0-9_$]*)/g, 'this.$1')
+    .replace(/(?<![\w@]|(?<!\.)\.)@([a-zA-Z_][a-zA-Z0-9_$]*)/g, 'this.$1')
     // µXxx (PascalCase) → µ.Xxx et µurl/µonline/µvisible/µready/µserver + les
     // fabriques temps réel µsocket/µsmooth → µ.* : formes courtes des objets
     // framework, mêmes règles que le lexer (§3.8b/3.8c) PAR CONSTRUCTION
@@ -521,8 +535,10 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     .replace(RE_MU_LANG_G, MU_LANG_OUT)
     // µtheme → µ.store.__mjsTheme — même sucre que le lexer (§3.8e), CALQUE de µlang.
     .replace(RE_MU_THEME_G, MU_THEME_OUT)
+    // µlayout → la prop `layout` (« default » sans rien) : `$layout` devient `$.layout` plus bas
+    .replace(RE_MU_LAYOUT_G, "($layout || 'default')")
     // sucre universel µfoo → µ.foo — runes minuscules HORS liste blanche ci-dessus
-    // (µraw/µsnap/µplay/µminmax/µinspect, mjs_rare_runes.ts) : AVANT ce filet, elles
+    // (µraw/µsnap/µplay/µinspect, mjs_rare_runes.ts) : AVANT ce filet, elles
     // ressortaient littérales dans le JS final (`µraw is not defined` au premier
     // rendu, repro `weatherData={µraw(result)}` en branche `{success result}`).
     // MÊME garde que le script (transpiler/index.ts, MU_UNIVERSAL_RE, corps partagé
@@ -537,13 +553,10 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     // une chaîne ou un commentaire reste hors de portée, comme pour PASCAL/SHORT ci-dessus
     // (`mapCodeSegments` a déjà isolé les chaînes).
     .replace(RE_MU_UNIVERSAL_G, 'µ.$1')
-    // µ.inspect($x) → µ.inspect('x') et µ.minmax($x, min, max) →
-    // µ.minmax(_mjsThis, 'x', min, max) : remodelage d'arguments identique au script
+    // µ.inspect($x) → µ.inspect('x') : remodelage d'arguments identique au script
     // (transpiler/index.ts), sans quoi le préfixe pointé ci-dessus suffirait à éviter
-    // le ReferenceError mais appellerait le runtime avec un typage difforme (clé
-    // manquante, instance absente).
+    // le ReferenceError mais appellerait le runtime avec un typage difforme (clé manquante).
     .replace(RE_MU_INSPECT_ARG_G, inspectArgHorsCommentaire)
-    .replace(RE_MU_MINMAX_ARG_PAREN_G, minmaxArgHorsCommentaire)
 
   // $x → $.x sauf si ∈ externalVars (singleton importé : garde `$x`, sa forme
   // compilée). La FAUTE de consommation `$x` au lieu de `µ$$x` est détectée en
@@ -564,7 +577,7 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   // `$x → $.x` juste en dessous, et tourne après le bloc $$/§§ ci-dessus
   // (garantit qu'un `$` restant ici est bien SIMPLE, jamais la queue d'un
   // `$$xxx` déjà consommé).
-  res = res.replace(/(?<![\w.\$])\$([a-zA-Z0-9_]+)[ \t]*=:[ \t]*(.+?)(?=\n|;|$)/g,
+  res = res.replace(/(?<![\w$]|(?<!\.)\.)\$([a-zA-Z0-9_]+)[ \t]*=:[ \t]*(.+?)(?=\n|;|$)/g,
     (_m, name, valueExpr) => {
       const varName = `$${name}`
       const prefix = externalVars.includes(varName) ? varName : `$.${name}`
@@ -590,7 +603,7 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   // TOUJOURS enveloppée de parenthèses) n'ont même pas besoin de ce filet :
   // Civet y rejette déjà nativement `:=` (déclaration, pas une expression) —
   // ce garde-fou y transforme juste ce rejet générique en message pédagogique.
-  res = res.replace(/(?<![\w.])\$([a-zA-Z_][a-zA-Z0-9_$]*)[ \t]*:=/g,
+  res = res.replace(/(?<!\w|(?<!\.)\.)\$([a-zA-Z_][a-zA-Z0-9_$]*)[ \t]*:=/g,
     (m: string, name: string, offset: number, full: string) => {
       const varName = `$${name}`
       if (externalVars.includes(varName)) return m
@@ -598,14 +611,17 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
       throw new Error(t('lexer.symbole-declare-civet', { varName, preview }))
     })
 
-  res = res.replace(/(?<![\w.])\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m, name) => {
+  // précédé d'un point, c'est une propriété (`obj.$x`) ; de deux, une plage ou une
+  // décomposition (`[1..$n]`, `[...$items]`) : la variable
+  // précédé d'un `$`, c'est la fin d'un `$$x` resté tel quel (propriété `obj.$$x`, laissée par la règle `$$` juste au-dessus) : pas un `$x`
+  res = res.replace(/(?<![\w$]|(?<!\.)\.)\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m, name) => {
     const varName = `$${name}`
     return externalVars.includes(varName) ? varName : `$.${name}`
   })
 
   // § getContext (le setter `§x = …` est traité en pré-passe, cf. applyContextSetters)
   res = res.replace(
-    /(?<![\w.§])§([a-zA-Z_]\w*)/g,
+    /(?<![\w§]|(?<!\.)\.)§([a-zA-Z_]\w*)/g,
     (_m, name) => `this._mjs_getContext('${name}')`
   )
 
@@ -634,7 +650,7 @@ export function cleanJs(expr: string | null | undefined, externalVars: string[] 
   // la transforment en setter réactif. Sa place est donc avant elles, pas après.
   const raw = rewriteMuToggle((expr ?? '').toString().trim(), 'interpolation {…}/handler')
   const pre = reecritOuRejetteRuneChemin(applyContextSetters(raw, externalVars))
-  const out = mapCodeSegments(pre, (seg) => applySymbolRegex(applyGrammarRegex(seg), externalVars))
+  const out = mapCodeSegments(rewriteUnless(pre), (seg) => applySymbolRegex(applyGrammarRegex(seg), externalVars))
   // µimport('chemin.js') / mjsimport('chemin.js') → µ._mjs_import(µasset('chemin.js'))
   // passe FINALE, sur `out` COMPLET : `mapCodeSegments` isole déjà les
   // chaînes littérales AVANT d'appeler `applySymbolRegex` par segment — or
@@ -789,78 +805,76 @@ function compileGrammarViaCivet(symbolsCleaned: string, rawExprForError: string,
 
   // Retire le `;`/saut de ligne final éventuel PUIS la parenthèse enveloppante
   // qu'on vient d'ajouter — sortie = expression JS nue, drop-in de cleanJs.
-  const result = stripOuterParens(compiled.replace(/;\s*$/, '').trim())
+  const out    = compiled.replace(/;\s*$/, '').trim()
+  const result = /^var [A-Za-z_$][\w$]* = /.test(out) ? withCivetHelpers(out) : stripOuterParens(out)
   civetExprCache.set(normalized, result)
   return result
 }
 
-// même conversion Coffee `"...#{X}..."` →
-// gabarit `` `...${X}...` `` que la Pass 3 du `<script>` (transpiler/index.ts,
-// convertCoffeeInterpolations/toTemplateLiteral) — DUPLIQUÉE ici, pas réutilisée : les
-// deux fichiers s'importent déjà mutuellement (transpiler/index.ts → generator/state.js
-// → generator/utils.js), un import inverse ferait un cycle — transpiler/index.ts reste
-// hors périmètre ici, sa propre Pass 3 n'est pas retouchée pour pointer ici.
-// Sans cette passe, une interpolation `#{}` DANS une
-// expression de template (`{"val: #{$x}"}`) atteint le vrai compilateur Civet SANS avoir
-// été convertie : Civet ne comprend PAS `#{}` nativement (seul Coffee le fait) — la
-// chaîne compile telle quelle, `$x` reste du texte INERTE dans un Literal JS, jamais
-// suivi (cf. docs/03-reactivite.md). Portée VOLONTAIREMENT identique à la Pass 3 :
-// double-quote seulement (Coffee n'interpole pas les single-quotes), scan
-// contexte-aware (commentaires/chaînes/gabarits natifs intacts).
-function toTemplateLiteral(body: string): string {
-  return '`' + body.replace(/`/g, '\\`').replace(/\$\{/g, '\\${').replace(/#\{([^}]+)\}/g, '${$1}') + '`'
+// une aide de Civet (`[1..200]` → `var range = …`, `a %% b` → `var modulo = …`) est déclarée AVANT
+// l'expression : elles partent ensemble, dans une fléchée appelée sur place (`this` inchangé)
+function withCivetHelpers(out: string): string {
+  const body = (acorn.parse(out, { ecmaVersion: 'latest', sourceType: 'script', allowAwaitOutsideFunction: true }) as any).body
+  const last = body[body.length - 1]
+  if (!last || last.type !== 'ExpressionStatement') return stripOuterParens(out)
+  const expr = stripOuterParens(out.slice(last.expression.start, last.expression.end))
+  return `(() => { ${out.slice(0, last.start).trim()} return (${expr}); })()`
 }
-export function convertCoffeeInterpolations(src: string): string {
-  let res = ''
-  let i = 0
-  const n = src.length
-  while (i < n) {
-    const ch = src[i]
-    if (ch === '/' && src[i + 1] === '/') {
-      const e = src.indexOf('\n', i)
-      const end = e === -1 ? n : e
-      res += src.slice(i, end); i = end; continue
+
+// conversion Coffee `"…#{X}…"` → gabarit : une seule fonction, dans le lexeur (partagée avec la Pass 3 du <script>).
+// Sans elle, une interpolation `#{}` DANS une expression de template (`{"val: #{$x}"}`) atteint Civet, qui ne la lit
+// pas : `$x` reste du texte inerte, jamais suivi (cf. docs/03-reactivite.md)
+export { convertCoffeeInterpolations }
+
+// `() => { if ($a) { $x = 5 } }` : Civet lit les accolades d'une flèche comme un OBJET dès que leur contenu en forme un
+// (`if (a) {…}` y devient une méthode nommée `if`) — la flèche rendait cet objet, le clic restait sans effet, sans
+// erreur. Un `;` collé à la dernière instruction, avant un commentaire final, en fait un bloc, comme en JavaScript ;
+// posé seulement quand la lecture de Civet donne un objet, tout autre gestionnaire reste tel qu'écrit. Civet n'est
+// consulté que si une instruction du premier niveau commence par un mot de contrôle : sans lui, une lecture en objet
+// garde le code exécuté (`{ foo() }` y vaut `{ foo: foo() }`), quand un `;` en ferait une méthode (`foo();` y devient
+// `foo() {;}`, l'appel n'a plus lieu)
+const FLECHE_ACCOLADE_RE = /^\s*(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)?\s*=>\s*\{/
+const FLECHE_OBJET_RE    = /^\(*\s*(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)?\s*=>\s*\(\s*\{/
+const MOT_DE_CONTROLE_RE = /\s*(?:if|unless|while|until|for|switch|try|do|loop|with)(?![\w$])/y
+export function corpsDeFlecheEnBloc(js: string): string {
+  const tete = FLECHE_ACCOLADE_RE.exec(js)
+  if (!tete) return js
+  const fin = js.trimEnd().length - 1
+  if (js[fin] !== '}') return js
+  // l'accolade finale doit refermer celle de la flèche (chaînes et commentaires masqués) ; au premier niveau du corps (accolades
+  // de la flèche, hors parenthèses et crochets), le mot qui commence chaque instruction
+  const masque = maskInertSameLength(js)
+  let profondeur = 0
+  let groupes    = 0
+  let controle   = false
+  for (let i = tete[0].length - 1; i <= fin; i++) {
+    const c = masque[i]
+    if (c === '(' || c === '[') groupes++
+    else if (c === ')' || c === ']') groupes--
+    else if (c === '{') profondeur++
+    else if (c === '}') {
+      profondeur--
+      if (profondeur === 0 && i < fin) return js
     }
-    if (ch === '/' && src[i + 1] === '*') {
-      const e = src.indexOf('*/', i + 2)
-      const end = e === -1 ? n : e + 2
-      res += src.slice(i, end); i = end; continue
+    if (profondeur === 1 && groupes === 0 && (c === '{' || c === '\n' || c === ';') && !controle) {
+      MOT_DE_CONTROLE_RE.lastIndex = i + 1
+      controle = MOT_DE_CONTROLE_RE.test(masque)
     }
-    if (src.startsWith("'''", i)) {
-      const e = src.indexOf("'''", i + 3)
-      const end = e === -1 ? n : e + 3
-      res += src.slice(i, end); i = end; continue
-    }
-    if (ch === "'") {
-      let j = i + 1
-      while (j < n && src[j] !== "'" && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
-      if (j < n && src[j] === "'") { res += src.slice(i, j + 1); i = j + 1 } else { res += src.slice(i, j); i = j }
-      continue
-    }
-    if (ch === '`') {
-      let j = i + 1
-      while (j < n && src[j] !== '`') { if (src[j] === '\\') j++; j++ }
-      const end = Math.min(j + 1, n)
-      res += src.slice(i, end); i = end; continue
-    }
-    if (src.startsWith('"""', i)) {
-      const e = src.indexOf('"""', i + 3)
-      if (e === -1) { res += src.slice(i); break }
-      const body = src.slice(i + 3, e)
-      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, e + 3)
-      i = e + 3; continue
-    }
-    if (ch === '"') {
-      let j = i + 1
-      while (j < n && src[j] !== '"' && src[j] !== '\n') { if (src[j] === '\\') j++; j++ }
-      if (j >= n || src[j] === '\n') { res += src.slice(i, j); i = j; continue }
-      const body = src.slice(i + 1, j)
-      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, j + 1)
-      i = j + 1; continue
-    }
-    res += ch; i++
   }
-  return res
+  if (profondeur !== 0 || !controle) return js
+  let lu: string
+  try {
+    lu = getCivetCompile()(`(${js})`, { js: true, sync: true, parseOptions: { coffeeEq: true } })
+  }
+  catch {
+    return js
+  }
+  if (!FLECHE_OBJET_RE.test(lu.trim())) return js
+  // `;` collé à la dernière instruction (sur sa propre ligne, il casserait l'indentation lue par Civet), lue sur le masque : un
+  // commentaire final l'aurait avalé
+  let k = fin - 1
+  while (/\s/.test(masque[k])) k--
+  return js.slice(0, k + 1) + ';' + js.slice(k + 1)
 }
 
 // cleanJsExpr : variante « site EXPRESSION » de cleanJs — cf. header pour la
@@ -918,12 +932,41 @@ export function parseMixedString(
     if (isPure) return cleanJsExpr(rawVal.slice(1, -1), externalVars, templateLang, moduleName)
   }
 
+  // Application du bouclier sur les chaînes mixtes.
+  // exiger une lettre/`_` en tête : un `$5` littéral (prix, "5$") n'est PAS
+  // une variable et ne doit pas devenir `${$.5}` (SyntaxError). Aligné sur
+  // la porte d'aiguillage (`\$[a-zA-Z_]`). `$$nom` (store, thème) se lit comme
+  // `{$$nom}` : compilé par cleanJsExpr, comme l'expression entre accolades.
+  // Appliqué au seul TEXTE de l'attribut, segment par segment : passé sur le résultat entier, il
+  // réécrivait aussi le code déjà compilé des `{…}` — un `$US` dans une chaîne de l'expression
+  // (`{$n + ' $US'}`), le `$count` d'un singleton importé (`{µ$$count.value}`, enveloppé deux fois)
+  // Le texte fixe a ses entités décodées, comme le ferait le navigateur (l'attribut est posé par `setAttribute`, qui ne décode
+  // rien), puis il est échappé pour le gabarit : un `${` que seul le décodage fait apparaître (`&#36;&#123;`) reste du texte, et
+  // un `$nom` écrit en entité n'est pas une variable
+  const fixe = (s: string): string => decodeHtmlEntities(s).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
+  const raccourci = (texte: string): string => {
+    let sortie = ''
+    let debut  = 0
+    for (const m of texte.matchAll(/(?<![\w$]|(?<!\.)\.)(?:\$\$([a-zA-Z_]\w*)|\$([a-zA-Z_][a-zA-Z0-9_$]*))/g)) {
+      const [vu, store, name] = m
+      const varName = `$${name}`
+      sortie += fixe(texte.slice(debut, m.index))
+      if (store) sortie += `\${${cleanJsExpr(`$$${store}`, externalVars, templateLang, moduleName)}}`
+      else sortie += externalVars.includes(varName) ? `\${${varName}}` : `\${$.${name}}`
+      debut = m.index! + vu.length
+    }
+    return sortie + fixe(texte.slice(debut))
+  }
+
   let jsEval = ''
+  let texte  = ''
   let i = 0
   const n = rawVal.length
 
   while (i < n) {
     if (rawVal[i] === '{') {
+      jsEval += raccourci(texte)
+      texte = ''
       i += 1
       let expr = ''
       let balance = 1
@@ -962,22 +1005,11 @@ export function parseMixedString(
 
       jsEval += `\${${cleanJsExpr(expr, externalVars, templateLang, moduleName)}}`
     } else {
-      const ch = rawVal[i]
-      if (ch === '\\') jsEval += '\\\\'
-      else if (ch === '`') jsEval += '\\`'
-      else jsEval += ch
+      texte += rawVal[i]
       i += 1
     }
   }
-
-  // Application du bouclier sur les chaînes mixtes.
-  // exiger une lettre/`_` en tête : un `$5` littéral (prix, "5$") n'est PAS
-  // une variable et ne doit pas devenir `${$.5}` (SyntaxError). Aligné sur
-  // la porte d'aiguillage (`\$[a-zA-Z_]`).
-  jsEval = jsEval.replace(/(?<![\w.\$])\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m, name) => {
-    const varName = `$${name}`
-    return externalVars.includes(varName) ? `\${${varName}}` : `\${$.${name}}`
-  })
+  jsEval += raccourci(texte)
 
   return `\`${jsEval}\``
 }
@@ -989,23 +1021,51 @@ export function parseMixedString(
 // regroupés dans `_mjs_renderStruct` qui est rejoué à chaque mutation (coût négligé,
 // la structure mute rarement).
 
-// entités HTML NOMMÉES + numériques courantes, table minimale (pas les
-// ~2000 entités HTML5 complètes : hors périmètre, cf. appelant).
-const NAMED_HTML_ENTITIES: Record<string, string> = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: '\u00A0',
-}
-
 // decodeHtmlEntities — même sémantique que le parseur HTML natif pour un attribut
 // STATIQUE : le chemin HTML (`staticAttr`, attributes/index.ts) laisse les entités
 // telles quelles dans la chaîne injectée (le navigateur les décode LUI-MÊME au parse,
 // via innerHTML/`µ._mjs_cloneTpl`) — le chemin DOM (`emitAttrSet`, paths.ts : setAttribute/
 // prop directe construits par appel, jamais parsés) ne bénéficie d'AUCUN décodage
-// natif, il faut donc le faire ICI, avant `JSON.stringify`. Entités nommées courantes
+// natif, il faut donc le faire ICI, avant `JSON.stringify` (de même pour le texte du mode
+// impératif, cf. appendTextNode). Toutes les entités nommées du standard (entites-html.ts)
 // + numériques décimales (`&#123;`) et hexadécimales (`&#x7B;`/`&#X7B;`) ; un `&` qui
 // n'amorce pas une entité reconnue, ou un nom inconnu, reste intact (jamais de
 // décodage agressif qui altérerait un texte contenant un `&` nu).
-export function decodeHtmlEntities(s: string): string {
-  return s.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);/g, (match, body) => {
+// Les 106 noms historiques se lisent aussi SANS `;`, le plus long en tête (`&notit;` → `¬it;`), comme le
+// navigateur : partout dans un texte (`texte`), et dans un attribut sauf devant une lettre, un chiffre
+// ou `=` (`?a=1&copy=2` reste tel quel). Une référence numérique se lit aussi sans `;`, dans un texte comme dans un
+// attribut (cette exception ne vaut que pour les noms) : elle s'arrête au premier caractère qui n'est pas un chiffre
+// de sa base (`&#65x` → `Ax`)
+// noms d'entités que le standard HTML lit aussi sans `;` (héritage) : les 96 caractères de U+00A0 à U+00FF,
+// `amp` `lt` `gt` `quot`, et six formes en capitales
+const ENTITES_HERITEES = new Set('nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml amp lt gt quot AMP LT GT QUOT COPY REG'.split(' '))
+// références numériques 128 à 159 : le standard HTML les lit par la table windows-1252 (`&#128;` → €, `&#150;` → –) ;
+// les cinq codes qu'elle ne définit pas (129, 141, 143, 144, 157) restent tels quels
+const WINDOWS_1252 = '€\x81‚ƒ„…†‡ˆ‰Š‹Œ\x8DŽ\x8F\x90‘’“”•–—˜™š›œ\x9DžŸ'
+
+// noms d'attribut que le filtre du runtime (`µ._mjs_safeAttr`, mjs_init.ts) peut refuser, comparés en minuscules comme lui :
+// gestionnaire `on…`, `srcdoc`, adresse (`µ._mjs_URL_ATTRS`, et `data`, `codebase` d'un <object>)
+const ATTR_A_RISQUE = /^(?:on[a-z][\s\S]*|srcdoc|href|src|xlink:href|action|formaction|poster|ping|background|data|codebase)$/
+
+/** Dernier argument d'une écriture d'attribut calculé (`µ._mjs_updAttrNode(n, nom, v, 1)`, `this._mjs_updAttr(id, nom, v, 1)`) :
+ * `, 1` quand le nom, écrit dans le gabarit, n'a rien à faire refuser au filtre du runtime, qui pose alors la valeur sans lui ;
+ * rien pour un nom à risque, ni pour `class`, que le runtime écrit déjà sans ce filtre. Un nom calculé (étalement, balise
+ * dynamique) n'arrive jamais ici : il garde le filtre. */
+export function attrSur(nom: string): string {
+  return nom === 'class' || ATTR_A_RISQUE.test(nom.toLowerCase()) ? '' : ', 1'
+}
+
+export function decodeHtmlEntities(s: string, texte = false): string {
+  return s.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*)(;?)/g, (match, body, pv, offset) => {
+    if (body[0] !== '#' && !(pv && entiteNommee(body) !== undefined)) {
+      for (let n = Math.min(body.length, 6); n >= 2; n--) {
+        if (!ENTITES_HERITEES.has(body.slice(0, n))) continue
+        const suite = n < body.length ? body[n] : pv || s[offset + match.length]
+        if (!texte && suite !== undefined && /[=a-zA-Z0-9]/.test(suite)) return match
+        return entiteNommee(body.slice(0, n)) + body.slice(n) + pv
+      }
+      return match
+    }
     if (body[0] === '#') {
       const isHex = body[1] === 'x' || body[1] === 'X'
       const code = isHex ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
@@ -1013,10 +1073,199 @@ export function decodeHtmlEntities(s: string): string {
       // hors plage Unicode (> U+10FFFF) : String.fromCodePoint lève un RangeError qui
       // plantait toute la compilation, sans composant ni ligne — le HTML remplace ces
       // entités par U+FFFD plutôt que de refuser le document, même remède ici.
-      if (code < 0 || code > 0x10FFFF) return String.fromCharCode(0xFFFD)
+      // `&#0;` et une demi-paire de substitution (U+D800 à U+DFFF) aussi, comme le parseur HTML
+      if (code <= 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return String.fromCharCode(0xFFFD)
+      if (code >= 0x80 && code <= 0x9F) return WINDOWS_1252[code - 0x80]
       return String.fromCodePoint(code)
     }
-    const named = NAMED_HTML_ENTITIES[body]
+    const named = entiteNommee(body)
     return named !== undefined ? named : match
   })
+}
+
+// identifiants LIBRES d'un code JS : noms lus ou écrits qui ne sont déclarés nulle part au-dessus
+// d'eux (paramètres, `const`/`let`/`var`, fonctions, classes, `catch`, boucles), propriétés et
+// étiquettes exclues. null quand le code ne se parse pas
+export function freeIdentifiers(code: string): Set<string> | null {
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
+  }
+  catch {
+    return null
+  }
+  type Portee = { noms: Set<string>, parent: Portee | null }
+  const libres = new Set<string>()
+  const FONCTIONS = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'])
+  const nouvelle = (parent: Portee | null): Portee => ({ noms: new Set(), parent })
+  const declare = (motif: any, portee: Portee): void => {
+    if (!motif) return
+    switch (motif.type) {
+      case 'Identifier': portee.noms.add(motif.name); break
+      case 'ObjectPattern': for (const p of motif.properties) declare(p.type === 'RestElement' ? p.argument : p.value, portee); break
+      case 'ArrayPattern': for (const e of motif.elements) declare(e, portee); break
+      case 'AssignmentPattern': declare(motif.left, portee); break
+      case 'RestElement': declare(motif.argument, portee); break
+    }
+  }
+  const connu = (nom: string, portee: Portee | null): boolean => {
+    for (let p = portee; p; p = p.parent) if (p.noms.has(nom)) return true
+    return false
+  }
+  // déclarations d'un bloc : let/const, fonctions et classes (les `var` remontent à la fonction)
+  const hisseBloc = (instructions: any[], portee: Portee): void => {
+    for (const s of instructions) {
+      if (s.type === 'VariableDeclaration' && s.kind !== 'var') for (const d of s.declarations) declare(d.id, portee)
+      else if ((s.type === 'FunctionDeclaration' || s.type === 'ClassDeclaration') && s.id) portee.noms.add(s.id.name)
+    }
+  }
+  const hisseVar = (noeud: any, portee: Portee): void => {
+    if (!noeud || typeof noeud.type !== 'string' || FONCTIONS.has(noeud.type)) return
+    if (noeud.type === 'VariableDeclaration' && noeud.kind === 'var') for (const d of noeud.declarations) declare(d.id, portee)
+    for (const cle of Object.keys(noeud)) {
+      const v = noeud[cle]
+      if (Array.isArray(v)) for (const e of v) hisseVar(e, portee)
+      else if (v && typeof v.type === 'string') hisseVar(v, portee)
+    }
+  }
+  // un motif de déclaration ne lit que ses valeurs par défaut et ses clés calculées
+  const motif = (m: any, portee: Portee): void => {
+    if (!m) return
+    switch (m.type) {
+      case 'ObjectPattern':
+        for (const p of m.properties) {
+          if (p.type === 'RestElement') { motif(p.argument, portee); continue }
+          if (p.computed) visite(p.key, portee)
+          motif(p.value, portee)
+        }
+        break
+      case 'ArrayPattern': for (const e of m.elements) motif(e, portee); break
+      case 'AssignmentPattern': motif(m.left, portee); visite(m.right, portee); break
+      case 'RestElement': motif(m.argument, portee); break
+    }
+  }
+  const fonction = (f: any, portee: Portee): void => {
+    let p = portee
+    if (f.type === 'FunctionExpression' && f.id) {
+      p = nouvelle(portee)
+      p.noms.add(f.id.name)
+    }
+    const corps = nouvelle(p)
+    if (f.type !== 'ArrowFunctionExpression') corps.noms.add('arguments')
+    for (const prm of f.params) declare(prm, corps)
+    for (const prm of f.params) motif(prm, corps)
+    if (f.body.type === 'BlockStatement') {
+      hisseBloc(f.body.body, corps)
+      hisseVar(f.body, corps)
+      for (const s of f.body.body) visite(s, corps)
+    }
+    else visite(f.body, corps)
+  }
+  const visite = (n: any, portee: Portee): void => {
+    if (!n || typeof n.type !== 'string') return
+    switch (n.type) {
+      case 'Identifier':
+        if (!connu(n.name, portee)) libres.add(n.name)
+        return
+      case 'Program': {
+        const p = nouvelle(portee)
+        hisseBloc(n.body, p)
+        hisseVar(n, p)
+        for (const s of n.body) visite(s, p)
+        return
+      }
+      case 'BlockStatement':
+      case 'StaticBlock': {
+        const p = nouvelle(portee)
+        hisseBloc(n.body, p)
+        for (const s of n.body) visite(s, p)
+        return
+      }
+      case 'FunctionDeclaration':
+      case 'FunctionExpression':
+      case 'ArrowFunctionExpression':
+        fonction(n, portee)
+        return
+      case 'ClassDeclaration':
+      case 'ClassExpression': {
+        let p = portee
+        if (n.type === 'ClassExpression' && n.id) {
+          p = nouvelle(portee)
+          p.noms.add(n.id.name)
+        }
+        visite(n.superClass, p)
+        for (const m of n.body.body) {
+          if (m.type === 'StaticBlock') visite(m, p)
+          else {
+            if (m.computed) visite(m.key, p)
+            visite(m.value, p)
+          }
+        }
+        return
+      }
+      case 'VariableDeclaration':
+        for (const d of n.declarations) {
+          motif(d.id, portee)
+          visite(d.init, portee)
+        }
+        return
+      case 'ForStatement': {
+        const p = nouvelle(portee)
+        if (n.init && n.init.type === 'VariableDeclaration') for (const d of n.init.declarations) declare(d.id, p)
+        visite(n.init, p)
+        visite(n.test, p)
+        visite(n.update, p)
+        visite(n.body, p)
+        return
+      }
+      case 'ForInStatement':
+      case 'ForOfStatement': {
+        const p = nouvelle(portee)
+        if (n.left.type === 'VariableDeclaration') for (const d of n.left.declarations) declare(d.id, p)
+        visite(n.left, p)
+        visite(n.right, p)
+        visite(n.body, p)
+        return
+      }
+      case 'CatchClause': {
+        const p = nouvelle(portee)
+        declare(n.param, p)
+        motif(n.param, p)
+        visite(n.body, p)
+        return
+      }
+      case 'SwitchStatement': {
+        visite(n.discriminant, portee)
+        const p = nouvelle(portee)
+        for (const c of n.cases) hisseBloc(c.consequent, p)
+        for (const c of n.cases) {
+          visite(c.test, p)
+          for (const s of c.consequent) visite(s, p)
+        }
+        return
+      }
+      case 'MemberExpression':
+        visite(n.object, portee)
+        if (n.computed) visite(n.property, portee)
+        return
+      case 'Property':
+        if (n.computed) visite(n.key, portee)
+        visite(n.value, portee)
+        return
+      case 'LabeledStatement':
+        visite(n.body, portee)
+        return
+      case 'BreakStatement':
+      case 'ContinueStatement':
+      case 'MetaProperty':
+        return
+    }
+    for (const cle of Object.keys(n)) {
+      const v = n[cle]
+      if (Array.isArray(v)) for (const e of v) visite(e, portee)
+      else if (v && typeof v.type === 'string') visite(v, portee)
+    }
+  }
+  visite(ast, nouvelle(null))
+  return libres
 }

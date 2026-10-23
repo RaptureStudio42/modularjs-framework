@@ -37,20 +37,14 @@ let fakeNow = 0
 // restaurées dans un after() — même idiome que crossfade-sampleandrun-rejection.test.ts
 // (fixé pour la même raison), qui partage le même mjs_easing.js importé une
 // seule fois pour tout le process.
-const __origRaf = (globalThis as any).requestAnimationFrame
-const __origCancelRaf = (globalThis as any).cancelAnimationFrame
-const __origPerf = (globalThis as any).performance
-const __origPerfNow = __origPerf ? __origPerf.now : void 0
-;(globalThis as any).requestAnimationFrame = (cb: (t: number) => void) => {
-  const id = ++rafIdCounter
-  rafQueue.push({ id, cb })
-  return id
-}
-;(globalThis as any).cancelAnimationFrame = (id: number) => {
-  rafQueue = rafQueue.filter(f => f.id !== id)
-}
-if (!(globalThis as any).performance) (globalThis as any).performance = {}
-;(globalThis as any).performance.now = () => fakeNow
+// Et posées seulement pendant les tests de ce fichier (before et after du describe), comme l'horloge
+// (`performance.now`) : `performance` est l'objet partagé par toutes les fenêtres happy-dom de
+// l'exécution — remplacés dès le chargement du fichier, l'horloge restait figée et les images
+// fausses pour les fichiers lancés AVANT lui dans la même commande
+let __origRaf: any = void 0
+let __origCancelRaf: any = void 0
+let __origPerf: any = void 0
+let __origPerfNow: any = void 0
 
 function flushOneFrame(time: number) {
   fakeNow = time
@@ -75,6 +69,23 @@ const µ: any = (globalThis as any).µ
 await import('../src/runtime/mjs_easing.js')
 
 describe('µ._mjs_runTransition (mode tick) — abort entre 2 frames résout la Promise', function () {
+  before(() => {
+    __origRaf       = (globalThis as any).requestAnimationFrame
+    __origCancelRaf = (globalThis as any).cancelAnimationFrame
+    ;(globalThis as any).requestAnimationFrame = (cb: (t: number) => void) => {
+      const id = ++rafIdCounter
+      rafQueue.push({ id, cb })
+      return id
+    }
+    ;(globalThis as any).cancelAnimationFrame = (id: number) => {
+      rafQueue = rafQueue.filter(f => f.id !== id)
+    }
+    __origPerf    = (globalThis as any).performance
+    __origPerfNow = __origPerf ? __origPerf.now : void 0
+    if (!(globalThis as any).performance) (globalThis as any).performance = {}
+    ;(globalThis as any).performance.now = () => fakeNow
+  })
+
   after(() => {
     ;(globalThis as any).requestAnimationFrame = __origRaf
     ;(globalThis as any).cancelAnimationFrame = __origCancelRaf

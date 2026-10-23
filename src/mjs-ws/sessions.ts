@@ -16,10 +16,11 @@
 // session devient NON reprenable (jamais de rejeu partiel), la minuterie
 // continue pour la purge différée.
 
-import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { Buffer } from 'node:buffer'
+import { randomBytes } from 'node:crypto'
 import type { MjsWsClient, MjsWsLogFn } from './core.js'
 import type { MjsWsStatsRegistry } from './stats.js'
+import { checkSetting, showSetting } from './guard.js'
+import { safeEqual } from './package-helpers.js'
 import { t } from '../messages/index.js'
 
 export interface MjsWsResumeOptions {
@@ -41,11 +42,17 @@ export interface MjsWsResolvedResume {
 // source UNIQUE, jamais recopiées en dur — même précédent que DEFAULT_LIMITS)
 export const DEFAULT_RESUME: MjsWsResolvedResume = { grace: 30000, maxBuffered: 500, maxBytes: 262144 }
 
-/** Résout l'option `resume` de mjsWs() — absent/false = désactivé (undefined), true = défauts, objet = défauts surchargés. */
+/** Résout l'option `resume` de mjsWs() — absent/`false`/`null` = désactivé (undefined), `true` = défauts, objet = défauts
+ *  complétés (une clé à `undefined` garde son défaut). Chaque réglage est un nombre fini ≥ 0 (cf. checkSetting, guard.ts) :
+ *  `maxBuffered: NaN` laissait sinon le tampon de grâce grossir sans borne. Tout autre type lève en clair. */
 export function resolveResumeOptions(raw: boolean | MjsWsResumeOptions | undefined): MjsWsResolvedResume | undefined {
-  if (!raw) return undefined
+  if (raw === undefined || raw === null || raw === false) return undefined
   if (raw === true) return { ...DEFAULT_RESUME }
-  return { ...DEFAULT_RESUME, ...raw }
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'resume', raw: showSetting(raw), attendu: 'true, false, { grace, maxBuffered, maxBytes }' }))
+  const resume = { ...DEFAULT_RESUME } as MjsWsResolvedResume & Record<string, unknown>
+  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) resume[cle] = v
+  for (const cle of ['grace', 'maxBuffered', 'maxBytes'] as const) checkSetting('resume.' + cle, resume[cle], 'nombre')
+  return resume
 }
 
 /** id d'identité pour la garde de reprise — identity.id s'il existe (stringifié), sinon null
@@ -80,14 +87,6 @@ export interface MjsWsSessionsHooks {
   onExpire: (client: MjsWsClient, reason?: string) => void
 }
 
-// comparaison de clés à temps constant — égalité de LONGUEUR d'abord (timingSafeEqual lève
-// un RangeError sinon, ce qui planterait le handshake au lieu d'un simple accueil frais)
-function keysEqual(expected: string, given: string): boolean {
-  const a = Buffer.from(expected, 'utf8')
-  const b = Buffer.from(given, 'utf8')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
-}
 
 export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: Record<string, unknown>) => number, log: MjsWsLogFn, hooks: MjsWsSessionsHooks, stats?: MjsWsStatsRegistry) {
   const registry = new Map<string, SessionRecord>()   // id de session → session
@@ -132,7 +131,9 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
   function buffer(client: MjsWsClient, frame: Record<string, unknown>): void {
     const record = byClient.get(client)
     if (!record || !record.parked || record.overflowed) return
-    if (frame.seq != null) return   // delta de flux — couvert par le µ:resync du retour, ne JAMAIS doubler
+    // delta de flux — couvert par le µ:resync du retour, ne JAMAIS doubler ; l'état complet (`reset`) d'un abonnement accordé
+    // pendant l'absence, lui, n'est couvert par rien : un client repris sans lui appliquerait la suite sur un état vide
+    if (frame.seq != null && (frame.p as { op?: unknown } | null | undefined)?.op !== 'reset') return
     if (typeof frame.t === 'string' && EXCLUDED_TYPES.has(frame.t)) return
     record.buffer.push(frame)
     record.bytes += sizeOf(frame)
@@ -154,7 +155,8 @@ export function createSessionsEngine(opts: MjsWsResolvedResume, sizeOf: (frame: 
     const record = registry.get(id)
     if (!record || !record.parked) return null           // inconnue/expirée — ou client encore vivant : jamais le vol d'une connexion
     if (record.overflowed) return null
-    if (!keysEqual(record.key, key)) return null
+    // à temps constant (package-helpers.ts::safeEqual : une longueur différente ne lève pas, accueil frais)
+    if (!safeEqual(record.key, key)) return null
     if (record.identityId !== identityId) return null    // l'auth (déjà re-vérifiée par core.ts) doit prouver le MÊME utilisateur
     if (record.timer) { clearTimeout(record.timer); record.timer = null }
     record.parked = false

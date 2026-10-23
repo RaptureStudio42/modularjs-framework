@@ -76,13 +76,24 @@ async function rawRequestClient(transport: MemoryTransport, url: string) {
 
 // capture console.log/warn/error — même principe que cli-init-scaffold-hints.test.ts,
 // version qui reste active pendant un `await` (rechargement asynchrone)
+// une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
+// sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
+const capturesEnCours: Array<() => void> = []
+afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
   const orig = { log: console.log, warn: console.warn, error: console.error }
   console.log   = (...a: any[]) => { lines.push(a.join(' ')) }
   console.warn  = (...a: any[]) => { lines.push(a.join(' ')) }
   console.error = (...a: any[]) => { lines.push(a.join(' ')) }
-  return { lines, restore: () => { console.log = orig.log; console.warn = orig.warn; console.error = orig.error } }
+  const restore = (): void => {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error
+    const i = capturesEnCours.indexOf(restore)
+    if (i >= 0) capturesEnCours.splice(i, 1)
+  }
+  capturesEnCours.push(restore)
+  return { lines, restore }
 }
 
 // ============================================================================
@@ -107,7 +118,7 @@ describe('mjs.config.json — section `ws` (validation stricte, patron `runtime`
 
   it("throw sur ws.X inconnu, avec suggestion orthographique ('entrry' → 'entry')", () => {
     const root = writeConfig({ ws: { entrry: 'ws.js' } })
-    assert.throws(() => findConfig(root), /ws\.entrry : clé inconnue.*tu voulais dire 'entry'/)
+    assert.throws(() => findConfig(root), /ws\.entrry : clé inconnue.*vouliez-vous dire 'entry'/)
   })
 
   it('throw sur ws non-objet', () => {
@@ -158,7 +169,7 @@ describe('mjs.config.json — section `ws` (validation stricte, patron `runtime`
 
   it("throw sur ws.limits.X inconnu, avec suggestion orthographique ('ratee' → 'rate')", () => {
     const root = writeConfig({ ws: { limits: { ratee: 5 } } })
-    assert.throws(() => findConfig(root), /ws\.limits\.ratee : clé inconnue.*tu voulais dire 'rate'/)
+    assert.throws(() => findConfig(root), /ws\.limits\.ratee : clé inconnue.*vouliez-vous dire 'rate'/)
   })
 
   it('throw sur ws.limits.rate <= 0 (0 refusé, entiers > 0 uniquement)', () => {

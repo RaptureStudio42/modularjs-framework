@@ -29,6 +29,12 @@ import * as acorn from 'acorn'
 import { analyzeSnippetOrNull } from '../analyzer/index.js'
 import { t } from '../messages/index.js'
 import { maskNonCode } from '../mask.js'
+import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
+
+// raccourci `$var` dans un TEXTE d'attribut (`title="de $min à $max"`) : même repère que `parseMixedString`
+// (utils.ts), qui écrit la variable dans le texte — lettre ou `_` après le `$` (« 5$ » est un prix), pas collé
+// à un mot, ni après un point seul (`a.$b`) mais bien après `..` ou `...` (« $min..$max », « Chargement...$n »)
+const SHORTCUT_TEXT_RE = /(?<![\w$]|(?<!\.)\.)\$\$?[a-zA-Z_][a-zA-Z0-9_$]*/g
 
 export interface ResetOpts {
   analyzer?: any
@@ -39,6 +45,14 @@ export interface ResetOpts {
    * template, cf. generator/utils.ts:cleanJsExpr). Absent en dehors du
    * transpiler complet (ex. appels directs à `compile()` dans les tests). */
   moduleName?: string
+  /** coupe individuellement l'avertissement `reactivity` émis ici — reset à CHAQUE compile
+   *  (isolé par flux async, cf. le bandeau du fichier), jamais un état global partagé entre
+   *  deux compilations concurrentes. */
+  lint?: LintToggles
+  colorsEnabled?: boolean
+  /** noms posés sur l'instance par le <script> (`@sock = …`) — un effet en direct sans `sock` écrit
+   *  prend sa connexion dans `@sock` : sans lui, erreur du build (cf. attributes/index.ts) */
+  instanceProps?: string[]
 }
 
 /** Route d'événement telle qu'émise vers le runtime (`_mjs_bindEvents`) — 3 formes :
@@ -85,6 +99,9 @@ export class CompilerState {
    * qui les voit VRAIMENT (cf. CompilerState.templateLocals, l'union globale) — un
    * gestionnaire situé ailleurs garde la variable du `<script>`. */
   inlineLocals: string[][] = []
+  /** La ligne du fichier de la balise qui porte chaque gestionnaire de `inlines` (même index) ;
+   * `undefined` quand le nœud n'a pas de ligne. Lue par l'avertissement de l'événement brut. */
+  inlineLines: Array<number | undefined> = []
   analyzer: any | null = null
   externalVars: string[] = []
   isPrePass: boolean = false
@@ -117,7 +134,7 @@ export class CompilerState {
    * mais rejoué SYNCHRONEMENT juste après sa définition (`init()`, avant que le
    * constructeur ne rende la main) — un enfant fraîchement créé peut recevoir
    * SON PROPRE connectedCallback avant celui du parent (ordre non garanti par le
-   * moteur, constaté DOM natif ET happy-dom (`<@color value=!{$panel} editable>`,
+   * moteur, constaté DOM natif ET happy-dom (`<@@color value=!{$panel} editable>`,
    * garde `µmount` "value requis")).
    * Poser la prop AVANT tout connectedCallback (donc avant TOUT rendu de
    * n'importe quel composant du sous-arbre) supprime la course, quel que soit
@@ -151,8 +168,16 @@ export class CompilerState {
    * copies tirent : struct tourne TOUJOURS avant les effects (mount et
    * update, cf. invalidate-struct-before-effects.test.ts). */
   effectGuardStack: string[] = []
+  /** codes enregistrés en effet pendant le walk d'une branche gardée : le `{if}` de racine
+   * sait ainsi quelles mises à jour de sa branche ont déjà leur jumeau (monté, puis rejoué
+   * à chaque changement de variable) et ne les calcule pas une seconde fois */
+  effectTwins: Set<string> = new Set()
   usedAnimations: Set<string> = new Set()
   transitionsProcessed: Set<string> = new Set()
+  /** le composant pose un effet de l'appli (fichier *.effects.mjs) */
+  usesProjectEffects = false
+  /** cf. ResetOpts.instanceProps */
+  instanceProps: Set<string> = new Set()
   /** Refs DOM `@this=!{nom}` au top-level avec une variable NUE (sans `$`,
    * donc non réactive). Le compilateur AUTO-DÉCLARE ces variables (`let nom`)
    * en tête de `init` si le script ne les déclare pas — sinon `nom = node`
@@ -172,6 +197,9 @@ export class CompilerState {
   templateLang: 'civet' | 'js' = 'civet'
   /** Best-effort, cf. ResetOpts.moduleName. */
   moduleName: string | undefined = undefined
+  /** cf. ResetOpts.lint/colorsEnabled — reset à CHAQUE compile, jamais un état partagé. */
+  lint: LintToggles | undefined = undefined
+  colorsEnabled = false
 
   reset(opts: ResetOpts = {}): void {
     this.counter = 0
@@ -180,10 +208,13 @@ export class CompilerState {
     this.eventsWithPrevent = new Set()
     this.inlines = []
     this.inlineLocals = []
+    this.inlineLines = []
     this.analyzer = opts.analyzer ?? null
     this.externalVars = opts.externalVars ?? []
     this.templateLang = opts.templateLang ?? 'civet'
     this.moduleName = opts.moduleName
+    this.lint = opts.lint
+    this.colorsEnabled = opts.colorsEnabled ?? false
     this.isPrePass = false
     this.snippetRegistry = []
     this.hasFlip = false
@@ -196,8 +227,11 @@ export class CompilerState {
     this.structVars = new Set()
     this.templateLocals = new Set()
     this.effectGuardStack = []
+    this.effectTwins = new Set()
     this.usedAnimations = new Set()
     this.transitionsProcessed = new Set()
+    this.usesProjectEffects = false
+    this.instanceProps = new Set(opts.instanceProps ?? [])
     this.refVars = new Set()
     this.hasDestroyHooks = false
   }
@@ -236,7 +270,13 @@ export class CompilerState {
     // est réutilisé plus bas quand elle réussit (sinon `cleanJs(tokenize())` était
     // refait à l'identique sur la MÊME chaîne, ×2 pre/real pass).
     let wholeCleanCached: string | null = null
-    const pureMatch = str.match(/^!?\{(.+)\}$/)
+    // ce que lit le repli Civet, et le texte où chercher une plage (`[1..$n]`) : l'expression entière pour du
+    // code ; pour un texte d'attribut (`isRawText`), son code seul — l'intérieur des accolades —, jamais le
+    // texte autour (les `..` d'un « $min..$max » n'y font pas une plage, l'apostrophe de « l'exemple » n'y
+    // ouvre pas une chaîne)
+    let sourceCivet  = raw
+    let codeForRange = str
+    const pureMatch  = str.match(/^!?\{(.+)\}$/)
     // GARDE (tooltip breadcrumb doc/tuto figé après nav client,
     // seul F5 rafraîchit) — un template MULTI-BLOCS type "{$a} — {$b}" matche AUSSI
     // cette regex (gourmande : du PREMIER `{` au DERNIER `}`), produisant un
@@ -253,6 +293,10 @@ export class CompilerState {
       && (str.match(/\}/g) ?? []).length === 1
     if (isUnambiguousSingleBlock) {
       codeToAnalyze = `[${pureMatch![1]}]`
+      if (isRawText) {
+        sourceCivet   = pureMatch![1]
+        codeForRange = pureMatch![1]
+      }
     } else if (str.includes('{')) {
       // AVANT de décomposer en blocs
       // `{...}` séparés (pensé pour un TEMPLATE mixte `"préfixe {$a} suffixe
@@ -341,20 +385,26 @@ export class CompilerState {
         // reste de CODE Civet (préfixe d'un appel sans parenthèses, ex. `µt 'clé', { … }` →
         // leftover = `µt 'clé', `) : dans ce 2e cas, un `$var` DANS la chaîne `'clé'` devient
         // une fausse dépendance si on scanne le texte brut — masqué (maskNonCode) sauf en mode texte.
-        const matches = (isRawText ? leftover : maskNonCode(leftover)).match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g)
+        const matches = isRawText ? leftover.match(SHORTCUT_TEXT_RE) : maskNonCode(leftover).match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g)
         if (matches) blocks.push(...matches)
         codeToAnalyze = `[${blocks.join(', ')}]`
+        if (isRawText) {
+          sourceCivet   = `[${blocks.join(', ')}]`
+          codeForRange = blocks.join('\n')
+        }
       }
-    } else if (str.includes('#') && str.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/)) {
-      // repli du sucre `#` (commentaire Civet SANS accolades, ex. `$x > 0 # note`, cf.
-      // isUnambiguousSingleBlock/whole-parse plus haut qui échouent tous deux sur un `#` nu) :
-      // scan sur la vue MASQUÉE, sinon un `$var` dans CE commentaire ou dans une chaîne de code
-      // (`'texte #$fake'`) devient une fausse dépendance (effet réabonné à une var jamais lue).
-      const scanned = isRawText ? str : maskNonCode(str)
-      const matches = scanned.match(/(?<![\w.\$])\$[a-zA-Z0-9_$]+/g) ?? []
-      codeToAnalyze = `[${matches.join(', ')}]`
+    } else if (isRawText) {
+      // texte d'attribut sans accolades : seul le raccourci `$var` y lit quelque chose, tout le reste est du
+      // texte — un `#`, une apostrophe, les `..` d'un « $min..$max », les `...` d'un « Chargement...$n »
+      codeToAnalyze = `[${(str.match(SHORTCUT_TEXT_RE) ?? []).join(', ')}]`
+      codeForRange = ''
     } else {
-      codeToAnalyze = `[${str}]`
+      // un `#` HORS chaîne ouvre un commentaire (`$x > 0 # note sur $y`) : seul le code qui le précède
+      // compte, par le chemin commun. Un `#` DANS une chaîne (couleur `'#333'`, texte `' #'`) n'en est pas
+      // un : l'ancien repli, déclenché par tout `#`, ne gardait que les `$x` écrits en toutes lettres et
+      // perdait les lectures d'une méthode (`@fmt($n)`), de `µlang`, d'un contexte
+      const debutCommentaire = hashCommentStart(str)
+      codeToAnalyze = `[${debutCommentaire === -1 ? str : str.slice(0, debutCommentaire)}]`
     }
 
     // `tokenize` seul ne couvre que les sigils ($x → $.x). Pour que `acorn.parse`
@@ -383,10 +433,13 @@ export class CompilerState {
     // le candidat d'origine est gardé tel quel (comportement identique à avant
     // ce correctif, `[]` in fine) et on avertit — une fois, au real pass — si un
     // `$xxx` textuel laisse deviner une dépendance qu'on ne pourra jamais suivre.
-    if (analyzeSnippetOrNull(cleanCodeForAst) === null) {
+    // une plage de Civet (`[1..$n]`) PARSE aussi en JS — `1..$` : le nombre `1.`, puis une
+    // propriété —, sans aucune dépendance : elle passe d'office par le vrai Civet
+    const plage = /(?<!\.)\.\.(?!\.)/.test(maskNonCode(codeForRange))
+    if (plage || analyzeSnippetOrNull(cleanCodeForAst) === null) {
       let civetOk = false
       try {
-        const civetCandidate = `[${cleanJsExpr(raw, this.externalVars, this.templateLang, this.moduleName)}]`
+        const civetCandidate = `[${cleanJsExpr(sourceCivet, this.externalVars, this.templateLang, this.moduleName)}]`
         if (analyzeSnippetOrNull(civetCandidate) !== null) {
           cleanCodeForAst = civetCandidate
           civetOk = true
@@ -396,7 +449,8 @@ export class CompilerState {
       }
       if (!civetOk && !this.isPrePass && /\$[A-Za-z_]\w*/.test(raw)) {
         const moduleHint = this.moduleName ? t('generator.hint-dans-module', { moduleName: this.moduleName }) : ''
-        console.warn(t('generator.deps-non-analysables', { expr: raw, moduleHint }))
+        const line = typedLine('reactivity', t('generator.deps-non-analysables', { expr: raw, moduleHint }), this.lint)
+        if (line !== null) printDiagnostic(line, this.colorsEnabled)
       }
     }
 
@@ -423,9 +477,15 @@ export class CompilerState {
    * mutation ultérieure) même quand `x` est `null`, malgré le `?.` de la
    * condition qui protège pourtant `_mjs_renderStruct`. Fix : enveloppe `code`
    * avec la même garde que le bloc AVANT de le stocker — les deux copies
-   * (celle de struct, celle-ci) partagent désormais la même condition. */
-  registerEffect(code: string, vars: string[]): void {
-    const guarded = this.effectGuardStack.length === 0
+   * (celle de struct, celle-ci) partagent désormais la même condition.
+   *
+   * `unguarded` : effet qui tient un SOUVENIR à jour et ne lit que l'état (effets filtrés d'un
+   * `{for}`, `@class{$x is item.key}` & co : la valeur précédente de `$x`, pour savoir quelle ligne
+   * éteindre). Gardé par la branche, il s'arrêtait pendant qu'elle était cachée et son souvenir
+   * restait en retard : à la réapparition, la mauvaise ligne était éteinte. */
+  registerEffect(code: string, vars: string[], opts: { unguarded?: boolean } = {}): void {
+    if (this.effectGuardStack.length > 0 && !opts.unguarded) this.effectTwins.add(code)
+    const guarded = this.effectGuardStack.length === 0 || opts.unguarded
       ? code
       : this.effectGuardStack.reduceRight((acc, g) => `if (${g}) { ${acc} }`, code)
     if (vars.length === 0) {
@@ -502,8 +562,8 @@ export function getEffectVars(expr: string | null | undefined, isRawText = false
 }
 
 /** Enregistre un code dans le dispatch direct (V2). */
-export function registerEffect(code: string, vars: string[]): void {
-  currentState().registerEffect(code, vars)
+export function registerEffect(code: string, vars: string[], opts: { unguarded?: boolean } = {}): void {
+  currentState().registerEffect(code, vars, opts)
 }
 
 // dedent : utilitaire sans état (laissé hors classe).
@@ -519,4 +579,21 @@ export function dedent(str: string | null | undefined): string {
     .filter((m): m is number => m !== null)
   const margin = margins.length > 0 ? Math.min(...margins) : 0
   return lines.map((l) => (l.length > margin ? l.slice(margin) : '')).join('\n')
+}
+
+// début d'un commentaire `#` hors chaîne (`$x > 0 # note`), ou -1 ; `#{` (interpolation) et `#nom` (champ
+// privé, symbole) n'en ouvrent pas
+function hashCommentStart(s: string): number {
+  let quote: string | null = null
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k]
+    if (quote) {
+      if (c === '\\') k++
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c
+    else if (c === '#' && !/[a-zA-Z_{]/.test(s[k + 1] ?? '')) return k
+  }
+  return -1
 }

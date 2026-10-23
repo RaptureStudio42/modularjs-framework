@@ -149,3 +149,20 @@ describe('testing/createHarness — le harnais de test des applications', functi
     await restreint.destroy()
   })
 })
+
+describe('testing/createHarness — les effets', function () {
+  this.timeout(60000)
+
+  it('un effet se pose : le harnais charge aussi le fichier de chaque effet du projet', async () => {
+    const root   = mjsTmp('testing-effets')
+    const srcDir = join(root, 'src')
+    mkdirSync(srcDir, { recursive: true })
+    writeFileSync(join(srcDir, 'tst-neon.mjs'), '<h1 class="t" *neon(#f0f)>néon</h1>')
+    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js' }, null, 2))
+    const app = await createHarness({ root })
+    const c   = await app.mount('tst-neon')
+    assert.match(c.find('.t').getAttribute('mjs-fx') ?? '', /neon/)
+    c.destroy()
+    await app.destroy()
+  })
+})

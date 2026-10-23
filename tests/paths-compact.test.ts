@@ -38,7 +38,7 @@ const PROFOND = [
 function corpsDeConstruction(sortie: string, debutHtml: string): string {
   const debut = sortie.indexOf('µ._mjs_cloneTpl("' + debutHtml)
   assert.notEqual(debut, -1, 'template introuvable dans la sortie compilée : ' + debutHtml)
-  const fin = sortie.indexOf('return { fragment: _f', debut)
+  const fin = sortie.indexOf('return { fragment: _mjs_fr', debut)
   assert.notEqual(fin, -1, 'fin de fonction introuvable pour le template : ' + debutHtml)
   return sortie.slice(debut, fin)
 }

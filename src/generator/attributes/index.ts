@@ -9,15 +9,26 @@
 //   - Dans une `{for}`, le code est dans la closure de l'updateFn de la loop
 //     — la loop est elle-même structurelle (always-run) donc pas besoin
 //     d'indexer dans effectsByVar.
+//
+// Noms émis : tout ce que le code généré déclare à côté du code de l'auteur (variable, constante, paramètre de fonction)
+// porte le préfixe `_mjs` — l'auteur lit ses variables de script, ses noms de ligne et de valeur dans ce même code, et ne
+// l'écrit jamais. Restent en clair `e` et `el` (gestionnaire d'événement) et `_node` et `el` (`@attach`), que le contrat donne à
+// l'auteur ; dans un `@attach`, `el` n'est posé que pour l'expression qui le lit sans que l'auteur le déclare.
+// tests/generateur-noms-locaux-reserves.test.ts relève les noms déclarés et refuse tout autre.
 
+import * as acorn from 'acorn'
 import { state, getEffectVars, registerEffect } from '../state.js'
-import { cleanJs, cleanJsExpr, parseMixedString } from '../utils.js'
+import { typedLine, printDiagnostic } from '../../diagnostics.js'
+import { cleanJs, cleanJsExpr, decodeHtmlEntities, freeIdentifiers, parseMixedString, corpsDeFlecheEnBloc, attrSur as attrSurNom } from '../utils.js'
 import { transformReactiveWrites } from '../transform-reactive.js'
 import { applyPathTracking } from '../path-tracker.js'
 import type { Node, Attr } from '../../parser/index.js'
+import { transitionDirective } from '../../parser/index.js'
 import type { PorteeEntree } from '../compile.js'
 import { t } from '../../messages/index.js'
 import { suggestKey } from '../../bundler/config.js'
+import { maskNonCode } from '../../mask.js'
+import { adjustAttr, SVG_NS, MATH_NS } from '../paths.js'
 
 export interface AttrCtx {
   compiler: typeof state
@@ -25,7 +36,7 @@ export interface AttrCtx {
   attr: Attr
   attrName: string | null | undefined
   rawVal: string
-  ctx: { type: string; updates: string[]; loops: any[]; locals?: Set<string>; portee?: PorteeEntree[] }
+  ctx: { type: string; updates: string[]; loops: any[]; locals?: Set<string>; portee?: PorteeEntree[]; svgNs?: string | null; foreign?: boolean; enBloc?: boolean; branche?: { id: string; etat: string } }
   id: string | null
   lid: string | null
   attrStr: string  // mutable via retour de la fonction
@@ -44,19 +55,17 @@ export interface AttrResult {
 function pushInline(env: AttrCtx, code: string): void {
   state.inlines.push(code)
   state.inlineLocals.push(env.ctx.locals ? Array.from(env.ctx.locals).sort() : [])
+  state.inlineLines.push(env.node.line)
 }
 
-/** Squelette qui recrée, en tête d'un gestionnaire ou d'une liaison, les noms que le gabarit met
- * en portée ICI, dans l'ordre du gabarit (cf. PorteeEntree, compile.ts) : chaque `{for}` par la
- * ligne propre au site (`ligneBoucle`, inchangée), puis chaque `{const}` et la valeur de la
- * branche `{success}`/`{error}` — ceux-là seulement s'ils sont lus, par `code` ou par une entrée
- * recréée après eux (itérable d'une boucle, expression d'un autre `{const}`). Sans eux, un
- * `{const}` ou la valeur chargée levait « … is not defined » au clic, et une boucle sur cette
- * valeur aussi. Chacun passe par un temporaire (`__cst_N`, `__aw_N`), comme les boucles par
- * `__arr_N`/`__idx_N` : le contrôle des constantes reconnaît ainsi le squelette et refuse toute
- * AUTRE écriture de ces noms, qui ne toucherait qu'une copie locale (cf. const-reassign.ts). */
-function squelettePortee(env: AttrCtx, code: string, ligneBoucle: (l: any) => string, grammaire: 'civet' | 'js' = 'civet'): string {
-  const portee: PorteeEntree[] = env.ctx.portee ?? env.ctx.loops.map((loop: any) => ({ kind: 'for' as const, loop }))
+/** Ce que les aides de portée lisent d'un site de liaison : la portée du gabarit (`ctx`) et, pour la grammaire Civet, les noms du script (`compiler`) ; un texte de
+ * branche, que `walk` (compile.ts) compile sans `AttrCtx`, les passe seuls */
+type EnvPortee = Pick<AttrCtx, 'ctx' | 'compiler'>
+
+/** Les entrées de la portée qu'un code doit recréer, une case par entrée : chaque `{for}` toujours (son
+ * itérable est lu aussi) ; un `{const}` ou la valeur de la branche `{await}` seulement si `code` lit son nom,
+ * ou si l'une des entrées recréées après lui le lit (itérable d'une boucle, expression d'un autre `{const}`). */
+function porteeLue(portee: PorteeEntree[], code: string): boolean[] {
   const lu      = (texte: string, nom: string): boolean => new RegExp(`(?<![\\w$.])${nom}(?![\\w$])`).test(texte)
   const retenue = portee.map(() => false)
   let aLire     = code
@@ -71,15 +80,46 @@ function squelettePortee(env: AttrCtx, code: string, ligneBoucle: (l: any) => st
       if (e.kind === 'const') aLire += '\n' + e.raw
     }
   }
+  return retenue
+}
+
+/** Ce que lit le squelette après l'entrée `i` de la portée : `code`, l'itérable de chaque boucle intérieure et l'expression de
+ * chaque `{const}` recréé après elle — une variable de ligne lue à travers un `{const}` de la ligne (`{const lab = v[0]}`), ou un
+ * `{const}` qui en lit un autre, compte comme lue. */
+function texteLuApres(portee: PorteeEntree[], retenue: boolean[], i: number, code: string): string {
+  let texte = code
+  for (let k = i + 1; k < portee.length; k++) {
+    const e = portee[k]
+    if (!retenue[k]) continue
+    if (e.kind === 'for') texte += '\n' + e.loop.iterable
+    else if (e.kind === 'const') texte += '\n' + e.raw
+  }
+  return texte
+}
+
+/** Squelette qui recrée, en tête d'un gestionnaire ou d'une liaison, les noms que le gabarit met
+ * en portée ICI, dans l'ordre du gabarit (cf. PorteeEntree, compile.ts) : chaque `{for}` par la
+ * ligne propre au site (`ligneBoucle`, inchangée), puis chaque `{const}` et la valeur de la
+ * branche `{success}`/`{error}` — ceux-là seulement s'ils sont lus, par `code` ou par une entrée
+ * recréée après eux (itérable d'une boucle, expression d'un autre `{const}`). Sans eux, un
+ * `{const}` ou la valeur chargée levait « … is not defined » au clic, et une boucle sur cette
+ * valeur aussi. Chacun passe par un temporaire (`_mjs_cst_N`, `_mjs_aw_N`), comme les boucles par
+ * `_mjs_ra_N`/`_mjs_ri_N` : le contrôle des constantes reconnaît ainsi le squelette et refuse toute
+ * AUTRE écriture de ces noms, qui ne toucherait qu'une copie locale (cf. const-reassign.ts). Ces
+ * temporaires sont des affectations, pas des déclarations : leur préfixe réservé `_mjs_` garantit
+ * qu'aucune variable du `<script>` ne porte leur nom, sans quoi le gestionnaire l'écraserait. */
+function squelettePortee(env: EnvPortee, code: string, ligneBoucle: (l: any, luApres: string) => string, grammaire: 'civet' | 'js' = 'civet'): string {
+  const portee: PorteeEntree[] = env.ctx.portee ?? env.ctx.loops.map((loop: any) => ({ kind: 'for' as const, loop }))
+  const retenue = porteeLue(portee, code)
   let sortie = ''
   for (let i = 0; i < portee.length; i++) {
     const e = portee[i]
     if (!retenue[i]) continue
     if (e.kind === 'for') {
-      sortie += ligneBoucle(e.loop)
+      sortie += ligneBoucle(e.loop, texteLuApres(portee, retenue, i, code))
       continue
     }
-    const temp   = e.kind === 'const' ? `__cst_${i}` : `__aw_${i}`
+    const temp   = e.kind === 'const' ? `_mjs_cst_${i}` : `_mjs_aw_${i}`
     const valeur = e.kind === 'const'
       ? (grammaire === 'js' ? e.js : cleanJs(e.raw, env.compiler.externalVars))
       : `_mjsThis._mjs_awaitStates?.get('${e.id}')?.${e.champ}`
@@ -89,24 +129,91 @@ function squelettePortee(env: AttrCtx, code: string, ligneBoucle: (l: any) => st
 }
 
 /** Squelette d'une boucle pour la réécriture DOM→modèle d'une liaison deux sens (cf.
- * squelettePortee). Optim #8 — lit la prop JS `_mjs_idx_N` si présente, sinon l'attribut.
+ * squelettePortee). Optim #8 — lit la prop JS `_mjs_idx_N` si présente, sinon l'attribut. L'élément
+ * se relit dans la collection elle-même : sa position pour un tableau, sa clé pour un objet (la boucle
+ * d'un objet range sa clé comme index ; ses valeurs en tableau ne s'y liraient pas), sa position dans
+ * la liste de ses éléments pour un Set ou une Map (une paire `[clé, valeur]`, comme la ligne l'affiche).
  * Harmonisation Civet — seul point de divergence Coffee/Civet du squelette : l'existentiel
  * binaire Coffee `a ? b` (sans `:`) n'existe pas en Civet (« Failed to parse ») ; Civet exprime le
  * même repli via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »). */
 function ligneBoucleLiaison(l: any): string {
   const d = l.depth
-  return `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
-    `  __arr_${d} = if Array.isArray(${l.iterable}) then ${l.iterable} else Object.values(${l.iterable})\n` +
-    `  ${l.item} = __arr_${d}[__idx_${d}]\n` +
-    `  ${l.index} = __idx_${d}\n`
+  return `  _mjs_ri_${d} = _mjs_el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} _mjs_el.getAttribute('data-mjs-idx-${d}')\n` +
+    `  _mjs_ra_${d} = ${l.iterable}\n` +
+    `  _mjs_ra_${d} = Array.from(_mjs_ra_${d}) if _mjs_ra_${d} instanceof Map or _mjs_ra_${d} instanceof Set\n` +
+    `  ${l.item} = _mjs_ra_${d}[_mjs_ri_${d}]\n` +
+    `  ${l.index} = _mjs_ri_${d}\n`
+}
+
+/** Les variables réactives que lisent les `{const}` qu'un code oblige à recréer (cf. porteeLue) : l'effet qui
+ * les recrée doit suivre ces variables, sinon un `{const}` lu par la condition ou la valeur ne bouge plus
+ * quand elles changent. */
+function varsDesConst(env: EnvPortee, code: string): string[] {
+  const portee  = env.ctx.portee ?? []
+  const retenue = porteeLue(portee, code)
+  const vars    = new Set<string>()
+  portee.forEach((e, i) => { if (retenue[i] && e.kind === 'const') for (const v of getEffectVars(e.raw)) vars.add(v) })
+  return [...vars]
 }
 
 /** Effet posé à la RACINE pour une liaison située dans une branche `{await}` (hors de la fonction
  * de la branche) : la valeur `{success}`/`{error}` et les `{const}` de la branche y sont recréés,
- * sans quoi son premier passage levait « … is not defined » et le composant entier tombait.
+ * sans quoi son premier passage levait « … is not defined » et le composant entier tombait ; et
+ * seulement quand cette branche est celle qui est affichée (cf. brancheCourante).
  * Aucune boucle ici : un `{for}` a son propre chemin, et un `{await}` n'est jamais dans un `{for}`. */
-function effetRacineLiaison(env: AttrCtx, id: string, expr: string, updateLogic: string): string {
-  return `{ const node = this._mjs_nodes.${id}; if(node) { ${squelettePortee(env, expr, () => '', 'js')}${updateLogic} } }`
+function effetRacineLiaison(env: EnvPortee, id: string, expr: string, updateLogic: string): string {
+  const affichee = brancheCourante(env)
+  return `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node${affichee ? ` && ${affichee}` : ''}) { ${squelettePortee(env, expr, () => '', 'js')}${updateLogic} } }`
+}
+
+/** Un attribut ou une prop posé dans une branche `{await}` suit ses variables : la pose se fait à la construction de la branche (par l'appelant), cet effet de la racine la
+ * rejoue quand une variable lue change (cf. effetRacineLiaison). Les variables qu'un `{const}` lu par l'expression lit comptent comme les siennes, l'effet recrée ce
+ * `{const}` ; sans variable réactive la pose suffit, rien ne peut changer ce qu'elle a écrit. */
+function suivreEnBranche(env: AttrCtx, id: string, code: string, updateLogic: string, vars: string[]): void {
+  const varsEffet = [...new Set([...vars, ...varsDesConst(env, code)])]
+  if (varsEffet.length > 0) registerEffect(effetRacineLiaison(env, id, code, updateLogic), varsEffet)
+}
+
+/** Ce qui dit que la branche qui porte la liaison est bien celle que le bloc `{await}` affiche (`_mjs_awaitLastRender`, que le runtime passe à la branche affichée avant de la
+ * créer et retire quand la promesse disparaît) : l'attente, `{success}` et `{error}`, nommées ou non (`ctx.branche`, posé par compileAwait). Une branche qui n'est plus affichée
+ * (promesse remplacée, rejetée ou retirée) laisse ses nœuds connus du composant : l'effet qui y écrirait changerait une balise retirée de la page, relirait la valeur de la
+ * branche qui n'existe plus (`null`) et ferait tomber le composant entier, rappellerait la fabrique d'une attache sans que personne la défasse, écrirait dans un nœud texte que
+ * le pool de nœuds texte (mjs_textpool) a réattribué à une autre branche, ou insérerait les lignes d'une liste `{for}` entre deux repères que ce pool a réattribués. */
+export function brancheCourante(env: EnvPortee): string {
+  const b = env.ctx.branche
+  return b ? `_mjsThis._mjs_awaitLastRender?.get('${b.id}') === '${b.etat}'` : ''
+}
+
+/** Le texte `{expr}` (ou `{{expr}}`, `brut`) d'une branche `{await}` qui lit une variable réactive, ou un `{const}` qui en lit une, ou qui est un texte traduit (il suit la
+ * langue) : son nœud `lid` est repéré par l'appelant (un marqueur, ou le conteneur du HTML brut), écrit une première fois à la construction de la branche (`pose`, dans
+ * la fonction de la branche, où la valeur de la branche et les `{const}` sont déjà là) puis tenu à jour par un effet de la racine (`effet`), qui recrée cette valeur et ces
+ * `{const}` (cf. squelettePortee) et ne tourne que si la branche est celle qui est affichée (cf. brancheCourante). Rend null quand rien ne peut changer le texte : il
+ * reste alors calculé une fois, dans le gabarit de la branche. */
+export function texteDeBranche(env: EnvPortee, lid: string, jsVar: string, vars: string[], brut: boolean): { pose: string; effet: string; vars: string[] } | null {
+  const suivies = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
+  if (suivies.length === 0 && !/µ\.t\(|__mjsLang/.test(jsVar)) return null
+  // le HTML brut ne se réécrit que s'il a changé (`_mjs_h`, comme les lignes d'un `{for}`), le texte de même ; `null` et `undefined` n'écrivent rien dans un texte, comme
+  // `_mjs_updText` à la racine (le HTML brut écrit « null », là aussi comme à la racine)
+  const ecrire = brut
+    ? `const _mjs_ts = String(${jsVar}); if (_mjs_node._mjs_h !== _mjs_ts) { _mjs_node.innerHTML = _mjs_ts; _mjs_node._mjs_h = _mjs_ts; }`
+    : `const _mjs_ts = \`\${(${jsVar}) ?? ''}\`; if (_mjs_node.data !== _mjs_ts) _mjs_node.data = _mjs_ts;`
+  const garde = brancheCourante(env)
+  return {
+    pose:  `{ const _mjs_node = __nodes['${lid}']; if(_mjs_node) { ${ecrire} } }`,
+    effet: `{ const _mjs_node = this._mjs_nodes.${lid}; if(_mjs_node${garde ? ` && ${garde}` : ''}) { ${squelettePortee(env, jsVar, () => '', 'js')}${ecrire} } }`,
+    vars:  suivies
+  }
+}
+
+/** Un `{if}` ou un `{key}` posé dans une branche `{await}` suit ses variables : sa condition (ou sa clé) est rejouée par un effet de la racine, qui reconstruit le contenu du
+ * bloc entre ses ancres quand le choix change. `choix` est le code de la condition (ou de la clé), `tout` tout le code que l'effet rejoue (le choix, les fabriques du contenu, ses
+ * mises à jour) : la valeur de la branche et les `{const}` que `tout` lit sont recréés en tête de l'effet (`prelude`, cf. squelettePortee), mais seuls les `{const}` que lit le
+ * choix lui font suivre leurs variables (le contenu suit les siennes par ses propres effets). Rend null quand le choix ne lit aucune variable (la valeur de la branche seule, des
+ * constantes) : il reste fait une fois, à la construction de la branche. */
+export function suiviDeBloc(env: EnvPortee, choix: string, tout: string, vars: string[]): { prelude: string; garde: string; vars: string[] } | null {
+  const suivies = [...new Set([...vars, ...varsDesConst(env, choix)])]
+  if (suivies.length === 0) return null
+  return { prelude: squelettePortee(env, tout, () => '', 'js'), garde: brancheCourante(env), vars: suivies }
 }
 
 /** Helper : enregistre un code d'update au root (effectsByVar + ctx.updates),
@@ -143,10 +250,52 @@ function pushIdxPropUpdates(env: AttrCtx): boolean {
   const currentDepth = env.ctx.loops[env.ctx.loops.length - 1].depth
   for (const l of env.ctx.loops) {
     const idxVar = l.depth === currentDepth ? l.index : l.internalIndex
-    const idxUpd = `{ const n_idx = __nodes['${env.lid}']; if(n_idx && n_idx._mjs_idx_${l.depth} !== ${idxVar}) { n_idx._mjs_idx_${l.depth} = ${idxVar}; } }`
+    const idxUpd = `{ const _mjs_nIdx = __nodes['${env.lid}']; if(_mjs_nIdx && _mjs_nIdx._mjs_idx_${l.depth} !== ${idxVar}) { _mjs_nIdx._mjs_idx_${l.depth} = ${idxVar}; } }`
     if (!env.ctx.updates.includes(idxUpd)) env.ctx.updates.push(idxUpd)
   }
   return true
+}
+
+/** L'attribut d'un élément SVG ou MathML tel que l'analyseur HTML du navigateur le pose dans le gabarit : `viewbox` devient `viewBox`,
+ * `definitionurl` `definitionURL`, `xlink:href` passe dans l'espace de noms de XLink (cf. adjustAttr, paths.ts). La mise à jour d'un
+ * attribut calculé le cherche par son nom exact, casse comprise : sous le nom écrit elle ne trouvait pas celui du gabarit et en créait un
+ * second, que le dessin ignore. Le nom rendu est celui que le gabarit déclare et que la mise à jour cherche ; `ns` dit si l'analyseur
+ * pose l'attribut dans un espace de noms (à déclarer dans le gabarit, sans quoi `setAttribute` le crée sans espace de noms).
+ * L'élément est SVG (ou MathML) quand c'est `<svg>` (ou `<math>`) lui-même, ou quand le contexte le dit (`svgNs` : posé en entrant dans
+ * l'une de ces balises, relayé dans les blocs, retiré sous un `<foreignObject>`) ; un élément HTML garde le nom écrit. */
+function adjustedAttr(env: AttrCtx, attrName: string): { name: string, ns: string | null } {
+  const tag = (env.node.name ?? '').toLowerCase()
+  return adjustAttr(tag === 'svg' ? SVG_NS : tag === 'math' ? MATH_NS : env.ctx.svgNs ?? null, attrName)
+}
+
+/** `, 1` pour un nom sans risque (cf. attrSur, generator/utils.ts) ; rien pour une prop booléenne, que le runtime écrit par sa propriété, jamais par le filtre */
+function attrSur(nom: string): string {
+  return MJS_BOOLEAN_PROPS.includes(nom) ? '' : attrSurNom(nom)
+}
+
+/** Le nœud que `µ._mjs_updAttrNode` reçoit pour un attribut étranger (`xlink:href`, `xml:lang`…) d'un élément SVG : un jumeau du nœud qui garde la lecture, le retrait et le
+ * filtre de sécurité de la mise à jour (c'est elle qui l'appelle) et ne change que la CRÉATION, posée dans l'espace de noms `ns`. Sans lui la mise à jour retire l'attribut
+ * quand la valeur devient `null`, `undefined` ou `false`, puis le recrée par `setAttribute`, qui le pose SANS espace de noms : un `<use xlink:href>` n'est plus lu (adresse
+ * vide, boîte 0 x 0, l'icône disparaît pour de bon), un `xml:lang` ne donne plus sa langue. La recherche et le retrait se font par le nom qualifié, comme avant : le rendu
+ * serveur (happy-dom) laisse `xml:lang` et `xml:space` sans espace de noms, une recherche par espace de noms ne les y trouverait pas et en créerait un second.
+ * `noeud` est un identifiant déjà lié, qui peut valoir `undefined` (la mise à jour ne fait alors rien). */
+function noeudEtranger(noeud: string, ns: string): string {
+  const k = '_mjs_k'
+  const v = '_mjs_v'
+  return `${noeud} && { tagName: ${noeud}.tagName, getAttribute: (${k}) => ${noeud}.getAttribute(${k}), setAttribute: (${k}, ${v}) => ${noeud}.hasAttribute(${k}) ? ${noeud}.setAttribute(${k}, ${v}) : ${noeud}.setAttributeNS('${ns}', ${k}, ${v}), removeAttribute: (${k}) => ${noeud}.removeAttribute(${k}) }`
+}
+
+/** L'appel qui écrit la valeur d'un attribut calculé sur le nœud `noeud` (cf. adjustedAttr pour `adj`) : `µ._mjs_updAttrNode` tel quel, sauf pour un attribut étranger, dont le
+ * jumeau (cf. noeudEtranger) est lié à un nom avant l'appel : le nom de l'attribut reste le deuxième argument de la mise à jour. Sans point-virgule final. */
+function ecrireAttr(noeud: string, adj: { name: string, ns: string | null }, valeur: string): string {
+  if (!adj.ns) return `µ._mjs_updAttrNode(${noeud}, '${adj.name}', ${valeur}${attrSur(adj.name)})`
+  return `{ const _mjs_j = ${noeudEtranger(noeud, adj.ns)}; µ._mjs_updAttrNode(_mjs_j, '${adj.name}', ${valeur}${attrSur(adj.name)}) }`
+}
+
+/** La même écriture à la racine du composant, où le nœud se lit par son identifiant : `this._mjs_updAttr('a1', …)` ; un attribut étranger prend le nœud de `${ptr}._mjs_nodes`. */
+function ecrireAttrRacine(ptr: string, id: string, adj: { name: string, ns: string | null }, valeur: string): string {
+  if (!adj.ns) return `${ptr}._mjs_updAttr('${id}', '${adj.name}', ${valeur}${attrSur(adj.name)});`
+  return `{ const _mjs_node = ${ptr}._mjs_nodes.${id}; ${ecrireAttr('_mjs_node', adj, valeur)}; }`
 }
 
 // ============================================================================
@@ -171,9 +320,34 @@ function staticAttr(env: AttrCtx): AttrResult {
 // `title=""` reste '' (chemin static) ; HTML servi par un back : écrire `disabled="true"`
 const BARE_ATTR_KEEP_NATIVE = new Set(['popover', 'translate'])
 
+// `data-*` et `aria-*` écrits sur un composant se posent sur SA balise :
+// fixes, liés ou nus, comme sur une balise native
+const DOM_ATTR_COMPOSANT = /^(?:data|aria)-/i
+
+// la prop qu'un attribut à tiret pose sur un composant du framework (balise `mjs-…`) porte le nom que la forme en dur obtient : le composant relit
+// l'attribut `search-placeholder` sous `searchPlaceholder` (`syncProps`, mjs_element.ts : nom mis en minuscules par l'analyseur HTML, chaque `-x` devient `X`).
+// Les formes calculées (`{…}`, `!{…}`, `{...p}`) rangeaient la valeur sous le nom écrit, une clé que personne ne lit. `data-*`, `aria-*` et `mjs-*` ne sont pas
+// des props : ils gardent leur nom, comme sur une balise ordinaire ou tierce
+const NOT_A_PROP = /^(?:data|aria|mjs)-/i
+
+function propName(name: string): string {
+  if (!name.includes('-') || NOT_A_PROP.test(name)) return name
+  return name.toLowerCase().replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())
+}
+
+const isComponent = (node: Node): boolean => (node.name ?? '').startsWith('mjs-')
+
+// la même règle pour une clé connue à l'exécution seulement (donnée étalée `{...p}`)
+const SPREAD_KEY = "_mjs_k.indexOf('-') < 0 || /^(?:data|aria|mjs)-/i.test(_mjs_k) ? _mjs_k : _mjs_k.toLowerCase().replace(/-([a-z])/g, (_mjs_m) => _mjs_m[1].toUpperCase())"
+
+// balise `mjs-…` pas encore mise à niveau, liaison à deux sens : la prop prend le nom de la forme en dur (registre des props en attente d'un composant du projet,
+// propriété propre reprise à sa mise à niveau), sauf pour une balise que le manifeste dit tierce — elle reçoit l'attribut brut, que son auteur lit tel quel
+// (le test de µ._mjs_pend, mjs_init.ts)
+const FOREIGN_TAG = '(µ.paths && !Object.prototype.hasOwnProperty.call(µ.paths, _mjs_node.localName.slice(4)))'
+
 function booleanAttr(env: AttrCtx): AttrResult {
   const attrName = env.attrName ?? ''
-  const bare     = !(env.node.name ?? '').includes('-') || BARE_ATTR_KEEP_NATIVE.has(attrName) || attrName.startsWith('mjs-')
+  const bare     = !(env.node.name ?? '').includes('-') || BARE_ATTR_KEEP_NATIVE.has(attrName) || attrName.startsWith('mjs-') || DOM_ATTR_COMPOSANT.test(attrName)
   return {
     attrStr: env.attrStr + (bare ? ` ${attrName}` : ` ${attrName}='true'`),
     id: env.id,
@@ -196,9 +370,35 @@ function spread(env: AttrCtx): AttrResult {
   // mjs_init.ts). Une clé venue de la donnée étalée — jamais écrite dans le code, donc jamais
   // réservée au raccourcissement — pouvait tomber sur le nom court d'une méthode du prototype
   // et la masquer sur l'élément : le composant crevait à sa mise à niveau
-  const updateLogic = isWc
-    ? "if (node._set) { node._set(k, v); } else { µ._mjs_pend(node, k, v); }"
-    : "const a = k.replace(/_/g, '-'); µ._mjs_safeAttr(node, a, v);"
+  // un composant `mjs-…` reçoit la clé étalée sous le nom de prop de la forme en dur (cf. propName), une balise tierce sous le nom de la donnée
+  const keyDecl     = isComponent(env.node) ? `const _mjs_p = ${SPREAD_KEY}; ` : ''
+  const setKey      = isComponent(env.node) ? '_mjs_p' : '_mjs_k'
+  const pendKey     = isComponent(env.node) ? `${FOREIGN_TAG} ? _mjs_k : _mjs_p` : '_mjs_k'
+  const updateLogic = `${keyDecl}if (_mjs_node._set) { _mjs_node._set(${setKey}, _mjs_v); } else { µ._mjs_pend(_mjs_node, ${pendKey}, _mjs_v); }`
+  // balise native : chaque clé s'écrit comme un attribut calculé (`µ._mjs_updAttrNode` : retrait sur false, null et undefined, filtre des
+  // adresses). Chaque étalement de la balise garde les clés et les valeurs qu'il pose (`_mjs_spk`, par son rang parmi les attributs) : une clé
+  // posée par plusieurs étalements prend la valeur du dernier qui la pose, comme à la première pose, même quand un étalement plus haut change ;
+  // une clé qu'aucun étalement ne pose plus (objet qui la perd, devenu vide ou nul) reprend la valeur fixe écrite par l'auteur sur la balise,
+  // telle que le navigateur la lit (un attribut booléen HTML nu, `hidden`, est rangé par l'analyseur en `{true}`), ou quitte la balise. `noeud` : l'expression qui donne le nœud, ou null quand `_mjs_node` est déjà lié (effet
+  // de la racine d'une branche `{await}`)
+  const rang     = Math.max(0, (env.node.attrs ?? []).indexOf(env.attr))
+  const fixes    = (env.node.attrs ?? []).filter((a) => /^[a-zA-Z_][\w:.-]*$/.test(a.name ?? '') &&
+    (a.type === 'boolean' || (a.type === 'dynamic' && a.expr === 'true') || (a.type === 'static' && !/\{|(?<![\w]|(?<!\.)\.)\$[a-zA-Z_]/.test(a.val ?? ''))))
+  const remettre = fixes.length === 0
+    ? '_mjs_node.removeAttribute(_mjs_a);'
+    : `{ const _mjs_f = {__proto__: null, ${fixes.map((a) => `${JSON.stringify(a.name)}: ${JSON.stringify(a.type === 'static' ? decodeHtmlEntities(a.val ?? '') : '')}`).join(', ')}}; ` +
+      'if (_mjs_a in _mjs_f) _mjs_node.setAttribute(_mjs_a, _mjs_f[_mjs_a]); else _mjs_node.removeAttribute(_mjs_a); }'
+  const etaler = (noeud: string | null, valeur: string): string => {
+    const lier = noeud ? `const _mjs_node = ${noeud}; ` : ''
+    return isWc
+      ? `{ const _mjs_spd = ${valeur}; if(_mjs_spd) { ${lier}if(_mjs_node) for (const _mjs_k in _mjs_spd) { const _mjs_v = _mjs_spd[_mjs_k]; ${updateLogic} } } }`
+      : `{ const _mjs_spd = ${valeur}; ${lier}if(_mjs_node) { ` +
+        `const _mjs_pk = (_mjs_node._mjs_spk ??= {}), _mjs_av = _mjs_pk[${rang}], _mjs_vu = _mjs_pk[${rang}] = {__proto__: null}; ` +
+        `if(_mjs_spd) for (const _mjs_k in _mjs_spd) _mjs_vu[_mjs_k.replace(/_/g, '-')] = _mjs_spd[_mjs_k]; ` +
+        `for (let _mjs_i = 0; _mjs_i < 2; _mjs_i++) for (const _mjs_a in (_mjs_i ? _mjs_av : _mjs_vu)) if (!_mjs_i || !(_mjs_a in _mjs_vu)) { ` +
+        `let _mjs_t; for (const _mjs_r in _mjs_pk) if (_mjs_a in _mjs_pk[_mjs_r]) _mjs_t = _mjs_pk[_mjs_r]; ` +
+        `if (_mjs_t) µ._mjs_updAttrNode(_mjs_node, _mjs_a, _mjs_t[_mjs_a]); else ${remettre} } } }`
+  }
 
   // `for..in` (zéro alloc) au lieu de `Object.entries().forEach()`
   // (alloue un tableau d'entries + une closure à CHAQUE update — par mutation au
@@ -207,10 +407,9 @@ function spread(env: AttrCtx): AttrResult {
     // `_mjs_spd` (préfixe réservé) et non `o` : sinon `<div {...o}>` (item de
     // boucle ou var nommé `o`) émettrait `const o = o` → ReferenceError TDZ au
     // mount.
-    const code = `{ const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = this._mjs_nodes.${id}; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`
-    pushUpdate(env, code, vars)
+    pushUpdate(env, etaler(`this._mjs_nodes.${id}`, jsVar), vars)
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = __nodes['${env.lid}']; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`)
+    env.ctx.updates.push(etaler(`__nodes['${env.lid}']`, jsVar))
     // var externe partagée lue par la row (`{...$pkg}`) : sans
     // `structVars`, `_mjs_renderStruct` est sauté → spread figé à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
@@ -225,12 +424,14 @@ function spread(env: AttrCtx): AttrResult {
     // `this._mjs_nodes` (encore vide à cet instant). (b) réactivité
     // ULTÉRIEURE via `registerEffect` + `this._mjs_nodes[id]` (`_mjs_updAwait`
     // idempotent, ne rejoue jamais son contenu tout seul).
-    const initCode = `{ const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = __nodes['${id}']; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`
-    env.ctx.updates.push(initCode)
-    // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés avant d'être lus
-    // (cf. effetRacineLiaison) — sans eux, « … is not defined » dès le premier passage
-    const reactiveCode = `{ ${squelettePortee(env, jsVar, () => '', 'js')}const _mjs_spd = ${jsVar}; if(_mjs_spd) { const node = this._mjs_nodes.${id}; if(node) for (const k in _mjs_spd) { const v = _mjs_spd[k]; ${updateLogic} } } }`
-    registerEffect(reactiveCode, vars)
+    env.ctx.updates.push(etaler(`__nodes['${id}']`, jsVar))
+    // effet posé à la racine (cf. effetRacineLiaison) : valeur `{await}` et `{const}` de la branche recréés avant d'être lus — sans eux,
+    // « … is not defined » dès le premier passage — et seulement quand cette branche est celle qui est affichée : avant l'arrivée de la
+    // promesse (ou après son remplacement, son rejet, son retrait) la valeur est `null`, et `{...v.attrs}` la lisait quand même ;
+    // un `{const}` lu par l'étalement est recréé par l'effet : l'effet suit donc aussi les variables que ce `{const}` lit
+    const spreadLogic = etaler(null, jsVar)
+    const varsEffet   = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
+    registerEffect(effetRacineLiaison(env, id, jsVar, spreadLogic), varsEffet)
   }
 
   return { id }
@@ -244,25 +445,44 @@ function dynamic(env: AttrCtx): AttrResult {
   // Site EXPR (valeur d'attribut attr={$expr}).
   const jsVar = cleanJsExpr(env.attr.expr ?? '', env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
   const id = env.id ?? `a${++state.counter}`
-  const isWc = (env.node.name ?? '').includes('-')
   const attrName = env.attrName ?? ''
+  const isWc = (env.node.name ?? '').includes('-')
+  // la prop d'un composant `mjs-…` porte le nom que la forme en dur obtient (cf. propName) ; `data-*` et `aria-*` gardent le nom écrit
+  const prop = isComponent(env.node) ? propName(attrName) : attrName
+  // en attente : une balise que le manifeste dit tierce reçoit le nom écrit, que son auteur lit tel quel
+  const pendProp = prop === attrName ? `'${attrName}'` : `${FOREIGN_TAG} ? '${attrName}' : '${prop}'`
+  // nom (et espace de noms) que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr) ; un composant garde le nom écrit, qui est celui d'une prop
+  const adj = isWc ? { name: attrName, ns: null } : adjustedAttr(env, attrName)
+  const nom = adj.name
 
   let attrStr = env.attrStr
+
+  // un attribut booléen calculé ne s'écrit pas dans le gabarit (de la ligne, d'un bloc {if} ou {key} de la racine) : `selected=''` y vaudrait « choisi » jusqu'à la mise à jour,
+  // et le navigateur ne retient qu'une option choisie par liste — l'option qui arrive ainsi prend le choix des autres, puis la mise à jour la déchoisit et la liste retombe sur sa première
+  // option (de même une case radio qui prend le groupe, un `autofocus` qui prend le focus, un `autoplay` qui démarre). La mise à jour qui suit pose la valeur ; la constante `true`
+  // (attribut nu, `checked={true}`) n'en a pas, son gabarit la porte. La racine elle-même se construit d'un seul tenant, avant sa mise à jour, sans choix déjà fait à emporter : elle garde son témoin
+  const sansTemoin = attrName !== 'value' && MJS_BOOLEAN_PROPS.includes(attrName) && env.attr.expr?.trim() !== 'true'
 
   if (env.ctx.type === 'root') {
     let code: string
     if (isWc) {
-      const updateLogic = `if (node._set) { node._set('${attrName}', ${jsVar}); } else { µ._mjs_pend(node, '${attrName}', ${jsVar}); }`
-      code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
+      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
+        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+      code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     } else {
-      code = `this._mjs_updAttr('${id}', '${attrName}', ${jsVar});`
+      code = ecrireAttrRacine('this', id, adj, jsVar)
     }
     pushUpdate(env, code, vars)
-    if (!isWc) attrStr += ` ${attrName}=''`
+    if (!isWc && !(sansTemoin && env.ctx.enBloc)) attrStr += ` ${nom}=''`
   } else if (env.ctx.type === 'for') {
     if (isWc) {
-      const updateLogic = `if (node._set) { node._set('${attrName}', ${jsVar}); } else { µ._mjs_pend(node, '${attrName}', ${jsVar}); }`
-      env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} } }`)
+      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
+      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
+        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+      env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     } else {
       // Filtered dispatch pour les attributs dynamiques génériques
       // tels que `data-active={item.id === $sel}` ou `aria-selected={...}`,
@@ -291,60 +511,41 @@ function dynamic(env: AttrCtx): AttrResult {
         // "javascript:…"` passait tel quel. On route par `µ._mjs_updAttrNode` (comme
         // la branche dynamique NON filtrée, ~:221) → filtre javascript:/data:html
         // ET aligne la sémantique false/null → removeAttribute.
-        const setMatchAttr = filt.isBoolean
-          ? `node.setAttribute('${attrName}', 'true');`
-          : `µ._mjs_updAttrNode(node, '${attrName}', ${filt.matchValue});`
-        const setUnmatchAttr = filt.isBoolean
-          ? `node.setAttribute('${attrName}', 'false');`
-          : (filt.unmatchValue.trim() === "''" || filt.unmatchValue.trim() === '""'
-              ? `node.removeAttribute('${attrName}');`
-              : `µ._mjs_updAttrNode(node, '${attrName}', ${filt.unmatchValue});`)
+        // un attribut booléen (`selected`, `checked`, `disabled`…) se pose et se retire comme hors boucle (`µ._mjs_updAttrNode`) : écrit en
+        // texte, `"false"` laissait l'attribut PRÉSENT, donc actif — toutes les lignes s'allumaient. `data-*` et `aria-*` gardent le texte
+        const booleen      = filt.isBoolean && attrName !== 'value' && MJS_BOOLEAN_PROPS.includes(attrName)
+        const setMatchAttr = booleen
+          ? `${ecrireAttr('_mjs_node', adj, 'true')};`
+          : filt.isBoolean
+            ? `_mjs_node.setAttribute('${nom}', 'true');`
+            : `${ecrireAttr('_mjs_node', adj, filt.matchValue)};`
+        const setUnmatchAttr = booleen
+          ? `${ecrireAttr('_mjs_node', adj, 'false')};`
+          : filt.isBoolean
+            ? `_mjs_node.setAttribute('${nom}', 'false');`
+            : (filt.unmatchValue.trim() === "''" || filt.unmatchValue.trim() === '""'
+                ? `_mjs_node.removeAttribute('${nom}');`
+                : `${ecrireAttr('_mjs_node', adj, filt.unmatchValue)};`)
         const condExpr = `${filt.itemAccess ? `${lastLoop!.item}.${filt.itemAccess}` : lastLoop!.item} === _mjsThis._state.${filt.externVar}`
         const filteredLogic = `if (!!(${condExpr})) { ${setMatchAttr} } else { ${setUnmatchAttr} }`
         const keyExpr = filt.itemAccess
           ? `${lastLoop!.item}.${filt.itemAccess}`
           : `${lastLoop!.item}`
-        // Propriété de clé par fn (même schéma que @class filtré) :
-        // (re)pose seulement si clé inédite ou détenue par une autre row.
-        // Bonus : évite l'alloc d'une closure à CHAQUE updateFn (l'ancien set
-        // inconditionnel reallouait sur tous les updates répétés).
-        env.ctx.updates.push(
-          `{ const n${env.lid} = __nodes['${env.lid}']; ` +
-          `if(n${env.lid}) { let node = n${env.lid}; ${filteredLogic} ` +
-          `const __k = ${keyExpr}; ` +
-          `const __fe = ((_mjsThis._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
-          `const __idx = (__fe.idx ??= new Map()); ` +
-          `const __fns = (__nodes._mjs_filterFns ??= {}); ` +
-          `const __f0 = __fns['${idxName}']; ` +
-          `if (__f0 === void 0 || __idx.get(__k) !== __f0) { ` +
-          `const __f = (matches) => { let node = n${env.lid}; if (matches) { ${setMatchAttr} } else { ${setUnmatchAttr} } }; ` +
-          `__idx.set(__k, __f); __fns['${idxName}'] = __f; } ` +
-          `(_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'); ` +
-          `(__nodes._mjs_filterKeys ??= {})['${idxName}'] = __k; ` +
-          `} }`
-        )
-        const filtEffectCode =
-          `{ ` +
-          `const __fe = ((this._mjs_filt ??= {})['${filterKey}'] ??= { idx: null, prev: void 0 }); ` +
-          `const prev = __fe.prev; ` +
-          `const curr = this._state.${filt.externVar}; ` +
-          `if (prev !== curr) { ` +
-          `const idx = __fe.idx; ` +
-          `if (idx) { ` +
-          `if (prev !== void 0) { const f = idx.get(prev); if (f) f(false); } ` +
-          `if (curr !== void 0) { const f = idx.get(curr); if (f) f(true); } ` +
-          `} ` +
-          `__fe.prev = curr; ` +
-          `} }`
-        // Expansion transitive : si `filt.externVar` est un computed, on doit
-      // s'abonner aussi à ses deps statiques. Sinon, l'effect filtered ne
-      // tire pas quand une dep du computed mute (ex : `currentStep` dérivé de
-      // `currentStepIdx` — sans expansion, mutation de l'idx → computed dirty
-      // mais filtered effect jamais réveillé). On passe par `getEffectVars`
-      // qui fait l'expansion via `analyzer.resolveSnippetDeps`.
-      const filtVars = getEffectVars(`$${filt.externVar}`)
-      registerEffect(filtEffectCode, filtVars.length > 0 ? filtVars : [filt.externVar])
-        attrStr += ` ${attrName}=''`
+        // propriété de clé par fn (même schéma que @class filtré) : l'entrée de la clé est reposée
+        // quand elle est inédite ou détenue par une autre ligne. Deux rattrapages, émis seulement
+        // là où le défaut est possible (ailleurs le code est celui d'avant, à l'octet) :
+        // - la fonction est refaite à CHAQUE passe de la ligne quand la valeur écrite lit la ligne
+        //   (autre champ, index, `{const}`, boucle parente) : elle ferme sur la passe qui l'a faite,
+        //   et une ligne gardée par sa clé reçoit de nouveaux objets (liste rechargée)
+        // - la ligne lâche l'entrée de son ancienne clé quand le champ filtré n'est pas la clé du
+        //   `by` (champ modifié, ligne positionnelle d'une liste sans clé)
+        // le gain du dispatch est intact : le choix qui bouge appelle toujours 2 fonctions
+        const refaire = valeurLitLaLigne([filt.matchValue, filt.unmatchValue], lastLoop!.item, filt.itemAccess, env.ctx)
+        const lacher  = !filtreSurLaCle(lastLoop, filt.itemAccess)
+        const multi   = plusieursLignes(lacher, env.ctx.loops)
+        const creer   = `const __f = (_mjs_match) => { let _mjs_node = _mjs_n${env.lid}; if (_mjs_match) { ${setMatchAttr} } else { ${setUnmatchAttr} } }; `
+        liaisonFiltree(env, filt.externVar, idxName, keyExpr, filteredLogic, poseFonctionFiltree(creer, idxName, refaire, lacher, multi), multi, appelFiltre)
+        if (!sansTemoin) attrStr += ` ${nom}=''`
         return { id, attrStr }
       }
       // `disabled={item.locked}` avec
@@ -368,7 +569,7 @@ function dynamic(env: AttrCtx): AttrResult {
       // juste plus bas) : une constante `true` n'a donc besoin d'AUCUN
       // updateFn, exactement comme un attribut HTML statique.
       if (env.attr.expr?.trim() !== 'true') {
-        env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${jsVar}); } }`)
+        env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireAttr(`_mjs_n${env.lid}`, adj, jsVar)}; } }`)
       }
     }
     // WC (`<mjs-x foo=!{$shared}>`) et attribut dynamique NON
@@ -376,16 +577,23 @@ function dynamic(env: AttrCtx): AttrResult {
     // `_mjs_renderStruct` sauté → DOM figé à vie sur mutation. Les chemins FILTRÉS
     // (au-dessus) ont leur effect dédié → ils sont déjà `return`és et exclus.
     for (const v of vars) state.structVars.add(v)
-    if (!isWc) attrStr += ` ${attrName}=''`
+    if (!isWc && !sansTemoin) attrStr += ` ${nom}=''`
   } else {
     if (isWc) {
       // même chemin que la branche `for` ci-dessus :
       // sans ça, une prop dynamique de composant (`<mjs-card item={d}>`) en
       // branche `{await}` ne posait RIEN — `item` disparaissait en silence.
-      const updateLogic = `if (node._set) { node._set('${attrName}', ${jsVar}); } else { µ._mjs_pend(node, '${attrName}', ${jsVar}); }`
-      env.ctx.updates.push(`{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`)
+      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
+      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
+        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+      env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
+      // la prop suit ses variables : effet de la racine, comme à la racine (la pose ci-dessus la vaut à la construction de la branche)
+      suivreEnBranche(env, id, jsVar, updateLogic, vars)
     } else {
       attrStr += ` ${attrName}='\${${jsVar}}'`
+      // l'attribut aussi : la valeur posée à la construction est réécrite par `µ._mjs_updAttrNode` (filtre des adresses, nom et espace de noms du gabarit) quand une variable lue change
+      suivreEnBranche(env, id, jsVar, `${ecrireAttr('_mjs_node', adj, jsVar)};`, vars)
     }
   }
 
@@ -448,7 +656,8 @@ function buildTemplateFromSegments(
 ): string {
   let tpl = ''
   for (const s of segments) {
-    tpl += s.text.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+    // texte fixe : entités décodées comme le ferait le navigateur (cf. parseMixedString), un `${` du décodage reste du texte
+    tpl += decodeHtmlEntities(s.text).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
     if (s.expr !== null) tpl += `\${${cleanJsExpr(s.expr, externalVars, templateLang, moduleName)}}`
   }
   return `\`${tpl}\``
@@ -480,12 +689,15 @@ function interpolation(env: AttrCtx): AttrResult {
 
   const id = env.id ?? `a${++state.counter}`
   const attrName = env.attrName ?? ''
+  // nom (et espace de noms) que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr)
+  const adj = adjustedAttr(env, attrName)
+  const nom = adj.name
   let attrStr = env.attrStr
 
   if (env.ctx.type === 'root') {
-    const code = `this._mjs_updAttr('${id}', '${attrName}', ${jsTemplateStr});`
+    const code = ecrireAttrRacine('this', id, adj, jsTemplateStr)
     pushUpdate(env, code, vars)
-    attrStr += ` ${attrName}=''`
+    attrStr += ` ${nom}=''`
   } else if (env.ctx.type === 'for') {
     // SÉCURITÉ (XSS) — `href="{item.url}"` (interpolation QUOTÉE
     // dans un {for}, données d'item souvent distantes) émettait un `setAttribute`
@@ -494,11 +706,11 @@ function interpolation(env: AttrCtx): AttrResult {
     // `µ._mjs_updAttrNode` (comme root via `_mjs_updAttr`) → filtre javascript:/data:html.
     // La valeur vient d'un template literal (toujours string) → jamais false/null,
     // donc pas de removeAttribute intempestif ; `_mjs_safeAttr` re-diffe en interne.
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${jsTemplateStr}); } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireAttr(`_mjs_n${env.lid}`, adj, jsTemplateStr)}; } }`)
     // var externe interpolée dans la row (`title="v : {$prefix}"`) :
     // sans `structVars`, `_mjs_renderStruct` sauté → attribut figé à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
-    attrStr += ` ${attrName}=''`
+    attrStr += ` ${nom}=''`
   } else {
     // chemin CLONE/innerHTML (ctx ni root ni for) : le navigateur
     // DÉCODE les entités. On échappe l'apostrophe du TEXTE STATIQUE (qui fermerait
@@ -513,6 +725,8 @@ function interpolation(env: AttrCtx): AttrResult {
       if (s.expr !== null) jsValClone += `\${${cleanJsExpr(s.expr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`
     }
     attrStr += ` ${attrName}='${jsValClone}'`
+    // la chaîne suit les variables qu'elle lit (cf. dynamic, branche {await}) ; le nœud est celui de `mjs-id`, posé par l'appelant
+    suivreEnBranche(env, id, jsTemplateStr, `${ecrireAttr('_mjs_node', adj, jsTemplateStr)};`, vars)
   }
 
   return { id, attrStr }
@@ -523,6 +737,7 @@ function interpolation(env: AttrCtx): AttrResult {
 // ============================================================================
 
 import { dedent } from '../state.js'
+import { EFFECTS, parseEffect, checkPlacement, checkLife, nearestEffect, effectSpec, projectEffect, nestedEffects, defaultSock, removedEffectError, type ParsedEffect } from '../../effects/catalog.js'
 
 // ============================================================================
 // ENREGISTREMENT DES ROUTES D'ÉVÉNEMENTS — point de passage UNIQUE
@@ -669,11 +884,12 @@ function eventListener(env: AttrCtx): AttrResult {
     rawContent = `${evt}(e, el)`
   }
 
-  const cleanedJs = cleanJs(rawContent, env.compiler.externalVars)
+  // en Civet, les accolades derrière une flèche sont un bloc, jamais un objet (cf. corpsDeFlecheEnBloc)
+  const cleanedJs = env.compiler.templateLang === 'js' ? cleanJs(rawContent, env.compiler.externalVars) : corpsDeFlecheEnBloc(cleanJs(rawContent, env.compiler.externalVars))
   const idx = state.inlines.length
 
   // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
-  const reconstructCoffee = squelettePortee(env, cleanedJs, (l) => {
+  const reconstructCoffee = squelettePortee(env, cleanedJs, (l, luApres) => {
     const d = l.depth
     const item = l.item
     const idxVar = l.index
@@ -685,11 +901,16 @@ function eventListener(env: AttrCtx): AttrResult {
     // squelette : l'existentiel binaire Coffee `a ? b` (sans `:`) n'existe
     // pas en Civet (« Failed to parse ») ; Civet exprime le même repli
     // via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »).
-    return `  __idx_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
-      `  __arr_${d} = if Array.isArray(${iterable}) then ${iterable} else Object.values(${iterable})\n` +
-      `  __idx_${d} = +__idx_${d} if Array.isArray(${iterable})\n` +
-      `  ${item} = __arr_${d}[__idx_${d}]\n` +
-      `  ${idxVar} = __idx_${d}\n`
+    // L'élément se relit dans la collection : position d'un tableau, clé d'un objet, position parmi les éléments d'un Set ou d'une Map (cf.
+    // ligneBoucleLiaison) — cette conversion seulement quand l'élément est lu : par le gestionnaire, par l'itérable d'une boucle
+    // intérieure ou par un `{const}` recréé après la boucle (texteLuApres)
+    const lu = new RegExp(`(?<![\\w$.])${item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`).test(luApres)
+    return `  _mjs_ri_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
+      `  _mjs_ra_${d} = ${iterable}\n` +
+      (lu ? `  _mjs_ra_${d} = Array.from(_mjs_ra_${d}) if _mjs_ra_${d} instanceof Map or _mjs_ra_${d} instanceof Set\n` : '') +
+      `  _mjs_ri_${d} = +_mjs_ri_${d} if Array.isArray(_mjs_ra_${d})\n` +
+      `  ${item} = _mjs_ra_${d}[_mjs_ri_${d}]\n` +
+      `  ${idxVar} = _mjs_ri_${d}\n`
   })
 
   const userCode = dedent(cleanedJs).split('\n').map(l => `  ${l}`).join('\n')
@@ -755,6 +976,16 @@ function castExprFor(cast: string | undefined, raw: string): string {
   }
 }
 
+/** Un <input> qui peut tenir un nombre : son `type` est écrit « number », ou donné par une variable. Lui seul a un
+ * état de saisie invalide (« - », « 1. » : `validity.badInput`) et un nombre à lire dans un champ vidé. */
+function numberFieldPossible(node: Node): boolean {
+  if ((node.name ?? '').toLowerCase() !== 'input') return false
+  const type = node.attrs.find(a => a.name === 'type')
+  if (!type) return false
+  if (type.type === 'dynamic') return true
+  return /^\s*number\s*$|[{$]/i.test(type.val ?? '')
+}
+
 function bindingStandard(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) throw new Error(`[binding_standard] expected !{...} pattern, got "${env.rawVal}"`)
@@ -776,14 +1007,26 @@ function bindingStandard(env: AttrCtx): AttrResult {
   const rawAttr = (env.attrName ?? '').replace(/^@/, '')
   const { base: baseAttr, cast } = splitCast(rawAttr)
 
+  // champ nombre qu'on vide (« 5 », Retour arrière) : le champ vide se lit 0, que la liaison réécrirait dans le champ à la place
+  // de la frappe — « 0 » empêchait de l'effacer pour taper un autre nombre. Tant que le champ a le focus et reste vide, ce 0 du
+  // modèle n'y est pas réécrit ; une autre valeur, ou le champ qui n'a plus le focus, le remplace comme avant
+  const emptiableNumber = baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'input' && (cast === 'number' || (!cast && numberFieldPossible(env.node)))
+  const emptyInProgress = emptiableNumber ? ` && !(_mjs_node.value === '' && _mjs_bv === 0 && _mjs_node.getRootNode().activeElement === _mjs_node)` : ''
+
   let updateLogic: string
-  if (baseAttr === 'value') {
-    updateLogic = `if (node.type === 'select-multiple') { ` +
-      `const arr = Array.isArray(${jsVar}) ? ${jsVar}.map(String) : []; ` +
-      `Array.from(node.options).forEach(o => o.selected = arr.includes(o.value)); ` +
-      `} else if (node.value !== ${jsVar}) { node.value = ${jsVar}; }`
+  if (baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'select') {
+    // <select> : l'aide du runtime choisit les options (un tableau pour `multiple`) et réapplique la valeur quand elles
+    // changent (options chargées ensuite) ; variable vide (`null`) : rien de choisi
+    updateLogic = `µ._mjs_selVal(_mjs_node, ${jsVar} == null ? '' : ${jsVar});`
+  } else if (baseAttr === 'value') {
+    updateLogic = `if (_mjs_node.type === 'select-multiple') { ` +
+      `const _mjs_arr = Array.isArray(${jsVar}) ? ${jsVar}.map(String) : []; ` +
+      `Array.from(_mjs_node.options).forEach(_mjs_opt => _mjs_opt.selected = _mjs_arr.includes(_mjs_opt.value)); ` +
+      // variable vide (jamais écrite, `null`) : champ vide — `node.value = undefined` écrirait la
+      // chaîne « undefined » dans le champ
+      `} else { const _mjs_bv = ${jsVar} == null ? '' : ${jsVar}; if (_mjs_node.value !== _mjs_bv${emptyInProgress}) { _mjs_node.value = _mjs_bv; } }`
   } else if (baseAttr === 'checked') {
-    updateLogic = `if (node.checked !== !!${jsVar}) { node.checked = !!${jsVar}; }`
+    updateLogic = `if (_mjs_node.checked !== !!${jsVar}) { _mjs_node.checked = !!${jsVar}; }`
   } else if (MJS_BOOLEAN_PROPS.includes(baseAttr)) {
     // même piège
     // que le défaut historique « booléens jamais retirés » (cf.
@@ -798,7 +1041,7 @@ function bindingStandard(env: AttrCtx): AttrResult {
     // nativement cette propriété (`<details>` pour `open`, `<button>`/
     // `<input>` pour `disabled`…) : sur un `<div>`/composant custom,
     // l'assignation crée une simple propriété expando, l'attribut reste posé.
-    // `hasIdl` se capture AVANT l'assignation (qui créerait sinon elle-même
+    // `_mjs_idl` se capture AVANT l'assignation (qui créerait sinon elle-même
     // la propriété expando et fausserait le test) ; retrait/pose explicites
     // en secours, sans effet sur un tag qui a déjà la réflexion native. Testé
     // sur le PROTOTYPE (`Object.getPrototypeOf(node)`), pas sur `node` lui-même :
@@ -808,16 +1051,17 @@ function bindingStandard(env: AttrCtx): AttrResult {
     // `<button>` (faux négatif qui bloque définitivement le `setAttribute` de
     // secours). Le prototype (`HTMLButtonElement.prototype`/`HTMLDivElement.prototype`)
     // ne reçoit jamais d'expando d'instance : le test reste stable dans le temps.
-    updateLogic = `const hasIdl = '${baseAttr}' in Object.getPrototypeOf(node); if (node.${baseAttr} !== !!${jsVar}) { node.${baseAttr} = !!${jsVar}; } if (!(${jsVar})) { node.removeAttribute('${baseAttr}'); } else if (!hasIdl) { node.setAttribute('${baseAttr}', ''); }`
+    updateLogic = `const _mjs_idl = '${baseAttr}' in Object.getPrototypeOf(_mjs_node); if (_mjs_node.${baseAttr} !== !!${jsVar}) { _mjs_node.${baseAttr} = !!${jsVar}; } if (!(${jsVar})) { _mjs_node.removeAttribute('${baseAttr}'); } else if (!_mjs_idl) { _mjs_node.setAttribute('${baseAttr}', ''); }`
   } else {
-    updateLogic = `if (node.getAttribute('${baseAttr}') !== String(${jsVar})) node.setAttribute('${baseAttr}', ${jsVar});`
+    // même écriture que la liaison à sens unique : filtre des adresses (`javascript:`…), retrait sur false, null et undefined
+    updateLogic = `µ._mjs_updAttrNode(_mjs_node, '${baseAttr}', ${jsVar}${attrSur(baseAttr)});`
   }
 
   if (env.ctx.type === 'root') {
-    const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     pushUpdate(env, code, vars)
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     // #5 — un two-way binding dans un {for} vit dans la closure de l'updateFn
     // de ligne, qui ne re-tourne QUE si la loop se reconcilie. Sans ça, muter
     // une var EXTERNE du binding (ex. `@group=!{$choix}` partagé par les
@@ -844,7 +1088,7 @@ function bindingStandard(env: AttrCtx): AttrResult {
     //      sans effet. Même mécanisme que root (`registerEffect` +
     //      `this._mjs_nodes`) — sûr : (a) a toujours fini de tourner avant que
     //      quiconque puisse muter `$v`.
-    const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+    const initCode = `{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`
     // <select> : la pose doit attendre les <option> d'un {for} imbriqué —
     // même besoin que `postUpdates` (paths.ts), mais pour du code émis
     // ICI, jamais vu par son parseur HTML. Sentinelle consommée par
@@ -853,7 +1097,8 @@ function bindingStandard(env: AttrCtx): AttrResult {
     const isSelectValue = baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'select'
     env.ctx.updates.push(isSelectValue ? SELECT_VALUE_DEFER_PREFIX + initCode : initCode)
     const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
-    registerEffect(reactiveCode, vars)
+    // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
+    registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
   }
 
   // `open`
@@ -869,20 +1114,20 @@ function bindingStandard(env: AttrCtx): AttrResult {
 
   let valExtractor: string
   if (baseAttr === 'value') {
-    const autoNum = cast ? 'false' : "['number', 'range'].includes(el.type)"
-    valExtractor = `if el.type == 'select-multiple' then Array.from(el.selectedOptions).map((o) => o.value) else (if ${autoNum} then Number(el.value) else ${castExpr('el.value')})`
+    const autoNum = cast ? 'false' : "['number', 'range'].includes(_mjs_el.type)"
+    valExtractor = `if _mjs_el.type == 'select-multiple' then Array.from(_mjs_el.selectedOptions).map((_mjs_opt) => _mjs_opt.value) else (if ${autoNum} then Number(_mjs_el.value) else ${castExpr('_mjs_el.value')})`
   } else if (baseAttr === 'checked') {
-    valExtractor = 'el.checked'
+    valExtractor = '_mjs_el.checked'
   } else if (MJS_BOOLEAN_PROPS.includes(baseAttr)) {
     // même
-    // raisonnement que `checked` : `el.getAttribute('open')` renvoie `''`
+    // raisonnement que `checked` : `_mjs_el.getAttribute('open')` renvoie `''`
     // (chaîne, PAS un booléen) quand présent — `$x` se serait retrouvé à `''`
     // au lieu de `true` après un toggle, une valeur "vraie" mais TYPÉE
     // différemment de ce que le modèle attend (incohérence silencieuse).
-    // La PROPRIÉTÉ DOM (`el.open`) renvoie un booléen natif propre.
-    valExtractor = `el.${baseAttr}`
+    // La PROPRIÉTÉ DOM (`_mjs_el.open`) renvoie un booléen natif propre.
+    valExtractor = `_mjs_el.${baseAttr}`
   } else {
-    valExtractor = castExpr(`el.getAttribute('${baseAttr}')`)
+    valExtractor = castExpr(`_mjs_el.getAttribute('${baseAttr}')`)
   }
 
   let attrStr = env.attrStr
@@ -904,10 +1149,22 @@ function bindingStandard(env: AttrCtx): AttrResult {
   const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
   const idx = state.inlines.length
-  let inlineBody = `  return if el and el != e.target\n`
+  let inlineBody = `  return if _mjs_el and _mjs_el != _mjs_e.target\n`
+  // champ nombre au pas incomplet (« 1. », « - », « 1e ») : le navigateur ne rend pas de valeur (`value` vaut '',
+  // `badInput` est vrai) — la convertir (0, NaN) puis la réécrire dans le champ effaçait la frappe, le pas est ignoré
+  // la variable (nom simple `$n`) retient le champ refusé : une écriture du code à valeur identique, qui ne déclenche aucun
+  // effet, le remplace alors (`_set`, mjs_element.ts), sauf s'il a le focus
+  const plainVar = baseAttr === 'value' && numberFieldPossible(env.node) ? varExpr.trim().match(/^\$(\w+)$/) : null
+  if (plainVar) inlineBody += `  return µ._mjs_refuse(_mjsThis, '${plainVar[1]}', _mjs_el) if _mjs_el.type == 'number' and _mjs_el.validity?.badInput\n`
+  else if (baseAttr === 'value') inlineBody += `  return if _mjs_el.type == 'number' and _mjs_el.validity?.badInput\n`
   inlineBody += reconstructCoffee
-  inlineBody += `  ${jsVar} = ${valExtractor}\n`
-  pushInline(env, `(e, el) =>\n${inlineBody}`)
+  // lu en nombre (`.number`, `.int`, `.float`) : un texte qui n'en est pas un (« . », « - », « abc ») ne donne pas NaN, ni au
+  // modèle ni, par la réécriture du champ, à l'écran — la frappe reste telle quelle
+  if (baseAttr === 'value' && (cast === 'number' || cast === 'int' || cast === 'float')) {
+    inlineBody += `  _mjs_val = ${valExtractor}\n  return if Number.isNaN(_mjs_val)\n  ${jsVar} = _mjs_val\n`
+  }
+  else inlineBody += `  ${jsVar} = ${valExtractor}\n`
+  pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
   registerEventRoute(evtType, id, idx, 0, 'binding')
 
@@ -930,17 +1187,25 @@ function bindingDimensions(env: AttrCtx): AttrResult {
   let reconstructJs = ''
   if (env.ctx.loops && env.ctx.loops.length > 0) {
     const propPosed = pushIdxPropUpdates(env)
+    // un nom déjà déclaré par une boucle englobante (l'`index` par défaut de deux boucles imbriquées) est réaffecté, jamais redéclaré :
+    // un second `let index` dans le même bloc empêchait le composant de se construire
+    const declares = new Set<string>()
+    const poser    = (nom: string, valeur: string): string => {
+      const decl = declares.has(nom) ? '' : 'let '
+      declares.add(nom)
+      return `${decl}${nom} = ${valeur}; `
+    }
     for (const l of env.ctx.loops) {
       const d = l.depth
       if (!propPosed) {
         const attrPart = ` data-mjs-idx-${d}='\${${l.index}}'`
         if (!attrStr.includes(attrPart)) attrStr += attrPart
       }
-      // Optim #8 — Read direct via prop JS, fallback getAttribute.
-      reconstructJs += `const __idx_${d} = t._mjs_idx_${d} != null ? t._mjs_idx_${d} : t.getAttribute('data-mjs-idx-${d}'); `
-      reconstructJs += `const __arr_${d} = Array.isArray(${l.iterable}) ? ${l.iterable} : Object.values(${l.iterable}); `
-      reconstructJs += `let ${l.item} = __arr_${d}[__idx_${d}]; `
-      reconstructJs += `let ${l.index} = __idx_${d}; `
+      // Optim #8 — Read direct via prop JS, fallback getAttribute. L'élément se relit dans la collection : position d'un tableau, clé d'un objet
+      reconstructJs += `const _mjs_ri_${d} = _mjs_t._mjs_idx_${d} != null ? _mjs_t._mjs_idx_${d} : _mjs_t.getAttribute('data-mjs-idx-${d}'); `
+      reconstructJs += `let _mjs_ra_${d} = ${l.iterable}; if (_mjs_ra_${d} instanceof Map || _mjs_ra_${d} instanceof Set) _mjs_ra_${d} = Array.from(_mjs_ra_${d}); `
+      reconstructJs += poser(l.item, `_mjs_ra_${d}[_mjs_ri_${d}]`)
+      reconstructJs += poser(l.index, `_mjs_ri_${d}`)
     }
   }
 
@@ -963,30 +1228,30 @@ function bindingDimensions(env: AttrCtx): AttrResult {
   const simpleVar = /^\$\.([A-Za-z_$][\w$]*)$/.exec(jsVar)
   const buildSetup = (thisRef: string | null): string => {
     const writeBack = thisRef && simpleVar
-      ? `µ._set(${thisRef}, '${simpleVar[1]}', t.${attrName});`
-      : `${jsVar} = t.${attrName};`
-    return `node._mjs_ro_${attrName} ??= false; ` +
-      `if (!node._mjs_ro_${attrName}) { ` +
-      `node._mjs_ro_${attrName} = true; ` +
-      `const ro = new ResizeObserver((entries) => { ` +
-      `for (let entry of entries) { ` +
-      `const t = entry.target; ` +
+      ? `µ._set(${thisRef}, '${simpleVar[1]}', _mjs_t.${attrName});`
+      : `${jsVar} = _mjs_t.${attrName};`
+    return `_mjs_node._mjs_ro_${attrName} ??= false; ` +
+      `if (!_mjs_node._mjs_ro_${attrName}) { ` +
+      `_mjs_node._mjs_ro_${attrName} = true; ` +
+      `const _mjs_ro = new ResizeObserver((_mjs_entries) => { ` +
+      `for (let _mjs_entry of _mjs_entries) { ` +
+      `const _mjs_t = _mjs_entry.target; ` +
       `${reconstructJs}` +
-      `if (${jsVar} !== t.${attrName}) { ${writeBack} } ` +
+      `if (${jsVar} !== _mjs_t.${attrName}) { ${writeBack} } ` +
       `} ` +
       `}); ` +
-      `ro.observe(node); ` +
-      `const t = node; ${reconstructJs} ` +
-      `if (${jsVar} !== t.${attrName}) { ${writeBack} } ` +
+      `_mjs_ro.observe(_mjs_node); ` +
+      `const _mjs_t = _mjs_node; ${reconstructJs} ` +
+      `if (${jsVar} !== _mjs_t.${attrName}) { ${writeBack} } ` +
       `}`
   }
 
   if (env.ctx.type === 'root') {
     // Setup-only : pas de var dépendance, mais doit s'exécuter au mount.
     // On l'enregistre sans vars → seul `_mjs_effectsAll` au mount initial le tire.
-    pushUpdate(env, `{ const node = this._mjs_nodes.${id}; if (node) { ${buildSetup('this')} } }`, [])
+    pushUpdate(env, `{ const _mjs_node = this._mjs_nodes.${id}; if (_mjs_node) { ${buildSetup('this')} } }`, [])
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const node = __nodes['${env.lid}']; if (node) { ${buildSetup(simpleVar ? '_mjsThis' : null)} } }`)
+    env.ctx.updates.push(`{ const _mjs_node = __nodes['${env.lid}']; if (_mjs_node) { ${buildSetup(simpleVar ? '_mjsThis' : null)} } }`)
   } else {
     // ctx.type ni 'root' ni 'for' (branche {await}) : le ResizeObserver
     // n'était jamais installé pour un `clientWidth=!{...}` DANS cette
@@ -996,7 +1261,7 @@ function bindingDimensions(env: AttrCtx): AttrResult {
     // branche (avant que `_mjs_updAwait` ne fusionne les refs dans
     // `this._mjs_nodes` : `this` reste valide ici, l'arrow function de la
     // branche le capture depuis son appel `.call(this, …)`).
-    env.ctx.updates.push(`{ const node = __nodes['${id}']; if (node) { ${buildSetup('this')} } }`)
+    env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if (_mjs_node) { ${buildSetup('this')} } }`)
   }
   return { id, attrStr }
 }
@@ -1028,21 +1293,21 @@ function bindingMedia(env: AttrCtx): AttrResult {
 
   let updateLogic: string
   if (prop === 'currentTime') {
-    updateLogic = `if (Math.abs(node.currentTime - ${jsVar}) > 0.05) node.currentTime = ${jsVar};`
+    updateLogic = `if (Math.abs(_mjs_node.currentTime - ${jsVar}) > 0.05) _mjs_node.currentTime = ${jsVar};`
   } else if (prop === 'paused') {
-    updateLogic = `if (node.paused !== !!${jsVar}) { ` +
-      `if (${jsVar}) { node.pause(); } ` +
-      `else { const p = node.play(); if(p && p.catch) p.catch(() => {}); } }`
+    updateLogic = `if (_mjs_node.paused !== !!${jsVar}) { ` +
+      `if (${jsVar}) { _mjs_node.pause(); } ` +
+      `else { const _mjs_p = _mjs_node.play(); if(_mjs_p && _mjs_p.catch) _mjs_p.catch(() => {}); } }`
   } else {
-    updateLogic = `if (node.${prop} !== ${jsVar}) node.${prop} = ${jsVar};`
+    updateLogic = `if (_mjs_node.${prop} !== ${jsVar}) _mjs_node.${prop} = ${jsVar};`
   }
 
   if (prop !== 'duration') {
     if (env.ctx.type === 'root') {
-      const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+      const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
       pushUpdate(env, code, vars)
     } else if (env.ctx.type === 'for') {
-      env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} } }`)
+      env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
       // média two-way lié à une var externe en row
       // (`paused=!{$playing}`) : sans `structVars`, figé à vie sur mutation.
       for (const v of vars) state.structVars.add(v)
@@ -1053,10 +1318,11 @@ function bindingMedia(env: AttrCtx): AttrResult {
       // (plus bas) était câblé. Même remède que bindingStandard : pose
       // initiale via `__nodes[id]`, réactivité ultérieure via
       // `registerEffect` + `this._mjs_nodes[id]`.
-      const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+      const initCode = `{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`
       env.ctx.updates.push(initCode)
       const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
-      registerEffect(reactiveCode, vars)
+      // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
+      registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
     }
   }
 
@@ -1075,10 +1341,10 @@ function bindingMedia(env: AttrCtx): AttrResult {
   const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
   const idx = state.inlines.length
-  let inlineBody = `  return if el and el != e.target\n`
+  let inlineBody = `  return if _mjs_el and _mjs_el != _mjs_e.target\n`
   inlineBody += reconstructCoffee
-  inlineBody += `  ${jsVar} = el.${prop}\n`
-  pushInline(env, `(e, el) =>\n${inlineBody}`)
+  inlineBody += `  ${jsVar} = _mjs_el.${prop}\n`
+  pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
   for (const evt of evts) registerEventRoute(evt, id, idx, 0, 'binding')
 
@@ -1099,8 +1365,8 @@ function bindingContent(env: AttrCtx): AttrResult {
 
   // SEUL binding two-way sans `reconstructCoffee` :
   // dans un `{for item in $notes}<div contenteditable @text=!{item.txt}>`,
-  // l'inline émis était `item.txt = el.textContent` — mais l'inline est un
-  // handler NU `(e, el) => {...}`, sans AUCUN accès à `item` dans son propre
+  // l'inline émis était `item.txt = _mjs_el.textContent` — mais l'inline est un
+  // handler NU `(_mjs_e, _mjs_el) => {...}`, sans AUCUN accès à `item` dans son propre
   // scope (TypeError « item is not defined », ou pire : écrase un `item`
   // top-level homonyme du script si un tel nom existe). Fix : même
   // reconstruction que `bindingStandard`/`bindingGroup` (ré-hydrate
@@ -1119,11 +1385,14 @@ function bindingContent(env: AttrCtx): AttrResult {
   // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
   const reconstructCoffee = squelettePortee(env, varName, ligneBoucleLiaison)
 
+  // `@html` : le HTML que montre la balise est aussi la valeur de référence de la liaison (`_mjs_html`, cf. l'écriture plus bas) ;
+  // posé AVANT le modèle, pour qu'un passage de l'effet qui suit la frappe trouve la valeur déjà vue et n'écrive rien
   const idx = state.inlines.length
-  let inlineBody = `  return if el and el != e.target\n`
+  let inlineBody = `  return if _mjs_el and _mjs_el != _mjs_e.target\n`
   inlineBody += reconstructCoffee
-  inlineBody += `  ${varName} = el.${prop}\n`
-  pushInline(env, `(e, el) =>\n${inlineBody}`)
+  if (prop === 'innerHTML') inlineBody += `  _mjs_el._mjs_html = _mjs_el.innerHTML\n`
+  inlineBody += `  ${varName} = _mjs_el.${prop}\n`
+  pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
   registerEventRoute('input', id, idx, 0, 'binding')
 
@@ -1132,16 +1401,27 @@ function bindingContent(env: AttrCtx): AttrResult {
                      varName.includes('$$') || varName.includes('$__')
   const ptr = needsAlias ? '_mjsThis' : 'this'
 
+  // l'écriture sur la balise `n` (qui existe) : `textContent` se relit à l'identique, la comparaison suffit ; `innerHTML` ne se relit pas
+  // à l'identique quand la chaîne n'est pas sous forme normalisée (`<img src=x>`, balise non fermée, attribut sans guillemets) et la
+  // comparaison réécrivait le contenu à chaque passage de l'effet (code `onerror` rejoué, image rechargée, nœuds refaits, curseur renvoyé
+  // au début) : on n'écrit que si la VALEUR a changé depuis la dernière vue, gardée sur la balise (`_mjs_html`)
+  const corps  = (n: string): string => prop === 'innerHTML'
+    ? `const _mjs_h = String(${jsVar}); if (${n}._mjs_html !== _mjs_h) { ${n}._mjs_html = _mjs_h; if (${n}.innerHTML !== _mjs_h) ${n}.innerHTML = _mjs_h; }`
+    : `if (${n}.textContent !== String(${jsVar})) ${n}.textContent = String(${jsVar});`
+  const ecrire = (n: string): string => prop === 'innerHTML'
+    ? `if (${n}) { ${corps(n)} }`
+    : `if (${n} && ${n}.textContent !== String(${jsVar})) ${n}.textContent = String(${jsVar});`
+
   if (env.ctx.type === 'root') {
     const code = `{ ` +
-      `const node = ${ptr}._mjs_nodes['${id}']; ` +
-      `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
+      `const _mjs_node = ${ptr}._mjs_nodes['${id}']; ` +
+      `${ecrire('_mjs_node')} ` +
       `}`
     pushUpdate(env, code, vars)
   } else if (env.ctx.type === 'for') {
     env.ctx.updates.push(`{ ` +
-      `const node = __nodes['${env.lid}']; ` +
-      `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
+      `const _mjs_node = __nodes['${env.lid}']; ` +
+      `${ecrire('_mjs_node')} ` +
       `}`)
     for (const v of vars) state.structVars.add(v)
   } else {
@@ -1159,20 +1439,24 @@ function bindingContent(env: AttrCtx): AttrResult {
     // — `_mjs_updAwait` étant idempotent, `$t`/`$h` muté après coup resterait sans
     // effet sans ce volet.
     const initCode = `{ ` +
-      `const node = __nodes['${id}']; ` +
-      `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
+      `const _mjs_node = __nodes['${id}']; ` +
+      `${ecrire('_mjs_node')} ` +
       `}`
     env.ctx.updates.push(initCode)
-    // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus
-    // (cf. effetRacineLiaison)
-    const prelude = squelettePortee(env, jsVar, () => '', 'js')
-    const reactiveCode = prelude
-      ? `{ const node = ${ptr}._mjs_nodes['${id}']; if (node) { ${prelude}if (node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); } }`
+    // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus (cf. effetRacineLiaison),
+    // et seulement quand cette branche est celle qui est affichée (cf. brancheCourante), qu'elle lise la valeur de la branche ou non :
+    // promesse remplacée ou rejetée, la valeur lue vaut `null` et `v.titre` ferait tomber le composant, et le nœud retiré de la page
+    // continuerait de recevoir le texte ou le HTML (un `<img onerror>` écrit dans un nœud détaché s'exécute quand même)
+    const prelude      = squelettePortee(env, jsVar, () => '', 'js')
+    const affichee     = brancheCourante(env)
+    const reactiveCode = prelude || affichee
+      ? `{ const _mjs_node = ${ptr}._mjs_nodes['${id}']; if (_mjs_node${affichee ? ` && ${affichee}` : ''}) { ${prelude}${corps('_mjs_node')} } }`
       : `{ ` +
-        `const node = ${ptr}._mjs_nodes['${id}']; ` +
-        `if (node && node.${prop} !== String(${jsVar})) node.${prop} = String(${jsVar}); ` +
+        `const _mjs_node = ${ptr}._mjs_nodes['${id}']; ` +
+        `${ecrire('_mjs_node')} ` +
         `}`
-    registerEffect(reactiveCode, vars)
+    // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
+    registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
   }
   return { id, attrStr }
 }
@@ -1194,15 +1478,21 @@ function bindingGroup(env: AttrCtx): AttrResult {
 
   const pureVarName = varExpr.replace(/^\$/, '').replace(/[^a-zA-Z0-9_]/g, '-')
   const id = env.id ?? `g${++state.counter}`
+  // le groupe natif porte le numéro de l'exemplaire du composant (`_mjs_gid`, donné au premier passage) : sans lui, deux exemplaires posés dans
+  // le même arbre (`@lightDom`), ou deux composants qui lient la même variable, formaient un seul groupe — un clic dans l'un décochait l'autre
+  // sans que son état bouge. Un `name` écrit par l'auteur reste le sien
+  const nomAuteur = (env.node.attrs ?? []).some((a) => a.name === 'name')
+  const nomGroupe = (suffixe: string): string => nomAuteur ? '' :
+    `{ const _mjs_gn = \`mjs-grp-${pureVarName}-\${_mjsThis._mjs_gid ??= (µ._mjs_gseq = (µ._mjs_gseq || 0) + 1)}${suffixe}\`; if (_mjs_node.name !== _mjs_gn) _mjs_node.name = _mjs_gn; } `
 
-  const updateLogic = `if (node.type === 'radio') { ` +
-    `node.checked = (node.value === String(${jsVar})); ` +
-    `} else if (node.type === 'checkbox') { ` +
-    `node.checked = (Array.isArray(${jsVar}) && ${jsVar}.map(String).includes(node.value)); ` +
+  const updateLogic = `if (_mjs_node.type === 'radio') { ` +
+    `_mjs_node.checked = (_mjs_node.value === String(${jsVar})); ` +
+    `} else if (_mjs_node.type === 'checkbox') { ` +
+    `_mjs_node.checked = (Array.isArray(${jsVar}) && ${jsVar}.map(String).includes(_mjs_node.value)); ` +
     `}`
 
   if (env.ctx.type === 'root') {
-    const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${nomGroupe('')}${updateLogic} } }`
     pushUpdate(env, code, vars)
   } else if (env.ctx.type === 'for') {
     // le `name='mjs-grp-...'` posé plus bas
@@ -1228,10 +1518,10 @@ function bindingGroup(env: AttrCtx): AttrResult {
       return names.some((nm) => new RegExp(`(?<![\\w.$])${nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`).test(varExpr))
     })
     const uniqueSuffix = dependsOnLoop ? loopsGrp.map((l) => `-\${${l.index}}`).join('') : ''
-    const updateLogicFor = uniqueSuffix
-      ? `node.name = \`mjs-grp-${pureVarName}${uniqueSuffix}\`; ${updateLogic}`
-      : updateLogic
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogicFor} } }`)
+    const updateLogicFor = nomAuteur
+      ? (uniqueSuffix ? `_mjs_node.name = \`mjs-grp-${pureVarName}${uniqueSuffix}\`; ${updateLogic}` : updateLogic)
+      : `${nomGroupe(uniqueSuffix)}${updateLogic}`
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogicFor} } }`)
     // #5 — cf. bindingStandard : un @group two-way dans un {for} (radios /
     // checkboxes partageant une var, idiome Svelte 6-5/6-6) doit re-rendre le
     // widget quand la var mute. On marque ses vars externes comme structurelles.
@@ -1249,10 +1539,11 @@ function bindingGroup(env: AttrCtx): AttrResult {
     // `this._mjs_nodes[id]` (`_mjs_updAwait` idempotent, ne rejoue jamais son contenu
     // tout seul). Pas de suffixe `name` dynamique ici (réservé au `{for}`,
     // ci-dessus) : une branche {await} ne clone pas de rows.
-    const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+    const initCode = `{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${nomGroupe('')}${updateLogic} } }`
     env.ctx.updates.push(initCode)
     const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
-    registerEffect(reactiveCode, vars)
+    // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
+    registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
   }
 
   let attrStr = env.attrStr
@@ -1269,31 +1560,31 @@ function bindingGroup(env: AttrCtx): AttrResult {
   // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
   const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
-  // temporaires `__grp_*` : un `v`/`arr` nu écrasait la variable de boucle ou la valeur `{await}`
-  // homonyme de l'utilisateur, relue juste après dans l'expression liée
+  // temporaires `_mjs_gv`/`_mjs_ga` (préfixe réservé) : un `v`/`arr` nu écrasait la variable de boucle ou la valeur `{await}`
+  // homonyme de l'utilisateur, relue juste après dans l'expression liée ; un `__grp_v` écrasait la variable du `<script>` du même nom
   const idx = state.inlines.length
-  let inlineBody = `  return if el and el != e.target\n`
+  let inlineBody = `  return if _mjs_el and _mjs_el != _mjs_e.target\n`
   inlineBody += reconstructCoffee
-  inlineBody += `  __grp_v = el.value\n`
+  inlineBody += `  _mjs_gv = _mjs_el.value\n`
   switch (cast) {
-    case 'number': inlineBody += `  __grp_v = Number(__grp_v)\n`; break
-    case 'int':    inlineBody += `  __grp_v = parseInt(__grp_v, 10)\n`; break
-    case 'float':  inlineBody += `  __grp_v = parseFloat(__grp_v)\n`; break
-    case 'string': inlineBody += `  __grp_v = String(__grp_v)\n`; break
+    case 'number': inlineBody += `  _mjs_gv = Number(_mjs_gv)\n`; break
+    case 'int':    inlineBody += `  _mjs_gv = parseInt(_mjs_gv, 10)\n`; break
+    case 'float':  inlineBody += `  _mjs_gv = parseFloat(_mjs_gv)\n`; break
+    case 'string': inlineBody += `  _mjs_gv = String(_mjs_gv)\n`; break
     case 'bool':
-    case 'boolean': inlineBody += `  __grp_v = (__grp_v is true or __grp_v is 'true' or __grp_v is '1' or __grp_v is 1)\n`; break
+    case 'boolean': inlineBody += `  _mjs_gv = (_mjs_gv is true or _mjs_gv is 'true' or _mjs_gv is '1' or _mjs_gv is 1)\n`; break
   }
-  inlineBody += `  if el.type == 'radio'\n`
-  inlineBody += `    ${jsVar} = __grp_v\n`
-  inlineBody += `  else if el.type == 'checkbox'\n`
-  inlineBody += `    __grp_arr = if Array.isArray(${jsVar}) then [...${jsVar}] else []\n`
-  inlineBody += `    if el.checked\n`
-  inlineBody += `      __grp_arr.push(__grp_v) if not __grp_arr.includes(__grp_v)\n`
+  inlineBody += `  if _mjs_el.type == 'radio'\n`
+  inlineBody += `    ${jsVar} = _mjs_gv\n`
+  inlineBody += `  else if _mjs_el.type == 'checkbox'\n`
+  inlineBody += `    _mjs_ga = if Array.isArray(${jsVar}) then [...${jsVar}] else []\n`
+  inlineBody += `    if _mjs_el.checked\n`
+  inlineBody += `      _mjs_ga.push(_mjs_gv) if not _mjs_ga.includes(_mjs_gv)\n`
   inlineBody += `    else\n`
-  inlineBody += `      __grp_arr = __grp_arr.filter((i) => String(i) != String(__grp_v))\n`
-  inlineBody += `    ${jsVar} = __grp_arr\n`
+  inlineBody += `      _mjs_ga = _mjs_ga.filter((_mjs_i) => String(_mjs_i) != String(_mjs_gv))\n`
+  inlineBody += `    ${jsVar} = _mjs_ga\n`
 
-  pushInline(env, `(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
   registerEventRoute('change', id, idx, 0, 'binding')
 
@@ -1318,7 +1609,8 @@ function bindingThis(env: AttrCtx): AttrResult {
   const _refSugar = varExpr.trim().match(/^\$\.?([A-Za-z_$][\w$]*)$/)
   if (_refSugar) {
     const _plain = _refSugar[1]
-    console.warn(t('generator.this-ref-reactive', { varExpr: varExpr.trim(), plain: _plain }))
+    const line = typedLine('reactivity', t('generator.this-ref-reactive', { varExpr: varExpr.trim(), plain: _plain }), state.lint)
+    if (line !== null) printDiagnostic(line, state.colorsEnabled)
   }
   const jsVar = cleanJs(varExpr, env.compiler.externalVars)
   const id = env.id ?? `t${++state.counter}`
@@ -1336,12 +1628,13 @@ function bindingThis(env: AttrCtx): AttrResult {
   // `@this=!` installe un teardown `_mjs_ref_td` → destroy walker requis.
   state.hasDestroyHooks = true
   const updateLogicRaw = `
-    if (${jsVar} !== node) {
-      ${jsVar} = node;
-      if (!node._mjs_ref_td) {
-        node._mjs_ref_td = () => { if (${jsVar} === node) ${jsVar} = null; };
+    if (${jsVar} !== _mjs_node) {
+      ${jsVar} = _mjs_node;
+      if (!_mjs_node._mjs_ref_td) {
+        _mjs_node._mjs_ref_td = () => { if (${jsVar} === _mjs_node) ${jsVar} = null; };
+        _mjs_node._mjs_ref_td._mjs_ref = true;
         this._mjs_attachments = this._mjs_attachments || new Set();
-        this._mjs_attachments.add(node._mjs_ref_td);
+        this._mjs_attachments.add(_mjs_node._mjs_ref_td);
       }
     }
   `
@@ -1349,16 +1642,16 @@ function bindingThis(env: AttrCtx): AttrResult {
 
   if (env.ctx.type === 'root') {
     // Setup-only : pas de var dépendance, exécuté au mount initial.
-    pushUpdate(env, `{ const node = this._mjs_nodes.${id}; if (node) { ${cleanLogic} } }`, [])
+    pushUpdate(env, `{ const _mjs_node = this._mjs_nodes.${id}; if (_mjs_node) { ${cleanLogic} } }`, [])
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if (n${env.lid}) { let node = n${env.lid}; ${cleanLogic} } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if (_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${cleanLogic} } }`)
   } else {
     // ctx.type ni 'root' ni 'for' (branche {await}) : `@this=!{ref}` ne
     // posait jamais la référence DOM dans cette branche. Setup-only comme au
     // root (l'assignation est idempotente, pas de dépendance réactive à
     // réenregistrer) — on rejoue le même code une fois, DANS la createFn de
     // la branche (`this` y reste valide, capturé depuis `.call(this, …)`).
-    env.ctx.updates.push(`{ const node = __nodes['${id}']; if (node) { ${cleanLogic} } }`)
+    env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if (_mjs_node) { ${cleanLogic} } }`)
   }
   return { id }
 }
@@ -1378,6 +1671,10 @@ function bindingComponent(env: AttrCtx): AttrResult {
   if (!m) return { id: env.id }
   const varExpr = m[1]
   const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  // la prop de l'enfant porte le nom que la forme en dur obtient (cf. propName) : son état, `_mjs_binds` et l'événement `mjs-bind:` le portent aussi ; l'attribut
+  // du rendu serveur garde le nom écrit, que l'enfant relit camélisé à l'hydratation. Enfant pas encore mis à niveau : la clé dépend de la balise
+  const prop    = propName(attrName)
+  const pendKey = prop === attrName ? `'${attrName}'` : `${FOREIGN_TAG} ? '${attrName}' : '${prop}'`
 
   const vars = getEffectVars(varExpr)
 
@@ -1397,28 +1694,31 @@ function bindingComponent(env: AttrCtx): AttrResult {
   // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
   const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
-  const updateLogic = `(node._mjs_binds ??= new Set()).add('${attrName}'); ` +
-    `if (node._set) { ` +
-    `  if (node._state && node._state['${attrName}'] !== ${jsVar}) node._set('${attrName}', ${jsVar}); ` +
+  const updateLogic = `(_mjs_node._mjs_binds ??= new Set()).add('${prop}'); ` +
+    `if (_mjs_node._set) { ` +
+    `  if (_mjs_node._state && _mjs_node._state['${prop}'] !== ${jsVar}) _mjs_node._set('${prop}', ${jsVar}); ` +
     // `_set` pose la valeur en JS PUR (aucune trace HTML) : côté client
     // sans effet (le composant vit déjà en mémoire), mais côté SERVEUR
     // (`µ._isServer`) la valeur ne serait alors JAMAIS sérialisée dans le HTML
     // prérendu, donc jamais rejouée à l'hydratation (composant enfant reconstruit
-    // à froid, prop two-way perdue, cf. mjs-color qui exige `value`).
-    `  if (µ._isServer) { const __ssrVal = typeof ${jsVar} === 'object' ? JSON.stringify(${jsVar}) : String(${jsVar}); if (node.getAttribute('${attrName}') !== __ssrVal) node.setAttribute('${attrName}', __ssrVal); } ` +
+    // à froid, prop two-way perdue, cf. mjs-core-color qui exige `value`).
+    `  if (µ._isServer) { const __ssrVal = typeof ${jsVar} === 'object' ? JSON.stringify(${jsVar}) : String(${jsVar}); if (_mjs_node.getAttribute('${attrName}') !== __ssrVal) _mjs_node.setAttribute('${attrName}', __ssrVal); } ` +
     `} else { ` +
-    `  const val = typeof ${jsVar} === 'object' ? JSON.stringify(${jsVar}) : String(${jsVar}); ` +
-    `  if (node.getAttribute('${attrName}') !== val) node.setAttribute('${attrName}', val); ` +
+    // enfant pas encore mis à niveau (fichier chargé après le parent, ligne de `{for}` clonée dans un gabarit inerte) : la valeur part
+    // dans le registre `µ._mjs_pend`, TYPÉE — 7 reste un nombre, une date une date. Par un attribut, l'enfant la relirait en chaîne à sa
+    // mise à niveau et la chaîne remonterait dans la variable du parent. Une balise `mjs-` qui n'est pas un composant du projet (hors du
+    // manifeste) reçoit, elle, l'attribut (`1`) : texte, ou JSON pour un objet
+    `  µ._mjs_pend(_mjs_node, ${pendKey}, ${jsVar}, 1); ` +
     `}`
 
   if (env.ctx.type === 'root') {
-    const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     pushUpdate(env, code, vars)
     // rejoué SYNCHRONEMENT dans `init()` (state.initialPropBinds,
     // cf. sa déclaration) : même code, idempotent (garde `!==` déjà dedans).
     state.initialPropBinds.push(code)
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} }`)
+    env.ctx.updates.push(`const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} }`)
     // prop de composant liée à une var externe en row
     // (`<mjs-x foo={$shared}>`) : sans `structVars`, figée à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
@@ -1434,28 +1734,104 @@ function bindingComponent(env: AttrCtx): AttrResult {
     // d'`initialPropBinds` ici : ce volet ne concerne QUE les props du ROOT
     // rejouées synchrone dans `init()` (SSR) — un composant qui n'existe pas
     // encore avant que la branche ne se règle n'a rien à y rejouer.
-    const initCode = `{ const node = __nodes['${id}']; if(node) { ${updateLogic} } }`
+    const initCode = `{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`
     env.ctx.updates.push(initCode)
     const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
-    registerEffect(reactiveCode, vars)
+    // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
+    registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
   }
 
   const idx = state.inlines.length
-  let inlineBody = `  return if el and el != e.target\n`
+  let inlineBody = `  return if _mjs_el and _mjs_el != _mjs_e.target\n`
   inlineBody += reconstructCoffee
-  // Convention MJS : l'event `mjs-bind:X` porte la valeur dans `e.data`
+  // Convention MJS : l'event `mjs-bind:X` porte la valeur dans `_mjs_e.data`
   // (cf. `_mjs_notifyMutation` runtime, `_bindEv.data = ...`). PAS `e.detail`.
+  // comparaison sans conversion : de vide à 0 (ou de 0 à vide), la valeur remonte
   if (cast) {
-    inlineBody += `  __mjsCast = ${castExprFor(cast, 'e.data')}\n`
-    inlineBody += `  ${jsVar} = __mjsCast if ${jsVar} != __mjsCast\n`
+    inlineBody += `  _mjs_cast = ${castExprFor(cast, '_mjs_e.data')}\n`
+    inlineBody += `  ${jsVar} = _mjs_cast unless Object.is(${jsVar}, _mjs_cast)\n`
   } else {
-    inlineBody += `  ${jsVar} = e.data if ${jsVar} != e.data\n`
+    inlineBody += `  ${jsVar} = _mjs_e.data unless Object.is(${jsVar}, _mjs_e.data)\n`
   }
-  pushInline(env, `(e, el) =>\n${inlineBody}`)
+  pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
-  registerEventRoute(`mjs-bind:${attrName}`, id, idx, 0, 'binding')
+  registerEventRoute(`mjs-bind:${prop}`, id, idx, 0, 'binding')
 
   return { id, attrStr }
+}
+
+// ============================================================================
+// <@module $comp …props…> — le repère `<div mjs-mod mjs-comp={…}>` que rend le transpiler
+// ============================================================================
+// L'expression du composant et les attributs DYNAMIQUES (`ids={$trouvees}`, `titre={f.nom}`,
+// `class={…}`) sont évalués ICI, dans la portée du nœud — racine, ligne de `{for}`, branche — et non
+// dans un effet posé au niveau du composant, qui ne voyait ni la variable de la boucle ni un `{if}`
+// ouvert plus tard. Ils partent en deux objets vers `µ._updModule` : les props, posées comme sur un
+// composant écrit en dur (valeur typée, jamais une chaîne d'attribut), et les attributs de la balise
+// (`class`, `style`, `id`, `data-*`, `aria-*`). Les valeurs fixes (`titre="Démo"`) restent des
+// attributs recopiés au remplacement. Le nœud passé est celui du gabarit : `µ._updModule` suit seul
+// ses remplacements successifs.
+function propModule(node: Node, attr: Attr): boolean {
+  if (!node.attrs.some((a) => a.name === 'mjs-comp')) return false
+  const n = attr.name ?? ''
+  return attr.type === 'dynamic' && n !== '' && !/^[@*]/.test(n) && !/^mjs-/i.test(n)
+}
+
+function bindingModule(env: AttrCtx): AttrResult {
+  const lang    = env.compiler.templateLang
+  const expr    = (e: string) => cleanJsExpr(e, env.compiler.externalVars, lang, env.compiler.moduleName)
+  const dyn     = env.node.attrs.filter((a) => propModule(env.node, a))
+  const natifs  = dyn.filter((a) => /^(?:class|style|id|data-.*|aria-.*)$/i.test(a.name ?? ''))
+  const props   = dyn.filter((a) => !natifs.includes(a))
+  const varsDe  = (l: Attr[]) => [...new Set(l.flatMap((a) => getEffectVars(a.expr ?? '')))]
+  const vars    = [...new Set([...getEffectVars(env.attr.expr ?? ''), ...varsDe(dyn)])]
+  const id      = env.id ?? `a${++state.counter}`
+  const accept  = env.node.attrs.find((a) => a.name === 'mjs-accept')
+  const liste   = accept ? `[${String(accept.val ?? '').split(/\s+/).filter(Boolean).map((n) => `'${n}'`).join(', ')}]` : 'null'
+  const objet   = (l: Attr[]) => `{ ${l.map((a) => `${JSON.stringify(propName(a.name ?? ''))}: (${expr(a.expr ?? '')})`).join(', ')} }`
+  const appel   = (noeud: string, lesProps: string, refs = '') => `µ._updModule(this, null, (${expr(env.attr.expr ?? '')}), ${liste}, ${lesProps}, ${noeud}, ${objet(natifs)}${refs});`
+
+  if (env.ctx.type === 'for') {
+    // une ligne rejoue tout à chaque passage, comme un composant écrit en dur dans une ligne ; `__nodes`
+    // (les refs de la ligne) permet de resynchroniser la liste quand le composant remplace le repère
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${appel(`_mjs_n${env.lid}`, objet(props), ', __nodes')} } }`)
+    for (const v of vars) state.structVars.add(v)
+    return { id }
+  }
+
+  // racine ou branche `{await}` : le composant (et les attributs de la balise) suivent l'expression du
+  // composant ; les props sont posées à la création, puis chacune par son propre effet, sur ses seules
+  // variables — comme un composant écrit en dur : changer `$t` ne repose pas `ids` ni `opts`
+  const varsMain = [...new Set([...getEffectVars(env.attr.expr ?? ''), ...varsDe(natifs)])]
+  const lesProps = `() => (${objet(props)})`
+  if (env.ctx.type === 'root') {
+    pushUpdate(env, `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${appel('_mjs_node', lesProps)} } }`, varsMain)
+    for (const p of props) {
+      const pv = getEffectVars(p.expr ?? '')
+      if (pv.length > 0) pushUpdate(env, `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { µ._mjs_modSet(_mjs_node, ${JSON.stringify(propName(p.name ?? ''))}, (${expr(p.expr ?? '')})); } }`, pv)
+    }
+    return { id }
+  }
+
+  // branche {await} : pose initiale dans la fonction de la branche (refs locales), puis effets de
+  // racine qui recréent les noms de la branche (même schéma que `bindingComponent`) — et seulement
+  // branche AFFICHÉE : promesse rejouée ou rejetée, la valeur `{success}`/`{error}` vaut `null`, et la
+  // relire planterait l'hôte
+  env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${appel('_mjs_node', lesProps)} } }`)
+  const affichee = brancheCourante(env)
+  const garde    = (corps: string) => affichee ? `if (${affichee}) { ${corps} }` : corps
+  const noms     = (l: string[]) => l.map((e) => expr(e)).join(', ')
+  // les variables que lit un `{const}` recréé par un effet comptent aussi : `{const c = $obj}` puis `x={c.x}` suit `$obj` ; l'effet
+  // du composant et des attributs de la balise suit celles que lisent l'expression du composant et les attributs natifs, chaque
+  // prop suit celles que lit sa propre expression
+  const varsConst = (l: string[]) => varsDesConst(env, noms(l))
+  registerEffect(garde(`{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${squelettePortee(env, noms([env.attr.expr ?? '', ...dyn.map((a) => a.expr ?? '')]), () => '', 'js')}${appel('_mjs_node', lesProps)} } }`), [...new Set([...varsMain, ...varsConst([env.attr.expr ?? '', ...natifs.map((a) => a.expr ?? '')])])])
+  for (const p of props) {
+    const pv = [...new Set([...getEffectVars(p.expr ?? ''), ...varsConst([p.expr ?? ''])])]
+    if (pv.length === 0) continue
+    registerEffect(garde(`{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${squelettePortee(env, noms([p.expr ?? '']), () => '', 'js')}µ._mjs_modSet(_mjs_node, ${JSON.stringify(propName(p.name ?? ''))}, (${expr(p.expr ?? '')})); } }`), pv)
+  }
+  return { id }
 }
 
 // ============================================================================
@@ -1509,6 +1885,68 @@ function flattenPreservingLiterals(s: string): string {
   return out
 }
 
+// les réglages d'une transition créée par `µanim.create` : nommés, une valeur fixe (une durée
+// devient des ms, `12` un nombre, `right` ou `'texte'` une chaîne, `[a, b]` une liste) ou une
+// variable (`$x`, `item.id`) lue à la pose
+function customOpts(name: string, raw: string, scope: string[], expr: (v: string) => string): string {
+  const parts: string[] = []
+  const lit = (v: string): string => {
+    if (/^\$\$?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(v) || (/^([A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*$/.test(v) && scope.includes(v.split('.')[0]))) return `(${expr(v)})`
+    let m = /^(\d*\.?\d+)(ms|s)$/.exec(v)
+    if (m) return String(Number(m[1]) * (m[2] === 's' ? 1000 : 1))
+    if (/^-?\d*\.?\d+$/.test(v)) return String(Number(v))
+    if (v === 'true' || v === 'false') return v
+    // un texte entier, sans guillemet libre au milieu (`'a' + 'b'` est un calcul) ; `\'` y reste une apostrophe
+    m = /^(['"])((?:\\[\s\S]|(?!\1)[^\\])*)\1$/.exec(v)
+    if (m) return JSON.stringify(m[2].replace(/\\(['"\\])/g, '$1'))
+    if (/^\[[\s\S]*\]$/.test(v)) return '[' + splitTop(v.slice(1, -1)).map(lit).join(', ') + ']'
+    if (/^[\w#%.\-]+$/.test(v)) return JSON.stringify(v)
+    throw new Error(t('transitions.maison-valeur', { nom: name, reglage: '', valeur: v }))
+  }
+  for (const item of splitTop(raw)) {
+    if (item === '') continue
+    const m = /^([A-Za-z][\w-]*)\s*:\s*([\s\S]*)$/.exec(item)
+    if (!m) throw new Error(t('transitions.maison-positionnel', { nom: name }))
+    try {
+      parts.push(`${JSON.stringify(m[1])}: ${lit(m[2].trim())}`)
+    }
+    catch {
+      throw new Error(t('transitions.maison-valeur', { nom: name, reglage: m[1], valeur: m[2].trim() }))
+    }
+  }
+  return '{' + parts.join(', ') + '}'
+}
+
+// découpe aux virgules de premier niveau (hors parenthèses, crochets, guillemets)
+function splitTop(raw: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let quote: string | null = null
+  let cur = ''
+  let escaped = false
+  for (const ch of raw) {
+    if (quote) {
+      cur += ch
+      // `\'` ne referme pas le texte
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') quote = ch
+    else if (ch === '(' || ch === '[') depth++
+    else if (ch === ')' || ch === ']') depth--
+    else if (ch === ',' && depth === 0) {
+      out.push(cur.trim())
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  if (cur.trim() !== '') out.push(cur.trim())
+  return out
+}
+
 function bindingTransition(env: AttrCtx): AttrResult {
   const id = env.id ?? `t${++state.counter}`
   const trackingKey = `${id}::${env.lid ?? ''}`
@@ -1518,16 +1956,18 @@ function bindingTransition(env: AttrCtx): AttrResult {
   state.transitionsProcessed.add(trackingKey)
 
   const attrs = env.node.attrs ?? []
-  const tAttr   = attrs.find((a: any) => (a.name ?? '').startsWith('@transition.'))
-  const inAttr  = attrs.find((a: any) => (a.name ?? '').startsWith('@in.'))
-  const outAttr = attrs.find((a: any) => (a.name ?? '').startsWith('@out.'))
+  // `@transition=*fly(…)`, `@in.global=*fade`… : la directive, ses modificateurs, l'effet
+  const directive = (d: string) => attrs.find((a: any) => a.name === d || (a.name ?? '').startsWith(d + '.'))
+  const tAttr   = directive('@transition')
+  const inAttr  = directive('@in')
+  const outAttr = directive('@out')
   if (!tAttr && !inAttr && !outAttr) return { id }
 
   const modifiers: string[] = []
   for (const a of [tAttr, inAttr, outAttr]) {
     if (!a) continue
     const parts = (a.name ?? '').split('.')
-    modifiers.push(...parts.slice(2))
+    modifiers.push(...parts.slice(1))
   }
   const isGlobal = modifiers.includes('global')
   const isShared = modifiers.includes('shared')
@@ -1571,53 +2011,75 @@ function bindingTransition(env: AttrCtx): AttrResult {
       // se terminant par un commentaire `//` (Civet/Coffee) avalerait la fermeture du
       // callback. `flattenPreservingLiterals` (plus bas) préserve ensuite ce saut de ligne
       // PRÉCISÉMENT parce qu'il termine potentiellement un tel commentaire.
-      return `node._mjs_cb_${key} = () => { ${body}\n; };`
+      return `_mjs_node._mjs_cb_${key} = () => { ${body}\n; };`
     })
     .join(' ')
 
+  // l'effet de la directive → l'expression qui rend sa paire { intro, outro } : une transition du
+  // catalogue (µ._mjs_fxAnim), un effet qui se joue une fois (µ._mjs_fxLife), ou une transition
+  // créée par `µanim.create` (µ._mjs_fxAnimCustom) — un nom proche d'un effet connu est une faute
   const formatAnim = (a: any): string => {
     if (!a) return 'null'
-    const parts = (a.name ?? '').split('.')
-    const animName = parts[1]
-    const argsRaw = getVal(a)
-    if (animName) state.usedAnimations.add(animName)
-    let args: string
-    if (!argsRaw || argsRaw === '') {
-      args = '{}'
-    } else {
-      const cleaned = cleanJs(argsRaw, env.compiler.externalVars).trim()
-      args = cleaned.startsWith('{') ? cleaned : `{${cleaned}}`
+    const dir = (a.name ?? '').split('.')[0].slice(1)
+    const m = /^\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)\(([\s\S]*)\)$/.exec(String(a.val ?? ''))
+    // `@in="*fly"` : l'effet est là, entre guillemets (sans eux, le parseur lui aurait posé ses parenthèses) ;
+    // `@in.global="*fly"` propose `@in.global=*fly`, le modificateur reste
+    if (!m && /^\*[A-Za-z][\w-]*(?:\.[a-z][a-z0-9_]*)?$/.test(String(a.val ?? ''))) throw new Error(t('transitions.guillemets', { directive: transitionDirective(a.name ?? '@' + dir), effet: String(a.val) }))
+    if (!m) throw new Error(t('transitions.attend-effet', { directive: '@' + dir }))
+    const name  = m[1]
+    const raw   = m[2]
+    const scope = env.ctx.locals ? Array.from(env.ctx.locals) : []
+    const expr  = (v: string) => cleanJsExpr(v, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    if (!effectSpec(name)) {
+      const proche = nearestEffect(name)
+      // une faute de frappe sur un effet connu (`fdae`), ou un alias que cet effet n'a pas (`fade.inconnu`) : l'erreur donne le
+      // bon nom ; sinon, une transition créée par µanim.create (vérifiée en fin de build)
+      // un effet retiré ou fondu dans un autre (`*knockout` → `*gradient.knockout`) : le message de l'effet posé directement
+      if (proche.distance <= 1 || (name.includes('.') && EFFECTS[name.split('.')[0]]) || removedEffectError(name)) parseEffect(name, raw, scope)
+      state.usedAnimations.add(name)
+      return `µ._mjs_fxAnimCustom(${JSON.stringify(name)}, ${customOpts(name, raw, scope, expr)}\n)`
     }
-    // `\n` avant `)` — même raison que `cbAssignments` juste au-dessus : un `args` se
-    // terminant par un commentaire `//` ne doit pas avaler la fermeture de l'appel.
-    return `µ?.anim?.${animName}(${args}\n)`
+    const settings = parseEffect(name, raw, scope)
+    // un effet de l'appli : réglé, c'est l'effet de la bibliothèque qui se pose ; CSS, sa définition part avec
+    const real = settings.base ?? name
+    effectKids(real, settings, env.node)
+    if (projectEffect(name)) state.usesProjectEffects = true
+    // le nom écrit, pour que les messages nomment l'alias (`@in=*filter.frosted_glass`), pas l'effet qu'il règle ; les réglages écrits
+    // à la pose, pour distinguer un déclencheur que l'auteur a écrit de celui que l'alias porte
+    checkLife(name, settings, dir, raw)
+    const dynKeys = Object.keys(settings.dynamic)
+    const dyn  = dynKeys.length === 0 ? 'null' : '{' + dynKeys.map(k => `${JSON.stringify(k)}: (${expr(settings.dynamic[k])})`).join(', ') + '}'
+    const spec = dynKeys.length === 0 ? 'null' : JSON.stringify(settings.spec)
+    const fx   = effectSpec(real)!
+    if (fx.transition || fx.custom) {
+      if (fx.transition) state.usedAnimations.add(real)
+      return `(${customDef(name, settings, true)}µ._mjs_fxAnim(_mjsThis, _mjs_node, ${JSON.stringify(real)}, ${fixedCode(name, settings)}, ${dyn}, ${spec}\n))`
+    }
+    return `((_mjs_fxn, _mjs_d) => µ._mjs_fxLife(_mjsThis, _mjs_fxn, ${JSON.stringify(real)}, ${fixedCode(name, settings)}, _mjs_d, ${spec}\n))(_mjs_node, ${dyn})`
   }
 
   let setupCode = ''
   if (tAttr) {
     setupCode = `
-      const _raw_t = ${formatAnim(tAttr)};
-      const t_cfg = typeof _raw_t === 'function' ? _raw_t() : _raw_t;
-      if (t_cfg) {
-        if (t_cfg.intro) node._mjs_intro = t_cfg.intro;
-        if (t_cfg.outro) node._mjs_outro = t_cfg.outro;
+      const _mjs_cfgT = ${formatAnim(tAttr)};
+      if (_mjs_cfgT) {
+        if (_mjs_cfgT.intro) _mjs_node._mjs_intro = _mjs_cfgT.intro;
+        if (_mjs_cfgT.outro) _mjs_node._mjs_outro = _mjs_cfgT.outro;
       }
     `
-  } else {
-    if (inAttr) {
-      setupCode += `
-        const _raw_in = ${formatAnim(inAttr)};
-        const in_cfg = typeof _raw_in === 'function' ? _raw_in() : _raw_in;
-        if (in_cfg && in_cfg.intro) node._mjs_intro = in_cfg.intro;
-      `
-    }
-    if (outAttr) {
-      setupCode += `
-        const _raw_out = ${formatAnim(outAttr)};
-        const out_cfg = typeof _raw_out === 'function' ? _raw_out() : _raw_out;
-        if (out_cfg && out_cfg.outro) node._mjs_outro = out_cfg.outro;
-      `
-    }
+  }
+  // `@in` / `@out` à côté de `@transition` : chacun reprend son sens
+  if (inAttr) {
+    setupCode += `
+      const _mjs_cfgIn = ${formatAnim(inAttr)};
+      if (_mjs_cfgIn && _mjs_cfgIn.intro) _mjs_node._mjs_intro = _mjs_cfgIn.intro;
+    `
+  }
+  if (outAttr) {
+    setupCode += `
+      const _mjs_cfgOut = ${formatAnim(outAttr)};
+      if (_mjs_cfgOut && _mjs_cfgOut.outro) _mjs_node._mjs_outro = _mjs_cfgOut.outro;
+    `
   }
 
   const nodeLookup = env.ctx.type !== 'root' && env.lid
@@ -1625,8 +2087,8 @@ function bindingTransition(env: AttrCtx): AttrResult {
     : `this._mjs_nodes.${id}`
 
   const initialCheck = isGlobal ? 'true' : '!_mjsThis._mjs_initial_render'
-  const globalLine   = isGlobal ? 'node._mjs_global = true;' : ''
-  const sharedLine   = isShared ? `node._mjs_anim_mode = 'shared';` : ''
+  const globalLine   = isGlobal ? '_mjs_node._mjs_global = true;' : ''
+  const sharedLine   = isShared ? `_mjs_node._mjs_anim_mode = 'shared';` : ''
 
   // Pipeline intro : on doit attendre que le node soit dans le DOM ET ait un
   // layout calculé avant de capturer ses dims pour les animations samplées
@@ -1645,22 +2107,22 @@ function bindingTransition(env: AttrCtx): AttrResult {
   //
   const jsCode = `
     {
-      const node = ${nodeLookup};
-      if (node && !node._mjs_transition_init) {
-        node._mjs_transition_init = true;
+      const _mjs_node = ${nodeLookup};
+      if (_mjs_node && !_mjs_node._mjs_transition_init) {
+        _mjs_node._mjs_transition_init = true;
         ${globalLine}
         ${sharedLine}
         ${setupCode}
         ${cbAssignments}
-        if (node._mjs_intro && (${initialCheck})) {
+        if (_mjs_node._mjs_intro && (${initialCheck})) {
           try {
-            node._mjs_cb_introstart?.();
-            µ._mjs_whenLayouted(node, () => {
-              µ._mjs_playTransition(node, node._mjs_intro, 'in')
-                .then(() => node._mjs_cb_introend?.())
-                .catch(e => console.warn(${JSON.stringify(t('generator.erreur-intro'))}, e));
+            _mjs_node._mjs_cb_introstart?.();
+            µ._mjs_whenLayouted(_mjs_node, () => {
+              µ._mjs_playTransition(_mjs_node, _mjs_node._mjs_intro, 'in')
+                .then(() => _mjs_node._mjs_cb_introend?.())
+                .catch(_mjs_err => console.warn(${JSON.stringify(t('generator.erreur-intro'))}, _mjs_err));
             });
-          } catch(e) { console.error(${JSON.stringify(t('generator.echec-intro'))}, e); }
+          } catch(_mjs_err) { console.error(${JSON.stringify(t('generator.echec-intro'))}, _mjs_err); }
         }
       }
     }
@@ -1858,6 +2320,111 @@ export function detectFilteredValueExpr(
   return null
 }
 
+// le champ filtré est-il la clé du `by` de la boucle ? Une ligne gardée par sa clé garde alors la même valeur filtrée : son entrée d'index ne change jamais de clé, rien à lâcher.
+// Sans `by`, sur un autre champ ou sur l'élément lui-même, le champ peut changer sur une ligne gardée
+function filtreSurLaCle(boucle: { key?: string | null } | null, itemAccess: string): boolean {
+  return !!boucle && boucle.key != null && itemAccess === boucle.key
+}
+
+// plusieurs lignes peuvent porter la valeur filtrée dès que le champ n'est pas la clé du `by` d'une boucle seule (`lacher`) : une valeur répétée, une clé reprise dans un autre groupe d'une
+// boucle imbriquée. L'index garde alors la fonction de chaque ligne (cf. poseFonctionFiltree) ; la boucle seule filtrée sur sa clé garde le code d'avant, à l'octet
+function plusieursLignes(lacher: boolean, boucles: unknown[]): boolean {
+  return lacher || boucles.length > 1
+}
+
+// la valeur écrite par une liaison filtrée (attribut, style) lit-elle la ligne ? Un nom de la portée de la ligne — élément, index, `{const}`, boucle parente — rend périmée la fonction
+// gardée dans l'index : elle a fermé sur la passe qui l'a faite. Ne la rendent pas périmée : un texte ou un nombre, le champ filtré lui-même (même valeur tant que la clé ne change pas,
+// et une clé qui change fait refaire la fonction), une variable d'état (`$.x`, relue à l'appel). Dans le doute (gabarit de texte, portée inconnue, élément filtré lu) : oui
+function valeurLitLaLigne(valeurs: string[], item: string, itemAccess: string, ctx: AttrCtx['ctx']): boolean {
+  if (!ctx.portee) return true
+  const noms = new Set<string>(ctx.locals ?? [])
+  for (const l of ctx.loops) {
+    if (l.item) noms.add(l.item)
+    if (l.index) noms.add(l.index)
+  }
+  for (const p of ctx.portee) {
+    if (p.kind === 'for') {
+      if (p.loop.item) noms.add(p.loop.item)
+      if (p.loop.index) noms.add(p.loop.index)
+    }
+    else noms.add(p.name)
+  }
+  const echapper = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const champ    = itemAccess ? new RegExp(`(?<![\\w$.])${echapper(item)}\\.${echapper(itemAccess)}(?![\\w$.\\[(])`, 'g') : null
+  for (const valeur of valeurs) {
+    if (valeur.includes('`')) return true
+    let texte = valeur.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '0')
+    if (champ) texte = texte.replace(champ, '0')
+    texte = texte.replace(/\b\d[\w.]*/g, '0').replace(/\.\.\./g, ' ')
+    for (const m of texte.matchAll(/(?<![\w$µ.])[A-Za-z_$µ][\w$µ]*/g)) if (noms.has(m[0])) return true
+  }
+  return false
+}
+
+// pose, dans l'index d'une liaison filtrée par valeur (attribut, style), la fonction de la ligne. `refaire` : la fonction est refaite à CHAQUE passe de la ligne (sinon seulement si la clé
+// est inédite ou détenue par une autre ligne) ; `lacher` : la ligne lâche l'entrée de son ancienne clé, tant qu'elle est la sienne. Sans l'un ni l'autre, le code est celui d'avant, à l'octet
+function poseFonctionFiltree(creer: string, idxName: string, refaire: boolean, lacher: boolean, multi = false): string {
+  const lecture = `const __f0 = __fns['${idxName}']; `
+  // `multi` : plusieurs lignes peuvent porter la même valeur (cf. dynamic) ; l'index garde alors la fonction de chacune, un Set quand une clé en porte plusieurs
+  // (µ._mjs_filtPut). La ligne retire la sienne, sous la clé où elle est posée, avant d'en poser une neuve : le garde reste celui d'avant, une clé à Set la fait refaire à chaque passe
+  if (multi) {
+    const cle     = lacher ? `const _mjs_pk = (__nodes._mjs_filterKeys ??= {})['${idxName}']; ` : ''
+    const retire  = `if (__f0 !== void 0) µ._mjs_filtDrop(__idx, ${lacher ? '_mjs_pk' : '__k'}, __f0); `
+    const poseSet = `µ._mjs_filtPut(__fe, __k, __f); __fns['${idxName}'] = __f; `
+    if (refaire) return `${lecture}${cle}${retire}${creer}${poseSet}`
+    return `${lecture}if (__f0 === void 0 || __idx.get(__k) !== __f0) { ${cle}${retire}${creer}${poseSet}} `
+  }
+  const lache   = lacher ? `const _mjs_pk = (__nodes._mjs_filterKeys ??= {})['${idxName}']; if (__f0 !== void 0 && _mjs_pk !== __k && __idx.get(_mjs_pk) === __f0) __idx.delete(_mjs_pk); ` : ''
+  const pose    = `__idx.set(__k, __f); __fns['${idxName}'] = __f; `
+  if (refaire) return `${lacher ? lecture : ''}${lache}${creer}${pose}`
+  return `${lecture}if (__f0 === void 0 || __idx.get(__k) !== __f0) { ${lache}${creer}${pose}} `
+}
+
+// liaison filtrée par valeur d'une ligne de `{for}` (attribut, `@class`, `@style`), commune aux trois : la passe de la
+// ligne (`logique`) la pose et range sa fonction ou son nœud (`pose`) dans l'index de sa valeur ; l'effet de la racine
+// ne touche que les deux lignes qui changent quand la variable bouge, l'ancienne valeur s'éteint, la nouvelle s'allume.
+// `bascule(valeur, allume)` : l'effet sur l'entrée d'une valeur quand une seule ligne la porte ; avec `multi`, plusieurs
+// lignes peuvent la porter et µ._mjs_filtCall les appelle toutes. Le texte émis est le même pour les trois liaisons
+function liaisonFiltree(env: AttrCtx, externVar: string, idxName: string, keyExpr: string, logique: string, pose: string, multi: boolean, bascule: (valeur: string, allume: string) => string): void {
+  env.ctx.updates.push(
+    `{ const _mjs_n${env.lid} = __nodes['${env.lid}']; ` +
+    `if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${logique} ` +
+    `const __k = ${keyExpr}; ` +
+    `const __fe = ((_mjsThis._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
+    `const __idx = (__fe.idx ??= new Map()); ` +
+    `const __fns = (__nodes._mjs_filterFns ??= {}); ` +
+    pose +
+    `(_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'); ` +
+    `(__nodes._mjs_filterKeys ??= {})['${idxName}'] = __k; ` +
+    `} }`
+  )
+  const filtEffectCode =
+    `{ ` +
+    `const __fe = ((this._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
+    `const _mjs_prev = __fe.prev; ` +
+    `const _mjs_curr = this._state.${externVar}; ` +
+    `if (_mjs_prev !== _mjs_curr) { ` +
+    `const _mjs_idx = __fe.idx; ` +
+    `if (_mjs_idx) { ` +
+    (multi
+      ? `if (_mjs_prev !== void 0) µ._mjs_filtCall(_mjs_idx.get(_mjs_prev), false); ` +
+        `if (_mjs_curr !== void 0) µ._mjs_filtCall(_mjs_idx.get(_mjs_curr), true); `
+      : `if (_mjs_prev !== void 0) { ${bascule('_mjs_prev', 'false')} } ` +
+        `if (_mjs_curr !== void 0) { ${bascule('_mjs_curr', 'true')} } `) +
+    `} ` +
+    `__fe.prev = _mjs_curr; ` +
+    `} }`
+  // Expansion transitive : si la variable est un dérivé, l'effet s'abonne aussi à ses dépendances statiques (sinon une
+  // dépendance qui mute laisse le dérivé périmé et l'effet endormi) — getEffectVars passe par analyzer.resolveSnippetDeps.
+  // Hors garde de branche : le souvenir `prev` suit la variable même quand un {if} cache la liste, sinon la ligne
+  // éteinte au retour n'est pas la bonne (cf. CompilerState.registerEffect)
+  const filtVars = getEffectVars(`$${externVar}`)
+  registerEffect(filtEffectCode, filtVars.length > 0 ? filtVars : [externVar], { unguarded: true })
+}
+
+// effet sur la ligne seule d'une valeur, pour l'attribut et le style : sa fonction, appelée allumée ou éteinte
+const appelFiltre = (valeur: string, allume: string): string => `const _mjs_f = _mjs_idx.get(${valeur}); if (_mjs_f) _mjs_f(${allume});`
+
 function bindingClass(env: AttrCtx): AttrResult {
   // `(.+)` gourmand (le nom d'attribut se termine au
   // DERNIER `}`), pas `[^}]+` qui tronquait la condition au 1er `}` :
@@ -1865,13 +2432,34 @@ function bindingClass(env: AttrCtx): AttrResult {
   // bindingStyle{cond}.
   const m = (env.attrName ?? '').match(/@class\{(.+)\}/)
   if (!m) return { id: env.id }
-  const conditionExpr = m[1]
-  const className = env.rawVal
+  // plusieurs bascules de la balise portent la même classe (`@class{$a}="on" @class{$b}="on big"`) : la classe est présente si l'une au
+  // moins des bascules qui la contiennent est vraie. Elle n'a qu'une garde (`_mjs_cl_<classes>`, partagée sinon, et la classe dépendait de
+  // l'ordre des écritures) : chaque classe est posée par la première bascule qui la porte, avec les conditions de toutes celles qui la
+  // portent ; les classes d'une bascule qui ont les mêmes porteuses restent ensemble
+  const jetons    = (v: string | undefined): string[] => (v ?? '').trim().split(/\s+/).filter(Boolean)
+  const condition = (a: { name?: string }): string => (a.name ?? '').match(/@class\{(.+)\}/)![1]
+  const bascules  = (env.node.attrs ?? []).filter((a) => /^@class\{.+\}$/.test(a.name ?? ''))
+  const miennes   = jetons(env.rawVal)
+  const groupes   = new Map<string, string[]>(miennes.length === 0 ? [[m[1], []]] : [])
+  for (const c of miennes) {
+    const porteuses = bascules.includes(env.attr) ? bascules.filter((a) => a === env.attr || jetons(a.val).includes(c)) : [env.attr]
+    if (porteuses[0] !== env.attr) continue
+    const cond = porteuses.length > 1 ? porteuses.map((a) => `(${condition(a)})`).join(' || ') : m[1]
+    groupes.set(cond, [...(groupes.get(cond) ?? []), c])
+  }
+  // toutes ses classes ensemble (le cas courant) : la chaîne écrite, garde et code d'avant à l'octet
+  let id = env.id
+  for (const [cond, classes] of groupes) id = basculeDeClasses(env, id, classes.length === miennes.length ? env.rawVal : classes.join(' '), cond)
+  return { id }
+}
+
+// une bascule de `className` (une ou plusieurs classes) sur la condition `conditionExpr` ; rend l'id du nœud, créé au besoin
+function basculeDeClasses(env: AttrCtx, idNoeud: string | undefined, className: string, conditionExpr: string): string {
   // Site EXPR (condition @class{cond}, même nature qu'un {if}).
   const jsVar = cleanJsExpr(conditionExpr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
 
   const vars = getEffectVars(conditionExpr)
-  const id = env.id ?? `c${++state.counter}`
+  const id = idNoeud ?? `c${++state.counter}`
   // Toggle GARDÉ : ne touche le DOM que si la condition a CHANGÉ pour ce nœud.
   // L'updateFn d'un {for} est ré-exécutée sur TOUTES les lignes à chaque
   // réconciliation → l'ancien `toggle()` inconditionnel faisait 1000 appels
@@ -1880,7 +2468,7 @@ function bindingClass(env: AttrCtx): AttrResult {
   // et la closure du filtered-dispatch — cohérent car les deux écrivent la
   // même classe sur le même nœud.
   const safeCls = className.replace(/[^a-zA-Z0-9_$]/g, '_')
-  const guardProp = `node._mjs_cl_${safeCls}`
+  const guardProp = `_mjs_node._mjs_cl_${safeCls}`
   // `@class{cond}="foo bar"` (multi-classes) : un token
   // avec espace fait jeter `classList.toggle` (InvalidCharacterError). On émet un
   // toggle par classe (tokens connus au compile). La garde reste sur `safeCls`
@@ -1888,10 +2476,10 @@ function bindingClass(env: AttrCtx): AttrResult {
   const clsTokens = className.trim().split(/\s+/).filter(Boolean)
   const clsToggle = (nodeVar: string, boolExpr: string): string =>
     clsTokens.map((c) => `${nodeVar}.classList.toggle('${c}', ${boolExpr});`).join(' ')
-  const updateLogic = `{ const _mjs_tv = !!(${jsVar}); if (${guardProp} !== _mjs_tv) { ${clsToggle('node', '_mjs_tv')} ${guardProp} = _mjs_tv; } }`
+  const updateLogic = `{ const _mjs_tv = !!(${jsVar}); if (${guardProp} !== _mjs_tv) { ${clsToggle('_mjs_node', '_mjs_tv')} ${guardProp} = _mjs_tv; } }`
 
   if (env.ctx.type === 'root') {
-    const code = `{ const node = this._mjs_nodes.${id}; if(node) { ${updateLogic} } }`
+    const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     pushUpdate(env, code, vars)
   } else if (env.ctx.type === 'for') {
     // Tentative de détection du pattern filtered (gain massif sur select1k).
@@ -1958,61 +2546,41 @@ function bindingClass(env: AttrCtx): AttrResult {
       // Propriété de clé : on (re)pose si la clé est inédite OU
       // détenue par une AUTRE row (vol de clé create-avant-destroy). La purge ne
       // delete que si l'entrée est encore la nôtre. Update répété → skip.
-      env.ctx.updates.push(
-        `{ const n${env.lid} = __nodes['${env.lid}']; ` +
-        `if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} ` +
-        `const __k = ${keyExpr}; ` +
-        `const __fe = ((_mjsThis._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
-        `const __idx = (__fe.idx ??= new Map()); ` +
-        `const __fns = (__nodes._mjs_filterFns ??= {}); ` +
-        `if (__fns['${idxName}'] === void 0 || __idx.get(__k) !== n${env.lid}) { ` +
-        `__idx.set(__k, n${env.lid}); __fns['${idxName}'] = n${env.lid}; } ` +
-        `(_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'); ` +
-        `(__nodes._mjs_filterKeys ??= {})['${idxName}'] = __k; ` +
-        `} }`
-      )
-
-      // Enregistrer un effect "filtered" pour la var externe au root.
-      // Cet effect lookup les fns dans l'index par old/new value, sans
-      // toucher au reste du DOM ni à `_mjs_renderStruct`.
-      // On stocke `_mjs_filt[<X>__<class>].prev` pour connaître l'ancienne valeur.
-      // L'index stocke le NŒUD → on toggle directement (plus d'appel de
-      // closure). Pour le pattern d'égalité `${filt.externVar} === item`, la
-      // ligne `prev` (ancienne valeur) ne matche plus → retire la classe ; la
-      // ligne `curr` (nouvelle valeur) matche → ajoute la classe. On tient à
-      // jour la garde `_mjs_cl_${safeCls}` pour rester cohérent avec l'updateFn
-      // (qui re-tourne sur data update et lit cette garde).
-      const filtEffectCode =
-        `{ ` +
-        `const __fe = ((this._mjs_filt ??= {})['${filterKey}'] ??= { idx: null, prev: void 0 }); ` +
-        `const prev = __fe.prev; ` +
-        `const curr = this._state.${filt.externVar}; ` +
-        `if (prev !== curr) { ` +
-        `const idx = __fe.idx; ` +
-        `if (idx) { ` +
-        `if (prev !== void 0) { const nd = idx.get(prev); if (nd) { ${clsToggle('nd', 'false')} nd._mjs_cl_${safeCls} = false; } } ` +
-        `if (curr !== void 0) { const nd = idx.get(curr); if (nd) { ${clsToggle('nd', 'true')} nd._mjs_cl_${safeCls} = true; } } ` +
-        `} ` +
-        `__fe.prev = curr; ` +
-        `} }`
-      // Expansion transitive : si `filt.externVar` est un computed, on doit
-      // s'abonner aussi à ses deps statiques. Sinon, l'effect filtered ne
-      // tire pas quand une dep du computed mute (ex : `currentStep` dérivé de
-      // `currentStepIdx` — sans expansion, mutation de l'idx → computed dirty
-      // mais filtered effect jamais réveillé). On passe par `getEffectVars`
-      // qui fait l'expansion via `analyzer.resolveSnippetDeps`.
-      const filtVars = getEffectVars(`$${filt.externVar}`)
-      registerEffect(filtEffectCode, filtVars.length > 0 ? filtVars : [filt.externVar])
-      return { id }
+      // plusieurs lignes peuvent porter la valeur (cf. plusieursLignes) : l'index garde alors la
+      // fonction de chaque ligne (un Set quand une clé en porte plusieurs), non son nœud, et une
+      // ligne qui change de clé (champ filtré modifié, ligne positionnelle d'une liste sans clé)
+      // lâche son ancienne entrée (cf. poseFonctionFiltree). La boucle seule filtrée sur sa clé
+      // garde l'index de nœuds d'avant, à l'octet
+      const lacher = !filtreSurLaCle(lastLoop, filt.itemAccess)
+      const multi  = plusieursLignes(lacher, env.ctx.loops)
+      const creer  = `const __f = (_mjs_match) => { ${clsToggle(`_mjs_n${env.lid}`, '_mjs_match')} _mjs_n${env.lid}._mjs_cl_${safeCls} = _mjs_match; }; `
+      const pose   = multi
+        ? poseFonctionFiltree(creer, idxName, false, lacher, true)
+        : `if (__fns['${idxName}'] === void 0 || __idx.get(__k) !== _mjs_n${env.lid}) { __idx.set(__k, _mjs_n${env.lid}); __fns['${idxName}'] = _mjs_n${env.lid}; } `
+      // l'index stocke le NŒUD de la ligne (sans `multi`) : l'effet de la racine bascule la classe directement, sans
+      // appel de fonction, et tient à jour la garde `_mjs_cl_${safeCls}` que relit la passe de la ligne
+      liaisonFiltree(env, filt.externVar, idxName, keyExpr, updateLogic, pose, multi, (valeur, allume) => `const _mjs_nd = _mjs_idx.get(${valeur}); if (_mjs_nd) { ${clsToggle('_mjs_nd', allume)} _mjs_nd._mjs_cl_${safeCls} = ${allume}; }`)
+      return id
     }
 
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let node = n${env.lid}; ${updateLogic} } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     // condition NON filtrable lisant une var externe
     // (`@class{$cond}="on"`) : sans `structVars`, `_mjs_renderStruct` sauté → classe
     // figée à vie. Le chemin filtré (au-dessus) a son effect dédié → déjà `return`é.
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await} ; un {if}/{key} imbriqué dedans en hérite) : la classe
+    // n'était posée nulle part, ni dans l'attente ni dans {success} ni dans {error}
+    // même schéma que bindingStandard : pose initiale dans la createFn de la branche (`__nodes[id]`, les refs
+    // ne sont fusionnées dans `this._mjs_nodes` qu'après), puis suivi par un effet de la racine car
+    // `_mjs_updAwait` ne rejoue pas le contenu d'une branche déjà réglée ; sans variable réactive dans la
+    // condition, la pose initiale suffit. Un `{const}` lu par la condition est recréé par l'effet : l'effet
+    // suit donc aussi les variables que ce `{const}` lit
+    env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
+    const varsEffet = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
+    if (varsEffet.length > 0) registerEffect(effetRacineLiaison(env, id, jsVar, updateLogic), varsEffet)
   }
-  return { id }
+  return id
 }
 
 // ============================================================================
@@ -2115,7 +2683,12 @@ function bindingStyle(env: AttrCtx): AttrResult {
     ? `if (!!(${jsCond})) { ${styleSetter(fullExprRaw !== null ? fullExprRaw : jsVal)} } else { _mjs_node.style.removeProperty('${cssProp}'); }`
     : fullExprRaw !== null
       ? styleSetter(fullExprRaw)
-      : `const _mjs_v = ${jsVal}; if (_mjs_v == null || _mjs_v === '') { _mjs_node.style.removeProperty('${cssProp}'); } else { _mjs_node.style.setProperty('${cssProp}', _mjs_v); }`
+      // texte mêlé (`"{$c} !important"`) : la valeur n'est connue qu'à l'exécution ; valeur fixe suivie de `!important` : détachée ici
+      : rawVal.includes('{')
+        ? styleSetter(jsVal)
+        : /!important\s*$/i.test(rawVal)
+          ? `_mjs_node.style.setProperty('${cssProp}', ${JSON.stringify(rawVal.replace(/\s*!important\s*$/i, '').trim())}, 'important');`
+          : `const _mjs_v = ${jsVal}; if (_mjs_v == null || _mjs_v === '') { _mjs_node.style.removeProperty('${cssProp}'); } else { _mjs_node.style.setProperty('${cssProp}', _mjs_v); }`
 
   if (env.ctx.type === 'root') {
     const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
@@ -2147,63 +2720,293 @@ function bindingStyle(env: AttrCtx): AttrResult {
         // Le caller a déjà passé cleanJs si nécessaire ; ici l'expression
         // ternaire est dans `env.attr.expr` brut, donc on extrait sans
         // re-clean (les vars utilisateur déjà sigilées sont conservées).
-        const setMatch = `node.style.setProperty('${cssProp}', String(${filt.matchValue}));`
-        const setUnmatch = filt.unmatchValue.trim() === "''" || filt.unmatchValue.trim() === '""'
-          ? `node.style.removeProperty('${cssProp}');`
-          : `node.style.setProperty('${cssProp}', String(${filt.unmatchValue}));`
+        // même règle que hors boucle (styleSetter) : `null`, `undefined` et `''` retirent la propriété, `!important` est détaché. Une valeur
+        // écrite en clair se décide ici (le code d'avant, à l'octet, pour un texte sans `!important`) ; une expression, à l'exécution
+        const ecrireStyle = (valeur: string): string => {
+          const v = valeur.trim()
+          if (v === 'null' || v === 'undefined' || v === "''" || v === '""') return `_mjs_node.style.removeProperty('${cssProp}');`
+          const texte = /^'([^'\\]*)'$|^"([^"\\]*)"$/.exec(v)
+          if (!texte) return styleSetter(v)
+          const brut = texte[1] ?? texte[2]
+          if (/!important\s*$/i.test(brut)) return `_mjs_node.style.setProperty('${cssProp}', ${JSON.stringify(brut.replace(/\s*!important\s*$/i, '').trim())}, 'important');`
+          return `_mjs_node.style.setProperty('${cssProp}', String(${v}));`
+        }
+        const setMatch   = ecrireStyle(filt.matchValue)
+        const setUnmatch = ecrireStyle(filt.unmatchValue)
         const filteredLogic = `if (!!(${filt.itemAccess ? `${lastLoop!.item}.${filt.itemAccess}` : lastLoop!.item} === _mjsThis._state.${filt.externVar})) { ${setMatch} } else { ${setUnmatch} }`
         const keyExpr = filt.itemAccess
           ? `${lastLoop!.item}.${filt.itemAccess}`
           : `${lastLoop!.item}`
-        // Optim #1 — Pareil que pour @class : closure stable, on évite la
-        // re-allocation à chaque updateFn.
-        env.ctx.updates.push(
-          `{ const n${env.lid} = __nodes['${env.lid}']; ` +
-          `if(n${env.lid}) { let node = n${env.lid}; ${filteredLogic} ` +
-          `const __k = ${keyExpr}; ` +
-          `const __fe = ((_mjsThis._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
-          `const __idx = (__fe.idx ??= new Map()); ` +
-          `if (!__idx.has(__k)) __idx.set(__k, (matches) => { let node = n${env.lid}; if (matches) { ${setMatch} } else { ${setUnmatch} } }); ` +
-          `(_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'); ` +
-          `(__nodes._mjs_filterKeys ??= {})['${idxName}'] = __k; ` +
-          `} }`
-        )
-        // Effect "filtered" au root : passe true/false à la fn enregistrée.
-        // Différence vs @class : on a besoin de signaler match/unmatch
-        // explicitement (la fn ne peut pas se "toggler" toute seule).
-        const filtEffectCode =
-          `{ ` +
-          `const __fe = ((this._mjs_filt ??= {})['${filterKey}'] ??= { idx: null, prev: void 0 }); ` +
-          `const prev = __fe.prev; ` +
-          `const curr = this._state.${filt.externVar}; ` +
-          `if (prev !== curr) { ` +
-          `const idx = __fe.idx; ` +
-          `if (idx) { ` +
-          `if (prev !== void 0) { const f = idx.get(prev); if (f) f(false); } ` +
-          `if (curr !== void 0) { const f = idx.get(curr); if (f) f(true); } ` +
-          `} ` +
-          `__fe.prev = curr; ` +
-          `} }`
-        // Expansion transitive : si `filt.externVar` est un computed, on doit
-      // s'abonner aussi à ses deps statiques. Sinon, l'effect filtered ne
-      // tire pas quand une dep du computed mute (ex : `currentStep` dérivé de
-      // `currentStepIdx` — sans expansion, mutation de l'idx → computed dirty
-      // mais filtered effect jamais réveillé). On passe par `getEffectVars`
-      // qui fait l'expansion via `analyzer.resolveSnippetDeps`.
-      const filtVars = getEffectVars(`$${filt.externVar}`)
-      registerEffect(filtEffectCode, filtVars.length > 0 ? filtVars : [filt.externVar])
+        // propriété de clé par fn (même schéma que @class et l'attribut filtrés) : (re)pose si la
+        // clé est inédite ou détenue par une AUTRE ligne. L'ancien `if (!__idx.has(__k))` gardait la
+        // fonction de la PREMIÈRE ligne à jamais : une liste reconstruite (un {if} qui la cache puis
+        // la réaffiche) laissait l'index pointer sur les nœuds retirés — le choix suivant ne
+        // touchait plus rien d'affiché, l'ancien restait allumé. Mêmes rattrapages que l'attribut
+        // filtré, émis seulement là où le défaut est possible : fonction refaite à chaque passe si la
+        // valeur lit la ligne, ancienne clé lâchée si le champ filtré n'est pas la clé du `by`
+        const refaire = valeurLitLaLigne([filt.matchValue, filt.unmatchValue], lastLoop!.item, filt.itemAccess, env.ctx)
+        const lacher  = !filtreSurLaCle(lastLoop, filt.itemAccess)
+        const multi   = plusieursLignes(lacher, env.ctx.loops)
+        const creer   = `const __f = (_mjs_match) => { let _mjs_node = _mjs_n${env.lid}; if (_mjs_match) { ${setMatch} } else { ${setUnmatch} } }; `
+        liaisonFiltree(env, filt.externVar, idxName, keyExpr, filteredLogic, poseFonctionFiltree(creer, idxName, refaire, lacher, multi), multi, appelFiltre)
         return { id }
       }
     }
     // `_mjs_node` (pas `node`) : doit matcher le nom utilisé par `updateLogic`
     // ci-dessus (même risque de collision qu'au root — voir son commentaire).
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { let _mjs_node = n${env.lid}; ${updateLogic} } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     // `@style.color={$theme}` (non filtré) lisant une var externe :
     // sans `structVars`, `_mjs_renderStruct` sauté → style figé à vie sur mutation.
     // Le chemin filtré (ternaire) a son effect dédié → déjà `return`é plus haut.
     for (const v of vars) state.structVars.add(v)
+  } else {
+    // ctx.type ni 'root' ni 'for' (branche {await} ; un {if}/{key} imbriqué dedans en hérite) : le style, `--var={…}`
+    // compris, n'était posé nulle part ; même schéma que bindingClass (pose initiale dans `__nodes[id]`, puis
+    // effet de la racine quand une variable réactive est lue ; les variables qu'un `{const}` lu par la condition
+    // ou la valeur lit comptent aussi, l'effet recrée ce `{const}`)
+    env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
+    const codeLu    = `${jsCond} ${fullExprRaw ?? jsVal}`
+    const varsEffet = [...new Set([...vars, ...varsDesConst(env, codeLu)])]
+    if (varsEffet.length > 0) registerEffect(effetRacineLiaison(env, id, codeLu, updateLogic), varsEffet)
   }
   return { id }
+}
+
+// ============================================================================
+// BindingEffect — *neon(#0ff) : un effet de la bibliothèque, posé sur l'élément par le moteur
+// (runtime/mjs_fx.ts) au montage, retiré à sa destruction. Réglages vérifiés et convertis ICI
+// (effects/catalog.ts) : une valeur fixe arrive déjà propre. Le moteur ignore une seconde pose
+// du même effet sur le même nœud (re-rendu d'un bloc parent) : rien ne repart de zéro tant que
+// le nœud vit. Un réglage tenu par une variable (`*neon($couleur)`) est lu à la pose, puis suivi
+// par une mise à jour réactive (`µ._mjs_fxSet`), avec sa règle.
+// ============================================================================
+// les réglages fixes d'un effet, tels que le moteur les reçoit : écrits en clair, ou, pour un alias que l'appli utilise
+// plusieurs fois (ProjectEffect.table, donné par le bundler), un renvoi à la table du cœur avec ce que l'usage
+// change seulement — l'alias n'est jamais recopié. Un réglage de l'alias que l'usage tient par une variable sort de
+// la table : l'usage reste alors écrit en clair
+function fixedCode(ecrit: string, settings: ParsedEffect): string {
+  const proj = projectEffect(ecrit)
+  if (proj?.table === undefined || !proj.fixed) return JSON.stringify(settings.fixed)
+  const change: Record<string, unknown> = {}
+  for (const k of Object.keys(proj.fixed)) {
+    if (!(k in settings.fixed)) return JSON.stringify(settings.fixed)
+  }
+  for (const [k, v] of Object.entries(settings.fixed)) {
+    if (!(k in proj.fixed) || JSON.stringify(v) !== JSON.stringify(proj.fixed[k])) change[k] = v
+  }
+  return Object.keys(change).length === 0 ? `µ._mjs_alias(${proj.table})` : `µ._mjs_alias(${proj.table}, ${JSON.stringify(change)})`
+}
+
+// la définition d'un effet CSS de l'appli, posée avant l'effet (µ._mjs_fxCustom ne la construit
+// qu'une fois) ; rien pour un autre effet ; `expression` : suivie d'une virgule, pour précéder une
+// expression (`(définition, effet)`), sinon d'un point-virgule
+function customDef(name: string, settings: ParsedEffect, expression = false): string {
+  const c = settings.custom
+  if (!c || settings.base) return ''
+  return `µ._mjs_fxCustom(${JSON.stringify(name)}, ${JSON.stringify({ params: c.params ?? [], decls: c.decls ?? [], keyframes: c.keyframes ?? [] })})${expression ? ', ' : '; '}`
+}
+
+// les effets donnés en réglage (`*delta(fx: *fly(up))`) : une transition embarque son animation ; un
+// effet CSS de l'appli, sa définition, posée avant l'effet qui le joue
+function nestedDefs(settings: ParsedEffect): string {
+  let out = ''
+  // un effet de l'appli, réglé ou CSS : le composant dépend de son fichier (`mjs dev` le recompile)
+  if (settings.uses) state.usesProjectEffects = true
+  for (const n of nestedEffects(settings.fixed)) {
+    if (effectSpec(n)?.transition) state.usedAnimations.add(n)
+    const p = projectEffect(n)
+    if (p && !p.base) {
+      out += `µ._mjs_fxCustom(${JSON.stringify(n)}, ${JSON.stringify({ params: p.params ?? [], decls: p.decls ?? [], keyframes: p.keyframes ?? [] })}); `
+    }
+  }
+  return out
+}
+
+// un effet donné par défaut à un réglage (`*guard` tremble avec *shake) : posé dans les réglages
+// fixes, il part dans le cœur comme s'il avait été écrit
+function pullDefaults(name: string, settings: ParsedEffect): void {
+  for (const [k, st] of Object.entries(effectSpec(name)?.settings ?? {})) {
+    if (!st.pull || k in settings.fixed || k in settings.dynamic || typeof st.dflt !== 'string') continue
+    settings.fixed[k] = parseEffect(name, `${k}: ${st.dflt}`).fixed[k]
+  }
+}
+
+// la variable qu'un effet lit dans sa balise, `_bind` (`$x`, `$$x`) : pour *gauge, celle de son
+// nombre (`{$volume}`) ou de `value` — sa plage est dans le <vars> ; pour *guard, celle que le champ
+// écrit (`value=!{$age}`) — sa règle
+const BARE_VAR = /^\$\$?[A-Za-z_]\w*$/
+function effectBind(name: string, settings: ParsedEffect, node: { children: Array<{ type: string, expr: string | null }>, attrs: Array<{ name?: string, val?: string }> }): void {
+  if (name === 'gauge') {
+    const dyn  = settings.dynamic.value
+    const expr = node.children.find(c => c.type === 'expr' && BARE_VAR.test((c.expr ?? '').trim()))?.expr?.trim()
+    const v    = dyn ?? expr
+    if (v && BARE_VAR.test(v)) settings.fixed._bind = v
+  }
+  if (name === 'guard') {
+    const a = node.attrs.find(x => (x.name === 'value' || x.name === 'checked') && /^!(?:\.\w+)?\{\s*\$\$?[A-Za-z_]\w*\s*\}$/.test(x.val ?? ''))
+    if (a) settings.fixed._bind = /(\$\$?[A-Za-z_]\w*)/.exec(a.val!)![1]
+  }
+}
+
+// le texte d'une balise tel que le moteur le lit (`textContent.trim() !== ''` sur le texte DÉCODÉ par le navigateur) : le gabarit écrit `&nbsp;`, le moteur
+// lit U+00A0, un blanc. Une référence ne compte comme du texte que si on la lit à coup sûr (un nombre qui donne un caractère visible, un nom de cette
+// liste, tous des caractères visibles) ; les autres (un blanc écrit en entité, un nom inconnu, un nom sans `;`, un nombre hors plage) ne comptent pour
+// rien, et la balise dont les éléments sont ainsi séparés demande le mode : dans le doute, il part
+const SOLID_ENTITIES = new Set(['amp', 'lt', 'gt', 'quot', 'apos', 'copy', 'reg', 'trade', 'bull', 'middot', 'hellip', 'mdash', 'ndash', 'laquo', 'raquo', 'lsquo', 'rsquo', 'ldquo', 'rdquo', 'deg', 'euro', 'pound', 'cent', 'times', 'plusmn', 'sect', 'para', 'hearts', 'star', 'starf', 'check', 'rarr', 'larr', 'ast', 'vert', 'sol', 'lrm', 'rlm', 'zwj', 'zwnj', 'shy'])
+const visibleCode    = (code: number): boolean => code >= 0x20 && code <= 0x10FFFF && !(code >= 0x7F && code <= 0x9F) && !(code >= 0xD800 && code <= 0xDFFF) && String.fromCodePoint(code).trim() !== ''
+// ce que l'analyseur HTML du navigateur ne garde pas comme du texte : toute construction `<!…>`, `<?…>`, `</…>` (un commentaire, ou rien : il la ferme au premier `>`, dans
+// `<![CDATA[a>b]]>` il reste `b]]>`) et U+0000 (ignoré). Les constructions sont ôtées avant U+0000 : un U+0000 entre `<` et `!` les sépare, c'est du texte. Une construction ouverte
+// sans `>` dans le nœud avale la suite du gabarit (une fermante, les frères) : ce que le navigateur verra n'est plus lisible, `null`
+const CONSTRUCTION = /<[!?\/][^>]*>/g
+const OUVERTE      = /<[!?\/]/
+function keptText(raw: string): string | null {
+  const closed = raw.replace(CONSTRUCTION, '')
+  if (OUVERTE.test(closed)) return null
+  return closed.replace(/\u0000/g, '')
+}
+function solidText(raw: string): boolean {
+  const kept = keptText(raw)
+  if (kept === null) return false
+  const read = (ref: string, hex?: string, dec?: string, named?: string): string => {
+    if (named) return ref.endsWith(';') && SOLID_ENTITIES.has(named) ? 'x' : ''
+    return visibleCode(parseInt((hex ?? dec)!, hex ? 16 : 10)) ? 'x' : ''
+  }
+  return kept.replace(/&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|([A-Za-z][A-Za-z0-9]*));?/g, read).trim() !== ''
+}
+// un nœud de texte dont une construction reste ouverte, n'importe où sous la balise : le navigateur en avale la suite (la fermante d'un frère, d'autres frères), l'arbre
+// que le compilateur lit n'est plus celui du moteur
+const textLost = (nodes: Node[]): boolean => nodes.some(c => c.type === 'text' ? keptText(c.content ?? '') === null : textLost(c.children) || c.branches.some(b => textLost(b.children)))
+
+// le HTML brut : `{{ x }}` (le parseur le marque) et toute interpolation dont l'expression commence par `{` (`{ {x} }`) : le générateur (compile.ts) et `effectKids` le lisent par ce seul prédicat
+export const isRawExpr = (node: Node): boolean => node._is_raw === true || (node.expr ?? '').startsWith('{')
+
+// *marquee : le défilé des balises (la piste des enfants de mjs_fx_marquee.ts) n'est envoyé qu'aux applis dont une pose le demande. Une pose
+// le demande par `unit: child` ; le build lit les poses, jamais le gabarit, alors le compilateur l'écrit lui-même quand il voit que la balise
+// peut recevoir des balises. Du texte (fixe, interpolé, avec ou sans balises en ligne) ne le demande pas, ni une balise vide qu'un script
+// remplira (le gabarit ne le dit pas : l'auteur écrit `unit: child`). Le moteur prend la piste quand TOUS les nœuds de la balise sont des
+// éléments : un texte fixe parmi eux garde le calque du texte. Mais une construction qui peut écrire des balises (`{for}`, `<slot>`, un
+// composant, du HTML inséré tel quel) les demande toujours : dans le doute, le mode part. `drag`, `axis: both` et `on: scroll` écrits en clair
+// demandent déjà la piste, le build les lit : rien à ajouter
+function effectKids(name: string, settings: ParsedEffect, node: Node): void {
+  if (name !== 'marquee' || 'unit' in settings.dynamic) return
+  const f = settings.fixed
+  // `unit: auto` écrit en clair est le défaut : la pose ne le porte pas (à l'exécution, `auto` ne reste que pour une variable, dont le build garde le mode)
+  if (f.unit === 'auto') delete f.unit
+  if (f.unit !== undefined) return
+  if (f.drag === true || f.axis === 'both' || f.on === 'scroll') return
+  let plain = false
+  // `@html=!{…}` remplit la balise de HTML depuis le gabarit, sans passer par ses enfants : jamais lu ici, dans le doute le mode part
+  let risky = node.attrs.some((a) => /^@html(?:[.{]|$)/.test(a.name ?? ''))
+  const scan = (nodes: Node[]): void => {
+    for (const c of nodes) {
+      if (c.type === 'tag') {
+        const tag = (c.name ?? '').toLowerCase()
+        if (tag === 'slot' || tag.includes('-')) risky = true
+        else plain = true
+      }
+      else if (c.type === 'expr') risky ||= isRawExpr(c)
+      else if (c.type === 'for') risky = true
+      else {
+        scan(c.children)
+        for (const b of c.branches) scan(b.children)
+      }
+    }
+  }
+  scan(node.children)
+  const text = node.children.some(c => c.type === 'text' && solidText(c.content ?? ''))
+  if (risky || textLost(node.children) || (plain && !text)) f.unit = 'child'
+}
+
+/** La faute d'un effet porte la ligne de sa balise (`mjsLine`, celle du HTML recollé) : le bundler l'écrit dans le message,
+ * juste après le nom de l'effet, une fois contrôlée contre le fichier (transpile-msg.ts). Le message lui-même ne change pas : les
+ * fautes qu'un appel direct à `transpile()` rend gardent leur forme. */
+function locateFault(err: unknown, ligne: number | undefined): unknown {
+  if (err instanceof Error && ligne) (err as Error & { mjsLine?: number }).mjsLine = ligne
+  return err
+}
+
+function bindingEffect(env: AttrCtx): AttrResult {
+  const ecrit = (env.attrName ?? '').slice(1)
+  let settings: ParsedEffect
+  let name: string
+  // toute faute de cet effet (nom inconnu, réglage faux, mauvaise balise, connexion absente) porte la ligne de sa balise
+  try {
+    settings = parseEffect(ecrit, env.rawVal, env.ctx.locals ? Array.from(env.ctx.locals) : [])
+    // un effet de l'appli : réglé, c'est l'effet de la bibliothèque qui se pose ; CSS, sa définition part avec
+    name     = settings.base ?? ecrit
+    // un garde muet ne joue aucun effet de refus : *shake ne part pas au cœur
+    if (name === 'guard' && settings.fixed.silent === true && !('fx' in settings.fixed) && !('fx' in settings.dynamic)) settings.fixed.fx = 'none'
+    pullDefaults(name, settings)
+    defaultSock(name, ecrit, settings, state.instanceProps.has('sock'))
+    effectBind(name, settings, env.node as any)
+    effectKids(name, settings, env.node)
+    if (projectEffect(ecrit)) state.usesProjectEffects = true
+    checkPlacement(name, settings, env.node.name ?? '', !!(env.ctx.svgNs || env.ctx.foreign), ecrit)
+  }
+  catch (err) {
+    throw locateFault(err, env.node.line)
+  }
+  // une transition posée directement joue son animation (runtime/animations/<nom>.ts)
+  if (effectSpec(name)!.transition) state.usedAnimations.add(name)
+  const avant    = customDef(ecrit, settings) + nestedDefs(settings)
+  const id       = env.id ?? `a${++state.counter}`
+  // retrait de l'effet à la destruction du nœud ou du composant → chemin de destruction complet
+  state.hasDestroyHooks = true
+  const nodeRef  = env.ctx.type === 'root' ? `this._mjs_nodes.${id}` : env.ctx.type === 'for' ? `__nodes['${env.lid}']` : `__nodes['${id}']`
+  const dynKeys  = Object.keys(settings.dynamic)
+  const fixed    = fixedCode(ecrit, settings)
+  if (dynKeys.length === 0) {
+    env.ctx.updates.push(`{ const _mjs_fxn = ${nodeRef}; if(_mjs_fxn) { ${avant}µ._mjs_fx(this, _mjs_fxn, ${JSON.stringify(name)}, ${fixed}); } }`)
+    return { id }
+  }
+  const dyn  = '{' + dynKeys.map(k => `${JSON.stringify(k)}: (${cleanJsExpr(settings.dynamic[k], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)})`).join(', ') + '}'
+  const spec = JSON.stringify(settings.spec)
+  const vars = [...new Set(dynKeys.flatMap(k => getEffectVars(settings.dynamic[k])))]
+  env.ctx.updates.push(`{ const _mjs_fxn = ${nodeRef}; if(_mjs_fxn) { ${avant}µ._mjs_fx(this, _mjs_fxn, ${JSON.stringify(name)}, ${fixed}, ${dyn}, ${spec}); } }`)
+  const follow = `{ const _mjs_fxn = ${nodeRef}; if(_mjs_fxn) { µ._mjs_fxSet(_mjs_fxn, ${JSON.stringify(name)}, ${dyn}, ${spec}); } }`
+  if (env.ctx.type === 'root') pushUpdate(env, follow, vars)
+  else {
+    env.ctx.updates.push(follow)
+    // variable externe lue dans un bloc : le rendu structurel repasse quand elle change
+    for (const v of vars) state.structVars.add(v)
+  }
+  return { id }
+}
+
+/** Vrai si `code` lit un nom que le gabarit met en portée ici (variable ou index d'un `{for}`,
+ * `{const}`, valeur d'une branche `{await}`) ; une variable de boucle déstructurée compte pour
+ * chacun de ses noms. */
+function litLaPortee(env: AttrCtx, code: string): boolean {
+  for (const local of env.ctx.locals ?? []) {
+    for (const nom of local.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+      if (new RegExp(`(?<![\\w$.])${nom.replace(/\$/g, '\\$')}(?![\\w$])`).test(code)) return true
+    }
+  }
+  return false
+}
+
+// le `<script>` de l'auteur déclare-t-il `el` à sa racine (variable, fonction, classe, import) ? Lu sur le JS que l'analyseur garde du script, jamais sur le
+// `<script module>` ni sur un `@import` (le générateur ne les reçoit pas). Mémorisé par analyseur, il y en a un par compilation
+const SCRIPT_DECLARE_EL = new WeakMap<object, boolean>()
+
+function scriptDeclareEl(): boolean {
+  const analyseur = state.analyzer
+  const code      = analyseur?.modifiedCode
+  if (typeof code !== 'string' || !code.includes('el')) return false
+  const connu = SCRIPT_DECLARE_EL.get(analyseur)
+  if (connu !== undefined) return connu
+  let declaree = false
+  try {
+    const importe = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' }).body.some((s: any) => s.type === 'ImportDeclaration' && s.specifiers.some((sp: any) => sp.local.name === 'el'))
+    // une lecture de `el` ajoutée au bout du script reste libre tant que rien ne le déclare à sa racine (`var` des blocs compris)
+    const libres  = freeIdentifiers(`${code}\n;el;`)
+    declaree = importe || (libres !== null && !libres.has('el'))
+  }
+  catch {
+    // script illisible : une autre passe le dira, `el` reste alors celui du framework
+  }
+  SCRIPT_DECLARE_EL.set(analyseur, declaree)
+  return declaree
 }
 
 // ============================================================================
@@ -2211,31 +3014,53 @@ function bindingStyle(env: AttrCtx): AttrResult {
 // Mode détecté via AST : DIRECT vs FACTORY (cf. ast_daemon analyze_attach_mode)
 // ============================================================================
 function bindingAttach(env: AttrCtx): AttrResult {
+  // seul modificateur : `.once`, la fabrique est appelée une fois par balise, jamais rejouée
+  const modificateurs = (env.attrName ?? '').split('.').slice(1)
+  for (const mod of modificateurs) {
+    if (mod === 'once') continue
+    const suggestion = suggestKey(mod, ['once'])
+    const hint = suggestion && suggestion !== mod ? t('generator.hint-modificateur-suggestion', { suggestion }) : ''
+    throw new Error(t('generator.attach-modificateur-inconnu', { attrName: env.attrName ?? '', mod, hint }))
+  }
+  const once = modificateurs.includes('once')
   const rawExpr = env.attr.expr ?? env.attr.val
   if (!rawExpr) return { id: env.id }
 
   const jsFunc = cleanJs(rawExpr, env.compiler.externalVars)
 
-  const vars = getEffectVars(rawExpr)
+  // `.once` : aucune variable suivie, la balise déjà attachée n'est jamais reposée
+  const vars = once ? [] : getEffectVars(rawExpr)
   const id = env.id ?? `a${++state.counter}`
   // `@attach` installe un teardown `_mjs_td` → destroy walker requis.
   state.hasDestroyHooks = true
 
-  const isDirect = /\b_node\b/.test(jsFunc)
-  const mode = isDirect ? 'direct' : 'factory'
+  // `el`, second nom de la balise à côté de `_node` : l'expression qui le lit sans que rien ne le lie (ni paramètre ou déclaration de l'expression, ni `<script>` de
+  // l'auteur, ni `@this=!{el}`) est écrite à la main comme avec `_node` (mode direct) et reçoit la balise sous ce nom ; le `el` de l'auteur garde la main, le mode ne change pas
+  const litEl    = /\bel\b/.test(jsFunc) && freeIdentifiers(`(${jsFunc});`)?.has('el') === true && !state.refVars.has('el') && !scriptDeclareEl()
+  const isDirect = litEl || /\b_node\b/.test(jsFunc)
+  const mode     = isDirect ? 'direct' : 'factory'
 
   const evalBlock = mode === 'factory'
-    ? `const _setup = ${jsFunc}; const td = (typeof _setup === 'function') ? _setup(_node) : null;`
-    : `const td = ${jsFunc};`
+    ? `const _mjs_setup = ${jsFunc}; const _mjs_clean = (typeof _mjs_setup === 'function') ? _mjs_setup(_node) : null;`
+    : `${litEl ? 'const el = _node; ' : ''}const _mjs_clean = ${jsFunc};`
 
-  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} if (typeof td === 'function') { _node._mjs_td = td; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(td); }`
+  // `_mjs_att` : connexion du composant (`_mjs_ae`, avancé à chaque déconnexion) où la balise a reçu
+  // son attache ; remis à zéro quand son nettoyage tourne (mjs_destroy_hooks.ts)
+  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); }`
+  // rendu qui repasse sans rien changer pour l'attache : la balise déjà attachée ne se rejoue pas.
+  // Exception, une lecture qu'aucun effet ne suit (paramètre de route `&x`, `µurl`…) : seul le
+  // rendu complet de la navigation la rattrape, l'attache garde alors le rejeu à chaque rendu ; le code seul
+  // compte, pas les chaînes (`mark('Q&A')` ou `mark('prix en µ')` ne lisent rien)
+  const suivie = once || !/µ|&[\w$]/.test(maskNonCode(rawExpr, env.compiler.templateLang))
+  const garde  = `_node._mjs_att !== this._mjs_ae`
 
   if (env.ctx.type === 'root') {
     const code = `{ const _node = this._mjs_nodes.${id}; if(_node) { ${attachLogic} } }`
     // Deux registres :
     //   1. ctx.updates → _mjs_renderStruct (via le marqueur `_mjs_td` dans
-    //      classifyUpdates) → re-tire quand un bloc struct parent re-rend
-    //      le nœud ({if}/{key}/{for}). Aussi exécuté au mount via fullRender.
+    //      classifyUpdates) → pose l'attache sur la balise qu'un bloc struct
+    //      parent vient de créer ({if}/{key}/{for}) ; une balise déjà attachée
+    //      est sautée. Aussi exécuté au mount via fullRender.
     //   2. Si l'expression lit des vars réactives ($x), on enregistre aussi
     //      l'attach dans effectsByVar → re-tire quand la var change
     //      (ex. `@attach={tooltip($content)}` doit re-poser le tooltip à
@@ -2243,10 +3068,13 @@ function bindingAttach(env: AttrCtx): AttrResult {
     //      la valeur initiale.
     // Double invocation au mount possible — idempotente grâce à la garde
     // `if (_node._mjs_td) { purge; }` dans attachLogic.
-    env.ctx.updates.push(code)
+    env.ctx.updates.push(suivie ? `{ const _node = this._mjs_nodes.${id}; if(_node && _node._mjs_att !== this._mjs_ae) { ${attachLogic} } }` : code)
     if (vars.length > 0) registerEffect(code, vars)
   } else if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const _node_${env.lid} = __nodes['${env.lid}']; if(_node_${env.lid}) { let _node = _node_${env.lid}; ${attachLogic} } }`)
+    // dans une ligne, une attache SANS dépendance (ni `$x`, ni `µ`/`&x`, ni nom de la boucle ou d'un
+    // `{const}`) est posée une fois par balise ; celle qui lit la ligne se rejoue quand la ligne repasse
+    const libre = once || (suivie && vars.length === 0 && !litLaPortee(env, jsFunc))
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}${libre ? ` && _mjs_n${env.lid}._mjs_att !== this._mjs_ae` : ''}) { let _node = _mjs_n${env.lid}; ${attachLogic} } }`)
     // `@attach={tooltip($m)}` en row lisant une var externe : sans
     // `structVars`, `_mjs_renderStruct` sauté → l'attach reste figé sur $m initial.
     for (const v of vars) state.structVars.add(v)
@@ -2257,12 +3085,28 @@ function bindingAttach(env: AttrCtx): AttrResult {
     // création du fragment), réactivité ultérieure via `registerEffect` +
     // `this._mjs_nodes[id]` si l'expression dépend d'une var réactive (même
     // garde `vars.length > 0` qu'au root).
-    const initCode = `{ const _node = __nodes['${id}']; if(_node) { ${attachLogic} } }`
-    env.ctx.updates.push(initCode)
-    if (vars.length > 0) {
-      // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus
-      const reactiveCode = `{ const _node = this._mjs_nodes.${id}; if(_node) { ${squelettePortee(env, jsFunc, () => '', 'js')}${attachLogic} } }`
-      registerEffect(reactiveCode, vars)
+    const initCode = `{ const _node = __nodes['${id}']; if(_node${once ? ` && ${garde}` : ''}) { ${attachLogic} } }`
+    // les variables que lit un `{const}` recréé par l'effet comptent aussi : `{const t = $theme}` puis `@attach={marque(t)}` suit `$theme` ; `.once` n'en suit aucune
+    const varsEffet = once ? vars : [...new Set([...vars, ...varsDesConst(env, jsFunc)])]
+    const affichee  = brancheCourante(env)
+    // branche nommée (`{success v}`, `{error err}`) et forme réactive : l'effet seul pose l'attache, comme `@emit`. Le règlement de la
+    // promesse invalide `_awaits_` : la branche est créée, puis TOUS les effets tournent, celui-ci compris, sur le nœud déjà en page ; la
+    // pose faite à la création de la branche (nœud encore dans son fragment) serait aussitôt nettoyée par cet effet puis refaite, la
+    // fabrique appelée deux fois et son nettoyage lancé pour rien. La branche d'attente et une branche sans nom de valeur gardent la pose
+    // à la création : une promesse remplacée recrée l'attente sans rendu complet derrière. Dans un `{if}` ou un `{key}` de la branche, la
+    // balise née d'un changement de choix n'a aucun rendu complet derrière elle non plus : l'effet de ce bloc (cf. suiviDeBloc) pose
+    // l'attache de ce contenu neuf (`_mjs_basc`), à l'affichage de la branche c'est le rendu complet qui s'en charge
+    const nommee = (env.ctx.portee ?? []).some((e) => e.kind === 'await')
+    if (!(varsEffet.length > 0 && nommee)) env.ctx.updates.push(initCode)
+    else if (env.ctx.enBloc) env.ctx.updates.push(`if (this._mjs_basc) ${initCode}`)
+    if (varsEffet.length > 0) {
+      // effet posé à la racine : valeur `{await}` et `{const}` de la branche recréés s'ils sont lus, et seulement quand cette
+      // branche est celle qui est affichée (cf. brancheCourante), que la fabrique lise la valeur de la branche ou non : promesse
+      // remplacée ou rejetée, la valeur lue vaut `null` et `marque(v.label, $theme)` ferait tomber le composant quand `$theme`
+      // change ; `marque($theme)` rejouerait la fabrique sur un nœud retiré de la page, dont personne ne défera plus la pose
+      const prelude      = squelettePortee(env, jsFunc, () => '', 'js')
+      const reactiveCode = `{ const _node = this._mjs_nodes.${id}; if(_node${affichee ? ` && ${affichee}` : ''}) { ${prelude}${attachLogic} } }`
+      registerEffect(reactiveCode, varsEffet)
     }
   }
   return { id }
@@ -2348,14 +3192,19 @@ function bindingEmit(env: AttrCtx): AttrResult {
     //
     // L'effet de la forme réactive court à la RACINE, hors de la fonction de la branche : la
     // valeur `{await}` et les `{const}` de la branche y sont recréés s'ils sont lus (sans eux,
-    // « … is not defined » dès le montage) — et seulement branche AFFICHÉE : avant le règlement,
-    // la valeur n'existe pas encore (`null`), l'élément qui émet non plus.
-    const prelude  = squelettePortee(env, jsVal, () => '', 'js')
-    const affichee = (env.ctx.portee ?? [])
-      .filter((e) => e.kind === 'await')
-      .map((e: any) => `_mjsThis._mjs_awaitLastRender?.get('${e.id}') === '${e.champ === 'data' ? 'success' : 'error'}'`)
-      .join(' && ')
-    if (vars.length > 0) registerEffect(prelude ? `if (${affichee || 'true'}) { ${prelude}${code} }` : code, vars)
+    // « … is not defined » dès le montage) — et seulement branche AFFICHÉE, que l'expression lise
+    // la valeur de la branche ou non : avant le règlement, la valeur n'existe pas encore (`null`),
+    // l'élément qui émet non plus ; une branche remplacée ou rejetée n'émet plus rien tant qu'elle
+    // ne revient pas ; les variables que lit un `{const}` recréé comptent aussi : `{const c = $obj}`
+    // puis `@emit.ok={c.x}` repart quand `$obj` change
+    const prelude   = squelettePortee(env, jsVal, () => '', 'js')
+    const affichee  = brancheCourante(env)
+    const varsEffet = isOnce ? vars : [...new Set([...vars, ...varsDesConst(env, jsVal)])]
+    if (varsEffet.length > 0) {
+      registerEffect(prelude || affichee ? `if (${affichee || 'true'}) { ${prelude}${code} }` : code, varsEffet)
+      // le contenu neuf d'un `{if}` ou d'un `{key}` de la branche n'a aucun rendu complet derrière lui : l'effet du bloc (cf. suiviDeBloc) l'annonce (`_mjs_basc`)
+      if (env.ctx.enBloc) env.ctx.updates.push(`if (this._mjs_basc) { ${code} }`)
+    }
     else env.ctx.updates.push(code)
   }
   return { id: env.id }
@@ -2365,9 +3214,15 @@ function bindingEmit(env: AttrCtx): AttrResult {
 // Dispatcher principal — port de compile_tag.rb (la grosse switchcase
 // d'attributs). Ordre des conditions = identique V1.
 // ============================================================================
-const MJS_BOOLEAN_PROPS = ['value', 'checked', 'disabled', 'open', 'readonly',
-                            'required', 'selected', 'hidden', 'multiple',
-                            'autofocus', 'muted', 'autoplay', 'loop', 'controls']
+// noms posés par la PROPRIÉTÉ du nœud, jamais par le texte de l'attribut : `value` et les attributs booléens du HTML (leur seule présence vaut vrai, « false » les
+// laisserait actifs). La liste du générateur, la seule : compile.ts l'importe. L'exécution en tient une copie (mjs_element.ts, `MJS_BOOLEAN_PROPS`) et l'analyseur
+// la sienne pour l'attribut nu (parser/index.ts) : tests/attributs-booleens-liste-complete.test.ts les veut d'accord
+export const MJS_BOOLEAN_PROPS = ['value', 'checked', 'disabled', 'open', 'readonly',
+                                  'required', 'selected', 'hidden', 'multiple',
+                                  'autofocus', 'muted', 'autoplay', 'loop', 'controls',
+                                  'allowfullscreen', 'async', 'default', 'defer', 'formnovalidate',
+                                  'inert', 'ismap', 'itemscope', 'nomodule', 'novalidate',
+                                  'playsinline', 'reversed']
 
 const MEDIA_ATTRS = ['currentTime', 'duration', 'paused', 'volume', 'muted', 'playbackRate']
 const DIM_ATTRS = ['clientWidth', 'clientHeight', 'offsetWidth', 'offsetHeight']
@@ -2440,10 +3295,31 @@ function flipBinding(env: AttrCtx, attrName: string, expr: string, id: string, s
   const tmp   = `_mjsFlipVal_${id}`
   const val   = secours != null ? `(${tmp} == null || ${tmp} === false) ? ${secours} : ${tmp}` : tmp
   if (env.ctx.type === 'for') {
-    env.ctx.updates.push(`{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { const ${tmp} = ${jsVar}; µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${val}); } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { const ${tmp} = ${jsVar}; µ._mjs_updAttrNode(_mjs_n${env.lid}, '${attrName}', ${val}${attrSur(attrName)}); } }`)
     for (const v of vars) state.structVars.add(v)
   }
-  else pushUpdate(env, `{ const ${tmp} = ${jsVar}; this._mjs_updAttr('${id}', '${attrName}', ${val}); }`, vars)
+  else pushUpdate(env, `{ const ${tmp} = ${jsVar}; this._mjs_updAttr('${id}', '${attrName}', ${val}${attrSur(attrName)}); }`, vars)
+}
+
+// les anciennes animations qui n'ont pas d'effet du même nom : `@in=*zoom` est refusé, `@in=*elastic_fly` ne
+// joue rien — le message donne l'effet qui les remplace
+const REMOVED_ANIMATIONS = new Map([
+  ['zoom',          '*scale(start: 0.55)'],
+  ['zoomOut',       '*scale(start: 1.45)'],
+  ['elastic_fly',   '*fly(up, easing: elastic-out)'],
+  ['elastic_scale', '*scale(easing: elastic-out)']
+])
+
+// un réglage que l'effet a, pour l'exemple d'un message : sa durée si elle a une valeur par défaut, sinon son
+// réglage principal avec la sienne (`*typewriter` n'a pas de durée par défaut : sa vitesse, `speed: 30`)
+function exampleSetting(nom: string): string {
+  const spec = effectSpec(nom)
+  if (!spec) return 'duration: 400ms'
+  const duration = spec.settings.duration?.dflt
+  if (typeof duration === 'string') return `duration: ${duration}`
+  const mainDefault = spec.settings[spec.main]?.dflt
+  if (typeof mainDefault === 'string' || typeof mainDefault === 'number') return `${spec.main}: ${mainDefault}`
+  return 'duration: 400ms'
 }
 
 export function dispatchAttribute(env: AttrCtx): AttrResult {
@@ -2454,6 +3330,13 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
 
   const attrName = env.attrName
   const rawVal = env.rawVal
+
+  // *effet(réglages)
+  if (attrName.startsWith('*')) return bindingEffect(env)
+
+  // <@module> : l'expression du composant, ses props dynamiques et l'`accept` sont traités d'un bloc
+  if (attrName === 'mjs-comp') return bindingModule(env)
+  if (env.node.attrs.some((a) => a.name === 'mjs-comp') && (attrName === 'mjs-accept' || propModule(env.node, env.attr))) return { id: env.id }
 
   // #DX — Liaison two-way MAL FORMÉE. `rawVal` commence par `!` (intention de
   // binding `=!{…}`) mais n'est pas un `!{…}` bien formé. Avant, ça retombait
@@ -2491,6 +3374,11 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // @this
   if (attrName === '@this' && /^!?\{(.+)\}$/.test(rawVal)) {
     return bindingThis(env)
+  }
+
+  // `data-*` / `aria-*` en `!{…}` sur un composant : attribut de la balise qui suit la variable (sens unique)
+  if ((env.node.name ?? '').includes('-') && DOM_ATTR_COMPOSANT.test(attrName) && /^!\{(.+)\}$/.test(rawVal)) {
+    return dynamic({ ...env, attr: { ...env.attr, type: 'dynamic', expr: rawVal.slice(2, -1) } })
   }
 
   // mjs-foo with !{...} → binding_component
@@ -2558,11 +3446,18 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     state.hasFlip = true
     state.hasDestroyHooks = true
     if (env.ctx.loops.length > 0) {
-      const last = env.ctx.loops[env.ctx.loops.length - 1]
-      const loopItem = last.item
-      const loopIdx  = last.index
+      const loops = env.ctx.loops
+      const last  = loops[loops.length - 1]
       if (!attrStr.includes('mjs-key')) {
-        attrStr += ` mjs-key='\${${loopItem}.id !== undefined ? ${loopItem}.id : ${loopIdx}}'`
+        // étiquette de la balise = celle de sa ligne : clé du `by` du `{for}`, la même que celle de la liste ; sans `by`, l'`id` de l'élément, à défaut l'indice de création de la ligne
+        // dans une liste imbriquée, elle commence par celle de chaque ligne qui l'enveloppe, de la plus extérieure à la plus intérieure, séparées par `\u241f` (␟) : deux lignes intérieures
+        // de même clé sous deux lignes extérieures restent distinctes ; une ligne extérieure dont le nom est repris plus bas ne se relit plus, son indice interne la représente
+        // une ligne à plusieurs balises @flip, à toute profondeur, y ajoute la place de la balise dans le gabarit (`#place`, calculée par `placesFlip`, compile.ts)
+        const lineLabel = (l: typeof last, idx: string) => l.key ? `${l.item}?.${l.key} ?? ${idx}` : `${l.item}.id !== undefined ? ${l.item}.id : ${idx}`
+        const outer     = loops.slice(0, -1).map((l, i) => loops.slice(i + 1).some((m) => m.item === l.item || m.index === l.item) ? l.internalIndex : `(${lineLabel(l, l.internalIndex)})`)
+        const flipLabel = outer.length ? [...outer, `(${lineLabel(last, last.index)})`].join(' + "\\u241f" + ') : lineLabel(last, last.index)
+        const flipPlace = last.flipPlaces?.get(env.node)
+        attrStr += flipPlace === undefined ? ` mjs-key='\${${flipLabel}}'` : ` mjs-key='\${${flipLabel}}#${flipPlace}'`
       }
     }
     // Les champs calculés se posent PAR-DESSUS le repli statique, à chaque rendu ; l'id doit
@@ -2580,7 +3475,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   // @attach
-  if (attrName === '@attach') return bindingAttach(env)
+  if (attrName === '@attach' || attrName.startsWith('@attach.')) return bindingAttach(env)
 
   // @childtransition
   if (attrName === '@childtransition') {
@@ -2599,8 +3494,23 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     return { attrStr: env.attrStr + ` mjs-light`, id: env.id }
   }
 
-  // @transition.X / @in.X / @out.X / @introstart / @introend / @outrostart / @outroend
-  if (/^@(?:transition|in|out)\.\w+(?:\.(?:global|shared))*$|^@(?:introstart|introend|outrostart|outroend)$/.test(attrName)) {
+  // @transition=*x(…) / @in=*x / @out=*x, modificateurs .global/.shared, et @introstart / @introend /
+  // @outrostart / @outroend ; l'ancienne écriture `@in.fly={…}` donne la nouvelle
+  const vieille = /^@(transition|in|out)\.([A-Za-z_]\w*)/.exec(attrName)
+  if (vieille && vieille[2] !== 'global' && vieille[2] !== 'shared') {
+    // `@in.local=*fly` : l'écriture d'aujourd'hui, avec un modificateur inconnu (habitude Svelte)
+    if (/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.modificateur', { directive: '@' + vieille[1], mod: vieille[2] }))
+    // le nom d'une ancienne animation tombe, les modificateurs écrits (`@in.fly.shared`) restent sur la directive proposée
+    const directive   = transitionDirective(attrName)
+    const replacement = REMOVED_ANIMATIONS.get(vieille[2])
+    if (replacement) throw new Error(t('transitions.retiree', { ecrite: attrName, directive, effet: replacement }))
+    throw new Error(t('transitions.ancienne', { ecrite: attrName, directive, nom: vieille[2], reglage: exampleSetting(vieille[2]), modificateurs: directive !== '@' + vieille[1] }))
+  }
+  if (/^@(?:transition|in|out)(?:\.(?:global|shared))*$/.test(attrName)) {
+    if (!/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.attend-effet', { directive: attrName.split('.')[0] }))
+    return bindingTransition(env)
+  }
+  if (/^@(?:introstart|introend|outrostart|outroend)$/.test(attrName)) {
     return bindingTransition(env)
   }
 
@@ -2643,8 +3553,10 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     return eventListener(env)
   }
 
-  // raw_val avec $xxx et pas mjs-* → interpolation type "if dirty"
-  if (/(?<![\w.])\$[a-zA-Z_]/.test(rawVal) && !attrName.startsWith('mjs-')) {
+  // raw_val avec $xxx et pas mjs-* → interpolation type "if dirty" ; même repère que `parseMixedString` (utils.ts) et
+  // `getEffectVars` (state.ts) : un `$` collé à un mot (« 5$ ») ou après un seul point (« v1.$n ») est du texte, mais après
+  // `..` ou `...` (« Chargement...$n ») c'est une variable
+  if (/(?<![\w]|(?<!\.)\.)\$[a-zA-Z_]/.test(rawVal) && !attrName.startsWith('mjs-')) {
     // `isRawText: true` — `rawVal` est la valeur BRUTE de l'attribut (raccourci `$var` nu
     // hors accolades, ex. `href="#$ancre"`) : le `#` y est un caractère littéral, pas un
     // commentaire Civet — masquer comme du code perdrait la dépendance (`#$ancre` blanchi
@@ -2654,6 +3566,12 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
                        rawVal.includes('$$') || rawVal.includes('$__')
     const ptr = needsAlias ? '_mjsThis' : 'this'
     const jsEval = parseMixedString(rawVal, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    // nom que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr) ; à la racine et dans une branche le gabarit ne déclare pas l'attribut, la mise
+    // à jour le crée par `setAttribute`, sans espace de noms : un attribut que l'analyseur HTML pose dans un espace de noms (`xlink:href`) y est donc déclaré vide,
+    // comme le fait une valeur entre accolades seules, et la mise à jour le retrouve par son nom qualifié
+    const adj     = adjustedAttr(env, attrName)
+    const nom     = adj.name
+    const declare = adj.ns ? ` ${nom}=''` : ''
     // cette branche n'avait qu'un chemin ROOT
     // (`this._mjs_updAttr`, qui lit `this._mjs_nodes[id]`) : dans un `{for}`, les refs
     // de row vivent dans `__nodes` (PAS `this._mjs_nodes`) → `this._mjs_nodes[id]`
@@ -2671,13 +3589,13 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     // le défaut jumeau « booléens/null cassés en {for} »).
     if (env.ctx.type === 'for') {
       env.ctx.updates.push(
-        `{ const n${env.lid} = __nodes['${env.lid}']; if(n${env.lid}) { µ._mjs_updAttrNode(n${env.lid}, '${attrName}', ${jsEval}); } }`
+        `{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireAttr(`_mjs_n${env.lid}`, adj, jsEval)}; } }`
       )
       // le fix CRITIQUE rend l'attribut `$var` interpolé
       // VISIBLE au mount, mais sans `structVars` il reste NON réactif (var externe
       // mutée hors row → `_mjs_renderStruct` sauté). `vars` est déjà calculé plus haut.
       for (const v of vars) state.structVars.add(v)
-      return { id: env.id, attrStr: env.attrStr + ` ${attrName}=''` }
+      return { id: env.id, attrStr: env.attrStr + ` ${nom}=''` }
     }
     if (env.ctx.type !== 'root') {
       // contexte {await} (ni root ni for) : ce code s'exécute
@@ -2686,13 +3604,15 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
       // à cet instant précis. Même remède : viser les refs LOCALES
       // `__nodes` de la branche, déjà peuplées à ce point du corps généré.
       const id = env.id ?? `e${++state.counter}`
-      env.ctx.updates.push(`{ const node = __nodes['${id}']; if(node) µ._mjs_updAttrNode(node, '${attrName}', ${jsEval}); }`)
-      return { id }
+      env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) ${ecrireAttr('_mjs_node', adj, jsEval)}; }`)
+      // la chaîne suit ses variables : effet de la racine, la pose ci-dessus la vaut à la construction de la branche
+      suivreEnBranche(env, id, jsEval, `${ecrireAttr('_mjs_node', adj, jsEval)};`, vars)
+      return { id, attrStr: env.attrStr + declare }
     }
     const id = env.id ?? `e${++state.counter}`
-    const code = `${ptr}._mjs_updAttr('${id}', '${attrName}', ${jsEval});`
+    const code = ecrireAttrRacine(ptr, id, adj, jsEval)
     pushUpdate(env, code, vars)
-    return { id }
+    return { id, attrStr: env.attrStr + declare }
   }
 
   // Type spécifique

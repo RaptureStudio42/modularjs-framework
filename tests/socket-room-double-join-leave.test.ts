@@ -99,14 +99,14 @@ describe('µ.socket — room() : garde anti-doublon join/leave', () => {
   })
 })
 
-describe('µ.socket — join-optimiste : erreur de garde retire le salon, pas de re-join automatique', () => {
+describe('µ.socket — join optimiste : le refus qui nomme le salon le retire, pas de re-join automatique', () => {
   beforeEach(() => { MockWS.instances = [] })
 
-  it('join refusé (µ:error reçu) → le salon sort de _mjs_rooms, PAS de re-join au welcome suivant', async () => {
+  it('join refusé (µ:error join-denied qui nomme le salon) → le salon sort de _mjs_rooms, PAS de re-join au welcome suivant', async () => {
     const µ = makeMu(); const { s, ws } = open(µ, 'wss://rgA', { reconnect: { backoff: [0], jitter: 0 } })
     s.room('vip')
     assert.ok('vip' in s._mjs_rooms, 'sanity : join optimiste posé avant la réponse serveur')
-    ws._srv({ t: 'µ:error', p: { message: 'accès au salon refusé' } })
+    ws._srv({ t: 'µ:error', p: { message: 'accès au salon refusé', code: 'join-denied', room: 'vip' } })
     assert.equal('vip' in s._mjs_rooms, false, 'AVANT le fix : le salon refusé restait dans _mjs_rooms')
 
     ws._mjs_drop()
@@ -134,7 +134,7 @@ describe('µ.socket — join-optimiste : erreur de garde retire le salon, pas de
   it('nouvel appel sock.room(name) après refus → nouvelle tentative explicite', () => {
     const µ = makeMu(); const { s, ws } = open(µ, 'wss://rgC')
     s.room('vip')
-    ws._srv({ t: 'µ:error', p: { message: 'refus' } })
+    ws._srv({ t: 'µ:error', p: { message: 'refus', code: 'join-denied', room: 'vip' } })
     assert.equal('vip' in s._mjs_rooms, false)
 
     s.room('vip')   // l'appli retente explicitement, comme documenté
@@ -143,31 +143,45 @@ describe('µ.socket — join-optimiste : erreur de garde retire le salon, pas de
     s.destroy()
   })
 
-  it("dégâts collatéraux : l'erreur ne retire QUE le salon en attente le plus ancien (FIFO), jamais presence/stream d'un AUTRE salon", () => {
+  it("le refus ne retire QUE le salon qu'il nomme, jamais presence/stream d'un AUTRE salon", () => {
     const µ = makeMu(); const { s, ws } = open(µ, 'wss://rgD')
-    s.room('a')
     const zoneB = s.room('b')
+    s.room('a')
     zoneB.presence()
     zoneB.stream('pos')
-    ws._srv({ t: 'µ:error', p: { message: 'refus' } })   // corrèle au PREMIER salon en attente (FIFO) : 'a'
-    assert.equal('a' in s._mjs_rooms, false, "le salon EN ATTENTE le plus ancien ('a') est retiré")
+    ws._srv({ t: 'µ:error', p: { message: 'refus', code: 'join-denied', room: 'a' } })
+    assert.equal('a' in s._mjs_rooms, false, "le salon nommé ('a') est retiré")
     assert.ok('b' in s._mjs_rooms, "le salon 'b' (non concerné par cette erreur) reste intact")
-    assert.ok('b' in s._mjs_presence, 'présence du salon b intacte — jamais touchée par _mjs_onGuardError')
-    assert.ok('b/pos' in s._mjs_streams, 'stream du salon b intact — jamais touché par _mjs_onGuardError')
+    assert.ok('b' in s._mjs_presence, 'présence du salon b intacte — jamais touchée par _mjs_onJoinDenied')
+    assert.ok('b/pos' in s._mjs_streams, 'stream du salon b intact — jamais touché par _mjs_onJoinDenied')
+    s.destroy()
+  })
+
+  it('µ:error ordinaire (message refusé, débit) juste après un join : le salon reste tenu et revient au welcome suivant', async () => {
+    const µ = makeMu(); const { s, ws } = open(µ, 'wss://rgF', { reconnect: { backoff: [0], jitter: 0 } })
+    s.room('general')
+    ws._srv({ t: 'µ:error', p: { message: 'chat-length' } })
+    assert.ok('general' in s._mjs_rooms, 'un refus sans rapport a fait oublier le salon')
+    ws._mjs_drop()
+    await new Promise((r) => setTimeout(r, 10))
+    const ws2 = last()
+    ws2._mjs_open(); ws2._srv({ t: 'µ:welcome', p: {} })
+    assert.equal(ws2.sent.filter((m: any) => m.t === 'µ:join' && m.p.room === 'general').length, 1)
     s.destroy()
   })
 
   it('µ:error SANS aucun salon en attente : no-op silencieux (comportement pub/sub existant préservé)', () => {
     const µ = makeMu(); const { s, ws } = open(µ, 'wss://rgE')
-    assert.doesNotThrow(() => ws._srv({ t: 'µ:error', p: { message: 'débit dépassé, ralentis' } }))
-    assert.deepEqual(s.lastError, { message: 'débit dépassé, ralentis' }, 'lastError reste posé normalement (comportement inchangé)')
+    assert.doesNotThrow(() => ws._srv({ t: 'µ:error', p: { message: 'débit dépassé, ralentissez' } }))
+    assert.deepEqual(s.lastError, { message: 'débit dépassé, ralentissez' }, 'lastError reste posé normalement (comportement inchangé)')
     s.destroy()
   })
 })
 
 describe('µ.socket — _mjs_sendNow : paramètre room mort retiré', () => {
   it('la signature ne déclare plus de 3e paramètre room', () => {
-    assert.match(src, /_mjs_sendNow = function\(type, payload\)/, 'AVANT le fix : _mjs_sendNow(type, payload, room) déclarait un paramètre jamais passé par aucun appelant')
+    // le 3e paramètre, s'il existe, est `volatile` (une trame jamais mise en file hors ligne), passé par send()
+    assert.match(src, /_mjs_sendNow = function\(type, payload(, volatile)?\)/, 'AVANT le fix : _mjs_sendNow(type, payload, room) déclarait un paramètre jamais passé par aucun appelant')
     assert.doesNotMatch(src, /_mjs_sendNow = function\(type, payload, room\)/)
   })
 

@@ -71,14 +71,16 @@ async function entrer(s: any, hall?: string): Promise<any> {
 }
 
 // mémoire bornée — fait franchir le seuil de balayage GLOBAL
-// du paquet (BALAYAGE_TOUTES_LES_ACTIONS = 50, lobby.ts) : connecte un client-BRUIT dédié (jamais
-// devenu membre d'aucun hall — 'lobby-denied' à chaque appel, mais le compteur incrémente AVANT
-// cette garde, cf. lobby.ts) et y enchaîne 80 lobby:block, marge volontaire au-delà du seuil réel.
+// du paquet (SWEEP_EVERY_N_ACTIONS = 50, lobby.ts) : connecte un client-BRUIT dédié, membre de son
+// propre hall 'bruit' (seule l'action d'un membre compte, cf. lobby.ts::opportunisticSweep), et y
+// enchaîne 70 lobby:block, marge volontaire au-delà du seuil réel (sous la rafale de débit par défaut).
 // Le balayage déclenché est GLOBAL (toutes les Maps du paquet), pas scopé au hall 'bruit' lui-même.
 async function declencherBalayageGlobal(transport: MemoryTransport): Promise<void> {
   const s = connect(transport, 'memory://bruit-balayage-lobby', { id: 'bruit-lobby' })
   await tick()
-  for (let i = 0; i < 80; i++) s.send('lobby:block', { hall: 'bruit', identityId: 'x' })
+  joinHall(s, 'bruit')
+  await entrer(s, 'bruit')
+  for (let i = 0; i < 70; i++) s.send('lobby:block', { hall: 'bruit', identityId: 'x' })
   await tick()
   s.destroy()
   await tick()
@@ -273,8 +275,9 @@ describe('MJS-WS — paquet LOBBY (lobby.ts)', () => {
 
       const deltasT: any[] = []
       sT.on('lobby:member', (p: any) => deltasT.push(p))
-      // action quelconque (PAS lobby:status) — prouve que le retour n'est pas spécifique à statut()
-      sZ.send('lobby:block', { identityId: 'personne' })
+      // action quelconque (PAS lobby:status) — prouve que le retour n'est pas spécifique à statut() ; une action
+      // acceptée (bloquer une identité présente), un refus ne comptant pas comme activité
+      sZ.send('lobby:block', { identityId: theo.id })
       await tick()
 
       const d = deltasT.find((p: any) => p.id === '1')

@@ -157,7 +157,7 @@ describe('branche {await} : chaque forme d’attribut lit sa valeur, directement
     win.console.error = (...a: any[]) => { erreurs.push(a.map(String).join(' ')) }
     const files = readdirSync(outDir)
     let code = stripEsm(readFileSync(join(outDir, files.find((f: string) => /^mjs_core-/.test(f))!), 'utf-8')) + '\nglobalThis.µ = µ;\n'
-    for (const f of files.filter((f: string) => /^(enfant-lg|[a-z0-9]+)-[0-9a-f]+\.js$/.test(f))) code += stripEsm(readFileSync(join(outDir, f), 'utf-8')) + '\n'
+    for (const f of files.filter((f: string) => /^(enfant-lg|[a-z0-9]+)-[0-9a-z]+\.js$/.test(f))) code += stripEsm(readFileSync(join(outDir, f), 'utf-8')) + '\n'
     win.eval(code)
     win.document.body.innerHTML = `<mjs-${tag}></mjs-${tag}>`
     const el: any = win.document.body.firstElementChild
@@ -189,7 +189,7 @@ describe('branche {await} : chaque forme d’attribut lit sa valeur, directement
 })
 
 describe('gestionnaires : réaffecter un nom du gabarit est refusé à la compilation (écriture perdue)', () => {
-  const refus = /réaffecte « (\w+) », posé par le gabarit/
+  const refus = /réaffecte « (\w+) », posé par le HTML du composant/
 
   it('variable de boucle : {for x in $list}<button @click={x = 9}>', async () => {
     await assert.rejects(transpile("<script>\n  $list = [1]\n</script>\n{for x in $list}<button @click={x = 9}>b</button>{end}\n", { moduleName: 'card' }), (e: any) => refus.test(e.message) && /« x »/.test(e.message))

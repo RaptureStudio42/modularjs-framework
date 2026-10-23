@@ -12,7 +12,7 @@ describe('compileCss', () => {
 
   it('accent dans la feuille : aucune marque d\'ordre d\'octets, la 1re règle survit', () => {
     // sass pose U+FEFF en tête dès qu'un caractère non-ASCII apparaît ; le navigateur lit
-    // alors la marque comme un sélecteur et JETTE la première règle (ici :host, cf. <@color>)
+    // alors la marque comme un sélecteur et JETTE la première règle (ici :host, cf. <@@color>)
     const src = `:host { --taille: 16px; }\n.libelle::after { content: 'déjà →'; }`
     const out = compileCss(src, 'scss')
     assert.equal(out.includes('\uFEFF'), false, 'le CSS produit ne doit contenir aucun U+FEFF')

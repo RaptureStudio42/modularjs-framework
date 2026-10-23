@@ -51,7 +51,7 @@ function makeClient(transport: MemoryTransport, trace?: Array<{ url: string; msg
 async function startApp(bus: MemoryAdapterBus, opts: MjsWsOptions = {}): Promise<{ transport: MemoryTransport; app: MjsWsApp; adapter: MemoryAdapter }> {
   const transport = new MemoryTransport()
   const adapter   = new MemoryAdapter({ bus })
-  const app       = mjsWs({ transport, heartbeat: 0, adapter, antiEntropy: CADENCE, auth: (h: any) => ({ id: h.auth.uid }), ...opts })
+  const app       = mjsWs({ transport, heartbeat: 0, adapter, antiEntropy: CADENCE, auth: (h: any) => ({ id: h.auth.uid }), presence: 'public', ...opts })   // présence globale ouverte (fermée par défaut)
   await app.listen()
   return { transport, app, adapter }
 }

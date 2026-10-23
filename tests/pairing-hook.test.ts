@@ -5,7 +5,7 @@
 //
 // Harnais : Bundler réel + happy-dom (calqué sur tests/key-blocs-freres.test.ts),
 // avec un double GLOBAL de `Element.prototype.animate` dont `finished` est une
-// promesse JAMAIS résolue — l'outro `@transition.fade` démarre (node.animate
+// promesse JAMAIS résolue — l'outro `@transition=*fade` démarre (node.animate
 // appelé) mais ne se termine jamais pendant le test : l'ancien noeud reste dans
 // le DOM, marqué `_mjs_dying`, exactement le fenêtre où observer l'appariement.
 // `fade` est tree-shaké hors du bundle isolé (2 chunks seulement, cf.
@@ -25,7 +25,7 @@ const stripEsm = (s: string) => s
   .replace(/\bexport\s+/g, '')
   .replace(/import\.meta\.url/g, "'http://localhost/'");
 
-// {key} et {if} portent chacun un noeud @transition.fade — sert à observer,
+// {key} et {if} portent chacun un noeud @transition=*fade — sert à observer,
 // une fois l\'ancien en sortie (outro jamais résolue), la pose de
 // _mjs_pairedWith par _mjs_updKey/_mjs_updIf.
 const COMPONENT = `
@@ -36,13 +36,17 @@ $visible = true
 
 <div>
   {key $k}
-    <div class="a" @transition.fade>a {$k}</div>
+    <div class="a" @transition=*fade>a {$k}</div>
   {end}
   {if $visible}
-    <div class="b" @transition.fade>b</div>
+    <div class="b" @transition=*fade>b</div>
   {end}
 </div>
 `;
+
+// le vrai `animate` (aucun sous happy-dom), rendu après les tests : la classe Element est partagée par toutes les fenêtres
+let animateAvant: any;
+let animatePose = false;
 
 async function monter(): Promise<{ window: any; hote: any }> {
   const root = mjsTmp('pairing-hook');
@@ -66,6 +70,10 @@ async function monter(): Promise<{ window: any; hote: any }> {
   const window: any = new Window({ url: 'http://localhost/' });
   // double GLOBAL de node.animate (WAAPI) — `finished` JAMAIS résolue : l\'outro
   // démarre mais ne finit jamais, l\'ancien noeud stagne en DOM `_mjs_dying`.
+  if (!animatePose) {
+    animateAvant = window.Element.prototype.animate;
+    animatePose = true;
+  }
   window.Element.prototype.animate = function () {
     return {
       finished: new Promise(() => {}),
@@ -88,6 +96,12 @@ describe('runtime — _mjs_updKey/_mjs_updIf posent _mjs_pairedWith sur l\'ancie
   this.timeout(40000);
 
   after(async () => {
+    if (animatePose) {
+      const w: any = new Window({ url: 'http://localhost/' });
+      if (animateAvant === undefined) delete w.Element.prototype.animate;
+      else w.Element.prototype.animate = animateAvant;
+      w.close?.();
+    }
     await terminateSharedWorkerPool();
   });
 

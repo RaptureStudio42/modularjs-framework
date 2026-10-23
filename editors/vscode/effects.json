@@ -1,0 +1,7459 @@
+{
+  "annotate": {
+    "family": "Texte",
+    "main": "style",
+    "help": "un trait de feutre dessiné à la main se trace autour du mot : souligné, entouré, encadré, barré, rayé, entre crochets",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "underline, box, circle, strike, cross, bracket",
+        "default": "underline",
+        "values": [
+          "underline",
+          "box",
+          "circle",
+          "strike",
+          "cross",
+          "bracket"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#ff4fa3",
+        "values": null
+      },
+      "width": {
+        "rule": "float 0.5..12",
+        "default": "2",
+        "values": null
+      },
+      "padding": {
+        "rule": "int 0..40",
+        "default": "5",
+        "values": null
+      },
+      "strokes": {
+        "rule": "int 1..3",
+        "default": "2",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "800ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "on": {
+        "rule": "view, hover, click, load, always, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "always",
+          "success",
+          "error"
+        ]
+      },
+      "every": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      }
+    }
+  },
+  "attention": {
+    "family": "Boutons",
+    "main": "style",
+    "help": "un appel d'attention : tada, wobble, jello, heartbeat, swing, rubber, blink, headshake, jump, pop, wiggle",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "tada, wobble, jello, heartbeat, swing, rubber, blink, headshake, jump, pop, wiggle",
+        "default": "tada",
+        "values": [
+          "tada",
+          "wobble",
+          "jello",
+          "heartbeat",
+          "swing",
+          "rubber",
+          "blink",
+          "headshake",
+          "jump",
+          "pop",
+          "wiggle"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, always, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "always",
+          "success",
+          "error"
+        ]
+      },
+      "every": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      },
+      "repeat": {
+        "rule": "int 1..10",
+        "default": "1",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "angle": {
+        "rule": "int 1..45",
+        "default": "12",
+        "values": null
+      }
+    }
+  },
+  "autosize": {
+    "family": "En direct",
+    "main": "duration",
+    "help": "la boîte suit son contenu en douceur : sa taille glisse de l'ancienne à la nouvelle au lieu de sauter",
+    "lifecycle": false,
+    "settings": {
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "300ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "axis": {
+        "rule": "height, width, both",
+        "default": "height",
+        "values": [
+          "height",
+          "width",
+          "both"
+        ]
+      }
+    }
+  },
+  "backlight": {
+    "family": "Images",
+    "main": "blur",
+    "help": "une lueur faite des couleurs de l'image elle-même s'allume derrière elle : plus le flou est grand, plus la lumière déborde",
+    "lifecycle": false,
+    "settings": {
+      "blur": {
+        "rule": "int 0..200",
+        "default": "24",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.8",
+        "values": null
+      },
+      "saturate": {
+        "rule": "float 0..4",
+        "default": "1.4",
+        "values": null
+      },
+      "size": {
+        "rule": "float 0.5..2",
+        "default": "1",
+        "values": null
+      },
+      "x": {
+        "rule": "int -500..500",
+        "default": "0",
+        "values": null
+      },
+      "y": {
+        "rule": "int -500..500",
+        "default": "12",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "300ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "always",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      },
+      "legend": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "bars": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "des bandes révèlent la balise l'une après l'autre",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "down",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "count": {
+        "rule": "int 1..40",
+        "default": "8",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "640ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "beam": {
+    "family": "Fonds",
+    "main": "color",
+    "help": "des faisceaux de lumière floue qui entrent par un coin, au fond de la balise",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "angle": {
+        "rule": "int -80..80",
+        "default": "-35",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.21",
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..4",
+        "default": "2",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..200",
+        "default": "70",
+        "values": null
+      },
+      "origin": {
+        "rule": "top-left, top-right",
+        "default": "top-left",
+        "values": [
+          "top-left",
+          "top-right"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2s",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "750ms",
+        "values": null
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "behind": {
+    "family": "Images",
+    "main": "image",
+    "help": "le texte passe derrière le sujet d'une photo, fourni détouré à part ; avec du relief, le sujet et le fond glissent en sens contraires sous la souris",
+    "lifecycle": false,
+    "settings": {
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "size": {
+        "rule": "cover, contain, auto",
+        "default": null,
+        "values": [
+          "cover",
+          "contain",
+          "auto"
+        ]
+      },
+      "position": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": null,
+        "values": null
+      },
+      "depth": {
+        "rule": "int 0..100",
+        "default": "0",
+        "values": null
+      },
+      "edge": {
+        "rule": "'zoom' | 'blur' | string /^[^;{}]+$/",
+        "default": "zoom",
+        "values": null
+      }
+    }
+  },
+  "blend": {
+    "family": "Images",
+    "main": "mode",
+    "help": "un mode de fusion, comme dans un logiciel de retouche : la balise fondue avec ce qui est derrière elle, avec une couleur, un dégradé ou une seconde image",
+    "lifecycle": false,
+    "settings": {
+      "mode": {
+        "rule": "normal, multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion, hue, saturation, color, luminosity",
+        "default": "multiply",
+        "values": [
+          "normal",
+          "multiply",
+          "screen",
+          "overlay",
+          "darken",
+          "lighten",
+          "color-dodge",
+          "color-burn",
+          "hard-light",
+          "soft-light",
+          "difference",
+          "exclusion",
+          "hue",
+          "saturation",
+          "color",
+          "luminosity"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "180",
+        "values": null
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "fit": {
+        "rule": "cover, contain, stretch, repeat",
+        "default": "cover",
+        "values": [
+          "cover",
+          "contain",
+          "stretch",
+          "repeat"
+        ]
+      },
+      "position": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "order": {
+        "rule": "over, under",
+        "default": "over",
+        "values": [
+          "over",
+          "under"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, rest, view",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "rest",
+          "view"
+        ]
+      }
+    }
+  },
+  "blocks": {
+    "family": "Transitions",
+    "main": "cols",
+    "help": "un damier de tuiles qui s'assemblent en tournant",
+    "lifecycle": false,
+    "settings": {
+      "cols": {
+        "rule": "int 1..40",
+        "default": "6",
+        "values": null
+      },
+      "rows": {
+        "rule": "int 1..40",
+        "default": "4",
+        "values": null
+      },
+      "order": {
+        "rule": "diagonal, random, rows, columns, center, edges",
+        "default": "diagonal",
+        "values": [
+          "diagonal",
+          "random",
+          "rows",
+          "columns",
+          "center",
+          "edges"
+        ]
+      },
+      "seed": {
+        "rule": "int 1..999",
+        "default": "3",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "620ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "blur": {
+    "family": "Transitions",
+    "main": "amount",
+    "help": "la balise sort du flou",
+    "lifecycle": false,
+    "settings": {
+      "amount": {
+        "rule": "int 0..200",
+        "default": "5",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-in-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "border": {
+    "family": "Bordures",
+    "main": "style",
+    "help": "une bordure animée : liseré en dégradé et son halo, dentelle, trait qui court",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "gradient, wave, run",
+        "default": "gradient",
+        "values": [
+          "gradient",
+          "wave",
+          "run"
+        ]
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": "[#ffbc00, #ff0058]",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "width": {
+        "rule": "int 1..40",
+        "default": null,
+        "values": null
+      },
+      "glow": {
+        "rule": "int 0..200",
+        "default": "30",
+        "values": null
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "45",
+        "values": null
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "bounce": {
+    "family": "Texte",
+    "main": "height",
+    "help": "une vague de lettres qui sautent",
+    "lifecycle": false,
+    "settings": {
+      "height": {
+        "rule": "int 0..100",
+        "default": "14",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.4s",
+        "values": null
+      },
+      "step": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "90ms",
+        "values": null
+      },
+      "order": {
+        "rule": "right, left, center, edges, random",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "center",
+          "edges",
+          "random"
+        ]
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-in-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "chromatic": {
+    "family": "Images",
+    "main": "gap",
+    "help": "les couleurs se décalent, rouge d'un côté et bleu de l'autre ; l'écart grandit au survol",
+    "lifecycle": false,
+    "settings": {
+      "gap": {
+        "rule": "float 0..40",
+        "default": "4",
+        "values": null
+      },
+      "grow": {
+        "rule": "float 0..80",
+        "default": "12",
+        "values": null
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "90",
+        "values": null
+      },
+      "mode": {
+        "rule": "rgb, cmy",
+        "default": "rgb",
+        "values": [
+          "rgb",
+          "cmy"
+        ]
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2s",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "250ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "circular": {
+    "family": "Texte",
+    "main": "radius",
+    "help": "le texte posé en cercle, qui tourne : un badge",
+    "lifecycle": false,
+    "settings": {
+      "radius": {
+        "rule": "int 10..1000",
+        "default": "60",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "12s",
+        "values": null
+      },
+      "direction": {
+        "rule": "cw, ccw",
+        "default": "cw",
+        "values": [
+          "cw",
+          "ccw"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "clay": {
+    "family": "Cartes",
+    "main": "color",
+    "help": "de la pâte à modeler : la balise se gonfle en relief, ou se creuse",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#1f83f2",
+        "values": null
+      },
+      "shape": {
+        "rule": "raised, hollow",
+        "default": "raised",
+        "values": [
+          "raised",
+          "hollow"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..200",
+        "default": "30",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "always",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "confetti": {
+    "family": "Boutons",
+    "main": "count",
+    "help": "une gerbe de confettis",
+    "lifecycle": false,
+    "settings": {
+      "count": {
+        "rule": "int 5..300",
+        "default": "40",
+        "values": null
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "click",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": "[#ff4fa3, #22d3ee, #facc15, #7c3aed]",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "up",
+        "values": null
+      },
+      "spread": {
+        "rule": "int 10..360",
+        "default": "360",
+        "values": null
+      },
+      "power": {
+        "rule": "int 20..600",
+        "default": "140",
+        "values": null
+      }
+    }
+  },
+  "count": {
+    "family": "Texte",
+    "main": "duration",
+    "help": "le nombre écrit dans la balise se compte jusqu'à sa valeur, avec vos séparateurs — en texte, ou en volets : des cartes qui basculent",
+    "lifecycle": false,
+    "settings": {
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2s",
+        "values": null
+      },
+      "from": {
+        "rule": "float",
+        "default": "0",
+        "values": null
+      },
+      "separator": {
+        "rule": "string 0..3",
+        "default": " ",
+        "values": null
+      },
+      "decimal": {
+        "rule": "string 0..3",
+        "default": ",",
+        "values": null
+      },
+      "prefix": {
+        "rule": "string 0..8",
+        "default": null,
+        "values": null
+      },
+      "suffix": {
+        "rule": "string 0..8",
+        "default": null,
+        "values": null
+      },
+      "pad": {
+        "rule": "int 1..12",
+        "default": null,
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "style": {
+        "rule": "plain, flip",
+        "default": "plain",
+        "values": [
+          "plain",
+          "flip"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "background": {
+        "rule": "une couleur CSS",
+        "default": "#1f2633",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#f5f7fa",
+        "values": null
+      }
+    }
+  },
+  "crossfade": {
+    "family": "Transitions",
+    "main": "key",
+    "help": "la balise vole d'une liste à l'autre (sur le cycle de vie seulement)",
+    "lifecycle": true,
+    "settings": {
+      "key": {
+        "rule": "ce qui reconnaît la balise d'une liste à l'autre : une variable (item.id, $choix) ou une valeur",
+        "default": null,
+        "values": null
+      },
+      "group": {
+        "rule": "string 1..40",
+        "default": null,
+        "values": null
+      },
+      "fallback": {
+        "rule": "scale, fade, none",
+        "default": "scale",
+        "values": [
+          "scale",
+          "fade",
+          "none"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      }
+    }
+  },
+  "crt": {
+    "family": "Images",
+    "main": "lines",
+    "help": "un vieil écran cathodique par-dessus la balise : lignes de balayage, scintillement, bords assombris",
+    "lifecycle": false,
+    "settings": {
+      "lines": {
+        "rule": "int 1..12",
+        "default": "3",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.35",
+        "values": null
+      },
+      "flicker": {
+        "rule": "float 0..1",
+        "default": "0.4",
+        "values": null
+      },
+      "roll": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "6s",
+        "values": null
+      },
+      "vignette": {
+        "rule": "float 0..1",
+        "default": "0.5",
+        "values": null
+      },
+      "tint": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "glow": {
+        "rule": "float 0..1",
+        "default": "0.3",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..200",
+        "default": "18",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "cube": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "la balise tourne comme la face d'un cube",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "left",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-bezier(.45, .05, .55, .95)",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "cursors": {
+    "family": "En direct",
+    "main": "sock",
+    "help": "les curseurs des autres visiteurs de la page, avec leur nom, en direct : leur souris et leurs clics, leur sélection de texte, la balise où ils sont",
+    "lifecycle": false,
+    "settings": {
+      "sock": {
+        "rule": "la variable qui tient une connexion µsocket ($$sock, @sock)",
+        "default": null,
+        "values": null
+      },
+      "server": {
+        "rule": "string 1..300",
+        "default": null,
+        "values": null
+      },
+      "room": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "cursor": {
+        "rule": "none, normal, pulse",
+        "default": "pulse",
+        "values": [
+          "none",
+          "normal",
+          "pulse"
+        ]
+      },
+      "selection": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "focus": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "max": {
+        "rule": "int 1..1000",
+        "default": "20",
+        "values": null
+      }
+    }
+  },
+  "cycle": {
+    "family": "Texte",
+    "main": "words",
+    "help": "des mots se relaient à la place du mot écrit : chacun chasse le précédent, un cadre lumineux s'ouvre sur lui, ou il se tape à la machine",
+    "lifecycle": false,
+    "settings": {
+      "words": {
+        "rule": "une liste de mots ([Coder., 'Designer, web.'])",
+        "default": null,
+        "values": null
+      },
+      "style": {
+        "rule": "slide, flip, fade, blur, zoom, frame, type",
+        "default": "slide",
+        "values": [
+          "slide",
+          "flip",
+          "fade",
+          "blur",
+          "zoom",
+          "frame",
+          "type"
+        ]
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "up",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2.5s",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#01fe87",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "cursor": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "outside": {
+        "rule": "hidden, hollow, visible",
+        "default": "hidden",
+        "values": [
+          "hidden",
+          "hollow",
+          "visible"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "delta": {
+    "family": "En direct",
+    "main": "duration",
+    "help": "un nombre qui change se voit : il monte, la balise clignote en vert ▲ ; il baisse, en rouge ▼ ; et il compte jusqu'à sa nouvelle valeur",
+    "lifecycle": false,
+    "settings": {
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      },
+      "up": {
+        "rule": "une couleur CSS",
+        "default": "#16a34a",
+        "values": null
+      },
+      "down": {
+        "rule": "une couleur CSS",
+        "default": "#dc2626",
+        "values": null
+      },
+      "arrow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "fx": {
+        "rule": "un effet qui se joue une fois (*scramble, *fly(up), *count…), ou none",
+        "default": "*count",
+        "values": null
+      },
+      "separator": {
+        "rule": "string 0..3",
+        "default": " ",
+        "values": null
+      },
+      "decimal": {
+        "rule": "string 0..3",
+        "default": ",",
+        "values": null
+      },
+      "prefix": {
+        "rule": "string 0..8",
+        "default": null,
+        "values": null
+      },
+      "suffix": {
+        "rule": "string 0..8",
+        "default": null,
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      }
+    }
+  },
+  "dissolve": {
+    "family": "Texte",
+    "main": "duration",
+    "help": "le texte se désagrège en poussière",
+    "lifecycle": false,
+    "settings": {
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "5.5s",
+        "values": null
+      },
+      "direction": {
+        "rule": "left, right",
+        "default": "left",
+        "values": [
+          "left",
+          "right"
+        ]
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2s",
+        "values": null
+      },
+      "particles": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "dock": {
+    "family": "Icônes",
+    "main": "scale",
+    "help": "les enfants grossissent à l'approche de la souris et s'écartent, comme le dock d'un bureau",
+    "lifecycle": false,
+    "settings": {
+      "scale": {
+        "rule": "float 1..3",
+        "default": "1.6",
+        "values": null
+      },
+      "range": {
+        "rule": "int 20..800",
+        "default": "140",
+        "values": null
+      },
+      "axis": {
+        "rule": "x, y",
+        "default": "x",
+        "values": [
+          "x",
+          "y"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "150ms",
+        "values": null
+      }
+    }
+  },
+  "draw": {
+    "family": "Transitions",
+    "main": "duration",
+    "help": "un tracé SVG se dessine",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "int 1..100000",
+        "default": null,
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "800ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-in-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "extrude": {
+    "family": "Texte",
+    "main": "color",
+    "help": "un relief 3D sous le texte, qui se creuse",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#2563eb",
+        "values": null
+      },
+      "depth": {
+        "rule": "int 1..30",
+        "default": "6",
+        "values": null
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "45",
+        "values": null
+      },
+      "grow": {
+        "rule": "int 0..30",
+        "default": "4",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "fade": {
+    "family": "Transitions",
+    "main": "duration",
+    "help": "un fondu",
+    "lifecycle": false,
+    "settings": {
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "filter": {
+    "family": "Images",
+    "main": "style",
+    "help": "un atelier de retouche : dix réglages fins (luminosité, contraste, teinte…), 27 ambiances (noir et blanc, sépia, polaroid, cyberpunk…) et 14 effets spéciaux (postérisation, grain, vignettage…)",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "grayscale, sepia, vintage, noir, warm, cool, vivid, faded, dramatic, duotone, blur, invert, polaroid, lomo, kodachrome, technicolor, cyberpunk, sunset, night, nightvision, thermal, xray, newsprint, bleach, cross, pastel, matrix, posterize, threshold, sharpen, emboss, edges, chromatic, pixelate, grain, halftone, vignette, tiltshift, bloom, ripple, scanlines, none",
+        "default": "grayscale",
+        "values": [
+          "grayscale",
+          "sepia",
+          "vintage",
+          "noir",
+          "warm",
+          "cool",
+          "vivid",
+          "faded",
+          "dramatic",
+          "duotone",
+          "blur",
+          "invert",
+          "polaroid",
+          "lomo",
+          "kodachrome",
+          "technicolor",
+          "cyberpunk",
+          "sunset",
+          "night",
+          "nightvision",
+          "thermal",
+          "xray",
+          "newsprint",
+          "bleach",
+          "cross",
+          "pastel",
+          "matrix",
+          "posterize",
+          "threshold",
+          "sharpen",
+          "emboss",
+          "edges",
+          "chromatic",
+          "pixelate",
+          "grain",
+          "halftone",
+          "vignette",
+          "tiltshift",
+          "bloom",
+          "ripple",
+          "scanlines",
+          "none"
+        ]
+      },
+      "amount": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": "[#1b1464, #ffd1e8]",
+        "values": null
+      },
+      "brightness": {
+        "rule": "float 0..3",
+        "default": "1",
+        "values": null
+      },
+      "contrast": {
+        "rule": "float 0..3",
+        "default": "1",
+        "values": null
+      },
+      "saturate": {
+        "rule": "float 0..3",
+        "default": "1",
+        "values": null
+      },
+      "hue": {
+        "rule": "int -360..360",
+        "default": "0",
+        "values": null
+      },
+      "grayscale": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "sepia": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "invert": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "blur": {
+        "rule": "float 0..50",
+        "default": "0",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "shadow": {
+        "rule": "une valeur CSS (#0ff, 12px, 0 0 20px red), sans ; ni accolades",
+        "default": null,
+        "values": null
+      },
+      "levels": {
+        "rule": "int 2..8",
+        "default": "4",
+        "values": null
+      },
+      "threshold": {
+        "rule": "float 0..1",
+        "default": "0.35",
+        "values": null
+      },
+      "strength": {
+        "rule": "float 0..3",
+        "default": "1",
+        "values": null
+      },
+      "size": {
+        "rule": "int 1..48",
+        "default": null,
+        "values": null
+      },
+      "shift": {
+        "rule": "float 0..20",
+        "default": "6",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 1..100",
+        "default": null,
+        "values": null
+      },
+      "band": {
+        "rule": "int 10..70",
+        "default": "30",
+        "values": null
+      },
+      "frequency": {
+        "rule": "int 1..60",
+        "default": "15",
+        "values": null
+      },
+      "scale": {
+        "rule": "int 0..80",
+        "default": "40",
+        "values": null
+      },
+      "gap": {
+        "rule": "int 2..10",
+        "default": "4",
+        "values": null
+      },
+      "spot": {
+        "rule": "int 0..2000",
+        "default": "0",
+        "values": null
+      },
+      "soft": {
+        "rule": "int 0..1000",
+        "default": "40",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "0.2",
+        "values": null
+      },
+      "ring": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "near": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "parallax": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, rest, view",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "rest",
+          "view"
+        ]
+      }
+    }
+  },
+  "flash": {
+    "family": "En direct",
+    "main": "color",
+    "help": "le morceau qui change s'éclaire un instant : un contour, un fond ou une lueur",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#facc15",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "style": {
+        "rule": "outline, fill, glow",
+        "default": "outline",
+        "values": [
+          "outline",
+          "fill",
+          "glow"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "change, load, click, hover, view, success, error",
+        "default": "change",
+        "values": [
+          "change",
+          "load",
+          "click",
+          "hover",
+          "view",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "flip": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "un retournement en place, comme une carte",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "left",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "550ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-in-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "flipcard": {
+    "family": "Cartes",
+    "main": "axis",
+    "help": "une carte à deux faces qui se retourne en 3D : le premier enfant est le recto, le second le verso",
+    "lifecycle": false,
+    "settings": {
+      "axis": {
+        "rule": "y, x",
+        "default": "y",
+        "values": [
+          "y",
+          "x"
+        ]
+      },
+      "flipped": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "reverse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "perspective": {
+        "rule": "int 100..5000",
+        "default": "1000",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease",
+        "values": null
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "hover, click, view, none",
+        "default": "hover",
+        "values": [
+          "hover",
+          "click",
+          "view",
+          "none"
+        ]
+      }
+    }
+  },
+  "float": {
+    "family": "Icônes",
+    "main": "distance",
+    "help": "un flottement doux, en boucle",
+    "lifecycle": false,
+    "settings": {
+      "distance": {
+        "rule": "int 0..200",
+        "default": "12",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "up",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-in-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "fluid": {
+    "family": "Fonds",
+    "main": "colors",
+    "help": "une encre colorée tourbillonne sous la souris, s'étire et s'efface lentement, avec un halo et des rayons de lumière : au fond de la balise, ou à travers ses lettres",
+    "lifecycle": false,
+    "settings": {
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "where": {
+        "rule": "box, text",
+        "default": "box",
+        "values": [
+          "box",
+          "text"
+        ]
+      },
+      "auto": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "size": {
+        "rule": "float 0.05..2",
+        "default": "0.5",
+        "values": null
+      },
+      "strength": {
+        "rule": "int 0..5000",
+        "default": "1000",
+        "values": null
+      },
+      "fade": {
+        "rule": "float 0..10",
+        "default": "2",
+        "values": null
+      },
+      "friction": {
+        "rule": "float 0..10",
+        "default": "1",
+        "values": null
+      },
+      "curl": {
+        "rule": "int 0..50",
+        "default": "4",
+        "values": null
+      },
+      "glow": {
+        "rule": "float 0..2",
+        "default": "0.5",
+        "values": null
+      },
+      "rays": {
+        "rule": "float 0..1",
+        "default": "0.6",
+        "values": null
+      },
+      "detail": {
+        "rule": "int 16..256",
+        "default": "32",
+        "values": null
+      },
+      "quality": {
+        "rule": "int 64..2048",
+        "default": "512",
+        "values": null
+      },
+      "resolution": {
+        "rule": "float 0.5..4",
+        "default": "1.5",
+        "values": null
+      },
+      "background": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "hover, click",
+        "default": "hover",
+        "values": [
+          "hover",
+          "click"
+        ]
+      }
+    }
+  },
+  "fly": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "la balise arrive en glissant vers `direction` (un mot ou un angle), floue, penchée et tournée si l'on veut, et repart par où elle est venue",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "up",
+        "values": null
+      },
+      "distance": {
+        "rule": "une longueur : un nombre (en px) ou une valeur CSS (40px, 100%, 2em)",
+        "default": "40",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..100",
+        "default": "0",
+        "values": null
+      },
+      "skew": {
+        "rule": "int -80..80",
+        "default": "0",
+        "values": null
+      },
+      "rotate": {
+        "rule": "int -1080..1080",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "focus": {
+    "family": "Cartes",
+    "main": "blur",
+    "help": "quand on survole un enfant de la balise, les autres se floutent ou s'estompent : lui seul reste net, plus grand si l'on veut",
+    "lifecycle": false,
+    "settings": {
+      "blur": {
+        "rule": "int 0..40",
+        "default": "8",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "grayscale": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "scale": {
+        "rule": "float 0.5..1.5",
+        "default": "1",
+        "values": null
+      },
+      "grow": {
+        "rule": "float 1..2",
+        "default": "1",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      }
+    }
+  },
+  "follow": {
+    "family": "En direct",
+    "main": "sock",
+    "help": "l'écran du public suit le défilement de celui qui mène : même partie, coupée au même endroit ; et sa souris et ses clics, sa sélection, la balise active",
+    "lifecycle": false,
+    "settings": {
+      "sock": {
+        "rule": "la variable qui tient une connexion µsocket ($$sock, @sock)",
+        "default": null,
+        "values": null
+      },
+      "server": {
+        "rule": "string 1..300",
+        "default": null,
+        "values": null
+      },
+      "room": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "lead": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "ease": {
+        "rule": "float 0..1",
+        "default": "0.12",
+        "values": null
+      },
+      "glow": {
+        "rule": "une couleur CSS",
+        "default": "rgba(88,166,255,.18)",
+        "values": null
+      },
+      "cursor": {
+        "rule": "none, normal, pulse",
+        "default": "pulse",
+        "values": [
+          "none",
+          "normal",
+          "pulse"
+        ]
+      },
+      "selection": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "focus": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "gallery": {
+    "family": "Défilement",
+    "main": "style",
+    "help": "les enfants de la balise (images, cartes, liens) sont rangés dans l'espace — en profondeur, en plan incliné, en bande, en roue, en arc, en tunnel ou en sphère — et avancent au défilement, au glisser, à la souris ou tout seuls",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "depth, coverflow, strip, wheel, arc, tunnel, sphere",
+        "default": "coverflow",
+        "values": [
+          "depth",
+          "coverflow",
+          "strip",
+          "wheel",
+          "arc",
+          "tunnel",
+          "sphere"
+        ]
+      },
+      "on": {
+        "rule": "scroll, drag, pointer, always",
+        "default": "scroll",
+        "values": [
+          "scroll",
+          "drag",
+          "pointer",
+          "always"
+        ]
+      },
+      "loop": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "snap": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "gap": {
+        "rule": "float 0.2..4",
+        "default": "1",
+        "values": null
+      },
+      "perspective": {
+        "rule": "int 200..5000",
+        "default": "1200",
+        "values": null
+      },
+      "tilt": {
+        "rule": "float 0..30",
+        "default": "0",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "index": {
+        "rule": "int 0..10000",
+        "default": "0",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "0.1",
+        "values": null
+      }
+    }
+  },
+  "gauge": {
+    "family": "En direct",
+    "main": "color",
+    "help": "un nombre se remplit comme une jauge, dans sa plage : un fond, un trait ou un anneau",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#58a6ff",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "track": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "style": {
+        "rule": "fill, line, ring",
+        "default": "fill",
+        "values": [
+          "fill",
+          "line",
+          "ring"
+        ]
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "thickness": {
+        "rule": "int 1..60",
+        "default": "4",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.35",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "300ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "value": {
+        "rule": "float",
+        "default": null,
+        "values": null
+      },
+      "min": {
+        "rule": "float",
+        "default": null,
+        "values": null
+      },
+      "max": {
+        "rule": "float",
+        "default": null,
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "glass": {
+    "family": "Cartes",
+    "main": "blur",
+    "help": "du verre dépoli : la balise floute ce qu'il y a derrière elle",
+    "lifecycle": false,
+    "settings": {
+      "blur": {
+        "rule": "int 0..100",
+        "default": "10",
+        "values": null
+      },
+      "tint": {
+        "rule": "une couleur CSS",
+        "default": "rgba(255,255,255,.13)",
+        "values": null
+      },
+      "border": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "glitch": {
+    "family": "Texte",
+    "main": "every",
+    "help": "le texte glitche par salves (calques colorés) ; un composant, une image : la balise elle-même tremble",
+    "lifecycle": false,
+    "settings": {
+      "every": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "5s",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "burst": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.5s",
+        "values": null
+      },
+      "strength": {
+        "rule": "int 0..40",
+        "default": "4",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#00d29499",
+        "values": null
+      },
+      "color2": {
+        "rule": "une couleur CSS",
+        "default": "#fb2c3666",
+        "values": null
+      },
+      "glow": {
+        "rule": "une couleur CSS",
+        "default": "rgba(16,185,129,.6)",
+        "values": null
+      },
+      "mode": {
+        "rule": "text, box",
+        "default": null,
+        "values": [
+          "text",
+          "box"
+        ]
+      }
+    }
+  },
+  "goo": {
+    "family": "Formes",
+    "main": "mode",
+    "help": "un effet liquide : la balise saigne, ou ses enfants fusionnent",
+    "lifecycle": false,
+    "settings": {
+      "mode": {
+        "rule": "drip, merge",
+        "default": "drip",
+        "values": [
+          "drip",
+          "merge"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "strength": {
+        "rule": "int 1..40",
+        "default": "10",
+        "values": null
+      },
+      "halo": {
+        "rule": "int 0..200",
+        "default": "50",
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..20",
+        "default": "3",
+        "values": null
+      },
+      "distance": {
+        "rule": "int 10..1000",
+        "default": "200",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover",
+        "default": "always",
+        "values": [
+          "always",
+          "hover"
+        ]
+      },
+      "drag": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "pointer": {
+        "rule": "int 0..600",
+        "default": "0",
+        "values": null
+      }
+    }
+  },
+  "gradient": {
+    "family": "Texte",
+    "main": "colors",
+    "help": "un dégradé de couleurs, une image ou un motif défile dans les lettres (ou sur la balise)",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": "[#22d3ee, #ff4fa3, #facc15]",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "right",
+        "values": null
+      },
+      "where": {
+        "rule": "text, box",
+        "default": "text",
+        "values": [
+          "text",
+          "box"
+        ]
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "pattern": {
+        "rule": "none, stripes, dots, waves, checks",
+        "default": "none",
+        "values": [
+          "none",
+          "stripes",
+          "dots",
+          "waves",
+          "checks"
+        ]
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": null,
+        "values": null
+      },
+      "size": {
+        "rule": "int 100..800",
+        "default": null,
+        "values": null
+      },
+      "outline": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "width": {
+        "rule": "float 0..10",
+        "default": "0",
+        "values": null
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "grid": {
+    "family": "Fonds",
+    "main": "style",
+    "help": "une grille de cases au fond de la balise, qui réagit à la souris",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "hex, halo, trail, needle, lines",
+        "default": "hex",
+        "values": [
+          "hex",
+          "halo",
+          "trail",
+          "needle",
+          "lines"
+        ]
+      },
+      "light": {
+        "rule": "fill, outline, glow, rows",
+        "default": "fill",
+        "values": [
+          "fill",
+          "outline",
+          "glow",
+          "rows"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "size": {
+        "rule": "int 10..300",
+        "default": null,
+        "values": null
+      },
+      "rainbow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "fade": {
+        "rule": "none, down, up, left, right, edges",
+        "default": "none",
+        "values": [
+          "none",
+          "down",
+          "up",
+          "left",
+          "right",
+          "edges"
+        ]
+      }
+    }
+  },
+  "guard": {
+    "family": "En direct",
+    "main": "text",
+    "help": "un champ refuse une valeur hors de sa règle : il fait « non » de la tête et dit ce qui est permis",
+    "lifecycle": false,
+    "settings": {
+      "text": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "fx": {
+        "rule": "un effet qui se joue une fois (*scramble, *fly(up), *count…), ou none",
+        "default": "*shake",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#dc2626",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2s",
+        "values": null
+      },
+      "place": {
+        "rule": "bottom, top, right",
+        "default": "bottom",
+        "values": [
+          "bottom",
+          "top",
+          "right"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      },
+      "silent": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "heatmap": {
+    "family": "En direct",
+    "main": "on",
+    "help": "chaque clic (ou l'événement choisi) part au serveur, qui en fait la carte, page par page et composant par composant ; `show` la dessine sur place",
+    "lifecycle": false,
+    "settings": {
+      "on": {
+        "rule": "string 1..40",
+        "default": "click",
+        "values": null
+      },
+      "sock": {
+        "rule": "la variable qui tient une connexion µsocket ($$sock, @sock)",
+        "default": null,
+        "values": null
+      },
+      "server": {
+        "rule": "string 1..300",
+        "default": null,
+        "values": null
+      },
+      "name": {
+        "rule": "string 1..120",
+        "default": null,
+        "values": null
+      },
+      "show": {
+        "rule": "bool | int 1..10000000",
+        "default": "false",
+        "values": null
+      }
+    }
+  },
+  "highlight": {
+    "family": "Texte",
+    "main": "color",
+    "help": "un surligneur passe derrière le texte",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "rgba(250,204,21,.55)",
+        "values": null
+      },
+      "height": {
+        "rule": "int 5..100",
+        "default": "45",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left",
+        "default": "right",
+        "values": [
+          "right",
+          "left"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "view",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "hologram": {
+    "family": "Cartes",
+    "main": "style",
+    "help": "un reflet irisé glisse sur la balise et suit la souris, comme une carte à collectionner",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "rainbow, foil, galaxy, prism, gold, sheen, frame, curtain, night-sky, frost, lattice, opal, streaks, rays, rays-window, rays-cloud, rays-fade, rays-wide, haze, haze-deep, dust-dark, dust, glint, glint-dark, bloom",
+        "default": "rainbow",
+        "values": [
+          "rainbow",
+          "foil",
+          "galaxy",
+          "prism",
+          "gold",
+          "sheen",
+          "frame",
+          "curtain",
+          "night-sky",
+          "frost",
+          "lattice",
+          "opal",
+          "streaks",
+          "rays",
+          "rays-window",
+          "rays-cloud",
+          "rays-fade",
+          "rays-wide",
+          "haze",
+          "haze-deep",
+          "dust-dark",
+          "dust",
+          "glint",
+          "glint-dark",
+          "bloom"
+        ]
+      },
+      "strength": {
+        "rule": "float 0..1",
+        "default": null,
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "size": {
+        "rule": "int 50..600",
+        "default": "200",
+        "values": null
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "110",
+        "values": null
+      },
+      "blend": {
+        "rule": "color-dodge, overlay, soft-light, screen, hard-light",
+        "default": "color-dodge",
+        "values": [
+          "color-dodge",
+          "overlay",
+          "soft-light",
+          "screen",
+          "hard-light"
+        ]
+      },
+      "glare": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "7s",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "mask": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "inset(10% 8% 53% 8%), polygon(8% 16%, 92% 16%, 92% 47%), circle(30% at 50% 40%), ellipse(30% 20% at 50% 40%), path('M 10 10 H 90 V 60 Z')",
+        "default": null,
+        "values": null
+      },
+      "shine": {
+        "rule": "bright, calm, shade",
+        "default": null,
+        "values": [
+          "bright",
+          "calm",
+          "shade"
+        ]
+      },
+      "glow": {
+        "rule": "une couleur CSS",
+        "default": "hsl(175, 100%, 90%)",
+        "values": null
+      },
+      "brightness": {
+        "rule": "float 0..2",
+        "default": "0.55",
+        "values": null
+      },
+      "zoom": {
+        "rule": "bool | 'spin'",
+        "default": "false",
+        "values": null
+      },
+      "back": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "seed": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, load",
+        "default": null,
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "load"
+        ]
+      }
+    }
+  },
+  "ink": {
+    "family": "Transitions",
+    "main": "style",
+    "help": "la balise apparaît à travers un masque qui s'étale, parmi vingt : encre, pinceau, aquarelle, fumée, givre, pluie, labyrinthe… ou votre image",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "blots, brush, wash, smoke, drip, dots, shards, swirl, tear, burn, frost, rain, cells, cracks, ripple, scribble, petals, glitch, topo, maze",
+        "default": "blots",
+        "values": [
+          "blots",
+          "brush",
+          "wash",
+          "smoke",
+          "drip",
+          "dots",
+          "shards",
+          "swirl",
+          "tear",
+          "burn",
+          "frost",
+          "rain",
+          "cells",
+          "cracks",
+          "ripple",
+          "scribble",
+          "petals",
+          "glitch",
+          "topo",
+          "maze"
+        ]
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "soft": {
+        "rule": "float 0.005..1",
+        "default": null,
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..20",
+        "default": null,
+        "values": null
+      },
+      "seed": {
+        "rule": "int 1..999",
+        "default": "3",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": null,
+        "values": null
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "invert": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.8s",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "iris": {
+    "family": "Transitions",
+    "main": "origin",
+    "help": "une ouverture grandit depuis un point et découvre la balise : un rond, un rectangle, un losange, une croix, un ovale, déjà entrouvert ou penché si l'on veut",
+    "lifecycle": false,
+    "settings": {
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, « x% y% » (20% 80%), ou pointer (le point sous la souris)",
+        "default": "center",
+        "values": null
+      },
+      "shape": {
+        "rule": "circle, box, diamond, cross, ellipse",
+        "default": "circle",
+        "values": [
+          "circle",
+          "box",
+          "diamond",
+          "cross",
+          "ellipse"
+        ]
+      },
+      "start": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "angle": {
+        "rule": "int -180..180",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "380ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "iso": {
+    "family": "Icônes",
+    "main": "depth",
+    "help": "la balise devient un cube vu de trois quarts, qui se soulève",
+    "lifecycle": false,
+    "settings": {
+      "depth": {
+        "rule": "int 0..200",
+        "default": "60",
+        "values": null
+      },
+      "lift": {
+        "rule": "int 0..100",
+        "default": "20",
+        "values": null
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "kenburns": {
+    "family": "Images",
+    "main": "zoom",
+    "help": "le lent zoom d'une photo qui glisse, dans son cadre qui ne bouge pas",
+    "lifecycle": false,
+    "settings": {
+      "zoom": {
+        "rule": "float 1..3",
+        "default": "1.2",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "right",
+        "values": null
+      },
+      "distance": {
+        "rule": "int 0..50",
+        "default": "5",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "12s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-in-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "lang": {
+    "family": "En direct",
+    "main": "style",
+    "help": "au changement de langue, les textes traduits se brouillent puis se recomposent — ou s'effacent et se tapent",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "scramble, type",
+        "default": "scramble",
+        "values": [
+          "scramble",
+          "type"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "chars": {
+        "rule": "string 1..80",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "lift": {
+    "family": "Cartes",
+    "main": "height",
+    "help": "la balise se soulève, avec son ombre",
+    "lifecycle": false,
+    "settings": {
+      "height": {
+        "rule": "int 0..60",
+        "default": "8",
+        "values": null
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "rgba(0,0,0,.45)",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..200",
+        "default": "30",
+        "values": null
+      },
+      "press": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "250ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "liquid": {
+    "family": "Images",
+    "main": "strength",
+    "help": "la balise se tord comme vue à travers de l'eau",
+    "lifecycle": false,
+    "settings": {
+      "strength": {
+        "rule": "int 0..200",
+        "default": "40",
+        "values": null
+      },
+      "cells": {
+        "rule": "int 0..200",
+        "default": "0",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..2000",
+        "default": "0",
+        "values": null
+      },
+      "ghost": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "resolution": {
+        "rule": "float 0.5..4",
+        "default": "1.5",
+        "values": null
+      },
+      "rest": {
+        "rule": "float 0..1",
+        "default": "0.12",
+        "values": null
+      },
+      "frequency": {
+        "rule": "float 0.001..0.2",
+        "default": "0.015",
+        "values": null
+      },
+      "octaves": {
+        "rule": "int 1..5",
+        "default": "2",
+        "values": null
+      },
+      "seed": {
+        "rule": "int 1..999",
+        "default": "2",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, always, view, click",
+        "default": "hover",
+        "values": [
+          "hover",
+          "always",
+          "view",
+          "click"
+        ]
+      }
+    }
+  },
+  "loader": {
+    "family": "Chargement",
+    "main": "style",
+    "help": "un indicateur de chargement, dessiné dans une balise vide",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "dots, steps, plus, neon, trio, 3d, bloom, spiral, galaxy, cross, vortex",
+        "default": "dots",
+        "values": [
+          "dots",
+          "steps",
+          "plus",
+          "neon",
+          "trio",
+          "3d",
+          "bloom",
+          "spiral",
+          "galaxy",
+          "cross",
+          "vortex"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "color2": {
+        "rule": "une couleur CSS",
+        "default": "#e91e63",
+        "values": null
+      },
+      "size": {
+        "rule": "int 16..600",
+        "default": "96",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "longshadow": {
+    "family": "Texte",
+    "main": "color",
+    "help": "une longue ombre portée qui fuit la souris, ou tombe dans une direction fixe",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#212121",
+        "values": null
+      },
+      "follow": {
+        "rule": "pointer, fixed",
+        "default": "pointer",
+        "values": [
+          "pointer",
+          "fixed"
+        ]
+      },
+      "angle": {
+        "rule": "int 0..360",
+        "default": "45",
+        "values": null
+      },
+      "length": {
+        "rule": "int 10..1000",
+        "default": "200",
+        "values": null
+      },
+      "fade": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "light": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "magnet": {
+    "family": "Icônes",
+    "main": "strength",
+    "help": "la balise est attirée par la souris",
+    "lifecycle": false,
+    "settings": {
+      "strength": {
+        "rule": "int 0..200",
+        "default": "20",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "300ms",
+        "values": null
+      },
+      "ring": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      }
+    }
+  },
+  "marquee": {
+    "family": "Texte",
+    "main": "speed",
+    "help": "le contenu défile sans fin : du texte, ou des images et des cartes qu'on tire à la main, qui suivent le défilement, ou en nappe sans bord",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "12s",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "left",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "gap": {
+        "rule": "int 0..400",
+        "default": "32",
+        "values": null
+      },
+      "pause": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, scroll, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "scroll",
+          "success",
+          "error"
+        ]
+      },
+      "drag": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "axis": {
+        "rule": "auto, both",
+        "default": "auto",
+        "values": [
+          "auto",
+          "both"
+        ]
+      },
+      "reverse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "unit": {
+        "rule": "auto, child",
+        "default": "auto",
+        "values": [
+          "auto",
+          "child"
+        ]
+      }
+    }
+  },
+  "matrix": {
+    "family": "Fonds",
+    "main": "color",
+    "help": "une pluie de caractères qui tombe au fond de la balise",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#00ff66",
+        "values": null
+      },
+      "head": {
+        "rule": "une couleur CSS",
+        "default": "#e9fff1",
+        "values": null
+      },
+      "background": {
+        "rule": "une couleur CSS",
+        "default": "#000",
+        "values": null
+      },
+      "speed": {
+        "rule": "int 1..10",
+        "default": "5",
+        "values": null
+      },
+      "density": {
+        "rule": "int 1..10",
+        "default": "6",
+        "values": null
+      },
+      "size": {
+        "rule": "int 8..40",
+        "default": "15",
+        "values": null
+      },
+      "chars": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "trail": {
+        "rule": "float 0.01..0.5",
+        "default": "0.06",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "down",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view"
+        ]
+      }
+    }
+  },
+  "mesh": {
+    "family": "Fonds",
+    "main": "style",
+    "help": "un fond de grandes taches de couleur floues qui dérivent lentement",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "boreal, sunset, ocean, neon, candy, forest",
+        "default": "boreal",
+        "values": [
+          "boreal",
+          "sunset",
+          "ocean",
+          "neon",
+          "candy",
+          "forest"
+        ]
+      },
+      "drift": {
+        "rule": "spots, sweep",
+        "default": "spots",
+        "values": [
+          "spots",
+          "sweep"
+        ]
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "background": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "count": {
+        "rule": "int 2..8",
+        "default": "5",
+        "values": null
+      },
+      "size": {
+        "rule": "int 10..150",
+        "default": "60",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..200",
+        "default": "60",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "20s",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "mouse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "neon": {
+    "family": "Texte",
+    "main": "color",
+    "help": "une lueur de néon autour du texte, du cadre, ou des deux",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#0ff",
+        "values": null
+      },
+      "where": {
+        "rule": "text, box, both",
+        "default": "text",
+        "values": [
+          "text",
+          "box",
+          "both"
+        ]
+      },
+      "size": {
+        "rule": "float 0.2..5",
+        "default": "1",
+        "values": null
+      },
+      "core": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "flicker": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "breathe": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "always",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "noise": {
+    "family": "Fonds",
+    "main": "amount",
+    "help": "un grain de pellicule par-dessus la balise",
+    "lifecycle": false,
+    "settings": {
+      "amount": {
+        "rule": "float 0..1",
+        "default": "0.5",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "blend": {
+        "rule": "overlay, soft-light, multiply, screen",
+        "default": "overlay",
+        "values": [
+          "overlay",
+          "soft-light",
+          "multiply",
+          "screen"
+        ]
+      }
+    }
+  },
+  "offline": {
+    "family": "En direct",
+    "main": "text",
+    "help": "quand le réseau tombe, une bande le dit (et compte ce qui partira au retour) ; la page se grise",
+    "lifecycle": false,
+    "settings": {
+      "text": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "count": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "place": {
+        "rule": "top, bottom",
+        "default": "top",
+        "values": [
+          "top",
+          "bottom"
+        ]
+      },
+      "size": {
+        "rule": "int 16..300",
+        "default": "40",
+        "values": null
+      },
+      "zindex": {
+        "rule": "int 0..2147483647",
+        "default": "2147483000",
+        "values": null
+      },
+      "background": {
+        "rule": "une couleur CSS",
+        "default": "#24292f",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "logo": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "veil": {
+        "rule": "float 0..1",
+        "default": "0.8",
+        "values": null
+      },
+      "fx": {
+        "rule": "un effet qui se joue une fois (*scramble, *fly(up), *count…), ou none",
+        "default": null,
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      }
+    }
+  },
+  "orbit": {
+    "family": "Icônes",
+    "main": "radius",
+    "help": "les enfants de la balise tournent en cercle autour de son centre",
+    "lifecycle": false,
+    "settings": {
+      "radius": {
+        "rule": "int 10..2000",
+        "default": "120",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "20s",
+        "values": null
+      },
+      "direction": {
+        "rule": "cw, ccw",
+        "default": "cw",
+        "values": [
+          "cw",
+          "ccw"
+        ]
+      },
+      "upright": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "outline": {
+    "family": "Texte",
+    "main": "color",
+    "help": "le texte en contour, qui se remplit",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "width": {
+        "rule": "float 0.5..6",
+        "default": "1.5",
+        "values": null
+      },
+      "fill": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "parallax": {
+    "family": "Défilement",
+    "main": "speed",
+    "help": "la balise glisse à son propre rythme quand la page défile",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "float -5..5",
+        "default": "0.5",
+        "values": null
+      },
+      "axis": {
+        "rule": "y, x",
+        "default": "y",
+        "values": [
+          "y",
+          "x"
+        ]
+      },
+      "origin": {
+        "rule": "view, page",
+        "default": "view",
+        "values": [
+          "view",
+          "page"
+        ]
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "1",
+        "values": null
+      }
+    }
+  },
+  "particles": {
+    "family": "Fonds",
+    "main": "mode",
+    "help": "des particules : neige, étoiles, réseau reliant des points, étincelles, étoiles filantes",
+    "lifecycle": false,
+    "settings": {
+      "mode": {
+        "rule": "snow, stars, network, aura, meteors",
+        "default": "snow",
+        "values": [
+          "snow",
+          "stars",
+          "network",
+          "aura",
+          "meteors"
+        ]
+      },
+      "count": {
+        "rule": "int 1..400",
+        "default": null,
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "down",
+        "values": null
+      },
+      "links": {
+        "rule": "int 0..500",
+        "default": "150",
+        "values": null
+      },
+      "mouse": {
+        "rule": "repulse, attract, none",
+        "default": "repulse",
+        "values": [
+          "repulse",
+          "attract",
+          "none"
+        ]
+      },
+      "on": {
+        "rule": "always, hover",
+        "default": "always",
+        "values": [
+          "always",
+          "hover"
+        ]
+      }
+    }
+  },
+  "path": {
+    "family": "Icônes",
+    "main": "d",
+    "help": "la balise suit un tracé : un tracé tout fait, le vôtre, ou un `<path>` déjà dessiné",
+    "lifecycle": false,
+    "settings": {
+      "d": {
+        "rule": "string 1..4000",
+        "default": "wave",
+        "values": null
+      },
+      "from": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "viewbox": {
+        "rule": "string 3..60",
+        "default": null,
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "rotate": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "angle": {
+        "rule": "int -360..360",
+        "default": "0",
+        "values": null
+      },
+      "reverse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "alternate": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "repeat": {
+        "rule": "int 0..1000",
+        "default": "0",
+        "values": null
+      },
+      "start": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "end": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "anchor": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, scroll",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "scroll"
+        ]
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "peel": {
+    "family": "Cartes",
+    "main": "corner",
+    "help": "un coin de page qui se soulève et montre ce qu'il y a dessous",
+    "lifecycle": false,
+    "settings": {
+      "corner": {
+        "rule": "top-right, top-left, bottom-right, bottom-left",
+        "default": "top-right",
+        "values": [
+          "top-right",
+          "top-left",
+          "bottom-right",
+          "bottom-left"
+        ]
+      },
+      "size": {
+        "rule": "int 10..400",
+        "default": "40",
+        "values": null
+      },
+      "grow": {
+        "rule": "int 10..600",
+        "default": "90",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#f5f5f5",
+        "values": null
+      },
+      "under": {
+        "rule": "une couleur CSS",
+        "default": "#111827",
+        "values": null
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "shadow": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "300ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "physics": {
+    "family": "Formes",
+    "main": "mode",
+    "help": "les enfants de la balise deviennent des objets pesants : ils tombent et s'entassent, flottent au bout d'un ressort ou pendent à un fil ; on les attrape à la souris ou au doigt, un à la fois",
+    "lifecycle": false,
+    "settings": {
+      "mode": {
+        "rule": "fall, float, hang",
+        "default": "fall",
+        "values": [
+          "fall",
+          "float",
+          "hang"
+        ]
+      },
+      "gravity": {
+        "rule": "float -3..3",
+        "default": "1",
+        "values": null
+      },
+      "bounce": {
+        "rule": "float 0..1",
+        "default": "0.5",
+        "values": null
+      },
+      "friction": {
+        "rule": "float 0..1",
+        "default": "0.3",
+        "values": null
+      },
+      "drag": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "walls": {
+        "rule": "all, floor, none",
+        "default": "all",
+        "values": [
+          "all",
+          "floor",
+          "none"
+        ]
+      },
+      "spin": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "strength": {
+        "rule": "float 0..1",
+        "default": "0.3",
+        "values": null
+      },
+      "length": {
+        "rule": "int 0..2000",
+        "default": "100",
+        "values": null
+      },
+      "push": {
+        "rule": "int 0..600",
+        "default": "140",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "sleep": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "30s",
+        "values": null
+      },
+      "on": {
+        "rule": "view, load, click",
+        "default": "view",
+        "values": [
+          "view",
+          "load",
+          "click"
+        ]
+      }
+    }
+  },
+  "pile": {
+    "family": "Défilement",
+    "main": "gap",
+    "help": "les enfants de la balise s'empilent au défilement : chacun monte, se colle en haut et recouvre le précédent, qui peut rapetisser, s'assombrir et se flouter",
+    "lifecycle": false,
+    "settings": {
+      "gap": {
+        "rule": "int 0..400",
+        "default": "0",
+        "values": null
+      },
+      "top": {
+        "rule": "int 0..1000",
+        "default": "0",
+        "values": null
+      },
+      "scale": {
+        "rule": "float 0..0.3",
+        "default": "0.05",
+        "values": null
+      },
+      "dim": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..40",
+        "default": "0",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "origin": {
+        "rule": "top, center",
+        "default": "top",
+        "values": [
+          "top",
+          "center"
+        ]
+      }
+    }
+  },
+  "pixelate": {
+    "family": "Transitions",
+    "main": "size",
+    "help": "l'image arrive en gros carreaux qui rétrécissent par paliers jusqu'à devenir nets, et repart de même",
+    "lifecycle": false,
+    "settings": {
+      "size": {
+        "rule": "int 2..400",
+        "default": "48",
+        "values": null
+      },
+      "steps": {
+        "rule": "int 2..40",
+        "default": "8",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "900ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "pixels": {
+    "family": "Boutons",
+    "main": "mode",
+    "help": "la balise se découpe en carreaux : remplissage, explosion, rideau, mosaïque, échange d'image",
+    "lifecycle": false,
+    "settings": {
+      "mode": {
+        "rule": "fill, explode, strip, mosaic, swap",
+        "default": "fill",
+        "values": [
+          "fill",
+          "explode",
+          "strip",
+          "mosaic",
+          "swap"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#ff5722",
+        "values": null
+      },
+      "size": {
+        "rule": "int 1..100",
+        "default": null,
+        "values": null
+      },
+      "spread": {
+        "rule": "int 0..500",
+        "default": "60",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "stagger": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "cover": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "pointer": {
+    "family": "Souris",
+    "main": "style",
+    "help": "un curseur qui suit la souris avec un léger retard et grossit sur ce qui se clique : un disque qui inverse les couleurs, un anneau, un point, ou une lentille qui floute ou grise ce qu'elle couvre",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "disc, ring, dot, lens",
+        "default": "disc",
+        "values": [
+          "disc",
+          "ring",
+          "dot",
+          "lens"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "size": {
+        "rule": "int 4..600",
+        "default": "36",
+        "values": null
+      },
+      "blend": {
+        "rule": "difference, normal, exclusion, screen, multiply, overlay",
+        "default": "difference",
+        "values": [
+          "difference",
+          "normal",
+          "exclusion",
+          "screen",
+          "multiply",
+          "overlay"
+        ]
+      },
+      "filter": {
+        "rule": "grayscale, invert, blur, saturate, sepia, hue",
+        "default": "grayscale",
+        "values": [
+          "grayscale",
+          "invert",
+          "blur",
+          "saturate",
+          "sepia",
+          "hue"
+        ]
+      },
+      "outside": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "soft": {
+        "rule": "int 0..1000",
+        "default": "0",
+        "values": null
+      },
+      "grow": {
+        "rule": "float 1..6",
+        "default": "2.2",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "0.18",
+        "values": null
+      },
+      "hide": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "text": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "press": {
+        "rule": "float 0.3..2",
+        "default": "0.8",
+        "values": null
+      },
+      "zindex": {
+        "rule": "int 0..2147483647",
+        "default": "2147483000",
+        "values": null
+      }
+    }
+  },
+  "pulse": {
+    "family": "Boutons",
+    "main": "color",
+    "help": "un anneau lumineux bat autour de la balise, ou autour des lettres",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "rgba(88,166,255,.6)",
+        "values": null
+      },
+      "where": {
+        "rule": "box, text",
+        "default": "box",
+        "values": [
+          "box",
+          "text"
+        ]
+      },
+      "size": {
+        "rule": "int 0..100",
+        "default": "16",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.8s",
+        "values": null
+      },
+      "direction": {
+        "rule": "out, in",
+        "default": "out",
+        "values": [
+          "out",
+          "in"
+        ]
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "rainbow": {
+    "family": "Texte",
+    "main": "colors",
+    "help": "chaque lettre prend une couleur de la liste ; les couleurs voyagent, ou restent",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": "[#ff4d4d, #ff9f1a, #ffe14d, #4dff88, #4dd2ff, #6b6bff, #d24dff]",
+        "values": null
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "order": {
+        "rule": "right, left, center, edges, random",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "center",
+          "edges",
+          "random"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "react": {
+    "family": "En direct",
+    "main": "emoji",
+    "help": "un clic sur la balise fait partir son émoji chez tous les visiteurs de la page, comme pendant un direct — par le serveur temps réel ; vers le haut, ou dans la direction et avec la gravité voulues",
+    "lifecycle": false,
+    "settings": {
+      "emoji": {
+        "rule": "string 1..16",
+        "default": null,
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..10",
+        "default": "1",
+        "values": null
+      },
+      "stage": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "sock": {
+        "rule": "la variable qui tient une connexion µsocket ($$sock, @sock)",
+        "default": null,
+        "values": null
+      },
+      "server": {
+        "rule": "string 1..300",
+        "default": null,
+        "values": null
+      },
+      "room": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      },
+      "rate": {
+        "rule": "int 1..10",
+        "default": "5",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "up",
+        "values": null
+      },
+      "gravity": {
+        "rule": "float -5..5",
+        "default": "-1",
+        "values": null
+      },
+      "size": {
+        "rule": "int 8..200",
+        "default": "32",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2.5s",
+        "values": null
+      },
+      "spread": {
+        "rule": "int 0..400",
+        "default": "60",
+        "values": null
+      },
+      "height": {
+        "rule": "int 10..100",
+        "default": "60",
+        "values": null
+      },
+      "max": {
+        "rule": "int 1..200",
+        "default": "40",
+        "values": null
+      }
+    }
+  },
+  "reflect": {
+    "family": "Images",
+    "main": "gap",
+    "help": "un reflet miroir sous la balise, qui s'efface en fondu",
+    "lifecycle": false,
+    "settings": {
+      "gap": {
+        "rule": "int 0..100",
+        "default": "4",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.5",
+        "values": null
+      },
+      "size": {
+        "rule": "int 5..100",
+        "default": "50",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..40",
+        "default": "0",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "down",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "water": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      }
+    }
+  },
+  "reveal": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "la balise remonte de l'ombre ; à la sortie, elle glisse hors champ",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "up",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "380ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-in",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "ripple": {
+    "family": "Boutons",
+    "main": "color",
+    "help": "une onde part du point touché ; sur `<@document>`, un anneau à chaque clic de la page",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "on": {
+        "rule": "click, enter, move",
+        "default": "click",
+        "values": [
+          "click",
+          "enter",
+          "move"
+        ]
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, « x% y% » (20% 80%), ou pointer (le point sous la souris)",
+        "default": "pointer",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0.35",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "size": {
+        "rule": "int 10..2000",
+        "default": "100",
+        "values": null
+      }
+    }
+  },
+  "rotate": {
+    "family": "Transitions",
+    "main": "angle",
+    "help": "la balise arrive en tournant sur elle-même, en grandissant si l'on veut",
+    "lifecycle": false,
+    "settings": {
+      "angle": {
+        "rule": "int -1080..1080",
+        "default": "-200",
+        "values": null
+      },
+      "start": {
+        "rule": "float 0..3",
+        "default": "1",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "scale": {
+    "family": "Transitions",
+    "main": "start",
+    "help": "la balise grandit depuis un point (`origin`) en s'opacifiant, dans les deux sens ou un seul",
+    "lifecycle": false,
+    "settings": {
+      "start": {
+        "rule": "float 0..40",
+        "default": "0",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "axis": {
+        "rule": "both, x, y",
+        "default": "both",
+        "values": [
+          "both",
+          "x",
+          "y"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "scramble": {
+    "family": "Texte",
+    "main": "speed",
+    "help": "les lettres se mélangent, puis se remettent en place une à une",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "int 10..500",
+        "default": "40",
+        "values": null
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "order": {
+        "rule": "right, left, center, edges, random",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "center",
+          "edges",
+          "random"
+        ]
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "chars": {
+        "rule": "string 1..80",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "scratch": {
+    "family": "Cartes",
+    "main": "color",
+    "help": "une carte à gratter : une couche que l'on efface à la souris ou au doigt",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#b9bec7",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "text": {
+        "rule": "string 0..80",
+        "default": null,
+        "values": null
+      },
+      "ink": {
+        "rule": "une couleur CSS",
+        "default": "#5b6270",
+        "values": null
+      },
+      "brush": {
+        "rule": "int 4..200",
+        "default": "28",
+        "values": null
+      },
+      "shape": {
+        "rule": "round, square",
+        "default": "round",
+        "values": [
+          "round",
+          "square"
+        ]
+      },
+      "threshold": {
+        "rule": "float 0.05..1",
+        "default": "0.6",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "revealed": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "scrollprogress": {
+    "family": "Défilement",
+    "main": "color",
+    "help": "une barre de lecture qui avance avec le défilement de la balise, ou de la page",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#58a6ff",
+        "values": null
+      },
+      "colors": {
+        "rule": "une liste de couleurs ([#f0f, #0ff, gold])",
+        "default": null,
+        "values": null
+      },
+      "track": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "thickness": {
+        "rule": "int 1..40",
+        "default": "4",
+        "values": null
+      },
+      "place": {
+        "rule": "top, bottom, left, right",
+        "default": "top",
+        "values": [
+          "top",
+          "bottom",
+          "left",
+          "right"
+        ]
+      },
+      "source": {
+        "rule": "self, page",
+        "default": "self",
+        "values": [
+          "self",
+          "page"
+        ]
+      },
+      "origin": {
+        "rule": "start, center, end",
+        "default": "start",
+        "values": [
+          "start",
+          "center",
+          "end"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": "0",
+        "values": null
+      },
+      "glow": {
+        "rule": "int 0..40",
+        "default": "0",
+        "values": null
+      },
+      "zindex": {
+        "rule": "int 0..2147483647",
+        "default": "10",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      }
+    }
+  },
+  "scrub": {
+    "family": "Défilement",
+    "main": "frames",
+    "help": "une vidéo, ou une suite d'images, avance quand on descend dans la page et recule quand on remonte — ou suit la souris, de gauche à droite",
+    "lifecycle": false,
+    "settings": {
+      "frames": {
+        "rule": "string 1..2000",
+        "default": null,
+        "values": null
+      },
+      "count": {
+        "rule": "int 2..2000",
+        "default": null,
+        "values": null
+      },
+      "images": {
+        "rule": "une liste d'images : leurs adresses, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ([a.jpg, 'b.jpg'])",
+        "default": null,
+        "values": null
+      },
+      "first": {
+        "rule": "int 0..100000",
+        "default": "1",
+        "values": null
+      },
+      "on": {
+        "rule": "scroll, hover",
+        "default": "scroll",
+        "values": [
+          "scroll",
+          "hover"
+        ]
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "from": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "to": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0..1",
+        "default": "0.15",
+        "values": null
+      },
+      "fit": {
+        "rule": "cover, contain",
+        "default": "cover",
+        "values": [
+          "cover",
+          "contain"
+        ]
+      },
+      "reverse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "shake": {
+    "family": "Boutons",
+    "main": "when",
+    "help": "une secousse — au geste, ou chaque fois qu'une variable passe à vrai",
+    "lifecycle": false,
+    "settings": {
+      "when": {
+        "rule": "bool",
+        "default": null,
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "click",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "right",
+        "values": null
+      },
+      "distance": {
+        "rule": "int 1..60",
+        "default": "8",
+        "values": null
+      },
+      "repeat": {
+        "rule": "int 1..10",
+        "default": "1",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "450ms",
+        "values": null
+      }
+    }
+  },
+  "shared": {
+    "family": "Transitions",
+    "main": "key",
+    "help": "l'élément partagé d'une transition de page : la vignette glisse et grandit jusqu'à sa place dans la page suivante",
+    "lifecycle": false,
+    "settings": {
+      "key": {
+        "rule": "ce qui reconnaît la balise d'une liste à l'autre : une variable (item.id, $choix) ou une valeur",
+        "default": null,
+        "values": null
+      },
+      "group": {
+        "rule": "string 1..40",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "shatter": {
+    "family": "Transitions",
+    "main": "size",
+    "help": "l'image se reconstitue à partir de tuiles éparpillées ; à la sortie, elle vole en éclats",
+    "lifecycle": false,
+    "settings": {
+      "size": {
+        "rule": "int 4..200",
+        "default": "20",
+        "values": null
+      },
+      "spread": {
+        "rule": "int 0..3000",
+        "default": "400",
+        "values": null
+      },
+      "rotate": {
+        "rule": "int 0..1080",
+        "default": "360",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.2s",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "shine": {
+    "family": "Boutons",
+    "main": "color",
+    "help": "un reflet traverse la balise, ou balaie ses lettres",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "rgba(255,255,255,.55)",
+        "values": null
+      },
+      "where": {
+        "rule": "box, text",
+        "default": "box",
+        "values": [
+          "box",
+          "text"
+        ]
+      },
+      "ink": {
+        "rule": "une couleur CSS",
+        "default": "#6e7681",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "105",
+        "values": null
+      },
+      "width": {
+        "rule": "int 5..100",
+        "default": "30",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "700ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, always, view, click, load, success, error",
+        "default": "hover",
+        "values": [
+          "hover",
+          "always",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      },
+      "every": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      }
+    }
+  },
+  "skeleton": {
+    "family": "Chargement",
+    "main": "lines",
+    "help": "des barres qui scintillent, en attendant le contenu",
+    "lifecycle": false,
+    "settings": {
+      "lines": {
+        "rule": "int 1..12",
+        "default": "3",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#21262d",
+        "values": null
+      },
+      "shine": {
+        "rule": "une couleur CSS",
+        "default": "#30363d",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.4s",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..20",
+        "default": "7",
+        "values": null
+      }
+    }
+  },
+  "slide": {
+    "family": "Transitions",
+    "main": "axis",
+    "help": "un accordéon : la balise se déplie en hauteur, ou en largeur",
+    "lifecycle": false,
+    "settings": {
+      "axis": {
+        "rule": "y, x",
+        "default": "y",
+        "values": [
+          "y",
+          "x"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "cubic-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "smoke": {
+    "family": "Boutons",
+    "main": "color",
+    "help": "la souris soulève de la fumée dans la balise",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..100",
+        "default": "20",
+        "values": null
+      },
+      "size": {
+        "rule": "int 1..100",
+        "default": "8",
+        "values": null
+      },
+      "distance": {
+        "rule": "int 0..500",
+        "default": "100",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      }
+    }
+  },
+  "sparkles": {
+    "family": "Texte",
+    "main": "color",
+    "help": "des étincelles naissent autour de la balise, scintillent et s'éteignent",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#ffc700",
+        "values": null
+      },
+      "count": {
+        "rule": "int 1..60",
+        "default": "10",
+        "values": null
+      },
+      "size": {
+        "rule": "int 4..80",
+        "default": "18",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "700ms",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "spin": {
+    "family": "Icônes",
+    "main": "speed",
+    "help": "une rotation continue, à plat ou en 3D",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "2.5s",
+        "values": null
+      },
+      "direction": {
+        "rule": "cw, ccw",
+        "default": "cw",
+        "values": [
+          "cw",
+          "ccw"
+        ]
+      },
+      "axis": {
+        "rule": "z, x, y",
+        "default": "z",
+        "values": [
+          "z",
+          "x",
+          "y"
+        ]
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "linear",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "split": {
+    "family": "Texte",
+    "main": "color",
+    "help": "le texte se coupe en deux moitiés qui glissent",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "distance": {
+        "rule": "int 0..100",
+        "default": "8",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "right",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "350ms",
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "spoiler": {
+    "family": "Texte",
+    "main": "style",
+    "help": "un texte caché sous des grains, un flou, une barre ou des pavés, révélé au clic",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "grains, blur, bar, pixels",
+        "default": "grains",
+        "values": [
+          "grains",
+          "blur",
+          "bar",
+          "pixels"
+        ]
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "density": {
+        "rule": "int 1..10",
+        "default": "5",
+        "values": null
+      },
+      "size": {
+        "rule": "float 0.5..6",
+        "default": "1.2",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.2s",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "revealed": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "again": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": "4",
+        "values": null
+      },
+      "on": {
+        "rule": "click, hover",
+        "default": "click",
+        "values": [
+          "click",
+          "hover"
+        ]
+      }
+    }
+  },
+  "spotlight": {
+    "family": "Cartes",
+    "main": "color",
+    "help": "une lumière suit la souris : un halo dedans, un liseré au bord",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "where": {
+        "rule": "both, fill, border, veil",
+        "default": "both",
+        "values": [
+          "both",
+          "fill",
+          "border",
+          "veil"
+        ]
+      },
+      "size": {
+        "rule": "int 10..1000",
+        "default": "200",
+        "values": null
+      },
+      "fill": {
+        "rule": "float 0..1",
+        "default": "0.25",
+        "values": null
+      },
+      "width": {
+        "rule": "int 1..20",
+        "default": "2",
+        "values": null
+      },
+      "soft": {
+        "rule": "int 0..1000",
+        "default": "120",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "1",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "hover, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "always"
+        ]
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, « x% y% » (20% 80%), ou pointer (le point sous la souris)",
+        "default": "pointer",
+        "values": null
+      },
+      "glow": {
+        "rule": "int 0..1000",
+        "default": null,
+        "values": null
+      },
+      "every": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "sprite": {
+    "family": "Icônes",
+    "main": "image",
+    "help": "une planche de poses animée par à-coups, comme un dessin animé : une marche, un battement d'ailes, une pièce qui tourne",
+    "lifecycle": false,
+    "settings": {
+      "image": {
+        "rule": "une image : son adresse, µasset('…') ou µimage('…'), ou le chemin d'un fichier du dossier source ou d'un dossier de `assetDirs` ('photo.jpg')",
+        "default": null,
+        "values": null
+      },
+      "frames": {
+        "rule": "int 1..1000",
+        "default": "1",
+        "values": null
+      },
+      "columns": {
+        "rule": "int 1..1000",
+        "default": null,
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1s",
+        "values": null
+      },
+      "repeat": {
+        "rule": "int 0..1000",
+        "default": "0",
+        "values": null
+      },
+      "direction": {
+        "rule": "normal, reverse, alternate",
+        "default": "normal",
+        "values": [
+          "normal",
+          "reverse",
+          "alternate"
+        ]
+      },
+      "start": {
+        "rule": "int 0..999",
+        "default": "0",
+        "values": null
+      },
+      "pixel": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "fps": {
+        "rule": "float 0.1..120",
+        "default": null,
+        "values": null
+      },
+      "rows": {
+        "rule": "int 1..1000",
+        "default": null,
+        "values": null
+      },
+      "row": {
+        "rule": "int 0..999",
+        "default": "0",
+        "values": null
+      },
+      "poses": {
+        "rule": "une liste de mots ([Coder., 'Designer, web.'])",
+        "default": null,
+        "values": null
+      },
+      "animate": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "hold": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "stack": {
+    "family": "Cartes",
+    "main": "layers",
+    "help": "la balise se soulève et dévoile une pile de cartes dessous",
+    "lifecycle": false,
+    "settings": {
+      "layers": {
+        "rule": "int 1..6",
+        "default": "2",
+        "values": null
+      },
+      "gap": {
+        "rule": "int 0..200",
+        "default": "40",
+        "values": null
+      },
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#fff",
+        "values": null
+      },
+      "radius": {
+        "rule": "int 0..999",
+        "default": null,
+        "values": null
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "stagger": {
+    "family": "Texte",
+    "main": "style",
+    "help": "les lettres (ou les mots) arrivent l'une après l'autre : glissées, zoomées, basculées en 3D, floues… — au défilement aussi",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "move, zoom, flip, blur, rotate, fade",
+        "default": "move",
+        "values": [
+          "move",
+          "zoom",
+          "flip",
+          "blur",
+          "rotate",
+          "fade"
+        ]
+      },
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "up",
+        "values": null
+      },
+      "step": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "45ms",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "order": {
+        "rule": "right, left, center, edges, random",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "center",
+          "edges",
+          "random"
+        ]
+      },
+      "distance": {
+        "rule": "int 0..200",
+        "default": "16",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "unit": {
+        "rule": "letter, word, line, child",
+        "default": "letter",
+        "values": [
+          "letter",
+          "word",
+          "line",
+          "child"
+        ]
+      },
+      "clip": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, scroll, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "scroll",
+          "success",
+          "error"
+        ]
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      }
+    }
+  },
+  "sticky": {
+    "family": "Défilement",
+    "main": "offset",
+    "help": "une barre part avec la page, puis revient se coller en haut de l'écran en glissant depuis le dessus, après le défilement choisi ; elle peut se cacher quand on descend",
+    "lifecycle": false,
+    "settings": {
+      "offset": {
+        "rule": "int 0..20000",
+        "default": "0",
+        "values": null
+      },
+      "hide": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "top": {
+        "rule": "int 0..500",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "400ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "zindex": {
+        "rule": "int 0..2147483647",
+        "default": "1000",
+        "values": null
+      }
+    }
+  },
+  "swipe": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "un front doux balaie la balise et la découvre, dans n'importe quel sens",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down, up-right, up-left, down-right, down-left, ou un angle en degrés (0 = vers le haut, 90 = vers la droite, de -360 à 360)",
+        "default": "right",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "320ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "tilt": {
+    "family": "Cartes",
+    "main": "max",
+    "help": "la balise s'incline en 3D sous le pointeur ; reflet, parallaxe de ses enfants",
+    "lifecycle": false,
+    "settings": {
+      "max": {
+        "rule": "float 0..45",
+        "default": "12",
+        "values": null
+      },
+      "scale": {
+        "rule": "float 0.5..2",
+        "default": "1.03",
+        "values": null
+      },
+      "perspective": {
+        "rule": "int 100..5000",
+        "default": "800",
+        "values": null
+      },
+      "direction": {
+        "rule": "toward, away",
+        "default": "toward",
+        "values": [
+          "toward",
+          "away"
+        ]
+      },
+      "glare": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "450ms",
+        "values": null
+      },
+      "follow": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "100ms",
+        "values": null
+      },
+      "wait": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0ms",
+        "values": null
+      },
+      "bounce": {
+        "rule": "float 0..0.5",
+        "default": "0",
+        "values": null
+      },
+      "depth": {
+        "rule": "int 0..400",
+        "default": "0",
+        "values": null
+      },
+      "slide": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "tracking": {
+    "family": "Texte",
+    "main": "spacing",
+    "help": "les lettres arrivent écartées et se resserrent, comme un titre de film",
+    "lifecycle": false,
+    "settings": {
+      "spacing": {
+        "rule": "float -0.5..3",
+        "default": "0.5",
+        "values": null
+      },
+      "blur": {
+        "rule": "int 0..40",
+        "default": "0",
+        "values": null
+      },
+      "opacity": {
+        "rule": "float 0..1",
+        "default": "0",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "900ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "travel": {
+    "family": "Défilement",
+    "main": "to",
+    "help": "la balise quitte sa place au fil du défilement et voyage jusqu'à celle d'une autre, dont elle prend la position et la taille, en tournant si l'on veut",
+    "lifecycle": false,
+    "settings": {
+      "to": {
+        "rule": "string 1..400",
+        "default": null,
+        "values": null
+      },
+      "rotate": {
+        "rule": "int -3600..3600",
+        "default": "0",
+        "values": null
+      },
+      "spin": {
+        "rule": "int -3600..3600",
+        "default": "0",
+        "values": null
+      },
+      "arc": {
+        "rule": "int -2000..2000",
+        "default": "0",
+        "values": null
+      },
+      "size": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-in-out",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0..1",
+        "default": "0.12",
+        "values": null
+      },
+      "fade": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      }
+    }
+  },
+  "turn": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "un pli qui pivote sur son bord",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "left",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "600ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "typewriter": {
+    "family": "Transitions",
+    "main": "speed",
+    "help": "le texte se tape à la machine, puis s'efface",
+    "lifecycle": false,
+    "settings": {
+      "speed": {
+        "rule": "int 1..1000",
+        "default": "30",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": null,
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "underline": {
+    "family": "Texte",
+    "main": "color",
+    "help": "un soulignement qui se dessine",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": null,
+        "values": null
+      },
+      "thickness": {
+        "rule": "int 1..12",
+        "default": "3",
+        "values": null
+      },
+      "offset": {
+        "rule": "int 0..40",
+        "default": "2",
+        "values": null
+      },
+      "origin": {
+        "rule": "left, center, right",
+        "default": "left",
+        "values": [
+          "left",
+          "center",
+          "right"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "350ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  },
+  "unveil": {
+    "family": "Texte",
+    "main": "color",
+    "help": "une barre de couleur passe et découvre la balise",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#ff4fa3",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "1.1s",
+        "values": null
+      },
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "right",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease-in-out",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "view, hover, click, load, success, error",
+        "default": "view",
+        "values": [
+          "view",
+          "hover",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "velocity": {
+    "family": "Défilement",
+    "main": "style",
+    "help": "la balise réagit à la vitesse du défilement : elle penche, s'étire, bascule, se bombe, se floute ou prend du retard, puis revient à plat dès qu'on s'arrête ; un saut (une ancre, un retour en haut sans glissé : plus d'un écran d'un coup ; Page suivante sans défilement doux : plus d'un demi-écran d'un coup, au repos) ne la déforme pas",
+    "lifecycle": false,
+    "settings": {
+      "style": {
+        "rule": "skew, stretch, tilt, bend, blur, shift",
+        "default": "skew",
+        "values": [
+          "skew",
+          "stretch",
+          "tilt",
+          "bend",
+          "blur",
+          "shift"
+        ]
+      },
+      "strength": {
+        "rule": "float 0..5",
+        "default": "2",
+        "values": null
+      },
+      "max": {
+        "rule": "float 0..90",
+        "default": "12",
+        "values": null
+      },
+      "smooth": {
+        "rule": "float 0.01..1",
+        "default": "0.15",
+        "values": null
+      },
+      "axis": {
+        "rule": "y, x",
+        "default": "y",
+        "values": [
+          "y",
+          "x"
+        ]
+      }
+    }
+  },
+  "volet": {
+    "family": "Transitions",
+    "main": "direction",
+    "help": "le contenu entre en glissant dans sa propre boîte, comme un store",
+    "lifecycle": false,
+    "settings": {
+      "direction": {
+        "rule": "right, left, up, down",
+        "default": "down",
+        "values": [
+          "right",
+          "left",
+          "up",
+          "down"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "380ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "ease-out",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "wave": {
+    "family": "Texte",
+    "main": "color",
+    "help": "le texte est un verre qui se remplit d'eau",
+    "lifecycle": false,
+    "settings": {
+      "color": {
+        "rule": "une couleur CSS",
+        "default": "#03a9f4",
+        "values": null
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "4s",
+        "values": null
+      },
+      "level": {
+        "rule": "int 0..100",
+        "default": "45",
+        "values": null
+      },
+      "stroke": {
+        "rule": "float 0..10",
+        "default": "2",
+        "values": null
+      },
+      "on": {
+        "rule": "always, hover, view, click, load, success, error",
+        "default": "always",
+        "values": [
+          "always",
+          "hover",
+          "view",
+          "click",
+          "load",
+          "success",
+          "error"
+        ]
+      }
+    }
+  },
+  "weight": {
+    "family": "Texte",
+    "main": "radius",
+    "help": "la graisse des lettres ondule : chaque lettre s'épaissit à l'approche de la souris",
+    "lifecycle": false,
+    "settings": {
+      "radius": {
+        "rule": "int 20..800",
+        "default": "120",
+        "values": null
+      },
+      "strength": {
+        "rule": "float 0..1",
+        "default": "1",
+        "values": null
+      },
+      "min": {
+        "rule": "int 1..1000",
+        "default": "300",
+        "values": null
+      },
+      "max": {
+        "rule": "int 1..1000",
+        "default": "900",
+        "values": null
+      },
+      "axis": {
+        "rule": "string 4..4",
+        "default": "wght",
+        "values": null
+      },
+      "fallback": {
+        "rule": "auto, bold, stretch, none",
+        "default": "auto",
+        "values": [
+          "auto",
+          "bold",
+          "stretch",
+          "none"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "150ms",
+        "values": null
+      },
+      "idle": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "speed": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "3s",
+        "values": null
+      }
+    }
+  },
+  "wheel": {
+    "family": "Transitions",
+    "main": "spokes",
+    "help": "un rayon balaie la balise comme l'aiguille d'une horloge et la découvre",
+    "lifecycle": false,
+    "settings": {
+      "spokes": {
+        "rule": "int 1..12",
+        "default": "1",
+        "values": null
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, ou « x% y% » (20% 80%)",
+        "default": "center",
+        "values": null
+      },
+      "reverse": {
+        "rule": "bool",
+        "default": "false",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "700ms",
+        "values": null
+      },
+      "delay": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "0s",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out, cubic-bezier(…), ou une courbe : back, bounce, circ, cubic, elastic, expo, quad, quart, quint, sine, suivie de -in, -out ou -in-out (bounce-out, elastic-out)",
+        "default": "linear",
+        "values": null
+      },
+      "on": {
+        "rule": "view, scroll, load, success, error, hover",
+        "default": "view",
+        "values": [
+          "view",
+          "scroll",
+          "load",
+          "success",
+          "error",
+          "hover"
+        ]
+      },
+      "once": {
+        "rule": "bool",
+        "default": "true",
+        "values": [
+          "true",
+          "false"
+        ]
+      },
+      "range": {
+        "rule": "deux positions de défilement de la page, « début fin », en px ou en vh (0 1000px, 100vh 200vh)",
+        "default": null,
+        "values": null
+      },
+      "zone": {
+        "rule": "deux hauteurs de l'écran, « début fin », en % (0 % en haut, 100 % en bas) ou top, center, bottom (70% 40%, bottom center)",
+        "default": null,
+        "values": null
+      },
+      "of": {
+        "rule": "string 1..200",
+        "default": null,
+        "values": null
+      }
+    }
+  },
+  "zoom": {
+    "family": "Cartes",
+    "main": "scale",
+    "help": "le contenu grossit dans son cadre, qui ne bouge pas",
+    "lifecycle": false,
+    "settings": {
+      "scale": {
+        "rule": "float 1..3",
+        "default": "1.5",
+        "values": null
+      },
+      "origin": {
+        "rule": "center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, « x% y% » (20% 80%), ou pointer (le point sous la souris)",
+        "default": "center",
+        "values": null
+      },
+      "duration": {
+        "rule": "une durée (300ms, 1.5s, 0)",
+        "default": "500ms",
+        "values": null
+      },
+      "easing": {
+        "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+        "default": "ease",
+        "values": [
+          "linear",
+          "ease",
+          "ease-in",
+          "ease-out",
+          "ease-in-out"
+        ]
+      },
+      "on": {
+        "rule": "hover, view, click, always",
+        "default": "hover",
+        "values": [
+          "hover",
+          "view",
+          "click",
+          "always"
+        ]
+      }
+    }
+  }
+}

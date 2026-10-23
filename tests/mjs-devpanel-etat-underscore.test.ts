@@ -43,7 +43,7 @@ function charger(outDir: string, files: string[]) {
   const window: any = new Window({ url: 'http://localhost/' })
   const lire = (f: string) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))
   window.eval(`${lire(files.find(f => /^mjs_core-/.test(f))!)}\nglobalThis.µ = µ;`)
-  window.eval(lire(files.find(f => /^dp-secret-[a-f0-9]{8}\.js$/.test(f))!))
+  window.eval(lire(files.find(f => /^dp-secret-[0-9a-z]{5}\.js$/.test(f))!))
   return window
 }
 
@@ -60,13 +60,13 @@ describe("mjs_devpanel — onglet État : une variable préfixée d'un underscor
     const el: any = window.document.body.firstElementChild
     assert.equal(el._state._secret, 42, 'la compilation doit bien poser la clé `_secret` (sans préfixe _mjs_) sur _state')
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
 
     const etatTexte = racine.querySelector('.onglet-corps').textContent
     assert.match(etatTexte, /_secret/, `\$_secret doit apparaître dans l'onglet État :\n${etatTexte}`)
     assert.match(etatTexte, /\$?visible/, etatTexte)
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 })

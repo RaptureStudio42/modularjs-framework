@@ -177,6 +177,7 @@ describe('MJS-WS — session exclusive par identité (option sessionExclusive)',
     const recuO: any[] = []
     const µO = makeClient(transport, recuO)
     const sO = µO.socket('memory://sx7o', { auth: () => ({ uid: 'obs' }) })
+    app.room('zone', { presence: 'public' })   // O observe la présence du salon sans y entrer
     sO.connect(); sO.presence(); sO.presence('zone'); await tick()
 
     const µA = makeClient(transport)

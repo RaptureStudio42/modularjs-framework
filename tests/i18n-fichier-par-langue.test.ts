@@ -60,7 +60,7 @@ describe('i18n — un fichier par langue, manifeste allégé', function () {
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
-      const emis = readdirSync(outDir).filter(f => /^mjs_i18n-[a-z]+-[a-f0-9]{8}\.js$/.test(f)).sort()
+      const emis = readdirSync(outDir).filter(f => /^mjs_i18n-[a-z]+-[0-9a-z]{5}\.js$/.test(f)).sort()
       assert.deepEqual(emis.map(f => f.slice(0, 11)), ['mjs_i18n-en', 'mjs_i18n-fr'], `fichiers émis : ${emis.join(', ')}`)
 
       const data = readI18nData(manifestPath)
@@ -69,8 +69,8 @@ describe('i18n — un fichier par langue, manifeste allégé', function () {
       assert.equal(data.sections, undefined, 'la table des sections n\'est plus dans le manifeste')
       assert.deepEqual(data.langs, ['en', 'fr'], 'langues sélectionnables, triées')
       assert.deepEqual(Object.keys(data.files).sort(), ['en', 'fr'])
-      assert.match(data.files.fr, /\/mjs_i18n-fr-[a-f0-9]{8}\.js$/)
-      assert.match(data.files.en, /\/mjs_i18n-en-[a-f0-9]{8}\.js$/)
+      assert.match(data.files.fr, /\/mjs_i18n-fr-[0-9a-z]{5}\.js$/)
+      assert.match(data.files.en, /\/mjs_i18n-en-[0-9a-z]{5}\.js$/)
       assert.equal(data.default, 'fr')
       assert.equal(data.dev, true)
 
@@ -119,7 +119,7 @@ describe('i18n — un fichier par langue, manifeste allégé', function () {
       await bundler.compile()
       const data = readI18nData(manifestPath)
       const fr = readLangFile(outDir, data.files.fr)
-      assert.match(fr.sections.panier, /^[a-f0-9]{32}$/, `hash seul attendu, reçu : ${fr.sections.panier}`)
+      assert.match(fr.sections.panier, /^[a-f0-9]{12}$/, `hash seul attendu, reçu : ${fr.sections.panier}`)
       assert.equal(data.dev, false)
     } finally {
       await bundler.close()
@@ -169,7 +169,7 @@ describe('i18n — un fichier par langue, manifeste allégé', function () {
     try {
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
-      const emis = readdirSync(outDir).filter(f => /^mjs_i18n-[a-z]+-[a-f0-9]{8}\.js$/.test(f)).sort()
+      const emis = readdirSync(outDir).filter(f => /^mjs_i18n-[a-z]+-[0-9a-z]{5}\.js$/.test(f)).sort()
       assert.deepEqual(emis.map(f => f.slice(0, 11)), ['mjs_i18n-en', 'mjs_i18n-fr'], `fichiers émis : ${emis.join(', ')}`)
       const manifeste = readFileSync(manifestPath, 'utf-8')
       assert.equal(manifeste.includes('Au revoir'), false, 'aucune traduction en clair dans le fichier unique')

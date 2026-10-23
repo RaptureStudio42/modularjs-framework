@@ -3,7 +3,7 @@
 // Une boucle d'effets (un µeffect qui mute sa propre dépendance) produit une
 // chaîne infinie de microtasks : sans garde, l'onglet gèle définitivement.
 // La garde compte les flushs par rafale de microtasks (reset par macrotask) ;
-// au-delà de 10 000 elle émet UN µ.warn explicite et abandonne le flush, ce
+// au-delà de 10 000 elle émet UN µ.warn explicite et suspend les effets du composant (l'affichage suit encore l'état), ce
 // qui brise la chaîne et garde la page vivante.
 //
 // Deux contrats :

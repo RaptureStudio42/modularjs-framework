@@ -6,7 +6,7 @@
 // avertissement. `constructor`/`prototype` n'ont PAS ce problème de setter (propriétés de données
 // normales) : AVANT correctif, `body['constructor'] = 'hostile'` réussit et CRÉE une clé PROPRE
 // 'constructor' — observable directement (Object.keys). Incohérent avec le reste du codebase
-// (mjs_init.ts:563, `µ._mjs_guardPath`/`µ._mjs_safeKey`) qui refuse EXPLICITEMENT les 3 noms, avec
+// (`µ._mjs_safeKey`, mjs_init.ts, là où le runtime garde encore ces noms) qui refuse EXPLICITEMENT les 3 noms, avec
 // avertissement. Correctif attendu : même refus explicite + même avertissement ici. Ajout de la
 // couverture manquante d'un champ RÉPÉTÉ (`a=1&a=2`, comportement déjà documenté —
 // action-pipeline.ts:184 « dernière valeur gagne » — jamais vérifié par un test ; comportement

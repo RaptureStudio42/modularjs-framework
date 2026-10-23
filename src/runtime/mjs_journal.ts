@@ -65,7 +65,13 @@
         } catch (e) { queued = false; }
       }
       if (!queued) {
-        fetch('/__mjs/errors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: true }).catch(function() {});
+        // réglages sans prototype : fetch() lit aussi les membres hérités (credentials, mode, referrerPolicy…)
+        var init = Object.create(null);
+        init.method    = 'POST';
+        init.headers   = { 'Content-Type': 'application/json' };
+        init.body      = json;
+        init.keepalive = true;
+        fetch('/__mjs/errors', init).catch(function() {});
       }
     } catch (e) { /* veilleur muet — jamais de crash en cascade */ }
   };

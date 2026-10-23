@@ -887,10 +887,136 @@
       "name": "meta.routes.modularjs"
     },
     {
+      "comment": "bloc <vars> : types et valeurs permises des variables, props et stores du composant, toujours avant le <script>",
+      "begin": "^[ \\t]*(<)(vars)\\b([^>]*)(>)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.vars.html"
+        },
+        "3": {
+          "patterns": [
+            {
+              "comment": "le compilateur refuse tout attribut sur ce bloc",
+              "match": "\\S(?:.*\\S)?",
+              "name": "invalid.illegal.attribute.vars.modularjs"
+            }
+          ]
+        },
+        "4": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "end": "(</)(vars)(>)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.vars.html"
+        },
+        "3": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#vars-body"
+        }
+      ],
+      "name": "meta.vars.modularjs"
+    },
+    {
+      "comment": "bloc <types> : regles nommees d'un fichier *.types.mjs",
+      "begin": "^[ \\t]*(<)(types)\\b([^>]*)(>)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.types.html"
+        },
+        "3": {
+          "patterns": [
+            {
+              "comment": "le compilateur refuse tout attribut sur ce bloc",
+              "match": "\\S(?:.*\\S)?",
+              "name": "invalid.illegal.attribute.types.modularjs"
+            }
+          ]
+        },
+        "4": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "end": "(</)(types)(>)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.types.html"
+        },
+        "3": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#types-body"
+        }
+      ],
+      "name": "meta.types.modularjs"
+    },
+    {
+      "comment": "bloc <effects> : les effets de l'appli, d'un fichier *.effects.mjs — *nom = *effet(réglages), ou *nom(réglages) = puis ses lignes CSS ($réglage, @keyframes)",
+      "begin": "^[ \\t]*(<)(effects)\\b([^>]*)(>)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.effects.html"
+        },
+        "3": {
+          "patterns": [
+            {
+              "comment": "le compilateur refuse tout attribut sur ce bloc",
+              "match": "\\S(?:.*\\S)?",
+              "name": "invalid.illegal.attribute.effects.modularjs"
+            }
+          ]
+        },
+        "4": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "end": "(</)(effects)(>)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.tag.effects.html"
+        },
+        "3": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#effects-body"
+        }
+      ],
+      "name": "meta.effects.modularjs"
+    },
+    {
       "include": "#include-macro"
     },
     {
-      "begin": "(</?)(@?[a-zA-Z0-9:_-]+)",
+      "begin": "(</?)(@{0,2}[a-zA-Z0-9:_-]+)",
       "beginCaptures": {
         "1": {
           "name": "punctuation.definition.tag.begin.html"
@@ -909,6 +1035,12 @@
       "patterns": [
         {
           "include": "#viewtransition-attribute"
+        },
+        {
+          "include": "#transition-attribute"
+        },
+        {
+          "include": "#effect-attribute"
         },
         {
           "begin": "(@)([a-zA-Z0-9_\\.-]+)(=)(['\"])",
@@ -1000,6 +1132,59 @@
       ]
     },
     {
+      "comment": "{? timer} — un morceau du HTML réservé à un modèle (layout) du composant",
+      "match": "(\\{)\\s*(\\?)\\s*([A-Za-z][\\w-]*(?:\\s*,\\s*[A-Za-z][\\w-]*)*)\\s*(\\})",
+      "captures": {
+        "1": {
+          "name": "punctuation.section.embedded.begin.modularjs"
+        },
+        "2": {
+          "name": "keyword.control.modularjs"
+        },
+        "3": {
+          "patterns": [
+            {
+              "match": "[A-Za-z][\\w-]*",
+              "name": "entity.name.type.layout.modularjs"
+            }
+          ]
+        },
+        "4": {
+          "name": "punctuation.section.embedded.end.modularjs"
+        }
+      }
+    },
+    {
+      "comment": "{await promesse *skeleton(réglages)} : le squelette d'attente est un effet, coloré comme sur une balise",
+      "begin": "(\\{)\\s*(await)\\b",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.section.embedded.begin.modularjs"
+        },
+        "2": {
+          "name": "keyword.control.modularjs"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.modularjs"
+        }
+      },
+      "contentName": "meta.embedded.expression.coffee",
+      "patterns": [
+        {
+          "include": "#effect-attribute"
+        },
+        {
+          "include": "#modular-vars"
+        },
+        {
+          "include": "source.coffee"
+        }
+      ]
+    },
+    {
       "begin": "\\{",
       "beginCaptures": {
         "0": {
@@ -1046,6 +1231,9 @@
       "patterns": [
         {
           "include": "#viewtransition-attribute"
+        },
+        {
+          "include": "#transition-attribute"
         },
         {
           "match": "(@)([a-zA-Z][a-zA-Z0-9_.-]*)(=)(['\\\"][^'\\\"]*['\\\"]|\\{[^}]*\\}|[^\\s>]+)",
@@ -1672,6 +1860,502 @@
               "name": "entity.other.attribute-name.modularjs"
             }
           }
+        }
+      ]
+    },
+    "vars-body": {
+      "patterns": [
+        {
+          "comment": "# hors d'une valeur et d'une forme /.../ : commentaire jusqu'en fin de ligne",
+          "match": "(#).*$",
+          "name": "comment.line.number-sign.vars.modularjs",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.comment.modularjs"
+            }
+          }
+        },
+        {
+          "comment": "$$nom en tete de ligne : un store",
+          "match": "(?:^|\\G)[ \\t]*(\\$\\$)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.directive.store.modularjs"
+            },
+            "2": {
+              "name": "variable.other.readwrite.store.modularjs"
+            }
+          }
+        },
+        {
+          "comment": "$nom en tete de ligne : une variable ou une prop",
+          "match": "(?:^|\\G)[ \\t]*(\\$)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.directive.reactive.modularjs"
+            },
+            "2": {
+              "name": "variable.other.readwrite.reactive.modularjs"
+            }
+          }
+        },
+        {
+          "include": "#rule-body"
+        }
+      ]
+    },
+    "types-body": {
+      "patterns": [
+        {
+          "comment": "# hors d'une valeur et d'une forme /.../ : commentaire jusqu'en fin de ligne",
+          "match": "(#).*$",
+          "name": "comment.line.number-sign.types.modularjs",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.comment.modularjs"
+            }
+          }
+        },
+        {
+          "comment": "Nom en tete de ligne : la regle nommee definie (jamais un mot de la grammaire, jamais un champ `nom :`)",
+          "match": "(?:^|\\G)[ \\t]*(?!(?:int|float|string|bool|any|true|false|null)\\b)([A-Za-z_][A-Za-z0-9_]*)(?![ \\t]*\\??[ \\t]*:)(?=[ \\t#]|$)",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.alias.modularjs"
+            }
+          }
+        },
+        {
+          "include": "#rule-body"
+        }
+      ]
+    },
+    "rule-body": {
+      "patterns": [
+        {
+          "comment": "champ d'objet : `nom:`, `nom?:` (facultatif), cle entre guillemets",
+          "match": "([A-Za-z_][A-Za-z0-9_]*|'(?:[^'\\\\]|\\\\.)*'|\\\"(?:[^\\\"\\\\]|\\\\.)*\\\")[ \\t]*(\\?)?[ \\t]*(:)",
+          "captures": {
+            "1": {
+              "name": "variable.other.property.modularjs"
+            },
+            "2": {
+              "name": "keyword.operator.optional.modularjs"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.modularjs"
+            }
+          }
+        },
+        {
+          "comment": "forme /.../drapeaux : la classe [...] peut porter / et #",
+          "match": "(/)((?:\\[(?:\\\\.|[^\\]\\\\])*\\]|\\\\.|[^/\\\\\\[])*)(/)([a-z]*)",
+          "name": "string.regexp.modularjs",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.string.begin.regexp.modularjs"
+            },
+            "3": {
+              "name": "punctuation.definition.string.end.regexp.modularjs"
+            },
+            "4": {
+              "name": "keyword.other.flag.regexp.modularjs"
+            }
+          }
+        },
+        {
+          "match": "'(?:[^'\\\\]|\\\\.)*'",
+          "name": "string.quoted.single.modularjs"
+        },
+        {
+          "match": "\"(?:[^\"\\\\]|\\\\.)*\"",
+          "name": "string.quoted.double.modularjs"
+        },
+        {
+          "match": "\\.\\.",
+          "name": "keyword.operator.range.modularjs"
+        },
+        {
+          "match": "-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)",
+          "name": "constant.numeric.modularjs"
+        },
+        {
+          "match": "\\b(?:int|float|string|bool|any)\\b",
+          "name": "support.type.primitive.modularjs"
+        },
+        {
+          "match": "\\b(?:true|false|null)\\b",
+          "name": "constant.language.modularjs"
+        },
+        {
+          "comment": "regle nommee citee (fichier *.types.mjs)",
+          "match": "[A-Za-z_][A-Za-z0-9_]*",
+          "name": "entity.name.type.modularjs"
+        },
+        {
+          "match": "\\|",
+          "name": "keyword.operator.union.modularjs"
+        },
+        {
+          "comment": "apres le ! : les valeurs interdites",
+          "match": "!",
+          "name": "keyword.operator.negation.modularjs"
+        },
+        {
+          "match": "\\[[ \\t]*\\]",
+          "name": "meta.brace.square.modularjs"
+        },
+        {
+          "match": "\\{",
+          "name": "punctuation.definition.block.begin.modularjs"
+        },
+        {
+          "match": "\\}",
+          "name": "punctuation.definition.block.end.modularjs"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.modularjs"
+        }
+      ]
+    },
+    "effect-attribute": {
+      "comment": "effet `*nom` ou `*nom(réglages)` (src/effects/catalog.ts) — une étoile collée au blanc qui la précède, jamais dans le texte d'une balise. Le rouge ne couvre que ce que le compilateur refuse : `*nom=…` (les réglages vont entre parenthèses) et une valeur calculée `{…}`",
+      "patterns": [
+        {
+          "match": "(?<=\\s|^)(\\*[A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?(?:\\([^)]*\\))?=)",
+          "captures": {
+            "1": {
+              "name": "invalid.illegal.effect.modularjs"
+            }
+          }
+        },
+        {
+          "begin": "(?<=\\s|^)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            },
+            "3": {
+              "name": "punctuation.definition.arguments.begin.modularjs"
+            }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.end.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        },
+        {
+          "match": "(?<=\\s|^)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs"
+        }
+      ]
+    },
+    "effect-args": {
+      "comment": "les réglages d'un effet : une variable (`$x`, `$$x`, couleurs du <script>), `nom:`, couleur, booléen, nombre ou durée, texte, liste `[…]` ; des parenthèses dans une valeur (`rgb(0, 255, 255)`) et les crochets d'une liste s'imbriquent ; un effet en valeur d'un réglage (`fx: *scramble(20)`) se colore comme un effet",
+      "patterns": [
+        {
+          "match": "\\{[^}]*\\}",
+          "name": "invalid.illegal.effect-value.modularjs"
+        },
+        {
+          "include": "#modular-vars"
+        },
+        {
+          "match": "([A-Za-z][\\w-]*)\\s*(:)",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.effect.modularjs"
+            },
+            "2": {
+              "name": "punctuation.separator.key-value.modularjs"
+            }
+          }
+        },
+        {
+          "begin": "(?<=[\\s:,(\\[])(\\*)([A-Za-z][\\w-]*)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            },
+            "3": {
+              "name": "punctuation.definition.arguments.begin.modularjs"
+            }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.end.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        },
+        {
+          "match": "(?<=[\\s:,(\\[])(\\*)([A-Za-z][\\w-]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs"
+        },
+        {
+          "match": "'[^']*'",
+          "name": "string.quoted.single.modularjs"
+        },
+        {
+          "match": "\"[^\"]*\"",
+          "name": "string.quoted.double.modularjs"
+        },
+        {
+          "match": "#[0-9a-fA-F]{3,8}\\b",
+          "name": "constant.other.color.modularjs"
+        },
+        {
+          "match": "\\b(?:true|false)\\b",
+          "name": "constant.language.boolean.modularjs"
+        },
+        {
+          "match": "(?<![\\w#])-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:ms|s|px|deg|%)?(?![\\w])",
+          "name": "constant.numeric.modularjs"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.modularjs"
+        },
+        {
+          "begin": "\\[",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.list.begin.modularjs"
+            }
+          },
+          "end": "\\]",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.list.end.modularjs"
+            }
+          },
+          "name": "meta.list.effect.modularjs",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        },
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        }
+      ]
+    },
+    "transition-attribute": {
+      "comment": "transition, un effet déclenché par le cycle de vie : `@in=*fly(…)`, `@out=*fade`, `@transition.global=*slide(x)` — la directive, puis l'effet peint comme un effet posé ; en rouge, l'écriture que le build refuse (`@in.fly`, le nom de l'effet après un point)",
+      "patterns": [
+        {
+          "match": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(\\.(?!global\\b|shared\\b)[A-Za-z_]\\w*)",
+          "name": "invalid.illegal.transition.modularjs"
+        },
+        {
+          "begin": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.symbol.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            },
+            "5": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "6": {
+              "name": "entity.name.function.effect.modularjs"
+            },
+            "7": {
+              "name": "punctuation.definition.arguments.begin.modularjs"
+            }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.end.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        },
+        {
+          "match": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.symbol.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            },
+            "5": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "6": {
+              "name": "entity.name.function.effect.modularjs"
+            }
+          },
+          "name": "meta.effect.modularjs"
+        }
+      ]
+    },
+    "effects-body": {
+      "comment": "le corps d'un bloc <effects> : la définition d'un effet (son nom, ses réglages et leur défaut, le = et l'effet qu'il règle), ses déclarations CSS, @keyframes et ses étapes",
+      "patterns": [
+        {
+          "begin": "^[ \\t]*(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            },
+            "3": {
+              "name": "punctuation.definition.arguments.begin.modularjs"
+            }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.arguments.end.modularjs"
+            }
+          },
+          "name": "meta.effect.definition.modularjs",
+          "patterns": [
+            {
+              "include": "#effect-args"
+            }
+          ]
+        },
+        {
+          "match": "^[ \\t]*(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.effect.modularjs"
+            },
+            "2": {
+              "name": "entity.name.function.effect.modularjs"
+            }
+          },
+          "name": "meta.effect.definition.modularjs"
+        },
+        {
+          "match": "(?<=\\s|\\))=(?=\\s|$)",
+          "name": "keyword.operator.assignment.modularjs"
+        },
+        {
+          "include": "#effect-attribute"
+        },
+        {
+          "match": "^[ \\t]*(@keyframes)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.at-rule.keyframes.css"
+            }
+          }
+        },
+        {
+          "match": "^[ \\t]*((?:from|to|\\d{1,3}(?:\\.\\d+)?%)(?:\\s*,\\s*(?:from|to|\\d{1,3}(?:\\.\\d+)?%))*)[ \\t]*$",
+          "captures": {
+            "1": {
+              "name": "entity.other.keyframe-offset.css"
+            }
+          }
+        },
+        {
+          "begin": "^[ \\t]*(-?[a-z][a-z0-9-]*)[ \\t]*(:)",
+          "beginCaptures": {
+            "1": {
+              "name": "support.type.property-name.css"
+            },
+            "2": {
+              "name": "punctuation.separator.key-value.css"
+            }
+          },
+          "end": "$",
+          "contentName": "meta.property-value.css",
+          "patterns": [
+            {
+              "match": "(\\$)([A-Za-z_][\\w-]*)",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.modularjs"
+                },
+                "2": {
+                  "name": "variable.parameter.effect.modularjs"
+                }
+              }
+            },
+            {
+              "match": "#[0-9a-fA-F]{3,8}\\b",
+              "name": "constant.other.color.modularjs"
+            },
+            {
+              "match": "(?<![\\w#])-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:ms|s|px|deg|%|em|rem|vw|vh)?(?![\\w])",
+              "name": "constant.numeric.modularjs"
+            },
+            {
+              "match": "[;{}]",
+              "name": "invalid.illegal.effect-value.modularjs"
+            }
+          ]
         }
       ]
     }

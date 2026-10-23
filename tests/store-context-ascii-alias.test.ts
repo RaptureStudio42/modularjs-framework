@@ -52,8 +52,8 @@ describe('normalizeContextAlias (__context / __shared, opt-in)', () => {
     assert.equal(n('__shared.user'), '§§user')
   })
   it('bout-en-bout : `__context.theme` → getContext, `__shared.user` → contexte réactif', () => {
-    assert.equal(tokenize(n('__context.theme')), "this._mjs_getContext('theme')")
-    assert.equal(tokenize(n('__shared.user')), "this._mjs_getRCtx('user')")
+    assert.equal(tokenize(n('__context.theme')), "_mjsThis._mjs_getContext('theme')")
+    assert.equal(tokenize(n('__shared.user')), "_mjsThis._mjs_getRCtx('user')")
   })
   it('NE touche pas un identifiant qui contient __context (frontière de mot)', () => {
     assert.equal(n('my__context.x'), 'my__context.x')

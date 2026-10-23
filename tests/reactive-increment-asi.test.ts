@@ -56,9 +56,9 @@ describe('$x++ — pas d\'instruction ouverte par une parenthèse (ASI)', () => 
     // `return $.x++` (dernière ligne d'une méthode), argument d'appel, condition :
     // le nœud n'ouvre jamais une instruction, la sémantique prime.
     assert.match(transformReactiveWrites(METHODE(`  return $.compteur++`)),
-      /return \(\(_v => \(µ\._set\(_mjsThis, 'compteur', \(\+_v\) \+ 1\), \+_v\)\)\(\$\.compteur\)\)/)
+      /return \(\(_v\) => \(µ\._set\(_mjsThis, 'compteur', \(\+_v\) \+ 1\), \+_v\)\)\(\$\.compteur\)/)
     assert.match(transformReactiveWrites(`notify($.compteur++)`),
-      /notify\(\(\(_v => /)
+      /notify\(\(\(_v\) => /)
     assert.match(transformReactiveWrites(`const y = ++$.compteur`),
       /const y = \(µ\._set\(_mjsThis, 'compteur', \(\+\$\.compteur\) \+ 1\), \$\.compteur\)/)
   })

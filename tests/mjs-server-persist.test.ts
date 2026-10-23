@@ -300,7 +300,7 @@ describe('MJS-Server — persistance (persist.ts/persist-file.ts/persist-bridge.
     const bidule = { load: async () => [], save: () => {}, remove: () => {} }
     assert.throws(
       () => resolvePersistOption({ adapter: bidule, debunce: 10 } as any),
-      (e: any) => /debunce/.test(e.message) && /tu voulais dire 'debounce'/.test(e.message),
+      (e: any) => /debunce/.test(e.message) && /vouliez-vous dire 'debounce'/.test(e.message),
     )
     assert.throws(
       () => resolvePersistOption({ adapter: { load: async () => [] } } as any),

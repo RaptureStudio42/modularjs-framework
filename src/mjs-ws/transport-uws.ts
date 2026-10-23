@@ -30,7 +30,9 @@ import { Buffer } from 'node:buffer'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { MjsWsConnection, MjsWsRemoteInfo, MjsWsTransport } from './transport.js'
-import { normalizeRemoteAddress } from './transport.js'
+import { createAddressResolver } from './trust-proxy.js'
+import { DEFAULT_MAX_PAYLOAD } from './transport.js'
+import type { MjsWsAddressResolver, MjsWsTrustProxy } from './trust-proxy.js'
 import { t } from '../messages/index.js'
 
 // --- forme minimale de l'API uWebSockets.js réellement consommée ici -------
@@ -73,6 +75,8 @@ export interface UwsListenSocket {}
 
 export interface UwsWebSocketBehavior {
   maxPayloadLength?: number
+  /** octets en attente d'envoi au-delà desquels uWS ABANDONNE lui-même une trame (retour 2 de `send`) — 64 Ko par défaut côté uWS */
+  maxBackpressure?: number
   idleTimeout?: number
   upgrade?(res: UwsHttpResponse, req: UwsHttpRequest, context: unknown): void
   open?(ws: UwsWebSocket): void
@@ -130,16 +134,28 @@ export interface UwsTransportOpts {
   socketMode?: number
   /** Taille max d'une trame, en octets — mjsWs() y câble `limits.maxPayload` (défaut local ci-dessous, pour un usage standalone). */
   maxPayload?: number
+  /** Octets en attente d'envoi au-delà desquels uWS abandonne une trame (`maxBackpressure`) — mjsWs() y câble
+   *  `limits.maxBuffered`, la même borne que la garde d'engorgement (défaut local ci-dessous, pour un usage standalone). */
+  maxBuffered?: number
+  /** Proxy inverse de confiance (cf. trust-proxy.ts) — mjsWs() y câble `opts.trustProxy`. Absent ou `false` : l'adresse
+   *  du visiteur reste celle de la socket. `'loopback'` ou une liste d'adresses/plages : les en-têtes X-Forwarded-For /
+   *  X-Real-IP d'un pair de confiance donnent l'adresse du visiteur. Sur une socket unix (`socketPath`), le pair n'a
+   *  aucune adresse : `'loopback'` le tient pour local, une liste ne le contient jamais. `true` est refusé (lève à la construction). */
+  trustProxy?: MjsWsTrustProxy
+  /** Avertisseur appelé UNE fois quand des en-têtes de proxy arrivent d'une adresse locale (socket unix comprise) alors que
+   *  `trustProxy` n'est pas réglé (mjsWs() y branche l'avertissement du journal). Sans effet quand `trustProxy` est réglé, `false` compris. */
+  onProxyHeaders?: () => void
   /** injection de test — court-circuite loadRealUws() (même esprit que WsCommandInjections.transport, cli/ws.ts) */
   uwsModule?: UwsModule
 }
 
-// défaut aligné sur DEFAULT_LIMITS.maxPayload (index.ts) — dupliqué ici en
-// LITTÉRAL pour ne pas créer de dépendance circulaire (index.ts importe ce
-// fichier) ; mjsWs() passe de toute façon limits.maxPayload RÉSOLU à chaque
+// défaut = DEFAULT_LIMITS.maxPayload (index.ts), une seule valeur (DEFAULT_MAX_PAYLOAD, transport.ts) ;
+// mjsWs() passe de toute façon limits.maxPayload RÉSOLU à chaque
 // construction via la chaîne 'uws' — ce défaut ne joue qu'en usage STANDALONE
 // (`new UwsTransport()` hors mjsWs(), ex. tests/usage programmatique direct).
-const DEFAULT_MAX_PAYLOAD = 65536
+// même chose pour DEFAULT_LIMITS.maxBuffered : sans lui, uWS garderait sa propre borne de 64 Ko, bien
+// sous celle de la garde d'engorgement (1 Mo), et abandonnerait des trames avant qu'elle ne les voie
+const DEFAULT_MAX_BUFFERED = 1048576
 
 // LES 108 OCTETS, ET LA RAISON DE LES COMPTER : l'adresse d'une socket unix tient dans un `sun_path`
 // de 108 octets — au-dela, le bind echoue SANS DIRE POURQUOI. Pris en defaut au banc,
@@ -159,6 +175,13 @@ const SUN_PATH_MAX = 108
 // d'autre. Le chmod porte sur une socket VIVANTE et ne la coupe pas (verifie au banc).
 const DEFAULT_SOCKET_MODE = 0o660
 
+// trame trop grande (au-delà de maxPayloadLength) : uWS coupe la connexion lui-même, sans trame de fermeture, et son
+// rappel `close` reçoit 1006, le code d'une coupure réseau ordinaire (« Received TCP FIN before WebSocket close frame ») ;
+// seul ce texte les distingue (relevé sur uWS v20.52.0, trame texte, binaire ou fragmentée) — rapportée au cœur en 1009,
+// comme par transport-ws.ts, elle compte pour la mise au banc, une coupure ordinaire jamais ; la variante
+// « …, or other inflation error » suppose la compression, jamais activée ici
+const UWS_TROP_GRANDE = 'Received too big message'
+
 class UwsConnection implements MjsWsConnection {
   onMessage: ((data: string | Uint8Array) => void) | null = null
   onClose: ((code: number, reason: string) => void) | null = null
@@ -174,20 +197,20 @@ class UwsConnection implements MjsWsConnection {
     return this._closed ? 0 : this._ws.getBufferedAmount()
   }
 
-  send(data: string | Uint8Array): void {
-    if (this._closed) return
+  send(data: string | Uint8Array): boolean {
+    if (this._closed) return true
     try {
       // code retour uWS : 1 succès, 0 mis en file (contre-pression en cours, sera livré),
-      // 2 abandonné (au-delà de maxBackpressure, 64 Ko par défaut côté uWS — PLUS PETIT que
-      // limits.maxBuffered, 1 Mo par défaut côté MJS-WS : un send() encore accepté par le
-      // pré-check de guard.ts peut donc, plus rarement, revenir 2 ICI). Silencieux dans tous
-      // les cas — même politique que le catch de transport-ws.ts : guard.ts compte déjà la
-      // contre-pression au niveau core, pas ici.
+      // 2 abandonné (au-delà de maxBackpressure, câblé sur limits.maxBuffered : la garde de core.ts
+      // voit d'ordinaire l'engorgement avant uWS, mais un transport construit à la main avec une autre
+      // borne peut revenir 2 ICI). `false` = abandonnée : core.ts la compte rejetée, comme une trame
+      // jetée par sa propre garde, jusqu'à l'expulsion pour engorgement — sinon la trame disparaissait
+      // sans compte et le client lent n'était jamais expulsé.
       // isBinary (µschema) — `true` pour un Uint8Array, jamais déduit autrement :
       // MÊME détection que transport-ws.ts (`typeof data !== 'string'`), explicite ici car
       // l'API uWS l'exige en 2e argument (pas d'auto-détection côté natif).
-      this._ws.send(data, typeof data !== 'string')
-    } catch { /* ws invalide entre le check `_closed` et l'appel (fermeture concurrente côté natif) — silencieux, même politique que transport-ws.ts */ }
+      return this._ws.send(data, typeof data !== 'string') !== 2
+    } catch { return true /* ws invalide entre le check `_closed` et l'appel (fermeture concurrente côté natif) — silencieux, même politique que transport-ws.ts */ }
   }
 
   close(code?: number, reason?: string): void {
@@ -206,8 +229,13 @@ export class UwsTransport implements MjsWsTransport {
   private _handler: ((conn: MjsWsConnection) => void) | null = null
   private _uws: UwsModule | null = null
   private _listenToken: UwsListenSocket | null = null
+  // l'adresse retenue pour une connexion (socket, ou visiteur annoncé par un proxy de confiance) — lève ICI sur un trustProxy faux
+  private _addressOf: MjsWsAddressResolver
 
-  constructor(opts: UwsTransportOpts = {}) { this._opts = opts }
+  constructor(opts: UwsTransportOpts = {}) {
+    this._opts      = opts
+    this._addressOf = createAddressResolver(opts.trustProxy, opts.onProxyHeaders)
+  }
 
   onConnection(handler: (conn: MjsWsConnection) => void): void { this._handler = handler }
 
@@ -217,6 +245,7 @@ export class UwsTransport implements MjsWsTransport {
 
     app.ws('/*', {
       maxPayloadLength: this._opts.maxPayload ?? DEFAULT_MAX_PAYLOAD,
+      maxBackpressure:  this._opts.maxBuffered ?? DEFAULT_MAX_BUFFERED,
       // watchdog NATIF désactivé — core.ts a DÉJÀ son propre Watchdog (heartbeat × 2.5,
       // guard.ts), SEULE autorité d'inactivité pour TOUS les transports (WsTransport n'a pas
       // non plus de kill natif — `ws` ne le propose même pas). Choix retenu = LE PLUS SÛR :
@@ -233,8 +262,9 @@ export class UwsTransport implements MjsWsTransport {
         // décodage Buffer.from(ArrayBuffer).toString('utf8'), MÊME technique que message/close plus
         // bas — chaîne vide (aucune IP, ex. connexion interne exotique) repliée sur `undefined`,
         // jamais comptée par le plafond par IP (cf. MjsWsRemoteInfo.address) ; normalisée à
-        // la source, symétrie stricte avec transport-ws.ts — cf. transport.ts::normalizeRemoteAddress
-        const address = normalizeRemoteAddress(Buffer.from(res.getRemoteAddressAsText()).toString('utf8') || undefined)
+        // la source, symétrie stricte avec transport-ws.ts — cf. transport.ts::normalizeRemoteAddress ;
+        // un proxy déclaré de confiance (opts.trustProxy) donne l'adresse du visiteur à la place de la sienne
+        const address = this._addressOf(Buffer.from(res.getRemoteAddressAsText()).toString('utf8') || undefined, headers)
         const remoteInfo: MjsWsRemoteInfo = { origin: req.getHeader('origin') || undefined, headers, address }
         res.upgrade({ remoteInfo } as UwsUserData, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context)
       },
@@ -257,7 +287,9 @@ export class UwsTransport implements MjsWsTransport {
         const conn = ws.getUserData().conn
         if (!conn) return
         conn._markClosed()   // AVANT tout — cf. PIÈGE MAJEUR (commentaire de tête)
-        if (conn.onClose) conn.onClose(code, Buffer.from(message).toString('utf8'))
+        const raison = Buffer.from(message).toString('utf8')
+        // trame trop grande : 1009 pour le cœur, comme sous `ws` — cf. UWS_TROP_GRANDE
+        if (conn.onClose) conn.onClose(code === 1006 && raison === UWS_TROP_GRANDE ? 1009 : code, raison)
       },
       drain: () => {
         // MjsWsConnection n'expose pas de callback drain — guard.ts (core.ts) relit

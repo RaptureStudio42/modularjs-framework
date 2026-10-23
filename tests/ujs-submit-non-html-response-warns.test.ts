@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -67,7 +68,9 @@ function makeSubmitHandler(µ: any, win: any, doc: any, FormDataCtor: any, URLCt
   // résout directement `document.body`, sans jamais consulter de sélecteur ni
   // avertir (l'avertissement « cible introuvable » ne concerne QUE un `target`
   // fourni et non résolu — inatteignable ici). Rien à neutraliser.
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, doc, win)
+  poserMessages(µ)
   new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FormDataCtor, URLCtor, DOMParserCtor)
   const body = extractSubmitBody(UJS_SRC)
   return new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', body)

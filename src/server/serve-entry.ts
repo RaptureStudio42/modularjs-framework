@@ -20,7 +20,7 @@ import { resolve, dirname } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { MjsConfig } from '../bundler/config.js'
 import { importEntryModule, WATCHED_EXT, RELOAD_DEBOUNCE_MS } from '../cli/ws.js'
-import { matchPattern } from './render-routes.js'
+import { matchPattern, patternsBySpecificity } from './render-routes.js'
 import type { RecordServerFn } from './journal.js'
 import { t } from '../messages/index.js'
 
@@ -57,14 +57,10 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-// tri par spécificité — MÊME critère que resolvePage (render-routes.ts) : segments littéraux
-// décroissants puis longueur (un motif '/x/:id' cède la place à '/x/edit' si les deux matchent).
-function staticSegs(pattern: string): number {
-  return pattern.split('/').filter(s => s && s[0] !== ':' && s !== '*').length
-}
+// tri par spécificité — MÊME logique, mémoïsée, que resolvePage (render-routes.ts) : segments littéraux décroissants puis
+// longueur (un motif '/x/:id' cède la place à '/x/edit' si les deux matchent)
 function findMatch(table: RouteTable, pathname: string): Match | null {
-  const patterns = Object.keys(table).sort((a, b) => staticSegs(b) - staticSegs(a) || b.length - a.length)
-  for (const pattern of patterns) {
+  for (const pattern of patternsBySpecificity(table)) {
     const params = matchPattern(pattern, pathname)
     if (params) return { fn: table[pattern], params }
   }

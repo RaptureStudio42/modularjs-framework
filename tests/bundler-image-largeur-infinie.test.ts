@@ -7,7 +7,7 @@
 //
 // Fix : toute largeur non finie est refusée AU NIVEAU DU BUNDLER, avec un message ModularJS
 // clair qui nomme l'image et la largeur — la garde ne dépend d'aucune validation faite ailleurs
-// (`<@img widths="…">` a la sienne, dans le transpiler).
+// (`<@@img widths="…">` a la sienne, dans le transpiler).
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'

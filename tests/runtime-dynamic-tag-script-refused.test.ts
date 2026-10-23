@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // _updDynEl/_updModule vivent désormais dans mjs_dynamic.ts (DÉTACHÉ de mjs_runes.ts,
@@ -38,6 +39,7 @@ function makeRunes(): { µ: any; window: any; document: any; warnCalls: any[][] 
   const document: any = window.document
   const warnCalls: any[][] = []
   const µ: any = { log() {}, error() {}, warn(...args: any[]) { warnCalls.push(args) } }
+  poserMessages(µ)
   new Function('µ', 'document', runesSrc)(µ, document)
   new Function('µ', 'document', dynamicSrc)(µ, document)
   return { µ, window, document, warnCalls }
@@ -137,7 +139,9 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
     _mjs_epochs: new WeakMap(),
     activeComponent: null,
   }
+  poserMessages(µ)
   µ._mjs_toRaw = function(o: any) { while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW]; return o }
+  µ._mjs_rawIn = (v: any) => Array.isArray(v = µ._mjs_toRaw(v)) && v.some((e: any) => e !== µ._mjs_toRaw(e)) ? v.map(µ._mjs_toRaw) : v
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }
   new Function('µ', storeSrc)(µ)
@@ -198,6 +202,7 @@ describe('µ.Store refuse __proto__/constructor/prototype (mjs_store.ts)', () =>
 // fonction hissées, résolues quel que soit l'ordre).
 function makeSchemaApi(): any {
   const µ: any = { log() {}, error() {}, warn() {} }
+  poserMessages(µ)
   const body = schemaSrc + '\nreturn { mjschemaCreerRegistre: mjschemaCreerRegistre, mjschemaDefSchema: mjschemaDefSchema, mjschemaEncode: mjschemaEncode, mjschemaDecode: mjschemaDecode, mjschemaHashRegistre: mjschemaHashRegistre };'
   return new Function('µ', body)(µ)
 }

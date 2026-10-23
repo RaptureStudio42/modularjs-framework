@@ -15,11 +15,17 @@
 
 import { readFileSync, existsSync, realpathSync } from 'node:fs'
 import { join, dirname, resolve, basename, isAbsolute, sep } from 'node:path'
-import { extractSections, type SectionsResult } from './sections.js'
+import { extractSections, masqueValeursAttributs, type SectionsResult } from './sections.js'
+import { maskHtmlComments } from '../mask.js'
 import { dedent } from '../generator/state.js'
 import { t } from '../messages/index.js'
-import { findMacroTagEnd } from './macro-tag.js'
+import { typedLine, type LintToggles } from '../diagnostics.js'
+import { findMacroTagEnd, asciiLower } from './macro-tag.js'
 import { lintSplitRune } from './split-rune.js'
+import { parseEffect, effectSpec, removedEffectError } from '../effects/catalog.js'
+import { aliasExample } from '../effects/aliases-mjs.js'
+import { settingsComment } from '../effects/settings-comment.js'
+import { expandLayoutBlocks } from '../parser/index.js'
 
 export interface IncludeAccumulator {
   /** CSS partials inlinés (concaténé au <style> du parent). */
@@ -129,13 +135,17 @@ export function processIncludes(
   baseDir: string | undefined,
   acc: IncludeAccumulator,
   sourceDir?: string,
-  lint: { sigil?: string, scriptLang?: string, moduleLang?: string } = {}
+  lint: { sigil?: string, scriptLang?: string, moduleLang?: string } = {},
+  // coupe individuellement l'avertissement `[lint.include]` ci-dessous (mjs.config.json
+  // `lint.include`) — SANS RAPPORT avec `lint` ci-dessus (sigil/langue des sections incluses)
+  lintTypes?: LintToggles
 ): string {
   if (!baseDir) {
     // Sans baseDir on ne peut pas trouver les fichiers partials → retiré, mais SIGNALÉ
     // (avant : strip totalement silencieux, cf. plus haut).
     const out = html.replace(INCLUDE_RE, (_match, target: string) => {
-      acc.warnings.push(t('transpiler.include-sans-basedir', { target }))
+      const w = typedLine('include', t('transpiler.include-sans-basedir', { target }), lintTypes)
+      if (w !== null) acc.warnings.push(w)
       return ''
     })
     reportMalformedIncludes(out, acc.errors)
@@ -157,6 +167,10 @@ export function processIncludes(
     if (!s) {
       try {
         s = extractSections(readFileSync(partialPath, 'utf-8'))
+        if (s.vars || s.types.length > 0 || s.effects.length > 0) throw new Error(t('transpiler.include-vars'))
+        // les blocs `{? nom}` du partiel, vérifiés ici : une faute y est citée à sa ligne du partiel, le
+        // HTML recollé dans le composant n'a plus les lignes du fichier (le résultat n'est pas gardé)
+        expandLayoutBlocks(s.html, s.htmlStartLine)
       } catch (e: any) {
         throw new Error(`<@include ${target}> : ${e?.message ?? e}`)
       }
@@ -203,7 +217,7 @@ export function processIncludes(
       acc.expanding = acc.expanding ?? new Set()
       acc.expanding.add(key)
       try {
-        return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint)
+        return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes)
       } finally {
         acc.expanding.delete(key)
       }
@@ -247,7 +261,7 @@ export function processIncludes(
     }
 
     // Récursion : un partial peut lui-même <@include …>
-    return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint)
+    return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes)
   })
   reportMalformedIncludes(out, acc.errors)
   return out
@@ -298,7 +312,18 @@ export interface GlobalMacrosResult {
    * `TranspileData.macroErrors` ; le bundler fait déjà échouer le build si
    * non vide (bundler/index.ts). */
   errors: string[]
+  /** Avertissements (non fatals) : un `<script>` exécutable écrit dans <@head>, que le navigateur n'exécutera jamais —
+   * versés dans `TranspileData.sectionWarnings`, comme ceux des sections. */
+  warnings: string[]
+  /** les effets en direct de <@document> qui prennent leur connexion dans `@sock` (aucune écrite) : le
+   * <script> du composant doit le poser — vérifié par le transpileur, une fois le script compilé */
+  docSock: string[]
+  /** un alias d'effet de l'appli (`*ripple.rouge`) posé sur <@document> : le composant dépend du fichier qui le déclare */
+  usesProjectEffects: boolean
 }
+
+// les effets qui se posent sur <@document> : ceux de toute la page (la souris, la langue, les autres visiteurs)
+const DOC_EFFECTS = ['ripple', 'lang', 'cursors', 'offline', 'react', 'follow', 'heatmap', 'pointer', 'spotlight']
 
 const TARGETS: Record<string, string> = {
   window:   'window',
@@ -348,7 +373,7 @@ const ST_QUOTED    = 2   // intérieur d'une valeur d'attribut entre guillemets
 const ST_COMMENT   = 3   // commentaire `<!-- -->`
 const ST_TAG_NAME  = 4   // expression en position de NOM DE BALISE (`<{$tag}>`)
 const ST_BARE      = 5   // intérieur d'une valeur d'attribut NUE (sans guillemets)
-const ST_AUTOQUOTE = 6   // expression qui EST la valeur (premier caractère non blanc après le `=`)
+const ST_AUTOQUOTE = 6   // expression qui EST la valeur (premier caractère non blank après le `=`)
 
 // Blanc au sens HTML5 (espace, tabulation, saut de ligne, saut de page, retour chariot) — et RIEN
 // d'autre : `\s` en JavaScript y ajoute l'espace insécable, le BOM et U+2028, que le tokeniseur d'un
@@ -393,7 +418,7 @@ function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
   let mode     = 'name'
   let quote    = ''
   let token    = -1      // début du nom d'attribut courant, -1 si aucun n'est en cours
-  let apresNom = false   // un nom d'attribut a été lu PUIS clos par un blanc (son `=` reste ouvreur)
+  let apresNom = false   // un nom d'attribut a été lu PUIS clos par un blank (son `=` reste ouvreur)
   let i        = 0
   while (i < str.length) {
     const c = str[i]
@@ -653,7 +678,7 @@ function reportBareInterpolation(s: string, state: Uint8Array, attr: Int32Array,
 //
 // Reste licite : `attr={expr}` / `attr={{expr}}` en valeur d'attribut (le compilateur met CETTE
 // valeur entre guillemets), toute valeur entre guillemets simples ou doubles, et l'interpolation en
-// texte, dans un commentaire ou dans un `<style>`/`<script>` (masqués, jamais interpolés).
+// texte, dans un commentaire ou dans le contenu d'un `<style>`/`<script>` (masqué, jamais interpolé).
 //
 // REFUS et ÉMISSION lisent le MÊME texte, aux positions d'UNE SEULE passe du tokeniseur : les
 // guillemets d'une valeur auto-quotée sont posés à l'émission, jamais par une réécriture du source.
@@ -672,9 +697,11 @@ function buildHeadInjection(content: string, macro: 'head' | 'failed', errors: s
   // <style>/<script> n'ont jamais supporté l'interpolation `{$x}` dans <@head>,
   // aucune régression de feature.
   const blocks: string[] = []
-  const premasked = content.replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => {
-    blocks.push(m)
-    return `\x00MJSHEADLIT${blocks.length - 1}\x00`
+  // le CONTENU seul : la balise ouvrante se lit comme les autres (`<script src={$cdn}>` reçoit son adresse, au lieu
+  // de partir avec le texte `{$cdn}`)
+  const premasked = content.replace(/(<(style|script)\b[^>]*>)([\s\S]*?)(<\/\2>)/gi, (_m, open: string, _nom: string, inner: string, close: string) => {
+    blocks.push(inner)
+    return `${open}\x00MJSHEADLIT${blocks.length - 1}\x00${close}`
   })
   const restore = (str: string): string =>
     blocks.length ? str.replace(/\x00MJSHEADLIT(\d+)\x00/g, (_m, i) => blocks[Number(i)]) : str
@@ -716,6 +743,17 @@ function buildHeadInjection(content: string, macro: 'head' | 'failed', errors: s
   const queue = prefixe + premasked.slice(last)
   if (queue) parts.push(quoteHeadLiteral(restore(queue)))
   return parts.length ? parts.join(' + ') : "''"
+}
+
+// `<script>` que le navigateur exécuterait, d'après les attributs de sa balise ouvrante : type absent ou vide, JavaScript,
+// module, importmap, speculationrules. Tout autre type (application/ld+json…) est une donnée ; un type calculé
+// (`type={…}`) n'est connu qu'à l'exécution, rien n'est dit
+function headScriptRuns(attrs: string): boolean {
+  const m = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(attrs)
+  if (!m) return true
+  const type = (m[1] ?? m[2] ?? m[3]).trim().toLowerCase()
+  if (type.includes('{')) return false
+  return /^(|module|importmap|speculationrules|(text|application)\/(x-)?(java|ec)script|text\/(jscript|livescript|javascript1\.[0-5]))$/.test(type)
 }
 
 // compileFailedBlock : compile le contenu d'un <@failed args>…</@failed> en une
@@ -855,6 +893,100 @@ function reportUnclosedMacroTag(errors: string[], macro: string, html: string, i
   errors.push(msg)
 }
 
+// effets `*nom(…)` écrits sur une balise du langage (`<@window>`, `<@element>`…) : retirés des
+// attributs et signalés — un effet se pose sur une balise HTML ou un composant. `keep(nom,
+// réglages)`, si fourni, reçoit l'effet à la place du refus (les effets de souris de
+// `<@document>`). Même lecture que findMacroTagEnd : guillemets reconnus hors accolade seulement,
+// dans une accolade la profondeur seule compte ; une étoile collée à ce qui précède n'est pas un
+// effet. Une parenthèse séparée du nom par un blanc (`*ripple (color: red)`) est refusée comme sur
+// une balise HTML, ses réglages seraient perdus : `lineAt(position)` donne la ligne du .mjs d'une
+// position des attributs, null quand elle n'est pas celle du fichier du composant. Sur une balise qui ne
+// garde aucun effet (`<@window>`), l'espace et l'effet qui ne s'y pose pas sont dits tous les deux. Un
+// texte resté ouvert dans les réglages (une apostrophe dans un mot, un guillemet double) est dit comme
+// tel, pas comme une parenthèse oubliée
+function stripEffects(attrs: string, macro: string, errors: string[], keep: ((name: string, raw: string) => void) | undefined, lineAt: (offset: number) => number | null): string {
+  let out   = ''
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < attrs.length; i++) {
+    const ch = attrs[i]
+    if (quote) {
+      if (ch === quote) quote = ''
+    }
+    else if (depth > 0) {
+      if (ch === '{') depth++
+      else if (ch === '}') depth--
+    }
+    else if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '{') depth++
+    else if (ch === '*' && (i === 0 || /\s/.test(attrs[i - 1]))) {
+      const m = /^\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)/.exec(attrs.slice(i))
+      if (m) {
+        let end = i + m[0].length
+        // la parenthèse détachée est lue comme les autres : ses réglages ne restent pas parmi les attributs
+        const blank = /^\s+(?=\()/.exec(attrs.slice(end))
+        if (blank) end += blank[0].length
+        let raw        = ''
+        let note       = ''
+        const settings = attrs[end] === '('
+        if (settings) {
+          // réglages lus comme sur une balise : une parenthèse dans un texte (`color: ')'`) ne compte
+          // pas ; jamais refermée, elle est signalée (sa dernière lettre n'est plus mangée)
+          const from = end + 1
+          let open   = 0
+          let inText = ''
+          let closed = false
+          for (; end < attrs.length; end++) {
+            const c = attrs[end]
+            if (inText) {
+              if (c === '\\') end++
+              else if (c === inText) inText = ''
+            }
+            else if (c === '"' || c === "'") inText = c
+            else if (c === '(') open++
+            else if (c === ')' && --open === 0) { end++; closed = true; break }
+          }
+          if (!closed) {
+            errors.push(t(inText === '"' ? 'effets.guillemet-ouvert' : inText ? 'effets.texte-ouvert' : 'effets.parenthese', { nom: m[1], balise: macro }))
+            end = attrs.length
+          }
+          raw = closed ? attrs.slice(from, end - 1) : attrs.slice(from)
+          // un commentaire dans les réglages se lirait comme une valeur : refusé, avec sa ligne
+          const found = settingsComment(raw)
+          if (found) note = t('effets.commentaire', { nom: m[1], ligne: lineAt(from + found.at) ?? '', commentaire: found.text })
+        }
+        // un point derrière l'effet n'est le nom d'aucun alias (`*ripple .rouge`, `*ripple.rouge(size: 30).x`) : dit comme sur une balise
+        const stray = (settings ? /^(\s*)(\.[\w.-]*)/ : /^(\s+)(\.[\w.-]*)/).exec(attrs.slice(end))
+        // un effet inconnu est refusé d'abord, par son nom (`*rippel .rouge`) : son point ne dit rien
+        const dot   = stray && (effectSpec(m[1]) || effectSpec(m[1].split('.')[0])) ? stray : null
+        const gone  = removedEffectError(m[1], raw)
+        if (gone) errors.push(gone)
+        else {
+          if (blank) errors.push(t('effets.espace', { nom: m[1], ligne: lineAt(i) ?? '' }))
+          if (dot) errors.push(t(settings ? 'effets.point-reglages' : 'effets.point-espace', { nom: m[1], blanc: dot[1] ? ' ' : '', point: dot[2], exemple: aliasExample(m[1].split('.')[0]), ligne: lineAt(i) ?? '' }))
+          if (!keep) errors.push(t('effets.balise-speciale', { nom: m[1], balise: macro }))
+          else if (!blank && !dot) {
+            if (note) errors.push(note)
+            else keep(m[1], raw)
+          }
+        }
+        if (stray) end += stray[0].length
+        i = end - 1
+        continue
+      }
+      // une étoile et un point, sans nom d'effet entre eux (`*.rouge`) : l'effet manque, il ne reste pas parmi les attributs
+      const bare = /^\*(\.[\w.-]*)/.exec(attrs.slice(i))
+      if (bare) {
+        errors.push(t('effets.point-sans-effet', { point: bare[1], ligne: lineAt(i) ?? '' }))
+        i += bare[0].length - 1
+        continue
+      }
+    }
+    out += ch
+  }
+  return out
+}
+
 // replaceOpenTag — remplace chaque balise ouvrante `<@name …>` (insensible à
 // la casse) par `cb(attrs, wholeTag)`. `attrs` = tout ce qui suit le nom
 // jusqu'au `>` réel (via findMacroTagEnd) — BYTE-IDENTIQUE à ce que
@@ -884,10 +1016,12 @@ function replaceOpenTag(
   name: string,
   requireLeadingSpace: boolean,
   errors: string[],
-  cb: (attrs: string, wholeTag: string) => string
+  cb: (attrs: string, wholeTag: string) => string,
+  keep: ((name: string, raw: string, line: () => number | null) => void) | undefined,
+  tagLine: (tag: string) => number | null
 ): string {
   const needle = `<@${name}`.toLowerCase()
-  const lower = html.toLowerCase()
+  const lower = asciiLower(html)
   let out = ''
   let pos = 0
   for (;;) {
@@ -898,8 +1032,21 @@ function replaceOpenTag(
     const boundaryOk = requireLeadingSpace ? (boundary !== undefined && (/\s/.test(boundary) || boundary === '>' || boundary === '/')) : (boundary === undefined || /[\s/>]/.test(boundary))
     const tagEnd = boundaryOk ? findMacroTagEnd(html, nameEnd) : -1
     if (tagEnd === -1) { if (boundaryOk) reportUnclosedMacroTag(errors, name, html, idx); out += html.slice(pos, idx + 1); pos = idx + 1; continue }
-    out += html.slice(pos, idx) + cb(html.slice(nameEnd, tagEnd), html.slice(idx, tagEnd + 1))
+    const tag = html.slice(idx, tagEnd + 1)
+    const lineAt = effectLineAt(tag, nameEnd - idx, tagLine)
+    out += html.slice(pos, idx) + cb(stripEffects(html.slice(nameEnd, tagEnd), name, errors, keep && ((n, r) => keep(n, r, () => lineAt(0))), lineAt), tag)
     pos = tagEnd + 1
+  }
+}
+
+// la ligne du .mjs d'une position des attributs d'une balise du langage, cherchée seulement quand une
+// erreur la demande (`tagLine` avance un curseur, une balise sans faute ne le touche pas) ; `shiftBy` :
+// où commencent les attributs dans la balise ; null quand la balise ne se situe pas dans le fichier
+function effectLineAt(tag: string, shiftBy: number, tagLine: (tag: string) => number | null): (offset: number) => number | null {
+  let base: number | null | undefined
+  return (offset: number): number | null => {
+    if (base === undefined) base = tagLine(tag)
+    return base === null ? null : base + countNewlines(tag.slice(0, shiftBy + offset))
   }
 }
 
@@ -917,11 +1064,12 @@ function replacePairedTag(
   name: string,
   errors: string[],
   cb: (attrs: string, content: string) => string,
-  onSelfClose?: (attrs: string) => string
+  onSelfClose: ((attrs: string) => string) | undefined,
+  tagLine: (tag: string) => number | null
 ): string {
   const openNeedle = `<@${name}`.toLowerCase()
   const closeNeedle = `</@${name}>`.toLowerCase()
-  const lower = html.toLowerCase()
+  const lower = asciiLower(html)
   let out = ''
   let pos = 0
   for (;;) {
@@ -932,7 +1080,7 @@ function replacePairedTag(
     const boundaryOk = boundary === undefined || /[\s/>]/.test(boundary)
     const tagEnd = boundaryOk ? findMacroTagEnd(html, nameEnd) : -1
     if (tagEnd === -1) { if (boundaryOk) reportUnclosedMacroTag(errors, name, html, idx); out += html.slice(pos, idx + 1); pos = idx + 1; continue }
-    const attrs = html.slice(nameEnd, tagEnd)
+    const attrs = stripEffects(html.slice(nameEnd, tagEnd), name, errors, undefined, effectLineAt(html.slice(idx, tagEnd + 1), nameEnd - idx, tagLine))
     if (onSelfClose && attrs.endsWith('/')) {
       out += html.slice(pos, idx) + onSelfClose(attrs.slice(0, -1))
       pos = tagEnd + 1
@@ -945,7 +1093,7 @@ function replacePairedTag(
   }
 }
 
-export function processGlobalMacros(html: string, opts: { firstLine?: number; sigil?: 'µ' | 'mjs' } = {}): GlobalMacrosResult {
+export function processGlobalMacros(html: string, opts: { firstLine?: number; sigil?: 'µ' | 'mjs'; sourceHtml?: string } = {}): GlobalMacrosResult {
   // ligne du .mjs où commence CE html (section HTML, cf. extractSections().htmlStartLine) : sert à
   // citer un numéro de ligne juste dans les erreurs de <@head>/<@failed>. 1 par défaut. `sigil` =
   // symbole du projet, pour rendre dans ces mêmes messages le `mjs.`/`mjs$` tapé par l'auteur (le
@@ -961,6 +1109,7 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   const teardownLines: string[] = []
   // Erreurs de compile des liaisons class/style (cf. parseStyling plus bas).
   const errors: string[] = []
+  const warnings: string[] = []
 
   // Ligne du .mjs où commence le contenu (TRIMMÉ) d'un bloc <@head>/<@failed>. `cleaned` a pu être
   // réécrit avant que le bloc soit atteint (commentaire à pseudo-directive retiré, <@failed> déjà
@@ -975,6 +1124,21 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     if (at === -1) return firstLine
     lineCursor[macro] = at + trimmed.length
     return firstLine + countNewlines(html.slice(0, at))
+  }
+
+  // la ligne du .mjs d'une balise du langage, cherchée dans le HTML d'origine : `cleaned` a perdu les
+  // lignes des blocs retirés avant elle. Un curseur par texte de balise : la même balise écrite deux fois
+  // se retrouve dans l'ordre. Seul le HTML du composant (`sourceHtml`, avant les partiels) a les lignes du
+  // fichier : une balise absente de ce texte vient d'un partiel, et un texte de balise que le composant
+  // et un partiel écrivent à l'identique ne se départage pas — null dans les deux cas, jamais une ligne inventée
+  const tagCursor: Record<string, number> = {}
+  const tagLine = (tag: string): number | null => {
+    const source = opts.sourceHtml ?? html
+    if (source.split(tag).length !== html.split(tag).length) return null
+    const at = source.indexOf(tag, tagCursor[tag] ?? 0)
+    if (at === -1) return null
+    tagCursor[tag] = at + tag.length
+    return firstLine + countNewlines(source.slice(0, at))
   }
 
   // Généralisation de la règle <@include nom/> (slash
@@ -1005,7 +1169,7 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   // `<@…>` (ex. un commentaire explicatif citant `<@failed>`), sinon les regex
   // de macros ci-dessous matcheraient À L'INTÉRIEUR du commentaire. Les
   // commentaires normaux (sans `<@`) sont préservés.
-  cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, c => (/<@\w/.test(c) ? '' : c))
+  cleaned = cleaned.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, c => (/<@\w/.test(c) ? '' : c))
 
   // Parse les @event={handler} d'un tag macro → addEventListener/removeEventListener.
   const parseListeners = (attrs: string, targetJs: string) => {
@@ -1111,8 +1275,38 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       }
     }
 
+    // valeurs `={…}`/`=!{…}` blanchies (accolades équilibrées, même longueur) : seuls les NOMS d'attributs sont lus
+    // comme des événements — le `@y` de `scrollY=!{@y}` posait sinon un écouteur fantôme `addEventListener('y', …)`.
+    // Les corps des écouteurs se relisent sur `attrs`, aux mêmes positions
+    let noms = ''
+    for (let i = 0; i < attrs.length; ) {
+      if (attrs[i] === '=' && (attrs[i + 1] === '{' || (attrs[i + 1] === '!' && attrs[i + 2] === '{'))) {
+        const start = attrs[i + 1] === '{' ? i + 2 : i + 3
+        let k = start, depth = 1
+        while (k < attrs.length) {
+          if (attrs[k] === '{') depth++
+          else if (attrs[k] === '}' && --depth === 0) break
+          k++
+        }
+        noms += attrs.slice(i, start) + ' '.repeat(k - start) + attrs.slice(k, k + 1)
+        i = k + 1
+        continue
+      }
+      // `="…"` / `='…'` refermée : une valeur littérale, jamais un nom d'événement (le `@foo` de `title="@foo"`)
+      if (attrs[i] === '=' && (attrs[i + 1] === '"' || attrs[i + 1] === "'")) {
+        const k = attrs.indexOf(attrs[i + 1], i + 2)
+        if (k > -1) {
+          noms += attrs.slice(i, i + 2) + ' '.repeat(k - (i + 2)) + attrs[k]
+          i = k + 1
+          continue
+        }
+      }
+      noms += attrs[i]
+      i++
+    }
+
     let m: RegExpExecArray | null
-    while ((m = evRe.exec(attrs)) !== null) {
+    while ((m = evRe.exec(noms)) !== null) {
       const ev = m[1]
       const after = m.index + m[0].length
       // Forme abrégée : pas de `={...}` → handler = fonction du nom de l'event.
@@ -1169,7 +1363,7 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
         emitSource = handler
       }
       const fnId = `gl_${(counter++).toString(36)}`
-      setupLines.push(`@_${fnId} = (e, _) =>`)
+      setupLines.push(`@_${fnId} = (e, _mjs_el) =>`)
       // Émission avec `dedent` + réindentation UNIFORME — PAS un `.trim()`
       // PAR LIGNE (bug d'origine) — pour préserver la structure d'un handler
       // multi-lignes (`if…\n  $x = …`). Un `.trim()` par ligne ramenait
@@ -1206,9 +1400,18 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   // <svelte:window>. Réservé à <@window> (comme Svelte).
   //   <@window scrollY=!{$y} innerWidth=!{$w} />
   const parseBindings = (attrs: string, macro: string) => {
-    if (macro !== 'window') return
     const bindRe = /\b([a-zA-Z]\w*)=!\{([^}]+)\}/g
     let m: RegExpExecArray | null
+    // ailleurs que sur <@window>, une liaison ne lie rien : refusée, jamais jetée sans un mot
+    if (macro !== 'window') {
+      while ((m = bindRe.exec(attrs)) !== null) {
+        const msg = t('transpiler.liaison-reservee-window', { macro, prop: m[1], liables: Object.keys(WINDOW_BINDABLE).join(', ') })
+        // eslint-disable-next-line no-console
+        console.error(`[ModularJS] ❌ ${msg}`)
+        errors.push(msg)
+      }
+      return
+    }
     while ((m = bindRe.exec(attrs)) !== null) {
       const prop = m[1]
       const varExpr = m[2].trim()           // ex. `$y`
@@ -1219,15 +1422,18 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       // rattrapé au lieu du message propre.
       const def = Object.prototype.hasOwnProperty.call(WINDOW_BINDABLE, prop) ? WINDOW_BINDABLE[prop] : undefined
       if (!def) {
+        // erreur de construction : une faute de frappe (`scrolY`) laissait la liaison morte, construction verte
+        const msg = t('transpiler.window-propriete-non-liable', { prop, liables: Object.keys(WINDOW_BINDABLE).join(', ') })
         // eslint-disable-next-line no-console
-        console.error(t('transpiler.window-propriete-non-liable', { prop, liables: Object.keys(WINDOW_BINDABLE).join(', ') }))
+        console.error(`[ModularJS] ❌ ${msg}`)
+        errors.push(msg)
         continue
       }
       // 1. valeur initiale (au setup, une fois)
       setupLines.push(`${varExpr} = ${def.read}`)
       // 2. handler de rafraîchissement + attache/détache symétrique (awake/sleep)
       const fnId = `glb_${(counter++).toString(36)}`
-      setupLines.push(`@_${fnId} = (e, _) =>`)
+      setupLines.push(`@_${fnId} = (e, _mjs_el) =>`)
       setupLines.push(`  ${varExpr} = ${def.read}`)
       for (const ev of def.events) {
         attachLines.push(`window.addEventListener('${ev}', @_${fnId})`)
@@ -1296,8 +1502,9 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
         if (allowed) {
           const classes = s.slice(end + 2, qEnd).split(/\s+/).filter(Boolean)
           setupLines.push('µeffect =>')
-          for (const cls of classes) setupLines.push(`  µ._glCl(@, ${targetJs}, '${cls}', !!(${cond.trim()}))`)
-          for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, '${cls}', false)`)
+          // classe en chaîne échappée : une apostrophe (`bg-[url('/a.png')]`) refermait sinon la chaîne produite
+          for (const cls of classes) setupLines.push(`  µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, !!(${cond.trim()}))`)
+          for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
         }
       }
       out += s.slice(last)
@@ -1362,8 +1569,8 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
             errors.push(t('transpiler.macro-class-interpolation-non-supportee', { macro }))
           } else {
             const classes = raw.split(/\s+/).filter(Boolean)
-            for (const cls of classes) attachLines.push(`µ._glCl(@, ${targetJs}, '${cls}', true)`)
-            for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, '${cls}', false)`)
+            for (const cls of classes) attachLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, true)`)
+            for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
           }
         }
       }
@@ -1531,17 +1738,17 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     // sinon appel à 3 arguments, inchangé (byte-identique aux composants sans `accept`).
     setupLines.push(`  µ._updDynEl(@, '${key}', (${tagExpr})${accept ? `, [${accept.map(a => `'${a}'`).join(', ')}]` : ''})`)
     return `<div mjs-el="${key}"${rest ? ' ' + rest : ''}>`
-  })
+  }, undefined, tagLine)
   cleaned = cleaned.replace(/<\/@element>/gi, '</div>')
 
   // 0a. <@module $comp …attrs…>enfants</@module> → COMPOSANT DYNAMIQUE
   //     (équivalent de <svelte:component this={X}>). `$comp` (1ʳᵉ valeur) désigne
   //     le composant à monter : soit un NOM de tag (chaîne kebab d'un custom
   //     element MJS défini, le cas idiomatique), soit une CLASSE/constructeur.
-  //     Même mécanique que <@element> mais via µ._updModule, qui instancie le
+  //     µ._updModule, appelé par le générateur dans la portée du nœud, instancie le
   //     COMPOSANT (createElement pour un tag, `new` best-effort pour une classe),
-  //     déplace les enfants (light DOM → slots), copie les attrs (= props), et
-  //     re-monte si $comp change. `</@module>` → `</div>`.
+  //     déplace les enfants (light DOM → slots), pose les props dynamiques en valeurs
+  //     typées, et re-monte si $comp change. `</@module>` → `</div>`.
   let modCounter = 0
   cleaned = replaceOpenTag(cleaned, 'module', true, errors, (attrs, wholeTag) => {
     // cf. commentaire jumeau sur <@element> ci-dessus.
@@ -1559,12 +1766,12 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     const apresComp = i < 0 ? '' : raw.slice(i + 1).trim()
     if (ATTR_LIKE_RE.test(compExpr) || (BARE_IDENT_RE.test(compExpr) && /(^|\s)[$\{]/.test(apresComp))) return reportVariableAttendue('module', wholeTag)
     const { rest, accept } = extractAcceptAttr(apresComp)
-    const key = String(modCounter++)    // `=>` (fat arrow) pour que `@` = le composant (cf. <@element> ci-dessus).
-    setupLines.push('µeffect =>')
-    // cf. commentaire jumeau sur <@element> ci-dessus.
-    setupLines.push(`  µ._updModule(@, '${key}', (${compExpr})${accept ? `, [${accept.map(a => `'${a}'`).join(', ')}]` : ''})`)
-    return `<div mjs-mod="${key}"${rest ? ' ' + rest : ''}>`
-  })
+    const key = String(modCounter++)
+    // pas d'effet posé ici : l'expression du composant et les props dynamiques sont évaluées par le
+    // générateur dans la portée du nœud (ligne de `{for}`, branche `{if}`), cf. bindingModule
+    // (generator/attributes/index.ts). `accept` voyage en attribut fixe `mjs-accept`, retiré du rendu.
+    return `<div mjs-mod="${key}" mjs-comp={${compExpr}}${accept ? ` mjs-accept="${accept.join(' ')}"` : ''}${rest ? ' ' + rest : ''}>`
+  }, undefined, tagLine)
   cleaned = cleaned.replace(/<\/@module>/gi, '</div>')
 
   // 0b. <@failed args>…</@failed> → FALLBACK d'error boundary (équivalent du
@@ -1588,7 +1795,8 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       for (const l of body) setupLines.push(`  ${l}`)
       return ''
     },
-    () => reportSelfCloseForbidden('failed')
+    () => reportSelfCloseForbidden('failed'),
+    tagLine
   )
 
   // 1. <@head>…contenu…</@head> → INJECTION de contenu dans document.head,
@@ -1612,16 +1820,93 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   cleaned = replacePairedTag(cleaned, 'head', errors, (attrs, content) => {
     // parseStyling AVANT parseListeners (même raison que la boucle TARGETS
     // ci-dessous) : <@head> ne supporte pas les liaisons class/style → erreur.
+    parseBindings(attrs, 'head')
     const styled = parseStyling(attrs, 'head', 'document.head')
     parseListeners(styled, 'document.head')
     const inner = content.trim()
     if (inner) {      // `=>` pour que `@` = le composant (réconciliation + teardown corrects).
+      const ligne = contentFirstLine('head', content)
+      // un `<script>` exécutable posé ici part dans le <head> par innerHTML : le navigateur ne l'exécute jamais. Averti,
+      // jamais refusé (un script de données, JSON-LD, y a sa place). Seule une vraie balise compte : la recherche se fait
+      // hors commentaires et hors valeurs d'attribut (même longueur), ses attributs se relisent dans le texte écrit
+      const vue = masqueValeursAttributs(maskHtmlComments(inner))
+      for (const m of vue.matchAll(/<script\b[^>]*>/gi)) {
+        const attrs = inner.slice(m.index + '<script'.length, m.index + m[0].length - 1)
+        if (headScriptRuns(attrs)) warnings.push(t('transpiler.head-script-inerte', { ligne: ligne + countNewlines(inner.slice(0, m.index)) }))
+      }
       setupLines.push('µeffect =>')
-      setupLines.push(`  µ._setHead(@, ${buildHeadInjection(inner, 'head', errors, contentFirstLine('head', content), sigil)})`)
+      setupLines.push(`  µ._setHead(@, ${buildHeadInjection(inner, 'head', errors, ligne, sigil)})`)
       teardownLines.push('µ._clearHead(@)')
     }
     return ''
-  })
+  }, undefined, tagLine)
+
+  // Effets de toute la page sur <@document> (la souris : `*ripple` ; la langue : `*lang` ;
+  // les autres visiteurs : `*cursors`) : posés sur la racine du document à chaque réveil, retirés à
+  // chaque sommeil — valeurs fixes seulement (aucun nœud du gabarit pour suivre une variable), sauf la
+  // connexion d'un effet en direct : sa variable (`sock: $$sock`, suivie), sinon `@sock` du composant ;
+  // tout autre effet y est refusé, avec la liste de ceux qui y vont
+  let docFx = 0
+  let docProject = false
+  const docSock: string[] = []
+  // une valeur dans le code du <script> : en chaîne JSON, sans symbole que le lexer prendrait pour une variable
+  const enCode = (v: unknown): string => JSON.stringify(v).replace(/\$/g, '\\u0024').replace(/@/g, '\\u0040')
+  const keepDocEffect = (name: string, raw: string): void => {
+    // `*ripple.rouge` : un alias se pose là où l'effet qu'il règle se pose, c'est cet effet qui part sur la page
+    const effet = name.split('.')[0]
+    if (!DOC_EFFECTS.includes(effet)) {
+      errors.push(t('effets.document', { nom: name, liste: DOC_EFFECTS.map(n => '*' + n).join(', ') }))
+      return
+    }
+    let parsed
+    try {
+      parsed = parseEffect(name, raw)
+    }
+    catch (e) {
+      errors.push((e as Error).message)
+      return
+    }
+    if (Object.keys(parsed.dynamic).some(k => k !== 'sock')) {
+      errors.push(t('effets.document-variable', { nom: name }))
+      return
+    }
+    // *spotlight ne va sur la page qu'en voile : le halo et le liseré dessinent dans la balise, ils n'ont rien à faire sur <html>
+    if (effet === 'spotlight' && parsed.fixed.where !== 'veil') {
+      errors.push(t('effets.document', { nom: name, liste: DOC_EFFECTS.filter(n => n !== effet).map(n => '*' + n).join(', ') }))
+      return
+    }
+    const key    = `_mjs_fxDoc${docFx++}`
+    if (name !== effet) docProject = true
+    const ecrite = parsed.dynamic.sock
+    const sock   = ecrite ?? (effectSpec(name)?.settings.sock && !('server' in parsed.fixed) ? '@sock' : null)
+    if (!sock) {
+      attachLines.push(`@${key} = µ._mjs_fx(@, document.documentElement, ${JSON.stringify(effet)}, ${JSON.stringify(parsed.fixed)})`)
+      teardownLines.push(`@${key}?()`)
+      return
+    }
+    if (!ecrite) docSock.push(effet)
+    const regle = enCode({ sock: ['v', ecrite ?? '', t('effets.regle-connexion')] })
+    attachLines.push(`@${key} = µ._mjs_fx(@, document.documentElement, ${JSON.stringify(effet)}, ${JSON.stringify(parsed.fixed)}, { sock: ${sock} }, ${regle})`)
+    teardownLines.push(`@${key}?()`)
+    // une connexion rangée plus tard dans sa variable (un store rempli à la connexion de l'utilisateur) :
+    // l'effet s'y rebranche
+    if (ecrite) {
+      setupLines.push('µeffect =>')
+      setupLines.push(`  µ._mjs_fxSet(document.documentElement, ${JSON.stringify(effet)}, { sock: ${sock} }, ${regle})`)
+    }
+  }
+
+  // la faute d'un alias pointé (`*ripple.rouge`) sur <@document> cite la ligne de sa balise, juste après le nom de l'alias, comme sur une
+  // balise HTML ; `line` n'est demandée que si une faute vient d'être posée. Les fautes d'un effet sans alias gardent leur texte
+  const keepDocLine = (name: string, raw: string, line: () => number | null): void => {
+    const avant = errors.length
+    keepDocEffect(name, raw)
+    const debut = `[ModularJS] *${name}`
+    for (let i = avant; i < errors.length; i++) {
+      const ligne = name.includes('.') && errors[i].startsWith(debut) ? line() : null
+      if (ligne !== null) errors[i] = debut + t('bundler.transpile-msg.effet-ligne', { ligne: String(ligne) }) + errors[i].slice(debut.length)
+    }
+  }
 
   // 2. Macros « écouteurs » (window/document/body/html + <@head/> résiduels sans contenu).
   for (const macro of Object.keys(TARGETS)) {
@@ -1635,7 +1920,7 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       const styled = parseStyling(attrs, macro, targetJs)
       parseListeners(styled, targetJs)
       return ''
-    })
+    }, macro === 'document' ? keepDocLine : undefined, tagLine)
     // Close tag : </@window>
     const closeRe = new RegExp(`</@${macro}>`, 'gi')
     cleaned = cleaned.replace(closeRe, '')
@@ -1677,5 +1962,5 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       ')()\n'
   }
 
-  return { html: cleaned, setup, teardown, errors }
+  return { html: cleaned, setup, teardown, errors, warnings, docSock, usesProjectEffects: docProject }
 }

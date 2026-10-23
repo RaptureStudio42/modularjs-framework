@@ -57,24 +57,24 @@ describe('binding dimensions — réactivité (µ._set)', function () {
 
     assert.match(
       compCode,
-      /µ\._set\(this, 'w', t\.clientWidth\)/,
+      /µ\._set\(this, 'w', _mjs_t\.clientWidth\)/,
       'clientWidth doit écrire via µ._set(this, \'w\', …)',
     )
     assert.match(
       compCode,
-      /µ\._set\(this, 'h', t\.clientHeight\)/,
+      /µ\._set\(this, 'h', _mjs_t\.clientHeight\)/,
       'clientHeight doit écrire via µ._set(this, \'h\', …)',
     )
     // L'ancienne assignation brute (non réactive) ne doit plus apparaître.
     assert.doesNotMatch(
       compCode,
-      /\$\.w = t\.clientWidth/,
-      'plus d\'assignation brute $.w = t.clientWidth',
+      /\$\.w = _mjs_t\.clientWidth/,
+      'plus d\'assignation brute $.w = _mjs_t.clientWidth',
     )
     assert.doesNotMatch(
       compCode,
-      /\$\.h = t\.clientHeight/,
-      'plus d\'assignation brute $.h = t.clientHeight',
+      /\$\.h = _mjs_t\.clientHeight/,
+      'plus d\'assignation brute $.h = _mjs_t.clientHeight',
     )
   })
 

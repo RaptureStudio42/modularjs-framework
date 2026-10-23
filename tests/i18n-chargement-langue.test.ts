@@ -5,7 +5,7 @@
 // (`files[langue]`, émis par le bundler) est importé, et seulement ENSUITE le
 // démarrage habituel a lieu. Les composants montés pendant cette attente passent par
 // la file existante (`_mjs_i18nPendingMounts`) : mode 'wait' → premier rendu après
-// l'arrivée, 'auto'/'key' → placeholder puis réinvalidation.
+// l'arrivée, '*skeleton'/'key' → placeholder puis réinvalidation.
 //
 // Le fichier de la langue par DÉFAUT est chargé en même temps quand la langue affichée
 // n'est pas elle : c'est lui qui porte les replis de clé et de section (une traduction
@@ -19,6 +19,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const storeSrc = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_store_globals.ts'), 'utf-8')
@@ -33,7 +34,7 @@ function baseData(overrides: any = {}) {
   return {
     dev: false,
     default: 'fr',
-    placeholder: 'auto',
+    placeholder: '*skeleton',
     persist: false,
     detect: false,
     urlParam: false,
@@ -55,6 +56,7 @@ function fakeComp(section: string | null, override: string | null = null) {
   return {
     _mjs_i18n: [section, override],
     _mjs_invalidate(k: string) { invalidations.push(k) },
+    hasAttribute() { return false },
     _invalidations: invalidations,
   }
 }
@@ -65,6 +67,7 @@ function makeMu(data: any, opts: { fichiers?: Record<string, any>; absents?: str
   const fichiers = opts.fichiers ?? FICHIERS
   const absents = opts.absents ?? []
   const µ: any = { log() {}, warn() {}, error() {}, state(o: any) { return o } }
+  poserMessages(µ)
   const erreurs: string[] = []
   µ.error = (m: string) => { erreurs.push(String(m)) }
   new Function('µ', storeSrc)(µ)
@@ -112,19 +115,34 @@ describe('i18n runtime — chargement du fichier de langue au démarrage', funct
     const comp: any = fakeComp(null)
     const attente = µ.i18n._mjs_i18nMount(comp)
     assert.equal(typeof attente.then, 'function', 'mode wait avant démarrage : une promesse d\'attente est rendue')
-    assert.equal(µ.t('bonjour'), '', 'avant l\'arrivée : placeholder (prod = vide)')
+    assert.equal(µ.t('bonjour'), '', 'avant l\'arrivée : ni barre ni clé, le module attend et ne se rend pas')
     await attente
     assert.equal(µ.t('bonjour'), 'Bonjour', 'après l\'arrivée : texte réel')
   })
 
-  it("placeholder 'auto' : rendu avec le placeholder, puis réinvalidation à l'arrivée", async function () {
-    const { µ } = makeMu(baseData({ placeholder: 'auto' }))
+  it("placeholder '*skeleton' : rendu avec le placeholder, puis réinvalidation à l'arrivée", async function () {
+    const { µ } = makeMu(baseData({ placeholder: '*skeleton' }))
     const comp: any = fakeComp(null)
     assert.equal(µ.i18n._mjs_i18nMount(comp), null, 'mode auto : aucun rendu différé')
     assert.deepEqual(comp._invalidations, [], 'rien tant que le fichier n\'est pas là')
     await tick()
     assert.deepEqual(comp._invalidations, ['_awaits_'], 'le composant rendu en placeholder est réinvalidé à l\'arrivée')
     assert.equal(µ.t('bonjour'), 'Bonjour')
+  })
+
+  it('squelette (prod) : avant l\'arrivée du fichier de langue, tout texte est en route — la barre, pas le vide ; arrivé, le texte, et une clé absente pour de bon, rien', async function () {
+    const BARRE = '\u2007'.repeat(12)
+    const { µ } = makeMu(baseData({ placeholder: '*skeleton' }))
+    const comp: any = fakeComp('panier')
+    µ.i18n._mjs_i18nMount(comp)
+    assert.equal(µ.t('panier.resume'), BARRE, 'le texte d\'une section, avant le démarrage')
+    assert.equal(µ.t('bonjour'), BARRE, 'un texte de la racine, avant le démarrage')
+    await tick()
+    assert.equal(µ.t('bonjour'), 'Bonjour')
+    assert.equal(µ.t('inconnue'), '', 'absente pour de bon : rien')
+    const µ2 = makeMu(baseData({ placeholder: '*skeleton' })).µ
+    µ2._fxConf = { skeleton: ['await'] }
+    assert.equal(µ2.t('bonjour'), BARRE, '`"effects": { "skeleton": [] }` ne coupe plus les barres : elles ne dépendent que de `i18n.placeholder`')
   })
 
   it('?lang=en : langue validée par `langs`, fichier anglais ET fichier par défaut chargés', async function () {
@@ -167,12 +185,40 @@ describe('i18n runtime — chargement du fichier de langue au démarrage', funct
     assert.equal(µ.t('bonjour'), 'Bonjour', 'repli sur la langue par défaut, dont le fichier est là')
   })
 
-  it('les DEUX fichiers en 404 : démarrage quand même, tout en placeholder', async function () {
+  it('les DEUX fichiers en 404 : démarrage quand même, des barres à la place des textes en production, jamais un plantage', async function () {
     const { µ } = makeMu(baseData(), { absents: ['fr', 'en'] })
     await tick()
     await tick()
     assert.equal(µ._mjs_i18nBooted, true)
-    assert.equal(µ.t('bonjour'), '', 'aucune donnée : placeholder, jamais un plantage')
+    assert.equal(µ.t('bonjour'), '\u2007'.repeat(12), 'aucune donnée : les barres du secours, pas le vide')
+  })
+
+  it('le fichier de la langue par défaut en 404 : des barres sous wait, *skeleton et *loader ; la clé en développement et sous key', async function () {
+    for (const placeholder of ['wait', '*skeleton', '*loader']) {
+      const { µ } = makeMu(baseData({ placeholder }), { absents: ['fr'] })
+      await tick()
+      await tick()
+      assert.equal(µ._mjs_i18nBooted, true, placeholder)
+      assert.equal(µ.t('bonjour'), '\u2007'.repeat(12), placeholder + ' : la racine de cette langue n\'est jamais venue')
+      assert.equal(µ.t('panier.titre'), '\u2007'.repeat(12), placeholder + ' : ni sa table de fragments')
+    }
+    const dev = makeMu(baseData({ dev: true }), { absents: ['fr'] })
+    await tick()
+    await tick()
+    assert.equal(dev.µ.t('bonjour'), '⟦bonjour⟧', 'développement : la clé')
+    const cle = makeMu(baseData({ placeholder: 'key' }), { absents: ['fr'] })
+    await tick()
+    await tick()
+    assert.equal(cle.µ.t('bonjour'), '⟦bonjour⟧', 'key : la clé, toujours')
+  })
+
+  it('le fichier de la langue affichée en 404, celui de la langue par défaut là : le repli sur la langue par défaut, des barres seulement pour ce qui manque aux deux', async function () {
+    ;(globalThis as any).location = { search: '?lang=en', href: 'https://mjs.test/?lang=en', pathname: '/', hash: '' }
+    const { µ } = makeMu(baseData({ urlParam: true }), { absents: ['en'] })
+    await tick()
+    await tick()
+    assert.equal(µ.t('bonjour'), 'Bonjour', 'la langue par défaut a ce texte : le repli joue, pas de barre')
+    assert.equal(µ.t('absente.partout'), '\u2007'.repeat(12), 'un texte qu\'aucune des deux langues ne porte, et dont l\'une a échoué : la barre')
   })
 
   it('URL de fragment de section reconstituée à partir du préfixe et du nom compact', async function () {

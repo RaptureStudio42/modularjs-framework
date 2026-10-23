@@ -13,5 +13,8 @@
 // à consulter, on enregistre. Sous-classe anonyme — un constructeur ne peut être enregistré que
 // sous une seule balise.
 µ._al = function(tag, key, C) {
+  // la silhouette posée dans la balise courte pendant que le code arrivait (mjs_fx_skeleton.ts) part
+  // avant l'enregistrement, comme celle de la balise longue (µ._def)
+  if (µ._mjs_skelOff) µ._mjs_skelOff(tag);
   if (!customElements.get(tag) && (!µ.paths || Object.prototype.hasOwnProperty.call(µ.paths, key))) customElements.define(tag, class extends C {});
 };

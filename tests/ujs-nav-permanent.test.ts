@@ -21,6 +21,7 @@ import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
 import { assertAbsent } from './helpers/dom-assert.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -32,6 +33,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 function extractPopstateBody(src: string): string {
@@ -300,7 +302,7 @@ describe('mjs_ujs — µ._mjs_navTransplantPermanents : SYNCHRONE, même tick qu
 
     // À CET INSTANT : le vivant a quitté `zone` (disconnectedCallback a tiré, `_mjs_dead=true` un
     // instant) pour rejoindre `wrapper`, TOUJOURS détaché du document (pas encore installé).
-    assert.equal(vivant.parentNode, wrapper, 'transplanté dans le nouvel arbre, à la place de son homologue')
+    assert.ok(vivant.parentNode === wrapper, 'transplanté dans le nouvel arbre, à la place de son homologue')
     assert.equal(vivant.isConnected, false, 'transitoirement détaché — le nouvel arbre n\'est pas encore dans le document')
 
     // Installation (même tick, AUCUN await entre le transplant et cette ligne) — comme µ._mjs_zoneFill.

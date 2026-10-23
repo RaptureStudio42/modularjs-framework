@@ -205,7 +205,7 @@ describe('parser.parse', () => {
     })
 
     it('rejette un nom réservé', () => {
-      assert.throws(() => parse('{const node = 1}'), /NOM RÉSERVÉ/)
+      assert.throws(() => parse('{const el = 1}'), /NOM RÉSERVÉ/)
     })
 
     it('rejette une syntaxe sans `=`', () => {
@@ -315,7 +315,7 @@ describe('parser.parse', () => {
     })
 
     it('reserved name in for', () => {
-      assert.throws(() => parse('{for node in $list}{node}{end}'), /NOM RÉSERVÉ/)
+      assert.throws(() => parse('{for e in $list}{e}{end}'), /NOM RÉSERVÉ/)
     })
   })
 

@@ -36,8 +36,8 @@ function makeProject(prefix: string): { root: string; srcDir: string } {
 
 function assertSplitLayout(outputDir: string): void {
   const files = existsSync(outputDir) ? readdirSync(outputDir) : []
-  assert.ok(files.some(f => /^mjs_core-[a-f0-9]{8}\.js$/.test(f)), `le cœur doit être un fichier SÉPARÉ (mode split), trouvé : ${files.join(', ')}`)
-  assert.ok(files.some(f => /^greet-[a-f0-9]{8}\.js$/.test(f)), `le composant doit être un fichier SÉPARÉ (mode split), trouvé : ${files.join(', ')}`)
+  assert.ok(files.some(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f)), `le cœur doit être un fichier SÉPARÉ (mode split), trouvé : ${files.join(', ')}`)
+  assert.ok(files.some(f => /^greet-[0-9a-z]{5}\.js$/.test(f)), `le composant doit être un fichier SÉPARÉ (mode split), trouvé : ${files.join(', ')}`)
 }
 
 /** Dossiers de travail du rendu encore présents sous `$TMPDIR` (aucun ne doit survivre à `close`). */

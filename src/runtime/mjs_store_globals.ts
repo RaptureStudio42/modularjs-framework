@@ -19,7 +19,10 @@
 //   µ.store           — accesseurs énumérables PAR CLÉ (get déballe les computed, set → µ._storeSet)
 //   µ._storeDeclare   — crée les accesseurs manquants (idempotent, appelé par chaque module compilé)
 //   µ._storeSet/_mjs_storeDelete       — mutation top-level notifiante (clé + structure '*')
-//   µ._mjs_storeDeepSet/_mjs_storeDeepCall/_mjs_storeDeepDelete — mutation profonde (notifie la clé racine seule)
+//   µ._mjs_storeDeepSet/_mjs_storeDeepCall/_mjs_storeDeepDelete — mutation profonde (notifie la clé racine, et les clés qui rangent le même objet)
+//   µ._mjs_storeSetOn/_mjs_storeCallOn/_mjs_storeDeleteOn — même mutation, sur un objet déjà atteint (élément trouvé par `find`…)
+//   _mjsStoreWrite        — l'écriture commune (µ._mjs_storeSetOn), fonction locale au fichier
+//   _mjsStoreRefus        — avertissement d'un nom réservé, ou d'un objet écrit refusé (fonction, prototype), dans une écriture profonde, fonction locale au fichier
 //   µ._mjs_storeSubscribe/_mjs_storeUnsubscribe — abonnement composant par clés (posé au montage, mjs_element.ts)
 //   µ._mjs_storeWatch     — abonné générique non-composant (callback), retourne un désabonneur
 
@@ -38,13 +41,19 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
 µ._mjs_storeNotifyKey = function(key) {
   var subs = µ._mjs_storeSubs.get(key);
   if (subs) {
-    for (var comp of subs) { comp._mjs_invalidate('$$' + key); }
+    var sk = '$$' + key;
+    for (var comp of subs) {
+      comp._mjs_invalidate(sk);
+      // écriture faite hors de tout effet (`µ._mjs_effRun`, posé par _mjs_runEffectsV2, mjs_element.ts) : elle relance aussi les
+      // effets qui écrivent eux-mêmes la clé (dépendance '$$clé!', generator/effect-deps.ts) ; entre effets, la dernière écriture gagne
+      if (comp._mjs_effects && !µ._mjs_effRun) comp._mjs_invalidate(sk + '!');
+    }
   }
   var watchers = µ._mjs_storeWatchers.get(key);
   if (watchers && watchers.size > 0) {
     var v = µ.store[key];
     for (var fn of watchers) {
-      try { fn(v); } catch (e) { µ.warn('[ModularJS] µ._mjs_storeWatch : callback en erreur.', e); }
+      try { fn(v); } catch (e) { µ.warn(µ._mjs_msg('storeGWatch', null, 'µ._mjs_storeWatch : callback en erreur.'), e); }
     }
   }
 };
@@ -90,13 +99,14 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
     // ABSORBÉ sans effet par le setter hérité Object.prototype.__proto__ — rien
     // d'observable pour l'auteur du composant).
     if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
-      throw new Error(`[ModularJS] µ.store : clé « ${k} » refusée — elle appartient au prototype JavaScript, choisis un autre nom.`);
+      throw new Error(µ._mjs_msg('storeGProtoKey', { k: k }, 'µ.store : clé « {k} » refusée — elle appartient au prototype JavaScript, choisissez un autre nom.'));
     }
     if (Object.prototype.hasOwnProperty.call(µ.store, k)) {
       var existingDesc = Object.getOwnPropertyDescriptor(µ.store, k);
       if (existingDesc && existingDesc.get) continue;
       // Propriété plate : sa valeur devient la valeur brute, l'accesseur la remplace.
       µ._mjs_storeRaw[k] = existingDesc ? existingDesc.value : µ.store[k];
+      µ._mjs_storeIdxAdd(k, µ._mjs_storeRaw[k]);
       delete µ.store[k];
     }
     (function(key) {
@@ -105,9 +115,10 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
         configurable: true,
         get: function() {
           var v = µ._mjs_storeRaw[key];
-          if (v != null && v._mjs_c) {
+          // un dérivé compilé porte sa fonction `f` : une donnée reçue qui a la clé `_mjs_c` n'en est pas un
+          if (v != null && v._mjs_c && typeof v.f === 'function') {
             if (v._mjs_evaluating) {
-              µ.warn(`[ModularJS] µ.store : cycle de computed détecté sur « ${key} » — undefined retourné.`);
+              µ.warn(µ._mjs_msg('storeGCycle', { key: key }, 'µ.store : cycle de computed détecté sur « {key} » — undefined retourné.'));
               return void 0;
             }
             v._mjs_evaluating = true;
@@ -133,11 +144,19 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
 // serait un re-render sans aucun changement observable pour ces lecteurs.
 µ._storeSet = function(key, value) {
   if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-    µ.warn(`[ModularJS] µ.store : clé refusée (« ${key} ») — mutation ignorée.`);
+    µ.warn(µ._mjs_msg('storeGKey', { key: key }, 'µ.store : clé refusée (« {key} ») — mutation ignorée.'));
     return;
+  }
+  // types (mjs_types.ts) : la règle du store, posée par le <vars> d'un composant, passe avant
+  // l'écriture — valeur convertie, ramenée, ou refusée (rien n'est écrit)
+  var __sr = µ._mjs_storeRules;
+  if (__sr !== void 0 && Object.prototype.hasOwnProperty.call(__sr, key)) {
+    value = µ._mjs_tstore(key, value);
+    if (value === µ._mjs_TNO) return;
   }
   if (µ._mjs_storeRaw[key] === value) return;
   µ._mjs_storeRaw[key] = value;
+  µ._mjs_storeIdxAdd(key, value);
   if (!Object.prototype.hasOwnProperty.call(µ.store, key)) { µ._storeDeclare([key]); }
   µ._mjs_storeNotifyKey(key);
   var desc = Object.getOwnPropertyDescriptor(µ.store, key);
@@ -145,7 +164,7 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
 };
 
 // `µ._mjs_storeDelete(key)` : supprime raw + accesseur, notifie clé + structure
-// SEULEMENT si la clé existait (parité trap `deleteProperty` de µ.state, mjs_runes.ts).
+// SEULEMENT si la clé existait (parité trap `deleteProperty` de µ.state, mjs_runes.ts). Rend `true`, comme `delete`
 µ._mjs_storeDelete = function(key) {
   var had = Object.prototype.hasOwnProperty.call(µ._mjs_storeRaw, key);
   delete µ._mjs_storeRaw[key];
@@ -154,45 +173,189 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
     µ._mjs_storeNotifyKey(key);
     µ._mjs_storeNotifyStruct();
   }
+  return true;
 };
 
-// `µ._mjs_storeDeepSet('game', ['score'], v)` : mutation profonde SANS Proxy —
-// navigue `µ._mjs_storeRaw[rootKey]` (cible brute) et notifie SEULEMENT la clé
-// racine (pas la structure : l'ajout profond ne touche pas les clés
-// top-level du store, parité trap imbriqué mjs_runes.ts:282-288).
-µ._mjs_storeDeepSet = function(rootKey, path, value) {
-  if (!µ._mjs_guardPath([rootKey].concat(path))) return;
-  var o = µ._mjs_storeRaw[rootKey];
-  if (o == null) return;
-  for (var i = 0; i < path.length - 1; i++) { o = o[path[i]]; }
-  var last = path[path.length - 1];
-  if (o[last] === value) return;
-  o[last] = value;
-  µ._mjs_storeNotifyKey(rootKey);
+// index inverse objet → clés qui l'ont reçu (`$$a = $$b`), tenu à l'affectation : une mutation profonde prévient ces
+// clés sans parcourir tout le store. Une entrée périmée (clé réaffectée ou supprimée) est écartée à la lecture
+if (!µ._mjs_storeIdx) { µ._mjs_storeIdx = new WeakMap(); }
+µ._mjs_storeIdxAdd = function(key, v) {
+  if (v === null || typeof v !== 'object') return;
+  var s = µ._mjs_storeIdx.get(v);
+  if (s) s.add(key); else µ._mjs_storeIdx.set(v, new Set([key]));
 };
 
-// `µ._mjs_storeDeepCall('list', ['items'], 'push', [x])` : appelle une méthode
-// mutative sur un sous-objet du store et notifie la clé racine. Retourne la
-// valeur de retour de la méthode (ex. `.push()` → nouvelle longueur).
-µ._mjs_storeDeepCall = function(rootKey, path, methodName, args) {
-  if (!µ._mjs_guardPath([rootKey].concat(path))) return void 0;
-  var o = µ._mjs_storeRaw[rootKey];
-  if (o == null) return void 0;
-  for (var i = 0; i < path.length; i++) { o = o[path[i]]; }
-  var result = o[methodName].apply(o, args);
-  µ._mjs_storeNotifyKey(rootKey);
+// mutation profonde : l'objet de la clé racine peut être rangé sous d'autres clés (`$$a = $$b`) —
+// les lecteurs de chacune sont prévenus, la clé écrite comprise. Objet absent de l'index (posé seulement par
+// `µwrite`, sans prévenir) : toutes les clés sont parcourues. Objet indexé : une clé qui l'a reçu par `µwrite` (hors
+// index) est cherchée après coup, une seule fois par tour pour cet objet, puis prévenue et ajoutée à l'index — une
+// boucle d'écritures profondes ne parcourt pas tout le magasin à chaque écriture. `w` : l'objet écrit, quand ce n'est
+// pas celui de la clé racine — les clés de l'index qui le rangent sont prévenues aussi : un sous-objet rangé ailleurs
+// (`$$autre = $$cfg.a`), l'ancien objet d'une clé réaffectée que tient encore un alias (`$$pb = $$pa`, `sb := $$pa`,
+// `$$pa = autre`, `sb.x = 1`). `a` : les objets traversés par un chemin entre la racine et l'objet écrit, rangés sous une
+// autre clé (`$$autre = $$cfg.a`, puis `$$cfg.a.l.push(x)`, cf. _mjs_storeDeepSet) — leurs clés aussi
+µ._mjs_storeNotifyDeep = function(rootKey, w, a) {
+  var raw = µ._mjs_storeRaw, idx = µ._mjs_storeIdx, o = raw[rootKey], s = idx.get(o), k, t, i;
+  if (w !== o && w != null && (t = idx.get(w))) {
+    for (k of t) { if (raw[k] === w) µ._mjs_storeNotifyKey(k); }
+  }
+  if (a) for (i = 0; i < a.length; i++) {
+    for (k of idx.get(a[i])) { if (raw[k] === a[i]) µ._mjs_storeNotifyKey(k); }
+  }
+  if (!s) {
+    for (k in raw) { if (raw[k] === o) µ._mjs_storeNotifyKey(k); }
+    return;
+  }
+  s.add(rootKey);
+  for (k of s) { if (raw[k] === o) µ._mjs_storeNotifyKey(k); }
+  if (!s.q) {
+    s.q = 1;
+    queueMicrotask(function() {
+      s.q = 0;
+      for (var c in raw) { if (raw[c] === o && !s.has(c)) { s.add(c); µ._mjs_storeNotifyKey(c); } }
+    });
+  }
+};
+
+// nom réservé (CWE-1321) : une clé qui vaut `__proto__`, `constructor` ou `prototype` — clé d'un chemin, clé écrite, nom
+// de la méthode appelée — est refusée dans toute écriture profonde du magasin : rien n'est écrit, un avertissement nomme
+// le segment. Une clé objet (`['__proto__']`, objet dont `toString` rend le nom) est convertie une fois, comme JavaScript
+// la convertit, puis comparée et employée convertie. Un indice ou un symbole n'est jamais un nom réservé. L'objet écrit
+// passe le même refus : lu par le code avant l'aide (`?.`, variable de travail de CoffeeScript, élément trouvé suivi
+// d'une clé calculée, clé faite d'une expression, variable, objet fait d'une expression) ou rangé par une lecture
+// (`$$o.p = $$o[k]`), il est là où JavaScript mène — une fonction (`Object`, où mène `constructor`) ou un prototype
+// (`Object.prototype`, où mène `__proto__` : l'objet que range son propre constructeur) ne reçoit rien, l'avertissement
+// nomme le segment qui y mène. Les comparaisons restent dans chaque aide, sans appel ni allocation : seul le refus
+// appelle cette fonction
+function _mjsStoreRefus(k) {
+  µ.warn(µ._mjs_msg('initPath', { seg: k }, 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.'));
+}
+
+// écritures SUR un objet du store déjà atteint : par un chemin (`_mjs_storeDeepSet/Call/Delete` plus bas, après leur
+// navigation), ou par un élément trouvé (`$$taches.find(f).fait = true`, `$$m.get(k).tags.push(x)`, variable qui garde
+// cet élément, alias du magasin — path-tracker.ts). L'écriture va à l'objet reçu, comme en JavaScript ; la clé écrite,
+// ou la méthode, passe le refus d'un nom réservé, et l'objet celui d'une fonction ou d'un prototype (cf.
+// _mjsStoreRefus), payé une fois par écriture, quelle que soit la longueur du chemin. Puis la clé racine et les clés qui rangent le
+// même objet, ou l'objet écrit, sont prévenues (cf. _mjs_storeNotifyDeep). Un objet absent (`find` qui ne trouve rien,
+// alias jamais pris) lève la TypeError de JavaScript, celle de l'écriture (« Cannot set properties of undefined »),
+// comme sans MJS
+// `µ._mjs_storeSetOn('taches', objet, 'fait', v)` (_mjsStoreWrite) : rend la valeur écrite par le code (sémantique
+// d'une affectation), même convertie ou refusée par la règle d'un store typé ; valeur identique : rien n'est écrit ni
+// prévenu. Fonction locale, que _mjs_storeDeepSet appelle sans recherche sur `µ`
+function _mjsStoreWrite(rootKey, o, prop, value, a) {
+  var v = value, __treg = µ._mjs_storeTreg, c;
+  // objet absent : l'écriture native lève sa propre erreur
+  if (o == null) { o[prop] = v; }
+  // clé convertie une fois, comme JavaScript la convertit (`['nom']`, objet dont `toString` rend le nom) : le refus d'un nom
+  // réservé, la comparaison, la règle d'un store typé et l'écriture voient la même clé
+  if (typeof prop === 'object' || typeof prop === 'function') prop = String(prop);
+  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreRefus(prop); return value; }
+  // objet écrit : ni une fonction ni un prototype (cf. _mjsStoreRefus)
+  if (typeof o === 'function') { _mjsStoreRefus('constructor'); return value; }
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus('__proto__'); return value; }
+  // types : un champ ou un élément sous un store typé passe la règle de son conteneur
+  if (__treg !== void 0 && __treg.has(o)) {
+    v = µ._mjs_tdeep(null, __treg, o, prop, v);
+    if (v === µ._mjs_TNO) return value;
+  }
+  if (o[prop] !== v) {
+    o[prop] = v;
+    µ._mjs_storeNotifyDeep(rootKey, o, a);
+  }
+  return value;
+}
+µ._mjs_storeSetOn = _mjsStoreWrite;
+
+// `µ._mjs_storeCallOn('taches', liste, 'push', [x])` : méthode mutative appelée sur l'objet, rend son retour (ex.
+// `.push()` → nouvelle longueur)
+µ._mjs_storeCallOn = function(rootKey, o, methodName, args, a) {
+  var c;
+  // objet absent : la lecture native lève sa propre erreur
+  if (o == null) { return o[methodName].apply(o, args); }
+  if (methodName === '__proto__' || methodName === 'constructor' || methodName === 'prototype') { _mjsStoreRefus(methodName); return void 0; }
+  // objet modifié : ni une fonction ni un prototype (cf. _mjsStoreRefus)
+  if (typeof o === 'function') { _mjsStoreRefus('constructor'); return void 0; }
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus('__proto__'); return void 0; }
+  // méthode absente : la TypeError de JavaScript
+  var f = o[methodName];
+  if (typeof f !== 'function') { throw new TypeError(methodName + ' is not a function'); }
+  // types : une liste typée modifiée par une méthode fait contrôler ce qu'elle a changé ; refusée, la
+  // méthode est défaite
+  var __treg  = µ._mjs_storeTreg;
+  var __avant = (__treg !== void 0 && Array.isArray(o) && __treg.has(o)) ? µ._mjs_tbefore(o, methodName) : void 0;
+  var result  = f.apply(o, args);
+  if (__avant !== void 0 && !µ._mjs_tafter(null, __treg, o, __avant, methodName, args, result)) return result;
+  µ._mjs_storeNotifyDeep(rootKey, o, a);
   return result;
 };
 
-// `µ._mjs_storeDeepDelete('obj', ['clé'])` : supprime une sous-propriété et
-// notifie la clé racine (pas la structure — même logique que _mjs_storeDeepSet).
+// `µ._mjs_storeDeleteOn('taches', objet, 'note')` : supprime la propriété (pas la structure du store : ses clés
+// top-level ne bougent pas) et rend `true`, comme `delete` — refusée (champ obligatoire d'un store typé), la
+// suppression est ignorée et rend `true` aussi, comme une écriture refusée rend sa valeur
+µ._mjs_storeDeleteOn = function(rootKey, o, prop, a) {
+  var __treg = µ._mjs_storeTreg, c;
+  // objet absent : la suppression native lève sa propre erreur
+  if (o == null) { delete o[prop]; }
+  // clé convertie une fois (cf. _mjsStoreWrite) ; types : un champ obligatoire d'un store typé ne se supprime pas
+  if (typeof prop === 'object' || typeof prop === 'function') prop = String(prop);
+  if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') { _mjsStoreRefus(prop); return true; }
+  // objet modifié : ni une fonction ni un prototype (cf. _mjsStoreRefus)
+  if (typeof o === 'function') { _mjsStoreRefus('constructor'); return true; }
+  if ((c = o.constructor) && c.prototype === o) { _mjsStoreRefus('__proto__'); return true; }
+  if (__treg !== void 0 && !µ._mjs_tdelete(null, __treg, o, prop)) return true;
+  delete o[prop];
+  µ._mjs_storeNotifyDeep(rootKey, o, a);
+  return true;
+};
+
+// `µ._mjs_storeDeepSet('game', ['a', 'score'], v)` : mutation profonde SANS Proxy, par un chemin aux clés écrites dans
+// le code ou calculées (`$$game.a.score = v`, `$$game[cle].score = v`, path-tracker.ts) — navigue
+// `µ._mjs_storeRaw[rootKey]` (cible brute ; racine absente : rien n'est écrit) comme JavaScript navigue, chaque clé
+// convertie une fois puis passée au refus d'un nom réservé (cf. _mjsStoreRefus), puis écrit par _mjsStoreWrite. Seules
+// la clé racine et les clés qui rangent le même objet sont prévenues (pas la structure : l'ajout
+// profond ne touche pas les clés top-level du store, parité trap imbriqué mjs_runes.ts:282-288). La navigation relève
+// les objets qu'elle traverse sous la racine rangés sous une autre clé (index, `$$autre = $$cfg.a`) : ces clés sont
+// prévenues aussi (cf. _mjs_storeNotifyDeep) — aucune allocation sans eux
+µ._mjs_storeDeepSet = function(rootKey, path, value) {
+  var o = µ._mjs_storeRaw[rootKey], n = path.length - 1, i, a, k;
+  if (o == null) return;
+  for (i = 0; i < n; i++) {
+    k = path[i];
+    if (typeof k === 'object' || typeof k === 'function') k = String(k);
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return; }
+    if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
+    o = o[k];
+  }
+  _mjsStoreWrite(rootKey, o, path[n], value, a);
+};
+
+// `µ._mjs_storeDeepCall('list', ['items'], 'push', [x])` : appelle une méthode
+// mutative sur un sous-objet du store (_mjs_storeCallOn) et rend son retour
+µ._mjs_storeDeepCall = function(rootKey, path, methodName, args) {
+  var o = µ._mjs_storeRaw[rootKey], i, a, k;
+  if (o == null) return void 0;
+  for (i = 0; i < path.length; i++) {
+    k = path[i];
+    if (typeof k === 'object' || typeof k === 'function') k = String(k);
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return void 0; }
+    if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
+    o = o[k];
+  }
+  return µ._mjs_storeCallOn(rootKey, o, methodName, args, a);
+};
+
+// `µ._mjs_storeDeepDelete('obj', ['clé'])` : supprime une sous-propriété (_mjs_storeDeleteOn), rend `true` comme `delete`
 µ._mjs_storeDeepDelete = function(rootKey, path) {
-  if (!µ._mjs_guardPath([rootKey].concat(path))) return;
-  var o = µ._mjs_storeRaw[rootKey];
-  if (o == null || path.length === 0) return;
-  for (var i = 0; i < path.length - 1; i++) { o = o[path[i]]; }
-  delete o[path[path.length - 1]];
-  µ._mjs_storeNotifyKey(rootKey);
+  var o = µ._mjs_storeRaw[rootKey], n = path.length - 1, i, a, k;
+  if (o == null || n < 0) return true;
+  for (i = 0; i < n; i++) {
+    k = path[i];
+    if (typeof k === 'object' || typeof k === 'function') k = String(k);
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsStoreRefus(k); return true; }
+    if (i > 0 && µ._mjs_storeIdx.has(o)) { a = a || []; a.push(o); }
+    o = o[k];
+  }
+  return µ._mjs_storeDeleteOn(rootKey, o, path[n], a);
 };
 
 // `µ._mjs_storeSubscribe(comp, ['session','game'])` : abonne un composant à des
@@ -314,7 +477,11 @@ try {
 // `_mjs_storeWatch` — miroir bidirectionnel simple, posé UNE fois pour toutes les
 // sources d'écriture plutôt que dupliqué à chaque call-site.
 µ._mjs_themeApply = function(value) {
-  if (typeof document !== 'undefined' && document.documentElement) { document.documentElement.dataset.mjsTheme = value; }
+  if (typeof document === 'undefined' || !document.documentElement) { return; }
+  var set = function() { document.documentElement.dataset.mjsTheme = value; };
+  // thème en cercle (mjs_theme.ts) : une bascule qui suit un clic se propage depuis le point cliqué
+  if (typeof µ._mjs_themeSwap === 'function') { µ._mjs_themeSwap(value, set); }
+  else { set(); }
 };
 if (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsTheme === undefined) {
   if (typeof µ._storeDeclare === 'function') { µ._storeDeclare(['__mjsTheme'], true); }
@@ -334,7 +501,7 @@ if (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsTheme === undefined) {
     if (key !== '__mjsTheme') { return __mjsThemeOrigStoreSet.apply(this, arguments); }
     if (!__mjsThemeIsKnown(value)) {
       var __mjsThemeConnus = ['light', 'dark'].concat(Array.isArray(µ._themes) ? µ._themes : []);
-      µ.warn(`[ModularJS] µtheme : « ${value} » n'est pas un thème déclaré — ignorée. Thèmes connus : ${__mjsThemeConnus.join(', ')}.`);
+      µ.warn(µ._mjs_msg('storeGTheme', { value: value, themes: __mjsThemeConnus.join(', ') }, 'µtheme : « {value} » n\'est pas un thème déclaré — ignorée. Thèmes connus : {themes}.'));
       return;
     }
     if (!__mjsThemeInternalWrite && __mjsThemeOsUnwatch) { __mjsThemeOsUnwatch(); __mjsThemeOsUnwatch = null; }
@@ -428,7 +595,7 @@ if (!µ.res) { µ.res = µ.state({}); }
   for (k in props) {
     if (!Object.prototype.hasOwnProperty.call(props, k)) { continue; }
     if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
-      µ.warn(`[ModularJS] µ.res : clé refusée (« ${k} ») — mutation ignorée.`);
+      µ.warn(µ._mjs_msg('storeGResKey', { k: k }, 'µ.res : clé refusée (« {k} ») — mutation ignorée.'));
       continue;
     }
     µ.res[k] = props[k];
@@ -454,7 +621,7 @@ if (!µ.res) { µ.res = µ.state({}); }
   for (k in props) {
     if (!Object.prototype.hasOwnProperty.call(props, k)) { continue; }
     if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
-      µ.warn(`[ModularJS] µ.res : clé refusée (« ${k} ») — mutation ignorée.`);
+      µ.warn(µ._mjs_msg('storeGResKey', { k: k }, 'µ.res : clé refusée (« {k} ») — mutation ignorée.'));
       continue;
     }
     µ.res[k] = props[k];
@@ -483,7 +650,7 @@ try {
     }
   }
 } catch (__re) {
-  µ.warn('[ModularJS] µres : balise __mjs_res illisible au boot, ignorée.', __re);
+  µ.warn(µ._mjs_msg('storeGResTag', null, 'µres : balise __mjs_res illisible au boot, ignorée.'), __re);
 }
 // <<< extrait-test boot-res
 

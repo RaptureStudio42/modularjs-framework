@@ -16,6 +16,19 @@ function escapeJsonForScript(json: string): string {
   return json.replace(/</g, '\\u003c')
 }
 
+// libellé traduit posé dans le JavaScript de la page : littéral JSON, jamais entre apostrophes — une
+// apostrophe (« d'origine »), un guillemet ou une barre oblique inverse d'une traduction ne cassent
+// plus le script, et `<` y est neutralisé comme dans l'instantané
+function jsString(text: string): string {
+  return escapeJsonForScript(JSON.stringify(text))
+}
+
+// libellé traduit posé dans le HTML de la page (titre de l'onglet, h1, pied) : échappé comme du texte — une
+// traduction qui contient `<` ou `&` n'y glisse jamais de balise
+function htmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 const CSS = `
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -33,7 +46,7 @@ footer{margin-top:20px;color:#555;font-size:11px}
 `.trim()
 
 // familles affichées, dans l'ordre — [clé JSON, titre traduit, [[champ, libellé traduit], …]] ;
-// latences et mémoire/uptime ont une forme différente (cf. render() plus bas), traitées à part.
+// intervalles entre pings et mémoire/uptime ont une forme différente (cf. render() plus bas), traitées à part.
 // libellés résolus via t() À LA CONSTRUCTION du script (buildScript(), appelée PAR REQUÊTE par
 // renderStatsPage — jamais au chargement du module, pour respecter la langue courante) ; les clés
 // JSON ('connexions', 'actives', …) restent des littéraux, JAMAIS traduites (elles indexent
@@ -44,14 +57,14 @@ function buildScript(): string {
   const locale = getMessagesLang() === 'en' ? 'en-US' : 'fr-FR'
   return `
 var FAMILIES = [
-  ['connexions', '${t('ws.stats.titre-connexions')}', [['actives','${t('ws.stats.champ-actives')}'],['parquees','${t('ws.stats.champ-parquees')}'],['accueillies','${t('ws.stats.champ-accueillies')}'],['refusees','${t('ws.stats.champ-refusees')}'],['refuseesPlafond','${t('ws.stats.champ-refusees-plafond')}'],['refuseesOrigine','${t('ws.stats.champ-refusees-origine')}'],['refuseesBan','${t('ws.stats.champ-refusees-ban')}'],['fermees','${t('ws.stats.champ-fermees')}']]],
-  ['salons', '${t('ws.stats.titre-salons')}', [['nombre','${t('ws.stats.champ-nombre')}'],['membresTotal','${t('ws.stats.champ-membres-total')}'],['abonnesPresence','${t('ws.stats.champ-abonnes-presence')}']]],
-  ['flux', '${t('ws.stats.titre-flux')}', [['nombre','${t('ws.stats.champ-nombre')}'],['deltasEmis','${t('ws.stats.champ-deltas-emis')}'],['resyncsRejeu','${t('ws.stats.champ-resyncs-rejeu')}'],['resyncsReset','${t('ws.stats.champ-resyncs-reset')}']]],
-  ['messages', '${t('ws.stats.titre-messages')}', [['recus','${t('ws.stats.champ-recus')}'],['envoyes','${t('ws.stats.champ-envoyes')}'],['tamponnes','${t('ws.stats.champ-tamponnes')}'],['rejoues','${t('ws.stats.champ-rejoues')}'],['rejetes','${t('ws.stats.champ-rejetes')}'],['binaireRecues','${t('ws.stats.champ-binaire-recues')}'],['binaireIgnorees','${t('ws.stats.champ-binaire-ignorees')}']]],
-  ['garde', '${t('ws.stats.titre-garde')}', [['kicksDebit','${t('ws.stats.champ-kicks-debit')}'],['kicksSilence','${t('ws.stats.champ-kicks-silence')}'],['kicksEngorgement','${t('ws.stats.champ-kicks-engorgement')}'],['kicksChargeUtile','${t('ws.stats.champ-kicks-charge-utile')}'],['expirationsJeton','${t('ws.stats.champ-expirations-jeton')}'],['misesAuBanc','${t('ws.stats.champ-mises-au-banc')}']]],
-  ['pont', '${t('ws.stats.titre-pont')}', [['http401','401'],['rateLimited','${t('ws.stats.champ-rate-limited')}'],['webhooksEnvoyes','${t('ws.stats.champ-webhooks-envoyes')}'],['webhooksEchoues','${t('ws.stats.champ-webhooks-echoues')}'],['webhooksAbandonnes','${t('ws.stats.champ-webhooks-abandonnes')}']]],
-  ['adaptateur', '${t('ws.stats.titre-adaptateur')}', [['publies','${t('ws.stats.champ-publies')}'],['recus','${t('ws.stats.champ-recus')}'],['ignoresOrigin','${t('ws.stats.champ-ignores-origin')}'],['reordonnances','${t('ws.stats.champ-reordonnances')}'],['reconnexions','${t('ws.stats.champ-reconnexions')}']]],
-  ['sessions', '${t('ws.stats.titre-sessions')}', [['emises','${t('ws.stats.champ-emises')}'],['reprises','${t('ws.stats.champ-reprises')}'],['expirees','${t('ws.stats.champ-expirees')}'],['debordees','${t('ws.stats.champ-debordees')}']]]
+  ['connexions', ${jsString(t('ws.stats.titre-connexions'))}, [['actives',${jsString(t('ws.stats.champ-actives'))}],['parquees',${jsString(t('ws.stats.champ-parquees'))}],['accueillies',${jsString(t('ws.stats.champ-accueillies'))}],['refusees',${jsString(t('ws.stats.champ-refusees'))}],['refuseesPlafond',${jsString(t('ws.stats.champ-refusees-plafond'))}],['refuseesOrigine',${jsString(t('ws.stats.champ-refusees-origine'))}],['refuseesBan',${jsString(t('ws.stats.champ-refusees-ban'))}],['fermees',${jsString(t('ws.stats.champ-fermees'))}]]],
+  ['salons', ${jsString(t('ws.stats.titre-salons'))}, [['nombre',${jsString(t('ws.stats.champ-nombre'))}],['membresTotal',${jsString(t('ws.stats.champ-membres-total'))}],['abonnesPresence',${jsString(t('ws.stats.champ-abonnes-presence'))}]]],
+  ['flux', ${jsString(t('ws.stats.titre-flux'))}, [['nombre',${jsString(t('ws.stats.champ-nombre'))}],['deltasEmis',${jsString(t('ws.stats.champ-deltas-emis'))}],['resyncsRejeu',${jsString(t('ws.stats.champ-resyncs-rejeu'))}],['resyncsReset',${jsString(t('ws.stats.champ-resyncs-reset'))}]]],
+  ['messages', ${jsString(t('ws.stats.titre-messages'))}, [['recus',${jsString(t('ws.stats.champ-recus'))}],['envoyes',${jsString(t('ws.stats.champ-envoyes'))}],['tamponnes',${jsString(t('ws.stats.champ-tamponnes'))}],['rejoues',${jsString(t('ws.stats.champ-rejoues'))}],['rejetes',${jsString(t('ws.stats.champ-rejetes'))}],['binaireRecues',${jsString(t('ws.stats.champ-binaire-recues'))}],['binaireIgnorees',${jsString(t('ws.stats.champ-binaire-ignorees'))}]]],
+  ['garde', ${jsString(t('ws.stats.titre-garde'))}, [['kicksDebit',${jsString(t('ws.stats.champ-kicks-debit'))}],['kicksSilence',${jsString(t('ws.stats.champ-kicks-silence'))}],['kicksEngorgement',${jsString(t('ws.stats.champ-kicks-engorgement'))}],['kicksChargeUtile',${jsString(t('ws.stats.champ-kicks-charge-utile'))}],['expirationsJeton',${jsString(t('ws.stats.champ-expirations-jeton'))}],['misesAuBanc',${jsString(t('ws.stats.champ-mises-au-banc'))}]]],
+  ['pont', ${jsString(t('ws.stats.titre-pont'))}, [['http401','401'],['rateLimited',${jsString(t('ws.stats.champ-rate-limited'))}],['webhooksEnvoyes',${jsString(t('ws.stats.champ-webhooks-envoyes'))}],['webhooksEchoues',${jsString(t('ws.stats.champ-webhooks-echoues'))}],['webhooksAbandonnes',${jsString(t('ws.stats.champ-webhooks-abandonnes'))}]]],
+  ['adaptateur', ${jsString(t('ws.stats.titre-adaptateur'))}, [['publies',${jsString(t('ws.stats.champ-publies'))}],['recus',${jsString(t('ws.stats.champ-recus'))}],['ignoresOrigin',${jsString(t('ws.stats.champ-ignores-origin'))}],['reordonnances',${jsString(t('ws.stats.champ-reordonnances'))}],['reconnexions',${jsString(t('ws.stats.champ-reconnexions'))}]]],
+  ['sessions', ${jsString(t('ws.stats.titre-sessions'))}, [['emises',${jsString(t('ws.stats.champ-emises'))}],['reprises',${jsString(t('ws.stats.champ-reprises'))}],['expirees',${jsString(t('ws.stats.champ-expirees'))}],['debordees',${jsString(t('ws.stats.champ-debordees'))}]]]
 ]
 
 function fmt(n) { return typeof n === 'number' ? n.toLocaleString('${locale}') : String(n) }
@@ -67,19 +80,19 @@ function render(data) {
     var rows = f[2].map(function(fld) { return [fld[1], fmt(fam[fld[0]])] })
     return card(f[1], rows)
   })
-  var lat = data.latences || {}
-  cards.push(card('${t('ws.stats.titre-latences')}', [
+  var lat = data.intervallesPing || {}
+  cards.push(card(${jsString(t('ws.stats.titre-intervalle-ping'))}, [
     ['p50', lat.p50 == null ? '—' : fmt(lat.p50)],
     ['p95', lat.p95 == null ? '—' : fmt(lat.p95)],
-    ['${t('ws.stats.champ-echantillon')}', fmt(lat.echantillon)]
+    [${jsString(t('ws.stats.champ-echantillon'))}, fmt(lat.echantillon)]
   ]))
-  cards.push(card('${t('ws.stats.titre-memoire')}', [
+  cards.push(card(${jsString(t('ws.stats.titre-memoire'))}, [
     ['uptime', fmt(data.uptime) +' s'],
     ['RSS', fmt(Math.round(((data.memoire && data.memoire.rss) || 0) / 1048576)) +' Mo'],
     ['process', data.processId]
   ]))
   document.getElementById('grid').innerHTML = cards.join('')
-  document.getElementById('sub').textContent = '${t('ws.stats.sub-process')}'+ data.processId +'${t('ws.stats.sub-depuis')}'+ fmt(data.uptime) +'${t('ws.stats.sub-s')}'
+  document.getElementById('sub').textContent = ${jsString(t('ws.stats.sub-process'))}+ data.processId +${jsString(t('ws.stats.sub-depuis'))}+ fmt(data.uptime) +${jsString(t('ws.stats.sub-s'))}
   document.getElementById('ts').textContent = new Date(data.horodatage).toLocaleTimeString('${locale}')
 }
 
@@ -100,16 +113,16 @@ export function renderStatsPage(snapshot: MjsWsStatsSnapshot): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${t('ws.stats.titre-page')}</title>
+<title>${htmlText(t('ws.stats.titre-page'))}</title>
 <style>
 ${CSS}
 </style>
 </head>
 <body>
-<h1>${t('ws.stats.titre-page')}</h1>
+<h1>${htmlText(t('ws.stats.titre-page'))}</h1>
 <p class="sub" id="sub"></p>
 <div class="grid" id="grid"></div>
-<footer>${t('ws.stats.pied-de-page')} <span id="ts"></span></footer>
+<footer>${htmlText(t('ws.stats.pied-de-page'))} <span id="ts"></span></footer>
 <script>
 ${buildScript()}
 var INITIAL_STATS = ${initial}

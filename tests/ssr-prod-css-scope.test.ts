@@ -79,7 +79,8 @@ describe('prérendu — CSS scopé sous les noms courts de production', function
         if(moteur === 'browser' && !(await chromiumDisponible())) this.skip()
         const texte     = await prerendre(fixture(`prod-css-${moteur}-${env}`, moteur), env)
         const templates = compter(texte, /<template shadowrootmode=/g)
-        const feuilles  = compter(texte, /<style\b/g)
+        // le cœur embarque le thème : sa feuille (variables `--mjs-surface`) s'ajoute dans chaque racine d'ombre, écartée du décompte
+        const feuilles  = compter(texte, /<style\b/g) - compter(texte, /<style[^>]*>:where\(:root\)/g)
         assert.equal(templates, 2, `2 <template shadowrootmode> attendus (hote + carte, jamais leger) — fragment : ${texte}`)
         assert.equal(feuilles, 3, `3 feuilles attendues (hote, carte, leger aplati), vues ${feuilles} — les propriétés \`_mjs_*\` sont raccourcies en production : le rendu serveur ne doit plus les lire par leur nom`)
         assert.match(texte, /\.hote-wrap\s*\{/, 'la feuille de la racine doit voyager dans le fragment')

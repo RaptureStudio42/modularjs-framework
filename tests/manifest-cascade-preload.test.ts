@@ -76,6 +76,20 @@ describe('bundler — writeManifest() : cascade de modules, table des dépendanc
     }
   })
 
+  // un module cœur (<@@switch>, balise mjs-core-switch) se précharge comme un composant du projet
+  it('µDeps porte aussi un module cœur : E→[core-switch]', async function () {
+    const root   = mjsTmp('cascade-preload-coeur')
+    const srcDir = join(root, 'src')
+    mkdirSync(srcDir, { recursive: true })
+    writeFileSync(join(srcDir, 'e.mjs'), '<@@switch checked={true}></@@switch>\n')
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
+    const stats   = await bundler.compile()
+    assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
+    await bundler.close()
+    const deps = extractConst(readFileSync(join(root, 'bundle.js'), 'utf-8'), 'µDeps')
+    assert.deepEqual(deps.e, ['core-switch'], JSON.stringify(deps))
+  })
+
   it('µPaths reste la table complète (A, B, C, D, M cœur y compris) — µDeps ne filtre QUE le préchargement', async function () {
     const { manifestPath } = await buildProject()
     const manifestSrc = readFileSync(manifestPath, 'utf-8')

@@ -5,7 +5,7 @@
 //    TOUJOURS les clés `duration`/`easing` de `cfg`, même quand elles valent `undefined` (un
 //    config asym pur, sans duration/easing au niveau cfg, comme dans l'exemple documenté) —
 //    Object.assign ne saute pas les valeurs `undefined`, il les écrit. Les `duration`/`easing`
-//    passés par l'APPELANT (`@transition.nom={duration: 777, …}`) étaient donc écrasés par
+//    passés par l'APPELANT (`@transition=*nom(duration: 777ms, …)`) étaient donc écrasés par
 //    `undefined` dès que le config asym ne les définissait pas lui-même.
 //
 // 2. Le mode détecté (`asym` vs `managed`) était mémoïsé sur `setup`, PARTAGÉ par tous les nœuds

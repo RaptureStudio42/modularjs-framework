@@ -14,8 +14,11 @@
 
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
+import { networkInterfaces, hostname } from 'node:os'
 import type { CssOnlyPayload } from '../bundler/index.js'
 import { t } from '../messages/index.js'
+// lecture de l'en-tête Host commune avec la garde du pont MJS WS (mjs-ws/bridge.ts)
+import { hostHeaderName as hostnameOf } from '../host-header.js'
 
 export interface HMRMessage {
   type: 'reload' | 'css-update' | 'connected' | 'error' | 'theme-vars'
@@ -69,11 +72,151 @@ export function hasTrustedBrowserOrigin(origin: string | string[] | undefined): 
   return LOCAL_ORIGIN_RE.test(v)
 }
 
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', ''])
+
+/** Hôte d'écoute prêt à entrer dans une URL : une IPv6 entre crochets (`[::1]`), le reste tel quel. */
+export function hostForUrl(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host
+}
+
+/** true si le serveur écoute ailleurs que sur la seule boucle locale (`0.0.0.0`, une adresse du
+ * réseau local…) : une page ouverte depuis une autre machine peut alors être légitime. */
+export function listensBeyondLoopback(listenHost: string): boolean {
+  const h = hostnameOf(hostForUrl(listenHost)) ?? listenHost
+  return !(h === 'localhost' || h === '::1' || h.startsWith('127.'))
+}
+
+/** Noms propres du serveur de développement : localhost et ses sous-domaines (`app.localhost`, toujours en boucle locale),
+ * 127.0.0.1, [::1], le nom de la machine (et `<nom>.local`), l'hôte d'écoute lui-même et, quand il écoute sur toutes les interfaces
+ * (`0.0.0.0`, `::`), les adresses de la machine (test sur un téléphone du réseau local). La garde Host les admet d'office
+ * (createDevHostCheck) ; la page servie sous l'un d'eux passe la garde d'origine quand son origine est la même que Host
+ * (devOriginVerdict), jamais comme origine locale. `adresses` : pour les tests ; par défaut les interfaces réseau, relevées une fois. */
+function createDevOwnNameCheck(listenHost: string, adresses?: string[]): (nom: string) => boolean {
+  const admis   = new Set(['localhost', '127.0.0.1', '::1'])
+  const machine = hostname().toLowerCase()
+  const court   = machine.split('.')[0]
+  for (const n of [machine, court, court + '.local']) if (n && n !== '.local') admis.add(n)
+  const ecoute = hostnameOf(hostForUrl(listenHost)) ?? listenHost.toLowerCase()
+  if (!WILDCARD_HOSTS.has(ecoute)) admis.add(ecoute)
+  else {
+    const liste = adresses ?? Object.values(networkInterfaces()).flatMap(l => (l ?? []).map(i => i.address))
+    for (const a of liste) admis.add(a.toLowerCase().replace(/%.*$/, ''))
+  }
+  return (nom) => admis.has(nom) || nom.endsWith('.localhost')
+}
+
+/** Garde contre le rebinding DNS : le nom d'une page hostile peut basculer vers 127.0.0.1, mais
+ * son navigateur envoie toujours CE nom dans l'en-tête Host. Acceptés d'office : les noms propres
+ * du serveur (createDevOwnNameCheck). `permis` (`dev.allowedHosts`) ouvre d'autres noms (tunnel,
+ * proxy) : nom exact, `.domaine` pour ce domaine et ses sous-domaines, `true` pour tout permettre.
+ * En-tête absent : refusé, sauf avec `true`. `adresses` : pour les tests. */
+export function createDevHostCheck(listenHost: string, adresses?: string[], permis?: readonly string[] | true): (host: string | string[] | undefined) => boolean {
+  if (permis === true) return () => true
+  const propre    = createDevOwnNameCheck(listenHost, adresses)
+  const nomPermis = allowedHostName(permis)
+  return (host) => {
+    const nom = hostnameOf(host)
+    if (nom === undefined) return false
+    return propre(nom) || nomPermis(nom)
+  }
+}
+
+// nom de la boucle locale au sens strict : localhost et ses sous-domaines (toujours en boucle locale), 127.0.0.1, ::1 — l'origine d'une
+// page de cette machine, sur tout port, et le Host qu'écrit un tunnel qui le réécrit. Le nom de la machine, `<nom>.local` et les adresses
+// du réseau n'en sont pas : dans Host, ils prouvent que la requête arrive ici ; dans une origine, pas que la page vient d'ici (un nom du
+// réseau local, une réponse mDNS se contrefont)
+function isLoopbackName(nom: string): boolean {
+  return nom === 'localhost' || nom.endsWith('.localhost') || nom === '127.0.0.1' || nom === '::1'
+}
+
+// noms de `dev.allowedHosts` : nom exact, `.domaine` pour ce domaine et ses sous-domaines, `true` pour tout nom — lecture de la garde
+// Host (createDevHostCheck) ; la garde d'origine n'en garde que les noms exacts pour une origine autre que Host (devOriginVerdict)
+function allowedHostName(permis?: readonly string[] | true): (nom: string) => boolean {
+  if (permis === true) return () => true
+  const noms = new Set<string>()
+  const domaines: string[] = []
+  for (const p of permis ?? []) {
+    const n = p.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
+    if (n.startsWith('.')) domaines.push(n.slice(1))
+    else if (n) noms.add(n)
+  }
+  return (nom) => noms.has(nom) || domaines.some(d => nom === d || nom.endsWith('.' + d))
+}
+
+/** Nom de l'en-tête Host cité par la réponse 403 : sans le port, réduit aux caractères d'un nom
+ * d'hôte (l'en-tête vient du client, il ne passe pas tel quel dans la réponse). */
+export function hostNameForMessage(host: string | string[] | undefined): string {
+  return (hostnameOf(host) ?? '').replace(/[^a-z0-9.:_-]/g, '') || 'nom.exemple'
+}
+
+// noms d'origine refusée signalés au terminal, au plus : au-delà, une ligne dit que les suivants sont tus (une page qui essaie mille
+// sous-domaines n'inonde ni le terminal ni la mémoire)
+const MAX_ORIGIN_WARNINGS = 20
+
+/** Verdict de la garde d'origine de `mjs dev` pour une origine présente, le même pour le rechargement à chaud et les formulaires.
+ * Admise (true) : une origine de la boucle locale (isLoopbackName, sur tout port : une autre appli de la machine) ; la même origine que
+ * Host (la page servie par cette connexion), quand `hoteAdmis` admet ce Host ; ou une origine dont le nom est écrit exactement dans
+ * `dev.allowedHosts` (`permis` : la page d'un tunnel qui réécrit Host en `localhost`). Une entrée `.domaine` et `true` admettent des
+ * Host, pas une origine autre que Host : ils couvriraient aussi les pages d'autres sites (un autre utilisateur d'un domaine partagé
+ * comme `.ngrok-free.app`, n'importe quel site), qui joignent ce serveur depuis votre navigateur. Refusée : l'entrée `.domaine` qui la
+ * couvre quand le Host reçu est local (un tunnel l'a réécrit : le message dit d'écrire le nom exact), false sinon. */
+function devOriginVerdict(origin: string, host: string | string[] | undefined, permis: readonly string[] | true | undefined, hoteAdmis: (host: string) => boolean): true | string | false {
+  let u: URL
+  try { u = new URL(origin) } catch { return false }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  const nom = hostnameOf(u.host) ?? ''
+  const h   = Array.isArray(host) ? host[0] : host
+  if (isLoopbackName(nom) || (h !== undefined && h.toLowerCase() === u.host && hoteAdmis(h))) return true
+  if (permis === undefined || permis === true) return false
+  if (allowedHostName(permis.filter(p => !p.trim().startsWith('.')))(nom)) return true
+  if (!isLoopbackName(hostnameOf(h) ?? '')) return false
+  return permis.find(p => p.trim().startsWith('.') && allowedHostName([p])(nom))?.trim() ?? false
+}
+
+/** Garde d'origine de `mjs dev`, une par serveur, partagée par le rechargement à chaud et les formulaires (cf. devOriginVerdict) :
+ * true, false, ou le message qui dit d'écrire le nom exact (Host réécrit par un tunnel, origine qu'une entrée `.domaine` couvre),
+ * affiché aussi dans le terminal, une fois par nom et pour MAX_ORIGIN_WARNINGS noms au plus. `hostAllowed` : la garde Host du serveur
+ * (createDevHostCheck), passée par lui pour que les deux gardes lisent les mêmes noms, relevés au même moment ; la même origine que
+ * Host vaut quand ce Host passe cette garde, ou quand le serveur écoute au-delà de la boucle locale. Origine absente : false. */
+export function createDevOriginCheck(permis?: readonly string[] | true, listenHost = '127.0.0.1', hostAllowed = createDevHostCheck(listenHost, undefined, permis)): (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false {
+  const auDela    = listensBeyondLoopback(listenHost)
+  const hoteAdmis = (h: string) => auDela || hostAllowed(h)
+  const signales  = new Set<string>()
+  let tus         = false
+  return (origin, host) => {
+    const v = Array.isArray(origin) ? origin[0] : origin
+    if (!v) return false
+    const motif = devOriginVerdict(v, host, permis, hoteAdmis)
+    if (typeof motif !== 'string') return motif
+    const nom     = hostNameForMessage(new URL(v).host)
+    const message = t('server.origine-nom-exact', { nom, motif, hote: hostNameForMessage(host) })
+    if (signales.has(nom) || tus) return message
+    if (signales.size < MAX_ORIGIN_WARNINGS) {
+      signales.add(nom)
+      console.warn(message)
+    }
+    else {
+      tus = true
+      console.warn(t('server.origine-refus-tus', { max: MAX_ORIGIN_WARNINGS }))
+    }
+    return message
+  }
+}
+
+/** Origine acceptée pour le WebSocket de rechargement : absente (pas un navigateur : curl, un script) ou admise par la règle de la garde
+ * d'origine de `mjs dev` (devOriginVerdict : boucle locale, même origine que Host, nom exact de `dev.allowedHosts`), la garde Host
+ * relue ici à chaque appel. `mjs dev` lui-même passe par sa garde partagée avec les formulaires (createDevOriginCheck). */
+export function isAcceptedHmrOrigin(origin: string | string[] | undefined, host: string | string[] | undefined, listenHost: string, permis?: readonly string[] | true): boolean {
+  if (origin === undefined) return true
+  const v = Array.isArray(origin) ? origin[0] : origin
+  return !!v && devOriginVerdict(v, host, permis, (h) => listensBeyondLoopback(listenHost) || createDevHostCheck(listenHost, undefined, permis)(h)) === true
+}
+
 export class HMRServer {
   wss: WebSocketServer
   clients: Set<WebSocket>
 
-  constructor(httpServer: HttpServer, opts: { path?: string } = {}) {
+  constructor(httpServer: HttpServer, opts: { path?: string, listenHost?: string, isAllowedHost?: (host: string | string[] | undefined) => boolean, allowedHosts?: readonly string[] | true, originCheck?: (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false } = {}) {
     this.wss = new WebSocketServer({
       server: httpServer,
       path: opts.path ?? '/__mjs_hmr',
@@ -81,7 +224,14 @@ export class HMRServer {
     this.clients = new Set()
 
     this.wss.on('connection', (ws: WebSocket, request: IncomingMessage) => {
-      if (!isTrustedDevOrigin(request.headers.origin)) {
+      const { origin, host } = request.headers
+      // `mjs dev` : la garde d'origine partagée avec les formulaires (originCheck), qui dit au terminal le nom exact à écrire ; sinon la
+      // même règle relue ici (listenHost), ou les seules origines locales
+      let permise: boolean
+      if (opts.originCheck) permise = origin === undefined || opts.originCheck(origin, host) === true
+      else if (opts.listenHost !== undefined) permise = isAcceptedHmrOrigin(origin, host, opts.listenHost, opts.allowedHosts)
+      else permise = isTrustedDevOrigin(origin)
+      if (!permise || (opts.isAllowedHost && !opts.isAllowedHost(host))) {
         ws.close(1008, 'Origin not allowed')
         return
       }
@@ -237,9 +387,21 @@ export const hmrClientSnippet = (wsUrl: string) => `
     if (div) div.remove()
   }
 
+  // chargé par <script src> : l'origine d'où il vient, wss: si elle est en https — derrière un tunnel qui réécrit Host, le Host reçu
+  // par le serveur nomme localhost, seule cette origine passe par le tunnel ; écrit en ligne (sans src) : l'adresse du serveur
+  let scriptSocket = ''
+  try {
+    const src = document.currentScript && document.currentScript.src
+    if (typeof src === 'string' && src) {
+      const u = new URL(src)
+      scriptSocket = (u.protocol === 'https:' ? 'wss://' : 'ws://') + u.host + new URL('${wsUrl}').pathname
+    }
+  } catch {}
+
   let retries = 0
   const connect = () => {
-    const ws = new WebSocket('${wsUrl}')
+    // adresse du serveur au protocole de la page : une page en https (tunnel) refuse ws: (contenu mixte)
+    const ws = new WebSocket(scriptSocket || (location.protocol === 'https:' ? 'wss:' : 'ws:') + '${wsUrl}'.replace(/^wss?:/, ''))
     ws.addEventListener('open', () => {
       retries = 0
       console.log(${JSON.stringify(t('server.hmr-connecte'))})

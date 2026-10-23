@@ -74,69 +74,46 @@ describe('animations/iris.ts — rond qui s\'ouvre au centre', function () {
   })
 })
 
-describe('animations/swipe.ts — front dégradé qui balaie l\'élément', function () {
-  it('direction par défaut (right) : duration 320, maskPosition/maskImage/maskSize/maskRepeat corrects', function () {
-    const { µMock } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({})
-    const cfg = intro({})
+describe('animations/swipe.ts — front dégradé qui balaie l\'élément, dans n\'importe quel sens', function () {
+  // le masque à l'instant t : noir (visible) jusqu'au front, transparent après
+  const masque = (cfg: any, t: number) => cfg.css(t, 1 - t).maskImage
+
+  it('sens par défaut (vers la droite) : duration 320, easing ease-out ; à t=0 tout est caché, à t=1 tout est visible', function () {
+    const { µMock, resolved } = makeµMock()
+    const cfg = loadFactory(SWIPE_SRC, µMock)({}).intro({})
     assert.equal(cfg.duration, 320)
-    const atStart = cfg.css(0, 1)
-    const atEnd = cfg.css(1, 0)
-    const atMid = cfg.css(0.25, 0.75)
-    assert.equal(atStart.maskPosition, '100% 0%')
-    assert.equal(atEnd.maskPosition, '0% 0%')
-    assert.equal(atMid.maskPosition, '75% 0%')
-    assert.equal(atStart.maskImage, 'linear-gradient(to right, #000 0%, #000 59.33%, transparent 66.66%, transparent 100%)')
-    assert.equal(atEnd.maskImage, atStart.maskImage, 'maskImage identique à t=0 et t=1 — seule la position bouge')
-    assert.equal(atStart.maskSize, '300% 100%')
-    assert.equal(atStart.maskRepeat, 'no-repeat')
+    assert.equal(resolved[0], 'ease-out')
+    assert.equal(masque(cfg, 0), 'linear-gradient(90deg, #000 -20%, transparent 0%)')
+    assert.equal(masque(cfg, 1), 'linear-gradient(90deg, #000 100%, transparent 120%)')
+    assert.equal(cfg.css(0.5, 0.5).maskRepeat, 'no-repeat')
   })
 
-  it('{ dir: \'left\' } : sens et gradient inversés', function () {
+  it('angle : le front suit l\'angle donné (135 = vers le bas à droite)', function () {
     const { µMock } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({ dir: 'left' })
-    const cfg = intro({})
-    assert.equal(cfg.css(0, 1).maskPosition, '0% 0%')
-    assert.equal(cfg.css(1, 0).maskPosition, '100% 0%')
-    assert.ok(cfg.css(0, 1).maskImage.startsWith('linear-gradient(to left,'))
+    const cfg = loadFactory(SWIPE_SRC, µMock)({ angle: 135 }).intro({})
+    assert.match(masque(cfg, 0.5), /^linear-gradient\(135deg, #000 40%, transparent 60%\)$/)
   })
 
-  it('{ direction: \'down\' } (clé longue, pas de dir) : axe vertical', function () {
+  it('dir / direction en mot : right 90, down 180, left 270, up 0 ; dir gagne sur direction', function () {
     const { µMock } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({ direction: 'down' })
-    const cfg = intro({})
-    assert.equal(cfg.css(0, 1).maskSize, '100% 300%')
-    assert.equal(cfg.css(0, 1).maskPosition, '0% 100%')
-    assert.equal(cfg.css(1, 0).maskPosition, '0% 0%')
+    const deg = (o: any) => /\((\d+)deg/.exec(masque(loadFactory(SWIPE_SRC, µMock)(o).intro({}), 0.5))![1]
+    assert.equal(deg({ dir: 'left' }), '270')
+    assert.equal(deg({ direction: 'down' }), '180')
+    assert.equal(deg({ dir: 'up' }), '0')
+    assert.equal(deg({ dir: 'up', direction: 'left' }), '0')
   })
 
-  it('{ dir: \'up\' } : axe vertical, sens inverse de down', function () {
-    const { µMock } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({ dir: 'up' })
-    const cfg = intro({})
-    assert.equal(cfg.css(0, 1).maskPosition, '0% 0%')
-    assert.equal(cfg.css(1, 0).maskPosition, '0% 100%')
-  })
-
-  it('{ dir: \'up\', direction: \'left\' } : les deux clés présentes, dir gagne', function () {
-    const { µMock } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({ dir: 'up', direction: 'left' })
-    const cfg = intro({})
-    assert.ok(cfg.css(0, 1).maskImage.startsWith('linear-gradient(to top,'), 'dir doit gagner sur direction')
-  })
-
-  it('{ dir: \'diagonal\' } : direction invalide — 1 warn, repli sur right', function () {
+  it('{ dir: \'diagonal\' } : direction invalide — 1 warn, repli vers la droite', function () {
     const { µMock, warns } = makeµMock()
-    const factory = loadFactory(SWIPE_SRC, µMock)
-    const { intro } = factory({ dir: 'diagonal' })
-    const cfg = intro({})
+    const cfg = loadFactory(SWIPE_SRC, µMock)({ dir: 'diagonal' }).intro({})
     assert.equal(warns.length, 1)
-    assert.match(warns[0], /direction invalide 'diagonal'/)
-    assert.equal(cfg.css(0, 1).maskPosition, '100% 0%', 'comportement de right : repli appliqué')
+    assert.match(warns[0], /diagonal/)
+    assert.match(masque(cfg, 0.5), /^linear-gradient\(90deg/)
+  })
+
+  it('intro === outro : la sortie rejoue le même masque à l\'envers', function () {
+    const { µMock } = makeµMock()
+    const f = loadFactory(SWIPE_SRC, µMock)({})
+    assert.equal(f.intro, f.outro)
   })
 })

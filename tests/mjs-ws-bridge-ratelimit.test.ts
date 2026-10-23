@@ -5,7 +5,7 @@
 // (guard.ts) n'expose aucun « peek », impossible de prouver l'éviction sans attendre 10 minutes
 // réelles sinon (cf. commentaire du test).
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsWs } from '../src/mjs-ws/index.js'
@@ -42,17 +42,19 @@ async function startApp(opts: MjsWsOptions = {}): Promise<{ app: MjsWsApp; bridg
 // isole bien « échec de signature » de « échec d'horodatage ». Chaîne DIRIGÉE + INJECTIVE
 // — direction 'in' (ces requêtes sont TOUTES des commandes admin entrantes),
 // cf. tests/mjs-ws-bridge.test.ts pour la couverture directe de la séparation de domaine.
-function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number): string {
-  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body]
+function sign(secret: string, method: string, pathWithQuery: string, body: string, ts: number, nonce: string): string {
+  const fields    = ['in', String(ts), method.toUpperCase(), pathWithQuery, body, nonce]
   const canonical = fields.map(f => f.length +':'+ f).join('')
   return createHmac('sha256', secret).update(canonical).digest('hex')
 }
 
-async function req(port: number, method: string, path: string, body?: any, badSig = false): Promise<{ status: number; json: any }> {
+// `badSig` : signature fausse ; `'aucune'` : requête sans en-têtes de signature (la seule que compte le seau général)
+async function req(port: number, method: string, path: string, body?: any, badSig: boolean | 'aucune' = false): Promise<{ status: number; json: any }> {
   const bodyStr = body !== undefined ? JSON.stringify(body) : ''
   const ts      = Math.floor(Date.now() / 1000)
-  const sig     = badSig ? '0'.repeat(64) : sign(SECRET, method, path, bodyStr, ts)
-  const headers: Record<string, string> = { 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-signature': sig }
+  const nonce   = randomBytes(16).toString('hex')   // neuf à chaque requête : le pont l'exige par défaut
+  const sig     = badSig ? '0'.repeat(64) : sign(SECRET, method, path, bodyStr, ts, nonce)
+  const headers: Record<string, string> = badSig === 'aucune' ? {} : { 'x-mjs-ws-timestamp': String(ts), 'x-mjs-ws-nonce': nonce, 'x-mjs-ws-signature': sig }
   if (bodyStr) headers['content-type'] = 'application/json'
   const res  = await fetch('http://127.0.0.1:'+ port + path, { method, headers, body: bodyStr || undefined })
   const text = await res.text()
@@ -74,25 +76,25 @@ function writeConfig(config: unknown): string {
 describe('MJS-WS — pont universel : limite de débit par IP', function () {
   this.timeout(15000)
 
-  it('(a) seau général PAR IP dépassé → 429 rate-limited ; en dessous du seau → 200', async () => {
+  it('(a) seau général PAR IP (requêtes sans signature) dépassé → 429 rate-limited ; en dessous du seau → traitées (401)', async () => {
     const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET, rateLimit: { perIp: [3, 10000] } } })
     const statuses: number[] = []
     let last429: any = null
     for (let i = 0; i < 5; i++) {
-      const r = await req(bridgePort, 'POST', '/broadcast', { type: 'x' })
+      const r = await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, 'aucune')
       statuses.push(r.status)
       if (r.status === 429) last429 = r.json
     }
-    assert.deepEqual(statuses, [200, 200, 200, 429, 429], 'capacité 3 — les 2 requêtes suivantes sont rejetées')
+    assert.deepEqual(statuses, [401, 401, 401, 429, 429], 'capacité 3 — les 2 requêtes suivantes sont rejetées')
     assert.deepEqual(last429, { ok: false, error: 'rate-limited' }, 'corps 429 minimal, sans autre détail')
     await app.stop()
   })
 
   it("(b) GET /health n'est JAMAIS 429, même seau général déjà épuisé", async () => {
     const { app, bridgePort } = await startApp({ bridge: { port: 0, secret: SECRET, rateLimit: { perIp: [2, 10000] } } })
-    await req(bridgePort, 'POST', '/broadcast', { type: 'x' })
-    await req(bridgePort, 'POST', '/broadcast', { type: 'x' })
-    const blocked = await req(bridgePort, 'POST', '/broadcast', { type: 'x' })
+    await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, 'aucune')
+    await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, 'aucune')
+    const blocked = await req(bridgePort, 'POST', '/broadcast', { type: 'x' }, 'aucune')
     assert.equal(blocked.status, 429, 'le seau général doit être épuisé à ce stade (pré-condition du test)')
     for (let i = 0; i < 5; i++) {
       const h = await fetch('http://127.0.0.1:'+ bridgePort +'/health')
@@ -133,7 +135,7 @@ describe('MJS-WS — pont universel : limite de débit par IP', function () {
   it('(e) ws.bridge.rateLimit : clé inconnue / forme invalide → erreur avec suggestion ; formes valides acceptées', () => {
     assert.throws(
       () => findConfig(writeConfig({ ws: { bridge: { rateLimit: { perIpp: [120, 10000] } } } })),
-      /ws\.bridge\.rateLimit\.perIpp : clé inconnue — tu voulais dire 'perIp' \?/,
+      /ws\.bridge\.rateLimit\.perIpp : clé inconnue — vouliez-vous dire 'perIp' \?/,
     )
     assert.throws(
       () => findConfig(writeConfig({ ws: { bridge: { rateLimit: 'oui' } } })),

@@ -59,14 +59,18 @@ function checkPattern(pattern: any, js: string, moduleName: string | undefined, 
 // lintReservedSymbolNames — refuse toute LIAISON portant le nom d'un symbole du framework, dans
 // le JS déjà compilé (jamais sur le source Civet/Coffee brut). Échec de parse → return silencieux,
 // une autre passe du pipeline le dira (même contrat que parseModuleAst, transpiler/index.ts).
-export function lintReservedSymbolNames(js: string, moduleName: string | undefined, section: string): void {
-  if (!js) return
+// `preAst` : l'AST de `js` déjà analysé (le transpileur le partage) ; `null` : analyse déjà échouée, rien à contrôler
+export function lintReservedSymbolNames(js: string, moduleName: string | undefined, section: string, preAst?: acorn.Node | null): void {
+  if (!js || preAst === null) return
   let ast: acorn.Node
-  try {
-    ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' })
-  }
-  catch {
-    return
+  if (preAst) ast = preAst
+  else {
+    try {
+      ast = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module' })
+    }
+    catch {
+      return
+    }
   }
 
   walk.full(ast, (node: any) => {

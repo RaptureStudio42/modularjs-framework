@@ -13,6 +13,7 @@
 // Portée par test + restauration = robuste à l'ordre de chargement.
 
 import assert from 'node:assert/strict'
+import { poserMessages } from './helpers/messages-stub.js'
 
 let rafQueue: Array<{ id: number, cb: (t: number) => void }> = []
 let rafIdCounter = 0
@@ -42,6 +43,7 @@ function flushOneFrame(time: number) {
 // vraiment — cf. describe() plus bas.
 ;(globalThis as any).µ = (globalThis as any).µ || {}
 const µ: any = (globalThis as any).µ
+poserMessages(µ)
 µ.Ticker = µ.Ticker || { add() {} }
 µ._mjs_interpolatorSet = µ._mjs_interpolatorSet || new WeakSet()
 µ.anim = µ.anim || {}

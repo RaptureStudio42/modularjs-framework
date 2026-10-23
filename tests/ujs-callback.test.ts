@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -20,6 +21,7 @@ function extractHelpersBlock(src: string): string {
   return extractMarked(src, 'helpers-navigation')
 }
 function installHelpers(µ: any, document: any, window: any) {
+  poserMessages(µ)
   new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, document, window)
 }
 function extractNavDispatchStatement(): string {
@@ -231,6 +233,7 @@ describe('mjs_ujs — directive @callback', function () {
         pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
       })
       installHelpers(µ, doc, win)
+      poserMessages(µ)
       new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, class {})
 
       µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { el: form })
@@ -254,6 +257,7 @@ describe('mjs_ujs — directive @callback', function () {
         pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
       })
       installHelpers(µ, doc, win)
+      poserMessages(µ)
       new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement())(µ, win, doc, FakeFormData, URL, class {})
 
       µ._mjs_navDispatch('http://x/posts', 'POST', new FakeFormData(), { el: form })

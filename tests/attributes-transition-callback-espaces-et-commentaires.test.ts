@@ -13,7 +13,7 @@ const acorn    = require('acorn')
 async function introstartCallbackBody(assignment: string): Promise<string> {
   const source = [
     '<script>', '$x = \'\'', '</script>',
-    `<p @transition.fade @introstart={${assignment}}>test</p>`,
+    `<p @transition=*fade @introstart={${assignment}}>test</p>`,
   ].join('\n')
   const { output } = await transpile(source, { moduleName: 'transCallback' })
   const m = output.match(/node\._mjs_cb_introstart = \(\) => \{([\s\S]*?)\n?\s*\};/)

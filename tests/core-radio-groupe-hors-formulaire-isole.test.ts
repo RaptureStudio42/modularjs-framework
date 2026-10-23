@@ -23,10 +23,10 @@ const stripEsm = (s: string) => s
 // trop large.
 const HOST = [
   '<form id="avecform" @noUJS>',
-  '  <@radio name="opt" value="a">A</@radio>',
+  '  <@@radio name="opt" value="a">A</@@radio>',
   '</form>',
   '<div id="sansform">',
-  '  <@radio name="opt" value="b">B</@radio>',
+  '  <@@radio name="opt" value="b">B</@@radio>',
   '</div>',
 ].join('\n')
 
@@ -47,7 +47,7 @@ async function buildAndMount(): Promise<{ window: any; hote: any }> {
     assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`)
     return f!
   }
-  const code = [pick(/^mjs_core-/), pick(/^radio-/), pick(/^hote-/)]
+  const code = [pick(/^mjs_core-/), pick(/^core-radio-/), pick(/^hote-/)]
     .map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
     .join('\n')
 
@@ -71,15 +71,15 @@ async function tick(ms = 30) {
   await new Promise((r) => setTimeout(r, ms))
 }
 
-describe('mjs-radio — un groupe hors <form> ne décoche pas un groupe de même name DANS un <form>', function () {
+describe('mjs-core-radio — un groupe hors <form> ne décoche pas un groupe de même name DANS un <form>', function () {
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
 
   it('cocher le radio hors formulaire laisse le radio du formulaire coché (groupes indépendants)', async () => {
     const { window, hote } = await buildAndMount()
-    const dansForm = hote._shadow.querySelector('#avecform mjs-radio')
-    const horsForm = hote._shadow.querySelector('#sansform mjs-radio')
-    assert.ok(dansForm && horsForm, 'les deux <mjs-radio> attendus')
+    const dansForm = hote._shadow.querySelector('#avecform mjs-core-radio')
+    const horsForm = hote._shadow.querySelector('#sansform mjs-core-radio')
+    assert.ok(dansForm && horsForm, 'les deux <mjs-core-radio> attendus')
     const nativeDansForm = dansForm._shadow.querySelector('input.native')
     const nativeHorsForm = horsForm._shadow.querySelector('input.native')
 
@@ -95,8 +95,8 @@ describe('mjs-radio — un groupe hors <form> ne décoche pas un groupe de même
 
   it('inversement, cocher le radio du formulaire ne décoche pas celui hors formulaire', async () => {
     const { window, hote } = await buildAndMount()
-    const dansForm = hote._shadow.querySelector('#avecform mjs-radio')
-    const horsForm = hote._shadow.querySelector('#sansform mjs-radio')
+    const dansForm = hote._shadow.querySelector('#avecform mjs-core-radio')
+    const horsForm = hote._shadow.querySelector('#sansform mjs-core-radio')
     const nativeDansForm = dansForm._shadow.querySelector('input.native')
     const nativeHorsForm = horsForm._shadow.querySelector('input.native')
 

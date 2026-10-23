@@ -18,7 +18,7 @@ function pageHtml(baseHref: string | null): string {
   return `<!doctype html><html><head><meta charset="utf-8">${base}
 <meta name="csrf-token" content="SECRET123">
 </head><body>
-<script>window.__warn = []; window.µ = { log:function(){}, error:function(){}, warn:function(m){ window.__warn.push(m) } };</script>
+<script>window.__warn = []; window.µ = { log:function(){}, error:function(){}, warn:function(m){ window.__warn.push(m) }, _mjs_txt:function(k, v, f){ return f.replace(/\\{(\\w+)\\}/g, function(m, n){ return v && n in v ? v[n] : m }) } };</script>
 <script>${AJAX_SRC}</script>
 </body></html>`
 }

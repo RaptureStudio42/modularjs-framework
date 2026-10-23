@@ -3,10 +3,10 @@
 // le fichier entier par le navigateur (SyntaxError au chargement, page morte) alors que le
 // build était vert. Le lot est donc tranché à la compilation, en citant la ligne produite.
 //
-// Cause mesurée : Civet referme une fin de corps de flèche à accolades sur une expression
-// bancale quand ce bloc ne contient QU'UN `if` lui-même à accolades — `() => { if (1) { z = 5 } }`
-// ressort en `() =>( { if (1) { return z = 5 } })`, que rien n'exécute. Les écritures
-// équivalentes (corps indenté, `if … then …`, corps à plusieurs instructions) compilent juste.
+// Cause mesurée : un défaut de Civet, un objet décomposé dans le `else` d'un if/then/else en ligne
+// (`z = if c then {n: 1} else {...o}`), ressort en `else {ref = ...o}`, que rien n'analyse. Un corps
+// de flèche à accolades qui ne contient qu'un `if` (`() => { if (1) { z = 5 } }`), autrefois lu par
+// Civet comme un objet, est désormais un bloc : il compile juste, comme ses écritures équivalentes.
 
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
@@ -14,19 +14,20 @@ import { transpile } from '../src/transpiler/index.js'
 const composant = (script: string, html: string) => `<script>\n${script}\n</script>\n${html}\n`
 
 describe('gestionnaires inline — lot refusé quand le JavaScript compilé ne s’analyse pas', function () {
-  const CASSE = '<button @click={() => { if (1) { z = 5 } }}>go</button>\n'
+  const CASSE  = '<button @click={z = if c then {n: 1} else {...o}}>go</button>\n'
+  const SCRIPT = 'z .= 0\nc = true\no = {}'
 
-  it('if à accolades seul dans le corps, aucune constante en jeu', async function () {
+  it('objet décomposé dans le else, aucune constante en jeu', async function () {
     await assert.rejects(
-      () => transpile(composant('z .= 0', CASSE), { moduleName: 'card' }),
+      () => transpile(composant(SCRIPT, CASSE), { moduleName: 'card' }),
       /JavaScript invalide/,
     )
   })
 
   it('le refus cite la ligne fautive du JavaScript produit', async function () {
     await assert.rejects(
-      () => transpile(composant('z .= 0', CASSE), { moduleName: 'card' }),
-      /if \(1\) \{ return z = 5 \}/,
+      () => transpile(composant(SCRIPT, CASSE), { moduleName: 'card' }),
+      /else \{ref = \.\.\.o\}/,
     )
   })
 
@@ -34,7 +35,7 @@ describe('gestionnaires inline — lot refusé quand le JavaScript compilé ne s
     // le gestionnaire sain déclare sa PROPRE liaison homonyme de la constante : c'est la
     // recherche du nom dans le texte du lot entier qui le refusait à tort
     const html = '<button @click={() => { let z = 1; z = 5 }}>a</button>\n' + CASSE
-    const err: any = await transpile(composant('z := 0', html), { moduleName: 'card' }).then(() => null, (e: any) => e)
+    const err: any = await transpile(composant('z := 0\nc = true\no = {}', html), { moduleName: 'card' }).then(() => null, (e: any) => e)
     assert.ok(err, 'le lot doit être refusé')
     assert.match(String(err.message), /JavaScript invalide/)
     assert.doesNotMatch(String(err.message), /CONSTANT/)
@@ -47,6 +48,10 @@ describe('gestionnaires inline — lot refusé quand le JavaScript compilé ne s
 
     it('if … then …', async function () {
       await transpile(composant('z .= 0', '<button @click={() => if (1) then z = 5}>go</button>\n'), { moduleName: 'card' })
+    })
+
+    it('if à accolades seul dans le corps : lu comme un bloc', async function () {
+      await transpile(composant('z .= 0', '<button @click={() => { if (1) { z = 5 } }}>go</button>\n'), { moduleName: 'card' })
     })
 
     it('corps à deux instructions', async function () {

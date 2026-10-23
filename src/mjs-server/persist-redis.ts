@@ -30,16 +30,23 @@
 // le socket + son cycle de reconnexion à backoff resteraient ouverts indéfiniment après l'arrêt du
 // serveur (process qui ne rend jamais la main, warnings de reconnexion en boucle vers un Redis dont
 // plus personne ne se sert). À signaler côté doc si ce comportement doit être documenté.
+// Cette attente est elle-même bornée (cf. PendingWrites dans persist.ts) : une commande envoyée à un Redis qui s'est tu est
+// bornée par RedisConnection (30 s : la connexion est fermée, la commande échoue), le moteur l'abandonne au même moment (WRITE_TIMEOUT_MS) — chaque écriture
+// n'est donc suivie par `_inFlight` que 30 s depuis son départ. Garder pour toujours la promesse abandonnée retenait une promesse de
+// plus par tentative sous une panne muette (120 par heure et par partie), et stop() ne rendait jamais la main. Passé le délai
+// l'écriture est lâchée (elle peut encore aboutir, le moteur rattrape alors son arrivée) ; un warn dit combien d'écritures n'ont
+// pas répondu, puis la connexion est fermée quand même (ce qui rejette les commandes restées sans réponse : un warn chacune).
 //
 //   import { mjsServer, RedisPersistAdapter } from 'modularjs-framework/mjs-server'
 //   app = mjsServer({ persist: new RedisPersistAdapter({ url: 'redis://localhost:6379', prefix: 'mjs-server:' }) })
 
 import { RedisConnection, parseRedisUrl, type RespValue } from '../mjs-ws/adapter-redis.js'
-import type { MjsWsLogFn, MjsWsLogLevel } from '../mjs-ws/index.js'
+import type { MjsWsLogFn } from '../mjs-ws/index.js'
 import type { MjsServerPersistAdapter } from './persist.js'
 import type { MjsServerGameSnapshot } from './game.js'
-import { encodeSnapshot, decodeSnapshot } from './persist.js'
+import { encodeSnapshot, decodeSnapshot, PendingWrites, WRITE_TIMEOUT_MS } from './persist.js'
 import { t } from '../messages/index.js'
+import { consoleLog } from '../mjs-ws/package-helpers.js'
 
 const CONNECT_TIMEOUT_MS = 5000   // borne « jamais bloquant » — même ordre de grandeur que persist-bridge.ts
 
@@ -55,19 +62,14 @@ export interface RedisPersistAdapterOpts {
   onLog?: MjsWsLogFn
 }
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[mjs-server:persist-redis] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
-}
+const defaultLog = consoleLog('[mjs-server:persist-redis]')
 
 export class RedisPersistAdapter implements MjsServerPersistAdapter {
   private _conn: RedisConnection
   private _key: string
   private _onLog: MjsWsLogFn
   private _amorcee = false
-  private _enVol = new Set<Promise<void>>()
+  private _inFlight = new PendingWrites()
   // callbacks « réveille-moi à la prochaine connexion réussie » — posés par _awaitConnection,
   // consommés (splice) à CHAQUE onConnected (initiale ou reconnexion), jamais accumulés au-delà
   private _ready: Array<() => void> = []
@@ -125,21 +127,21 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
     })
   }
 
-  // garde-fou — .catch() AVANT .finally() : une promesse orpheline rejetée ne doit
-  // JAMAIS devenir un unhandledRejection (Node 20 tue le process dessus). En pratique _runWhenReady
-  // catche déjà tout en interne (jamais un rejet ici) — filet de sécurité.
-  private _suivre(p: Promise<void>, label: string): void {
-    this._enVol.add(p)
-    p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'redis', label: label }), { err: err instanceof Error ? err.message : String(err) }))
-      .finally(() => this._enVol.delete(p))
+  // garde-fou — .catch() : une promesse orpheline rejetée ne doit JAMAIS devenir un unhandledRejection
+  // (Node 20 tue le process dessus). En pratique _runWhenReady catche déjà tout en interne (jamais un
+  // rejet ici) — filet de sécurité. `_inFlight` ne suit `p` que WRITE_TIMEOUT_MS (cf. l'en-tête)
+  private _suivre(p: Promise<void>, label: string): Promise<void> {
+    this._inFlight.track(p)
+    return p.catch(err => this._onLog('warn', t('serveur.persist-backend-rejet-non-intercepte', { backend: 'redis', label: label }), { err: err instanceof Error ? err.message : String(err) }))
   }
 
-  save(id: string, data: MjsServerGameSnapshot): void {
-    this._suivre(this._runWhenReady(() => this._conn.send(['HSET', this._key, id, encodeSnapshot(data)]).then(() => {}), `save('${id}')`), `save('${id}')`)
+  // promesse rendue = fin de la commande, jamais rejetée (cf. _suivre) : le moteur s'y enchaîne
+  save(id: string, data: MjsServerGameSnapshot): Promise<void> {
+    return this._suivre(this._runWhenReady(() => this._conn.send(['HSET', this._key, id, encodeSnapshot(data)]).then(() => {}), `save('${id}')`), `save('${id}')`)
   }
 
-  remove(id: string): void {
-    this._suivre(this._runWhenReady(() => this._conn.send(['HDEL', this._key, id]).then(() => {}), `remove('${id}')`), `remove('${id}')`)
+  remove(id: string): Promise<void> {
+    return this._suivre(this._runWhenReady(() => this._conn.send(['HDEL', this._key, id]).then(() => {}), `remove('${id}')`), `remove('${id}')`)
   }
 
   async load(): Promise<Array<{ id: string; data: MjsServerGameSnapshot }>> {
@@ -165,10 +167,12 @@ export class RedisPersistAdapter implements MjsServerPersistAdapter {
     return results
   }
 
-  /** attend la file ENTIÈRE (cf. _runWhenReady, bornée) PUIS ferme la connexion — cf.
-   *  commentaire de tête pour la justification (dernier appel du cycle de vie). */
+  /** attend la file ENTIÈRE (cf. _runWhenReady, bornée) — chaque écriture au plus WRITE_TIMEOUT_MS depuis son départ (cf.
+   *  PendingWrites) : un warn compte celles restées sans réponse — PUIS ferme la connexion, cf. commentaire de tête pour
+   *  la justification (dernier appel du cycle de vie). */
   async flush(): Promise<void> {
-    await Promise.allSettled(Array.from(this._enVol))
+    const unanswered = await this._inFlight.settle()
+    if (unanswered > 0) this._onLog('warn', t('serveur.persist-backend-flush-sans-reponse', { backend: 'redis', nb: unanswered, delai: WRITE_TIMEOUT_MS / 1000 }))
     this._conn.stop()
   }
 }

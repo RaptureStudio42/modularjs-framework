@@ -174,11 +174,11 @@ describe('mjs-ws/stats — app.stats() : forme complète + uptime/processId', ()
     assert.equal(typeof snap.horodatage, 'number')
     assert.equal(typeof snap.memoire.rss, 'number')
     assert.ok(snap.memoire.rss > 0)
-    for (const famille of ['connexions', 'messages', 'garde', 'salons', 'flux', 'pont', 'adaptateur', 'sessions', 'latences', 'erreurs']) {
+    for (const famille of ['connexions', 'messages', 'garde', 'salons', 'flux', 'pont', 'adaptateur', 'sessions', 'intervallesPing', 'erreurs']) {
       assert.ok(famille in snap, `famille '${famille}' manquante dans l'instantané`)
     }
     assert.deepEqual(Object.keys(snap.connexions).sort(), ['accueillies', 'actives', 'fermees', 'parquees', 'refusees', 'refuseesBan', 'refuseesOrigine', 'refuseesPlafond'].sort())
-    assert.deepEqual(snap.latences, { p50: null, p95: null, echantillon: 0 }, 'aucun ping encore mesuré')
+    assert.deepEqual(snap.intervallesPing, { p50: null, p95: null, echantillon: 0 }, 'aucun ping encore mesuré')
     await app.stop()
   })
 
@@ -242,7 +242,7 @@ describe('mjs-ws/stats — pont : GET /stats + /metrics, règle de signature loo
     const valueLines = r.text.split('\n').filter(l => l && !l.startsWith('#'))
     assert.ok(valueLines.length > 10, `attendu plusieurs lignes de métriques, reçu ${valueLines.length}`)
     for (const line of valueLines) assert.match(line, /^mjs_ws_[a-z_]+ [0-9.]+$/, `ligne non conforme : '${line}'`)
-    assert.ok(r.text.includes('mjs_ws_ping_samples'), 'latences exposées (mjs_ws_ping_p50_ms/p95 quand échantillon non vide, mjs_ws_ping_samples toujours)')
+    assert.ok(r.text.includes('mjs_ws_ping_interval_samples'), 'intervalles entre pings exposés (mjs_ws_ping_interval_p50_ms/p95 quand échantillon non vide, mjs_ws_ping_interval_samples toujours)')
     assert.ok(r.text.includes('mjs_ws_connections_active'), 'préfixe mjs_ws_ respecté')
     await app.stop()
   })
@@ -325,15 +325,15 @@ describe('mjs-ws/stats — LatencyReservoir : p50/p95 sur un échantillon connu,
     assert.deepEqual(r.percentiles(), { p50: null, p95: null, echantillon: 0 })
   })
 
-  it('ping réel (heartbeat actif) → latences.p50/p95 numériques, échantillon ≥ 1', async () => {
+  it('ping réel (heartbeat actif) → intervallesPing.p50/p95 numériques, échantillon ≥ 1', async () => {
     const { transport, app } = await startApp({ heartbeat: 20 })
     const µ = makeClient(transport)
     const s = µ.socket('memory://stats-latency', { heartbeat: 20 })
     s.connect(); await tick()
     await tick(45)   // laisse au moins 1 aller-retour ping/pong passer (même délai que mjs-ws-core.test.ts #5)
     const snap = app.stats()
-    assert.equal(typeof snap.latences.p50, 'number')
-    assert.ok(snap.latences.echantillon >= 1)
+    assert.equal(typeof snap.intervallesPing.p50, 'number')
+    assert.ok(snap.intervallesPing.echantillon >= 1)
     s.destroy(); await app.stop()
   })
 })

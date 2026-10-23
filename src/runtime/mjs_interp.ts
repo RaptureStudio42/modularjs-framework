@@ -12,6 +12,7 @@
 //   {for id, e in $vue.entites}<mjs-entity {...e} />{/for}           # positions LISSÉES
 //   …
 //   $vue.stop()   # coupe la boucle de rendu + les abonnements — le vrai partie.state, LUI, continue
+//   (appelé dans un composant, il s'arrête aussi seul à sa destruction et repart s'il revient dans la page)
 //
 // `fields` — noms de clés de `partie.state` qui sont des DICTS {id → entité} (forme de `def.view`
 // côté jeu, cf. mjs-server/game.ts) : SEULES ces clés apparaissent sur le store miroir renvoyé (les
@@ -53,10 +54,20 @@ function _mjinterpLoop(step) {
   };
 }
 
+// range une clé venue des données (id d'entité, nom de champ) sur une copie : `__proto__` y reste une clé comme une autre —
+// l'affectation `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+function _mjinterpPut(o, k, v) {
+  if (k === '__proto__') { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); }
+  else { o[k] = v; }
+}
+
+// clé propre, jamais héritée : `k in b` trouvait `constructor` ou `toString` sur le prototype d'une copie qui ne les a plus
+var _mjinterpOwn = Object.prototype.hasOwnProperty;
+
 // clone superficiel d'une entité (1 niveau — cf. tête de fichier, "sous-objets" = scalaires plats)
 function _mjinterpCloneEnt(ent) {
   var clone = {}, k;
-  for (k in ent) { clone[k] = ent[k]; }
+  for (k in ent) { _mjinterpPut(clone, k, ent[k]); }
   return clone;
 }
 
@@ -72,7 +83,7 @@ function _mjinterpSnap(game, fields) {
     if (!dict || typeof dict !== 'object') { continue; }
     for (id in dict) {
       ent = dict[id];
-      out[c][id] = (ent && typeof ent === 'object') ? _mjinterpCloneEnt(ent) : ent;
+      _mjinterpPut(out[c], id, (ent && typeof ent === 'object') ? _mjinterpCloneEnt(ent) : ent);
     }
   }
   return out;
@@ -82,7 +93,7 @@ function _mjinterpSnap(game, fields) {
 // _mjinterpExtrapoler), non-numériques = valeur de `b` (le plus récent des deux échantillons).
 function _mjinterpLerpEnt(a, b, r) {
   var out = {}, k;
-  for (k in b) { out[k] = (typeof a[k] === 'number' && typeof b[k] === 'number') ? a[k] + (b[k] - a[k]) * r : b[k]; }
+  for (k in b) { _mjinterpPut(out, k, (typeof a[k] === 'number' && typeof b[k] === 'number') ? a[k] + (b[k] - a[k]) * r : b[k]); }
   return out;
 }
 
@@ -96,9 +107,9 @@ function _mjinterpLerpFrame(a, b, r, fields) {
     dictA = a[c] || {}; dictB = b[c] || {};
     res = {};
     for (id in dictB) {
-      res[id] = (dictA[id] && typeof dictA[id] === 'object' && typeof dictB[id] === 'object')
+      _mjinterpPut(res, id, (dictA[id] && typeof dictA[id] === 'object' && typeof dictB[id] === 'object')
         ? _mjinterpLerpEnt(dictA[id], dictB[id], r)
-        : dictB[id];
+        : dictB[id]);
     }
     out[c] = res;
   }
@@ -126,7 +137,7 @@ function _mjinterpEqEnt(a, b) {
   if (a === b) { return true; }
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') { return a === b; }
   for (k in b) { if (a[k] !== b[k]) { return false; } }
-  for (k in a) { if (!(k in b)) { return false; } }
+  for (k in a) { if (!_mjinterpOwn.call(b, k)) { return false; } }
   return true;
 }
 
@@ -135,7 +146,7 @@ function _mjinterpEqDict(a, b) {
   if (a === b) { return true; }
   if (!a || !b) { return false; }
   for (k in b) { if (!_mjinterpEqEnt(a[k], b[k])) { return false; } }
-  for (k in a) { if (!(k in b)) { return false; } }
+  for (k in a) { if (!_mjinterpOwn.call(b, k)) { return false; } }
   return true;
 }
 
@@ -190,16 +201,36 @@ function _mjinterpRender(st) {
   var fields = opts.fields || [];
   var delay = opts.delay != null ? opts.delay : 2;
   var st = { game: game, fields: fields, delay: delay, buffer: [], deltas: [], mirror: µ.state({}) };
-  var i;
+  var comp = µ.activeComponent, arrete = false, offState, offStart, stopLoop, fin, i;
   for (i = 0; i < fields.length; i++) { st.mirror[fields[i]] = {}; }
 
-  _mjinterpArrival(st);   // amorce le tampon avec l'état COURANT — pas d'attente du 1er événement réseau
-  var offState = game.on('state', function() { _mjinterpArrival(st); });
-  var offStart = game.on('start', function() { _mjinterpArrival(st); });
-  var stopLoop = _mjinterpLoop(function() { _mjinterpRender(st); });
+  // abonnements + boucle, tampon amorcé avec l'état COURANT — pas d'attente du 1er événement réseau
+  function lancer() {
+    if (arrete || offState) { return; }
+    st.buffer = []; st.deltas = [];
+    _mjinterpArrival(st);
+    offState = game.on('state', function() { _mjinterpArrival(st); });
+    offStart = game.on('start', function() { _mjinterpArrival(st); });
+    stopLoop = _mjinterpLoop(function() { _mjinterpRender(st); });
+  }
+  function couper() {
+    if (offState) { stopLoop(); offState(); offStart(); offState = null; }
+  }
+  lancer();
+  // rattaché au composant qui l'appelle, comme µevery : sa destruction coupe la boucle et les abonnements (sans quoi la
+  // boucle tournait à chaque image et les écouteurs de partie restaient à vie) ; remis dans la page, il repart à son montage
+  if (comp && typeof comp._mjs_onDestroy === 'function') {
+    fin = function() {
+      if (arrete) { return; }
+      couper();
+      comp._mjs_onDestroy(fin);
+      (comp._mjs_mount_cbs || (comp._mjs_mount_cbs = [])).push(lancer);
+    };
+    comp._mjs_onDestroy(fin);
+  }
 
   Object.defineProperty(st.mirror, 'stop', {
-    value: function() { stopLoop(); offState(); offStart(); },
+    value: function() { arrete = true; couper(); },
     enumerable: false,
     configurable: true
   });

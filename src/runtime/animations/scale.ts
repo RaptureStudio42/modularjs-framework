@@ -1,31 +1,20 @@
-// animations/scale.coffee — port direct de Svelte scale.
+// animations/scale.ts — la balise grandit jusqu'à sa taille depuis `start` (0 : un point ; 20 : vingt fois trop grande) en s'opacifiant
+// de la part `opacity` (0) de son opacité jusqu'à tout ; `origin` (« x% y% ») : le point d'où elle grandit, le centre par défaut ;
+// `axis` : x ou y, elle ne grandit que dans ce sens (both par défaut)
+// options : start (0), opacity (0), origin, axis, duration (400), delay (0), easing (ease-out)
 (function(opts = {}) {
-  var ref, ref1, sd, setup, start, startOp;
-  start = (ref = opts.start) != null ? ref : 0;
-  startOp = (ref1 = opts.opacity) != null ? ref1 : 0;
-  sd = 1 - start;
-  setup = function(node) {
-    var baseTransform, od, ref2, ref3, ref4, style, targetOpacity;
-    style = window.getComputedStyle(node);
-    targetOpacity = +style.opacity;
-    baseTransform = style.transform === 'none' ? '' : style.transform;
-    od = targetOpacity * (1 - startOp);
-    return {
-      delay: (ref2 = opts.delay) != null ? ref2 : 0,
-      duration: (ref3 = opts.duration) != null ? ref3 : 400,
-      easing: µ.easing.resolve(opts.easing),
-      steps: (ref4 = opts.steps) != null ? ref4 : 60,
-      css: function(t, u) {
-        return {
-          transform: `${baseTransform} scale(${1 - sd * (1 - t)})`.trim(),
-          opacity: targetOpacity - od * (1 - t)
-        };
-      }
-    };
-  };
-  setup._isCfgFactory = true;
-  return {
-    intro: setup,
-    outro: setup
-  };
+  var gap = 1 - (opts.start ?? 0);
+  var fn  = opts.axis === 'x' ? 'scaleX' : opts.axis === 'y' ? 'scaleY' : 'scale';
+  return µ._mjs_animFrom(opts, {
+    add: function(node, style, rest) {
+      var tf = style.transform === 'none' ? '' : style.transform;
+      // l'opacité de départ est une part de celle de la balise : celle de l'enveloppe n'est pas la bonne
+      var od = rest * (1 - (opts.opacity ?? 0));
+      return function(t, u) {
+        var f = { transform: `${tf} ${fn}(${1 - gap * u})`.trim(), opacity: rest - od * u };
+        if (opts.origin) f.transformOrigin = opts.origin;
+        return f;
+      };
+    }
+  });
 });

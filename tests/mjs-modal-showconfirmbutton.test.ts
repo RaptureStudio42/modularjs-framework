@@ -73,21 +73,21 @@ describe('mjs_modal — showConfirmButton (défaut true)', function () {
     const { document, µ } = loadModal()
     µ.modal.fire({ text: 'x', showConfirmButton: false })
     const b = box(document)
-    assert.equal(document.activeElement, b, 'la boîte reçoit le focus, faute de bouton/input')
+    assert.ok(document.activeElement === b, 'la boîte reçoit le focus, faute de bouton/input')
     assert.equal(b.getAttribute('tabindex'), '-1')
   })
 
   it('showConfirmButton:false + showCancelButton:true : le focus initial tombe QUAND MÊME sur la boîte (pas sur cancel — même règle que "confirm ou rien" qu\'auparavant)', function () {
     const { document, µ } = loadModal()
     µ.modal.fire({ text: 'x', showConfirmButton: false, showCancelButton: true })
-    assert.equal(document.activeElement, box(document))
+    assert.ok(document.activeElement === box(document), 'le focus initial tombe sur la boîte, pas sur le bouton d\'annulation')
   })
 
   it('showConfirmButton:false, zéro bouton : le piège à focus (Tab) ne plante PAS — reste sur la boîte', function () {
     const { window, document, µ } = loadModal()
     µ.modal.fire({ text: 'x', showConfirmButton: false })
     assert.doesNotThrow(() => { tab(window, document) })
-    assert.equal(document.activeElement, box(document), 'aucun élément focusable dans la boîte : Tab neutralisé')
+    assert.ok(document.activeElement === box(document), 'aucun élément focusable dans la boîte : Tab neutralisé')
   })
 
   it('showConfirmButton:false : fermeture par ESC toujours active (dismiss:\'esc\')', async function () {
@@ -97,7 +97,7 @@ describe('mjs_modal — showConfirmButton (défaut true)', function () {
     const r = await p
     assert.equal(r.isDismissed, true)
     assert.equal(r.dismiss, 'esc')
-    assert.equal(box(document), null)
+    assertAbsent(box(document), 'boîte retirée du DOM après Échap')
   })
 
   it('showConfirmButton:false : fermeture par clic backdrop toujours active (dismiss:\'backdrop\')', async function () {
@@ -118,7 +118,7 @@ describe('mjs_modal — showConfirmButton (défaut true)', function () {
   it('showConfirmButton:false avec un input présent : le focus initial reste sur l\'input (priorité inchangée)', function () {
     const { document, µ } = loadModal()
     µ.modal.fire({ input: 'text', showConfirmButton: false })
-    assert.equal(document.activeElement, box(document).querySelector('.mjs-modal-input'))
+    assert.ok(document.activeElement === box(document).querySelector('.mjs-modal-input'), 'le focus initial reste sur le champ de saisie')
   })
 
   it('showConfirmButton:false avec un input + inputValidator présents : fermable par ESC sans jamais passer par le bouton (confirmBtn absent, onConfirm inatteignable)', async function () {

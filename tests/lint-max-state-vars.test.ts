@@ -67,7 +67,9 @@ describe('mjs.config.json — validation stricte du bloc lint', () => {
   it('throw sur clé inconnue dans lint, avec la liste des clés admises', () => {
     const root = mjsTmp('cfg')
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ lint: { maxStateVarz: 40 } }))
-    assert.throws(() => findConfig(root), /lint\.maxStateVarz : clé inconnue[\s\S]*Clés valides : maxStateVars/)
+    // liste des clés valides désormais longue (un type par avertissement de build, cf.
+    // src/diagnostics.ts) — on vérifie juste que maxStateVars y figure, pas sa position exacte
+    assert.throws(() => findConfig(root), /lint\.maxStateVarz : clé inconnue[\s\S]*Clés valides : [\s\S]*\bmaxStateVars\b/)
   })
 
   it('throw sur lint non-objet', () => {

@@ -1,6 +1,6 @@
 # 26 · Chat — module temps réel prêt à l'emploi (au-dessus de MJS-WS)
 
-> **Module optionnel.** Le paquet Chat compose des salons de discussion à historique — par-dessus [23 · MJS-WS](23-mjs-ws.md), sans le modifier, via le mécanisme des paquets activables (`app.use`). Tant que tu n'appelles pas `app.use(chatPackage(...))`, son coût est **nul**.
+> **Module optionnel.** Le paquet Chat compose des salons de discussion à historique — par-dessus [23 · MJS-WS](23-mjs-ws.md), sans le modifier, via le mécanisme des paquets activables (`app.use`). Tant que vous n'appelez pas `app.use(chatPackage(...))`, son coût est **nul**.
 
 ```ts
 // serveur — TypeScript classique (chatPackage est une simple composition app.use(), pas une
@@ -110,7 +110,7 @@ C'est tout ce qu'il faut pour un salon complet — historique rejoué au join, d
 
 `duplicates` compare la **même** clé d'identité que `rateLimit` et le muet ([§5](#moderation)) — le compte si l'identité en a un, sinon la connexion — dans le même salon ; le texte comparé est normalisé (espaces réduits à un seul, casse ignorée), donc « Salut  à tous » et « salut à tous » comptent comme un seul et même message. Désactivé par défaut ; `true` arme une fenêtre de 30 secondes.
 
-> ⚠️ **`canJoin` n'est pas un filtre sur `µ:join`.** Un paquet installé via `app.use()` est composé **après** la construction de l'app (`mjsWs()`) — il ne peut pas s'y raccrocher : l'adhésion au salon MJS-WS bas niveau (présence, `.has(client)`, rejeu d'historique) reste **seule** gouvernée par `mjsWs({ rooms: { join } })`, cf. [23 · MJS-WS §4](23-mjs-ws.md#salons-presence). `canJoin` ici est un filet **supplémentaire**, au niveau message : si tu veux réellement empêcher l'adhésion à un salon `chat:*`, configure `rooms.join` sur `mjsWs()` — chatPackage délègue à cette garde existante plutôt que d'en réinventer une (même contrat `MjsWsJoinFn`, réutilisable tel quel aux deux endroits).
+> ⚠️ **`canJoin` n'est pas un filtre sur `µ:join`.** Un paquet installé via `app.use()` est composé **après** la construction de l'app (`mjsWs()`) — il ne peut pas s'y raccrocher : l'adhésion au salon MJS-WS bas niveau (présence, `.has(client)`, rejeu d'historique) reste **seule** gouvernée par `mjsWs({ rooms: { join } })`, cf. [23 · MJS-WS §4](23-mjs-ws.md#salons-presence). `canJoin` ici est un filet **supplémentaire**, au niveau message : si vous voulez réellement empêcher l'adhésion à un salon `chat:*`, configurez `rooms.join` sur `mjsWs()` — chatPackage délègue à cette garde existante plutôt que d'en réinventer une (même contrat `MjsWsJoinFn`, réutilisable tel quel aux deux endroits).
 
 `ctx` transmis à `onMessage` : `{ text, room, client, identity }` (`identity` est un raccourci vers `client.identity`).
 
@@ -136,7 +136,7 @@ room = sock.chat('general', { prefix: 'room:' })  # préfixe personnalisé — D
 | `me` | `{id, name}` \| `null` | Identité résolue **côté serveur** (requête `chat:me`) — `null` tant que la réponse n'est pas encore revenue. |
 | `send(text)` | fonction | Envoie un message — **fire-and-forget** (aucun ack, aucune Promise, cf. [§8](#annexe)). |
 | `typing()` | fonction | Signale « je suis en train d'écrire » — throttlé **serveur** (~3 s par identité, [§6](#frappe)). |
-| `close()` | fonction | Quitte le salon (`µ:leave`) et purge le store local. |
+| `close()` | fonction | Quitte le salon (`µ:leave`, sauf si une autre poignée du même salon reste ouverte) et coupe les frappes en cours (`typingUsers` vidé) ; les messages déjà reçus restent dans `messages`. |
 | `remove(id)` | fonction | Retire un message — réservé aux `moderators` ([§5](#moderation)). |
 | `mute(identityId, durationMs)` | fonction | Rend muette une identité pour une durée — réservé aux `moderators` ([§5](#moderation)). |
 
@@ -148,11 +148,15 @@ room = sock.chat('general', { prefix: 'room:' })  # préfixe personnalisé — D
 
 ### Reconnexion — resync **automatique**
 
-Aucune logique dédiée : `sock.room()` (posé en interne par `sock.chat()`) rejoint le salon à nouveau automatiquement à la reconnexion — le salon MJS-WS rejoue alors son historique comme à tout `µ:join`, la dédup par `id` absorbe les doublons. `.me` n'est demandé qu'une fois (au premier join disponible), pas à chaque reconnexion — l'identité ne change pas en cours de session dans l'usage normal.
+Aucune logique dédiée : `sock.room()` (posé en interne par `sock.chat()`) rejoint le salon à nouveau automatiquement à la reconnexion — le salon MJS-WS rejoue alors son historique comme à tout `µ:join`, la dédup par `id` absorbe les doublons. `.me` est redemandé à chaque reconnexion : il suit l'identité de la connexion (connexion à un compte par `sock.account`, déconnexion, retour en invité).
 
 ### Plusieurs salons, plusieurs poignées
 
-Chaque `sock.chat(nom)` est une poignée **indépendante** (aucun singleton par nom, même choix que `sock.game()`) — ouvrir deux fois le même nom sur un même socket duplique le store en mémoire mais partage la **même** adhésion `sock.room()` sous-jacente : fermer l'une des deux quitte le salon pour de bon, même si l'autre poignée reste ouverte (limite déjà assumée par `sock.room()` lui-même).
+Chaque `sock.chat(nom)` est une poignée **indépendante** (aucun singleton par nom, même choix que `sock.game()`) — ouvrir deux fois le même nom sur un même socket duplique le store en mémoire mais partage la **même** adhésion `sock.room()` sous-jacente, qui compte ses poignées : fermer l'une ne quitte le salon qu'au départ de la dernière (une autre discussion du même nom, ou un composant qui écoute ce salon par `sock.room()`, continue de le recevoir).
+
+### Dans un composant
+
+Ouverte pendant qu'un composant s'exécute — son code d'initialisation, son `µmount`, un de ses effets —, la poignée est rattachée à ce composant, y compris quand l'appel passe par une fonction d'un magasin ou d'un module appelée depuis là (c'est le moment de l'appel qui compte, pas l'endroit où le code est écrit). Elle le suit, comme `µevery` : à la destruction du composant, elle se ferme (salon quitté, frappes en cours et leurs minuteries coupées) ; s'il revient dans la page, elle se rouvre — salon rejoint de nouveau, historique rejoué (les messages déjà affichés ne sont pas doublés), `me` redemandé. Fermée par `close()`, elle le reste. Ouverte hors de tout composant (au chargement d'un module, à l'initialisation de l'appli, dans un gestionnaire d'événement), elle n'est rattachée à rien : `close()` reste à appeler.
 
 ---
 
@@ -192,7 +196,7 @@ Côté client, `typingUsers` expire après ~5 secondes sans nouvelle frappe reç
 
 - **Aucune persistance au-delà de la mémoire du process.** `room().history()` est un journal **en mémoire**, purgé quand le salon se vide (cf. [23 · MJS-WS §4.1](23-mjs-ws.md#salons-presence)) — un redémarrage du serveur, ou un salon qui se vide puis se repeuple, perd l'historique. Aucun hook `opts.persist` n'existe ici (celui de `mjs-server/persist.ts` est un mécanisme séparé, scopé aux `game` de MJS-Server) : un vrai stockage (base de données, fichier, pont HTTP…) reste à la charge de l'appli hôte, via `opts.onMessage` (qui voit passer chaque message avant diffusion) pour l'écriture — rien d'équivalent n'existe pour relire un historique plus long que le journal en mémoire au démarrage.
 - **Le store client `sock.chat()` garde les 100 derniers messages.** `.messages` est borné (aligné sur l'historique serveur, [23 · MJS-WS §4.1](23-mjs-ws.md#salons-presence)) — au-delà, le plus ancien est évincé.
-- **Seaux de débit et muets sont bornés en mémoire, mais pas de la même façon.** Les seaux à jetons (`opts.rateLimit`) — et le throttle de frappe ([§6](#frappe)) — sont purgés dès qu'un salon n'a plus aucun membre : reconstituer un seau neuf (ou repasser une frappe) au prochain arrivant est sans enjeu. Un muet (`room.mute(identityId, durationMs)`), lui, n'est **jamais** levé par ce vidage : l'échéance posée survit tant qu'elle n'est pas atteinte, salon vide ou pas, et n'est balayée (à l'accès, ou lors d'un balayage périodique opportuniste — jamais une minuterie dédiée) qu'une fois expirée.
+- **Seaux de débit et muets sont bornés en mémoire, mais pas de la même façon.** Les seaux à jetons (`opts.rateLimit`) — et le throttle de frappe ([§6](#frappe)) — sont purgés dès qu'un salon n'a plus aucun membre : reconstituer un seau neuf (ou repasser une frappe) au prochain arrivant est sans enjeu. Un muet (`room.mute(identityId, durationMs)`), lui, n'est **jamais** levé par ce vidage : l'échéance posée survit tant qu'elle n'est pas atteinte, salon vide ou pas, et n'est balayée (à l'accès, ou lors d'un balayage périodique opportuniste — jamais une minuterie dédiée) qu'une fois expirée. Seules les actions des membres d'un salon font avancer ce balayage : un client qui n'est membre d'aucun salon ne le déclenche jamais.
 - **Muet est en mémoire process, non répliqué.** Sur un déploiement multi-processus, un client dont la connexion bascule sur un autre processus (reconnexion, répartition de charge) redevient audible tant que ce processus-là ne l'a pas lui-même muté — l'adaptateur cluster ([23 · MJS-WS §9](23-mjs-ws.md#adaptateur-redis)) ne réplique aujourd'hui que la présence, pas cet état de modération.
 - **Suppression = tombstone, jamais une réécriture d'historique.** Cf. [§5](#moderation) — `room().history()` n'expose pas de primitive pour retirer une entrée précise de son journal.
 - **`canJoin` ne gouverne pas l'adhésion `µ:join`.** Cf. l'encart du [§3](#options) — seule `mjsWs({ rooms: { join } })` le peut ; `canJoin` est un filet de second niveau, réévalué par message.
@@ -228,7 +232,7 @@ Contrairement au préfixe `µgame:` de MJS-Server, `chat:` n'est **pas réservé
 | `chat:removed` | SERVEUR→CLIENT (diffusion, journalisée) | `{ room, id }` |
 | `chat:mute` | CLIENT→SERVEUR (fire-and-forget, modérateur) | `{ room, identityId, durationMs }` |
 
-Identité — `from.id`/`from.name` sont toujours résolus depuis `client.identity` (duck-typé `{id, ...meta}`, cf. [23 · MJS-WS §1](23-mjs-ws.md#options)) : `name` = `identity.name`, repli l'id lui-même. `ts` est toujours `Date.now()` serveur. Rien de tout ceci ne peut être usurpé depuis la charge du client.
+Identité — `from.id`/`from.name` sont toujours résolus depuis `client.identity` (duck-typé `{id, ...meta}`, cf. [23 · MJS-WS §1](23-mjs-ws.md#options)) : `name` = `identity.name`, repli l'id lui-même. Un visiteur sans compte a pour id (`from.id`, `.me.id`, `mute`) `anon:` suivi de son id de connexion — jamais confondu avec un compte qui porterait cet id. `ts` est toujours `Date.now()` serveur. Rien de tout ceci ne peut être usurpé depuis la charge du client.
 
 ---
 

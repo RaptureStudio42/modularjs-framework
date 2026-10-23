@@ -61,7 +61,7 @@ describe('cœur minifié d\'un projet sans aucune brique jointe à l\'usage', fu
     const bundler = new Bundler(resolveBundlerOpts(found!.config, found!.configDir) as any)
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
-    const coreFile = readdirSync(outDir).find((f) => /^mjs_core-[a-f0-9]{8}\.js$/.test(f))
+    const coreFile = readdirSync(outDir).find((f) => /^mjs_core-[0-9a-z]{5}\.js$/.test(f))
     assert.ok(coreFile, 'mjs_core-*.js doit exister')
     core = readFileSync(join(outDir, coreFile!), 'utf-8')
   })
@@ -101,7 +101,7 @@ describe('cœur minifié d\'un projet sans aucune brique jointe à l\'usage', fu
     const out      = readdirSync(outDir)
     const scripts  = [coreAsScript(core), 'window.__errors = []; µ.error = function() { window.__errors.push(Array.prototype.slice.call(arguments).join(\' \')); };']
     for (const name of Object.keys(FILES)) {
-      const file = out.find((f) => new RegExp('^'+ name.replace('.mjs', '') +'-[a-f0-9]{8}\\.js$').test(f))
+      const file = out.find((f) => new RegExp('^'+ name.replace('.mjs', '') +'-[0-9a-z]{5}\\.js$').test(f))
       assert.ok(file, `composant ${name} introuvable dans : ${out.join(', ')}`)
       scripts.push(componentAsScript(readFileSync(join(outDir, file!), 'utf-8')))
     }

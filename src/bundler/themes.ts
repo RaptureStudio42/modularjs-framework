@@ -56,7 +56,7 @@ export function compileThemeFile(source: string, filePath: string, opts: ThemeCo
   // fichiers de thème — « le fichier ne contient QUE des blocs <theme> (+ commentaires) » : un
   // commentaire HTML (et le blanc autour) hors du bloc est toléré, le reste (balise, texte nu)
   // continue d'échouer avec le même message
-  const htmlUtile = sections.html.replace(/<!--[\s\S]*?-->/g, '').trim()
+  const htmlUtile = sections.html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '').trim()
   if (htmlUtile !== '')                  throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'du HTML' }))
   if (sections.script.raw.trim() !== '') throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'un <script>' }))
   if (sections.style.raw.trim() !== '')  throw new Error(t('bundler.theme-fichier-impur', { fichier: basename(filePath), quoi: 'un <style>' }))

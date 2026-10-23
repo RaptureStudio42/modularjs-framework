@@ -2,8 +2,12 @@
   $value    = ''
   $editable = false
   $compact  = false
-  $label    = 'Couleur'
+  $label    = null
   $before   = false                                  # pastille AVANT le code (defaut : apres)
+
+  # libellé par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
+  tr = (key, lang)-> µ._mjs_label('core', key)
+  $labelText = $label ?? tr('colorLabel', µlang)
 
   boolAttr = (v)-> v !== undefined and v !== false
 
@@ -38,11 +42,11 @@
     µemit 'change', e.target.value
 
   µmount ->
-    µ.error('[mjs-color] l\'attribut « value » est requis.') unless $value
+    µ.error('[mjs-core-color] ' + µ._mjs_txt('coreColorNoValue', null, 'l\'attribut « value » est requis.')) unless $value
 </script>
 
 {if boolAttr($editable) and $hex}
-  <input type="color" class="picker" part="picker" @class{boolAttr($before)}="before" aria-label={$label} value={$hex} @change={@onChange(e)}>
+  <input type="color" class="picker" part="picker" @class{boolAttr($before)}="before" aria-label={$labelText} value={$hex} @change={@onChange(e)}>
 {else}
   <span class="swatch" part="swatch" @class{boolAttr($before)}="before" --mjs-color-value={$value} title={$swatchLabel} role={$swatchRole} aria-label={$swatchLabel} aria-hidden={$swatchHidden}></span>
 {end}
@@ -55,34 +59,29 @@
     display: inline-flex
     align-items: center
     gap: 8px
-    // hauteur du texte (JAMAIS de // en fin de ligne sur une custom property : SASS le garde dans la valeur)
-    --mjs-color-size: 1em
-    --mjs-color-radius: 4px
-    --mjs-color-border: var(--mjs-border, #888)
-    // hauteur de ligne du code, partagee avec l'etai (JAMAIS de // en fin de ligne sur une custom property)
-    --mjs-color-line: calc(.9rem * 1.4)
 
   // etai invisible : reserve TOUJOURS la hauteur de ligne du code, meme en compact ou il n'y a plus de texte -- sans lui la boite se reduit a la pastille et remonte de 3 px par rapport a ses voisines
   :host::before
     content: ''
     width: 0
-    height: var(--mjs-color-line)
+    height: var(--mjs-color-line, calc(.9rem * 1.4))
 
   .swatch, .picker
     display: inline-block
     box-sizing: border-box
     order: 1                                         // apres le code par defaut
-    width: var(--mjs-color-size)
-    height: var(--mjs-color-size)
+    width: var(--mjs-color-size, 1em)
+    height: var(--mjs-color-size, 1em)
     flex: none
-    border: 1px solid var(--mjs-color-border)
-    border-radius: var(--mjs-color-radius)
+    border: 1px solid var(--mjs-color-border, var(--mjs-border, #888))
+    border-radius: var(--mjs-color-radius, 4px)
 
     &.before
       order: -1                                      // opt-in : pastille avant le code
 
+  // une couleur seule : `background-color` refuse une image, une valeur venue d'une donnée (`url(…)`) ne fait partir aucune requête
   .swatch
-    background: var(--mjs-color-value)
+    background-color: var(--mjs-color-value)
 
   .picker
     font: inherit                                    // Firefox donne sa propre police aux controles : sans ca, le 1em de la case vaut 13.3px au lieu de 16
@@ -96,14 +95,15 @@
 
     &::-webkit-color-swatch
       border: none
-      border-radius: calc(var(--mjs-color-radius) - 1px)
+      border-radius: calc(var(--mjs-color-radius, 4px) - 1px)
 
     &::-moz-color-swatch
       border: none
-      border-radius: calc(var(--mjs-color-radius) - 1px)
+      border-radius: calc(var(--mjs-color-radius, 4px) - 1px)
 
   .code
     font-size: .9rem
     font-family: monospace
-    line-height: var(--mjs-color-line)
+    // meme defaut que l'etai (:host::before) : les deux reservent la meme hauteur
+    line-height: var(--mjs-color-line, calc(.9rem * 1.4))
 </style>

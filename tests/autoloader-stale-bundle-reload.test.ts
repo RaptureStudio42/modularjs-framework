@@ -12,6 +12,7 @@ import { writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { mjsTmp } from './helpers/tmp.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname       = dirname(fileURLToPath(import.meta.url))
 const AUTOLOADER_SRC  = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_autoloader.ts'), 'utf-8')
@@ -101,6 +102,7 @@ describe('mjs_autoloader — garde bundle périmé (rechargement une fois par bu
     } else {
       (globalThis as any).window = { location: { reload: () => { reloadCalls.push(true); calls.push('reload') } } }
     }
+    poserMessages(µ)
     new Function('µ', AUTOLOADER_SRC)(µ)
     return { Autoloader: µ.Autoloader, µ, calls, reloadCalls, errorCalls, warnCalls }
   }

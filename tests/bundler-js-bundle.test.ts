@@ -28,7 +28,7 @@ function makeProject(prefix: string): { root: string; srcDir: string; stylesDir:
 }
 
 // fixture partagée : parent → 2 enfants (balises littérales), un module `@import`-é, une
-// animation `@transition.fade`, une feuille partagée `@css theme` — cf. § 5.1 de la conception.
+// animation `@transition=*fade`, une feuille partagée `@css theme` — cf. § 5.1 de la conception.
 function writeFixture(p: ReturnType<typeof makeProject>, cfgExtra: Record<string, unknown> = {}): void {
   writeFileSync(join(p.srcDir, 'util.civet'), 'export triple := (x) -> x * 3\n')
   writeFileSync(join(p.stylesDir, 'theme.sass'), '.parent\n  color: red\n')
@@ -43,7 +43,7 @@ function writeFixture(p: ReturnType<typeof makeProject>, cfgExtra: Record<string
     '</script>',
     '',
     '<p class="triple">{triple(2)}</p>',
-    '{if $show}<p class="fade" @transition.fade>fondu</p>{end}',
+    '{if $show}<p class="fade" @transition=*fade>fondu</p>{end}',
     '<mjs-child-a></mjs-child-a>',
     '<mjs-child-b></mjs-child-b>'
   ].join('\n'))
@@ -112,7 +112,7 @@ describe('bundler — clé js', function () {
       const { stats } = await buildFixture(p, { js: 'bundle' })
       assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
       const text = readFileSync(p.manifestPath, 'utf-8')
-      assert.equal(text.includes('-ZZZZZZZZ.'), false, 'aucun repère non résolu ne doit survivre')
+      assert.equal(text.includes('-ZZZZZ.'), false, 'aucun repère non résolu ne doit survivre')
       // un COMMENTAIRE de frontière de module ('// mjsv:mjs:core', posé par esbuild.build() en
       // dev non minifié) n'est pas un bogue — seul un import/spécificateur RÉEL et encore actif
       // ('import "mjs:...) en serait un.
@@ -121,11 +121,9 @@ describe('bundler — clé js', function () {
       assert.ok(text.includes('"mjs-child-b"'), 'le cœur doit contenir la définition de child-b')
       assert.ok(text.includes('"mjs-app-parent"'), 'le cœur doit contenir la définition de parent')
       assert.ok(text.includes('µ.Element'), 'le cœur du runtime doit être présent')
-      // `_dir_<Classe>` (transpiler/template.ts:22) : en mode bundle, remplacé par le littéral
-      // urlPrefix ('/out/' ici) — jamais laissé en `new URL('.', import.meta.url).href`, qui
-      // pointerait vers le dossier du FICHIER UNIQUE, pas forcément celui des satellites.
-      assert.ok(text.includes('"/out/"'), 'le littéral urlPrefix doit remplacer _dir_ dans au moins un composant')
-      assert.equal(/new URL\(\s*['"]\.['"]\s*,\s*import\.meta\.url\s*\)\.href/.test(text), false, '_dir_ ne doit jamais rester en new URL(\'.\', import.meta.url).href dans un composant fusionné')
+      // plus de constante de dossier par composant (`new URL('.', import.meta.url).href`) : `init` pose
+      // `_mjs_dir` en littéral — rien ne pointe vers le dossier du FICHIER UNIQUE.
+      assert.equal(/new URL\(\s*['"]\.['"]\s*,\s*import\.meta\.url\s*\)\.href/.test(text), false, 'aucune constante de dossier en new URL(\'.\', import.meta.url).href dans un composant fusionné')
     })
 
     it('montage happy-dom réel : enfants rendus, animation et feuille partagée posées, µ.paths uniforme, import { µ } possible', async function () {
@@ -135,7 +133,7 @@ describe('bundler — clé js', function () {
       const { window, document } = await mountBundle(p.manifestPath)
       const µ = window.µ
       assert.ok(µ, 'µ doit être exposé sur window (build de dev)')
-      assert.ok(µ.anim && typeof µ.anim.fade === 'function', 'µ.anim.fade doit être défini (animation utilisée par @transition.fade)')
+      assert.ok(µ.anim && typeof µ.anim.fade === 'function', 'µ.anim.fade doit être défini (animation utilisée par @transition=*fade)')
       assert.ok(µ.CSS && µ.CSS['theme'], 'µ.CSS[\'theme\'] doit être posé (feuille partagée @css)')
       assert.ok(µ.paths['app-parent'], 'µ.paths doit connaître "parent"')
       assert.ok(µ.paths['child-a'], 'µ.paths doit connaître "child-a"')

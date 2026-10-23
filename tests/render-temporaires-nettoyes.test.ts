@@ -146,8 +146,9 @@ describe('dossier de travail du rendu — jamais laissé derrière', function ()
   })
 
   it('SABOTAGE — le tri par dépendances lève (cycle) : le dossier de travail est quand même retiré', async () => {
-    const root = fixtureProject('atelier-cycle')
-    const tmp  = mjsTmp('cycle-tmp')
+    const root  = fixtureProject('atelier-cycle')
+    const tmp   = mjsTmp('cycle-tmp')
+    const avant = process.env.TMPDIR
     process.env.TMPDIR = tmp
     try {
       const erreur = await creerRendererSabote(root, (src) => {
@@ -158,13 +159,16 @@ describe('dossier de travail du rendu — jamais laissé derrière', function ()
       assert.match(String(erreur), /cycle simulé/, 'la création du renderer doit bien lever ici')
       assert.deepEqual(ateliers(tmp), [], 'aucun dossier de travail ne doit survivre à cette sortie')
     } finally {
-      delete process.env.TMPDIR
+      // rendre le TMPDIR d'avant : l'effacer ferait écrire les fichiers suivants du processus dans /tmp
+      if (avant === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = avant
     }
   })
 
   it('SABOTAGE — happy-dom absent : le dossier de travail est quand même retiré', async () => {
-    const root = fixtureProject('atelier-happydom')
-    const tmp  = mjsTmp('happydom-tmp')
+    const root  = fixtureProject('atelier-happydom')
+    const tmp   = mjsTmp('happydom-tmp')
+    const avant = process.env.TMPDIR
     process.env.TMPDIR = tmp
     try {
       const erreur = await creerRendererSabote(root, (src) => {
@@ -175,7 +179,8 @@ describe('dossier de travail du rendu — jamais laissé derrière', function ()
       assert.ok(erreur, 'la création du renderer doit bien lever ici')
       assert.deepEqual(ateliers(tmp), [], 'aucun dossier de travail ne doit survivre à cette sortie')
     } finally {
-      delete process.env.TMPDIR
+      if (avant === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = avant
     }
   })
 })

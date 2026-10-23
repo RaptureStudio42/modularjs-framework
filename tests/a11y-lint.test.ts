@@ -21,9 +21,11 @@ import { checkA11y } from '../src/transpiler/a11y.js'
 import { transpile } from '../src/transpiler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 
-// dernier message = rappel de désactivation (ajouté dès qu'il y a ≥1 alerte) — retiré pour ne compter que les VRAIES alertes
+// checkA11y() ne rend plus que les VRAIES alertes (le rappel « pour couper ce contrôle »
+// répété par composant a disparu, remplacé par l'étiquette [lint.a11y] posée au point
+// d'impression, transpiler/index.ts) — identité gardée pour ne pas réécrire tous les appels
 function realAlerts(msgs: string[]): string[] {
-  return msgs.length ? msgs.slice(0, -1) : msgs
+  return msgs
 }
 
 describe('checkA11y — contrôles unitaires (fonction pure)', () => {
@@ -46,18 +48,18 @@ describe('checkA11y — contrôles unitaires (fonction pure)', () => {
     })
   })
 
-  // `<@img>` est le module cœur qui écrit le `<img>` : il serait absurde qu'il
+  // `<@@img>` est le module cœur qui écrit le `<img>` : il serait absurde qu'il
   // échappe au contrôle que la balise native subit
-  describe('1bis. <@img> sans alt', () => {
-    it('signale un <@img> sans alt', () => {
-      const msgs = realAlerts(checkA11y('<@img src={$photo.src}></@img>', 'mod'))
+  describe('1bis. <@@img> sans alt', () => {
+    it('signale un <@@img> sans alt', () => {
+      const msgs = realAlerts(checkA11y('<@@img src={$photo.src}></@@img>', 'mod'))
       assert.equal(msgs.length, 1, JSON.stringify(msgs))
     })
 
     it('se tait quand le alt est là, sous quelque forme que ce soit', () => {
-      assert.deepEqual(realAlerts(checkA11y('<@img src={$p.src} alt="Une photo"></@img>', 'mod')), [])
-      assert.deepEqual(realAlerts(checkA11y('<@img src={$p.src} alt={$legende}></@img>', 'mod')), [])
-      assert.deepEqual(realAlerts(checkA11y('<@img src={$p.src} alt=""></@img>', 'mod')), [])
+      assert.deepEqual(realAlerts(checkA11y('<@@img src={$p.src} alt="Une photo"></@@img>', 'mod')), [])
+      assert.deepEqual(realAlerts(checkA11y('<@@img src={$p.src} alt={$legende}></@@img>', 'mod')), [])
+      assert.deepEqual(realAlerts(checkA11y('<@@img src={$p.src} alt=""></@@img>', 'mod')), [])
     })
   })
 
@@ -209,12 +211,11 @@ describe('checkA11y — contrôles unitaires (fonction pure)', () => {
     })
   })
 
-  describe('rappel de désactivation', () => {
-    it('ajouté UNE SEULE FOIS, en dernière position, quand il y a au moins une alerte', () => {
+  describe('aucun rappel par composant (remplacé par [lint.a11y], posé au point d\'impression)', () => {
+    it('deux alertes restent deux alertes, rien d\'autre ajouté', () => {
       const msgs = checkA11y('<div>\n  <img src="a.png">\n  <img src="b.png">\n</div>', 'mod')
-      assert.equal(msgs.length, 3) // 2 alertes + 1 rappel
-      assert.match(msgs[2], /lint.*a11y.*false/)
-      assert.match(msgs[2], /mjs\.config\.json/)
+      assert.equal(msgs.length, 2)
+      assert.ok(msgs.every(m => !m.includes('pour couper ce contrôle')), `plus de rappel par message : ${JSON.stringify(msgs)}`)
     })
 
     it('absent quand il n\'y a aucune alerte', () => {
@@ -235,12 +236,14 @@ async function warningsFor(src: string, moduleName: string, opts: Record<string,
 describe('transpiler — câblage lint.a11y', function () {
   this.timeout(30000)
 
-  it('défaut ON — sans AUCUNE clé lint, un gabarit fautif déclenche l\'alerte', async () => {
+  it('défaut ON — sans AUCUNE clé lint, un gabarit fautif déclenche l\'alerte, étiquetée [lint.a11y]', async () => {
     const w = await warningsFor('<img src="x.png">', 'defaut-on')
     assert.ok(w.some(m => m.includes('sans attribut alt')), `avertissements capturés : ${JSON.stringify(w)}`)
+    assert.ok(w.some(m => m.endsWith('[lint.a11y]')), `étiquette [lint.a11y] attendue en fin de ligne : ${JSON.stringify(w)}`)
+    assert.ok(w.every(m => !m.includes('pour couper ce contrôle')), `plus de rappel répété par composant : ${JSON.stringify(w)}`)
   })
 
-  it('lint.a11y: false coupe tout, même gabarit fautif (aucun avertissement, y compris le rappel)', async () => {
+  it('lint.a11y: false coupe tout, même gabarit fautif (aucun avertissement)', async () => {
     const w = await warningsFor('<img src="x.png">', 'a11y-off', { a11y: false })
     assert.equal(w.length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
   })

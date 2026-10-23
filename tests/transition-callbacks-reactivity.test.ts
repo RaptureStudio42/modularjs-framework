@@ -28,7 +28,7 @@ $status = 'waiting...'
 
 {if $visible}
   <p class="anim"
-    @transition.noop
+    @transition=*fade
     @introstart={$status = 'intro started'}
     @introend={$status = 'intro ended'}
     @outrostart={$status = 'outro started'}
@@ -91,16 +91,16 @@ describe('runtime — callbacks @intro*/@outro* déclenchent la réactivité', f
     }
 
     // ----- Runtime : on appelle les callbacks et on vérifie que le binding
-    // `{$status}` se met à jour. On stub une anim `noop` pour que le pipeline
+    // `{$status}` se met à jour. On stub l'anim `fade` pour que le pipeline
     // de bindingTransition s'exécute sans dépendre de la lib d'anims (tree-shake).
     const win: any = new Window({ url: 'http://localhost/' })
     const document: any = win.document
 
     win.eval(`${coreCode}\nglobalThis.µ = µ;\n`)
-    // Stub anim avant que le composant s'upgrade. `noop` retourne un config
+    // Stub anim avant que le composant s'upgrade. `fade` retourne un config
     // dont `_mjs_playTransition` ne fait rien d'observable, ce qui nous laisse
     // appeler manuellement les callbacks via les props posées sur le node.
-    win.eval(`µ.anim = µ.anim || {}; µ.anim.noop = () => ({ intro: () => Promise.resolve(), outro: () => Promise.resolve() });`)
+    win.eval(`µ.anim = µ.anim || {}; µ.anim.fade = () => ({ intro: () => Promise.resolve(), outro: () => Promise.resolve() });`)
     win.eval(compCode)
 
     document.body.innerHTML = '<mjs-trc></mjs-trc>'

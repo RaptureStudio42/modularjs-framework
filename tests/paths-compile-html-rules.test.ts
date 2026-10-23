@@ -340,7 +340,7 @@ describe('compilateur (paths.ts/compile.ts)', function () {
       assert.doesNotMatch(info.body, /createElementNS\([^,]*,\s*(["'])div\1\)/, 'div : plus de createElementNS')
       assert.match(info.body, /createElement\((["'])input\1\)/, 'input : createElement nu (HTML)')
       assert.match(info.body, /createElementNS\([^,]*svg[^,]*,\s*(["'])circle\1\)/, 'circle : createElementNS(svg) — hors foreignObject, inchangé')
-      assert.match(info.body, /createElementNS\([^,]*svg[^,]*,\s*(["'])foreignobject\1\)/, 'foreignObject lui-même reste un élément SVG : createElementNS(svg)')
+      assert.match(info.body, /createElementNS\([^,]*svg[^,]*,\s*(["'])foreignObject\1\)/, 'foreignObject lui-même reste un élément SVG : createElementNS(svg), avec sa casse SVG — dans l\'espace de noms SVG la casse compte, un `foreignobject` ne serait qu\'un élément inconnu dont le HTML n\'est pas mis en page')
     })
 
     // montage en mode IMPÉRATIF (branche {await} avec un bloc frère) : c'est le seul chemin que le

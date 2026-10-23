@@ -52,10 +52,20 @@
 // Cousin spécialisé : µ.predict (mjs_predict.ts, jeux sock.game()) — MÊME patron (snapshot + rejeu),
 // spécialisé intentions/serveur-autoritaire-par-tick plutôt que requête/réponse générique.
 
+// range une clé venue des données (valeurs du store, souvent reçues du serveur) sur une copie : `__proto__` y reste une clé
+// comme une autre — l'affectation `copie['__proto__'] = …` changerait le prototype de la copie au lieu d'y ranger la donnée
+function _mjoptPut(o, k, v) {
+  if (k === '__proto__') { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); }
+  else { o[k] = v; }
+}
+
+// clé propre, jamais héritée : `k in b` trouvait `constructor` ou `toString` sur le prototype d'une copie qui ne les a plus
+var _mjoptOwn = Object.prototype.hasOwnProperty;
+
 function _mjoptDeepClone(v) {
   var out, k;
   if (Array.isArray(v)) { out = []; for (k = 0; k < v.length; k++) { out.push(_mjoptDeepClone(v[k])); } return out; }
-  if (v && typeof v === 'object') { out = {}; for (k in v) { out[k] = _mjoptDeepClone(v[k]); } return out; }
+  if (v && typeof v === 'object') { out = {}; for (k in v) { _mjoptPut(out, k, _mjoptDeepClone(v[k])); } return out; }
   return v;
 }
 
@@ -66,13 +76,13 @@ function _mjoptEq(a, b) {
   if (a === b) { return true; }
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') { return a === b; }
   for (k in b) { if (!_mjoptEq(a[k], b[k])) { return false; } }
-  for (k in a) { if (!(k in b)) { return false; } }
+  for (k in a) { if (!_mjoptOwn.call(b, k)) { return false; } }
   return true;
 }
 
 function _mjoptSnapshot(store) {
   var out = {}, k;
-  for (k in store) { out[k] = _mjoptDeepClone(store[k]); }
+  for (k in store) { _mjoptPut(out, k, _mjoptDeepClone(store[k])); }
   return out;
 }
 
@@ -88,15 +98,18 @@ function _mjoptRun(state, apply) {
 // supprimées, sautée si inchangée (cf. tête de fichier).
 function _mjoptPublier(store, state) {
   var k;
-  for (k in store) { if (!(k in state)) { delete store[k]; } }
+  for (k in store) { if (!_mjoptOwn.call(state, k)) { delete store[k]; } }
   for (k in state) { if (!_mjoptEq(store[k], state[k])) { store[k] = state[k]; } }
 }
 
 // file par store (WeakMap : jamais de fuite si la store elle-même est jetée) — { base, entries, seq }.
+// file vide (rien en vol) : base reprise sur la store, qui fait foi — une écriture faite depuis le
+// dernier appel (réponse serveur, autre code) n'est plus écrasée, ni ses clés neuves supprimées
 var _mjoptQueues = new WeakMap();
 function _mjoptQueueFor(store) {
   var qs = _mjoptQueues.get(store);
-  if (!qs) { qs = { base: _mjoptSnapshot(store), entries: [], seq: 0 }; _mjoptQueues.set(store, qs); }
+  if (!qs) { qs = { base: null, entries: [], seq: 0 }; _mjoptQueues.set(store, qs); }
+  if (!qs.entries.length) { qs.base = _mjoptSnapshot(store); }
   return qs;
 }
 
@@ -105,22 +118,33 @@ function _mjoptQueueFor(store) {
 // § EMPILAGE) : fait avancer `base` pour chaque entrée 'ok' EN TÊTE de file (ordre de création),
 // s'arrête à la première encore 'pending' — une entrée 'ok' bloquée reste dans la file, rejouée
 // ci-dessous comme les autres, jamais perdue ni dupliquée.
+// une entrée dont l'`apply` (ou le `after`) lève sort de la file, son erreur notée (`entry.error`), et
+// le rejeu reprend sans elle : une entrée fautive ne bloque jamais la store ni les appels suivants
 function _mjoptRejouer(store, qs) {
+  var entry;
   while (qs.entries.length && qs.entries[0].status === 'ok') {
-    qs.base = _mjoptRun(_mjoptDeepClone(qs.base), qs.entries.shift().apply);
+    entry = qs.entries.shift();
+    try { qs.base = _mjoptRun(_mjoptDeepClone(qs.base), entry.apply); } catch (e) { entry.error = e; }
   }
   var state = _mjoptDeepClone(qs.base), i;
-  for (i = 0; i < qs.entries.length; i++) { state = _mjoptRun(state, qs.entries[i].apply); }
+  for (i = 0; i < qs.entries.length; i++) {
+    try { state = _mjoptRun(state, qs.entries[i].apply); }
+    catch (e) { qs.entries[i].error = e; qs.entries.splice(i, 1); return _mjoptRejouer(store, qs); }
+  }
   _mjoptPublier(store, state);
 }
 
 // résolution d'une entrée — SUCCÈS : marquée 'ok' (jamais retirée directement, cf. compaction de
 // préfixe ci-dessus — une sœur plus ANCIENNE encore en vol doit pouvoir continuer à la rejouer).
 // ÉCHEC : retirée IMMÉDIATEMENT, n'importe où dans la file (un échec ne bloque jamais ses sœurs).
+// le compteur des mises à jour en vol redescend une fois par entrée, même sortie de la file plus tôt
 function _mjoptSettle(store, qs, entry, ok) {
+  if (entry.status !== 'pending') { return; }   // sécurité (déjà réglée)
+  µ._mjs_optPending = Math.max(0, (µ._mjs_optPending || 1) - 1);
+  entry.status = ok ? 'ok' : 'ko';
   var idx = qs.entries.indexOf(entry);
-  if (idx === -1) { return; }   // sécurité (déjà réglée)
-  if (ok) { entry.status = 'ok'; } else { qs.entries.splice(idx, 1); }
+  if (idx === -1) { return; }   // déjà sortie de la file : son apply a levé
+  if (!ok) { qs.entries.splice(idx, 1); }
   _mjoptRejouer(store, qs);
 }
 
@@ -129,7 +153,7 @@ function _mjoptSettle(store, qs, entry, ok) {
 µ.optimistic = function(store, opts) {
   opts = opts || {};
   if (!store || typeof store !== 'object') {
-    µ.warn('[µ.optimistic] store invalide (objet attendu, ex. µ.state({...}))');
+    µ.warn('[µ.optimistic] ' + µ._mjs_txt('optimisticBadStore', null, 'store invalide (objet attendu, ex. µ.state({...}))'));
     return Promise.resolve({ ok: false, error: { code: 'invalid-store', message: 'store invalide' } });
   }
   var apply = typeof opts.apply === 'function' ? opts.apply : function() {};
@@ -137,7 +161,14 @@ function _mjoptSettle(store, qs, entry, ok) {
   var qs = _mjoptQueueFor(store);
   var entry = { id: ++qs.seq, apply: apply, status: 'pending' };
   qs.entries.push(entry);
+  // les mises à jour en vol, toutes stores confondues : *offline dit combien attendent le réseau
+  µ._mjs_optPending = (µ._mjs_optPending || 0) + 1;
   _mjoptRejouer(store, qs);   // application locale IMMÉDIATE, avant tout aller-retour réseau
+  // `apply` qui lève : rien de publié ni d'envoyé, l'entrée est déjà sortie de la file
+  if (entry.error) {
+    _mjoptSettle(store, qs, entry, false);
+    return Promise.resolve({ ok: false, error: entry.error });
+  }
 
   var p;
   try { p = via(); } catch (e) { p = Promise.reject(e); }
@@ -147,10 +178,16 @@ function _mjoptSettle(store, qs, entry, ok) {
     function(response) {
       if (typeof opts.after === 'function') {
         var before = entry.apply;
-        entry.apply = function(state) { return opts.after(_mjoptRun(state, before), response); };
+        // `after` reçoit l'état produit par `apply`, nouvel état rendu compris, et le garde s'il le mute
+        // en place sans rien rendre
+        entry.apply = function(state) {
+          var next = _mjoptRun(state, before), out = opts.after(next, response);
+          return (out && typeof out === 'object') ? out : next;
+        };
       }
       _mjoptSettle(store, qs, entry, true);
-      return { ok: true, response: response };
+      // `after` qui a levé, ou entrée déjà sortie de la file : son effet est retiré, c'est un échec
+      return entry.error ? { ok: false, error: entry.error } : { ok: true, response: response };
     },
     function(error) {
       _mjoptSettle(store, qs, entry, false);

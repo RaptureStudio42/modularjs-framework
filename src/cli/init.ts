@@ -77,7 +77,7 @@ $blocks   = BLOCK_ORDER
 
 <section class="hello">
   <h1>{$greeting}</h1>
-  <label class="field">Ton prénom <input value=!{$name} placeholder="monde"></label>
+  <label class="field">Votre prénom <input value=!{$name} placeholder="monde"></label>
   <p class="lead">Un module ModularJS range toujours ses blocs dans cet ordre :</p>
   <ol class="blocks">
     {for block in $blocks}
@@ -170,7 +170,7 @@ Pour du style qui dépend de l'état, on écrit \`@style.prop={expr}\`, une vari
 npx mjs dev
 \`\`\`
 
-puis, dans ta page : \`<mjs-hello-world></mjs-hello-world>\`.
+puis, dans votre page : \`<mjs-hello-world></mjs-hello-world>\`.
 `
 
 export function runInit(root: string): void {

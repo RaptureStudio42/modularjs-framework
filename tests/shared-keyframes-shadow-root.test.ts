@@ -1,5 +1,5 @@
 // bogue PRÉEXISTANT (mesuré sous Chromium) : une transition `.shared`
-// (`@transition.fade.shared`, `@transition.iris.shared`…) posée sur un nœud qui vit dans un
+// (`@transition.shared=*fade`, `@transition.shared=*iris`…) posée sur un nœud qui vit dans un
 // composant EN OMBRE (mode par défaut de ModularJS) ne joue JAMAIS et l'élément n'est jamais
 // retiré du DOM. Cause : `ensureSheet()` injecte le `@keyframes` dans le DOCUMENT, or les noms de
 // `@keyframes` sont À PORTÉE D'ARBRE (tree-scoped) — un nœud dans un shadow root ne voit pas un

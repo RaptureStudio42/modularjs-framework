@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME_DIR = join(__dirname, '..', 'src', 'runtime')
@@ -27,6 +28,7 @@ describe('µ.easing.bezier + resolve(cubic-bezier)', function () {
     g.CSSStyleSheet = win.CSSStyleSheet
     const warns: string[] = []
     const µ: any = { log() {}, warn(m: any) { warns.push(String(m)) }, error() {}, anim: {}, _csp: false, debug: true }
+    poserMessages(µ)
     new Function('µ', EASING_SRC)(µ)
     return { µ, warns }
   }

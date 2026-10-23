@@ -29,13 +29,24 @@ after(() => { for (const d of tmpDirs) rmSync(d, { recursive: true, force: true 
 
 function randomPort(): number { return 56500 + Math.floor(Math.random() * 2000) }
 
+// une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
+// sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
+const capturesEnCours: Array<() => void> = []
+afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
   const orig = { log: console.log, warn: console.warn, error: console.error }
   console.log   = (...a: any[]) => { lines.push(a.join(' ')) }
   console.warn  = (...a: any[]) => { lines.push(a.join(' ')) }
   console.error = (...a: any[]) => { lines.push(a.join(' ')) }
-  return { lines, restore: () => { console.log = orig.log; console.warn = orig.warn; console.error = orig.error } }
+  const restore = (): void => {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error
+    const i = capturesEnCours.indexOf(restore)
+    if (i >= 0) capturesEnCours.splice(i, 1)
+  }
+  capturesEnCours.push(restore)
+  return { lines, restore }
 }
 
 // ============================================================================================

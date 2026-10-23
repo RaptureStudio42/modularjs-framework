@@ -60,14 +60,14 @@ describe('transpiler — @title forme HTML ({{ }})', () => {
     const src = `<script lang="coffee">\n$a = 'Solde : '\n$b = 42\n</script>\n<div @title={{ $a + $b }}>Survole-moi</div>`
     const { output } = await transpile(src, { moduleName: 'th1b' })
     assert.match(output, /mjs-title-html=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title-html',\s*\$\.a\s*\+\s*\$\.b\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title-html',\s*\$\.a\s*\+\s*\$\.b(?:, 1)?\)/)
   })
 
   it('@title={{ $html }} suit la variable $ : attribut mjs-title-html câblé RÉACTIF (_mjs_updAttr, valeur = $.html)', async () => {
     const src = `<script lang="coffee">\n$html = '<b>x</b>'\n</script>\n<div @title={{ $html }}>Survole-moi</div>`
     const { output } = await transpile(src, { moduleName: 'th2' })
     assert.match(output, /mjs-title-html=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title-html',\s*\$\.html\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title-html',\s*\$\.html(?:, 1)?\)/)
   })
 
   it("@title={ { text: 'x' } } (UN espace entre les deux accolades) → forme SIMPLE, objet littéral en EXPRESSION réactive, mjs-title-html ABSENT (règle de l'espace)", async () => {
@@ -261,14 +261,14 @@ describe('transpiler — @title forme EXPRESSION (passe-plat réactif)', () => {
   it("@title={$msg} suit la variable $ : l'attribut est câblé RÉACTIF (_mjs_updAttr sur 'mjs-title', valeur = \$.msg)", async () => {
     const src = `<script lang="coffee">\n$msg = 'Bonjour'\n</script>\n<div @title={$msg}>Survole-moi</div>`
     const { output } = await transpile(src, { moduleName: 'ti16' })
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.msg\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.msg(?:, 1)?\)/)
   })
 
   it('@title={cond ? a : b} (ternaire, PAS un objet malgré le ":") → passe-plat réactif, aucune erreur', async () => {
     const src = `<script lang="coffee">\n$cond = true\n$a = 'x'\n$b = 'y'\n</script>\n<div @title={$cond ? $a : $b}>x</div>`
     const { output } = await transpile(src, { moduleName: 'ti17' })
     assert.match(output, /mjs-title=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.cond \? \$\.a : \$\.b\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.cond \? \$\.a : \$\.b(?:, 1)?\)/)
   })
 })
 
@@ -372,7 +372,7 @@ describe('extractBraceBody — regex littérale (délégation à extractBalanced
     const src = `<script lang="coffee">\n$n = 2\n</script>\n<button @title={ /a*/*$n }>Aide</button>`
     const { output } = await transpile(src, { moduleName: 'tb5' })
     assert.match(output, /mjs-title=''/, 'AVANT : le piège /* avalait tout le fichier, mjs-title disparaissait')
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\/a\*\/\s*\*\s*\$\.n\)/, 'expression reçue INTACTE (regex + multiplication), pas tronquée')
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\/a\*\/\s*\*\s*\$\.n(?:, 1)?\)/, 'expression reçue INTACTE (regex + multiplication), pas tronquée')
     assert.doesNotMatch(output, /_mjs_bindEvents\(\{"title"/, 'même symptôme que B1 : écouteur DOM fantôme sur l\'événement "title"')
   })
 
@@ -380,7 +380,7 @@ describe('extractBraceBody — regex littérale (délégation à extractBalanced
     const src = `<script lang="coffee">\n$s = 'x'\n</script>\n<button @title={ /}/.test($s) ? 'a' : 'b' }>Aide</button>`
     const { output } = await transpile(src, { moduleName: 'tb6' })
     assert.match(output, /mjs-title=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\/\}\/\.test\(\$\.s\)\s*\?\s*'a'\s*:\s*'b'\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\/\}\/\.test\(\$\.s\)\s*\?\s*'a'\s*:\s*'b'(?:, 1)?\)/)
     assert.doesNotMatch(output, /_mjs_bindEvents\(\{"title"/)
   })
 
@@ -395,7 +395,7 @@ describe('extractBraceBody — regex littérale (délégation à extractBalanced
     const src = `<script lang="coffee">\n$a = 4\n$b = 2\n</script>\n<button @title={ $a / $b }>Aide</button>`
     const { output } = await transpile(src, { moduleName: 'tb8' })
     assert.match(output, /mjs-title=''/)
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.a\s*\/\s*\$\.b\)/)
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-title',\s*\$\.a\s*\/\s*\$\.b(?:, 1)?\)/)
   })
 
   // @confirm a la MÊME disambiguation que @title : un corps sans
@@ -406,7 +406,7 @@ describe('extractBraceBody — regex littérale (délégation à extractBalanced
     const src = `<script lang="coffee">\n$n = 2\n</script>\n<a @confirm={ /a*/*$n }>Suppr</a>`
     const { output } = await transpile(src, { moduleName: 'tb9' })
     assert.match(output, /mjs-confirm=''/, 'le piège /* ne doit plus avaler la suite du fichier')
-    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\/a\*\/\s*\*\s*\$\.n\)/, 'expression reçue INTACTE (regex + multiplication), pas tronquée')
+    assert.match(output, /_mjs_updAttr\('[^']+',\s*'mjs-confirm',\s*\/a\*\/\s*\*\s*\$\.n(?:, 1)?\)/, 'expression reçue INTACTE (regex + multiplication), pas tronquée')
     assert.doesNotMatch(output, /_mjs_bindEvents\(\{"confirm"/, 'écouteur DOM fantôme sur l\'événement "confirm"')
   })
 

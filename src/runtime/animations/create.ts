@@ -6,7 +6,7 @@
 
 // Trois styles cohabitent :
 
-// 1) Symétrique avec `css` (callback à la Svelte, retourne un objet keyframe)
+// 1) Symétrique avec `css` (un callback `(t, u)` qui retourne un objet keyframe)
 //      µanim.create 'spin',
 //        duration: 1000
 //        easing: µeasing.elasticOut
@@ -28,12 +28,12 @@
 //        outro: (node, opts) -> node.animate([...], opts).finished
 
 // Le 2ème argument peut être un objet (config statique) OU une fonction
-// `(node, opts) -> cfg` (setup par-nœud, comme Svelte).
+// `(node, opts) -> cfg` (setup par-nœud : la config se calcule à chaque lancement).
 //
 // Pour les modes `tick` et `css`, on délègue à `µ._mjs_runTransition` qui gère
 // le cache cfg per-node (évite re-capture stale du DOM en revival), l'abort
-// de la rAF/WAAPI loop précédente, et la continuité from current `t` —
-// exactement comme Svelte. Pour le mode asymétrique explicite (intro/outro
+// de la rAF/WAAPI loop précédente, et la continuité from current `t` (une
+// transition interrompue repart de là où elle en est). Pour le mode asymétrique explicite (intro/outro
 // fonctions directes), on reste en legacy : le user gère son lifecycle
 // via WAAPI direct (`node.animate(...).finished`).
 (function(name, config) {
@@ -47,12 +47,24 @@
     // setup(node) : retourne la cfg pour ce node. Marqué `_isCfgFactory` →
     // `_mjs_playTransition` route via `_mjs_runTransition` qui s'occupe du cache,
     // de l'abort, et de la continuité.
+    // une config fixe prend la durée, l'attente et la courbe écrites là où la transition est posée
+    // (`@in=*spin(duration: 1s)`) ; une config fonction les reçoit dans `opts`
     setup = function(node) {
+      var cfg, k, keys;
       if (typeof config === 'function') {
         return config(node, opts);
-      } else {
-        return config;
       }
+      cfg = config;
+      // mode asymétrique (intro/outro) : ses propres valeurs gagnent, rien à fusionner
+      if (!cfg || (!cfg.css && !cfg.tick)) return cfg;
+      keys = ['duration', 'delay', 'easing'];
+      for (k = 0; k < keys.length; k++) {
+        if (opts[keys[k]] !== void 0) {
+          if (cfg === config) cfg = Object.assign({}, config);
+          cfg[keys[k]] = opts[keys[k]];
+        }
+      }
+      return cfg;
     };
     setup._isCfgFactory = true;
     // mode (asym/managed) PAR NŒUD, pas sur `setup` : cette PAIRE {intro, outro} est déjà
@@ -120,7 +132,7 @@
     // chargement dépendant de détails de bundling) — un bug de "mauvaise
     // animation qui joue" quasi impossible à tracer sans ce warning.
     if (µ.anim[name] !== undefined) {
-      µ.warn(`[µanim.create] '${name}' remplace une animation déjà enregistrée sous ce nom (built-in du framework, ou un autre µanim.create appelé avant) — la précédente est perdue.`);
+      µ.warn('[µanim.create] ' + µ._mjs_txt('animCreateOverride', { name: name }, '\'{name}\' remplace une animation déjà enregistrée sous ce nom (built-in du framework, ou un autre µanim.create appelé avant) — la précédente est perdue.'));
     }
     µ.anim[name] = factory;
   }

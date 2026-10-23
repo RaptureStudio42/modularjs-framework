@@ -31,7 +31,7 @@ async function build(files: Record<string, string>): Promise<{ outDir: string; s
 }
 
 function readComponent(outDir: string, name: string): string {
-  const f = readdirSync(outDir).find((f) => new RegExp(`^${name}-[a-f0-9]{8}\\.js$`).test(f))
+  const f = readdirSync(outDir).find((f) => new RegExp(`^${name}-[0-9a-z]{5}\\.js$`).test(f))
   assert.ok(f, `${name}-*.js doit exister dans ${outDir}`)
   return readFileSync(join(outDir, f!), 'utf-8')
 }
@@ -70,7 +70,7 @@ describe('liaison de composant — cast de type sur le nom', function () {
       assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
       const out = readComponent(outDir, 'hote')
       assert.match(out, /mjs-bind:value/)
-      assert.doesNotMatch(out, /__mjsCast/, 'aucune variable de conversion ne doit apparaître quand il n\'y a pas de cast')
+      assert.doesNotMatch(out, /_mjs_cast/, 'aucune variable de conversion ne doit apparaître quand il n\'y a pas de cast')
     })
   })
 

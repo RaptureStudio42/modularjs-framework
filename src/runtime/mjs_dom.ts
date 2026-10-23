@@ -40,6 +40,10 @@
 // Deux bundles qui définissent la même balise : le premier chargé gagne, le second est signalé et
 // ignoré — jamais une exception, qui emporterait tout le module.
 µ._def = function(tag, C) {
+  // la silhouette d'un composant dont le code arrivait (mjs_fx_skeleton.ts) part AVANT l'enregistrement,
+  // qui monte les balises déjà là : elle n'est jamais vue à côté du vrai rendu
+  if (µ._mjs_skelOff) µ._mjs_skelOff(tag);
   if (!customElements.get(tag)) customElements.define(tag, C);
-  else (µ.warn || console.warn)('[ModularJS] '+ tag +' déjà défini par un autre bundle : cette définition est ignorée');
+  // un fichier de page ou de groupe rapporte aussi des composants déjà chargés seuls : c'est attendu, rien à dire
+  else if (!(µ.pathOf && /mjs_(page|group)-/.test(µ.pathOf(tag.slice(4))))) (µ.warn || console.warn)(µ._mjs_msg('domDefined', { tag: tag }, '{tag} déjà défini par un autre bundle : cette définition est ignorée'));
 };

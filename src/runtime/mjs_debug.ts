@@ -11,6 +11,7 @@ if (µ.Element) {
   // 1. Global Registry (Tracks births and deaths)
   originalConnected = µ.Element.prototype.connectedCallback;
   µ.Element.prototype.connectedCallback = function() {
+    // un miroir (µclone, copies de *marquee) est une instance : il entre au registre comme les autres
     µ.instances.add(this);
     if (originalConnected) {
       return originalConnected.apply(this, arguments);
@@ -29,18 +30,21 @@ if (µ.Element) {
   // aurait posé un _runEffects mort.
   originalRunEffects = µ.Element.prototype._mjs_runEffectsV2;
   µ.Element.prototype._mjs_runEffectsV2 = function(d, full) {
-    var prevOutline, prevTransition;
+    var el = this;
     if (µ.debugMode && !this._mjs_has_crashed) {
-      prevOutline = this.style.outline;
-      prevTransition = this.style.transition;
-      this.style.transition = 'none';
-      this.style.outline = '2px solid rgba(0, 255, 0, 0.9)';
-      setTimeout(() => {
-        this.style.transition = 'outline 0.3s ease-out';
-        this.style.outline = prevOutline;
-        return setTimeout((() => {
-          return this.style.transition = prevTransition;
-        }), 300);
+      // le style du composant n'est lu qu'au premier rendu d'un clignotement : un 2e rendu rapproché ne prend pas le
+      // vert pour l'original ; un seul minuteur par composant, réarmé à chaque rendu
+      if (!el._mjs_dbgPrev) el._mjs_dbgPrev = { outline: el.style.outline, transition: el.style.transition };
+      clearTimeout(el._mjs_dbgTimer);
+      el.style.transition = 'none';
+      el.style.outline = '2px solid rgba(0, 255, 0, 0.9)';
+      el._mjs_dbgTimer = setTimeout(() => {
+        el.style.transition = 'outline 0.3s ease-out';
+        el.style.outline = el._mjs_dbgPrev.outline;
+        el._mjs_dbgTimer = setTimeout(() => {
+          el.style.transition = el._mjs_dbgPrev.transition;
+          el._mjs_dbgPrev = null;
+        }, 300);
       }, 50);
     }
     return originalRunEffects.call(this, d, full);

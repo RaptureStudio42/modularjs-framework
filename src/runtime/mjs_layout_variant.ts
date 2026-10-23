@@ -31,7 +31,7 @@ if (µ.Element) {
       // composant part alors dans le système d'erreur du framework — `_mjs_catchError` remonte
       // à la boundary `<@failed>` la plus proche, ou affiche le panneau fatal. Mieux vaut
       // une carte qui crie qu'une carte muette avec la mauvaise mise en page.
-      const layoutErr = new Error(`[ModularJS] <${this.tagName.toLowerCase()}> : variant de style '${name}' inconnu (connus : ${Object.keys(this._mjs_layouts).join(', ') || 'aucune'}).`);
+      const layoutErr = new Error(µ._mjs_msg('layoutUnknown', { tag: this.tagName.toLowerCase(), name: name, known: Object.keys(this._mjs_layouts).join(', ') || µ._mjs_txt('layoutNone', null, 'aucune') }, '<{tag}> : variant de style \'{name}\' inconnu (connus : {known}).'));
       // mode `mjs-light` : pas de shadow, donc ni panneau fatal ni boundary à remplir — il
       // ne reste que le journal, à voix haute
       if (this._mjs_isLight || typeof this._mjs_catchError !== 'function') {
@@ -47,6 +47,8 @@ if (µ.Element) {
       }
       return;
     }
+    // un modèle du HTML seul (nommé par µlayout, sans style à lui) : rien à charger
+    if (this._mjs_layouts && this._mjs_layouts[name] === '') { return; }
     // Empreinte connue → `?v=` casse le cache navigateur (le nom de fichier
     // reste stable). Sans empreinte (repli historique) : URL nue, comme avant.
     const fingerprint = this._mjs_layouts && this._mjs_layouts[name];
@@ -80,8 +82,8 @@ if (µ.Element) {
       }
       if (!µ._mjs_layoutMissingWarned.has(url)) {
         µ._mjs_layoutMissingWarned.add(url);
-        const knownNames = this._mjs_layouts ? (Object.keys(this._mjs_layouts).join(', ') || 'aucune') : 'aucune';
-        µ.warn(`[ModularJS] <${this.tagName.toLowerCase()}> : fichier du variant '${name}' introuvable (${url}) — noms connus : ${knownNames}.`);
+        const knownNames = this._mjs_layouts ? (Object.keys(this._mjs_layouts).join(', ') || µ._mjs_txt('layoutNone', null, 'aucune')) : µ._mjs_txt('layoutNone', null, 'aucune');
+        µ.warn(µ._mjs_msg('layoutFile', { tag: this.tagName.toLowerCase(), name: name, url: url, known: knownNames }, '<{tag}> : fichier du variant \'{name}\' introuvable ({url}) — noms connus : {known}.'));
       }
       return;
     }
@@ -118,6 +120,8 @@ if (µ.Element) {
       µ._mjs_styleVariantSheetCache.set(variantCss, sheet);
     }
     sheets.push(µ._mjs_styleVariantSheetCache.get(variantCss));
-    return this._shadow.adoptedStyleSheets = sheets;
+    // les feuilles posées en route restent (cf. _mjs_applyLayout)
+    var kept = this._shadow.adoptedStyleSheets.filter(function(s) { return s._mjs_keep; });
+    return this._shadow.adoptedStyleSheets = kept.length ? sheets.concat(kept) : sheets;
   };
 }

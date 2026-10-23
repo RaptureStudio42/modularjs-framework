@@ -81,7 +81,7 @@ describe('MJS-WS — reprise de session, cas limites', () => {
   })
 
   it('2. multi-onglets : A coupe (grâce) → l\'utilisateur reste présent (B vivant) ; B coupe aussi → UN leave, à l\'expiration du DERNIER', async () => {
-    const { transport, app } = await startApp({ resume: { grace: 150 }, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {} })
+    const { transport, app } = await startApp({ resume: { grace: 150 }, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {}, presence: 'public' })   // présence globale ouverte (fermée par défaut)
     const recuO: any[] = []
     wireWebSocket(transport, { 'memory://e2o': { in: recuO } })
     const µA = makeMu(); const sA = µA.socket('memory://e2a', { auth: () => ({ uid: 7 }), reconnect: { enabled: false } })
@@ -106,7 +106,7 @@ describe('MJS-WS — reprise de session, cas limites', () => {
   })
 
   it('3. close() serveur d\'un PARQUÉ (µ:bye impossible à livrer) : session détruite et purge IMMÉDIATES — pas à l\'expiration', async () => {
-    const { transport, app } = await startApp({ resume: true, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {} })
+    const { transport, app } = await startApp({ resume: true, auth: (hello: any) => ({ id: hello.auth.uid }), onLog: () => {}, presence: 'public' })   // présence globale ouverte (fermée par défaut)
     const recuA: any[] = []; const recuO: any[] = []
     wireWebSocket(transport, { 'memory://e3a': { in: recuA }, 'memory://e3o': { in: recuO } })
     const µA = makeMu(); const sA = µA.socket('memory://e3a', { auth: () => ({ uid: 'a' }), reconnect: { backoff: [80], jitter: 0 } })
@@ -232,7 +232,7 @@ describe('MJS-WS — reprise de session, cas limites', () => {
       writeFileSync(join(root, 'mjs.config.json'), JSON.stringify(config))
       return root
     }
-    assert.throws(() => findConfig(write({ ws: { resume: { grace: 5000, maxBufferd: 10 } } })), /ws\.resume\.maxBufferd : clé inconnue — tu voulais dire 'maxBuffered' \?/)
+    assert.throws(() => findConfig(write({ ws: { resume: { grace: 5000, maxBufferd: 10 } } })), /ws\.resume\.maxBufferd : clé inconnue — vouliez-vous dire 'maxBuffered' \?/)
     assert.throws(() => findConfig(write({ ws: { resume: 'oui' } })), /ws\.resume doit être true, false ou un objet/)
     assert.throws(() => findConfig(write({ ws: { resume: { grace: 0 } } })), /ws\.resume\.grace doit être un entier > 0/)
     assert.throws(() => findConfig(write({ ws: { resume: { maxBytes: 12.5 } } })), /ws\.resume\.maxBytes doit être un entier > 0/)

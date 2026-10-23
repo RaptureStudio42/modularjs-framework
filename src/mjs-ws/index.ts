@@ -19,7 +19,7 @@
 //   })
 //   app.serve('achat', (p, client) => ({ solde: 100 - p.prix }))
 //   app.on('chat', (p, client) => app.broadcast('chat', p, { except: client }))
-//   const ennemis = app.stream('ennemis', { journal: 200 })
+//   const ennemis = app.stream('ennemis', { public: true, journal: 200 })   // fermé sans public, room ni canSubscribe
 //   ennemis.add('e1', { x: 10, y: 20 })              // delta numéroté + journal (resync auto)
 //   app.room('partie-42').kick(tricheur, 'triche')   // µ:left, la connexion reste ouverte
 //   await app.listen()
@@ -33,7 +33,7 @@ import { WsTransport } from './transport-ws.js'
 import { UwsTransport } from './transport-uws.js'
 import { createCore, DEFAULT_MAX_QUEUED } from './core.js'
 import type {
-  MjsWsApp, MjsWsBanBy, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsLogFn, MjsWsLogLevel, MjsWsRateBy, MjsWsResolvedBan, MjsWsResolvedOptions, MjsWsTokenOptions,
+  MjsWsApp, MjsWsBanBy, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsLogFn, MjsWsRateBy, MjsWsResolvedBan, MjsWsResolvedOptions, MjsWsTokenOptions,
 } from './core.js'
 import type { MjsWsRemoteInfo, MjsWsTransport } from './transport.js'
 import type { MjsWsRoomsOptions } from './rooms.js'
@@ -57,10 +57,18 @@ import type { MjsWsAdapter } from './adapter.js'
 // `import { mjsWs, list, bits } from 'modularjs-framework/ws'`)
 import { resolveSchemaOptions } from './schema.js'
 import type { MjsWsCodec, MjsWsSchemaOptions } from './schema.js'
+// proxy inverse de confiance (trust-proxy.ts) — `opts.trustProxy` validé ici, appliqué par les transports intégrés
+import { resolveTrustProxy } from './trust-proxy.js'
+import type { MjsWsTrustProxy } from './trust-proxy.js'
+import { checkSetting, showSetting } from './guard.js'
+import type { MjsWsSettingRule } from './guard.js'
+import { consoleLog } from './package-helpers.js'
+import { DEFAULT_MAX_PAYLOAD } from './transport.js'
 import { t } from '../messages/index.js'
 export { list, bits } from '../schema/core.js'
 export type { MjschemaScalar, MjschemaFieldType, MjschemaFields, MjschemaListType, MjschemaBitsType, MjschemaDefinitionsJSON } from '../schema/core.js'
 export type { MjsWsCodec, MjsWsSchemaOptions } from './schema.js'
+export type { MjsWsTrustProxy } from './trust-proxy.js'
 
 export { MemoryTransport, MemoryClientSocket } from './transport.js'
 export type { MemoryTransportConnectOpts } from './transport.js'
@@ -74,7 +82,7 @@ export type {
   MjsWsApp, MjsWsClient, MjsWsHelloPayload, MjsWsLimits, MjsWsBroadcastOpts, MjsWsLogFn, MjsWsLogLevel, MjsWsTokenOptions,
   MjsWsRateBy, MjsWsBanBy, MjsWsResolvedBan,
 } from './core.js'
-export type { MjsWsRoomsOptions, MjsWsRoomHandle, MjsWsJoinFn } from './rooms.js'
+export type { MjsWsRoomsOptions, MjsWsRoomOptions, MjsWsRoomHandle, MjsWsJoinFn } from './rooms.js'
 export type { MjsWsStreamOptions, MjsWsStreamHandle } from './streams.js'
 // pont universel — cf. bridge.ts pour l'implémentation, docs/23-mjs-ws.md pour le guide
 export { resolveBridgeOptions } from './bridge.js'
@@ -88,11 +96,12 @@ export type {
 export { isProxyOptions } from './proxy.js'
 export type { MjsWsProxyOptions } from './proxy.js'
 // refus d'auth explicite — un opts.auth qui `throw new MjsWsAuthDenied('msg')` transmet son
-// message métier au client ; une exception nue devient un `µ:denied` générique (détail loggé serveur seul)
-export { MjsWsAuthDenied } from './core.js'
+// message métier au client ; une exception nue devient un `µ:denied` générique (détail loggé serveur seul).
+// MjsWsError : même rôle pour un serve()/on() — son message part tel quel, même en production
+export { MjsWsAuthDenied, MjsWsError } from './core.js'
 // jetons JWT HS256 sans dépendance — cf. token.ts, autonomes vis-à-vis du pont
 export { signToken, verifyToken, jwtAuth } from './token.js'
-export type { SignTokenOpts } from './token.js'
+export type { SignTokenOpts, VerifyTokenOpts } from './token.js'
 // reprise de session — cf. sessions.ts, docs/23-mjs-ws.md « La reprise de session »
 export { DEFAULT_RESUME, resolveResumeOptions } from './sessions.js'
 export type { MjsWsResumeOptions, MjsWsResolvedResume } from './sessions.js'
@@ -129,6 +138,19 @@ export type { MjsPackage } from './packages.js'
 // (suppression/muet), frappe. Cf. docs/26-chat.md pour le guide, chat.ts pour le protocole complet.
 export { chatPackage } from './chat.js'
 export type { MjsWsChatOptions, MjsWsChatMessageCtx } from './chat.js'
+// paquet CURSEURS (cursors.ts) — les curseurs et sélections des autres visiteurs d'une page, pour
+// l'effet `*cursors` (runtime/mjs_fx_cursors.ts). Cf. docs/38-effets.md, cursors.ts pour le protocole.
+export { cursorsPackage } from './cursors.js'
+export type { MjsWsCursorsOptions } from './cursors.js'
+
+// paquets RÉACTIONS, SUIVRE, CARTE DE CHALEUR — les effets `*react`, `*follow`,
+// `*heatmap` (runtime/mjs_fx_*.ts). Cf. docs/38-effets.md, et chaque fichier pour son protocole.
+export { reactionsPackage } from './reactions.js'
+export type { MjsWsReactionsOptions } from './reactions.js'
+export { followPackage } from './follow.js'
+export type { MjsWsFollowOptions } from './follow.js'
+export { heatmapPackage, renderHeatmapPage } from './heatmap.js'
+export type { MjsWsHeatmapOptions, MjsWsHeatmapPoint, MjsWsHeatmapSnapshot, MjsWsHeatmapUnit } from './heatmap.js'
 // paquet COMPTES & IDENTITÉS v1 (comptes.ts) — comptes
 // persistés (scrypt), jetons réutilisant token.ts (signToken), élévation invité→compte par
 // µ:refresh EXISTANT (jamais dupliqué, cf. son en-tête « Élévation »), rôles + `hasRole`,
@@ -161,6 +183,22 @@ export interface MjsWsOptions {
   /** Host du transport par défaut ('ws'/'uws'). Ignoré si `transport` est une instance. */
   host?: string
   /**
+   * Proxy inverse de confiance. Derrière nginx, la socket ne voit que l'adresse du proxy : tous les visiteurs la
+   * partagent, et les bornes par adresse (`limits.maxConnectionsPerIp`, mise au banc par IP, débit par IP,
+   * anti-force-brute des comptes, verrou des codes de partie de MJS-Server…) deviennent GLOBALES. Absent ou `false`
+   * (défaut) : rien ne change, l'adresse reste celle de la socket. `'loopback'` : croire X-Forwarded-For / X-Real-IP
+   * quand le pair est une adresse de boucle (127.0.0.0/8, ::1, socket unix). Une liste d'adresses ou de plages
+   * (`['10.0.0.0/8', '192.168.1.5']`) : les croire quand le pair en fait partie ; une plage plus large que /8 en IPv4
+   * (/16 en IPv6) est refusée. `true` est REFUSÉ (trop large : tout visiteur direct choisirait son adresse). Le
+   * visiteur est X-Real-IP s'il est lisible, n'est pas lui-même un proxy de confiance, et que X-Forwarded-For est
+   * absent ou désigne le même ; sans X-Real-IP utilisable, l'entrée la plus à droite de X-Forwarded-For qui n'est pas
+   * un proxy de confiance ; sinon le pair (en-têtes en désaccord : un avertissement unique, cf. trust-proxy.ts) ;
+   * `meta.address` porte l'adresse retenue. Appliquée par les transports intégrés
+   * ('ws', 'uws') — ignorée pour une instance de transport. Option absente alors que des en-têtes de proxy arrivent
+   * d'une adresse locale : un avertissement unique au journal. Cf. docs/23-mjs-ws.md « Derrière un proxy inverse ».
+   */
+  trustProxy?: MjsWsTrustProxy
+  /**
    * Authentifie le µ:hello. `false` ou throw → µ:denied {message}. Retour → `client.identity`.
    * Fonction historique OU objet-proxy `{url, secret, timeout?, cache?}` (proxy.ts)
    * délégant la décision à un back HTTP signé (POST `{event:'connect', hello}`, réponse
@@ -174,9 +212,10 @@ export interface MjsWsOptions {
   parse?: (data: string) => any
   /** Sérialisation des trames sortantes (défaut : JSON.stringify). */
   serialize?: (obj: unknown) => string
-  /** Période ATTENDUE des µ:ping client, ms (défaut 15000). Watchdog serveur = 2.5×. `0` = watchdog désactivé. */
+  /** Période ATTENDUE des µ:ping client, ms (défaut 15000). Watchdog serveur = 2.5×. `0` = watchdog désactivé. Nombre fini ≥ 0, vérifié à la construction. */
   heartbeat?: number
-  /** Quotas anti-abus par connexion (cf. MjsWsLimits pour les défauts). */
+  /** Quotas anti-abus par connexion (cf. MjsWsLimits pour les défauts). Chaque réglage est vérifié à la construction :
+   *  NaN, négatif, infini ou mauvais type lèvent en clair ; une clé à `undefined` garde son défaut. */
   limits?: Partial<MjsWsLimits>
   /**
    * Suivi d'expiration + rafraîchissement du jeton (src/mjs-ws/core.ts) — `sweep` :
@@ -190,11 +229,17 @@ export interface MjsWsOptions {
   /**
    * Salons : garde d'admission `join(room, client)` (false/throw = refus) et méta de présence
    * `meta(client)` (défaut {}). `canSeePresence(room, client)` : garde de LECTURE de présence
-   * de salon, opt-in, MIROIR de `join` — absente (défaut)
-   * = présence de salon lisible par tout authentifié comme avant, SANS lien avec `join`. Plafond de
+   * de salon, MIROIR de `join` — absente (défaut) = présence d'un salon réservée à ses membres
+   * (cf. `app.room(nom, { presence: 'public' })` pour l'ouvrir). Plafond de
    * salons par client : `limits.maxRoomsPerClient` (pas ici, cf. MjsWsLimits).
    */
   rooms?: MjsWsRoomsOptions
+  /**
+   * Présence GLOBALE (qui est connecté au serveur : `µ:sub-presence` sans salon) — absente (défaut) = fermée, servie à
+   * personne : la demander vaut `µ:error { message, code: 'presence-denied' }`. `'public'` l'ouvre à tous les clients.
+   * La présence d'un salon a ses propres réglages (`app.room(nom, { presence })`, `rooms.canSeePresence`).
+   */
+  presence?: 'public'
   /** Pose des filets uncaughtException/unhandledRejection qui LOGGENT sans tuer le process (défaut false). */
   guardProcess?: boolean
   /** Callback de log (défaut : console, format sobre). */
@@ -230,7 +275,8 @@ export interface MjsWsOptions {
   verifyOrigin?: string[] | ((origin: string | undefined, remote: MjsWsRemoteInfo) => boolean)
   /**
    * Mise au banc — ACTIVE par défaut (cf. DEFAULT_BAN : 3 expulsions pour abus en 1 min → 5 min de
-   * refus, par compte ET par IP). Un client expulsé revenait sinon aussitôt, compteurs neufs.
+   * refus du fautif : son compte, ou sans compte son IP). Un client expulsé revenait sinon aussitôt,
+   * compteurs neufs.
    * `false` désactive ; `true` = défauts ; objet = réglages fins (`after`, `within`, `duration` en
    * ms, `by` : `'account'` | `'ip'` | `'both'`). Cf. MjsWsResolvedOptions.ban (core.ts) pour ce qui
    * compte comme abus et où le refus s'applique, docs/23-mjs-ws.md « Qui compte pour qui ».
@@ -339,9 +385,17 @@ export function resolveAdapterOption(raw: MjsWsAdapterConfig | MjsWsAdapter | un
  * DEFAULT_ANTI_ENTROPY. `false` (l'une ou l'autre source) = désactivée.
  */
 export function resolveAntiEntropyOption(top: number | false | undefined, adapterRaw: MjsWsAdapterConfig | MjsWsAdapter | undefined): number | false {
-  if (top !== undefined) return top
-  if (adapterRaw && !isAdapterInstance(adapterRaw) && adapterRaw.antiEntropy !== undefined) return adapterRaw.antiEntropy
+  if (top !== undefined) return checkAntiEntropy('antiEntropy', top)
+  if (adapterRaw && !isAdapterInstance(adapterRaw) && adapterRaw.antiEntropy !== undefined) return checkAntiEntropy('adapter.antiEntropy', adapterRaw.antiEntropy)
   return DEFAULT_ANTI_ENTROPY
+}
+
+// la cadence d'anti-entropie : `false`, ou un entier ≥ 1 — NaN, 0 ou négatif feraient publier l'instantané de présence
+// toutes les millisecondes (setInterval les lit comme 1 ms)
+function checkAntiEntropy(cle: string, v: unknown): number | false {
+  if (v === false) return false
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(t('ws.index.reglage-invalide', { cle, raw: showSetting(v), attendu: t('ws.index.entier-positif-ou-false') }))
+  return v
 }
 
 // exportées — réutilisées par cli/ws.ts (bannière : heartbeat/limites EFFECTIFS
@@ -352,10 +406,12 @@ export const DEFAULT_HEARTBEAT = 15000
 // MjsWsLimits.maxConnectionsPerIp, core.ts, pour le détail du pourquoi 100 par défaut) /
 // maxRoomsPerClient: 50 (CHANGEMENT DE COMPORTEMENT ASSUMÉ
 // lui aussi, généreux : cf. le commentaire de MjsWsLimits.maxRoomsPerClient, core.ts).
-export const DEFAULT_LIMITS: MjsWsLimits = { rate: 40, burst: 80, kickAfter: 50, maxPayload: 65536, maxBuffered: 1048576, maxConnections: null, maxConnectionsPerIp: 100, maxRoomsPerClient: 50, maxQueued: DEFAULT_MAX_QUEUED, rateBy: 'connection' }
-// mise au banc — ACTIVE par défaut : 3 expulsions pour abus en 1 min → 5 min de refus, par compte
-// ET par IP (cf. MjsWsOptions.ban)
-export const DEFAULT_BAN: MjsWsResolvedBan = { after: 3, within: 60000, duration: 300000, by: 'both' }
+export const DEFAULT_LIMITS: MjsWsLimits = { rate: 40, burst: 80, kickAfter: 50, maxPayload: DEFAULT_MAX_PAYLOAD, maxBuffered: 1048576, maxConnections: null, maxConnectionsPerIp: 100, maxRoomsPerClient: 50, maxQueued: DEFAULT_MAX_QUEUED, rateBy: 'connection' }
+// mise au banc — ACTIVE par défaut : 3 expulsions pour abus en 1 min → 5 min de refus du fautif, son
+// compte (sans compte : son IP, au hello). Jamais toute l'adresse pour la faute d'un compte : avec une
+// inscription libre (paquet comptes, invités), un visiteur se crée un compte en une requête et fermait
+// l'adresse à tous ses voisins (cf. MjsWsOptions.ban ; `'both'` reste au choix de l'appli)
+export const DEFAULT_BAN: MjsWsResolvedBan = { after: 3, within: 60000, duration: 300000, by: 'account' }
 const VALID_BAN_BY: readonly MjsWsBanBy[]   = ['account', 'ip', 'both']
 const VALID_RATE_BY: readonly MjsWsRateBy[] = ['connection', 'account', 'ip', 'both']
 // suivi d'expiration + rafraîchissement du jeton — MÊME patron que DEFAULT_LIMITS
@@ -365,11 +421,12 @@ export const DEFAULT_TOKEN: MjsWsTokenOptions = { sweep: 10000, slack: 5000 }
 // cf. resolveAntiEntropyOption, rooms.ts attachPresenceAntiEntropy)
 export const DEFAULT_ANTI_ENTROPY = 15000
 
-function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void {
-  const line = `[MJS-WS] ${message}`
-  if (level === 'error') console.error(line, meta ?? '')
-  else if (level === 'warn') console.warn(line, meta ?? '')
-  else console.log(line, meta ?? '')
+const defaultLog = consoleLog('[MJS-WS]')
+
+/** câblage de `opts.trustProxy` vers les transports intégrés — `onProxyHeaders` : l'avertisseur « derrière un proxy sans réglage » (trust-proxy.ts) */
+export interface MjsWsProxyWiring {
+  trustProxy?: MjsWsTrustProxy
+  onProxyHeaders?: () => void
 }
 
 /**
@@ -381,11 +438,15 @@ function defaultLog(level: MjsWsLogLevel, message: string, meta?: unknown): void
  * (déjà `MjsWsTransport` — MemoryTransport en test, ou un transport maison) est utilisé tel quel.
  * `limits` déjà résolue (défauts appliqués) — nécessaire pour câbler `maxPayload` côté 'ws' ET 'uws'
  * (les DEUX transports réels acceptent ce réglage nativement, cf. transport-ws.ts/transport-uws.ts ;
- * sans lui, `ws` retomberait sur son propre défaut de 100 Mo — bien au-delà de `limits.maxPayload`).
+ * sans lui, `ws` retomberait sur son propre défaut de 100 Mo — bien au-delà de `limits.maxPayload`),
+ * et `maxBuffered` côté 'uws' (sa borne d'attente native, 64 Ko sinon : uWS abandonnerait des trames
+ * bien avant la garde d'engorgement de core.ts).
+ * `proxy` : le câblage de `opts.trustProxy` vers les DEUX transports intégrés (cf. trust-proxy.ts) ; une instance
+ * déjà construite l'ignore, elle lit ses propres options.
  */
-export function resolveTransport(raw: MjsWsOptions['transport'], port: number | undefined, host: string | undefined, limits: MjsWsLimits): MjsWsTransport {
-  if (raw === undefined || raw === 'ws') return new WsTransport({ port, host, maxPayload: limits.maxPayload })
-  if (raw === 'uws') return new UwsTransport({ port, host, maxPayload: limits.maxPayload })
+export function resolveTransport(raw: MjsWsOptions['transport'], port: number | undefined, host: string | undefined, limits: MjsWsLimits, proxy: MjsWsProxyWiring = {}): MjsWsTransport {
+  if (raw === undefined || raw === 'ws') return new WsTransport({ port, host, maxPayload: limits.maxPayload, trustProxy: proxy.trustProxy, onProxyHeaders: proxy.onProxyHeaders })
+  if (raw === 'uws') return new UwsTransport({ port, host, maxPayload: limits.maxPayload, maxBuffered: limits.maxBuffered, trustProxy: proxy.trustProxy, onProxyHeaders: proxy.onProxyHeaders })
   if (typeof raw === 'string') throw new Error(t('ws.index.transport-invalide', { raw }))
   return raw
 }
@@ -423,6 +484,47 @@ export function resolveBanOption(raw: MjsWsOptions['ban']): MjsWsResolvedBan | n
   return ban
 }
 
+// règles des réglages de `limits` (cf. checkSetting, guard.ts) — maxPayload et maxBuffered partent aussi aux transports
+// natifs, qui lisent 0 (et NaN) comme « illimité » : entiers ≥ 1
+const LIMITS_RULES: Record<string, MjsWsSettingRule> = {
+  rate: 'nombre', burst: 'nombre', kickAfter: 'nombre', maxPayload: 'entier', maxBuffered: 'entier',
+  maxConnections: 'plafond', maxConnectionsPerIp: 'plafond', maxRoomsPerClient: 'plafond', maxPresencePerClient: 'plafond', maxQueued: 'plafond',
+}
+
+/**
+ * Résout `opts.limits` — DEFAULT_LIMITS complété ; une clé à `undefined` garde son défaut (avant, elle l'écrasait :
+ * `maxPayload: undefined` annulait la borne de taille). Chaque réglage est vérifié (cf. checkSetting), `rateBy` aussi :
+ * une valeur fausse lève tout de suite, en clair — `rate: Number(process.env.RATE)` sans la variable (NaN) coupait le
+ * seau à jetons en silence. Les clés inconnues passent telles quelles, comme avant.
+ */
+function resolveLimitsOption(raw: unknown): MjsWsLimits {
+  if (raw === undefined || raw === null) return { ...DEFAULT_LIMITS }
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'limits', raw: showSetting(raw), attendu: '{ rate, burst, kickAfter, maxPayload, maxBuffered, … }' }))
+  const limits = { ...DEFAULT_LIMITS } as MjsWsLimits & Record<string, unknown>
+  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) limits[cle] = v
+  for (const [cle, regle] of Object.entries(LIMITS_RULES)) if (limits[cle] !== undefined) checkSetting('limits.' + cle, limits[cle], regle)
+  limits.rateBy = resolveRateByOption(limits.rateBy)
+  return limits
+}
+
+/** Résout `opts.heartbeat` — absent (ou `null`) = DEFAULT_HEARTBEAT, `0` = chien d'inactivité désactivé, sinon un nombre fini ≥ 0 (NaN le coupait en silence). */
+function resolveHeartbeatOption(raw: unknown): number {
+  if (raw === undefined || raw === null) return DEFAULT_HEARTBEAT
+  checkSetting('heartbeat', raw, 'nombre')
+  return raw as number
+}
+
+/** Résout `opts.token` — DEFAULT_TOKEN complété (une clé à `undefined` garde son défaut) ; `sweep`, période du balayage : entier ≥ 1 ; `slack` : nombre fini ≥ 0. */
+function resolveTokenOption(raw: unknown): MjsWsTokenOptions {
+  if (raw === undefined || raw === null) return { ...DEFAULT_TOKEN }
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('ws.index.reglage-invalide', { cle: 'token', raw: showSetting(raw), attendu: '{ sweep, slack }' }))
+  const token = { ...DEFAULT_TOKEN } as MjsWsTokenOptions & Record<string, unknown>
+  for (const [cle, v] of Object.entries(raw)) if (v !== undefined) token[cle] = v
+  checkSetting('token.sweep', token.sweep, 'entier')
+  checkSetting('token.slack', token.slack, 'nombre')
+  return token
+}
+
 /** Vérifie `limits.rateBy` (cf. MjsWsLimits.rateBy) — une valeur fausse lève tout de suite, en clair. */
 export function resolveRateByOption(raw: unknown): MjsWsRateBy {
   if (raw === undefined) return 'connection'
@@ -449,9 +551,13 @@ export function mjsWs(userOpts: MjsWsOptions = {}): MjsWsApp {
   // résolue AVANT le transport (pas juste dans `resolved` ci-dessous) : la chaîne 'uws' a besoin
   // de limits.maxPayload DÉJÀ résolue (défauts appliqués) pour construire UwsTransport — un seul
   // calcul, réutilisé aux deux endroits (jamais recalculé, jamais désynchronisé).
-  const limits: MjsWsLimits = { ...DEFAULT_LIMITS, ...(userOpts.limits ?? {}) }
-  limits.rateBy   = resolveRateByOption(limits.rateBy)
-  const transport = resolveTransport(userOpts.transport, userOpts.port, userOpts.host, limits)
+  const limits: MjsWsLimits = resolveLimitsOption(userOpts.limits)
+  // proxy de confiance — validé ICI, avant tout transport : une valeur fausse lève en clair même avec un transport
+  // maison qui ignore l'option. L'avertissement « derrière un proxy sans réglage » ne vaut que pour une option ABSENTE
+  // (`false` ou une liste sont des choix explicites) ; il part au journal de l'app, une seule fois (cf. trust-proxy.ts)
+  resolveTrustProxy(userOpts.trustProxy)
+  const proxyHint = userOpts.trustProxy === undefined ? () => (userOpts.onLog ?? defaultLog)('warn', t('ws.trust-proxy.proxy-sans-reglage')) : undefined
+  const transport = resolveTransport(userOpts.transport, userOpts.port, userOpts.host, limits, { trustProxy: userOpts.trustProxy, onProxyHeaders: proxyHint })
   // adaptateur résolu ICI (pas inline dans `resolved` ci-dessous) : la MÊME instance sert deux
   // champs de `resolved` — `adapter` (core.ts, cluster) ET `rooms._cluster.adapter` (anti-
   // entropie, cf. rooms.ts attachPresenceAntiEntropy) — jamais deux résolutions séparées.
@@ -462,16 +568,20 @@ export function mjsWs(userOpts: MjsWsOptions = {}): MjsWsApp {
     welcome:      userOpts.welcome,
     parse:        userOpts.parse ?? ((s: string) => JSON.parse(s)),
     serialize:    userOpts.serialize ?? ((o: unknown) => JSON.stringify(o)),
-    heartbeat:    userOpts.heartbeat ?? DEFAULT_HEARTBEAT,
+    heartbeat:    resolveHeartbeatOption(userOpts.heartbeat),
     limits,
+    // transport construit ici ('ws', 'uws') : il a reçu limits.maxPayload et coupe déjà toute trame plus grande, le cœur ne
+    // remesure pas chaque message ; un transport passé en instance ne l'a pas forcément reçu, le cœur garde son contrôle
+    payloadCappedByTransport: transport !== userOpts.transport,
     // suivi d'expiration + rafraîchissement du jeton — TOUJOURS résolu (comme
     // limits ci-dessus) ; l'armement RÉEL du balayage reste data-driven (cf. core.ts)
-    token:        { ...DEFAULT_TOKEN, ...(userOpts.token ?? {}) },
+    token:        resolveTokenOption(userOpts.token),
     // anti-entropie de présence (cf. rooms.ts MjsWsRoomsClusterOptions/attachPresenceAntiEntropy,
     // adapter.ts) — posée ICI, jamais dans core.ts : `_cluster`
     // absent si aucun adaptateur (ZÉRO changement de comportement, même principe que le reste
     // du clustering, opt-in via `adapter`).
     rooms: { ...(userOpts.rooms ?? {}), ...(adapter ? { _cluster: { adapter, antiEntropyMs } } : {}) },
+    presence:     userOpts.presence,
     guardProcess: userOpts.guardProcess ?? false,
     onLog:        userOpts.onLog ?? defaultLog,
     // résolu ICI (synchrone, avant tout .listen()) — secret manquant/vide lève tout de

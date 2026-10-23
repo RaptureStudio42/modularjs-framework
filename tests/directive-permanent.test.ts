@@ -100,7 +100,7 @@ describe('directive @permanent — bout en bout : compilé puis transplanté par
 
     µ._mjs_navTransplantPermanents(zone, [wrapper])
 
-    assert.equal(vivant.parentNode, wrapper, "l'élément produit par LA DIRECTIVE a bien été transplanté dans le nouvel arbre")
+    assert.ok(vivant.parentNode === wrapper, "l'élément produit par LA DIRECTIVE a bien été transplanté dans le nouvel arbre")
 
     win.close?.()
   })

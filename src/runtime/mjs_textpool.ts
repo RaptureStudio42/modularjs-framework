@@ -8,6 +8,12 @@
 //
 // `_mjs_pooled`, le drapeau anti-écriture périmée posé ici, reste testé par `_mjs_updText`/`_mjs_updHtml`
 // du côté cœur : sans ce fichier il n'est jamais posé, et le test est simplement toujours faux.
+//
+// Un nœud servi ne porte rien de son ancien usage : le code émis pose sur l'ANCRE de départ d'un `{if}` son
+// choix (`_mjs_old_branch`) et sur celle d'un `{key}` sa clé (`_mjs_old_key`, que `_mjs_key_set` dit posée) ; un nœud rendu au pool avec l'un
+// d'eux, réattribué comme ancre d'un autre bloc, lui ferait lire un choix qui n'est pas le sien (le bloc ne
+// construirait rien). La remise à zéro se fait au SERVICE, pas au retour : un effet tardif de la branche
+// détruite, qui tient encore son ancre, peut l'écrire pendant que le nœud dort dans le pool.
 
 // Pool global de text nodes vides (réutilisables).
 //
@@ -25,6 +31,10 @@
   if (µ._mjs_textPool.length > 0) {
     n = µ._mjs_textPool.pop();
     n._mjs_pooled = false;
+    // lecture avant écriture : un nœud propre (le cas courant) ne reçoit aucune propriété de plus
+    if (n._mjs_old_branch !== void 0) n._mjs_old_branch = void 0;
+    if (n._mjs_old_key !== void 0) n._mjs_old_key = void 0;
+    if (n._mjs_key_set !== void 0) n._mjs_key_set = void 0;
     if (txt !== '' && txt !== void 0) n.data = txt;
     return n;
   }

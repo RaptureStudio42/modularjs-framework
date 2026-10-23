@@ -1,6 +1,6 @@
-// mjs_rare_runes.ts (µplay/µminmax/µinspect/µraw/µsnap/µimport), RATTACHÉES D'OFFICE au
-// cœur jusqu'ici, ne doivent être embarquées QUE si l'une d'elles sert — même règle que
-// mjs_title.ts, mais un SEUL fichier pour les 6 (aucune n'apporte grand-chose seule).
+// mjs_rare_runes.ts (µraw/µsnap/µimport) ne doit être embarqué QUE si l'une d'elles sert — même règle que
+// mjs_title.ts, un SEUL fichier pour les 3 (aucune n'apporte grand-chose seule). µinspect (mjs_inspect.ts)
+// et µplay (mjs_play.ts), plus lourdes, ont chacune leur fichier et leur signal : écrire µraw ne les tire pas.
 // `µsnap` a une forme SANS le mot « snap » (opérateur `=:`) ; `µimport` réclame un
 // fichier CIBLE réel (empreinte résolue par µasset au build).
 
@@ -11,7 +11,9 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const MARK_RARE = 'µ._mjs_import = function'
+const MARK_RARE    = 'µ._mjs_import = function'
+const MARK_INSPECT = 'µ.inspect = function'
+const MARK_PLAY    = 'µ.play = function'
 
 async function buildProject(cfgExtra: any, files: Record<string, string>, extraSetup?: (srcDir: string) => void): Promise<{ outDir: string }> {
   const root = mjsTmp('detect-rare')
@@ -49,32 +51,34 @@ describe('mjs_rare_runes.ts — détaché du cœur, build RÉEL', function () {
     assert.equal(core.includes(MARK_RARE), false)
   })
 
-  it('µplay(node, classe) seul : PRÉSENT', async function () {
+  it('µplay(node, classe) seul : mjs_play.ts PRÉSENT, ni µinspect ni µraw/µsnap/µimport', async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs': ['<script lang="coffee">', '@go = -> µplay(@_shadow, \'anim\')', '</script>', '<p>x</p>'].join('\n'),
     })
-    assert.ok(coreContent(outDir).includes(MARK_RARE))
+    const core = coreContent(outDir)
+    assert.ok(core.includes(MARK_PLAY))
+    assert.equal(core.includes(MARK_INSPECT), false)
+    assert.equal(core.includes(MARK_RARE), false)
   })
 
-  it('µminmax $x, 0, 10 seul : PRÉSENT', async function () {
-    const { outDir } = await buildProject({}, {
-      'hop.mjs': ['<script lang="coffee">', '@x = 5', 'µminmax $x, 0, 10', '</script>', '<p>{$x}</p>'].join('\n'),
-    })
-    assert.ok(coreContent(outDir).includes(MARK_RARE))
-  })
-
-  it('µinspect $x seul : PRÉSENT', async function () {
+  it('µinspect $x seul : mjs_inspect.ts PRÉSENT, ni µplay ni µraw/µsnap/µimport', async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs': ['<script lang="coffee">', '@x = 5', 'µinspect $x', '</script>', '<p>{$x}</p>'].join('\n'),
     })
-    assert.ok(coreContent(outDir).includes(MARK_RARE))
+    const core = coreContent(outDir)
+    assert.ok(core.includes(MARK_INSPECT))
+    assert.equal(core.includes(MARK_PLAY), false)
+    assert.equal(core.includes(MARK_RARE), false)
   })
 
-  it('µraw({...}) seul : PRÉSENT', async function () {
+  it('µraw({...}) seul : PRÉSENT, sans µinspect ni µplay', async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs': ['<script lang="coffee">', '@obj = µraw({a: 1})', '</script>', '<p>{@obj.a}</p>'].join('\n'),
     })
-    assert.ok(coreContent(outDir).includes(MARK_RARE))
+    const core = coreContent(outDir)
+    assert.ok(core.includes(MARK_RARE))
+    assert.equal(core.includes(MARK_INSPECT), false)
+    assert.equal(core.includes(MARK_PLAY), false)
   })
 
   it('$total =: expr (opérateur =:, jamais le mot « snap ») seul : PRÉSENT', async function () {
@@ -92,6 +96,13 @@ describe('mjs_rare_runes.ts — détaché du cœur, build RÉEL', function () {
       writeFileSync(join(srcDir, 'vendor', 'lib.js'), 'export const v = 1\n')
     })
     assert.ok(coreContent(outDir).includes(MARK_RARE))
+  })
+
+  it("runtime:['inspect', 'play'] sans usage dans les sources : présents quand même", async function () {
+    const { outDir } = await buildProject({ runtime: ['inspect', 'play'] }, { 'hop.mjs': '<p>x</p>\n' })
+    const core = coreContent(outDir)
+    assert.ok(core.includes(MARK_INSPECT))
+    assert.ok(core.includes(MARK_PLAY))
   })
 
   it("runtime:['rare_runes'] sans usage dans les sources : présent quand même (explicite gagne)", async function () {

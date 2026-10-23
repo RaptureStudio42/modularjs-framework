@@ -72,8 +72,8 @@ async function expulsionReelle(port: number): Promise<void> {
 // ============================================================================================
 
 describe('MJS-WS — mise au banc : résolution de l’option', () => {
-  it('défaut ACTIF : 3 expulsions en 1 min → 5 min de refus, par compte et par IP', () => {
-    assert.deepEqual(DEFAULT_BAN, { after: 3, within: 60000, duration: 300000, by: 'both' })
+  it('défaut ACTIF : 3 expulsions en 1 min → 5 min de refus du fautif (son compte, sans compte son IP)', () => {
+    assert.deepEqual(DEFAULT_BAN, { after: 3, within: 60000, duration: 300000, by: 'account' })
     assert.deepEqual(resolveBanOption(undefined), DEFAULT_BAN)
     assert.deepEqual(resolveBanOption(true), DEFAULT_BAN)
   })

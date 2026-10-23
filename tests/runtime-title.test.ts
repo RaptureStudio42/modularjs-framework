@@ -278,7 +278,7 @@ describe('runtime @title — repli body (Popover ABSENT, comportement RÉEL happ
     b.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }))
     await sleep(25)
     const bubble2 = document.querySelector('.mjs-title')
-    assert.equal(bubble1, bubble2, 'même instance DOM réutilisée')
+    assert.ok(bubble1 === bubble2, 'même instance DOM réutilisée')
     assert.equal(bubble2.textContent, 'Second')
     assert.equal(document.querySelectorAll('.mjs-title').length, 1, 'jamais 2 bulles à la fois')
   })

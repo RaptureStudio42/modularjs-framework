@@ -106,8 +106,8 @@ describe("mjs_ujs — hashchange même route : µ.url.query se rafraîchit (via 
 })
 
 describe("µ.Router.navigate() — mémorise _mjs_lastNavQuery en plus de _mjs_lastNavPath", function () {
-  it("navigate('#/liste?tri=prix') pose _mjs_lastNavPath='/liste' ET _mjs_lastNavQuery='tri=prix'", function () {
-    const µ: any = { log() {}, warn() {}, error() {} }
+  it("navigate('#/liste?tri=prix') pose _mjs_lastNavPath='/liste' ET _mjs_lastNavQuery='tri=prix'", async function () {
+    const µ: any = { log() {}, warn() {}, error() {}, _mjs_txt() { return '' }, _mjs_logger() { return this.log } }
     const g: any = globalThis
     const prevWindow = g.window, prevDocument = g.document, prevCustomEvent = g.CustomEvent
     const fakeWin: any = {
@@ -127,6 +127,9 @@ describe("µ.Router.navigate() — mémorise _mjs_lastNavQuery en plus de _mjs_l
       µ.Router.navigate('#/liste', false) // même route, SANS query cette fois
       assert.equal(µ.Router._mjs_lastNavQuery, '', 'une navigation sans query doit remettre _mjs_lastNavQuery à vide')
     } finally {
+      // navigate() diffère d'une tâche le contrôle « aucune route » (setTimeout, faute de requestAnimationFrame ici) :
+      // il passe avant que la fausse fenêtre ne soit rendue, sinon il lit `window` une fois rendu et lève hors de tout test
+      await new Promise((r) => setTimeout(r, 0))
       g.window = prevWindow; g.document = prevDocument; g.CustomEvent = prevCustomEvent
     }
   })

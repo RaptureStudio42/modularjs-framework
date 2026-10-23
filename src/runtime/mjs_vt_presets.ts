@@ -60,11 +60,11 @@
   else {
     namePart = name.split('=')[0].trim();
     optsRaw = undefined;
-    µ.warn(`[ModularJS] @viewTransition : valeur malformée '${name}' — repli sur '${namePart}'.`);
+    µ.warn(µ._mjs_msg('vtMalformed', { name: name, namePart: namePart }, '@viewTransition : valeur malformée \'{name}\' — repli sur \'{namePart}\'.'));
   }
   colonIdx = namePart.indexOf(':');
   if (colonIdx !== -1) {
-    µ.warn(`[ModularJS] @viewTransition : la direction ne s'écrit plus dans le nom ('${namePart}') — repli sur '${namePart.slice(0, colonIdx)}', pose 'dir'/'direction' en option.`);
+    µ.warn(µ._mjs_msg('vtDirName', { namePart: namePart, base: namePart.slice(0, colonIdx) }, '@viewTransition : la direction ne s\'écrit plus dans le nom (\'{namePart}\') — repli sur \'{base}\', posez \'dir\'/\'direction\' en option.'));
     namePart = namePart.slice(0, colonIdx);
   }
   m = namePart.match(/^([a-z][a-z0-9-]*)$/);
@@ -77,32 +77,32 @@
       pair = pairs[i].trim();
       if (!pair) { continue; } // virgule finale tolérée
       pm = pair.match(/^([a-zA-Z]+)\s*:\s*(.+)$/);
-      if (!pm) { µ.warn(`[ModularJS] @viewTransition : option malformée '${pair}' dans '${name}' — ignorée.`); continue; }
+      if (!pm) { µ.warn(µ._mjs_msg('vtOptMalformed', { pair: pair, name: name }, '@viewTransition : option malformée \'{pair}\' dans \'{name}\' — ignorée.')); continue; }
       rawKey = pm[1];
       key = µ._mjs_vtOptionKeyAliases[rawKey];
       if (!key) {
-        µ.warn(`[ModularJS] @viewTransition : clé inconnue '${rawKey}' dans '${name}' — ignorée (clés valides : ${µ._mjs_vtOptionKeys.map(function(k) { return k + '/' + µ._mjs_vtOptionShort[k]; }).join(', ')}).`);
+        µ.warn(µ._mjs_msg('vtUnknownKey', { rawKey: rawKey, name: name, keys: µ._mjs_vtOptionKeys.map(function(k) { return k + '/' + µ._mjs_vtOptionShort[k]; }).join(', ') }, '@viewTransition : clé inconnue \'{rawKey}\' dans \'{name}\' — ignorée (clés valides : {keys}).'));
         continue;
       }
-      if (seen[key]) { µ.warn(`[ModularJS] @viewTransition : clé '${key}' en double dans '${name}' ('${key}'/'${µ._mjs_vtOptionShort[key]}' désignent la même option) — 2e occurrence ignorée.`); continue; }
+      if (seen[key]) { µ.warn(µ._mjs_msg('vtDupKey', { key: key, name: name, short: µ._mjs_vtOptionShort[key] }, '@viewTransition : clé \'{key}\' en double dans \'{name}\' (\'{key}\'/\'{short}\' désignent la même option) — 2e occurrence ignorée.')); continue; }
       seen[key] = true;
       val = pm[2].trim();
       if ((val.charAt(0) === '"' && val.charAt(val.length - 1) === '"') || (val.charAt(0) === "'" && val.charAt(val.length - 1) === "'")) { val = val.slice(1, -1).trim(); }
       if (key === 'direction') {
-        if (µ._mjs_vtDirs.indexOf(val) === -1) { µ.warn(`[ModularJS] @viewTransition : direction invalide '${val}' dans '${name}' — ignorée.`); continue; }
+        if (µ._mjs_vtDirs.indexOf(val) === -1) { µ.warn(µ._mjs_msg('vtBadDir', { val: val, name: name }, '@viewTransition : direction invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
         dir = val;
       }
       else if (key === 'duration') {
         // Nombre NU uniquement, toujours des ms (cohérence setTimeout) :
         // 'ms'/'s' suffixés N'EXISTENT PLUS (RETRAIT).
         dm = val.match(/^(\d+)$/);
-        if (!dm) { µ.warn(`[ModularJS] @viewTransition : duration invalide '${val}' dans '${name}' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.`); continue; }
+        if (!dm) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, '@viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
         num = parseInt(dm[1], 10);
-        if (!(num > 0)) { µ.warn(`[ModularJS] @viewTransition : duration invalide '${val}' dans '${name}' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.`); continue; }
+        if (!(num > 0)) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, '@viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
         durationMs = num;
       }
       else if (key === 'priority') {
-        if (!/^\d+$/.test(val)) { µ.warn(`[ModularJS] @viewTransition : priority invalide '${val}' dans '${name}' — ignorée.`); continue; }
+        if (!/^\d+$/.test(val)) { µ.warn(µ._mjs_msg('vtBadPrio', { val: val, name: name }, '@viewTransition : priority invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
         priority = parseInt(val, 10);
       }
     }
@@ -319,11 +319,10 @@
     var vertical = dir === 'down' || dir === 'up';
     var from = { down: 'translateY(-102%)', up: 'translateY(102%)', left: 'translateX(102%)', right: 'translateX(-102%)' }[dir];
     var to = { down: 'translateY(102%)', up: 'translateY(-102%)', left: 'translateX(-102%)', right: 'translateX(102%)' }[dir];
-    var i, cells = '';
-    for (i = 0; i < 8; i++) { cells += `<i class="mjs-vtc-bar" style="--i:${i}"></i>`; }
     return {
       coverMs: 620, revealMs: 640,
-      html: function() { return cells; },
+      html: function() { return '<i class="mjs-vtc-bar"></i>'.repeat(8); },
+      idx: function(p) { return p; },
       css: function() {
         return `
 #mjs-vt-curtain{display:flex;flex-direction:${vertical ? 'row' : 'column'}}
@@ -341,11 +340,9 @@
   // s'effondre dans le même ordre pour découvrir la nouvelle page.
   blocks: {
     coverMs: 600, revealMs: 620,
-    html: function() {
-      var x, y, cells = '';
-      for (y = 0; y < 4; y++) { for (x = 0; x < 6; x++) { cells += `<i class="mjs-vtc-block" style="--i:${x + y}"></i>`; } }
-      return cells;
-    },
+    html: function() { return '<i class="mjs-vtc-block"></i>'.repeat(24); },
+    // 6 colonnes × 4 rangées : vague diagonale, colonne + rangée
+    idx: function(p) { return p % 6 + (p / 6 | 0); },
     css: function() {
       return `
 #mjs-vt-curtain{display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(4,1fr)}
@@ -411,13 +408,18 @@
   layer.className = 'mjs-vtc-cover';
   layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647';
   layer.innerHTML = spec.html();
-  document.body.appendChild(layer);
+  // rang de chaque bande ou tuile (`--i`, délai de la cascade) posé par le CSSOM, jamais par un attribut style dans le
+  // balisage : une CSP stricte (µ._csp) refuse ce dernier, toutes les bandes partaient ensemble
+  if (spec.idx) { Array.prototype.forEach.call(layer.children, function(c, p) { c.style.setProperty('--i', spec.idx(p)); }); }
+  // posé sur <html>, à côté de <body>, jamais dedans : une page dont le contenant est <body> (réponse sans
+  // X-MJS-Target) remplace tout son contenu à la permutation, le calque partait avec et la révélation sautait
+  document.documentElement.appendChild(layer);
   setTimeout(function() {
     if (seq !== µ._mjs_vtCurtainSeq) { return; }
     // swap() tournait SANS garde sous le rideau noir : une
     // permutation qui lève abandonnait le reste de ce callback (double rAF + révélation + retrait)
     // → #mjs-vt-curtain restait à vie, écran noir permanent. La révélation continue quand même.
-    try { swap(); } catch (e) { µ.error('[ModularJS] @viewTransition : la permutation sous rideau a levé —', e); }
+    try { swap(); } catch (e) { µ.error(µ._mjs_msg('vtSwapThrew', null, '@viewTransition : la permutation sous rideau a levé —'), e); }
     requestAnimationFrame(function() { requestAnimationFrame(function() {
       if (seq !== µ._mjs_vtCurtainSeq) { return; }
       layer.className = 'mjs-vtc-reveal';
@@ -457,7 +459,7 @@
   entry = µ._vtPresets[p.base];
   if (!entry) {
     if (!µ._mjs_vtCurtains[p.base]) {
-      µ.warn(`[ModularJS] @viewTransition : préréglage inconnu '${name}' — valeurs valides : ${Object.keys(µ._vtPresets).join(', ')}, ${Object.keys(µ._mjs_vtCurtains).join(', ')} (pour orienter une base directionnelle : l'option { dir: left }, le suffixe ':left' a été retiré en v6).`);
+      µ.warn(µ._mjs_msg('vtUnknownPreset', { name: name, presets: Object.keys(µ._vtPresets).join(', '), curtains: Object.keys(µ._mjs_vtCurtains).join(', ') }, '@viewTransition : préréglage inconnu \'{name}\' — valeurs valides : {presets}, {curtains} (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).'));
     }
     if (sheet) { setCss(''); }
     return;
@@ -534,10 +536,28 @@
 // rectangle exact de l'original. Fidèle pour du contenu concret (images, blocs,
 // texte) ; un SOUS-COMPOSANT imbriqué dans l'élément nommé n'est PAS répliqué
 // (son shadow fermé ne se clone pas) — limite documentée (docs/17-router.md).
+// Clone inerte : fait dans un document sans fenêtre (aucun composant n'y est construit), puis chaque composant (balise à
+// tiret), cadre ou média remplacé par une boîte vide du même style — le fantôme ne monte rien, ne relance ni requête, ni
+// minuterie, ni lecture (le clone ordinaire montait chaque composant une deuxième fois au départ, une troisième à l'arrivée).
+// Un élément intégré personnalisé (`<button is="…">`) garde sa définition dans le clone : recréé sans elle, même balise,
+// mêmes attributs, même contenu. Créé par le code (`createElement('button', { is })`), il n'a pas d'attribut `is` : sa
+// classe, qui n'est pas celle de la copie inerte (un bouton ordinaire), le désigne.
 µ._mjs_vtGhost = function(el, rect) {
-  var g = el.cloneNode(true);
   var copy = function(src, dst) {
-    var cs, i, p, a, b, txt;
+    var cs, i, p, a, b, txt, box;
+    if (dst.localName.indexOf('-') > 0 || /^(iframe|video|audio|object|embed)$/.test(dst.localName)) {
+      box = document.createElement('div');
+    }
+    else if (dst.hasAttribute('is') || Object.getPrototypeOf(src) !== Object.getPrototypeOf(dst)) {
+      dst.removeAttribute('is');
+      box = document.createElementNS(dst.namespaceURI, dst.localName);
+      for (i = 0; i < dst.attributes.length; i++) { box.setAttribute(dst.attributes[i].name, dst.attributes[i].value); }
+      while (dst.firstChild) { box.appendChild(dst.firstChild); }
+    }
+    if (box) {
+      if (dst.parentNode) { dst.parentNode.replaceChild(box, dst); }
+      dst = box;
+    }
     cs = getComputedStyle(src);
     // une seule écriture de style par élément (une analyse CSS) au lieu d'un setProperty par
     // propriété calculée (plus de 400) : même rendu, mesuré 8 à 16 % plus rapide en Chromium.
@@ -548,8 +568,9 @@
     a = src.children;
     b = dst.children;
     for (i = 0; i < a.length && i < b.length; i++) { copy(a[i], b[i]); }
+    return dst;
   };
-  copy(el, g);
+  var g = copy(el, document.implementation.createHTMLDocument('').importNode(el, true));
   g.style.position = 'fixed';
   g.style.top = rect.top + 'px';
   g.style.left = rect.left + 'px';
@@ -594,7 +615,7 @@
     }
   }
   catch (e) {
-    µ.warn(`[ModularJS] couche de lévitation VT abandonnée : ${e.message}`);
+    µ.warn(µ._mjs_msg('vtLevitation', { msg: e.message }, 'couche de lévitation VT abandonnée : {msg}'));
     return null;
   }
   document.body.appendChild(layer);
@@ -638,7 +659,7 @@
     }
   }
   catch (e) {
-    µ.warn(`[ModularJS] couche de lévitation VT (arrivée) abandonnée : ${e.message}`);
+    µ.warn(µ._mjs_msg('vtLevitationIn', { msg: e.message }, 'couche de lévitation VT (arrivée) abandonnée : {msg}'));
     state.layer.textContent = '';
     return;
   }

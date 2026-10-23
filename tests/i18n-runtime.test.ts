@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const STORE = join(__dirname, '..', 'src', 'runtime', 'mjs_store_globals.ts')
@@ -27,6 +28,7 @@ const i18nSrc = readFileSync(I18N, 'utf-8')
 // (tests/i18n-chargement-langue.test.ts). `undefined` = build SANS i18n (inerte).
 function makeMu(data?: any) {
   const µ: any = { log() {}, warn() {}, error() {}, state(o: any) { return o } }
+  poserMessages(µ)
   new Function('µ', storeSrc)(µ)
   if (data !== undefined) { semerLangues(µ, data) }
   new Function('µ', i18nSrc)(µ)
@@ -57,6 +59,7 @@ function semerLangues(µ: any, data: any): void {
 // vaut TOUJOURS la langue par défaut sur une page prérendue statique).
 function makeMuHydrated(hydratedLang: string, data: any) {
   const µ: any = { log() {}, warn() {}, error() {}, state(o: any) { return o } }
+  poserMessages(µ)
   new Function('µ', storeSrc)(µ)
   µ._storeDeclare(['__mjsLang'], true)
   µ._storeSet('__mjsLang', hydratedLang)
@@ -69,7 +72,7 @@ function baseData(overrides: any = {}) {
   return {
     dev: false,
     default: 'fr',
-    placeholder: 'auto',
+    placeholder: '*skeleton',
     root: {
       fr: { bonjour: 'Bonjour', salut: { one: '%{n} salut', other: '%{n} saluts' }, imbrique: { profond: 'Valeur %{x}' } },
       en: { bonjour: 'Hello', salut: { one: '%{n} hi', other: '%{n} his' } },
@@ -88,6 +91,7 @@ function fakeComp(section: string | null, override: string | null = null) {
   return {
     _mjs_i18n: [section, override],
     _mjs_invalidate(k: string) { invalidations.push(k) },
+    hasAttribute() { return false },
     _invalidations: invalidations,
   }
 }
@@ -358,13 +362,13 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
     })
   })
 
-  describe('modes de rendu (auto/key) pendant clé/fragment manquant', function () {
-    it("mode 'auto' + dev=false → chaîne vide sur clé manquante", function () {
+  describe('modes de rendu (*skeleton/key) pendant clé/fragment manquant', function () {
+    it("mode '*skeleton' + dev=false → chaîne vide sur clé manquante", function () {
       const µ = makeMu(baseData({ dev: false }))
       assert.equal(µ.t('inconnue.cle'), '')
     })
 
-    it("mode 'auto' + dev=true → '⟦clé⟧' sur clé manquante", function () {
+    it("mode '*skeleton' + dev=true → '⟦clé⟧' sur clé manquante", function () {
       const µ = makeMu(baseData({ dev: true }))
       assert.equal(µ.t('inconnue.cle'), '⟦inconnue.cle⟧')
     })
@@ -380,8 +384,97 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
     })
   })
 
+  describe('squelette : un texte en route, en production — une barre ; une clé absente pour de bon, rien', function () {
+    // douze espaces de chiffre (U+2007) : la place d'un texte, qu'un surlignage peint en gris
+    const BARRE = '\u2007'.repeat(12)
+
+    it('un fragment de section en cours de chargement : µ.t rend la barre ; arrivé, le texte ; une clé absente de la section arrivée, rien', async function () {
+      const µ = makeMu(baseData())
+      let rendre: any = null
+      ;(globalThis as any).fetch = () => new Promise((ok) => { rendre = () => ok({ ok: true, json: async () => ({ titre: 'Panier' }) }) })
+      const p = µ.i18n._ensure('fr', 'panier')
+      assert.equal(µ.t('panier.titre'), BARRE)
+      assert.equal(µ.t('bonjour'), 'Bonjour', 'une clé racine, déjà là')
+      assert.equal(µ.t('inconnue.cle'), '', 'une section qui n\'est pas en route : rien')
+      rendre()
+      await p
+      assert.equal(µ.t('panier.titre'), 'Panier')
+      assert.equal(µ.t('panier.absente'), '', 'absente pour de bon : rien, pas une barre à vie')
+    })
+
+    it('en développement, la clé ; en production, `"effects": { "skeleton": [] }` ne coupe pas les barres', async function () {
+      ;(globalThis as any).fetch = () => new Promise(() => {})
+      const µ = makeMu(baseData({ dev: true }))
+      µ.i18n._ensure('fr', 'panier')
+      assert.equal(µ.t('panier.titre'), '⟦panier.titre⟧')
+      const µ2 = makeMu(baseData())
+      µ2._fxConf = { skeleton: ['await'] }
+      µ2.i18n._ensure('fr', 'panier')
+      assert.equal(µ2.t('panier.titre'), '\u2007'.repeat(12))
+    })
+  })
+
+  describe('chargement en échec : des barres en production, jamais le vide ; en développement, la clé', function () {
+    const BARRE = ' '.repeat(12)
+
+    it('un fragment qui répond 404 : la barre à la place de ses textes sous wait, *skeleton et *loader ; une section qui n\'a pas échoué, rien', async function () {
+      for (const placeholder of ['wait', '*skeleton', '*loader']) {
+        const µ = makeMu(baseData({ placeholder }))
+        ;(globalThis as any).fetch = async () => ({ ok: false, status: 404 })
+        await assert.rejects(() => µ.i18n._ensure('fr', 'panier'))
+        assert.equal(µ.t('panier.titre'), BARRE, placeholder + ' : le texte que l\'échec laisse sans valeur')
+        assert.equal(µ.t('bonjour'), 'Bonjour', placeholder + ' : une clé racine, déjà là')
+        assert.equal(µ.t('inconnue.cle'), '', placeholder + ' : une section qui n\'a pas échoué')
+      }
+    })
+
+    it('un fragment qui échoue sur une erreur réseau ou un JSON illisible : la barre aussi', async function () {
+      const µ = makeMu(baseData({ placeholder: 'wait' }))
+      ;(globalThis as any).fetch = async () => { throw new TypeError('Failed to fetch') }
+      await assert.rejects(() => µ.i18n._ensure('fr', 'panier'))
+      assert.equal(µ.t('panier.titre'), BARRE, 'réseau coupé')
+      const µ2 = makeMu(baseData({ placeholder: 'wait' }))
+      ;(globalThis as any).fetch = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('JSON illisible') } })
+      await assert.rejects(() => µ2.i18n._ensure('fr', 'panier'))
+      assert.equal(µ2.t('panier.titre'), BARRE, 'JSON illisible')
+    })
+
+    it('en développement la clé, et le mode key la garde toujours : l\'échec n\'y change rien', async function () {
+      ;(globalThis as any).fetch = async () => ({ ok: false, status: 404 })
+      const µ = makeMu(baseData({ dev: true }))
+      await assert.rejects(() => µ.i18n._ensure('fr', 'panier'))
+      assert.equal(µ.t('panier.titre'), '⟦panier.titre⟧')
+      const µ2 = makeMu(baseData({ placeholder: 'key' }))
+      await assert.rejects(() => µ2.i18n._ensure('fr', 'panier'))
+      assert.equal(µ2.t('panier.titre'), '⟦panier.titre⟧')
+    })
+
+    it('une reprise qui aboutit (un montage qui redemande le fragment) rend le texte : plus de barre ; absente pour de bon, rien', async function () {
+      const µ = makeMu(baseData({ placeholder: 'wait' }))
+      let repond = false
+      ;(globalThis as any).fetch = async () => (repond ? { ok: true, status: 200, json: async () => ({ titre: 'Panier' }) } : { ok: false, status: 404 })
+      await assert.rejects(() => µ.i18n._ensure('fr', 'panier'))
+      assert.equal(µ.t('panier.titre'), BARRE)
+      await new Promise(r => setTimeout(r, 0)) // la lecture a redemandé la section (aucun module ne la déclare) : cette requête-là échoue aussi
+      repond = true
+      await µ.i18n._ensure('fr', 'panier')
+      assert.equal(µ.t('panier.titre'), 'Panier')
+      assert.equal(µ.t('panier.absente'), '', 'absente pour de bon : rien, pas une barre à vie')
+    })
+
+    it('une requête qui pend n\'est pas un échec : le chemin d\'avant, la barre d\'un texte en route (*skeleton), rien sous wait', function () {
+      ;(globalThis as any).fetch = () => new Promise(() => {})
+      const µ = makeMu(baseData({ placeholder: '*skeleton' }))
+      µ.i18n._ensure('fr', 'panier')
+      assert.equal(µ.t('panier.titre'), BARRE)
+      const µ2 = makeMu(baseData({ placeholder: 'wait' }))
+      µ2.i18n._ensure('fr', 'panier')
+      assert.equal(µ2.t('panier.titre'), '', 'sous wait la requête qui pend suit le secours de la minuterie, pas des barres d\'emblée')
+    })
+  })
+
   describe('µ._i18nData ABSENT : module inerte', function () {
-    it('µ.t ne crashe jamais et rend le placeholder (mode auto = vide sans info dev)', function () {
+    it('µ.t ne crashe jamais et rend le placeholder (mode *skeleton = vide sans info dev)', function () {
       const µ = makeMu(undefined)
       assert.equal(µ.t('quoi.que.ce.soit'), '')
     })
@@ -454,7 +547,7 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       ;(globalThis as any).fetch = async () => { calls++; return { ok: true, json: async () => ({ titre: 'ne doit jamais être fetché' }) } }
       const json = await µ.i18n._ensure('fr', 'panier')
       assert.equal(calls, 0, 'aucun fetch : la graine a déjà résolu le fragment')
-      assert.deepEqual(json, { titre: 'Panier' })
+      assert.deepEqual({ ...json }, { titre: 'Panier' }, 'le contenu semé (tables du dictionnaire sans prototype)')
       assert.equal(µ.t('panier.titre'), 'Panier')
     })
 
@@ -469,8 +562,27 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       ;(globalThis as any).fetch = async () => { calls++; return { ok: true, json: async () => ({ titre: 'ne doit jamais être fetché' }) } }
       const json = await µ.i18n._ensure('en', 'panier')
       assert.equal(calls, 0, "aucun fetch : le repli emprunte la promesse déjà résolue par la graine (langue par défaut fr)")
-      assert.deepEqual(json, { titre: 'Panier' })
+      assert.deepEqual({ ...json }, { titre: 'Panier' }, 'le contenu semé (tables du dictionnaire sans prototype)')
       assert.equal(µ.t('panier.titre'), 'Panier', "µt en langue affichée (en) rend la valeur repliée sur fr, seule langue traduite")
+    })
+
+    // une graine écrite à la main ne touche jamais un objet partagé : une langue nommée comme une propriété héritée (`toString`,
+    // `valueOf`, `hasOwnProperty`) reçoit son propre dictionnaire, jamais la fonction d'Object.prototype
+    it("graine dont une langue porte le nom d'une propriété héritée (toString…) → aucune fonction d'Object.prototype n'est touchée", async function () {
+      const partagees: any[] = [Object.prototype.toString, Object.prototype.valueOf, Object.prototype.hasOwnProperty]
+      try {
+        stubDocument({ __mjs_i18n: { textContent: JSON.stringify({ lang: 'fr', sections: { toString: { panier: { titre: 'X' } }, valueOf: { panier: { titre: 'Y' } } }, root: { toString: { a: 'b' }, hasOwnProperty: { c: 'd' } } }) } })
+        const µ = makeMu(baseData())
+        await µ.i18n._ensure('fr', 'panier').catch(() => null)
+        for (const f of partagees) {
+          assert.equal(f.panier, undefined, 'section posée sur ' + f.name)
+          assert.equal(f.a, undefined, 'racine posée sur ' + f.name)
+          assert.equal(f.c, undefined, 'racine posée sur ' + f.name)
+        }
+      }
+      finally {
+        for (const f of partagees) { delete f.panier; delete f.a; delete f.c }
+      }
     })
 
     it('section absente de la graine (mais présente au manifest) → fetch normal (1 appel)', async function () {
@@ -612,11 +724,22 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
     })
 
     // CONTRE-ÉPREUVE — sans `wait` au config, rien ne change : le 1er rendu part tout de suite.
-    it("config `placeholder: 'auto'` SANS override : aucune promesse, le 1er rendu part tout de suite", async function () {
-      const µ = makeMu(baseData({ placeholder: 'auto' }))
+    it("config `placeholder: '*skeleton'` SANS override : aucune promesse, le 1er rendu part tout de suite", async function () {
+      const µ = makeMu(baseData({ placeholder: '*skeleton' }))
       ;(globalThis as any).fetch = async () => ({ ok: true, json: async () => ({ titre: 'Panier' }) })
       const comp = fakeComp('panier')
       assert.equal(µ.i18n._mjs_i18nMount(comp), null)
+    })
+
+    // le défaut est wait : sans réglage au config ni override du module, le 1er rendu attend (jamais de texte brut, ni de barres)
+    it("config SANS `placeholder` ni override : wait est le défaut — une promesse d'attente, rendue même avant le démarrage", async function () {
+      const µ = makeMu(baseData({ placeholder: undefined }))
+      ;(globalThis as any).fetch = async () => ({ ok: true, json: async () => ({ titre: 'Panier' }) })
+      const comp = fakeComp('panier')
+      const attente = µ.i18n._mjs_i18nMount(comp)
+      assert.equal(typeof attente.then, 'function')
+      await attente
+      assert.equal(µ.t('panier.titre'), 'Panier', 'après l\'attente, le texte est là')
     })
 
     it("mode 'wait' : _mjs_i18nMount retourne null quand le fragment est DÉJÀ en cache", async function () {
@@ -632,11 +755,21 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
     // connexion — gel du premier rendu en mode 'wait' tant que le fragment manque, levé à son
     // arrivée. Composant factice étendu des champs de rendu que le gel touche ; chaque
     // invalidation note si le composant était encore gelé à cet instant.
-    function connectComp(override: string | null) {
+    function connectComp(override: string | null, attributs: string[] = []) {
       const comp: any = { _mjs_i18n: ['panier', override], _mjs_is_mounted: true, _mjs_pending_full: true, _mjs_pending: new Set(['titre']), calls: [] as string[] }
       comp._mjs_invalidate = (k: string) => { comp.calls.push(k + (comp._mjs_i18n_hold ? ':gelé' : ':libre')) }
+      comp.hasAttribute = (nom: string) => attributs.includes(nom)
       return comp
     }
+
+    // fragment retenu jusqu'à l'appel de la valeur rendue ; laisse passer quelques tours pour que les promesses chaînées se règlent
+    function fragmentRetenu() {
+      let ouvrir: (v: any) => void = () => {}
+      const porte = new Promise((r) => { ouvrir = r })
+      ;(globalThis as any).fetch = async () => { await porte; return { ok: true, json: async () => ({ titre: 'Panier' }) } }
+      return ouvrir
+    }
+    const tours = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)) }
 
     it("_mjs_connect en mode 'wait', fragment absent : rendu programmé annulé et composant GELÉ, puis dégelé et rendu à l'arrivée", async function () {
       const µ = makeMu(baseData())
@@ -670,12 +803,92 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       assert.deepEqual(comp.calls, [])
     })
 
+    // le gel allonge la retenue de `[mjs-loading]` de l'hôte (`_mjs_cssPending`, la même que celle des feuilles
+    // paresseuses, lue par connectedCallback) : le module reste caché tant que son fragment manque
+    it("_mjs_connect en mode 'wait' : le gel est enchaîné à la retenue de l'hôte, levée avec lui", async function () {
+      const µ = makeMu(baseData())
+      const ouvrir = fragmentRetenu()
+      const comp = connectComp('wait')
+      µ.i18n._mjs_connect(comp)
+      assert.ok(comp._mjs_cssPending && typeof comp._mjs_cssPending.then === 'function', 'retenue posée sur l\'hôte')
+      let levee = false
+      comp._mjs_cssPending.then(() => { levee = true })
+      await tours()
+      assert.equal(levee, false, 'retenu tant que le fragment manque')
+      ouvrir(null)
+      await tours()
+      assert.equal(levee, true, 'levée à l\'arrivée du fragment')
+      assert.equal(comp._mjs_i18n_hold, false)
+    })
+
+    it("_mjs_connect en mode 'wait' : une retenue de feuille déjà posée reste attendue en plus du fragment", async function () {
+      const µ = makeMu(baseData())
+      const ouvrir = fragmentRetenu()
+      let finFeuille: (v: any) => void = () => {}
+      const comp = connectComp('wait')
+      comp._mjs_cssPending = new Promise((r) => { finFeuille = r })
+      µ.i18n._mjs_connect(comp)
+      let levee = false
+      comp._mjs_cssPending.then(() => { levee = true })
+      ouvrir(null)
+      await tours()
+      assert.equal(levee, false, 'fragment arrivé mais feuille pas là : toujours retenu')
+      finFeuille(null)
+      await tours()
+      assert.equal(levee, true)
+    })
+
+    it("_mjs_connect en mode 'wait' : fragment en échec : retenue levée avec le gel, le module se rend avec ses placeholders", async function () {
+      const µ = makeMu(baseData())
+      ;(globalThis as any).fetch = async () => ({ ok: false, status: 404 })
+      const comp = connectComp('wait')
+      µ.i18n._mjs_connect(comp)
+      let levee = false
+      comp._mjs_cssPending.then(() => { levee = true })
+      await tours()
+      assert.equal(levee, true, 'la panne lève la retenue')
+      assert.equal(comp._mjs_i18n_hold, false, 'et le gel')
+      assert.ok(comp.calls.includes('_awaits_:libre'), `rendu demandé après la panne : ${JSON.stringify(comp.calls)}`)
+    })
+
+    it("mode 'wait', avant le démarrage : _mjs_i18nMount ne crée aucune attente pour un hôte de page prérendue (mjs-ssr)", async function () {
+      const µ = makeMu(baseData())
+      µ._mjs_i18nBooted = false
+      fragmentRetenu()
+      const comp = connectComp('wait', ['mjs-ssr'])
+      assert.equal(µ.i18n._mjs_i18nMount(comp), null)
+      assert.equal(comp._mjs_i18nBootWaitPromise, undefined)
+    })
+
+    it("_mjs_connect en mode 'wait' : hôte de page prérendue (mjs-ssr) : jamais gelé, aucune retenue, aucun délai de secours", async function () {
+      const µ = makeMu(baseData())
+      fragmentRetenu()
+      const comp = connectComp('wait', ['mjs-ssr'])
+      µ.i18n._mjs_connect(comp)
+      assert.notEqual(comp._mjs_i18n_hold, true)
+      assert.equal(comp._mjs_cssPending, undefined)
+      assert.equal(comp._mjs_i18nTimer, undefined)
+    })
+
+    for (const drapeau of ['server', '_isServer']) {
+      it(`_mjs_connect en mode 'wait' : rendu serveur (µ.${drapeau}) : gelé, mais aucune retenue ajoutée`, async function () {
+        const µ = makeMu(baseData())
+        µ[drapeau] = true
+        fragmentRetenu()
+        const comp = connectComp('wait')
+        µ.i18n._mjs_connect(comp)
+        assert.equal(comp._mjs_i18n_hold, true)
+        assert.equal(comp._mjs_cssPending, undefined)
+      })
+    }
+
     it("_mjs_connect hors mode 'wait' : enregistré, jamais gelé, rendu programmé intact", async function () {
       const µ = makeMu(baseData())
       ;(globalThis as any).fetch = async () => ({ ok: true, json: async () => ({ titre: 'Panier' }) })
       const comp = connectComp(null)
       µ.i18n._mjs_connect(comp)
       assert.equal(comp._mjs_i18n_hold, undefined)
+      assert.equal(comp._mjs_cssPending, undefined, 'aucune retenue hors mode wait')
       assert.equal(comp._mjs_pending_full, true)
       assert.equal(comp._mjs_pending.size, 1)
       assert.equal(µ._mjs_i18nComps.has(comp), true, 'enregistré comme tout composant i18n')
@@ -760,6 +973,23 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       assert.equal(µ.t('bonjour'), 'Hello', 'racine bascule vers EN après résolution complète')
       assert.ok(compRacine._invalidations.includes('_awaits_'), 'swap atomique : racine invalidée')
       assert.ok(compSection._invalidations.includes('_awaits_'), 'swap atomique : section invalidée EN MÊME TEMPS')
+    })
+
+    it('crochets de bascule (effet *lang) : prévenus AVANT la vague d\'invalidation, avec la langue affichée et la précédente', async function () {
+      const µ = makeMu(baseData())
+      ;(globalThis as any).fetch = async () => ({ ok: true, json: async () => ({ titre: 'x' }) })
+      const comp = fakeComp('panier')
+      µ.i18n._mjs_i18nMount(comp)
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+      comp._invalidations.length = 0
+      const vus: any[] = []
+      µ._mjs_i18nSwapHooks = new Set([(nouvelle: string, ancienne: string) => vus.push({ nouvelle, ancienne, invalidations: comp._invalidations.length, t: µ.t('bonjour') })])
+      µ._storeSet('__mjsLang', 'en')
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+      assert.deepEqual(vus, [{ nouvelle: 'en', ancienne: 'fr', invalidations: 0, t: 'Hello' }])
+      assert.ok(comp._invalidations.includes('_awaits_'), 'puis la vague')
     })
 
     it("(b) atomicité : 2 sections qui résolvent à des instants DIFFÉRENTS → aucun swap partiel (toutes deux invalidées EN MÊME TEMPS)", async function () {
@@ -883,11 +1113,11 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       const waitResult = await waitPromise
       await new Promise((r) => setTimeout(r, 10))
 
-      assert.deepEqual(waitResult, { resume: 'Résumé FR (lent)' }, "le composant 'wait' initial reçoit quand même son fragment (contrat _mjs_mountReal inchangé)")
+      assert.deepEqual({ ...waitResult }, { resume: 'Résumé FR (lent)' }, "le composant 'wait' initial reçoit quand même son fragment (contrat _mjs_mountReal inchangé)")
       assert.equal(comp._invalidations.length, invalidationsBeforeLateFr, "AUCUNE invalidation supplémentaire déclenchée par le fragment fr tardif (garde de pertinence : lang !== langue effective)")
       assert.equal(µ.t('panier.resume'), 'Summary EN', "le composant continue d'afficher la langue EFFECTIVE (en), jamais fr")
       // le fragment tardif reste UTILE : peuplé dans le cache pour un futur retour vers fr, sans fetch supplémentaire.
-      assert.deepEqual(µ._mjs_i18nDictOf('fr').panier, { resume: 'Résumé FR (lent)' }, 'le dict fr est quand même peuplé (cache toujours utile pour un futur retour)')
+      assert.deepEqual({ ...µ._mjs_i18nDictOf('fr').panier }, { resume: 'Résumé FR (lent)' }, 'le dict fr est quand même peuplé (cache toujours utile pour un futur retour)')
     })
 
     it('(f) premier chargement : placeholders/modes INCHANGÉS (non-régression, cf. suites ci-dessus « modes de rendu »)', function () {
@@ -912,6 +1142,7 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
 
     it('µ._mjs_storeRaw.__mjsLang DÉJÀ présent (SSR réhydratée) → respecté, pas écrasé', function () {
       const µ: any = { log() {}, warn() {}, error() {}, state(o: any) { return o } }
+      poserMessages(µ)
       new Function('µ', storeSrc)(µ)
       µ._mjs_storeRaw.__mjsLang = 'en'
       µ._i18nData = baseData({ default: 'fr' })
@@ -1082,6 +1313,82 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       stubLocation('?lang=de')
       const µ = makeMuHydrated('fr', baseData({ urlParam: true }))
       assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+  })
+
+  describe('langue mémorisée — page rendue par le serveur : elle passe avant la langue du rendu, quand la page porte sa graine', function () {
+    const graine = (lang: string) => stubDocument({ __mjs_i18n: { textContent: JSON.stringify({ lang, sections: {} }) } })
+
+    it('graine fr + SSR hydraté fr + persist ON + mémoire « en » → la langue mémorisée prime : la page passe à en', function () {
+      stubLocalStorage({ __mjsLang: 'en' })
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'en')
+    })
+
+    it('?lang=fr l\'emporte sur la mémoire « en » : la page reste fr', function () {
+      stubLocalStorage({ __mjsLang: 'en' })
+      stubLocation('?lang=fr')
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true, urlParam: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+
+    it('?lang=en l\'emporte sur la mémoire « fr » : la page passe à en', function () {
+      stubLocalStorage({ __mjsLang: 'fr' })
+      stubLocation('?lang=en')
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true, urlParam: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'en')
+    })
+
+    it('sans mémoire : la langue du rendu', function () {
+      stubLocalStorage({})
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+
+    it('mémoire égale à la langue du rendu : fr, la page ne bascule pas', async function () {
+      stubLocalStorage({ __mjsLang: 'fr' })
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+      assert.equal(µ.t('bonjour'), 'Bonjour')
+    })
+
+    it('mémorisation éteinte (persist OFF) : la mémoire est ignorée', function () {
+      stubLocalStorage({ __mjsLang: 'en' })
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: false }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+
+    it('mémoire inconnue (« de ») : ignorée, la langue du rendu', function () {
+      stubLocalStorage({ __mjsLang: 'de' })
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+
+    it('SANS graine : la langue posée par le rendu garde la main sur la mémoire (rien ne change)', function () {
+      stubLocalStorage({ __mjsLang: 'en' })
+      const µ = makeMuHydrated('fr', baseData({ persist: true }))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'fr')
+    })
+
+    it('le passage du démarrage n\'écrit ni la mémoire ni l\'adresse', async function () {
+      const memoire = stubLocalStorage({ __mjsLang: 'en' })
+      const historique = stubHistory()
+      stubLocation('')
+      graine('fr')
+      const µ = makeMuHydrated('fr', baseData({ persist: true, urlParam: true }))
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+      assert.equal(µ._mjs_storeRaw.__mjsLang, 'en')
+      assert.equal(µ.t('bonjour'), 'Hello', 'la page est passée à l\'anglais')
+      assert.deepEqual(memoire.setItemCalls, [], 'la mémoire n\'est pas réécrite')
+      assert.equal(historique.calls.length, 0, 'l\'adresse ne change pas')
     })
   })
 })

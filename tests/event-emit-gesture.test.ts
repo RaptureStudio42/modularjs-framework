@@ -60,7 +60,7 @@ describe('@EVENEMENT.emit.NOM — code émis', function () {
   it('dans un {for} : la charge utile lit la row reconstruite', async () => {
     const js = await out('<script>\nrows = [{ id: 1 }]\n</script>\n<div>{for row in rows}<button @click.emit.select={row.id}>x</button>{end}</div>')
     assert.match(js, /_mjsThis\._mjs_emit\('select', row\.id\)/)
-    assert.match(js, /__idx_0/, 'la reconstruction de la row du {for} est bien émise avec le handler')
+    assert.match(js, /_mjs_ri_0/, 'la reconstruction de la row du {for} est bien émise avec le handler')
   })
 
   it('modificateurs combinés : ils s\'appliquent AVANT l\'émission', async () => {
@@ -105,12 +105,12 @@ describe('modificateur d\'événement inconnu — garde bloquante', function () 
 
   it('faute de frappe proche : erreur AVEC suggestion', async () => {
     await assert.rejects(() => transpile('<button @click.stopp={f()}>x</button>', { moduleName: 'm1' }),
-      /n'est pas un modificateur d'événement[\s\S]*Tu voulais dire « \.stop » \?/)
+      /n'est pas un modificateur d'événement[\s\S]*Vouliez-vous dire « \.stop » \?/)
   })
 
   it('faute de frappe sur `prevent` : erreur AVEC suggestion', async () => {
     await assert.rejects(() => transpile('<button @click.prevnet={f()}>x</button>', { moduleName: 'm2' }),
-      /Tu voulais dire « \.prevent » \?/)
+      /Vouliez-vous dire « \.prevent » \?/)
   })
 
   it('suffixe sans voisin proche : erreur SANS suggestion', async () => {

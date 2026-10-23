@@ -85,21 +85,25 @@ function _mjschemaClonerChamps(champs) {
 function _mjschemaValiderType(nomSchema, nomChamp, type) {
   if (typeof type === 'string') {
     if (MJSCHEMA_SCALAIRES.indexOf(type) !== -1) { return; }
-    throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : type inconnu \'' + type + '\' — types valides : ' + MJSCHEMA_SCALAIRES.join(', ') + ', list(type), bits([noms])');
+    throw new Error('[µ.schema] ' + µ._mjs_txt('schemaUnknownType', { nomSchema: nomSchema, nomChamp: nomChamp, type: type, scalars: MJSCHEMA_SCALAIRES.join(', ') }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : type inconnu \'{type}\' — types valides : {scalars}, list(type), bits([noms])'));
   }
   if (type.kind === 'list') {
-    if (MJSCHEMA_SCALAIRES.indexOf(type.of) === -1) { throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : list() attend un type scalaire (' + MJSCHEMA_SCALAIRES.join(', ') + ') — sous-schémas/list imbriquée non supportés, reçu \'' + type.of + '\''); }
+    if (MJSCHEMA_SCALAIRES.indexOf(type.of) === -1) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaListType', { nomSchema: nomSchema, nomChamp: nomChamp, scalars: MJSCHEMA_SCALAIRES.join(', '), of: type.of }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : list() attend un type scalaire ({scalars}) — sous-schémas/list imbriquée non supportés, reçu \'{of}\'')); }
     return;
   }
   if (type.kind === 'bits') {
-    if (!Array.isArray(type.noms) || type.noms.length === 0) { throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : bits() attend un tableau de noms non vide'); }
-    if (type.noms.length > 8) { throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : bits() accepte au plus 8 booléens (reçu ' + type.noms.length + ')'); }
+    if (!Array.isArray(type.noms) || type.noms.length === 0) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaBitsEmpty', { nomSchema: nomSchema, nomChamp: nomChamp }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() attend un tableau de noms non vide')); }
+    if (type.noms.length > 8) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaBitsMax', { nomSchema: nomSchema, nomChamp: nomChamp, count: type.noms.length }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() accepte au plus 8 booléens (reçu {count})')); }
     // parité serveur (src/schema/core.ts::validerType) — des noms en double étaient
     // acceptés ICI et refusés côté serveur : même refus, même id attribué en vain sinon.
-    if (new Set(type.noms).size !== type.noms.length) { throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : bits() — noms en double'); }
+    if (new Set(type.noms).size !== type.noms.length) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaBitsDup', { nomSchema: nomSchema, nomChamp: nomChamp }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : bits() — noms en double')); }
+    // un nom de bits() devient une clé de l'objet décodé : même garde qu'un nom de champ (parité serveur)
+    for (var i = 0; i < type.noms.length; i++) {
+      if (!_mjschemaNomChampValide(type.noms[i])) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaFieldName', { nom: nomSchema, field: type.noms[i] }, 'schéma \'{nom}\' : nom de champ invalide \'{field}\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\'')); }
+    }
     return;
   }
-  throw new Error('[µ.schema] schéma \'' + nomSchema + '\', champ \'' + nomChamp + '\' : type de champ invalide (ni chaîne scalaire, ni list(), ni bits())');
+  throw new Error('[µ.schema] ' + µ._mjs_txt('schemaFieldInvalid', { nomSchema: nomSchema, nomChamp: nomChamp }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : type de champ invalide (ni chaîne scalaire, ni list(), ni bits())'));
 }
 
 function _mjschemaMemeType(a, b) {
@@ -140,18 +144,18 @@ function mjschemaCreerRegistre() {
 function mjschemaDefSchema(registre, nom, champsEntree) {
   var champs = _mjschemaClonerChamps(champsEntree), ordre = Object.freeze(Object.keys(champs)), i, existant, def;
   for (i = 0; i < ordre.length; i++) {
-    if (!_mjschemaNomChampValide(ordre[i])) { throw new Error('[µ.schema] schéma \'' + nom + '\' : nom de champ invalide \'' + ordre[i] + '\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\''); }
+    if (!_mjschemaNomChampValide(ordre[i])) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaFieldName', { nom: nom, field: ordre[i] }, 'schéma \'{nom}\' : nom de champ invalide \'{field}\' — ne survit pas à un objet ordinaire ({}[nom] = valeur), ex. \'__proto__\'')); }
     _mjschemaValiderType(nom, ordre[i], champs[ordre[i]]);
   }
 
   existant = registre.parNom.get(nom);
   if (existant) {
     if (!_mjschemaMemeForme(existant.champs, champs)) {
-      throw new Error('[µ.schema] schéma \'' + nom + '\' déjà déclaré avec une forme différente — garde AJOUT-SEUL : un schéma existant est IMMUABLE, déclare un NOM neuf pour faire évoluer le protocole.');
+      throw new Error('[µ.schema] ' + µ._mjs_txt('schemaRedeclared', { nom: nom }, 'schéma \'{nom}\' déjà déclaré avec une forme différente — garde AJOUT-SEUL : un schéma existant est IMMUABLE, déclarez un NOM neuf pour faire évoluer le protocole.'));
     }
     return existant;
   }
-  if (registre.parId.length >= 256) { throw new Error('[µ.schema] registre plein — 256 schémas déjà déclarés (id u8 épuisé), impossible d\'ajouter \'' + nom + '\''); }
+  if (registre.parId.length >= 256) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaRegistryFull', { nom: nom }, 'registre plein — 256 schémas déjà déclarés (id u8 épuisé), impossible d\'ajouter \'{nom}\'')); }
   def = { id: registre.parId.length, nom: nom, champs: champs, ordre: ordre };
   registre.parNom.set(nom, def);
   registre.parId.push(def);
@@ -180,27 +184,56 @@ function _mjschemaNumOr0(v) {
   return isFinite(n) ? n : 0;
 }
 
-function _mjschemaMesurerScalaire(t, valeur) {
+// un champ flottant écrit tout nombre, Infinity, -Infinity et NaN compris (même règle que src/schema/core.ts::flottant)
+function _mjschemaFlottant(v) {
+  return typeof v === 'number' ? v : _mjschemaNumOr0(v);
+}
+
+// propriété lue sur l'objet à encoder — jamais celle qu'Object.prototype prête à tout objet (cf. lireCle,
+// src/schema/core.ts) ; un getter posé par une classe reste lu
+function _mjschemaLireCle(o, cle) {
+  if (o == null) { return undefined; }
+  if (cle in Object.prototype && !Object.prototype.hasOwnProperty.call(o, cle)) { return undefined; }
+  return o[cle];
+}
+
+// plage de chaque entier : une valeur hors plage lève au lieu d'arriver repliée (cf. verifierPlage, src/schema/core.ts)
+var _MJSCHEMA_PLAGES = { u8: [0, 255], i8: [-128, 127], u16: [0, 65535], i16: [-32768, 32767], u32: [0, 4294967295], i32: [-2147483648, 2147483647] };
+
+function _mjschemaVerifierPlage(nomSchema, champ, index, t, valeur) {
+  var plage = _MJSCHEMA_PLAGES[t], n;
+  if (!plage) { return; }
+  n = Math.trunc(_mjschemaNumOr0(valeur));
+  // infini ou NaN : hors plage aussi (cf. verifierPlage, src/schema/core.ts)
+  if (n < plage[0] || n > plage[1] || Math.abs(Number(valeur)) === Infinity || Number.isNaN(valeur)) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaOutOfRange', { nomSchema: nomSchema, nomChamp: index >= 0 ? champ + '[' + index + ']' : champ, valeur: String(valeur), t: t, min: plage[0], max: plage[1] }, 'schéma \'{nomSchema}\', champ \'{nomChamp}\' : {valeur} est hors de la plage de {t} ({min} à {max}) — la valeur arriverait repliée. Choisissez un type plus large, ou bornez la valeur avant l\'envoi.')); }
+}
+
+// `chaines` : octets UTF-8 encodés UNE fois à la mesure, recopiés à l'écriture (cf. Chaines, src/schema/core.ts)
+function _mjschemaMesurerScalaire(t, valeur, chaines, nomSchema, champ, index) {
   var fixe = _mjschemaTailleScalaireFixe(t), octets, max;
-  if (fixe != null) { return fixe; }
+  if (fixe != null) {
+    _mjschemaVerifierPlage(nomSchema, champ, index, t, valeur);
+    return fixe;
+  }
   octets = _mjschemaUtf8Encoder.encode(String(valeur == null ? '' : valeur));
   max = t === 'str8' ? 255 : 65535;
-  if (octets.byteLength > max) { throw new Error('[µ.schema] chaîne trop longue pour ' + t + ' (' + octets.byteLength + ' octets UTF-8, max ' + max + ')'); }
+  if (octets.byteLength > max) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaStringTooLong', { t: t, bytes: octets.byteLength, max: max }, 'chaîne trop longue pour {t} ({bytes} octets UTF-8, max {max})')); }
+  chaines.octets.push(octets);
   return (t === 'str8' ? 1 : 2) + octets.byteLength;
 }
 
-function _mjschemaMesurerChamp(type, valeur) {
+function _mjschemaMesurerChamp(type, valeur, chaines, nomSchema, champ) {
   var arr, total, i;
-  if (typeof type === 'string') { return _mjschemaMesurerScalaire(type, valeur); }
+  if (typeof type === 'string') { return _mjschemaMesurerScalaire(type, valeur, chaines, nomSchema, champ, -1); }
   if (type.kind === 'bits') { return 1; }
   arr = Array.isArray(valeur) ? valeur : [];
-  if (arr.length > 65535) { throw new Error('[µ.schema] list(' + type.of + ') : ' + arr.length + ' éléments, max 65535 (compteur u16)'); }
+  if (arr.length > 65535) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaListTooLong', { of: type.of, count: arr.length }, 'list({of}) : {count} éléments, max 65535 (compteur u16)')); }
   total = 2;
-  for (i = 0; i < arr.length; i++) { total += _mjschemaMesurerScalaire(type.of, arr[i]); }
+  for (i = 0; i < arr.length; i++) { total += _mjschemaMesurerScalaire(type.of, arr[i], chaines, nomSchema, champ, i); }
   return total;
 }
 
-function _mjschemaEcrireScalaire(vue, offset, t, valeur) {
+function _mjschemaEcrireScalaire(vue, offset, t, valeur, chaines) {
   var octets;
   switch (t) {
     case 'u8':   vue.setUint8(offset, _mjschemaNumOr0(valeur) & 0xFF); return offset + 1;
@@ -210,10 +243,10 @@ function _mjschemaEcrireScalaire(vue, offset, t, valeur) {
     case 'i16':  vue.setInt16(offset, _mjschemaNumOr0(valeur), true); return offset + 2;
     case 'u32':  vue.setUint32(offset, _mjschemaNumOr0(valeur), true); return offset + 4;
     case 'i32':  vue.setInt32(offset, _mjschemaNumOr0(valeur), true); return offset + 4;
-    case 'f32':  vue.setFloat32(offset, _mjschemaNumOr0(valeur), true); return offset + 4;
-    case 'f64':  vue.setFloat64(offset, _mjschemaNumOr0(valeur), true); return offset + 8;
+    case 'f32':  vue.setFloat32(offset, _mjschemaFlottant(valeur), true); return offset + 4;
+    case 'f64':  vue.setFloat64(offset, _mjschemaFlottant(valeur), true); return offset + 8;
     case 'str8': case 'str16':
-      octets = _mjschemaUtf8Encoder.encode(String(valeur == null ? '' : valeur));
+      octets = chaines.octets[chaines.i++];
       if (t === 'str8') { vue.setUint8(offset, octets.byteLength); offset += 1; }
       else { vue.setUint16(offset, octets.byteLength, true); offset += 2; }
       new Uint8Array(vue.buffer, vue.byteOffset + offset, octets.byteLength).set(octets);
@@ -221,19 +254,19 @@ function _mjschemaEcrireScalaire(vue, offset, t, valeur) {
   }
 }
 
-function _mjschemaEcrireChamp(vue, offset, type, valeur) {
+function _mjschemaEcrireChamp(vue, offset, type, valeur, chaines) {
   var octet, i, arr;
-  if (typeof type === 'string') { return _mjschemaEcrireScalaire(vue, offset, type, valeur); }
+  if (typeof type === 'string') { return _mjschemaEcrireScalaire(vue, offset, type, valeur, chaines); }
   if (type.kind === 'bits') {
     octet = 0;
-    for (i = 0; i < type.noms.length; i++) { if (valeur && valeur[type.noms[i]]) { octet |= (1 << i); } }
+    for (i = 0; i < type.noms.length; i++) { if (_mjschemaLireCle(valeur, type.noms[i])) { octet |= (1 << i); } }
     vue.setUint8(offset, octet);
     return offset + 1;
   }
   arr = Array.isArray(valeur) ? valeur : [];
   vue.setUint16(offset, arr.length, true);
   offset += 2;
-  for (i = 0; i < arr.length; i++) { offset = _mjschemaEcrireScalaire(vue, offset, type.of, arr[i]); }
+  for (i = 0; i < arr.length; i++) { offset = _mjschemaEcrireScalaire(vue, offset, type.of, arr[i], chaines); }
   return offset;
 }
 
@@ -242,7 +275,7 @@ function _mjschemaEcrireChamp(vue, offset, type, valeur) {
 // str16 dont la longueur annoncée dépasse la fenêtre lit des octets VOISINS hors trame (fuite heap),
 // et un compteur de list trop grand lève un RangeError brut du DataView, non nommé.
 function _mjschemaBornerLecture(offset, taille, vue) {
-  if (offset + taille > vue.byteLength) { throw new RangeError('[µ.schema] decode() : lecture hors de la trame (offset ' + offset + ', ' + taille + ' octets, trame de ' + vue.byteLength + ')'); }
+  if (offset + taille > vue.byteLength) { throw new RangeError('[µ.schema] ' + µ._mjs_txt('schemaDecodeOutOfFrame', { offset: offset, taille: taille, frame: vue.byteLength }, 'decode() : lecture hors de la trame (offset {offset}, {taille} octets, trame de {frame})')); }
 }
 
 function _mjschemaLireScalaire(vue, offset, t) {
@@ -291,16 +324,16 @@ function _mjschemaLireChamp(vue, offset, type) {
 // --- API haut niveau — encode(nom, objet) / decode(bytes), enveloppe [u8 id][charge] --------------
 
 function mjschemaEncode(registre, nom, objet) {
-  var def = registre.parNom.get(nom), o, taille, i, c, tampon, vue, offset;
-  if (!def) { throw new Error('[µ.schema] encode() : schéma inconnu \'' + nom + '\' — déclare-le d\'abord (µ.schema)'); }
+  var def = registre.parNom.get(nom), o, taille, i, c, tampon, vue, offset, chaines = { octets: [], i: 0 };
+  if (!def) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaEncodeUnknown', { nom: nom }, 'encode() : schéma inconnu \'{nom}\' — déclarez-le d\'abord (µ.schema)')); }
   o = objet || {};
   taille = 1;
-  for (i = 0; i < def.ordre.length; i++) { taille += _mjschemaMesurerChamp(def.champs[def.ordre[i]], o[def.ordre[i]]); }
+  for (i = 0; i < def.ordre.length; i++) { c = def.ordre[i]; taille += _mjschemaMesurerChamp(def.champs[c], _mjschemaLireCle(o, c), chaines, nom, c); }
   tampon = new ArrayBuffer(taille);
   vue = new DataView(tampon);
   vue.setUint8(0, def.id);
   offset = 1;
-  for (i = 0; i < def.ordre.length; i++) { c = def.ordre[i]; offset = _mjschemaEcrireChamp(vue, offset, def.champs[c], o[c]); }
+  for (i = 0; i < def.ordre.length; i++) { c = def.ordre[i]; offset = _mjschemaEcrireChamp(vue, offset, def.champs[c], _mjschemaLireCle(o, c), chaines); }
   return new Uint8Array(tampon);
 }
 
@@ -308,10 +341,10 @@ function mjschemaEncode(registre, nom, objet) {
  *  byteOffset/byteLength explicites, jamais `bytes.buffer` seul (cf. src/schema/core.ts::decode). */
 function mjschemaDecode(registre, bytes) {
   var id, def, vue, offset, objet, i, c, res;
-  if (bytes.byteLength < 1) { throw new Error('[µ.schema] decode() : trame vide, octet id de schéma attendu'); }
+  if (bytes.byteLength < 1) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaDecodeEmpty', null, 'decode() : trame vide, octet id de schéma attendu')); }
   id = bytes[0];
   def = registre.parId[id];
-  if (!def) { throw new Error('[µ.schema] decode() : id de schéma inconnu (' + id + ') — registre local incomplet ou désynchronisé'); }
+  if (!def) { throw new Error('[µ.schema] ' + µ._mjs_txt('schemaDecodeUnknownId', { id: id }, 'decode() : id de schéma inconnu ({id}) — registre local incomplet ou désynchronisé')); }
   vue = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   offset = 1;
   objet = {};
@@ -428,7 +461,7 @@ function mjschemaChargerDefinitions(json) {
   registre = µ._mjs_mjschemaRegistre;
   if (!registre || !registre.parNom.has(t)) { return null; }
   try { return mjschemaEncode(registre, t, obj.p); }
-  catch (e) { µ.error('[µ.schema] encodage en échec, envoi en JSON', e); return null; }
+  catch (e) { µ.error('[µ.schema] ' + µ._mjs_txt('schemaEncodeFailed', null, 'encodage en échec, envoi en JSON'), e); return null; }
 };
 
 // id de schéma inconnu à la réception — averti UNE SEULE FOIS par id (pas 1 fois par trame, sinon un
@@ -438,7 +471,7 @@ var _mjschemaWarnedIds = {};
 function _mjschemaWarnUnknownId(id) {
   if (_mjschemaWarnedIds[id]) { return; }
   _mjschemaWarnedIds[id] = true;
-  µ.warn('[µ.schema] id de schéma inconnu (' + id + ') reçu — registre local désynchronisé (en attente d\'un µ:schema ?)');
+  µ.warn('[µ.schema] ' + µ._mjs_txt('schemaUnknownIdReceived', { id: id }, 'id de schéma inconnu ({id}) reçu — registre local désynchronisé (en attente d\'un µ:schema ?)'));
 }
 
 // réception — trame BINAIRE (ArrayBuffer natif navigateur avec binaryType='arraybuffer', ou Uint8Array
@@ -456,7 +489,7 @@ function _mjschemaWarnUnknownId(id) {
   id = bytes[0];
   if (!registre.parId[id]) { _mjschemaWarnUnknownId(id); return; }
   try { decoded = mjschemaDecode(registre, bytes); }
-  catch (e) { µ.error('[µ.schema] décodage en échec (trame corrompue ?)', e); return; }
+  catch (e) { µ.error('[µ.schema] ' + µ._mjs_txt('schemaDecodeFailed', null, 'décodage en échec (trame corrompue ?)'), e); return; }
   sock._mjs_dispatch(decoded.nom, { t: decoded.nom, p: decoded.objet });
 };
 
@@ -473,7 +506,7 @@ function _mjschemaWarnUnknownId(id) {
   var p = msg.p || {}, buffered, i;
   µ._mjs_mjschemaSwapping = true;
   try { µ._mjs_mjschemaRegistre = mjschemaChargerDefinitions(p.definitions); }
-  catch (e) { µ.error('[µ.schema] définitions µ:schema invalides, registre local INCHANGÉ', e); }
+  catch (e) { µ.error('[µ.schema] ' + µ._mjs_txt('schemaDefsInvalid', null, 'définitions µ:schema invalides, registre local INCHANGÉ'), e); }
   µ._mjs_mjschemaSwapping = false;
   buffered = µ._mjs_mjschemaBuffered;
   µ._mjs_mjschemaBuffered = [];

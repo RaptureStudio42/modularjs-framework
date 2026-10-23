@@ -70,7 +70,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
     assert.doesNotMatch(r.code!, /setAttribute\("mjs-flip", "2500"\)/, "AVANT le fix : la regex retenait `2500` et jetait `* $ralenti` en silence")
     assert.match(r.code!, /setAttribute\("mjs-flip", "200"\)/, 'repli statique — le nœud reste détectable par le runtime avant le 1er update')
     assert.match(r.code!, /const _mjsFlipVal_\w+ = 2500 \* [^;]*ralenti;/, 'la durée est relue à chaque rendu')
-    assert.match(r.code!, /_mjs_updAttrNode\([^,]+, 'mjs-flip', \(_mjsFlipVal_\w+ == null \|\| _mjsFlipVal_\w+ === false\) \? "200" : _mjsFlipVal_\w+\)/, 'et coalescée vers la durée de repli plutôt que de retirer l\'attribut')
+    assert.match(r.code!, /_mjs_updAttrNode\([^,]+, 'mjs-flip', \(_mjsFlipVal_\w+ == null \|\| _mjsFlipVal_\w+ === false\) \? "200" : _mjsFlipVal_\w+(?:, 1)?\)/, 'et coalescée vers la durée de repli plutôt que de retirer l\'attribut')
   })
 
   it('durée calculée : même expression JS que le contournement manuel `mjs-flip={…}`, au secours près', async () => {
@@ -79,7 +79,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
     assert.deepEqual(directive.errors, [])
     assert.deepEqual(contournage.errors, [])
     const exprDirective   = directive.code!.match(/const _mjsFlipVal_\w+ = ([^;]+);/)![1]
-    const exprContournage = contournage.code!.match(/_mjs_updAttrNode\([^,]+, 'mjs-flip', (.+?)\); \}/)![1]
+    const exprContournage = contournage.code!.match(/_mjs_updAttrNode\([^,]+, 'mjs-flip', (.+?)(?:, 1)?\); \}/)![1]
     assert.equal(exprDirective, exprContournage, 'la directive doit transpiler l\'expression comme le chemin dynamique éprouvé')
   })
 

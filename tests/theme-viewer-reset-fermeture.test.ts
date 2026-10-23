@@ -6,7 +6,8 @@
 // déclenché par l'évènement 'pagehide' (fiable au déchargement, contrairement à un simple fetch).
 
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { localizeViewerSource } from '../src/server/viewer-page.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHarness } from '../src/testing/index.js'
@@ -26,7 +27,7 @@ function projetTemporaire(nomFichier: string): string {
   const root   = mjsTmp('theme-viewer-reset')
   const srcDir = join(root, 'src')
   mkdirSync(srcDir, { recursive: true })
-  copyFileSync(SOURCE, join(srcDir, nomFichier + '.mjs'))
+  writeFileSync(join(srcDir, nomFichier + '.mjs'), localizeViewerSource(readFileSync(SOURCE, 'utf-8')))
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js' }, null, 2))
   return root
 }

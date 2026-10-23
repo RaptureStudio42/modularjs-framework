@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked, extractMarkedBody } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -33,6 +34,7 @@ function extractLRUCacheStatement(src: string): string {
 
 function makeLRUCache(): any {
   const µ: any = { warn() {} }
+  poserMessages(µ)
   new Function('µ', extractLRUCacheStatement(PAGE_CACHE_SRC))(µ)
   return µ.LRUCache
 }
@@ -94,6 +96,7 @@ describe("mjs_ujs — µ.pageCache.onEvict : itère un TABLEAU de nœuds", funct
   it('éviction LRU en mode contenant : µ._mjs_destroyEvictedTree appelé sur CHAQUE nœud ÉLÉMENT du tableau évincé (texte ignoré)', function () {
     const destroyed: any[] = []
     const µ: any = { LRUCache, _mjs_destroyEvictedTree: (n: any) => destroyed.push(n) }
+    poserMessages(µ)
     new Function('µ', extractPageCacheOnEvictStatements(UJS_SRC))(µ)
     // borne à 10 (défaut, cf. source) : 11 entrées → la plus ancienne (/page0) est évincée.
     for (let i = 0; i < 11; i++) {
@@ -108,6 +111,7 @@ describe("mjs_ujs — µ.pageCache.onEvict : itère un TABLEAU de nœuds", funct
   it('défense : valeur ancien format (élément SEUL, pas un tableau) reste tolérée', function () {
     const destroyed: any[] = []
     const µ: any = { LRUCache, _mjs_destroyEvictedTree: (n: any) => destroyed.push(n) }
+    poserMessages(µ)
     new Function('µ', extractPageCacheOnEvictStatements(UJS_SRC))(µ)
     const soleEl: any = { nodeType: 1, tag: 'seul' }
     µ.pageCache.set('/p0', soleEl)
@@ -164,7 +168,9 @@ describe("mjs_ujs — submit ajax : invalidation pageCache/preloadCache après m
       if (m === 'get' || m === 'delete') return µ.ajax[m](opts.url, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
       return µ.ajax[m](opts.url, opts.data, opts.success, opts.error, opts.always, opts.timeout, opts.signal)
     }
+    poserMessages(µ)
     new Function('µ', 'document', 'window', extractHelpersBlock(UJS_SRC))(µ, doc, win)
+    poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', extractNavDispatchStatement(UJS_SRC))(µ, win, doc, FormDataCtor, URLCtor, DOMParserCtor)
     const body = extractSubmitBody(UJS_SRC)
     return new Function('e', 'µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', body)

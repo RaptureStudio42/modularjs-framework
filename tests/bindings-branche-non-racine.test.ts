@@ -290,6 +290,7 @@ function makeElementSandbox(): { µ: any } {
     class CustomEvent { constructor(name, init) { this.type = name; Object.assign(this, init || {}); } }
     class Node {}
     class CSSStyleSheet { replaceSync() {} }
+    class MutationObserver { observe() {} }
     const customElements = { get: () => null, define: () => {} };
     const document = { adoptedStyleSheets: [] };
     ${initSrc.replace(/export\s*\{[^}]*\}/, '')}

@@ -24,7 +24,7 @@
         // interrompait _loop AVANT la reprogrammation du rAF en laissant
         // `_mjs_raf` non-null périmé → plus AUCUN tween/spring ne tournait
         // jusqu'au reload. La tâche fautive est éjectée, les autres vivent.
-        µ.error('[ModularJS] Ticker : tâche en erreur, éjectée.', e);
+        µ.error(µ._mjs_msg('tickerTask', null, 'Ticker : tâche en erreur, éjectée.'), e);
         keepAlive = false;
       }
       if (!keepAlive) {

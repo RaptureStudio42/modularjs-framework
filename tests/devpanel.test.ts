@@ -62,7 +62,7 @@ function charger(outDir: string, files: string[]) {
   const lire = (f: string) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))
   window.eval(`${lire(files.find(f => /^mjs_core-/.test(f))!)}\nglobalThis.µ = µ;`)
   for (const nom of ['dp-enfant', 'dp-parent', 'dp-saisie']) {
-    window.eval(lire(files.find(f => new RegExp(`^${nom}-[a-f0-9]{8}\\.js$`).test(f))!))
+    window.eval(lire(files.find(f => new RegExp(`^${nom}-[0-9a-z]{5}\\.js$`).test(f))!))
   }
   return window
 }
@@ -74,7 +74,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
   it('ABSENT du bundle de production — zéro poids chez qui déploie', async () => {
     const { core } = await compiler(true)
-    assert.ok(!/µ\.devPanel\s*=/.test(core), 'le panneau ne doit pas être dans un bundle de production')
+    assert.ok(!/µ\.console\s*=/.test(core), 'le panneau ne doit pas être dans un bundle de production')
   })
 
   // RÉGRESSION — le panneau relisait sa
@@ -82,7 +82,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
   // 'undefined'` était posée DEVANT le try/catch. Sur un document d'ORIGINE OPAQUE (`about:blank`,
   // `page.setContent()` d'un Playwright, iframe sandboxée sans `allow-same-origin`), le simple
   // `typeof` lève un `SecurityError` : l'exception tuait tout le reste du core concaténé APRÈS ce
-  // module — `µ.instances` jamais posé, `µ.devPanel` jamais défini, dans TOUT bundle de dev, que le
+  // module — `µ.instances` jamais posé, `µ.console` jamais défini, dans TOUT bundle de dev, que le
   // développeur ouvre le panneau ou non. Mesuré : 7 tests sur 8 de ssr-adopt-browser/ssr-bench.
   it('un `localStorage` qui LÈVE au chargement ne casse pas le reste du core', async () => {
     const { outDir, files } = await compiler(false)
@@ -91,14 +91,14 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     window.eval(`Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error("SecurityError: Access is denied for this document."); } });`)
     const lire = (f: string) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))
     window.eval(`${lire(files.find(f => /^mjs_core-/.test(f))!)}\nglobalThis.µ = µ;`)
-    assert.equal(typeof window.µ.devPanel, 'function', 'le core doit finir de s\'évaluer malgré le stockage inaccessible')
+    assert.equal(typeof window.µ.console, 'function', 'le core doit finir de s\'évaluer malgré le stockage inaccessible')
     assert.ok(window.µ.instances, 'µ.instances doit être posé — c\'est lui qui disparaissait')
   })
 
-  it('présent en développement, et µ.devPanel() existe', async () => {
+  it('présent en développement, et µ.console() existe', async () => {
     const { outDir, files } = await compiler(false)
     const window = charger(outDir, files)
-    assert.equal(typeof window.µ.devPanel, 'function', 'µ.devPanel doit être exposée en développement')
+    assert.equal(typeof window.µ.console, 'function', 'µ.console doit être exposée en développement')
   })
 
   it('ouvert, il montre l\'arbre réel des composants montés', async () => {
@@ -107,7 +107,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     window.document.body.innerHTML = '<mjs-dp-parent></mjs-dp-parent>'
     await new Promise(r => setTimeout(r, 60))
 
-    assert.equal(window.µ.devPanel(), true, 'devPanel() doit ouvrir')
+    assert.equal(window.µ.console(), true, 'µ.console() doit ouvrir')
     const hote = window.document.querySelector('[data-mjs-devpanel]')
     assert.ok(hote, 'le panneau doit être dans la page')
     const texte = hote.shadowRoot.textContent
@@ -115,7 +115,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     assert.match(texte, /dp-enfant/, `et l'enfant, trouvé en franchissant la frontière d'ombre :\n${texte}`)
     assert.match(texte, /2 composants montés/, texte)
 
-    assert.equal(window.µ.devPanel(), false, 'un second appel referme')
+    assert.equal(window.µ.console(false), false, 'µ.console(false) referme')
     assertAbsent(window.document.querySelector('[data-mjs-devpanel]'), 'et retire le panneau de la page')
   })
 
@@ -131,7 +131,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     // n'est pas celui de Node — deepEqual s'en offusquerait pour rien
     assert.equal(Array.from((el._mjs_computedDeps || {}).total || []).sort().join(','), 'price,quantity', `_mjs_computedDeps doit porter le graphe :\n${JSON.stringify(el._mjs_computedDeps)}`)
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
 
@@ -144,7 +144,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     const derivesTexte = racine.querySelector('.onglet-corps').textContent
     assert.match(derivesTexte, /\$total/, derivesTexte)
     assert.match(derivesTexte, /←\s*\$price,\s*\$quantity|←\s*\$quantity,\s*\$price/, `les dépendances du dérivé doivent être affichées :\n${derivesTexte}`)
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   // Le panneau ancré en bas se posait PAR-DESSUS le bas de la page : le dernier écran du
@@ -158,7 +158,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     await new Promise(r => setTimeout(r, 60))
     const defilant: any = window.document.scrollingElement || window.document.documentElement
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     const hauteur = racine.querySelector('.panneau').style.height
     assert.equal(defilant.style.paddingBottom, hauteur, `la page doit gagner la hauteur du panneau (${hauteur})`)
@@ -174,7 +174,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     racine.querySelector('[data-action="ancrer"]').dispatchEvent(new window.Event('click', { bubbles: true }))
     assert.notEqual(defilant.style.paddingBottom, '', 're-ancré, la place doit être reprise')
-    window.µ.devPanel(false)
+    window.µ.console(false)
     assert.equal(defilant.style.paddingBottom, '', 'fermé, la page doit retrouver son bas')
     assert.equal(window.document.documentElement.style.getPropertyValue('--mjs-devpanel-h'), '', 'et la variable doit être retirée')
   })
@@ -187,7 +187,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     window.document.body.innerHTML = '<mjs-dp-enfant></mjs-dp-enfant>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
     const champ: any = racine.querySelector('input.di-valeur[data-di-key="quantity"]')
@@ -204,7 +204,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     champ.blur()
     await new Promise(r => setTimeout(r, 900))
     assert.equal(champ.isConnected, false, 'une fois le champ quitté, le rendu périodique doit repartir')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   it('le défilement de l\'arbre survit à un rafraîchissement', async () => {
@@ -212,12 +212,12 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     const window = charger(outDir, files)
     window.document.body.innerHTML = '<mjs-dp-parent></mjs-dp-parent>'
     await new Promise(r => setTimeout(r, 60))
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelector('.arbre').scrollTop = 42
     await new Promise(r => setTimeout(r, 900))
     assert.equal(racine.querySelector('.arbre').scrollTop, 42, 'l\'arbre ne doit pas remonter en haut tout seul')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   // RÉGRESSION — la garde de saisie
@@ -231,7 +231,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     window.document.body.innerHTML = '<mjs-dp-saisie></mjs-dp-saisie>'
     await new Promise(r => setTimeout(r, 60))
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     const hote: any = window.document.querySelector('mjs-dp-saisie')
     const champPage = (hote.shadowRoot || hote._shadow).querySelector('input.s')
@@ -242,7 +242,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     await new Promise(r => setTimeout(r, 900))   // > 700 ms : le battement doit avoir vu le nouveau venu
 
     assert.match(racine.querySelector('.compte').textContent, /2 composants montés/, 'le panneau doit continuer à suivre la page')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 
   it('écrire une valeur dans le panneau change vraiment l\'état du composant', async () => {
@@ -253,7 +253,7 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
     const el: any = window.document.body.firstElementChild
     assert.equal(el._state.total, 6, 'départ : 2 × 3')
 
-    window.µ.devPanel(true)
+    window.µ.console(true)
     const racine = window.document.querySelector('[data-mjs-devpanel]').shadowRoot
     racine.querySelectorAll('.ligne')[0].dispatchEvent(new window.Event('click', { bubbles: true }))
     const champ = racine.querySelector('input.di-valeur[data-di-key="quantity"]')
@@ -264,6 +264,6 @@ describe('mjs_devpanel — le panneau d\'inspection', function () {
 
     assert.equal(el._state.quantity, 10, 'la valeur écrite doit atteindre le composant')
     assert.equal(el._state.total, 20, 'et son dérivé doit se recalculer')
-    window.µ.devPanel(false)
+    window.µ.console(false)
   })
 })

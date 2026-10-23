@@ -8,13 +8,14 @@
 //   - "XXXXX" (chaîne)      → rejoint la partie privée existant à ce code (inconnu → erreur)
 // `code` sous quelque forme que ce soit exige `def.code === true`, sinon erreur claire.
 
+import { randomInt } from 'node:crypto'
 import type { MjsWsApp, MjsWsClient } from '../mjs-ws/index.js'
 import type { MjsServerResolvedDef } from './game-def.js'
 import { Game, createGame, restoreGame, peerIdOf } from './game.js'
 import type { MjsServerSeat, MjsServerGameSnapshot, MjsServerGameStats } from './game.js'
 // anti-triche — quota de coups PAR IDENTITÉ agrégé (cf. identityQuotas plus bas), MÊME
 // primitive que game.ts::_consumeToken/_consumeHashToken (guard.ts, déjà composée là-bas)
-import { TokenBucket } from '../mjs-ws/guard.js'
+import { TokenBucket, errMessage } from '../mjs-ws/guard.js'
 // anti-brute-force sur le CODE de partie privée — MÊME classe/patron que
 // accounts.ts::account:login (failuresByIp), réutilisée TELLE QUELLE (jamais réimplémentée), cf.
 // codeFailures plus bas
@@ -41,9 +42,24 @@ const DEFAULT_CODE_PAR_IP_WINDOW_MS = 60000   // 10 échecs/min/IP
 // TOUJOURS actif (même politique que codePerIp) — `null` explicite désactive le plafond.
 const DEFAULT_QUEUE_CAP = 1000
 
+// parties privées en cours (au registre, pas finies) d'un même créateur où il siège encore, tous types et toutes connexions confondus
+// — sans elle, un jeu à une place ou deux connexions qui se relaient (l'une crée, l'autre complète) gardaient autant de parties
+// qu'elles en demandaient. La même valeur borne les parties privées en cours où une même identité siège, qu'elle les ait créées ou
+// rejointes par code (cf. checkSeatedPrivateGames) : sans elle, le relais « A crée, B complète, A quitte » n'était borné nulle part,
+// B n'étant créateur d'aucune. Défaut TOUJOURS actif (même politique que codePerIp) — `null` explicite désactive les deux bornes
+const DEFAULT_PRIVATE_GAMES_PER_CREATOR = 5
+
+/** un ticket d'un groupe de la file en cours d'appariement, avec le siège qu'il a pris (cf. openMatch) */
+interface SeatedTicket { ticket: MjsWsClient; player: MjsServerSeat }
+
+/** le refus SYNCHRONE d'un ticket (hooks.onJoin a levé) : le ticket et l'erreur levée (cf. openMatch) */
+interface TicketRefusal { ticket: MjsWsClient; err: unknown }
+
 export interface MjsServerMatchmaking {
   /** cf. index.ts — composé avec opts.onDisconnect (MJS-WS), jamais appelé pour un client jamais assis nulle part */
   onClientDisconnect(client: MjsWsClient): void
+  /** cf. index.ts — app.stop() commence : tout coup reçu ensuite est refusé (la rafale finale de sauvegarde ne le contiendrait pas) */
+  refuseMoves(): void
   /** cf. index.ts — app.stop() : coupe tous les setTimeout vivants (aucun ne doit survivre à l'arrêt) */
   destroyAll(): void
   /** persist.ts (boot, AVANT le vrai listen) — restaure UNE partie depuis un instantané dans les
@@ -68,8 +84,9 @@ export interface MjsServerMatchmaking {
  *  `codePerIp` — [capacité, fenêtreMs] pour le verrou anti-brute-force sur les
  *  tentatives de join par CODE échouées (cf. codeFailures plus bas) ; défaut TOUJOURS actif
  *  (DEFAULT_CODE_PAR_IP_*, contrairement à movesPerIdentity qui est opt-in) — `null` explicite pour
- *  désactiver. index.ts n'expose PAS encore d'option publique pour le repasser (hors périmètre). */
-export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServerResolvedDef>, baseServe: MjsWsApp['serve'], baseOn: MjsWsApp['on'], persist: MjsServerPersistEngine | null = null, gameStats: MjsServerGameStats | null = null, movesPerIdentity: [number, number] | null = null, codePerIp: [number, number] | null = [DEFAULT_CODE_PAR_IP_CAPACITY, DEFAULT_CODE_PAR_IP_WINDOW_MS], queueCap: number | null = DEFAULT_QUEUE_CAP): MjsServerMatchmaking {
+ *  désactiver. index.ts n'expose PAS encore d'option publique pour le repasser (hors périmètre).
+ *  `privateGamesPerCreator` — cf. DEFAULT_PRIVATE_GAMES_PER_CREATOR (opts.antiCheat.privateGamesPerCreator, déjà validée par index.ts) */
+export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServerResolvedDef>, baseServe: MjsWsApp['serve'], baseOn: MjsWsApp['on'], persist: MjsServerPersistEngine | null = null, gameStats: MjsServerGameStats | null = null, movesPerIdentity: [number, number] | null = null, codePerIp: [number, number] | null = [DEFAULT_CODE_PAR_IP_CAPACITY, DEFAULT_CODE_PAR_IP_WINDOW_MS], queueCap: number | null = DEFAULT_QUEUE_CAP, privateGamesPerCreator: number | null = DEFAULT_PRIVATE_GAMES_PER_CREATOR): MjsServerMatchmaking {
   const queues     = new Map<string, MjsWsClient[]>()     // type → tickets FIFO
   // reverse index — retrait O(1) sur déconnexion ; SINGULIER par construction (une connexion n'est
   // JAMAIS dans deux files à la fois, cf. playQueued) — s'inscrire pour un NOUVEAU type retire
@@ -85,8 +102,39 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // traîner. Indépendant de `queuedType` ci-dessus (celui-ci reste keyé par CONNEXION, pour le
   // retrait O(1) du tableau `queues` lui-même — inchangé).
   const queuedIdentities = new Map<string, Set<string>>()
-  const games    = new Map<string, Game>()
+  // index inverse — les parties où une CONNEXION a pris place (siège ou regard) et celles où une IDENTITÉ est assise, par type : la
+  // déconnexion et le rejeu de µgame:play ne balaient plus toutes les parties vivantes (O(parties) à chaque appel). Indice, jamais
+  // vérité : chaque usage revérifie la partie (toujours au registre, connexion ou identité encore là), une entrée périmée (départ,
+  // refus, siège vidé par l'appli) est donc sans effet ; une partie qui sort du registre emporte toutes ses entrées (cf. GameRegistry)
+  const gamesOfConnection = new Map<MjsWsClient, Set<Game>>()
+  const gamesOfIdentity   = new Map<string, Set<Game>>()   // clé : identityKey(type, identité)
+  const indexEntries      = new Map<Game, { connections: Set<MjsWsClient>; identities: Set<string> }>()
+  // une connexion ne tient qu'UNE partie privée en attente à la fois : la dernière qu'elle a créée (cf. createWithCode)
+  const waitingPrivate = new Map<MjsWsClient, Game>()
+  // parties privées par créateur (cf. creatorKeyOf, privateGamesPerCreator) — une partie détruite en sort (cf. GameRegistry), une
+  // partie finie, ou que son créateur a quittée, est écartée au prochain compte ; `seat` = l'identité de siège du créateur (peerIdOf)
+  const privateGamesOf = new Map<string, Set<Game>>()
+  const creatorOf      = new Map<Game, { key: string; seat: string }>()
+  // registre des parties annoncées (id → partie) — tient l'index inverse à chaque entrée et sortie, quel que soit le chemin : partie
+  // par code, groupe de la file (sièges déjà posés), partie restaurée au démarrage (sièges restaurés), destruction (onGameDestroyed)
+  class GameRegistry extends Map<string, Game> {
+    set(id: string, game: Game): this {
+      super.set(id, game)
+      indexSeats(game)
+      return this
+    }
+
+    delete(id: string): boolean {
+      const game = super.get(id)
+      if (game) { unindexGame(game); forgetCreator(game) }
+      return super.delete(id)
+    }
+  }
+  const games    = new GameRegistry()
   const codes      = new Map<string, string>()             // code → id de partie
+  // parties de la file en cours d'appariement (muettes, cf. openMatch) : hors de `games` tant qu'elles ne sont pas annoncées, donc hors
+  // de portée d'un µgame:resync/move/leave et d'un rejeu de µgame:play (cf. findGameOfIdentity) ; destroyAll les détruit aussi
+  const matching   = new Set<Game>()
   // anti-triche — quota de coups PAR IDENTITÉ agrégé sur TOUTES les parties vivantes (cf.
   // movesPerIdentity plus haut) : SEUL endroit qui voit toutes les parties (cf. tête de fichier) —
   // un seau à jetons (TokenBucket) PAR IDENTITÉ, jamais par partie : TOUTES les parties d'une même
@@ -111,13 +159,29 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // sur un code invalide/format (déjà refusé bon marché par handlerPlay, avant d'arriver ici). `null`
   // si `codePerIp` désactivé (coût nul).
   const codeFailures = codePerIp ? new FailureBucket(codePerIp[0], codePerIp[1]) : null
-  let _gameCounter = 0
+  // amorcé à l'heure du démarrage (ms), +1 par partie : jamais l'id d'une partie d'un démarrage précédent, même quand sa sauvegarde
+  // n'a pas été restaurée (load() en échec, type de jeu retiré, instantané invalide) — reparti de 0, il rendait game1 à la 1re partie
+  // neuve, qui écrasait la sauvegarde de la veille puis l'effaçait à sa fin. Relevé ensuite par tout id lu au chargement (reserveGameId)
+  let _gameCounter = Date.now()
   // true PENDANT app.stop() (destroyAll) — cf. onGameDestroyed : détruire pour un ARRÊT SERVEUR
   // ne doit JAMAIS effacer la partie du stockage persistant (elle doit revivre au prochain boot via
   // persist.ts load()), contrairement à une VRAIE fin de partie (end/emptyTtl/annulation de sièges)
   let stopping = false
+  // true dès le début de app.stop() (refuseMoves, avant la rafale finale de sauvegarde) : un coup reçu ensuite est refusé, sans quoi
+  // il était acquitté puis perdu au redémarrage
+  let refusingMoves = false
 
   function generateGameId(): string { return 'game' + (++_gameCounter) }
+
+  /** un id `game<n>` lu au chargement, partie restaurée ou non, n'est jamais réattribué ensuite (même sous une horloge qui a reculé
+   *  depuis le démarrage précédent). Un instantané d'AVANT l'anglicisation porte `partie<n>` (pas encore passé par
+   *  migrate-games-fr-to-en) : volontairement PAS lu ici — espace de noms disjoint de `game<n>`, aucune collision possible */
+  function reserveGameId(id: unknown): void {
+    const m = typeof id === 'string' ? /^game(\d+)$/.exec(id) : null
+    // 15 chiffres au plus (le compteur en a 13) : un id démesuré (sauvegarde illisible) poussait le compteur au-delà de 2^53, où `++`
+    // ne bouge plus — toutes les parties neuves recevaient le même id. Le compteur ne peut de toute façon pas rendre un tel id
+    if (m && m[1].length <= 15) _gameCounter = Math.max(_gameCounter, Number(m[1]))
+  }
 
   /** create() + armGame() persistance — SEUL point d'entrée pour une partie FRAÎCHE
    *  (les 3 call-sites ci-dessous), symétrique de restoreGameFromSnapshot pour une partie
@@ -136,7 +200,8 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     let code: string
     do {
       code = ''
-      for (let i = 0; i < CODE_LENGTH; i++) code += ALPHABET_CODE[Math.floor(Math.random() * ALPHABET_CODE.length)]
+      // tirage cryptographique : le code sert de contrôle d'accès (rejoindre, regarder), la suite de Math.random se devine
+      for (let i = 0; i < CODE_LENGTH; i++) code += ALPHABET_CODE[randomInt(ALPHABET_CODE.length)]
     } while (codes.has(code))
     return code
   }
@@ -208,11 +273,63 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     queuedIdentities.get(type)?.delete(id)
   }
 
-  /** cherche, parmi les parties VIVANTES (encore dans le registre `games` — cf.
-   *  onGameDestroyed, jamais de fenêtre où une partie détruite y traînerait encore : la
-   *  suppression est SYNCHRONE dans le même appel que _destroy()) de CE type, celle où cette
-   *  IDENTITÉ (peerIdOf) occupe déjà un siège — balayage O(n) sur les parties vivantes, MÊME
-   *  échelle v1 que onClientDisconnect plus bas (pas d'index inverse, cf. son commentaire).
+  // --- index inverse (cf. gamesOfConnection/gamesOfIdentity plus haut) --------------------------
+
+  function identityKey(type: string, id: string): string { return type + '\n' + id }
+
+  function indexEntry(game: Game): { connections: Set<MjsWsClient>; identities: Set<string> } {
+    let entry = indexEntries.get(game)
+    if (!entry) { entry = { connections: new Set(), identities: new Set() }; indexEntries.set(game, entry) }
+    return entry
+  }
+
+  /** retient que `client` prend place dans `game` (siège ou regard) — posé AVANT l'opération : si elle échoue, l'entrée reste
+   *  périmée, sans effet (cf. onClientDisconnect, qui revérifie) */
+  function indexConnection(game: Game, client: MjsWsClient): void {
+    let joined = gamesOfConnection.get(client)
+    if (!joined) { joined = new Set(); gamesOfConnection.set(client, joined) }
+    joined.add(game)
+    indexEntry(game).connections.add(client)
+  }
+
+  /** retient que l'identité `id` est (ou va être) assise dans `game` — même règle que indexConnection (cf. findGameOfIdentity) */
+  function indexIdentity(game: Game, id: string): void {
+    const key = identityKey(game.type, id)
+    let seatedIn = gamesOfIdentity.get(key)
+    if (!seatedIn) { seatedIn = new Set(); gamesOfIdentity.set(key, seatedIn) }
+    seatedIn.add(game)
+    indexEntry(game).identities.add(key)
+  }
+
+  /** une partie entre au registre : ses sièges déjà posés (groupe de la file, partie restaurée), identités et connexions */
+  function indexSeats(game: Game): void {
+    for (const player of game.players) {
+      if (!player) continue
+      indexIdentity(game, player.id)
+      for (const client of player.clients) indexConnection(game, client)
+    }
+  }
+
+  /** une partie sort du registre (détruite) : toutes ses entrées d'index partent avec elle, sa place de partie privée en attente aussi */
+  function unindexGame(game: Game): void {
+    const entry = indexEntries.get(game)
+    if (!entry) return
+    indexEntries.delete(game)
+    for (const client of entry.connections) {
+      const joined = gamesOfConnection.get(client)
+      if (joined) { joined.delete(game); if (joined.size === 0) gamesOfConnection.delete(client) }
+      if (waitingPrivate.get(client) === game) waitingPrivate.delete(client)
+    }
+    for (const key of entry.identities) {
+      const seatedIn = gamesOfIdentity.get(key)
+      if (seatedIn) { seatedIn.delete(game); if (seatedIn.size === 0) gamesOfIdentity.delete(key) }
+    }
+  }
+
+  /** la partie VIVANTE (au registre) de CE type où cette IDENTITÉ (peerIdOf) occupe déjà un siège, trouvée par l'index inverse sans
+   *  visiter les autres parties ; une entrée périmée rencontrée (identité plus assise, partie sortie du registre) est retirée au
+   *  passage. Une partie FINIE (grâce `endTtl`) est ignorée : le joueur qui relance la file après la fin y est remis, au lieu de
+   *  retrouver une partie où tous ses coups sont refusés (« partie terminée »).
    *  Scopé par TYPE (jamais cross-type) : une même identité PEUT légitimement occuper un siège
    *  dans plusieurs parties de types DIFFÉRENTS (v1 ne l'empêche pas, cf. onClientDisconnect) —
    *  seule la dédup INTRA-type est visée ici. Utilisé par playQueued pour réattacher un 2e
@@ -220,11 +337,19 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
    *  (qui, via la dédup de game.ts::_createSeat, finirait de toute façon par réattacher — ceci
    *  évite juste de repasser par une file/un appariement pour rien). */
   function findGameOfIdentity(type: string, id: string): Game | null {
-    for (const game of games.values()) {
-      if (game.type !== type) continue
-      if (game.players.some(j => j !== null && j.id === id)) return game
+    const key = identityKey(type, id)
+    const seatedIn = gamesOfIdentity.get(key)
+    if (!seatedIn) return null
+    let found: Game | null = null
+    for (const game of seatedIn) {
+      if (games.get(game.id) !== game || !game.players.some(j => j !== null && j.id === id)) {
+        seatedIn.delete(game)
+        indexEntries.get(game)?.identities.delete(key)
+      }
+      else if (!found && !game._ended) found = game
     }
-    return null
+    if (seatedIn.size === 0) gamesOfIdentity.delete(key)
+    return found
   }
 
   // `game._infoMode(player)` porte `{view}` (authoritative) OU `{seed, journal}`
@@ -250,14 +375,144 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
 
   // --- code : créer / rejoindre ----------------------------------------------------------------
 
+  /** la réponse d'un siège admis dans une partie par code : µgame:start aux autres sièges si les places sont complètes, puis le siège.
+   *  Une partie déjà finie à ce moment (hooks.onJoin de l'entrant a appelé .end()) : son µgame:end est parti avant cette réponse, que
+   *  le client de l'entrant, qui ne connaissait pas encore la partie, a ignoré — il lui est renvoyé, à lui seul, un tour de boucle
+   *  après sa réponse (même raison que game.ts::_announce pour la file) */
+  function seatedResponse(game: Game, player: MjsServerSeat, client: MjsWsClient): unknown {
+    markStartedIfFull(game, player)
+    resendEnd(game, client)
+    return seatResponse(game, player)
+  }
+
+  /** une partie déjà finie quand une connexion y prend place (siège, 2e demande d'une connexion déjà assise, regard de spectateur) :
+   *  son µgame:end lui est renvoyé, à elle seule, un tour de boucle après sa réponse — avant, son client ne connaît pas la partie */
+  function resendEnd(game: Game, client: MjsWsClient): void {
+    if (game._ended) setImmediate(() => app.send(client, 'µgame:end', { game: game.id, result: game._endResult }))
+  }
+
+  /** pose le siège de `client` dans une partie par code (créateur ou invité) et répond. Quand hooks.onJoin rend une Promise, la demande
+   *  lui laisse un tour de la boucle d'événements (setImmediate) avant de répondre, sans l'attendre davantage : un rejet déjà connu à ce
+   *  moment (le crochet n'a rien attendu du dehors) est un refus synchrone — le siège est défait sans trace, la demande échoue — ; un
+   *  rejet plus tardif refuse le joueur APRÈS sa réponse (game.ts::_refuseSeat), jamais avant : le client ne connaît pas encore la
+   *  partie, la fin lui échapperait et sa poignée resterait assise sur un siège libéré. Le siège n'est annoncé (roster, µgame:start
+   *  aux autres) qu'une fois ce premier verdict rendu : un refus synchrone ne laisse aucune trace chez les autres joueurs. */
+  function takeSeat(game: Game, client: MjsWsClient): unknown {
+    const admissions: Array<Promise<MjsServerSeat | null>> = []
+    indexConnection(game, client)
+    indexIdentity(game, peerIdOf(client))
+    const player = game._createSeat(client, admissions)
+    if (admissions.length === 0) return seatedResponse(game, player, client)
+    const verdict = { waiting: true, refused: null as MjsServerSeat | null }
+    admissions[0].then(seat => {
+      if (seat === null) return
+      if (verdict.waiting) verdict.refused = seat
+      else game._refuseSeat(seat)
+    })
+    return Promise.race([admissions[0], new Promise<void>(resolve => setImmediate(resolve))]).then(() => {
+      verdict.waiting = false
+      if (game._destroyed) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+      if (verdict.refused) {
+        if (verdict.refused.clients.size > 1) game._refuseSeat(verdict.refused)   // un autre onglet de la même identité s'est rattaché pendant l'attente et a sa réponse : refus après coup, pour tous
+        else game._dropSeat(verdict.refused)
+        throw new Error(t('serveur.matchmaking-entree-refusee'))
+      }
+      game._seatAdmitted()
+      return seatedResponse(game, player, client)
+    })
+  }
+
+  /** crée une partie privée et y assoit son créateur. Une connexion ne tient qu'UNE partie privée en attente à la fois : la précédente
+   *  qu'elle a créée, si ses places n'ont jamais été toutes prises (`_started` faux) et si cette connexion y siège encore, est fermée —
+   *  µgame:end { cancelled: true, reason: 'replaced' } à ses sièges, partie détruite, code oublié —, quel que soit son type de jeu. Une
+   *  partie complétée une fois est une vraie partie : jamais fermée ainsi ; une table que son créateur a quittée non plus (d'autres
+   *  joueurs y attendent peut-être). La précédente n'est fermée qu'une fois la nouvelle créée (un hooks.onCreate qui lève la laisse
+   *  intacte). Au-delà, un même créateur (cf. creatorKeyOf) ne garde que `privateGamesPerCreator` parties privées en cours où il siège
+   *  encore, connecté ou non (complétées ou non, tous types, toutes connexions) : la demande suivante est refusée, la partie remplacée
+   *  ne comptant pas ; une partie qu'il a quittée ne compte plus, même si d'autres y restent. Son identité ne siège pas non plus dans
+   *  plus de `privateGamesPerCreator` parties privées en cours, créées ou rejointes (cf. checkSeatedPrivateGames). Sans ces bornes, un
+   *  jeu à une place, ou deux connexions qui se relaient, créaient autant de parties vivantes qu'ils envoyaient de demandes et
+   *  pouvaient épuiser la mémoire du serveur ; une table vide qu'ils quittent est fermée tout de suite (cf. game.ts::_afterDeparture) */
   function createWithCode(def: MjsServerResolvedDef, client: MjsWsClient): unknown {
+    const previous = waitingPrivate.get(client)
+    const replaced = previous && replaceable(previous, client) ? previous : null
+    const creator  = creatorKeyOf(client)
+    if (privateGamesPerCreator !== null) {
+      const live = livePrivateGamesOf(creator)
+      if (live.size - (replaced && live.has(replaced) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('serveur.matchmaking-parties-privees-limite', { max: privateGamesPerCreator }))
+      checkSeatedPrivateGames(peerIdOf(client), replaced)
+    }
     const game = create(def)
+    if (replaced && replaceable(replaced, client)) replaced._cancel('replaced')
     game.code = generateCode()
     codes.set(game.code, game.id)
     games.set(game.id, game)
-    const player = game._createSeat(client)
-    markStartedIfFull(game, player)
-    return seatResponse(game, player)
+    waitingPrivate.set(client, game)
+    trackCreator(creator, peerIdOf(client), game)
+    return takeSeat(game, client)
+  }
+
+  /** la partie privée en attente de cette connexion peut-elle être remplacée : toujours au registre, jamais complète, pas finie, et la
+   *  connexion y siège encore */
+  function replaceable(game: Game, client: MjsWsClient): boolean {
+    return games.get(game.id) === game && !game._started && !game._ended && game._findSeatOf(client) !== null
+  }
+
+  /** le créateur compté par privateGamesPerCreator : son identité ; un anonyme, son adresse (sa connexion quand le transport n'en
+   *  donne pas, ex. MemoryTransport) — préfixes distincts, une identité ne se confond jamais avec une adresse */
+  function creatorKeyOf(client: MjsWsClient): string {
+    const id = peerIdOf(client)
+    if (id !== 'anon:' + client.id || client.meta.address === undefined) return 'id:' + id
+    return 'ip:' + client.meta.address
+  }
+
+  function trackCreator(creator: string, seat: string, game: Game): void {
+    let created = privateGamesOf.get(creator)
+    if (!created) { created = new Set(); privateGamesOf.set(creator, created) }
+    created.add(game)
+    creatorOf.set(game, { key: creator, seat })
+  }
+
+  /** une partie sort du registre : elle ne compte plus pour son créateur */
+  function forgetCreator(game: Game): void {
+    const creator = creatorOf.get(game)
+    if (creator === undefined) return
+    creatorOf.delete(game)
+    const created = privateGamesOf.get(creator.key)
+    if (created) { created.delete(game); if (created.size === 0) privateGamesOf.delete(creator.key) }
+  }
+
+  /** les parties privées en cours de ce créateur où il siège encore (au registre, pas finies, son siège occupé, connecté ou non) — une
+   *  partie finie (grâce `endTtl`) n'y est plus, une partie qu'il a quittée non plus, même si d'autres joueurs y restent */
+  function livePrivateGamesOf(creator: string): Set<Game> {
+    const live = new Set<Game>()
+    for (const game of privateGamesOf.get(creator) ?? []) {
+      const seat = creatorOf.get(game)?.seat
+      if (games.get(game.id) === game && !game._ended && game.players.some(j => j !== null && j.id === seat)) live.add(game)
+    }
+    return live
+  }
+
+  /** les parties privées en cours où cette identité (peerIdOf) siège, créateur ou invité (au registre, pas finies, son siège occupé,
+   *  connecté ou non), tous types confondus — trouvées par l'index inverse, sans visiter les autres parties */
+  function seatedPrivateGamesOf(id: string): Set<Game> {
+    const seated = new Set<Game>()
+    for (const type of gameDefs.keys()) {
+      for (const game of gamesOfIdentity.get(identityKey(type, id)) ?? []) {
+        if (game.code && games.get(game.id) === game && !game._ended && game.players.some(j => j !== null && j.id === id)) seated.add(game)
+      }
+    }
+    return seated
+  }
+
+  /** une place de plus dans une partie privée (création, entrée par code) est refusée à l'identité qui siège déjà dans
+   *  `privateGamesPerCreator` parties privées en cours, qu'elle les ait créées ou rejointes ; `freed` = la partie en attente que la
+   *  demande remplace (elle ne compte pas). Sans elle, deux connexions qui se relaient (A crée, B complète, A quitte) gardaient vivantes
+   *  autant de parties qu'elles en demandaient : la borne des créateurs ne compte que les parties où le créateur siège encore */
+  function checkSeatedPrivateGames(id: string, freed: Game | null): void {
+    if (privateGamesPerCreator === null) return
+    const seated = seatedPrivateGamesOf(id)
+    if (seated.size - (freed && seated.has(freed) ? 1 : 0) >= privateGamesPerCreator) throw new Error(t('serveur.matchmaking-parties-privees-siege-limite', { max: privateGamesPerCreator }))
   }
 
   // anti-brute-force code (cf. codeFailures plus haut) — `ipOf` MÊME fonction que
@@ -298,22 +553,26 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // ne révèle jamais qu'un code existe pour un AUTRE type
     if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
     const alreadySeated = game._findSeatOf(client)
-    if (alreadySeated) return seatResponse(game, alreadySeated)   // même connexion qui rejoue play : idempotent
-    const player = game._createSeat(client)   // throw 'partie complète' si déjà pleine — PAS un échec de code, non comptabilisé
-    markStartedIfFull(game, player)
-    return seatResponse(game, player)
+    if (alreadySeated) {   // même connexion qui rejoue play (composant remonté) : idempotent, la fin comprise
+      resendEnd(game, client)
+      return seatResponse(game, alreadySeated)
+    }
+    // une autre connexion de la même identité, déjà assise, s'y rattache (cf. game.ts::_createSeat) : aucune place de plus à borner
+    const id = peerIdOf(client)
+    if (!game.players.some(j => j !== null && j.id === id)) checkSeatedPrivateGames(id, null)
+    return takeSeat(game, client)   // throw 'partie complète' si déjà pleine — PAS un échec de code, non comptabilisé
   }
 
   // --- file d'attente publique --------------------------------------------------------------
 
   // v1 — seatTtl couvre UNIQUEMENT les sièges issus de la file (le
   // fondateur d'une partie par code est confirmé par sa propre requête, rien à surveiller tant
-  // qu'il reste connecté ; emptyTtl suffit à purger un fondateur qui repart sans jamais recevoir
-  // personne). À l'expiration : la partie ENTIÈRE est annulée (pas de re-complétion depuis la
+  // qu'il reste connecté ; un fondateur qui repart sans jamais recevoir personne voit sa table
+  // fermée tout de suite, cf. game.ts::_afterDeparture). À l'expiration : la partie ENTIÈRE est annulée (pas de re-complétion depuis la
   // file) — le plus simple des deux choix envisagés, documenté ici.
   function playQueued(def: MjsServerResolvedDef, client: MjsWsClient): unknown {
     // idempotence (anti-triche) — CETTE identité (peerIdOf, cf. game.ts) est
-    // déjà en file OU déjà assise dans une partie VIVANTE de ce type : ignore/réattache plutôt que
+    // déjà en file OU déjà assise dans une partie VIVANTE et non finie de ce type : ignore/réattache plutôt que
     // de pousser un 2e ticket (cf. matchmaking.ts:130-152 — un spam de µgame:play
     // prenait autant de tickets que d'appels, jusqu'à des sièges fantômes qui ne vident jamais la
     // partie). Déjà en file → réponse IDENTIQUE à celle du 1er ticket (même {queue}, aucun 2e
@@ -324,6 +583,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (isQueued(def.type, id)) return { queue: (queues.get(def.type) ?? []).length }
     const existingGame = findGameOfIdentity(def.type, id)
     if (existingGame) {
+      indexConnection(existingGame, client)
       const player = existingGame._createSeat(client)
       return seatResponse(existingGame, player)
     }
@@ -346,22 +606,153 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     queuedType.set(client, def.type)
     enqueue(def.type, id)
     if (queue.length < def.seats) return { queue: queue.length }
+    return drainQueue(def, client)
+  }
 
-    const tickets = queue.splice(0, def.seats)
-    for (const t of tickets) { queuedType.delete(t); dequeue(def.type, peerIdOf(t)) }
-    const game = create(def)
-    games.set(game.id, game)
+  // Un groupe complet est apparié en deux temps. La partie naît MUETTE (rien n'en part vers les joueurs), tous les tickets prennent
+  // siège et passent par hooks.onJoin — une Promise rendue est attendue —, PUIS SEULEMENT la partie est annoncée (µgame:start aux
+  // tickets qui attendaient, réponse à la requête qui a complété le groupe). Un ticket refusé, par un throw ou par une Promise
+  // rejetée, défait l'appariement sans bruit : la partie disparaît, les autres tickets retournent EN TÊTE de la file, dans leur
+  // ordre, et y attendent un autre adversaire sans rien avoir reçu. Le refusé est averti une seule fois : par µgame:end « entrée
+  // refusée » (game.ts::_sendJoinRefused, qui y met le type de jeu et `queue: true` : le client en tire la poignée en file à qui la
+  // donner), ou par l'erreur de sa requête µgame:play quand c'est lui le dernier arrivé (sa requête
+  // est encore en cours : l'erreur de onJoin si elle est synchrone, « entrée refusée » si le refus vient d'une Promise — le message
+  // d'une Promise rejetée reste dans le journal du serveur). Tant que le groupe est en suspens, ses tickets restent marqués en file
+  // (queuedType, queuedIdentities) : un µgame:play de plus de leur part est l'idempotence habituelle, pas un 2e ticket.
+
+  /** retire un ticket de la file : ses marques de connexion et d'identité (le tableau `queues` n'est pas touché) — seulement celles que
+   *  CE ticket détient encore pour ce type. Une connexion fermée pendant l'attente a déjà rendu les siennes (onClientDisconnect) et la
+   *  marque d'identité est peut-être celle de sa nouvelle connexion ; une connexion passée dans la file d'un autre type y garde la sienne */
+  function forget(def: MjsServerResolvedDef, ticket: MjsWsClient): void {
+    if (queuedType.get(ticket) !== def.type) return
+    queuedType.delete(ticket)
+    dequeue(def.type, peerIdOf(ticket))
+  }
+
+  /** remet des tickets d'un groupe défait EN TÊTE de la file de leur type, dans leur ordre. Un ticket qui n'est plus marqué en file
+   *  pour ce type (sa connexion s'est fermée pendant l'attente, ou est partie dans la file d'un autre type) n'est pas remis ; un
+   *  ticket déjà présent dans le tableau (sa connexion a rejoué entre-temps) non plus. */
+  function requeue(def: MjsServerResolvedDef, tickets: MjsWsClient[]): void {
+    const queue = queues.get(def.type) ?? []
+    queues.set(def.type, queue)
+    queue.unshift(...tickets.filter(ticket => queuedType.get(ticket) === def.type && !queue.includes(ticket)))
+  }
+
+  /** position (à partir de 1) d'une connexion dans la file de ce type, 0 si elle n'y est pas */
+  function positionOf(def: MjsServerResolvedDef, ticket: MjsWsClient): number {
+    return (queues.get(def.type) ?? []).indexOf(ticket) + 1
+  }
+
+  /** forme les groupes complets de la file de ce type, un par un, dans l'ordre d'arrivée. `caller` = la connexion dont la requête
+   *  µgame:play est en cours (`null` pour une reprise en arrière-plan) : sa réponse est celle de son groupe (son siège, l'erreur de
+   *  son refus, ou sa position quand son groupe est défait), à défaut sa position dans la file. Un groupe défait remet ses
+   *  survivants en tête : la boucle les reprend si la file contient déjà un groupe complet (des joueurs arrivés pendant l'attente
+   *  d'un onJoin). Un hooks.onCreate qui lève arrête la boucle : les tickets sortis de la file reviennent en tête, sauf celui de
+   *  l'appelant, qui reçoit l'erreur ; la prochaine arrivée relancera l'appariement. */
+  function drainQueue(def: MjsServerResolvedDef, caller: MjsWsClient | null): unknown {
+    const queue = queues.get(def.type)
+    let answered = false
+    let reply: unknown
+    let failure: { err: unknown } | null = null
+    while (queue && queue.length >= def.seats) {
+      const group = queue.splice(0, def.seats)
+      const mine  = caller !== null && group.includes(caller)
+      let game: Game
+      try {
+        game = create(def)
+      } catch (err) {
+        requeue(def, group.filter(ticket => ticket !== caller))
+        if (mine) { forget(def, caller!); failure = { err } }
+        else def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) }))
+        break
+      }
+      try {
+        const outcome = openMatch(def, game, group, mine ? caller : null)
+        if (mine) { answered = true; reply = outcome }
+        else if (outcome instanceof Promise) outcome.catch((err: unknown) => def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) })))
+      } catch (err) {
+        if (mine) failure = { err }   // le refus de l'appelant : seule exception que le règlement d'un groupe laisse remonter
+        else def.log('error', t('serveur.matchmaking-appariement-echoue', { msg: errMessage(err) }))
+      }
+    }
+    if (failure) throw failure.err
+    if (answered) return reply
+    return caller ? { queue: positionOf(def, caller) } : undefined
+  }
+
+  /** assoit tous les tickets du groupe dans `game` (muette) et leur fait passer hooks.onJoin ; règle ensuite le groupe (cf. settleMatch),
+   *  tout de suite si aucun onJoin n'a rendu de Promise, sinon une fois toutes terminées (rend alors une Promise de la réponse). Un
+   *  refus synchrone arrête l'assise des suivants : le groupe est défait sans attendre les Promises des tickets déjà assis. */
+  function openMatch(def: MjsServerResolvedDef, game: Game, tickets: MjsWsClient[], caller: MjsWsClient | null): unknown {
+    game._silent  = true
     game._started = true   // née complète par construction — jamais un 2e µgame:start pour elle
+    matching.add(game)
+    const seated: SeatedTicket[]                      = []
+    const waits: Array<Promise<MjsServerSeat | null>> = []
 
+    let refusal: TicketRefusal | null = null
+    for (const ticket of tickets) {
+      try {
+        seated.push({ ticket, player: game._createSeat(ticket, waits) })
+      } catch (err) {
+        refusal = { ticket, err }
+        break
+      }
+    }
+    if (refusal || waits.length === 0) return settleMatch(def, game, tickets, caller, seated, refusal, [])
+    return Promise.all(waits).then(refused => {
+      try { return settleMatch(def, game, tickets, caller, seated, null, refused) }
+      finally { drainQueue(def, null) }   // les survivants d'un groupe défait sont revenus en tête : un groupe complet a pu se former derrière eux
+    })
+  }
+
+  /** décide du sort d'un groupe dont les onJoin ont tous passé : annoncé si personne n'est refusé et si toutes les connexions sont encore là
+   *  (une fermée pendant l'attente n'a plus de marque de file, cf. onClientDisconnect), défait sinon. `refusal` = le refus synchrone
+   *  (ticket et erreur), `refused` = les sièges dont la Promise de onJoin a rejeté (`null` pour ceux qui ont abouti) */
+  function settleMatch(def: MjsServerResolvedDef, game: Game, tickets: MjsWsClient[], caller: MjsWsClient | null, seated: SeatedTicket[], refusal: TicketRefusal | null, refused: Array<MjsServerSeat | null>): unknown {
+    matching.delete(game)
+    if (game._destroyed) return undefined   // l'arrêt du serveur est passé pendant l'attente : rien à annoncer ni à remettre en file
+    const refusedTickets = new Set<MjsWsClient>()
+    if (refusal) refusedTickets.add(refusal.ticket)
+    for (const seat of refused) {
+      const entry = seat ? seated.find(e => e.player === seat) : undefined
+      if (entry) refusedTickets.add(entry.ticket)
+    }
+    const everyoneHere = tickets.every(ticket => queuedType.get(ticket) === def.type)
+    if (refusedTickets.size === 0 && everyoneHere) return startMatch(def, game, tickets, caller, seated)
+    return undoMatch(def, game, tickets, caller, refusal, refusedTickets)
+  }
+
+  /** annonce un groupe complet et admis : la partie entre dans le registre et devient audible, les tickets qui attendaient reçoivent
+   *  µgame:start (puis ont `seatTtl` pour se manifester), la requête de l'appelant reçoit son siège */
+  function startMatch(def: MjsServerResolvedDef, game: Game, tickets: MjsWsClient[], caller: MjsWsClient | null, seated: SeatedTicket[]): unknown {
+    games.set(game.id, game)
+    for (const ticket of tickets) forget(def, ticket)
+    game._announce()
     const unconfirmedIds: string[] = []
     let callerSeat: MjsServerSeat | null = null
-    for (const ticket of tickets) {
-      const player = game._createSeat(ticket)
-      if (ticket === client) callerSeat = player
+    for (const { ticket, player } of seated) {
+      if (ticket === caller) callerSeat = player
       else { unconfirmedIds.push(player.id); pushStart(game, player) }
     }
     game._armConfirmWindow(unconfirmedIds, def.seatTtl)
-    return seatResponse(game, callerSeat!)
+    return callerSeat ? seatResponse(game, callerSeat) : undefined
+  }
+
+  /** défait un groupe sans bruit : la partie est détruite (ni µgame:end, ni crochet de l'appli), les refusés sortent de la file et
+   *  reçoivent leur fin « entrée refusée » (sauf l'appelant, dont la requête a l'erreur), les autres reviennent en tête de la file.
+   *  Rend la réponse de l'appelant : sa position s'il attend toujours, sinon l'erreur de son refus est levée */
+  function undoMatch(def: MjsServerResolvedDef, game: Game, tickets: MjsWsClient[], caller: MjsWsClient | null, refusal: TicketRefusal | null, refusedTickets: Set<MjsWsClient>): unknown {
+    game._destroy()
+    for (const ticket of refusedTickets) {
+      forget(def, ticket)
+      if (ticket !== caller) game._sendJoinRefused(ticket, true)
+    }
+    requeue(def, tickets.filter(ticket => !refusedTickets.has(ticket)))
+    if (caller === null) return undefined
+    if (refusal && refusal.ticket === caller) throw refusal.err
+    if (refusedTickets.has(caller)) throw new Error(t('serveur.matchmaking-entree-refusee'))
+    return { queue: positionOf(def, caller) }
   }
 
   // --- spectateurs (anti-triche, lecture seule) ------------------------------------
@@ -379,7 +770,9 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     const gameId = codes.get(code)
     const game = gameId !== undefined ? games.get(gameId) : undefined
     if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    indexConnection(game, client)
     const info = game._addSpectator(client)
+    resendEnd(game, client)
     return { game: game.id, seat: null, spectator: true, phase: game.phase, turn: game.turn, seq: game.seq, code: game.code, ...info }
   }
 
@@ -423,10 +816,22 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (typeof p?.move !== 'string') throw new Error(t('serveur.matchmaking-move-coup-manquant'))
     const game = games.get(p.game)
     if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    if (refusingMoves) throw new Error(t('serveur.matchmaking-arret-en-cours'))
     return { ok: true, result: await game._onMove(client, p.move, p.p) }
   }
 
   function handlerLeave(p: any, client: MjsWsClient): unknown {
+    // sans `game`, avec `type` : le joueur quitte la file publique avant d'être apparié — son ticket part (le suivant
+    // n'est pas apparié avec un fantôme) ; rien à faire s'il n'y est plus (apparié entre-temps, ou jamais entré)
+    if (p?.game === undefined && typeof p?.type === 'string') {
+      if (queuedType.get(client) === p.type) {
+        queuedType.delete(client)
+        dequeue(p.type, peerIdOf(client))
+        const queue = queues.get(p.type)
+        if (queue) { const i = queue.indexOf(client); if (i !== -1) queue.splice(i, 1) }
+      }
+      return { ok: true }
+    }
     if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-leave-partie-manquante'))
     const game = games.get(p.game)
     if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
@@ -442,6 +847,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-resync-partie-manquante'))
     const game = games.get(p.game)
     if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    indexConnection(game, client)
     const { seat, info } = game._resync(client)
     return { game: game.id, seat, ...info, phase: game.phase, turn: game.turn, seq: game.seq, code: game.code }
   }
@@ -475,35 +881,49 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
         const queue = queues.get(type)
         if (queue) { const i = queue.indexOf(client); if (i !== -1) queue.splice(i, 1) }
       }
-      // un même client PEUT occuper un siège dans plusieurs parties (types différents, v1 ne
-      // l'empêche pas) — parcours de toutes les parties vivantes (échelle v1 : pas d'index inverse)
-      for (const game of games.values()) game._onDisconnect(client)
+      // un même client PEUT occuper un siège dans plusieurs parties (types différents, v1 ne l'empêche pas) — seules celles où il a
+      // pris place sont visitées (index inverse, cf. indexConnection), chacune revérifiée : une partie sortie du registre est ignorée,
+      // et _onDisconnect ne fait rien là où la connexion n'est plus (départ, refus)
+      const joined = gamesOfConnection.get(client)
+      if (joined) {
+        gamesOfConnection.delete(client)
+        for (const game of joined) {
+          indexEntries.get(game)?.connections.delete(client)
+          if (games.get(game.id) === game) game._onDisconnect(client)
+        }
+      }
+      waitingPrivate.delete(client)
       // anti-triche — le siège reste OCCUPÉ après une déconnexion (v1, pas de kick auto,
       // cf. _onDisconnect) ; le quota de cette identité n'y est PLUS lié
       // (cf. « RÉTENTION » en tête de fichier) — simple point d'activité pour la purge par TTL.
       if (movesPerIdentity) purgeExpiredIdentityQuotas(Date.now())
     },
 
+    refuseMoves(): void {
+      refusingMoves = true
+    },
+
     destroyAll(): void {
       stopping = true
       for (const game of Array.from(games.values())) game._destroy()
+      for (const game of Array.from(matching)) game._destroy()   // groupes de la file en cours d'appariement : leurs minuteries ne survivent pas à l'arrêt non plus
+      matching.clear()
     },
 
     restoreGameFromSnapshot(data: MjsServerGameSnapshot): boolean {
+      // AVANT tout refus (type retiré, doublon, instantané invalide) : la sauvegarde reste dans le stockage, son id ne doit pas resservir
+      reserveGameId(data?.id)
       const def = gameDefs.get(data.type)
       if (!def) return false
+      // deux sauvegardes du même id (copie dans le dossier de stockage, back qui rend un doublon) : la 1re restaurée reste, la suivante est
+      // refusée (avertissement de loadAtBoot) — restaurée aussi, l'orpheline, détruite à sa grâce, retirait la partie vivante du registre
+      // et effaçait sa sauvegarde
+      if (games.has(data.id)) throw new Error(t('serveur.persist-restauration-doublon', { id: data.id }))
       const game = restoreGame(app, def, onGameDestroyed, data)
       game._gameStats = gameStats
       if (movesPerIdentity) game._identityQuota = identityQuotaOk
       games.set(game.id, game)
       if (game.code) codes.set(game.code, game.id)
-      // ids restaurés JAMAIS réattribués ensuite — sans ça, une partie fraîche créée après un
-      // redémarrage pourrait un jour recevoir le MÊME id qu'une partie restaurée encore vivante
-      // (compteur reparti de 0) et écraser silencieusement son entrée dans `games`. Un instantané
-      // d'AVANT l'anglicisation porte `partie<n>` (pas encore passé par migrate-games-fr-to-en) :
-      // volontairement PAS lu ici — espace de noms disjoint de `game<n>`, aucune collision possible
-      const m = /^game(\d+)$/.exec(game.id)
-      if (m) _gameCounter = Math.max(_gameCounter, Number(m[1]))
       persist?.armGame(game)
       return true
     },

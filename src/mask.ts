@@ -16,6 +16,12 @@
 //   réécriture qui ne doit RIEN voir de ce qui est entre guillemets/heredoc/commentaire.
 // - `maskHtmlComments(html)` — uniquement les commentaires HTML `<!-- … -->`, motif LAZY
 //   (un `<!--` jamais refermé ne masque rien, même tolérance que le HTML natif).
+//
+// BORNES D'UN COMMENTAIRE HTML : celles que lit le navigateur. `<!-->` et `<!--->` sont des commentaires VIDES, refermés
+// sur place ; sinon la fin est le premier `-->` ou `--!>`. Toute passe qui saute, masque ou retire un commentaire lit ces
+// bornes-là — `readHtmlComment` pour un commentaire ouvert à une position connue, sinon le motif
+// `<!--(?:-?>|[\s\S]*?--!?>)`. Chercher le `-->` suivant avalait tout ce qui suit un `<!-->` jusqu'au commentaire
+// d'après : le gabarit perdait des balises que le navigateur affiche.
 
 import { maskInertSameLength } from './lexer/index.js'
 import { ouvreUneRegex, scanRegexLiteral } from './sigils.js'
@@ -86,8 +92,18 @@ export function maskNonCode(src: string, lang = 'civet'): string {
 }
 
 // maskHtmlComments — commentaires HTML `<!-- … -->` blanchis, même longueur, `\n` gardés.
-// Motif LAZY exigeant `-->` : un `<!--` jamais refermé ne masque rien (mettre un bloc de côté
+// Motif LAZY exigeant une fin : un `<!--` jamais refermé ne masque rien (mettre un bloc de côté
 // en le commentant doit le rendre inerte, jamais avaler tout le reste du fichier en silence).
 export function maskHtmlComments(html: string): string {
-  return html.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '))
+  return html.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, (m) => m.replace(/[^\n]/g, ' '))
+}
+
+// readHtmlComment — commentaire HTML ouvert en `i` (`<!--`), bornes du navigateur (cf. en-tête) : position qui suit sa
+// fin et texte qu'il porte ; null s'il n'est jamais refermé
+const COMMENTAIRE_OUVERT = /<!--(?:-?>|([\s\S]*?)--!?>)/y
+
+export function readHtmlComment(html: string, i: number): { end: number, data: string } | null {
+  COMMENTAIRE_OUVERT.lastIndex = i
+  const m = COMMENTAIRE_OUVERT.exec(html)
+  return m ? { end: i + m[0].length, data: m[1] ?? '' } : null
 }

@@ -69,6 +69,10 @@
 // Pas de `.retry()` : rappeler sock.game(type, opts) suffit — chaque appel crée une poignée NEUVE
 // et indépendante (aucun singleton par type, contrairement à stream()/presence()).
 //
+// Composant — contrairement à chat() et lobby(), la poignée ne suit pas le composant qui l'ouvre : elle vit jusqu'à `.leave()`
+// ou la fin de la partie, même composant détruit ou remonté. Relâchée puis relancée au retour, elle recréait la table d'une
+// partie privée (code neuf, invités renvoyés) et remettait en file une partie finie entre-temps.
+//
 // Dédup : un µgame:state dont seq ≤ dernier vu est IGNORÉ (retransmission, désordre).
 //
 // Deltas (def.deltas:true côté jeu, cf. mjs-server/game.ts) — le serveur peut envoyer µgame:state
@@ -94,10 +98,14 @@
 // connu (partie par CODE, déjà assise à 1 place, poussée quand la 2e arrive) met à jour DIRECTEMENT
 // cette entrée ; sinon (complétion de FILE publique — le protocole ne transmet AUCUN type sur
 // µgame:start, cf. tête de src/mjs-server/index.ts) la poignée la plus ANCIENNE de _mjs_gamesPending est
-// la meilleure correspondance disponible — même limite assumée que le join-optimiste de room()
-// (mjs_socket.ts::_mjs_pendingRoomJoins/_mjs_onGuardError) : ordre garanti par la FIFO du serveur (un seul
-// message traité à la fois), jamais une certitude absolue si un même socket met EN FILE plusieurs
-// types de jeu à la fois.
+// la meilleure correspondance disponible : ordre garanti par la FIFO du serveur (un seul message traité à la fois),
+// jamais une certitude absolue si un même socket met EN FILE plusieurs types de jeu à la fois.
+//
+// Entrée refusée en file — un joueur refusé par hooks.onJoin pendant qu'il attendait en file reçoit µgame:end { game, type, queue:
+// true, result: { refused: true, reason: 'join-refused' } } pour une partie qu'il n'a jamais connue (défaite en silence avant d'être
+// annoncée, cf. src/mjs-server/matchmaking.ts) : sa poignée la plus ANCIENNE encore en file pour ce type finit en statut 'finished'
+// avec ce result et l'événement 'end', puis quitte _mjs_gamesPending (cf. _mjs_onTicketRefused). Le refusé qui complétait le groupe
+// reçoit, lui, l'erreur de sa requête µgame:play : statut 'error'.
 
 if (typeof MjsSocket !== 'undefined') {
 
@@ -109,7 +117,8 @@ if (typeof MjsSocket !== 'undefined') {
     var store = h.state, view = h._mjs_view, k;
     for (k in store) { delete store[k]; }
     if (view && typeof view === 'object') {
-      for (k in view) { if (_mjs_safeKey(k)) { store[k] = view[k]; } }
+      // `store` est un état réactif (µ.state) : il refuse lui-même __proto__, constructor et prototype
+      for (k in view) { store[k] = view[k]; }
     }
     store.gameId = h._mjs_gameId;
     store.seat    = h._mjs_seat;
@@ -157,7 +166,7 @@ if (typeof MjsSocket !== 'undefined') {
   // mjs-server/game.ts, ne recurse QUE dans une clé présente des deux côtés — une clé neuve arrive
   // toujours en UN SEUL op `v` pour tout le sous-arbre, jamais reconstruite segment par segment) : le
   // `if (!(seg in noeud))` ci-dessous est un filet défensif, jamais le chemin normal. Garde `_mjs_safeKey`
-  // (même politique que _syncGameStore ci-dessus et mjs_socket.ts::_mjs_applyDelta) : un segment de chemin réseau ne
+  // (la vue est un objet ordinaire, aucun état réactif ne la garde) : un segment de chemin réseau ne
   // devient jamais __proto__/constructor/prototype — op silencieusement IGNORÉE si c'est le cas.
   // DÉFENSE EN PROFONDEUR : une suppression (`x:1`) qui viserait quand même un index de
   // tableau (normalement plus jamais émis par deepDiff CÔTÉ SERVEUR au rétrécissement, cf.
@@ -184,7 +193,8 @@ if (typeof MjsSocket !== 'undefined') {
 
   // trame µgame:state — `frame.view` (vue COMPLÈTE, compat v1 inchangée) OU `frame.delta` (liste
   // d'ops chemin à points, cf. _applyDeltaOps juste au-dessus — jeu déclaré avec def.deltas:true,
-  // cf. mjs-server/game.ts) — JAMAIS seat/code dans les deux cas, cf. _buildFrame côté serveur.
+  // cf. mjs-server/game.ts) OU ni l'un ni l'autre (phase/tour/_ack qui changent sans que la vue bouge,
+  // def.deltas:true : la vue reste celle d'avant) — JAMAIS seat/code, cf. _buildFrame côté serveur.
   // Dédup EXPLICITE valable pour LES DEUX formes : seq <= dernier vu est ignoré, ni store
   // ni événement. Un delta s'applique EN PLACE sur `h._vue` déjà reconstruit — jamais null ici, un
   // jeu def.deltas:true envoie TOUJOURS une vue complète en 1re diffusion/resync (cf. test h de
@@ -192,12 +202,17 @@ if (typeof MjsSocket !== 'undefined') {
   function _applyStatePush(h, frame) {
     if (frame.seq != null && h._mjs_seq != null && frame.seq <= h._mjs_seq) { return false; }
     if (frame.delta) { h._mjs_view = _applyDeltaOps(h._mjs_view, frame.delta); }
-    else { h._mjs_view = frame.view; }
+    else if ('view' in frame) { h._mjs_view = frame.view; }
     h._mjs_phase = frame.phase;
     h._mjs_turn  = frame.turn;
     h._mjs_seq   = frame.seq;
     _syncGameStore(h);
     return true;
+  }
+
+  // poignée de la file publique : ni code (partie privée), ni spectateur
+  function _gamePublicQueue(h) {
+    return h._mjs_playOpts.code === undefined && !h._mjs_playOpts.spectator;
   }
 
   function _gameOn(h, evt, fn) {
@@ -273,8 +288,9 @@ if (typeof MjsSocket !== 'undefined') {
     var self = this;
     if (this._mjs_gameWired) { return; }
     this._mjs_gameWired = true;
-    this._mjs_games = {};          // id de partie -> poignée, parties DÉJÀ assises
+    this._mjs_games = Object.create(null);   // id de partie -> poignée, parties DÉJÀ assises ; sans prototype : une partie nommée `__proto__` ou `toString` est une partie comme les autres
     this._mjs_gamesPending = [];   // poignées SANS id de partie, en file (FIFO) — cf. tête de fichier
+    this._mjs_seatsEarly = Object.create(null);   // id de partie -> dernier roster reçu AVANT la réponse de la poignée qui s'y assoit (cf. _mjs_onGameSeatPush)
     this.on('µgame:state',  function(p) { self._mjs_onGameStatePush(p); });
     this.on('µgame:start',  function(p) { self._mjs_onGameStartPush(p); });
     this.on('µgame:seat',   function(p) { self._mjs_onGameSeatPush(p); });
@@ -313,9 +329,12 @@ if (typeof MjsSocket !== 'undefined') {
   // DEUX flux indépendants sur le fil : rien ne garantit que cet ack revienne AVANT le µgame:start
   // qui complète la file (le start peut le devancer). `h._partieId != null` =
   // déjà assise par cette poussée : un ack {attente} ARRIVÉ EN RETARD ne doit JAMAIS faire régresser
-  // le statut en arrière ('playing' → 'waiting').
+  // le statut en arrière ('playing' → 'waiting'). Même chose pour une fin « entrée refusée » qui devance l'ack {queue} (cf.
+  // _mjs_onTicketRefused) : la poignée finie ne repasse pas en file.
   MjsSocket.prototype._mjs_onPlayResolved = function(h, frame) {
-    if (h._mjs_status === 'left') { return; }
+    // assise par la réponse d'un µgame:play parti avant son leave() : le siège est rendu, l'adversaire n'attend pas un fantôme
+    if (h._mjs_status === 'left' && h._mjs_gameId == null && frame && frame.game != null) { this.request('µgame:leave', { game: frame.game }).then(function() {}, function() {}); }
+    if (h._mjs_status === 'left' || h._mjs_status === 'finished') { return; }
     if (h._mjs_gameId != null) { return; }
     if (frame && typeof frame.queue === 'number') {
       h._mjs_status = 'waiting';
@@ -341,8 +360,10 @@ if (typeof MjsSocket !== 'undefined') {
   MjsSocket.prototype._mjs_seatFresh = function(h, frame, evt) {
     var i = this._mjs_gamesPending.indexOf(h);
     if (i !== -1) { this._mjs_gamesPending.splice(i, 1); }
+    h._mjs_seats = this._mjs_seatsEarly[frame.game] || null;
+    delete this._mjs_seatsEarly[frame.game];
     _applyFullFrame(h, frame);
-    if (_mjs_safeKey(frame.game)) { this._mjs_games[frame.game] = h; }
+    this._mjs_games[frame.game] = h;
     _dispatchGame(h, evt, frame);
   };
 
@@ -361,14 +382,21 @@ if (typeof MjsSocket !== 'undefined') {
       _dispatchGame(h, 'start', frame);
       return;
     }
-    if (this._mjs_gamesPending.length === 0) { return; }   // poussée orpheline — rien à quoi rattacher
+    // poussée orpheline : aucune poignée de ce socket n'attend de siège (celle qui était en file l'a quittée pendant que
+    // la partie se formait) — le siège est rendu, l'adversaire n'attend pas un fantôme
+    if (this._mjs_gamesPending.length === 0) { this.request('µgame:leave', { game: frame.game }).then(function() {}, function() {}); return; }
     next = this._mjs_gamesPending[0];
     this._mjs_seatFresh(next, frame, 'start');
   };
 
+  // le serveur diffuse le roster pendant le traitement de la requête de celui qui entre, la réponse ne part qu'ensuite : pour
+  // une partie pas encore connue, le dernier roster est gardé (tant qu'une poignée attend son siège) et posé par _mjs_seatFresh
   MjsSocket.prototype._mjs_onGameSeatPush = function(frame) {
     var h = this._mjs_games[frame.game];
-    if (!h) { return; }
+    if (!h) {
+      if (this._mjs_gamesPending.length) { this._mjs_seatsEarly[frame.game] = frame.seats; }
+      return;
+    }
     h._mjs_seats = frame.seats;
     _syncGameStore(h);
     _dispatchGame(h, 'seat', frame);
@@ -382,12 +410,32 @@ if (typeof MjsSocket !== 'undefined') {
 
   MjsSocket.prototype._mjs_onGameEndPush = function(frame) {
     var h = this._mjs_games[frame.game];
-    if (!h) { return; }
+    if (!h) { this._mjs_onTicketRefused(frame); return; }
     h._mjs_status = 'finished';
     h._mjs_result = frame.result;
     _syncGameStore(h);
     _dispatchGame(h, 'end', frame);
     delete this._mjs_games[frame.game];   // terminal : plus rien à resynchroniser après coupure
+  };
+
+  // fin « entrée refusée » (result.refused) d'une partie que ce client ne connaît pas : le serveur a défait en silence la partie de
+  // la file publique avant de l'annoncer, le refusé n'a jamais reçu d'id de partie. La trame le dit (queue: true) et nomme le type de
+  // jeu : la poignée refusée est la plus ANCIENNE encore en file POUR CE TYPE (sans code : un code désigne une partie précise, jamais
+  // un ticket de file). Elle finit comme n'importe quelle partie (statut 'finished', result, événement 'end' ; gameId et seat restent
+  // null : jamais assise) et sort de _mjs_gamesPending — plus rejouée à la reconnexion, plus de µgame:start pris à la place d'une
+  // poignée neuve. Toute autre fin d'une partie inconnue reste ignorée, y compris un refus sans ce drapeau : c'est le refus tardif
+  // d'une partie par code déjà finie, qui ne doit pas prendre la place d'une poignée en file
+  MjsSocket.prototype._mjs_onTicketRefused = function(frame) {
+    var pending = this._mjs_gamesPending, i = 0, h;
+    if (frame.queue !== true || !frame.result || frame.result.refused !== true) { return; }
+    while (i < pending.length && (pending[i]._mjs_playOpts.code !== undefined || pending[i]._mjs_type !== frame.type)) { i++; }
+    if (i === pending.length) { return; }
+    h = pending.splice(i, 1)[0];
+    h._mjs_status = 'finished';
+    h._mjs_queue  = null;
+    h._mjs_result = frame.result;
+    _syncGameStore(h);
+    _dispatchGame(h, 'end', frame);
   };
 
   MjsSocket.prototype._mjs_onGameLeftPush = function(frame) {
@@ -416,7 +464,7 @@ if (typeof MjsSocket !== 'undefined') {
   MjsSocket.prototype._mjs_onResyncResolved = function(h, frame) {
     if (h._mjs_status === 'left') { return; }
     if (!_applyFullFrame(h, frame)) { return; }
-    if (_mjs_safeKey(frame.game)) { this._mjs_games[frame.game] = h; }
+    this._mjs_games[frame.game] = h;
     _dispatchGame(h, 'state', frame);
   };
 
@@ -471,6 +519,12 @@ if (typeof MjsSocket !== 'undefined') {
     _syncGameStore(h);
     if (gameId != null) {
       this.request('µgame:leave', { game: gameId }).then(function() {}, function() {});
+    }
+    // encore en file publique (jamais assise) : le serveur garde son ticket tant qu'on ne le lui dit pas, et apparierait
+    // le joueur suivant avec ce fantôme ; un seul ticket par type et par connexion côté serveur — gardé si une autre
+    // poignée de ce type l'attend encore. waitForOpen : part après le µgame:play encore en attente d'ouverture
+    else if (i !== -1 && _gamePublicQueue(h) && !this._mjs_gamesPending.some(function(o) { return o._mjs_type === h._mjs_type && _gamePublicQueue(o); })) {
+      this.request('µgame:leave', { type: h._mjs_type }, { waitForOpen: true }).then(function() {}, function() {});
     }
   };
 

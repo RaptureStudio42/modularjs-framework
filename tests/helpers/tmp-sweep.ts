@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { sweepRegistered } from './tmp.js'
+import { closeFinishedFiles, countFinishedTest } from './happy-dom-fermeture.js'   //close() réel des fenêtres happy-dom des tests, et filet de fin de fichier
 
 
 function mjsDirsNow(): Set<string> {
@@ -157,6 +158,8 @@ export const mochaHooks = {
     beat = setInterval(() => { try { writeFileSync(lockPath, String(process.pid)) } catch { /* best-effort */ } }, LOCK_BEAT_MS)   //réécrit : un verrou retiré par un harnais sans battement se repose
     beat.unref()
   },
+  beforeEach: closeFinishedFiles,
+  afterEach:  countFinishedTest,
   afterAll() {
     clearInterval(beat)
     if (!otherRunAlive()) {

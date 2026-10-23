@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { extractMarked } from './helpers/extract-marked.js'
+import { poserMessages } from './helpers/messages-stub.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
@@ -21,6 +22,7 @@ function loadHelpers(warns: string[]) {
   const µ: any = { warn: (m: string) => warns.push(m) }
   const src = extractMarked(UJS_SRC, '_mjs_navNoUjs')
             + '\n' + extractMarked(UJS_SRC, '_mjs_navWarnNoUjsMethod')
+  poserMessages(µ)
   new Function('µ', src)(µ)
   return µ
 }

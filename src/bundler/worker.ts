@@ -15,16 +15,18 @@
 //       5. Fait minify (séquentiel — mangleCache partagé esbuild)
 //       6. Écrit le fichier hashé
 //
-//   - Worker (ce fichier) : reçoit le message et délègue à `transpileFromMsg`
-//     (transpile-msg.ts), partagé avec le chemin « dans le processus principal »
-//     que le master emprunte sous le seuil de fichiers — une seule définition de
-//     l'appel à `transpile()` et de la projection du TranspileData.
+//   - Worker (ce fichier) : reçoit le message, prend la langue des messages du
+//     master (le thread a son propre catalogue, resté en français), puis délègue
+//     à `transpileFromMsg` (transpile-msg.ts), partagé avec le chemin « dans le
+//     processus principal » que le master emprunte sous le seuil de fichiers —
+//     une seule définition de l'appel à `transpile()` et de la projection du
+//     TranspileData.
 //
 // Gain mesuré attendu : ~2.4× sur build prod 474 fichiers (41.5s → ~17s).
 
 import { parentPort } from 'node:worker_threads'
 import { transpileFromMsg, type TranspileMsg } from './transpile-msg.js'
-import { t } from '../messages/index.js'
+import { t, setMessagesLang } from '../messages/index.js'
 
 if (!parentPort) {
   throw new Error(t('bundler.worker.parent-port-manquant'))
@@ -39,6 +41,8 @@ parentPort.on('message', async (msg: TranspileMsg) => {
     })
     return
   }
+
+  if (msg.lang) setMessagesLang(msg.lang)
 
   try {
     const result = await transpileFromMsg(msg)

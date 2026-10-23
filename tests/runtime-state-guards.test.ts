@@ -44,41 +44,6 @@ async function mount(name: string, source: string) {
   return { window, el, document }
 }
 
-// Variante : patche `µ.warn` APRÈS l'enregistrement du custom element mais AVANT
-// son instanciation (`innerHTML`), pour capturer les avertissements émis au montage —
-// `µminmax` s'appelle au setup du `<script>`, donc à la connexion de l'élément.
-async function mountCapturingWarn(name: string, source: string) {
-  const root = mjsTmp(`state-guards-${name}`)
-  const srcDir = join(root, 'src')
-  const outDir = join(root, 'out')
-  mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, `${name}.mjs`), source)
-
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
-  const stats = await bundler.compile()
-  assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
-
-  const window: any = new Window({ url: 'http://localhost/' })
-  const document: any = window.document
-  const files = readdirSync(outDir)
-  const coreFile = files.find((f: string) => /^mjs_core-/.test(f))
-  const compFile = files.find((f: string) => new RegExp(`^${name}-`).test(f))
-  const stripEsm = (s: string) => s
-    .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
-    .replace(/^\s*export\s+\{[^}]*\}\s*;?\s*$/gm, '')
-    .replace(/\bexport\s+default\s+/g, '')
-    .replace(/\bexport\s+/g, '')
-    .replace(/import\.meta\.url/g, "'http://localhost/'")
-  window.eval(stripEsm(readFileSync(join(outDir, coreFile!), 'utf-8')))
-  window.eval('globalThis.µ = µ; globalThis.__mjsWarnCalls = []; var __origWarn = µ.warn; µ.warn = function(...a) { globalThis.__mjsWarnCalls.push(String(a[0])); return __origWarn.apply(µ, a); };')
-  window.eval(stripEsm(readFileSync(join(outDir, compFile!), 'utf-8')))
-  document.body.innerHTML = `<mjs-${name}></mjs-${name}>`
-  const el: any = document.body.firstElementChild
-  await new Promise(r => setTimeout(r, 80))
-  const warnCalls: string[] = window.__mjsWarnCalls
-  return { window, el, document, warnCalls }
-}
-
 describe('µ.state() : écriture DIRECTE sur une collection (Array) notifie', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
@@ -154,40 +119,6 @@ describe('µ.state() : écriture DIRECTE sur une collection (Array) notifie', fu
   // réduit `export µ$$X = {...}` en `µ.state(...)`, mêmes traps `coll` ci-dessus) : les
   // 2 tests montés au-dessus exercent donc déjà le chemin de code dont profite le
   // singleton, sans code séparé à côté.
-})
-
-describe('µminmax : bornes inversées avertissent', function () {
-  this.timeout(40000)
-  after(async () => { await terminateSharedWorkerPool() })
-
-  it('min > max sur 2 variables du MÊME composant → 2 avertissements distincts (dédup par composant ET variable, pas par couple min/max)', async () => {
-    const src = [
-      '<script>',
-      '$a = 50',
-      '$b = 50',
-      'µminmax $a, 100, 0',
-      'µminmax $b, 100, 0',
-      '</script>',
-      '<p class="a">{$a}</p>',
-      '<p class="b">{$b}</p>',
-    ].join('\n')
-    const { warnCalls } = await mountCapturingWarn('minmaxinv', src)
-    assert.equal(warnCalls.length, 2, `attendu 2 avertissements distincts (a et b), reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
-    assert.equal(warnCalls[0], '[ModularJS] µminmax : bornes inversées (min 100 > max 0) sur `a`')
-    assert.equal(warnCalls[1], '[ModularJS] µminmax : bornes inversées (min 100 > max 0) sur `b`')
-  })
-
-  it('bornes normales (min < max) → aucun avertissement', async () => {
-    const src = [
-      '<script>',
-      '$c = 50',
-      'µminmax $c, 0, 100',
-      '</script>',
-      '<p class="c">{$c}</p>',
-    ].join('\n')
-    const { warnCalls } = await mountCapturingWarn('minmaxok', src)
-    assert.equal(warnCalls.length, 0, `aucun avertissement attendu, reçu : ${JSON.stringify(warnCalls)}`)
-  })
 })
 
 describe('µraw ignoré par µ._mjs_deepSet/µ._mjs_deepCall : corrigé', function () {
@@ -321,8 +252,8 @@ describe('µderived + await : refusé à la compilation', () => {
 
 // Les traps `set`/`deleteProperty`
 // du proxy `coll` (Array/Map/Set/Date de `_wrap`, mjs_runes.ts) : (1) __proto__/constructor
-// passaient sans garde ni avertissement (remplacement du prototype de l'INSTANCE, cf. µ._mjs_guardPath
-// mjs_init.ts, _mjs_wrapDeep mjs_element.ts, µ.Store mjs_store.ts — tous filtrent déjà cette famille de
+// passaient sans garde ni avertissement (remplacement du prototype de l'INSTANCE, cf. µ._mjs_safeKey
+// mjs_init.ts, que _mjs_wrapDeep mjs_element.ts et µ.Store mjs_store.ts emploient pour filtrer cette famille de
 // clés) ; (2)/(3) `true` en dur au lieu du résultat RÉEL de Reflect.set/Reflect.deleteProperty violait
 // l'invariant Proxy sur une prop non-configurable/non-writable (Object.freeze, `delete arr.length`) ;
 // (4) un élément OBJET d'une collection (`st.list[0]`) restait BRUT (le get trap de `coll` ne rappelait
@@ -331,7 +262,7 @@ describe('proxy `coll` (Array/Map/Set/Date) : garde proto-pollution, invariants 
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('__proto__/constructor sur un élément coll : refusés + avertis, le brut garde son vrai prototype, push reste utilisable', async () => {
+  it('__proto__/constructor sur un élément coll : refusés + tracés, le brut garde son vrai prototype, push reste utilisable', async () => {
     const src = [
       '<script>',
       '@st = µstate({arr: [1, 2, 3]})',
@@ -342,16 +273,17 @@ describe('proxy `coll` (Array/Map/Set/Date) : garde proto-pollution, invariants 
     const len = () => el._shadow.querySelector('.len').textContent.trim()
     const RAW = window.µ._mjs_RAW
     const warnCalls: string[] = []
-    const origWarn = window.µ.warn
-    window.µ.warn = (...a: any[]) => { warnCalls.push(String(a[0])); return origWarn.apply(window.µ, a) }
+    // refus dit par une trace de développement (µ.log), une fois par nom
+    const origLog = window.µ.log
+    window.µ.log = (...a: any[]) => { warnCalls.push(String(a[0])); return origLog.apply(window.µ, a) }
 
     el.st.arr['__proto__'] = { polluted: 42 }
     el.st.arr['constructor'] = 'evil'
-    window.µ.warn = origWarn
+    window.µ.log = origLog
 
-    assert.equal(warnCalls.length, 2, `AVANT le fix : ces 2 clés passaient SANS avertissement, reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
-    assert.match(warnCalls[0], /clé refusée.*__proto__/, 'avertissement __proto__ absent/mal formé')
-    assert.match(warnCalls[1], /clé refusée.*constructor/, 'avertissement constructor absent/mal formé')
+    assert.equal(warnCalls.length, 2, `une trace par clé refusée, reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
+    assert.match(warnCalls[0], /clé refusée.*__proto__/, 'trace __proto__ absente/mal formée')
+    assert.match(warnCalls[1], /clé refusée.*constructor/, 'trace constructor absente/mal formée')
     assert.equal(typeof el.st.arr.push, 'function', 'AVANT le fix : `__proto__` remplaçait le prototype de l\'INSTANCE → push disparaissait')
     assert.equal(Object.getPrototypeOf(el.st.arr[RAW]), window.Array.prototype, 'le brut doit garder Array.prototype (pas de pollution d\'instance)')
 
@@ -433,7 +365,7 @@ describe('proxy `nested` (objets plats) : garde proto-pollution, invariants Prox
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('__proto__/constructor sur `st.obj` : refusés + avertis, le brut garde son vrai prototype, témoin réactif intact', async () => {
+  it('__proto__/constructor sur `st.obj` : refusés + tracés, le brut garde son vrai prototype, témoin réactif intact', async () => {
     const src = [
       '<script>',
       '@st = µstate({obj: {a: 1}})',
@@ -444,16 +376,17 @@ describe('proxy `nested` (objets plats) : garde proto-pollution, invariants Prox
     const av = () => el._shadow.querySelector('.av').textContent.trim()
     const RAW = window.µ._mjs_RAW
     const warnCalls: string[] = []
-    const origWarn = window.µ.warn
-    window.µ.warn = (...a: any[]) => { warnCalls.push(String(a[0])); return origWarn.apply(window.µ, a) }
+    // refus dit par une trace de développement (µ.log), une fois par nom
+    const origLog = window.µ.log
+    window.µ.log = (...a: any[]) => { warnCalls.push(String(a[0])); return origLog.apply(window.µ, a) }
 
     el.st.obj['__proto__'] = { p: 1 }
     el.st.obj['constructor'] = 'evil'
-    window.µ.warn = origWarn
+    window.µ.log = origLog
 
-    assert.equal(warnCalls.length, 2, `AVANT le fix : ces 2 clés passaient SANS avertissement sur \`nested\`, reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
-    assert.match(warnCalls[0], /clé refusée.*__proto__/, 'avertissement __proto__ absent/mal formé')
-    assert.match(warnCalls[1], /clé refusée.*constructor/, 'avertissement constructor absent/mal formé')
+    assert.equal(warnCalls.length, 2, `une trace par clé refusée sur \`nested\`, reçu ${warnCalls.length} : ${JSON.stringify(warnCalls)}`)
+    assert.match(warnCalls[0], /clé refusée.*__proto__/, 'trace __proto__ absente/mal formée')
+    assert.match(warnCalls[1], /clé refusée.*constructor/, 'trace constructor absente/mal formée')
     assert.equal(Object.getPrototypeOf(el.st.obj[RAW]), window.Object.prototype, 'AVANT le fix : `__proto__` remplaçait le prototype de l\'objet BRUT')
     assert.equal(window.eval('({}).p'), undefined, 'contrôle croisé : Object.prototype PARTAGÉ du realm reste intact (pas de pollution qui fuit vers un autre objet)')
 

@@ -1,5 +1,5 @@
 // module cœur select : une option modifiée EN PLACE (liste {for} réactive, même clé, même
-// noeud <mjs-option> réutilisé — donc aucun slotchange) doit se refléter dans le panneau, y
+// noeud <mjs-core-option> réutilisé — donc aucun slotchange) doit se refléter dans le panneau, y
 // compris après fermeture puis réouverture. Patron build+happy-dom calqué sur
 // tests/core-select.test.ts.
 
@@ -22,11 +22,11 @@ const HOST = [
   "$items = [{id: 1, value: 'a', label: 'Alpha'}]",
   'renommer = -> $items = [{id: 1, value: "a", label: "Alpha modifie"}]',
   '</script>',
-  '<@select name="sel">',
+  '<@@select name="sel">',
   '  {for item in $items by id}',
-  '    <@option value={item.value}>{item.label}</@option>',
+  '    <@@option value={item.value}>{item.label}</@@option>',
   '  {end}',
-  '</@select>',
+  '</@@select>',
   '<button class="renommer" @click={renommer()}>renommer</button>',
 ].join('\n')
 
@@ -47,7 +47,7 @@ async function buildAndMount(): Promise<{ window: any; hote: any }> {
     assert.ok(f, `chunk attendu ${re} parmi ${files.join(', ')}`)
     return f!
   }
-  const code = [pick(/^mjs_core-/), pick(/^select-/), pick(/^option-/), pick(/^hote-/)]
+  const code = [pick(/^mjs_core-/), pick(/^core-select-/), pick(/^core-option-/), pick(/^hote-/)]
     .map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8')))
     .join('\n')
 
@@ -68,23 +68,23 @@ async function tick(ms = 30) {
   await new Promise((r) => setTimeout(r, ms))
 }
 
-describe('mjs-select — une option modifiée en place reste juste dans le panneau', function () {
+describe('mjs-core-select — une option modifiée en place reste juste dans le panneau', function () {
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
 
   it('le libellé du panneau suit la mutation dès la première réouverture, sans ajout ni retrait d\'option', async () => {
     const { window, hote } = await buildAndMount()
-    const selEl = hote._shadow.querySelector('mjs-select')
+    const selEl = hote._shadow.querySelector('mjs-core-select')
     const selShadow = () => selEl._shadow
 
     click(window, selShadow().querySelector('.select-btn'))
     await tick()
     assert.equal(selShadow().querySelector('.select-option-label')?.textContent.trim(), 'Alpha', 'préalable : le panneau affiche le libellé initial')
 
-    // mutation EN PLACE : même id -> même noeud <mjs-option> réutilisé, aucun slotchange
+    // mutation EN PLACE : même id -> même noeud <mjs-core-option> réutilisé, aucun slotchange
     click(window, hote._shadow.querySelector('.renommer'))
     await tick()
-    // le bouton est HORS du wrapper <@select> : le clic-dehors (onDocumentClick) referme le
+    // le bouton est HORS du wrapper <@@select> : le clic-dehors (onDocumentClick) referme le
     // panneau, comportement normal
     assert.equal(selEl._state.open, false, 'préalable : le clic-dehors a bien refermé le panneau')
 
@@ -95,7 +95,7 @@ describe('mjs-select — une option modifiée en place reste juste dans le panne
 
   it('le libellé du bouton (hors panneau) suit aussi la mutation en place', async () => {
     const { window, hote } = await buildAndMount()
-    const selEl = hote._shadow.querySelector('mjs-select')
+    const selEl = hote._shadow.querySelector('mjs-core-select')
     const btn = selEl._shadow.querySelector('.select-btn')
 
     click(window, btn)
