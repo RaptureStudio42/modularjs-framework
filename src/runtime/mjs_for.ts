@@ -316,7 +316,7 @@ if (µ.Element) {
   };
 
   µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr) {
-    var cache, d, dyingTail, entry, i, index, isArray, item, items, j, keysArr, l, lastItemNode, lastNode, len, len1, len2, m, n, newEntries, newKeySet, newKeys, nxt, o, oldKey, oldKeys, parentNode, ref, ref1, ref2, ref3;
+    var cache, d, dyingTail, entry, i, index, isArray, item, items, j, keysArr, l, lastItemNode, lastNode, len, len1, len2, m, n, newEntries, newKeySet, newKeys, o, oldKey, oldKeys, parentNode;
     if (!col) {
       // Collection falsy (null/undefined) : au lieu d'un early-return qui
       // laissait les anciennes rows en fantômes (incohérence `[]` vide vs `null`
@@ -640,7 +640,7 @@ if (µ.Element) {
                   }
                   try {
                     return typeof n._mjs_cb_introend === "function" ? n._mjs_cb_introend() : void 0;
-                  } catch (error1) {
+                  } catch {
                     return null;
                   }
                 }).catch(function(err) {
@@ -1136,7 +1136,7 @@ if (µ.Element) {
     // (`__frag`), donc !isConnected → getComputedStyle vide, offsetHeight=0,
     // sampling slide/fly à 0 → animation invisible. Cas vécu : recoche d'un
     // `{if}` qui contient un `{for}` avec `@transition.slide.global`.
-    for (i = m = ref2 = newEntries.length - 1; m >= 0; i = m += -1) {
+    for (i = m = newEntries.length - 1; m >= 0; i = m += -1) {
       ({entry} = newEntries[i]);
       // µ-opt — hoist les nodes de l'entrée (relus 4× : last, first×2, ref3) + `nodes[0]`.
       // `_mjs_liveEntryNodes` et pas `entry.nodes` : une entrée dont un `{if}` racine a
@@ -1176,7 +1176,7 @@ if (µ.Element) {
     // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1, émis
     // seulement pour les composants SANS transitions/@attach) saute ce passage.
     µ._mjs_holdPush = 1;
-    for (i = m = ref2 = newEntries.length - 1; m >= 0; i = m += -1) {
+    for (i = m = newEntries.length - 1; m >= 0; i = m += -1) {
       ({entry, item, index} = newEntries[i]);
       if (entry._mjs_init) {
         entry._mjs_init = 0;

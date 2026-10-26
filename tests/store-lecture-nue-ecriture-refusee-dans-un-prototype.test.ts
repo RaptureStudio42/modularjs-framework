@@ -1,4 +1,4 @@
-// magasin `$$` — une lecture rend ce que JavaScript rend, une écriture va où JavaScript l'envoie : `lu := $$o[k]`,
+// magasin `$$` — une lecture rend ce que JavaScript rend, une écriture qui atteint un prototype est refusée : `lu := $$o[k]`,
 // `v := $$rows[i].v` et la variable de travail de CoffeeScript (`$$rows[i]?.v`) se compilent en lecture nue, sans
 // aide ni garde ; `k` valant `constructor` rend `Object`, `__proto__` rend `Object.prototype`, `prototype` rend
 // `undefined`, sans avertissement ; l'écriture qui suit (par la variable, par le chemin d'un prototype rangé dans le

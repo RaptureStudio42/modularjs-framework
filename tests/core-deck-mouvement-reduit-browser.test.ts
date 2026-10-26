@@ -1,5 +1,6 @@
 // module cœur deck (<@@deck>, en éventail) dans Chromium réel, sous mouvement réduit (prefers-reduced-motion: reduce) : le titre de la
-// carte (::before) et sa barre de couleur (::after) paraissent d'un coup, comme la carte elle-même, sans le fondu d'une demi-seconde.
+// carte (::before) et sa barre de couleur (::after, dépliée par sa taille de fond) paraissent d'un coup, comme la carte elle-même, sans le
+// fondu d'une demi-seconde.
 // Sans mouvement réduit, les deux gardent leur fondu (témoin : le test lit bien ces deux pseudo-éléments).
 
 import assert from 'node:assert/strict'
@@ -57,7 +58,7 @@ describe('<@@deck> : sous mouvement réduit, le titre et la barre perdent leur f
   const apparition = (page: any) => page.evaluate(() => {
     const el = (document.querySelector('mjs-dkm-page') as any)._shadow.querySelector('.c1')
     el.focus()
-    return { titre: getComputedStyle(el, '::before').opacity, barre: getComputedStyle(el, '::after').transform }
+    return { titre: getComputedStyle(el, '::before').opacity, barre: getComputedStyle(el, '::after').backgroundSize }
   }) as Promise<Apparition>
 
   it('mouvement réduit : la carte, son titre et sa barre n\'ont aucune transition', async () => {
@@ -68,7 +69,7 @@ describe('<@@deck> : sous mouvement réduit, le titre et la barre perdent leur f
 
   it('mouvement réduit : au focus, le titre est opaque et la barre dépliée tout de suite', async () => {
     const { ctx, page } = await ouvrir('reduce')
-    assert.deepEqual(await apparition(page), { titre: '1', barre: 'matrix(1, 0, 0, 50, 0, 0)' })
+    assert.deepEqual(await apparition(page), { titre: '1', barre: '50px 500px' })
     await ctx.close()
   })
 

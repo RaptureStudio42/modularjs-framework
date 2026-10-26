@@ -24,7 +24,7 @@ const PAGE = `<form class="fs" method="get" action="/envoi">
 
 describe('rendu serveur : « false », toute casse, lu comme dans le navigateur', function () {
   this.timeout(120000)
-  let parts: Record<string, string> = {}
+  const parts: Record<string, string> = {}
 
   before(async () => {
     const root = mjsTmp('rendu-serveur-faux-casse')

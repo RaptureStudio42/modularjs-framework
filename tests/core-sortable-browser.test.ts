@@ -232,8 +232,6 @@ async function construire(prod: boolean): Promise<{ root: string, script: string
   return { root, script: [...files].sort((a, b) => rang(a) - rang(b) || a.localeCompare(b)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;\n' + libellesDuManifeste(join(root, 'bundle.js')) }
 }
 
-const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
 for (const prod of [false, true]) {
   for (const nom of ['chromium', 'firefox'] as const) {
     describe(`<@@sortable> : la liste triable (${nom} réel, ${prod ? 'production' : 'développement'})`, function () {
@@ -286,7 +284,7 @@ for (const prod of [false, true]) {
           await page.goto('http://t.test/', { waitUntil: 'load' })
           try {
             await page.waitForFunction((t: string) => !!(document.querySelector(t) as any)?._shadow?.querySelector('mjs-core-sortable')?._shadow?.querySelector('slot'), tag)
-          } catch (e: any) {
+          } catch {
             throw new Error(`la page ${tag} ne démarre pas : ${erreurs.join(' | ') || 'aucune erreur de page'} / console : ${avis.join(' | ')}`)
           }
           await page.waitForTimeout(200)

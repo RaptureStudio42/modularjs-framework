@@ -114,12 +114,11 @@ describe('<@failed retry> — limite de réessai', function () {
   it('retry="3" : exactement trois réessais (quatre montages), puis arrêt', async () => {
     const { window, document } = await mount('flaky3', flakySource('3', true))
     assert.equal(window.__mount, 1)
-    let el = document.querySelector('mjs-flaky3')
     for (let i = 0; i < 3; i++) {
-      el = await clickReset(window, document, 'mjs-flaky3')
+      await clickReset(window, document, 'mjs-flaky3')
       assert.equal(window.__mount, 2 + i, `réessai #${i + 1} doit remonter`)
     }
-    el = await clickReset(window, document, 'mjs-flaky3')
+    await clickReset(window, document, 'mjs-flaky3')
     assert.equal(window.__mount, 4, 'les trois réessais consommés, un 4e clic ne doit RIEN remonter')
   })
 
@@ -146,7 +145,7 @@ describe('<@failed retry> — limite de réessai', function () {
   })
 
   it('le compteur ne fuit pas entre deux instances distinctes du même composant', async () => {
-    const { window, document } = await mount('flakytwo', flakySource('', true))
+    const { document } = await mount('flakytwo', flakySource('', true))
     document.body.insertAdjacentHTML('beforeend', '<mjs-flakytwo></mjs-flakytwo>')
     await new Promise(r => setTimeout(r, 80))
     const [elA, elB] = document.querySelectorAll('mjs-flakytwo')

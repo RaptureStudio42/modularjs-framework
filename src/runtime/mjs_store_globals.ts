@@ -21,6 +21,7 @@
 //   µ._storeSet/_mjs_storeDelete       — mutation top-level notifiante (clé + structure '*')
 //   µ._mjs_storeDeepSet/_mjs_storeDeepCall/_mjs_storeDeepDelete — mutation profonde (notifie la clé racine, et les clés qui rangent le même objet)
 //   µ._mjs_storeSetOn/_mjs_storeCallOn/_mjs_storeDeleteOn — même mutation, sur un objet déjà atteint (élément trouvé par `find`…)
+//   µ._mjs_softSetOn/_mjs_softCallOn/_mjs_softDeleteOn — écriture comme JavaScript, qui refuse seulement un prototype du langage (variable du même nom qu'une variable du magasin)
 //   _mjsStoreWrite        — l'écriture commune (µ._mjs_storeSetOn), fonction locale au fichier
 //   _mjsStoreRefus        — avertissement d'un nom réservé, ou d'un objet écrit refusé (fonction, prototype), dans une écriture profonde, fonction locale au fichier
 //   µ._mjs_storeSubscribe/_mjs_storeUnsubscribe — abonnement composant par clés (posé au montage, mjs_element.ts)
@@ -195,6 +196,8 @@ if (!µ._mjs_storeIdx) { µ._mjs_storeIdx = new WeakMap(); }
 // `$$pa = autre`, `sb.x = 1`). `a` : les objets traversés par un chemin entre la racine et l'objet écrit, rangés sous une
 // autre clé (`$$autre = $$cfg.a`, puis `$$cfg.a.l.push(x)`, cf. _mjs_storeDeepSet) — leurs clés aussi
 µ._mjs_storeNotifyDeep = function(rootKey, w, a) {
+  // clé `null` : écriture d'un nom qui lit plusieurs clés du magasin (path-tracker.ts), gardée, rien n'est prévenu
+  if (rootKey === null) return;
   var raw = µ._mjs_storeRaw, idx = µ._mjs_storeIdx, o = raw[rootKey], s = idx.get(o), k, t, i;
   if (w !== o && w != null && (t = idx.get(w))) {
     for (k of t) { if (raw[k] === w) µ._mjs_storeNotifyKey(k); }
@@ -306,6 +309,40 @@ function _mjsStoreWrite(rootKey, o, prop, value, a) {
   delete o[prop];
   µ._mjs_storeNotifyDeep(rootKey, o, a);
   return true;
+};
+
+// aide DOUCE (path-tracker.ts, SOFT) : écriture par une variable qui porte le nom d'une variable déclarée d'une lecture du
+// magasin sans en tenir une (paramètre, autre fonction) — elle écrit comme JavaScript : accesseur appelé, valeur égale
+// écrite, prototype d'une classe de l'appli ou clé `constructor` d'un objet ordinaire permis, aucune clé prévenue. Seuls
+// un prototype d'une classe du langage (`Object.prototype`, où mène une clé `'__proto__'` venue de données) et une classe
+// du langage (`Object`, où mène `constructor`) sont refusés : une classe native, reconnue à son code (`[native code]`),
+// celle d'une autre page (iframe, rendu serveur) comprise. Un objet ordinaire n'en paie qu'une lecture de son
+// `constructor`. Objet absent : l'erreur de JavaScript
+function _mjsNatif(f) {
+  return typeof f === 'function' && /\[native code\]\s*\}$/.test(Function.prototype.toString.call(f));
+}
+function _mjsLangueRefus(o) {
+  var c, p, seg;
+  if (o === null || (typeof o !== 'object' && typeof o !== 'function')) return false;
+  if ((c = o.constructor) && c.prototype === o && _mjsNatif(c)) seg = '__proto__';
+  else if (typeof o === 'function' && (p = o.prototype) && p.constructor === o && _mjsNatif(o)) seg = 'constructor';
+  else return false;
+  _mjsStoreRefus(seg);
+  return true;
+}
+µ._mjs_softSetOn = function(o, prop, value) {
+  if (_mjsLangueRefus(o)) return value;
+  return o[prop] = value;
+};
+µ._mjs_softCallOn = function(o, methodName, args) {
+  if (_mjsLangueRefus(o)) return void 0;
+  var f = o[methodName];
+  if (typeof f !== 'function') { throw new TypeError(methodName + ' is not a function'); }
+  return f.apply(o, args);
+};
+µ._mjs_softDeleteOn = function(o, prop) {
+  if (_mjsLangueRefus(o)) return true;
+  return delete o[prop];
 };
 
 // `µ._mjs_storeDeepSet('game', ['a', 'score'], v)` : mutation profonde SANS Proxy, par un chemin aux clés écrites dans
@@ -436,7 +473,7 @@ try {
       }
     }
   }
-} catch (__se) {
+} catch {
   // réhydratation best-effort : ne jamais casser le boot
 }
 
@@ -514,7 +551,7 @@ if (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsTheme === undefined) {
   if (!__mjsThemeFromAttr) {
     try {
       if (typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches) { __mjsThemeInitial = 'dark'; }
-    } catch (__te) { /* matchMedia absent/throw : repli clair */ }
+    } catch { /* matchMedia absent/throw : repli clair */ }
   }
   __mjsThemeInternalWrite = true;
   if (typeof µ._storeSet === 'function') { µ._storeSet('__mjsTheme', __mjsThemeInitial); }
@@ -537,7 +574,7 @@ if (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsTheme === undefined) {
           __mjsThemeOsUnwatch = function() { __mjsThemeMql.removeEventListener('change', __mjsThemeOsListener); };
         }
       }
-    } catch (__me) { /* matchMedia change listener indisponible : pas de suivi OS */ }
+    } catch { /* matchMedia change listener indisponible : pas de suivi OS */ }
   }
 }
 

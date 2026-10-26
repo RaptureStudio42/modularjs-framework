@@ -115,7 +115,7 @@ function _mjsFxMarqueeMove(parent, node, before) {
       parent.moveBefore(node, before);
       return;
     }
-    catch (e) {}
+    catch {}
   }
   µ._mjs_dom.insertBefore(parent, node, before);
 }
@@ -732,7 +732,7 @@ function _mjsFxMarqueeTell(el, comp) {
           try {
             µ._mjs_dom.setPointerCapture(el, e.pointerId);
           }
-          catch (x) {}
+          catch {}
           µ._mjs_dom.setAttribute(el, 'mjs-fx-marquee-held', '');
         }
         // un mouvement sans déplacement (un navigateur en envoie un juste avant de lâcher) ne compte pas : l'arrêt se mesure depuis le dernier vrai mouvement
@@ -974,7 +974,7 @@ function _mjsFxMarqueeTell(el, comp) {
             try {
               µ._mjs_dom.releasePointerCapture(el, g.id);
             }
-            catch (x) {}
+            catch {}
           }
           g = null;
           window.removeEventListener('pointermove', move);

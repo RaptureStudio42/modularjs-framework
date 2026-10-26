@@ -1,7 +1,7 @@
 // mjs_fx_toolbeat — la cadence des effets qui se répètent (*shine, *attention, *glitch, *annotate)
 //   µ._mjs_fxEvery(el, v, dflt)
-//         la cadence en ms : le réglage `every` écrit sur la balise (`v`), sinon la variable de thème commune `$$fx-every`
-//         (`--mjs-fx-every`, lue sur la balise : posée par un `<theme>` ou un `<style>` plus haut), sinon le défaut de l'effet. La
+//         la cadence en ms : le réglage `every` écrit sur la balise (`v`), sinon la variable de thème commune `$$mjs-fx-every`
+//         (`--mjs-mjs-fx-every`, lue sur la balise : posée par un `<theme>` ou un `<style>` plus haut), sinon le défaut de l'effet. La
 //         variable passe la règle de `every` écrit sur la balise (une durée : 300ms, 1.5s, 0) : une valeur qu'elle refuse est ignorée,
 //         l'effet garde son défaut, et le développement le dit une fois par valeur
 //   var stop = µ._mjs_fxBeat(ms, f, wait)
@@ -14,7 +14,7 @@
 
 µ._mjs_fxEvery = function(el, v, dflt) {
   if (v !== void 0 && v !== null && v !== '') return µ._mjs_fxMs(v, dflt);
-  var css = µ._mjs_fxCss(el, '--mjs-fx-every');
+  var css = µ._mjs_fxCss(el, '--mjs-mjs-fx-every');
   // la règle de `every` tenu par une variable (la même qu'à la construction) : `-1s`, `2` sans unité, `abc` sont refusés
   if (µ._mjs_fxNorm(css, ['t'])[1] === 0) return µ._mjs_fxMs(css, dflt);
   // l'avis, une fois par valeur, est du développement (cf. µ._mjs_fxEveryWarn, mjs_fx.ts) : la production n'a pas la fonction

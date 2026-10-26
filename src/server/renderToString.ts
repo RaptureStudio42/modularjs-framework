@@ -1212,6 +1212,18 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   }
   const coreFile = coreFiles[0]
   const coreCode = stripEsm(readFileSync(join(outputDir, coreFile), 'utf-8'))
+  // libellés du runtime (modules cœur, modale, routeur, effets) : le navigateur les reçoit par le manifeste, que la fenêtre de
+  // rendu n'évalue pas — sans eux, chaque `µ._mjs_label` rendait `undefined` et la page servie sortait sans ces textes
+  // (graphique vide muet, noms d'accessibilité vides, texte d'attente de <@@select> absent), qui n'arrivaient qu'à la reprise.
+  // La table du manifeste et sa langue de repli, une fois par renderer : la langue AFFICHÉE se choisit ensuite au rendu, comme au
+  // navigateur (µlang, langue du module i18n, `lang` du document, langue de repli du projet), surcharges `mjs.<groupe>.<clé>`
+  // du dictionnaire racine comprises (µ._mjs_label, mjs_init.ts). Sans les messages de la console (groupes `err` et `dev`) :
+  // la fenêtre de rendu garde pour eux son texte de secours, comme avant, et chaque rendu ne relit qu'une table de quelques Ko
+  const uiLabels = Object.fromEntries(Object.entries(bundler.manifestLabels()).map(([lang, groups]) => {
+    const { err: _err, dev: _dev, ...ui } = groups as Record<string, unknown>
+    return [lang, ui]
+  }))
+  const labelsLine = `µ._runtimeLabels = ${JSON.stringify(uiLabels)};\nµ._runtimeLabelsLang = ${JSON.stringify(bundler.labelsLang())};`
 
   // Portée par fichier (Option A) : chaque module/composant part dans sa propre
   // IIFE, ses imports résolus en destructuration locale depuis les namespaces
@@ -1469,7 +1481,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         noterTexteFeuilles(window)
         // thèmes de l'application : le navigateur les reçoit par le manifeste (`µ._themeCss`), la fenêtre de rendu n'évalue pas le manifeste
         const themeLine = bundler.themeCss ? `µ._themeCss = ${JSON.stringify(bundler.themeCss)}; if (typeof µ._themeAdopt === 'function') { µ._themeAdopt(); }\n` : ''
-        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${i18nDataLine}\n${i18nSectionsLine}\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
+        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${labelsLine}\n${i18nDataLine}\n${i18nSectionsLine}\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
       } catch (e: any) {
         throw new Error(t('server.ssr-eval-echec', { message: e.message }))
       }
@@ -1597,6 +1609,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // déjà résolu. `lang` (racine de la balise) reste la langue EFFECTIVE de CE rendu ; chaque clé
       // de `used` lit son propre dictionnaire (`µ._i18nDict[sa langue à elle]`, peuplé pour
       // `effectiveLang` ET `defLang` par le préchargement disque ci-dessus).
+      // Textes racine : ceux que `µ.t` a notés, plus les surcharges des libellés du framework (`mjs.<groupe>.<clé>`) de la
+      // langue du rendu — `µ._mjs_label` les lit sans les noter, et sans elles la reprise, qui dessine avant l'arrivée du
+      // fichier de langue, remplaçait les textes du serveur par les libellés par défaut
       const i18nScript = effectiveLang ? serializeGlobal(
         `(function() {
           var used = µ._i18nUsed || {}
@@ -1613,7 +1628,9 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
               any = true
             }
           }
-          var root = (${buildSeedRoot.toString()})(µ._i18nUsedRoot, µ._i18nLangs)
+          var usedRoot = µ._i18nUsedRoot || {}
+          usedRoot[${JSON.stringify(effectiveLang)}] = Object.assign({ mjs: true }, usedRoot[${JSON.stringify(effectiveLang)}])
+          var root = (${buildSeedRoot.toString()})(usedRoot, µ._i18nLangs)
           if (!any && !root) { return null }
           var seed = { lang: ${JSON.stringify(effectiveLang)}, sections: sections }
           if (root) { seed.root = root }

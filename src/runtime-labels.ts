@@ -43,7 +43,7 @@ export const RUNTIME_LABELS = {
     router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' },
     toast:  { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' },
     ujs:    { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' },
-    core:   { carouselPrev: 'Précédent', carouselNext: 'Suivant', codeCopy: 'Copier le code', codeCopied: 'Copié !', selectPlaceholder: 'Choisir…', selectSearch: 'Rechercher…', selectEmpty: 'Aucun résultat', selectOther: 'Autre…', selectOtherPlaceholder: 'Précisez', selectOtherHint: 'Entrée pour valider · Échap pour revenir', selectOtherOk: 'Valider', selectOtherSep: '\u00a0: ', numberLabel: 'Nombre', numberLess: 'Moins', numberMore: 'Plus', numberBigLess: 'Diminuer de {n}', numberBigMore: 'Augmenter de {n}', gaugeLabel: 'Nombre', knobLabel: 'Valeur', progressLabel: 'Progression', colorLabel: 'Couleur', menuLabel: 'Menu', clockHours: 'Heures', clockMinutes: 'Minutes', clockSeconds: 'Secondes', editorLabel: 'Éditeur de texte', editorPlaceholder: 'Écrivez ici…', toolbarLabel: 'Mise en forme', toolH2: 'Titre', toolH3: 'Sous-titre', toolQuote: 'Citation', toolBold: 'Gras', toolItalic: 'Italique', toolUnderline: 'Souligné', toolStrike: 'Barré', toolUl: 'Liste à puces', toolOl: 'Liste numérotée', toolCheck: 'Liste à cocher', toolLink: 'Lien', toolUndo: 'Annuler', toolRedo: 'Rétablir', toolClear: 'Effacer la mise en forme', linkLabel: 'Adresse du lien', linkApply: 'Appliquer', linkRemove: 'Retirer le lien', linkCancel: 'Annuler', linkDone: 'Lien enregistré', boxChecked: 'Case cochée', boxUnchecked: 'Case non cochée', checked: 'Case cochée', unchecked: 'Case décochée' },
+    core:   { carouselPrev: 'Précédent', carouselNext: 'Suivant', codeCopy: 'Copier le code', codeCopied: 'Copié !', selectPlaceholder: 'Choisir…', selectSearch: 'Rechercher…', selectEmpty: 'Aucun résultat', selectOther: 'Autre…', selectOtherPlaceholder: 'Précisez', selectOtherHint: 'Entrée pour valider · Échap pour revenir', selectOtherOk: 'Valider', selectOtherSep: '\u00a0: ', numberLabel: 'Nombre', numberLess: 'Moins', numberMore: 'Plus', numberBigLess: 'Diminuer de {n}', numberBigMore: 'Augmenter de {n}', gaugeLabel: 'Nombre', knobLabel: 'Valeur', progressLabel: 'Progression', colorLabel: 'Couleur', menuLabel: 'Menu', clockHours: 'Heures', clockMinutes: 'Minutes', clockSeconds: 'Secondes', editorLabel: 'Éditeur de texte', editorPlaceholder: 'Écrivez ici…', toolbarLabel: 'Mise en forme', toolH2: 'Titre', toolH3: 'Sous-titre', toolQuote: 'Citation', toolBold: 'Gras', toolItalic: 'Italique', toolUnderline: 'Souligné', toolStrike: 'Barré', toolUl: 'Liste à puces', toolOl: 'Liste numérotée', toolCheck: 'Liste à cocher', toolLink: 'Lien', toolUndo: 'Annuler', toolRedo: 'Rétablir', toolClear: 'Effacer la mise en forme', linkLabel: 'Adresse du lien', linkApply: 'Appliquer', linkRemove: 'Retirer le lien', linkCancel: 'Annuler', linkDone: 'Lien enregistré', boxChecked: 'Case cochée', boxUnchecked: 'Case non cochée', checked: 'Case cochée', unchecked: 'Case décochée', chartLabel: 'Graphique', chartEmpty: 'Aucune valeur', chartHint: 'Flèches pour parcourir les points, Entrée pour choisir', chartGrouped: 'Moyenne de {n} valeurs', chartWeekOf: 'Semaine du {date}', chartOwnScale: 'Une échelle par série\u00a0: leurs unités diffèrent', chartMean: 'Moyenne', chartMedian: 'Médiane', chartQ1: 'Premier quartile', chartQ3: 'Troisième quartile', chartTrend: 'Tendance', chartNext: 'le cercle\u00a0: le point suivant estimé', chartDate: 'Date', chartTime: 'Date et heure', chartNumber: 'Valeur', chartCategory: 'Libellé', chartPeriod: 'Période', chartTotal: 'Total', chartOthers: 'Autres', chartRange: 'De {from} à {to}', chartCount: 'Valeurs', chartBin: 'Classe', chartSeries: 'Série', chartShare: 'Part', chartPieNone: 'L\'anneau ne convient pas à ces données\u00a0: il compare plusieurs séries de même unité, ou des libellés', chartBrowse: 'Flèches pour parcourir les valeurs', chartChoose: 'Flèches pour parcourir les valeurs, Entrée pour choisir', chartLess: 'Moins', chartMore: 'Plus', chartDayHour: 'Jour et heure', chartTools: 'Outils du graphique', chartLegend: 'Séries affichées', chartShape: 'Forme', chartShapeOf: 'Forme\u00a0: {shape}', chartLine: 'Courbe', chartArea: 'Aire', chartDots: 'Points', chartBar: 'Barres', chartStack: 'Barres empilées', chartHistogram: 'Histogramme', chartPie: 'Anneau', chartHeatmap: 'Carte d\'intensité', chartRadar: 'Radar', chartCalendar: 'Calendrier', chartStats: 'Statistiques', chartStep: 'Pas de temps', chartAuto: 'Automatique', chartDay: 'Jour', chartWeek: 'Semaine', chartMonth: 'Mois', chartYear: 'Année' },
     fx:     { range: 'de {a} à {b}', atLeast: 'au moins {a}', atMost: 'au plus {b}', chars: 'de {a} à {b} caractères', charsMin: 'au moins {a} caractères', charsMax: 'au plus {b} caractères', or: 'ou', except: 'sauf', invalid: 'valeur refusée', offline: 'Hors ligne', loading: 'Chargement', pending1: '1 changement partira au retour du réseau', pendingN: '{n} changements partiront au retour du réseau', spoiler: 'Texte masqué, activer pour l\'afficher', flip: 'Retourner la carte' },
     err: {
       // mjs_vt_presets.ts
@@ -397,6 +397,18 @@ export const RUNTIME_LABELS = {
       coreColorNoValue: 'l\'attribut « value » est requis.',
       // src/core-modules/toolbar.mjs
       coreToolbarUnknown: '<@@toolbar> : l\'outil « {n} » n\'existe pas, il est ignoré — outils connus : {list}.',
+      // src/core-modules/chart.mjs
+      coreChartWord: '<@@chart> : « {word} » n\'est pas une valeur connue de {prop}, elle est ignorée — valeurs connues : {list}.',
+      coreChartColor: '<@@chart> : la couleur « {color} » de la série « {key} » est refusée, la série prend la teinte {hue} — écrivez un nom de teinte ({list}), un entier de 1 ou plus (au-delà de 6, on reprend au début) ou une couleur CSS que le navigateur sait lire, sans « ; », « : », guillemet, accolade, « < », « > », « \\ », « /* » ni url(…).',
+      coreChartNoStats: '<@@chart> : la forme {shape} ne trace pas stats « {word} », il est ignoré — formes qui tracent des statistiques : {list} ; trend : {trend}.',
+      coreChartMix: '<@@chart> : {prop} « {word} » ne va pas avec la forme {shape}, il est ignoré — valeurs possibles : {list}.',
+      coreChartRadar: '<@@chart> : un radar demande au moins 3 lignes, une par axe ; il en reçoit {n}, une courbe le remplace.',
+      coreChartRadarCut: '<@@chart> : un radar montre {max} axes au plus, les {n} lignes reçues sont réduites aux {max} dernières.',
+      coreChartUnits: '<@@chart> : les séries de la forme {shape} n\'ont pas la même unité ({units}) et partagent pourtant une même échelle.',
+      coreChartZone: '<@@chart> : « {zone} » n\'est pas un fuseau connu, il est ignoré — écrivez local ou le nom d\'une zone IANA (Europe/Paris, UTC…) ; sans fuseau, les heures s\'affichent telles qu\'elles sont écrites.',
+      coreChartDecimals: '<@@chart> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 10 ; sans decimals, les nombres gardent leur écriture automatique.',
+      coreChartPieDrop: '<@@chart> : la série « {key} » n\'a pas de total positif, l\'anneau ne lui donne aucune part.',
+      coreChartPieLabelDrop: '<@@chart> : le libellé « {label} » n\'a pas de total positif, l\'anneau ne lui donne aucune part.',
       // src/core-modules/gauge.mjs
       coreGaugeStep: '<@@gauge> : le pas « {n} » n\'est pas un nombre positif, la jauge avance de 1. Écrivez un pas plus grand que 0.',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
@@ -409,7 +421,7 @@ export const RUNTIME_LABELS = {
       // mjs_fx.ts
       fxBrought: '*{name} : {k} = {vu} ramené à {to} — permis : {reg}{at}',
       fxRefused: '*{name} : {k} = {vu} refusé, valeur par défaut — permis : {reg}{at}',
-      fxEveryRefused: 'la variable de thème $$fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}',
+      fxEveryRefused: 'la variable de thème $$mjs-fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}',
       // mjs_fx_sprite.ts
       spriteImage: '*sprite : l\'image {url} est introuvable — la planche n\'est pas animée',
       spriteFps: '*sprite : fps et speed sont écrits tous les deux — fps l\'emporte',
@@ -422,6 +434,9 @@ export const RUNTIME_LABELS = {
       cloneOption: 'µclone : option « {opt} » inconnue — la seule option est mirror : µclone el, mirror: true rend un miroir vivant, qui partage l\'état de l\'original.',
     },
     dev: {
+      // mjs_debug.ts
+      propOneWay: '<{tag}> écrit sa prop « {prop} » : cette valeur vient du parent ; liez-la par !{…} ou envoyez un événement. Le parent garde sa propre valeur, il ne voit pas ce changement.',
+      attachNotFn: '<{tag}> : l\'@attach de <{node}> (ligne {line}) a rendu une valeur de type {type}, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss : replaceSync a échoué pour la feuille légère <{tag}> :',
       hotcssTag: '_hotCss : replaceSync a échoué pour <{tag}> :',
@@ -515,9 +530,13 @@ export const RUNTIME_LABELS = {
       // mjs_fx_autosize.ts
       autosizeField: '*autosize : sur un <{tag}>, l\'effet ne fait rien — il fait glisser la taille d\'une boîte quand son contenu change (une balise ajoutée, un bloc qui s\'ouvre, une image qui arrive), et ce qu\'on tape dans un champ n\'en change pas le contenu. Posez *autosize sur la boîte dont le contenu change, par exemple celle qui entoure le champ et ses messages.',
       // select.mjs
-      selectOtherScript: '<@@select> : une liste reçoit « other » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — en production, la réponse libre « Autre » ne serait pas envoyée. Écrivez « other » sur la liste dans votre page plutôt que de le poser par un script.',
+      selectOtherScript: '<@@select> : une liste reçoit « other » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — la réponse libre « Autre » n\'est pas envoyée, ni en développement ni en production. Écrivez « other » sur la liste dans votre page plutôt que de le poser par un script.',
       // editor.mjs
-      editorAnswerScript: '<@@editor> : un éditeur reçoit « answer » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — en production, le mode « répondre » ne serait pas envoyé. Écrivez « answer » sur l\'éditeur dans votre page plutôt que de le poser par un script.',
+      editorAnswerScript: '<@@editor> : un éditeur reçoit « answer » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — le mode « répondre » n\'est pas envoyé, ni en développement ni en production. Écrivez « answer » sur l\'éditeur dans votre page plutôt que de le poser par un script.',
+      // toolbar.mjs
+      toolbarToolScript: '<@@toolbar> : une barre reçoit l\'outil « {n} » d\'un script, mais aucune page de l\'application n\'écrit cet outil — il n\'est pas envoyé, ni en développement ni en production. Écrivez « {n} » dans la liste d\'outils d\'une barre de votre page (l\'attribut toolbar d\'un éditeur, ou tools d\'une barre) plutôt que de le poser par un script.',
+      // chart.mjs
+      chartToolbarScript: '<@@chart> : un graphique reçoit « toolbar » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — la barre d\'outils n\'est pas envoyée, ni en développement ni en production. Écrivez « toolbar » sur le graphique dans votre page plutôt que de le poser par un script.',
     },
   },
   en: {
@@ -525,7 +544,7 @@ export const RUNTIME_LABELS = {
     router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' },
     toast:  { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' },
     ujs:    { sendFailed: 'Sending failed — the server did not respond.' },
-    core:   { carouselPrev: 'Previous', carouselNext: 'Next', codeCopy: 'Copy code', codeCopied: 'Copied!', selectPlaceholder: 'Choose…', selectSearch: 'Search…', selectEmpty: 'No results', selectOther: 'Other…', selectOtherPlaceholder: 'Please specify', selectOtherHint: 'Enter to confirm · Esc to go back', selectOtherOk: 'Confirm', selectOtherSep: ': ', numberLabel: 'Number', numberLess: 'Less', numberMore: 'More', numberBigLess: 'Decrease by {n}', numberBigMore: 'Increase by {n}', gaugeLabel: 'Number', knobLabel: 'Value', progressLabel: 'Progress', colorLabel: 'Color', menuLabel: 'Menu', clockHours: 'Hours', clockMinutes: 'Minutes', clockSeconds: 'Seconds', editorLabel: 'Text editor', editorPlaceholder: 'Write here…', toolbarLabel: 'Formatting', toolH2: 'Heading', toolH3: 'Subheading', toolQuote: 'Quote', toolBold: 'Bold', toolItalic: 'Italic', toolUnderline: 'Underline', toolStrike: 'Strikethrough', toolUl: 'Bulleted list', toolOl: 'Numbered list', toolCheck: 'Checklist', toolLink: 'Link', toolUndo: 'Undo', toolRedo: 'Redo', toolClear: 'Clear formatting', linkLabel: 'Link address', linkApply: 'Apply', linkRemove: 'Remove link', linkCancel: 'Cancel', linkDone: 'Link saved', boxChecked: 'Checked box', boxUnchecked: 'Unchecked box', checked: 'Box checked', unchecked: 'Box unchecked' },
+    core:   { carouselPrev: 'Previous', carouselNext: 'Next', codeCopy: 'Copy code', codeCopied: 'Copied!', selectPlaceholder: 'Choose…', selectSearch: 'Search…', selectEmpty: 'No results', selectOther: 'Other…', selectOtherPlaceholder: 'Please specify', selectOtherHint: 'Enter to confirm · Esc to go back', selectOtherOk: 'Confirm', selectOtherSep: ': ', numberLabel: 'Number', numberLess: 'Less', numberMore: 'More', numberBigLess: 'Decrease by {n}', numberBigMore: 'Increase by {n}', gaugeLabel: 'Number', knobLabel: 'Value', progressLabel: 'Progress', colorLabel: 'Color', menuLabel: 'Menu', clockHours: 'Hours', clockMinutes: 'Minutes', clockSeconds: 'Seconds', editorLabel: 'Text editor', editorPlaceholder: 'Write here…', toolbarLabel: 'Formatting', toolH2: 'Heading', toolH3: 'Subheading', toolQuote: 'Quote', toolBold: 'Bold', toolItalic: 'Italic', toolUnderline: 'Underline', toolStrike: 'Strikethrough', toolUl: 'Bulleted list', toolOl: 'Numbered list', toolCheck: 'Checklist', toolLink: 'Link', toolUndo: 'Undo', toolRedo: 'Redo', toolClear: 'Clear formatting', linkLabel: 'Link address', linkApply: 'Apply', linkRemove: 'Remove link', linkCancel: 'Cancel', linkDone: 'Link saved', boxChecked: 'Checked box', boxUnchecked: 'Unchecked box', checked: 'Box checked', unchecked: 'Box unchecked', chartLabel: 'Chart', chartEmpty: 'No values', chartHint: 'Arrow keys to browse the points, Enter to choose', chartGrouped: 'Average of {n} values', chartWeekOf: 'Week of {date}', chartOwnScale: 'One scale per series: their units differ', chartMean: 'Mean', chartMedian: 'Median', chartQ1: 'First quartile', chartQ3: 'Third quartile', chartTrend: 'Trend', chartNext: 'the circle: the next estimated point', chartDate: 'Date', chartTime: 'Date and time', chartNumber: 'Value', chartCategory: 'Label', chartPeriod: 'Period', chartTotal: 'Total', chartOthers: 'Others', chartRange: '{from} to {to}', chartCount: 'Values', chartBin: 'Range', chartSeries: 'Series', chartShare: 'Share', chartPieNone: 'A ring does not suit this data: it compares several series with the same unit, or labels', chartBrowse: 'Arrow keys to browse the values', chartChoose: 'Arrow keys to browse the values, Enter to choose', chartLess: 'Less', chartMore: 'More', chartDayHour: 'Day and time', chartTools: 'Chart tools', chartLegend: 'Shown series', chartShape: 'Shape', chartShapeOf: 'Shape: {shape}', chartLine: 'Line', chartArea: 'Area', chartDots: 'Dots', chartBar: 'Bars', chartStack: 'Stacked bars', chartHistogram: 'Histogram', chartPie: 'Ring', chartHeatmap: 'Heat map', chartRadar: 'Radar', chartCalendar: 'Calendar', chartStats: 'Statistics', chartStep: 'Time step', chartAuto: 'Automatic', chartDay: 'Day', chartWeek: 'Week', chartMonth: 'Month', chartYear: 'Year' },
     fx:     { range: 'from {a} to {b}', atLeast: 'at least {a}', atMost: 'at most {b}', chars: '{a} to {b} characters', charsMin: 'at least {a} characters', charsMax: 'at most {b} characters', or: 'or', except: 'except', invalid: 'value refused', offline: 'Offline', loading: 'Loading', pending1: '1 change will be sent when the network is back', pendingN: '{n} changes will be sent when the network is back', spoiler: 'Hidden text, activate to show it', flip: 'Flip the card' },
     err: {
       // mjs_vt_presets.ts
@@ -557,12 +576,12 @@ export const RUNTIME_LABELS = {
       modalCustomClass: '`customClass` must be an object, received {type}.',
       modalSoundType: '`sound` must be a boolean or a string, received {type}.',
       modalNoBody: '`document.body` is missing — a modal cannot be shown at this point of the page load.',
-      modalUnknownIcon: 'µ.modal.fire — unknown icon « {v} », ignored (expected: {list}).',
-      modalUnknownInput: 'µ.modal.fire — unknown input type « {v} », falling back to « text » (expected: {list}).',
-      modalSoundPath: 'µ.sound — path « {path} » cannot be resolved, no sound: {reason}.',
-      modalSoundUnknown: 'µ.sound — unknown type « {type} », no sound (expected: {list}).',
-      modalNotifyPos: 'µ.config.notifyPosition: invalid value (« {v} ») — falling back to \'top-right\'.',
-      modalNotifyFlow: 'µ.config.notifyFlow: invalid value (« {v} ») — falling back to \'auto\'.',
+      modalUnknownIcon: 'µ.modal.fire — unknown icon "{v}", ignored (expected: {list}).',
+      modalUnknownInput: 'µ.modal.fire — unknown input type "{v}", falling back to "text" (expected: {list}).',
+      modalSoundPath: 'µ.sound — path "{path}" cannot be resolved, no sound: {reason}.',
+      modalSoundUnknown: 'µ.sound — unknown type "{type}", no sound (expected: {list}).',
+      modalNotifyPos: 'µ.config.notifyPosition: invalid value ("{v}") — falling back to \'top-right\'.',
+      modalNotifyFlow: 'µ.config.notifyFlow: invalid value ("{v}") — falling back to \'auto\'.',
       modalPreConfirm: 'µ.modal: preConfirm failed —',
       modalValidator: 'µ.modal: inputValidator failed —',
       // mjs_element.ts
@@ -577,43 +596,43 @@ export const RUNTIME_LABELS = {
       elStructLoop: '<{tag}>: structural mutation loop detected (20 passes) — re-render abandoned. A var driving a {for}/{if} is probably mutated again by the render itself.',
       // mjs_store_globals.ts
       storeGWatch: 'µ._mjs_storeWatch: callback failed.',
-      storeGProtoKey: 'µ.store: key « {k} » refused — it belongs to the JavaScript prototype, choose another name.',
-      storeGCycle: 'µ.store: computed cycle detected on « {key} » — returning undefined.',
-      storeGKey: 'µ.store: key refused (« {key} ») — mutation ignored.',
-      storeGTheme: 'µtheme: « {value} » is not a declared theme — ignored. Known themes: {themes}.',
-      storeGResKey: 'µ.res: key refused (« {k} ») — mutation ignored.',
+      storeGProtoKey: 'µ.store: key "{k}" refused — it belongs to the JavaScript prototype, choose another name.',
+      storeGCycle: 'µ.store: computed cycle detected on "{key}" — returning undefined.',
+      storeGKey: 'µ.store: key refused ("{key}") — mutation ignored.',
+      storeGTheme: 'µtheme: "{value}" is not a declared theme — ignored. Known themes: {themes}.',
+      storeGResKey: 'µ.res: key refused ("{k}") — mutation ignored.',
       storeGResTag: 'µres: __mjs_res tag unreadable at boot, ignored.',
       // mjs_runes.ts
-      runesKey: 'µ.state: key refused (« {key} ») — mutation ignored.',
-      runesCycle: 'µ.state: computed cycle detected on « {key} » — returning undefined.',
+      runesKey: 'µ.state: key refused ("{key}") — mutation ignored.',
+      runesCycle: 'µ.state: computed cycle detected on "{key}" — returning undefined.',
       // mjs_every.ts
       everyInit: 'µevery must be called at initialization.',
-      everySyntax: 'µevery is written « µevery 2500, -> »: a delay in milliseconds, then the function to repeat.',
-      everyHash: 'µevery: the 2nd argument is an options hash (« µevery 3000, pause: true, -> ») — received:',
-      everyOptType: 'µevery: option « {opt} » expected of type {type}, received: ',
+      everySyntax: 'µevery is written "µevery 2500, ->": a delay in milliseconds, then the function to repeat.',
+      everyHash: 'µevery: the 2nd argument is an options hash ("µevery 3000, pause: true, ->") — received:',
+      everyOptType: 'µevery: option "{opt}" expected of type {type}, received: ',
       everyIgnored: '— option ignored.',
-      everyUnknownOpt: 'µevery: unknown option « {opt} ». Known options: {list}.',
-      everyTimes: 'µevery: option « times » expected ≥ 0, received:',
+      everyUnknownOpt: 'µevery: unknown option "{opt}". Known options: {list}.',
+      everyTimes: 'µevery: option "times" expected ≥ 0, received:',
       everyError: 'µevery:',
-      everyWhileAsync: 'µevery: the « while » option must return a SYNCHRONOUS boolean — an async function returns a promise, always truthy, and the repetition would never stop. Stopped.',
+      everyWhileAsync: 'µevery: the "while" option must return a SYNCHRONOUS boolean — an async function returns a promise, always truthy, and the repetition would never stop. Stopped.',
       // mjs_dynamic.ts
       dynAccept: '<@element>/<@module>: accept expects a list of names (array or space-separated string)',
-      dynRefused: '<@element>/<@module>: tag « {norm} » refused — a dynamic element cannot become {norm}; to allow it explicitly: accept="{norm}".',
-      dynNotListed: '<@element>/<@module>: tag « {norm} » refused — not in the list accept="{list}"; when accept is present, only the names it lists are created.',
+      dynRefused: '<@element>/<@module>: tag "{norm}" refused — a dynamic element cannot become {norm}; to allow it explicitly: accept="{norm}".',
+      dynNotListed: '<@element>/<@module>: tag "{norm}" refused — not in the list accept="{list}"; when accept is present, only the names it lists are created.',
       dynInstance: '<@module>: cannot instantiate the component. Pass the tag NAME (kebab string of the custom element) rather than the class.',
       // mjs_i18n.ts
-      i18nMissing: 'i18n: key « {key} » missing in « {lang} », falling back to « {def} »',
+      i18nMissing: 'i18n: key "{key}" missing in "{lang}", falling back to "{def}"',
       i18nNoData: 'i18n: µ._i18nData never received, i18n components shown as placeholders',
-      i18nLoadSection: 'i18n: failed to load « {section} » ({lang}) — {reason}',
-      i18nLoadLang: 'i18n: failed to load the language « {lang} » ({url}) — {reason}',
+      i18nLoadSection: 'i18n: failed to load "{section}" ({lang}) — {reason}',
+      i18nLoadLang: 'i18n: failed to load the language "{lang}" ({url}) — {reason}',
       i18nHook: 'i18n: language switch hook failed:',
       i18nSecours: 'i18n: texts still missing after {ms} ms — the module appears with ⟦key⟧ in place of each missing text, the texts will replace them on arrival',
       // mjs_fx.ts
-      fxLoad: 'effect « {name} »: its file failed to load —',
-      fxApply: 'effect « {name} »: applying it failed —',
+      fxLoad: 'effect "{name}": its file failed to load —',
+      fxApply: 'effect "{name}": applying it failed —',
       fxRemove: 'effect removal failed:',
       // mjs_store.ts
-      storeKey: 'µ.Store: key refused (« {prop} ») — mutation ignored.',
+      storeKey: 'µ.Store: key refused ("{prop}") — mutation ignored.',
       storeProto: 'store: prototype change refused',
       // mjs_if.ts
       ifReintro: 'Re-intro failed:',
@@ -648,8 +667,8 @@ export const RUNTIME_LABELS = {
       interpInvalidator: 'µ.interpolate: invalidator failed, detached.',
       interpNonFinite: 'µ.interpolate: non-finite value ignored ({value})',
       // mjs_init.ts
-      initReadOnly: '<{tag}>: property « {prop} » is read-only, value ignored.',
-      initPath: 'state path refused (segment « {seg} ») — mutation ignored.',
+      initReadOnly: '<{tag}>: property "{prop}" is read-only, value ignored.',
+      initPath: 'state path refused (segment "{seg}") — mutation ignored.',
       // mjs_for.ts
       forDupKeys: '{for}: duplicate keys detected — only the first occurrences are rendered. Check that the `by` key is unique. (cacheId: {id})',
       // mjs_failed.ts
@@ -675,11 +694,11 @@ export const RUNTIME_LABELS = {
       reactNoCore: '*react: the socket module is missing from the core (runtime setting)',
       // mjs_fx_heatmap.ts
       heatmapServerHint: ' — for a server address, write server: \'{on}\'',
-      heatmapEvent: '*heatmap: « {name} » is not a valid event name (lowercase: click, mousemove, dblclick…){hint}',
+      heatmapEvent: '*heatmap: "{name}" is not a valid event name (lowercase: click, mousemove, dblclick…){hint}',
       // mjs_ticker.ts
       tickerTask: 'Ticker: task failed, ejected.',
       // mjs_socket.ts
-      socketPackage: '{effet}: the MJS WS server does not know « {type} » — it lacks the {paquet} package: add app.use({invoke}) on the server side; until then, nothing is sent',
+      socketPackage: '{effet}: the MJS WS server does not know "{type}" — it lacks the {paquet} package: add app.use({invoke}) on the server side; until then, nothing is sent',
       // mjs_rare_runes.ts
       runesInspectInit: 'µ.inspect must be called at initialization.',
       // mjs_lazy_css.ts
@@ -695,8 +714,8 @@ export const RUNTIME_LABELS = {
       hoverOf: '*{name}: no ancestor of the tag matches "{of}" (the of setting): its direct parent drives the hover. Check this selector.',
       // mjs_fx_path.ts
       pathStays: '*path: {why} — the tag does not move{tag}',
-      pathMissing: 'the path « {from} » does not exist in your component (an SVG <path> is needed)',
-      pathUnreadable: 'the path « {d} » is unreadable',
+      pathMissing: 'the path "{from}" does not exist in your component (an SVG <path> is needed)',
+      pathUnreadable: 'the path "{d}" is unreadable',
       // mjs_fx_travel.ts
       travelNone: '*travel: the destination "{to}" was not found, this step is skipped — check the selector, it is looked up in your component, then in the page',
       // mjs_fx_liquid.ts
@@ -798,7 +817,7 @@ export const RUNTIME_LABELS = {
       sockOptionInvalid: 'option {name} ignored: invalid value {value}',
       sockBadUrl: 'invalid URL, connection abandoned: {url}',
       sockDuplicateAuth: '{url}: a connection to this address already exists with a different auth — it is returned to you as is, under its first identity; close it (destroy()) before opening another one under another identity',
-      sockHandleGone: '{fn}() on a handle of room « {room} » that has already left (leave()): nothing is registered or sent — to use this room again, take a new handle with sock.room()',
+      sockHandleGone: '{fn}() on a handle of room "{room}" that has already left (leave()): nothing is registered or sent — to use this room again, take a new handle with sock.room()',
       // mjs_ajax.ts
       ajaxBinVersionDiff: 'schema version differs (client {hashLocal}, server {version}) — refreshing in the background',
       ajaxBinTooShort: 'response too short to carry a schema version (8 bytes expected, {size} received)',
@@ -879,6 +898,18 @@ export const RUNTIME_LABELS = {
       coreColorNoValue: 'the \'value\' attribute is required.',
       // src/core-modules/toolbar.mjs
       coreToolbarUnknown: '<@@toolbar>: the tool "{n}" does not exist, it is ignored — known tools: {list}.',
+      // src/core-modules/chart.mjs
+      coreChartWord: '<@@chart>: "{word}" is not a known value of {prop}, it is ignored — known values: {list}.',
+      coreChartColor: '<@@chart>: the color "{color}" of the series "{key}" is refused, the series takes hue {hue} — write a theme hue name ({list}), an integer of 1 or more (past 6, the hues start over) or a CSS color the browser can read, without ";", ":", quote, brace, "<", ">", "\\", "/*" or url(…).',
+      coreChartNoStats: '<@@chart>: the {shape} shape does not draw stats "{word}", it is ignored — shapes that draw statistics: {list}; trend: {trend}.',
+      coreChartMix: '<@@chart>: {prop} "{word}" does not go with the {shape} shape, it is ignored — possible values: {list}.',
+      coreChartRadar: '<@@chart>: a radar needs at least 3 rows, one per axis; it receives {n}, a line chart replaces it.',
+      coreChartRadarCut: '<@@chart>: a radar shows {max} axes at most, the {n} rows received are cut to the last {max}.',
+      coreChartUnits: '<@@chart>: the series of the {shape} shape do not have the same unit ({units}) yet they share one scale.',
+      coreChartZone: '<@@chart>: "{zone}" is not a known time zone, it is ignored — write local or the name of an IANA zone (Europe/Paris, UTC…); without a time zone, hours are shown as they are written.',
+      coreChartDecimals: '<@@chart>: decimals "{value}" is ignored — write a whole number from 0 to 10; without decimals, numbers keep their automatic writing.',
+      coreChartPieDrop: '<@@chart>: the series "{key}" has no positive total, the ring gives it no share.',
+      coreChartPieLabelDrop: '<@@chart>: the label "{label}" has no positive total, the ring gives it no share.',
       // src/core-modules/gauge.mjs
       coreGaugeStep: '<@@gauge>: the step "{n}" is not a positive number, the gauge moves by 1. Write a step greater than 0.',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
@@ -891,7 +922,7 @@ export const RUNTIME_LABELS = {
       // mjs_fx.ts
       fxBrought: '*{name} : {k} = {vu} brought back to {to} — allowed: {reg}{at}',
       fxRefused: '*{name} : {k} = {vu} refused, default value — allowed: {reg}{at}',
-      fxEveryRefused: 'the theme variable $$fx-every is {vu}, a refused value: each effect keeps its default cadence — allowed: a duration (300ms, 1.5s, 0){at}',
+      fxEveryRefused: 'the theme variable $$mjs-fx-every is {vu}, a refused value: each effect keeps its default cadence — allowed: a duration (300ms, 1.5s, 0){at}',
       // mjs_fx_sprite.ts
       spriteImage: '*sprite: the image {url} was not found — the sheet is not animated',
       spriteFps: '*sprite: fps and speed are both written — fps wins',
@@ -904,10 +935,13 @@ export const RUNTIME_LABELS = {
       cloneOption: 'µclone: unknown option "{opt}" — the only option is mirror: µclone el, mirror: true returns a live mirror, which shares the state of the original.',
     },
     dev: {
+      // mjs_debug.ts
+      propOneWay: '<{tag}> writes its prop "{prop}": this value comes from the parent; bind it with !{…} or send an event. The parent keeps its own value, it does not see this change.',
+      attachNotFn: '<{tag}>: the @attach on <{node}> (line {line}) returned a value of type {type}, not a function: it is ignored. Return a cleanup function, called when the element goes away, or nothing.',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss: replaceSync failed for the light sheet <{tag}>:',
       hotcssTag: '_hotCss: replaceSync failed for <{tag}>:',
-      hotcssShared: '_hotCss: replaceSync failed for the shared sheet « {name} »:',
+      hotcssShared: '_hotCss: replaceSync failed for the shared sheet "{name}":',
       hotcssRoot: '_hotCss: replaceSync failed for mjs_root:',
       // mjs_devinspect.ts
       inspectArmed: 'object inspector armed — µconsole(value), or from the panel (Ctrl+Shift+Space)',
@@ -997,9 +1031,13 @@ export const RUNTIME_LABELS = {
       // mjs_fx_autosize.ts
       autosizeField: '*autosize: on a <{tag}>, the effect does nothing — it smoothly resizes a box when its content changes (a tag added, a block that opens, an image that arrives), and typing in a field does not change its content. Place *autosize on the box whose content changes, for example the one around the field and its messages.',
       // select.mjs
-      selectOtherScript: '<@@select>: a list gets "other" from a script, but no page of the application writes that attribute — in production the free "Other" answer would not be shipped. Write "other" on the list in your page instead of setting it from a script.',
+      selectOtherScript: '<@@select>: a list gets "other" from a script, but no page of the application writes that attribute — the free "Other" answer is not shipped, neither in development nor in production. Write "other" on the list in your page instead of setting it from a script.',
       // editor.mjs
-      editorAnswerScript: '<@@editor>: an editor gets "answer" from a script, but no page of the application writes that attribute — in production the "answer" mode would not be shipped. Write "answer" on the editor in your page instead of setting it from a script.',
+      editorAnswerScript: '<@@editor>: an editor gets "answer" from a script, but no page of the application writes that attribute — the "answer" mode is not shipped, neither in development nor in production. Write "answer" on the editor in your page instead of setting it from a script.',
+      // toolbar.mjs
+      toolbarToolScript: '<@@toolbar>: a toolbar gets the tool "{n}" from a script, but no page of the application writes that tool — it is not shipped, neither in development nor in production. Write "{n}" in the tool list of a toolbar in your page (the toolbar attribute of an editor, or tools of a toolbar) instead of setting it from a script.',
+      // chart.mjs
+      chartToolbarScript: '<@@chart>: a chart gets "toolbar" from a script, but no page of the application writes that attribute — the toolbar is not shipped, neither in development nor in production. Write "toolbar" on the chart in your page instead of setting it from a script.',
     },
   },
 }
@@ -1028,14 +1066,23 @@ export const CORE_LABEL_MODULES: Record<string, string[]> = {
   menu:     ['menuLabel'],
   clock:    ['clockHours', 'clockMinutes', 'clockSeconds'],
   editor:   ['editorLabel', 'editorPlaceholder', 'linkLabel', 'linkApply', 'linkRemove', 'linkCancel', 'linkDone', 'boxChecked', 'boxUnchecked', 'checked', 'unchecked'],
-  toolbar:  ['toolbarLabel', 'toolH2', 'toolH3', 'toolQuote', 'toolBold', 'toolItalic', 'toolUnderline', 'toolStrike', 'toolUl', 'toolOl', 'toolCheck', 'toolLink', 'toolUndo', 'toolRedo', 'toolClear']
+  toolbar:  ['toolbarLabel', 'toolH2', 'toolH3', 'toolQuote', 'toolBold', 'toolItalic', 'toolUnderline', 'toolStrike', 'toolUl', 'toolOl', 'toolCheck', 'toolLink', 'toolUndo', 'toolRedo', 'toolClear'],
+  chart:    ['chartLabel', 'chartEmpty', 'chartHint', 'chartGrouped', 'chartWeekOf', 'chartOwnScale', 'chartMean', 'chartMedian', 'chartQ1', 'chartQ3', 'chartTrend', 'chartNext', 'chartDate', 'chartTime', 'chartNumber', 'chartCategory', 'chartPeriod', 'chartTotal', 'chartOthers', 'chartRange', 'chartCount', 'chartBin', 'chartSeries', 'chartShare', 'chartPieNone', 'chartBrowse', 'chartChoose', 'chartLess', 'chartMore', 'chartDayHour', 'chartTools', 'chartLegend', 'chartShape', 'chartShapeOf', 'chartLine', 'chartArea', 'chartDots', 'chartBar', 'chartStack', 'chartHistogram', 'chartPie', 'chartHeatmap', 'chartRadar', 'chartCalendar', 'chartStats', 'chartStep', 'chartAuto', 'chartDay', 'chartWeek', 'chartMonth', 'chartYear']
 }
 
-// les clés du groupe `core` des modules donnés ; un nom sans ligne dans la table (module sans libellé, nom inconnu,
-// `constructor`…) n'en apporte aucune
-export function coreLabelKeys(modules: Iterable<string>): Set<string> {
+// les clés d'une PARTIE d'un module que la construction ôte quand aucune page ne la demande (cf. STRICT_ATTRS, bundler/core-sections.ts), nommée
+// `<module>.<attribut>` : `chart.toolbar`, la barre d'outils de <@@chart> (ses textes, les noms des formes de son menu, ceux des pas de temps). Ses clés
+// restent rangées sous leur module dans CORE_LABEL_MODULES (le module les lit) ; le manifeste ne les pose pas quand la partie est ôtée (cf. coreLabelKeys)
+export const CORE_LABEL_PARTS: Record<string, string[]> = {
+  'chart.toolbar': ['chartTools', 'chartLegend', 'chartShape', 'chartShapeOf', 'chartStats', 'chartStep', 'chartLine', 'chartArea', 'chartDots', 'chartBar', 'chartStack', 'chartHistogram', 'chartPie', 'chartHeatmap', 'chartRadar', 'chartCalendar', 'chartAuto', 'chartDay', 'chartWeek', 'chartMonth', 'chartYear']
+}
+
+// les clés du groupe `core` des modules donnés, moins celles des parties ôtées (`dropped`, cf. CORE_LABEL_PARTS) ; un nom sans ligne dans la table
+// (module sans libellé, nom inconnu, `constructor`…) n'en apporte aucune, une partie inconnue n'en ôte aucune
+export function coreLabelKeys(modules: Iterable<string>, dropped: Iterable<string> = []): Set<string> {
   const keys = new Set<string>()
   for (const name of modules) if (Object.hasOwn(CORE_LABEL_MODULES, name)) for (const key of CORE_LABEL_MODULES[name]) keys.add(key)
+  for (const part of dropped) if (Object.hasOwn(CORE_LABEL_PARTS, part)) for (const key of CORE_LABEL_PARTS[part]) keys.delete(key)
   return keys
 }
 
@@ -1064,15 +1111,15 @@ export function fxLabelKeys(effects: Iterable<string>): Set<string> {
 // dans le build ; absent (faits inconnus), tous sont gardés. `coreModules` = les modules cœur que le build
 // emporte : le groupe `core` se réduit à leurs clés, dans l'ordre de la table, et ne part pas quand il n'en
 // reste aucune ; absent (faits inconnus), le groupe est gardé entier. `fxEffects` = les fichiers d'effet que le build
-// emporte (noms sans `mjs_fx_`) : même découpe du groupe `fx` (cf. fxLabelKeys). Sans `groups`, ni `coreModules` ni
-// `fxEffects` ne jouent
-export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, coreModules?: ReadonlySet<string>, fxEffects?: ReadonlySet<string>) {
+// emporte (noms sans `mjs_fx_`) : même découpe du groupe `fx` (cf. fxLabelKeys). `coreDropped` = les parties des modules cœur que le
+// build a ôtées (cf. CORE_LABEL_PARTS) : leurs clés ne partent pas. Sans `groups`, ni `coreModules`, ni `coreDropped`, ni `fxEffects` ne jouent
+export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, coreModules?: ReadonlySet<string>, fxEffects?: ReadonlySet<string>, coreDropped?: ReadonlySet<string>) {
   const garde = (t: any) => {
     if (!groups) return t
     const reste: any = {}
     for (const k of Object.keys(t)) {
       if (OPTIONAL_LABEL_GROUPS.includes(k) && !groups.has(k)) continue
-      const keys = k === 'core' && coreModules ? coreLabelKeys(coreModules) : k === 'fx' && fxEffects ? fxLabelKeys(fxEffects) : undefined
+      const keys = k === 'core' && coreModules ? coreLabelKeys(coreModules, coreDropped) : k === 'fx' && fxEffects ? fxLabelKeys(fxEffects) : undefined
       if (keys) {
         const part = Object.fromEntries(Object.entries(t[k]).filter(([key]) => keys.has(key)))
         if (Object.keys(part).length > 0) reste[k] = part
@@ -1082,7 +1129,7 @@ export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, co
     return reste
   }
   if (!prod) return { fr: garde(RUNTIME_LABELS.fr), en: garde(RUNTIME_LABELS.en) }
-  const sansMessages = (t: any) => { const { dev, err, ...reste } = t; return garde(reste) }
+  const sansMessages = (t: any) => { const { dev: _dev, err: _err, ...reste } = t; return garde(reste) }
   return { fr: sansMessages(RUNTIME_LABELS.fr), en: sansMessages(RUNTIME_LABELS.en) }
 }
 

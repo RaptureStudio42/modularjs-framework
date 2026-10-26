@@ -10,7 +10,7 @@
 // que la balise est à l'écran ; click : un passage par clic ; load : un passage à l'apparition ;
 // success, error : un passage quand l'envoi réussit, ou échoue),
 // every (entre deux passages, pour always et view, calés sur l'horloge commune des effets qui se
-// répètent ; sans lui, la variable de thème `$$fx-every`, sinon 3s ; hover, écrit : les passages se
+// répètent ; sans lui, la variable de thème `$$mjs-fx-every`, sinon 3s ; hover, écrit : les passages se
 // suivent ainsi pendant le survol).
 
 µ._mjs_fxDefs.shine = {

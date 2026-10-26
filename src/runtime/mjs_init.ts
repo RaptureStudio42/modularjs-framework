@@ -82,7 +82,7 @@ try {
       µ._mjs_ssrHydrate = hydrateEl.getAttribute('data-mjs-ssr-hydrate');
     }
   }
-} catch (__e2) {
+} catch {
   // no-op
 }
 
@@ -159,21 +159,23 @@ Object.defineProperty(µ, 'activeComponent', {
 //
 // Le niveau vient de `µ._logLevel` (chaîne posée par le build, clé `logLevel`
 // de mjs.config.json — cf. bundler/config.ts) ; absent, repli 'log' (jamais un
-// silence par accident). Défauts du build : dev 'log', prod 'warn'.
+// silence par accident ; le manifeste le pose toujours). Défauts du build : dev 'log', prod 'error'.
 //
 // `µ.debug = true`, posé à la main dans la console, FORCE 'log' quel que soit
 // ce réglage — l'échappatoire de mise au point survit au niveau configuré, EN
-// DÉVELOPPEMENT. En build de production, la LECTURE ci-dessous compile en
-// `µ.debug` (défini à `false` par le minifieur, cf. bundler/minify.ts) : le
-// branchement disparaît à la compilation, l'échappatoire console n'existe
-// plus dans ce bundle-là (µ.debug reste assignable, mais plus lu nulle part).
+// DÉVELOPPEMENT, minifié ou non. En build de production minifié, le build réécrit la
+// LECTURE ci-dessous en un identifiant libre que le minifieur pose à `false` (pas un
+// define de `µ.debug`, cf. bundleRuntime, bundler/index.ts) : le branchement disparaît à la compilation, l'échappatoire
+// console n'existe plus dans ce bundle-là (µ.debug reste assignable, mais plus lu nulle part).
 //
-// En PROD, au-dessus de 'log' (défaut 'warn'), le build retire du cœur les traces
-// `µ.log(…)` et `µ._mjs_logger()?.(…)` avec leurs arguments, et l'aide `µ._mjs_logger`
-// avec elles ; aux niveaux stricts ('error'/'silent'), le minifieur retire aussi
-// les appels `console.*` correspondants DU BUNDLE (cf. bundler/minify.ts,
-// `cutRuntimeTraces` et `pure`, dépendant du niveau) — cette vérification de niveau
-// reste utile en dev/non-minifié, où rien n'est retiré à la compilation.
+// En PROD, au-dessus de 'log', le build retire du cœur les traces `µ.log(…)` et
+// `µ._mjs_logger()?.(…)` avec leurs arguments, et l'aide `µ._mjs_logger` avec elles ;
+// aux niveaux 'error' (le défaut) et 'silent', les appels `µ.warn(…)` du runtime aussi,
+// au niveau 'silent' ses appels `µ.error(…)` quand le journal des erreurs n'est pas
+// embarqué ; le minifieur retire enfin les appels `console.*` correspondants DU BUNDLE
+// (cf. bundler/minify.ts, `cutRuntimeTraces` et `pure`, dépendant du niveau) — cette
+// vérification de niveau reste utile en dev/non-minifié, où rien n'est retiré à la
+// compilation, et pour les appels écrits par l'application, qui restent.
 // ----------------------------------------------------------------------------
 µ.debug = false;
 
@@ -493,7 +495,7 @@ function _mjsMsgNote(lvl, args) {
 // texte d'une valeur quelconque, sans jamais lever : `String` écrit aussi un Symbol (une concaténation `+ ''` lève sur
 // lui) ; un objet sans prototype, qui n'a ni toString ni valueOf, donne un texte vide
 function _mjsMsgStr(a) {
-  try { return String(a); } catch (e) { return ''; }
+  try { return String(a); } catch { return ''; }
 }
 // une erreur non attrapée qui porte un texte court en attente : l'entrée est « levée »
 function _mjsMsgHear(e) {
@@ -563,7 +565,7 @@ var _mjsMsgIdle = 0;
     try {
       var lang = _mjsMsgLang();
       if (lang) { _mjsMsgAsk({ l: lang, u: µ._msgUrls[lang] }); }
-    } catch (e) { }
+    } catch { }
   };
   var rest = function() { window.requestIdleCallback ? window.requestIdleCallback(go) : setTimeout(go, 200); };
   document.readyState === 'complete' ? rest() : window.addEventListener('load', rest);
@@ -578,7 +580,7 @@ var _mjsMsgIdle = 0;
     if (typeof t === 'string') { txt = t; }
     else if (grp === 'err' && µ._msgUrls) {
       txt = String(key);
-      try { txt += ' ' + JSON.stringify(vars || {}); } catch (e) { txt += ' {}'; }
+      try { txt += ' ' + JSON.stringify(vars || {}); } catch { txt += ' {}'; }
       try {
         var urls = µ._msgUrls;
         var lang = _mjsMsgLang();
@@ -592,12 +594,12 @@ var _mjsMsgIdle = 0;
           }
           _mjsMsgPend = 1;
         }
-      } catch (e) { }
+      } catch { }
       return txt;
     }
     return txt.replace(/\{(\w+)\}/g, function(m, n) { return (vars && Object.prototype.hasOwnProperty.call(vars, n)) ? String(vars[n]) : m; });
   }
-  catch (e) { return txt; }
+  catch { return txt; }
 };
 µ._mjs_msg = function(key, vars, fr) {
   return '[ModularJS] ' + µ._mjs_txt(key, vars, fr, 1);
@@ -665,7 +667,7 @@ var _mjsMsgIdle = 0;
     try {
       el[k] = v;
     }
-    catch (e) {
+    catch {
       var vues = µ._mjs_ro.get(el);
       if (!vues) {
         vues = Object.create(null);
@@ -718,9 +720,11 @@ var _mjsMsgIdle = 0;
 // MÊME cible que celle déjà connue de son propre carnet (_mjs_proxyCache indexé
 // par target), au lieu d'empiler un Proxy-de-Proxy à chaque frontière — c'est
 // cet empilement qui cassait l'identité et faisait repartir le ping-pong.
-// Boucle (pas un seul niveau) : une chaîne héritée peut être imbriquée.
+// Boucle (pas un seul niveau) : une chaîne héritée peut être imbriquée. Le symbole se lit une fois par niveau : sur une
+// enveloppe, chaque lecture passe par son piège `get`
 µ._mjs_toRaw = function(o) {
-  while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW];
+  var r;
+  while (o != null && typeof o === 'object' && (r = o[µ._mjs_RAW])) o = r;
   return o;
 };
 
@@ -871,6 +875,33 @@ var _mjsMsgIdle = 0;
 // var pendant son exécution, le 2e `_mjs_invalidate` détecte `_mjs_inEffect === true`
 // et bascule en microtask (comportement V1).
 µ._mjs_inEffect = false;
+
+// <boucles>
+// Rendus d'une boucle regroupés (generator/loop-batch.ts) : le compilateur enveloppe une boucle qui écrit l'état,
+// `µ._mjs_lq++; try { … } finally { --µ._mjs_lq || µ._mjs_lqF() }`. Tant qu'une boucle tourne, une écriture qui
+// redessinerait tout de suite les textes et attributs d'une variable qui ne pilote aucun bloc et ne pose aucune prop
+// d'un composant enfant (voie directe de `_mjs_invalidate`, mjs_element.ts) attend : le composant note le nom (`_mjs_lqk`) et entre une fois dans la file
+// `µ._mjs_lqq`. La sortie de la boucle la plus extérieure prévient chaque composant de la file, une fois par nom noté,
+// par le chemin ordinaire d'une écriture : textes et attributs à jour avant l'instruction qui suit la boucle, blocs et
+// reffets à leur heure habituelle. La file est relevée avant d'être jouée (une boucle jouée pendant la vidange a la
+// sienne) ; un composant qui lève n'arrête pas les suivants, son erreur sort en microtâche. Bloc gardé au cœur des seules
+// applis dont le compilateur a enveloppé une boucle (bundler/index.ts)
+µ._mjs_lq = 0;
+µ._mjs_lqq = [];
+µ._mjs_lqF = function() {
+  var q = µ._mjs_lqq;
+  µ._mjs_lqq = [];
+  for (var i = 0; i < q.length; i++) {
+    var el = q[i], ks = el._mjs_lqk;
+    el._mjs_lqk = null;
+    try {
+      ks.forEach(function(k) { el._mjs_invalidate(k); });
+    } catch (e) {
+      queueMicrotask(function() { throw e; });
+    }
+  }
+};
+// </boucles>
 
 // Helper template+cloneNode pour les `__create_X()` sans interpolations.
 //

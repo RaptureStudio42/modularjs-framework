@@ -149,7 +149,7 @@ describe('mjs_theme.ts — montage happy-dom', function () {
   })
 
   it('composant AVEC thème : document.adoptedStyleSheets porte les deux feuilles (framework + application)', async () => {
-    const { window, document, µ } = await mountHarness({}, '<style>\n:host\n  color: var(--mjs-fg)\n</style>\n<p>x</p>\n')
+    const { document, µ } = await mountHarness({}, '<style>\n:host\n  color: var(--mjs-fg)\n</style>\n<p>x</p>\n')
     document.body.innerHTML = '<mjs-hop></mjs-hop>'
     assert.ok(µ._mjs_themeSheet, 'la feuille de thème du framework doit exister au boot')
     assert.ok(µ._mjs_themeAppSheet, "la feuille de thème de l'application doit exister au boot, même vide")

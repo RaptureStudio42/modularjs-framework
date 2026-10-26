@@ -35,7 +35,7 @@ export type FeatureScanData = {
 export const SCAN_KEYS = [
   'title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes',
   'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle',
-  'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone',
+  'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone', 'chart',
 ] as const
 
 // un effet `*nom` écrit dans un gabarit (ou sur `<@document>`) : le moteur (`fx`) et le fichier de
@@ -88,6 +88,10 @@ export const I18N_LOADER = 'i18n_loader'
 // l'appli se sert de la traduction : une page écrit `@i18n` ou `µt(…)` (le compilateur pose alors `_mjs_i18n` ou appelle `µ.t(`). Sert à refuser un
 // `runtime` qui n'embarque pas 'i18n' (bundler/index.ts, resolveRuntimeFiles) seulement quand l'appli en a besoin. Signal à part, comme I18N_PAQUETS
 export const I18N_USED = 'i18n_used'
+// une boucle qui écrit l'état, enveloppée par le compilateur (`µ._mjs_lq++;try{…}`, generator/loop-batch.ts) : la file des boucles (bloc balisé
+// `<boucles>` de mjs_init.ts et de `_mjs_invalidate`, mjs_element.ts) n'entre au cœur que si une unité de ce build en a une. Signal à part, comme
+// I18N_PAQUETS : une appli sans boucle enveloppée reçoit un cœur identique à l'octet
+export const BOUCLES = 'boucles'
 // les appels `µ?.Autoloader?.observe?.(` et `µ.Autoloader?.load?.(` sont écrits par le compilateur dans CHAQUE composant : ils ne comptent pas
 const REGEX_AUTOLOADER_MENTION = /\bAutoloader\b(?!\?\.(?:observe|load)\?\.\()/
 const REGEX_PRELOAD_MENTION    = /\bpreload\b/
@@ -247,6 +251,9 @@ const REGEX_FORM_RESET = /\._mjs_formReset\(/
 // composant qui déclare `@formAssociated` (un module de saisie du cœur, un composant de l'application), juste avant l'enregistrement de sa balise ;
 // le préfixe `_mjs_` est réservé au framework : un projet sans composant déclaré n'en cite aucun et ne paie pas le fichier
 const REGEX_FORM_ASSOCIATED = /\._mjs_formClass\(/
+// les calculs des graphiques (mjs_chart.ts) : `µ._mjs_chart` écrit par les modules de graphiques du cœur (échelles, statistiques, tracés), jamais
+// par une application (le préfixe `_mjs_` est réservé au framework) : un projet sans graphique n'en cite aucun et ne paie pas le fichier
+const REGEX_CHART = /\._mjs_chart\b/
 // entrée/sortie de survol (mjs_boundary.ts) : la clé de l'événement dans la table de routage que le gabarit compilé passe à
 // `_mjs_bindEvents({"mouseenter":{…}})` (JSON.stringify : toujours entre guillemets doubles). Faux positifs acceptés
 // (le nom d'événement dans un texte), jamais de faux négatif ; seul un nom fabriqué à l'exécution échappe (`runtime: ['boundary']`).
@@ -271,6 +278,8 @@ const REGEX_I18N_USED   = /µ\.t\(|\b_mjs_i18n\b/
 // l'attente de ce module est l'indicateur de chargement : `_mjs_i18n = ["accueil","*loader",null,{"style":"bloom"}]` (ou sans section, `[null,"*loader"]`)
 const REGEX_I18N_LOADER = /\b_mjs_i18n = \[(?:null|"[a-z0-9_-]+"),"\*loader"/
 const REGEX_TYPES =/\._mjs_types = |\._mjs_storeTypes\(/
+// l'ouverture de l'enveloppe d'une boucle qui écrit l'état, cherchée sans son objet (`µ`/`mjs` selon la config du projet)
+const REGEX_BOUCLES = /\._mjs_lq\+\+;\s*try\s*\{/
 
 // la valeur d'un réglage écrit dans une pose, en texte : un mot, un nombre ou un booléen en toutes lettres ; `*` quand le build ne
 // sait pas la lire (une variable `($.s)`, sa règle `["l", …]`, une liste, un objet)
@@ -482,8 +491,10 @@ export function scanCompiledFeatures(js: string, data?: FeatureScanData, aliases
   if (REGEX_CLONE.test(js)) used.add('clone')
   if (REGEX_FORM_RESET.test(js)) used.add('form_reset')
   if (REGEX_FORM_ASSOCIATED.test(js)) used.add('form_associated')
+  if (REGEX_CHART.test(js)) used.add('chart')
   if (REGEX_I18N_USED.test(js)) used.add(I18N_USED)
   if (REGEX_I18N_PAQUETS.test(js)) used.add(I18N_PAQUETS)
+  if (REGEX_BOUCLES.test(js)) used.add(BOUCLES)
   if (REGEX_I18N_LOADER.test(js)) {
     used.add(I18N_LOADER)
     used.add('fx')

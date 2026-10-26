@@ -483,7 +483,7 @@ var _mjsFxHoloTypes = function() {
   var defs = [['rx', '<angle>', '0deg'], ['tx', '<length>', '0px'], ['ty', '<length>', '0px'], ['s', '<number>', '1']];
   for (var i = 0; i < defs.length; i++) {
     try { CSS.registerProperty({ name: '--mjs-fx-hologram-' + defs[i][0], syntax: defs[i][1], inherits: false, initialValue: defs[i][2] }); }
-    catch (e) { }
+    catch { }
   }
 };
 // @@

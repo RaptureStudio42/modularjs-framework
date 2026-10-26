@@ -1,4 +1,4 @@
-// La construction de production n'envoie le code des noms cachés des lignes à cocher de l'éditeur riche (<@@editor>) qu'aux applications qui s'en servent, avec les repères
+// La construction n'envoie le code des noms cachés des lignes à cocher de l'éditeur riche (<@@editor>) qu'aux applications qui s'en servent, avec les repères
 // `@@` du fichier du module :
 // - le mode « répondre » (attribut `answer`) : la lecture du nom d'une ligne (`data-key`), le choix du nom ou de la position qui désigne chaque ligne, la lecture de
 //   `checked` en noms ; une page qui n'écrit pas `answer` n'en reçoit rien ;
@@ -6,7 +6,7 @@
 //   n'en reçoit rien ;
 // - le nom lu et réécrit sert aux deux : il part avec l'un ou avec l'autre, une seule fois quand les deux restent ;
 // - une application qui n'écrit pas `answer` et n'affiche pas l'outil des cases reçoit exactement le code d'avant : aucun des noms des lignes nommées n'y figure.
-// Le développement garde tout. Statique, avec un Bundler réel, sur le texte non minifié (les noms du code y survivent).
+// Le développement prend la même décision que la production. Statique, avec un Bundler réel, sur le texte non minifié (les noms du code y survivent).
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -95,9 +95,11 @@ describe('éditeur riche : le code des noms cachés des lignes n\'est envoyé qu
     for (const motif of [/\bkeyOf =/g, /\bisKey =/g, /\bkeysOf =/g, /\bnameLines =/g, /\bhasText =/g]) assert.equal(fois(c, motif), 1, `${motif} défini une fois`)
   })
 
-  it('le développement garde tout, même sans answer ni outil des cases, chaque définition une seule fois', async () => {
-    const c = await construire('noms-dev', page('<@@editor name="e" toolbar="bold italic" value=!{$v}></@@editor>'), { env: 'dev' })
-    pose(c, TOUT, 'développement')
-    for (const motif of [/\bkeyOf =/g, /\bisKey =/g, /\bkeysOf =/g, /\bnameLines =/g]) assert.equal(fois(c, motif), 1, `${motif} défini une fois`)
+  it('le développement tranche comme la production : sans answer ni outil des cases, aucun des noms ; avec les deux, chaque définition une seule fois', async () => {
+    const sans = await construire('noms-dev', page('<@@editor name="e" toolbar="bold italic" value=!{$v}></@@editor>'), { env: 'dev' })
+    absent(sans, TOUT, 'développement, ni answer ni cases')
+    const avec = await construire('noms-dev-tout', page('<@@editor name="e" answer value={$v} checked=!{$c}></@@editor><@@editor name="f" toolbar="bold check" value=!{$v}></@@editor>'), { env: 'dev' })
+    pose(avec, TOUT, 'développement, answer et cases')
+    for (const motif of [/\bkeyOf =/g, /\bisKey =/g, /\bkeysOf =/g, /\bnameLines =/g]) assert.equal(fois(avec, motif), 1, `${motif} défini une fois`)
   })
 })

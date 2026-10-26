@@ -820,26 +820,26 @@ Chaque réglage **visuel** d'un effet est une variable de thème `$$<effet>-<ré
 
 Les listes de couleurs se règlent aussi par thème : `$$gradient-colors`, `$$rainbow-colors`, `$$confetti-colors`, `$$mesh-colors`, `$$border-colors` (`$$rainbow-colors: red, gold, #0ff`). S'y ajoute `$$glitch-blend` (le mélange des calques du glitch, `screen`). Les autres réglages règlent un comportement (un geste, un nombre, un style) : ils s'écrivent sur la balise. La cadence des effets qui se répètent a, elle, sa variable commune.
 
-### Une cadence commune : `$$fx-every`
+### Une cadence commune : `$$mjs-fx-every`
 
-Les effets qui se répètent ont un réglage `every`, le temps entre deux passages : `*shine`, `*attention`, `*glitch` et `*annotate`. La variable de thème `$$fx-every` leur donne une cadence commune : posée dans un bloc `<theme>` ou un `<style>`, elle vaut pour toute la descendance, et `every` écrit sur la balise l'emporte. L'éclat de `*spotlight` a son propre réglage (`every` sur la balise, ou `$$spotlight-every`), que la cadence commune ne touche pas.
+Les effets qui se répètent ont un réglage `every`, le temps entre deux passages : `*shine`, `*attention`, `*glitch` et `*annotate`. La variable de thème `$$mjs-fx-every` leur donne une cadence commune : posée dans un bloc `<theme>` ou un `<style>`, elle vaut pour toute la descendance, et `every` écrit sur la balise l'emporte. L'éclat de `*spotlight` a son propre réglage (`every` sur la balise, ou `$$spotlight-every`), que la cadence commune ne touche pas.
 
 ```html
 <theme>
-  $$fx-every: 4s
+  $$mjs-fx-every: 4s
 </theme>
 
 <button *shine(on: always)>Un reflet toutes les 4 s</button>
 <button *shine(on: always, every: 2s)>Un reflet toutes les 2 s : la balise l'emporte</button>
 ```
 
-L'ordre : `every` écrit sur la balise ; puis `$$fx-every` ; puis le défaut de l'effet (3 s pour `*shine`, `*attention` et `*annotate`, 5 s pour `*glitch`) — sans variable, chaque effet garde son défaut. Pour `*attention` et `*annotate`, `every` reste la pause entre deux passages. La variable règle une cadence, elle ne fait rien répéter : un `*shine` au survol ou un `*attention` à l'arrivée à l'écran, sans `every` écrit, passent une fois. La cadence commune ne met en marche aucun effet : l'éclat de `*spotlight` ne s'allume que par `every` écrit sur la balise ou par `$$spotlight-every`, et bat alors à leur durée.
+L'ordre : `every` écrit sur la balise ; puis `$$mjs-fx-every` ; puis le défaut de l'effet (3 s pour `*shine`, `*attention` et `*annotate`, 5 s pour `*glitch`) — sans variable, chaque effet garde son défaut. Pour `*attention` et `*annotate`, `every` reste la pause entre deux passages. La variable règle une cadence, elle ne fait rien répéter : un `*shine` au survol ou un `*attention` à l'arrivée à l'écran, sans `every` écrit, passent une fois. La cadence commune ne met en marche aucun effet : l'éclat de `*spotlight` ne s'allume que par `every` écrit sur la balise ou par `$$spotlight-every`, et bat alors à leur durée.
 
-La valeur de `$$fx-every` suit la règle de `every` écrit sur la balise : une durée (`300ms`, `1.5s`, `0`). Une valeur refusée (`-1s`, `2` sans unité, `abc`) est ignorée : chaque effet garde son défaut, et la console du développement le dit une fois par valeur. `0` vaut `every: 0` écrit sur la balise. La cadence est relue à chaque passage, au moment de programmer le suivant : un thème qui change en cours de route vaut à partir de là (le passage déjà programmé garde son heure).
+La valeur de `$$mjs-fx-every` suit la règle de `every` écrit sur la balise : une durée (`300ms`, `1.5s`, `0`). Une valeur refusée (`-1s`, `2` sans unité, `abc`) est ignorée : chaque effet garde son défaut, et la console du développement le dit une fois par valeur. `0` vaut `every: 0` écrit sur la balise. La cadence est relue à chaque passage, au moment de programmer le suivant : un thème qui change en cours de route vaut à partir de là (le passage déjà programmé garde son heure).
 
 Les effets qui ont le même rythme battent ensemble. Le premier passage de `*shine`, `*attention` et `*annotate` part tout de suite (à la pose avec `on: always`, à l'arrivée à l'écran avec `on: view`) ; les suivants se calent sur une horloge commune, aux multiples du tour comptés depuis le début de la page, le prochain un tour entier au moins après le premier, et deux reflets posés à des moments différents passent ensuite au même instant. La première salve de `*glitch` part, comme avant, 2 s après la pose ou l'arrivée à l'écran (après un tour, s'il est plus court) ; les suivantes se calent de même, la prochaine un tour entier au moins après elle. Le tour, c'est `every` pour `*shine`, `*glitch` et l'éclat de `*spotlight` ; l'appel et sa pause pour `*attention` (`duration` × `repeat` + `every`) ; le tracé et sa pause pour `*annotate` (`delay` + `duration` + `every`). Le calage vaut pour `on: always` et `on: view` ; au survol (`on: hover`), le premier passage part à l'entrée de la souris.
 
-> ⚠️ Les effets lisent toujours des variables en `--mjs-…`, comme les modules cœur : une appli qui change `varPrefix` (cf. [31 · Thèmes](31-themes.md)) règle ses effets en écrivant `--mjs-neon-color` tel quel, et non `$$neon-color` (de même `--mjs-fx-every`).
+> ⚠️ Les effets lisent toujours des variables en `--mjs-…`, comme les modules cœur : une appli qui change `varPrefix` (cf. [31 · Thèmes](31-themes.md)) règle ses effets en écrivant `--mjs-neon-color` tel quel, et non `$$neon-color` (de même `--mjs-mjs-fx-every`).
 
 ## Les anciens noms (avant la 3.0)
 

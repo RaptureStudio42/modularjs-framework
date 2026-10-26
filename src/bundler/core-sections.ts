@@ -1,6 +1,7 @@
 // bundler/core-sections — un module cœur (src/core-modules/*.mjs) porte, en plus de ce qui sert à toute liste, des MORCEAUX REPÉRÉS qui ne
 // servent qu'à un attribut (`other` de <@@select> : la réponse libre « Autre » ; `group` de <@@sortable> : les groupes). Le build ne garde que ce que l'appli demande : un morceau
-// reste dès qu'une page écrit l'attribut (ou que le build ne sait pas : étalement `{...p}`), et le développement garde tout.
+// reste dès qu'une page écrit l'attribut (ou que le build ne sait pas : étalement `{...p}`), en développement comme en production (cf. STRICT_ATTRS) ; seuls les
+// morceaux d'un fait de l'appli (`transition`) ou d'un réglage (`reprise`) restent tous en développement.
 // Tel quel, le fichier porte tout et marche seul (tests, éditeur, copie dans un projet : les repères y sont des commentaires). Ici il est
 // filtré, et les repères ne sortent jamais. Un fichier sans repère passe tel quel.
 //
@@ -13,7 +14,9 @@
 //   other           le morceau est propre à l'attribut : il part quand aucune page ne l'écrit
 //   !other          l'autre forme des lignes qui existent avec et sans l'attribut : écrite en commentaire (`# ` ou `// ` devant), elle est
 //                   décommentée quand `other` part, et retirée quand il reste
-//   dev other       l'avertissement du développement : gardé en développement seulement, et seulement quand aucune page n'écrit `other`
+//   dev other       l'avertissement du développement : gardé en développement seulement, et seulement quand aucune page n'écrit `other` ; pour un
+//                   attribut de STRICT_ATTRS, son code s'écrit en commentaire sous `!other`, réveillé quand le morceau part (une copie du module
+//                   posée dans un projet garde tout et ne le dit jamais)
 // Une étiquette peut nommer un FAIT de l'appli plutôt qu'un attribut : `transition` (TRANSITION_LABEL) veut dire « une page du projet écrit une
 // transition (`@in`, `@out`, `@transition`) », décision `Bundler.coreTransitionWritten()`. Elle s'écrit comme les autres (`transition`, `!transition`,
 // `dev transition`) et s'emboîte avec elles : un morceau de sortable.mjs cerné par `group` puis par `transition` n'est gardé que si l'appli
@@ -27,7 +30,13 @@
 // calculée ou un étalement (le build ne sait pas), ou nomme l'outil. Comme `reprise`, c'est un fait de l'appli pris sur les seules pages du projet, avant qu'aucun
 // module cœur ne soit compilé : l'éditeur écrit lui-même une <@@toolbar tools={…}> dans son gabarit, qui ne compte pas. Les morceaux d'un outil sont son entrée et son
 // icône dans la barre (toolbar.mjs), et ce qui ne sert qu'à le faire agir (editor.mjs) ; ce qui affiche et coche une liste à cocher déjà dans la valeur n'en dépend jamais.
-// Une étiquette peut aussi nommer un groupe d'outils (`tool-icons`, `tool-glyphs`, `tool-heads`, `tool-keys`) ou le séparateur d'une liste (`tool-separator`) : TOOL_GROUPS.
+// Une étiquette peut aussi nommer un groupe d'outils (`tool-icons`, `tool-glyphs`, `tool-heads`, `tool-keys`), le séparateur d'une liste (`tool-separator`), ou aucun outil
+// (`tool-script` : l'avertissement d'un outil qu'une barre reçoit d'un script) : TOOL_GROUPS.
+// Un attribut de STRICT_ATTRS se tranche partout pareil : son morceau part dès qu'aucune page ne l'écrit, en développement comme en production, pour que
+// le rendu serveur et le navigateur, le développement et la production emportent le même gabarit (`toolbar` de <@@chart>, `other` de <@@select>, `answer`
+// de <@@editor>, `group` de <@@sortable>). Le doute y est plus large que pour un autre attribut (Bundler.coreAttrWrittenStrict) : une balise dynamique qui
+// écrit l'attribut ou un étalement, un script qui nomme la balise du module gardent le morceau. Un outil (`tool-<nom>`) se tranche de même, sur
+// Bundler.coreToolShown, avec le même doute pour les balises <@@editor> (`toolbar`) et <@@toolbar> (`tools`).
 // Une ligne retirée, ou de repère, est remplacée par une ligne VIDE : les numéros de ligne des messages du compilateur sont ceux du fichier.
 
 import { t } from '../messages/index.js'
@@ -45,6 +54,8 @@ export const TOOL_PREFIX = 'tool-'
  * Les groupes d'outils : `tool-<groupe>` est vraie quand l'appli peut afficher l'un des outils du groupe (un morceau qui sert plusieurs outils, comme le style des
  * icônes). `keys` : les deux outils dont le raccourci n'agit que si une barre de l'éditeur montre l'outil (l'éditeur interroge ses barres, elles s'inscrivent auprès de lui).
  * `separator` n'est pas un outil mais le séparateur `|` d'une liste : vrai quand une barre en écrit un.
+ * `script` n'a aucun outil : jamais vrai, il répond « non » dès que la construction tranche les outils (toutes les barres disent leur liste, aucun doute). Il cerne
+ * l'avertissement du développement d'un outil qu'une barre reçoit d'un script alors que la construction l'a ôté (`dev tool-script`, toolbar.mjs) : présent dès qu'un outil peut manquer.
  */
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   icons:     ['ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear'],
@@ -52,6 +63,20 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   heads:     ['h2', 'h3'],
   keys:      ['link', 'check'],
   separator: ['|'],
+  script:    [],
+}
+
+/**
+ * Les attributs que le développement tranche comme la production, par module : leur morceau part dès qu'aucune page ne les écrit (cf.
+ * Bundler.coreAttrWrittenStrict, qui en décide), leur autre forme (`!attr`) revient alors partout. `toolbar` de <@@chart> : la barre d'outils,
+ * ses fonctions, son gabarit, son style et ses icônes (ses libellés : CORE_LABEL_PARTS, runtime-labels.ts) ; `answer` de <@@editor> : le mode
+ * « répondre » ; `other` de <@@select> : la réponse libre « Autre » ; `group` de <@@sortable> : les groupes.
+ */
+export const STRICT_ATTRS: Readonly<Record<string, readonly string[]>> = {
+  chart:    ['toolbar'],
+  editor:   ['answer'],
+  select:   ['other'],
+  sortable: ['group'],
 }
 
 /** ce que demande une étiquette : le morceau propre à l'attribut, son autre forme, l'avertissement du développement */

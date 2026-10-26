@@ -23,16 +23,19 @@ import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import { transpile, cssTrapWarnings } from '../transpiler/index.js'
 import { findConstReassignment } from '../transpiler/const-reassign.js'
+import { warnUnreachableCode } from '../transpiler/unreachable.js'
 import { INCLUDE_RE, resolvePartial } from '../transpiler/macros.js'
 import { scanImgTags, isResolvableSrc, parseWidths, rewriteImgTag, type ImgTag } from '../transpiler/img-tag.js'
 import { scanEffectImages, imageCall, type EffectImage } from '../transpiler/effect-images.js'
 import { getAdapter } from '../languages/index.js'
 import { build as esbuildBuild } from 'esbuild'
-import { minifyJs, stripMsgFallbacks, withMangleCacheLock, buildPureList, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
+import { minifyJs, stripMsgFallbacks, withMangleCacheLock, buildPureList, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
 import { readImageSize, generateVariants, animatedKind, type GeneratedVariant } from './image.js'
 import { compileCss } from '../transpiler/css.js'
 import { shiftGeneratedPosition, chainOverMap } from '../transpiler/source-map-chain.js'
 import { compileThemeFile, assembleThemes, isThemeFile } from './themes.js'
+import { chartProblems } from './core-chart.js'
+import { coreCamelProps, camelAttrProblems } from './core-attrs.js'
 import { isTypesFile, collectTypeDefs } from './types-files.js'
 import { isEffectsFile, collectEffectDefs, countEffectUses, ALIAS_TABLE_MIN_USES } from './effects-files.js'
 import { EFFECTS, devCatalog, fxRangesSource, withProjectEffects, effectSpec, fixedImages, imageValue, typoDistance, replacedThemeVar, type ProjectEffect } from '../effects/catalog.js'
@@ -42,7 +45,7 @@ import { applyPathTrackingMapped } from '../generator/path-tracker.js'
 import { cpus } from 'node:os'
 import { WorkerPool, resolveWorkerScript } from './worker-pool.js'
 import { transpileFromMsg, tagSpans, effectDefsToWire, type TranspileMsg } from './transpile-msg.js'
-import { normalizePreload, normalizeUrlPrefix, OPTIONAL_RUNTIME_MODULES, DETECTED_CORE_MODULES, levenshtein, resolveLogLevel, logLevelAllows, dureeEnMs, verifierPlafondDuree, cheminDansDossier, refusManifestPath } from './config.js'
+import { normalizePreload, normalizeUrlPrefix, OPTIONAL_RUNTIME_MODULES, DETECTED_CORE_MODULES, levenshtein, resolveLogLevel, resolveTerminalLogLevel, logLevelAllows, dureeEnMs, verifierPlafondDuree, cheminDansDossier, refusManifestPath } from './config.js'
 import type { PreloadConfig, RuntimeConfig, VtValue, I18nConfig, CssConfig, JsConfig, LogLevelConfig, RenderConfig, RenderMode, EffectsConfig, BundleGroupConfig } from './config.js'
 import { normalizeMode } from '../server/render-routes.js'
 import { feuillesConsignees, feuillesRenduPerimees } from '../server/sorties-rendu.js'
@@ -53,10 +56,10 @@ import { runtimeLabelsFor, runtimeMessagesFor, coreLabelKeys, fxLabelKeys, RUNTI
 import { typedLine, printDiagnostic, resolveColorsEnabled, type LintType, type LintToggles } from '../diagnostics.js'
 import { AT_RESERVED_NAMES, skeletonHtml, type TagRef, type TagRefKind } from '../parser/index.js'
 import { extractSections } from '../transpiler/sections.js'
-import { scanCompiledFeatures, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PAQUETS, I18N_LOADER, I18N_USED } from './features.js'
+import { scanCompiledFeatures, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PAQUETS, I18N_LOADER, I18N_USED, BOUCLES } from './features.js'
 import { parsePlaceholder, PLACEHOLDER_CONFIG, type Placeholder } from '../effects/placeholder.js'
 import { selectFxSections, type FxClient } from './fx-sections.js'
-import { selectCoreSections, TRANSITION_LABEL, RESUME_LABEL, TOOL_PREFIX, TOOL_GROUPS } from './core-sections.js'
+import { selectCoreSections, TRANSITION_LABEL, RESUME_LABEL, TOOL_PREFIX, TOOL_GROUPS, STRICT_ATTRS } from './core-sections.js'
 import { hologramClient, HOLOGRAM_FILE } from './hologram-styles.js'
 import { HOLOGRAM_MOTIFS, hologramMotifsOf, injectHologramImages } from './hologram-motifs.js'
 import { collectCoreCalls, missingCoreSymbols } from './core-contract.js'
@@ -746,6 +749,41 @@ const REGEX_VARIANT_FILE = /^([^.]+)\.[^.]+\.css$/
 // lecture du groupe `core` des libellés dans le texte d'un fichier du PROJET (la copie éjectée d'un module cœur garde son
 // `µ._mjs_label('core', key)`) : cherchée sans l'objet (`µ`/`mjs` selon la config), cf. coreLabelModules()
 const REGEX_CORE_LABEL_READ = /_mjs_label\(\s*['"]core['"]/
+
+// une source du PROJET peut-elle donner l'attribut `attr` à une balise du module cœur `module` sans que le relevé des balises le voie (cf.
+// coreAttrWrittenStrict) ? Un module .civet, .coffee, .js ou .ts (`script` vrai) : dès qu'il nomme la balise (`mjs-core-chart`, `@@chart`), il peut la
+// fabriquer. Un composant .mjs : ses blocs <script> de même ; son gabarit, par une balise dynamique (<@element $tag>, <@module $comp>) qui écrit
+// l'attribut, quelle que soit la forme de sa valeur, ou un étalement `{...p}` — ou qui ne se referme pas : dans le doute, oui
+function coreTagDoubt(src: string, module: string, attr: string, script: boolean): boolean {
+  const named = new RegExp(`(?:mjs-core-|@@)${module}(?![\\w-])`, 'i')
+  if (script) return named.test(src)
+  for (const m of src.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) if (named.test(m[1])) return true
+  const written = new RegExp(`\\s${attr}(?![\\w-])`, 'i')
+  for (const m of src.matchAll(/<?@(?:element|module)(?![\w-])/gi)) {
+    const end = tagEnd(src, m.index + m[0].length)
+    if (end < 0) return true
+    const head = src.slice(m.index, end)
+    if (/\{\s*\.\.\./.test(head) || written.test(head)) return true
+  }
+  return false
+}
+
+// la fin d'une balise ouverte avant `from` (l'indice qui suit son `>`), valeurs entre guillemets et entre accolades sautées ; -1 quand elle ne se referme pas
+function tagEnd(src: string, from: number): number {
+  let depth = 0
+  let quote = ''
+  for (let i = from; i < src.length; i++) {
+    const c = src[i]
+    if (quote) {
+      if (c === quote) quote = ''
+    }
+    else if (c === '"' || c === '\'') quote = c
+    else if (c === '{') depth++
+    else if (c === '}') depth--
+    else if (c === '>' && depth <= 0) return i + 1
+  }
+  return -1
+}
 
 // fichiers du cœur que l'atelier de thème (/__mjs/theme, src/server/theme-viewer.mjs) appelle : ce que `scanCompiledFeatures`
 // relève dans son code compilé, ni plus ni moins (tests/theme-atelier-coeur-developpement.test.ts le garde) — cf. resolveRuntimeFiles
@@ -1850,6 +1888,10 @@ export class Bundler {
    * liste, une liste calculée, un étalement, aucune barre). Relevé avec tagRefsComplete, sur les seules références du projet, avant qu'aucun module cœur ne soit compilé
    * (cf. coreToolShown) : la barre que l'éditeur écrit dans son propre gabarit ne compte pas. */
   private pageTools: ReadonlySet<string> | null = null
+  /** Les parties des modules cœur que mjsSource a ôtées ce tour (`dropped`) et celles qu'un module emporté garde (`kept` : un modèle en fichier, un module
+   * cité par le catalogue), nommées `<module>.<attribut>` (`chart.toolbar`, cf. STRICT_ATTRS) : les libellés propres à une partie (CORE_LABEL_PARTS) ne
+   * partent pas quand elle est ôtée et qu'aucun module emporté ne la garde. Remises à zéro au début de chaque compile(). */
+  private coreParts = { dropped: new Set<string>(), kept: new Set<string>() }
   /** Dépendances DIRECTES brutes accumulées PAR COMPOSANT (balises du gabarit +
    * modules `@import`-és), jumeau de pendingTagRefs ci-dessus — consommée par
    * buildManifestDeps() APRÈS resolveTagShortcuts() (seul point où l'union des
@@ -1866,6 +1908,9 @@ export class Bundler {
   fxChunkPaths: Map<string, string> = new Map()
   /** Les outils des effets (`fx_tool<nom>`) que le cœur du dernier bundleRuntime() embarque : les effets écrits à part (compileFxChunks) s'y mesurent. */
   private fxToolsEmbarked: ReadonlySet<string> | null = null
+  /** Le cœur du dernier bundleRuntime() embarque le journal des erreurs (mjs_journal.ts, qui lit chaque µ.error) : les effets écrits à part et les
+   *  animations, minifiés après lui, s'y mesurent (au niveau 'silent', leurs µ.error restent alors en place, cf. minifyJs). */
+  private journalInCore: boolean | undefined = undefined
   /** Le fichier de groupe de chaque composant groupé (clé du manifeste → chemin public haché) : publié
    * dans µ.paths à la place du fichier séparé, qui reste écrit (rendu serveur, `prune`). Rempli par
    * compile() en production seulement, remis à zéro à chaque compile(). */
@@ -1918,6 +1963,8 @@ export class Bundler {
   /** fichiers d'effet que le build emporte (noms sans `mjs_fx_`), dont le manifeste pose les libellés par défaut (groupe `fx`, cf.
    *  FX_LABEL_EFFECTS) — `undefined` tant que le cœur n'a pas été choisi : le groupe part alors entier */
   private labelFxEffects: Set<string> | undefined = undefined
+  /** parties de modules cœur ôtées de ce build (cf. coreParts) : le manifeste ne pose pas leurs libellés (CORE_LABEL_PARTS) — vide tant que le cœur n'a pas été choisi */
+  private labelCoreDropped: Set<string> = new Set()
   /** clés des textes de traces que le cœur du dernier bundleRuntime() nomme (cf. manifestLabels) — `undefined` tant que le cœur n'a pas été choisi */
   private traceKeys: string[] | undefined = undefined
   coreHashedPath: string
@@ -2815,6 +2862,7 @@ export class Bundler {
     this.pendingTagRefs = []
     this.tagRefsComplete = false
     this.pageTools       = null
+    this.coreParts       = { dropped: new Set(), kept: new Set() }
     this.pendingComponentDeps = []
     this.pendingFxDeps = new Map()
     this.fxChunkPaths = new Map()
@@ -4318,6 +4366,22 @@ export class Bundler {
       }))
     }
 
+    // <@@chart> : ses valeurs écrites en dur (mots de shape, stats, step et axis, couleurs des séries, combinaisons), cf. core-chart.ts
+    for (const ref of this.pendingTagRefs) {
+      if ((ref.kind === 'raccourci-coeur' || ref.kind === 'litteral-coeur') && ref.name.toLowerCase() === 'chart') problems.push(...chartProblems(ref))
+    }
+
+    // les modules du cœur : un attribut écrit en dur en camelCase (`emptyLabel="…"`), que le HTML met en minuscules — les props d'un module
+    // se lisent dans sa source, une fois par construction, cf. core-attrs.ts
+    const camelProps = new Map<string, string[]>()
+    for (const ref of this.pendingTagRefs) {
+      if ((ref.kind !== 'raccourci-coeur' && ref.kind !== 'litteral-coeur') || !ref.attrs) continue
+      const source = coreCatalog.get(ref.name.toLowerCase())
+      if (!source) continue
+      if (!camelProps.has(source)) camelProps.set(source, coreCamelProps(readFileSync(source, 'utf-8')))
+      problems.push(...camelAttrProblems(ref, camelProps.get(source)!))
+    }
+
     // dédup — une même faute de frappe référencée plusieurs fois (ou depuis
     // plusieurs fichiers avec exactement le même message) ne doit pas répéter
     // la ligne (même hygiène que `uniqueUpdates`, generator/compile.ts).
@@ -4363,6 +4427,54 @@ export class Bundler {
   }
 
   // --------------------------------------------------------------------------
+  // coreAttrWrittenStrict(module, attr) : la réponse de coreAttrWritten pour un attribut que le développement tranche comme la production (STRICT_ATTRS),
+  // avec un doute plus large — son morceau part alors de toutes les constructions, serveur compris. 'yes' : une référence au module, ou à l'un de ses
+  // modèles en fichier (`chart--x`), écrit l'attribut. 'unknown' : les références du projet ne sont pas toutes lues ; une référence porte un étalement ou n'a
+  // pas rapporté ses attributs (un cache ancien) ; une source du projet peut donner l'attribut hors du relevé des balises (cf. coreTagDoubt : une balise
+  // dynamique qui l'écrit ou qui étale, un script ou un module .civet / .coffee / .js / .ts qui nomme la balise du module), ou ne se lit pas. 'no' sinon, seule réponse
+  // qui autorise un retrait. Les sources passent par scanSource (mémoïsée par date et taille) : un tour de `mjs dev` qui ajoute ou retire un doute change
+  // la réponse.
+  // --------------------------------------------------------------------------
+  coreAttrWrittenStrict(module: string, attr: string): 'yes' | 'unknown' | 'no' {
+    if (!this.tagRefsComplete) return 'unknown'
+    const wanted = module.toLowerCase()
+    const name   = attr.toLowerCase()
+    let maybe    = false
+    for (const ref of this.pendingTagRefs) {
+      if (ref.kind !== 'raccourci-coeur' && ref.kind !== 'litteral-coeur') continue
+      if (ref.name.toLowerCase().split('--')[0] !== wanted) continue
+      if (!ref.attrs) {
+        maybe = true
+        continue
+      }
+      if (ref.attrs.names.some(n => n.toLowerCase() === name)) return 'yes'
+      if (ref.attrs.spread) maybe = true
+    }
+    if (maybe) return 'unknown'
+    return this.coreTagDoubted([[wanted, name]]) ? 'unknown' : 'no'
+  }
+
+  // --------------------------------------------------------------------------
+  // coreTagDoubted(pairs) : une source du projet peut-elle donner l'un de ces attributs (`[module, attribut]`) à une balise de son module cœur sans que le
+  // relevé des balises le voie (cf. coreTagDoubt) ? Une source qui ne se lit pas, ou un dossier qui ne se parcourt pas : oui. Doute commun à
+  // coreAttrWrittenStrict et à coreToolShown.
+  // --------------------------------------------------------------------------
+  private coreTagDoubted(pairs: ReadonlyArray<readonly [string, string]>): boolean {
+    let files: string[]
+    try {
+      // une déclaration de types (.d.ts) ne fabrique aucune balise
+      files = this.findFiles(this.sourceDir, ['.mjs', '.civet', '.coffee', '.js', '.ts']).filter(f => !f.endsWith('.d.ts'))
+    }
+    catch {
+      return true
+    }
+    return pairs.some(([module, attr]) => {
+      const kind = 'coreTagDoubt\0' + module + '\0' + attr
+      return files.some(f => this.scanSource(kind, f, true, (src) => coreTagDoubt(src, module, attr, !f.endsWith('.mjs'))))
+    })
+  }
+
+  // --------------------------------------------------------------------------
   // coreTransitionWritten() : une page du projet écrit-elle une transition (`@in`, `@out` ou `@transition`, de quelque façon : valeur, réglage
   // tenu par une variable, alias d'un fichier d'effets, dans un `{if}`, un composant enfant, un partiel…) ? C'est le signal compilé `fx_transition`
   // (features.ts), celui qui fait partir le moteur des transitions : une transition ne joue pas sans lui, donc aucun faux négatif ; un faux positif
@@ -4390,7 +4502,7 @@ export class Bundler {
   // <@@toolbar> son attribut `tools`, chacun en mots séparés par des blancs (`|` est un séparateur, `none` aucune barre : ni l'un ni l'autre n'est un outil). Dès
   // qu'une barre ne dit pas sa liste (attribut absent, vide, calculé, écrit deux fois, étalement, référence relevée sans le texte de ses attributs), le build ne sait pas
   // ce que l'appli peut afficher : null, tout reste. Aucune barre dans le projet : null aussi (le module n'est alors demandé que par un autre module cœur).
-  // Un éditeur qui écrit `answer` tel quel (sans valeur, ou autre que « false ») n'affiche jamais sa barre : sa liste ne compte pas, il ne demande pas « tous les outils ».
+  // Un éditeur qui écrit `answer` tel quel (sans valeur, ou autre que « false », quelle que soit sa casse, comme le lit l'éditeur) n'affiche jamais sa barre : sa liste ne compte pas, il ne demande pas « tous les outils ».
   // `answer={…}`, `answer="{…}"` ou un étalement gardent la règle prudente ; le modèle d'un fichier du projet (`editor--compact`) a son propre gabarit : sa liste compte.
   // --------------------------------------------------------------------------
   private toolsOfPages(): ReadonlySet<string> | null {
@@ -4403,7 +4515,7 @@ export class Bundler {
       if (!attr) continue
       seen = true
       const answer = ref.attrs?.texts?.answer
-      if (ref.name.toLowerCase() === 'editor' && !ref.attrs?.spread && typeof answer === 'string' && answer !== 'false') continue
+      if (ref.name.toLowerCase() === 'editor' && !ref.attrs?.spread && typeof answer === 'string' && answer.toLowerCase() !== 'false') continue
       const text = ref.attrs?.spread ? null : ref.attrs?.texts?.[attr]
       if (text == null || !text.trim()) return null
       for (const word of text.trim().split(/\s+/)) named.add(word)
@@ -4415,12 +4527,15 @@ export class Bundler {
   // coreToolShown(tool) : l'appli peut-elle afficher cet outil de la barre de l'éditeur riche (`bold`, `link`, `check`…) ? 'yes' quand une barre le nomme ; 'unknown'
   // quand le build ne sait pas (cf. toolsOfPages) ou que les références du projet ne sont pas toutes lues ; 'no' quand toutes les barres disent leur liste et qu'aucune
   // ne le nomme. `tool` est un outil, un groupe d'outils (TOOL_GROUPS) ou `separator` : vrai dès que l'un des outils du groupe est nommé. Pour qui décide, 'unknown'
-  // vaut 'yes' : 'no' autorise un retrait.
+  // vaut 'yes' : 'no' autorise un retrait. La réponse tranche le développement comme la production (cf. mjsSource) : le doute y est celui d'un attribut de
+  // STRICT_ATTRS (coreTagDoubted) — une source du projet qui peut fabriquer un éditeur ou une barre hors du relevé (un script qui nomme <@@editor> ou <@@toolbar>,
+  // une balise dynamique qui écrit `toolbar`, `tools` ou un étalement) répond 'unknown'.
   // --------------------------------------------------------------------------
   coreToolShown(tool: string): 'yes' | 'unknown' | 'no' {
     if (!this.tagRefsComplete || !this.pageTools) return 'unknown'
     const shown = this.pageTools
-    return (Object.hasOwn(TOOL_GROUPS, tool) ? TOOL_GROUPS[tool] : [tool]).some(name => shown.has(name)) ? 'yes' : 'no'
+    if ((Object.hasOwn(TOOL_GROUPS, tool) ? TOOL_GROUPS[tool] : [tool]).some(name => shown.has(name))) return 'yes'
+    return this.coreTagDoubted([['editor', 'toolbar'], ['toolbar', 'tools']]) ? 'unknown' : 'no'
   }
 
   // --------------------------------------------------------------------------
@@ -4429,9 +4544,12 @@ export class Bundler {
   // sortable ; `transition` nomme le fait « une page écrit une transition », coreTransitionWritten ; `reprise` le fait « l'appli reprend des pages rendues par
   // le serveur », coreResumeWanted ; `tool-<nom>` le fait « une barre de l'appli peut afficher cet outil », coreToolShown) : en PRODUCTION, les morceaux d'un attribut
   // que nulle page n'écrit (coreAttrWritten = 'no') sont ôtés
-  // avant la compilation ; 'yes' et 'unknown' (étalement, références pas encore lues) gardent tout. Le DÉVELOPPEMENT garde toujours
-  // tout (le panneau et les scripts allument ce qu'une page n'écrit pas) ; l'avertissement du développement ne reste que lorsqu'aucune
-  // page n'écrit l'attribut. Le texte réduit est ce qui entre dans l'empreinte du cache et dans le message du pool de threads : ajouter ou
+  // avant la compilation ; 'yes' et 'unknown' (étalement, références pas encore lues) gardent tout. Les morceaux d'un attribut de STRICT_ATTRS (`toolbar` de
+  // <@@chart>, `other` de <@@select>, `answer` de <@@editor>, `group` de <@@sortable>) et ceux d'un outil de la barre de l'éditeur se tranchent partout comme
+  // en production, sur coreAttrWrittenStrict et coreToolShown, pour que le rendu serveur et le navigateur emportent le même gabarit quel que soit leur
+  // environnement ; mjsSource relève aussi les parties de STRICT_ATTRS, ôtées ou gardées (coreParts), pour les libellés du manifeste. Le DÉVELOPPEMENT garde
+  // les autres morceaux (`transition`, `reprise`, un attribut hors de STRICT_ATTRS). L'avertissement du développement ne reste que lorsqu'aucune page n'écrit
+  // l'attribut. Le texte réduit est ce qui entre dans l'empreinte du cache et dans le message du pool de threads : ajouter ou
   // retirer l'attribut dans une page, en mode veille, recompile le module. Un fichier du projet (une copie éjectée d'un module cœur
   // comprise), un modèle en fichier et un texte sans repère passent tels quels : les repères n'y sont que des commentaires.
   // --------------------------------------------------------------------------
@@ -4439,10 +4557,11 @@ export class Bundler {
     const content = readFileSync(filePath, 'utf-8')
     const file    = resolve(filePath)
     if (!file.startsWith(this.coreModulesDir + sep)) return content
-    const stem  = basename(file, '.mjs')
-    const model = modelNameOf(stem) !== stem
-    const dev   = !this.isProd()
-    const known = new Map<string, boolean>()
+    const stem   = basename(file, '.mjs')
+    const model  = modelNameOf(stem) !== stem
+    const family = modelNameOf(stem).split('--')[0]
+    const dev    = !this.isProd()
+    const known  = new Map<string, boolean>()
     // un autre module du catalogue qui cite celui-ci (`<@@nom`, `<mjs-core-nom`) peut y écrire l'attribut dans son gabarit : ses références ne se
     // lisent qu'une fois compilé, après celui-ci (cf. coreAttrWritten) — dans le doute, tout reste
     let cited: boolean | undefined
@@ -4453,13 +4572,21 @@ export class Bundler {
     // l'attribut est-il écrit nulle part (une réponse par attribut et par lecture) ; les étiquettes `transition`, `reprise` et `tool-<nom>` ne sont pas des attributs : aucune page
     // n'écrit de transition, l'appli ne reprend aucune page du serveur, aucune barre ne montre l'outil — `reprise` et `tool-<nom>` ne dépendent pas des modules qui citent celui-ci,
     // ce sont un réglage et un fait de l'appli
+    // un attribut tranché partout pareil (STRICT_ATTRS), pour le module de base comme pour ses modèles ; un outil de la barre de l'éditeur aussi
+    const strictAttr = (attr: string): boolean => Object.hasOwn(STRICT_ATTRS, family) && STRICT_ATTRS[family].includes(attr)
+    const strict     = (attr: string): boolean => attr.startsWith(TOOL_PREFIX) || strictAttr(attr)
     const absent = (attr: string): boolean => {
-      const tool = attr.startsWith(TOOL_PREFIX)
-      if (model || (attr !== RESUME_LABEL && !tool && citedByCatalog())) return false
-      if (!known.has(attr)) known.set(attr, (attr === TRANSITION_LABEL ? this.coreTransitionWritten() : attr === RESUME_LABEL ? this.coreResumeWanted() : tool ? this.coreToolShown(attr.slice(TOOL_PREFIX.length)) : this.coreAttrWritten(stem, attr)) === 'no')
+      if (!known.has(attr)) {
+        const tool = attr.startsWith(TOOL_PREFIX)
+        const gone = !(model || (attr !== RESUME_LABEL && !tool && citedByCatalog())) && (attr === TRANSITION_LABEL ? this.coreTransitionWritten() : attr === RESUME_LABEL ? this.coreResumeWanted() : tool ? this.coreToolShown(attr.slice(TOOL_PREFIX.length)) : strictAttr(attr) ? this.coreAttrWrittenStrict(stem, attr) : this.coreAttrWritten(stem, attr)) === 'no'
+        known.set(attr, gone)
+        if (strictAttr(attr)) (gone ? this.coreParts.dropped : this.coreParts.kept).add(family + '.' + attr)
+      }
       return known.get(attr)!
     }
-    return selectCoreSections(file, content, (kind, attr) => kind === 'dev' ? dev && absent(attr) : kind === 'alt' ? !dev && absent(attr) : dev || !absent(attr))
+    // le développement garde tout, sauf un attribut ou un outil tranché partout pareil
+    const keep = (attr: string): boolean => dev && !strict(attr)
+    return selectCoreSections(file, content, (kind, attr) => kind === 'dev' ? dev && absent(attr) : kind === 'alt' ? !keep(attr) && absent(attr) : keep(attr) || !absent(attr))
   }
 
   // --------------------------------------------------------------------------
@@ -4619,7 +4746,7 @@ export class Bundler {
       ...FX_TOOL_KEYS.map(k => 'mjs_' + k + '.ts'),
       ...FX_KEYS.map(k => 'mjs_' + k + '.ts'), 'mjs_i18n.ts', 'mjs_journal.ts', 'mjs_ajax.ts', 'mjs_socket.ts', 'mjs_schema.ts', 'mjs_optimistic.ts', 'mjs_game.ts', 'mjs_chat.ts', 'mjs_accounts.ts', 'mjs_lobby.ts',
       'mjs_interp.ts', 'mjs_predict.ts', 'mjs_det.ts', 'mjs_lockstep.ts', 'mjs_router.ts',
-      'mjs_modal.ts', 'mjs_ujs.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_hydrate.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts',
+      'mjs_modal.ts', 'mjs_ujs.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_hydrate.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts',
       'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts', 'mjs_flip.ts',
     ]
     // Exception de nommage : la clé de config PUBLIQUE `runtime: ['vault']` reste
@@ -4959,6 +5086,9 @@ export class Bundler {
     // le socle des composants associés au formulaire (mjs_form_associated.ts) : détecté DIRECTEMENT sur l'appel `µ._mjs_formClass(` que le
     // compilateur écrit pour un composant `@formAssociated` — aucun forçage
     const wantsFormAssociated = forced.has('mjs_form_associated.ts') || used === undefined || used.has('form_associated')
+    // les calculs des graphiques (mjs_chart.ts) : détectés DIRECTEMENT sur `µ._mjs_chart` que les modules de graphiques du cœur écrivent — aucun
+    // forçage, aucun nom dans `runtime` : une application sans graphique ne les reçoit jamais
+    const wantsChart = used === undefined || used.has('chart')
     // les outils partagés des effets (mjs_fx_tool<nom>.ts, bundler/fx-tools.ts) : seulement ceux que le code des effets de la page appelle, tel
     // qu'il part dans ce build (le fichier trié en production, entier en développement : cf. effectSource), au cœur comme dans son propre
     // fichier (un effet nommé à l'exécution, `fx: $effet`, peut être n'importe lequel de ceux qui se nomment : tous les fichiers partent alors
@@ -4996,6 +5126,7 @@ export class Bundler {
       'mjs_clone.ts':       wantsClone,
       'mjs_form_reset.ts':  wantsFormReset,
       'mjs_form_associated.ts': wantsFormAssociated,
+      'mjs_chart.ts':       wantsChart,
       'mjs_on.ts':          wantsOn,
       'mjs_alias.ts':       wantsAlias,
       'mjs_types.ts':       wantsTypes,
@@ -5257,6 +5388,7 @@ export class Bundler {
     const { files: selectedFiles, warnings: runtimeWarnings, coreOnly } = this.resolveRuntimeFiles(used)
     for (const w of runtimeWarnings) this.buildWarn(w)
     this.labelCoreModules = this.coreLabelModules()
+    this.labelCoreDropped = new Set([...this.coreParts.dropped].filter(p => !this.coreParts.kept.has(p)))
     this.labelFxEffects   = new Set(selectedFiles.filter(f => /^mjs_fx_[a-z0-9_]+\.ts$/.test(f)).map(f => f.slice(7, -3)))
     this.labelGroups      = this.runtimeLabelGroups(selectedFiles, this.labelCoreModules, this.labelFxEffects)
     // les effets qui partent dans leur propre fichier (cf. compileFxChunks) sortent du cœur — leur
@@ -5266,8 +5398,9 @@ export class Bundler {
 
     // mjs_debug est un module d'INSPECTION dev-only : il wrappe
     // connect/disconnect (registre `µ.instances`), la télémétrie `µ.debugMode`
-    // et pousse `devtoolsFormatters`. En prod il n'apporte QUE du poids
-    // (~0,8 Ko gzip) + ~200 ns par connect/disconnect, pour un outillage jamais
+    // et pousse `devtoolsFormatters`, et porte les avertissements de développement
+    // (prop à sens unique, @attach). En prod il n'apporte QUE du poids
+    // (~1,5 Ko gzip) + ~200 ns par connect/disconnect, pour un outillage jamais
     // sollicité (aucun symbole cœur ne le référence : les `if (µ.debug)` du
     // cœur visent le BOOLÉEN de mjs_init, strippé par DCE). On ne l'inclut donc
     // qu'en build NON-prod (en cœur nu il est déjà absent). Insertion juste
@@ -5350,12 +5483,13 @@ export class Bundler {
     }
     // lectures `µ.debug` mortes en prod : `define: { 'µ.debug': 'false' }` ne peut rien (µ est une
     // variable LOCALE du cœur, esbuild n'applique pas un define derrière une déclaration locale, cf.
-    // minify.ts) ; en prod, chaque LECTURE `µ.debug` (jamais une écriture `µ.debug = …`, exclue par
+    // minify.ts) ; en prod minifiée, chaque LECTURE `µ.debug` (jamais une écriture `µ.debug = …`, exclue par
     // le lookahead) devient l'identifiant libre `MJS_DEBUG`, que `minifyJs` reçoit en
-    // `define: { MJS_DEBUG: 'false' }` → chaque `if (µ.debug)` part en DCE réel. Hors prod, rien ne
-    // change : les sources gardent `µ.debug`, la bascule console `µ.debug = true` reste vivante,
+    // `define: { MJS_DEBUG: 'false' }` → chaque `if (µ.debug)` part en DCE réel. Hors prod, minifié ou non,
+    // rien ne change : les sources gardent `µ.debug`, la bascule console `µ.debug = true` reste vivante,
     // et les tests qui évaluent ces fichiers bruts n'ont rien à connaître
-    const sansDebug    = this.shouldMinify()
+    const debugMort    = this.isProd() && this.shouldMinify()
+    const sansDebug    = debugMort
       ? parts.join('\n').replace(/(?<![\w$.])µ\.debug(?![\w$])(?!\s*=[^=])/g, 'MJS_DEBUG')
       : parts.join('\n')
     // en production, les messages de la console ne portent plus leur texte français de secours : ils
@@ -5370,7 +5504,10 @@ export class Bundler {
     // l'accroche de l'indicateur de chargement (`*loader`, bloc balisé de mjs_i18n.ts) : seulement si une unité de ce build, ou la configuration,
     // l'écrit ; sinon le cœur d'une appli traduite n'en porte pas un octet. Le rendu des barres grises (`*skeleton`) reste, lui, au cœur : le secours de `wait` s'en sert
     const avecChargeur  = used.has(I18N_LOADER) ? avecPaquets : avecPaquets.replace(/^\/\/ <i18n-loader>\n[\s\S]*?^\/\/ <\/i18n-loader>\n\n/m, '').replace(/^[ \t]*\/\/ <i18n-loader-appel>\n[\s\S]*?^[ \t]*\/\/ <\/i18n-loader-appel>\n/gm, '')
-    const concatenated = this.isProd() ? stripMsgFallbacks(avecChargeur) : avecChargeur
+    // la file des boucles qui écrivent l'état (blocs balisés `<boucles>` de mjs_init.ts et de `_mjs_invalidate`, mjs_element.ts) : seulement si le
+    // compilateur a enveloppé une boucle dans une unité de ce build (generator/loop-batch.ts) ; sinon le cœur est identique, à l'octet, à celui d'avant
+    const avecBoucles  = used.has(BOUCLES) ? avecChargeur : avecChargeur.replace(/^[ \t]*\/\/ <boucles>\n[\s\S]*?^[ \t]*\/\/ <\/boucles>\n/gm, '')
+    const concatenated = this.isProd() ? stripMsgFallbacks(avecBoucles) : avecBoucles
     this.traceKeys     = traceKeysIn(concatenated)
     // GARDE DU CONTRAT — dernier mot avant que ce cœur parte sur disque : chaque symbole interne
     // que les unités de ce build APPELLENT doit exister dans le texte qu'on vient d'assembler.
@@ -5393,6 +5530,7 @@ export class Bundler {
     }
     // outils des effets (cf. assertFxTools) : ceux que le cœur embarque, contre ce que les effets (au cœur ou à part) et les outils eux-mêmes appellent
     this.fxToolsEmbarked = new Set(FX_TOOL_KEYS.filter(k => orderedFiles.includes('mjs_' + k + '.ts')))
+    this.journalInCore   = orderedFiles.includes('mjs_journal.ts')
     this.assertFxTools(fxModules)
     const minified = await minifyJs(concatenated, {
       force: this.shouldMinify(),
@@ -5400,8 +5538,10 @@ export class Bundler {
       sourceMap: this.shouldEmitSourceMap(),
       mangleCache: this.mangleCache,
       logLevel: this.prodLogLevel(),
+      dev: !this.isProd(),
       runtimeSource: this.isProd(),
-      define: this.shouldMinify() ? { MJS_DEBUG: 'false' } : undefined,
+      journal: this.journalInCore,
+      define: debugMort ? { MJS_DEBUG: 'false' } : undefined,
     })
     // mode 'bundle' : le cœur ne devient JAMAIS un fichier sur disque — gardé en mémoire
     // (bundleVirtualSources), résolu par le plugin esbuild d'emitSingleFile() sous le
@@ -5490,18 +5630,23 @@ export class Bundler {
   // minifié, et un `minify: true` posé pour alléger un bundle local ne fait plus passer
   // tout le projet en prod (ce qui retirait le panneau d'inspection sans rien demander).
   // PUBLIC : bundler/startup.ts assemble le fichier de page d'une route prérendue APRÈS ce
-  // compile, et doit le minifier selon la MÊME politique (une seule définition).
+  // compile, et doit le minifier selon la MÊME politique (une seule définition). La règle elle-même
+  // est `Bundler.minifies()` : le bandeau de cli.ts l'applique avant que le Bundler n'existe.
   shouldMinify(): boolean {
-    return this.minifyMode === 'auto' ? this.isProd() : this.minifyMode
+    return Bundler.minifies(this.minifyMode, this.envMode)
+  }
+
+  static minifies(mode: boolean | 'auto', env: 'dev' | 'prod'): boolean {
+    return mode === 'auto' ? env === 'prod' : mode
   }
 
   // currentLogLevel()/prodLogLevel() : niveau EFFECTIF de la console (clé `logLevel` de
-  // mjs.config.json, cf. resolveLogLevel/config.ts — défauts dev 'log', prod 'warn').
+  // mjs.config.json, cf. resolveLogLevel/config.ts — défauts dev 'log', prod 'error').
   // currentLogLevel() suit l'environnement RÉEL de CE build (émis au manifeste pour le
   // navigateur — cf. writeManifest — et gouverne buildWarn() ci-dessous). prodLogLevel()
   // vaut TOUJOURS le niveau de PROD, quel que soit l'environnement en cours : c'est lui qui
-  // pilote la liste `pure` du minifieur (cf. tous les appels à minifyJs()), pour qu'un bundle
-  // minifié en dev (minify forcé) retire exactement ce qu'un build de prod retirerait.
+  // pilote la liste `pure` du minifieur en production (cf. tous les appels à minifyJs()). En
+  // développement, minifié ou non, rien n'est retiré (`dev` de minifyJs) : minifier n'y fait que minifier.
   private currentLogLevel() {
     return resolveLogLevel(this.logLevel, this.isProd() ? 'prod' : 'dev')
   }
@@ -5511,13 +5656,15 @@ export class Bundler {
   }
 
   // buildWarn() : point de sortie UNIQUE des avertissements du bundler vers le terminal —
-  // respecte currentLogLevel() (rien en dessous de 'warn'). Remplace un `console.warn` direct
+  // respecte le niveau du terminal (rien en dessous de 'warn') : celui que la clé fixe pour CET environnement,
+  // sinon ses avertissements restent visibles, en production aussi (cf. resolveTerminalLogLevel, config.ts).
+  // Remplace un `console.warn` direct
   // partout où le contexte a accès à `this` (compile-time — PAS la validation de
   // mjs.config.json elle-même, qui tourne avant que l'environnement dev/prod ne soit connu).
   // PUBLIC : cli.ts l'appelle aussi pour ses propres échos d'avertissements de build
   // (`stats.warnings`, purge d'orphelins) — même bundler, même niveau, un seul filtre.
   buildWarn(message: string): void {
-    if (logLevelAllows(this.currentLogLevel(), 'warn')) printDiagnostic(message, this.colorsEnabled)
+    if (logLevelAllows(resolveTerminalLogLevel(this.logLevel, this.isProd() ? 'prod' : 'dev'), 'warn')) printDiagnostic(message, this.colorsEnabled)
   }
 
   // où s'écrivent `@in=*nom`, `@out=*nom` et `@transition=*nom` (avec leurs modificateurs) : « fichier (ligne N) », un par fichier. Une directive s'écrit dans l'ouverture
@@ -6049,6 +6196,7 @@ export class Bundler {
       // sans les alias que ModularJS livre tels quels : chaque thread les connaît déjà (cf. effectDefsToWire)
       effectDefsWire: effectDefsToWire(this.effectDefs),
       typesText: !this.isProd(),
+      devWarnings: !this.isProd(),
       skeleton: this.effectsConf?.skeleton,
       guard: this.effectsConf?.guard,
       typedStores: this.typedStores,
@@ -6255,6 +6403,7 @@ export class Bundler {
           sourceMap: this.shouldEmitSourceMap(),
           mangleCache: this.mangleCache,
           logLevel: this.prodLogLevel(),
+          dev: !this.isProd(),
         })
         // carte de source ÉCRITE. Deux cas, une seule règle : ce qui est écrit
         // doit pointer le `.mjs`, jamais un état intermédiaire.
@@ -6846,7 +6995,7 @@ export class Bundler {
   private async compileScriptModuleCold(filePath: string, ext: '.civet' | '.coffee', baseName: string, importedModules: string[], src: string): Promise<string> {
     // Apply MJS sugar (µ. routing, runes µ$X, µ.inspect) AVANT compile langage.
     // Permet aux modules user d'utiliser µ$X = ... etc.
-    const { applyMjsSugarToScript, lintNoRawImport, lintSplitRune, sigilAliasCode } = await import('../transpiler/index.js')
+    const { applyMjsSugarToScript, lintNoRawImport, lintSplitRune, sigilAliasCode, parseModuleAst, sourceLineOf } = await import('../transpiler/index.js')
     const { extractDirectives } = await import('../transpiler/directives.js')
     const { tokenize } = await import('../lexer/index.js')
     // Passer le lang au sucre : sans lui, un module .coffee autonome
@@ -6898,9 +7047,18 @@ export class Bundler {
     const preProcessed = tokenize(applyMjsSugarToScript(moduleSrc, langName, undefined, '<script module>', premiereLigne), { moduleMode: true, fileName: basename(filePath), firstLine: premiereLigne })
     const adapter = getAdapter(langName)
     // l'adaptateur retourne `{ code, map }` ; ce chemin-ci
-    // (module `@import`-é autonome) ne se sert que du code — sa carte n'a personne à qui parler,
-    // le fichier n'ayant ni gabarit ni bloc `<script>` à décaler
-    let js = (await adapter.compileToJs(preProcessed, { fileName: basename(filePath), bare: true })).code
+    // (module `@import`-é autonome) ne garde que le code — sa carte ne sert qu'à citer la ligne du
+    // fichier, le fichier n'ayant ni gabarit ni bloc `<script>` à décaler
+    const compiled = await adapter.compileToJs(preProcessed, { fileName: basename(filePath), bare: true })
+    let js = compiled.code
+    // code qui suit un `return`, un `throw`, un `break` ou un `continue` dans le même bloc (cf.
+    // transpiler/unreachable.ts) : cité à sa ligne du fichier, quand le sucre a gardé les lignes —
+    // imports ajoutés devant exclus
+    const keepsLines = preProcessed.split('\n').length === src.split('\n').length + dir.pendingAutoImports.length
+    warnUnreachableCode(this.lint?.unreachable === false ? null : parseModuleAst(compiled.code), offset => {
+      const line = keepsLines ? sourceLineOf(compiled.code, compiled.map, offset) : null
+      return line !== null && line > dir.pendingAutoImports.length ? line - dir.pendingAutoImports.length : null
+    }, basename(filePath), this.lint, this.colorsEnabled)
     // Civet préserve les assignations top-level bares (`foo = 1`) telles
     // quelles. En ESM strict mode c'est illégal. CoffeeScript en mode `bare`
     // injecte des `var` automatiquement ; on reproduit ce comportement pour
@@ -6999,6 +7157,7 @@ export class Bundler {
           sourceMap: this.shouldEmitSourceMap(),
           mangleCache: this.mangleCache,
           logLevel: this.prodLogLevel(),
+          dev: !this.isProd(),
         })
         // PLUS de writeHashed()/this.cache.set() ICI (cf. compileMjsCold, même
         // raisonnement) : l'unité part en attente d'émission topologique.
@@ -7328,6 +7487,7 @@ export class Bundler {
       filename: 'mjs_styles.js',
       mangleCache: this.mangleCache,
       logLevel: this.prodLogLevel(),
+      dev: !this.isProd(),
     })
     // mode 'bundle' : jamais un fichier `mjs_styles-<hash>.js` — gardé en mémoire, résolu par
     // le plugin esbuild d'emitSingleFile() sous 'mjs:styles' (cf. bandeau de bundleRuntime()
@@ -7462,7 +7622,7 @@ export class Bundler {
                    `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
                    `  µ._mjs_rootStyleSheet = _root;\n` +
                    `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel() })
+        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
         this.splitRootHashedPath = this.writeHashed('mjs_style_root', '.js', minified.code)
         newRootCss = css
       } else {
@@ -7488,7 +7648,7 @@ export class Bundler {
                    `  s_${safeVar}.replaceSync(${JSON.stringify(css)});\n` +
                    `  µ.CSS[${keyLit}] = s_${safeVar};\n` +
                    `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: `mjs_style_${baseName}.js`, mangleCache: this.mangleCache, logLevel: this.prodLogLevel() })
+        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: `mjs_style_${baseName}.js`, mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
         this.splitStyleHashedPaths[baseName] = this.writeHashed(stem, '.js', minified.code)
         newSharedCss.set(baseName, css)
       }
@@ -7595,7 +7755,7 @@ export class Bundler {
                    `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
                    `  µ._mjs_rootStyleSheet = _root;\n` +
                    `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel() })
+        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
         this.splitRootHashedPath = this.writeHashed('mjs_style_root', '.js', minified.code)
         newRootCss = css
       } else {
@@ -7794,7 +7954,7 @@ export class Bundler {
     const missing = keys.filter(k => !existsSync(join(this.runtimeDir, 'mjs_' + k + '.ts')))
     if (missing.length > 0) throw new Error(t('bundler.index.runtime-introuvable', { manquants: missing.length, total: keys.length, dossier: this.runtimeDir, liste: missing.map(k => 'mjs_' + k + '.ts').join(', ') }))
     // réglages qui changent le fichier produit : avec le texte de l'effet et l'état du cache de noms courts, la clé du mémo
-    const reglages = JSON.stringify([this.isProd(), this.shouldMinify(), this.shouldEmitSourceMap(), this.prodLogLevel(), [...this.fxToolsEmbarked ?? []].sort()])
+    const reglages = JSON.stringify([this.isProd(), this.shouldMinify(), this.shouldEmitSourceMap(), this.prodLogLevel(), this.journalInCore, [...this.fxToolsEmbarked ?? []].sort()])
     const memos    = new Map<string, { src: string, entree: string, reglages: string, noms: string, code: string, map?: string }>()
     for (const k of keys) {
       const src    = this.effectSource('mjs_' + k + '.ts', readFileSync(join(this.runtimeDir, 'mjs_' + k + '.ts'), 'utf-8'), used)
@@ -7813,7 +7973,9 @@ export class Bundler {
           sourceMap: this.shouldEmitSourceMap(),
           mangleCache: this.mangleCache,
           logLevel: this.prodLogLevel(),
+          dev: !this.isProd(),
           runtimeSource: this.isProd(),
+          journal: this.journalInCore,
         })
         // clé prise sur le cache APRÈS minification : c'est l'état que le tour suivant retrouve quand rien n'a bougé
         memo = { src, entree, reglages, noms: this.shouldMinify() ? JSON.stringify(this.mangleCache) : '', code: minified.code, map: minified.map }
@@ -7835,7 +7997,8 @@ export class Bundler {
   // s'afficher (µ._mjs_txt, mjs_init.ts). Inscrits au registre des sorties (comme tout fichier haché,
   // nettoyés avec les périmés) mais hors de mjs-precache.json : personne ne les télécharge d'avance.
   // Rien en développement, où la table complète reste au manifeste. Quand le cœur n'a plus ses traces (cf. tracesCut),
-  // les textes que seules des traces lisent n'y sont plus non plus.
+  // les textes que seules des traces lisent n'y sont plus non plus ; aux niveaux 'error' et 'silent', ceux que seuls des
+  // avertissements lisent non plus (les avertissements du runtime partent du code envoyé, cf. WARNING_ONLY_MESSAGES).
   // --------------------------------------------------------------------------
   private compileMessageFiles(): number {
     this.msgFileNames = new Map()
@@ -7843,7 +8006,7 @@ export class Bundler {
     const cut = this.tracesCut()
     for (const lang of RUNTIME_LANGS) {
       const messages = runtimeMessagesFor(lang)
-      const path     = this.writeHashed(`mjs_err-${lang}`, '.json', JSON.stringify(cut ? messagesWithoutTraces(messages) : messages))
+      const path     = this.writeHashed(`mjs_err-${lang}`, '.json', JSON.stringify(cut ? messagesWithoutTraces(messages, this.prodLogLevel()) : messages))
       this.msgFileNames.set(lang, path.slice(this.urlPrefix.length + 1))
     }
     return this.msgFileNames.size
@@ -7857,13 +8020,20 @@ export class Bundler {
 
   // manifestLabels() : la table des libellés du manifeste. En production au niveau 'log', les traces du cœur écrivent :
   // leur texte part ici, dans un groupe `err` réduit à ces textes (ceux que le cœur nomme), pour que la première trace
-  // sorte en texte sans attendre le fichier de messages, qui reste complet
-  private manifestLabels(): Record<string, any> {
-    const labels = runtimeLabelsFor(this.isProd(), this.labelGroups, this.labelCoreModules, this.labelFxEffects) as Record<string, any>
+  // sorte en texte sans attendre le fichier de messages, qui reste complet. Publique, comme labelsLang() : le rendu serveur
+  // pose cette table (sans les messages de la console) dans sa fenêtre, qui n'évalue pas le manifeste (server/renderToString.ts)
+  manifestLabels(): Record<string, any> {
+    const labels = runtimeLabelsFor(this.isProd(), this.labelGroups, this.labelCoreModules, this.labelFxEffects, this.labelCoreDropped) as Record<string, any>
     const keys   = this.traceKeys ?? TRACE_READ_MESSAGES
     if (!this.isProd() || levelCutsTraces(this.prodLogLevel()) || keys.length === 0) return labels
     for (const lang of Object.keys(labels)) labels[lang] = { ...labels[lang], err: traceMessages(runtimeMessagesFor(lang), keys) }
     return labels
+  }
+
+  // labelsLang() : la langue de repli des libellés du runtime (`µ._runtimeLabelsLang`) — celle du projet (`i18n.default`),
+  // sinon la clé `lang` de mjs.config.json (`getMessagesLang()`, posée par `setMessagesLang`)
+  labelsLang(): string {
+    return this.i18n?.default ?? getMessagesLang()
   }
 
   // msgUrlsLine() : la ligne du manifeste qui publie l'adresse de chaque fichier de messages — vide
@@ -7948,11 +8118,15 @@ export class Bundler {
       emitted++
     }
     const concatenated = this.autoImportMu(parts.join('\n'))
+    // texte du runtime (animations et pièces communes) : en production, ses avertissements partent comme ceux du cœur (cf. minifyJs, runtimeSource)
     const minified = await minifyJs(concatenated, {
       force: this.shouldMinify(),
       filename: 'mjs_anims.js',
       mangleCache: this.mangleCache,
       logLevel: this.prodLogLevel(),
+      dev: !this.isProd(),
+      runtimeSource: this.isProd(),
+      journal: this.journalInCore,
     })
     // mode 'bundle' : jamais un fichier `mjs_anims-<hash>.js` — mêmes raisons que
     // bundleSharedStyles()/bundleRuntime() ci-dessus, sous 'mjs:anims'.
@@ -9508,6 +9682,7 @@ export class Bundler {
           filename: 'mjs_external.js',
           mangleCache: this.mangleCache,
           logLevel: this.prodLogLevel(),
+          dev: !this.isProd(),
         })
         this.pendingUnits.set('mjs_external', { kind: 'cold', file: this.manifestExternal, stem: 'mjs_external', ext: '.js', code: minified.code, deps, features })
       },
@@ -10044,9 +10219,9 @@ export class Bundler {
       // seule figée au build : c'est le runtime qui choisit celle AFFICHÉE (`µ._mjs_label`,
       // mjs_init.ts) — un site basculé en anglais montrait des toasts « Succès »/« Erreur ».
       // `µ._runtimeLabelsLang` = langue de repli : celle du projet (`i18n.default`), sinon la
-      // clé `lang` de mjs.config.json (`getMessagesLang()`, posée par `setMessagesLang`).
+      // clé `lang` de mjs.config.json (cf. labelsLang). Le rendu serveur pose la même langue et la même table, sans les messages de la console.
       `µ._runtimeLabels = ${JSON.stringify(this.manifestLabels())};`,
-      `µ._runtimeLabelsLang = ${JSON.stringify(this.i18n?.default ?? getMessagesLang())};`,
+      `µ._runtimeLabelsLang = ${JSON.stringify(this.labelsLang())};`,
       // adresse du fichier de messages de chaque langue (production seulement) : lue par le cœur au
       // premier message de la console. Nom SANS `_mjs_` : le manifeste n'est pas raccourci avec le cœur
       this.msgUrlsLine(),
@@ -10507,10 +10682,12 @@ export class Bundler {
     // ce fichier ne définit pas (faute de frappe, composant oublié du projet) : tous les
     // `customElements.define` ont déjà tourné au-dessus, tout ce qui reste `:not(:defined)` avec
     // ce préfixe est inconnu pour de bon. Les balises insérées PLUS TARD ne sont pas suivies (pas
-    // d'observer) : il n'y aurait rien à charger pour elles non plus.
+    // d'observer) : il n'y aurait rien à charger pour elles non plus. Ce contrôle ne sert qu'à un avertissement : aux niveaux de
+    // production qui retirent ceux du framework ('error', 'silent', cf. runtimeCallsCut), il ne s'écrit pas
+    const warns = !(this.isProd() && this.shouldMinify() && runtimeCallsCut(this.prodLogLevel()).includes('warn'))
     lines.push(`if (typeof document !== 'undefined') {`)
     lines.push(`  if (µ.Autoloader) { µ.Autoloader.observe(document.body); }`)
-    lines.push(`  else { document.querySelectorAll(':not(:defined)').forEach((n) => { if (n.tagName.indexOf('MJS-') === 0) µ.warn('[ModularJS] <' + n.tagName.toLowerCase() + '> inconnue : aucun composant de ce nom dans le fichier unique'); }); }`)
+    if (warns) lines.push(`  else { document.querySelectorAll(':not(:defined)').forEach((n) => { if (n.tagName.indexOf('MJS-') === 0) µ.warn('[ModularJS] <' + n.tagName.toLowerCase() + '> inconnue : aucun composant de ce nom dans le fichier unique'); }); }`)
     lines.push(`}`)
     lines.push(`if (typeof window !== 'undefined') { window.__mjsBundleReady = Promise.resolve(); }`)
     lines.push(`export { µ };`)
@@ -10576,7 +10753,8 @@ export class Bundler {
       treeShaking: true,
       minify: shouldMinify,
       define: { 'µ.debug': 'false' },
-      pure: buildPureList(this.prodLogLevel()),
+      // en développement, minifié ou non, rien n'est retiré : le niveau de la console s'applique à l'exécution
+      pure: this.isProd() ? buildPureList(this.prodLogLevel()) : [],
       mangleProps: shouldMinify ? /^_mjs_/ : undefined,
       mangleCache: shouldMinify ? this.mangleCache : undefined,
       keepNames: false,
@@ -10957,6 +11135,7 @@ export class Bundler {
       typeDefs: this.typeDefs,
       effectDefs: this.effectDefs,
       typesText: !this.isProd(),
+      devWarnings: !this.isProd(),
       skeleton: this.effectsConf?.skeleton,
       guard: this.effectsConf?.guard,
       typedStores: this.typedStores,

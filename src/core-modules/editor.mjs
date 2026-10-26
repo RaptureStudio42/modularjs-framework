@@ -2,10 +2,10 @@
 
 <script module>
   # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à l'attribut `answer` (le mode « répondre ») ou à un outil de la barre (`tool-link`,
-  # `tool-check`) : le build de production les ôte quand aucune page n'écrit `answer`, ou quand aucune barre de l'application ne peut afficher l'outil ; le développement et la copie dans un
-  # projet gardent tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé. `!answer` est l'autre forme des lignes qui existent avec et sans `answer`, écrite en
+  # `tool-check`) : la construction les ôte quand aucune page n'écrit `answer`, ou quand aucune barre de l'application ne peut afficher l'outil, en développement comme en production ; la copie dans un
+  # projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé. `!answer` est l'autre forme des lignes qui existent avec et sans `answer`, écrite en
   # commentaire et remise en code quand `answer` part. `tool-keys` cerne ce qui interroge les barres pour le raccourci du lien et des cases, `dev answer` l'avertissement du développement quand un script pose `answer`
-  # alors qu'aucune page ne l'écrit. Ce qui affiche et coche une liste à cocher déjà dans la valeur (readBlocks, boxHit, toggleCheck, fixup) n'est jamais repéré : il ne dépend d'aucun outil
+  # alors qu'aucune page ne l'écrit (écrit en commentaire, réveillé quand `answer` part). Ce qui affiche et coche une liste à cocher déjà dans la valeur (readBlocks, boxHit, toggleCheck, fixup) n'est jamais repéré : il ne dépend d'aucun outil
   # le nettoyeur : tout HTML qui entre (collage, dépôt, valeur liée) et tout ce que la surface contient devient d'abord un MODÈLE
   # de blocs, puis un HTML canonique reconstruit depuis lui ; le résultat est le même quel que soit le navigateur qui a
   # fabriqué le DOM (<b> ou <strong>, <div> ou <p>, <p><ul> mal imbriqué…), et rien d'autre que la liste permise n'en sort
@@ -29,7 +29,7 @@
   NOTEXT    = /^(button|submit|reset|checkbox|radio|file|image|color|range|hidden)$/
 
   # @@ dev answer
-  answerTold = false
+  # answerTold = false # @@ !answer
   # @@
 
   # le geste de défaire ou de refaire rendu au champ du focus (plus bas), commun à tous les éditeurs de la page : un rejeu qui retombe sur l'étape d'un autre
@@ -552,13 +552,13 @@
   tr = (key, lang)-> µ._mjs_label('core', key) ?? ''
 
   on = (v)-> v !== undefined and v !== null and v !== false and v !== 'false'
-  # `required` : « false », quelle que soit sa casse, le laisse faux (le rendu serveur la lit ici, sans le socle du cœur qui l'ôte dans le navigateur)
+  # `disabled`, `readonly`, `required` et `answer` : « false », quelle que soit sa casse, les laisse faux (le rendu serveur lit les trois premiers ici, sans le socle du cœur qui l'ôte de la balise dans le navigateur ; `answer`, que ce socle ne lit pas, se lit ici au serveur comme dans le navigateur)
   must = (v)-> on(v) and String(v).toLowerCase() !== 'false'
 
 
-  $off    = on($disabled) or $formDisabled
-  $ro     = on($readonly)
-  $ans    = on($answer) # @@ answer
+  $off    = must($disabled) or $formDisabled
+  $ro     = must($readonly)
+  $ans    = must($answer) # @@ answer
   $edit   = not $off and not $ro and not $ans # @@ answer
   $tick   = $ans and not $off and not $ro # @@ answer
   $textRo = $ro and not $ans # @@ answer
@@ -714,11 +714,14 @@
     setTimeout(emitState, 0)
 
   # @@ dev answer
-  # la production retire le mode « répondre » quand aucune page n'écrit `answer` : un éditeur qui le reçoit d'un script, ici, ne l'aurait plus là-bas
-  µeffect ->
-    if $ans and not answerTold
-      answerTold = true
-      µ.warn(µ._mjs_msg('dev.editorAnswerScript', {}, '<@@editor> : un éditeur reçoit « answer » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — en production, le mode « répondre » ne serait pas envoyé. Écrivez « answer » sur l\'éditeur dans votre page plutôt que de le poser par un script.'))
+  # aucune page n'écrit `answer` : la construction a ôté le mode « répondre », un éditeur qui le reçoit d'un script ne l'a pas. Écrit en commentaire, réveillé
+  # seulement quand le mode est ôté : une copie du module posée dans un projet le garde, et ne le dit jamais
+  # @@ !answer
+  # µeffect ->
+  #   if must($answer) and not answerTold
+  #     answerTold = true
+  #     µ.warn(µ._mjs_msg('dev.editorAnswerScript', {}, '<@@editor> : un éditeur reçoit « answer » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — le mode « répondre » n\'est pas envoyé, ni en développement ni en production. Écrivez « answer » sur l\'éditeur dans votre page plutôt que de le poser par un script.'))
+  # @@
   # @@
 
 
@@ -1573,7 +1576,7 @@
   <div class="surface" part="surface" role={$ans ? 'group' : 'textbox'} aria-multiline={$ans ? null : 'true'} aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$textRo ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and not $ans and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($textRo and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div>
   <!-- @@ -->
   <!-- @@ !answer -->
-  <!-- <div class="surface" part="surface" role="textbox" aria-multiline="true" aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(on($required) and $edit) ? true : null} aria-readonly={$ro ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($ro and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div> -->
+  <!-- <div class="surface" part="surface" role="textbox" aria-multiline="true" aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$ro ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($ro and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div> -->
   <!-- @@ -->
   <textarea class="anchor" tabindex="-1" aria-hidden="true" @this=!{textField} @focus={ensureFocus()}></textarea>
   <div class="live" role="status" aria-live="polite">{$announce}</div>

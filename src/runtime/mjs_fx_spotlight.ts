@@ -17,7 +17,7 @@
 // sont alors ceux du repos, posés là par leurs deux variables (en %, la place suit la taille de la balise) : rien d'autre n'écoute, rien ne tourne.
 // Le voile suit toujours la souris. `glow` : la portée du halo dans la boîte, en px (sans lui, celle du liseré : 0,72 fois `size`). `every` :
 // allumée, la lumière s'allume par instants, un éclat à chaque durée (« réduire les animations » : allumée sans éclat) ; sans lui, la variable de thème
-// `$$spotlight-every` l'allume, à sa durée ; `$$fx-every`, la cadence commune des effets qui se répètent, ne l'allume pas. Toujours allumée (`on: always`),
+// `$$spotlight-every` l'allume, à sa durée ; `$$mjs-fx-every`, la cadence commune des effets qui se répètent, ne l'allume pas. Toujours allumée (`on: always`),
 // l'éclat se cale sur l'horloge commune de ces effets : ses tours partent des multiples de sa durée, comptés depuis le début de la page.
 // Le halo et le liseré ne posent aucun nœud dans la balise : `:empty`, `:last-child`, `childElementCount`,
 // `li:last-child` de l'auteur visent ce qu'ils visaient, et un `innerHTML` ne les emporte pas. Le liseré est
@@ -78,7 +78,7 @@
     + '[mjs-fx~="spotlight"][mjs-fx-spot-on]::before{opacity:1}'
     // l'éclat : allumée, la lumière s'allume par instants — un éclat, puis plus rien jusqu'au suivant. Sa durée : `every` écrit sur la balise (sa
     // variable, posée sur elle), sinon la variable de thème `$$spotlight-every` ; sans l'une ni l'autre, la déclaration ne vaut rien et la lumière
-    // reste allumée sans éclat : la cadence commune `$$fx-every` n'allume rien. La règle part toujours, la variable de thème pouvant venir d'une
+    // reste allumée sans éclat : la cadence commune `$$mjs-fx-every` n'allume rien. La règle part toujours, la variable de thème pouvant venir d'une
     // feuille que la construction ne lit pas. Avec « réduire les animations », allumée sans éclat
     + '@media (prefers-reduced-motion:no-preference){[mjs-fx~="spotlight"][mjs-fx-spot-on]::after,[mjs-fx~="spotlight"][mjs-fx-spot-on]::before{animation:mjs-fx-spot-flash var(--mjs-spotlight-every) ease-out infinite}}'
     + '@keyframes mjs-fx-spot-flash{0%,55%,100%{opacity:0}12%{opacity:1}}'

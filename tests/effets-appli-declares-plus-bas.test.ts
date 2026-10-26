@@ -2,7 +2,7 @@
 // déclaré PLUS BAS dans le fichier, ou dans un fichier d'effets qui suit : l'ordre d'écriture ne compte pas.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'

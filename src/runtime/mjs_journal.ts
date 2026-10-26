@@ -62,7 +62,7 @@
       if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
         try {
           queued = navigator.sendBeacon('/__mjs/errors', new Blob([json], { type: 'application/json' }));
-        } catch (e) { queued = false; }
+        } catch { queued = false; }
       }
       if (!queued) {
         // réglages sans prototype : fetch() lit aussi les membres hérités (credentials, mode, referrerPolicy…)
@@ -73,7 +73,7 @@
         init.keepalive = true;
         fetch('/__mjs/errors', init).catch(function() {});
       }
-    } catch (e) { /* veilleur muet — jamais de crash en cascade */ }
+    } catch { /* veilleur muet — jamais de crash en cascade */ }
   };
 
   window.addEventListener('error', function(e) {
@@ -82,7 +82,7 @@
       var msg = (e && e.message) || 'Error';
       var stack = (e && e.error && e.error.stack) || msg;
       µ._mjs_journalSend(buildPayload(msg, stack));
-    } catch (err) { /* muet */ }
+    } catch { /* muet */ }
   });
 
   window.addEventListener('unhandledrejection', function(e) {
@@ -92,7 +92,7 @@
       var msg = (reason && reason.message) || String(reason);
       var stack = (reason && reason.stack) || msg;
       µ._mjs_journalSend(buildPayload(msg, stack));
-    } catch (err) { /* muet */ }
+    } catch { /* muet */ }
   });
 
   // enrobage de µ.error — TOUJOURS posé (que le journal soit actif ou non) : le gate se joue à
@@ -111,7 +111,7 @@
         var msg = parts.join(' ');
         µ._mjs_journalSend(buildPayload(msg, (firstErr && firstErr.stack) || msg));
       }
-    } catch (err) { /* muet */ }
+    } catch { /* muet */ }
     return originalError.apply(this, arguments);
   };
 })();

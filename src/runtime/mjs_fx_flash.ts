@@ -23,7 +23,7 @@
     try {
       el._mjs_flashAnim.cancel();
     }
-    catch (e) {}
+    catch {}
   }
   var a = µ._mjs_animate(el, kf, { duration: isFinite(d) ? d : 600, easing: 'ease-out' });
   el._mjs_flashAnim = a;

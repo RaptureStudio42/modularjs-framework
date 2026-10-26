@@ -27,12 +27,15 @@ const MODULES: Record<string, string> = {
   clock:    '<@@clock></@@clock>',
   editor:   '<@@editor name="t"></@@editor>',
   toolbar:  '<@@toolbar for="zone"></@@toolbar><div id="zone"></div>',
+  chart:    '<@@chart></@@chart>',
 }
 
 // la page unique ci-dessous évalue les fichiers du build à la suite, dans UN seul script : les noms que plusieurs modules déclarent
 // à leur niveau (`told` pour <@@select> et <@@toolbar>) s'y heurtent, alors que le navigateur donne à chaque module sa portée.
 // L'éditeur et sa barre ont leur batterie à eux (tests/core-editeur-*.test.ts) ; ici ils ne passent que par les builds seuls
 const SANS_PAGE_UNIQUE = ['editor', 'toolbar']
+// une partie d'un module que le gabarit n'écrit pas ne part pas, ses libellés non plus (la barre d'outils de <@@chart>, cf. CORE_LABEL_PARTS)
+const OTEES: Record<string, string[]> = { chart: ['chart.toolbar'] }
 
 async function construire(nom: string, gabarit: string): Promise<{ root: string, outDir: string, erreurs: string[] }> {
   const root = mjsTmp(`coeur-libelles-runtime-vide-${nom}`)
@@ -65,7 +68,7 @@ describe('modules cœur à libellé en `runtime: []` — build RÉEL', function 
     it(`<@@${nom}> seul : le manifeste pose les clés de ce module et de ceux qu'il pose, pas une de plus`, async () => {
       const { root, outDir, erreurs } = await construire(`cles-${nom}`, gabarit)
       assert.equal(erreurs.length, 0, erreurs.join('\n'))
-      const attendu = [...coreLabelKeys(moduleEtPoses(nom, modulesPoses()))].sort()
+      const attendu = [...coreLabelKeys(moduleEtPoses(nom, modulesPoses()), OTEES[nom] ?? [])].sort()
       const table   = libellesDuBuild(join(root, 'bundle.js'), outDir)
       assert.deepEqual(Object.keys(table.fr.core ?? {}).sort(), attendu)
       assert.deepEqual(Object.keys(table.en.core ?? {}).sort(), attendu)

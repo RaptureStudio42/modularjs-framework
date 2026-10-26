@@ -133,7 +133,7 @@ function _mjsFxReflectCss() {
     // relancés, puis encore à chaque changement du contenu) — la balise ne se copie pas plus qu'un composant
     var inner = host ? '' : _mjsFxReflectInner(el);
     var whole = host || inner !== '';
-    var sup   = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch (e) { return false; } };
+    var sup   = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch { return false; } };
     var natif = sup('-webkit-box-reflect', 'below 0');
     var moz   = sup('background', '-moz-element(#a)');
     var fancy = blur > 0 || water;

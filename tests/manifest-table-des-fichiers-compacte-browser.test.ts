@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs'
-import { join, dirname, extname, normalize } from 'node:path'
+import { join, extname, normalize } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'

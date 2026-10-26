@@ -1,6 +1,6 @@
-// La construction retire les groupes de <@@sortable> quand aucune liste de l'appli n'écrit `group` (production seulement) : ce que le module
+// La construction retire les groupes de <@@sortable> quand aucune liste de l'appli n'écrit `group`, en développement comme en production : ce que le module
 // cœur envoie dépend de ce que les pages écrivent, par le même mécanisme que la partie « Autre » de <@@select> (repères `@@` dans le fichier
-// du module, décision `coreAttrWritten(<module du fichier>, <attribut du repère>)`). Le développement garde tout, une copie éjectée garde tout,
+// du module, décision `coreAttrWrittenStrict(<module du fichier>, <attribut du repère>)`). Une copie éjectée garde tout,
 // et le module cœur en cache suit l'appli (mode veille : ajouter puis retirer `group` dans une page change le module émis).
 //
 // Statique, avec un Bundler réel et le catalogue réel du framework ; un seul test monte les listes dans happy-dom (l'avertissement du
@@ -199,11 +199,11 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
     })
   })
 
-  describe('développement : tout reste toujours', () => {
-    it('aucune liste n\'écrit `group` : tout reste, avec l\'avertissement', async () => {
+  describe('développement : la même décision que la production', () => {
+    it('aucune liste n\'écrit `group` : plus rien des groupes, l\'avertissement est là', async () => {
       const { code } = await build('tri-groupe-dev-sans', { 'liste.mjs': SCRIPT + liste('value=!{$l}') }, MODES.dev)
-      assert.deepEqual(manque(code, GROUPE_MINIFIE), [])
-      assert.deepEqual(manque(code, GROUPE_NOMS), [])
+      assert.deepEqual(present(code, GROUPE_MINIFIE), [])
+      assert.deepEqual(present(code, GROUPE_NOMS), [])
       assert.ok(code.includes(AVIS), 'l\'avertissement du développement est là')
       assert.deepEqual(leaks(code), [])
     })
@@ -318,7 +318,8 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
         const files = readdirSync(app.outDir)
         const mine  = files.filter((f) => /^ma-liste-.*\.js$/.test(f)).map((f) => readFileSync(join(app.outDir, f), 'utf-8')).join('\n')
         assert.deepEqual(manque(mine, GROUPE_MINIFIE), [], `${mode} : la copie garde les groupes`)
-        if (mode === 'prod') assert.deepEqual(present(coreOf(app.outDir, 'core-sortable'), GROUPE_MINIFIE), [], 'le module cœur de la même appli est trié, lui')
+        // le script de la copie nomme la balise du module (ses textes citent <@@sortable>) : dans le doute, le module cœur de la même appli garde les groupes
+        assert.deepEqual(manque(coreOf(app.outDir, 'core-sortable'), GROUPE_MINIFIE), [], `${mode} : le module cœur garde les groupes, dans le doute`)
         assert.doesNotThrow(() => transformSync(mine, { format: 'esm' }), `${mode} : le code de la copie se lit`)
       }
     })

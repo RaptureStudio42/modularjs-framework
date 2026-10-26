@@ -179,7 +179,9 @@ export interface MjsConfig {
    * niveau dans les deux environnements. Objet `{ dev?, prod? }` : un niveau par environnement,
    * chaque sous-clé absente retombe sur le défaut de SON environnement. Niveaux, du plus bavard
    * au plus muet : `'log'` (tout) > `'warn'` (avertissements + erreurs) > `'error'` (erreurs
-   * seules) > `'silent'` (rien). Défauts : `dev` → `'log'`, `prod` → `'warn'`.
+   * seules) > `'silent'` (rien). Défauts : `dev` → `'log'`, `prod` → `'error'` ; le terminal garde
+   * ses avertissements tant que la clé ne fixe pas le niveau de son environnement
+   * (cf. `resolveTerminalLogLevel`).
    * `µ.debug = true`, posé à la main dans la console navigateur, FORCE `'log'` quel que soit ce
    * réglage — échappatoire de mise au point, cf. `resolveLogLevel`/`logLevelAllows` ci-dessous.
    */
@@ -964,6 +966,9 @@ export interface LintConfig {
    *  Défaut `true` — `false` coupe, `"error"` en fait une erreur de build (seule clé qui
    *  accepte cette valeur). */
   emptyComponent?: boolean | 'error'
+  /** Du code qui suit, dans le même bloc, un `return`, un `throw`, un `break` ou un `continue` :
+   *  il ne s'exécute jamais (la production le retire sans le dire). Défaut `true` — `false` coupe. */
+  unreachable?: boolean
 }
 
 /** Niveaux de verbosité de la console, du plus bavard au plus muet. */
@@ -976,8 +981,13 @@ export type LogLevelName = 'log' | 'warn' | 'error' | 'silent'
  */
 export type LogLevelConfig = LogLevelName | { dev?: LogLevelName; prod?: LogLevelName }
 
-/** Défauts — dev bavard (`'log'`), prod mesuré (`'warn'`, comportement de build inchangé). */
-const DEFAULT_LOG_LEVELS: Record<'dev' | 'prod', LogLevelName> = { dev: 'log', prod: 'warn' }
+/** Défauts — dev bavard (`'log'`), prod réduit aux erreurs (`'error'` : les avertissements du framework ne s'écrivent
+ *  plus dans la console du navigateur et sortent du fichier construit). */
+const DEFAULT_LOG_LEVELS: Record<'dev' | 'prod', LogLevelName> = { dev: 'log', prod: 'error' }
+
+/** Défauts du terminal (`mjs build`, `mjs dev`) quand la clé ne dit rien de l'environnement : ses avertissements restent
+ *  visibles, en production aussi — le défaut `'error'` vaut pour la console du navigateur et le fichier construit. */
+const DEFAULT_TERMINAL_LOG_LEVELS: Record<'dev' | 'prod', LogLevelName> = { dev: 'log', prod: 'warn' }
 
 /** Rang numérique d'un niveau — plus haut = plus bavard. Sert à `logLevelAllows`. */
 const LOG_LEVEL_RANK: Record<LogLevelName, number> = { log: 3, warn: 2, error: 1, silent: 0 }
@@ -990,6 +1000,16 @@ const LOG_LEVEL_RANK: Record<LogLevelName, number> = { log: 3, warn: 2, error: 1
 export function resolveLogLevel(logLevel: LogLevelConfig | undefined, env: 'dev' | 'prod'): LogLevelName {
   if (typeof logLevel === 'string') return logLevel
   return logLevel?.[env] ?? DEFAULT_LOG_LEVELS[env]
+}
+
+/**
+ * Niveau EFFECTIF du terminal d'un environnement (avertissements de `mjs build`/`mjs dev`) : celui que la clé `logLevel`
+ * fixe pour cet environnement (chaîne, ou sous-clé), sinon `DEFAULT_TERMINAL_LOG_LEVELS` — un projet qui n'écrit rien
+ * voit ses avertissements de construction, en production comme en développement.
+ */
+export function resolveTerminalLogLevel(logLevel: LogLevelConfig | undefined, env: 'dev' | 'prod'): LogLevelName {
+  if (typeof logLevel === 'string') return logLevel
+  return logLevel?.[env] ?? DEFAULT_TERMINAL_LOG_LEVELS[env]
 }
 
 /**

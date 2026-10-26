@@ -232,4 +232,8 @@
     color: var(--mjs-knob-color)
     font: 700 calc(var(--mjs-knob-size) / 5) Arial, sans-serif
     pointer-events: none
+
+  @media (prefers-reduced-motion: reduce)
+    .bar
+      transition: none
 </style>

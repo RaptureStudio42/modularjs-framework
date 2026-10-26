@@ -54,7 +54,7 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_themeShee
 try {
   µ._mjs_themeSheet.insertRule(':root[mjs-theme-circle]::view-transition-old(root),:root[mjs-theme-circle]::view-transition-new(root){animation:none;mix-blend-mode:normal}', µ._mjs_themeSheet.cssRules.length);
 }
-catch (e) { /* sélecteur inconnu */ }
+catch { /* sélecteur inconnu */ }
 var _mjsThemeGeste = null;
 document.addEventListener('pointerdown', function(e) { _mjsThemeGeste = { x: e.clientX, y: e.clientY, t: Date.now() }; }, true);
 document.addEventListener('keydown', function(e) {
@@ -90,7 +90,7 @@ document.addEventListener('keydown', function(e) {
   try {
     vt = document.startViewTransition(set);
   }
-  catch (e) {
+  catch {
     fin();
     set();
     return;

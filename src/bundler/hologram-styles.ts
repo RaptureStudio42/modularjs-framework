@@ -11,7 +11,7 @@
 // Ce client ajoute au filtre une passe : les styles qui partagent une définition (`style('a b c', …)`) ne gardent, dans l'appel,
 // que les noms demandés.
 
-import { HOLOGRAM_STYLE_PREFIX, HOLOGRAM_STYLE_ANY, FX_ANY, fxSignal } from './features.js'
+import { HOLOGRAM_STYLE_ANY, FX_ANY, fxSignal } from './features.js'
 import { selectFxSections, fxDemand, fxWrittenValues, type FxClient } from './fx-sections.js'
 import { t } from '../messages/index.js'
 

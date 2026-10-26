@@ -106,7 +106,7 @@ describe('messages chargés à bon escient — erreur levée', () => {
 
   it('erreur du framework attrapée par le code du site (aucun événement) : rien', async () => {
     const { µ, demandes, journal } = assistant()
-    try { throw new Error(µ._mjs_msg('monMsg', { nom: 'z' })) } catch (e) { /* attrapée */ }
+    try { throw new Error(µ._mjs_msg('monMsg', { nom: 'z' })) } catch { /* attrapée */ }
     await attendre()
     assert.equal(demandes.length, 0)
     assert.deepEqual(journal, [])

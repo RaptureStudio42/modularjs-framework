@@ -51,6 +51,8 @@ describe('MJS-WS — pont universel : une retentative de webhook ne garde pas sa
       assert.ok(delai < 1000, 'le 5e événement a attendu '+ delai +' ms une place libre')
       // les 4 premiers arrivent à leur retentative (+2 s)
       await attendre(() => ['c1', 'c2', 'c3', 'c4'].every(id => arrivees.has(id)), 6000)
+      // le serveur note l'arrivée avant de répondre, le pont compte l'envoi après la réponse reçue : les compteurs se lisent une fois les cinq réponses revenues
+      await attendre(() => stats.pont.webhooksEnvoyes >= 5, 2000)
       assert.equal(stats.pont.webhooksEchoues, 4)
       assert.equal(stats.pont.webhooksEnvoyes, 5)
       assert.equal(stats.pont.webhooksAbandonnes, 0)

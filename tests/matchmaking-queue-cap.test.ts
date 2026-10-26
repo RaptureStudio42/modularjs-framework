@@ -29,7 +29,7 @@ describe('matchmaking — plafond de la file d\'attente publique', () => {
     this.timeout(30000)
     const transport = new MemoryTransport()
     const app: MjsServerApp = mjsServer({ transport, heartbeat: 0, auth: (hello: any) => hello.auth, onLog: () => {} })
-    ;(app as any).game('foule', { seats: 100000, state: () => ({}), moves: { noop: (g: any) => true } })
+    ;(app as any).game('foule', { seats: 100000, state: () => ({}), moves: { noop: () => true } })
     await app.listen()
 
     // DEFAULT_QUEUE_CAP = 1000 (matchmaking.ts) — le 1001e ticket doit être rejeté

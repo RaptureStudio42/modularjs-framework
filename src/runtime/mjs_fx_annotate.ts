@@ -7,7 +7,7 @@
 // color (#ff4fa3), width (l'épaisseur, px ; 2), padding (l'écart au texte, px ; 5), strokes (le
 // nombre de passages, comme un vrai trait de feutre ; 2), duration (le tracé entier ; 800ms), delay,
 // on (view, hover, click, load ; always : le trait se retrace sans fin, après une pause `every`, calé
-// sur l'horloge commune des effets qui se répètent ; sans `every`, la variable de thème `$$fx-every`,
+// sur l'horloge commune des effets qui se répètent ; sans `every`, la variable de thème `$$mjs-fx-every`,
 // sinon 3s).
 // « Réduire les animations » : avec always, le trait est là une fois pour toutes.
 

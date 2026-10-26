@@ -21,7 +21,7 @@ Quand le déclaratif ne suffit pas — appeler une méthode native (`canvas.getC
 <canvas @this=!{canvas} width="300" height="200"></canvas>
 ```
 
-> ⚠️ La directive s'écrit **`@this`**, pas `@bind:this` (cette dernière n'existe pas en MJS). La forme avec `!` (`@this=!{el}`) est l'usage idiomatique.
+> ⚠️ La directive s'écrit **`@this`**, pas `@bind:this` (cette dernière n'existe pas en MJS), et toujours avec `!` : `@this=!{el}`. Sans le point d'exclamation, `@this={el}` serait lu comme l'écoute d'un événement nommé « this » et `el` ne recevrait jamais le nœud : la construction le refuse et vous donne la bonne écriture. Écrit sans valeur (`@this`) ou avec un texte (`@this="el"`), il serait lu de même : la construction le refuse aussi.
 
 > 🔥 **Point d'attention (perf) — une ref n'a pas de `$`.** Dans MJS, `$` signifie **réactif**. Une référence DOM n'a aucune raison d'être réactive : vous voulez juste un *pointeur* vers le nœud. Si vous mettez un `$` (`@this=!{$canvas}`), la ref devient réactive et **chaque écriture de propriété** (`$canvas.style.width = …`, `$canvas.className = …`) passe par le système réactif (`µ._mjs_deepSet` → *notify* + *invalidate*) au lieu d'une écriture directe. Sur un *hot-path* (HUD de jeu, animation, boucle qui repeint à chaque frame), le surcoût est **massif**. **Déclarez donc vos refs sans `$`** — et le compilateur **vous avertit** à la compilation si vous mettez un `$` sur un `@this`. Réservez `$` aux **vraies données** affichées dans le template (`{$pv}`, `{$nom}`…).
 
@@ -77,6 +77,14 @@ export trapFocus = (_node)->
 ```
 
 Comme pour `µeffect`, **la dernière fonction retournée est le nettoyage** : MJS l'exécute juste avant une ré-exécution de l'attachement *et* au démontage final du nœud.
+
+Une valeur rendue qui n'est pas une fonction n'est pas un nettoyage : elle est ignorée. Le piège courant est une dernière ligne qui rend autre chose sans le vouloir, puisque Civet rend la valeur de la dernière ligne : `requestAnimationFrame(…)` rend un nombre, une bibliothèque rend son objet, et une boucle en dernière ligne rend la liste de ses valeurs. En développement, MJS le signale dans la console, une fois par balise, avec le composant, la balise et sa ligne.
+
+```
+[ModularJS] <@menu> : l'@attach de <div> (ligne 12) a rendu une valeur de type number, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.
+```
+
+Cela vaut pour `@attach` et `@attach.once`, avec `_node`, avec `el` ou avec la fonction passée telle quelle. Ne rien rendre reste silencieux : terminez la fonction par une ligne `return`, ou rendez `null`. La construction de production n'en garde rien : ni ce contrôle, ni son texte.
 
 > ⚠️ Deux écritures équivalentes : passer la fonction telle quelle (`@attach={trapFocus}` — MJS l'appelle avec le nœud), ou l'appeler explicitement avec le nœud (`@attach={trapFocus(_node)}` ou `@attach={trapFocus(el)}` : `_node` et `el` sont deux noms du nœud courant, au choix, à la racine comme dans une ligne de `{for}` ou une branche de `{await}`, avec `@attach.once` comme sans). Les deux marchent ; la première est la plus directe quand l'action ne prend que le nœud. Écrire `_node` ou `el` dans l'expression, c'est faire l'attache vous-même : l'expression est exécutée telle quelle, avec le nœud, et sa valeur de retour est le nettoyage. Un paramètre que vous nommez `el` (`@attach={(el) -> …}`) est le vôtre, la fabrique reçoit le nœud sous le nom que vous lui donnez ; et si le `<script>` du composant déclare lui-même une variable `el` (ou la lie par `@this=!{el}`), `el` reste la vôtre dans l'expression : le nœud n'y est alors connu que sous `_node`. Un `el` déclaré dans le `<script module>` ou importé par `@import` n'est pas reconnu comme le vôtre : ne le nommez pas ainsi.
 
@@ -172,6 +180,8 @@ Un attribut `@xxx` que le compilateur ne reconnaît pas comme directive devient 
 ```html
 <button @confirn="Supprimer">Supprimer</button>
 ```
+
+Sur la balise d'un composant, un écouteur dit aussi au développement que le parent suit l'enfant : une prop à sens unique que l'enfant écrit lui-même n'est pas signalée quand sa balise porte au moins un gestionnaire d'événement, quel qu'il soit (voir [Props](04-props.md)).
 
 Il en va autrement des balises de **SECTION** (`<style>`, `<script>`, `<theme>`, `<routes>`), qui n'atteignent jamais le DOM : un attribut que le compilateur ne connaît pas y arrête le build avec une suggestion (`<style @dsplay="inline">` → `@display`), et une directive racine mal écrite (`@improt`) aussi.
 

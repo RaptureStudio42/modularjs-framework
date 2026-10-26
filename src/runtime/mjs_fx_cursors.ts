@@ -288,8 +288,8 @@ function _mjsCursorsReach(el) {
       try {
         r = sel.getComposedRanges({ shadowRoots: roots })[0];
       }
-      catch (e) {
-        try { r = sel.getComposedRanges.apply(sel, roots)[0]; } catch (e2) { return null; }
+      catch {
+        try { r = sel.getComposedRanges.apply(sel, roots)[0]; } catch { return null; }
       }
       if (!r) return null;
       var plus = false;
@@ -370,7 +370,7 @@ function _mjsCursorsReach(el) {
       var z = (c.nodeType === 1 ? c : n).getBoundingClientRect();
       return { x: z.left, y: z.top, h: z.height };
     }
-    catch (e) {
+    catch {
       return null;
     }
   };
@@ -481,7 +481,7 @@ function _mjsCursorsReach(el) {
         var rs = rg.getClientRects();
         for (var k = 0; k < rs.length && k < 32; k++) if (rs[k].width > 0) box(d, 'mjs-fx-cursor-sel', rs[k].left, rs[k].top, rs[k].width, rs[k].height);
       }
-      catch (e) { /* une page qui a changé depuis : les bandes attendront */ }
+      catch { /* une page qui a changé depuis : les bandes attendront */ }
       c = caretAt(b, t.bo);
     }
     if (!c) return;

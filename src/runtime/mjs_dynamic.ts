@@ -298,7 +298,7 @@
       return;
     }
     try { nn = new Comp(); }
-    catch (e) {
+    catch {
       return µ.warn(µ._mjs_msg('dynInstance', null, '<@module> : impossible d\'instancier le composant. Passez le NOM de tag (chaîne kebab du custom element) plutôt que la classe.'));
     }
   } else {

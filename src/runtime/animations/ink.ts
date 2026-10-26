@@ -518,7 +518,7 @@
       try {
         has2d = !!document.createElement('canvas').getContext('2d');
       }
-      catch (e) {
+      catch {
         has2d = false;
       }
     }
@@ -595,7 +595,7 @@
             map   = image ? imageMap(e.img, mw, mh) : inkMap(style, mw, mh, { seed: seed, angle: angle, ox: origin[0], oy: origin[1], count: count });
             sheet = inkSprite(map, mw, mh, SS, N, soft, invert);
           }
-          catch (err) {
+          catch {
             if (!image) return null;
             fail(image);
             return null;

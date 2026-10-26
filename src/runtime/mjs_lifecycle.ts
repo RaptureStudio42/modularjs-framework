@@ -131,12 +131,12 @@ if (µ.Element) {
     // (mjs_easing) coupe le rAF / cancel l'anim et nulle `_mjs_transition_state`.
     // NB : appelé depuis la destruction DIFFÉRÉE (node réellement parti) et
     // depuis l'éviction du pageCache → jamais sur un simple déplacement DOM.
-    try { this._mjs_transition_state?.abort?.(); } catch (e) { /* défensif */ }
+    try { this._mjs_transition_state?.abort?.(); } catch { /* défensif */ }
     if (this._mjs_nodes) {
       for (const k in this._mjs_nodes) {
         const n = this._mjs_nodes[k];
         if (n && n._mjs_transition_state) {
-          try { n._mjs_transition_state.abort(); } catch (e) { /* défensif */ }
+          try { n._mjs_transition_state.abort(); } catch { /* défensif */ }
         }
       }
     }

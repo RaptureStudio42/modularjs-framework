@@ -16,7 +16,6 @@ import { chargerAnimation } from './helpers/charger-animation.js'
 
 const HERE     = dirname(fileURLToPath(import.meta.url))
 const RUNTIME = join(HERE, '..', 'src', 'runtime')
-const source  = (name: string) => readFileSync(join(RUNTIME, 'animations', name + '.ts'), 'utf-8')
 
 function makeµ() {
   return {

@@ -37,6 +37,7 @@ export type LintType =
   | 'legacy'
   | 'config'
   | 'emptyComponent'
+  | 'unreachable'
 
 /** gravité d'un TYPE lint — jamais 'error' : une erreur de build fait échouer `mjs build`, elle
  *  n'est ni typée ni coupable (cf. paintError ci-dessous, pour ELLE seule). */
@@ -78,6 +79,7 @@ export const LINT_SEVERITY: Record<LintType, LintSeverity> = {
   legacy:           'warning',
   config:           'warning',
   emptyComponent:   'warning',
+  unreachable:      'warning',
 }
 
 /** ordre de déclaration ci-dessus — une seule liste, consultée par la validation de config ET

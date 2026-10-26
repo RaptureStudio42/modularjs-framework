@@ -87,14 +87,14 @@ function _dpMajRelire() {
     var v = JSON.parse(localStorage.getItem('mjs-devpanel-maj') || 'null');
     if (v && typeof v === 'object') ['fx', 'color', 'duration', 'style'].forEach(function(k) { if (v[k] !== void 0) _dpMaj[k] = v[k]; });
   }
-  catch (e) {}
+  catch {}
 }
 
 function _dpMajEcrire() {
   try {
     localStorage.setItem('mjs-devpanel-maj', JSON.stringify({ fx: _dpMaj.fx, color: _dpMaj.color, duration: _dpMaj.duration, style: _dpMaj.style }));
   }
-  catch (e) {}
+  catch {}
 }
 
 // un calque d'effet, le panneau ou son calque de surlignage : rien de la page
@@ -298,7 +298,7 @@ function _dpResoudre(selecteur) {
     for (var j = 0; j < candidats.length; j++) {
       if (_dpAncetreMatch(candidats[j], selecteur)) return candidats[j];
     }
-  } catch (e) { /* sélecteur invalide : aucune correspondance, jamais un crash */ }
+  } catch { /* sélecteur invalide : aucune correspondance, jamais un crash */ }
   return null;
 }
 
@@ -372,7 +372,7 @@ function _dpGeoRelire() {
     if (typeof lu.w === 'number') _dpGeo.w = lu.w;
     if (typeof lu.x === 'number') _dpGeo.x = lu.x;
     if (typeof lu.y === 'number') _dpGeo.y = lu.y;
-  } catch (e) { /* stockage désactivé ou valeur corrompue : on garde les valeurs par défaut */ }
+  } catch { /* stockage désactivé ou valeur corrompue : on garde les valeurs par défaut */ }
   _dpGeoBorner();
 }
 
@@ -382,7 +382,7 @@ function _dpGeoEcrire() {
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem('mjs-devpanel-geo', JSON.stringify(_dpGeo));
-  } catch (e) { /* stockage indisponible ou refusé : tant pis */ }
+  } catch { /* stockage indisponible ou refusé : tant pis */ }
 }
 
 /** Ramène `_dpGeo` dans des bornes valides, fenêtre courante comprise. */
@@ -458,7 +458,7 @@ function _dpSaisieEnCours() {
   // ANNULE l'intervalle : le panneau se figerait pour de bon, sans le moindre message. On
   // préfère donc conclure « personne ne saisit » — un rendu de trop, jamais un panneau mort.
   var actif;
-  try { actif = _dpRoot && _dpRoot.activeElement } catch (e) { return false }
+  try { actif = _dpRoot && _dpRoot.activeElement } catch { return false }
   if (!actif) return false;
   // le contrôle dont le panneau vient de rendre le focus après un réglage, et auquel on n'a pas retouché : rien n'y est en cours
   if (actif === _dpFocusRestored) return false;
@@ -467,7 +467,7 @@ function _dpSaisieEnCours() {
 
 // l'élément du panneau qui a le focus, null sinon — même garde que ci-dessus
 function _dpActive() {
-  try { return (_dpRoot && _dpRoot.activeElement) || null } catch (e) { return null }
+  try { return (_dpRoot && _dpRoot.activeElement) || null } catch { return null }
 }
 
 // le contrôle d'un réglage qui a le focus, de quoi le retrouver quand le panneau est réécrit : un réglage de l'éclair
@@ -513,7 +513,7 @@ function _dpSelectionInCode() {
       }
     }
   }
-  catch (e) { /* une sélection que le navigateur refuse de dire : on redessine comme avant */ }
+  catch { /* une sélection que le navigateur refuse de dire : on redessine comme avant */ }
   return false;
 }
 
@@ -576,7 +576,7 @@ function _dpGlisserFinir(e) {
   cible.removeEventListener('pointermove', _dpGlisserBouger);
   cible.removeEventListener('pointerup', _dpGlisserFinir);
   cible.removeEventListener('pointercancel', _dpGlisserFinir);
-  if (cible.releasePointerCapture) { try { cible.releasePointerCapture(_dpGlissement.pointerId); } catch (err) { /* déjà relâché */ } }
+  if (cible.releasePointerCapture) { try { cible.releasePointerCapture(_dpGlissement.pointerId); } catch { /* déjà relâché */ } }
   _dpGlissement = null;
   _dpGeoEcrire();
   _dpRender();
@@ -812,7 +812,7 @@ function _dpStyleTexte(el) {
     try {
       var texte = Array.from(feuille.cssRules || []).map(function(r) { return r.cssText; }).join('\n');
       if (texte) morceaux.push('/* feuille ' + (i + 1) + '/' + feuilles.length + ' */\n' + texte);
-    } catch (e) { /* feuille illisible (rare) : ignorée sans planter */ }
+    } catch { /* feuille illisible (rare) : ignorée sans planter */ }
   });
   if (morceaux.length) return morceaux.join('\n\n');
   var tag = el.tagName.toLowerCase();
@@ -837,7 +837,7 @@ function _dpThemeInfo(el) {
   while ((m = re.exec(source))) noms.add(m[1]);
   var vars = Array.from(noms).sort().map(function(nom) {
     var val = '';
-    try { val = getComputedStyle(el).getPropertyValue('--' + nom).trim(); } catch (e) { val = ''; }
+    try { val = getComputedStyle(el).getPropertyValue('--' + nom).trim(); } catch { val = ''; }
     return { nom: nom, val: val };
   });
   return { actif: actif, connus: connus, vars: vars };
@@ -1214,7 +1214,7 @@ function _dpActiveDeep() {
       a = r.activeElement;
     }
   }
-  catch (e) { /* `activeElement` d'une racine d'ombre qui lève hors navigateur : on garde l'hôte */ }
+  catch { /* `activeElement` d'une racine d'ombre qui lève hors navigateur : on garde l'hôte */ }
   return a;
 }
 
@@ -1414,7 +1414,7 @@ if (typeof window !== 'undefined') {
         return appel;
       }
     });
-  } catch (e) { /* propriété verrouillée par la page : Ctrl+Shift+Espace reste disponible */ }
+  } catch { /* propriété verrouillée par la page : Ctrl+Shift+Espace reste disponible */ }
 }
 
 document.addEventListener('keydown', function(e) {

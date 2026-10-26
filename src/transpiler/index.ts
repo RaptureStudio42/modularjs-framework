@@ -46,6 +46,7 @@ import { transformReactiveWritesMapped } from '../generator/transform-reactive.j
 import { applyPathTrackingMapped } from '../generator/path-tracker.js'
 import { annotateEffectDepsMapped } from '../generator/effect-deps.js'
 import { rebindDetachedThisMapped } from '../generator/this-rebinding.js'
+import { batchLoopWritesMapped } from '../generator/loop-batch.js'
 import { pseudoClashWarnings } from '../effects/pseudo-clash.js'
 import { lintReservedSymbolNames } from '../generator/reserved-symbols.js'
 import { storeArgsToRawJsLint, inlineHandlerLines } from '../generator/store-args.js'
@@ -54,6 +55,8 @@ import { setProjectEffects, withProjectEffects, sockAbsent, type ProjectEffect }
 import { resolveEffectImages } from './effect-images.js'
 import { checkA11y } from './a11y.js'
 import { checkUjsForm } from './ujs-form.js'
+import { warnUnreachableCode } from './unreachable.js'
+import { nomsChangeants } from '../analyzer/derived-reads.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { t, type MsgKey } from '../messages/index.js'
 import { maskHtmlComments as masqueCommentairesHtml, readHtmlComment } from '../mask.js'
@@ -272,6 +275,10 @@ export interface TranspileOpts {
   /** texte de chaque règle dans le code émis, pour les messages de développement — `false` en
    *  production (défaut `true`). */
   typesText?: boolean
+  /** avertissements du développement dans le code émis : une attache (`@attach`) qui rend autre chose qu'une fonction, une prop
+   *  à sens unique que l'enfant écrit lui-même (mjs_debug.ts les dit) — `true` en développement seulement (défaut `false`) :
+   *  le code de production n'en porte rien. */
+  devWarnings?: boolean
   /** les chargements qui montrent un squelette d'eux-mêmes (`effects.skeleton` de mjs.config.json ;
    *  défaut `['await']`) — ici, `await` : un {await} sans branche d'attente */
   skeleton?: string[]
@@ -1549,7 +1556,7 @@ function lintElementPropertyAtConstruction(ast: acorn.Node | null, moduleName: s
 
 // la ligne du .mjs d'une position du JS compilé du <script>, lue dans la carte de source du compilateur (déjà
 // décalée à la ligne du bloc) ; null sans carte ou sans repère : jamais une ligne inventée
-function sourceLineOf(js: string, mapJson: string | undefined, offset: number): number | null {
+export function sourceLineOf(js: string, mapJson: string | undefined, offset: number): number | null {
   if (!mapJson) return null
   const segments = decode(JSON.parse(mapJson).mappings ?? '')[js.slice(0, offset).split('\n').length - 1] ?? []
   const col      = offset - (offset > 0 ? js.lastIndexOf('\n', offset - 1) + 1 : 0)
@@ -5211,6 +5218,15 @@ async function transpileImpl(
     return line !== null && line <= lastWrittenLine ? line : null
   }
   lintElementPropertyAtConstruction(scriptAst, moduleName, opts.lint, colorsEnabled, scriptLineOf)
+  // code qui suit un `return`, un `throw`, un `break` ou un `continue` dans le même bloc (cf. unreachable.ts) :
+  // le <script> et le <script module>, chacun à sa ligne du .mjs — imports ajoutés devant le bloc exclus
+  warnUnreachableCode(scriptAst, scriptLineOf, `${moduleName}.mjs`, opts.lint, colorsEnabled)
+  const moduleKeepsLines = modulePrep.split('\n').length === moduleSection.raw.split('\n').length
+  const lastModuleLine   = moduleSection.startLine - 1 + moduleSection.raw.split('\n').length - dir.pendingAutoImports.length
+  warnUnreachableCode(moduleAst, offset => {
+    const line = moduleKeepsLines ? sourceLineOf(moduleCompiled.code, moduleSourceMap, offset) : null
+    return line !== null && line <= lastModuleLine ? line : null
+  }, `${moduleName}.mjs`, opts.lint, colorsEnabled)
   // une fonction d'un module .js copié tel quel qui écrit dans le magasin `$$x` reçu en argument (cf. generator/store-args.ts) :
   // le <script> et le <script module> ici, les gestionnaires et les expressions du HTML plus bas
   const scanStoreArgs = storeArgsToRawJsLint(dir.pendingAutoImports, moduleName, opts.lint, colorsEnabled, opts.sourceDir)
@@ -5243,7 +5259,10 @@ async function transpileImpl(
   // tout de même analysés et leurs `_mjs_var_bits` correctement remplis.
   let analyzer: Analyzer
   try {
-    analyzer = new Analyzer(scriptJs ?? '', externalVars, opts.lint, colorsEnabled, scriptAst)
+    // variables du `<script module>` que le module change lui-même : jamais une donnée sûre pour une valeur dérivée (sans
+    // lecture du module, aucune ne l'est)
+    const changeants = moduleAst ? nomsChangeants(moduleAst, moduleVars) : null
+    analyzer = new Analyzer(scriptJs ?? '', externalVars, opts.lint, colorsEnabled, scriptAst, changeants ? moduleVars.filter((v) => !changeants.has(v)) : [])
   }
   catch (e: any) {
     // défaut de Civet sur une flèche en ligne (FLECHE_EN_LIGNE_CIVET_RE, `f = => x = if a then 'b' else 'c'`) : le JavaScript produit
@@ -5346,7 +5365,7 @@ async function transpileImpl(
   // 10. Generator HTML — V2 retourne aussi `effectsByVar` (Map varName → codes).
   // `structVars` permet au runtime de skip `_mjs_renderStruct` quand
   // une mutation ne touche pas un bloc structurel.
-  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps, inlineLocals] = compileHtml(html, {
+  const [surgicalHtmlWithMarkers, updates, events, inlines, effectsByVar, structVars, mountOnlyEffects, passiveEvents, tagRefs, templateLocals, initialPropBinds, componentDeps, inlineLocals, propVars] = compileHtml(html, {
     analyzer,
     externalVars,
     templateLang,
@@ -5359,6 +5378,7 @@ async function transpileImpl(
     guardSilent: opts.guard === false,
     instanceProps,
     firstLine: sections.htmlStartLine,
+    devWarnings: opts.devWarnings === true,
   })
 
   // `<@view name>` réellement transformé en `<metamjs-view id="name">` par le
@@ -5416,9 +5436,12 @@ async function transpileImpl(
   // Émet l'index des vars qui pilotent _mjs_renderStruct. Object lookup
   // est O(1). Si la struct est vide, on émet `null` pour signaler au runtime
   // de skip totalement _mjs_renderStruct (pas d'allocation).
-  const structVarsStr = (struct.length === 0)
-    ? 'null'
-    : `{${[...structVars].map(v => `"${v}":1`).join(',')}}`
+  // Une var qui pose une prop sur un composant enfant y figure aussi, avec la valeur 2 : aucun bloc à redessiner (tout lecteur
+  // compare à 1), mais la file des boucles la laisse passer à chaque écriture (`_mjs_invalidate`, mjs_element.ts) — la prop est de
+  // l'état de l'enfant, une méthode de l'enfant appelée dans la boucle lit la valeur du tour. Sans bloc ni prop d'enfant : `null`
+  const structEntries = struct.length === 0 ? [] : [...structVars].map(v => `"${v}":1`)
+  for (const v of propVars) if (struct.length === 0 || !structVars.has(v)) structEntries.push(`"${v}":2`)
+  const structVarsStr = structEntries.length === 0 ? 'null' : `{${structEntries.join(',')}}`
 
   // `µ._storeDeclare([...])` module-level (créé les accesseurs manquants,
   // idempotent) : TOUTES les clés $$ mentionnées par le module, lectures ET
@@ -5478,6 +5501,11 @@ async function transpileImpl(
   const _p4 = rebindDetachedThisMapped(jsInitBase)
   passMaps.push(_p4.map)
   jsInitBase = _p4.code
+  // rendus d'une boucle regroupés (cf. loop-batch.ts) : une boucle qui écrit l'état ne redessine qu'à sa sortie. APRÈS
+  // les quatre passes ci-dessus : elle reconnaît les écritures aux appels qu'elles ont posés
+  const _p5 = batchLoopWritesMapped(jsInitBase)
+  passMaps.push(_p5.map)
+  jsInitBase = _p5.code
   // Ancre de la zone cartographiée : le texte du `<script>` DANS SON ÉTAT
   // de sortie des 4 passes. Tout ce qui s'y ajoute ensuite (tableau d'effets en tête,
   // gestionnaires inline en queue) est hors carte — on retrouve donc la position finale
@@ -5797,7 +5825,12 @@ async function transpileImpl(
     // méthode du composant citée nue par un gestionnaire inline (cf. visibleNames plus haut)
     if (visibleNames) lintHandlerBareMethod(inlinesJs, analyzer.methodNames, visibleNames, moduleName, bareMethodsSaid, opts.lint, colorsEnabled, handlerLine)
     scanStoreArgs(inlinesJs, inlineHandlerLines(generatorState.inlineLines))
-    jsInitBase += '\n' + rebindDetachedThisMapped(annotateEffectDepsMapped(applyPathTrackingMapped(transformReactiveWritesMapped(inlinesJs).code).code, analyzer.methodReads, analyzer.computedDeps).code).code
+    // code mort dans un gestionnaire (cf. unreachable.ts) : à la ligne de la balise qui le porte — pas de
+    // lecture du JavaScript quand `lint.unreachable` est coupé
+    const inlinesAst = opts.lint?.unreachable === false ? null : parseModuleAst(inlinesJs)
+    const handlerAt  = inlineHandlerLines(generatorState.inlineLines)
+    warnUnreachableCode(inlinesAst, offset => handlerAt(offset, inlinesAst!), `${moduleName}.mjs`, opts.lint, colorsEnabled)
+    jsInitBase += '\n' + batchLoopWritesMapped(rebindDetachedThisMapped(annotateEffectDepsMapped(applyPathTrackingMapped(transformReactiveWritesMapped(inlinesJs).code).code, analyzer.methodReads, analyzer.computedDeps).code).code).code
   }
 
   // voie AST (post-Civet) : ferme le trou du gabarit (µimport niché

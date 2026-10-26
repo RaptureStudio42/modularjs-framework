@@ -8,7 +8,7 @@
 // fin, avec une pause entre deux appels ; view), every (always : la pause ; hover et view, écrit :
 // l'appel se répète pendant le survol, ou tant que la balise est à l'écran, avec cette pause entre
 // deux ; always et view : les appels calés sur l'horloge commune des effets qui se répètent ; sans
-// lui, la variable de thème `$$fx-every`, sinon 3s), duration (un appel ; 1s), repeat (le nombre
+// lui, la variable de thème `$$mjs-fx-every`, sinon 3s), duration (un appel ; 1s), repeat (le nombre
 // d'appels d'affilée ; 1), delay (l'attente avant le premier), angle (wiggle : l'amplitude du
 // balancement, en degrés ; 12).
 // Le geste s'ajoute au transform de l'auteur (animation-composition: add) : un badge centré par

@@ -57,7 +57,7 @@ describe('bundler — pruneOrphans() muet sur un registre {extensions:[]}', func
   })
 
   it("registre .mjs-outputs.json PRÉSENT avec extensions:[] (JSON valide) : pruneOrphans() ne purge RIEN et le DIT — zéro cache-hit pour isoler le cas", async function () {
-    const { root, srcDir, outDir, manifest } = makeProject('prune-registre-vide')
+    const { srcDir, outDir, manifest } = makeProject('prune-registre-vide')
     writeFileSync(join(srcDir, 'a.mjs'), comp('a'))
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })

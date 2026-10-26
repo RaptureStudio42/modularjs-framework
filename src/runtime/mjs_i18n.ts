@@ -74,6 +74,24 @@ if (!µ._i18nLangs) { µ._i18nLangs = {}; }
 // chargement aboutit (un montage qui redemande le fragment, `µ._i18nLang` qui reçoit la langue).
 var __i18nEchecs = Object.create(null);
 
+// les composants qui ont lu un libellé du cœur (`mjs.core.<clé>`, cf. µ._mjs_i18nLookup) avant l'arrivée du fichier de leur langue :
+// la surcharge que ce fichier peut porter ne s'est pas vue (un module cœur passé à la langue d'une bascule dès le clic, avant ses
+// textes). Quand une langue arrive, la liste se vide ; ses composants encore dans la page se rendent à nouveau si ce fichier surcharge
+// un libellé du cœur (sans surcharge, le libellé du framework lu pendant l'attente est déjà le bon), chacun avec ses miroirs (`µclone`,
+// copies de `*marquee`), qui lisent ses dérivés
+var __i18nLabelReaders = new Set();
+function __i18nWakeLabelReaders(racine) {
+  if (!__i18nLabelReaders.size) { return; }
+  var lecteurs = __i18nLabelReaders;
+  __i18nLabelReaders = new Set();
+  var coeur = racine && racine.mjs && racine.mjs.core;
+  if (!coeur || typeof coeur !== 'object' || !Object.keys(coeur).length) { return; }
+  lecteurs.forEach(function(c) {
+    var g = c._mjs_twins;
+    (g ? g.m.slice() : [c]).forEach(function(i) { if (i.isConnected) { i._mjs_invalidate('_awaits_'); } });
+  });
+}
+
 // Point d'entrée des données d'une langue (fichier de langue, rendu serveur).
 // Rejouable : un second appel remplace la table (HMR, test qui ré-évalue).
 µ._i18nLang = function(lang, data) {
@@ -81,6 +99,7 @@ var __i18nEchecs = Object.create(null);
   delete __i18nEchecs[lang];
   µ._i18nLangs[lang] = { root: (data && data.root) || {}, sections: (data && data.sections) || {} };
   __i18nMergeRootIntoExistingDicts();  // dict déjà créé (graine ssr, langue rechargée) : backfill
+  __i18nWakeLabelReaders(data && data.root);
 };
 
 // l'entrée propre d'une langue chargée, null sinon : une langue inconnue, choisie par la donnée, n'est jamais lue sur un
@@ -449,6 +468,10 @@ function __i18nEffectiveLang() {
   var lang = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || __i18nEffectiveLang() || µ._i18nData.default;
   if (!lang) { return undefined; }
   var node = __i18nResolve(lang, cle);
+  // libellé du cœur lu pendant un rendu ou par une valeur dérivée (`$labelText = $label ?? tr(…, µlang)`, calculée hors du rendu
+  // à une bascule), la langue pas encore arrivée : le module se rendra à nouveau à son arrivée
+  var lecteur = µ._mjs_computing || µ.activeComponent;
+  if (typeof node !== 'string' && lecteur && !µ._isServer && !__i18nLangOf(lang) && String(cle).lastIndexOf('mjs.core.', 0) === 0) { __i18nLabelReaders.add(lecteur); }
   return typeof node === 'string' ? node : undefined;
 };
 
@@ -458,7 +481,7 @@ function __i18nPluralRulesFor(lang) {
   if (Object.prototype.hasOwnProperty.call(__i18nPluralRulesCache, lang)) { return __i18nPluralRulesCache[lang]; }
   var r = null;
   if (typeof Intl !== 'undefined' && typeof Intl.PluralRules === 'function') {
-    try { r = new Intl.PluralRules(lang); } catch (e) { r = null; }
+    try { r = new Intl.PluralRules(lang); } catch { r = null; }
   }
   __i18nPluralRulesCache[lang] = r;
   return r;
@@ -612,7 +635,7 @@ function __i18nSeedFrom(doc) {
       }
     }
     return seed.lang;
-  } catch (e) { /* graine best-effort */ }
+  } catch { /* graine best-effort */ }
   return null;
 }
 // langue du rendu serveur de la page de départ (graine lue ici, avant tout montage) : base de la langue provisoire
@@ -1050,7 +1073,7 @@ function __i18nUrlLang() {
     try {
       var fromUrl = new URLSearchParams(location.search).get('lang');
       if (__i18nKnownLang(fromUrl)) { return fromUrl; }
-    } catch (e) { /* URL malformée / API absente : ignoré */ }
+    } catch { /* URL malformée / API absente : ignoré */ }
   }
   return null;
 }
@@ -1067,7 +1090,7 @@ function __i18nSavedLang() {
         var saved = localStorage.getItem(__I18N_STORAGE_KEY);
         if (__i18nKnownLang(saved)) { return saved; }
       }
-    } catch (e) { /* quota/sandbox/navigation privée/typeof sur origine opaque : ignoré */ }
+    } catch { /* quota/sandbox/navigation privée/typeof sur origine opaque : ignoré */ }
   }
   return null;
 }
@@ -1329,7 +1352,7 @@ function __i18nBoot() {
         if (!µ._isServer && µ._i18nData.persist) {
           try {
             if (typeof localStorage !== 'undefined') { localStorage.setItem(__I18N_STORAGE_KEY, newLang); }
-          } catch (e) { /* quota/sandbox/typeof sur origine opaque : ignoré */ }
+          } catch { /* quota/sandbox/typeof sur origine opaque : ignoré */ }
         }
         // URL `?lang=` (urlParam) — reflète la langue CIBLE ;
         // retirée si c'est la langue par défaut (URL canonique propre). Ne touche
@@ -1340,7 +1363,7 @@ function __i18nBoot() {
             if (newLang === µ._i18nData.default) { url.searchParams.delete('lang'); }
             else { url.searchParams.set('lang', newLang); }
             history.replaceState(history.state, '', url.pathname + url.search + url.hash);
-          } catch (e) { /* ignoré */ }
+          } catch { /* ignoré */ }
         }
       }, function() {
         if (myGen !== __i18nSwapGen) return; // idem : ne pas écraser une bascule plus récente

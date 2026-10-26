@@ -45,7 +45,7 @@ const SOURCE = `<script>
 <@@field class="f" label="Contrat" help="Aide du contrat"><@@editor class="ef" name="cf" toolbar="none" value=!{$cf}></@@editor></@@field>
 <@@toolbar class="tbt" for="et"></@@toolbar>
 {if $vue}
-  <@@editor id="et" class="et" name="et" toolbar="none" value={$tard}></@@editor>
+  <@@editor id="et" class="et" name="et" toolbar="none" value=!{$tard}></@@editor>
 {end}
 <@@editor class="el" name="el" toolbar="none" value={$liste}></@@editor>
 <@@editor class="en" name="en" toolbar="none" value=!{$notes}></@@editor>

@@ -29,7 +29,7 @@ function _mjsFxGuardMatrixZoomed() {
     p.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;zoom:2;transform:translateX(10px);transform-origin:0 0';
     document.documentElement.appendChild(p);
     try { _mjsFxGuardZoomedMatrix = new DOMMatrix(getComputedStyle(p).transform).e === p.getBoundingClientRect().left; }
-    catch (e) { _mjsFxGuardZoomedMatrix = false; }
+    catch { _mjsFxGuardZoomedMatrix = false; }
     p.remove();
   }
   return _mjsFxGuardZoomedMatrix;
@@ -203,7 +203,7 @@ function _mjsFxGuardSure(el, cs) {
         }
         return { x: r.left - (ox + lo) * z, y: r.top - (oy + to) * z, w: w, h: h };
       }
-      catch (e) { return neutral(z); }
+      catch { return neutral(z); }
     };
     // la bulle : à côté du champ, dans le même parent ; placée au sous-pixel près dans le repère de son bloc conteneur
     // (sa boîte, bordure retirée, défilement compris ; la page, sans ancêtre positionné), en pixels de ce repère.

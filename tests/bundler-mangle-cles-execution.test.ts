@@ -54,7 +54,8 @@ function projet(prefix: string): Projet {
 }
 
 function nouveauBundler(p: Projet, js: JsMode): Bundler {
-  return new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: join(p.outDir, 'bundle.js'), urlPrefix: '/out', env: 'prod', js })
+  // production au niveau 'warn' : l'avertissement de l'élément tiers vérifié plus bas reste dans le code envoyé (le défaut 'error' retire ceux du framework)
+  return new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: join(p.outDir, 'bundle.js'), urlPrefix: '/out', env: 'prod', js, logLevel: 'warn' })
 }
 
 async function construire(p: Projet, js: JsMode = 'split'): Promise<void> {

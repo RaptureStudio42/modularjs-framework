@@ -1,7 +1,7 @@
-// Types — la limite de la variable d'un {for} sur un STORE typé : la variable est l'élément même de la liste, pas un
-// alias contrôlé. Écrire par elle (`f.id = 'zz'`) n'est donc PAS refusé par la règle du champ ; en échange, relire
-// l'élément reste exact (`indexOf` le retrouve, `structuredClone(f.tags)` passe). Écrire par le store
-// (`$$flux[1].id = 'zz'`) est, lui, contrôlé et refusé.
+// Types — la variable d'un {for} sur un STORE typé est l'élément même de la liste, et elle écrit sous la règle du champ :
+// `f.id = 'zz'` sur un champ `int 0..100` est refusé, avec le message de l'écriture par le store, et l'élément garde sa
+// valeur d'avant ; une valeur permise (`f.id = 5`) s'écrit. Relire l'élément reste exact (`indexOf` le retrouve,
+// `structuredClone(f.tags)` passe). Écrire par le store (`$$flux[1].id = 'zz'`) est refusé de même.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -29,6 +29,7 @@ const SRC = [
   '{for f in $$flux}',
   '<li class="f"><span class="v">{f.id}</span>',
   '<button class="ecrit" @click={f.id = \'zz\'}>ecrit</button>',
+  '<button class="permis" @click={f.id = 5}>permis</button>',
   '<button class="range" @click={selectionner(f)}>range</button>',
   '<button class="store" @click={$$flux[1].id = \'zz\'}>store</button>',
   '</li>',
@@ -40,7 +41,7 @@ let code = ''
 
 before(async function() {
   this.timeout(120000)
-  const root   = mjsTmp('store-boucle-variable-limite')
+  const root   = mjsTmp('store-boucle-variable-regle')
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
@@ -74,12 +75,18 @@ async function cliquer(bouton: string): Promise<{ messages: string[], id: any, e
   return r
 }
 
-describe('types — variable d’un {for} sur un store typé : l’élément de la liste, écriture non contrôlée', function() {
+describe('types — variable d’un {for} sur un store typé : l’élément de la liste, écriture sous la règle du champ', function() {
   this.timeout(60000)
 
-  it('f.id = zz n’est pas refusé : l’écriture passe, sans message', async () => {
+  it('f.id = zz est refusé : l’élément garde sa valeur d’avant, avec le message de l’écriture par le store', async () => {
     const r = await cliquer('ecrit')
-    assert.equal(r.id, 'zz')
+    assert.equal(r.id, 1)
+    assert.ok(r.messages.some((m) => m.includes("$$flux[1].id refuse 'zz'")), r.messages.join(' | '))
+  })
+
+  it('f.id = 5, une valeur permise, s’écrit sans message', async () => {
+    const r = await cliquer('permis')
+    assert.equal(r.id, 5)
     assert.deepEqual(r.messages, [])
   })
 

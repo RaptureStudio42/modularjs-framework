@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { navigateurPresent, construire, ouvrir, boite, agrandit, releve, exige, page, PILOTE, REGISTRE, COSINUS, couleurs, type Construit } from './helpers/hologramme-zoom.js'
+import { navigateurPresent, construire, ouvrir, boite, agrandit, releve, exige, page, PILOTE, REGISTRE, couleurs, type Construit } from './helpers/hologramme-zoom.js'
 
 const DOS_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="280"><rect width="200" height="280" fill="#e8c020"/><circle cx="100" cy="140" r="60" fill="#a01030"/></svg>'
 const DATA    = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22%2320c060%22/%3E%3C/svg%3E'

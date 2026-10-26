@@ -349,7 +349,7 @@ describe('(e) — defineProperty/setPrototypeOf refusés (mjs_store.ts _mjs_buil
 
   describe("état profond réactif d'un composant (_mjs_wrapDeep, mjs_element.ts)", () => {
     it('setPrototypeOf / defineProperty(__proto__) refusés, clé légitime toujours acceptée', () => {
-      const { µ, MjsTest } = makeElementSandbox()
+      const { MjsTest } = makeElementSandbox()
       const el: any = new MjsTest()
       const raw: any = { a: 1 }
       el._set('box', raw)
@@ -358,7 +358,7 @@ describe('(e) — defineProperty/setPrototypeOf refusés (mjs_store.ts _mjs_buil
     })
 
     it('non-régression — le trap `set` existant de _mjs_wrapDeep refuse toujours __proto__', () => {
-      const { µ, MjsTest } = makeElementSandbox()
+      const { MjsTest } = makeElementSandbox()
       const el: any = new MjsTest()
       const raw: any = { a: 1 }
       el._set('box', raw)

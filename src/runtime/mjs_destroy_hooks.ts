@@ -223,7 +223,7 @@ if (µ.Element) {
       const el = elements[__ei];
       try {
         if (typeof el._mjs_cb_outroend === "function") el._mjs_cb_outroend();
-      } catch (error1) { /* ignore */ }
+      } catch { /* ignore */ }
     }
     return µ._mjs_rm(node);
   };

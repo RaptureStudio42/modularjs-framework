@@ -1,4 +1,4 @@
-// La construction de production n'envoie de l'éditeur de texte riche (<@@editor>, <@@toolbar>) que ce que l'appli peut utiliser, avec les repères `@@` du
+// La construction n'envoie de l'éditeur de texte riche (<@@editor>, <@@toolbar>) que ce que l'appli peut utiliser, avec les repères `@@` du
 // fichier de chaque module (même mécanisme que `other` de <@@select>) :
 // - le mode « répondre » (attribut `answer`) : son code, ses lignes à cocher et leur style ne partent que si une page écrit `answer` (l'attribut `paste`
 //   ne pèse que 15 octets gzip : il n'a pas de morceau à part) ;
@@ -7,12 +7,12 @@
 //   `<@@editor>` n'a pas d'attribut `toolbar` (ou `<@@toolbar>` pas de `tools`), a une valeur calculée ou un étalement `{...p}` (le build ne sait pas), ou
 //   nomme l'outil. Ce qui AFFICHE une liste à cocher déjà présente dans la valeur et la coche ne dépend d'aucun outil.
 // - un éditeur « répondre » écrit tel quel (`answer`, `answer="true"`) n'affiche jamais sa barre : sa liste `toolbar` ne compte pas, il n'est pas « tous les outils » ;
-//   `answer={…}`, `answer="false"` ou un étalement gardent la règle prudente ;
+//   `answer={…}`, `answer="false"` (toute casse : `"FALSE"`, `"False"`, qui laissent le mode éteint) ou un étalement gardent la règle prudente ;
 // - le raccourci du lien et celui des cases n'agissent que si la barre de l'éditeur montre l'outil : le petit code qui interroge les barres (editor.mjs) et l'inscription de
 //   la barre auprès de son éditeur (toolbar.mjs) ne partent que si l'appli peut montrer l'un des deux outils ;
 // - l'avertissement du développement quand un script pose `answer` alors qu'aucune page ne l'écrit, comme celui de `other` de <@@select> ;
 // - le message d'un nom d'outil inconnu est rangé avec les messages de la console : ni son texte ni sa traduction ne sont dans la barre envoyée.
-// Le développement garde tout. La décision est prise sur les seules pages du projet, avant qu'un module cœur ne soit compilé : l'éditeur écrit lui-même
+// Le développement prend la même décision que la production. Elle est prise sur les seules pages du projet, avant qu'un module cœur ne soit compilé : l'éditeur écrit lui-même
 // une `<@@toolbar tools={…}>` calculée dans son gabarit, qui ne doit pas compter.
 //
 // Statique, avec un Bundler réel et le catalogue réel du framework, sur le texte non minifié (les noms du code y survivent).
@@ -124,9 +124,10 @@ describe('éditeur riche — la production n\'envoie que ce que l\'appli utilise
       absent(c.editeur, REPONDRE, 'answer ailleurs')
     })
 
-    it('le développement garde tout, même sans answer', async () => {
+    it('le développement tranche comme la production : sans answer, ni son code, ni ses lignes à cocher', async () => {
       const c = await construire('allege-answer-dev', page('<@@editor name="e" value=!{$v}></@@editor>'), { env: 'dev' })
-      pose(c.editeur, [...REPONDRE, ...TOUJOURS], 'développement')
+      absent(c.editeur, REPONDRE, 'développement')
+      pose(c.editeur, TOUJOURS, 'développement')
     })
   })
 
@@ -148,6 +149,8 @@ describe('éditeur riche — la production n\'envoie que ce que l\'appli utilise
 
     for (const [forme, balise] of [
       ['answer="false"', '<@@editor name="e" answer="false" value=!{$v}></@@editor>'],
+      ['answer="FALSE"', '<@@editor name="e" answer="FALSE" value=!{$v}></@@editor>'],
+      ['answer="False"', '<@@editor name="e" answer="False" value=!{$v}></@@editor>'],
       ['answer={$c}', '<@@editor name="e" answer={$c} value={$v}></@@editor>'],
       ['answer=!{$c}', '<@@editor name="e" answer=!{$c} value={$v}></@@editor>'],
       ['answer="{$t}"', '<@@editor name="e" answer="{$t}" value={$v}></@@editor>'],
@@ -330,10 +333,12 @@ describe('éditeur riche — la production n\'envoie que ce que l\'appli utilise
       absent(barre, [...BARRE_LIEN, ...BARRE_GRAS], 'composant enveloppe')
     })
 
-    it('le développement garde tout, même avec une barre restreinte', async () => {
+    it('le développement tranche comme la production, avec une barre restreinte', async () => {
       const c = await construire('allege-dev', page('<@@editor name="e" toolbar="bold" value=!{$v}></@@editor>'), { env: 'dev' })
-      pose(c.editeur, [...LIEN, ...CASES, ...REPONDRE, ...CLES_EDITEUR], 'développement, éditeur')
-      pose(c.barre, [...BARRE_TOUT, ...CLES_BARRE], 'développement, barre')
+      absent(c.editeur, [...LIEN, ...CASES, ...REPONDRE, ...CLES_EDITEUR], 'développement, éditeur')
+      pose(c.editeur, TOUJOURS, 'développement, éditeur')
+      pose(c.barre, BARRE_GRAS, 'développement, barre')
+      absent(c.barre, [...BARRE_LIEN, ...BARRE_CASES, ...BARRE_UL, ...BARRE_OL, ...BARRE_UNDO, ...BARRE_REDO, ...BARRE_CLEAR, ...BARRE_ITAL, ...BARRE_SOUL, ...BARRE_BARRE, ...BARRE_TITRE, ...BARRE_CITE, ...CLES_BARRE], 'développement, barre')
     })
 
     it('la page « répondre » à barre restreinte : le mode reste, le lien part', async () => {
@@ -419,7 +424,7 @@ describe('éditeur riche — la production n\'envoie que ce que l\'appli utilise
     }
 
     it('chaque étiquette est l\'attribut answer de l\'éditeur, le fait « reprise » ou un outil (tool-<nom>) connu', () => {
-      const connus = new Set(['answer', RESUME_LABEL, ...['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike', 'ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear', 'icons', 'glyphs', 'heads', 'separator', 'keys'].map((t) => `tool-${t}`)])
+      const connus = new Set(['answer', RESUME_LABEL, ...['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike', 'ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear', 'icons', 'glyphs', 'heads', 'separator', 'keys', 'script'].map((t) => `tool-${t}`)])
       for (const nom of ['editor', 'toolbar']) {
         const vues = new Set<string>()
         selectCoreSections(`${nom}.mjs`, lire(nom), (_kind, attr) => { vues.add(attr); return true })
@@ -492,6 +497,14 @@ describe('Bundler.coreToolShown — l\'outil peut-il être affiché par l\'appli
     assert.equal(ask(lettres, 'icons'), 'no')
     assert.equal(ask(lettres, 'separator'), 'no')
     assert.equal(ask(withRefs([]), 'icons'), 'unknown')
+  })
+
+  it('le groupe script n\'a aucun outil : jamais yes, même quand une liste écrit « script » ; no dès que la construction tranche les outils, unknown dans le doute', () => {
+    const bundler = withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold script') }])
+    assert.equal(ask(bundler, 'script'), 'no')
+    assert.equal(ask(bundler, 'link'), 'no')
+    assert.equal(ask(withRefs([{ file: 'a.mjs', name: 'editor', kind: 'raccourci-coeur', attrs: texts('bold') }]), 'script'), 'no')
+    assert.equal(ask(withRefs([]), 'script'), 'unknown')
   })
 
   it('un nom qui est aussi une propriété de tout objet (constructor, toString) n\'est pas un groupe', () => {

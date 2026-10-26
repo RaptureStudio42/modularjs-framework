@@ -190,7 +190,6 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
     await terminateSharedWorkerPool()
   })
 
-  const racine = ''
   const grosse = (): string => {
     let css = ''
     for(let i = 0; css.length < 30000; i++) css += `.regle-${i} { color: #${(100000 + i).toString(16).slice(0, 6)}; margin: ${i % 40}px }\n`
@@ -231,7 +230,7 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
       try {
         await lancee.waitForFunction(monte, null, { timeout: 30000 })
       }
-      catch (e: any) {
+      catch {
         const etat = await lancee.evaluate(() => { const h: any = document.querySelector('mjs-liste'); const c: any[] = h && h.shadowRoot ? Array.from(h.shadowRoot.querySelectorAll('mjs-carte')) : []; return { n: c.length, montees: c.filter(x => x.shadowRoot && x.shadowRoot.adoptedStyleSheets.length > 0).length, defini: !!customElements.get('mjs-carte'), liste: h && h.shadowRoot ? h.shadowRoot.adoptedStyleSheets.length : -1, c0: c[0] && c[0].shadowRoot ? c[0].shadowRoot.innerHTML.slice(0, 200) : null, upg: c[0] ? c[0].matches(':defined') : null } })
         throw new Error(`montage incomplet : ${JSON.stringify(etat)} — erreurs de page : ${erreursPage.slice(0, 5).join(' | ')}`)
       }

@@ -357,7 +357,7 @@ describe('transitions au survol, `on: hover` (navigateurs réels)', function () 
         try {
           await page.waitForFunction(`(${cond})(window.__etat(${JSON.stringify(id)}))`, null, { timeout: ms })
         }
-        catch (e) {
+        catch {
           throw new Error(`${id} n'a jamais vérifié ${cond} : ${JSON.stringify(await etat(id))}`)
         }
       }
@@ -562,7 +562,7 @@ describe('transitions au survol, `on: hover` (navigateurs réels)', function () 
             try {
               await p.waitForFunction(`(${cond})(window.__etat(${JSON.stringify(id)}))`, null, { timeout: 8000 })
             }
-            catch (e) {
+            catch {
               throw new Error(`*${id} n'a jamais vérifié ${cond} : ${JSON.stringify(await lire(id))}`)
             }
           }
@@ -609,7 +609,7 @@ describe('transitions au survol, `on: hover` (navigateurs réels)', function () 
           try {
             await p.waitForFunction(`(${cond})(window.__etat(${JSON.stringify(id)}))`, null, { timeout: ms })
           }
-          catch (e) {
+          catch {
             throw new Error(`${id} n'a jamais vérifié ${cond} : ${JSON.stringify(await lire(id))}`)
           }
         }
@@ -739,7 +739,7 @@ describe('transitions au survol, `on: hover` (navigateurs réels)', function () 
             try {
               await p.waitForFunction((t: string) => { const e = (window as any).__el('t-vu'); return (window as any).__ecrit.length > 0 && e.textContent === t && !e._mjs_transition_state }, texte, { timeout: 8000 })
             }
-            catch (e) {
+            catch {
               throw new Error(`le texte « ${texte} » n'a jamais été tapé : ${JSON.stringify(await p.evaluate(() => { const t = (window as any).__el('t-vu'); return { ecrit: (window as any).__ecrit, texte: t.textContent, jeu: !!t._mjs_transition_state, haut: Math.round(t.getBoundingClientRect().top), fenetre: window.innerHeight } }))}`)
             }
           }

@@ -85,7 +85,7 @@ describe('mjs_context.ts — détaché du cœur, build RÉEL', function () {
 
   it('canvas.getContext(\'2d\') (API du DOM, sans µ) : ABSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', 'µmount ->', "  ctx = canvas.getContext('2d')", '</script>', '<canvas @this={canvas}></canvas>'].join('\n'),
+      'hop.mjs': ['<script>', 'µmount ->', "  ctx = canvas.getContext('2d')", '</script>', '<canvas @this=!{canvas}></canvas>'].join('\n'),
     })
     assert.equal(coreContent(outDir).includes(MARK_CONTEXT), false)
   })

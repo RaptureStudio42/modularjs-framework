@@ -1457,8 +1457,18 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       // clés racine lues par la page (`µ.t`, cf. i18n-seed-root.ts) : fonction évaluée dans la page par son texte
       // (`evaluate` d'une expression n'est pas arrêté par la CSP de la page)
       // un relevé qui échoue ne fait pas échouer le rendu, mais il se dit : sans lui la graine sort sans ses textes racine
+      // plus les surcharges des libellés du framework (`mjs.<groupe>.<clé>`) de la langue du rendu, comme le moteur happy-dom :
+      // `µ._mjs_label` les lit sans les noter, et sans elles la reprise, qui dessine avant l'arrivée du fichier de langue, remplaçait
+      // les textes du serveur par les libellés par défaut
       let racine: any = null
-      try { racine = await slot.page.evaluate(`(${buildSeedRoot.toString()})(window.__mjsCore._i18nUsedRoot, window.__mjsCore._i18nLangs)`) }
+      try {
+        racine = await slot.page.evaluate(`(function(core) {
+          var lang = (core.store && core.store.__mjsLang !== undefined) ? core.store.__mjsLang : (core._i18nData && core._i18nData.default)
+          var used = Object.assign({}, core._i18nUsedRoot)
+          if (lang) { used[lang] = Object.assign({ mjs: true }, used[lang]) }
+          return (${buildSeedRoot.toString()})(used, core._i18nLangs)
+        })(window.__mjsCore)`)
+      }
       catch (e: any) { warnings.push(t('server.browser-releve-racine-echec', { tag, err: String(e?.message ?? e).split('\n')[0] })) }
       const i18nJson: string | null = await slot.page.evaluate((root: any) => {
         try {

@@ -32,6 +32,7 @@ import { t } from '../messages/index.js'
 import { maskInertSameLength } from '../lexer/index.js'
 import { maskHtmlComments } from '../mask.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
+import { derivesAuxLecturesConnues, type DeriveCandidat, type Recepteur } from './derived-reads.js'
 
 export interface AnalyzeSnippetResult {
   deps: string[]
@@ -281,7 +282,7 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
 // celui vu par le walk juste après, qui continue de voir s0/s1/s2 intacts —
 // et n'y fait rien, vu qu'un RHS `ref` nu ne matche aucune de ses conditions).
 // ============================================================================
-function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies: Record<string, string[]>): void {
+function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies: Record<string, string[]>, candidats: DeriveCandidat[], fermetures: Fermeture[]): void {
   const body = ast.body
   for (let i = 0; i + 2 < body.length; i++) {
     const s0 = body[i]
@@ -353,9 +354,14 @@ function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies:
     if (deps.size > 0) dependencies[varName] = Array.from(deps)
     ms.appendLeft(s0.start, `$.${varName} = { _mjs_c: true, f: ${hasAwait ? 'async ' : ''}() => { `)
     ms.overwrite(s2.start, assign.right.start, 'return ')
-    ms.appendRight(s2.end, ' } };')
+    candidats.push({ nom: varName, noeud: s1, locaux: [refName] })
+    fermetures.push({ nom: varName, pos: s2.end, simple: ' } };', marquee: ' }, _mjs_s: 1 };' })
   }
 }
+
+// fin d'une enveloppe de valeur dérivée, posée une fois toutes les valeurs dérivées connues : `_mjs_s` marque celles
+// dont toutes les lectures sont connues (cf. derived-reads.ts), dans l'ordre où elles ont été trouvées
+interface Fermeture { nom: string; pos: number; simple: string; marquee: string }
 
 // ============================================================================
 // resolveMethodReadsPointFixe(methods) — une méthode qui APPELLE une
@@ -416,7 +422,8 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
 // ============================================================================
 // `preAst` : l'AST de `jsCode` déjà analysé ; absent ou `null` (analyse échouée en amont), le texte est relu — et l'erreur
 // d'analyse levée comme avant
-export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
+// `moduleVars` : noms du premier niveau du `<script module>` ; `externalVars` : variables externes (`$nom`)
+export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean; moduleVars?: string[]; externalVars?: string[] } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
   const stateVariables = new Set<string>()
   // Object.create(null) sur TOUS les dicts de ce
   // fichier indexés par un nom UTILISATEUR (méthode/état/computed) : un `{}` ordinaire
@@ -455,7 +462,9 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
   // pré-passe DÉDIÉE, AVANT le walk : édite `ms` directement, ne
   // mute jamais `ast` (le walk ci-dessous continue de voir s0/s1/s2 intacts,
   // cf. detectUnparenthesizedDerivedIf() plus haut pour le détail du motif)
-  detectUnparenthesizedDerivedIf(ast, ms, dependencies)
+  const candidats: DeriveCandidat[] = []
+  const fermetures: Fermeture[] = []
+  detectUnparenthesizedDerivedIf(ast, ms, dependencies, candidats, fermetures)
 
   walk.ancestor(ast, {
     MemberExpression(node: any) {
@@ -580,7 +589,8 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
             // un derived dont le RHS contient `await` doit être une flèche
             // ASYNC, sinon `() => (await …)` est une SyntaxError.
             ms.appendLeft(effectiveRight.start, hasAwait ? '{ _mjs_c: true, f: async () => (' : '{ _mjs_c: true, f: () => (')
-            ms.appendRight(effectiveRight.end, ') }')
+            candidats.push({ nom: varName, noeud: effectiveRight, force: isForceDepsMarker && node.right.arguments.length >= 2 })
+            fermetures.push({ nom: varName, pos: effectiveRight.end, simple: ') }', marquee: '), _mjs_s: 1 }' })
           }
         }
       }
@@ -703,6 +713,19 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
     }
   }
 
+  // lectures connues en sommeil (`LECTURES_CONNUES`, derived-reads.ts) : aucune valeur marquée, aucun receveur enveloppé
+  const recepteurs = new Map<string, Recepteur[]>()
+  const connues = derivesAuxLecturesConnues(ast, candidats, dependencies, diag.moduleVars ?? [], diag.externalVars ?? [], recepteurs)
+  for (const f of fermetures) ms.appendRight(f.pos, connues.has(f.nom) ? f.marquee : f.simple)
+  // receveur d'une méthode ordinaire, ou itérable d'un parcours (`Symbol.iterator`), d'une valeur connue : vérifié à chaque
+  // calcul (`_mjs_rcv`, runtime/mjs_element.ts) — la méthode ou l'itérateur d'un objet de l'utilisateur peut lire l'état par
+  // une fermeture, la valeur passe alors à « toute écriture la périme »
+  for (const [nom, liste] of recepteurs) {
+    for (const r of liste) {
+      ms.appendLeft(r.noeud.start, '_mjsThis._mjs_rcv(')
+      ms.appendRight(r.noeud.end, `, ${r.methode === null ? 'Symbol.iterator' : `'${r.methode}'`}, '${nom}')`)
+    }
+  }
   const modifiedCode = ms.toString()
 
   // µderived hors racine — l'AssignmentExpression handler ci-dessus retourne
@@ -769,6 +792,7 @@ export class Analyzer {
   // cycles réactifs déjà signalés : un par nom, jamais répété d'une passe de resolveDependencyGraph à l'autre
   private cyclesSignales = new Set<string>()
   private externalVars: string[] = []
+  private moduleVars: string[] = []
   // miroirs Set des `includes` chauds (`stateVars`/`externalVars` testés
   // en boucles snippets×deps). Les arrays publics restent la façade ; ces Set
   // sont reconstruits à CHAQUE mutation de stateVars (analyzeAndBuild + autoDeclare).
@@ -792,8 +816,10 @@ export class Analyzer {
   static RESERVED_STATE_NAMES: string[] = ['__proto__', 'constructor', 'prototype']
 
   // `preAst` : l'AST du script déjà analysé par le transpileur (partagé, jamais modifié ici)
-  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null) {
+  // `moduleVars` : noms du premier niveau du `<script module>` (leurs fonctions ne voient pas l'état de l'instance)
+  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null, moduleVars: string[] = []) {
     this.externalVars = externalVars
+    this.moduleVars = moduleVars
     this.externalVarsSet = new Set(externalVars)
     this.lint = lint
     this.colorsEnabled = colorsEnabled
@@ -804,7 +830,7 @@ export class Analyzer {
   // Analyse principale + registre de présence des vars
   // ------------------------------------------------------------------------
   private analyzeAndBuild(jsScriptCode: string, preAst?: acorn.Node | null): void {
-    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled }, preAst)
+    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled, moduleVars: this.moduleVars, externalVars: this.externalVars }, preAst)
     this.modifiedCode = out.modifiedCode
 
     this.stateVars = out.state.filter(v => !this.externalVarsSet.has(`$${v}`))

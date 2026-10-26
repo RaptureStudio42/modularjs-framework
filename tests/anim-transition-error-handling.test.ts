@@ -117,7 +117,7 @@ describe('µ._mjs_runTransition — symétrie tick/css sur exception utilisateur
     let p: any
     try {
       p = µ._mjs_runTransition(node, cfg, 'in')
-    } catch (e) {
+    } catch {
       threw = true
     }
     assert.equal(threw, false, 'AVANT le fix : cfg.css() qui lève sortait NON capturée hors de µ._mjs_runTransition')
@@ -142,7 +142,7 @@ describe('µ._mjs_runTransition — symétrie tick/css sur exception utilisateur
     let p: any
     try {
       p = µ._mjs_runTransition(node, cfg, 'in')
-    } catch (e) {
+    } catch {
       threw = true
     }
     assert.equal(threw, false, 'AVANT le fix : cfg.css() qui lève en mode .shared sortait NON capturée hors de µ._mjs_runTransition')

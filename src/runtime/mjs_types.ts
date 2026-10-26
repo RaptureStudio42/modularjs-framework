@@ -301,7 +301,7 @@ function _mjsTRepr(v) {
       var j = JSON.stringify(v);
       return j.length > 60 ? j.slice(0, 60) + '…' : j;
     }
-    catch (_e) { return Object.prototype.toString.call(v); }
+    catch { return Object.prototype.toString.call(v); }
   }
   return String(v);
 }

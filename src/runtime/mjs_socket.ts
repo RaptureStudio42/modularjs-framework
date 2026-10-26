@@ -102,7 +102,7 @@ var _mjsSockSame = function(a, b, visited) {
       for (var j = 0; ok && j < ka.length; j++) ok = kb.has(ka[j]) && _mjsSockSame(a[ka[j]], b[ka[j]], visited);
     }
   }
-  catch (e) {
+  catch {
     ok = false;
   }
   visited.length -= 2;
@@ -526,7 +526,7 @@ MjsSocket.prototype._mjs_onOpen = function() {
   var a = this.opts.auth;
   if (typeof a === 'function') {
     var r;
-    try { r = a(); } catch (e) { r = undefined; }
+    try { r = a(); } catch { r = undefined; }
     if (r && typeof r.then === 'function') { r.then(hello, function() { hello(undefined); }); }
     else { hello(r); }
   } else { hello(a); }
@@ -651,7 +651,7 @@ MjsSocket.prototype._mjs_onDenied = function(msg) {
     if (!__r) { continue; }
     delete this._mjs_reqs[pend[__pi].id];
     if (__r.timer) { clearTimeout(__r.timer); }
-    try { __r.reject({ code: 'denied', message: pourquoi }); } catch (e) {}
+    try { __r.reject({ code: 'denied', message: pourquoi }); } catch {}
   }
   this._mjs_teardown(true);           // fin définitive
   // la file hors ligne appartient à l'identité refusée : un connect() suivant, peut-être sous une autre identité, n'en
@@ -691,7 +691,7 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
     if (µ._mjs_mjschemaOnBinary) { µ._mjs_mjschemaOnBinary(this, ev.data); }
     return;
   }
-  try { msg = (this.opts.parse || JSON.parse)(ev.data); } catch (e) { return; }
+  try { msg = (this.opts.parse || JSON.parse)(ev.data); } catch { return; }
   // JSON.parse('null')/('42')/('"x"') renvoie une valeur non-objet → `msg.t`
   // lèverait (null.t) ou serait undefined : on jette proprement le message.
   if (!msg || typeof msg !== 'object') { return; }
@@ -776,7 +776,7 @@ MjsSocket.prototype._mjs_teardown = function(final, unknown) {
   if (this._mjs_stableTimer) { clearTimeout(this._mjs_stableTimer); this._mjs_stableTimer = null; }
   if (this._mjs_ws) {
     this._mjs_ws.onopen = this._mjs_ws.onmessage = this._mjs_ws.onclose = this._mjs_ws.onerror = null;
-    try { this._mjs_ws.close(); } catch (e) {}
+    try { this._mjs_ws.close(); } catch {}
     this._mjs_ws = null;
   }
   this._mjs_stopHeartbeat();
@@ -807,7 +807,7 @@ MjsSocket.prototype._mjs_teardown = function(final, unknown) {
     if (spared[__id]) { this._mjs_reqs[__id] = reqs[__id]; continue; } // épargnée : ré-inscrite pour _mjs_onWelcome
     var __r = reqs[__id];
     if (__r.timer) { clearTimeout(__r.timer); }
-    try { __r.reject(unknown ? { code: 'unknown', message: 'connexion renouvelée après l\'envoi : le serveur a pu servir la requête, sa réponse est perdue' } : { code: 'closed', message: 'connexion fermée avant réponse du serveur' }); } catch (e) {}
+    try { __r.reject(unknown ? { code: 'unknown', message: 'connexion renouvelée après l\'envoi : le serveur a pu servir la requête, sa réponse est perdue' } : { code: 'closed', message: 'connexion fermée avant réponse du serveur' }); } catch {}
   }
 };
 
@@ -845,7 +845,7 @@ MjsSocket.prototype._mjs_rawSend = function(obj) {
       this._mjs_ws.send(__bin || (this.opts.serialize || JSON.stringify)(obj));
       return true;
     }
-    catch (e) { return false; }
+    catch { return false; }
   }
   return false;
 };
@@ -1448,7 +1448,7 @@ MjsSocket.prototype._mjs_onLeft = function(msg) {
   delete this._mjs_rooms[p.room];
   // les rappels de TOUTES les poignées du salon, sur une copie : un rappel peut quitter sa poignée (leave() retire le sien)
   var cbs = (this._mjs_onLeftCb && this._mjs_onLeftCb[p.room] || []).slice(), i;
-  for (i = 0; i < cbs.length; i++) { try { cbs[i](p.reason); } catch (e) {} }
+  for (i = 0; i < cbs.length; i++) { try { cbs[i](p.reason); } catch {} }
   // kick serveur symétrique au
   // leave() client : purge streams/présence/handlers du salon (APRÈS le
   // callback, qui peut vouloir lire l'état une dernière fois). Sans ça, mêmes

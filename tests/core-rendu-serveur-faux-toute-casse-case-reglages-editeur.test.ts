@@ -1,7 +1,9 @@
 // le HTML rendu par le serveur lit « false », quelle que soit sa casse, comme le navigateur après l'hydratation, pour la case,
 // l'interrupteur, le radio, le bouton rotatif, la jauge et l'éditeur : `disabled="FALSE"` les laisse actifs et leur champ caché part avec
-// la page servie, `required="FALSE"` ne rend obligatoire ni la case native de leur ombre ni la zone de l'éditeur (`aria-required`).
-// Les mêmes attributs écrits vides restent vrais (témoins)
+// la page servie, `required="FALSE"` ne rend obligatoire ni la case native de leur ombre ni la zone de l'éditeur (`aria-required`) ;
+// pour l'éditeur, `required="False"` et `required={…}` lié au texte « FALSE » non plus. Les mêmes attributs écrits vides restent vrais
+// (témoins), comme `required={…}` lié à vrai. En développement comme en production (le serveur construit dans le même environnement que
+// le client) : aucune page n'écrit `answer`, la production envoie l'éditeur sans le mode « répondre »
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -10,7 +12,12 @@ import { mjsTmp } from './helpers/tmp.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 
-const PAGE = `<form class="fs" method="get" action="/envoi">
+const PAGE = `<script>
+  $haut = 'FALSE'
+  $vrai = true
+</script>
+
+<form class="fs" method="get" action="/envoi">
   <@@checkbox class="sc" name="sc" checked disabled="FALSE" required="FALSE">c</@@checkbox>
   <@@switch class="sw" name="sw" checked disabled="False" required="False">w</@@switch>
   <@@radio class="sr" name="sr" value="1" checked disabled="FALSE" required="FALSE">r</@@radio>
@@ -22,20 +29,23 @@ const PAGE = `<form class="fs" method="get" action="/envoi">
   <@@knob class="tk" name="tk" value="3" disabled></@@knob>
   <@@gauge class="tg" name="tg" value="3" disabled></@@gauge>
   <@@editor class="se" name="se" required="FALSE"></@@editor>
+  <@@editor class="se2" name="se2" required="False"></@@editor>
+  <@@editor class="sle" name="sle" required={$haut}></@@editor>
   <@@editor class="te" name="te" required></@@editor>
+  <@@editor class="tle" name="tle" required={$vrai}></@@editor>
 </form>
 `
 
-describe('rendu serveur : « false », toute casse, lu comme dans le navigateur (case, interrupteur, radio, bouton rotatif, jauge, éditeur)', function () {
+for (const env of ['dev', 'prod'] as const) describe(`rendu serveur (${env === 'dev' ? 'développement' : 'production'}) : « false », toute casse, lu comme dans le navigateur (case, interrupteur, radio, bouton rotatif, jauge, éditeur)`, function () {
   this.timeout(120000)
-  let parts: Record<string, string> = {}
+  const parts: Record<string, string> = {}
 
   before(async () => {
-    const root = mjsTmp('rendu-serveur-faux-casse-cases')
+    const root = mjsTmp('rendu-serveur-faux-casse-cases-' + env)
     const src  = join(root, 'src')
     mkdirSync(src, { recursive: true })
     writeFileSync(join(src, 'hote-ssr.mjs'), PAGE)
-    const renderer = await createSSRRenderer({ sourceDir: src, outputDir: join(root, 'out'), bundlerOpts: { runtime: ['hydrate'] } } as any)
+    const renderer = await createSSRRenderer({ sourceDir: src, outputDir: join(root, 'out'), bundlerOpts: { runtime: ['hydrate'], ...(env === 'prod' ? { env: 'prod' } : {}) } } as any)
     try {
       const r = await renderer.renderToString('mjs-hote-ssr', { ssrMode: 'markers' } as any)
       // le HTML de chaque module, de sa balise à celle du module suivant
@@ -58,7 +68,7 @@ describe('rendu serveur : « false », toute casse, lu comme dans le navigateur 
   const inactif = (c: string) => (corps(c).match(/aria-disabled="true"/g) || []).length
 
   it('chaque module est rendu', () => {
-    assert.deepEqual(Object.keys(parts).sort(), ['sc', 'se', 'sg', 'sk', 'sr', 'sw', 'tc', 'te', 'tg', 'tk', 'tr', 'tw'])
+    assert.deepEqual(Object.keys(parts).sort(), ['sc', 'se', 'se2', 'sg', 'sk', 'sle', 'sr', 'sw', 'tc', 'te', 'tg', 'tk', 'tle', 'tr', 'tw'])
   })
 
   it('disabled="FALSE" (toute casse) : la case, l\'interrupteur et le radio restent actifs, cochés, leur champ caché écrit ; disabled écrit vide les désactive', () => {
@@ -75,7 +85,7 @@ describe('rendu serveur : « false », toute casse, lu comme dans le navigateur 
     assert.deepEqual(['tk', 'tg'].map((c) => [inactif(c) > 0, cache(c)]), [[true, false], [true, false]])
   })
 
-  it('required="FALSE" : l\'éditeur ne dit pas aria-required ; required écrit vide le dit', () => {
-    assert.deepEqual(['se', 'te'].map((c) => (corps(c).match(/aria-required="true"/g) || []).length), [0, 1])
+  it('required="FALSE", "False" ou lié au texte « FALSE » : l\'éditeur ne dit pas aria-required ; required écrit vide ou lié à vrai le dit', () => {
+    assert.deepEqual(['se', 'se2', 'sle', 'te', 'tle'].map((c) => (corps(c).match(/aria-required="true"/g) || []).length), [0, 0, 0, 1, 1])
   })
 })

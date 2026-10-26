@@ -159,7 +159,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
           const mean = [0, 0, 0]
           const set = new Set<number>()
           const bande = [0, 0, 0, 0, 0], nb = [0, 0, 0, 0, 0]
-          let centre = 0, coin = 0, cn = 0, kn = 0, rc = 0, rk = 0
+          let centre = 0, coin = 0, rc = 0, rk = 0
           const lum = (a: any, i: number) => .2126 * a[i] + .7152 * a[i + 1] + .0722 * a[i + 2]
           const lignes = new Array(H).fill(0)
           const LAGS = [3, 5, 7, 10], ac = LAGS.map(() => 0), acn = LAGS.map(() => 0)
@@ -182,8 +182,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
             lignes[y] += dl
             LAGS.forEach((g, k) => { if (x + g < W) { ac[k] += Math.abs(lum(d, i) - lum(d, i + 4 * g)); acn[k]++ } })
             if (d[i] <= 40 && d[i + 1] <= 40 && d[i + 2] <= 40) { noir++; if (x < W / 2) noirG++ }
-            if (x > W * .4 && x < W * .6 && y > H * .4 && y < H * .6) { centre += lum(d, i); rc += lum(ref, i); cn++ }
-            if ((x < W * .12 || x > W * .88) && (y < H * .12 || y > H * .88)) { coin += lum(d, i); rk += lum(ref, i); kn++ }
+            if (x > W * .4 && x < W * .6 && y > H * .4 && y < H * .6) { centre += lum(d, i); rc += lum(ref, i) }
+            if ((x < W * .12 || x > W * .88) && (y < H * .12 || y > H * .88)) { coin += lum(d, i); rk += lum(ref, i) }
           }
           out[r.c] = {
             diff: diff / n, bg: bg / n, mean: mean.map((v) => v / n), gris: gris / n, binaire: binaire / n, niveaux: niveaux / n, egal: egal / n,

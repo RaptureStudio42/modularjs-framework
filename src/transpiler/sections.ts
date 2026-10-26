@@ -263,15 +263,10 @@ function countNewlines(src: string): number {
 // dans une chaîne (déjà protégé), ni dans `url( )` : l'alternative `url\(...\)` consomme tout le
 // contenu de l'appel AVANT que le scan n'atteigne son `//` interne (guillemetée ou non, peu
 // importe : blanchir tout l'appel est sans effet ici, cette vue ne sert qu'à repérer les balises).
-const STYLE_INERT_RE = /'(?:\\.|[^\\'\n])*'|"(?:\\.|[^\\"\n])*"|\/\*[\s\S]*?\*\/|url\((?:[^)\\]|\\.)*\)|\/\/[^\n]*/gi
-
-function maskStyleInertSameLength(src: string): string {
-  return src.replace(STYLE_INERT_RE, (tok) => tok.replace(/[^\n]/g, ' '))
-}
-
-// lecteur des littéraux de STYLE_INERT_RE : le premier qui commence à `de` ou après, [début, fin) — même résultat que
-// l'expression, sans relire tout le texte à chaque appel : la fin déjà cherchée d'un `/*` ou d'un `url(` est gardée (un `/*`
-// ou un `url(` jamais refermés relisaient le texte jusqu'au bout à chacun de leurs appels : temps quadratique)
+//
+// lecteur de ces littéraux : le premier qui commence à `de` ou après, [début, fin), sans relire tout le texte à chaque
+// appel : la fin déjà cherchée d'un `/*` ou d'un `url(` est gardée (un `/*` ou un `url(` jamais refermés relisaient le
+// texte jusqu'au bout à chacun de leurs appels : temps quadratique)
 const FIN_DE_LIGNE = new Set(['\n', '\r', ' ', ' '])
 
 function lecteurLitteraux(scan: string): (de: number) => [number, number] | null {

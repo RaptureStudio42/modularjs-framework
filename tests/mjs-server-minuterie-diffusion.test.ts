@@ -2,7 +2,6 @@
 // sauvegardée, comme après un coup : la partie est marquée « modifiée » après l'appel (et, si la minuterie rend une Promise,
 // après sa résolution). Sans cela le serveur avait un état que ni les clients ni la sauvegarde ne voyaient. Vrai serveur
 // MJS-Server + vrai client µ.socket (MemoryTransport) + adaptateur de sauvegarde espion ; les durées sont courtes.
-import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'

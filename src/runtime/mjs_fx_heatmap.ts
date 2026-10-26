@@ -582,7 +582,7 @@ var _mjsHeatmapRuns = function(s) {
     try {
       return decodeURIComponent(run);
     }
-    catch (e) {
+    catch {
       return run;
     }
   });

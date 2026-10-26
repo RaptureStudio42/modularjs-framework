@@ -222,7 +222,7 @@ describe('onJoin qui lève — instance de partie', () => {
     let refuse = false
     const { game } = refusingGame({
       emptyTtl: 5000,
-      hooks: { onJoin: (g: any, player: any) => { if (refuse) throw new Error('refusé') } },
+      hooks: { onJoin: () => { if (refuse) throw new Error('refusé') } },
     })
     const host = fakeClient('hote')
     game._createSeat(host)
@@ -240,7 +240,7 @@ describe('onJoin qui lève — instance de partie', () => {
     let refuse = false
     const { game } = refusingGame({
       emptyTtl: 5000,
-      hooks: { onJoin: (g: any, player: any) => { if (refuse) throw new Error('refusé') } },
+      hooks: { onJoin: () => { if (refuse) throw new Error('refusé') } },
     })
     game._createSeat(fakeClient('hote'))
     refuse = true

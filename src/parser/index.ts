@@ -80,6 +80,9 @@ export interface TagRefAttrs {
   // le TEXTE écrit de chaque attribut, nom en minuscules : la valeur entre guillemets ou nue (`toolbar="bold italic"`), `''` quand l'attribut est écrit sans valeur
   // (`answer`), `null` quand le build ne peut pas la lire (valeur calculée `{…}`, texte interpolé). Absent d'une référence relevée avant son ajout
   texts?: Record<string, string | null>
+  // l'expression écrite de chaque attribut calculé (`series={[…]}`), nom en minuscules, présente seulement quand la balise en écrit un :
+  // le build y lit ce qui est écrit en dur dans l'expression (les couleurs des séries de <@@chart>, ses lignes écrites)
+  exprs?: Record<string, string>
 }
 
 export interface Branch {
@@ -1119,6 +1122,12 @@ function attrTexts(attrs: Attr[]): Record<string, string | null> {
   return Object.fromEntries(attrs.flatMap(a => a.name ? [[a.name.toLowerCase(), a.type === 'boolean' ? '' : a.type === 'static' && !/[{}&]/.test(a.val ?? '') ? (a.val ?? '') : null]] : []))
 }
 
+// l'expression des attributs calculés (`nom={…}`), nom en minuscules ; null quand la balise n'en écrit aucun
+function attrExprs(attrs: Attr[]): Record<string, string> | null {
+  const out = attrs.flatMap(a => a.name && a.type === 'dynamic' && typeof a.expr === 'string' ? [[a.name.toLowerCase(), a.expr]] : [])
+  return out.length ? Object.fromEntries(out) : null
+}
+
 // resolveTagName — réécrit `<@nom>` en `<mjs-nom>` (raccourci-dev, un composant du
 // PROJET) et `<@@nom>` en `<mjs-core-nom>` (raccourci-coeur, un module de la
 // bibliothèque cœur), en enregistrant
@@ -1314,7 +1323,10 @@ function parseDom(scanner: Scanner, container: Node[], parseChildren: ChildrenPa
       const coeur   = ref.kind === 'raccourci-coeur' || ref.kind === 'litteral-coeur'
       const modeles = (coeur ? fileModels.core : fileModels.dev)[ref.name.toLowerCase()]
       // un module cœur : les attributs écrits sur la balise, relevés avant que le choix d'un modèle en fichier ne retire `layout` (les références de modèle ci-dessous les reprennent)
-      if (coeur) ref.attrs = { names: node.attrs.flatMap(a => a.name ? [a.name] : []), spread: node.attrs.some(a => a.type === 'spread'), texts: attrTexts(node.attrs) }
+      if (coeur) {
+        const exprs = attrExprs(node.attrs)
+        ref.attrs = { names: node.attrs.flatMap(a => a.name ? [a.name] : []), spread: node.attrs.some(a => a.type === 'spread'), texts: attrTexts(node.attrs), ...(exprs ? { exprs } : {}) }
+      }
       if (modeles) {
         const calcule = node.attrs.find(a => (a.name === 'layout' || a.name === 'template') && (a.type === 'dynamic' || (a.type === 'static' && /[{}]/.test(a.val ?? ''))))
         // choisi par une valeur calculée (`layout={$vue}`) : le compilateur écrit le {if} — la balise

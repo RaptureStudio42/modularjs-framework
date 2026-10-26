@@ -170,9 +170,11 @@ Une liste ou un objet est contrôlé **en entier** : si un seul élément est re
 | un composant enfant lié en deux sens : `<@panneau data=!{$settings}>` | oui — le parent est prévenu et corrige, des deux côtés |
 | un composant enfant qui reçoit l'objet en liaison simple : `<@panneau data={$settings}>` | **non** — l'enfant surveille l'objet de son côté : liez en deux sens, ou déclarez le type dans le `<vars>` de l'enfant |
 
-**Limite — la variable d'un `{for}` sur un store typé.** Dans un `{for}` sur un store typé, la variable de boucle est l'élément même de la liste : écrire par elle (`f.id = 'zz'`) n'est pas contrôlé par la règle du champ. Pour que l'écriture soit contrôlée, écrivez par le store (`$$flux[i].id = 'zz'`, ou `$$flux.find((f) -> f.id == id).id = 'zz'`).
+**La variable d'un `{for}` sur un store typé.** Dans un `{for}` sur un store typé, la variable de boucle est l'élément même de la liste, et elle écrit sous la règle du champ : `@click={f.id = 'zz'}` est refusé comme `$$flux[i].id = 'zz'` ou `$$flux.find((f) -> f.id == id).id = 'zz'`, avec le même message, et l'élément garde sa valeur d'avant. La variable d'une boucle du `<script>` aussi, dans les trois langues : Civet `for f of $$flux` (ou `for f in $$flux`), JavaScript `for (const f of $$flux)`, CoffeeScript `for f in $$flux`.
 
-Une **promesse** passe toujours (`$user = µfetch(…)`, lue par `{await}`) : sa vraie valeur arrive plus tard.
+Le paramètre d'un rappel écrit sur place (`$$flux.forEach((f) -> f.id = 'zz')`, de même `map`, `filter`, `find`, `some`, `every`, l'élément de `reduce`), la variable d'une boucle sur une copie qui garde les éléments (`for f of $$flux.filter(…)`, `slice()`, `toSorted()`, `Array.from($$flux)`, `[...$$flux]`) et l'élément d'une telle copie (`$$flux.slice()[0].id = 'zz'`, ou atteint par `find`, `at`, `pop`, `shift` : `$$flux.filter(…).find(…).id = 'zz'`), comme le rappel de `Array.from($$flux, f)`, écrivent aussi sous la règle du champ, dans les trois langues. Une fonction nommée qui écrit l'élément qu'on lui passe (`regler = (f) -> f.id = 'zz'`, puis `regler($$flux[0])` ou `$$flux.forEach(regler)`) n'est pas suivie : MJS ne suit pas une valeur d'une fonction à l'autre. Écrivez alors dans un rappel posé sur place, ou par le chemin (`$$flux[i].id = v`).
+
+Une **promesse** passe toujours (`$user = fetch('/api/user').then((r) -> r.json())`, lue par `{await}`) : sa vraie valeur arrive plus tard.
 
 ## Un champ lié se garde de lui-même
 

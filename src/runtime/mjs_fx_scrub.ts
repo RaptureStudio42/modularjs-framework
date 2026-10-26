@@ -47,7 +47,7 @@
         try {
           raw = JSON.parse(raw);
         }
-        catch (e) {
+        catch {
           return item;
         }
       }

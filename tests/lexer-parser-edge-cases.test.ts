@@ -8,7 +8,7 @@ import { Window } from 'happy-dom'
 import { tokenize } from '../src/lexer/index.js'
 import { parse } from '../src/parser/index.js'
 import { transpile } from '../src/transpiler/index.js'
-import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))

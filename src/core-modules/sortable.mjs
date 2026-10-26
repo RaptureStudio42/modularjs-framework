@@ -1,15 +1,17 @@
 <script module>
-  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'aux groupes (attribut `group`) : le build de production les ôte quand aucune liste de l'appli ne l'écrit, le développement et la copie dans un projet gardent tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
-  # `group` : le morceau propre aux groupes ; `!group` : l'autre forme des lignes qui existent avec et sans `group`, écrite en commentaire et remise en code quand `group` part ; `dev group` : l'avertissement du développement, gardé tant qu'aucune page n'écrit `group`
-  # `transition` : le morceau propre au fondu des lignes (une ligne que la page fait sortir avec une transition, que `*crossfade` fait voler), ôté en production quand aucune page de l'application n'écrit de transition (`@in`, `@out`, `@transition`) ; `!transition` et `dev transition` sur le même modèle
+  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'aux groupes (attribut `group`) : la construction les ôte quand aucune liste de l'appli ne l'écrit, en développement comme en production, au serveur comme au navigateur ; la copie dans un projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
+  # `group` : le morceau propre aux groupes ; `!group` : l'autre forme des lignes qui existent avec et sans `group`, écrite en commentaire et remise en code quand `group` part ; `dev group` : l'avertissement du développement, écrit en commentaire et réveillé quand `group` part
+  # `transition` : le morceau propre au fondu des lignes (une ligne que la page fait sortir avec une transition, que `*crossfade` fait voler), ôté en production quand aucune page de l'application n'écrit de transition (`@in`, `@out`, `@transition`) ; `!transition` sur le même modèle que `!group` ; `dev transition` : l'avertissement du développement, gardé tant qu'aucune page n'écrit de transition
   # @@ group
   # les listes vivantes, tous groupes confondus : chacune s'y inscrit à son réveil et s'en retire à son sommeil
   sortableLists = new Set()
   # @@
   # @@ dev group
-  told    = false
-  # le texte de l'avertissement : développement seulement, tant qu'aucune page n'écrit `group`
-  warning = { fr: '<@@sortable> : une liste reçoit « group » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — en production, les groupes (l\'échange de lignes entre listes) ne seraient pas envoyés. Écrivez « group » sur la liste dans votre page plutôt que de le poser par un script.', en: '<@@sortable>: a list gets "group" from a script, but no page of the application writes that attribute — in production the groups (rows moving between lists) would not be shipped. Write "group" on the list in your page instead of setting it from a script.' }
+  # le texte de l'avertissement : développement seulement, quand la construction a ôté les groupes ; écrit en commentaire, réveillé seulement alors
+  # @@ !group
+  # told    = false
+  # warning = { fr: '<@@sortable> : une liste reçoit « group » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — les groupes (l\'échange de lignes entre listes) ne sont pas envoyés, ni en développement ni en production. Écrivez « group » sur la liste dans votre page plutôt que de le poser par un script.', en: '<@@sortable>: a list gets "group" from a script, but no page of the application writes that attribute — the groups (rows moving between lists) are not shipped, neither in development nor in production. Write "group" on the list in your page instead of setting it from a script.' }
+  # @@
   # @@
   # @@ dev transition
   toldFade    = false
@@ -906,11 +908,14 @@
     deco.forEach (rec, el)-> retext(el, rec)
 
   # @@ dev group
-  # la production retire les groupes quand aucune page n'écrit `group` : une liste qui le reçoit d'un script, ici, ne les aurait plus là-bas
-  µeffect ->
-    if $group and not told
-      told = true
-      µ.warn('[ModularJS] ' + (warning[µ._mjs_labelLang()] ?? warning[µ._runtimeLabelsLang] ?? warning.fr))
+  # aucune page n'écrit `group` : la construction a ôté les groupes, une liste qui le reçoit d'un script ne les a pas. Écrit en commentaire, réveillé
+  # seulement quand les groupes sont ôtés : une copie du module posée dans un projet les garde, et ne le dit jamais
+  # @@ !group
+  # µeffect ->
+  #   if $group and not told
+  #     told = true
+  #     µ.warn('[ModularJS] ' + (warning[µ._mjs_labelLang()] ?? warning[µ._runtimeLabelsLang] ?? warning.fr))
+  # @@
   # @@
 
   µawake =>

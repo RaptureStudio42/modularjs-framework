@@ -205,7 +205,7 @@ function _mjsFxPathCssEase(v, ok) {
   map: _mjsFxPathMap,
   shapes: _MJS_FX_PATHS,
   setup: function(el, s) {
-    var sup = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch (e) { return false; } };
+    var sup = function(a, b) { try { return typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports(a, b); } catch { return false; } };
     var offset = sup('offset-path', 'path("M0 0")');
     var calm   = µ._mjs_fxCalm();
     var from   = typeof s.from === 'string' && s.from !== '' ? s.from : '';
@@ -266,7 +266,7 @@ function _mjsFxPathCssEase(v, ok) {
         try {
           node = root.querySelector(from) || document.querySelector(from);
         }
-        catch (e) {}
+        catch {}
         if (!node || node.localName !== 'path') {
           warn(µ._mjs_txt('pathMissing', { from: from }, 'le tracé « {from} » n\'existe pas dans votre composant (il faut un <path> SVG)'));
           return null;

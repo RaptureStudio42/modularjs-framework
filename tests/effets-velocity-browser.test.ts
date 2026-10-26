@@ -149,8 +149,6 @@ const COMPTEURS = () => {
   }
 }
 
-const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
 // l'écart d'un bord à sa meilleure courbe lisse : un polynôme de degré 6 ajusté aux moindres carrés (base de Tchebychev sur [-1, 1], équations normales
 // résolues par élimination de Gauss avec pivot), puis la MOYENNE GLISSANTE de l'écart sur `fenetre` lignes : le bord relevé tombe sur des pixels entiers
 // (un bruit de ±0,5 px que la moyenne éteint), alors qu'une facette ou une cassure d'un bord bombé est un écart qui dure sur plusieurs lignes

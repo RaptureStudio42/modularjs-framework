@@ -250,25 +250,36 @@ describe('effets en direct', function () {
     const appels: any[] = []
     let taille = 40
     mesurer(window, a, () => ({ width: 200, height: taille, top: 0, left: 0, right: 200, bottom: taille, x: 0, y: 0 }))
-    a.animate = (images: any, opts: any) => {
+    // le cœur appelle animate par le prototype (un composant peut masquer celui de sa balise) quand il existe — happy-dom 20.14 l'a, 20.11 non : l'espion s'y pose le temps du test, filtré sur la balise
+    const proto = window.Element.prototype
+    const avant = Object.getOwnPropertyDescriptor(proto, 'animate')
+    const natif = proto.animate
+    proto.animate = function (this: any, images: any, opts: any) {
+      if (this !== a) return natif?.call(this, images, opts)
       appels.push({ images, opts })
       return { cancel() {}, onfinish: null }
     }
-    // un premier changement : la taille de départ est retenue (la balise n'avait pas encore de taille)
-    plus.click()
-    await attendre(() => a.querySelectorAll('p').length === 2)
-    await new Promise((r) => setTimeout(r, 20))
-    taille = 80
-    plus.click()
-    await attendre(() => appels.length > 0)
-    assert.equal(appels.length, 1)
-    const [de, vers] = appels[0].images
-    assert.equal(de.height, '40px')
-    assert.equal(vers.height, '80px')
-    assert.equal(de.boxSizing, 'border-box')
-    assert.equal(de.overflow, 'hidden', 'ce qui dépasse est masqué le temps du glissement')
-    assert.equal(de.width, undefined, 'axis: height — la largeur ne bouge pas')
-    assert.equal(appels[0].opts.duration, 200)
-    assert.equal(appels[0].opts.easing, 'ease-out')
+    try {
+      // un premier changement : la taille de départ est retenue (la balise n'avait pas encore de taille)
+      plus.click()
+      await attendre(() => a.querySelectorAll('p').length === 2)
+      await new Promise((r) => setTimeout(r, 20))
+      taille = 80
+      plus.click()
+      await attendre(() => appels.length > 0)
+      assert.equal(appels.length, 1)
+      const [de, vers] = appels[0].images
+      assert.equal(de.height, '40px')
+      assert.equal(vers.height, '80px')
+      assert.equal(de.boxSizing, 'border-box')
+      assert.equal(de.overflow, 'hidden', 'ce qui dépasse est masqué le temps du glissement')
+      assert.equal(de.width, undefined, 'axis: height — la largeur ne bouge pas')
+      assert.equal(appels[0].opts.duration, 200)
+      assert.equal(appels[0].opts.easing, 'ease-out')
+    }
+    finally {
+      if (avant) Object.defineProperty(proto, 'animate', avant)
+      else delete proto.animate
+    }
   })
 })

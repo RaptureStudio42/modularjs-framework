@@ -273,11 +273,6 @@ describe('*lift(color, blur, press) — l\'ombre réglable et l\'appui', functio
       return { page, erreurs }
     }
 
-    const centre = (page: any, tag: string) => page.evaluate((t: string) => {
-      const r = (document.querySelector(t) as any)._shadow.querySelector('.c').getBoundingClientRect()
-      return { x: r.left + r.width / 2, y: r.top + r.height + 20 }
-    }, tag)
-
     // ce que la balise montre : sa montée, son ombre, ses durées (et la marque d'appui)
     const vue = (page: any, tag: string) => page.evaluate((t: string) => {
       const el = (document.querySelector(t) as any)._shadow.querySelector('.c')

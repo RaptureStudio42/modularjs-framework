@@ -27,7 +27,7 @@
 // >>> extrait-test _mjs_abortStaleNav
 µ._mjs_abortStaleNav = function() {
   if (µ._mjs_navController) {
-    try { µ._mjs_navController.abort(); } catch (e) {}
+    try { µ._mjs_navController.abort(); } catch {}
   }
   µ._mjs_navController = typeof AbortController === 'function' ? new AbortController() : null;
   return µ._mjs_navController;
@@ -150,7 +150,7 @@ var _confirmCfgWarned = false;
         if (parsed.ok) { confirmButtonText = parsed.ok; }
         if (parsed.cancel) { cancelButtonText = parsed.cancel; }
       }
-    } catch (e) { /* texte brut : JSON invalide, `text` reste `message` tel quel */ }
+    } catch { /* texte brut : JSON invalide, `text` reste `message` tel quel */ }
   }
   if (v === true) {
     if (µ.modal && typeof µ.modal.fire === 'function') {
@@ -184,7 +184,7 @@ var _confirmCfgWarned = false;
     var u = new URL(finalUrl, window.location.href);
     if (u.origin !== window.location.origin) { return fallback; }
     return u.pathname + u.search;
-  } catch (e) { return fallback; }
+  } catch { return fallback; }
 };
 // <<< extrait-test _mjs_finalPathFor
 
@@ -196,7 +196,7 @@ var _confirmCfgWarned = false;
 // >>> extrait-test _mjs_hardNav
 µ._mjs_hardNav = function(destination) {
   var url, href;
-  try { url = new URL(destination, window.location.href); href = url.href; } catch (e) { url = null; href = destination; }
+  try { url = new URL(destination, window.location.href); href = url.href; } catch { url = null; href = destination; }
   // même garde de protocole que µ._mjs_navApplyJson, posée ICI en défense en profondeur
   // (µ._mjs_hardNav a d'autres appelants, cf. le repli cross-page ci-dessus) : seul http(s) part vers
   // location.href — une destination `javascript:`/`data:`/`blob:`… EXÉCUTAIT le script au lieu de
@@ -306,7 +306,7 @@ var _confirmCfgWarned = false;
   var el;
   doc = doc || document;
   if (!target) { return { zone: doc.body, mode: 'body', target: null }; }
-  try { el = doc.querySelector(target); } catch (e) { el = null; }
+  try { el = doc.querySelector(target); } catch { el = null; }
   if (el) { return { zone: el, mode: 'target', target: target }; }
   if (doc === document && µ._mjs_navZone && µ._mjs_navZone.isConnected && µ._mjs_navZone !== doc.body) {
     return { zone: µ._mjs_navZone, mode: 'replaced', target: target };
@@ -337,7 +337,7 @@ var _confirmCfgWarned = false;
     ev = new CustomEvent('mjs:' + name, { detail: detail, bubbles: true, cancelable: !!cancelable });
     document.dispatchEvent(ev);
     return !(cancelable && ev.defaultPrevented);
-  } catch (e) {}
+  } catch {}
   return true;
 };
 
@@ -361,7 +361,7 @@ var _confirmCfgWarned = false;
     // navigation réelle (pushState/assign) et reste strict sur le schéma — volontairement pas touché.
     if (abs.host !== window.location.host) { return { path: u, url: u }; } // autre hôte : on ne rabote rien
     return { path: abs.pathname + abs.search, url: abs.pathname + abs.search + abs.hash };
-  } catch (e) {}
+  } catch {}
   return { path: u, url: u }; // harnais sans window.location exploitable : chaîne brute
 };
 
@@ -481,7 +481,7 @@ var _confirmCfgWarned = false;
   if (typeof window === 'undefined' || !window.location) { return; }
   try {
     u = new URL(dest, window.location.href);
-  } catch (e) {
+  } catch {
     window.location.reload();
     return;
   }
@@ -712,7 +712,7 @@ var _confirmCfgWarned = false;
       if (!(n in prev)) { prev[n] = µ.paths[n]; }
       µ.paths[n] = fiche.file;
     });
-  } catch (e) {}
+  } catch {}
 };
 // <<< extrait-test _mjs_navPageFile
 
@@ -742,7 +742,7 @@ var _confirmCfgWarned = false;
 // et µ._mjs_navRevalidate plus bas) au `document` COURANT. Opt-out puis gardes AVANT tout, TITRE ensuite,
 // MÉTADONNÉES en dernier (réconciliation PAR CLÉ, cf. µ._mjs_navHeadReconcile juste au-dessus).
 µ._mjs_navApplyHead = function(doc) {
-  try { µ._mjs_navCsrf(doc); } catch (e) {} // AVANT la désactivation : le jeton suit toujours
+  try { µ._mjs_navCsrf(doc); } catch {} // AVANT la désactivation : le jeton suit toujours
   if (µ.config && µ.config.navHead === false) { return; } // désactivation globale, cf. bandeau
   try {
     var t, table, kids, i, key, node;
@@ -762,7 +762,7 @@ var _confirmCfgWarned = false;
       if (key) { table[key] = { tag: node.tagName, attrs: µ._mjs_navHeadAttrs(node), node: node }; } // dernier gagnant si doublon
     }
     µ._mjs_navHeadReconcile(table);
-  } catch (e) {} // une réconciliation de tête ne doit JAMAIS faire tomber la navigation
+  } catch {} // une réconciliation de tête ne doit JAMAIS faire tomber la navigation
 };
 
 // PHOTO du <head> COURANT — prise par µ._mjs_navHibernate PENDANT que la page à archiver est
@@ -902,7 +902,7 @@ var _confirmCfgWarned = false;
   nodes = Array.prototype.slice.call(zone.childNodes);
   try {
     document.dispatchEvent(new CustomEvent('mjs:before-cache', { detail: { path: path, zone: zone }, bubbles: true, cancelable: false }));
-  } catch (e) {}
+  } catch {}
   for (i = 0; i < nodes.length; i++) { if (nodes[i].nodeType === 1) { nodes[i]._mjs_page_cached = true; } }
   if (policy === 'revalidate') { nodes._mjs_mjsCachePolicy = 'revalidate'; nodes._mjs_mjsRecu = µ._mjs_navRecu; }
   // photo prise MAINTENANT, pendant que la page à archiver est ENCORE affichée (seule fenêtre où
@@ -954,7 +954,7 @@ var _confirmCfgWarned = false;
           _fresh = new URL(finalUrl, window.location.href);
           _asked = new URL(path, window.location.href);
           if (_fresh.pathname + _fresh.search !== _asked.pathname + _asked.search) { return; }
-        } catch (e) { return; }
+        } catch { return; }
       }
       // `nav.reload`/`nav.method` REÇUS ICI : DÉLIBÉRÉMENT jamais lus sur ce chemin, même esprit
       // que la garde de redirection juste au-dessus. Ce refetch est un rafraîchissement SILENCIEUX de
@@ -1047,7 +1047,7 @@ var _confirmCfgWarned = false;
       µ._mjs_navScriptWarned[sig] = true;
       µ.warn('[µ.UJS] ' + µ._mjs_txt('ujsScriptSwapped', { sig: sig }, '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez @noUJS sur les liens qui mènent à cette page. Script : {sig}'));
     }
-  } catch (e) {}
+  } catch {}
 };
 
 // ÉLÉMENTS PERMANENTS `mjs-permanent` — un nœud qui porte cet attribut ET un `id` traverse
@@ -1153,7 +1153,7 @@ var _confirmCfgWarned = false;
       for (k = 0; k < places.length; k++) {
         s = places[k];
         if (s[0].isConnected || s[2].parentNode || typeof s[0].insertBefore !== 'function') { continue; }
-        try { s[0].insertBefore(s[2], (s[1] && s[1].parentNode === s[0]) ? s[1] : null); } catch (e) {}
+        try { s[0].insertBefore(s[2], (s[1] && s[1].parentNode === s[0]) ? s[1] : null); } catch {}
       }
     });
   }
@@ -1481,7 +1481,7 @@ var _navFlashModalWarned = false;
       destUrl = new URL(dest, (typeof document !== 'undefined' && document.baseURI) || window.location.href);
       destOrigin = destUrl.origin;
       destProtocol = destUrl.protocol;
-    } catch (eDestOrigin) { destOrigin = liveOrigin; destProtocol = null; }
+    } catch { destOrigin = liveOrigin; destProtocol = null; }
   }
   // `via` transmis par l'appelant (popstate/clic réseau/_mjs_navDispatch, cf. leurs 3 call-sites) ;
   // défaut 'link' (repli raisonnable pour cette fonction, pensée pour la navigation liée).
@@ -1855,7 +1855,7 @@ window.addEventListener('popstate', function(e) {
     var _anchorEl;
     if (µ._mjs_scrollPos && µ._mjs_scrollPos.has(destination + destHash)) { µ._mjs_restoreScroll(destination + destHash); }
     else {
-      try { _anchorEl = document.getElementById(decodeURIComponent(destHash.slice(1))); } catch (e2) { _anchorEl = null; }
+      try { _anchorEl = document.getElementById(decodeURIComponent(destHash.slice(1))); } catch { _anchorEl = null; }
       if (_anchorEl && typeof _anchorEl.scrollIntoView === 'function') { _anchorEl.scrollIntoView(); }
     }
     return;
@@ -2225,7 +2225,7 @@ window.addEventListener('hashchange', function() {
 // commentaire de µ._mjs_ujsShadowAttach pour le pourquoi du retargeting).
 // >>> extrait-test _mjs_ujsOnClick
 µ._mjs_ujsOnClick = function(e) {
-  var cachedNodes, currentPath, currentRoot, destPath, destination, evPaths, fullDest, isHashRoute, isSamePage, link, ref, ref3, ref4, seq, target;
+  var cachedNodes, currentPath, destPath, destination, evPaths, fullDest, isHashRoute, isSamePage, link, ref, ref3, seq, target;
   // action déjà prévenue — y compris par un gestionnaire du composant : la prise en charge du lien
   // n'a lieu qu'à la remontée, une fois ces gestionnaires joués (pont shadow, µ._mjs_ujsShadowAttach)
   if (e.defaultPrevented) {
@@ -2486,7 +2486,7 @@ window.addEventListener('hashchange', function() {
     var _revertClickUrl = function() {
       var back = (_navFromUrl.split('#')[0] === currentPath) ? _navFromUrl : currentPath;
       if (typeof back !== 'string' || !back) { return; }
-      try { window.history.replaceState({}, '', back); } catch (e) { /* adresse laissée telle quelle */ }
+      try { window.history.replaceState({}, '', back); } catch { /* adresse laissée telle quelle */ }
     };
     seq = ++µ._mjs_navSeq;
     // Abandon réel du fetch de navigation précédent (cf. `_mjs_abortStaleNav`,
@@ -2567,7 +2567,7 @@ window.addEventListener('hashchange', function() {
             var _fu = new URL(finalUrl, window.location.href);
             navDest = _fu.pathname + _fu.search + _fu.hash;
             window.history.replaceState({}, '', navDest);
-          } catch (e) { navDest = fullDest; }
+          } catch { navDest = fullDest; }
         }
       };
       if (html && typeof html === 'object') {
@@ -2994,7 +2994,7 @@ document.addEventListener('auxclick', µ._mjs_ujsOnAuxClick);
     var _actionOrigin;
     try {
       _actionOrigin = new URL(_actionAttr, window.location.href).origin;
-    } catch (e2) {
+    } catch {
       return; // action inanalysable : soumission NATIVE, aucun preventDefault
     }
     if (_actionOrigin !== window.location.origin) {
@@ -3275,7 +3275,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     if (typeof µ._mjs_navDropHibernation === 'function') { µ._mjs_navDropHibernation(); }
     back = (typeof _getFromUrl === 'string' && _getFromUrl.split('#')[0] === _curPath) ? _getFromUrl : _curPath;
     if (typeof back !== 'string' || !back) { return; }
-    try { window.history.replaceState({}, '', back); } catch (e) { /* adresse laissée telle quelle */ }
+    try { window.history.replaceState({}, '', back); } catch { /* adresse laissée telle quelle */ }
   };
   // envoi qui modifie le serveur (verbe autre que GET/HEAD) : `µ.pageCache` (pages hibernées) et `µ._mjs_preloadCache`
   // (HTML préchargé au survol/eager) sont figés au contenu lu AVANT la mutation. Exemple concret : DELETE d'un post
@@ -3308,7 +3308,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       // `finalUrl` distinct de l'URL soumise ⇒ pushState) — auto-contenu
       // (`return` en fin de branche) : le PRG partagé de fin de fonction
       // (chemin HTML) ne doit pas repousser une 2e fois l'historique.
-      try { absUrl = new URL(url, window.location.href).href; } catch (e) { absUrl = url; }
+      try { absUrl = new URL(url, window.location.href).href; } catch { absUrl = url; }
       shouldPush = (method !== 'GET' && method !== 'HEAD') && !!finalUrl && finalUrl !== absUrl;
       // _restoreNav() AVANT µ._mjs_navApplyJson (qui émet mjs:load) : sans ce déplacement, un
       // écouteur mjs:load lisait µ.nav.active===true ICI alors qu'il vaut déjà false sur les branches
@@ -3326,9 +3326,9 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
       // sous CETTE clé (pageCache empoisonné).
       var _onJsonSwapped = function() {
         if (shouldPush) {
-          try { var _ju = new URL(finalUrl, window.location.href); µ._mjs_lastUjsPath = _ju.pathname + _ju.search; } catch (e2) {}
+          try { var _ju = new URL(finalUrl, window.location.href); µ._mjs_lastUjsPath = _ju.pathname + _ju.search; } catch {}
         } else if ((method === 'GET' || method === 'HEAD') && getUrl) {
-          try { var _gu = new URL(getUrl, window.location.href); µ._mjs_lastUjsPath = _gu.pathname + _gu.search; } catch (e3) {}
+          try { var _gu = new URL(getUrl, window.location.href); µ._mjs_lastUjsPath = _gu.pathname + _gu.search; } catch {}
         }
       };
       µ._mjs_navApplyJson(html, finalUrl, { push: shouldPush, via: via, el: opts.el, seq: seq, onSwapped: _onJsonSwapped });
@@ -3419,13 +3419,13 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
           // d'historique en trop, `_mjs_lastUjsPath` pollué). On normalise `url` en absolu
           // avant de comparer.
           var _absUrl;
-          try { _absUrl = new URL(url, window.location.href).href; } catch (e) { _absUrl = url; }
+          try { _absUrl = new URL(url, window.location.href).href; } catch { _absUrl = url; }
           if (!stale && method !== 'GET' && method !== 'HEAD' && finalUrl && finalUrl !== _absUrl) {
             try {
               window.history.pushState({}, '', finalUrl);
               var _u = new URL(finalUrl, window.location.href);
               µ._mjs_lastUjsPath = _u.pathname + _u.search;
-            } catch (e) {}
+            } catch {}
           }
           // mjs:load émis ICI, à la toute fin de `_finSubmit` (elle-même appelée en toute fin
           // de `_swapSubmit`, cf. bandeau ci-dessus) : APRÈS le bloc PRG ci-dessus (un POST/PUT/
@@ -3458,7 +3458,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
           // le prochain clic archive les résultats sous la clé de la page d'AVANT
           // le submit (pageCache empoisonné). `_mjs_lastUjsPath` ne bouge qu'au swap RÉEL.
           if ((method === 'GET' || method === 'HEAD') && getUrl) {
-            try { var _gu = new URL(getUrl, window.location.href); µ._mjs_lastUjsPath = _gu.pathname + _gu.search; } catch (e) {}
+            try { var _gu = new URL(getUrl, window.location.href); µ._mjs_lastUjsPath = _gu.pathname + _gu.search; } catch {}
           }
           // mjs:load DÉPLACÉ à la toute fin de `done` (après le bloc PRG, tout en bas) : ICI,
           // `emitPath`/`emitUrl` (calculés en tête de µ._mjs_navDispatch) seraient PÉRIMÉS sur un PRG — un
@@ -3510,13 +3510,13 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     // d'historique en trop, `_mjs_lastUjsPath` pollué). On normalise `url` en absolu
     // avant de comparer.
     var _absUrl;
-    try { _absUrl = new URL(url, window.location.href).href; } catch (e) { _absUrl = url; }
+    try { _absUrl = new URL(url, window.location.href).href; } catch { _absUrl = url; }
     if (!stale && method !== 'GET' && method !== 'HEAD' && finalUrl && finalUrl !== _absUrl) {
       try {
         window.history.pushState({}, '', finalUrl);
         var _u = new URL(finalUrl, window.location.href);
         µ._mjs_lastUjsPath = _u.pathname + _u.search;
-      } catch (e) {}
+      } catch {}
     }
     // mjs:load émis ICI, à la toute fin de `done` : APRÈS le bloc PRG ci-dessus (un POST/PUT/
     // PATCH/DELETE qui redirige ne pousse `finalUrl` qu'à cet instant) et APRÈS _restoreNav() (plus
@@ -3631,7 +3631,7 @@ document.addEventListener('submit', µ._mjs_ujsOnSubmit);
     var _curRoot = _curMz.zone;
     var _curPath = µ._mjs_lastUjsPath;
     var _getFromUrl = window.location.pathname + window.location.search + window.location.hash; // pour `_undoGet`
-    try { window.history.pushState({}, '', getUrl); } catch (e) {}
+    try { window.history.pushState({}, '', getUrl); } catch {}
     // le contenu du contenant est hiberné, contenant compris quand c'est <body>
     // (avant : <body> en était exclu du pageCache). Simple PHOTOGRAPHIE (lecture de
     // childNodes, aucun retrait) : le retrait RÉEL des nœuds n'a lieu qu'au prochain

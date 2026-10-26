@@ -11,7 +11,7 @@
   spread = opts.spread != null ? opts.spread : 400;
   rotate = opts.rotate != null ? opts.rotate : 360;
   setup = function(node) {
-    var bg, cols, e, ease, h, k, layer, m, place, ref, ref1, rows, side, src, tiles, w, x, y;
+    var bg, cols, e, ease, h, layer, m, place, ref, ref1, rows, side, src, tiles, w, x, y;
     src = node.currentSrc || node.src || '';
     if (!src && typeof window.getComputedStyle === 'function') {
       bg = window.getComputedStyle(node).backgroundImage || '';

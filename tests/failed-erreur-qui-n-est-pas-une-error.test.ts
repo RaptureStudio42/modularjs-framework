@@ -46,7 +46,7 @@ describe('<@failed> — une valeur jetée qui n\'est pas une Error', function ()
 
   before(async () => {
     app = await createHarness({ root: projet() })
-    app.window.console.error = (...a: any[]) => journal.push(a.map((x) => { try { return String(x && x.message !== undefined ? x.message : x) } catch (e) { return '?' } }).join(' '))
+    app.window.console.error = (...a: any[]) => journal.push(a.map((x) => { try { return String(x && x.message !== undefined ? x.message : x) } catch { return '?' } }).join(' '))
     app.window.addEventListener('error', (e: any) => journal.push('non rattrapée : ' + (e.error?.message ?? e.message)))
   })
 

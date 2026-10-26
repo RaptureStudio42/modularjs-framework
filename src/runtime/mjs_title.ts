@@ -37,8 +37,9 @@
 // composant gagne toujours, même avec une classe nue). Variables `--mjs-title-*` pour les
 // couleurs/formes (CSS pur, pas de clé JS pour celles-ci) ; `--mjs-title-dur` seule est
 // alimentée par la config (setProperty sur la bulle — canal variable, zéro style inline pour la
-// durée). Le positionnement (top/left, calculé depuis getBoundingClientRect) reste, lui, posé en
-// style direct — donnée purement géométrique et jetable, même famille que le FLIP (mjs_easing.ts).
+// durée). Le positionnement (top/left, calculé depuis getBoundingClientRect, et max-height d'une
+// bulle plus haute que la fenêtre) reste, lui, posé en style direct — donnée purement géométrique
+// et jetable, même famille que le FLIP (mjs_easing.ts).
 
 // test d'inclusion insensible à une méthode `contains` du composant (cf. mjs_element.ts)
 µ._mjs_inside = µ._mjs_inside || function(a, b) {
@@ -52,7 +53,9 @@
 
 µ._mjs_titleSheet = new CSSStyleSheet();
 
-µ._mjs_titleSheet.replaceSync(`:where(.mjs-title){position:fixed;z-index:2147483647;max-width:280px;pointer-events:none;opacity:0;padding:var(--mjs-title-pad, 6px 10px);border-radius:var(--mjs-title-radius, 6px);border:1px solid var(--mjs-border, rgba(255,255,255,.25));background:var(--mjs-title-bg, #1c2333);color:var(--mjs-title-fg, #f4f4f5);box-shadow:var(--mjs-title-shadow, 0 4px 14px rgba(0,0,0,.35));font:13px/1.4 system-ui,sans-serif;transition:opacity var(--mjs-title-dur, 150ms) ease,transform var(--mjs-title-dur, 150ms) ease}
+// inset et margin remis : la feuille native de [popover] pose inset:0 et margin:auto, qui tirent la bulle vers le centre de la fenêtre
+// overflow:auto comme cette feuille native : sans Popover aussi, une bulle à hauteur bornée rogne son texte
+µ._mjs_titleSheet.replaceSync(`:where(.mjs-title){position:fixed;inset:auto;margin:0;z-index:2147483647;max-width:280px;overflow:auto;pointer-events:none;opacity:0;padding:var(--mjs-title-pad, 6px 10px);border-radius:var(--mjs-title-radius, 6px);border:1px solid var(--mjs-border, rgba(255,255,255,.25));background:var(--mjs-title-bg, #1c2333);color:var(--mjs-title-fg, #f4f4f5);box-shadow:var(--mjs-title-shadow, 0 4px 14px rgba(0,0,0,.35));font:13px/1.4 system-ui,sans-serif;transition:opacity var(--mjs-title-dur, 150ms) ease,transform var(--mjs-title-dur, 150ms) ease}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="top"]){transform:translateY(var(--mjs-title-offset, 4px))}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="bottom"]){transform:translateY(calc(var(--mjs-title-offset, 4px)*-1))}
 :where(.mjs-title.mjs-title-visible){opacity:1;transform:translateY(0)}`);
@@ -120,7 +123,7 @@ function __titleResolveConfig(el) {
         if (typeof parsed.dur === 'number') { cfg.dur = parsed.dur; }
         if (parsed.transition === 'fade' || parsed.transition === 'slide') { cfg.transition = parsed.transition; }
       }
-    } catch (e) { /* JSON invalide : repli silencieux sur les valeurs déjà résolues */ }
+    } catch { /* JSON invalide : repli silencieux sur les valeurs déjà résolues */ }
   }
   return cfg;
 }
@@ -128,11 +131,13 @@ function __titleResolveConfig(el) {
 // Résolution PURE du côté effectif — testable directement avec des rects fabriqués, aucune
 // dépendance DOM. `preferred` non reconnu (mjs-title-conf corrompu, passé outre la fusion)
 // retombe sur 'top'.
+// le côté préféré s'il a la place, sinon l'autre s'il l'a ; aucun des deux : celui qui a le plus de place (égalité : le préféré)
 µ._mjs_titleResolveSide = function(preferred, rect, bubbleHeight, gap, viewportH) {
-  var side = preferred === 'bottom' ? 'bottom' : 'top';
-  if (side === 'top' && rect.top < bubbleHeight + gap) { return 'bottom'; }
-  if (side === 'bottom' && (viewportH - rect.bottom) < bubbleHeight + gap) { return 'top'; }
-  return side;
+  var up   = rect.top;
+  var down = viewportH - rect.bottom;
+  var need = bubbleHeight + gap;
+  if (preferred === 'bottom') { return down >= need || (up < need && down >= up) ? 'bottom' : 'top'; }
+  return up >= need || (down < need && up >= down) ? 'top' : 'bottom';
 };
 
 // Bulle PARESSEUSE, réutilisée PAR RACINE (test « bulle unique ») : `host` = la racine réelle en
@@ -169,15 +174,31 @@ function __titleBubbleFor(host) {
 
 // Positionnement : au-dessus par défaut, bascule en dessous (ou l'inverse) si la place
 // manque — cf. µ._mjs_titleResolveSide, seule la lecture des rects est faite ici.
+// bulle déjà ouverte (cf. __titleDoShow) et ramenée au bord gauche avant la mesure : à son ancienne
+// place, la largeur restante pourrait la plier ; contre un bord, glissée vers l'intérieur
+// zoom CSS autour de la bulle (html, conteneur zoomé) : le navigateur multiplie ses top et left par lui, lu sur l'écran en la
+// décalant de 1 000 px (currentCSSZoom manque à Safari) ; plus haute que la fenêtre, hauteur bornée à la fenêtre moins deux
+// écarts, le surplus rogné ; aucun côté assez grand, ramenée dans la fenêtre quitte à couvrir son élément
 function __titlePosition(bubble, trigger, side) {
   var gap   = 8;
+  var vh    = window.innerHeight;
+  bubble.style.top       = '0px';
+  bubble.style.left      = '0px';
+  bubble.style.maxHeight = '';
   var rect  = trigger.getBoundingClientRect();
   var brect = bubble.getBoundingClientRect();
-  var eff   = µ._mjs_titleResolveSide(side, rect, brect.height, gap, window.innerHeight);
+  bubble.style.top = '1000px';
+  var zoom  = (bubble.getBoundingClientRect().top - brect.top) / 1000 || 1;
+  if (brect.height > vh - 2 * gap) {
+    bubble.style.maxHeight = parseFloat(getComputedStyle(bubble).height) - (brect.height - vh + 2 * gap) / zoom + 'px';
+    brect = bubble.getBoundingClientRect();
+  }
+  var eff   = µ._mjs_titleResolveSide(side, rect, brect.height, gap, vh);
   var top   = eff === 'top' ? (rect.top - brect.height - gap) : (rect.bottom + gap);
-  var left  = rect.left + (rect.width - brect.width) / 2;
-  bubble.style.top  = top + 'px';
-  bubble.style.left = left + 'px';
+  var left  = Math.max(gap, Math.min(rect.left + (rect.width - brect.width) / 2, document.documentElement.clientWidth - brect.width - gap));
+  if (top < 0 || top + brect.height > vh) { top = Math.max(gap, Math.min(top, vh - brect.height - gap)); }
+  bubble.style.top  = top / zoom + 'px';
+  bubble.style.left = left / zoom + 'px';
   bubble.setAttribute('data-mjs-title-side', eff);
 }
 
@@ -263,6 +284,11 @@ function __titleDoShow(el, root, cfg) {
   if (content.html) { bubble.innerHTML = content.value; } else { bubble.textContent = content.value; }
   bubble.setAttribute('data-mjs-title-transition', cfg.transition);
   bubble.style.setProperty('--mjs-title-dur', cfg.dur + 'ms');
+  // ouverte AVANT la mesure : un popover fermé est en display:none (0 × 0) ; elle reste à opacity 0
+  // jusqu'à mjs-title-visible, posée plus bas dans la même tâche — aucune image au mauvais endroit
+  if (__titlePopoverOk && typeof bubble.showPopover === 'function') {
+    try { bubble.showPopover(); } catch { /* déjà ouverte : sans conséquence */ }
+  }
   __titlePosition(bubble, el, cfg.side);
   if (__titleObserver) {
     __titleObserver.disconnect();
@@ -279,9 +305,6 @@ function __titleDoShow(el, root, cfg) {
   __titleCurrent       = el;
   __titleCurrentBubble = bubble;
   __titleDescribe(el, bubble.id);
-  if (__titlePopoverOk && typeof bubble.showPopover === 'function') {
-    try { bubble.showPopover(); } catch (e) { /* déjà ouverte : sans conséquence */ }
-  }
   // Reflow forcé AVANT de rebasculer la classe : redémarre la transition CSS sur une bulle
   // réutilisée (même bulle qu'au tour précédent) — même patron que les transitions anti-flash du
   // framework (épingler l'état de départ avant de déclencher l'état d'arrivée).
@@ -300,7 +323,7 @@ function __titleHide() {
   if (bubble) {
     bubble.classList.remove('mjs-title-visible');
     if (__titlePopoverOk && typeof bubble.hidePopover === 'function') {
-      try { bubble.hidePopover(); } catch (e) { /* déjà fermée : sans conséquence */ }
+      try { bubble.hidePopover(); } catch { /* déjà fermée : sans conséquence */ }
     }
     __titleUndescribe(el, bubble.id);
   }

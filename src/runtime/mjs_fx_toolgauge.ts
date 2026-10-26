@@ -78,7 +78,7 @@
     try {
       if (PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')) (po = new PerformanceObserver(arm)).observe({ type: 'long-animation-frame' });
     }
-    catch (e) {}
+    catch {}
   };
   // plus d'écoute : le verdict rendu (pour de bon), ou plus aucun effet lourd posé
   var quit = function() {

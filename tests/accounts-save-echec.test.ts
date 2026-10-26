@@ -8,7 +8,6 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsWs, accountsPackage, accountsAuth } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
-import { t } from '../src/messages/index.js'
 import type { MjsWsApp, MjsWsOptions } from '../src/mjs-ws/index.js'
 import type { MjsWsAccountsOptions, MjsWsAccountsPersistAdapter, MjsWsAccountRecord } from '../src/mjs-ws/accounts.js'
 

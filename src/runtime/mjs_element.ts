@@ -500,7 +500,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         _isLight = true;
         µ._mjs_lightNext = null;
       }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
     if (_isLight) {
       this._shadow = this;
       this._mjs_isLight = true;
@@ -535,7 +535,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         this._shadow = this.attachShadow({
           mode: 'closed'
         });
-      } catch (e) {
+      } catch {
         // si on arrive ICI et que
         // `attachShadow` échoue avec "already hosts a shadow tree", c'est
         // qu'un Shadow DOM a déjà été attaché EN AMONT — nécessairement par
@@ -812,11 +812,20 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // utilisateur rapportent tous deux `[object Object]` ; un objet natif
     // rapporte son tag spécifique. On wrappe donc UNIQUEMENT : plain/instance
     // user (`[object Object]`), Array, et Map/Set/Date/RegExp (traités plus bas).
+    //
+    // Passe aussi, enveloppé et gardé comme `Object.prototype` (cf. `__refus` plus bas), un prototype qui porte une
+    // étiquette — `Map.prototype`, `Set.prototype`, où mène `__proto__` : l'objet que range son propre constructeur, et
+    // qui garde le `valueOf` d'`Object.prototype`. Le prototype d'une valeur simple (`String.prototype`,
+    // `Number.prototype`, `Boolean.prototype`, `Symbol.prototype`, `BigInt.prototype`) a le sien, qui vérifie son `this` :
+    // rendu tel quel, ses lectures (`String(p)`, `{p}` dans la vue) marchent comme en JavaScript, une enveloppe les ferait
+    // lever. Testé seulement pour ce qui serait rendu tel quel : un objet ou une liste n'en paie rien
+    let __c;
     if (
       !Array.isArray(target) &&
       !(target instanceof Map) && !(target instanceof Set) &&
       !(target instanceof Date) && !(target instanceof RegExp) &&
-      Object.prototype.toString.call(target) !== '[object Object]'
+      Object.prototype.toString.call(target) !== '[object Object]' &&
+      !((__c = target?.constructor) && __c.prototype === target && target.valueOf === ({}).valueOf)
     ) {
       return target;
     }
@@ -843,9 +852,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // objet qui est une fonction ou un prototype (`Object.prototype`, rangé dans l'état par une lecture
     // `$loc.p = $$o['__proto__']`) : rien ne s'y écrit, ne s'y définit ni ne s'y supprime par cette enveloppe (`+=`, `||=`,
     // alias, `Object.assign`, rune `µproxy`), même contrôle que les aides d'écriture profonde (mjs_deep.ts). Testé une
-    // fois, à la création de l'enveloppe : une écriture n'en paie que la lecture
-    let __c;
-    const __refus = typeof target === 'function' ? 'constructor' : (__c = target.constructor) && __c.prototype === target ? '__proto__' : '';
+    // fois, à la création de l'enveloppe : une écriture n'en paie que la lecture. Ni gelé, ni scellé, ni fermé aux ajouts
+    // (`preventExtensions` plus bas). Un prototype d'abord : `Function.prototype`, qu'enveloppent une lecture dans une `Map` ou
+    // un `Set` de l'état et la rune `µproxy`, est aussi une fonction ; rangé à la racine, il reste brut (cf. `_set`)
+    const __refus = (__c = target.constructor) && __c.prototype === target ? '__proto__' : typeof target === 'function' ? 'constructor' : '';
 
     // Précalcul une seule fois par création de Proxy.
     const isMap = target instanceof Map;
@@ -874,8 +884,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // appelée via `$box.embiggen(10)` — sans ce bind sur proxy, `this = box`
     // (raw) et `@width = ...` mute en silence sans re-render.
     let proxy;
+    // pièges écrits en méthodes : le paquet en garde quelques octets de moins
     const handler = {
-      get: function(obj, prop, _receiver) {
+      get(obj, prop, _receiver) {
         // Fast-path Symbol (Symbol.iterator, Symbol.toPrimitive, etc.)
         if (typeof prop === 'symbol') {
           // (a) — accès à la cible BRUTE (utilisé par µ._mjs_deepSet/µ._mjs_deepCall pour
@@ -957,7 +968,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
         return val;
       },
-      set: function(obj, prop, value, _receiver) {
+      set(obj, prop, value, _receiver) {
         // SÉCURITÉ — defense-in-depth : ce Proxy est le
         // filet d'un alias ÉCHAPPÉ (`externalMerge($obj, untrusted)`) ; une clé
         // `__proto__`/`constructor`/`prototype` d'une source non fiable ne doit
@@ -1009,7 +1020,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // trap, `delete` sur l'alias supprimait bien la clé (Reflect par défaut)
       // mais ne notifiait JAMAIS `rootKey` → DOM figé. Symétrique du `set`
       // ci-dessus.
-      deleteProperty: function(obj, prop) {
+      deleteProperty(obj, prop) {
         // SÉCURITÉ — symétrique du set trap.
         if (!µ._mjs_safeKey(prop)) return true;
         if (__refus) return _mjsEnvRefus(__refus);
@@ -1027,7 +1038,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // SÉCURITÉ — `Object.defineProperty(proxy, '__proto__', …)`
       // contournait le `set`/`deleteProperty` ci-dessus (chemin d'écriture DIFFÉRENT du Proxy) :
       // même garde, même silence (filet d'un alias ÉCHAPPÉ, cf. commentaire du `set` plus haut).
-      defineProperty: function(obj, prop, desc) {
+      defineProperty(obj, prop, desc) {
         if (!µ._mjs_safeKey(prop)) return false;
         if (__refus) {
           _mjsEnvRefus(__refus);
@@ -1035,9 +1046,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
         return Reflect.defineProperty(obj, prop, desc);
       },
+      // prototype ou fonction (`__refus`) : ni gelé, ni scellé, ni fermé aux ajouts — `Object.freeze`, `Object.seal` et
+      // `Object.preventExtensions` lèvent leur TypeError, `Reflect.preventExtensions` rend `false`, même avertissement.
+      // Posé pour eux seuls : un autre objet de l'état n'a pas ce piège (`undefined`, le comportement de JavaScript), et
+      // la création de son enveloppe n'alloue rien de plus
+      preventExtensions: __refus ? () => !_mjsEnvRefus(__refus) : void 0,
       // SÉCURITÉ — `Object.setPrototypeOf(proxy, evil)` changeait le
       // PROTOTYPE en un seul appel, hors de portée du trap `set` (pas une écriture de clé).
-      setPrototypeOf: function(obj, proto) {
+      setPrototypeOf(obj, proto) {
         // message copié à tort du store (mjs_store.ts) :
         // ici c'est l'ÉTAT RÉACTIF d'un COMPOSANT (_mjs_wrapDeep), pas le store global.
         µ.warn(µ._mjs_msg('elProto', null, 'état : changement de prototype refusé'));
@@ -1103,12 +1119,17 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
             return v._mjs_cached;
           }
           v._mjs_evaluating = true;
+          // le composant dont le dérivé se calcule, hors rendu compris (bascule de langue) : un libellé du cœur
+          // lu là sans sa langue le note, et il se redessine à l'arrivée du fichier (µ._mjs_i18nLookup, mjs_i18n.ts)
+          const __calculant = µ._mjs_computing;
+          µ._mjs_computing = el;
           try {
             v._mjs_cached = v.f.call(el._state);
             v._mjs_dirty = false;
             return v._mjs_cached;
           } finally {
             v._mjs_evaluating = false;
+            µ._mjs_computing = __calculant;
           }
         },
         set: function(newVal) {
@@ -1236,7 +1257,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // classe, même technique que mjs_on.ts.
 
   connectedCallback() {
-    var key, parseProp, ref, schema, syncProps;
+    var parseProp, ref, schema, syncProps;
     // Reprise du fragment différé par `_mjs_mount` en mode léger (cf. son
     // commentaire) : `connectedCallback` n'a pas la contrainte
     // « pas d'enfants » du constructeur, l'insertion peut se faire ici sans
@@ -1284,7 +1305,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       if (typeStr === Object || typeStr === Array) {
         try {
           return JSON.parse(v);
-        } catch (error1) {
+        } catch {
           return null;
         }
       }
@@ -1313,7 +1334,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         if (_c0 === 123 || _c0 === 91) { // '{' ou '['
           try {
             return JSON.parse(v);
-          } catch (_e) {
+          } catch {
             // garder la valeur brute
           }
         }
@@ -1325,7 +1346,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // (au montage seulement) : leur attribut, reflet texte ou posé par le rendu serveur, n'est pas relu
     syncProps = (only, deja) => {
       var attr, j, key, len, parsed, ref, results;
-      ref = this.attributes;
+      // une copie : un `_set` qui ôte un attribut pendant la lecture (la prop `readonly` d'un module du cœur relue fausse) ne décale plus la liste
+      ref = [...this.attributes];
       results = [];
       for (j = 0, len = ref.length; j < len; j++) {
         attr = ref[j];
@@ -1798,7 +1820,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                   // = le shadow root (le listener délégué est posé dessus) →
                   // `e.currentTarget.getBoundingClientRect()` échoue. Le 2e arg
                   // `t` reste aussi disponible. Cas vécu : seek slider audio-player.
-                  try { Object.defineProperty(e, 'currentTarget', { value: t, configurable: true }); } catch (_err) { /* event read-only */ }
+                  try { Object.defineProperty(e, 'currentTarget', { value: t, configurable: true }); } catch { /* event read-only */ }
                   // passage de ce gestionnaire, rendu à sa fin même s'il lève : un événement routé imbriqué ouvre le
                   // sien puis rend la main ; la fonction de retrait d'un `µon` posé pendant ce passage en porte la
                   // marque (mjs_on.ts)
@@ -1820,7 +1842,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
                   // Restaure le getter natif de currentTarget — même obligation
                   // que dans _mjs_on : l'event POURSUIT sa propagation et un
                   // listener tiers en aval lisait notre valeur figée.
-                  try { delete e.currentTarget; } catch (_e2) { /* read-only */ }
+                  try { delete e.currentTarget; } catch { /* read-only */ }
                   ran = true;
                 }
                 // Aucun handler exécutable sous cet id → on tente l'id suivant.
@@ -2061,7 +2083,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           if (this._mjs_hydrate(factory)) {
             return;
           }
-        } catch (_e) {
+        } catch {
           // fallback : création normale ci-dessous
         }
       }
@@ -2262,6 +2284,21 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // Fast-path ultra-court : si pas d'effects user, pas de _mjs_renderStruct
       // non plus à fire (rare mais possible), on inline le minimum.
       if (__list && __list.length > 0) {
+        // <boucles>
+        // une boucle qui écrit l'état tourne (µ._mjs_lq, mjs_init.ts) : une variable qui ne pilote aucun bloc attend la
+        // sortie de la boucle, qui la repasse ici une fois — ses textes et attributs écrits une fois, pas à chaque tour ;
+        // une variable qui pilote un bloc (1) ou pose une prop sur un composant enfant (2, l'état de l'enfant) garde son chemin
+        if (µ._mjs_lq && (!this._mjs_renderStructVars || !this._mjs_renderStructVars[k])) {
+          if (this._mjs_lqk) {
+            this._mjs_lqk.add(k);
+          }
+          else {
+            this._mjs_lqk = new Set([k]);
+            µ._mjs_lqq.push(this);
+          }
+          return;
+        }
+        // </boucles>
         µ._mjs_inEffect = true;
         try {
           // ORDRE CRITIQUE : struct AVANT effects. Mêmes raisons que dans la
@@ -2784,7 +2821,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // n'importe quelle valeur jetée (`undefined`, un Symbol, un objet sans prototype) : son texte, jamais une seconde
     // exception ici
     let __txt = '';
-    try { __txt = ': ' + String(err?.message ?? err); } catch (_e) { /* valeur sans texte */ }
+    try { __txt = ': ' + String(err?.message ?? err); } catch { /* valeur sans texte */ }
     __fatal.textContent = 'Fatal Error' + __txt;
     // en production le texte est d'abord court : le fichier de messages, à son arrivée, réécrit ce bandeau
     if (Object.isExtensible(err)) err._mjs_fatal = __fatal;

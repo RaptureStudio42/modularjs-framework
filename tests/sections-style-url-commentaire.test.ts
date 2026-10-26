@@ -1,4 +1,4 @@
-// STYLE_INERT_RE (extraction des sections <style>/<theme>/<routes>) traitait tout `//`
+// l'extraction des sections <style>/<theme>/<routes> (transpiler/sections.ts) traitait tout `//`
 // comme un commentaire SASS, y compris CELUI d'une URL (`url(https://…)`) hors chaîne : sur
 // la même ligne que `</style>`, ce faux commentaire masquait la fermeture jusqu'à la fin de
 // la ligne — « balise orpheline » refusée sur un composant pourtant valide. Un `//` n'est un

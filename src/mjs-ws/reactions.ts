@@ -14,7 +14,7 @@
 // Débit : un seau à jetons par (salon, identité) — au-delà, l'émoji est ignoré. `opts.canJoin` : même
 // contrat que chat.ts.
 
-import type { MjsWsClient, MjsWsLogFn } from './core.js'
+import type { MjsWsLogFn } from './core.js'
 import { definePackage } from './packages.js'
 import type { MjsPackage } from './packages.js'
 import { peerIdOf } from './rooms.js'

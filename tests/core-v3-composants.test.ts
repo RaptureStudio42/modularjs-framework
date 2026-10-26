@@ -1,5 +1,5 @@
 // Modules cœur de la V3 — `<@@carousel>`, `<@@deck>`, `<@@tabs>`, `<@@menu>`, `<@@clock>`, `<@@knob>`,
-// `<@@number>`, `<@@progress>`, `<@@cube>`, `<@@switch>`, `<@@checkbox>`, `<@@field>` : chacun
+// `<@@number>`, `<@@progress>`, `<@@cube>`, `<@@switch>`, `<@@field>` : chacun
 // compile, se monte, et répond à son geste principal (bouton, clic, clavier), avec sa valeur liée
 // dans les deux sens quand il en a une. Leurs modèles se choisissent tous par `layout` (plus de
 // `mode`, `look` ni `indicator`).
@@ -34,7 +34,7 @@ $p     = 40
 <@@progress class="prog" value={$p}></@@progress>
 <@@cube class="cube">X</@@cube>
 <@@switch class="sw" layout="triangle" on="Oui" off="Non">Mode</@@switch>
-<@@checkbox class="cb" layout="glow">Lumière</@@checkbox>
+<@@switch class="swg" layout="glow">Lumière</@@switch>
 <@@field class="fl" layout="float" label="Nom" icon="👤"><input name="nom" aria-label="Nom"></@@field>
 <@@deck class="deck2" layout="spread"><div title="A">A</div><div title="B">B</div></@@deck>
 <@@carousel class="car2" layout="flat"><div>1</div><div>2</div><div>3</div></@@carousel>
@@ -142,10 +142,10 @@ describe('modules cœur de la V3', function () {
     assert.equal(dedans('.cube', '.box').children.length, 4)
   })
 
-  it('layout : switch triangle, checkbox glow, field float', () => {
+  it('layout : switch triangle et glow, field float', () => {
     assert.ok(dedans('.sw', '.wrap.triangle'))
     assert.equal(dedans('.sw', '.tri-on').textContent, 'Oui')
-    assert.ok(dedans('.cb', '.wrap.glow'))
+    assert.ok(dedans('.swg', '.wrap.glow') && !dedans('.swg', '.wrap.triangle'))
     assert.ok(dedans('.fl', '.field.float .control .float-label'))
     assert.equal(dedans('.fl', '.icon').textContent, '👤')
   })

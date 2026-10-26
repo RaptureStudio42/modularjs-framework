@@ -7,7 +7,7 @@
 // `reportValidity()`, `setCustomValidity()` et la bulle de l'envoi, `:invalid` / `:valid`, `<label for>`, `<fieldset disabled>`. La valeur
 // envoyée ne passe pas par ici : un module du cœur garde le champ caché posé dans sa balise (une page rendue par le serveur s'envoie sans
 // JavaScript) et ne dit donc rien par `setFormValue` — jamais deux fois la même paire. Un navigateur sans `attachInternals`, comme le rendu
-// serveur : rien n'est posé, le composant reste ce qu'il était (repli silencieux)
+// serveur : rien n'est posé, le composant reste ce qu'il était (repli silencieux), sauf `readonly={…}` lié, écrit sur la balise (plus bas)
 
 // la classe d'un composant `@formAssociated`, avant son enregistrement (µ._def) : le navigateur lit `formAssociated` et les rappels du
 // formulaire (sur le prototype) au moment de `customElements.define`. Posés ici : `internals` (les ElementInternals de l'instance, pris au
@@ -25,9 +25,33 @@
 // « false ») comme leur champ natif : hors de la validation, leur maniement inchangé ; la liste l'ignore comme `<select>` : ôté de sa
 // balise, quelle que soit sa valeur, elle reste validée ; un composant de l'application qui ne le lit pas garde la règle du navigateur.
 // `disabled`, `readonly` et `required` ôtés par la page rendent fausse la prop qu'ils avaient posée : le module redevient actif, modifiable,
-// facultatif, comme le champ natif ; `readonly={…}` lié sur un module du cœur qui ne le lit pas est écrit sur sa balise, comme l'attribut
+// facultatif, comme le champ natif ; `readonly={…}` lié sur un module du cœur qui ne le lit pas est écrit sur sa balise, comme l'attribut,
+// dans le navigateur comme au rendu serveur
 µ._mjs_formClass = function(C) {
-  var P = C.prototype;
+  var P = C.prototype, set = P._set;
+
+  // la prop `readonly` d'un module du cœur qui ne la déclare pas (la case, l'interrupteur, le radio, le bouton rotatif, la jauge) va sur sa
+  // balise, comme l'attribut écrit : vraie, le navigateur le sort de la validation ; `null`, `undefined`, `false` ou « false » (toute casse),
+  // elle est ôtée ; la liste l'ignore, comme `<select>` : ôtée ; déjà posé, l'attribut n'est pas réécrit (la lecture des attributs le relit
+  // aussitôt en prop, et le réécrire la relancerait sans fin). Posé aussi au rendu serveur : la page servie porte l'attribut que le navigateur
+  // écrit, et la reprise le garde. La prop `label` posée, changée ou ôtée après le montage refait le nom du champ de l'ombre : elle passe
+  // devant ses étiquettes, comme un `aria-label` sur un champ natif
+  P._set = function(k, v) {
+    var r;
+    if (k === 'readonly' && this.localName.indexOf('mjs-core-') === 0 && !(this._mjs_var_bits && k in this._mjs_var_bits)) {
+      // la valeur que la lecture des attributs tire de l'attribut lui-même, quand c'est son texte, ne l'ôte pas : `readonly="null"` reste porté,
+      // comme toute valeur autre que « false » ; au rendu serveur, « false » écrit dans la page et `readonly` écrit sur la liste restent écrits
+      // (le navigateur les ôte de la balise à la mise à niveau). Un texte qu'elle relit autrement (`[false]`, `[1]`) est ôté
+      if (v == null || v === false || String(v).toLowerCase() === 'false' || this.localName === 'mjs-core-select') {
+        if (String(v) !== this.getAttribute(k)) this.removeAttribute(k);
+      }
+      else if (!this.hasAttribute(k)) this.setAttribute(k, '');
+      return true;
+    }
+    r = set.call(this, k, v);
+    if (k === 'label' && this._mjs_n) _mjsFormName(this);
+    return r;
+  };
   if (typeof HTMLElement === 'undefined' || !HTMLElement.prototype.attachInternals) return;
   C.formAssociated     = true;
   C.observedAttributes = ['disabled', 'readonly', 'required', 'aria-label', 'aria-labelledby'];
@@ -56,24 +80,6 @@
     _mjsFormPut(this);
   };
   P.formDisabledCallback = function(off) { this._set('formDisabled', off && this.matches(':disabled')); }; // WebKit, à la mise à niveau, dit « désactivé » après le retrait de « false »
-
-  // la prop `label` posée, changée ou ôtée après le montage refait le nom du champ de l'ombre : elle passe devant ses étiquettes, comme un
-  // `aria-label` sur un champ natif ; la prop `readonly` d'un module du cœur qui ne la déclare pas (la case, l'interrupteur, le radio, le
-  // bouton rotatif, la jauge ; la liste l'ôte) va sur sa balise, comme l'attribut écrit : vraie, le navigateur le sort de la validation ; `null`,
-  // `undefined`, `false` ou « false » (toute casse), elle est ôtée ; déjà posé, l'attribut n'est pas réécrit (la lecture des attributs le
-  // relit aussitôt en prop, et le réécrire la relancerait sans fin)
-  var set = P._set;
-  P._set = function(k, v) {
-    var r;
-    if (k === 'readonly' && this.localName.indexOf('mjs-core-') === 0 && !(this._mjs_var_bits && k in this._mjs_var_bits)) {
-      if (v == null || v === false || String(v).toLowerCase() === 'false') this.removeAttribute(k);
-      else if (!this.hasAttribute(k)) this.setAttribute(k, '');
-      return true;
-    }
-    r = set.call(this, k, v);
-    if (k === 'label' && this._mjs_n) _mjsFormName(this);
-    return r;
-  };
 
   // le nom posé sur la balise suit jusqu'au champ de l'ombre ; `readonly` ôté de la liste ; « false » ôté ; `disabled`, `readonly` et `required`
   // ôtés par la page rendent fausse leur prop, que la lecture des attributs ne remet pas

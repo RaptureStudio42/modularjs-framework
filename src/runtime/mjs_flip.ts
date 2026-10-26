@@ -194,7 +194,7 @@ if (µ.Element) {
           try {
             return µ._mjs_animate(n, frames, opts);
           }
-          catch (err) {
+          catch {
             opts.easing = 'cubic-bezier(0.25, 1, 0.5, 1)';
             return µ._mjs_animate(n, frames, opts);
           }

@@ -10,7 +10,7 @@
 //   sur `e.target`, la balise du module, `checked`, `value`, `name` et `type` ne se lisent pas.
 // - Variables de thème : `--mjs-check-*` et `--mjs-switch-*` agissent posées sur un ancêtre, dans le bloc
 //   `<theme>` de l'application, sur `:root` ou sur la balise elle-même ; `--mjs-accent` et `--mjs-border`
-//   restent lus ; le modèle `glow` pose ses valeurs plus bas et garde la main, le modèle `triangle` garde sa
+//   restent lus ; le modèle `glow` de l'interrupteur pose ses valeurs plus bas et garde la main, le modèle `triangle` garde sa
 //   taille et son boîtier mais ses deux couleurs, `--mjs-switch-off` et `--mjs-switch-on` (celles du triangle, des
 //   libellés `Off` et `On` et de leurs halos), se règlent comme les autres.
 // - Anneau de focus clavier : sa couleur se règle par `--mjs-check-focus` (case, radio) et `--mjs-switch-focus`
@@ -110,8 +110,8 @@ const HOTE = `<script>
   <@@checkbox class="cb-off" name="a">décochée</@@checkbox>
   <@@switch class="sw" checked={true}>interrupteur</@@switch>
   <@@radio class="rd" name="d" value="x" checked>radio</@@radio>
-  <@@checkbox class="cbg" layout="glow" checked={true}></@@checkbox>
-  <@@checkbox class="cbi" layout="glow" indeterminate={true}></@@checkbox>
+  <@@switch class="swg" layout="glow" checked={true}></@@switch>
+  <@@switch class="swg-off" layout="glow"></@@switch>
   <@@switch class="swt" layout="triangle" checked={true}></@@switch>
 </div>
 
@@ -132,8 +132,8 @@ const HOTE = `<script>
   <@@checkbox class="cb-off" name="b">décochée</@@checkbox>
   <@@switch class="sw" checked={true}>interrupteur</@@switch>
   <@@radio class="rd" name="e" value="x" checked>radio</@@radio>
-  <@@checkbox class="cbg" layout="glow" checked={true}></@@checkbox>
-  <@@checkbox class="cbi" layout="glow" indeterminate={true}></@@checkbox>
+  <@@switch class="swg" layout="glow" checked={true}></@@switch>
+  <@@switch class="swg-off" layout="glow"></@@switch>
   <@@switch class="swt" layout="triangle" checked={true}></@@switch>
 </div>
 
@@ -224,8 +224,8 @@ const MESURE = `window.__mesure = (racine) => {
   if (racine.querySelector('.cb-off')) out.decoch  = vue(de('cb-off', '.box'))
   if (racine.querySelector('.sw'))    out.inter    = { ...vue(de('sw', '.pill')), bouton: cs(de('sw', '.knob')).backgroundColor, bouton_w: cs(de('sw', '.knob')).width }
   if (racine.querySelector('.rd'))    out.radio    = { ...vue(de('rd', '.ring')), point: cs(de('rd', '.dot')).backgroundColor }
-  if (racine.querySelector('.cbg'))   out.glow     = { ...vue(de('cbg', '.box')), ombre: cs(de('cbg', '.box')).boxShadow }
-  if (racine.querySelector('.cbi'))   out.glowIndet = vue(de('cbi', '.box'))
+  if (racine.querySelector('.swg'))   out.glow     = { ...vue(de('swg', '.pill')), ombre: cs(de('swg', '.pill')).boxShadow }
+  if (racine.querySelector('.swg-off')) out.glowOff = { ...vue(de('swg-off', '.pill')), ombre: cs(de('swg-off', '.pill')).boxShadow }
   if (racine.querySelector('.sw-off')) out.interOff = { ...vue(de('sw-off', '.pill')), bouton: cs(de('sw-off', '.knob')).backgroundColor }
   if (racine.querySelector('.rd-off')) out.radioOff = vue(de('rd-off', '.ring'))
   if (racine.querySelector('.swt'))   out.triangle = { ...vue(de('swt', '.pill')), bouton: cs(de('swt', '.knob')).borderBottomColor, filtre: cs(de('swt', '.knob')).filter }
@@ -627,10 +627,9 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`cases, interrupteu
       if (!present) { this.skip(); return }
       const nu   = await mesure(`__q('.z-defaut')`)
       const pose = await mesure(`__q('.z-ancetre')`)
-      assert.deepEqual(pose.glow, nu.glow, 'glow : taille, fond, ombre')
-      assert.deepEqual(pose.glowIndet, nu.glowIndet, 'glow indéterminé : taille, fond, bordure')
-      assert.equal(nu.glowIndet.fond, 'rgb(32, 183, 255)', 'glow indéterminé : le bleu du modèle, pas l\'accent')
-      assert.equal(pose.glowIndet.bord, 'rgb(32, 183, 255)', 'glow indéterminé sous --mjs-check-accent : la bordure garde le bleu du modèle')
+      assert.deepEqual(pose.glow, nu.glow, 'glow allumé : taille, arrondi, fond, bordure, ombre')
+      assert.deepEqual(pose.glowOff, nu.glowOff, 'glow éteint : taille, arrondi, fond, bordure, ombre')
+      assert.equal(pose.glow.bord, 'rgb(32, 183, 255)', 'glow allumé sous --mjs-switch-accent : la bordure garde le bleu du modèle, pas l\'accent')
       const boitier = (t: any) => ({ w: t.w, h: t.h, rayon: t.rayon, fond: t.fond })
       assert.deepEqual(boitier(pose.triangle), boitier(nu.triangle), 'triangle : taille, arrondi et fond du boîtier ; seules ses deux couleurs suivent --mjs-switch-off/on (voir « modèle triangle »)')
     })

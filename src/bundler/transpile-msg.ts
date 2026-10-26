@@ -127,6 +127,8 @@ export interface TranspileMsg {
   effectDefsWire?: EffectDefsWire
   /** texte des règles dans le code émis (cf. TranspileOpts.typesText) : `false` en production */
   typesText?: boolean
+  /** avertissements du développement dans le code émis (cf. TranspileOpts.devWarnings) : `false` en production */
+  devWarnings?: boolean
   /** les chargements qui montrent un squelette d'eux-mêmes (cf. TranspileOpts.skeleton) */
   skeleton?: string[]
   /** *guard d'office sur un champ lié typé (cf. TranspileOpts.guard) */
@@ -253,6 +255,7 @@ export async function transpileFromMsg(msg: TranspileMsg): Promise<TranspileMsgR
     typeDefs: msg.typeDefs,
     effectDefs: msg.effectDefsWire ? effectDefsFromWire(msg.effectDefsWire) : msg.effectDefs,
     typesText: msg.typesText,
+    devWarnings: msg.devWarnings,
     skeleton: msg.skeleton,
     guard: msg.guard,
     typedStores: msg.typedStores,

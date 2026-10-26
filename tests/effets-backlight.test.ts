@@ -293,7 +293,6 @@ describe('effets — *backlight', function () {
     fenetre()
     const comp = await monter('mjs-fx-backlight-deux')
     const a = comp._shadow.querySelector('.a')
-    const b = comp._shadow.querySelector('.b')
     const p = a.parentNode
     const la = calque(a)
     // la balise passe en dernier (une ligne de liste réordonnée) : son double reste en arrière, il doit la rejoindre

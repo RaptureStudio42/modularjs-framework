@@ -309,8 +309,8 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('play'))
   })
 
-  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"textpool"/"esc"/"for_nested"/"alias" + "types" + "fx" + "lang" + "state" + "inspect" + "play" + "refuse" + "slot_events" + "element_at" + "boundary" + "adopt_sheet" + "form_reset" + "form_associated" + "clone"', () => {
-    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone']
+  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"textpool"/"esc"/"for_nested"/"alias" + "types" + "fx" + "lang" + "state" + "inspect" + "play" + "refuse" + "slot_events" + "element_at" + "boundary" + "adopt_sheet" + "form_reset" + "form_associated" + "clone" + "chart"', () => {
+    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone', 'chart']
     assert.deepEqual([...SCAN_KEYS].sort(), [...attendues].sort())
   })
 

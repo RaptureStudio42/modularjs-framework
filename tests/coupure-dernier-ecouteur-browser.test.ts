@@ -159,7 +159,7 @@ const EXTRAS: Extra[] = [
   { nom: 'Ctrl-clic non pris, puis preventDefault() d\'un autre écouteur de l\'auteur : aucune exception, rien ne s\'ouvre', pose: COUPE_PUIS_PREVENT, objet: 'lien', bouton: '.lk', mods: 'Control',
     verifie: (ctx, e) => { assert.equal(e.erreur, 'aucune', 'preventDefault() de l\'auteur ne lève rien'); assert.equal(ctx.popups.length, 0, 'l\'auteur a retenu le geste : aucun onglet'); assert.equal(e.visites, 0, 'la navigation de MJS n\'est pas passée') } },
   { nom: 'coupure dans un écouteur passif (lien) : le navigateur agit seul, MJS ne rejoue pas', pose: COUPE_PASSIF, objet: 'lien', bouton: '.lk',
-    verifie: (ctx, e) => { assert.equal(ctx.chargements.length, 2, 'le navigateur charge la page (chargements : ' + ctx.chargements.join(', ') + ')'); assert.deepEqual(ctx.lectures, [], 'aucune lecture par la navigation de MJS') } },
+    verifie: (ctx) => { assert.equal(ctx.chargements.length, 2, 'le navigateur charge la page (chargements : ' + ctx.chargements.join(', ') + ')'); assert.deepEqual(ctx.lectures, [], 'aucune lecture par la navigation de MJS') } },
   { nom: 'coupure dans un écouteur passif (formulaire) : le navigateur envoie seul, MJS ne rejoue pas', pose: COUPE_PASSIF_ENVOI, objet: 'form', bouton: '.bouton',
     verifie: (ctx) => { assert.equal(ctx.chargements.length, 2, 'le navigateur envoie le formulaire (chargements : ' + ctx.chargements.join(', ') + ')'); assert.deepEqual(ctx.envois, [], 'aucun envoi par la navigation de MJS') } },
   { nom: 'verbe mjs-method inconnu, coupé au document : un seul avertissement', pose: COUPE_DOC, objet: 'lien', bouton: '.lkf',
@@ -350,7 +350,7 @@ for (const nomNavigateur of ['chromium', 'firefox', 'webkit'] as const) {
           let e: any
           try {
             e = await ctx.page.evaluate(() => { const w: any = window; return { visites: w.__visites, chemin: location.pathname + location.hash, erreur: w.__erreur, lu: w.__lu, fd: w.__fd || 0 } })
-          } catch (erreur: any) {
+          } catch {
             e = { visites: 0, chemin: 'rechargée', erreur: undefined, lu: undefined }
           }
           await extra.verifie(ctx, e)

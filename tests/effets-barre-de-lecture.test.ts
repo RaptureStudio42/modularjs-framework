@@ -79,8 +79,6 @@ describe('effets — *scrollprogress', function () {
     return comp
   }
 
-  const calque = (el: any) => el.querySelector('[mjs-fx-layer="scrollprogress"]') || el._shadow?.querySelector('[mjs-fx-layer="scrollprogress"]')
-
   it('*scrollprogress : un calque en premier dans la balise, un rail et une barre, une barre de progression pour les lecteurs d\'écran', async () => {
     navigateur(false)
     const comp  = await monter('mjs-fx-barre')

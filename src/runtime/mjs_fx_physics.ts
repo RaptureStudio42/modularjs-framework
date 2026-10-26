@@ -1235,7 +1235,7 @@
         try {
           µ._mjs_dom.releasePointerCapture(el, d.id);
         }
-        catch (e) {}
+        catch {}
         swallow = function(ev) {
           ev.stopPropagation();
           ev.preventDefault();

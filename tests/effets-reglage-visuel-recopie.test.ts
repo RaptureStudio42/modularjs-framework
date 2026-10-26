@@ -32,6 +32,8 @@ async function attendre(cond: () => boolean, ms = 3000) {
 }
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+// une variable lue sur la balise sans l'espace que happy-dom 20.14 ajoute après une virgule (20.11 rend la valeur telle qu'écrite, comme un navigateur)
+const lue   = (el: any, p: string) => el.style.getPropertyValue(p).replace(/,\s+/g, ',')
 
 describe('effets — un réglage visuel recopié dans le code de l\'effet suit sa variable', function () {
   this.timeout(60000)
@@ -158,7 +160,7 @@ describe('effets — un réglage visuel recopié dans le code de l\'effet suit s
   it('*stagger(on: scroll) : un pas ou une courbe écrits après coup (variable) remplacent le pas régulier et la courbe linéaire du défilement', async () => {
     const m = await monter('mjs-fx-lettres-pas', '.m')
     const sh = m.getRootNode()
-    assert.equal(m.style.getPropertyValue('--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', 'sans pas écrit : un mot après l\'autre, d\'un pas régulier')
+    assert.equal(lue(m, '--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', 'sans pas écrit : un mot après l\'autre, d\'un pas régulier')
     assert.equal(m.style.getPropertyValue('--mjs-fx-stagger-ease'), 'linear', 'sans courbe écrite : linéaire')
     sh.querySelector('.p').click()
     await pause(20)

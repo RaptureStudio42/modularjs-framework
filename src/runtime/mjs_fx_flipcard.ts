@@ -142,7 +142,7 @@ function _mjsFxFlipEase(v) {
       try {
         return µ._mjs_dom.matches(key, ':focus-visible');
       }
-      catch (e) {
+      catch {
         return true;
       }
     };

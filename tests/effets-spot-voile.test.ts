@@ -88,7 +88,6 @@ describe('effets — *spotlight(where: veil)', function () {
   }
 
   const calque = (el: any) => el.querySelector('[mjs-fx-layer="spotlight"]')
-  const lampes = (el: any) => [...el.querySelectorAll('[mjs-fx-layer="spotlight"]')]
   // la boîte de la balise : 300 × 200 à (100, 50), et sa taille de mise en page (happy-dom n'en a pas : l'échelle serait infinie)
   const taille = (el: any) => {
     Object.defineProperty(el, 'offsetWidth', { value: 300, configurable: true })

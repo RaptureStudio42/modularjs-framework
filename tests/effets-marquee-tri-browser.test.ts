@@ -31,7 +31,8 @@ const LOGOS = '<div class="logo">A</div><div class="logo">B</div><div class="log
 const SCRIPT = '<script>\n$l = []\n</script>\n'
 // de quoi poser du HTML par @html=!{…}, et un réglage tenu par une variable
 const SCRIPT_BIS = '<script>\n$l = []\n$h = \'<div class="logo">H1</div><div class="logo">H2</div>\'\n$u = \'auto\'\n</script>\n'
-// une fonction que `@attach` appelle avec la balise : elle y pose trois balises, avant la pose de l'effet
+// une fonction que `@attach` appelle avec la balise : elle y pose trois balises, avant la pose de l'effet ; elle finit par `return`,
+// sinon Civet rendrait la liste des valeurs de sa boucle, que le développement signale (une attache qui ne rend pas une fonction)
 const FILL = `function fill(n) {
   for (const t of ['A', 'B', 'C']) {
     const d = document.createElement('div')
@@ -39,6 +40,7 @@ const FILL = `function fill(n) {
     d.textContent = t
     n.appendChild(d)
   }
+  return
 }`
 const SCRIPT_FILL = '<script>\n$l = []\n' + FILL + '\n</script>\n'
 // trois balises, la construction que le navigateur ne garde pas entre la première et la suivante

@@ -411,7 +411,8 @@ describe('*spotlight en production — chaque pose construite avec le seul code 
       writeFileSync(join(srcDir, 't-' + i + '.mjs'), pose.source)
       // un seul fichier (le manifeste) : les noms réduits des morceaux ne se heurtent pas
       const manifeste = join(outDir, 'bundle.js')
-      const bundler   = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste, js: 'bundle', env: 'prod' } as any)
+      // production au niveau 'warn' : l'avertissement vérifié plus bas reste dans le code envoyé (le défaut 'error' retire ceux du framework)
+      const bundler   = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste, js: 'bundle', env: 'prod', logLevel: 'warn' } as any)
       const stats     = await bundler.compile()
       await bundler.close()
       assert.deepEqual(stats.errors.map((e: any) => e.message), [], pose.nom)

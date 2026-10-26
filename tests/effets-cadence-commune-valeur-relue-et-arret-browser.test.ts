@@ -1,4 +1,4 @@
-// la cadence commune des effets qui se répètent (`$$fx-every`), dans les trois navigateurs réels : la variable passe la règle de `every` écrit
+// la cadence commune des effets qui se répètent (`$$mjs-fx-every`), dans les trois navigateurs réels : la variable passe la règle de `every` écrit
 // sur la balise (une durée : 300ms, 1.5s, 0) — une valeur qu'elle refuse (-1s, 2 sans unité, abc) est ignorée, chaque effet garde son défaut, et la
 // console du développement le dit une fois par valeur ; `0` vaut `every: 0` écrit sur la balise. La cadence est relue à chaque passage, au moment
 // de programmer le suivant : un thème qui change en cours de route vaut à partir de là (le passage déjà programmé garde son heure). Le premier
@@ -27,7 +27,7 @@ async function navigateurPresent(nom: Navigateur): Promise<boolean> {
 const STYLE  = '<style>\n:host\n  display: block\n</style>\n'
 // les quatre effets qui se répètent ; `every` : écrit sur chacun
 const EFFETS = (every = '') => `<button class="s" *shine(on: always${every})>S</button>\n<h1 class="g" *glitch(burst: 50ms${every})>G</h1>\n<button class="a" *attention(on: always, duration: 100ms${every})>A</button>\n<span class="n" *annotate(on: always, duration: 100ms${every})>N</span>\n`
-const THEME  = (v: string) => `<theme>\n  $$fx-every: ${v}\n</theme>\n`
+const THEME  = (v: string) => `<theme>\n  $$mjs-fx-every: ${v}\n</theme>\n`
 
 const COMPOSANTS: Record<string, string> = {
   // des valeurs que la règle de `every` refuse : chaque effet garde son défaut
@@ -38,7 +38,7 @@ const COMPOSANTS: Record<string, string> = {
   'cv-zero': THEME('0') + EFFETS() + STYLE,
   'cv-zero-ecrit': EFFETS(', every: 0') + STYLE,
   // un thème qui change en cours de route : 1 s, puis 200 ms
-  'cv-bascule': THEME('1s') + '<theme name="vite">\n  $$fx-every: 200ms\n</theme>\n' + EFFETS() + STYLE,
+  'cv-bascule': THEME('1s') + '<theme name="vite">\n  $$mjs-fx-every: 200ms\n</theme>\n' + EFFETS() + STYLE,
   // retiré de la page : plus aucun passage
   'cv-retrait': EFFETS(', every: 300ms') + STYLE,
   // posé plus tard, au début d'un tour de 500 ms : le premier passage tout de suite, les suivants sur l'horloge
@@ -69,7 +69,7 @@ async function construire(env: 'dev' | 'prod'): Promise<string> {
   return stripEsm(readFileSync(manifeste, 'utf-8'))
 }
 
-describe('effets — la cadence commune : la valeur de $$fx-every passe la règle de every, relue à chaque passage, arrêtée au retrait (navigateurs réels)', function () {
+describe('effets — la cadence commune : la valeur de $$mjs-fx-every passe la règle de every, relue à chaque passage, arrêtée au retrait (navigateurs réels)', function () {
   this.timeout(300000)
   const code = { dev: '', prod: '' }
 
@@ -170,7 +170,7 @@ describe('effets — la cadence commune : la valeur de $$fx-every passe la règl
 
     it('la cadence est relue à chaque passage, au moment de programmer le suivant : un thème qui change en cours de route vaut à partir de là', async () => {
       const tb: number = await page.evaluate(`(() => { document.querySelector('#cv-bascule').setAttribute('theme', 'vite'); return performance.now() })()`)
-      assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#cv-bascule')._shadow.querySelector('.s')).getPropertyValue('--mjs-fx-every').trim()`), '200ms', 'témoin : le thème « vite » pose 200 ms')
+      assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#cv-bascule')._shadow.querySelector('.s')).getPropertyValue('--mjs-mjs-fx-every').trim()`), '200ms', 'témoin : le thème « vite » pose 200 ms')
       await page.waitForTimeout(2400)
       const vus: [string, number][] = await page.evaluate('window.__vus')
       // le passage déjà programmé (tour de 1 s) tombe dans la première seconde ; ensuite, 200 ms (le tour de *attention et *annotate : l'appel
@@ -230,7 +230,7 @@ describe('effets — la cadence commune : la valeur de $$fx-every passe la règl
       const dev = await ouvrir(browser, code.dev)
       try {
         await dev.page.waitForTimeout(1200)
-        const sur = dev.avis.filter((a) => a.includes('$$fx-every'))
+        const sur = dev.avis.filter((a) => a.includes('$$mjs-fx-every'))
         for (const v of ['-1s', '2', 'abc']) assert.equal(sur.filter((a) => a.includes(`'${v}'`)).length, 1, `'${v}' : un avis, vus ${JSON.stringify(sur)}`)
         assert.equal(sur.length, 3, `un avis par valeur refusée, aucun pour 0 ni 1s : ${JSON.stringify(sur)}`)
         assert.deepEqual(dev.erreurs, [])

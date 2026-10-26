@@ -86,6 +86,18 @@ Le parent peut alors fournir la valeur ou non :
 
 Une prop n'est pas une copie figée au montage : si la donnée **change chez le parent**, l'enfant se met à jour automatiquement. Le lien parent → enfant est vivant, exactement comme un `$` interne. Rien de spécial à faire côté enfant : il lit `$answer`, et tout endroit du HTML qui l'affiche suit les changements.
 
+### L'enfant qui écrit lui-même une prop reçue
+
+Le lien va du parent vers l'enfant, dans ce sens seulement. Quand l'enfant écrit lui-même une prop reçue ainsi (`$dialog = null` dans l'enfant, pour `dialog={$dialog}` chez le parent), seule la valeur de l'enfant change : le parent garde la sienne et n'en sait rien. Un `{if $dialog}` du parent laisse donc l'enfant affiché. C'est voulu, le parent garde la main, mais le piège est silencieux : en développement, MJS le signale dans la console, une fois par composant et par prop, sous la balise telle que vous l'écrivez (`<@fenetre>`, `<@@select>` pour un module cœur).
+
+```
+[ModularJS] <@fenetre> écrit sa prop « dialog » : cette valeur vient du parent ; liez-la par !{…} ou envoyez un événement. Le parent garde sa propre valeur, il ne voit pas ce changement.
+```
+
+Pour que le parent suive, liez la prop à deux sens (`dialog=!{$dialog}`, voir [Bindings](07-bindings.md)) : l'écriture de l'enfant remonte dans la variable du parent. Ou envoyez un événement que le parent écoute pour écrire lui-même sa variable (voir [Événements](06-evenements.md)).
+
+Rien n'est dit pour une prop liée à deux sens, pour la valeur par défaut que le `<script>` de l'enfant pose (elle vient avant celle du parent, voir plus haut), pour une variable que le parent ne passe pas, pour une valeur fixe écrite en attribut (`titre="…"`), ni pour une liste réécrite avec les mêmes éléments (une copie, la remise à zéro d'un formulaire), ni quand la balise de l'enfant porte au moins un gestionnaire d'événement qui exécute du code (`@ferme={…}`, `@change={…}`, quel que soit l'événement, ceux des transitions compris : `@introstart={…}`) : le parent a alors un canal pour suivre, comme avec un module cœur piloté par la page (`<@@select value={$zone} @change={$zone = e.data}>`). Les directives écrites avec un `@` (`@attach`, `@class{…}`, `@this`, `@emit.x`, `@lightDom`, `@preload`…) ne sont pas des gestionnaires, ni un `@…` écrit sans valeur, qui n'exécute rien. Une prop étalée (`{...obj}`, ci-dessous) compte comme les autres. La construction de production n'en garde rien : ni ce contrôle, ni son texte.
+
 ## Propagation (spread) : `{...obj}`
 
 Quand un enfant attend beaucoup de props, les énumérer une à une devient verbeux. La syntaxe **spread `{...obj}`** développe un objet en une série d'attributs :

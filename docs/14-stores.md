@@ -148,11 +148,24 @@ lire ponctuellement sans provoquer de re-rendu.
 >
 > Le suivi est prudent : un nom déclaré plus d'une fois dans le `<script>` (même dans deux
 > fonctions différentes), réassigné, ou paramètre d'une fonction n'est jamais pris pour un alias du
-> magasin, ni pour une variable qui garde un élément trouvé (ci-dessous), et ce qu'il écrit ne
-> redessine rien. En CoffeeScript, où une variable s'écrit `sous = …` sans mot de déclaration, la
-> première affectation vaut déclaration : un nom affecté une seule fois dans sa fonction, hors d'une
-> boucle, est suivi ; affecté deux fois, ou sous le même nom dans deux fonctions, il ne l'est pas.
-> Donnez à chaque alias son propre nom, ou écrivez par le chemin (`$$items[0].fait = true`).
+> magasin, ni pour une variable qui garde un élément trouvé (ci-dessous). Dès que ce nom reçoit
+> quelque part une lecture du magasin, dans une fonction ou une autre — déclaration ou affectation
+> (`lu := $$prefs[section]`, `lu ||= $$prefs[section]`, `&&=`, `??=`, `?=`), variable d'une boucle
+> (`for t of $$taches`, `for (const k in $$prefs)`, ou sur une copie de ses objets : `for t of $$taches.filter(…)`),
+> élément d'une copie (`t := $$taches.filter(…)[0]`), nom tiré d'une déstructuration
+> (`{ meta } := $$taches[0]`, `[t] := $$taches`), paramètre par sa valeur par défaut
+> (`(t = $$taches[0]) ->`), valeur attendue (`t := await $$cfg.a`) —, ce qu'il écrit passe pourtant
+> par l'aide gardée : un prototype et les noms réservés restent refusés, même par un paramètre ou une
+> variable du même nom dans une autre fonction. L'écriture prévient la clé que lit la variable dans
+> sa fonction : deux fonctions qui déclarent chacune leur `x` sur deux clés préviennent chacune la
+> leur. Une même variable qui lit deux clés différentes — déclarée hors des fonctions et affectée
+> dans deux d'entre elles sur deux clés, ou faite d'une expression qui en lit deux
+> (`z := $$carte.get(k) or $$liste[0]`, `??`, ternaire, `if` de Civet) — reste gardée mais ne
+> prévient rien (la valeur change, l'écran non). En CoffeeScript, où une variable s'écrit `sous = …`
+> sans mot de déclaration, la première affectation vaut déclaration : un nom affecté une seule fois
+> dans sa fonction, hors d'une boucle, est un alias ; affecté deux fois, ou sous le même nom dans deux
+> fonctions, il ne l'est pas, et ses écritures suivent la règle ci-dessus. Donnez à chaque alias son
+> propre nom, ou écrivez par le chemin (`$$items[0].fait = true`).
 >
 > **Un élément trouvé est suivi aussi.** Une écriture qui passe par l'élément que rend `find`,
 > `findLast`, `at` (liste) ou `get` (`Map`) prévient les lecteurs de la clé, comme l'écriture par le
@@ -182,7 +195,9 @@ lire ponctuellement sans provoquer de re-rendu.
 > (`$$taches.find(f)[champ][k] = v`), derrière `?.` (`$$prefs[section]?[champ] = v`), dans la variable de travail de
 > CoffeeScript (`$$prefs[section][champ] ?= v`, `or=`, `and=`), par une clé faite d'une expression
 > (`$$prefs[req.section][champ] = v`), par une variable ou un alias qui garde un objet du magasin (`lu := $$prefs[section]`,
-> puis `lu[champ] = v`), dans un objet fait d'une expression (`($$prefs[section] || {})[champ] = v`), ou dans un objet
+> puis `lu[champ] = v`), par le paramètre d'un rappel ou la variable d'une boucle, sur le magasin comme sur une copie de
+> ses objets (`for p of Object.values($$prefs)`, puis `p[section][champ] = v`), par l'élément d'une telle copie
+> (`$$taches.filter(f)[0]`, ou atteint par `find`, `findLast`, `at`, `pop`, `shift` : `actives.find(g)[champ][k] = v`), dans un objet fait d'une expression (`($$prefs[section] || {})[champ] = v`), ou dans un objet
 > qu'une lecture a rangé dans le magasin (`$$o.p = $$o[k]`, puis `$$o.p.x = v`). Là, `'__proto__'` mène au prototype et
 > `'constructor'` à la fonction `Object` : l'écriture refuse alors l'objet atteint — elle n'écrit jamais dans un
 > prototype ni dans une fonction, n'y appelle aucune méthode, n'y supprime rien —, rien n'est écrit, et la console nomme
@@ -236,7 +251,19 @@ lire ponctuellement sans provoquer de re-rendu.
 > valant `'__proto__'`, `Object` pour `'constructor'`, `undefined` pour `'prototype'` ; l'écriture
 > qui suit (`lu.x = v`, `lu.push(x)`, `delete lu.x`) refuse un prototype ou une fonction (« Sécurité » plus haut), et
 > va dans tout autre objet. Une méthode absente lève la
-> `TypeError` de JavaScript (« push is not a function »).
+> `TypeError` de JavaScript (« push is not a function »). Une variable qui garde le prototype d'un objet du magasin
+> (`p := Object.getPrototypeOf($$o.m)`, ou `Reflect.getPrototypeOf`) se lit de même, tel quel, et son écriture est
+> refusée de la même façon. Un objet du magasin passé à une fonction (`Object.assign($$o.constructor, …)`,
+> `Object.freeze($$m.__proto__)`) reste celui de JavaScript : la fonction écrit là où JavaScript écrit.
+>
+> Une **autre variable du même nom** n'est pas celle-là. Le `t` d'une autre boucle, d'un autre rappel ou d'une autre
+> fonction, qui ne tient pas un objet du magasin, écrit comme JavaScript : le prototype d'une classe de votre appli
+> reçoit sa méthode, la clé `constructor` d'un objet ordinaire s'écrit, un accesseur est appelé même pour une valeur
+> égale (`img.src = img.src`), et aucune clé du magasin n'est prévenue. Quand ce nom est celui d'une variable déclarée
+> ou affectée (`=`) d'une lecture du magasin (`lu := $$prefs[section]`), une autre variable de ce nom (un paramètre,
+> dans une autre fonction) refuse seulement d'écrire dans le prototype d'une classe du langage (`Object.prototype`,
+> `Array.prototype`, `Function.prototype`…, ceux d'une autre page compris) ou dans une classe du langage (`Object`), où
+> mènent `'__proto__'` et `'constructor'` venus de données — avec le même message.
 >
 > Une variable qui garde cet élément est suivie de même : en Civet, sa déclaration
 > (`tache := $$taches.find(…)`, ou `tache = …` à sa première apparition, dans un bloc compris) ; en CoffeeScript, où chaque
@@ -253,21 +280,55 @@ lire ponctuellement sans provoquer de re-rendu.
 > tache.tags.push('urgent')
 > ```
 >
+> La variable d'un `{for t in $$taches}` du gabarit prévient la clé de même : `@click={t.fait = true}`
+> écrit dans l'élément, puis redessine ; sur un store typé, l'écriture passe par la règle du champ
+> (cf. [37 · Types](37-types.md)). La variable d'une boucle du `<script>` aussi, dans les trois
+> langues : Civet `for t of $$taches` (ou `for t in $$taches`), JavaScript `for (const t of $$taches)`,
+> CoffeeScript `for t in $$taches`. Elle n'est suivie que là où elle vit — sa boucle en Civet et en JavaScript, sa
+> fonction en CoffeeScript, qui la déclare en tête de fonction : le `t` d'une autre boucle, sur une liste hors du
+> magasin, écrit comme JavaScript (« Sécurité » plus haut). CoffeeScript lit la liste par une variable qu'il nomme lui-même
+> (`ref`, comme pour un `?.`) et qu'il déclare dans chaque fonction : deux boucles sur deux stores,
+> dans deux fonctions, préviennent chacune leur clé. Une variable affectée dans une boucle
+> (`u = $$taches[0]`) prévient la clé aussi.
+>
+> **Le paramètre d'un rappel est suivi aussi.** Le paramètre qui reçoit l'élément d'un rappel écrit
+> sur place (`$$taches.forEach((t) -> t.fait = true)`, de même `map`, `filter`, `some`, `every`,
+> `flatMap`, `find`, `findLast`, `findIndex`, `findLastIndex`, le second paramètre de `reduce` et de
+> `reduceRight`, le `forEach` d'une `Map` ou d'un `Set`) écrit dans l'élément, puis prévient la clé du
+> store d'où vient l'élément. De même le rappel de `Array.from($$taches, f)`, celui de
+> `Array.prototype.forEach.call($$taches, f)` et une méthode écrite en clé littérale (`$$taches['forEach'](f)`).
+> Il n'est suivi que dans son rappel : un paramètre du même nom, dans un rappel sur une liste hors du
+> magasin, écrit comme JavaScript (« Sécurité » plus haut).
+>
+> **Une copie garde les objets du magasin.** `filter`, `slice`, `concat`, `flat`, `toSorted`,
+> `toReversed`, `toSpliced`, `with`, `values()` et `entries()` (d'une liste ou d'une `Map`),
+> `Object.values($$prefs)`, `Object.entries($$prefs)`, `Array.from($$taches)` et `[...$$taches]` rendent
+> une liste neuve : l'écrire (`copie.push(x)`, `copie.splice(0, 1)`) n'écrit qu'elle, et ne redessine
+> rien. Ses éléments, eux, sont ceux du magasin : la variable d'une boucle sur la copie
+> (`for t of $$taches.filter(…)`, `for [cle, p] of Object.entries($$prefs)`, `for v of $$carte.values()`),
+> le paramètre d'un rappel sur elle (`$$taches.filter(…).forEach((t) -> …)`) et son élément
+> (`$$taches.filter(…)[0].fait = true`, ou atteint par `find`, `findLast`, `at`, `pop`, `shift` :
+> `actives.find((t) -> t.id == id).fait = true`, `while t = copie.shift()`) écrivent dans l'objet du magasin, puis préviennent sa clé,
+> même quand une variable tient la copie (`actives := $$taches.filter(…)`, puis `for t of actives`). Le
+> résultat de `map` et de `flatMap` n'est pas suivi : leur rappel rend souvent des objets neufs
+> (`$$taches.map((t) -> ({ ...t, vu: true }))`), qu'on écrit comme en JavaScript. Une copie profonde
+> (`structuredClone($$taches)`, `JSON.parse(JSON.stringify($$taches))`) n'est plus le magasin non plus.
+>
+> Ces formes valent dans les trois langues, dans un composant comme dans un module `.civet` ou
+> `.coffee` importé : la clé de données qui mène au prototype est refusée (« Sécurité » plus bas), et,
+> sur un store typé, la règle du champ contrôle l'écriture (cf. [37 · Types](37-types.md)).
+>
 > Restent hors de ce suivi, et n'y redessinent rien (la valeur change, l'écran non) :
 >
-> - la variable d'une boucle (`for t of $$taches` puis `t.fait = true`, `for t in $$taches` en
->   CoffeeScript, ou `{for t in $$taches}` dans le gabarit), et en CoffeeScript une variable affectée
->   dans une boucle ;
-> - le paramètre d'une fonction (`$$taches.forEach((t) -> t.fait = true)`), donc un élément passé à
->   une fonction qui l'écrit de son côté (`marquer($$taches.find(…))`) ;
+> - un élément passé à une fonction nommée qui l'écrit de son côté (`marquer = (t) -> t.fait = true`,
+>   puis `marquer($$taches[0])`, ou `$$taches.forEach(marquer)`) : MJS ne suit pas une valeur d'une
+>   fonction à l'autre — écrivez dans un rappel posé sur place, ou par le chemin ;
+> - le troisième paramètre d'un rappel, qui tient la liste elle-même
+>   (`$$taches.forEach((t, i, liste) -> liste[i].fait = true)`) ;
 > - la variable du `<script>` écrite par un gestionnaire ou une liaison du gabarit
 >   (`@click={tache.fait = true}`, `value=!{tache.nom}`) ;
-> - une fonction écrite avant la déclaration de la variable (`@marquer = -> tache.fait = true`, puis
->   `tache := …` plus bas) ;
-> - une variable tirée d'une déstructuration (`{ meta } := $$taches.find(…)`) ;
-> - un nom réassigné ou déclaré deux fois (voir plus haut), une copie (`slice`, `map`, `filter` : la
->   copie est écrite, le magasin non), une autre méthode que ces quatre
->   (`$$taches.filter(…)[0].fait = true`), et `+=` ou `++` dont la clé calculée est une expression
+> - le résultat de `map` ou de `flatMap`, même quand le rappel rend l'élément tel quel
+>   (`$$taches.map((t) -> t)[0].fait = true`), et `+=` ou `++` dont la clé calculée est une expression
 >   (`[i + 1]` : un nom ou un littéral seulement).
 >
 > Écrivez alors par le chemin (`$$taches[i].fait = true`), ou par `find` à l'endroit même de

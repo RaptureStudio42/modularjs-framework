@@ -283,7 +283,7 @@ var _MJS_FX_POINTER_TOP = ':where(dialog:modal,:popover-open,:fullscreen:not(htm
       try {
         return µ._mjs_dom.matches(n, _MJS_FX_POINTER_TOP);
       }
-      catch (e) {
+      catch {
         return false;
       }
     };

@@ -26,7 +26,7 @@ function setup() {
 describe('startRenderServer (mjs serve) — garde /__mjs/errors(.json), env sans NODE_ENV', () => {
   it('env:"prod" SANS NODE_ENV → 404 sur /__mjs/errors.json ET /__mjs/errors', async function () {
     this.timeout(15000)
-    const { root, srcDir, outDir } = setup()
+    const { root, srcDir } = setup()
     const origEnv = process.env.NODE_ENV
     delete process.env.NODE_ENV
     const config: any = { sourceDir: 'src', outputDir: 'out', pagesDir: srcDir, manifestPath: 'out/manifest.js' }
@@ -44,7 +44,7 @@ describe('startRenderServer (mjs serve) — garde /__mjs/errors(.json), env sans
 
   it('SANS --prod (env absent), SANS NODE_ENV → 200 sur /__mjs/errors.json ET /__mjs/errors (comportement dev)', async function () {
     this.timeout(15000)
-    const { root, srcDir, outDir } = setup()
+    const { root, srcDir } = setup()
     const origEnv = process.env.NODE_ENV
     delete process.env.NODE_ENV
     const config: any = { sourceDir: 'src', outputDir: 'out', pagesDir: srcDir, manifestPath: 'out/manifest.js' }

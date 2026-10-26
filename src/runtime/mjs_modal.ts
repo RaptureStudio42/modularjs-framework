@@ -317,7 +317,7 @@ function __modalErr(msg) {
 // Raison lisible d'une exception, sans jamais lever à son tour (l'objet levé peut être
 // n'importe quoi, y compris un piège dont le `message` ou le `toString` explose aussi).
 function __modalReason(e) {
-  try { return (e && e.message) ? String(e.message) : String(e); } catch (_) { return 'raison non affichable'; }
+  try { return (e && e.message) ? String(e.message) : String(e); } catch { return 'raison non affichable'; }
 }
 
 // Lecture d'une option PROPRE de l'appelant : une option qu'il n'a pas donnée vaut l'absence d'option, jamais la valeur
@@ -497,7 +497,7 @@ function __modalPlayFile(url) {
   try {
     p = new Audio(url).play();
     if (p && typeof p.catch === 'function') { p.catch(function() {}); }
-  } catch (e) { /* politique autoplay : jamais bruyant */ }
+  } catch { /* politique autoplay : jamais bruyant */ }
 }
 
 // signature WebAudio embarquée — recette EXACTE actée : oscillateur + gain par note,
@@ -530,7 +530,7 @@ function __modalPlaySignature(name) {
     else if (name === 'warning') { note(440, 0, 0.09, 'square', 0.03); note(440, 0.13, 0.09, 'square', 0.03); }
     else if (name === 'info') { note(660, 0, 0.1); }
     else if (name === 'notify') { note(880, 0, 0.06, 'sine', 0.04); }
-  } catch (e) { /* politique autoplay : jamais bruyant */ }
+  } catch { /* politique autoplay : jamais bruyant */ }
 }
 
 // résout un override explicite (false=silence assumé, chaîne fichier '/'|'.'|'http'=fichier
@@ -571,7 +571,7 @@ function __modalSound(type, override) {
     config = µ.config && µ.config.modalSound;
     if (!config) { return; } // GATE — sons automatiques seulement, µ.sound public le contourne
     __modalPlayForType(type, config);
-  } catch (e) { /* politique autoplay : jamais bruyant */ }
+  } catch { /* politique autoplay : jamais bruyant */ }
 }
 
 // ============================================================================
@@ -594,7 +594,7 @@ function __modalSound(type, override) {
       return;
     }
     __modalPlayForType(type, µ.config && µ.config.modalSound);
-  } catch (e) { /* politique autoplay : jamais bruyant */ }
+  } catch { /* politique autoplay : jamais bruyant */ }
 };
 
 // fusionne src PAR-DESSUS target (src gagne) — clés énumérables propres seulement

@@ -516,10 +516,10 @@ describe('modules cœur case, radio, interrupteur — variables de thème et lin
       ...theme.map((l) => '  ' + l),
       '</theme>',
       '<@@checkbox name="a">A</@@checkbox>',
-      '<@@checkbox name="g" layout="glow">G</@@checkbox>',
       '<@@radio name="b" value="x">B</@@radio>',
       '<@@switch name="c">C</@@switch>',
-      '<@@switch name="t" layout="triangle">T</@@switch>'
+      '<@@switch name="t" layout="triangle">T</@@switch>',
+      '<@@switch name="g" layout="glow">G</@@switch>'
     ].join('\n'))
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()

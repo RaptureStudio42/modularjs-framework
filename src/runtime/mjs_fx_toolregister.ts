@@ -7,5 +7,5 @@
   try {
     CSS.registerProperty({ name: name, syntax: syntax, inherits: false, initialValue: initial });
   }
-  catch (e) {}
+  catch {}
 };

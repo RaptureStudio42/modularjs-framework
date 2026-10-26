@@ -1,10 +1,12 @@
-// Reprise d'une page rendue par le serveur en mode « markers » quand le serveur et le navigateur n'ont pas été construits de la même façon (le serveur
-// en développement, `createSSRRenderer` sans `env`, et le navigateur en production qui a retiré des morceaux des modules, ou l'inverse) : la
-// numérotation des repères que le serveur écrit n'est plus celle que le navigateur attend. Dans Chromium, Firefox et WebKit réels :
+// Reprise d'une page rendue par le serveur en mode « markers » quand le serveur et le navigateur n'ont pas été construits de la même façon (ici, le
+// serveur construit avec une page de plus, qui écrit `other` sur une liste et nomme l'outil `link` dans la barre d'un éditeur : il garde ces parties des modules, que le
+// navigateur a retirées) : la numérotation des repères que le serveur écrit n'est plus celle que le navigateur attend. Leur `env` n'y est pour rien :
+// les parties retirées le sont de la même façon en développement et en production. Dans Chromium, Firefox et WebKit réels :
 // - un composant dont les repères ne correspondent pas est reconstruit proprement, sans erreur, et un avertissement dit la cause probable
 //   (le serveur et le navigateur construits différemment), une seule fois par balise ;
 // - l'éditeur (barre restreinte) et la liste (sans « Autre ») marchent ensuite : la frappe remonte vers la variable, la liste s'ouvre ;
-// - serveur et navigateur construits de la même façon : aucun avertissement, la reprise garde son gain.
+// - serveur et navigateur construits à partir des mêmes pages, même dans deux `env` différents (le serveur en développement, `createSSRRenderer` sans
+//   `env`, et le navigateur en production, ou l'inverse) : aucun avertissement, la reprise garde son gain.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
@@ -14,7 +16,13 @@ import { MOTEURS, assembler } from './helpers/editeur-riche.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 
-type Env = 'dev' | 'prod'
+type Env     = 'dev' | 'prod'
+type Serveur = Env | 'pages'
+
+// la page de plus du serveur construit sur d'autres pages : elle écrit `other` et nomme l'outil `link`, ce que les pages du navigateur ne font pas
+const AUTRE = `<@@select other><@@option value="1">Un</@@option></@@select>
+<@@editor toolbar="link"></@@editor>
+`
 
 const HOTE = `<script>
   $texte = '<p>Un <b>mot</b></p>'
@@ -29,7 +37,7 @@ const HOTE = `<script>
 <pre class="v">{$choix}</pre>
 `
 
-type Construit = { rendus: Record<Env, { html: string; hydrateScript: string }>; prod: Map<string, Buffer>; dev: string }
+type Construit = { rendus: Record<Serveur, { html: string; hydrateScript: string }>; prod: Map<string, Buffer>; dev: string }
 
 let construit: Promise<Construit> | null = null
 
@@ -49,7 +57,15 @@ function construire() {
       rendus[env] = await renderer.renderToString('mjs-hote', { ssrMode: 'markers' } as any)
       await renderer.close()
     }
-    const production = new Bundler({ sourceDir: srcDir, outputDir: prodDir, manifestPath: join(prodDir, 'bundle.js'), runtime: ['hydrate'], js: 'split', env: 'prod' } as any)
+    const pagesDir = join(root, 'src-pages')
+    mkdirSync(pagesDir, { recursive: true })
+    writeFileSync(join(pagesDir, 'hote.mjs'), HOTE)
+    writeFileSync(join(pagesDir, 'autre.mjs'), AUTRE)
+    const autres = await createSSRRenderer({ sourceDir: pagesDir, bundlerOpts: { runtime: ['hydrate'] } } as any)
+    rendus.pages = await autres.renderToString('mjs-hote', { ssrMode: 'markers' } as any)
+    await autres.close()
+    // production au niveau 'warn' : l'avertissement qui dit la cause reste dans le code envoyé (le défaut 'error' retire ceux du framework)
+    const production = new Bundler({ sourceDir: srcDir, outputDir: prodDir, manifestPath: join(prodDir, 'bundle.js'), runtime: ['hydrate'], js: 'split', env: 'prod', logLevel: 'warn' } as any)
     const statsProd  = await production.compile()
     await production.close()
     assert.equal(statsProd.errors.length, 0, statsProd.errors.map((e: any) => e.message).join('\n'))
@@ -64,12 +80,15 @@ function construire() {
   return construit
 }
 
-// serveur de cet environnement, navigateur de celui-là : la reprise tombe sur des repères différents quand ils diffèrent
-const COMBINAISONS: { serveur: Env; client: Env; pareil: boolean }[] = [
-  { serveur: 'dev',  client: 'prod', pareil: false },
-  { serveur: 'prod', client: 'dev',  pareil: false },
-  { serveur: 'prod', client: 'prod', pareil: true },
-  { serveur: 'dev',  client: 'dev',  pareil: true },
+// serveur de cet environnement (ou construit sur d'autres pages), navigateur de celui-là : la reprise tombe sur des repères différents quand les
+// pages diffèrent, jamais pour l'environnement seul
+const COMBINAISONS: { serveur: Serveur; client: Env; pareil: boolean }[] = [
+  { serveur: 'dev',   client: 'prod', pareil: true },
+  { serveur: 'prod',  client: 'dev',  pareil: true },
+  { serveur: 'prod',  client: 'prod', pareil: true },
+  { serveur: 'dev',   client: 'dev',  pareil: true },
+  { serveur: 'pages', client: 'prod', pareil: false },
+  { serveur: 'pages', client: 'dev',  pareil: false },
 ]
 
 for (const nom of MOTEURS) describe(`reprise en mode « markers », serveur et navigateur construits (ou non) de la même façon (${nom} réel)`, function () {
@@ -84,7 +103,7 @@ for (const nom of MOTEURS) describe(`reprise en mode « markers », serveur et n
   const E     = (expr: string): Promise<any> => page.evaluate(expr)
   const pause = (ms = 150) => page.waitForTimeout(ms)
 
-  async function charger(c: { serveur: Env; client: Env }) {
+  async function charger(c: { serveur: Serveur; client: Env }) {
     const { html, hydrateScript } = fait.rendus[c.serveur]
     const corps = c.client === 'prod' ? '<script type="module" src="/out/bundle.js"></script>' : `<script>${fait.dev.replace(/<\/script/gi, '<\\/script')}</script>`
     contenu = `<!doctype html><html lang="fr"><head><meta charset="utf-8"></head><body>${html}\n${hydrateScript}\n${corps}</body></html>`
@@ -111,7 +130,7 @@ for (const nom of MOTEURS) describe(`reprise en mode « markers », serveur et n
     await terminateSharedWorkerPool()
   })
 
-  for (const c of COMBINAISONS) describe(`serveur ${c.serveur}, navigateur ${c.client}`, function () {
+  for (const c of COMBINAISONS) describe(`serveur ${c.serveur === 'pages' ? 'construit sur d\'autres pages' : c.serveur}, navigateur ${c.client}`, function () {
     beforeEach(async function () {
       if (!present) { this.skip(); return }
       logs = []

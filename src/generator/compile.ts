@@ -1540,6 +1540,8 @@ export interface CompileOpts {
    *  le générateur porte celle de chaque balise et de chaque texte jusqu'à la construction du gabarit (marqueLigne,
    *  paths.ts), où ses messages la citent */
   firstLine?: number
+  /** cf. ResetOpts.devWarnings */
+  devWarnings?: boolean
 }
 
 export type CompileResult = [
@@ -1583,6 +1585,8 @@ export type CompileResult = [
    *  destructurations à trous, l'export public `compileHtml`), un élément inséré au
    *  milieu décale tous ceux d'après — les lecteurs positionnels cassent en silence. */
   inlineLocals: string[][],
+  /** vars qui posent une prop sur un composant enfant, hors ligne de `{for}` (cf. CompilerState.propVars) ; en fin de tuple, comme le précédent */
+  propVars: Set<string>,
 ]
 
 // avertissement compile-time (jamais bloquant) : `#{…}` (interpolation
@@ -1719,6 +1723,7 @@ export function compile(htmlRaw: string, opts: CompileOpts = {}): CompileResult 
     lint: opts.lint,
     colorsEnabled: opts.colorsEnabled,
     instanceProps: opts.instanceProps,
+    devWarnings: opts.devWarnings,
   })
 
   const preprocessed = preprocess(htmlRaw)
@@ -1838,5 +1843,5 @@ function compileArbre(ast: Node, tagRefs: TagRef[], opts: CompileOpts): CompileR
   // le real pass, sur les inlines FINALES (cf. warnRawEventEmit plus haut).
   warnRawEventEmit(state.inlines, state.inlineLines, opts.moduleName, opts.lint, opts.colorsEnabled)
 
-  return [surgicalHtml, uniqueUpdates, state.events, state.inlines, state.effectsByVar, state.structVars, state.mountOnlyEffects, passiveEvents, tagRefs, state.templateLocals, state.initialPropBinds, componentDeps, state.inlineLocals]
+  return [surgicalHtml, uniqueUpdates, state.events, state.inlines, state.effectsByVar, state.structVars, state.mountOnlyEffects, passiveEvents, tagRefs, state.templateLocals, state.initialPropBinds, componentDeps, state.inlineLocals, state.propVars]
 }

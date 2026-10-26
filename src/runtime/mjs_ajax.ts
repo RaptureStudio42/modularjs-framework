@@ -17,7 +17,7 @@ function _mjajaxMemeOrigine(url) {
   if (typeof location === 'undefined' || !location.origin) return true;
   base = (typeof document !== 'undefined' && document.baseURI) || location.href;
   try { return new URL(String(url), base).origin === location.origin; }
-  catch (e) { return false; }
+  catch { return false; }
 }
 
 µ.ajax = {
@@ -410,7 +410,7 @@ function _mjajaxDecoderAvecRafraichissement(registre, bytes, options) {
 
 function _mjajaxLireErreurNonOk(bytes, response) {
   var texte = new TextDecoder('utf-8').decode(bytes), corps = texte;
-  try { corps = JSON.parse(texte); } catch (e) {}
+  try { corps = JSON.parse(texte); } catch {}
   throw Object.assign(
     new Error((corps && corps.message) || ('HTTP Error ' + response.status)),
     { status: response.status, body: corps, url: response.url }

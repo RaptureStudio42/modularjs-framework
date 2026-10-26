@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { monterModule, pause, balises, textes } from './helpers/module-dynamique.js'
+import { monterModule, pause, textes } from './helpers/module-dynamique.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 
 const CARTE_A = '<script>\n$titre = \'\'\n</script>\n<p class="a">A:{$titre}</p>\n'

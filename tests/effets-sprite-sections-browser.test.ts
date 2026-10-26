@@ -102,7 +102,7 @@ describe('*sprite — des applis construites en production dans des navigateurs 
         try {
           await page.waitForFunction((tag: string) => !!(window as any).__racine(tag)?.querySelector('[mjs-fx-layer="sprite"]'), 'mjs-t-' + appli, { timeout: 20000 })
         }
-        catch (e) {
+        catch {
           throw new Error('la page ne s\'est pas montée : ' + erreurs.join(' | ') + ' :: ' + await page.evaluate((tag: string) => { const r = (window as any).__racine(tag); return r ? (r.innerHTML || r.outerHTML) : 'pas de racine' }, 'mjs-t-' + appli))
         }
         return { page, erreurs }

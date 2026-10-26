@@ -70,32 +70,32 @@ if (typeof MjsSocket !== 'undefined') {
       var s = parts[1].replace(/-/g, '+').replace(/_/g, '/');
       while (s.length % 4 !== 0) { s += '='; }
       return JSON.parse(atob(s));
-    } catch (e) { return null; }
+    } catch { return null; }
   }
 
   function _accountStorage() {
     // `typeof localStorage` DANS le try : sur une origine opaque,
     // l'identifiant lui-même est un ACCESSEUR qui lève (SecurityError), pas seulement ses
     // méthodes — même motif que mjs_i18n.ts (__i18nDetectInitialLang / persistance bascule).
-    try { return (typeof localStorage !== 'undefined') ? localStorage : null; } catch (e) { return null; }
+    try { return (typeof localStorage !== 'undefined') ? localStorage : null; } catch { return null; }
   }
 
   function _accountRead(key) {
     var s = _accountStorage();
     if (!s) { return null; }
-    try { return s.getItem(key); } catch (e) { return null; }   // quota/mode privé — jamais un crash
+    try { return s.getItem(key); } catch { return null; }   // quota/mode privé — jamais un crash
   }
 
   function _accountWrite(key, token) {
     var s = _accountStorage();
     if (!s) { return; }
-    try { s.setItem(key, token); } catch (e) {}
+    try { s.setItem(key, token); } catch {}
   }
 
   function _accountErase(key) {
     var s = _accountStorage();
     if (!s) { return; }
-    try { s.removeItem(key); } catch (e) {}
+    try { s.removeItem(key); } catch {}
   }
 
   // applique un jeton FRAÎCHEMENT élevé (hello déjà accepté, cf. _compteElever) — store + stockage

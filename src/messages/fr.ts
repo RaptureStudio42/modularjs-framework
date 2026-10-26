@@ -43,8 +43,8 @@ Options:
   --port <n>      Port du serveur dev (défaut : 3939), du serveur ws (défaut : 4000) ou du serveur de jeu (défaut : 4001)
   --entry <p>     Fichier d'entry du serveur ws/serveur (mjs ws/mjs serveur) — défauts propres à chaque commande
   --once          Compile et sort, alias de build
-  --dev           Force un build de DÉVELOPPEMENT (panneau d'inspection, pas de minification)
-  --prod          Force un build de PRODUCTION (minifié, i18n haché, sans outils de dév)
+  --dev           Force un build de DÉVELOPPEMENT (panneau d'inspection, non minifié sauf "minify": true)
+  --prod          Force un build de PRODUCTION (minifié sauf "minify": false, i18n haché, sans outils de dév)
                   Sans l'un ni l'autre : la clé 'env' de mjs.config.json, sinon NODE_ENV.
   -v, --version   Affiche la version de mjs et sort
   -h, --help      Affiche cette aide et sort
@@ -56,7 +56,7 @@ Options:
   'cli.port-invalide': ({ valeur }: MsgVars) => `⚠️  --port ignoré : "${valeur}" n'est pas un nombre valide (défaut conservé).`,
   'cli.flag-inconnu': ({ arg }: MsgVars) => `⚠️  Flag inconnu ignoré : "${arg}" (vérifiez l'orthographe — voir 'mjs --help').`,
   'cli.config-trouve': ({ dossier }: MsgVars) => `📋 mjs.config.json : ${dossier}/mjs.config.json`,
-  'cli.env-dev': ({ origine }: MsgVars) => `🛠️  Build de DÉVELOPPEMENT (${origine}) — non minifié, panneau d'inspection inclus (Ctrl+Shift+Espace).`,
+  'cli.env-dev': ({ origine, minifie }: MsgVars) => `🛠️  Build de DÉVELOPPEMENT (${origine}) — ${minifie ? 'minifié' : 'non minifié'}, panneau d'inspection inclus (Ctrl+Shift+Espace).`,
   'cli.source-origine-config': `« sourceDir » de mjs.config.json`,
   'cli.source-origine-defaut': `chemin par défaut, aucun « sourceDir » en config`,
   'cli.build-racine-vide': ({ commande, racine, source, origine }: MsgVars) => `
@@ -76,7 +76,7 @@ Options:
 
    Vérifiez « sourceDir » dans mjs.config.json, ou la racine que vous visez.
    C'est exactement le cas qui remplace un manifeste par un manifeste vide.`,
-  'cli.env-prod': ({ origine }: MsgVars) => `🚀 Build de PRODUCTION (${origine}) — minifié, fragments i18n hachés, aucun outil de développement.`,
+  'cli.env-prod': ({ origine, minifie }: MsgVars) => `🚀 Build de PRODUCTION (${origine}) — ${minifie ? 'minifié' : 'non minifié'}, fragments i18n hachés, aucun outil de développement.`,
   'cli.env-origine-flag': 'imposé par --dev/--prod',
   'cli.env-origine-defaut': 'défaut de `mjs build` — `--prod` pour un build de production',
   'cli.avertissements-titre': ({ nb }: MsgVars) => `\n⚠️  ${nb} avertissement(s) :`,
@@ -580,6 +580,16 @@ Options:
   // variants — layout="x"/template="x" littéral dont le nom n'est pas une
   // variant <style name="…"> connu du module ciblé (parser/index.ts, TagRef.layoutLiteral)
   'bundler.index.tag-layout-litteral-inconnue': ({ fichier, tag, nom, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} layout="${nom}"> — variant '${nom}' inconnu de ce composant (connus : ${connus}). Corrigez la faute de frappe ou ajoutez <style name="${nom}"> à ce composant.`,
+  // <@@chart> : valeurs écrites en dur sur la balise (bundler/core-chart.ts) — un mot inconnu, une couleur refusée, une combinaison impossible
+  'bundler.index.chart-mot-inconnu': ({ fichier, tag, attribut, valeur, mot, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} ${attribut}="${valeur}"> — « ${mot} » n'est pas une valeur connue de ${attribut} (valeurs connues : ${connus}). Corrigez la faute de frappe.`,
+  'bundler.index.chart-couleur-refusee': ({ fichier, tag, couleur, teintes }: MsgVars) => `[bundler] ${fichier} : <${tag} series={…}> — la couleur « ${couleur} » est refusée : écrivez un nom de teinte (${teintes}), un entier de 1 ou plus (au-delà de 6, on reprend au début) ou une couleur CSS que le navigateur sait lire, sans « ; », « : », guillemet, accolade, « < », « > », « \\ », « /* » ni url(…).`,
+  'bundler.index.chart-sans-statistiques': ({ fichier, tag, forme, valeur, mots, formes, tendance }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="${forme}" stats="${valeur}"> — la forme ${forme} ne trace pas stats « ${mots} » (formes qui tracent des statistiques : ${formes} ; trend : ${tendance}). Retirez « ${mots} » de stats ou changez de forme.`,
+  'bundler.index.chart-combinaison': ({ fichier, tag, forme, attribut, valeur, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="${forme}" ${attribut}="${valeur}"> — ${attribut}="${valeur}" ne va pas avec la forme ${forme} (valeurs possibles : ${connus}).`,
+  // un module du cœur : un attribut écrit en dur en camelCase, que le HTML met en minuscules (bundler/core-attrs.ts)
+  'bundler.index.coeur-attribut-camel': ({ fichier, tag, attribut, kebab, minuscules }: MsgVars) => `[bundler] ${fichier} : <${tag} ${attribut}=…> — écrivez ${kebab} : le HTML met les noms d'attributs en minuscules, et ${attribut} écrit en dur arriverait en ${minuscules}, ignoré.`,
+  'bundler.index.chart-fuseau-inconnu': ({ fichier, tag, valeur }: MsgVars) => `[bundler] ${fichier} : <${tag} timezone="${valeur}"> — « ${valeur} » n'est pas un fuseau connu : écrivez local (l'heure de l'écran du visiteur) ou le nom d'une zone IANA (Europe/Paris, America/New_York, UTC…), ou retirez timezone pour afficher les heures telles qu'elles sont écrites.`,
+  'bundler.index.chart-decimales': ({ fichier, tag, ecrit, valeur }: MsgVars) => `[bundler] ${fichier} : <${tag} ${ecrit}> — decimals attend un nombre entier de 0 à 10, le nombre de chiffres après la virgule : « ${valeur} » ne convient pas.`,
+  'bundler.index.chart-radar-axes': ({ fichier, tag, nb }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="radar" rows={…}> — un radar demande au moins 3 lignes, une par axe : ${nb} ${Number(nb) > 1 ? 'sont écrites' : 'est écrite'}.`,
   // — minify.ts
   'bundler.minify.label-acces-indexe': "accès indexé `obj['_mjs_X']`",
   'bundler.minify.label-acces-template': 'accès template literal `obj[`_mjs_${...}`]`',
@@ -821,6 +831,9 @@ Extrait incriminé : ${extrait}
   'generator.interpolation-echec-civet': ({ moduleHint, rawExprForError, civetMsg, gluedTernaryHint }: MsgVars) => `[ModularJS] interpolation : échec de compilation Civet${moduleHint} — « ${rawExprForError} » — ${civetMsg}${gluedTernaryHint}`,
 
   // — src/generator/attributes/index.ts —
+  'generator.this-sans-point-exclamation': ({ expr }: MsgVars) => `[ModularJS] « @this={${expr}} » : une référence au nœud s'écrit avec un point d'exclamation, écrivez @this=!{${expr}}. Sans lui, @this serait lu comme l'écoute d'un événement nommé « this », et ${expr} ne recevrait jamais le nœud. Cf. docs/09-directives-dom.md.`,
+  'generator.this-sans-reference': ({ ecrit, ref }: MsgVars) => `[ModularJS] « ${ecrit} » : une référence au nœud s'écrit @this=!{${ref}}, une variable entre accolades après un point d'exclamation. Sans elle, @this serait lu comme l'écoute d'un événement nommé « this », et aucune variable ne recevrait le nœud. Cf. docs/09-directives-dom.md.`,
+  'generator.preload-sans-valeur': () => `[ModularJS] « @preload » sans valeur : le préchargement d'un lien se règle par une valeur, écrivez @preload="hover" (au survol), @preload="on" (dès que le lien paraît) ou @preload="off" (jamais). Sans valeur, @preload serait lu comme l'écoute d'un événement nommé « preload », et rien ne serait préchargé ; pour écouter un tel événement, écrivez @preload={…}. Cf. docs/17-router.md.`,
   'generator.this-ref-reactive': ({ varExpr, plain }: MsgVars) => `[mjs] @this=!{${varExpr}} : référence DOM liée à une variable RÉACTIVE « $ ». Chaque écriture (${varExpr}.style.x = …) passe alors par la réactivité (coût µ._mjs_deepSet). Pour une simple référence DOM, utilisez une variable SANS « $ » : @this=!{${plain}}. Cf. docs/09-directives-dom.md.`,
   // littéral émis DANS le code généré (navigateur) — cf. risques §5, insertion ${JSON.stringify(t(...))} au site d'appel
   'generator.erreur-intro': `[ModularJS] Erreur intro:`,
@@ -960,6 +973,7 @@ Extrait incriminé : ${extrait}
   'transpiler.rune-emit-dans-module': ({ rune, ligne }: MsgVars) => `[ModularJS] « ${rune} » dans <script module> (ligne ${ligne}) — le module s'exécute à l'import, sans composant actif : aucun élément à qui faire émettre l'événement. L'émission appartient au <script> (ou à une méthode appelée depuis lui).`,
   'transpiler.rune-separee-du-symbole': ({ symbole, rune, lieu, ligne }: MsgVars) => `[ModularJS] « ${symbole} » séparé de sa rune « ${rune} » par un espace ou un retour à la ligne (${lieu}, ligne ${ligne}) — écrivez ${symbole}.${rune} d'un seul tenant, sur une seule ligne : coupée ainsi, la rune échappe à la réécriture et à la détection du compilateur, et le code peut planter à l'exécution.`,
   'transpiler.on-url-change-legacy': ({ moduleName, ligne }: MsgVars) => `[ModularJS] ⚠️  ${moduleName}${ligne ? ` (ligne ${ligne})` : ''} : « @onUrlChange = -> » : forme V1 retirée — le routeur ne l'appelle plus ; écrivez la rune « µurlChange (path, params) -> ».`,
+  'transpiler.code-inaccessible': ({ fichier, ligne, mot }: MsgVars) => `[ModularJS] '${fichier}'${ligne ? ` (ligne ${ligne})` : ''} : ce code suit un « ${mot} » dans le même bloc, il ne sera jamais exécuté — la construction de production le retire sans rien dire. Retirez ce code ou ce « ${mot} », ou placez le « ${mot} » sous une condition.`,
   // Fragments de « forme trouvée », interpolés dans
   // transpiler.page-marqueur-manquant ci-dessous (même patron que hint-ligne-civet plus bas).
   'transpiler.page-forme-bloc-routes': `le bloc « <routes> »`,

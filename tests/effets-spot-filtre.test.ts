@@ -111,6 +111,20 @@ describe('effets — *filter(…, spot)', function () {
     }
   }
 
+  // happy-dom 20.14 a getAnimations et animate sur tout élément, 20.11 non, et le cœur les lit par le prototype, partagé par toutes les fenêtres : un test écrit pour le chemin sans l'API Web Animations les ôte le temps de son déroulement
+  // (ses propres faux, s'il en a, se posent ensuite sur ce prototype) et appelle la fonction rendue dans un finally, qui remet ce qui y était
+  function sansAnimations() {
+    const proto = window.Element.prototype
+    const avant = ['getAnimations', 'animate'].map((nom) => [nom, Object.getOwnPropertyDescriptor(proto, nom)] as const)
+    for (const [nom] of avant) delete proto[nom]
+    return () => {
+      for (const [nom, d] of avant) {
+        if (d) Object.defineProperty(proto, nom, d)
+        else delete proto[nom]
+      }
+    }
+  }
+
   it('sans spot (défaut) : rien n\'écoute, rien n\'est posé, le filtre est celui d\'avant', async () => {
     const comp = await monter('mjs-fx-spotf-defaut')
     const el   = comp._shadow.querySelector('.a')
@@ -223,15 +237,23 @@ describe('effets — *filter(…, spot)', function () {
     let releves = 0
     const n = window.document.createElement('div')
     comp._shadow.appendChild(n)
-    n.getAnimations = () => { releves++; return anims }
-    n.animate = () => ({ playState: 'running' })
     boite(n)
     // aucune minuterie, ni avant, ni pendant, ni après le survol
     let minuteries = 0
     const vraiSet = window.setInterval
     window.setInterval = (...a: any[]) => { minuteries++; return vraiSet.apply(window, a as any) }
-    const zone = window._mjsFxSpot(n, { spot: 100, soft: 40, smooth: 1, on: 'hover' })
+    // les faux de la balise, là où le cœur les lit : sur le prototype, filtrés sur elle ; la zone règle son suivi à sa pose, ils la précèdent
+    const rendreApi = sansAnimations()
+    const proto     = window.Element.prototype
+    proto.getAnimations = function (this: any) {
+      if (this !== n) return []
+      releves++
+      return anims
+    }
+    proto.animate = function (this: any) { return this === n ? { playState: 'running' } : undefined }
+    let zone: any
     try {
+      zone = window._mjsFxSpot(n, { spot: 100, soft: 40, smooth: 1, on: 'hover' })
       geste(n, 'pointerenter', 150, 90)
       assert.equal(bc.demandes(), 1, 'à l\'entrée, deux images pour reprendre la transformation que le survol applique')
       // la transition part juste après l'entrée : l'événement arme le suivi, qui dure tant que le navigateur la dit en cours
@@ -288,10 +310,16 @@ describe('effets — *filter(…, spot)', function () {
       assert.equal(minuteries, 0, 'le suivi n\'a posé aucune minuterie')
     }
     finally {
-      zone.off()
-      window.setInterval = vraiSet
-      n.remove()
-      bc.rendre()
+      // un retrait qui lève ne laisse pas les faux sur le prototype, partagé par tout le processus
+      try {
+        zone?.off()
+      }
+      finally {
+        window.setInterval = vraiSet
+        n.remove()
+        bc.rendre()
+        rendreApi()
+      }
     }
   })
 
@@ -342,71 +370,83 @@ describe('effets — *filter(…, spot)', function () {
   })
 
   it('smooth: 0.5 : la zone rattrape la souris image après image, puis la boucle s\'arrête d\'elle-même', async () => {
-    const comp = await monter('mjs-fx-spotf-lent')
-    const el   = comp._shadow.querySelector('.a')
-    const bc   = boucle()
+    const rendreApi = sansAnimations()
     try {
-      boite(el)
-      geste(el, 'pointerenter', 150, 90)
-      const [c] = copies(el)
-      assert.equal(posX(c), '50.0px', 'née sous la souris')
-      assert.equal(bc.demandes(), 0, 'rien ne tourne tant que la souris ne bouge pas')
-      geste(el, 'pointermove', 350, 90)
-      assert.equal(posX(c), '50.0px')
-      assert.equal(bc.demandes(), 1)
-      geste(el, 'pointermove', 350, 90)
-      assert.equal(bc.demandes(), 1, 'une seule boucle')
-      const vus: number[] = []
-      for (let i = 0; i < 80 && bc.demandes() > 0; i++) {
-        bc.image()
-        vus.push(parseFloat(posX(c)))
+      const comp = await monter('mjs-fx-spotf-lent')
+      const el   = comp._shadow.querySelector('.a')
+      const bc   = boucle()
+      try {
+        boite(el)
+        geste(el, 'pointerenter', 150, 90)
+        const [c] = copies(el)
+        assert.equal(posX(c), '50.0px', 'née sous la souris')
+        assert.equal(bc.demandes(), 0, 'rien ne tourne tant que la souris ne bouge pas')
+        geste(el, 'pointermove', 350, 90)
+        assert.equal(posX(c), '50.0px')
+        assert.equal(bc.demandes(), 1)
+        geste(el, 'pointermove', 350, 90)
+        assert.equal(bc.demandes(), 1, 'une seule boucle')
+        const vus: number[] = []
+        for (let i = 0; i < 80 && bc.demandes() > 0; i++) {
+          bc.image()
+          vus.push(parseFloat(posX(c)))
+        }
+        assert.ok(vus.length > 4 && vus.length < 40, `converge en ${vus.length} images`)
+        assert.ok(vus.every((v, i) => i === 0 || v >= vus[i - 1]))
+        assert.equal(posX(c), '250.0px')
+        assert.equal(bc.demandes(), 0, 'la boucle s\'est arrêtée')
+        geste(el, 'pointermove', 150, 90)
+        assert.equal(bc.demandes(), 1)
+        geste(el, 'pointerleave', 600, 90)
+        assert.equal(bc.demandes(), 0, 'la sortie l\'arrête')
       }
-      assert.ok(vus.length > 4 && vus.length < 40, `converge en ${vus.length} images`)
-      assert.ok(vus.every((v, i) => i === 0 || v >= vus[i - 1]))
-      assert.equal(posX(c), '250.0px')
-      assert.equal(bc.demandes(), 0, 'la boucle s\'est arrêtée')
-      geste(el, 'pointermove', 150, 90)
-      assert.equal(bc.demandes(), 1)
-      geste(el, 'pointerleave', 600, 90)
-      assert.equal(bc.demandes(), 0, 'la sortie l\'arrête')
+      finally {
+        bc.rendre()
+      }
     }
     finally {
-      bc.rendre()
+      rendreApi()
     }
   })
 
   it('smooth par défaut (0.2) : un retard, une boucle ; « réduire les animations » : collé à la souris, double ôté sans fondu', async () => {
-    const comp = await monter('mjs-fx-spotf-img')
-    const el   = comp._shadow.querySelector('.a')
-    const bc   = boucle()
+    const rendreApi = sansAnimations()
     try {
-      boite(el)
-      geste(el, 'pointerenter', 150, 90)
-      geste(el, 'pointermove', 350, 90)
-      assert.equal(bc.demandes(), 1, '0.2 : la zone traîne')
-      geste(el, 'pointerleave', 600, 90)
+      const comp = await monter('mjs-fx-spotf-img')
+      const el   = comp._shadow.querySelector('.a')
+      const bc   = boucle()
+      try {
+        boite(el)
+        geste(el, 'pointerenter', 150, 90)
+        geste(el, 'pointermove', 350, 90)
+        assert.equal(bc.demandes(), 1, '0.2 : la zone traîne')
+        geste(el, 'pointerleave', 600, 90)
+      }
+      finally {
+        bc.rendre()
+      }
+      await attendre(() => copies(el).length === 0, 1500)
+      const vrai = window.matchMedia
+      window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
+      const bc2 = boucle()
+      try {
+        const comp2 = await monter('mjs-fx-spotf-lent')
+        const el2   = comp2._shadow.querySelector('.a')
+        boite(el2)
+        geste(el2, 'pointerenter', 150, 90)
+        geste(el2, 'pointermove', 350, 90)
+        assert.equal(posX(copies(el2)[0]), '250.0px')
+        assert.equal(bc2.demandes(), 0)
+        geste(el2, 'pointerleave', 600, 90)
+        assert.equal(copies(el2).length, 0, 'sans fondu : parti aussitôt')
+      }
+      finally {
+        bc2.rendre()
+        window.matchMedia = vrai
+      }
     }
     finally {
-      bc.rendre()
-    }
-    await attendre(() => copies(el).length === 0, 1500)
-    const vrai = window.matchMedia
-    window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
-    const bc2 = boucle()
-    try {
-      const comp2 = await monter('mjs-fx-spotf-lent')
-      const el2   = comp2._shadow.querySelector('.a')
-      boite(el2)
-      geste(el2, 'pointerenter', 150, 90)
-      geste(el2, 'pointermove', 350, 90)
-      assert.equal(posX(copies(el2)[0]), '250.0px')
-      assert.equal(bc2.demandes(), 0)
-      geste(el2, 'pointerleave', 600, 90)
-      assert.equal(copies(el2).length, 0, 'sans fondu : parti aussitôt')
-    }
-    finally {
-      bc2.rendre()
-      window.matchMedia = vrai
+      rendreApi()
     }
   })
 
@@ -463,43 +503,49 @@ describe('effets — *filter(…, spot)', function () {
   })
 
   it('smooth hors bornes (0, négatif, trop grand, illisible) : ramené entre 0,01 et 1 à la pose et dans le suivi sur place ; la zone avance, la boucle finit', async () => {
-    const comp = await monter('mjs-fx-spotf-collee')
-    const def  = window.µ._mjs_fxDefs.filter
-    const bc   = boucle()
+    const rendreApi = sansAnimations()
     try {
-      for (const via of ['pose', 'suivi']) {
-        for (const vu of [0, -1, -50, 3, 'x']) {
-          const n = window.document.createElement('img')
-          n.setAttribute('src', GIF)
-          comp._shadow.appendChild(n)
-          boite(n)
-          const stop = def.setup(n, { style: 'grayscale', spot: 100, soft: 0, smooth: via === 'pose' ? vu : 0.5 })
-          if (via === 'suivi') stop.set('smooth', vu)
-          geste(n, 'pointerenter', 150, 90)
-          const c = copies(n)[0]
-          geste(n, 'pointermove', 350, 90)
-          const lent = typeof vu === 'number' ? vu < 1 : false
-          const arret = vu === 3 || vu === 'x'
-          assert.ok(c, via + ' ' + vu + ' : le double')
-          let dernier = parseFloat(posX(c))
-          let images  = 0
-          if (arret && via === 'pose' && vu === 3) assert.equal(bc.demandes(), 0, 'collé à la souris : aucune boucle')
-          for (; images < 4000 && bc.demandes() > 0; images++) {
-            bc.image()
-            const x = parseFloat(posX(c))
-            assert.ok(x >= dernier && x <= 250, via + ' ' + vu + ' : la zone avance vers la souris (' + dernier + ' puis ' + x + ')')
-            dernier = x
+      const comp = await monter('mjs-fx-spotf-collee')
+      const def  = window.µ._mjs_fxDefs.filter
+      const bc   = boucle()
+      try {
+        for (const via of ['pose', 'suivi']) {
+          for (const vu of [0, -1, -50, 3, 'x']) {
+            const n = window.document.createElement('img')
+            n.setAttribute('src', GIF)
+            comp._shadow.appendChild(n)
+            boite(n)
+            const stop = def.setup(n, { style: 'grayscale', spot: 100, soft: 0, smooth: via === 'pose' ? vu : 0.5 })
+            if (via === 'suivi') stop.set('smooth', vu)
+            geste(n, 'pointerenter', 150, 90)
+            const c = copies(n)[0]
+            geste(n, 'pointermove', 350, 90)
+            const lent = typeof vu === 'number' ? vu < 1 : false
+            const arret = vu === 3 || vu === 'x'
+            assert.ok(c, via + ' ' + vu + ' : le double')
+            let dernier = parseFloat(posX(c))
+            let images  = 0
+            if (arret && via === 'pose' && vu === 3) assert.equal(bc.demandes(), 0, 'collé à la souris : aucune boucle')
+            for (; images < 4000 && bc.demandes() > 0; images++) {
+              bc.image()
+              const x = parseFloat(posX(c))
+              assert.ok(x >= dernier && x <= 250, via + ' ' + vu + ' : la zone avance vers la souris (' + dernier + ' puis ' + x + ')')
+              dernier = x
+            }
+            assert.ok(bc.demandes() === 0, via + ' ' + vu + ' : la boucle finit (' + images + ' images' + (lent ? '' : ', collée') + ')')
+            assert.equal(posX(c), '250.0px', via + ' ' + vu + ' : et la zone est sur la souris')
+            geste(n, 'pointerleave', 600, 90)
+            stop()
+            n.remove()
           }
-          assert.ok(bc.demandes() === 0, via + ' ' + vu + ' : la boucle finit (' + images + ' images' + (lent ? '' : ', collée') + ')')
-          assert.equal(posX(c), '250.0px', via + ' ' + vu + ' : et la zone est sur la souris')
-          geste(n, 'pointerleave', 600, 90)
-          stop()
-          n.remove()
         }
+      }
+      finally {
+        bc.rendre()
       }
     }
     finally {
-      bc.rendre()
+      rendreApi()
     }
   })
 

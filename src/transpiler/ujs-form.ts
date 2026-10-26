@@ -8,8 +8,7 @@
 // les gestionnaires du composant joués (src/runtime/mjs_ujs.ts, µ._mjs_ujsShadowAttach), comme pour
 // un lien — le formulaire est alors local, rien à signaler.
 //
-// RÈGLE ZÉRO — même motif que transpiler/a11y.ts (et STYLE_INERT_RE, transpiler/
-// sections.ts) : les zones <pre>…</pre> et <code>…</code> sont neutralisées avant
+// RÈGLE ZÉRO — même motif que transpiler/a11y.ts : les zones <pre>…</pre> et <code>…</code> sont neutralisées avant
 // analyse, `\n` préservés pour garder les numéros de ligne justes. Sans ça, le site
 // de doc — qui MONTRE des <form> en exemple — reçoit des dizaines de fausses alertes.
 

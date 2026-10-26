@@ -15,8 +15,6 @@ import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MODES, variantes, construire, charger, graves } from './helpers/liaison-navigateur.js'
 import type { Cible, Mode, Ouverture } from './helpers/liaison-navigateur.js'
 
-const BOUTONS = ['inv', 'dep', 'ajout', 'ret', 'retmil', 'invi']
-
 // l'état du parent, imprimé en JSON : ce qu'il croit de ses lignes
 const PARENT = (donnees: string, corps: string) => `<script>
   $menu = ${donnees}

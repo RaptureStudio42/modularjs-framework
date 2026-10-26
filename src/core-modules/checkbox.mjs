@@ -90,7 +90,7 @@
     @syncValidity()
 </script>
 
-<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled" @class{µlayout is 'glow'}="glow">
+<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled">
   <input type="checkbox" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} @this=!{native} @change={@onChange(e)}>
   <span class="box" part="box" aria-hidden="true">
     <svg class="tick" viewBox="0 0 16 16" fill="none">
@@ -180,65 +180,4 @@
 
   .label
     font-size: .9rem
-
-  .glow
-    input.native
-      width: 120px
-      height: 40px
-
-    .box
-      width: 120px
-      height: 40px
-      border: 0
-      border-radius: 20px
-      background: linear-gradient(0deg, #333, #000)
-      box-shadow: 0 0 0 4px #353535, 0 0 0 5px #3e3e3e, inset 0 0 10px #000, 0 5px 20px rgba(0, 0, 0, .5), inset 0 0 15px rgba(0, 0, 0, .2)
-
-      &::before
-        content: ''
-        position: absolute
-        top: 0
-        left: 0
-        width: 80px
-        height: 40px
-        border-radius: 20px
-        background: linear-gradient(0deg, #000, #6b6b6b)
-        box-shadow: 0 0 0 1px #232323
-        transform: scale(.98, .96)
-        transition: .5s
-
-      &::after
-        content: ''
-        position: absolute
-        top: calc(50% - 2px)
-        left: 65px
-        width: 4px
-        height: 4px
-        border-radius: 50%
-        background: linear-gradient(0deg, #6b6b6b, #000)
-        transition: .5s
-
-    .tick, .dash
-      display: none
-
-  .glow input.native:indeterminate ~ .box
-    background-color: #20b7ff
-    border-color: #20b7ff
-
-  .glow input.native:checked ~ .box
-    border-color: #20b7ff
-    background: linear-gradient(0deg, #6dd1ff, #20b7ff)
-    box-shadow: 0 0 2px #6dd1ff, 0 0 0 4px #353535, 0 0 0 5px #3e3e3e, inset 0 0 10px #000, 0 5px 20px rgba(0, 0, 0, .5), inset 0 0 15px rgba(0, 0, 0, .2)
-
-    &::before
-      left: 40px
-
-    &::after
-      left: 105px
-      background: #63cdff
-      box-shadow: 0 0 5px #13b3ff, 0 0 15px #13b3ff
-
-  @media (prefers-reduced-motion: reduce)
-    .glow .box::before, .glow .box::after
-      transition: none
 </style>

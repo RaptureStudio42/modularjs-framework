@@ -46,6 +46,34 @@ En MJS, le `$` change tout : la variable et l'affichage sont **liés**. Vous éc
 
 </details>
 
+### Écrire dans une boucle — textes et attributs écrits une fois, à la sortie
+
+Une boucle du script qui écrit l'état écrit les textes et les attributs qui l'affichent **une fois, à sa sortie**, au lieu d'une fois par écriture : `for i in [1..1000] then $o.a.b.c = i` écrit l'état mille fois et le DOM une fois. Juste après la boucle, ces textes et attributs sont à jour : l'instruction qui suit lit le DOM final.
+
+```html
+<script>
+  $total = 0
+  remplir = (lignes) ->
+    for l in lignes
+      $total += l.prix                               # l'état change à chaque tour, le texte attend la sortie
+    @@_shadow.querySelector('.total').textContent    # déjà la somme finale
+</script>
+
+<p class="total">{$total}</p>
+```
+
+- **Pendant la boucle**, l'état est à jour (`$total` relu dans la boucle donne la valeur du tour) ; seuls les textes et les attributs du DOM gardent l'état d'avant la boucle.
+- Les **props des composants enfants** n'attendent pas : une prop est de l'état de l'enfant, pas un attribut du DOM. Une variable passée à un enfant (`<@panier x={$courant}>`, `x=!{$courant}`, `{...$o}`) lui arrive à chaque écriture, comme hors boucle : une méthode de l'enfant appelée dans la boucle (`panier.garder()`) lit la valeur du tour. Cette variable garde tout son chemin d'avant, comme une variable qui pilote un bloc : ses propres textes et attributs dans le composant se réécrivent aussi à chaque tour. Ceux des autres variables restent regroupés. Une exception : dès que le code en cours écrit une variable qui pilote un bloc (`$items.push(x)` sous un `{for}`, la condition d'un `{if}`), le composant attend le rendu de ce bloc, et les écritures suivantes de la variable passée à l'enfant l'attendent avec lui — l'enfant reçoit la valeur finale après la boucle, et une méthode de l'enfant appelée entre-temps lit la valeur d'avant.
+- Les **blocs** (`{for}`, `{if}`, `{key}`, `{await}`) gardent leur heure : ils se redessinent juste après le code en cours, une fois, sur l'état final, comme après plusieurs écritures hors boucle. Une liste remplie dans une boucle (`for x in xs then $items.push(x)`) montre donc ses nouvelles lignes après ce passage, pas dès l'instruction qui suit la boucle. Les textes d'un composant dont la boucle écrit aussi un bloc attendent ce bloc : ils se mettent à jour avec lui, sur l'état final.
+- Les **reffets** (`µeffect`) gardent aussi leur heure : un passage juste après le code en cours, sur l'état final.
+- Toutes les boucles comptent : `for`, `for…in`, `for…of`, `while`, `do…while`, et celles qu'écrivent Civet et CoffeeScript (`for x in`, `loop`, `until`, compréhensions). Toutes les écritures aussi : `$x`, `$o.a.b`, `$$x` du magasin, une méthode qui modifie une liste (`$items.push(x)`), `delete $o.x` — y compris celles d'un rappel appelé par la boucle (`for g in groupes then g.forEach((x) -> $n += x)`).
+- **Plusieurs composants** : une écriture `$$x` dans la boucle touche chaque composant qui l'affiche ; chacun écrit ses textes une fois, à la sortie.
+- **Boucles imbriquées** : seule la sortie de la boucle la plus extérieure écrit le DOM, même quand la boucle intérieure est dans une fonction appelée par la boucle — pourvu que la boucle extérieure écrive elle-même l'état. Une boucle qui ne fait qu'appeler une fonction (`for x in xs then traiter(x)`) n'est pas regroupée : chaque boucle de `traiter` écrit le DOM à sa sortie.
+- La sortie écrit le DOM **dans tous les cas** : fin de la boucle, `break`, `continue`, `return`, ou exception levée dans la boucle (dans le `catch`, les textes sont déjà à jour).
+- Une boucle **qui attend** (`await`, `for await`, ou `yield` dans un générateur) n'est pas regroupée : elle écrit le DOM à chaque écriture, comme avant — pendant l'attente, le reste de la page doit pouvoir se redessiner. Une boucle sans attente écrite dans son corps l'est, elle.
+- Une boucle **sans écriture** de l'état n'est pas touchée et ne coûte rien. Une appli dont aucune boucle n'écrit l'état n'embarque pas ce mécanisme : son fichier de départ n'en porte pas un octet.
+- Ne sont pas regroupés : un `.forEach`, un `.map` ou un autre rappel écrit hors de toute boucle (chaque écriture met le DOM à jour, comme avant : écrivez un `for` pour regrouper), une boucle d'un module de script importé (`.civet`, `.coffee`), et une écriture que la compilation ne voit pas dans la boucle — par une variable qui garde un objet de l'état (`t = $todos[0]`, puis `t.fait = true` dans la boucle), ou dans une fonction appelée par une boucle qui n'écrit rien elle-même.
+
 ### Types et valeurs permises — le bloc `<vars>`
 
 Une variable peut dire ce qu'elle accepte. La règle s'écrit dans le bloc `<vars>`, **avant** le `<script>` ; la valeur de départ reste dans le script :
@@ -69,7 +97,7 @@ Une variable peut dire ce qu'elle accepte. La règle s'écrit dans le bloc `<var
 
 ## Valeurs dérivées
 
-Une affectation `$y = expression(...$x...)` au niveau racine du `<script>` devient **automatiquement** un dérivé : recalculé quand ses dépendances changent. Aucun mot-clé spécial.
+Une affectation `$y = expression(...$x...)` au niveau racine du `<script>` devient **automatiquement** un dérivé : après toute écriture du composant, il se recalcule quand on le lit, et ce que le gabarit en affiche suit les `$` qu'il lit. Aucun mot-clé spécial.
 
 ```html
 <script>
@@ -87,13 +115,13 @@ Une affectation `$y = expression(...$x...)` au niveau racine du `<script>` devie
 
 Vous pourriez écrire une fonction `total()` qui recalcule la somme. Mais alors le template appellerait `{total()}` à chaque rendu, et surtout MJS ne saurait pas *quand* le rafraîchir.
 
-Avec `$total = ...`, MJS **lit** les `$` à l'intérieur (ici `$numbers`), retient que `$total` en dépend, et le recalcule **exactement** quand `$numbers` change. Vous décrivez le *quoi* (« le total, c'est la somme »), MJS gère le *quand*.
+Avec `$total = ...`, MJS **lit** les `$` à l'intérieur (ici `$numbers`), retient que `$total` en dépend, et remet l'écran à jour **dès** que `$numbers` change. Vous décrivez le *quoi* (« le total, c'est la somme »), MJS gère le *quand*.
 
 </details>
 
 ### `µderived` — dépendances déclarées
 
-La dérivation automatique lit le **texte** de l'expression pour repérer les `$` dont elle dépend. Quand la vraie dépendance est cachée dans une fonction appelée, elle n'apparaît pas dans ce texte : le dérivé ne se recalcule jamais, sans la moindre erreur — l'écran reste simplement figé. `µderived $var = expression, $a, $b` force la liste : l'**expression** d'abord, les **dépendances** ensuite, séparées par des virgules.
+La dérivation automatique lit le **texte** de l'expression pour repérer les `$` dont elle dépend. Une valeur dérivée se recalcule quand on la lit, après toute écriture du composant : un gestionnaire ou un `µeffect` qui la lit reçoit la valeur du moment, même quand une partie de ses lectures est cachée — une fonction ou une méthode du `<script>` qui lit l'état, un accès calculé `$[k]`, la méthode, l'accesseur ou l'itérateur d'un objet de votre application (`$trad.get('titre')`, quand `get` lit `$dict`). Mais ce que le gabarit en affiche ne suit que les `$` qu'elle lit en toutes lettres, et un `µeffect` qui la lit ne se relance qu'avec ces `$` et les siens : l'écran peut garder l'ancienne valeur. Une variable sans `$` qu'une fonction change (`compteur += 1`), l'heure ou le hasard (`Date.now()`, `Math.random()`) ne préviennent rien : sans écriture du composant, la valeur lue reste celle du dernier calcul. `µderived $var = expression, $a, $b` nomme les dépendances que l'affichage doit suivre : l'**expression** d'abord, les **dépendances** ensuite, séparées par des virgules. L'écran, et un `µeffect` qui la lit, suivent dès que l'une d'elles change.
 
 ```html
 <script>
@@ -374,6 +402,10 @@ Un objet rangé dans une `Map` ou un `Set` d'état — variable de composant, `�
 > Un chemin de l'état écrit dans le code (`$loc.p.x = v`, `$loc.p.push(x)`, `delete $loc.p.x`) passe le même refus quand l'objet qu'il atteint y a été rangé par une lecture (`$loc.p = $$o[k]`, `$racine = $$o[k]`) : là, `'__proto__'` mène au prototype et `'constructor'` à la fonction `Object`. L'écriture n'écrit alors jamais dans un prototype ni dans une fonction — une fonction rangée dans l'état comprise (`$loc.f.x = v`) —, n'y appelle aucune méthode, n'y supprime rien ; rien n'est écrit, et la console nomme le segment qui y mène (le même message).
 >
 > Les écritures qui passent par l'état enveloppé suivent la même règle quand cet objet est un prototype : une forme qui lit avant d'écrire (`$loc.p.x += 1`, `++`, `||=`, `&&=`, `??=`, et en CoffeeScript `?=`, `or=`, `and=`), une variable qui le garde (`t := $loc.p`, puis `t.x = v` ou `delete t.x`), `Object.assign($loc.p, …)`, la rune `µproxy $loc.p`. Rien n'y est écrit, défini ni supprimé, sans erreur, et la console affiche le même message ; seul `Object.defineProperty` lève sa `TypeError`, comme pour un de ces trois noms.
+>
+> Un prototype qui porte une étiquette, rangé de même dans l'état (`$racine = $$o.m[k]`, `k` valant `'__proto__'` : `Map.prototype`, ou `Set.prototype`), sort enveloppé comme `Object.prototype` : son identité change, et une méthode lue par l'enveloppe s'applique à l'enveloppe, pas au prototype (`$racine.isPrototypeOf(new Map())` rend `false`, `$racine.valueOf()` rend l'enveloppe) ; rien ne s'y écrit par l'état — les mêmes formes, le même message. L'enveloppe d'un prototype ne le laisse ni geler, ni sceller, ni fermer aux ajouts : `Object.freeze`, `Object.seal` et `Object.preventExtensions` lèvent leur `TypeError`, `Reflect.preventExtensions` rend `false`, et la console affiche le même message ; `Object.setPrototypeOf` est refusé comme pour tout objet de l'état (« état : changement de prototype refusé »).
+>
+> Restent hors de portée, et suivent JavaScript : une fonction du moteur rangée à la racine de l'état (`$racine = $$o['constructor']`, la fonction `Object`) reçoit les écritures qui passent par l'état enveloppé (`$racine.x += 1`, une variable qui la garde, `Object.assign($racine, …)`, `Object.freeze($racine)`) ; le `prototype` d'une telle fonction (`$racine.prototype`) ; le prototype d'une valeur simple (`String.prototype`, `Number.prototype`, `Boolean.prototype`, `Symbol.prototype`, `BigInt.prototype`), rangé tel quel pour que ses lectures marchent (`String($racine)`, `{$racine}` dans la vue) ; `Function.prototype` rangé à la racine (une fonction de l'état reste brute) ; le prototype d'un élément de la page (`HTMLDivElement.prototype`) ; le prototype que rend `Object.getPrototypeOf($o)` sur l'état ; une valeur du magasin passée à une fonction (`Object.assign($$o.constructor, …)`) ; ce qu'on atteint depuis une fonction de votre appli (`$cb.constructor`). Là, l'écriture va où JavaScript l'envoie : vérifiez la clé venue de données avant de lire l'objet (cf. ci-dessous).
 >
 > Ces trois noms sont refusés aussi au premier niveau de l'état (`$[clé] = v`, un attribut de balise, un objet étalé `{...$data}`), et en écriture à travers un objet de l'état qui a échappé au suivi statique (passé à une fonction). En LECTURE à travers l'état (`$o[k]` lu dans une expression, ou par une fonction qui a reçu l'objet), ils rendent `undefined` sauf si l'état porte VRAIMENT une donnée sous ce nom (propriété propre) — jamais le prototype hérité du realm : une forme que le compilateur laisse passer par l'état enveloppé — qui lit avant d'écrire (`$o[a][b] += v`, `||=`, `++`, et en CoffeeScript `?=`, `or=`), ou dont une clé est faite d'une expression (`$o[req.a][b] = v`) — lit alors `undefined` et lève une `TypeError`, sans rien écrire non plus, et sans message ; un de ces noms en dernière clé (`$o.a[k] += v`) n'écrit rien, sans erreur ni message. Hors de l'état — les objets de vos bibliothèques, les vôtres hors de `$` et `$$` —, une clé venue de données reste à vérifier avant d'écrire : liste de clés permises, `Object.hasOwn`, ou une `Map` ([14 · Stores](14-stores.md), « Sécurité » ; [18 · Pièges](18-pieges.md), § 18).
 

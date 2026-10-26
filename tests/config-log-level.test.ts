@@ -2,12 +2,13 @@
 // mjs_init.ts) ET sortie du BUILD (liste `pure` du minifieur, cf. bundler/minify.ts), réglés
 // par la MÊME clé. Chaîne (même niveau dev/prod) ou objet `{ dev?, prod? }` (un niveau par
 // environnement, sous-clé absente = défaut de cet environnement). Niveaux, du plus bavard au
-// plus muet : 'log' > 'warn' > 'error' > 'silent'. Défauts : dev 'log', prod 'warn'.
+// plus muet : 'log' > 'warn' > 'error' > 'silent'. Défauts : dev 'log', prod 'error' ; le terminal du build garde ses
+// avertissements tant que la clé ne fixe pas le niveau de son environnement (resolveTerminalLogLevel).
 
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { findConfig, resolveBundlerOpts, resolveLogLevel, logLevelAllows } from '../src/bundler/config.js'
+import { findConfig, resolveBundlerOpts, resolveLogLevel, resolveTerminalLogLevel, logLevelAllows } from '../src/bundler/config.js'
 import { buildPureList, LOG_LEVEL_PURE_BASE } from '../src/bundler/minify.js'
 import { mjsTmp, sweepRegistered } from './helpers/tmp.js'
 
@@ -81,12 +82,27 @@ describe('resolveLogLevel — défauts par environnement', () => {
 
   it('sous-clé absente → défaut de CET environnement', () => {
     assert.equal(resolveLogLevel({ prod: 'error' }, 'dev'), 'log')
-    assert.equal(resolveLogLevel({ dev: 'log' }, 'prod'), 'warn')
+    assert.equal(resolveLogLevel({ dev: 'log' }, 'prod'), 'error')
   })
 
   it('logLevel absent (undefined) → défauts des deux environnements', () => {
     assert.equal(resolveLogLevel(undefined, 'dev'), 'log')
-    assert.equal(resolveLogLevel(undefined, 'prod'), 'warn')
+    assert.equal(resolveLogLevel(undefined, 'prod'), 'error')
+  })
+})
+
+describe('resolveTerminalLogLevel — le terminal du build garde ses avertissements sans clé', () => {
+  it('clé absente, ou sous-clé de l\'environnement absente : avertissements visibles, en production aussi', () => {
+    assert.equal(resolveTerminalLogLevel(undefined, 'prod'), 'warn')
+    assert.equal(resolveTerminalLogLevel(undefined, 'dev'), 'log')
+    assert.equal(resolveTerminalLogLevel({ dev: 'error' }, 'prod'), 'warn')
+    assert.ok(logLevelAllows(resolveTerminalLogLevel(undefined, 'prod'), 'warn'))
+  })
+
+  it('un niveau écrit pour l\'environnement le gouverne, comme avant', () => {
+    assert.equal(resolveTerminalLogLevel('error', 'prod'), 'error')
+    assert.equal(resolveTerminalLogLevel({ prod: 'silent' }, 'prod'), 'silent')
+    assert.equal(resolveTerminalLogLevel({ prod: 'error' }, 'dev'), 'log')
   })
 })
 
@@ -116,12 +132,12 @@ describe('buildPureList — liste `pure` du minifieur pour les 4 niveaux', () =>
     assert.deepEqual(buildPureList('log'), [])
   })
 
-  it("'warn' : liste actuelle inchangée (défaut de production)", () => {
+  it("'warn' : liste de base, inchangée", () => {
     assert.deepEqual(buildPureList('warn'), LOG_LEVEL_PURE_BASE)
     assert.deepEqual(buildPureList('warn'), ['console.log', 'console.info', 'console.debug', 'µ.log'])
   })
 
-  it("'error' : liste actuelle + console.warn/µ.warn", () => {
+  it("'error' (défaut de production) : liste de base + console.warn/µ.warn", () => {
     assert.deepEqual(buildPureList('error'), ['console.log', 'console.info', 'console.debug', 'µ.log', 'console.warn', 'µ.warn'])
   })
 

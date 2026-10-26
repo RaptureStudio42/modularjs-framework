@@ -21,7 +21,8 @@ export default tseslint.config(
   {
     // `**/*.mjs` — ce sont des COMPOSANTS ModularJS (balises, `@directives`, SASS), pas du
     // JavaScript : le parseur d'ESLint ne peut que s'y casser les dents (« Unexpected token < »)
-    ignores: ['dist/**', 'node_modules/**', 'tests/snapshots/**', 'public/**', 'app/**', 'bench/**', '**/*.mjs']
+    // `tests/browser-smoke/fixture/sortie/` — l'appli que la fumée des navigateurs construit elle-même, ignorée par git : du code produit, pas écrit
+    ignores: ['dist/**', 'node_modules/**', 'tests/snapshots/**', 'tests/browser-smoke/fixture/sortie/**', 'public/**', 'app/**', 'bench/**', '**/*.mjs']
   },
   {
     files: ['src/**/*.ts', 'tests/**/*.ts'],

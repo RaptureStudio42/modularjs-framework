@@ -261,7 +261,7 @@ const TEMOINS: Temoin[] = [
   { texte: "addEventListener(el, 'animationstart', beat)",                                    pages: AVEC_TOUJOURS },
   { texte: "removeEventListener(el, 'animationstart', beat)",                                 pages: AVEC_TOUJOURS, n: { coin: 2 } },
   // `every` écrit : l'éclat — sa variable, son attribut posé puis retiré (deux fois avec `origin` : le retrait de la lumière tenue en un point) ;
-  // sa règle part toujours (la variable de thème `$$spotlight-every` l'allume aussi, même posée dans une feuille que la construction ne lit pas ; `$$fx-every` ne l'allume pas)
+  // sa règle part toujours (la variable de thème `$$spotlight-every` l'allume aussi, même posée dans une feuille que la construction ne lit pas ; `$$mjs-fx-every` ne l'allume pas)
   { texte: "every: ''",                                                                       pages: AVEC_ECLAT },
   { texte: "setAttribute(el, 'mjs-fx-spot-every'",                                            pages: AVEC_ECLAT },
   { texte: "removeAttribute(el, 'mjs-fx-spot-every')",                                        pages: AVEC_ECLAT, n: { coineclat: 2, coineclatvar: 2 } },

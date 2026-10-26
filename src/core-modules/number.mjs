@@ -299,7 +299,7 @@
     window.removeEventListener('blur', release)
 </script>
 
-<div class="field" part="field" role="group" aria-label={$labelText} @class{$off}="off">
+<div class="field" part="field" role="group" aria-label={$labelText} @class{$off}="off" @class{$wide}="wide">
   {if $wide}
     <button type="button" class="step less big" part="button" tabindex="-1" aria-label={$bigLess} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e, true)} @click={activate(-1, e, true)}>−−</button>
   {end}
@@ -329,6 +329,10 @@
 
     &.off
       opacity: .5
+
+  // `big` : deux boutons de 40px en plus, le champ s'élargit d'autant (la saisie garde sa place) ; une largeur posée par la page reste la sienne
+  .field.wide
+    width: var(--mjs-number-width, 240px)
 
   .step
     flex: none

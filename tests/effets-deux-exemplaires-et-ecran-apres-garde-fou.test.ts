@@ -57,7 +57,7 @@ export const SOURCES: Record<string, string> = {
 
 const pause = (ms = 60) => new Promise(r => setTimeout(r, ms))
 
-for (const [etiquette, config] of [['dev', {}], ['minifie', { minify: true }]] as const) {
+for (const [etiquette, config] of [['dev', {}], ['minifie', { minify: true, logLevel: 'warn' }]] as const) {
   describe(`µeffect — deux reffets ne se relancent pas par une clé du store qu'ils écrivent tous deux ; écran juste après le garde-fou (${etiquette})`, function () {
     this.timeout(120000)
     let app: any

@@ -107,7 +107,7 @@ function _mjsFxTravelFind(el, sel) {
       var hit = µ._mjs_dom.querySelector(list[i], sel);
       if (hit && hit !== el && !µ._mjs_dom.contains(el, hit)) return hit;
     }
-    catch (e) {
+    catch {
       return false;
     }
   }

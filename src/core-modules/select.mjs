@@ -1,12 +1,12 @@
 @formAssociated
 
 <script module>
-  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à l'attribut `other` : le build de production les ôte quand aucune liste de l'appli ne l'écrit, le développement et la copie dans un projet gardent tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
-  # `other` : le morceau propre à `other` ; `!other` : l'autre forme des lignes qui existent avec et sans `other`, écrite en commentaire et remise en code quand `other` part ; `dev other` : l'avertissement du développement, gardé tant qu'aucune page n'écrit `other`
+  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à l'attribut `other` : la construction les ôte quand aucune liste de l'appli ne l'écrit, en développement comme en production, au serveur comme au navigateur ; la copie dans un projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
+  # `other` : le morceau propre à `other` ; `!other` : l'autre forme des lignes qui existent avec et sans `other`, écrite en commentaire et remise en code quand `other` part ; `dev other` : l'avertissement du développement, écrit en commentaire et réveillé quand `other` part
   # `reprise` : le morceau qui écrit le choix de la liste dans sa balise quand le serveur la rend, ôté en production quand l'application ne reprend aucune page rendue par le serveur
   nextId = 0
   # @@ dev other
-  told = false
+  # told = false # @@ !other
   # @@
 </script>
 
@@ -702,11 +702,14 @@
   # @@
 
   # @@ dev other
-  # la production retire la réponse libre quand aucune page n'écrit `other` : une liste qui le reçoit d'un script, ici, ne l'aurait plus là-bas
-  µeffect ->
-    if $otherMax and not told
-      told = true
-      µ.warn(µ._mjs_msg('dev.selectOtherScript', {}, '<@@select> : une liste reçoit « other » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — en production, la réponse libre « Autre » ne serait pas envoyée. Écrivez « other » sur la liste dans votre page plutôt que de le poser par un script.'))
+  # aucune page n'écrit `other` : la construction a ôté la réponse libre, une liste qui le reçoit d'un script ne l'a pas. Écrit en commentaire, réveillé
+  # seulement quand la réponse libre est ôtée : une copie du module posée dans un projet la garde, et ne le dit jamais
+  # @@ !other
+  # µeffect ->
+  #   if $other !== undefined and $other !== false and not told
+  #     told = true
+  #     µ.warn(µ._mjs_msg('dev.selectOtherScript', {}, '<@@select> : une liste reçoit « other » d\'un script, mais aucune page de l\'application n\'écrit cet attribut — la réponse libre « Autre » n\'est pas envoyée, ni en développement ni en production. Écrivez « other » sur la liste dans votre page plutôt que de le poser par un script.'))
+  # @@
   # @@
 
   # @@ reprise

@@ -42,7 +42,7 @@
       try {
         CSS.registerProperty({ name: '--mjs-fx-gauge-p', syntax: '<number>', inherits: true, initialValue: '0' });
       }
-      catch (e) {}
+      catch {}
     }
     var host = µ._mjs_fxInner(el) || el;
     if (host !== el) µ._mjs_fxAdopt(host, 'gauge');

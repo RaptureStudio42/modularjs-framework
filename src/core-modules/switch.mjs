@@ -88,7 +88,7 @@
     @syncValidity()
 </script>
 
-<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled" @class{µlayout is 'triangle'}="triangle">
+<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled" @class{µlayout is 'triangle'}="triangle" @class{µlayout is 'glow'}="glow">
   <input type="checkbox" role="switch" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} @this=!{native} @change={@onChange(e)}>
   <span class="pill" part="pill" aria-hidden="true">
     {if µlayout is 'triangle'}
@@ -153,7 +153,7 @@
       background-color: var(--mjs-switch-color, #fff)
       transform: translateX(calc(var(--mjs-switch-width, 40px) - var(--mjs-switch-height, 22px)))
 
-  input.native:focus-visible ~ .pill
+  .wrap:not(.glow) input.native:focus-visible ~ .pill
     box-shadow: 0 0 0 3px var(--mjs-switch-focus, rgba(59, 130, 246, .35))
 
   .label
@@ -219,7 +219,65 @@
     .tri-off
       transform: skewX(30deg) scale(0)
 
+  .glow
+    input.native
+      width: 120px
+      height: 40px
+
+    .pill
+      width: 120px
+      height: 40px
+      border: 0
+      border-radius: 20px
+      background: linear-gradient(0deg, #333, #000)
+      box-shadow: 0 0 0 4px #353535, 0 0 0 5px #3e3e3e, inset 0 0 10px #000, 0 5px 20px rgba(0, 0, 0, .5), inset 0 0 15px rgba(0, 0, 0, .2)
+
+      &::before
+        content: ''
+        position: absolute
+        top: 0
+        left: 0
+        width: 80px
+        height: 40px
+        border-radius: 20px
+        background: linear-gradient(0deg, #000, #6b6b6b)
+        box-shadow: 0 0 0 1px #232323
+        transform: scale(.98, .96)
+        transition: .5s
+
+      &::after
+        content: ''
+        position: absolute
+        top: calc(50% - 2px)
+        left: 65px
+        width: 4px
+        height: 4px
+        border-radius: 50%
+        background: linear-gradient(0deg, #6b6b6b, #000)
+        transition: .5s
+
+    .knob
+      display: none
+
+  .glow input.native:checked ~ .pill
+    border-color: #20b7ff
+    background: linear-gradient(0deg, #6dd1ff, #20b7ff)
+    box-shadow: 0 0 2px #6dd1ff, 0 0 0 4px #353535, 0 0 0 5px #3e3e3e, inset 0 0 10px #000, 0 5px 20px rgba(0, 0, 0, .5), inset 0 0 15px rgba(0, 0, 0, .2)
+
+    &::before
+      left: 40px
+
+    &::after
+      left: 105px
+      background: #63cdff
+      box-shadow: 0 0 5px #13b3ff, 0 0 15px #13b3ff
+
+  // relief gardé : l'anneau du clavier se pose au-delà de ses deux anneaux (4 et 5 px), allumé comme éteint
+  .glow input.native:focus-visible ~ .pill
+    outline: 3px solid var(--mjs-switch-focus, rgba(59, 130, 246, .35))
+    outline-offset: 5px
+
   @media (prefers-reduced-motion: reduce)
-    .triangle .knob, .triangle .tri-on, .triangle .tri-off
+    .triangle .knob, .triangle .tri-on, .triangle .tri-off, .glow .pill::before, .glow .pill::after
       transition: none
 </style>

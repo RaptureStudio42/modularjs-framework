@@ -87,7 +87,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       sortie       = outDir
       mkdirSync(srcDir, { recursive: true })
       for (const [n, source] of Object.entries(SOURCES)) writeFileSync(join(srcDir, n), source)
-      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), ...(env === 'prod' ? { env: 'prod', js: 'bundle' } : {}) } as any)
+      // production au niveau 'warn' : les avertissements vérifiés ici restent dans le code envoyé (le défaut 'error' retire ceux du framework)
+      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), ...(env === 'prod' ? { env: 'prod', js: 'bundle', logLevel: 'warn' } : {}) } as any)
       const stats   = await bundler.compile()
       await bundler.close()
       assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

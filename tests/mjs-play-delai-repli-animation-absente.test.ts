@@ -39,6 +39,8 @@ describe('µ.play — délai de repli quand l\'animation ne démarre jamais', fu
     const win: any = new Window({ url: 'http://localhost/' })
     const µ: any = loadRareRunes(win)
     const node = win.document.createElement('div')
+    // le test vise le chemin sans getAnimations (la fin par événement, puis le filet) : happy-dom 20.14 l'a sur tout élément et rend la main tout de suite quand la classe ne lance rien, 20.11 non
+    node.getAnimations = undefined
     win.document.body.appendChild(node)
 
     let settled = false
@@ -58,6 +60,8 @@ describe('µ.play — délai de repli quand l\'animation ne démarre jamais', fu
     const win: any = new Window({ url: 'http://localhost/' })
     const µ: any = loadRareRunes(win)
     const node = win.document.createElement('div')
+    // le test vise le chemin sans getAnimations (la fin par événement, puis le filet) : happy-dom 20.14 l'a sur tout élément et rend la main tout de suite quand la classe ne lance rien, 20.11 non
+    node.getAnimations = undefined
     win.document.body.appendChild(node)
 
     const t0 = Date.now()

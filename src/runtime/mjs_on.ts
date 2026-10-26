@@ -37,13 +37,13 @@ if (µ.Element) {
           // échoue. Cas vécu : seek slider de l'audio-player.
           try {
             Object.defineProperty(e, 'currentTarget', { value: delegatedTarget, configurable: true });
-          } catch (_err) { /* event read-only strict : on se rabat sur le 2e arg */ }
+          } catch { /* event read-only strict : on se rabat sur le 2e arg */ }
           try {
             return handler.call(this, e, delegatedTarget);
           } finally {
             // Restaure le getter natif : l'event POURSUIT sa propagation et un
             // listener tiers (analytics, lib externe) lisait notre valeur figée.
-            try { delete e.currentTarget; } catch (_e2) { /* read-only */ }
+            try { delete e.currentTarget; } catch { /* read-only */ }
           }
         }
       }

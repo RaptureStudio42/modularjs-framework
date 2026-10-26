@@ -1268,14 +1268,14 @@ function _mjsFxValue(el, name, k, v, sp) {
 }
 
 // @@ dev
-// une valeur de la variable de thème `$$fx-every` que la règle de `every` refuse (cf. µ._mjs_fxEvery, mjs_fx_toolbeat.ts) : dite une fois par
+// une valeur de la variable de thème `$$mjs-fx-every` que la règle de `every` refuse (cf. µ._mjs_fxEvery, mjs_fx_toolbeat.ts) : dite une fois par
 // valeur, en développement seulement (même réglage que les types : `µ._typesMode`) ; la production n'a pas cette fonction
 var _mjsFxEveryWarned = {};
 µ._mjs_fxEveryWarn = function(el, v) {
   var mode = µ._typesMode;
   if (!(mode === 'warn' || mode === 'error') || Object.prototype.hasOwnProperty.call(_mjsFxEveryWarned, v)) return;
   _mjsFxEveryWarned[v] = true;
-  µ.warn(µ._mjs_msg('fxEveryRefused', { vu: "'" + v + "'", at: el && el.localName ? ' (<' + el.localName + '>)' : '' }, 'la variable de thème $$fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}'));
+  µ.warn(µ._mjs_msg('fxEveryRefused', { vu: "'" + v + "'", at: el && el.localName ? ' (<' + el.localName + '>)' : '' }, 'la variable de thème $$mjs-fx-every vaut {vu}, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0){at}'));
 };
 // @@
 

@@ -144,13 +144,14 @@ describe('*gallery — la place des panneaux (tailles posées à la main, u = 10
         await attendre(40)
       }
       const z = (i: number) => parseInt(b.kids[i].style.zIndex)
-      // chaque écriture de z-index
+      // chaque écriture de z-index : `style.zIndex = v` passe par setProperty('z-index', v) — par le setter du prototype en happy-dom 20.11, par le Proxy du style en 20.14, qui n'a plus d'accesseur par propriété
       let ecrits = 0
       for (const c of b.kids) {
-        let proto: any = Object.getPrototypeOf(c.style)
-        let d: any = null
-        while (proto && !(d = Object.getOwnPropertyDescriptor(proto, 'zIndex'))) proto = Object.getPrototypeOf(proto)
-        Object.defineProperty(c.style, 'zIndex', { get() { return d.get.call(this) }, set(v: any) { ecrits++; d.set.call(this, v) }, configurable: true })
+        const original = c.style.setProperty
+        c.style.setProperty = (nom: string, ...reste: any[]) => {
+          if (nom === 'z-index') ecrits++
+          return original.call(c.style, nom, ...reste)
+        }
       }
       await bouge(3)
       assert.ok(z(3) > z(4) && z(4) > z(2), 'au repos sur le panneau 3 : il est au-dessus, le 4 devant le 2 (à égale distance, le dernier dans la page)')

@@ -163,7 +163,7 @@ describe('moteur des transitions : navigateurs réels', function () {
           const µ: any = (window as any).µ
           const n = document.getElementById('t1') as HTMLElement
           const lire = () => getComputedStyle(n).opacity
-          const cfg = { css: (t: number, u: number) => ({ opacity: String(t) }), delay: 120, duration: 240, easing: 'linear' }
+          const cfg = { css: (t: number) => ({ opacity: String(t) }), delay: 120, duration: 240, easing: 'linear' }
           const p = µ._mjs_runTransition(n, cfg, 'in')
           const sync = lire()
           const premiere = await new Promise<string>((res) => requestAnimationFrame(() => res(lire())))
@@ -189,7 +189,7 @@ describe('moteur des transitions : navigateurs réels', function () {
           const µ: any = (window as any).µ
           const n = document.getElementById('t2') as HTMLElement
           const lire = () => parseFloat(getComputedStyle(n).opacity)
-          const cfg = { css: (t: number, u: number) => ({ opacity: String(t) }), duration: 600, easing: 'linear' }
+          const cfg = { css: (t: number) => ({ opacity: String(t) }), duration: 600, easing: 'linear' }
           const p1 = µ._mjs_runTransition(n, cfg, 'in')
           await new Promise((res) => setTimeout(res, 250))
           const avant = lire()
@@ -220,7 +220,7 @@ describe('moteur des transitions : navigateurs réels', function () {
           const µ: any = (window as any).µ
           const n = document.getElementById('t3') as HTMLElement
           const lire = () => parseFloat(getComputedStyle(n).opacity)
-          const cfg = { css: (t: number, u: number) => ({ opacity: String(t) }), duration: 600, easing: 'linear' }
+          const cfg = { css: (t: number) => ({ opacity: String(t) }), duration: 600, easing: 'linear' }
           const p1 = µ._mjs_runTransition(n, cfg, 'out')
           await new Promise((res) => setTimeout(res, 250))
           const avant = lire()
@@ -244,7 +244,7 @@ describe('moteur des transitions : navigateurs réels', function () {
           const µ: any = (window as any).µ
           const n = document.getElementById('t4') as HTMLElement
           const lire = () => getComputedStyle(n).opacity
-          const cfg = { css: (t: number, u: number) => ({ opacity: String(t) }), delay: 400, duration: 200, easing: 'linear' }
+          const cfg = { css: (t: number) => ({ opacity: String(t) }), delay: 400, duration: 200, easing: 'linear' }
           const p1 = µ._mjs_runTransition(n, cfg, 'in')
           await new Promise((res) => setTimeout(res, 80))
           const avant = lire()

@@ -263,7 +263,7 @@ function _mjsFxHold(el, factory, watched) {
   try {
     cfg = factory(el);
   }
-  catch (e) {
+  catch {
     return;
   }
   if (!cfg) return;
@@ -292,7 +292,7 @@ function _mjsFxHold(el, factory, watched) {
       try {
         hold.cancel();
       }
-      catch (e) {}
+      catch {}
       if (el._mjs_transition_state === this) el._mjs_transition_state = null;
     }
   };
@@ -341,7 +341,7 @@ function _mjsFxScrub(el, factory, s) {
   try {
     cfg = factory(el);
   }
-  catch (e) {
+  catch {
     return null;
   }
   if (!cfg) return null;
@@ -416,7 +416,7 @@ function _mjsFxScrub(el, factory, s) {
       try {
         next = factory(el);
       }
-      catch (e) {
+      catch {
         return;
       }
       if (!next || !next.css) return;
@@ -449,7 +449,7 @@ function _mjsFxScrub(el, factory, s) {
       try {
         anim.cancel();
       }
-      catch (e) {}
+      catch {}
     }
     else if (typeof cfg.cleanup === 'function') cfg.cleanup();
   };
@@ -474,7 +474,7 @@ function _mjsFxHoverParent(el, name, sel) {
       if (µ._mjs_dom.matches(n, sel)) return n;
     }
   }
-  catch (e) {}
+  catch {}
   µ.warn(µ._mjs_msg('hoverOf', { name: name, of: sel }, '*{name} : aucun ancêtre de la balise ne vérifie « {of} » (réglage of) : son parent direct commande le survol. Vérifiez ce sélecteur.'));
   return direct;
 }
@@ -511,7 +511,7 @@ function _mjsFxHoverOpen(parent) {
     try {
       return µ._mjs_dom.matches(parent, sel);
     }
-    catch (e) {
+    catch {
       return false;
     }
   };
@@ -616,7 +616,7 @@ function _mjsFxFinish(el, pair) {
   try {
     cfg = pair.intro(el);
   }
-  catch (e) {
+  catch {
     return;
   }
   if (cfg && typeof cfg.tick === 'function') cfg.tick(1, 0);

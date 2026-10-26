@@ -7,8 +7,11 @@
 // de Civet et de CoffeeScript), pour une variable CoffeeScript affectée une seule fois, en composant comme en module
 // importé, et en construction de production. Une clé calculée entre l'élément et la cible se lit comme JavaScript la lit
 // (`__proto__` mène au prototype, `constructor` à la fonction), et l'écriture les refuse, avec un avertissement ; par le chemin (`$$taches[0][k1][k2]`),
-// elle est refusée, avec un avertissement ; un nom réassigné, un paramètre, une copie, la variable
-// d'une boucle ne préviennent rien et écrivent là où JavaScript écrit. Un alias du magasin écrit dans l'objet qu'il
+// elle est refusée, avec un avertissement ; un nom qui reçoit quelque part une lecture du magasin (réassigné, paramètre
+// homonyme, déclaré deux fois, la variable d'une boucle Civet ou CoffeeScript) prévient la clé que lit sa variable dans
+// sa fonction (le `ref` que CoffeeScript tire pour une boucle et pour `?.` est une variable par fonction) ; un
+// paramètre, une copie ne préviennent rien ; tous écrivent là où JavaScript écrit. Un
+// alias du magasin écrit dans l'objet qu'il
 // tient, comme JavaScript (`sous := $$cfg.a` puis `$$cfg = autre`, `premier := $$liste[0]` puis `unshift`) ; jamais
 // pris, il lève la TypeError de l'écriture. `delete` rend `true` ; l'objet relu par `++` est tenu par un paramètre
 // local, aucune case partagée
@@ -655,11 +658,11 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
     }
   })
 
-  it('nom réassigné, paramètre, copies (slice, map, filter), variable de boucle : aucune notification, l\'écriture va là où JavaScript l\'envoie', async () => {
+  it('nom réassigné : la clé de sa lecture du magasin est prévenue ; variable de boucle : la clé est prévenue ; paramètre, copies (slice, map, filter) : aucune notification ; l\'écriture va là où JavaScript l\'envoie', async () => {
     const { window, comp } = await taches()
     try {
       const raw = window.µ._mjs_storeRaw
-      assert.deepEqual(prevenues(window, () => comp.reassigne(2)), [])
+      assert.deepEqual(prevenues(window, () => comp.reassigne(2)), ['taches'], 'nom réassigné : il a lu $$taches, cette clé est prévenue')
       assert.equal(window.µ.__t7.fait, true)
       assert.equal(raw.taches[1].fait, false)
       assert.deepEqual(prevenues(window, () => comp.copies()), [])
@@ -668,7 +671,7 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
       assert.equal(raw.taches[0].fait, false, 'copie : la liste du magasin n\'est pas écrite')
       assert.deepEqual(prevenues(window, () => comp.param(raw.taches[0])), [])
       assert.equal(raw.taches[0].fait, true, 'paramètre : l\'objet reçu est écrit tel quel')
-      assert.deepEqual(prevenues(window, () => comp.boucle()), [])
+      assert.deepEqual(prevenues(window, () => comp.boucle()), ['taches', 'taches'], 'variable de boucle : chaque élément écrit prévient la clé')
       assert.equal(raw.taches[2].fait, true, 'variable de boucle : l\'élément est écrit tel quel')
     }
     finally {
@@ -773,11 +776,11 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
     }
   })
 
-  it('CoffeeScript : nom réassigné, paramètre, copies, variable de boucle : aucune notification, l\'écriture va là où JavaScript l\'envoie', async () => {
+  it('CoffeeScript : nom réassigné : la clé de sa lecture du magasin est prévenue ; variable de boucle : la clé de la liste est prévenue, même quand `ref` lit un autre magasin dans une autre fonction ; paramètre, copies : aucune notification ; l\'écriture va là où JavaScript l\'envoie', async () => {
     const { window, comp } = await coffee()
     try {
       const raw = window.µ._mjs_storeRaw
-      assert.deepEqual(prevenues(window, () => comp.reassigne(2)), [])
+      assert.deepEqual(prevenues(window, () => comp.reassigne(2)), ['liste'], 'nom réassigné : il a lu $$liste, cette clé est prévenue')
       assert.equal(window.µ.__w.fait, true)
       assert.equal(raw.liste[1].fait, false)
       assert.deepEqual(prevenues(window, () => comp.copies()), [])
@@ -786,7 +789,9 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
       assert.equal(raw.liste[0].fait, false, 'copie : la liste du magasin n\'est pas écrite')
       assert.deepEqual(prevenues(window, () => comp.param(raw.liste[0])), [])
       assert.equal(raw.liste[0].fait, true)
-      assert.deepEqual(prevenues(window, () => comp.boucle()), [])
+      // `for u in $$liste` devient `ref = µ.store.liste` puis `u = ref[i]` : le `ref` que CoffeeScript déclare pour `?.`
+      // dans une autre fonction, sur `$$carte.get(k)`, est une autre variable — la clé de la liste est prévenue
+      assert.deepEqual(prevenues(window, () => comp.boucle()), ['liste'], 'variable de boucle : la clé de la liste est prévenue')
       assert.equal(raw.liste[1].fait, true)
     }
     finally {
@@ -850,16 +855,16 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
     }
   })
 
-  it('gardes de prudence : paramètre homonyme, boucle, affectation dans une autre fonction, autre valeur, seconde déclaration — rien de prévenu, l\'écriture va où JavaScript l\'envoie', async () => {
+  it('gardes de prudence : boucle, affectation dans une autre fonction, autre valeur, seconde déclaration — jamais pris pour un alias, la clé de la lecture du magasin faite par cette variable est prévenue ; un paramètre homonyme est une autre variable, écrite comme JavaScript, sans clé ; l\'écriture va où JavaScript l\'envoie', async () => {
     const c = await regle()
     try {
       const raw = c.window.µ._mjs_storeRaw
-      assert.deepEqual(prevenues(c.window, () => c.comp.memeFonction()), [])
+      assert.deepEqual(prevenues(c.window, () => c.comp.memeFonction()), ['cfg'], 'affectation dans une autre fonction : h a lu $$cfg')
       assert.equal(raw.cfg.a.b, 4)
-      assert.deepEqual(prevenues(c.window, () => c.comp.autres()), [])
+      assert.deepEqual(prevenues(c.window, () => c.comp.autres()), ['cfg'], 'autre valeur : w2 a lu $$cfg, la clé est prévenue même si l\'objet écrit est neuf')
       assert.equal(c.window.µ.__w2.b, 3)
       assert.equal(raw.cfg.a.b, 4)
-      assert.deepEqual(prevenues(c.window, () => c.comp.seconde()), [])
+      assert.deepEqual(prevenues(c.window, () => c.comp.seconde()), ['cfg'], 'seconde déclaration : w3 a lu $$cfg')
       assert.equal(raw.cfg.a.b, 6)
     }
     finally {
@@ -869,11 +874,11 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
     try {
       const raw = k.window.µ._mjs_storeRaw
       const recu = { b: 0 }
-      assert.deepEqual(prevenues(k.window, () => k.comp.aliasB(recu)), [])
+      assert.deepEqual(prevenues(k.window, () => k.comp.aliasB(recu)), [], 'paramètre homonyme : une autre variable que le s qui lit $$cfg dans aliasA, aucune clé prévenue')
       assert.equal(recu.b, 2, 'paramètre homonyme : l\'objet reçu est écrit')
-      assert.deepEqual(prevenues(k.window, () => k.comp.aliasA()), [])
+      assert.deepEqual(prevenues(k.window, () => k.comp.aliasA()), ['cfg'])
       assert.equal(raw.cfg.a.b, 1)
-      assert.deepEqual(prevenues(k.window, () => k.comp.boucleUne()), [])
+      assert.deepEqual(prevenues(k.window, () => k.comp.boucleUne()), ['liste'], 'affectée dans une boucle : u1 a lu $$liste')
       assert.equal(raw.liste[0].fait, true)
     }
     finally {

@@ -12,7 +12,7 @@ import { createServer, type Server } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { chromium, type Browser, type Page } from 'playwright'
+import { chromium, type Browser } from 'playwright'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME = join(__dirname, '..', 'src', 'runtime')

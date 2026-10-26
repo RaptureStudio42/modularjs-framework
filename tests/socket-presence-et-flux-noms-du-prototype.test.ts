@@ -10,12 +10,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { transformSync } from 'esbuild'
-import { cutRuntimeTraces } from '../src/bundler/minify.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(__dirname, '../src/runtime/mjs_socket.ts'), 'utf8')
-const NOMS = ['__proto__', 'constructor', 'prototype']
 const P = Object.prototype
 
 class FauxWS {

@@ -216,6 +216,8 @@ Un lien routé (`<a href="#/produit/42">`) peut précharger sa destination **ava
 
 Trois modes : **`off`** (jamais), **`hover`** (au survol du lien), **`on`** (dès l'apparition du lien dans le DOM, sans attendre le survol). Défauts : `view: "hover"`, `page: "off"`.
 
+`@preload` prend toujours une valeur (`hover`, `on` ou `off`) : écrit seul, vide (`@preload=""`) ou à `"true"`, il est refusé à la construction, sur un lien comme sur toute autre balise.
+
 ```json
 { "preload": "hover" }
 ```

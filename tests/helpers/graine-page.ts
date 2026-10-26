@@ -65,6 +65,8 @@ export interface Options {
   api?: boolean
   store?: Record<string, unknown>
   html?: (page: string) => string
+  // textes racine en plus : du YAML ajouté au français, des clés ajoutées à l'anglais (les surcharges `mjs.<groupe>.<clé>` des libellés du framework)
+  racine?: { fr?: string, en?: Record<string, unknown> }
 }
 
 // les règles réseau : `racineEn` et `racineFr` retardent le fichier de langue anglais et le français (ms), `echecRacineEn` et `echecRacineFr` le font répondre 404,
@@ -91,8 +93,8 @@ export async function construire(o: Options): Promise<Page> {
   const srcDir = join(root, 'src')
   mkdirSync(join(srcDir, 'i18n', 'fr'), { recursive: true })
   mkdirSync(join(srcDir, 'i18n', 'en'), { recursive: true })
-  writeFileSync(join(srcDir, 'i18n', 'fr.yml'), FR_RACINE)
-  writeFileSync(join(srcDir, 'i18n', 'en.json'), JSON.stringify(EN_RACINE))
+  writeFileSync(join(srcDir, 'i18n', 'fr.yml'), FR_RACINE + (o.racine?.fr ?? ''))
+  writeFileSync(join(srcDir, 'i18n', 'en.json'), JSON.stringify({ ...EN_RACINE, ...(o.racine?.en ?? {}) }))
   for (const [section, [fr, en]] of Object.entries(SECTIONS)) {
     writeFileSync(join(srcDir, 'i18n', 'fr', section + '.yml'), fr)
     writeFileSync(join(srcDir, 'i18n', 'en', section + '.json'), JSON.stringify(en))

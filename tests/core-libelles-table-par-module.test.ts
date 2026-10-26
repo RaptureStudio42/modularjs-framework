@@ -16,7 +16,7 @@ const table: Table = CORE_LABEL_MODULES
 describe('libellés des modules du cœur — la table module → ses clés', () => {
   it('le groupe core a les mêmes clés en français et en anglais', () => {
     assert.deepEqual([...GROUPE_EN].sort(), [...GROUPE_FR].sort())
-    assert.equal(GROUPE_FR.size, 51)
+    assert.equal(GROUPE_FR.size, 102)
   })
 
   it('chaque clé du groupe core appartient à exactement un module de la table', () => {
@@ -36,11 +36,11 @@ describe('libellés des modules du cœur — la table module → ses clés', () 
     assert.deepEqual(fautesDeLaTable(table, GROUPE_FR, lecturesDesModules(GROUPE_FR), modulesPoses()), [])
   })
 
-  it('la lecture du texte trouve ce qu\'elle doit : les douze modules à libellé lisent leurs clés, les autres aucune', () => {
+  it('la lecture du texte trouve ce qu\'elle doit : les treize modules à libellé lisent leurs clés, les autres aucune', () => {
     const lectures = lecturesDesModules(GROUPE_FR)
     for (const [module, cles] of Object.entries(table)) assert.deepEqual([...(lectures.get(module)?.lues ?? [])].sort(), [...cles].sort(), module)
     for (const [module, { lues }] of lectures) if (!(module in table)) assert.equal(lues.size, 0, `${module} lit des clés et n'est pas dans la table`)
-    assert.equal(Object.keys(table).length, 12)
+    assert.equal(Object.keys(table).length, 13)
   })
 
   it('un module qui appelle le groupe core a sa ligne dans la table, sauf <@@sortable> dont les textes sont dans le module', () => {
@@ -160,13 +160,13 @@ describe('runtimeLabelsFor — le groupe core limité aux modules emportés', ()
 
   it('modules inconnus (faits manquants) : tout le groupe, comme avant', () => {
     const t = runtimeLabelsFor(false, GROUPES) as any
-    assert.equal(Object.keys(t.fr.core).length, 51)
-    assert.equal(Object.keys(t.en.core).length, 51)
+    assert.equal(Object.keys(t.fr.core).length, 102)
+    assert.equal(Object.keys(t.en.core).length, 102)
   })
 
   it('groupes inconnus : tout est gardé, la liste des modules n\'y change rien', () => {
     const t = runtimeLabelsFor(false, undefined, new Set(['select'])) as any
-    assert.equal(Object.keys(t.fr.core).length, 51)
+    assert.equal(Object.keys(t.fr.core).length, 102)
   })
 
   it('le groupe core n\'est pas demandé : il ne part pas, quels que soient les modules', () => {

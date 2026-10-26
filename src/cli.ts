@@ -441,10 +441,12 @@ async function run(argv: string[]): Promise<void> {
 
   // Bandeau d'environnement — un build qui se trompe de mode ne se voit AUTREMENT nulle part
   // (le manifeste dit `dev:`, mais personne ne l'ouvre). Écrit tel quel dans le journal de
-  // déploiement : un `mjs build` lancé sans `--prod` y annonce « DÉVELOPPEMENT ».
+  // déploiement : un `mjs build` lancé sans `--prod` y annonce « DÉVELOPPEMENT ». La minification se dit à part,
+  // par la règle du Bundler : `"minify": true` minifie un build de développement, `false` laisse lisible la production.
   if (args.command === 'build' || args.command === 'check' || args.command === 'dev' || args.command === 'serve') {
     const origine = args.env ? t('cli.env-origine-flag') : t('cli.env-origine-defaut')
-    console.log(t(envBuild === 'prod' ? 'cli.env-prod' : 'cli.env-dev', { origine }))
+    const minifie = Bundler.minifies(cfgOpts.minify ?? 'auto', envBuild)
+    console.log(t(envBuild === 'prod' ? 'cli.env-prod' : 'cli.env-dev', { origine, minifie }))
   }
 
   const bundler = new Bundler({

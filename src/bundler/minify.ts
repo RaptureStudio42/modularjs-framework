@@ -26,16 +26,15 @@ export interface MinifyResult {
   map?: string
 }
 
-/** Liste `pure` au niveau `'warn'` — défaut de production, comportement historique inchangé :
- *  retire les traces (log/info/debug) et `µ.log`, garde avertissements et erreurs. */
+/** Liste `pure` au niveau `'warn'` : retire les traces (log/info/debug) et `µ.log`, garde avertissements et erreurs. */
 export const LOG_LEVEL_PURE_BASE = ['console.log', 'console.info', 'console.debug', 'µ.log']
 
 /**
  * Liste `pure` (retrait du bundle, cf. `minifyJs`) pour un niveau de PROD donné (clé `logLevel`
  * de mjs.config.json, cf. bundler/config.ts) :
  *   - `'log'`    : liste VIDE — rien n'est retiré.
- *   - `'warn'`   : `LOG_LEVEL_PURE_BASE` (défaut, aucun changement observable).
- *   - `'error'`  : + `console.warn`/`µ.warn`.
+ *   - `'warn'`   : `LOG_LEVEL_PURE_BASE`.
+ *   - `'error'`  : + `console.warn`/`µ.warn` (défaut de production).
  *   - `'silent'` : + `console.error`/`µ.error`.
  */
 export function buildPureList(level: LogLevelName): string[] {
@@ -64,19 +63,41 @@ export function buildPureList(level: LogLevelName): string[] {
 // une trace du runtime ne porte aucun effet de bord (tests/runtime-traces-sans-effet-de-bord.test.ts) : ses
 // arguments partent avec elle ; celles dont le texte coûte (µ._mjs_txt inscrit une entrée d'attente et pose des
 // écouteurs) s'écrivent µ._mjs_logger()?.(…) : coupées, elles n'évaluent rien, même sans minification
+//
+// avertissements et erreurs du runtime, même méthode : `µ.warn(` part aux niveaux 'error' et 'silent', `µ.error(`
+// au niveau 'silent' (cf. runtimeCallsCut), avec leurs arguments — le texte tiré de la table (µ._mjs_txt, µ._mjs_msg)
+// ne sert qu'à l'écriture, le reste ne fait que lire (même garde que les traces). Le journal des erreurs
+// (mjs_journal.ts) enveloppe µ.error pour envoyer chaque erreur au serveur : un cœur qui l'embarque garde ses µ.error
 // ============================================================================
 
 // repères de l'aide `µ._mjs_logger` (mjs_init.ts) : le bloc part avec les traces qu'elle garde
 const TRACE_LOGGER_BLOCK_RE = /^\/\/ <trace-logger>\n[\s\S]*?^\/\/ <\/trace-logger>\n?/m
 
-// l'appelé d'une trace : `µ.log` suivi d'une parenthèse, ou `µ._mjs_logger()` suivi de `?.(`
-const TRACE_CALLEE_RE = /(?<![\w$µ.])µ\.(?:log(?=\s*\()|_mjs_logger\(\)(?=\?\.\())/g
+/** les méthodes de console du runtime que la construction peut retirer du code envoyé */
+export type RuntimeConsoleMethod = 'log' | 'warn' | 'error'
+
+/** les appels du runtime qu'un niveau de PROD retire du code envoyé (cf. cutRuntimeTraces) : les traces `log` au-dessus de
+ *  'log', les avertissements `warn` aux niveaux 'error' et 'silent', les erreurs `error` au niveau 'silent' quand le cœur
+ *  n'embarque pas le journal des erreurs (`journal` faux), qui les lit pour les envoyer au serveur */
+export function runtimeCallsCut(level: LogLevelName, journal = true): RuntimeConsoleMethod[] {
+  if (!levelCutsTraces(level)) return []
+  if (level === 'warn') return ['log']
+  if (level === 'error' || journal) return ['log', 'warn']
+  return ['log', 'warn', 'error']
+}
+
+// l'appelé d'un appel retiré : `µ.<méthode>` suivi d'une parenthèse, ou `µ._mjs_logger()` suivi de `?.(`
+function calleeRe(methods: readonly RuntimeConsoleMethod[]): RegExp {
+  return new RegExp(`(?<![\\w$µ.])µ\\.(?:(?:${methods.join('|')})(?=\\s*\\()|_mjs_logger\\(\\)(?=\\?\\.\\())`, 'g')
+}
 
 // le nom `_mjs_logger`, seul ou derrière un point
 const TRACE_LOGGER_NAME_RE = /(?<![\w$])_mjs_logger(?![\w$])/g
 
-// ce que le texte doit porter pour qu'il y ait quelque chose à lire : un appel `µ.log`, l'aide ou ses repères
-const TRACE_HINT_RE = /µ\.log|_mjs_logger|<trace-logger>/
+// ce que le texte doit porter pour qu'il y ait quelque chose à lire : un appel de ces méthodes, l'aide ou ses repères
+function hintRe(methods: readonly RuntimeConsoleMethod[]): RegExp {
+  return new RegExp(`µ\\.(?:${methods.join('|')})|_mjs_logger|<trace-logger>`)
+}
 
 // le texte avec chaînes, morceaux de gabarit, expressions régulières et commentaires blanchis (même longueur, retours
 // à la ligne gardés), d'après les jetons d'acorn ; un code qu'acorn ne lit pas (en module, puis en script) retombe sur
@@ -108,19 +129,20 @@ function maskInertTokens(text: string): string {
   return maskInertSameLength(text)
 }
 
-// `µ.log(` devient `MJS_TRACE?.(` et `µ._mjs_logger()?.(` aussi ; l'appelant pose `define: { MJS_TRACE: 'null' }`
-// (minifyJs, option runtimeSource), sans lui le résultat ne tourne pas
+// `µ.log(` devient `MJS_TRACE?.(` et `µ._mjs_logger()?.(` aussi ; `µ.warn(` et `µ.error(` de même quand `methods` les
+// nomme (cf. runtimeCallsCut) ; l'appelant pose `define: { MJS_TRACE: 'null' }` (minifyJs, option runtimeSource), sans
+// lui le résultat ne tourne pas
 // le bloc de l'aide `µ._mjs_logger` (repères `// <trace-logger>`) est retiré, ses lignes laissées vides, quand
 // plus rien d'autre ne la nomme ; un autre usage la garde en place
-export function cutRuntimeTraces(source: string): string {
-  // ni trace, ni aide, ni repères dans ce texte (la plupart des morceaux d'effets) : rien à lire, rien à retirer
-  if (!TRACE_HINT_RE.test(source)) return source
+export function cutRuntimeTraces(source: string, methods: readonly RuntimeConsoleMethod[] = ['log']): string {
+  // ni appel retiré, ni aide, ni repères dans ce texte (la plupart des morceaux d'effets) : rien à lire, rien à retirer
+  if (!hintRe(methods).test(source)) return source
 
   const masked = maskInertTokens(source)
-  const calls  = [...masked.matchAll(TRACE_CALLEE_RE)]
+  const calls  = [...masked.matchAll(calleeRe(methods))]
   const helper = TRACE_LOGGER_BLOCK_RE.exec(source)
 
-  let edits: Array<[number, number, string]> = calls.map(m => [m.index!, m.index! + m[0].length, m[0] === 'µ.log' ? 'MJS_TRACE?.' : 'MJS_TRACE'])
+  let edits: Array<[number, number, string]> = calls.map(m => [m.index!, m.index! + m[0].length, m[0].endsWith(')') ? 'MJS_TRACE' : 'MJS_TRACE?.'])
   if (helper !== null) {
     const from  = helper.index
     const to    = from + helper[0].length
@@ -141,8 +163,9 @@ export function cutRuntimeTraces(source: string): string {
 //
 // le routeur, le bloc {await} et la poignée de salon partie (mjs_socket.ts) écrivent leurs traces avec un texte du groupe `err` de la table des messages (µ._mjs_txt) ; en production ce groupe
 // vit dans un fichier par langue, chargé quand un message s'écrit. selon le niveau de console :
-//   - 'warn' (défaut), 'error', 'silent' : la construction retire les traces du code envoyé, personne ne lira leur texte :
-//     les fichiers de messages ne le portent plus (messagesWithoutTraces)
+//   - 'warn', 'error' (défaut), 'silent' : la construction retire les traces du code envoyé, personne ne lira leur texte :
+//     les fichiers de messages ne le portent plus (messagesWithoutTraces) ; aux niveaux 'error' et 'silent', les avertissements
+//     partent aussi, et les textes qu'eux seuls lisent avec eux (WARNING_ONLY_MESSAGES)
 //   - 'log' : les traces restent, leur texte part avec le manifeste (traceMessages) : sans lui la première trace sortirait
 //     en clés, puis serait rejouée dans le désordre à l'arrivée du fichier de messages. Les fichiers restent complets
 // tests/runtime-messages-des-traces.test.ts relit le runtime et garde ces listes
@@ -156,6 +179,60 @@ export const TRACE_ONLY_MESSAGES: readonly string[] = [
   'awaitUnhandled', 'sockHandleGone', 'runesKey',
 ]
 
+/** clés du groupe `err` que seuls des avertissements du runtime lisent (appels `µ.warn(…)` directs, effets et animations compris) :
+ *  aux niveaux 'error' et 'silent', la construction retire ces avertissements du code envoyé, personne ne lira plus leur texte ;
+ *  une clé lue aussi par une erreur, une trace, un module cœur ou tout autre code reste (tests/runtime-messages-des-avertissements.test.ts) */
+export const WARNING_ONLY_MESSAGES: readonly string[] = [
+  'adoptSheetNoShadow',
+  'ajaxBinVersionDiff', 'ajaxCrossOrigin',
+  'animCreateOverride',
+  'autoloaderStale',
+  'backlightNone',
+  'behindEdge', 'behindImage',
+  'blendCsp', 'blendFilter', 'blendImage', 'blendNoSrc',
+  'chromaticFilter',
+  'crossfadeFallbackFailed',
+  'dynAccept', 'dynInstance', 'dynNotListed', 'dynRefused',
+  'effectInit',
+  'elCycle', 'elHydrate', 'elHydrateMismatch', 'elLoop', 'elOrphanInherited', 'elOrphanLocal', 'elProto', 'elStructLoop', 'elTeardown',
+  'everyError', 'everyHash', 'everyIgnored', 'everyInit', 'everyOptType', 'everySyntax', 'everyTimes', 'everyUnknownOpt', 'everyWhileAsync',
+  'fluidColor', 'fluidNoContext', 'fluidTextComponent',
+  'focusHost',
+  'forDupKeys',
+  'fxBrought', 'fxEveryRefused', 'fxRefused',
+  'gradientImage',
+  'hoverIgnored', 'hoverOf', 'hoverOfAlone',
+  'i18nMissing', 'i18nNoData', 'i18nSecours',
+  'initPath', 'initReadOnly',
+  'interpNonFinite',
+  'layoutFile',
+  'lazyCss',
+  'lifeHook', 'lifeOnDestroy', 'lifeRun',
+  'liquidFilter',
+  'lruEvictError',
+  'modalNotifyFlow', 'modalNotifyPos', 'modalSoundPath', 'modalSoundUnknown', 'modalUnknownIcon', 'modalUnknownInput',
+  'optimisticBadStore',
+  'pathStays',
+  'physicsHeight',
+  'pileOverflow',
+  'pixelateFilter',
+  'reflectNone',
+  'routerHistoryRefused', 'routerSlashRefused',
+  'runesCycle', 'runesInspectInit',
+  'schemaUnknownIdReceived',
+  'scratchBadMany', 'scratchBadOne', 'scratchColors', 'scratchIgnMany', 'scratchIgnNone', 'scratchIgnOne', 'scratchImage',
+  'smoothNonFinite',
+  'sockDuplicateAuth', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
+  'spotlightWhere',
+  'spriteFps', 'spriteImage', 'spritePoses', 'spriteRow',
+  'storeGCycle', 'storeGKey', 'storeGResKey', 'storeGResTag', 'storeGTheme', 'storeGWatch', 'storeKey', 'storeProto',
+  'transitionNone',
+  'travelNone',
+  'txBezierRange', 'txCssSharedThrew', 'txCssThrew', 'txEasingUnknown', 'txSetupThrew', 'txTickThrew',
+  'ujsCallbackMissing', 'ujsConfirmNoModal', 'ujsConfirmRetry', 'ujsConfirmRetryFailed', 'ujsConfirmValue', 'ujsFlashNoModal', 'ujsFlashUnknown', 'ujsHardNavOutside', 'ujsHardNavProtocol', 'ujsMethodNative', 'ujsMethodNoUjs', 'ujsPermanentDupId', 'ujsPermanentNoId', 'ujsReplaceNoTarget', 'ujsScriptSwapped', 'ujsSubmitFailed', 'ujsSubmitNoBody', 'ujsSubmitNotHtml', 'ujsTargetMissing', 'ujsTargetMissingReceived', 'ujsUnknownCache', 'ujsUnknownMethod', 'ujsVerbUnknown',
+  'vtBadDir', 'vtBadDur', 'vtBadPrio', 'vtDirName', 'vtDupKey', 'vtLevitation', 'vtLevitationIn', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey', 'vtUnknownPreset',
+]
+
 /** clés qu'une trace lit : les précédentes, et le texte d'UJS que sa trace du mode 'silent' partage avec son avertissement */
 export const TRACE_READ_MESSAGES: readonly string[] = [...TRACE_ONLY_MESSAGES, 'ujsNoPage']
 
@@ -164,10 +241,12 @@ export function levelCutsTraces(level: LogLevelName): boolean {
   return buildPureList(level).includes('µ.log')
 }
 
-/** le groupe `err` d'une langue sans les textes que seules des traces lisent */
-export function messagesWithoutTraces(messages: Record<string, string>): Record<string, string> {
+/** le groupe `err` d'une langue sans les textes que seules des traces lisent ; au niveau de PROD `level` 'error' ou 'silent', sans
+ *  ceux que seuls des avertissements lisent non plus */
+export function messagesWithoutTraces(messages: Record<string, string>, level: LogLevelName = 'warn'): Record<string, string> {
   const rest = { ...messages }
   for (const key of TRACE_ONLY_MESSAGES) delete rest[key]
+  if (level === 'error' || level === 'silent') for (const key of WARNING_ONLY_MESSAGES) delete rest[key]
   return rest
 }
 
@@ -779,17 +858,30 @@ export interface MinifyOpts {
   /**
    * Niveau de PROD (clé `logLevel` de mjs.config.json) qui détermine la liste `pure` ci-dessous
    * (cf. `buildPureList`) — TOUJOURS le niveau de prod, jamais celui de l'environnement en cours
-   * de build (deux minifications d'un même projet, l'une dev forcée, l'autre prod, retirent donc
-   * exactement les mêmes appels). Absent : `'warn'`, comportement historique inchangé.
+   * de build. Sans effet avec `dev`. Absent : `'error'`, le défaut de production.
    */
   logLevel?: LogLevelName
+  /**
+   * Build de DÉVELOPPEMENT : minifier ne fait que minifier (noms, espaces). La ligne `µ.debug = …` reste, aucune
+   * lecture de `µ.debug` n'est remplacée, la liste `pure` reste vide et `runtimeSource` ne retire rien : le niveau de
+   * la console s'applique à l'exécution, `µ.debug = true` tapé dans la console garde son effet. Absent : production.
+   */
+  dev?: boolean
   /**
    * Le texte est celui du runtime du framework (cœur, morceau d'effet), jamais du code d'une appli, et le build
    * est un build de PRODUCTION (le développement garde ses traces, minifié ou non) : à un niveau de PROD qui
    * coupe `log` (cf. `logLevel`), ses traces `µ.log(…)` et `µ._mjs_logger()?.(…)` partent avec leurs arguments
-   * et l'aide `µ._mjs_logger` avec elles (cf. `cutRuntimeTraces`). Absent : rien de plus que la liste `pure`.
+   * et l'aide `µ._mjs_logger` avec elles (cf. `cutRuntimeTraces`) ; aux niveaux 'error' et 'silent', ses appels
+   * `µ.warn(…)` aussi, et au niveau 'silent' ses appels `µ.error(…)` (cf. `journal`, `runtimeCallsCut`). Absent : rien
+   * de plus que la liste `pure`.
    */
   runtimeSource?: boolean
+  /**
+   * Avec `runtimeSource` : le cœur de ce build embarque le journal des erreurs (mjs_journal.ts), qui enveloppe `µ.error`
+   * pour envoyer chaque erreur au serveur — au niveau 'silent', les appels `µ.error(…)` du runtime restent alors en place.
+   * Absent : ils restent aussi ; seul un `false` (le cœur n'a pas le journal) les retire.
+   */
+  journal?: boolean
   /**
    * Définitions supplémentaires (esbuild `define`), FUSIONNÉES à celles posées ci-dessous
    * (`'µ.debug'`) — jamais un remplacement. Sert `MJS_DEBUG` (identifiant LIBRE, contrairement à
@@ -855,8 +947,11 @@ export async function minifyJs(
   // longueur) et retiré du texte RÉEL aux MÊMES positions : sans ce masquage, une ligne de
   // DOCUMENTATION montrant « µ.debug = true » à l'intérieur d'un template literal (guide de
   // débogage exporté par un module) matchait pareil et disparaissait en silence du texte affiché.
+  //
+  // En développement (`dev`), rien n'est cherché : la ligne reste, comme sans minification.
+  const dev          = opts.dev === true
   const debugLineRe  = /^[ \t;]*µ\.debug\s*=\s*[^;\n]+;?[ \t]*$/gm
-  const maskedSource = maskInertSameLength(source)
+  const maskedSource = dev ? '' : maskInertSameLength(source)
   let cleaned = ''
   let cursor  = 0
   let dm: RegExpExecArray | null
@@ -867,9 +962,13 @@ export async function minifyJs(
   cleaned += source.slice(cursor)
 
   // traces du texte du runtime : retirées du code envoyé quand le niveau de PROD coupe `log` (même
-  // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log'), cf. `cutRuntimeTraces`
-  const cutsTraces = opts.runtimeSource === true && levelCutsTraces(opts.logLevel ?? 'warn')
-  const text       = cutsTraces ? cutRuntimeTraces(cleaned) : cleaned
+  // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log') ; ses avertissements aux niveaux
+  // 'error' et 'silent', ses erreurs au niveau 'silent' sans le journal, cf. `cutRuntimeTraces` ; en développement,
+  // le niveau 'log' : ni liste `pure`, ni trace retirée
+  const level      = dev ? 'log' : (opts.logLevel ?? 'error')
+  const cut        = opts.runtimeSource === true ? runtimeCallsCut(level, opts.journal !== false) : []
+  const cutsTraces = cut.length > 0
+  const text       = cutsTraces ? cutRuntimeTraces(cleaned, cut) : cleaned
 
   // le transform() + merge ci-dessous
   // touche `opts.mangleCache`, un objet PARTAGÉ MUTABLE entre tous les appels
@@ -905,30 +1004,28 @@ export async function minifyJs(
       // masque, `define` le remplace donc PARTOUT dans le cœur où les sources du runtime lisent
       // `µ.debug` (converties à `MJS_DEBUG` — cf. mjs_easing/mjs_for/mjs_if/mjs_init/mjs_router/
       // mjs_destroy_hooks/mjs_debug/mjs_devinspect/mjs_devpanel.ts), et chaque `if (MJS_DEBUG)`
-      // part en DCE avec `opts.define = { MJS_DEBUG: 'false' }`.
-      define: { 'µ.debug': 'false', ...(cutsTraces ? { MJS_TRACE: 'null' } : {}), ...opts.define },
+      // part en DCE avec `opts.define = { MJS_DEBUG: 'false' }`. En développement (`dev`), `µ.debug` reste lu.
+      define: { ...(dev ? {} : { 'µ.debug': 'false' }), ...(cutsTraces ? { MJS_TRACE: 'null' } : {}), ...opts.define },
       // `pure` plutôt que `drop: ['console']` : `drop` vide TOUJOURS les corps de µ.error/µ.warn,
       // sans distinction de niveau — contrat trahi (« les erreurs ne doivent JAMAIS être
       // silencieuses », mjs_init) si le projet n'a rien demandé de tel. `pure` retire au
       // contraire EXACTEMENT ce que la clé `logLevel` (mjs.config.json) autorise pour le niveau
-      // de PROD (cf. `buildPureList`) : au défaut `'warn'`, seuls les niveaux de TRACE
+      // de PROD (cf. `buildPureList`) : au niveau `'warn'`, seuls les niveaux de TRACE
       // (log/info/debug) partent, et `µ.log` quand `µ` est un nom libre (jamais le cas dans le
-      // cœur ni dans un composant : les traces du runtime partent par `cutRuntimeTraces`, cf.
-      // `runtimeSource`) — `console.warn`/`µ.warn`/`console.error`/`µ.error`
-      // ne rejoignent la liste QUE si le projet a explicitement demandé un niveau `'error'`/
-      // `'silent'` plus strict.
+      // cœur ni dans un composant : les appels du runtime partent par `cutRuntimeTraces`, cf.
+      // `runtimeSource`) — `console.warn`/`µ.warn` rejoignent la liste au niveau `'error'`
+      // (le défaut de production), `console.error`/`µ.error` au niveau `'silent'`.
       //
       // MESURÉ (sonde esbuild isolée) — marquer `console.warn`/`console.error`
       // pur (niveaux `'error'`/`'silent'`) vide aussi l'appel INTERNE `console.warn(...)`/
       // `console.error(...)` dans le CORPS de `µ.warn`/`µ.error` eux-mêmes (mjs_init.ts, concaténé
       // dans ce même mjs_core.js) — exactement comme `console.log` vide déjà celui de `µ.log` au
-      // défaut `'warn'` (cf. le commentaire `define`/µ.debug ci-dessus, même famille de problème).
+      // niveau `'warn'` (cf. le commentaire `define`/µ.debug ci-dessus, même famille de problème).
       // Les CALL SITES `µ.warn(...)`/`µ.error(...)` ailleurs dans le bundle (composants : `µ` y
       // est une liaison IMPORTÉE, pas une globale) ne sont eux JAMAIS retirés par `pure` — sondé
-      // séparément, aucune régression de flux applicatif possible. Conséquence assumée, pas un
-      // bogue : à ces niveaux le projet a explicitement demandé que warn/error se taisent, et
-      // `pure` le fait au niveau JS exactement comme `'warn'` (le défaut) le fait déjà pour `log`.
-      pure: buildPureList(opts.logLevel ?? 'warn'),
+      // séparément, aucune régression de flux applicatif possible : ceux du code d'une appli restent,
+      // rendus muets à l'exécution ; ceux du runtime partent par `cutRuntimeTraces` (cf. `runtimeSource`).
+      pure: buildPureList(level),
       // Mangle des propriétés internes `_mjs_*` cohérent inter-fichiers
       // via mangleCache. L'API publique (`µ.X`, `$.X`) reste préservée par
       // le regex (qui matche uniquement le préfixe `_mjs_`).

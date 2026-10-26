@@ -381,7 +381,7 @@ var _txRunTick = function(node, cfg, t1, t2, direction, txId) {
         try {
           cancelAnimationFrame(raf);
         }
-        catch (err) {}
+        catch {}
         raf = null;
       }
       if (node._mjs_transition_state === state) node._mjs_transition_state = null;

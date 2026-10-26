@@ -165,7 +165,7 @@ export async function agrandit(p: any, tag: string, sel: string) {
 // le relevé, dans la page : à chaque image d'animation, la boîte de la carte, ses marques, sa matrice, et ce que `elementFromPoint` rend
 // sur la ligne médiane de la carte (toujours dans sa surface, même tournée) à l'endroit où elle recouvre un voisin. S'arrête quand la carte,
 // vue agrandie puis revenue, n'a plus aucune marque pendant vingt images
-export const RELEVE = async ([tag, sel, repos, voisins]: [string, string, { x: number, y: number, w: number, h: number }, string[]]) => {
+export const RELEVE = async ([tag, sel, _repos, voisins]: [string, string, { x: number, y: number, w: number, h: number }, string[]]) => {
   const racine  = (document.querySelector(tag) as any)._shadow as ShadowRoot
   const carte   = racine.querySelector(sel) as HTMLElement
   const liste   = voisins.map((s) => racine.querySelector(s) as HTMLElement)

@@ -85,17 +85,6 @@ const COMPTEURS = () => {
 
 const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-// relit une valeur jusqu'à ce qu'elle soit celle attendue, ou que le délai passe : rend la dernière lue
-async function attend(lire: () => Promise<string>, attendu: string, ms = 2500): Promise<string> {
-  const fin = Date.now() + ms
-  let v = await lire()
-  while (v !== attendu && Date.now() < fin) {
-    await attendre(50)
-    v = await lire()
-  }
-  return v
-}
-
 describe('*dock, *goo(drip), *parallax (navigateurs réels) — barre réduite ou défilée, gouttes à l\'écran, conteneurs tardifs', function () {
   this.timeout(240000)
   let script = ''

@@ -351,7 +351,7 @@
     try {
       return new URL(src, location.href).origin === location.origin;
     }
-    catch (e) {
+    catch {
       return false;
     }
   };
@@ -445,7 +445,7 @@
     try {
       gl = typeof cv.getContext === 'function' ? cv.getContext('webgl', { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, powerPreference: 'low-power' }) : null;
     }
-    catch (e) {
+    catch {
       gl = null;
     }
     if (!gl) return null;
@@ -574,7 +574,7 @@
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bk);
     }
-    catch (e) {
+    catch {
       return false;
     }
     // la copie n'a plus d'emploi

@@ -1,5 +1,5 @@
 // la cadence commune des effets qui se répètent (`every`), dans Chromium réel, construit en production : le réglage écrit sur la balise
-// l'emporte ; sinon la variable de thème commune `$$fx-every`, posée dans un `<theme>` ou un `<style>`, qui vaut pour toute la descendance
+// l'emporte ; sinon la variable de thème commune `$$mjs-fx-every`, posée dans un `<theme>` ou un `<style>`, qui vaut pour toute la descendance
 // (pour *spotlight, `$$spotlight-every` passe avant elle) ; sinon le défaut de l'effet. La cadence commune ne met en marche aucun effet : l'éclat de
 // *spotlight ne s'allume que par `every` écrit sur la balise ou par `$$spotlight-every`. Le premier passage de *shine, *attention et *annotate
 // part tout de suite (à la pose, à l'arrivée à l'écran), la première salve de *glitch 2 s après (un tour, s'il est plus court) ; les suivants
@@ -26,10 +26,10 @@ async function chromiumPresent(): Promise<boolean> {
 const STYLE = '<style>\n:host\n  display: block\n.p, .p2\n  position: relative\n  width: 200px\n  height: 30px\n  background: #111\n</style>\n'
 
 const COMPOSANTS: Record<string, string> = {
-  // $$fx-every dans le <theme> : elle règle les quatre effets qui se répètent, sans allumer l'éclat de *spotlight ; écrit sur la balise, `every` l'emporte
-  'cad-theme': '<theme>\n  $$fx-every: 600ms\n</theme>\n<button class="s" *shine(on: always)>S</button>\n<button class="s2" *shine(on: always, every: 2s)>S</button>\n<button class="a" *attention(on: always, duration: 100ms)>A</button>\n<h1 class="g" *glitch(burst: 50ms)>G</h1>\n<span class="n" *annotate(on: always, duration: 100ms)>N</span>\n<div class="p" *spotlight(on: always)></div>\n<div class="p2" *spotlight(on: always, every: 2s)></div>\n' + STYLE,
-  // posées dans un <style>, pour la descendance : $$spotlight-every passe avant $$fx-every pour *spotlight
-  'cad-spot': '<div class="p" *spotlight(on: always)></div>\n<button class="s" *shine(on: always)>S</button>\n<style>\n:host\n  display: block\n  $$fx-every: 700ms\n  $$spotlight-every: 900ms\n.p\n  position: relative\n  width: 200px\n  height: 30px\n</style>\n',
+  // $$mjs-fx-every dans le <theme> : elle règle les quatre effets qui se répètent, sans allumer l'éclat de *spotlight ; écrit sur la balise, `every` l'emporte
+  'cad-theme': '<theme>\n  $$mjs-fx-every: 600ms\n</theme>\n<button class="s" *shine(on: always)>S</button>\n<button class="s2" *shine(on: always, every: 2s)>S</button>\n<button class="a" *attention(on: always, duration: 100ms)>A</button>\n<h1 class="g" *glitch(burst: 50ms)>G</h1>\n<span class="n" *annotate(on: always, duration: 100ms)>N</span>\n<div class="p" *spotlight(on: always)></div>\n<div class="p2" *spotlight(on: always, every: 2s)></div>\n' + STYLE,
+  // posées dans un <style>, pour la descendance : $$spotlight-every passe avant $$mjs-fx-every pour *spotlight
+  'cad-spot': '<div class="p" *spotlight(on: always)></div>\n<button class="s" *shine(on: always)>S</button>\n<style>\n:host\n  display: block\n  $$mjs-fx-every: 700ms\n  $$spotlight-every: 900ms\n.p\n  position: relative\n  width: 200px\n  height: 30px\n</style>\n',
   // $$spotlight-every seule, dans le <theme> : elle allume l'éclat de *spotlight, à sa durée
   'cad-seule': '<theme>\n  $$spotlight-every: 800ms\n</theme>\n<div class="p" *spotlight(on: always)></div>\n' + STYLE,
   // sans variable : le défaut de chaque effet
@@ -134,7 +134,7 @@ describe('effets — la cadence commune des effets qui se répètent, dans un vr
     assert.deepEqual(erreurs, [])
   })
 
-  it('$$fx-every posée dans un <theme> règle les quatre effets qui se répètent, sans allumer l\'éclat de *spotlight ; `every` écrit sur la balise l\'emporte', async () => {
+  it('$$mjs-fx-every posée dans un <theme> règle les quatre effets qui se répètent, sans allumer l\'éclat de *spotlight ; `every` écrit sur la balise l\'emporte', async () => {
     const vus: [string, number][] = await page.evaluate('window.__vus')
     cale(vus, 'theme.s', 600, 3)
     cale(vus, 'theme.g', 600, 3)
@@ -142,11 +142,11 @@ describe('effets — la cadence commune des effets qui se répètent, dans un vr
     cale(vus, 'theme.a', 700, 3)
     cale(vus, 'theme.n', 700, 3)
     assert.ok(instants(vus, 'theme.s2').length <= 2, `every: 2s écrit : au plus deux passages, vus ${instants(vus, 'theme.s2').length}`)
-    assert.equal((await eclat('mjs-cad-theme', 'p')).nom, 'none', '*spotlight sans every : $$fx-every n\'allume pas l\'éclat')
+    assert.equal((await eclat('mjs-cad-theme', 'p')).nom, 'none', '*spotlight sans every : $$mjs-fx-every n\'allume pas l\'éclat')
     assert.deepEqual(await eclat('mjs-cad-theme', 'p2'), { nom: 'mjs-fx-spot-flash', duree: '2s' }, '*spotlight(every: 2s) : la balise l\'emporte')
   })
 
-  it('posées dans un <style> : $$fx-every vaut pour la descendance, $$spotlight-every passe avant elle pour *spotlight', async () => {
+  it('posées dans un <style> : $$mjs-fx-every vaut pour la descendance, $$spotlight-every passe avant elle pour *spotlight', async () => {
     const vus: [string, number][] = await page.evaluate('window.__vus')
     cale(vus, 'spot.s', 700, 3)
     assert.deepEqual(await eclat('mjs-cad-spot', 'p'), { nom: 'mjs-fx-spot-flash', duree: '0.9s' })

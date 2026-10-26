@@ -60,7 +60,7 @@
         return false;
       }
       sessionStorage.setItem('mjs-stale-reload', flagVal);
-    } catch (e) {
+    } catch {
       return false;
     }
     µ.warn('[Autoloader] ' + µ._mjs_txt('autoloaderStale', { fileName: fileName }, 'bundle périmé : \'{fileName}\' introuvable — rechargement de la page (une seule fois par build).'));

@@ -4,8 +4,7 @@
 // console, jamais bloquant, jamais une erreur de build).
 //
 // RÈGLE ZÉRO — avant toute analyse, les zones <pre>…</pre> et <code>…</code>
-// (exemples de code montrés dans une doc) sont neutralisées : même motif que
-// STYLE_INERT_RE (transpiler/sections.ts) — remplacées par des espaces de même
+// (exemples de code montrés dans une doc) sont neutralisées — remplacées par des espaces de même
 // longueur, `\n` préservés, pour que les numéros de ligne restent justes. Sans
 // ça, un site de documentation qui MONTRE du HTML dans ses exemples reçoit des
 // dizaines d'alertes fausses — exactement ce qui fait désactiver un contrôle le

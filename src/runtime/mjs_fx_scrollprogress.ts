@@ -79,7 +79,7 @@
     try {
       sup = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('animation-timeline', 'scroll()');
     }
-    catch (e) {}
+    catch {}
     // la ligne de temps du navigateur remonte jusqu'à la page quand la balise ne défile pas : elle ne
     // vaut que pour la page ou une balise qui défile, et sans lissage ; le reste passe par la variable
     var rolls    = page || (typeof getComputedStyle === 'function' && /auto|scroll|hidden/.test(getComputedStyle(el).overflowY));

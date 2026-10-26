@@ -287,8 +287,8 @@ describe('*parallax(smooth) — l\'élan', () => {
   })
 
   it('une cible qui n\'est pas un nombre n\'entretient pas la boucle', () => {
-    const b  = banc()
-    const el = b.poser({ origin: 'page', smooth: 0.5, speed: 'vite' })
+    const b = banc()
+    b.poser({ origin: 'page', smooth: 0.5, speed: 'vite' })
     b.defile(300)
     b.image()
     assert.equal(b.attente(), 0, 'NaN compte comme atteinte : rien ne tourne')

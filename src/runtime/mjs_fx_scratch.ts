@@ -48,7 +48,7 @@
       try {
         return c.getContext('2d', opts) || null;
       }
-      catch (e) {
+      catch {
         return null;
       }
     };
@@ -63,7 +63,7 @@
           probe.addColorStop(0, colors[c]);
           good.push(colors[c]);
         }
-        catch (e) {
+        catch {
           bad.push(String(colors[c]));
         }
       }
@@ -232,7 +232,7 @@
       try {
         cv.setPointerCapture(e.pointerId);
       }
-      catch (x) {}
+      catch {}
       dab(last, last);
       e.preventDefault();
     };

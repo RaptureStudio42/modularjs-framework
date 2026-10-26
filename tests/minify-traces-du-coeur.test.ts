@@ -124,13 +124,23 @@ describe('minifyJs — texte du runtime, niveau qui coupe `log`', () => {
     assert.ok(!code.includes('trace-xyz'), code)
   })
 
-  it('µ.warn et µ.error restent aussi aux niveaux error et silent : seul `console` s\'y retire', async () => {
+  it('niveaux error et silent : µ.warn part avec ses arguments, µ.error reste (le journal des erreurs peut le lire), `console` s\'y retire', async () => {
     const source = 'var µ = { warn: function(m) { globalThis.__written.push(m) }, error: function(m) { globalThis.__written.push(m) } }\nµ.warn(\'avertissement-xyz\')\nµ.error(\'erreur-xyz\')\nconsole.warn(\'console-xyz\')'
     for (const level of ['error', 'silent']) {
       const { code, written } = await exec(source, CORE(level))
-      assert.deepEqual(written, ['avertissement-xyz', 'erreur-xyz'], level)
+      assert.deepEqual(written, ['erreur-xyz'], level)
+      assert.ok(!code.includes('avertissement-xyz'), level)
       assert.ok(!code.includes('console-xyz'), level)
     }
+  })
+
+  it('niveau silent, cœur sans le journal des erreurs : µ.error part aussi', async () => {
+    const source = 'var µ = { warn: function(m) { globalThis.__written.push(m) }, error: function(m) { globalThis.__written.push(m) } }\nµ.warn(\'avertissement-xyz\')\nµ.error(\'erreur-xyz\')'
+    const { code, written } = await exec(source, { ...CORE('silent'), journal: false })
+    assert.deepEqual(written, [])
+    assert.ok(!code.includes('erreur-xyz') && !code.includes('avertissement-xyz'), code)
+    const garde = await exec(source, { ...CORE('error'), journal: false })
+    assert.deepEqual(garde.written, ['erreur-xyz'], 'au niveau error, l\'erreur reste, journal ou non')
   })
 
   it('niveau log : rien ne part, la trace s\'écrit, arguments évalués', async () => {

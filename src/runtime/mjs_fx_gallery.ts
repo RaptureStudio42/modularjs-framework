@@ -533,7 +533,7 @@ var _MJS_GALLERY = {
           try {
             µ._mjs_dom.setPointerCapture(el, e.pointerId);
           }
-          catch (x) {}
+          catch {}
           µ._mjs_dom.setAttribute(el, 'mjs-fx-gallery-drag', '');
           setMoving(true);
         }
@@ -571,7 +571,7 @@ var _MJS_GALLERY = {
         try {
           µ._mjs_dom.releasePointerCapture(el, e.pointerId);
         }
-        catch (x) {}
+        catch {}
         swallowOn();
         if (e.timeStamp - drag.t > 80 || calm) vel = 0;
         // l'élan : sans `snap` il s'éteint de lui-même (× 0,95 par image), avec `snap` le ressort le prend et

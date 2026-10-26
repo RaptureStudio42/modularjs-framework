@@ -6,7 +6,7 @@
 //   - box (un composant, une image, un champ… dont le texte n'est pas le sien) : la balise elle-même
 //     tremble, se dédouble en couleurs, et deux bandes colorées la balaient.
 // Réglages : every (entre deux salves, calées sur l'horloge commune des effets qui se répètent, `0` = sans
-// arrêt ; sans lui, la variable de thème `$$fx-every`, sinon 5s), on (always : les salves se suivent ;
+// arrêt ; sans lui, la variable de thème `$$mjs-fx-every`, sinon 5s), on (always : les salves se suivent ;
 // hover : pendant le survol ; view : tant que la balise est à l'écran ; click : une salve par clic ;
 // load : une salve à l'apparition), burst (durée d'une salve ; 1.5s), strength (amplitude en px ;
 // 4), color, color2 (les deux calques), glow (le halo), mode (text, box).

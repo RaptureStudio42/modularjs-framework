@@ -187,8 +187,10 @@ export function transformReactiveWritesMapped(js: string): PassResult {
           (p: any) => p.key && p.key.name === 'f'
         )
         if (fnNode) {
+          // `_mjs_s` (analyseur) : toutes ses lectures sont connues, seule l'écriture d'une variable de sa fermeture la périme
+          const sure = (node.right as any).properties.some((p: any) => p.key && (p.key.name === '_mjs_s' || p.key.value === '_mjs_s'))
           ms.overwrite(node.start, fnNode.value.start, `µ._mjs_setComputed(_mjsThis, '${varName}', `)
-          ms.overwrite(fnNode.value.end, node.end, ')')
+          ms.overwrite(fnNode.value.end, node.end, sure ? ', 1)' : ')')
           changed = true
           return
         }

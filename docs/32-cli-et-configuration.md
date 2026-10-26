@@ -38,7 +38,7 @@ Le `mjs.config.json` écrit est celui-ci, mot pour mot :
 }
 ```
 
-> **Développement ou production ?** C'est la **commande** qui tranche, pas le fichier : `mjs build` construit en développement, `mjs build --prod` en production. `minify` ne fait que minifier : un projet peut vouloir un bundle compact **en développement** sans perdre pour autant le panneau d'inspection ni les cartes de source.
+> **Développement ou production ?** C'est la **commande** qui tranche, pas le fichier : `mjs build` construit en développement, `mjs build --prod` en production. `minify` ne fait que minifier : un projet peut vouloir un bundle compact **en développement** sans rien perdre pour autant — le panneau d'inspection, les cartes de source, `µ.debug` et tout ce que la console écrit (`µ.log`, `µinspect`, les avertissements) restent comme sans minification.
 
 `mjs init` n'écrase **jamais** un fichier ou un dossier déjà présent : elle le saute et l'annonce (« ↪️ … (existe déjà) ») plutôt que d'écrire par-dessus. En fin de commande, elle affiche les prochaines étapes telles quelles :
 
@@ -125,8 +125,8 @@ Le rendu piloté par la config (`render`, SSR, prérendu) est détaillé au chap
 | `--host <adresse>` | hôte d'écoute — `mjs ws`/`mjs serveur` (défaut `127.0.0.1`, `--host ::` pour toutes les interfaces) |
 | `--port <n>` | port du serveur — `mjs dev` (3939), `mjs serve` (3000), `mjs ws` (4000), `mjs serveur` (4001) |
 | `--once` | force la commande sur `build` (compile et sort) |
-| `--dev` | build de **développement** — panneau d'inspection embarqué, pas de minification, cartes de source (c'est le défaut) |
-| `--prod` | build de **production** — minifié, fragments i18n hachés, aucun outil de développement |
+| `--dev` | build de **développement** — panneau d'inspection embarqué, non minifié (sauf `"minify": true`), cartes de source (c'est le défaut) |
+| `--prod` | build de **production** — minifié (sauf `"minify": false`), fragments i18n hachés, aucun outil de développement |
 | `-v`, `--version` | affiche la version du paquet mjs (`mjs <version>`) et sort — répond depuis n'importe quel dossier, sans config ni projet |
 | `-h`, `--help` | affiche l'aide et sort |
 
@@ -134,7 +134,7 @@ Le rendu piloté par la config (`render`, SSR, prérendu) est détaillé au chap
 
 ### Sur ma machine, en développement ; sur le serveur, en production
 
-**Un build est en développement, sauf si on demande le contraire.** Non minifié, panneau d'inspection embarqué, cartes de source, fragments i18n aux noms lisibles : c'est ce qu'on veut sur son poste, et c'est ce qu'on obtient sans rien configurer.
+**Un build est en développement, sauf si on demande le contraire.** Non minifié, panneau d'inspection embarqué, cartes de source, fragments i18n aux noms lisibles : c'est ce qu'on veut sur son poste, et c'est ce qu'on obtient sans rien configurer. Avec `"minify": true`, le fichier est minifié, et rien d'autre ne change.
 
 Le **serveur**, lui, ne se devine pas. Le framework ne regarde ni le nom d'hôte, ni le port, ni l'adresse, ni aucune variable d'environnement : `mjs build` lancé par un script de déploiement sur un shell non interactif produit exactement ce qu'il produit sur un portable. **C'est au script de déploiement de le dire**, et il n'y a qu'une façon :
 
@@ -144,7 +144,7 @@ mjs build --prod
 
 Une seule ligne, dans un seul fichier — celui qui déploie. Rien de versionné ne peut se tromper de machine, et aucune variable héritée d'un shell ne peut basculer un build sans qu'on l'ait demandé.
 
-> ⚠️ Sans `--prod`, le déploiement pousse un build de développement en ligne : bundle non minifié, `window.µ` exposé, panneau d'inspection livré aux visiteurs, et **fragments i18n non hachés** — donc servis depuis le cache des navigateurs après une correction de traduction. Le bandeau imprimé par `mjs build` (« 🛠️ Build de DÉVELOPPEMENT… ») l'écrit noir sur blanc dans le journal de déploiement : c'est la ligne à relire en cas de doute.
+> ⚠️ Sans `--prod`, le déploiement pousse un build de développement en ligne : bundle non minifié (minifié avec `"minify": true`, le reste ne change pas), `window.µ` exposé, panneau d'inspection livré aux visiteurs, et **fragments i18n non hachés** — donc servis depuis le cache des navigateurs après une correction de traduction. Le bandeau imprimé par `mjs build` (« 🛠️ Build de DÉVELOPPEMENT… ») l'écrit noir sur blanc dans le journal de déploiement : c'est la ligne à relire en cas de doute.
 
 Cette indifférence à l'environnement ne vaut que pour le CHOIX DU BUILD (minification, panneau d'inspection embarqué) — la garde des routes de développement, décrite juste en dessous, accepte elle aussi `NODE_ENV=production` comme signal, en plus de `--prod`.
 
@@ -163,7 +163,7 @@ Toutes les clés sont optionnelles ; les chemins qu'elles contiennent sont réso
 | `urlPrefix` | chaîne | dérivé de `outputDir` — détail plus bas | préfixe URL public des fichiers émis |
 | `defaultScriptLang` | `'civet'` \| `'coffee'` \| `'ts'` \| `'js'` | `civet` | langage par défaut des `<script>` sans `lang=` |
 | `languages` | objet `{ script?, template? }` | aucun propre — `script` retombe sur `defaultScriptLang`, `template` sur `civet` | forme à deux axes qui remplace progressivement `defaultScriptLang` — [2 · Anatomie d'un composant](02-composant.md) |
-| `minify` | booléen \| `'auto'` | `auto` | minification **seule** : `auto` suit le mode du build, `true` minifie même en développement, `false` ne minifie jamais — même en production. Ne décide pas de l'environnement : ça, c'est `--prod` |
+| `minify` | booléen \| `'auto'` | `auto` | minification **seule** : `auto` suit le mode du build, `true` minifie même en développement (noms et espaces raccourcis, rien de retiré : les outils de débogage et la console restent), `false` ne minifie jamais — même en production. Ne décide pas de l'environnement : ça, c'est `--prod`. Le bandeau de `mjs build` dit si le fichier est minifié |
 | `dev` | objet `{ port?, host?, allowedHosts? }` | aucun propre — `port` : 3939 en `mjs dev`, 3000 en `mjs serve` ; `host` : `127.0.0.1` | port/hôte du serveur de développement ; un `host` vide est refusé (le serveur écouterait sur toutes les adresses de la machine) ; `allowedHosts` : noms d'hôte acceptés en plus des siens dans l'en-tête `Host` (liste, `.domaine` pour ce domaine et ses sous-domaines, ou `true` pour tous) ; une page dont l'origine diffère de `Host` (derrière un tunnel qui le réécrit) n'est admise que par son nom exact — ni `.domaine` ni `true` n'ouvrent une origine, cf. « `mjs dev` ne répond qu'à ses propres noms » et « Un tunnel ou un proxy s'ouvre par `dev.allowedHosts` » |
 | `stylesheetsDir` | chaîne | `app/modularjs/styles` | dossier des feuilles de style partagées — détail plus bas |
 | `assetDirs` | liste de chaînes | aucune | dossiers d'images **en plus** de `sourceDir` : `µimage`, `µasset` et `<@@img>` y cherchent une image que `sourceDir` ne porte pas — détail plus bas |
@@ -192,7 +192,7 @@ Toutes les clés sont optionnelles ; les chemins qu'elles contiennent sont réso
 | `sourceMap` | `'never'` \| `'dev'` \| `'prod'` \| `'always'` | `dev` | quand émettre les cartes de source, qui font retomber un point d'arrêt sur la ligne du `.mjs` — cf. `sourceMap` plus bas |
 | `prune` | booléen | `true` | après un `mjs build` sans erreur, retire d'`outputDir` les fichiers qu'un build a écrits et qu'aucun ne produit plus (composant renommé ou supprimé), jamais un fichier à vous — cf. `prune` plus bas |
 | `bundles` | objet `{ "<nom>": ["<composant racine>", …] }` ou `{ "<nom>": { "roots": [...], "except": [...] } }` | aucun groupe | rassemble des composants, en production, en un seul fichier par groupe — cf. `bundles` plus bas |
-| `logLevel` | chaîne \| objet `{ dev?, prod? }` | dev `log`, prod `warn` | niveau de la console — navigateur ET sortie du build, réglés ensemble — cf. `logLevel` plus bas |
+| `logLevel` | chaîne \| objet `{ dev?, prod? }` | dev `log`, prod `error` | niveau de la console — navigateur ET build, réglés ensemble (côté build : ce que le minifieur retire du bundle et les avertissements de construction du terminal, pas les lignes écrites à la lecture de la configuration ou à la compilation d'un composant) — cf. `logLevel` plus bas |
 | `messages` | `'demand'` \| `'idle'` | `demand` | quand télécharger, en production, le fichier des messages du framework : `demand` = au premier message écrit, `idle` = d'avance, page au repos — [29 · i18n](29-i18n.md) § *Messages de la console en production* |
 
 Quelques clés méritent un mot de plus.
@@ -284,6 +284,7 @@ Trois gravités, visibles à la couleur du terminal :
 | `legacy` | avertissement | forme retirée ou dépréciée — `@onUrlChange = ->` (remplacé par la rune `µurlChange`), source CoffeeScript, variable de thème d'un effet fondu dans un autre (`$$shimmer-color` → `$$shine-ink`, cf. [38 · Effets](38-effets.md)) |
 | `config` | avertissement | réglage de `mjs.config.json` accepté mais sans effet ou risqué — hôte interne dans `render.forwardOrigin.trustedHosts`, `light` sur une route `csr` |
 | `emptyComponent` | avertissement | un composant sans HTML (script ou style seuls, ou un commentaire) : il ne rend rien — `"error"` en fait une erreur de build |
+| `unreachable` | avertissement | du code qui suit, dans le même bloc, un `return`, un `throw`, un `break` ou un `continue` : il ne s'exécutera jamais, et la construction de production le retire sans le dire. La ligne citée est celle du fichier source — `<script>`, `<script module>`, gestionnaire en ligne, module `.civet` ou `.coffee` importé. Ne sont pas lus : un `<script lang="js">` et les gestionnaires de `<@window>` et de `<@document>`. Une fonction déclarée plus bas (`function nom()`, remontée en tête) et la suite d'un autre bloc (`return if …`, puis le reste) ne sont pas signalées |
 
 Exemple — un projet qui a des variables de thème partagées entre plusieurs composants, en connaissance de cause, et qui n'a plus besoin du rappel :
 
@@ -563,7 +564,7 @@ Ce que coûte `bundle` : un composant partagé par plusieurs pages est télécha
 
 ### `logLevel`
 
-Le niveau de la console — **côté navigateur** (`µ.log`/`µ.warn`/`µ.error`) et **côté build** (ce que le minifieur retire du bundle, les avertissements du terminal) — réglé par la MÊME clé, du plus bavard au plus muet :
+Le niveau de la console — **côté navigateur** (`µ.log`/`µ.warn`/`µ.error`) et **côté build** (ce que le minifieur retire du bundle, et les avertissements de construction du terminal, pas les lignes écrites à la lecture de la configuration ou à la compilation d'un composant) — réglé par la MÊME clé, du plus bavard au plus muet :
 
 | Niveau | Montre |
 |---|---|
@@ -578,7 +579,7 @@ Une chaîne (`"logLevel": "warn"`) pose le MÊME niveau dans les deux environnem
 { "logLevel": { "dev": "log", "prod": "error" } }
 ```
 
-Défauts : `dev` → `'log'` (tout, pendant qu'on développe), `prod` → `'warn'` (avertissements et erreurs, silence sur les traces). Le niveau de PRODUCTION gouverne aussi ce que le minifieur retire du bundle : au-dessus de `'log'`, les traces du framework (`µ.log`) ne sont pas envoyées, ni l'appel ni le texte qu'il aurait écrit. Détail complet, et l'échappatoire `µ.debug` : [34 · Déboguer](34-deboguer.md).
+Défauts : `dev` → `'log'` (tout, pendant qu'on développe), `prod` → `'error'` (les erreurs seules : les avertissements du framework ne s'écrivent plus ; dans un build minifié, ils sortent aussi du fichier construit, sauf ceux des modules cœur). Le niveau de PRODUCTION gouverne aussi ce que le minifieur retire du bundle de production (un build de développement minifié n'en retire rien, un build de production non minifié non plus) : au-dessus de `'log'`, les traces du framework (`µ.log`) ne sont pas envoyées, ni l'appel ni le texte qu'il aurait écrit ; aux niveaux `'error'` et `'silent'`, ses avertissements (`µ.warn`) non plus ; au niveau `'silent'`, ses erreurs (`µ.error`) non plus, sauf quand le journal des erreurs est embarqué. Les modules cœur (`<@@number>`, `<@@select>`…) gardent leurs avertissements et leurs erreurs, avec leurs textes : le niveau les rend muets à l'exécution, sans les retirer. Pour garder les avertissements en production : `{ "logLevel": { "prod": "warn" } }`. Le terminal de `mjs build`, `mjs dev` et `mjs check` suit le niveau de l'environnement du build — la production avec `--prod`, le développement sans : ses avertissements de construction s'écrivent, sauf quand la clé fixe ce niveau à `'error'` ou `'silent'`. Les lignes écrites à la lecture de la configuration ou à la compilation d'un composant (`[lint.config]`, `[lint.a11y]`…) ne lisent pas ce niveau : seul le bloc `lint` les coupe. Détail complet, et l'échappatoire `µ.debug` : [34 · Déboguer](34-deboguer.md).
 
 ## 3. Validation stricte
 

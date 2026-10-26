@@ -395,7 +395,7 @@ for (const prod of [false, true]) {
           await page.goto('http://t.test/', { waitUntil: 'load' })
           try {
             await page.waitForFunction(([t, n]: any) => { const ls = (document.querySelector(t) as any)?._shadow?.querySelectorAll('mjs-core-sortable'); return !!ls && ls.length >= n && [...ls].every((l: any) => l._shadow?.querySelector('slot')) }, [tag, opts.listes ?? 2])
-          } catch (e: any) {
+          } catch {
             throw new Error(`la page ${tag} ne démarre pas : ${erreurs.join(' | ') || 'aucune erreur de page'} / console : ${avis.join(' | ')}`)
           }
           await page.waitForTimeout(250)
@@ -647,7 +647,7 @@ for (const prod of [false, true]) {
             await page.mouse.move(l21.x, l21.y + 20, { steps: 4 })
             const m = await marques(page, tag)
             assert.equal(m.l21.etat, 'held')
-            assert.equal(Object.entries(m).filter(([id, x]) => x.etat === 'held').length, 1, 'une seule ligne tenue')
+            assert.equal(Object.entries(m).filter(([_id, x]) => x.etat === 'held').length, 1, 'une seule ligne tenue')
             assert.equal(m.m2.etat, null, 'le groupe n\'est pas saisi')
             await page.keyboard.press('Escape')
             await page.mouse.up()

@@ -1,7 +1,8 @@
 <script module>
   # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à un outil (`tool-bold`, `tool-link`…), à un groupe d'outils (`tool-icons`, `tool-glyphs`,
-  # `tool-heads`, `tool-keys` : l'inscription auprès de l'éditeur, pour son raccourci) ou au séparateur `|` (`tool-separator`) : le build de production les ôte quand aucune barre de l'application ne peut afficher l'outil, le développement et la copie dans un projet
-  # gardent tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé. `!tool-separator` est l'autre forme des lignes qui existent avec et sans séparateur
+  # `tool-heads`, `tool-keys` : l'inscription auprès de l'éditeur, pour son raccourci) ou au séparateur `|` (`tool-separator`) : la construction les ôte quand aucune barre de l'application ne peut afficher l'outil, en développement comme en production ; la copie dans un projet
+  # garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé. `!tool-separator` est l'autre forme des lignes qui existent avec et sans séparateur ;
+  # `dev tool-script` l'avertissement du développement quand une barre reçoit d'un script un outil que la construction a ôté (écrit en commentaire, réveillé quand la construction tranche les outils)
   # chaque outil : le glyphe ou le dessin du bouton, son raccourci (Mod = Ctrl ou ⌘), s'il est un interrupteur
   # (aria-pressed) et la clé du libellé ; l'ordre de ALL dit l'ordre par défaut, `|` pose un séparateur
   ICON = {
@@ -44,10 +45,20 @@
 
   known = (n)-> Object.prototype.hasOwnProperty.call(TOOLS, n)
 
-  # un nom d'outil inconnu (une faute de frappe, un mot qui n'est pas anglais) est ignoré ; l'avertissement part une fois par nom
+  # un nom d'outil inconnu (une faute de frappe, un mot qui n'est pas anglais) est ignoré ; l'avertissement part une fois par nom. Un nom de ALL qui manque à TOOLS n'est pas une
+  # faute de frappe : la construction a ôté cet outil (aucune barre des pages de l'application ne le nomme) et une barre le reçoit d'un script. Il ne se dit pas inconnu :
+  # le développement le signale, la production se tait, comme pour la réponse libre d'une liste (`other`)
   unknown = (n)->
     return if told.has(n)
     told.add(n)
+    if NAMES.split(' ').includes(n)
+      # @@ dev tool-script
+      # écrit en commentaire, réveillé seulement quand la construction tranche les outils : une copie du module posée dans un projet les garde tous, et ne le dit jamais
+      # @@ !tool-script
+      # µ.warn(µ._mjs_msg('dev.toolbarToolScript', { n: n }, '<@@toolbar> : une barre reçoit l\'outil « {n} » d\'un script, mais aucune page de l\'application n\'écrit cet outil — il n\'est pas envoyé, ni en développement ni en production. Écrivez « {n} » dans la liste d\'outils d\'une barre de votre page (l\'attribut toolbar d\'un éditeur, ou tools d\'une barre) plutôt que de le poser par un script.'))
+      # @@
+      # @@
+      return
     µ.warn(µ._mjs_msg('coreToolbarUnknown', { n: n, list: NAMES }, '<@@toolbar> : l\'outil « {n} » n\'existe pas, il est ignoré — outils connus : {list}.'))
 
   # la liste d'outils écrite par l'auteur (un texte de noms séparés par des blancs, ou un tableau de noms : ['bold', 'italic']) → les noms connus et les séparateurs, sans doublon ni séparateur en bordure ; sans liste écrite (une barre sans tools, ou la barre de la photo d'un éditeur, définie avant lui : elle rend une première fois avant que l'éditeur lui donne la sienne) c'est la liste par défaut, et un outil que la production a retiré n'y est pas une faute de frappe : rien n'est signalé

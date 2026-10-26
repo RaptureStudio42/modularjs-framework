@@ -6,7 +6,7 @@
 // confiné) : refusés dès avant ce correctif, tests ici en régression.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, symlinkSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'

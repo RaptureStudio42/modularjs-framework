@@ -1,5 +1,5 @@
-// La construction retire la partie « Autre » de <@@select> quand aucune liste de l'appli n'écrit `other` (production seulement) :
-// ce que le module cœur envoie dépend de ce que les pages écrivent. Le développement garde tout, une copie éjectée garde tout, et le
+// La construction retire la partie « Autre » de <@@select> quand aucune liste de l'appli n'écrit `other`, en développement comme en production :
+// ce que le module cœur envoie dépend de ce que les pages écrivent. Une copie éjectée garde tout, et le
 // module cœur en cache suit l'appli (mode veille : ajouter puis retirer `other` dans une page change le module émis).
 //
 // Statique, avec un Bundler réel et le catalogue réel du framework ; un seul test monte la liste dans happy-dom (l'avertissement du
@@ -155,10 +155,10 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
     }
   })
 
-  describe('développement : tout reste toujours', () => {
-    it('aucune liste n\'écrit `other` : tout reste, avec l\'avertissement', async () => {
+  describe('développement : la même décision que la production', () => {
+    it('aucune liste n\'écrit `other` : plus rien de « Autre », l\'avertissement est là', async () => {
       const { code } = await build('tri-dev-sans', { 'liste.mjs': liste('search') }, MODES.dev)
-      assert.deepEqual(manque(code, [...AUTRE_MINIFIE, ...AUTRE_NOMS]), [])
+      assert.deepEqual(present(code, [...AUTRE_MINIFIE, ...AUTRE_NOMS]), [])
       assert.ok(code.includes(AVIS), 'l\'avertissement du développement est là')
       assert.deepEqual(leaks(code), [])
     })
@@ -275,7 +275,8 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
         const files = readdirSync(app.outDir)
         const mine  = files.filter((f) => /^ma-liste-.*\.js$/.test(f)).map((f) => readFileSync(join(app.outDir, f), 'utf-8')).join('\n')
         assert.deepEqual(manque(mine, ['select-other-edit', 'select-other-ok', 'with-other']), [], `${mode} : la copie garde « Autre »`)
-        if (mode === 'prod') assert.deepEqual(present(coreSelect(app.outDir), AUTRE_MINIFIE), [], 'le module cœur de la même appli est trié, lui')
+        // le script de la copie nomme la balise du module (ses textes citent <@@select>) : dans le doute, le module cœur de la même appli garde « Autre »
+        assert.deepEqual(manque(coreSelect(app.outDir), ['select-other-edit', 'select-other-ok', 'with-other']), [], `${mode} : le module cœur garde « Autre », dans le doute`)
         assert.doesNotThrow(() => transformSync(mine, { format: 'esm' }), `${mode} : le code de la copie se lit`)
       }
     })

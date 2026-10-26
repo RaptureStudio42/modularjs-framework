@@ -72,6 +72,8 @@ describe('*stagger — les unités : lettre, mot, ligne, enfant, et le cache (ha
   // un réglage tenu par une variable qui change : la voie du moteur (variable CSS, puis le suivi de l'effet, ou sa relance)
   const regle = (el: any, k: string, v: any) => µ()._mjs_fxSet(el, 'stagger', { [k]: v })
   const rangs = (el: any, sel: string) => [...el.querySelectorAll(sel)].map((n: any) => Number(n.style.getPropertyValue('--mjs-fx-stagger-k')))
+  // une variable lue sur la balise sans l'espace que happy-dom 20.14 ajoute après une virgule (20.11 rend la valeur telle qu'écrite, comme un navigateur)
+  const lue   = (el: any, p: string) => el.style.getPropertyValue(p).replace(/,\s+/g, ',')
 
   it('lettre et mot se comportent comme avant : mêmes règles, mêmes marques, mêmes rangs', () => {
     const css = µ()._mjs_fxDefs.stagger.css
@@ -663,12 +665,12 @@ describe('*stagger — les unités : lettre, mot, ligne, enfant, et le cache (ha
       for (const unite of ['line', 'child']) {
         const el  = unite === 'child' ? boite(3) : texte('ab cd')
         const off = µ()._mjs_fx(null, el, 'stagger', { unit: unite, on: 'scroll' })
-        assert.equal(el.style.getPropertyValue('--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', `${unite} : sans pas écrit, une unité après l'autre`)
+        assert.equal(lue(el, '--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', `${unite} : sans pas écrit, une unité après l'autre`)
         assert.equal(el.style.getPropertyValue('--mjs-fx-stagger-ease'), 'linear')
         regle(el, 'step', '80ms')
         assert.equal(el.style.getPropertyValue('--mjs-fx-stagger-st'), '', `${unite} : le pas écrit s'applique`)
         regle(el, 'step', undefined)
-        assert.equal(el.style.getPropertyValue('--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', `${unite} : le pas effacé, le pas régulier revient`)
+        assert.equal(lue(el, '--mjs-fx-stagger-st'), 'var(--mjs-stagger-duration,500ms)', `${unite} : le pas effacé, le pas régulier revient`)
         off()
       }
     }

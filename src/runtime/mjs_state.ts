@@ -351,13 +351,12 @@ const MJS_STATE_MUTATORS = new Set(['set', 'add', 'delete', 'clear', 'setTime', 
       if (target[key] === value) {
         return true;
       }
-      var isNew = !(key in target);
       target[key] = value;
       // époque de mutation du brut (cf. mjs_element.ts, `_set`/`_mjs_wrapDeep`).
       µ._mjs_bumpEpoch(target);
       µ._mjs_notifyUniversalChange(target, key);
       // Un lecteur peut dépendre de la *structure* (énumération via `{for … in @store}`)
-      // sans lire cette clé précise. On le réveille aussi : à `isNew` (ajout/reset) ET
+      // sans lire cette clé précise. On le réveille aussi : sur une clé neuve (ajout/reset) ET
       // sur mise à jour de valeur (positions d'un stream qui bougent). No-op s'il n'y a
       // aucun abonné structure — les stores lus par clé fixe (ex. `@sock.state`) ne
       // sont jamais énumérés, donc jamais impactés.

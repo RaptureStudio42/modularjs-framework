@@ -86,7 +86,7 @@
       try {
         ctx = layer && (kind !== 'bar' || lines) ? layer.getContext('2d') : null;
       }
-      catch (e) {
+      catch {
         ctx = null;
       }
       var W      = 0;

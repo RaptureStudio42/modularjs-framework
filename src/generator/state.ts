@@ -53,6 +53,9 @@ export interface ResetOpts {
   /** noms posés sur l'instance par le <script> (`@sock = …`) — un effet en direct sans `sock` écrit
    *  prend sa connexion dans `@sock` : sans lui, erreur du build (cf. attributes/index.ts) */
   instanceProps?: string[]
+  /** build de développement : le code émis dit en plus, par mjs_debug.ts, une attache qui rend autre chose qu'une fonction et
+   *  une prop à sens unique que l'enfant écrit lui-même ; absent ou `false` (production) : rien de plus n'est émis */
+  devWarnings?: boolean
 }
 
 /** Route d'événement telle qu'émise vers le runtime (`_mjs_bindEvents`) — 3 formes :
@@ -149,6 +152,12 @@ export class CompilerState {
    * pas si elle pilote la struct → `_mjs_renderStruct` doit tourner par défaut.
    * Le runtime gère ça via un flag `_renderStructAlwaysRun`. */
   structVars: Set<string> = new Set()
+  /** Vars qui posent une prop sur un composant enfant (`<@x p={$v}>`, `p=!{$v}`, `{...$o}`, à la racine ou dans une branche) : la prop
+   * est de l'état de l'enfant, pas un attribut du DOM. Une boucle qui écrit une de ces vars la lui livre à chaque écriture, comme hors
+   * boucle : une méthode de l'enfant appelée dans la boucle lit la valeur du tour. Émises dans `_mjs_renderStructVars` avec la valeur 2
+   * (aucun bloc à redessiner), lue par la file des boucles (`_mjs_invalidate`, mjs_element.ts) ; une ligne de `{for}` passe déjà par
+   * `structVars` */
+  propVars: Set<string> = new Set()
   /** Noms que le TEMPLATE introduit lui-même : variable et index de chaque `{for}`,
    * nom d'un `{const}`, argument d'un `{then}`/`{catch}`. Sert à filtrer les vars du
    * `<script>` passées en `predeclared` au batch inline — elles DOIVENT y rester locales.
@@ -178,6 +187,8 @@ export class CompilerState {
   usesProjectEffects = false
   /** cf. ResetOpts.instanceProps */
   instanceProps: Set<string> = new Set()
+  /** cf. ResetOpts.devWarnings */
+  devWarnings = false
   /** Refs DOM `@this=!{nom}` au top-level avec une variable NUE (sans `$`,
    * donc non réactive). Le compilateur AUTO-DÉCLARE ces variables (`let nom`)
    * en tête de `init` si le script ne les déclare pas — sinon `nom = node`
@@ -225,6 +236,7 @@ export class CompilerState {
     this.mountOnlyEffectsSet = new Set()
     this.initialPropBinds = []
     this.structVars = new Set()
+    this.propVars = new Set()
     this.templateLocals = new Set()
     this.effectGuardStack = []
     this.effectTwins = new Set()
@@ -232,6 +244,7 @@ export class CompilerState {
     this.transitionsProcessed = new Set()
     this.usesProjectEffects = false
     this.instanceProps = new Set(opts.instanceProps ?? [])
+    this.devWarnings = opts.devWarnings === true
     this.refVars = new Set()
     this.hasDestroyHooks = false
   }

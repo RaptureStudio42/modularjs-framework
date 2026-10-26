@@ -12,7 +12,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripMsgFallbacks } from '../src/bundler/minify.js'
 import { RUNTIME_LABELS, runtimeLabelsFor } from '../src/runtime-labels.js'
-import { TRACE_ONLY_MESSAGES } from '../src/bundler/minify.js'
+import { TRACE_ONLY_MESSAGES, WARNING_ONLY_MESSAGES } from '../src/bundler/minify.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -348,15 +348,15 @@ describe('build de production — messages hors du manifeste', function () {
         }
       })
 
-      it('un fichier JSON haché par langue, avec les clés de la table hors les textes que seules des traces lisent', () => {
+      it('un fichier JSON haché par langue, avec les clés de la table hors les textes que seules des traces ou des avertissements lisent', () => {
         for (const lang of ['fr', 'en'] as const) {
           const noms = prod.fichiers.filter((f) => new RegExp(`^mjs_err-${lang}-[0-9a-z]{5}\\.json$`).test(f))
           assert.equal(noms.length, 1, `fichier ${lang} : ${prod.fichiers.join(', ')}`)
           const contenu = JSON.parse(readFileSync(join(prod.outDir, noms[0]), 'utf-8'))
-          // au niveau de console par défaut le build retire les traces du cœur : leur texte ne part pas non plus
-          const attendu = Object.fromEntries(Object.entries(RUNTIME_LABELS[lang].err).filter(([cle]) => !TRACE_ONLY_MESSAGES.includes(cle)))
+          // au niveau de console par défaut ('error') le build retire les traces et les avertissements du cœur : leur texte ne part pas non plus
+          const attendu = Object.fromEntries(Object.entries(RUNTIME_LABELS[lang].err).filter(([cle]) => !TRACE_ONLY_MESSAGES.includes(cle) && !WARNING_ONLY_MESSAGES.includes(cle)))
           assert.deepEqual(Object.keys(contenu).sort(), Object.keys(attendu).sort())
-          assert.equal(Object.keys(contenu).length, Object.keys(RUNTIME_LABELS.fr.err).length - TRACE_ONLY_MESSAGES.length)
+          assert.equal(Object.keys(contenu).length, Object.keys(RUNTIME_LABELS.fr.err).length - TRACE_ONLY_MESSAGES.length - WARNING_ONLY_MESSAGES.length)
           assert.deepEqual(contenu, attendu)
         }
       })

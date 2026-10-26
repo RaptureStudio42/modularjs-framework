@@ -169,9 +169,16 @@ function effetRacineLiaison(env: EnvPortee, id: string, expr: string, updateLogi
 /** Un attribut ou une prop posé dans une branche `{await}` suit ses variables : la pose se fait à la construction de la branche (par l'appelant), cet effet de la racine la
  * rejoue quand une variable lue change (cf. effetRacineLiaison). Les variables qu'un `{const}` lu par l'expression lit comptent comme les siennes, l'effet recrée ce
  * `{const}` ; sans variable réactive la pose suffit, rien ne peut changer ce qu'elle a écrit. */
-function suivreEnBranche(env: AttrCtx, id: string, code: string, updateLogic: string, vars: string[]): void {
+function suivreEnBranche(env: AttrCtx, id: string, code: string, updateLogic: string, vars: string[], prop = false): void {
   const varsEffet = [...new Set([...vars, ...varsDesConst(env, code)])]
+  if (prop) notePropVars(varsEffet)
   if (varsEffet.length > 0) registerEffect(effetRacineLiaison(env, id, code, updateLogic), varsEffet)
+}
+
+/** Vars qui posent une prop sur un composant enfant (cf. state.propVars) : la prop est de l'état de l'enfant, une boucle qui écrit ces vars
+ * la lui livre à chaque écriture, sans attendre la sortie de la boucle comme un texte */
+function notePropVars(vars: string[]): void {
+  for (const v of vars) state.propVars.add(v)
 }
 
 /** Ce qui dit que la branche qui porte la liaison est bien celle que le bloc `{await}` affiche (`_mjs_awaitLastRender`, que le runtime passe à la branche affichée avant de la
@@ -337,6 +344,39 @@ function propName(name: string): string {
 
 const isComponent = (node: Node): boolean => (node.name ?? '').startsWith('mjs-')
 
+// ancienne écriture d'une transition (`@in.fly={…}`) : le nom d'une animation après la directive
+const ANCIENNE_TRANSITION = /^@(transition|in|out)\.([A-Za-z_]\w*)/
+
+// directives écrites en `@…` que le répartiteur (dispatchAttribute) traite, selon le nom et la valeur brute : un `@…`
+// qu'aucune ne prend est un gestionnaire d'événement (son repli, `eventListener`), les événements des transitions
+// (`@introstart`…) compris. La seule liste : le répartiteur la suit, la règle de l'avertissement « écrit sa prop » la relit
+const DIRECTIVES: Record<string, (nom: string, val: string) => boolean> = {
+  groupe:     (nom, val) => /^@group(\.[a-z]+)?$/.test(nom) && /^!\{(.+)\}$/.test(val),
+  contenu:    (nom, val) => (nom === '@html' || nom === '@text') && /^!\{(.+)\}$/.test(val),
+  ceci:       (nom, val) => nom === '@this' && /^!?\{(.+)\}$/.test(val),
+  style:      (nom) => nom.startsWith('@style.'),
+  classe:     (nom) => nom.startsWith('@class{'),
+  flip:       (nom) => nom === '@flip',
+  attache:    (nom) => nom === '@attach' || nom.startsWith('@attach.'),
+  enfants:    (nom) => nom === '@childtransition',
+  lumiere:    (nom) => nom === '@lightDom',
+  ancienne:   (nom) => { const v = ANCIENNE_TRANSITION.exec(nom); return !!v && v[2] !== 'global' && v[2] !== 'shared' },
+  transition: (nom) => /^@(?:transition|in|out)(?:\.(?:global|shared))*$/.test(nom),
+  emission:   (nom) => nom.startsWith('@emit.'),
+  booleen:    (nom) => MJS_BOOLEAN_PROPS.includes(nom.slice(1)),
+}
+
+// une balise qui porte un gestionnaire d'événement qui exécute du code (`@change={…}`, `@ferme={…}`, `@introstart={…}`) donne au parent un canal
+// pour suivre ce que l'enfant écrit : en développement, sa prop à sens unique écrite par l'enfant n'est pas dite (mjs_debug.ts). Une directive (cf.
+// DIRECTIVES) n'en est pas un, ni une valeur à deux sens (`!{…}`), ni un `@…` écrit sans valeur, qui n'exécute rien (`@persist` : le
+// répartiteur reçoit `->`, compile.ts). `val` : la valeur brute qu'il reçoit, `code` celle que le gestionnaire exécuterait
+const porteUnEcouteur = (node: Node): boolean => (node.attrs ?? []).some((a) => {
+  const nom  = a.name ?? ''
+  const val  = (a.val ?? '').toString()
+  const code = a.type === 'dynamic' ? a.expr : val === 'true' ? '' : val
+  return nom.startsWith('@') && !!code && !val.startsWith('!') && !Object.values(DIRECTIVES).some((d) => d(nom, val))
+})
+
 // la même règle pour une clé connue à l'exécution seulement (donnée étalée `{...p}`)
 const SPREAD_KEY = "_mjs_k.indexOf('-') < 0 || /^(?:data|aria|mjs)-/i.test(_mjs_k) ? _mjs_k : _mjs_k.toLowerCase().replace(/-([a-z])/g, (_mjs_m) => _mjs_m[1].toUpperCase())"
 
@@ -374,7 +414,10 @@ function spread(env: AttrCtx): AttrResult {
   const keyDecl     = isComponent(env.node) ? `const _mjs_p = ${SPREAD_KEY}; ` : ''
   const setKey      = isComponent(env.node) ? '_mjs_p' : '_mjs_k'
   const pendKey     = isComponent(env.node) ? `${FOREIGN_TAG} ? _mjs_k : _mjs_p` : '_mjs_k'
-  const updateLogic = `${keyDecl}if (_mjs_node._set) { _mjs_node._set(${setKey}, _mjs_v); } else { µ._mjs_pend(_mjs_node, ${pendKey}, _mjs_v); }`
+  // développement : chaque clé livrée à un composant est une prop à sens unique, que l'enfant ne devrait pas écrire lui-même (mjs_debug.ts le dit),
+  // sauf quand la balise porte un gestionnaire d'événement : le parent suit alors par l'événement
+  const recue       = state.devWarnings && isComponent(env.node) && !porteUnEcouteur(env.node) ? ' µ._mjs_oneWay?.(_mjs_node, _mjs_p);' : ''
+  const updateLogic = `${keyDecl}if (_mjs_node._set) { _mjs_node._set(${setKey}, _mjs_v); } else { µ._mjs_pend(_mjs_node, ${pendKey}, _mjs_v); }${recue}`
   // balise native : chaque clé s'écrit comme un attribut calculé (`µ._mjs_updAttrNode` : retrait sur false, null et undefined, filtre des
   // adresses). Chaque étalement de la balise garde les clés et les valeurs qu'il pose (`_mjs_spk`, par son rang parmi les attributs) : une clé
   // posée par plusieurs étalements prend la valeur du dernier qui la pose, comme à la première pose, même quand un étalement plus haut change ;
@@ -408,6 +451,7 @@ function spread(env: AttrCtx): AttrResult {
     // boucle ou var nommé `o`) émettrait `const o = o` → ReferenceError TDZ au
     // mount.
     pushUpdate(env, etaler(`this._mjs_nodes.${id}`, jsVar), vars)
+    if (isWc) notePropVars(vars)
   } else if (env.ctx.type === 'for') {
     env.ctx.updates.push(etaler(`__nodes['${env.lid}']`, jsVar))
     // var externe partagée lue par la row (`{...$pkg}`) : sans
@@ -431,6 +475,7 @@ function spread(env: AttrCtx): AttrResult {
     // un `{const}` lu par l'étalement est recréé par l'effet : l'effet suit donc aussi les variables que ce `{const}` lit
     const spreadLogic = etaler(null, jsVar)
     const varsEffet   = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
+    if (isWc) notePropVars(varsEffet)
     registerEffect(effetRacineLiaison(env, id, jsVar, spreadLogic), varsEffet)
   }
 
@@ -451,6 +496,9 @@ function dynamic(env: AttrCtx): AttrResult {
   const prop = isComponent(env.node) ? propName(attrName) : attrName
   // en attente : une balise que le manifeste dit tierce reçoit le nom écrit, que son auteur lit tel quel
   const pendProp = prop === attrName ? `'${attrName}'` : `${FOREIGN_TAG} ? '${attrName}' : '${prop}'`
+  // développement : la prop est livrée à sens unique, l'écriture que l'enfant en ferait lui-même sera dite (mjs_debug.ts), sauf quand la balise
+  // porte un gestionnaire d'événement : le parent suit alors par l'événement
+  const recue = state.devWarnings && isComponent(env.node) && !porteUnEcouteur(env.node) ? ` µ._mjs_oneWay?.(_mjs_node, '${prop}');` : ''
   // nom (et espace de noms) que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr) ; un composant garde le nom écrit, qui est celui d'une prop
   const adj = isWc ? { name: attrName, ns: null } : adjustedAttr(env, attrName)
   const nom = adj.name
@@ -469,19 +517,20 @@ function dynamic(env: AttrCtx): AttrResult {
       // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
       const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
         ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
       code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     } else {
       code = ecrireAttrRacine('this', id, adj, jsVar)
     }
     pushUpdate(env, code, vars)
+    if (isWc) notePropVars(vars)
     if (!isWc && !(sansTemoin && env.ctx.enBloc)) attrStr += ` ${nom}=''`
   } else if (env.ctx.type === 'for') {
     if (isWc) {
       // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
       const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
         ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
       env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     } else {
       // Filtered dispatch pour les attributs dynamiques génériques
@@ -586,10 +635,10 @@ function dynamic(env: AttrCtx): AttrResult {
       // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
       const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
         ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
       env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
       // la prop suit ses variables : effet de la racine, comme à la racine (la pose ci-dessus la vaut à la construction de la branche)
-      suivreEnBranche(env, id, jsVar, updateLogic, vars)
+      suivreEnBranche(env, id, jsVar, updateLogic, vars, true)
     } else {
       attrStr += ` ${attrName}='\${${jsVar}}'`
       // l'attribut aussi : la valeur posée à la construction est réécrite par `µ._mjs_updAttrNode` (filtre des adresses, nom et espace de noms du gabarit) quand une variable lue change
@@ -1594,7 +1643,7 @@ function bindingGroup(env: AttrCtx): AttrResult {
 
 // ============================================================================
 // BindingThis — port de attributes/binding_this.rb
-// @this=!{$ref} ou @this={$ref} → assigne le DOM node à la variable
+// @this=!{ref} → assigne le DOM node à la variable (`@this={ref}`, sans `!`, est refusé par dispatchAttribute)
 // ============================================================================
 function bindingThis(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!?\{(.+)\}$/)
@@ -1714,6 +1763,7 @@ function bindingComponent(env: AttrCtx): AttrResult {
   if (env.ctx.type === 'root') {
     const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     pushUpdate(env, code, vars)
+    notePropVars(vars)
     // rejoué SYNCHRONEMENT dans `init()` (state.initialPropBinds,
     // cf. sa déclaration) : même code, idempotent (garde `!==` déjà dedans).
     state.initialPropBinds.push(code)
@@ -1738,7 +1788,9 @@ function bindingComponent(env: AttrCtx): AttrResult {
     env.ctx.updates.push(initCode)
     const reactiveCode = effetRacineLiaison(env, id, jsVar, updateLogic)
     // l'effet recrée les `{const}` que la liaison lit : il suit aussi les variables que ces `{const}` lisent
-    registerEffect(reactiveCode, [...new Set([...vars, ...varsDesConst(env, jsVar)])])
+    const varsEffet = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
+    notePropVars(varsEffet)
+    registerEffect(reactiveCode, varsEffet)
   }
 
   const idx = state.inlines.length
@@ -3046,7 +3098,9 @@ function bindingAttach(env: AttrCtx): AttrResult {
 
   // `_mjs_att` : connexion du composant (`_mjs_ae`, avancé à chaque déconnexion) où la balise a reçu
   // son attache ; remis à zéro quand son nettoyage tourne (mjs_destroy_hooks.ts)
-  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); }`
+  // développement : une valeur rendue qui n'est ni une fonction ni rien (le nombre de `requestAnimationFrame`, un objet) est ignorée, mjs_debug.ts le dit
+  const nonFonction = state.devWarnings ? ` else if (_mjs_clean != null) µ._mjs_attachNotFn?.(this, _node, _mjs_clean, ${env.node.line ?? 0});` : ''
+  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); }${nonFonction}`
   // rendu qui repasse sans rien changer pour l'attache : la balise déjà attachée ne se rejoue pas.
   // Exception, une lecture qu'aucun effet ne suit (paramètre de route `&x`, `µurl`…) : seul le
   // rendu complet de la navigation la rattrape, l'attache garde alors le rejeu à chaque rendu ; le code seul
@@ -3352,12 +3406,12 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   // @group avec !{…}
-  if (/^@group(\.[a-z]+)?$/.test(attrName) && /^!\{(.+)\}$/.test(rawVal)) {
+  if (DIRECTIVES.groupe(attrName, rawVal)) {
     return bindingGroup(env)
   }
 
   // @html / @text avec !{…}
-  if ((attrName === '@html' || attrName === '@text') && /^!\{(.+)\}$/.test(rawVal)) {
+  if (DIRECTIVES.contenu(attrName, rawVal)) {
     return bindingContent(env)
   }
 
@@ -3372,9 +3426,18 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   // @this
-  if (attrName === '@this' && /^!?\{(.+)\}$/.test(rawVal)) {
+  if (DIRECTIVES.ceci(attrName, rawVal)) {
     return bindingThis(env)
   }
+  // `@this={ref}`, sans `!` : refusé, il tombait dans le repli des événements (écoute d'un événement « this ») et la variable ne recevait
+  // jamais le nœud
+  if (attrName === '@this' && env.attr.type === 'dynamic') throw new Error(t('generator.this-sans-point-exclamation', { expr: String(env.attr.expr ?? '').trim() }))
+  // `@this` écrit sans valeur ou avec un texte (`@this="ref"`), et `@preload` sans valeur (le préchargement d'un lien se règle par une valeur,
+  // sans défaut) : refusés de même, ils tombaient aussi dans le repli des événements (écoute d'un événement « this » ou « preload »)
+  const ecrit = (env.attr.val ?? '').toString()
+  const nu    = env.attr.type !== 'dynamic' && (ecrit === '' || ecrit === 'true')
+  if (attrName === '@this') throw new Error(t('generator.this-sans-reference', { ecrit: nu ? '@this' : `@this="${ecrit}"`, ref: !nu && /^[A-Za-z_$][\w$]*$/.test(ecrit) ? ecrit : 'ref' }))
+  if (attrName === '@preload' && nu) throw new Error(t('generator.preload-sans-valeur', {}))
 
   // `data-*` / `aria-*` en `!{…}` sur un composant : attribut de la balise qui suit la variable (sens unique)
   if ((env.node.name ?? '').includes('-') && DOM_ATTR_COMPOSANT.test(attrName) && /^!\{(.+)\}$/.test(rawVal)) {
@@ -3398,13 +3461,13 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   // @style.x
-  if (attrName.startsWith('@style.')) return bindingStyle(env)
+  if (DIRECTIVES.style(attrName, rawVal)) return bindingStyle(env)
 
   // @class{cond}
-  if (attrName.startsWith('@class{')) return bindingClass(env)
+  if (DIRECTIVES.classe(attrName, rawVal)) return bindingClass(env)
 
   // @flip simple — `@flip`, `@flip=300`, ou `@flip={duration: 300, delay: 600, easing: '...'}`.
-  if (attrName === '@flip') {
+  if (DIRECTIVES.flip(attrName, rawVal)) {
     let duration = '200'
     let delay = ''
     let easing = ''
@@ -3475,10 +3538,10 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   // @attach
-  if (attrName === '@attach' || attrName.startsWith('@attach.')) return bindingAttach(env)
+  if (DIRECTIVES.attache(attrName, rawVal)) return bindingAttach(env)
 
   // @childtransition
-  if (attrName === '@childtransition') {
+  if (DIRECTIVES.enfants(attrName, rawVal)) {
     // apostrophe → `&#39;` (chemin clone/innerHTML, décodée au parse).
     return { attrStr: env.attrStr + ` mjs-childtransition='${rawVal.replace(/'/g, '&#39;')}'`, id: env.id }
   }
@@ -3490,14 +3553,14 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // Pour les rares cas où l'isolation Shadow DOM n'est pas désirée (apps
   // qui veulent Tailwind/Bootstrap global, tables géantes perf-critical,
   // intégration native avec libs tierces qui font `document.querySelector`).
-  if (attrName === '@lightDom') {
+  if (DIRECTIVES.lumiere(attrName, rawVal)) {
     return { attrStr: env.attrStr + ` mjs-light`, id: env.id }
   }
 
   // @transition=*x(…) / @in=*x / @out=*x, modificateurs .global/.shared, et @introstart / @introend /
   // @outrostart / @outroend ; l'ancienne écriture `@in.fly={…}` donne la nouvelle
-  const vieille = /^@(transition|in|out)\.([A-Za-z_]\w*)/.exec(attrName)
-  if (vieille && vieille[2] !== 'global' && vieille[2] !== 'shared') {
+  const vieille = ANCIENNE_TRANSITION.exec(attrName)
+  if (vieille && DIRECTIVES.ancienne(attrName, rawVal)) {
     // `@in.local=*fly` : l'écriture d'aujourd'hui, avec un modificateur inconnu (habitude Svelte)
     if (/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.modificateur', { directive: '@' + vieille[1], mod: vieille[2] }))
     // le nom d'une ancienne animation tombe, les modificateurs écrits (`@in.fly.shared`) restent sur la directive proposée
@@ -3506,7 +3569,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     if (replacement) throw new Error(t('transitions.retiree', { ecrite: attrName, directive, effet: replacement }))
     throw new Error(t('transitions.ancienne', { ecrite: attrName, directive, nom: vieille[2], reglage: exampleSetting(vieille[2]), modificateurs: directive !== '@' + vieille[1] }))
   }
-  if (/^@(?:transition|in|out)(?:\.(?:global|shared))*$/.test(attrName)) {
+  if (DIRECTIVES.transition(attrName, rawVal)) {
     if (!/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.attend-effet', { directive: attrName.split('.')[0] }))
     return bindingTransition(env)
   }
@@ -3519,7 +3582,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // `@emit.xxx=` quelconque tomberait silencieusement dans un mauvais binding
   // (piège préexistant du fallback, cf. commentaire sur MJS_BOOLEAN_PROPS
   // juste en dessous).
-  if (attrName.startsWith('@emit.')) return bindingEmit(env)
+  if (DIRECTIVES.emission(attrName, rawVal)) return bindingEmit(env)
 
   // `@booleanProp`
   // (`@open`/`@checked`/`@disabled`/etc., ex. `<details @open>`) forçait
@@ -3542,7 +3605,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // `bindingStandard` échouer sur les DEUX.
   if (attrName.startsWith('@')) {
     const attrPure = attrName.slice(1)
-    if (MJS_BOOLEAN_PROPS.includes(attrPure)) {
+    if (DIRECTIVES.booleen(attrName, rawVal)) {
       env.attrName = attrPure
       if (env.attr.type === 'dynamic') return dynamic(env)
       return booleanAttr(env)

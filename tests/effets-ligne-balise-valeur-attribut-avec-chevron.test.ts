@@ -3,8 +3,7 @@
 // plusieurs lignes.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { transpileFromMsg, withEffectLines } from '../src/bundler/transpile-msg.js'
 import { mjsTmp } from './helpers/tmp.js'
 

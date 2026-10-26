@@ -61,7 +61,7 @@ if (µ.Element) {
   // Pour comparer le rendu précédent, on utilise une simple sentinelle de statut.
   // `get` lit l'expression du bloc ; `vars` : les variables qu'elle cite (absent : aucune)
   µ.Element.prototype._mjs_updAwait = function(id, get, pendingFn, successFn, errorFn, vars) {
-    var childMode, e, i, n, nodes, promise, ref, s, state, t;
+    var childMode, e, i, n, nodes, promise, s, state, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
     if (!(s && e)) {

@@ -87,7 +87,7 @@ if (µ.Element) {
         if (typeof node._mjs_cb_introstart === "function") {
           node._mjs_cb_introstart();
         }
-      } catch (error1) {
+      } catch {
         null;
       }
       if (node._mjs_intro) {
@@ -100,7 +100,7 @@ if (µ.Element) {
                 }
                 try {
                   return typeof node._mjs_cb_introend === "function" ? node._mjs_cb_introend() : void 0;
-                } catch (error1) {
+                } catch {
                   return null;
                 }
               }).catch(function(err) {
@@ -120,7 +120,7 @@ if (µ.Element) {
   // _mjs_updIf prend une createFn qui retourne {fragment, refs}.
   // Plus de parse HTML, plus de cache template, plus de walk paths.
   µ.Element.prototype._mjs_updIf = function(id, createFn) {
-    var built, childMode, destroyCount, dyingCount, e, firstNew, n, outroNodes, range, ref, ref1, s, t;
+    var built, childMode, destroyCount, dyingCount, e, firstNew, n, outroNodes, range, ref, s, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
     if (!(s && e)) {
@@ -202,7 +202,7 @@ if (µ.Element) {
   // Au lieu d'écrire dans this._mjs_nodes (global), on écrit dans __nodes (local item).
   // createFn() retourne {fragment, refs} ; on merge refs dans __nodes.
   µ.Element.prototype._mjs_updItemIf = function(startNode, endNode, createFn, __nodes) {
-    var built, childMode, n, range, ref, t;
+    var built, childMode, n, range, t;
     if (!(startNode && endNode)) {
       return;
     }

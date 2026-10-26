@@ -15,14 +15,36 @@
 // (variable comprise), ou le nom de la méthode appelée, est refusée — rien n'est écrit, un avertissement nomme le segment.
 // Une clé objet (`['__proto__']`, objet dont `toString` rend le nom) est convertie une fois, comme JavaScript la
 // convertit, et rangée convertie dans le chemin : la comparaison, la règle des types, la navigation et l'écriture voient
-// la même clé. Un indice ou un symbole n'est jamais un nom réservé. Une boucle en tête de chaque aide, sans appel ni
-// allocation, payée par toute écriture profonde : seul le refus appelle cette fonction. L'objet atteint au bout du chemin
-// passe le même refus : rangé dans l'état par une lecture (`$loc.p = $$o[k]`), il est là où JavaScript mène — une
-// fonction (`Object`, où mène `constructor`) ou un prototype (`Object.prototype`, où mène `__proto__` : l'objet que range
-// son propre constructeur) ne reçoit rien, l'avertissement nomme le segment qui y mène ; un objet absent garde l'erreur
-// de JavaScript
+// la même clé. Un indice ou un symbole n'est jamais un nom réservé. Le contrôle, payé par toute écriture profonde, vit
+// dans deux petites fonctions communes aux aides (`_mjsDeepChemin`, `_mjsDeepInterdit`, plus bas) : seul le refus appelle
+// celle-ci. L'objet atteint au bout du chemin passe le même refus : rangé dans l'état par une lecture
+// (`$loc.p = $$o[k]`), il est là où JavaScript mène — une fonction (`Object`, où mène `constructor`) ou un prototype
+// (`Object.prototype`, où mène `__proto__` : l'objet que range son propre constructeur) ne reçoit rien, l'avertissement
+// nomme le segment qui y mène ; un objet absent garde l'erreur de JavaScript
 function _mjsDeepRefus(k) {
   µ.warn(µ._mjs_msg('initPath', { seg: k }, 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.'));
+}
+
+// tête de chaque aide : clé objet convertie une fois et rangée convertie, nom réservé refusé ; rend `false` au refus.
+// Hors des aides, comme `_mjsDeepInterdit` : V8 ne fond une aide dans la boucle qui l'appelle (ni appel, ni tableau du
+// chemin fabriqué à chaque tour) qu'au-dessous de 460 octets de bytecode, et `µ._mjs_deepSet` les dépassait avec ses
+// gardes en ligne (1 000 000 d'écritures `$o.a.b.c = i` : 25 % plus lentes)
+function _mjsDeepChemin(path) {
+  var i, k;
+  for (i = 0; i < path.length; i++) {
+    k = path[i];
+    if (typeof k === 'object' || typeof k === 'function') path[i] = k = String(k);
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsDeepRefus(k); return false; }
+  }
+  return true;
+}
+
+// objet atteint au bout du chemin, écrit ou modifié : ni une fonction ni un prototype ; rend `true` au refus
+function _mjsDeepInterdit(o) {
+  var c;
+  if (typeof o === 'function') { _mjsDeepRefus('constructor'); return true; }
+  if (o != null && (c = o.constructor) && c.prototype === o) { _mjsDeepRefus('__proto__'); return true; }
+  return false;
 }
 
 // `µ._mjs_deepSet(el, ['box', 'width'], 200)` : assigne sans Proxy, navigue
@@ -32,12 +54,8 @@ function _mjsDeepRefus(k) {
 // la notification — un appelant qui utilise `$.obj.x = v` comme VALEUR (return,
 // affectation en chaîne, argument…) doit lire exactement ce qui a été écrit.
 µ._mjs_deepSet = function(el, path, value) {
-  var i, o, topKey, isRaw, root, k, c;
-  for (i = 0; i < path.length; i++) {
-    k = path[i];
-    if (typeof k === 'object' || typeof k === 'function') path[i] = k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsDeepRefus(k); return value; }
-  }
+  var i, o, topKey, isRaw, root;
+  if (!_mjsDeepChemin(path)) return value;
   topKey = path[0];
   if (path.length === 1) {
     el._set(topKey, value);
@@ -60,14 +78,14 @@ function _mjsDeepRefus(k) {
     i++;
   }
   // objet écrit : ni une fonction ni un prototype (cf. _mjsDeepRefus)
-  if (typeof o === 'function') { _mjsDeepRefus('constructor'); return value; }
-  if (o != null && (c = o.constructor) && c.prototype === o) { _mjsDeepRefus('__proto__'); return value; }
+  if (_mjsDeepInterdit(o)) return value;
   // clé déjà convertie en tête de l'aide : la règle des types, la comparaison et l'écriture voient la même clé
   var __last = path[path.length - 1];
   // Déballe la VALEUR écrite (pas seulement `o`, le conteneur navigué ci-dessus) : un pair peut
   // renvoyer un objet doublement enveloppé (écho de liaison) — même logique que `_set`, éléments d'une
-  // liste compris (`$o.items = $o.items.filter(…)`).
-  value = µ._mjs_rawIn(value);
+  // liste compris (`$o.items = $o.items.filter(…)`). Une primitive, que `µ._mjs_rawIn` rendrait telle quelle, passe sans
+  // l'appel : il pèserait dans le budget d'inlining de V8 (cf. _mjsDeepChemin)
+  if (value !== null && typeof value === 'object') value = µ._mjs_rawIn(value);
   // types (mjs_types.ts) : un champ ou un élément sous une valeur typée passe la règle de son
   // conteneur — clé calculée comprise (`$x[cle] = v`), contrôlée ici, à l'écriture. Valeur rendue :
   // celle écrite par le code (sémantique d'une affectation), même convertie, ramenée ou refusée
@@ -104,12 +122,8 @@ function _mjsDeepRefus(k) {
 // `µ._mjs_deepCall(el, ['list'], 'push', [item])` : appelle une méthode mutative
 // sur un sous-objet et notifie la mutation à la clé top-level.
 µ._mjs_deepCall = function(el, path, methodName, args) {
-  var i, o, result, topKey, isRaw, root, k, c;
-  for (i = 0; i < path.length; i++) {
-    k = path[i];
-    if (typeof k === 'object' || typeof k === 'function') path[i] = k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsDeepRefus(k); return void 0; }
-  }
+  var i, o, result, topKey, isRaw, root;
+  if (!_mjsDeepChemin(path)) return void 0;
   if (methodName === '__proto__' || methodName === 'constructor' || methodName === 'prototype') { _mjsDeepRefus(methodName); return void 0; }
   topKey = path[0];
   // Naviguer + appeler sur la cible BRUTE : appeler la méthode mutative via le
@@ -127,8 +141,7 @@ function _mjsDeepRefus(k) {
     i++;
   }
   // objet modifié : ni une fonction ni un prototype (cf. _mjsDeepRefus)
-  if (typeof o === 'function') { _mjsDeepRefus('constructor'); return void 0; }
-  if (o != null && (c = o.constructor) && c.prototype === o) { _mjsDeepRefus('__proto__'); return void 0; }
+  if (_mjsDeepInterdit(o)) return void 0;
   // Déballe aussi chaque ARGUMENT (ex. `arr.push($objEnveloppé)`) — pas seulement `o` ci-dessus.
   args = args.map(function(a) { return µ._mjs_toRaw(a); });
   // types (mjs_types.ts) : une liste typée modifiée par une méthode (push, splice, sort…) fait
@@ -162,12 +175,8 @@ function _mjsDeepRefus(k) {
 // Rend `true` (résultat d'un `delete` réussi, sémantique JS), jamais le retour
 // de la notification — même raison que `_mjs_deepSet`.
 µ._mjs_deepDelete = function(el, path) {
-  var i, o, topKey, isRaw, root, k, c;
-  for (i = 0; i < path.length; i++) {
-    k = path[i];
-    if (typeof k === 'object' || typeof k === 'function') path[i] = k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsDeepRefus(k); return false; }
-  }
+  var i, o, topKey, isRaw, root;
+  if (!_mjsDeepChemin(path)) return false;
   topKey = path[0];
   if (path.length === 1) {
     // `delete $.x` : on retire la clé racine de l'état puis on notifie.
@@ -183,8 +192,7 @@ function _mjsDeepRefus(k) {
   isRaw = µ._mjs_rawSet.has(o);
   for (i = 1; i < path.length - 1; i++) { o = o[path[i]]; }
   // objet modifié : ni une fonction ni un prototype (cf. _mjsDeepRefus)
-  if (typeof o === 'function') { _mjsDeepRefus('constructor'); return false; }
-  if (o != null && (c = o.constructor) && c.prototype === o) { _mjsDeepRefus('__proto__'); return false; }
+  if (_mjsDeepInterdit(o)) return false;
   // types : un champ obligatoire d'un objet typé ne se supprime pas (clé déjà convertie en tête de l'aide)
   var __cle = path[path.length - 1];
   var __treg = el._mjs_treg;
@@ -207,12 +215,8 @@ function _mjsDeepRefus(k) {
 // rien n'est enveloppé, `undefined` est rendu — sans quoi l'enveloppe d'un prototype (atteint par un objet gelé de
 // l'état, que l'état enveloppé rend brut) ferait écrire dans ce prototype tout code qui la reçoit
 µ._mjs_makeDeepProxy = function(el, path) {
-  var i, o, topKey, k;
-  for (i = 0; i < path.length; i++) {
-    k = path[i];
-    if (typeof k === 'object' || typeof k === 'function') path[i] = k = String(k);
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { _mjsDeepRefus(k); return void 0; }
-  }
+  var i, o, topKey;
+  if (!_mjsDeepChemin(path)) return void 0;
   topKey = path[0];
   o = el._state[topKey];
   i = 1;

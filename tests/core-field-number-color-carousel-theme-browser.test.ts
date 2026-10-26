@@ -20,7 +20,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 const VARIABLES = [
   '--mjs-field-error-color: purple',
   '--mjs-field-ok-color: orange',
-  '--mjs-number-width: 240px',
+  '--mjs-number-width: 280px',
   '--mjs-number-radius: 6px',
   '--mjs-number-border: green',
   '--mjs-number-accent: red',
@@ -127,7 +127,7 @@ const MESURE = `window.__mesure = (racine) => {
 // les variables VARIABLES, telles que le navigateur les calcule
 const AVEC_VARIABLES = {
   champ:   { erreur: 'rgb(128, 0, 128)', erreurTexte: 'rgb(128, 0, 128)', succes: 'rgb(255, 165, 0)', succesTexte: 'rgb(255, 165, 0)', flottantErreur: 'rgb(128, 0, 128)', flottantSucces: 'rgb(255, 165, 0)' },
-  nombre:  { w: '240px', rayon: '6px', bord: 'rgb(0, 128, 0)', traitMoins: 'rgb(0, 128, 0)', traitPlus: 'rgb(0, 128, 0)', fondMoins: 'rgb(255, 255, 0)', fondPlus: 'rgb(255, 255, 0)', fondGrand: 'rgb(255, 255, 0)', traitGrand: 'rgb(0, 128, 0)' },
+  nombre:  { w: '280px', rayon: '6px', bord: 'rgb(0, 128, 0)', traitMoins: 'rgb(0, 128, 0)', traitPlus: 'rgb(0, 128, 0)', fondMoins: 'rgb(255, 255, 0)', fondPlus: 'rgb(255, 255, 0)', fondGrand: 'rgb(255, 255, 0)', traitGrand: 'rgb(0, 128, 0)' },
   couleur: {
     w: '30px', h: '30px', rayon: '50%', bord: 'rgb(128, 0, 128)', etai: '40px', ligne: '40px',
     compact:   { w: '30px', rayon: '50%', bord: 'rgb(128, 0, 128)', etai: '40px' },
@@ -135,10 +135,11 @@ const AVEC_VARIABLES = {
   }
 }
 
-// les défauts de toujours, sans aucune variable posée : dans une application, --mjs-border vaut #d0d0d0
+// les défauts de toujours, sans aucune variable posée : dans une application, --mjs-border vaut #d0d0d0 ; le nombre mesuré porte `big`,
+// d'où 240px (160px sans `big`), et la largeur posée par VARIABLES (280px) diffère des deux
 const DEFAUTS = {
   champ:   { erreur: 'rgb(229, 72, 77)', erreurTexte: 'rgb(229, 72, 77)', succes: 'rgb(46, 158, 91)', succesTexte: 'rgb(46, 158, 91)', flottantErreur: 'rgb(229, 72, 77)', flottantSucces: 'rgb(46, 158, 91)' },
-  nombre:  { w: '160px', rayon: '999px', bord: 'rgb(208, 208, 208)', traitMoins: 'rgb(208, 208, 208)', traitPlus: 'rgb(208, 208, 208)', fondMoins: 'rgba(0, 0, 0, 0)', fondPlus: 'rgba(0, 0, 0, 0)', fondGrand: 'rgba(0, 0, 0, 0)', traitGrand: 'rgb(208, 208, 208)' }
+  nombre:  { w: '240px', rayon: '999px', bord: 'rgb(208, 208, 208)', traitMoins: 'rgb(208, 208, 208)', traitPlus: 'rgb(208, 208, 208)', fondMoins: 'rgba(0, 0, 0, 0)', fondPlus: 'rgba(0, 0, 0, 0)', fondGrand: 'rgba(0, 0, 0, 0)', traitGrand: 'rgb(208, 208, 208)' }
 }
 
 let construit: Promise<string> | null = null
@@ -311,7 +312,7 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`champ, nombre, pas
     assert.equal(m.champ.erreurTexte, 'rgb(128, 0, 128)')
     assert.equal(m.champ.flottantErreur, 'rgb(128, 0, 128)')
     assert.equal(m.champ.succes, DEFAUTS.champ.succes, 'le vert du succès ne bouge pas')
-    assert.equal(m.nombre.w, '160px', 'le reste des défauts ne bouge pas')
+    assert.equal(m.nombre.w, '240px', 'le reste des défauts ne bouge pas')
     assert.equal(await bordureFocus(zone('z-defaut'), 'rgb(255, 0, 0)'), 'rgb(255, 0, 0)', 'nombre focalisé : l\'accent posé sur :root')
     await page.addStyleTag({ content: ':root { ' + VARIABLES.join('; ') + ' }' })
     await attendre(500)
@@ -344,7 +345,7 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`champ, nombre, pas
     assert.equal(m.nombre.traitGrand, 'rgb(128, 0, 128)')
     assert.equal(m.couleur.bord, 'rgb(128, 0, 128)', 'bordure violette de la pastille')
     assert.equal(m.couleur.selecteur.bord, 'rgb(128, 0, 128)', 'et du sélecteur')
-    assert.equal(m.nombre.w, '160px', 'le reste des défauts ne bouge pas')
+    assert.equal(m.nombre.w, '240px', 'le reste des défauts ne bouge pas')
     assert.equal(await bordureFocus(zone('z-global'), 'rgb(255, 165, 0)'), 'rgb(255, 165, 0)', 'nombre focalisé : accent orange')
   })
 })

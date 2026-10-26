@@ -78,7 +78,7 @@ function _mjs_diApercu(v, kind) {
     case 'symbol': return String(v);
     case 'function': return 'ƒ ' + (v.name || '(anonyme)') + '()';
     case 'node': return '<' + (v.tagName ? v.tagName.toLowerCase() : µ._mjs_txt('dev.inspNode', null, 'nœud')) + '>';
-    case 'date': { try { return v.toISOString(); } catch (e) { return 'Date invalide'; } }
+    case 'date': { try { return v.toISOString(); } catch { return 'Date invalide'; } }
     case 'regexp': return v.toString();
     case 'error': return (v.name || 'Error') + ': ' + (v.message || '');
     case 'promise': return 'Promise';
@@ -121,7 +121,7 @@ function _diEntreesObjet(v, max) {
       var d = Object.getOwnPropertyDescriptor(v, s);
       return d && d.enumerable;
     });
-  } catch (e) { /* ownKeys/getOwnPropertySymbols en échec (proxy exotique) : liste vide, pas de crash */ }
+  } catch { /* ownKeys/getOwnPropertySymbols en échec (proxy exotique) : liste vide, pas de crash */ }
   var toutes = cles.concat(syms), out = [];
   for (var i = 0; i < toutes.length && i < max; i++) {
     var c = toutes[i], val, ok = true, err;

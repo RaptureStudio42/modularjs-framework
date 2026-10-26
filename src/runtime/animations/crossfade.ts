@@ -19,7 +19,7 @@
   };
   // l'animation finie ou annulée libère son maintien (fill), qui figerait les styles et accumulerait des objets Animation
   var free = function(anim) {
-    try { anim.cancel(); } catch (_e) {}
+    try { anim.cancel(); } catch {}
   };
   // les 61 images d'un trajet : image(p) rend celle de l'avancée p (de 0 à 1)
   var sample = function(image) {

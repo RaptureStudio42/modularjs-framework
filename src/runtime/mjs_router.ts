@@ -147,7 +147,7 @@
         usp = new URLSearchParams(qs);
         usp.forEach(function(v, k) { query[k] = v; });
       }
-    } catch (e) {}
+    } catch {}
     // Params de route : union de toutes les vues routées qui matchent l'URL.
     params = {};
     try {
@@ -155,7 +155,7 @@
       for (comp of ref) {
         this._mjs_mergeParams(params, this._mjs_extractParams(comp, path));
       }
-    } catch (e2) {}
+    } catch {}
     // `µ.url.path` exposait le
     // chemin ENCODÉ (`/caf%C3%A9`) alors que le matching interne décode déjà
     // (`:param` et littéraux) : un `µ.url.path === '/café'` applicatif échouait
@@ -165,9 +165,9 @@
     var pathDecoded = path;
     try {
       pathDecoded = path.split('/').map(function(s) {
-        try { return decodeURIComponent(s); } catch (e) { return s; }
+        try { return decodeURIComponent(s); } catch { return s; }
       }).join('/');
-    } catch (e3) {}
+    } catch {}
     // Écriture PAR CHAMP : chaque clé notifie ses propres lecteurs. `href`/`path`/
     // `hash` (chaînes) sont court-circuités par `µ.state` si identiques.
     µ.url.href = loc.href;
@@ -318,7 +318,7 @@
       // avant cette décision). Un seul point de vérité : le tableau, `rest` en
       // découle.
       all.all = mp.slice(mi).map(function(s) {
-        try { return decodeURIComponent(s); } catch (e) { return s; }
+        try { return decodeURIComponent(s); } catch { return s; }
       });
       all.rest = all.all.join('/');
       return { ok: true, params: all };
@@ -328,7 +328,7 @@
         withVal = Object.assign({}, params);
         if (seg.charCodeAt(0) === 58) { // ':' → segment paramétré → capture
           name = seg.slice(1);
-          try { withVal[name] = decodeURIComponent(mp[mi]); } catch (e) { withVal[name] = mp[mi]; }
+          try { withVal[name] = decodeURIComponent(mp[mi]); } catch { withVal[name] = mp[mi]; }
           rTry = this._matchSegs(rp, ri + 1, mp, mi + 1, withVal);
           if (rTry.ok) { return rTry; }
         } else {
@@ -336,7 +336,7 @@
           // (parité avec le littéral NON optionnel) → `/(café)` matche
           // `/caf%C3%A9`.
           var litDec;
-          try { litDec = decodeURIComponent(mp[mi]); } catch (e) { litDec = mp[mi]; }
+          try { litDec = decodeURIComponent(mp[mi]); } catch { litDec = mp[mi]; }
           if (seg === litDec) {
             rTry = this._matchSegs(rp, ri + 1, mp, mi + 1, params);
             if (rTry.ok) { return rTry; }
@@ -355,7 +355,7 @@
     if (seg.charCodeAt(0) === 58) { // ':' → segment paramétré → capture
       name = seg.slice(1);
       withVal = Object.assign({}, params);
-      try { withVal[name] = decodeURIComponent(mp[mi]); } catch (e) { withVal[name] = mp[mi]; }
+      try { withVal[name] = decodeURIComponent(mp[mi]); } catch { withVal[name] = mp[mi]; }
       return this._matchSegs(rp, ri + 1, mp, mi + 1, withVal);
     }
     // un segment LITTÉRAL de route (ex.
@@ -367,7 +367,7 @@
     // fonction. Décodage tolérant (try/catch) : un `%` mal formé dans l'URL
     // ne doit pas faire planter le routeur, juste comparer la valeur brute
     // (échoue proprement au pire, comme avant ce fix).
-    try { mSeg = decodeURIComponent(mp[mi]); } catch (e) { mSeg = mp[mi]; }
+    try { mSeg = decodeURIComponent(mp[mi]); } catch { mSeg = mp[mi]; }
     if (seg !== mSeg) { return { ok: false, params: {} }; }
     return this._matchSegs(rp, ri + 1, mp, mi + 1, params);
   },

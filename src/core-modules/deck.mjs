@@ -92,21 +92,31 @@
     opacity: 1
     transform: translateY(0)
 
+  // la barre de couleur, peinte au milieu d'une zone sans fond qui couvre aussi la place que la carte soulevée quitte (60 px au moins sous
+  // elle, et de côté autant qu'elle glisse) : le pointeur posé près d'un bord garde le survol, la carte ne retombe plus sous lui pour se
+  // soulever encore. La zone ne capte le pointeur que pendant le survol (`pointer-events`, qui ne transite pas : il change d'un coup) ;
+  // seule la barre se déplie et se replie (`background-size`) ; au-dessus de la carte, seule la barre compte (la découpe). Une zone
+  // encore touchable pendant le repli resterait 0,5 s sous la carte qui retombe : la carte balaierait le pointeur posé dessous, se
+  // relèverait, le lâcherait, et ainsi de suite
   .fan ::slotted(*)::after
     content: ''
     position: absolute
     top: -100px
-    left: calc(50% - 25px)
-    width: 50px
-    height: 10px
+    left: calc(max(var(--mjs-deck-i, 0), -1 * var(--mjs-deck-i, 0)) * -20px - 10px)
+    right: calc(max(var(--mjs-deck-i, 0), -1 * var(--mjs-deck-i, 0)) * -20px - 10px)
+    height: max(500px, calc(100% + 160px))
     z-index: -1
-    background: var(--mjs-deck-color)
-    transform: scaleY(0)
-    transform-origin: top
+    background-image: linear-gradient(var(--mjs-deck-color), var(--mjs-deck-color))
+    background-position: 50% 0
+    background-size: 50px 0
+    background-repeat: no-repeat
+    clip-path: polygon(calc(50% - 25px) 0, calc(50% + 25px) 0, calc(50% + 25px) 100px, 100% 100px, 100% 100%, 0 100%, 0 100px, calc(50% - 25px) 100px)
+    pointer-events: none
     transition: .5s
 
   .fan ::slotted(*:hover)::after, .fan ::slotted(*:focus-within)::after
-    transform: scaleY(50)
+    background-size: 50px 500px
+    pointer-events: auto
 
   .spread
     min-height: calc(var(--mjs-deck-h) + 60px)

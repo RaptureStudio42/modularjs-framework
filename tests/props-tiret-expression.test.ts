@@ -124,10 +124,9 @@ describe('props à tiret — le code émis', function () {
 
 describe('props à tiret — un composant du projet, monté', function () {
   this.timeout(60000)
-  let window: any = null
-  let hote: any   = null
+  let hote: any = null
 
-  before(async () => { ({ window, hote } = await monter()) })
+  before(async () => { ({ hote } = await monter()) })
   after(async () => { await terminateSharedWorkerPool() })
 
   const carte = (classe: string) => hote._shadow.querySelector(`mjs-carte.${classe}`)

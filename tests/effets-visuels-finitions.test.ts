@@ -87,16 +87,27 @@ describe('effets visuels — finitions', function () {
     Object.defineProperty(c, 'offsetWidth', { configurable: true, get: () => 200 })
     Object.defineProperty(c, 'offsetHeight', { configurable: true, get: () => h })
     const glisses: any[] = []
-    c.animate = (k: any[]) => {
+    // le cœur appelle animate par le prototype (un composant peut masquer celui de sa balise) quand il existe — happy-dom 20.14 l'a, 20.11 non : l'espion s'y pose le temps du test, filtré sur la balise
+    const proto = window.Element.prototype
+    const avant = Object.getOwnPropertyDescriptor(proto, 'animate')
+    const natif = proto.animate
+    proto.animate = function (this: any, k: any[], opts: any) {
+      if (this !== c) return natif?.call(this, k, opts)
       glisses.push(k.map((x) => x.height))
       return { cancel() {}, onfinish: null }
     }
-    // la taille de départ, relue quand rien ne glisse (fenêtre, police…)
-    c._mjs_fxOff.autosize()
-    window.µ._mjs_fx(null, c, 'autosize', {})
-    h = 140
-    c._shadow.querySelector('.i').dispatchEvent(new window.Event('load'))
-    await pause()
-    assert.equal(JSON.stringify(glisses), JSON.stringify([['40px', '140px']]), 'la boîte glisse de 40 à 140 px')
+    try {
+      // la taille de départ, relue quand rien ne glisse (fenêtre, police…)
+      c._mjs_fxOff.autosize()
+      window.µ._mjs_fx(null, c, 'autosize', {})
+      h = 140
+      c._shadow.querySelector('.i').dispatchEvent(new window.Event('load'))
+      await pause()
+      assert.equal(JSON.stringify(glisses), JSON.stringify([['40px', '140px']]), 'la boîte glisse de 40 à 140 px')
+    }
+    finally {
+      if (avant) Object.defineProperty(proto, 'animate', avant)
+      else delete proto.animate
+    }
   })
 })

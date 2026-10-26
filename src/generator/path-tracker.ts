@@ -111,8 +111,26 @@ const ALL_MUTATIVE = new Set([
 // écriture à travers lui est une écriture du magasin (cf. findRoot)
 const FIND_METHODS = new Set(['find', 'findLast', 'at', 'get'])
 
+// méthodes qui rendent l'élément qu'elles RETIRENT : celui d'une copie reste un objet du magasin (cf. findRoot) ; `splice`
+// rend ceux qu'il retire dans une liste (cf. copyRoot)
+const POP_METHODS = new Set(['pop', 'shift'])
+
+// méthodes qui reçoivent un rappel → rang du paramètre qui tient l'ÉLÉMENT (le `forEach` d'une Map ou d'un Set compris) :
+// un objet du magasin quand la liste en est un, ou une copie qui garde ses objets (cf. noteStore) ; aussi écrites en clé
+// littérale (`$$l['forEach'](f)`), ou appelées par `Array.prototype.forEach.call(l, f)`
+const CALLBACK_METHODS = new Map([['forEach', 0], ['map', 0], ['filter', 0], ['some', 0], ['every', 0], ['flatMap', 0], ['find', 0], ['findLast', 0], ['findIndex', 0], ['findLastIndex', 0], ['reduce', 1], ['reduceRight', 1]])
+
+// méthodes qui rendent une COPIE gardant les objets de la liste, de la Map ou du Set (cf. copyRoot)
+const COPY_METHODS = new Set(['filter', 'slice', 'concat', 'flat', 'toSorted', 'toReversed', 'toSpliced', 'with', 'values', 'entries'])
+
 // boucles : une affectation qu'elles portent est rejouée à chaque tour (cf. once)
 const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'WhileStatement', 'DoWhileStatement'])
+
+// portées d'un `let`, d'un `const` ou d'une fonction déclarée (cf. bindingOf)
+const BLOCKS = new Set(['Program', 'BlockStatement', 'StaticBlock', 'SwitchStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'CatchClause'])
+
+// affectations logiques : la variable garde sa valeur, ou prend celle de droite (cf. noteStore)
+const LOGICAL_ASSIGN = new Set(['||=', '&&=', '??='])
 
 const isFunction = (n: any) => n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression'
 
@@ -126,6 +144,14 @@ const isFunction = (n: any) => n.type === 'FunctionDeclaration' || n.type === 'F
 export function applyPathTracking(js: string): string {
   return applyPathTrackingMapped(js).code
 }
+
+// clé d'un nom qui lit plusieurs clés du magasin (cf. noteStore) : jamais celle d'une lecture, qui est un identifiant
+const NO_KEY = '?'
+
+// « clé » d'une variable qui ne tient aucun objet du magasin mais porte le nom d'une variable déclarée ou affectée (`=`)
+// d'une lecture du magasin (cf. storeKey) : son écriture passe par l'aide DOUCE (`µ._mjs_softSetOn`…), qui écrit comme
+// JavaScript et refuse seulement un prototype du langage ou l'une de ses fonctions — aucune clé prévenue
+const SOFT = '~'
 
 // Variante qui rend AUSSI la carte de source de cette passe — cf. pass-map.ts.
 // `storeOnly` : module autonome (`.civet`/`.coffee` importé), sans état de composant — seules les racines
@@ -184,17 +210,40 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
     if (!list) occs.set(id.name, list = [])
     list.push(o)
   }
+  // portées qui déclarent chaque nom (cf. bindingOf) : une fonction ses paramètres, son nom (expression) et ses `var` ;
+  // un bloc (programme, `{…}`, `for`, `switch`, `catch`) ses `let`, `const`, ses fonctions et le paramètre d'un `catch`
+  const declScopes = new Map<string, any[]>()
+  const declare = (scope: any, pat: any) => forEachPatternLeaf(pat, (leaf: any) => {
+    if (leaf.type !== 'Identifier') return
+    let l = declScopes.get(leaf.name)
+    if (!l) declScopes.set(leaf.name, l = [])
+    if (!l.includes(scope)) l.push(scope)
+  })
+  const enclosing = (anc: any[], block: boolean) => {
+    for (let i = anc.length - 2; i > 0; i--) if (block ? BLOCKS.has(anc[i].type) : isFunction(anc[i])) return anc[i]
+    return anc[0]
+  }
   walk.fullAncestor(ast, (node: any, _st: any, anc: any[], type: string) => {
     if (node.type === 'Identifier') noteOcc(node, anc, type)
     switch (node.type) {
       case 'FunctionDeclaration':
       case 'FunctionExpression':
       case 'ArrowFunctionExpression':
-        for (const p of node.params ?? []) collectPatternNames(p)
+        for (const p of node.params ?? []) {
+          collectPatternNames(p)
+          declare(node, p)
+        }
+        if (node.id) declare(node.type === 'FunctionDeclaration' ? enclosing(anc, true) : node, node.id)
         break
       case 'CatchClause':
         collectPatternNames(node.param)
+        declare(node, node.param)
         break
+      case 'VariableDeclaration': {
+        const scope = enclosing(anc, node.kind !== 'var')
+        for (const d of node.declarations) declare(scope, d.id)
+        break
+      }
       case 'ForOfStatement':
       case 'ForInStatement': {
         const left = node.left
@@ -275,6 +324,58 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
   // lectures d'une variable de travail suivie → clé racine, posées à sa 1re affectation (cf. work)
   const workIds = new Map<any, string>()
 
+  // variable qui reçoit QUELQUE PART une lecture du magasin (cf. noteStore) → clé de ses lectures, NO_KEY quand elles en
+  // lisent plusieurs, par variable (liaison, cf. bindingOf). `storeNames` : les noms des variables déclarées ou affectées
+  // (`=`) d'une telle lecture — une autre variable du même nom passe par l'aide douce (cf. SOFT) ; `paramNames` : ceux
+  // des autres liaisons (variable d'une boucle, nom d'un motif, valeur par défaut, affectation logique, paramètre d'un
+  // rappel), suivis par leur variable seulement — un `t` d'une autre boucle ou d'un autre rappel reste tel qu'écrit
+  const storeBindings = new Map<string, string>()
+  const storeNames    = new Set<string>()
+  const paramNames    = new Set<string>()
+  // variable qui tient une COPIE gardant les objets du magasin (`actives := $$l.filter(f)`, le `ref` que CoffeeScript tire
+  // pour `for t in $$l.filter(f)`) → clé de ces objets, par variable (cf. copyRoot) : la copie n'est pas au magasin
+  // (`actives.push(x)` n'écrit qu'elle), ses éléments le sont (`actives[0].fait = v`)
+  const copyNames    = new Set<string>()
+  const copyBindings = new Map<string, string>()
+  // clé passée à l'aide gardée : `null` pour NO_KEY, aucune clé prévenue
+  const keyArg = (root: string) => root === NO_KEY ? 'null' : JSON.stringify(root)
+
+  // variable que désigne un identifiant : la portée la plus proche qui déclare son nom (cf. declScopes), aucune pour un
+  // nom libre — `rang:nom`. Le `ref` que CoffeeScript déclare dans deux fonctions, ou un même nom déclaré dans deux
+  // fonctions, sont deux variables
+  const scopeRanks  = new Map<any, number>()
+  const bindingMemo = new Map<any, string>()
+  function bindingOf(id: any): string {
+    let b = bindingMemo.get(id)
+    if (b !== undefined) return b
+    let best: any = null
+    for (const s of declScopes.get(id.name) ?? []) {
+      if (s.start <= id.start && id.end <= s.end && (!best || s.start > best.start || (s.start === best.start && s.end < best.end))) best = s
+    }
+    if (best && !scopeRanks.has(best)) scopeRanks.set(best, scopeRanks.size)
+    b = `${best ? scopeRanks.get(best) : ''}:${id.name}`
+    bindingMemo.set(id, b)
+    return b
+  }
+
+  // clé d'une écriture par un nom qui lit le magasin (cf. noteStore) : celle de sa variable ; une autre variable du même
+  // nom (paramètre, autre fonction, autre bloc) ne tient pas cet objet — SOFT pour le nom d'une variable déclarée ou
+  // affectée (`=`), rien pour les autres (cf. paramNames)
+  const storeKey = (id: any) => {
+    if (!storeNames.has(id.name) && !paramNames.has(id.name)) return null
+    return storeBindings.get(bindingOf(id)) ?? (storeNames.has(id.name) ? SOFT : null)
+  }
+
+  // clé d'un objet qui vaut l'un ou l'autre (`a || b`, ternaire) : la première qui en a une, une clé du magasin plutôt
+  // que SOFT
+  const pick = (a: string | null, b: string | null) => a === null || (a === SOFT && b !== null) ? b : a
+
+  // tête de l'aide qui écrit un objet atteint (`Set`, `Call`, `Delete`) : gardée, la clé prévenue, ou douce (cf. SOFT)
+  const onHead = (aide: string, root: string) => root === SOFT ? `µ._mjs_soft${aide}On(` : `µ._mjs_store${aide}On(${keyArg(root)}, `
+
+  // clé de deux valeurs possibles d'un nom : l'une ou l'autre, NO_KEY quand ce sont deux clés différentes
+  const both = (a: string | null, b: string | null) => a === null ? b : b === null || a === b ? a : NO_KEY
+
   // Helper : analyse un node `expr` et retourne son path s'il est trackable.
   function getPath(expr: any): AliasEntry | null {
     if (!expr) return null
@@ -308,28 +409,93 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
   // clé racine du magasin quand l'objet `expr` est un objet du magasin : élément trouvé (`µ.store.t.find(f)`,
   // `µ.store.m.get(k).meta`, `alias.find(f)`), variable de foundMap ou de travail, ou chaîne partie d'une racine
   // (`µ.store.l[0][a.k]`, qu'aucun chemin n'écrit) — sinon null. L'état local (`$.items.find(f)`) a son filet
-  // `_mjs_wrapDeep` ; un appel optionnel (`find?.(f)`) ou une autre méthode (`filter(f)[0]`, copie `slice()`) ne sont
-  // pas suivis. Un objet fait d'une expression qui peut rendre un objet du magasin (`$$o[k] || {}`, `?? {}`,
+  // `_mjs_wrapDeep` ; l'élément d'une copie qui garde les objets du magasin l'est aussi (`filter(f)[0]`, cf. copyRoot), un
+  // appel optionnel (`find?.(f)`) ou une autre méthode (`map(f)[0]`) ne sont pas suivis. Un objet fait d'une expression qui peut rendre un objet du magasin (`$$o[k] || {}`, `?? {}`,
   // `$$o[k] ||= {}`, ternaire, virgule, `?.`) prend la clé de la première de ses valeurs possibles qui en a une : son
   // écriture passe par les aides, un objet neuf (`{}`) reçoit l'écriture comme en JavaScript. Ternaire entre deux clés : la seconde n'est prévenue que si elle range l'objet écrit (index du magasin)
-  function findRoot(expr: any): string | null {
+  // `Object.getPrototypeOf(x)` ou `Reflect.getPrototypeOf(x)`, appel direct à un seul argument (cf. findRoot)
+  function isProtoOf(e: any): boolean {
+    const c = e.callee
+    return e.type === 'CallExpression' && !e.optional && e.arguments.length === 1 && e.arguments[0].type !== 'SpreadElement' && c.type === 'MemberExpression' && !c.computed && !c.optional && c.object.type === 'Identifier' && (c.object.name === 'Object' || c.object.name === 'Reflect') && c.property.name === 'getPrototypeOf'
+  }
+
+  // `nom` : la valeur d'un nom (déclaration, affectation, cf. noteStore et track) — une expression qui peut rendre deux
+  // clés différentes (`$$a.get(k) or $$b[0]`, ternaire, `||=`) n'en prévient aucune (NO_KEY), et `await` rend la valeur
+  // attendue (l'objet même, quand le magasin ne tient pas une promesse)
+  function findRoot(expr: any, nom = false): string | null {
     for (let e = expr; e; ) {
-      if (e.type === 'Identifier') return workIds.get(e) ?? (tainted.has(e.name) ? null : foundMap.get(e.name) ?? null)
+      if (e.type === 'Identifier') {
+        // la valeur d'un nom ne prend jamais SOFT : une variable qui ne tient pas d'objet du magasin n'en donne aucun
+        const k = workIds.get(e) ?? (tainted.has(e.name) ? null : foundMap.get(e.name)) ?? storeKey(e)
+        return nom && k === SOFT ? null : k
+      }
       if (e.type === 'MemberExpression' && isStoreRoot(e.object)) return e.computed ? null : e.property.name
-      if (e.type === 'MemberExpression') e = e.object
-      else if (e.type === 'CallExpression' && !e.optional && e.callee.type === 'MemberExpression' && !e.callee.computed && FIND_METHODS.has(e.callee.property.name)) {
-        const tp = getPath(e.callee.object)
+      if (e.type === 'MemberExpression') {
+        // élément d'une copie qui garde les objets du magasin (`$$l.filter(f)[0]`, `ref[i]` d'une boucle CoffeeScript)
+        const c = copyRoot(e.object)
+        if (c) return c
+        e = e.object
+      }
+      else if (e.type === 'CallExpression' && !e.optional && e.callee.type === 'MemberExpression' && !e.callee.computed && (FIND_METHODS.has(e.callee.property.name) || POP_METHODS.has(e.callee.property.name))) {
+        // élément d'une copie qui garde les objets du magasin (`$$l.filter(f).find(g)`, `copie.at(0)`, `copie.pop()`) ;
+        // `pop` et `shift` sur une autre liste rendent un élément qu'elle n'a plus
+        const pop = POP_METHODS.has(e.callee.property.name)
+        const tp  = pop ? null : getPath(e.callee.object)
         if (tp) return tp.origin === 'store' ? String(tp.path[0]) : null
+        const c = copyRoot(e.callee.object)
+        if (c || pop) return c
         e = e.callee.object
       }
-      else if (e.type === 'LogicalExpression') return findRoot(e.left) ?? findRoot(e.right)
-      else if (e.type === 'ConditionalExpression') return findRoot(e.consequent) ?? findRoot(e.alternate)
-      else if (e.type === 'AssignmentExpression') return (e.operator === '=' ? null : findRoot(e.left)) ?? findRoot(e.right)
+      // prototype d'un objet du magasin (`Object.getPrototypeOf($$o.m)`, `Reflect.getPrototypeOf`) : la valeur reste celle
+      // de JavaScript (lecture nue), une écriture par elle passe par les aides, qui refusent un prototype
+      else if (isProtoOf(e)) e = e.arguments[0]
+      else if (e.type === 'LogicalExpression') return nom ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
+      else if (e.type === 'ConditionalExpression') return nom ? both(findRoot(e.consequent, true), findRoot(e.alternate, true)) : pick(findRoot(e.consequent), findRoot(e.alternate))
+      else if (e.type === 'AssignmentExpression') {
+        if (e.operator === '=') return findRoot(e.right, nom)
+        return nom ? both(findRoot(e.left, true), findRoot(e.right, true)) : pick(findRoot(e.left), findRoot(e.right))
+      }
       else if (e.type === 'SequenceExpression') e = e.expressions[e.expressions.length - 1]
       else if (e.type === 'ChainExpression') e = e.expression
+      else if (nom && e.type === 'AwaitExpression') e = e.argument
       else return null
     }
     return null
+  }
+
+  // clé racine des objets d'une COPIE qui les garde (cf. COPY_METHODS) : `$$l.filter(f)`, `slice()`, `concat(…)`,
+  // `toSorted()`, `values()` et `entries()` d'une Map…, `Object.values($$o)`, `Object.entries($$o)`, `Array.from($$l)`,
+  // `[...$$l]`, ou variable qui en tient une (cf. copyBindings) — sinon null. La copie n'est pas au magasin, ses éléments
+  // le sont ; `map`, `flatMap` (le rappel peut rendre des objets neufs), `Array.from(l, f)` et une copie profonde
+  // (`structuredClone`, `JSON.parse`) n'en sont pas. Les éléments qu'une copie retire par `splice` (`copie.splice(0, 1)`)
+  // en restent ; ceux que le magasin retire lui-même n'y sont plus (comme `pop`)
+  function copyRoot(e: any): string | null {
+    if (e.type === 'ChainExpression') e = e.expression
+    if (e.type === 'Identifier') return copyNames.has(e.name) ? copyBindings.get(bindingOf(e)) ?? null : null
+    if (e.type === 'ArrayExpression') {
+      let r: string | null = null
+      for (const el of e.elements) if (el?.type === 'SpreadElement') r = both(r, itemsRoot(el.argument))
+      return r
+    }
+    if (e.type !== 'CallExpression' || e.optional || e.callee.type !== 'MemberExpression' || e.callee.computed) return null
+    const o    = e.callee.object
+    const name = e.callee.property.name
+    const args = e.arguments
+    if (o.type === 'Identifier' && (o.name === 'Object' || o.name === 'Array')) {
+      const copie = o.name === 'Object' ? name === 'values' || name === 'entries' : name === 'from'
+      return copie && args.length === 1 && args[0].type !== 'SpreadElement' ? itemsRoot(args[0]) : null
+    }
+    if (name === 'splice') return copyRoot(o)
+    if (!COPY_METHODS.has(name)) return null
+    let r = itemsRoot(o)
+    if (name === 'concat') for (const a of args) r = both(r, itemsRoot(a.type === 'SpreadElement' ? a.argument : a))
+    return r
+  }
+
+  // clé des ÉLÉMENTS de `e` : ceux d'une copie qui les garde (cf. copyRoot), ou ceux d'un objet du magasin, qui en sont
+  // aussi (`for t of $$l`, `$$l.forEach((t) -> …)`)
+  function itemsRoot(e: any): string | null {
+    return copyRoot(e) ?? findRoot(e, true)
   }
 
   // clé racine de la valeur d'une variable de travail (cf. findRoot) ; `?.` dans la valeur (`(ref = µ.store.m?.get(k))`) :
@@ -427,7 +593,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
   function foundTarget(m: any, root: string, read: boolean, wait = false): WriteTarget | null {
     const p = foundParts(m)
     if (!p || p.binds.length) return null
-    const head = `µ._mjs_storeSetOn(${JSON.stringify(root)}, `
+    const head = onHead('Set', root)
     const k    = m.property
     const obj  = m.object.type === 'Identifier'
     const key  = !m.computed || k.type === 'Identifier' || k.type === 'Literal'
@@ -513,8 +679,91 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
   // copie (`$$liste.slice()`) ou un objet de l'état local (`ancien := $a`, filet `_mjs_wrapDeep`) n'ont pas de racine
   // (cf. findRoot) ; sa valeur reste une lecture nue (en-tête)
   function track(name: string, init: any): void {
-    const root = findRoot(init)
+    const root = findRoot(init, true)
     if (root) foundMap.set(name, root)
+  }
+
+  // la variable de `id` tient une valeur de clé `r` (cf. bindingOf) : sa clé, NO_KEY quand elle en tient deux ; rend vrai
+  // si la variable a changé
+  function noteBinding(map: Map<string, string>, id: any, r: string | null): boolean {
+    if (!r) return false
+    const b = bindingOf(id)
+    const k = map.get(b)
+    if (r === k || k === NO_KEY) return false
+    map.set(b, k === undefined ? r : NO_KEY)
+    return true
+  }
+
+  // variable qui reçoit QUELQUE PART une lecture du magasin — déclaration, affectation (`=`, `||=`, `&&=`, `??=`), variable
+  // d'une boucle `for…of` ou `for…in` sur le magasin ou sur une copie qui garde ses objets, nom d'une déstructuration,
+  // paramètre par sa valeur par défaut ou qui reçoit l'élément d'un rappel —, suivie ou non : une écriture par elle (`lu[k]
+  // = v`, `delete lu[k]`, `lu.push(x)`) passe toujours par l'aide gardée, qui refuse un nom réservé, un prototype, une
+  // fonction, même quand elle est réaffectée ou reprise dans une boucle (noms « taint », jamais pris pour un alias) ;
+  // elle prévient la clé que lit sa variable (cf. bindingOf) quand elle n'en lit qu'une, aucune quand elle en lit
+  // plusieurs (NO_KEY). Une autre variable du même nom ne tient pas cet objet (cf. storeKey) : elle écrit comme
+  // JavaScript, par l'aide douce quand `byName` (déclaration, affectation `=` d'un nom, cf. storeNames). Seules ces
+  // écritures-là paient une aide. Tours répétés tant qu'une variable change (une clé, puis NO_KEY) : une chaîne (`b := a`,
+  // `a := $$o[k]`) se résout dans n'importe quel ordre. `part` : le nom tient une partie de `init` (cf. itemsRoot). Rend
+  // vrai si la variable a changé
+  function noteStore(id: any, init: any, part = false, byName = false): boolean {
+    const r = part ? itemsRoot(init) : findRoot(init, true)
+    if (!noteBinding(storeBindings, id, r)) return false
+    ;(byName ? storeNames : paramNames).add(id.name)
+    return true
+  }
+  let encore = true
+  // motif lié à une valeur (`{ a } := $$prefs`, `[t] = $$liste`, `for { meta } of $$fiches`) : chacun de ses noms en tient
+  // une partie, ou sa valeur par défaut (`{ a = $$o.b } = …`, `(t = $$o.a) ->`). `part` : le nom tient une partie de
+  // `init` (élément d'une boucle, d'un rappel, d'un motif) ; sinon `init` même, qui peut être une copie (cf. copyBindings)
+  const notePattern = (p: any, init: any, part = false, byName = false): void => {
+    if (!p) return
+    if (p.type === 'Identifier') {
+      if (init && noteStore(p, init, part, byName)) encore = true
+      if (init && !part && noteBinding(copyBindings, p, copyRoot(init))) {
+        copyNames.add(p.name)
+        encore = true
+      }
+    }
+    else if (p.type === 'AssignmentPattern') {
+      notePattern(p.left, p.right, false, byName)
+      notePattern(p.left, init, part, byName)
+    }
+    else if (p.type === 'ArrayPattern') for (const el of p.elements) notePattern(el, init, true, byName)
+    else if (p.type === 'ObjectPattern') for (const pr of p.properties) notePattern(pr.type === 'RestElement' ? pr.argument : pr.value, init, true, byName)
+    else if (p.type === 'RestElement') notePattern(p.argument, init, part, byName)
+  }
+  const noteLoop = (n: any) => notePattern(n.left.type === 'VariableDeclaration' ? n.left.declarations[0].id : n.left, n.right, true)
+  // `Array.prototype.forEach` (une méthode à rappel d'une liste), objet de `.call(l, f)`
+  const isArrayMethod = (m: any) => m.type === 'MemberExpression' && !m.computed && m.object.type === 'MemberExpression' && !m.object.computed && m.object.object.type === 'Identifier' && m.object.object.name === 'Array' && m.object.property.name === 'prototype' && CALLBACK_METHODS.has(m.property.name)
+  while (encore) {
+    encore = false
+    walk.simple(ast, {
+      // un nom déclaré ou affecté (`=`) : suivi aussi par son nom (cf. storeNames)
+      VariableDeclarator(n: any) {
+        notePattern(n.id, n.init, false, n.id.type === 'Identifier')
+      },
+      AssignmentExpression(n: any) {
+        if (n.operator === '=' || LOGICAL_ASSIGN.has(n.operator)) notePattern(n.left, n.right, false, n.operator === '=' && n.left.type === 'Identifier')
+      },
+      ForOfStatement: noteLoop,
+      ForInStatement: noteLoop,
+      Function(n: any) {
+        for (const p of n.params) notePattern(p, null)
+      },
+      // paramètre qui reçoit l'élément d'un rappel (cf. CALLBACK_METHODS) : une partie de la liste, suivi par sa variable ;
+      // méthode écrite en clé littérale (`$$l['forEach'](f)`), rappel de `Array.from(l, f)` (second argument) et méthode
+      // d'une liste appelée sur `l` (`Array.prototype.forEach.call(l, f)`)
+      CallExpression(n: any) {
+        const c   = n.callee
+        const nom = c.type !== 'MemberExpression' ? null : !c.computed ? c.property.name : c.property.type === 'Literal' && typeof c.property.value === 'string' ? c.property.value : null
+        let i     = nom === null ? undefined : CALLBACK_METHODS.get(nom)
+        let liste = c.object
+        let f     = n.arguments[0]
+        if (nom === 'from' && !c.computed && c.object.type === 'Identifier' && c.object.name === 'Array') [i, liste, f] = [0, n.arguments[0], n.arguments[1]]
+        else if (nom === 'call' && !c.computed && isArrayMethod(c.object)) [i, liste, f] = [CALLBACK_METHODS.get(c.object.property.name), n.arguments[0], n.arguments[1]]
+        if (i !== undefined && liste && liste.type !== 'SpreadElement' && f && isFunction(f)) notePattern(f.params[i], liste, true, false)
+      },
+    })
   }
 
   walk.ancestor(ast, {
@@ -745,7 +994,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
       // `head` = tête d'appel déjà fermée par sa 1ʳᵉ virgule (`prefix(path, `
       // pour 'local' ; `prefix(rootKey, path, ` pour 'store' ; `prefix(rootKey, objet, ` pour un élément trouvé)
       const head = !tp
-        ? `µ._mjs_storeCallOn(${JSON.stringify(root)}, ${objet}, `
+        ? `${onHead('Call', root!)}${objet}, `
         : tp.origin === 'local'
           ? `µ._mjs_deepCall(_mjsThis, ${pathToJsLiteral(tp.path)}, `
           : `µ._mjs_storeDeepCall(${JSON.stringify(tp.path[0])}, ${pathToJsLiteral(tp.path.slice(1))}, `
@@ -806,7 +1055,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
             obj = param
           }
           const { open, close } = bindings(binds, 'true', wait === 'await')
-          out = `${open}µ._mjs_storeDeleteOn(${JSON.stringify(root)}, ${obj}, ${p.key})${close}`
+          out = `${open}${onHead('Delete', root!)}${obj}, ${p.key})${close}`
         }
         if (out) {
           ms.overwrite(node.start, node.end, `${asiGuard(ancestors)}(${out})`)
@@ -821,7 +1070,7 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
         const root = findRoot(target.object)
         const p    = root ? foundParts(target) : null
         if (p) {
-          ms.overwrite(node.start, node.end, `µ._mjs_storeDeleteOn(${JSON.stringify(root)}, ${p.obj}, ${p.key})`)
+          ms.overwrite(node.start, node.end, `${onHead('Delete', root!)}${p.obj}, ${p.key})`)
           changed = true
         }
         return

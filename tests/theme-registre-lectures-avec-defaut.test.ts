@@ -89,7 +89,7 @@ describe('registre des variables de thème — lectures avec défaut', function 
       'number-border':     ['core-number:var(--mjs-border, #888)'],
       'number-radius':     ['core-number:999px'],
       'number-step-bg':    ['core-number:transparent'],
-      'number-width':      ['core-number:160px'],
+      'number-width':      ['core-number:160px', 'core-number:240px'],
       'color-border':      ['core-color:var(--mjs-border, #888)'],
       'color-line':        ['core-color:1.26rem'],
       'color-radius':      ['core-color:4px'],
@@ -126,7 +126,9 @@ describe('registre des variables de thème — lectures avec défaut', function 
   })
 
   it('le sélecteur lit ses variables sans en déclarer : elles arrivent au registre d\'une application qui sort du silence', async () => {
-    const { registre } = await construire({ hote: THEME + '<@@select name="s"><@@option value="a">A</@@option></@@select>\n' })
+    // `other` écrit : la place horizontale du panneau de la réponse libre (`select-panel-left`) n'est lue que par la partie « Autre », que la
+    // construction ôte sinon, en développement comme en production
+    const { registre } = await construire({ hote: THEME + '<@@select name="s" other><@@option value="a">A</@@option></@@select>\n' })
     const noms = Object.keys(registre!).filter((n) => n.startsWith('select-')).sort()
     assert.deepEqual(noms, [
       'select-bg', 'select-border', 'select-fg', 'select-hover', 'select-max', 'select-panel-bg', 'select-panel-left', 'select-panel-max',
