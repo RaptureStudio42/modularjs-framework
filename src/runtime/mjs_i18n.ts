@@ -74,23 +74,46 @@ if (!µ._i18nLangs) { µ._i18nLangs = {}; }
 // chargement aboutit (un montage qui redemande le fragment, `µ._i18nLang` qui reçoit la langue).
 var __i18nEchecs = Object.create(null);
 
-// les composants qui ont lu un libellé du cœur (`mjs.core.<clé>`, cf. µ._mjs_i18nLookup) avant l'arrivée du fichier de leur langue :
-// la surcharge que ce fichier peut porter ne s'est pas vue (un module cœur passé à la langue d'une bascule dès le clic, avant ses
-// textes). Quand une langue arrive, la liste se vide ; ses composants encore dans la page se rendent à nouveau si ce fichier surcharge
-// un libellé du cœur (sans surcharge, le libellé du framework lu pendant l'attente est déjà le bon), chacun avec ses miroirs (`µclone`,
-// copies de `*marquee`), qui lisent ses dérivés
-var __i18nLabelReaders = new Set();
-function __i18nWakeLabelReaders(racine) {
-  if (!__i18nLabelReaders.size) { return; }
-  var lecteurs = __i18nLabelReaders;
-  __i18nLabelReaders = new Set();
-  var coeur = racine && racine.mjs && racine.mjs.core;
-  if (!coeur || typeof coeur !== 'object' || !Object.keys(coeur).length) { return; }
-  lecteurs.forEach(function(c) {
-    var g = c._mjs_twins;
-    (g ? g.m.slice() : [c]).forEach(function(i) { if (i.isConnected) { i._mjs_invalidate('_awaits_'); } });
+// les lecteurs d'un libellé du framework (`mjs.<groupe>.<clé>`, cf. µ._mjs_i18nLookup) lu avant l'arrivée du fichier de sa langue, rangés
+// par langue, chacun avec les groupes qu'il a lus : la surcharge que ce fichier peut porter ne s'est pas vue (un module cœur passé à la
+// langue d'une bascule dès le clic, avant ses textes ; un toast tiré pendant l'attente, au démarrage dans la langue voulue). Lecteur d'un
+// libellé du cœur : le composant qui le lit ; d'un autre groupe (toast, modal, router, fx) : la fonction qui l'écrit dans un affichage qui
+// dure (µ._mjs_labelKeep). Quand le fichier d'une langue arrive, ou qu'il échoue, les lecteurs de cette langue partent, ceux d'une autre
+// restent ; un lecteur dont ce fichier surcharge un groupe lu se rend à nouveau (un composant encore dans la page, avec ses miroirs —
+// `µclone`, copies de `*marquee` —, qui lisent ses dérivés) ou se récrit (une fonction). Sans surcharge de ses groupes, le libellé du
+// framework lu pendant l'attente est déjà le bon : rien ne bouge
+var __i18nLabelReaders = new Map();
+var __i18nLabelWriter  = null;
+function __i18nWakeLabelReaders(lang, racine) {
+  var lecteurs = __i18nLabelReaders.get(lang);
+  if (!lecteurs) { return; }
+  __i18nLabelReaders.delete(lang);
+  var mjs = racine && racine.mjs;
+  // un groupe que ce fichier surcharge
+  var surcharge = function(g) {
+    var t = mjs && mjs[g];
+    return !!t && typeof t === 'object' && Object.keys(t).length > 0;
+  };
+  lecteurs.forEach(function(groupes, l) {
+    if (!Object.keys(groupes).some(surcharge)) { return; }
+    if (typeof l === 'function') {
+      // une écriture qui lève n'arrête ni les autres ni l'arrivée de la langue
+      try { µ._mjs_labelKeep(l); }
+      catch (e) { µ.error(e); }
+      return;
+    }
+    var g = l._mjs_twins;
+    (g ? g.m.slice() : [l]).forEach(function(i) { if (i.isConnected) { i._mjs_invalidate('_awaits_'); } });
   });
 }
+// un affichage du runtime qui dure (toast, modale, panneau du routeur, effet) écrit ses libellés du framework par `fn`, appelée aussitôt :
+// un libellé qu'elle lit sans le fichier de sa langue la fait rappeler à l'arrivée d'un fichier qui surcharge son groupe
+µ._mjs_labelKeep = function(fn) {
+  var avant = __i18nLabelWriter;
+  __i18nLabelWriter = fn;
+  try { fn(); }
+  finally { __i18nLabelWriter = avant; }
+};
 
 // Point d'entrée des données d'une langue (fichier de langue, rendu serveur).
 // Rejouable : un second appel remplace la table (HMR, test qui ré-évalue).
@@ -99,7 +122,7 @@ function __i18nWakeLabelReaders(racine) {
   delete __i18nEchecs[lang];
   µ._i18nLangs[lang] = { root: (data && data.root) || {}, sections: (data && data.sections) || {} };
   __i18nMergeRootIntoExistingDicts();  // dict déjà créé (graine ssr, langue rechargée) : backfill
-  __i18nWakeLabelReaders(data && data.root);
+  __i18nWakeLabelReaders(lang, data && data.root);
 };
 
 // l'entrée propre d'une langue chargée, null sinon : une langue inconnue, choisie par la donnée, n'est jamais lue sur un
@@ -448,8 +471,14 @@ function __i18nEffectiveLang() {
   if (µ._mjs_i18nSwapPending) return µ._mjs_i18nPrevLang;
   return __i18nDisplayedLang || (µ._mjs_i18nBooted ? undefined : __i18nProvLang);
 }
-// exposée pour µ._mjs_label, mjs_init.ts
-µ._mjs_i18nEffectiveLang = __i18nEffectiveLang;
+// langue des libellés du framework quand le magasin n'en porte pas encore : l'effective ; avant le démarrage, sans langue provisoire (page
+// sans rendu serveur), la VOULUE (`?lang=`, préférence mémorisée, navigateur), celle où la page va paraître — un libellé lu pendant l'attente
+// des fichiers s'écrit dans cette langue et attend son fichier, jamais celui de la langue par défaut
+function __i18nLabelLang() {
+  return __i18nEffectiveLang() || (µ._mjs_i18nBooted ? undefined : __i18nWantedLang());
+}
+// exposée pour µ._mjs_label, mjs_init.ts : la table du framework se choisit dans la même langue que la surcharge du projet
+µ._mjs_i18nEffectiveLang = __i18nLabelLang;
 
 // dictionnaire du PROJET pour les libellés du RUNTIME (mjs_init.ts, µ._mjs_label) :
 // clés racine réservées `mjs.<groupe>.<clé>` (`mjs.toast.success`, `mjs.modal.cancel`…), lues AVANT
@@ -465,13 +494,20 @@ function __i18nEffectiveLang() {
 // jamais de throw — y compris quand `µ._i18nData` est le repli inerte ou quand `µ._mjs_storeRaw` n'existe
 // pas (module vault absent du build).
 µ._mjs_i18nLookup = function(cle) {
-  var lang = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || __i18nEffectiveLang() || µ._i18nData.default;
+  var lang = (µ._mjs_storeRaw && µ._mjs_storeRaw.__mjsLang) || __i18nLabelLang() || µ._i18nData.default;
   if (!lang) { return undefined; }
   var node = __i18nResolve(lang, cle);
-  // libellé du cœur lu pendant un rendu ou par une valeur dérivée (`$labelText = $label ?? tr(…, µlang)`, calculée hors du rendu
-  // à une bascule), la langue pas encore arrivée : le module se rendra à nouveau à son arrivée
-  var lecteur = µ._mjs_computing || µ.activeComponent;
-  if (typeof node !== 'string' && lecteur && !µ._isServer && !__i18nLangOf(lang) && String(cle).lastIndexOf('mjs.core.', 0) === 0) { __i18nLabelReaders.add(lecteur); }
+  // libellé lu pendant l'attente du fichier de sa langue (une langue du projet, que ce fichier n'a pas encore apportée) : son lecteur se
+  // rendra à nouveau, ou se récrira, à l'arrivée de CE fichier (cf. __i18nWakeLabelReaders). Lecteur d'un libellé du cœur : le rendu, ou la
+  // valeur dérivée qui le lit (`$labelText = $label ?? tr(…, µlang)`, calculée hors du rendu à une bascule) ; d'un autre groupe : l'écriture
+  // en cours (µ._mjs_labelKeep), jamais le composant actif
+  var g = typeof node !== 'string' && !µ._isServer && !__i18nLangOf(lang) && Object.prototype.hasOwnProperty.call(µ._i18nData.files || {}, lang) && /^mjs\.(\w+)\./.exec(cle);
+  var lecteur = g && (g[1] === 'core' ? µ._mjs_computing || µ.activeComponent : __i18nLabelWriter);
+  if (lecteur) {
+    var lecteurs = __i18nLabelReaders.get(lang) || __i18nLabelReaders.set(lang, new Map()).get(lang);
+    var groupes  = lecteurs.get(lecteur) || lecteurs.set(lecteur, {}).get(lecteur);
+    groupes[g[1]] = 1;
+  }
   return typeof node === 'string' ? node : undefined;
 };
 
@@ -1190,6 +1226,7 @@ function __i18nLoadLang(lang, strict) {
     }, function(err) {
       if (!__i18nLeaving) { µ.error(µ._mjs_msg('i18nLoadLang', { lang: lang, url: url, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de la langue « {lang} » ({url}) — {reason}')); }
       delete __i18nLangPromises[lang]; // langue rechargée à la bascule suivante
+      __i18nLabelReaders.delete(lang); // ses lecteurs ne l'attendent plus, même quand la bascule est annulée
       if (strict) { throw err; } // bascule annulée
       µ._i18nLang(lang, null); // langue vide : repli sur le défaut, jamais de gel
       if (!__i18nLeaving) { __i18nEchecs[lang] = true; } // ce que le défaut ne porte pas paraît en barres

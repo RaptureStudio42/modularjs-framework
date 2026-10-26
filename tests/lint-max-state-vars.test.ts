@@ -4,11 +4,14 @@
 // le découpage en sous-composants/écrans. Étalonnage réel : modules sains
 // 5-20 vars, monolithe pathologique vu à 182. Configurable par le bloc
 // `"lint": { "maxStateVars": N }` de mjs.config.json (validation stricte).
+// Les modules du cœur (`<@@nom>`, catalogue du framework) n'y sont pas soumis : leur nombre de variables
+// est l'affaire du framework, jamais de l'appli qui les emploie ; un composant du projet reste soumis au seuil.
 
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { transpile } from '../src/transpiler/index.js'
+import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { findConfig, resolveBundlerOpts } from '../src/bundler/config.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -50,6 +53,53 @@ describe('lint maxStateVars — avertissement « trop de variables d\'état »',
 
   it('0 = désactivé → jamais de warn, même à 100 vars', async () => {
     assert.equal(await warnsTooMany(sourceWithVars(100), { maxStateVars: 0 }), null)
+  })
+})
+
+// une appli jetable construite par le bundler (catalogue cœur fabriqué, ou le réel quand `catalogue` est null) : les lignes
+// du lint imprimées pendant la construction ; transpilation dans le processus, pour que la console les voie
+async function lintLinesOfBuild(files: Record<string, string>, catalogue: Record<string, string> | null, opts: Record<string, unknown> = {}): Promise<string[]> {
+  const root   = mjsTmp('lint-coeur')
+  const srcDir = join(root, 'src')
+  mkdirSync(srcDir, { recursive: true })
+  for (const [rel, content] of Object.entries(files)) writeFileSync(join(srcDir, rel), content)
+  let coreDir: string | undefined
+  if (catalogue) {
+    coreDir = join(root, 'core-modules')
+    mkdirSync(coreDir, { recursive: true })
+    for (const [rel, content] of Object.entries(catalogue)) writeFileSync(join(coreDir, rel), content)
+  }
+  const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js'), inlineTranspileLimit: 1e6, ...(coreDir ? { coreModulesDir: coreDir } : {}), ...opts })
+  const orig  = console.warn
+  const lines: string[] = []
+  console.warn = (...a: unknown[]) => { const s = String(a[0]); if (s.includes('[lint.maxStateVars]')) lines.push(s) }
+  try {
+    const stats = await bundler.compile()
+    assert.equal(stats.errors.length, 0, stats.errors.map((e: Error) => e.message).join('\n'))
+  }
+  finally {
+    console.warn = orig
+  }
+  return lines
+}
+
+describe('lint maxStateVars — les modules du cœur en sont exemptés', function () {
+  this.timeout(60000)
+  after(async () => { await terminateSharedWorkerPool() })
+
+  it('un module du catalogue cœur à 41 variables ne le montre pas ; un composant du projet à 41 variables le montre toujours', async () => {
+    const lines = await lintLinesOfBuild({ 'page.mjs': '<@@stress></@@stress>', 'gros.mjs': sourceWithVars(41) }, { 'stress.mjs': sourceWithVars(41) })
+    assert.ok(!lines.some(l => /stress/.test(l)), `le module du cœur ne doit pas être signalé :\n${lines.join('\n')}`)
+    assert.equal(lines.length, 1, `seul le composant du projet est signalé :\n${lines.join('\n')}`)
+    assert.match(lines[0], /\bgros\b.*\b41\b/)
+  })
+
+  it('catalogue réel, seuil 1 : aucun module du cœur ne le montre, le composant du projet qui les emploie le montre', async () => {
+    const HOST = '<script>\n$a = 1\n$b = 2\n</script>\n<p>{$a} {$b}</p>\n<@@select name="pays" search><@@option value="fr">France</@@option></@@select>'
+    const lines = await lintLinesOfBuild({ 'hote.mjs': HOST }, null, { maxStateVars: 1 })
+    assert.ok(!lines.some(l => /core-/.test(l)), `aucun module du cœur ne doit être signalé :\n${lines.join('\n')}`)
+    assert.equal(lines.length, 1, `seul le composant du projet est signalé :\n${lines.join('\n')}`)
+    assert.match(lines[0], /\bhote\b/)
   })
 })
 

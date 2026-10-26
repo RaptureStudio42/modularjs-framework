@@ -52,6 +52,21 @@ function _mjsDerive(x) {
   return x?._mjs_c && typeof x.f === 'function';
 }
 
+// expression du gabarit qui lit l'état par une clé calculée sans rien appeler (`{$[$k]}`, ou valeur dérivée qui en lit
+// une) : la variable lue n'est connue qu'à l'exécution, le compilateur lui donne la dépendance `*` (analyzer/index.ts),
+// écrite après chaque écriture du composant, une fois son propre rendu passé. Posé à la première connexion sur la seule
+// instance qui en a une (son `_mjs_invalidate` propre) : les autres composants n'en paient rien, à aucune écriture
+function _mjsToute(el) {
+  const inv = el._mjs_invalidate;
+  if (inv._mjs_toute || !(el._mjs_effectsByVar?.['*'] || el._mjs_renderStructVars?.['*'])) return;
+  const toute = function(k) {
+    inv.call(this, k);
+    if (k !== '*' && k !== '_awaits_') inv.call(this, '*');
+  };
+  toute._mjs_toute = true;
+  el._mjs_invalidate = toute;
+}
+
 // le VRAI shadow root d'une balise est prêt, neuf ou repris d'un rendu serveur (jamais pour le repli `mjs-light`) :
 // pont UJS (retargeting shadow fermé, cf. µ._mjs_ujsShadowAttach dans mjs_ujs.ts) et @title (mjs_title.ts), gardes
 // `typeof` : ces modules peuvent être absents d'un runtime tree-shaké ; puis le défilement interne
@@ -611,6 +626,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 
     // _set : assignation primitive depuis le code utilisateur transformé
   _set(k, v) {
+    // clé qui n'est ni un texte ni un symbole (`$[$k] = v`, `$k` un nombre, un booléen, null, undefined, un objet) : la
+    // clé de propriété qu'elle désigne, un texte — celui que lisent les reffets et les liaisons. Convertie AVANT la garde :
+    // une liste `['__proto__']` désigne `__proto__`
+    if (typeof k !== 'string' && typeof k !== 'symbol') k = String(k);
     // SÉCURITÉ — proto-pollution : un `{...$data}`
     // (spread) où `$data` vient d'un JSON réseau peut porter une clé PROPRE
     // `__proto__`/`constructor`/`prototype` (JSON.parse crée une own-prop
@@ -1257,7 +1276,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // classe, même technique que mjs_on.ts.
 
   connectedCallback() {
-    var parseProp, ref, schema, syncProps;
+    var parseProp, propDe, ref, schema, syncProps;
     // Reprise du fragment différé par `_mjs_mount` en mode léger (cf. son
     // commentaire) : `connectedCallback` n'a pas la contrainte
     // « pas d'enfants » du constructeur, l'insertion peut se faire ici sans
@@ -1272,6 +1291,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // prend le relais du :not(:defined) qui vient de s'éteindre à l'upgrade.
       // Retiré en fin du premier render ci-dessous.
       this.setAttribute('mjs-loading', '');
+      _mjsToute(this);
     }
     this._mjs_is_mounted = true;
     // topologie changée (connexion) : invalide tous les caches de résolution §§
@@ -1341,6 +1361,32 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       }
       return v;
     };
+    // nom d'attribut, ou clé de `mjs-props` (plus bas) → clé de la prop (`user-id` → `userId`) ; null s'il n'en désigne
+    // jamais une. Skip : préfixes MJS internes, attributs natifs HTML, et conventions
+    // ARIA/data-* (gérés par le browser, jamais exposés comme props).
+    // EXCEPTION : si l'attribut natif (`title`, `src`, `name`, …) correspond
+    // à une prop DÉCLARÉE du composant (`_mjs_var_bits`), c'est une vraie prop
+    // — le browser pose aussi l'attribut natif mais le composant veut la
+    // valeur dans `_state` (cas `<mjs-audio-player title="…">`).
+    propDe = (nom) => {
+      const _nameL = nom.toLowerCase();
+      const key = nom.replace(/-([a-z])/g, function(g) {
+        return g[1].toUpperCase();
+      });
+      const _isDeclaredProp = this._mjs_var_bits != null
+        && hasProp.call(this._mjs_var_bits, key);
+      if (nom.startsWith('mjs-')
+          || (MJS_NATIVE_ATTRS.has(_nameL) && !_isDeclaredProp)
+          || _nameL.startsWith('aria-')
+          || _nameL.startsWith('data-')
+          // Anti-`onclick` ciblé : seulement les VRAIS handlers DOM (présents
+          // sur le prototype). L'ancien `startsWith('on')` avalait aussi des
+          // props légitimes : `online`, `onboarding-step`, `onyx-color`…
+          || (_nameL.startsWith('on') && (_nameL in HTMLElement.prototype))) {
+        return null;
+      }
+      return key;
+    };
     // `only` : les seuls attributs à relire (ceux qui ont bougé, cf. l'observateur plus bas) ; absent,
     // tous — au montage. `deja` : les props que le parent a posées TYPÉES dans le registre, relu plus bas
     // (au montage seulement) : leur attribut, reflet texte ou posé par le rendu serveur, n'est pas relu
@@ -1352,30 +1398,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       for (j = 0, len = ref.length; j < len; j++) {
         attr = ref[j];
         if (only && !only.has(attr.name)) continue;
-        const _nameL = attr.name.toLowerCase();
-        key = attr.name.replace(/-([a-z])/g, function(g) {
-          return g[1].toUpperCase();
-        });
+        key = propDe(attr.name);
         // relu en chaîne, 7 deviendrait "7" chez l'enfant, puis chez le parent par la liaison à deux sens
-        if (deja && hasProp.call(deja, key)) continue;
-        // Skip : préfixes MJS internes, attributs natifs HTML, et conventions
-        // ARIA/data-* (gérés par le browser, jamais exposés comme props).
-        // EXCEPTION : si l'attribut natif (`title`, `src`, `name`, …) correspond
-        // à une prop DÉCLARÉE du composant (`_mjs_var_bits`), c'est une vraie prop
-        // — le browser pose aussi l'attribut natif mais le composant veut la
-        // valeur dans `_state` (cas `<mjs-audio-player title="…">`).
-        const _isDeclaredProp = this._mjs_var_bits != null
-          && hasProp.call(this._mjs_var_bits, key);
-        if (attr.name.startsWith('mjs-')
-            || (MJS_NATIVE_ATTRS.has(_nameL) && !_isDeclaredProp)
-            || _nameL.startsWith('aria-')
-            || _nameL.startsWith('data-')
-            // Anti-`onclick` ciblé : seulement les VRAIS handlers DOM (présents
-            // sur le prototype). L'ancien `startsWith('on')` avalait aussi des
-            // props légitimes : `online`, `onboarding-step`, `onyx-color`…
-            || (_nameL.startsWith('on') && (_nameL in HTMLElement.prototype))) {
-          continue;
-        }
+        if (key === null || (deja && hasProp.call(deja, key))) continue;
         parsed = parseProp(key, attr.value);
         // l'attribut n'est que le REFLET texte de la prop courante (le module `option` pose
         // `value="18"` pour `value={18}`, et cet observateur le relit aussitôt) : le relire
@@ -1403,7 +1428,31 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // reconnexion. On ne lit surtout pas `_state` — un composant peut avoir un `$layout`
     // à lui, sans rapport avec le style (cf. le garde de `_set`)
     this._mjs_applyLayout(this._mjs_layoutName || this.getAttribute('layout') || this.getAttribute('template') || 'default');
-    const __pend = µ._mjs_pending.get(this);
+    let __pend = µ._mjs_pending.get(this);
+    // props TYPÉES d'une racine rendue par le serveur (option `props`) : l'attribut `mjs-props` (JSON) porte ce que le texte
+    // d'un attribut ne sait pas dire — un nombre, une chaîne que la balise relirait en booléen ou en liste (cf.
+    // src/server/props-racine.ts). Versées EN TÊTE du registre : une prop posée par le parent l'emporte, l'attribut texte
+    // d'une prop typée n'est pas relu. Lu à chaque connexion : au serveur, au démarrage du client, pour une balise posée
+    // plus tard (navigation d'une page rendue par requête). Ses clés se lisent comme les noms d'attributs (`propDe`) :
+    // `user-id` est la prop `userId`, celle dont l'attribut n'est pas relu, et `data-*` n'en est jamais une. Clés sûres :
+    // `_set` refuse les autres (`µ._mjs_safeKey`) ; JSON illisible ou qui n'est pas un objet : les seuls attributs texte,
+    // comme sans `mjs-props`
+    const __tj = this.getAttribute('mjs-props');
+    if (__tj) {
+      try {
+        const __tp = JSON.parse(__tj);
+        if (typeof __tp === 'object') {
+          const __tc = Object.create(null);
+          for (const __n in __tp) {
+            const __k = propDe(__n);
+            if (__k !== null) __tc[__k] = __tp[__n];
+          }
+          __pend = Object.assign(__tc, __pend);
+        }
+      } catch {
+        // no-op
+      }
+    }
     // à chaque connexion, les valeurs que le parent livre (attributs, registre) ne sont pas des écritures de l'enfant et ne remontent pas : celles du
     // registre peuvent être périmées (le défaut qu'un composant du milieu a posé avant d'avoir reçu la sienne), l'attribut d'une page rendue par le
     // serveur reste celui de la page servie ; leur écho écraserait la variable du parent — la prop liée reste fermée jusqu'à la fin de cette reprise
@@ -2221,7 +2270,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // LOCALES), donc le marquage dirty des computeds ci-dessous ne se
     // déclenchait jamais pour un `$X = $$y*2` — le getter `_state.X` servait la
     // valeur `_mjs_cached` périmée indéfiniment après une écriture `$$y = …`.
-    if ((k === '_awaits_' || (k.charCodeAt(0) === 36 && k.charCodeAt(1) === 36)) && this._mjs_computedKeys) {
+    // clé qui n'est pas un texte (symbole, appelant direct ; `_set` convertit les autres) : jamais un magasin
+    if ((k === '_awaits_' || (typeof k === 'string' && k.charCodeAt(0) === 36 && k.charCodeAt(1) === 36)) && this._mjs_computedKeys) {
       const __ck = this._mjs_computedKeys, __cs = this._mjs_computeds;
       for (let __ci = 0, __cn = __ck.length; __ci < __cn; __ci++) {
         const __c = __cs[__ck[__ci]];

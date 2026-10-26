@@ -940,20 +940,30 @@
     box.setAttribute('data-mjs-route-error', '');
     box.className = 'mjs-route-error';
     var h = document.createElement('strong');
-    h.textContent = this._mjs_routerLabel('notFound');
     var p = document.createElement('p');
-    p.textContent = this._mjs_routerLabel('noRoute');
     var code = document.createElement('code');
     code.textContent = matchPath;
     box.appendChild(h);
     box.appendChild(p);
     box.appendChild(code);
+    var list   = null;
+    var routes = '';
     if (µ.debug) {
-      var list = document.createElement('p');
+      list = document.createElement('p');
       list.className = 'mjs-route-error-list';
-      list.textContent = this._mjs_routerLabel('declared') + ' : ' + this._mjs_declaredRoutes().join('  ·  ');
+      routes = this._mjs_declaredRoutes().join('  ·  ');
       box.appendChild(list);
     }
+    // les libellés : récrits à l'arrivée du fichier de la langue s'il les surcharge, le panneau encore affiché (µ._mjs_labelKeep,
+    // mjs_i18n.ts)
+    var self  = this;
+    var write = function() {
+      h.textContent = self._mjs_routerLabel('notFound');
+      p.textContent = self._mjs_routerLabel('noRoute');
+      if (list) { list.textContent = self._mjs_routerLabel('declared') + ' : ' + routes; }
+    };
+    if (µ._mjs_labelKeep) { µ._mjs_labelKeep(write); }
+    else { write(); }
     node.innerHTML = '';
     node.appendChild(box);
     if (µ._csp) {

@@ -43,11 +43,12 @@
 
   optionId = (i)-> "#{uid}-opt-#{i}"
 
-  # libellés par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
+  # libellés par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule) ; chacun est lu dans un dérivé, jamais dans le gabarit : la liste se redessine quand le fichier de la langue arrive après elle (surcharges `mjs.core.*` du projet)
   tr = (key, lang)-> µ._mjs_label('core', key)
 
   $placeholderText = $placeholder ?? tr('selectPlaceholder', µlang)
   $searchText      = $searchPlaceholder ?? tr('selectSearch', µlang)
+  $emptyText       = $emptyLabel ?? tr('selectEmpty', µlang)
 
   wrapperRef      = null
   buttonRef       = null
@@ -71,7 +72,7 @@
   multiOf    = (multiple)-> multiple !== undefined and multiple !== false
   stickyOf   = (sticky, multiple)-> sticky !== undefined and sticky !== false and not multiOf(multiple)
   searchOnOf = (search)-> search !== undefined and search !== false
-  offOf      = (disabled)-> disabled? and disabled !== false and String(disabled).toLowerCase() !== 'false' # `disabled="false"`, toute casse (le rendu serveur la lit ici, sans le socle du cœur), laisse la liste active ; lu à l'usage, comme `search` : la liste reste à 40 variables d'état (seuil du lint)
+  offOf      = (disabled)-> disabled? and disabled !== false and String(disabled).toLowerCase() !== 'false' # `disabled="false"`, toute casse (le rendu serveur la lit ici, sans le socle du cœur), laisse la liste active ; lu à l'usage, comme `search` : aucune variable d'état de plus (le seuil du lint ne vise pas les modules du cœur)
   lockedOf   = (disabled, formDisabled)-> offOf(disabled) or formDisabled # désactivée par elle-même ou par un `<fieldset disabled>` autour d'elle (`formDisabled`, posé par le socle du cœur) : les deux se cumulent
   normalize  = (s)-> (s ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/ß/g, 'ss') # NFKD défait aussi les ligatures (« ﬁ »), œ, æ et ß s'écrivent en lettres
 
@@ -805,7 +806,7 @@
       {end}
       <div class="select-list" id={panelId} role="listbox" aria-multiselectable={$multi}>
         {if $filtered.length == 0}
-          <div class="select-empty">{$emptyLabel ?? tr('selectEmpty', µlang)}</div>
+          <div class="select-empty">{$emptyText}</div>
         {else}
           {for sec in sectionsOf($filtered) by key}
             <div class="select-section" @class{sec.grouped}="select-group" role={sec.grouped ? 'group' : 'none'} aria-label={sec.label}>

@@ -147,15 +147,21 @@ MJS distingue deux portées, **transmises différemment** (voir aussi [Props](04
 
 ### Données locales → `props` (attribut)
 
-Les props propres à un composant passent par un **attribut** sur sa balise. Les valeurs scalaires sont posées telles quelles ; les **objets et tableaux** sont sérialisés en **JSON** et ré-hydratés automatiquement au montage — côté serveur **et** côté client.
+Les props propres à un composant passent par sa balise, et le composant les reçoit **avec leur type**, côté serveur **et** côté client, comme celles qu'un parent lui passe (`<@card stock={12}>`). Une chaîne, un booléen ou `null` s'écrit en **attribut** ; les **objets et tableaux** aussi, sérialisés en **JSON** et ré-hydratés automatiquement au montage.
+
+Un **nombre** ne tient pas dans le texte d'un attribut : `stock="12"` se lirait `"12"`, et `$stock + 1` donnerait `"121"`. Il voyage donc aussi dans l'attribut `mjs-props`, en JSON, avec les chaînes que la balise lirait autrement (`'true'`, `'null'`, un texte en JSON comme `'[1]'`, qui restent des chaînes). Le composant lit `mjs-props` à son montage, sur le serveur comme dans le navigateur : ces valeurs l'emportent sur leur attribut texte.
+
+Un nom de prop en camelCase (`userId`) s'écrit en kebab-case sur la balise (`user-id="5"`) : le nom d'un attribut ne garde pas sa casse, et le composant relit `user-id` en `userId`.
 
 ```js
 await renderToString({ sourceDir, tag: 'mjs-card',
-  props: { title: 'Stylo', item: { price: 3, tags: ['neuf'] } } })
-// → <mjs-card title="Stylo" item="{…JSON…}">…</mjs-card>
+  props: { title: 'Stylo', item: { price: 3, tags: ['neuf'] }, stock: 12 } })
+// → <mjs-card title="Stylo" item="{…JSON…}" stock="12" mjs-props="{…JSON…}">…</mjs-card>
 ```
 
-Comme l'attribut est porté par la balise dans le HTML envoyé, le client le **relit gratuitement** lors de la reprise en main : la donnée locale n'a pas besoin d'un transport séparé.
+Comme ces attributs sont portés par la balise dans le HTML envoyé, le client les **relit gratuitement** lors de la reprise en main : la donnée locale n'a pas besoin d'un transport séparé. `mjs-props` est lu chaque fois que la balise entre dans la page : au **démarrage** du runtime comme **plus tard**, quand une navigation (UJS) ou votre propre code (un fragment reçu par `fetch`) y pose une page rendue par requête — un nombre y reste un nombre.
+
+Une prop écrite en texte dans votre HTML (`<mjs-card stock="12">`) reste une chaîne, comme sans rendu serveur.
 
 ### État global → `store` (store `$$` inline)
 
@@ -484,7 +490,7 @@ Les quatre routes, les cinq clés de config et les trois étages sont **identiqu
 | Choisir le rendu par URL (sans code) | bloc `render` dans `mjs.config.json` : `default` + `routes[url] = { component, mode }` |
 | Rendre un composant en HTML | `renderToString({ sourceDir, tag, … })` |
 | Rendre plusieurs fois (1 compilation) | `createSSRRenderer({ sourceDir })` puis `.renderToString(tag, …)` |
-| Données locales d'un composant | `props` → attribut (objets en JSON, auto-ré-hydratés) |
+| Données locales d'un composant | `props` → attributs (objets en JSON, auto-ré-hydratés ; un nombre garde son type par `mjs-props`) |
 | État global partagé | `store` → `sharedScript` à placer une fois, réhydrate `$$` au boot |
 | Stratégie de reprise en main | `ssrMode: 'replace'` (défaut) · `'markers'` · `'positional'` · `'diff'` |
 | Mode du Shadow DOM | `shadowMode: 'open'` (défaut, requis pour la reprise en main) |

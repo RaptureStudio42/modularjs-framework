@@ -3231,6 +3231,13 @@ function reecritRuneConsole(src: string, lang?: string): string {
   return sortie + src.slice(dernier)
 }
 
+// singletons que déclare un module (`export µ$$X = …` en tête de ligne, hors chaînes et commentaires) : les seuls noms qu'il
+// lit en `µ$$X`, dans son code (applyMjsSugarToScript ci-dessous) comme dans une interpolation (le lexeur, option
+// `singletons`, que le bundler passe à un module autonome) — une seule lecture, un seul verdict
+export function singletonsDeclares(src: string): string[] {
+  return [...maskStringsAndComments(src).masked.matchAll(/^[ \t]*export[ \t]+µ\$\$([a-zA-Z0-9_]+)[ \t]*=/gm)].map((m) => m[1])
+}
+
 export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: string[], sectionLabel = '<script>', firstLine = 1): string {
   // Sigil store CANONIQUE `µ$$X` / `$$X` : on DOUBLE le `$` de la variable
   // réactive (`µ$X`/`$X`). Même mécanisme runtime que `µ$` (universal state
@@ -3256,11 +3263,7 @@ export function applyMjsSugarToScript(src: string, lang?: string, predeclared?: 
   // remède, sans le volet HTML (absent ici) : masquer chaînes/commentaires
   // (maskStringsAndComments), réécrire, restaurer.
   const { masked: maskedForExports, restore: restoreExports } = maskStringsAndComments(src)
-  const singletonExports = new Set<string>()
-  maskedForExports.replace(/^[ \t]*export[ \t]+µ\$\$([a-zA-Z0-9_]+)[ \t]*=/gm, (_m: string, nom: string) => {
-    singletonExports.add(nom)
-    return _m
-  })
+  const singletonExports = new Set(singletonsDeclares(src))
   let maskedOut = maskedForExports.replace(
     /^([ \t]*)export[ \t]+µ\$\$([a-zA-Z0-9_]+)([ \t]*=)/gm,
     '$1export µ$$$2$3'
@@ -5336,7 +5339,8 @@ async function transpileImpl(
   // AVERTISSEMENT, jamais bloquant : rien d'incorrect à l'exécution, c'est un
   // signal d'architecture. `stateVars` = l'ensemble DÉFINITIF post-analyse +
   // auto-déclaration template (état + dérivés, hors vars importées). Seuil
-  // `lint.maxStateVars` (mjs.config.json), 0 = désactivé, défaut 40.
+  // `lint.maxStateVars` (mjs.config.json), 0 = désactivé, défaut 40. Un module du
+  // cœur arrive ici à 0 (bundler, compileMjsCold) : jamais signalé à l'appli.
   const maxStateVars = opts.maxStateVars ?? 40
   if (maxStateVars > 0 && analyzer.stateVars.length > maxStateVars) {
     printDiagnostic(typedLine('maxStateVars', t('transpiler.trop-de-variables-etat', { moduleName, n: analyzer.stateVars.length, seuil: maxStateVars }))!, colorsEnabled)

@@ -430,6 +430,28 @@ export function reserveDataMarkers(cache: Record<string, string | false>): strin
 export const CORE_HELPER_NAMES = ['_p', '_tm', '_al', '_def', '_esc', '_set', '_storeSet', '_storeDeclare', '_glCl', '_glSt', '_updDynEl', '_updModule', '_setHead', '_clearHead', '_vtPresets', '_isServer']
 
 // ============================================================================
+// NOMS QUE LE RUNTIME POSE LUI-MÊME SUR µ : jamais donnés à une propriété interne
+//
+// Le cœur pose sur µ une API publique dont certains noms sont courts : `µ.t` (la traduction,
+// mjs_i18n.ts), `µ.log`, `µ.nav`, `µ.res`, `µ.url`, `µ.raw`, `µ.det`. Or esbuild ne réserve un nom
+// de propriété que dans la transformation qui le voit écrit : un composant qui n'en cite aucun est
+// minifié AVANT le cœur, et peut donner l'un de ces noms à une propriété interne portée par µ
+// (`µ._mjs_cloneTpl`, l'aide qui copie un gabarit, raccourcie en `t`). Le cœur, minifié ensuite,
+// garde la correspondance du cache alors même qu'il écrit `µ.t` : ses deux définitions se suivent,
+// la traduction prend la place de l'aide, et plus aucun composant ne se monte (« appendChild …
+// not of type 'Node' »). Le relevé des noms d'instance ne protège que l'application dont un
+// composant cite le nom (`µt 'clé'` compile en `µ.t(…)`) : une application traduite dont aucun
+// composant ne traduit rien y tombait, selon le tirage des noms courts.
+//
+// La liste EST le relevé des accès `µ.<nom>` du runtime (src/runtime, commentaires compris) dont
+// le nom tient en `RESERVED_NAME_MAX_LENGTH` caractères, les aides du cœur mises à part (elles ont
+// leur liste). Large exprès : un nom réservé à tort coûte quelques octets, un nom manqué rouvre le
+// bogue. Le test de réservation refait le relevé sur les sources : un nom court neuf posé sur µ
+// fait rougir tant qu'il n'est pas ici.
+// ============================================================================
+export const CORE_API_NAMES = ['X', 't', 'on', 'CSS', 'UJS', 'app', 'det', 'log', 'nav', 'raw', 'res', 'url']
+
+// ============================================================================
 // NOMS QUE LE NAVIGATEUR PORTE DÉJÀ : jamais donnés à une propriété interne
 //
 // Les propriétés `_mjs_*` se posent sur des objets du navigateur : nœuds (`node._mjs_outro`, la sortie

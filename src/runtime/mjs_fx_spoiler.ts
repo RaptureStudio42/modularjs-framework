@@ -248,6 +248,10 @@
         if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
         frame = 0;
       };
+      // son nom, le temps où le texte est caché : récrit à l'arrivée du fichier de la langue s'il le surcharge
+      var named = function() {
+        if (saved) µ._mjs_dom.setAttribute(el, 'aria-label', µ._mjs_fxLabel('spoiler'));
+      };
       // la balise comme un bouton, le temps où le texte est caché
       var lock = function() {
         saved = { role: µ._mjs_dom.getAttribute(el, 'role'), tab: µ._mjs_dom.getAttribute(el, 'tabindex'), label: µ._mjs_dom.getAttribute(el, 'aria-label'), inner: [] };
@@ -260,7 +264,7 @@
         }
         µ._mjs_dom.setAttribute(el, 'role', 'button');
         if (saved.tab === null) µ._mjs_dom.setAttribute(el, 'tabindex', '0');
-        µ._mjs_dom.setAttribute(el, 'aria-label', µ._mjs_fxLabel('spoiler'));
+        µ._mjs_fxLabelKeep(named);
       };
       var unlock = function() {
         if (!saved) return;

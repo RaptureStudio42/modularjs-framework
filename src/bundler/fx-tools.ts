@@ -41,7 +41,7 @@ export const FX_TOOLS: Record<string, { effects: string[], needs: string[], uses
   fx_toolwebkit:   { effects: ['fx_blend', 'fx_filter'], needs: [], uses: mention('_mjs_fxWebkit') },
   fx_toolcolor:    { effects: ['fx_blend', 'fx_filter'], needs: [], uses: mention('_mjs_fxColorOn') },
   fx_toolfonts:    { effects: ['fx_annotate', 'fx_delta', 'fx_weight'], needs: [], uses: mention('_mjs_fxOnFonts') },
-  fx_toollabel:    { effects: ['fx_flipcard', 'fx_guard', 'fx_loader', 'fx_offline', 'fx_spoiler'], needs: [], uses: mention('_mjs_fxLabel') },
+  fx_toollabel:    { effects: ['fx_flipcard', 'fx_guard', 'fx_loader', 'fx_offline', 'fx_spoiler'], needs: [], uses: mention('_mjs_fxLabel', '_mjs_fxLabelKeep') },
   fx_toolbeat:     { effects: ['fx_annotate', 'fx_attention', 'fx_glitch', 'fx_shine'], needs: [], uses: mention('_mjs_fxEvery', '_mjs_fxBeat') }
 }
 

@@ -66,9 +66,14 @@
     layer.setAttribute('aria-valuemin', '0');
     layer.setAttribute('aria-valuemax', '100');
     layer.setAttribute('aria-valuenow', '0');
-    var said = typeof µ._mjs_label === 'function' ? µ._mjs_label('fx', 'progress') : void 0;
-    if (typeof said !== 'string') said = typeof µ._mjs_labelLang === 'function' && µ._mjs_labelLang() === 'en' ? 'Reading progress' : 'Progression de la lecture';
-    layer.setAttribute('aria-label', said);
+    // son nom : récrit à l'arrivée du fichier de la langue s'il le surcharge (µ._mjs_labelKeep, mjs_i18n.ts)
+    var named = function() {
+      var said = typeof µ._mjs_label === 'function' ? µ._mjs_label('fx', 'progress') : void 0;
+      if (typeof said !== 'string') said = typeof µ._mjs_labelLang === 'function' && µ._mjs_labelLang() === 'en' ? 'Reading progress' : 'Progression de la lecture';
+      layer.setAttribute('aria-label', said);
+    };
+    if (µ._mjs_labelKeep) µ._mjs_labelKeep(named);
+    else named();
     // la place, la source et l'origine aussi sur le calque, où la feuille les lit : sur un composant il
     // vit dans son shadow root, d'où les attributs de la balise ne se voient pas
     layer.setAttribute('mjs-fx-scrollprogress-place', place);

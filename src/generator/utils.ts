@@ -510,6 +510,13 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
     //     (`&amp;` finit par `;` → non-match, sans backtracking).
     .replace(/(?<![\w)\]"'\x60&.])&([a-zA-Z_]\w*)(?![\w;])/g,
       (_m: string, name: string) => `µ.url.params.${name}`)
+    // µ$$X : le singleton lu dans le code d'une interpolation de chaîne (`{"#{µ$$X.y}"}`) — hors chaîne, la pré-passe
+    // 0-bis du transpileur l'a déjà réécrit en `$X`. Même verdict qu'elle, et que le lexer (règle 3.2-pré) : un nom
+    // importé se lit `$X`, tout autre est refusé ; sans cette règle, celle du `$$X` juste en dessous refusait le singleton
+    .replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, name: string) => {
+      if (externalVars.includes(`$${name}`)) return `$${name}`
+      throw new Error(t('transpiler.singleton-sans-import', { nom: name }))
+    })
     .replace(/(?<!\w|(?<!\.)\.)\$\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) => {
       // Un singleton importé (`$X` ∈ externalVars, via `@import µ$$X`) se
       // consomme en `µ$$X`, pas en `$$X` (= store GLOBAL, autre espace).

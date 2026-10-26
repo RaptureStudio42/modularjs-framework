@@ -38,6 +38,7 @@ import { openRenderCompileDir } from './render-compile-dir.js'
 import { outdatedHappyDomVersion, HAPPY_DOM_MINIMUM } from './happy-dom-version.js'
 import { t } from '../messages/index.js'
 import { buildSeedRoot } from './i18n-seed-root.js'
+import { propsRacine } from './props-racine.js'
 
 export interface SSRRendererOptions {
   /** Répertoire contenant les composants `.mjs` source. */
@@ -133,9 +134,11 @@ export interface SSRRendererOptions {
 
 export interface RenderOptions {
   /**
-   * Props initiales, passées en attributs HTML sur la balise racine.
-   * Scalaires → attribut direct ; objets/tableaux → attribut JSON, ré-hydraté
-   * automatiquement au montage (serveur ET client) par parseProp.
+   * Props initiales de la balise racine, reçues avec leur type (serveur ET client),
+   * comme celles qu'un parent pose (`<@x a={5}>`). Chacune en attribut (objets/tableaux
+   * en JSON, ré-hydratés au montage par parseProp) ; un nombre, ou une chaîne que la
+   * balise relirait autrement (`'true'`, `'[1]'`), EN PLUS dans l'attribut `mjs-props`
+   * (JSON), versé au registre des props en attente avant le montage (cf. props-racine.ts).
    */
   props?: Record<string, unknown>
   /**
@@ -1196,21 +1199,20 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // Charge le core + TOUS les composants compilés (un composant racine peut en
   // référencer d'autres). ESM stripé pour l'éval.
   const jsFiles = readdirSync(outputDir).filter(f => f.endsWith('.js'))
-  // `jsFiles.find` retenait le 1er
-  // `mjs_core-*` selon l'ordre de `readdirSync` (NON garanti par POSIX) : sur un
-  // outputDir RÉEL (prerender.ts) qui accumule d'anciens cores hachés, on pouvait
-  // charger un core PÉRIMÉ, silencieusement. Sélection déterministe (tri stable)
-  // + avertissement si plusieurs cores coexistent (artefacts de build à nettoyer).
+  // le cœur est celui que CETTE compilation vient d'écrire (`coreHashedPath`), jamais le premier `mjs_core-*` du dossier : un
+  // outputDir RÉEL (prerender.ts) garde des cœurs de builds antérieurs que le ménage des empreintes ne retire pas (sorties d'avant
+  // le registre des sorties, celles d'une 2.5 par exemple), et l'ordre alphabétique pouvait en désigner un — rendu sur un cœur périmé ;
+  // avertissement si plusieurs cœurs coexistent (restes de builds à retirer)
+  const coreFile  = basename(bundler.coreHashedPath)
   const coreFiles = jsFiles.filter(f => /^mjs_core-/.test(f)).sort()
-  if (coreFiles.length === 0) {
+  if (!coreFile || !coreFiles.includes(coreFile)) {
     await bundler.close()
     abandon()
     throw new Error(t('server.ssr-core-introuvable'))
   }
   if (coreFiles.length > 1) {
-    console.warn(t('server.ssr-plusieurs-core', { files: coreFiles.join(', '), first: coreFiles[0] }))
+    console.warn(t('server.ssr-plusieurs-core', { files: coreFiles.join(', '), first: coreFile }))
   }
-  const coreFile = coreFiles[0]
   const coreCode = stripEsm(readFileSync(join(outputDir, coreFile), 'utf-8'))
   // libellés du runtime (modules cœur, modale, routeur, effets) : le navigateur les reçoit par le manifeste, que la fenêtre de
   // rendu n'évalue pas — sans eux, chaque `µ._mjs_label` rendait `undefined` et la page servie sortait sans ces textes
@@ -1241,12 +1243,17 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // seul `throw` dedans faisait échouer le rendu de N'IMPORTE QUELLE page du même projet. Seuls
   // les fichiers du GRAPHE ÉMIS par CETTE compilation sont admis : `stats.manifest` (composants +
   // modules, cf. bundler/index.ts `manifest[baseName] = hashedPath`) couvre tout sauf le runtime
-  // (`mjs_core`/`mjs_styles`/`mjs_anims`/`mjs_i18n-*`… — jamais une clé `manifest`, déjà repérés
-  // par leur PRÉFIXE `mjs_`, cf. runtimeIds plus bas) : l'un ou l'autre suffit à admettre un fichier.
+  // (`mjs_core`/`mjs_styles`/`mjs_anims`/`mjs_i18n-*`… — jamais une clé `manifest`, repérés par
+  // leur PRÉFIXE `mjs_`, cf. runtimeIds plus bas) : l'un ou l'autre suffit à admettre un fichier.
+  // un `mjs_*` doit en plus sortir de CETTE compilation (`stats.sizes` : chaque .js qu'elle a écrit ou
+  // repris du cache) : le préfixe seul admettait l'ancien runtime d'un build antérieur, et celui d'une
+  // 2.5, qui importe son cœur classé après lui, faisait échouer le rendu de toute page
+  // (« Cannot access '_mjsF_mjs_u_core_45_…' before initialization »)
   const emittedBasenames = new Set(Object.values(stats.manifest as Record<string, string>).map(p => p.split('/').pop() || ''))
+  const emisCeTour       = new Set(stats.sizes.map(s => basename(s.path)))
   const files = jsFiles.filter(f =>
     f !== coreFile && f !== 'bundle.js' && !/^mjs_(?:page|group)-[^/]*-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f) &&
-    (/^mjs_/.test(f) || emittedBasenames.has(f)))
+    ((/^mjs_/.test(f) && emisCeTour.has(f)) || emittedBasenames.has(f)))
   const idByFile = new Map(files.map(f => [f, fileToId(f)]))
   // Résout une URL d'import (`/assets/.../x-hash.js`) vers l'id du fichier cible ;
   // null pour le core (µ global) ou tout externe → l'import est retiré.
@@ -1518,24 +1525,13 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         }
       }
 
-      // Monte le composant avec ses props en attributs HTML. Les objets/tableaux
-      // sont sérialisés en JSON (parseProp les ré-hydrate au montage) ; les
-      // scalaires passent en valeur d'attribut directe.
-      const serializeProp = (v: unknown): string =>
-        (v !== null && typeof v === 'object') ? JSON.stringify(v) : String(v)
-      // Le NOM de prop est concaténé dans le markup : le valider (sinon une clé
-      // `x><img onerror=…>` injecterait du HTML — XSS réfléchi). Seule la valeur
-      // était échappée jusqu'ici.
-      const PROP_NAME_RE = /^[A-Za-z_][\w:.-]*$/
-      let attrs = Object.entries(props)
-        .map(([k, v]) => {
-          if (!PROP_NAME_RE.test(k)) {
-            console.warn(t('server.ssr-prop-invalide', { keyJson: JSON.stringify(k) }))
-            return ''
-          }
-          return ` ${k}="${escapeAttr(serializeProp(v))}"`
-        })
-        .join('')
+      // Monte le composant avec ses props (cf. props-racine.ts) : chacune en attribut HTML
+      // (objets/tableaux en JSON, parseProp les ré-hydrate au montage) ; celles que ce texte
+      // ne redonne pas, EN PLUS typées dans `mjs-props`. Le NOM de prop, concaténé dans le
+      // markup, y est validé (sinon une clé `x><img onerror=…>` injecterait du HTML — XSS).
+      const { attrs: propAttrs, refusees } = propsRacine(props)
+      for (const k of refusees) console.warn(t('server.ssr-prop-invalide', { keyJson: JSON.stringify(k) }))
+      let attrs = Object.entries(propAttrs).map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('')
       // Racine en mode léger (cf. `RenderOptions.light`) : drapeau posé sur la CLASSE du composant
       // AVANT de construire l'élément — le constructeur décide là, et l'attribut que le parseur
       // pose ensuite arriverait trop tard. L'attribut voyage quand même dans le HTML servi : c'est
@@ -1545,8 +1541,13 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         if (classe) classe.mjsLight = true
         attrs += ' mjs-light'
       }
-      document.body.innerHTML = `<${tag}${attrs}></${tag}>`
-      const el: any = document.body.firstElementChild
+      // la racine est lue hors du document (même analyse du texte), puis se branche :
+      // `connectedCallback` (mjs_element.ts) lit ses props typées (`mjs-props`) — le chemin du
+      // client, qui relit le même attribut : le serveur rend ce que le client reprendra
+      const boite = document.createElement('div')
+      boite.innerHTML = `<${tag}${attrs}></${tag}>`
+      const el: any = boite.firstElementChild
+      document.body.replaceChildren(el)
 
       // Attend la fin du rendu (stabilité du scheduler + résolution des {await}),
       // avec settleMs comme plafond de sécurité. `settled=false` → plafond atteint.

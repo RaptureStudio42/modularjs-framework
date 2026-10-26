@@ -60,6 +60,7 @@
     var logo  = µ._mjs_fxImage(s.logo, el);
     var msg   = null;
     var said  = '';
+    var count = 0;
     // le logo et le message, posés une fois par bandeau ; le compte ne réécrit ensuite que le texte du message
     var words = function() {
       var t = document.createDocumentFragment();
@@ -82,18 +83,23 @@
       return t;
     };
     // le texte (et ce qui attend) : réécrit seulement quand il change — hors ligne, le bandeau était refait toutes les
-    // 500 ms (un <img> de logo neuf, redemandé au réseau, et la région `status` réécrite)
+    // 500 ms (un <img> de logo neuf, redemandé au réseau, et la région `status` réécrite) ; récrit aussi à l'arrivée du
+    // fichier de la langue s'il surcharge ses libellés
+    var write = function() {
+      msg.textContent = typeof s.text === 'string' && s.text !== '' ? s.text : L('offline');
+      if (s.count !== false && count > 0) {
+        var c = document.createElement('span');
+        c.setAttribute('mjs-fx-offline-n', '');
+        c.textContent = ' — ' + L(count === 1 ? 'pending1' : 'pendingN').replace('{n}', String(count));
+        msg.appendChild(c);
+      }
+    };
     var say = function(n) {
       var key = (s.count !== false ? n : 0) + ' ' + (typeof µ._mjs_labelLang === 'function' ? µ._mjs_labelLang() : µ._runtimeLabelsLang);
       if (key === said) return;
-      said = key;
-      msg.textContent = typeof s.text === 'string' && s.text !== '' ? s.text : L('offline');
-      if (s.count !== false && n > 0) {
-        var c = document.createElement('span');
-        c.setAttribute('mjs-fx-offline-n', '');
-        c.textContent = ' — ' + L(n === 1 ? 'pending1' : 'pendingN').replace('{n}', String(n));
-        msg.appendChild(c);
-      }
+      said  = key;
+      count = n;
+      µ._mjs_fxLabelKeep(write);
     };
     var show = function(n) {
       if (!band) {

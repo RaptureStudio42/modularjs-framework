@@ -86,18 +86,20 @@ function _mjsFxGuardSure(el, cs) {
     };
     // la valeur que la liaison écrirait : un nombre pour un champ nombre
     var typed = function(v) { return /^(number|range)$/.test(el.type) && v !== '' ? Number(v) : v; };
-    // { s, v, m } : s — 0 bonne, 2 ramenée (v : la borne), -1 refusée ; m — ce qui est permis, lu
-    // AVANT la correction (un champ corrigé n'a plus de message)
+    // { s, v, m } : s — 0 bonne, 2 ramenée (v : la borne), -1 refusée ; m — ce qui est permis, pris
+    // AVANT la correction (un champ corrigé n'a plus de message) : une fonction, que la bulle relit à l'arrivée du
+    // fichier de la langue
     var check = function() {
       var v    = raw();
       var rule = ruleOf();
       if (rule && typeof µ._mjs_tcheck === 'function') {
         var x = µ._mjs_tcheck(rule, typed(v));
-        return { s: x.s === 1 ? 0 : x.s, v: x.v, m: x.s < 0 || x.s === 2 ? said(rule) : '' };
+        return { s: x.s === 1 ? 0 : x.s, v: x.v, m: function() { return said(rule); } };
       }
       if (typeof el.checkValidity !== 'function' || el.checkValidity()) return { s: 0 };
-      var m = el.validationMessage || L('invalid');
-      var n = parseFloat(v);
+      var vm = el.validationMessage;
+      var m  = function() { return vm || L('invalid'); };
+      var n  = parseFloat(v);
       if (/^(number|range)$/.test(el.type) && isFinite(n)) {
         if (el.min !== '' && n < +el.min) return { s: 2, v: +el.min, m: m };
         if (el.max !== '' && n > +el.max) return { s: 2, v: +el.max, m: m };
@@ -252,9 +254,13 @@ function _mjsFxGuardSure(el, cs) {
       tip = document.createElement('span');
       tip.setAttribute('mjs-fx-guard-tip', '');
       tip.setAttribute('role', 'status');
-      tip.textContent = typeof s.text === 'string' && s.text !== '' ? s.text : msg;
       µ._mjs_dom.insertBefore(el.parentNode, tip, el.nextSibling);
-      lay();
+      // son texte : récrit à l'arrivée du fichier de la langue s'il le surcharge, la bulle replacée si elle est encore là
+      var t = tip;
+      µ._mjs_fxLabelKeep(function() {
+        t.textContent = typeof s.text === 'string' && s.text !== '' ? s.text : msg();
+        if (tip === t) lay();
+      });
       µ._mjs_dom.setAttribute(el, 'mjs-fx-guard-no', '');
       if (typeof MutationObserver === 'function') {
         moved = new MutationObserver(follow);

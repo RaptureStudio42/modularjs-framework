@@ -129,7 +129,10 @@ function _mjsFxFlipEase(v) {
       cmd.type = 'button';
       µ._mjs_dom.setAttribute(cmd, 'mjs-fx-layer', 'flipcard');
       µ._mjs_dom.setAttribute(cmd, 'mjs-fx-flipcard-turn', '');
-      cmd.textContent = µ._mjs_fxLabel('flip');
+      // son libellé : récrit à l'arrivée du fichier de la langue s'il le surcharge
+      µ._mjs_fxLabelKeep(function() {
+        if (cmd) cmd.textContent = µ._mjs_fxLabel('flip');
+      });
       apply();
     }
     var key = cmd || el;

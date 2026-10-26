@@ -259,7 +259,7 @@ Trois gravités, visibles à la couleur du terminal :
 |---|---|---|
 | `a11y` | avertissement | contrôle d'accessibilité — cf. `lint.a11y` plus bas |
 | `ujsForm` | avertissement | `<form>` sans `action` ni méthode — cf. `lint.ujsForm` plus bas |
-| `maxStateVars` | info | trop de variables d'état dans un composant — cf. `lint.maxStateVars` plus bas (reste un entier, `0` coupe) |
+| `maxStateVars` | info | trop de variables d'état dans un composant du projet (jamais dans un module du cœur) — cf. `lint.maxStateVars` plus bas (reste un entier, `0` coupe) |
 | `themeShared` | info | une variable de thème `$$x` déclarée par plusieurs composants — rappel qu'elle cascade, le partage est parfois voulu |
 | `themeUnknown` | avertissement | une variable de thème `$$x` lue mais déclarée nulle part — faute de frappe probable |
 | `runtimeHint` | info | un module runtime sélectionné dont le partenaire habituel manque (ex. `ujs` sans `router` : l'interception reste posée mais inerte) |
@@ -311,6 +311,8 @@ Une clé inconnue dans `lint` (faute de frappe sur un nom de type) fait échouer
 ### `lint.maxStateVars`
 
 Plafond d'alerte sur le nombre de variables d'état (`$x`) distinctes déclarées dans **un seul** composant. Défaut réel **40** (`src/transpiler/index.ts`, étalonnage constaté : modules sains 5-20 variables, monolithe pathologique observé à 182). `0` désactive le lint. Au-delà du seuil : un **avertissement** au build, jamais une erreur — un signal d'architecture, rien d'incorrect à l'exécution.
+
+Les modules du cœur (`<@@select>`, `<@@editor>`…, [30 · Modules cœur](30-modules-coeur.md)) n'y sont jamais soumis, quel que soit le seuil : leur nombre de variables est l'affaire du framework, pas de votre application. Une copie éjectée dans vos sources ([30 · Personnaliser](30-modules-coeur.md#personnaliser--trois-leviers-une-règle-de-fair-play)) devient un composant de votre projet : elle est soumise au seuil comme les autres.
 
 ### `lint.a11y`
 

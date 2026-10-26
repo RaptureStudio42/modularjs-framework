@@ -1308,7 +1308,7 @@ var _confirmCfgWarned = false;
 // `µ._mjs_lastUjsPath`). Mode 'error' : valeur TOUJOURS truthy (le contenant réel, INCHANGÉ) — detail.zone
 // ne bouge pas.
 µ._mjs_navShowNotFound = function(matchPath, target, method, cache) {
-  var mode, msg, rt, label, zoneInfo, box, h, p, code, style;
+  var mode, msg, rt, label, write, zoneInfo, box, h, p, code, style;
   mode = (µ.config && µ.config.routeNotFound) || 'error';
   if (mode === 'silent') { µ._mjs_logger()?.('[µ.UJS] ' + µ._mjs_txt('ujsNoPage', { matchPath: matchPath }, 'Aucune page ne correspond à \'{matchPath}\'.')); return false; }
   msg = '[µ.UJS] ' + µ._mjs_txt('ujsNoPage', { matchPath: matchPath }, 'Aucune page ne correspond à \'{matchPath}\'.');
@@ -1330,8 +1330,12 @@ var _confirmCfgWarned = false;
   box = document.createElement('div');
   box.setAttribute('data-mjs-route-error', '');
   box.className = 'mjs-route-error';
-  h = document.createElement('strong'); h.textContent = label('notFound');
-  p = document.createElement('p'); p.textContent = label('noRoute');
+  h = document.createElement('strong');
+  p = document.createElement('p');
+  // les libellés : récrits à l'arrivée du fichier de la langue s'il les surcharge, le panneau encore affiché (µ._mjs_labelKeep, mjs_i18n.ts)
+  write = function() { h.textContent = label('notFound'); p.textContent = label('noRoute'); };
+  if (µ._mjs_labelKeep) { µ._mjs_labelKeep(write); }
+  else { write(); }
   code = document.createElement('code'); code.textContent = matchPath;
   box.appendChild(h); box.appendChild(p); box.appendChild(code);
   if (µ._csp) {

@@ -78,7 +78,7 @@
 // serveur longue durée).
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
-import { resolve, join, extname } from 'node:path'
+import { resolve, join, extname, basename } from 'node:path'
 import { createRequire } from 'node:module'
 import type { MjsConfig, RenderEngine, RenderBrowserPoolConfig } from '../bundler/config.js'
 import { resolveBundlerOpts } from '../bundler/config.js'
@@ -86,6 +86,7 @@ import { Bundler } from '../bundler/index.js'
 import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, type RenderOptions, type RenderResult } from './renderToString.js'
 import { isServableFile, MIME } from './render-server.js'
 import { ecrireFeuilleRendu, feuillesALier, sansImport } from './sorties-rendu.js'
+import { propsRacine } from './props-racine.js'
 import { openRenderCompileDir } from './render-compile-dir.js'
 import { t, type MsgKey } from '../messages/index.js'
 // (SSRF) — même défense en profondeur que renderToString.ts
@@ -746,15 +747,9 @@ async function poserCookies(context: PwBrowserContext, cookies: { name: string; 
 }
 
 // ============================================================================
-// 5. PROPS — mêmes garde-fous que renderToString.ts (dupliqués : petites
-//    fonctions pures, pas d'export à exposer côté renderToString.ts pour ça).
+// 5. PROPS — les attributs des props de la racine (texte, `mjs-props`) et la
+//    validation de leur nom sont communs aux deux moteurs : props-racine.ts.
 // ============================================================================
-const PROP_NAME_RE = /^[A-Za-z_][\w:.-]*$/
-
-function serializeProp(v: unknown): string {
-  return (v !== null && typeof v === 'object') ? JSON.stringify(v) : String(v)
-}
-
 function escapeAttr(v: string): string {
   return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 }
@@ -895,18 +890,20 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   }
   const compileWarnings = stats.warnings.slice()
 
-  // Sélection déterministe du core — même garde que renderToString.ts (m8) :
-  // `readdirSync` n'est PAS garanti trié par POSIX.
-  const coreFiles = readdirSync(atelier.outputDir).filter(f => /^mjs_core-/.test(f)).sort()
-  if (coreFiles.length === 0) {
+  // le cœur de CETTE compilation (`coreHashedPath`), jamais le premier `mjs_core-*` du dossier — même garde que renderToString.ts :
+  // un cœur d'un build antérieur que le ménage des empreintes ne retire pas, classé avant le neuf, était importé par la page d'amorce ;
+  // les seuls `.js` comptent, la carte de source du cœur (`.js.map`) n'est pas un second cœur
+  const coreFile  = basename(bundler.coreHashedPath)
+  const coreFiles = readdirSync(atelier.outputDir).filter(f => /^mjs_core-.+\.js$/.test(f)).sort()
+  if (!coreFile || !coreFiles.includes(coreFile)) {
     await bundler.close()
     atelier.cleanup()
     throw new Error(t('server.browser-core-introuvable'))
   }
   if (coreFiles.length > 1) {
-    log(t('server.browser-plusieurs-core', { files: coreFiles.join(', '), first: coreFiles[0] }))
+    log(t('server.browser-plusieurs-core', { files: coreFiles.join(', '), first: coreFile }))
   }
-  const coreUrl = bundler.urlPrefix + '/' + coreFiles[0]
+  const coreUrl = bundler.urlPrefix + '/' + coreFile
   const helperSrc = pageHelperScript()
 
   const poolCfg: RenderBrowserPoolConfig = config.render?.browserPool || {}
@@ -1345,17 +1342,14 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       }
 
       // Nom de prop validé AVANT concaténation dans le HTML final retourné (sinon
-      // XSS réfléchie possible via une clé forgée, cf. escapeAttr plus bas) ; la
-      // VALEUR est sérialisée identiquement à renderToString.ts (objets/tableaux →
-      // JSON, `parseProp` les ré-hydrate au montage — même contrat serveur/client).
-      // Le montage lui-même passe par `setAttribute` (DOM, pas de concaténation
-      // HTML) : aucun risque d'injection à cette étape, seule la reconstruction du
-      // `html` final (plus bas) doit échapper.
-      const attrs: Record<string, string> = {}
-      for (const [k, v] of Object.entries(props)) {
-        if (!PROP_NAME_RE.test(k)) { warnings.push(t('server.browser-prop-invalide', { keyJson: JSON.stringify(k) })); continue }
-        attrs[k] = serializeProp(v)
-      }
+      // XSS réfléchie possible via une clé forgée, cf. escapeAttr plus bas) ; les
+      // VALEURS posées identiquement à renderToString.ts (props-racine.ts : chacune en
+      // attribut, celles que ce texte ne redonne pas EN PLUS typées dans `mjs-props`
+      // — même contrat serveur/client). Le montage lui-même passe par `setAttribute`
+      // (DOM, pas de concaténation HTML) : aucun risque d'injection à cette étape,
+      // seule la reconstruction du `html` final (plus bas) doit échapper.
+      const { attrs, refusees } = propsRacine(props)
+      for (const k of refusees) warnings.push(t('server.browser-prop-invalide', { keyJson: JSON.stringify(k) }))
 
       const mounted = await slot.page.evaluate(async ({ tag, attrs, lightRoot }: any) => {
         const core = (window as any).__mjsCore
@@ -1372,9 +1366,10 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
         const el = document.createElement(tag)
         for (const k in attrs) el.setAttribute(k, attrs[k])
         if (lightRoot) el.setAttribute('mjs-light', '')
+        // branchement : `connectedCallback` (mjs_element.ts) lit les props typées (`mjs-props`) — le chemin du client
         document.body.appendChild(el)
         return { ok: true }
-      }, { tag, attrs, lightRoot })
+      }, { tag, attrs: { ...attrs }, lightRoot })
       if (!mounted.ok) {
         throw new Error(t('server.browser-composant-non-enregistre', { tag }))
       }

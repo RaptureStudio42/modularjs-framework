@@ -29,7 +29,7 @@ import { scanImgTags, isResolvableSrc, parseWidths, rewriteImgTag, type ImgTag }
 import { scanEffectImages, imageCall, type EffectImage } from '../transpiler/effect-images.js'
 import { getAdapter } from '../languages/index.js'
 import { build as esbuildBuild } from 'esbuild'
-import { minifyJs, stripMsgFallbacks, withMangleCacheLock, buildPureList, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
+import { minifyJs, stripMsgFallbacks, withMangleCacheLock, buildPureList, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
 import { readImageSize, generateVariants, animatedKind, type GeneratedVariant } from './image.js'
 import { compileCss } from '../transpiler/css.js'
 import { shiftGeneratedPosition, chainOverMap } from '../transpiler/source-map-chain.js'
@@ -2267,7 +2267,12 @@ export class Bundler {
     // minify.ts) : une propriété interne posée sur un nœud sous un de ces noms écrirait dans la
     // propriété du navigateur. Une correspondance héritée d'un cache plus ancien est retirée.
     const withdrawnPlatform = this.shouldMinify() ? reserveMangleNames(this.mangleCache, PLATFORM_NAMES) : []
-    if (withdrawnMarkers.length > 0 || withdrawnHelpers.length > 0 || withdrawnPlatform.length > 0) this.mangleGeneration++
+    // noms courts que le runtime pose lui-même sur µ (`µ.t` de la traduction, `µ.log`, `µ.nav`, cf.
+    // minify.ts) : un composant minifié avant le cœur, qui n'en cite aucun, pouvait en donner un à une
+    // propriété interne de µ, que le cœur gardait ensuite — l'aide et l'API s'écrasaient. Une
+    // correspondance héritée d'un cache plus ancien est retirée.
+    const withdrawnApi = this.shouldMinify() ? reserveMangleNames(this.mangleCache, CORE_API_NAMES) : []
+    if (withdrawnMarkers.length > 0 || withdrawnHelpers.length > 0 || withdrawnPlatform.length > 0 || withdrawnApi.length > 0) this.mangleGeneration++
   }
 
   // --------------------------------------------------------------------------
@@ -6180,7 +6185,9 @@ export class Bundler {
       sigil: this.sigil,
       contextAlias: this.contextAlias,
       varPrefix: this.varPrefix,
-      maxStateVars: this.maxStateVars,
+      // un module du cœur (fichier du catalogue) n'est jamais signalé : son nombre de variables d'état est l'affaire du framework,
+      // pas de l'appli qui l'emploie ; une copie éjectée dans le projet est un composant du projet, soumise au seuil
+      maxStateVars: resolve(filePath).startsWith(this.coreModulesDir + sep) ? 0 : this.maxStateVars,
       a11y: this.a11y,
       ujsForm: this.ujsForm,
       lint: this.lint,
@@ -6995,7 +7002,7 @@ export class Bundler {
   private async compileScriptModuleCold(filePath: string, ext: '.civet' | '.coffee', baseName: string, importedModules: string[], src: string): Promise<string> {
     // Apply MJS sugar (µ. routing, runes µ$X, µ.inspect) AVANT compile langage.
     // Permet aux modules user d'utiliser µ$X = ... etc.
-    const { applyMjsSugarToScript, lintNoRawImport, lintSplitRune, sigilAliasCode, parseModuleAst, sourceLineOf } = await import('../transpiler/index.js')
+    const { applyMjsSugarToScript, singletonsDeclares, lintNoRawImport, lintSplitRune, sigilAliasCode, parseModuleAst, sourceLineOf } = await import('../transpiler/index.js')
     const { extractDirectives } = await import('../transpiler/directives.js')
     const { tokenize } = await import('../lexer/index.js')
     // Passer le lang au sucre : sans lui, un module .coffee autonome
@@ -7044,7 +7051,8 @@ export class Bundler {
       : aliased
     // lignes du fichier : les imports ajoutés devant décalent le texte lu
     const premiereLigne = 1 - dir.pendingAutoImports.length
-    const preProcessed = tokenize(applyMjsSugarToScript(moduleSrc, langName, undefined, '<script module>', premiereLigne), { moduleMode: true, fileName: basename(filePath), firstLine: premiereLigne })
+    // ses singletons (`export µ$$X`) : les seuls noms que le lexeur laisse lire en `µ$$X` dans une interpolation
+    const preProcessed = tokenize(applyMjsSugarToScript(moduleSrc, langName, undefined, '<script module>', premiereLigne), { moduleMode: true, singletons: singletonsDeclares(moduleSrc), fileName: basename(filePath), firstLine: premiereLigne })
     const adapter = getAdapter(langName)
     // l'adaptateur retourne `{ code, map }` ; ce chemin-ci
     // (module `@import`-é autonome) ne garde que le code — sa carte ne sert qu'à citer la ligne du

@@ -145,6 +145,14 @@ function __toastTitle(type) {
   return (typeof µ._mjs_label === 'function' && µ._mjs_label('toast', type)) || __toastTitlesFallback[type];
 }
 
+// écrit des libellés par défaut (boutons de la modale, titre d'un toast) par `fn`, aussitôt : lus sans le fichier de la langue (réseau
+// lent), `fn` les récrit à son arrivée s'il les surcharge, la modale encore ouverte, le toast encore là (µ._mjs_labelKeep,
+// mjs_i18n.ts) ; sans module i18n, `fn` seule
+function __modalKeep(fn) {
+  if (µ._mjs_labelKeep) { µ._mjs_labelKeep(fn); }
+  else { fn(); }
+}
+
 // Icônes 5 états — SVG inline (pas d'image externe), colorées via currentColor + la classe
 // mjs-modal-icon-<nom> (feuille ci-dessus). aria-hidden : décoratif, le sens vient du title/text.
 var __modalIcons = {
@@ -1269,7 +1277,6 @@ function __modalDismissResult(result) {
         confirmBtn.type = 'button';
         confirmBtn.className = 'mjs-modal-btn mjs-modal-confirm';
         __modalApplyClass(confirmBtn, options.customClass && options.customClass.confirmButton);
-        confirmBtn.textContent = options.confirmButtonText || __modalLabel('ok');
         actionsEl.appendChild(confirmBtn);
       }
 
@@ -1278,7 +1285,6 @@ function __modalDismissResult(result) {
         denyBtn.type = 'button';
         denyBtn.className = 'mjs-modal-btn mjs-modal-deny';
         __modalApplyClass(denyBtn, options.customClass && options.customClass.denyButton);
-        denyBtn.textContent = options.denyButtonText || __modalLabel('deny');
         actionsEl.appendChild(denyBtn);
       }
 
@@ -1287,9 +1293,15 @@ function __modalDismissResult(result) {
         cancelBtn.type = 'button';
         cancelBtn.className = 'mjs-modal-btn mjs-modal-cancel';
         __modalApplyClass(cancelBtn, options.customClass && options.customClass.cancelButton);
-        cancelBtn.textContent = options.cancelButtonText || __modalLabel('cancel');
         actionsEl.appendChild(cancelBtn);
       }
+
+      // les textes des boutons : celui de l'appelant, sinon le libellé par défaut, récrit à l'arrivée du fichier de la langue
+      __modalKeep(function() {
+        if (confirmBtn) { confirmBtn.textContent = options.confirmButtonText || __modalLabel('ok'); }
+        if (denyBtn) { denyBtn.textContent = options.denyButtonText || __modalLabel('deny'); }
+        if (cancelBtn) { cancelBtn.textContent = options.cancelButtonText || __modalLabel('cancel'); }
+      });
 
       box.appendChild(actionsEl);
       backdrop.appendChild(box);
@@ -1548,9 +1560,9 @@ function __modalDismissResult(result) {
     // duration:0 (permanent) OCCUPE SA PLACE indéfiniment — ASSUMÉ (seuls la croix, close(), le clic
     // sur un toast cliquable ou le glisser la libèrent). opts.duration (nombre ≥0, 0 compris) PRIME sur µ.config.notifyDuration.
     duration = typeof opts.duration === 'number' && opts.duration >= 0 ? opts.duration : __toastDefaultDuration();
-    // `opts.title` prime ; absent (undefined) → titre par défaut du type ; valeur FAUSSE
+    // `opts.title` prime ; absent (undefined) → titre par défaut du type, écrit plus bas ; valeur FAUSSE
     // (false/''/null) → aucun élément titre émis plus bas.
-    title = opts.title !== void 0 ? opts.title : __toastTitle(type);
+    title = opts.title;
 
     rec = { type: type, duration: duration, sound: opts.sound, displayed: false, removed: false, timerId: null, left: 0, since: 0, holds: 0, off: [], pause: __toastFlag(opts.pause, 'notifyPause'), swipe: __toastFlag(opts.swipe, 'notifySwipe'), drag: null, leaving: false, eat: 0, slideTimer: null };
 
@@ -1586,10 +1598,18 @@ function __modalDismissResult(result) {
     contentEl = document.createElement('div');
     contentEl.className = 'mjs-toast-content';
 
-    if (title) {
+    if (title || title === void 0) {
       titleEl = document.createElement('div');
       titleEl.className = 'mjs-toast-title';
-      titleEl.textContent = title;
+      // titre par défaut du type : récrit à l'arrivée du fichier de la langue, le toast encore là, avec le nom accessible de
+      // l'action, qui le reprend
+      if (title === void 0) {
+        __modalKeep(function() {
+          titleEl.textContent = __toastTitle(type);
+          if (actionEl) { actionEl.setAttribute('aria-label', titleEl.textContent + ' ' + msgEl.textContent); }
+        });
+      }
+      else { titleEl.textContent = title; }
       contentEl.appendChild(titleEl);
     }
 

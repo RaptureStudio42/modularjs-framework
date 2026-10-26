@@ -44,6 +44,9 @@ const RE_OLD_HOOK = new RegExp(`^@(${MU_HOOKS})(?=[ \\t]*(?:->|=>|\\([^)\\n]*\\)
 export interface TokenizeOpts {
   externalVars?: string[]
   moduleMode?: boolean
+  // singletons que le module déclare lui-même (`export µ$$X = …`, module autonome) : avec les noms importés
+  // (`$X` ∈ externalVars), les seuls qui se lisent `µ$$X` dans une interpolation
+  singletons?: string[]
   // position des erreurs : nom du texte compilé (`<module>.script`, comme pour Civet) et ligne du fichier où
   // commence ce texte ; sans nom, une erreur garde son message seul
   fileName?: string
@@ -540,7 +543,8 @@ export function rewriteIncrement(code: string, marque: string, appel: string, le
 
 export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   const externalVars = opts.externalVars ?? []
-  const moduleMode = opts.moduleMode ?? false
+  const moduleMode   = opts.moduleMode ?? false
+  const singletons   = opts.singletons ?? []
   // receveur des contextes § / §§ : le composant dont le script les porte (`_mjsThis`, capturé à l'init), quel que
   // soit l'appelant — `this` valait l'état dans une fonction rangée dans l'état (`$go = -> §x = 1`, appelée `$go()`).
   // Un module n'a pas de composant : `this` y reste
@@ -758,6 +762,19 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
         continue
       }
       // sinon : ET-binaire ou entité → le `&` retombe sur le fallthrough caractère.
+    }
+
+    // 3.2-pré µ$$xxx → $xxx : le singleton lu DANS le code d'une interpolation (`"#{µ$$X.y}"`, `` `${µ$$X.y}` ``, une
+    //     expression du gabarit). Hors chaîne, la pré-passe 0-bis du transpileur l'a déjà réécrit en `$xxx`, mais elle met
+    //     chaque chaîne de côté d'un bloc, interpolations comprises : ce `µ$$X` n'arrivait qu'ici, où le `µ` passait tel
+    //     quel et `$$X` tombait sous la garde de la règle 3.2 (refus d'un singleton importé, `µµ.store.X` sinon).
+    //     Même verdict que la pré-passe : un nom importé, ou le singleton qu'un module autonome déclare (`singletons`), se
+    //     lit `$xxx` ; tout autre nom est refusé, dans un module comme ailleurs — laissé passer, `$Inconnu` levait au
+    //     chargement du module
+    m = rest.match(/^µ\$\$([a-zA-Z0-9_]+)/)
+    if (m) {
+      if (!externalVars.includes(`$${m[1]}`) && !singletons.includes(m[1])) throw situe(new Error(t('transpiler.singleton-sans-import', { nom: m[1] })), code, i, opts)
+      result += `$${m[1]}`; i += m[0].length; continue
     }
 
     // 3.2 $$xxx → µ.store.xxx : STORE GLOBAL réactif, zéro import (µ.store =

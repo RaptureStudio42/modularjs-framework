@@ -1,6 +1,6 @@
 {
   "name": "modularjs-framework",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "ModularJS (MJS) — framework front compile-time : réactivité résolue à la compilation (sans Proxy au runtime), Custom Elements + Shadow DOM, syntaxe .mjs (Civet par défaut). Compilateur + runtime + CLI dev/HMR.",
   "license": "MIT",
   "author": "Matrix",
@@ -48,7 +48,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "mjs": "./bin/mjs"
+    "mjs": "bin/mjs"
   },
   "scripts": {
     "build:self": "esbuild src/cli.ts src/index.ts src/bundler/worker.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --entry-names=[name] && esbuild src/testing/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/testing.js && esbuild src/mjs-ws/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/mjs-ws.js && esbuild src/mjs-server/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/mjs-server.js",
