@@ -45,6 +45,8 @@
 // en sommeil : l'analyse ne voit pas à coup sûr tout ce qu'une valeur lit en cachette (variable sans `$` changée par une forme
 // qu'elle ne suit pas, même objet par deux chemins, fonction du `<script module>` crue pure) ; aucune valeur n'est marquée,
 // toute écriture du composant les périme toutes. Le runtime ne porte plus l'index par nom écrit ni `_mjs_rcv` : à rétablir avec
+// ce drapeau, sans quoi une valeur marquée dont un receveur est vérifié appellerait `_mjsThis._mjs_rcv` (enveloppe posée par
+// analyzer/index.ts), absent du runtime
 export const LECTURES_CONNUES = false
 
 type Portee = Map<string, 'param' | 'fn' | 'var'>

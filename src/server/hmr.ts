@@ -212,18 +212,31 @@ export function isAcceptedHmrOrigin(origin: string | string[] | undefined, host:
   return !!v && devOriginVerdict(v, host, permis, (h) => listensBeyondLoopback(listenHost) || createDevHostCheck(listenHost, undefined, permis)(h)) === true
 }
 
+// formes minimales des objets de `ws` que HMRServer expose : ses déclarations publiques ne citent pas `ws`, dont les types
+// (@types/ws) ne sont pas une dépendance du paquet
+export interface HMRSocket {
+  readonly readyState: number
+  send(data: string): void
+  close(code?: number, reason?: string): void
+}
+
+export interface HMRSocketServer {
+  close(cb?: (err?: Error) => void): void
+}
+
 export class HMRServer {
-  wss: WebSocketServer
-  clients: Set<WebSocket>
+  wss: HMRSocketServer
+  clients: Set<HMRSocket>
 
   constructor(httpServer: HttpServer, opts: { path?: string, listenHost?: string, isAllowedHost?: (host: string | string[] | undefined) => boolean, allowedHosts?: readonly string[] | true, originCheck?: (origin: string | string[] | undefined, host: string | string[] | undefined) => true | string | false } = {}) {
-    this.wss = new WebSocketServer({
+    const wss = new WebSocketServer({
       server: httpServer,
       path: opts.path ?? '/__mjs_hmr',
     })
+    this.wss     = wss
     this.clients = new Set()
 
-    this.wss.on('connection', (ws: WebSocket, request: IncomingMessage) => {
+    wss.on('connection', (ws: WebSocket, request: IncomingMessage) => {
       const { origin, host } = request.headers
       // `mjs dev` : la garde d'origine partagée avec les formulaires (originCheck), qui dit au terminal le nom exact à écrire ; sinon la
       // même règle relue ici (listenHost), ou les seules origines locales

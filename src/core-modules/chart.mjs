@@ -37,6 +37,13 @@
   CAL_STEPS    = ['auto', 'day', 'week', 'month']
   CAL_AXES     = ['date', 'datetime']
 
+  # les deux échelles : une série de nombres se range à gauche (défaut) ou à droite (`axis: 'right'`), sur les formes qui en dessinent
+  # deux ; les barres empilées et l'histogramme n'ont qu'une échelle, l'anneau, la carte, le radar et le calendrier aucune. `bridge` relie
+  # les points par-dessus une case vide sur les formes qui tracent un trait
+  SIDES       = ['left', 'right']
+  TWIN_SHAPES = ['line', 'area', 'dots', 'bar']
+  LINK_SHAPES = ['line', 'area']
+
   # @@ toolbar
   # la barre d'outils (`toolbar`), dans l'ordre où elle les pose : la légende des séries, le menu des formes, les statistiques, le pas de temps
   TOOLKIT = ['legend', 'shapes', 'stats', 'step']
@@ -259,11 +266,37 @@
   # (`unknownColor`, src/bundler/core-chart.ts), refusé au serveur comme au navigateur
   readable = (c)-> SAFE_COLOR.test(c) and not /^[\d.+]|^-(?![a-z])/i.test(c) and (typeof CSS is 'undefined' or typeof CSS.supports isnt 'function' or CSS.supports('color', c))
 
+  # l'axe d'une série (`axis`) : `left` (défaut) ou `right`, sa propre échelle graduée à droite ; un autre mot est une faute (cf. `misfit`) :
+  # la série reste à gauche
+  sideOf = (v, key)->
+    w = bare(v)
+    return 'left' if w is ''
+    return w if SIDES.includes(w)
+    µ.error(µ._mjs_msg('coreChartSide', { word: w, key: key, list: SIDES.join(' ') }, '<@@chart> : axis « {word} » de la série « {key} » n\'est pas une valeur connue, la série reste sur l\'axe de gauche — valeurs connues : {list}.')) if unsaid('side|' + key + '|' + w)
+    'left'
+
   seriesOf = (list)->
     return [] unless Array.isArray(list)
     list.filter((s)-> s? and s.key? and s.key isnt '').map (s, i)->
       tone = toneOf(s.color, i, String(s.key))
-      { key: String(s.key), name: (if s.name? and s.name isnt '' then String(s.name) else String(s.key)), unit: (if s.unit? then String(s.unit) else ''), kind: (if s.kind is 'text' then 'text' else 'number'), hue: tone.hue, custom: tone.custom }
+      { key: String(s.key), name: (if s.name? and s.name isnt '' then String(s.name) else String(s.key)), unit: (if s.unit? then String(s.unit) else ''), kind: (if s.kind is 'text' then 'text' else 'number'), hue: tone.hue, custom: tone.custom, side: sideOf(s.axis, String(s.key)) }
+
+  # les séries de nombres de l'axe de droite, sur une forme à deux échelles (cf. `TWIN_SHAPES`) ; sur une autre forme, elles restent sur
+  # l'échelle unique : une donnée des séries plutôt qu'une faute, un avertissement du développement, muet quand la forme vient de la barre
+  sidesFit = (list, form, quiet)->
+    right = list.filter((s)-> s.side is 'right' and s.kind isnt 'text').map((s)-> s.key)
+    return right if right.length is 0 or TWIN_SHAPES.includes(form)
+    µ.warn(µ._mjs_msg('coreChartSideShape', { shape: form, keys: right.join(' '), list: TWIN_SHAPES.join(' ') }, '<@@chart> : la forme {shape} n\'a qu\'une échelle, axis « right » est ignoré pour {keys} — formes à deux échelles : {list}.')) if not quiet and unsaid('sides|' + form + '|' + right.join(' '))
+    []
+
+  # les lignes qu'un regroupement par période laisse de côté (`step`, le calendrier) : leur abscisse ne se lit pas en jour — une date qui
+  # n'existe pas (le 30 février), un instant qui ne se lit pas, une abscisse absente. Une faute des données, dite une fois par abscisse (cf.
+  # `misfit`), au lieu d'une ligne perdue en silence
+  strayOf = (base, kind, utc)->
+    for r in base
+      x = if r.x? and r.x isnt '' then String(r.x) else '—'
+      µ.error(µ._mjs_msg('coreChartDay', { x: x }, '<@@chart> : « {x} » n\'est pas une date qui existe, sa ligne ne se range dans aucune période et quitte le graphique — écrivez un jour possible (AAAA-MM-JJ) ou un instant qui se lit.')) if C.periodStart(kind, r.x, 'day', utc) is null and unsaid('day|' + x)
+    null
 
   tonesOf = (list)->
     out = {}
@@ -316,10 +349,11 @@
   linesOf = (model, tones)->
     model.lines.map((l)-> Object.assign({}, l, { hue: tones[l.key].hue, custom: tones[l.key].custom }))
 
-  ticksOf = (model, lang, places)->
-    s = model.scale
+  # les graduations d'une échelle `s` ; `unit` (deux échelles) s'écrit au bout de la plus haute
+  ticksOf = (s, lang, places, unit)->
     return [] unless s
-    s.ticks.map((t)-> { v: t, y: pct(1 - C.ratio(t, s.min, s.max)), text: C.axisNumber(t, lang, places) })
+    last = s.ticks.length - 1
+    s.ticks.map((t, k)-> { v: t, y: pct(1 - C.ratio(t, s.min, s.max)), text: C.axisNumber(t, lang, places) + (if unit and k is last then ' ' + unit else '') })
 
   # la gouttière des graduations, en px : la plus longue graduation, mesurée dans leur police une fois le tracé mesuré (`width`), estimée
   # avant comme au serveur (6,5 px par signe), plus l'écart au tracé (8 px) et 4 px d'air ; au-dessus de 48 px seulement, sinon rien
@@ -327,6 +361,62 @@
   gutterOf = (ticks, width, measure)->
     w = Math.ceil(ticks.reduce(((m, t)-> Math.max(m, (if width > 0 then measure(t.text) else String(t.text).length * 6.5))), 0)) + 12
     if w > 48 then w else null
+
+  # la gouttière des graduations de droite, quand une série prend l'axe de droite : 48 px au moins, comme celle de gauche ; sans elles, rien
+  rightGutterOf = (ticks, width, measure)-> if ticks.length then gutterOf(ticks, width, measure) ?? 48 else null
+
+  # le trait et la surface d'une série, écrits comme ceux de la couche de calcul : coupés à chaque case vide, ou d'un seul tenant (`link`,
+  # cf. `bridge`) ; la surface descend jusqu'à la ligne du zéro de son échelle (`base`)
+  runsOf = (points, link)->
+    runs = [[]]
+    for p in points
+      if p
+        runs[runs.length - 1].push(p)
+      else if not link
+        runs.push([])
+    runs.filter((r)-> r.length)
+
+  spot   = (x, y)-> (x * C.WIDE).toFixed(2) + ' ' + (y * C.HIGH).toFixed(2)
+  pathOf = (points, link)-> runsOf(points, link).map((r)-> 'M ' + r.map((p)-> spot(p.x, p.y)).join(' L ')).join(' ')
+  areaOf = (points, base, link)-> runsOf(points, link).map((r)-> 'M ' + spot(r[0].x, base) + ' L ' + r.map((p)-> spot(p.x, p.y)).join(' L ') + ' L ' + spot(r[r.length - 1].x, base) + ' Z').join(' ')
+
+  # les barres de colonnes que partagent deux échelles, posées comme la couche de calcul les pose sur une seule : dans chaque case, une
+  # barre par série visible, côte à côte dans l'ordre des séries, chacune depuis le zéro de son échelle
+  barsAcross = (lines, fractions)->
+    group = 0.74 / Math.max(fractions.length, 1)
+    each  = group / Math.max(lines.length, 1)
+    out   = []
+    fractions.forEach (f, i)->
+      lines.forEach (l, j)->
+        p = l.points[i]
+        out.push({ i: i, key: l.key, left: f - group / 2 + j * each, width: each, top: Math.min(p.y, l.baseline), height: Math.abs(l.baseline - p.y) }) if p
+    out
+
+  # le dessin d'une courbe, d'une aire, de points ou de barres. Sans série à droite ni `bridge`, celui de la couche de calcul ; une série
+  # de droite qui a une valeur (`right`) partage le graphique en deux échelles : chaque côté se calcule comme un graphique à lui seul (une
+  # échelle par série quand ses unités diffèrent ; `bounds` règle l'échelle de gauche, celle de droite s'ajuste à ses séries), puis les
+  # deux se rejoignent sur les colonnes du graphique entier (la tendance y ajoute une place dès qu'une série en trace une), les barres côte
+  # à côte. `twin` : l'axe de droite est dessiné ; `scale` et `right` : les échelles graduées, null pour un côté sans valeur ou à une
+  # échelle par série. `link` : le trait et la surface passent par-dessus les cases vides
+  plotOf = (table, kind, form, marks, bounds, masked, places, right, link)->
+    o      = { kind: kind, shape: form, trend: marks.includes('trend'), bounds: boundsOf(bounds), hidden: masked, places: places }
+    model  = C.plotModel(table, o)
+    valued = (key)-> model.lines.some((l)-> l.key is key and l.points.some((p)-> p isnt null))
+    right  = right.filter(valued)
+    link   = link and LINK_SHAPES.includes(form)
+    return model unless right.length or link
+    left  = model.lines.map((l)-> l.key).filter((k)-> not right.includes(k))
+    lo    = if right.length then C.plotModel(table, Object.assign({}, o, { hidden: masked.concat(right) })) else model
+    hi    = if right.length then C.plotModel(table, Object.assign({}, o, { hidden: masked.concat(left), bounds: {} })) else model
+    lines = model.lines.map (l)->
+      side  = if right.includes(l.key) then hi else lo
+      line  = side.lines.find((m)-> m.key is l.key)
+      moved = side.fractions.some((f, i)-> f isnt model.fractions[i])
+      return line unless link or moved
+      points = if moved then line.points.map((p)-> if p then Object.assign({}, p, { x: model.fractions[p.i] }) else null) else line.points
+      Object.assign({}, line, { points: points, d: pathOf(points, link), area: areaOf(points, line.baseline, link) })
+    return Object.assign({}, model, { lines: lines }) unless right.length
+    Object.assign({}, model, { lines: lines, bars: (if form is 'bar' then barsAcross(lines, model.fractions) else model.bars), own: lo.own or hi.own, scale: (if left.some(valued) then lo.scale else null), right: hi.scale, rights: right, twin: true })
 
   # les étiquettes de l'axe x : entières, sans chevauchement à la largeur mesurée du tracé ; la première part du bord gauche, la dernière finit au bord droit
   labelsOf = (fractions, texts, width, measure)->
@@ -696,8 +786,10 @@
   # droite, haut et bas (0 : sans effet). Ce qu'entraîne un choix fait dans la barre (`picks`) ne se dit jamais en console : une forme, des
   # statistiques, un pas ou des séries masquées que l'utilisateur a choisis. Sur un axe d'instants, hors `local`, chaque heure est ramenée
   # d'abord à celle qu'elle affiche (`zone` : telle qu'écrite, ou dans une zone IANA), puis lue en UTC (`utc`) : la même au serveur et au
-  # navigateur ; `places` : le nombre de chiffres après la virgule de chaque mesure écrite (`decimals`)
-  dataOf = (rows, series, shape, stats, step, hidden, axis, bounds, toolbar, shapes, timezone, decimals, picks)->
+  # navigateur ; `places` : le nombre de chiffres après la virgule de chaque mesure écrite (`decimals`). `sides` : les séries de l'axe de
+  # droite (cf. `sidesFit`) ; `bridge` : relier les points par-dessus les cases vides (cf. `plotOf`) ; une ligne qu'un regroupement par
+  # période laisse de côté se signale (cf. `strayOf`)
+  dataOf = (rows, series, shape, stats, step, hidden, axis, bounds, toolbar, shapes, timezone, decimals, bridge, picks)->
     list   = seriesOf(series)
     base   = rowsOf(rows)
     own    = ours(picks, 'shape', shape)
@@ -705,6 +797,7 @@
     family = SHAPES[form]
     asked  = statsOf(stats)
     marks  = statsFit(asked, form, own or ours(picks, 'stats', stats))
+    sides  = sidesFit(list, form, own)
     period = stepOf(step)
     masked = wordsOf(hidden)
     kind   = axisOf(axis, base)
@@ -717,11 +810,12 @@
     tones  = tonesOf(list)
     reads  = form is 'histogram' or family isnt 'axes'
     group  = Object.assign((if reads then { rows: (if family is 'radar' then base.slice(-RADAR_MAX) else base), kind: kind, grouped: false } else C.groupRows(base, list, kind, period, utc)), { utc: utc })
+    strayOf(base, kind, utc) if (group.grouped or (form is 'calendar' and CAL_AXES.includes(kind))) and not (own or ours(picks, 'step', step))
     units  = if form is 'stack' or family is 'radar' or (family is 'heat' and kind isnt 'datetime') then unitsOf(group.rows, list, masked) else []
     µ.warn(µ._mjs_msg('coreChartUnits', { shape: form, units: units.join(' ') }, '<@@chart> : les séries de la forme {shape} n\'ont pas la même unité ({units}) et partagent pourtant une même échelle.')) if units.length > 1 and not (own or ours(picks, 'hidden', hidden)) and unsaid('units|' + form + '|' + units.join(' '))
     µ.warn(µ._mjs_msg('coreChartRadarCut', { max: RADAR_MAX, n: base.length }, '<@@chart> : un radar montre {max} axes au plus, les {n} lignes reçues sont réduites aux {max} dernières.')) if family is 'radar' and base.length > RADAR_MAX and not own and unsaid('cut')
     table  = C.fromRows(group.rows, list)
-    model  = if form is 'pie' then pieOf(base, list, kind, masked, tones) else if form is 'histogram' then binsOf(table, masked, marks, places) else if form is 'stack' then stackOf(table, group.kind, masked, bounds, places) else if family is 'heat' then heatOf(base, list, kind, masked, tones, bounds, utc) else if family is 'radar' then radarOf(table, group.rows, masked, bounds) else if family is 'calendar' then calendarOf(base, list, kind, masked, period, bounds, utc) else C.plotModel(table, { kind: group.kind, shape: form, trend: marks.includes('trend'), bounds: boundsOf(bounds), hidden: masked, places: places })
+    model  = if form is 'pie' then pieOf(base, list, kind, masked, tones) else if form is 'histogram' then binsOf(table, masked, marks, places) else if form is 'stack' then stackOf(table, group.kind, masked, bounds, places) else if family is 'heat' then heatOf(base, list, kind, masked, tones, bounds, utc) else if family is 'radar' then radarOf(table, group.rows, masked, bounds) else if family is 'calendar' then calendarOf(base, list, kind, masked, period, bounds, utc) else plotOf(table, group.kind, form, marks, bounds, masked, places, sides, flag(bridge))
     # une série (ou un libellé, dans un anneau par libellé) sans total positif n'a pas de part dans l'anneau : une limite des données, un
     # avertissement du développement
     for key in (if form is 'pie' and not (own or ours(picks, 'hidden', hidden)) then model.drop else [])
@@ -763,16 +857,24 @@
     }
   # @@
 
-  # ce que dessine un graphique à axes : les tracés des séries qui ont une valeur, graduations, points, barres, traits des statistiques, tendances, légende des traits
+  # ce que dessine un graphique à axes : les tracés des séries qui ont une valeur, graduations, points, barres, traits des statistiques, tendances, légende des traits.
+  # Deux échelles (`twin`) : les graduations de droite (`yRight`), l'unité de chaque côté au bout de sa plus haute graduation quand ses
+  # séries la partagent ; la grille suit celles de gauche, celles de droite quand aucune série de gauche n'a de valeur
   drawOf = (data, lang)->
     return ringOf(data, lang) if data.family is 'pie'
     return heatDraw(data, lang) if data.family is 'heat'
     return radarDraw(data, lang) if data.family is 'radar'
     return calendarDraw(data, lang) if data.family is 'calendar'
-    ticks = ticksOf(data.model, lang, (if data.form is 'histogram' then null else data.places))
+    m     = data.model
+    twin  = m.twin is true and not data.empty
+    unit  = (right)-> if twin then unitOf(data.lines.filter((l)-> m.rights.includes(l.key) is right and l.points.some((p)-> p isnt null))) else ''
+    ticks = ticksOf(m.scale, lang, (if data.form is 'histogram' then null else data.places), unit(false))
+    other = if twin then ticksOf(m.right, lang, data.places, unit(true)) else []
     {
       paths: data.lines.filter((l)-> l.points.some((p)-> p isnt null))
-      ticks: ticks
+      ticks: (if ticks.length then ticks else other)
+      twin: twin
+      yRight: other
       yLabels: (if data.empty then [] else ticks)
       dots: dotsOf(data.lines, data.form, data.rows.length)
       dotSize: (if data.form is 'dots' then 4.5 else 3)
@@ -825,6 +927,7 @@
   $shapes     = '' # @@ toolbar
   $timezone   = null
   $decimals   = null
+  $bridge     = false
 
   # `input` : la largeur mesurée du tracé et le mode clavier, une seule variable d'état réécrite au redimensionnement et au passage du clavier
   # à la souris, jamais au survol (cf. `setInput`)
@@ -850,8 +953,8 @@
   # les dérivés suivent la langue de la page (lire µlang les rend réactifs à la bascule) ; la barre d'outils se calcule avec les données
   # (`picks` : ce qu'elle a écrit), le tableau des valeurs et les textes avec le dessin ; le gabarit lit les étiquettes de l'axe x et le
   # texte dit au clavier (cf. `xLabelsOf`, `saidOf`)
-  $data = dataOf($rows, $series, $shape, $stats, $step, $hidden, $axis, $bounds, $toolbar, $shapes, $timezone, $decimals, picks) # @@ toolbar
-  # $data = dataOf($rows, $series, $shape, $stats, $step, $hidden, $axis, $bounds, '', '', $timezone, $decimals, picks) # @@ !toolbar
+  $data = dataOf($rows, $series, $shape, $stats, $step, $hidden, $axis, $bounds, $toolbar, $shapes, $timezone, $decimals, $bridge, picks) # @@ toolbar
+  # $data = dataOf($rows, $series, $shape, $stats, $step, $hidden, $axis, $bounds, '', '', $timezone, $decimals, $bridge, picks) # @@ !toolbar
   $draw = Object.assign(drawOf($data, langOf(µlang)), { table: tableOf($data, langOf(µlang)), texts: textsOf($label, $emptyLabel, langOf(µlang)) })
   $tip  = tipOf($hover, $data, $axisUnit, langOf(µlang))
 
@@ -1154,7 +1257,7 @@
   {end}
   <!-- @@ -->
   {if $data.family is 'axes'}
-    <div class="frame" part="frame" --mjs-chart-gutter={gutterOf($draw.yLabels, $input.width, measure)}>
+    <div class="frame" part="frame" @class{$draw.twin}="twin" --mjs-chart-gutter={gutterOf($draw.yLabels, $input.width, measure)} --mjs-chart-gutter-right={rightGutterOf($draw.yRight, $input.width, measure)}>
       <div class="plot" part="plot" @this=!{plotRef}>
         <svg class="svg" aria-hidden="true" focusable="false" @this=!{svgRef}>
           <svg class="draw" viewBox="0 0 1000 300" preserveAspectRatio="none" width="100%" height="100%">
@@ -1166,6 +1269,7 @@
             {for t in $draw.trends by key}<path class="trend stat-trend tone-{t.hue}" --mjs-chart-tone={t.custom} d={t.d}/>{end}
           </svg>
           {for t in $draw.yLabels by v}<text class="ylabel" x="-8" y="{t.y}%">{t.text}</text>{end}
+          {for t in $draw.yRight by v}<text class="ylabel right" x="100%" dx="8" y="{t.y}%">{t.text}</text>{end}
           {for l in xLabelsOf($data, $input.width, measure, $draw.texts.lang) by i}<text class="xlabel" x="{l.x}%" y="100%" dy="1.45em" text-anchor={l.anchor}>{l.text}</text>{end}
           {for d in $draw.dots by id}<circle class="dot tone-{d.hue}" --mjs-chart-tone={d.custom} cx="{d.x}%" cy="{d.y}%" r={$draw.dotSize}/>{end}
           {for t in $draw.trends by key}<circle class="ghost tone-{t.hue}" --mjs-chart-tone={t.custom} cx="{t.x}%" cy="{t.y}%" r="4.5"/>{end}
@@ -1260,9 +1364,10 @@
 
 <style @display="block">
   // les couleurs se règlent par le thème : les six teintes ($$chart-1 à $$chart-6), la grille ($$chart-grid), les axes ($$chart-axis), les
-  // textes ($$chart-text), la bulle ($$chart-tip-bg, $$chart-tip-fg, $$chart-tip-border), le trait de chaque statistique ($$chart-stat-mean,
-  // $$chart-stat-median, $$chart-stat-q1, $$chart-stat-q3, $$chart-stat-trend), la case vide ($$chart-empty) et la teinte neutre
-  // ($$chart-neutral) ; chacune retombe sur la variable générale du thème, ou sur la teinte de la série
+  // textes ($$chart-text), la bulle ($$chart-tip-bg, $$chart-tip-fg, $$chart-tip-border, son titre $$chart-tip-title), le trait de chaque
+  // statistique ($$chart-stat-mean, $$chart-stat-median, $$chart-stat-q1, $$chart-stat-q3, $$chart-stat-trend), la case vide ($$chart-empty)
+  // et la teinte neutre ($$chart-neutral) ; chacune retombe sur la variable générale du thème, ou sur la teinte de la série, le titre de la
+  // bulle sur le texte de la bulle. L'opacité de la grille : $$chart-grid-opacity (0,5 sans réglage)
   :host
     font: inherit
 
@@ -1273,15 +1378,19 @@
     gap: 8px
 
   // la gouttière des graduations à gauche (à la mesure de la plus longue, cf. `gutterOf`), la place des étiquettes de l'axe x dessous :
-  // réservées dès le premier rendu
+  // réservées dès le premier rendu ; à droite, la gouttière des graduations de l'axe de droite, quand une série le prend (cf. `rightGutterOf`)
   .frame
-    padding: 8px 0 24px calc(var(--mjs-chart-gutter, 48) * 1px)
+    padding: 8px calc(var(--mjs-chart-gutter-right, 0) * 1px) 24px calc(var(--mjs-chart-gutter, 48) * 1px)
 
   .plot
     position: relative
     height: var(--mjs-chart-height, 180px)
     border-left: 1px solid var(--mjs-chart-axis, var(--mjs-border, color-mix(in srgb, currentColor 32%, transparent)))
     border-bottom: 1px solid var(--mjs-chart-axis, var(--mjs-border, color-mix(in srgb, currentColor 32%, transparent)))
+
+  // deux échelles : l'axe de droite
+  .twin .plot
+    border-right: 1px solid var(--mjs-chart-axis, var(--mjs-border, color-mix(in srgb, currentColor 32%, transparent)))
 
   .svg
     position: absolute
@@ -1302,9 +1411,12 @@
     text-anchor: end
     dominant-baseline: middle
 
+    &.right
+      text-anchor: start
+
   .grid
     stroke: var(--mjs-chart-grid, var(--mjs-border, color-mix(in srgb, currentColor 32%, transparent)))
-    stroke-opacity: .5
+    stroke-opacity: var(--mjs-chart-grid-opacity, .5)
     stroke-width: 1
     vector-effect: non-scaling-stroke
 
@@ -1462,6 +1574,7 @@
       opacity: 0
 
     b
+      color: var(--mjs-chart-tip-title, inherit)
       font-weight: 600
 
     .grouped

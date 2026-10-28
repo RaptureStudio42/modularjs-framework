@@ -24,19 +24,19 @@ describe('µread / µwrite — parenthèses optionnelles', function () {
     ['µread($i)',      '_mjsThis._state.i'],
     ['µread( $i )',    '_mjsThis._state.i'],
     ['µread ($i)',     '_mjsThis._state.i'],
-    ['µwrite $i, 3',   '_mjsThis._state.i = 3'],
-    ['µwrite($i, 3)',  '(_mjsThis._state.i = 3)'],
+    ['µwrite $i, 3',   'µ._mjs_rawWrite(_mjsThis).i = 3'],
+    ['µwrite($i, 3)',  '(µ._mjs_rawWrite(_mjsThis).i = 3)'],
     ['µread $_secret', '_mjsThis._state._secret'],
     ['µread($_secret)', '_mjsThis._state._secret'],
     ['µread $$x',      'µ._mjs_storeRaw.x'],
     ['µread($$x)',     'µ._mjs_storeRaw.x'],
-    ['µwrite $$x, 1',  'µ._mjs_storeRaw.x = 1'],
-    ['µwrite($$x, 1)', '(µ._mjs_storeRaw.x = 1)'],
+    ['µwrite $$x, 1',  'µ._mjs_storeRawWrite.x = 1'],
+    ['µwrite($$x, 1)', '(µ._mjs_storeRawWrite.x = 1)'],
     // valeur avec ses PROPRES parenthèses (appel imbriqué) — le corps s'arrête à la
     // virgule, aucun comptage de profondeur : la fermante d'origine referme la
     // parenthèse ouvrante FRAÎCHE émise à la place de `µwrite(`.
-    ['µwrite($total, calc(a, b))', '(_mjsThis._state.total = calc(a, b))'],
-    ['µwrite($$total, calc(a, b))', '(µ._mjs_storeRaw.total = calc(a, b))']
+    ['µwrite($total, calc(a, b))', '(µ._mjs_rawWrite(_mjsThis).total = calc(a, b))'],
+    ['µwrite($$total, calc(a, b))', '(µ._mjs_storeRawWrite.total = calc(a, b))']
   ]
 
   describe('lexer (scripts)', function () {
@@ -86,12 +86,12 @@ describe('µread / µwrite — parenthèses optionnelles', function () {
   describe('coupée par un saut de ligne', function () {
     const coupees: Array<[string, string]> = [
       ['µread\n($x)',        '_mjsThis._state.x'],
-      ['µwrite\n($x, 3)',    '(_mjsThis._state.x = 3)'],
+      ['µwrite\n($x, 3)',    '(µ._mjs_rawWrite(_mjsThis).x = 3)'],
       ['µread(\n  $x\n)',    '_mjsThis._state.x'],
       ['µread(\n  $$x\n)',   'µ._mjs_storeRaw.x'],
       // virgule consommée, valeur reportée à la ligne suivante : le corps s'arrête à la
       // virgule, la ligne suivante suit tel quel (même trick que l'ancienne forme `= v`).
-      ['µwrite $x,\n  3',    '_mjsThis._state.x = \n  3']
+      ['µwrite $x,\n  3',    'µ._mjs_rawWrite(_mjsThis).x = \n  3']
     ]
     for (const [source, attendu] of coupees) {
       it(`lexer : ${JSON.stringify(source)}`,   () => assert.equal(tokenize(source), attendu))

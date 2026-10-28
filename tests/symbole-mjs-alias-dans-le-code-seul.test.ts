@@ -22,7 +22,9 @@ describe('symbole mjs : alias dans le code seul', () => {
 
   it('la feuille de style garde ses sélecteurs', async () => {
     const { data } = await mjs('<style>\n.mjs.actif\n  color: red\n</style>\n<p class="mjs actif">x</p>')
-    assert.equal(data.baseCss, '.mjs.actif{color:red}')
+    // la feuille de base s'ouvre sur la règle qui cache un composant `hidden`, posée à tout composant : seul le sélecteur écrit compte ici
+    assert.ok(data.baseCss.endsWith('.mjs.actif{color:red}'), data.baseCss)
+    assert.doesNotMatch(data.baseCss, /µ/)
   })
 
   it('le code garde l\'alias : script, interpolation d\'une chaîne du script, expressions du HTML', async () => {

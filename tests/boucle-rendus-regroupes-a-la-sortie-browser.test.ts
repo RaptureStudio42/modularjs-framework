@@ -7,7 +7,7 @@
 // boucle), exception levée dans la boucle, `return` depuis la boucle, boucles imbriquées (seule la plus extérieure
 // redessine), variable remise à sa valeur d'avant, texte et liste du même composant (le texte attend le bloc), magasin `$$`
 // lu par deux composants (une passe chacun), reffet (une passe, sur l'état final), douze mille sorties de boucle dans un même
-// tour (pas une boucle réactive).
+// tour (pas une boucle réactive), `.forEach` hors de toute boucle dont le rappel écrit l'état (regroupé comme une boucle).
 
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
@@ -122,6 +122,9 @@ lignes = -> @@_shadow.querySelectorAll('li').length
   for i of [1..n]
     $n = i
   null
+@rappel = (n) ->
+  [1..n].forEach (k) -> $n = k
+  txt '.n'
 unPas = (k) ->
   for i of [1..2]
     $n = k
@@ -228,6 +231,9 @@ lignes = -> @@_shadow.querySelectorAll('li').length
   for i in [1..n]
     $n = i
   null
+@rappel = (n) ->
+  [1..n].forEach (k) -> $n = k
+  txt '.n'
 unPas = (k) ->
   for i in [1..2]
     $n = k
@@ -364,6 +370,11 @@ describe('boucle du code d\'un composant : textes et attributs écrits une fois,
               j = await jouer('effet', [100])
               assert.equal(j.sync[0], 1, `reffet : 1 écriture DOM (${j.sync[0]})`)
               assert.deepEqual(j.effets, [[langue, 100]], 'reffet : un passage, sur l\'état final')
+
+              // un `.forEach` hors de toute boucle dont le rappel écrit l'état : regroupé comme une boucle
+              j = await jouer('rappel', [300])
+              assert.equal(j.ret, '300', '.forEach hors boucle : DOM à jour juste après l\'appel')
+              assert.equal(j.sync[0], 1, `.forEach hors boucle : 1 écriture DOM (${j.sync[0]})`)
 
               // dix mille sorties de boucle dans un même tour (une fonction qui boucle, appelée par un `.forEach`) : ce ne sont pas des
               // microtâches, la garde des boucles réactives ne les compte pas — l'affichage suit jusqu'au bout

@@ -29,7 +29,7 @@ type JsMode = 'split' | 'bundle'
 type Cache  = Record<string, string | false>
 
 interface Projet { root: string; srcDir: string; outDir: string }
-interface Options { retards?: Record<string, number>; clic?: { balise: string; sel: string }; etats?: string[] }
+interface Options { retards?: Record<string, number>; retenus?: string[]; clic?: { balise: string; sel: string }; etats?: string[] }
 interface Releve { rendus: Record<string, string>; apres: Record<string, string>; erreurs: string[]; polluees: string[]; etats: Record<string, Record<string, string>> }
 
 // valeur témoin portée par chaque clé d'exécution : ce qu'on cherche ensuite sur l'élément
@@ -272,12 +272,21 @@ function instantane(outDir: string): Record<string, string> {
 }
 
 // sert la page puis les fichiers de out/ tels qu'écrits ; `retards` retient les fichiers dont le nom
-// commence par une clé (un enfant défini après le rendu de son parent)
-async function servir(p: Projet, body: string, retards: Record<string, number> = {}): Promise<{ url: string; server: Server }> {
-  const html   = `<!doctype html><html><head><meta charset="utf-8"></head><body>${body}<script type="module" src="/out/bundle.js"></script></body></html>`
-  const server = createServer((req, res) => {
+// commence par une clé (un enfant défini après le rendu de son parent) ; `retenus` les garde jusqu'à ce que la page
+// demande `/feu-vert` — une porte, quand la page doit avoir fait quelque chose AVANT leur arrivée
+async function servir(p: Projet, body: string, retards: Record<string, number> = {}, retenus: string[] = []): Promise<{ url: string; server: Server }> {
+  const html    = `<!doctype html><html><head><meta charset="utf-8"></head><body>${body}<script type="module" src="/out/bundle.js"></script></body></html>`
+  let liberer   = () => {}
+  const libere  = new Promise<void>(resolve => { liberer = resolve })
+  const server  = createServer((req, res) => {
     const chemin  = decodeURIComponent((req.url ?? '/').split('?')[0])
     const envoyer = () => {
+      if(chemin === '/feu-vert') {
+        liberer()
+        res.writeHead(204)
+        res.end()
+        return
+      }
       if(chemin === '/') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         res.end(html)
@@ -294,11 +303,28 @@ async function servir(p: Projet, body: string, retards: Record<string, number> =
     }
     const nom    = chemin.split('/').pop() ?? ''
     const retard = Object.entries(retards).find(([prefixe]) => nom.startsWith(prefixe))
-    if(retard) setTimeout(envoyer, retard[1])
+    if(retenus.some(prefixe => nom.startsWith(prefixe))) libere.then(envoyer)
+    else if(retard) setTimeout(envoyer, retard[1])
     else envoyer()
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
   return { url: `http://127.0.0.1:${(server.address() as any).port}/`, server }
+}
+
+// la page tient sa chronologie par des portes, jamais par l'horloge : chaque étape attend que la précédente ait eu
+// lieu (rAF, après les rendus du cœur, synchrones ou en micro-tâche), la dernière demande au serveur les modules
+// retenus. `pret` (expression) : la page est prête pour la première étape ; `etapes` : le code de chaque étape
+function chronologie(pret: string, etapes: string[]): string {
+  return [
+    '<script>',
+    '(function () {',
+    `  var etapes = [${etapes.map(e => `function () { ${e} }`).join(', ')}, function () { fetch('/feu-vert'); }];`,
+    '  var suivante = function () { etapes.shift()(); if (etapes.length) requestAnimationFrame(suivante); };',
+    `  var guetter = function () { if (${pret}) suivante(); else requestAnimationFrame(guetter); };`,
+    '  requestAnimationFrame(guetter);',
+    '})();',
+    '</script>',
+  ].join('\n')
 }
 
 // textes rendus (les <p> et <b> de chaque ombre, joints par |) et propriétés PROPRES qui portent
@@ -346,7 +372,7 @@ function releverEtats(balises: string[]): Record<string, Record<string, string>>
 }
 
 async function monter(browser: any, p: Projet, body: string, balises: string[], opts: Options = {}): Promise<Releve> {
-  const { url, server }   = await servir(p, body, opts.retards ?? {})
+  const { url, server }   = await servir(p, body, opts.retards ?? {}, opts.retenus ?? [])
   const page              = await browser.newPage()
   const erreurs: string[] = []
   let apres: Record<string, string> = {}
@@ -366,7 +392,7 @@ async function monter(browser: any, p: Projet, body: string, balises: string[], 
       }
       parcourir(document)
       return attendues.every(b => vus.has(b))
-    }, balises, { timeout: 10000 }).catch(() => {})
+    }, balises, { timeout: 30000 }).catch(() => {})
     await page.waitForTimeout(100)
     const { rendus, polluees } = await page.evaluate(releverPage, TEMOIN)
     const etats = opts.etats ? await page.evaluate(releverEtats, opts.etats) : {}
@@ -508,29 +534,19 @@ describe('production — clés d\'exécution et marqueurs de données contre les
     ecrireChronologie(p)
     await construire(p, 'split')
     if(!browser) return
-    // t = 150 ms : la page pose une propriété propre sur les deux enfants (pas encore définis) ;
-    // t = 400 ms : le parent « a » change sa prop ; t ≈ 900 ms : les modules des enfants arrivent
-    const body = [
-      '<mjs-parent-a></mjs-parent-a><mjs-parent-b></mjs-parent-b>',
-      '<script>',
-      'setTimeout(function () {',
-      "  var a = document.querySelector('mjs-parent-a');",
-      "  var ea = a && a._shadow ? a._shadow.querySelector('mjs-enfant-a') : null;",
-      "  if (!ea) throw new Error('enfant a introuvable');",
-      "  ea.nom = 'deux-ancien';",
-      "  var b = document.querySelector('mjs-parent-b');",
-      "  var eb = b && b._shadow ? b._shadow.querySelector('mjs-enfant-b') : null;",
-      "  if (!eb) throw new Error('enfant b introuvable');",
-      "  eb.nom = 'deux-ancien';",
-      '}, 150);',
-      'setTimeout(function () {',
-      "  var a = document.querySelector('mjs-parent-a');",
-      "  if (!a || typeof a.changer !== 'function') throw new Error('methode changer absente');",
-      '  a.changer();',
-      '}, 400);',
-      '</script>',
-    ].join('\n')
-    const releve = await monter(browser, p, body, ['mjs-parent-a', 'mjs-parent-b', 'mjs-enfant-a', 'mjs-enfant-b'], { retards: { 'enfant-': 900 } })
+    // dans cet ordre, chaque étape après la précédente : la page pose une propriété propre sur les deux enfants
+    // (rendus par leurs parents, pas encore définis : leurs modules sont retenus) ; le parent « a » change sa prop ;
+    // les modules des enfants arrivent. Tenu par des portes : avec une horloge (150 ms, 400 ms, 900 ms), une machine
+    // chargée n'avait pas encore rendu les parents à 150 ms (« enfant a introuvable »)
+    const enfants = "var a = document.querySelector('mjs-parent-a'); var b = document.querySelector('mjs-parent-b'); var ea = a && a._shadow ? a._shadow.querySelector('mjs-enfant-a') : null; var eb = b && b._shadow ? b._shadow.querySelector('mjs-enfant-b') : null;"
+    const body = '<mjs-parent-a></mjs-parent-a><mjs-parent-b></mjs-parent-b>' + chronologie(
+      "(function () { " + enfants + " return !!(ea && eb && typeof a.changer === 'function'); })()",
+      [
+        enfants + " ea.nom = 'deux-ancien'; eb.nom = 'deux-ancien';",
+        "document.querySelector('mjs-parent-a').changer();",
+      ],
+    )
+    const releve = await monter(browser, p, body, ['mjs-parent-a', 'mjs-parent-b', 'mjs-enfant-a', 'mjs-enfant-b'], { retenus: ['enfant-'] })
     assert.equal(releve.rendus['mjs-enfant-a'], 'trois', `écriture du parent POSTÉRIEURE à la propriété propre : c'est elle qui doit gagner — erreurs de page : ${releve.erreurs.join(' / ') || 'aucune'}`)
     assert.equal(releve.rendus['mjs-enfant-b'], 'deux-ancien', `propriété propre POSTÉRIEURE à l'écriture du parent : c'est elle qui doit gagner — erreurs de page : ${releve.erreurs.join(' / ') || 'aucune'}`)
     assert.deepEqual(releve.erreurs, [], 'aucune erreur de page')
@@ -541,25 +557,17 @@ describe('production — clés d\'exécution et marqueurs de données contre les
     ecrireFige(p)
     await construire(p, 'split')
     if(!browser) return
-    // t = 150 ms : la page fige `nom` sur l'enfant (pas encore défini) ; t = 400 ms : le parent
-    // réécrit sa prop ; t ≈ 900 ms : le module de l'enfant arrive
-    const body = [
-      '<mjs-parent-c></mjs-parent-c>',
-      '<script>',
-      'setTimeout(function () {',
-      "  var p = document.querySelector('mjs-parent-c');",
-      "  var e = p && p._shadow ? p._shadow.querySelector('mjs-enfant-c') : null;",
-      "  if (!e) throw new Error('enfant introuvable');",
-      "  Object.defineProperty(e, 'nom', { value: 'fige', configurable: false, writable: true, enumerable: true });",
-      '}, 150);',
-      'setTimeout(function () {',
-      "  var p = document.querySelector('mjs-parent-c');",
-      "  if (!p || typeof p.changer !== 'function') throw new Error('methode changer absente');",
-      '  p.changer();',
-      '}, 400);',
-      '</script>',
-    ].join('\n')
-    const releve = await monter(browser, p, body, ['mjs-parent-c', 'mjs-enfant-c'], { retards: { 'enfant-c-': 900 } })
+    // dans cet ordre, chaque étape après la précédente (portes, jamais l'horloge) : la page fige `nom` sur l'enfant
+    // (pas encore défini : son module est retenu) ; le parent réécrit sa prop ; le module de l'enfant arrive
+    const enfant = "var p = document.querySelector('mjs-parent-c'); var e = p && p._shadow ? p._shadow.querySelector('mjs-enfant-c') : null;"
+    const body = '<mjs-parent-c></mjs-parent-c>' + chronologie(
+      "(function () { " + enfant + " return !!(e && typeof p.changer === 'function'); })()",
+      [
+        enfant + " Object.defineProperty(e, 'nom', { value: 'fige', configurable: false, writable: true, enumerable: true });",
+        "document.querySelector('mjs-parent-c').changer();",
+      ],
+    )
+    const releve = await monter(browser, p, body, ['mjs-parent-c', 'mjs-enfant-c'], { retenus: ['enfant-c-'] })
     // ni le registre ni la reprise des propriétés propres au montage ne tentent de retirer une
     // propriété figée : aucune levée, l'enfant finit son montage
     assert.equal(releve.rendus['mjs-parent-c'], 'parent', `le parent doit rester rendu — erreurs de page : ${releve.erreurs.join(' / ') || 'aucune'}`)

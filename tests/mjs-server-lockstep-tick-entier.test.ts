@@ -43,7 +43,7 @@ describe('lockstep — tick non entier rejeté', () => {
     const ls = createLockstep('t1', null)
     // i part de 1 — i*0.001 avec i=0 vaudrait 0, un tick ENTIER légitime (0*0.001===0), pas
     // fractionnaire : ce n'est pas le cas qu'on veut prouver ici
-    for (let i = 1; i < 100; i++) ls.receiveHash('p1', i * 0.001, 'hash-' + i, 2)
+    for (let i = 1; i < 100; i++) ls.receiveHash('p1', i * 0.001, 'hash-' + i, ['p1', 'p2'])
     assert.equal(ls._hashSize(), 0, 'aucune entrée fractionnaire ne doit être retenue')
   })
 

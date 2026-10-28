@@ -1,10 +1,10 @@
 // disconnectedCallback() (mjs_element.ts) appelait µ._mjs_cleanupUniversalDeps(this) SANS garde —
-// un cœur qui s'en passerait un jour (mjs_runes.ts reste aujourd'hui dans le cœur strict) planterait
-// à CHAQUE déconnexion de composant, en silence nulle part ailleurs. Garde défensive
-// `typeof … === 'function'`, même patron que les nettoyages voisins du même bloc (i18n). Ici
-// `_mjs_cleanupUniversalDeps` reste bel et bien du cœur aujourd'hui : ce test simule son absence en
-// la retirant après le montage, pas par une configuration réelle — c'est un prérequis de
-// robustesse, pas un changement de comportement observable.
+// un cœur qui s'en passe (mjs_runes.ts ne vient qu'avec µ.state et les stores : c'est le cas d'un projet
+// qui n'en écrit aucun) planterait à CHAQUE déconnexion de composant, en silence nulle part ailleurs. Garde
+// défensive `typeof … === 'function'`, même patron que les nettoyages voisins du même bloc (i18n). L'hôte lit
+// un store global (`$$x`) : son cœur porte le registre (mjs_runes.ts) et les stores globaux
+// (mjs_store_globals.ts), dont les deux nettoyages observés ici ; le 2e cas retire le premier après le
+// montage pour simuler un cœur sans lui
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
@@ -25,7 +25,7 @@ async function loadHarness() {
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, 'discog.mjs'), '<p>x</p>\n')
+  writeFileSync(join(srcDir, 'discog.mjs'), '<p>{$$x}</p>\n')
 
   const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
   const stats = await bundler.compile()
@@ -75,7 +75,7 @@ describe('mjs_element.ts — disconnectedCallback() tolère µ._mjs_cleanupUnive
     const el = mount(document, 'mjs-discog')
     await new Promise((r) => setTimeout(r, 80))
 
-    // simule un cœur futur sans mjs_runes.ts : la fonction manque réellement au moment du
+    // simule un cœur sans mjs_runes.ts : la fonction manque réellement au moment du
     // démontage, pas juste un mock qui jette.
     delete win.µ._mjs_cleanupUniversalDeps
 

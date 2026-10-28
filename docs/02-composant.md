@@ -335,7 +335,7 @@ Une seule clé de `mjs.config.json` décide, pour tout le projet, de la façon d
 | `'split'` | **un fichier par feuille**, importé par le JavaScript des composants qui la déclarent | plusieurs feuilles bien séparées : une page ne paie que celles de ses composants |
 | `'lazy'` | **un vrai `.css` par feuille**, demandé au montage du premier composant qui la déclare | des feuilles lourdes que peu d'écrans utilisent : rien ne part tant que personne n'en a besoin |
 
-En `'lazy'`, une feuille réclamée par dix composants ne fait qu'**une** requête : le résultat est mis en cache par URL, et les neuf autres montages le réutilisent. Le composant reste masqué le temps de l'aller-retour (le même bouclier anti-clignotement qui masque tout composant avant son premier rendu), puis apparaît habillé — jamais nu.
+En `'lazy'`, une feuille réclamée par dix composants ne fait qu'**une** requête : le résultat est mis en cache par URL, et les neuf autres montages le réutilisent. Le composant reste invisible, à sa place, le temps de l'aller-retour (le même bouclier anti-clignotement qui cache tout composant avant son premier rendu), puis apparaît habillé — jamais nu.
 
 Trois choses à savoir avant de choisir `'lazy'` :
 

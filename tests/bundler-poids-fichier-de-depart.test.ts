@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const MESUREE  = 54493 // octets mesurés, runtime core + js bundle + production
+const MESUREE  = 52407 // octets mesurés, runtime core + js bundle + production
 const PLAFOND  = Math.ceil(MESUREE * 1.02)
 
 const SOURCES: Record<string, string> = {

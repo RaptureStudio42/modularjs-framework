@@ -38,6 +38,8 @@ Tout tourne en ligne sur le site officiel — **[mjs.rapturestudio.fr](https://m
 npm install modularjs-framework
 ```
 
+Le paquet livre ses types TypeScript, en déclarations `.d.ts`, pour `modularjs-framework`, `modularjs-framework/cli`, `modularjs-framework/testing`, `modularjs-framework/ws` et `modularjs-framework/mjs-server` : un projet TypeScript les lit tels quels, en mode `strict` compris. Elles citent les types de Node.js : installez `@types/node` dans votre projet (`npm install --save-dev @types/node`), que le paquet déclare en dépendance pair facultative ; un projet JavaScript n'a rien à installer.
+
 ### Coloration dans l'éditeur
 
 `.mjs` est aussi l'extension des modules JavaScript de Node : sans rien faire, l'éditeur lit un composant MJS comme du JavaScript et le souligne en erreurs de bout en bout. L'extension VS Code du dépôt règle ça, et complète les 117 effets pendant la frappe, avec leur aide au survol — installation et réglage par chemin dans [`editors/vscode/`](./editors/vscode/).
@@ -160,6 +162,8 @@ Everything runs online on the official site — **[mjs.rapturestudio.fr](https:/
 ```bash
 npm install modularjs-framework
 ```
+
+The package ships its TypeScript types, as `.d.ts` declarations, for `modularjs-framework`, `modularjs-framework/cli`, `modularjs-framework/testing`, `modularjs-framework/ws` and `modularjs-framework/mjs-server`: a TypeScript project reads them as is, `strict` mode included. They refer to the Node.js types: install `@types/node` in your project (`npm install --save-dev @types/node`), which the package declares as an optional peer dependency; a JavaScript project has nothing to install.
 
 ### Editor syntax highlighting
 

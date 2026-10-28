@@ -60,6 +60,8 @@ export interface MjsServerMatchmaking {
   onClientDisconnect(client: MjsWsClient): void
   /** cf. index.ts — app.stop() commence : tout coup reçu ensuite est refusé (la rafale finale de sauvegarde ne le contiendrait pas) */
   refuseMoves(): void
+  /** cf. index.ts — app.stop() commence : plus aucune minuterie de partie ne part (cf. game.ts `_held`), l'échéance reste sauvegardée */
+  holdTimers(): void
   /** cf. index.ts — app.stop() : coupe tous les setTimeout vivants (aucun ne doit survivre à l'arrêt) */
   destroyAll(): void
   /** persist.ts (boot, AVANT le vrai listen) — restaure UNE partie depuis un instantané dans les
@@ -170,6 +172,8 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // true dès le début de app.stop() (refuseMoves, avant la rafale finale de sauvegarde) : un coup reçu ensuite est refusé, sans quoi
   // il était acquitté puis perdu au redémarrage
   let refusingMoves = false
+  // true dès le début de app.stop() (holdTimers) : une partie créée ensuite naît avec ses minuteries retenues (cf. game.ts `_held`)
+  let holdingTimers = false
 
   function generateGameId(): string { return 'game' + (++_gameCounter) }
 
@@ -192,6 +196,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // anti-triche — `null` si movesPerIdentity absent (cf. tête de fichier) : game.ts
     // court-circuite alors la garde entièrement (if (this._identityQuota && ...)), coût nul.
     if (movesPerIdentity) game._identityQuota = identityQuotaOk
+    if (holdingTimers) game._held = true
     persist?.armGame(game)
     return game
   }
@@ -543,7 +548,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     return codeFailures ? codeFailures.recordFailure(ipOf(client)) : true
   }
 
-  function joinWithCode(def: MjsServerResolvedDef, client: MjsWsClient, code: string): unknown {
+  function joinWithCode(def: MjsServerResolvedDef, client: MjsWsClient, code: string, reads: boolean): unknown {
     checkCodeLockout(client)
     const gameId = codes.get(code)
     const game = gameId !== undefined ? games.get(gameId) : undefined
@@ -552,6 +557,8 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     // renvoyés à une requête B). MÊME message que 'code inconnu' (pas une forme d'erreur à part) :
     // ne révèle jamais qu'un code existe pour un AUTRE type
     if (!game || game.type !== def.type) throw new Error(recordCodeFailure(client) ? t('serveur.matchmaking-code-inconnu', { code: code }) : t('serveur.matchmaking-trop-tentatives-code'))
+    // journal lockstep coupé : la page qui ne sait pas lire son instantané est refusée avant d'y prendre ou d'y retrouver un siège
+    game._requireSnapshotReader(reads)
     const alreadySeated = game._findSeatOf(client)
     if (alreadySeated) {   // même connexion qui rejoue play (composant remonté) : idempotent, la fin comprise
       resendEnd(game, client)
@@ -570,7 +577,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
   // qu'il reste connecté ; un fondateur qui repart sans jamais recevoir personne voit sa table
   // fermée tout de suite, cf. game.ts::_afterDeparture). À l'expiration : la partie ENTIÈRE est annulée (pas de re-complétion depuis la
   // file) — le plus simple des deux choix envisagés, documenté ici.
-  function playQueued(def: MjsServerResolvedDef, client: MjsWsClient): unknown {
+  function playQueued(def: MjsServerResolvedDef, client: MjsWsClient, reads: boolean): unknown {
     // idempotence (anti-triche) — CETTE identité (peerIdOf, cf. game.ts) est
     // déjà en file OU déjà assise dans une partie VIVANTE et non finie de ce type : ignore/réattache plutôt que
     // de pousser un 2e ticket (cf. matchmaking.ts:130-152 — un spam de µgame:play
@@ -583,6 +590,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (isQueued(def.type, id)) return { queue: (queues.get(def.type) ?? []).length }
     const existingGame = findGameOfIdentity(def.type, id)
     if (existingGame) {
+      existingGame._requireSnapshotReader(reads)   // journal lockstep coupé, page qui ne sait pas lire son instantané : refusée
       indexConnection(existingGame, client)
       const player = existingGame._createSeat(client)
       return seatResponse(existingGame, player)
@@ -739,7 +747,8 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     return callerSeat ? seatResponse(game, callerSeat) : undefined
   }
 
-  /** défait un groupe sans bruit : la partie est détruite (ni µgame:end, ni crochet de l'appli), les refusés sortent de la file et
+  /** défait un groupe sans bruit : la partie est détruite (ni µgame:end, ni crochet de l'appli hormis hooks.onDestroy, qui referme ce
+   *  que hooks.onCreate a ouvert), les refusés sortent de la file et
    *  reçoivent leur fin « entrée refusée » (sauf l'appelant, dont la requête a l'erreur), les autres reviennent en tête de la file.
    *  Rend la réponse de l'appelant : sa position s'il attend toujours, sinon l'erreur de son refus est levée */
   function undoMatch(def: MjsServerResolvedDef, game: Game, tickets: MjsWsClient[], caller: MjsWsClient | null, refusal: TicketRefusal | null, refusedTickets: Set<MjsWsClient>): unknown {
@@ -780,6 +789,8 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
 
   function handlerPlay(p: any, client: MjsWsClient): unknown {
     if (typeof p?.type !== 'string') throw new Error(t('serveur.matchmaking-play-type-manquant'))
+    // le client sait lire un instantané du lockstep (cf. game.ts::_requireSnapshotReader) — absent chez une page d'une version d'avant
+    const reads = p.snapshots === true
     const def = gameDefs.get(p.type)
     if (!def) throw new Error(t('serveur.matchmaking-type-jeu-inconnu', { type: p.type }))
     // anti-triche — drapeau spectateur SUR µgame:play (jamais une trame séparée : réutilise
@@ -799,10 +810,10 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (typeof p.code === 'string') {
       if (p.code === '') throw new Error(t('serveur.matchmaking-code-invalide'))
       if (!def.code) throw new Error(t('serveur.matchmaking-jeu-sans-parties-privees', { type: p.type }))
-      return joinWithCode(def, client, p.code)
+      return joinWithCode(def, client, p.code, reads)
     }
     if (p.code !== undefined) throw new Error(t('serveur.matchmaking-code-invalide'))
-    return playQueued(def, client)
+    return playQueued(def, client, reads)
   }
 
   // coups async : `await` fait remonter une éventuelle rejection au try/catch de
@@ -847,6 +858,7 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     if (typeof p?.game !== 'string') throw new Error(t('serveur.matchmaking-resync-partie-manquante'))
     const game = games.get(p.game)
     if (!game) throw new Error(t('serveur.matchmaking-partie-introuvable'))
+    game._requireSnapshotReader(p.snapshots === true)   // journal lockstep coupé, page qui ne sait pas lire son instantané : refusée
     indexConnection(game, client)
     const { seat, info } = game._resync(client)
     return { game: game.id, seat, ...info, phase: game.phase, turn: game.turn, seq: game.seq, code: game.code }
@@ -864,11 +876,19 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
     game?._receiveHash(client, p.tick, p.h)
   }
 
+  // µgame:snapshot — instantané lockstep proposé par un siège (cf. lockstep.ts « INSTANTANÉS »), fire-and-forget comme µgame:hash :
+  // trame malformée (tick ou générateur non entiers, état absent) ou partie/joueur introuvable → ignorée en silence
+  function handlerSnapshot(p: any, client: MjsWsClient): void {
+    if (typeof p?.game !== 'string' || !Number.isInteger(p?.tick) || !Number.isInteger(p?.rng) || p?.state === undefined) return
+    games.get(p.game)?._receiveSnapshot(client, p.tick, p.state, p.rng)
+  }
+
   baseServe('µgame:play', handlerPlay)
   baseServe('µgame:move', handlerMove)
   baseServe('µgame:leave', handlerLeave)
   baseServe('µgame:resync', handlerResync)
   baseOn('µgame:hash', handlerHash)
+  baseOn('µgame:snapshot', handlerSnapshot)
 
   return {
     onClientDisconnect(client: MjsWsClient): void {
@@ -903,10 +923,17 @@ export function createMatchmaking(app: MjsWsApp, gameDefs: Map<string, MjsServer
       refusingMoves = true
     },
 
+    holdTimers(): void {
+      holdingTimers = true
+      for (const game of games.values()) game._held = true
+      for (const game of matching) game._held = true   // groupes de la file en cours d'appariement
+    },
+
     destroyAll(): void {
       stopping = true
-      for (const game of Array.from(games.values())) game._destroy()
-      for (const game of Array.from(matching)) game._destroy()   // groupes de la file en cours d'appariement : leurs minuteries ne survivent pas à l'arrêt non plus
+      // `true` : un arrêt n'est pas la fin de la partie, hooks.onDestroy ne part pas (la partie sauvegardée revit au redémarrage)
+      for (const game of Array.from(games.values())) game._destroy(true)
+      for (const game of Array.from(matching)) game._destroy(true)   // groupes de la file en cours d'appariement : leurs minuteries ne survivent pas à l'arrêt non plus
       matching.clear()
     },
 

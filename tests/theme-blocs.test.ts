@@ -280,7 +280,7 @@ describe('thèmes — commentaire `//` en fin de ligne de déclaration', functio
 
   it('TÉMOIN — sur une propriété ORDINAIRE, dart-sass retirait déjà le commentaire', async function () {
     const { data } = await transpile('<style>\n  .a\n    color: red   // note\n</style>\n<div>x</div>\n', { moduleName: 'card' })
-    assert.equal(data.baseCss.trim(), '.a{color:red}')
+    assert.equal(data.baseCss.trim(), ':host([hidden]:not([hidden=until-found i])){display:none}.a{color:red}')
   })
 
   // Les deux morsures trouvées ensuite : le retrait ne doit pas manger

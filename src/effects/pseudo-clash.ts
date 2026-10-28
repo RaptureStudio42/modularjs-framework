@@ -10,16 +10,17 @@ import { typedLine, type LintToggles } from '../diagnostics.js'
 type Pseudo = 'before' | 'after'
 type Reglages = Record<string, unknown>
 
-// les pseudo-éléments de la balise que prend chaque effet, selon ses réglages fixes (`f`) et tenus par une variable (`d`) ; null : on
-// ne sait pas au build
-const PSEUDOS: Record<string, (f: Reglages, d: Reglages, kids: any[]) => Pseudo[] | null> = {
+// les pseudo-éléments de la balise que prend chaque effet, selon ses réglages fixes (`f`) et tenus par une variable (`d`), et les effets
+// écrits sur la même balise (`noms`) ; null : on ne sait pas au build
+const PSEUDOS: Record<string, (f: Reglages, d: Reglages, kids: any[], noms: string[]) => Pseudo[] | null> = {
   shine:     (f, d) => 'where' in d ? null : f.where === 'text' ? [] : ['after'],
   noise:     () => ['after'],
   underline: () => ['after'],
   unveil:    () => ['after'],
   tilt:      (f, d) => 'glare' in d ? null : f.glare === true ? ['after'] : [],
   spotlight: () => ['before', 'after'],
-  border:    (f, d) => 'style' in d ? null : (f.style ?? 'gradient') === 'gradient' ? ['before', 'after'] : [],
+  // le dégradé posé avec *spotlight, qui garde ceux de la balise : il dessine dans les pseudo-éléments d'un calque
+  border:    (f, d, _kids, noms) => noms.includes('spotlight') ? [] : 'style' in d ? null : (f.style ?? 'gradient') === 'gradient' ? ['before', 'after'] : [],
   iso:       () => ['before', 'after'],
   glitch:    () => ['before', 'after'],
   split:     () => ['before', 'after'],
@@ -47,6 +48,7 @@ export function pseudoClashWarnings(html: string, lint?: LintToggles): string[] 
     const fx = (n.attrs ?? []).filter((a: any) => a.type === 'static' && /^\*[a-z]/i.test(a.name ?? ''))
     if (fx.length < 2) return
     const pris: Record<Pseudo, string[]> = { before: [], after: [] }
+    const lus: { a: any, p: any, nom: string }[] = []
     for (const a of fx) {
       let p: any
       try {
@@ -55,9 +57,12 @@ export function pseudoClashWarnings(html: string, lint?: LintToggles): string[] 
       catch {
         continue
       }
-      const nom = String(p.base ?? a.name.slice(1)).split('.')[0]
+      lus.push({ a, p, nom: String(p.base ?? a.name.slice(1)).split('.')[0] })
+    }
+    const noms = lus.map(l => l.nom)
+    for (const { a, p, nom } of lus) {
       if (!Object.hasOwn(PSEUDOS, nom)) continue
-      for (const w of PSEUDOS[nom](p.fixed ?? {}, p.dynamic ?? {}, n.children ?? []) ?? []) pris[w].push(a.name)
+      for (const w of PSEUDOS[nom](p.fixed ?? {}, p.dynamic ?? {}, n.children ?? [], noms) ?? []) pris[w].push(a.name)
     }
     const doubles = (['before', 'after'] as Pseudo[]).filter(w => pris[w].length > 1)
     if (doubles.length === 0) return

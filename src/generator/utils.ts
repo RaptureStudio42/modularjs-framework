@@ -42,7 +42,8 @@
 // en SYNCHRONE (des centaines de fois depuis des callbacks de `.replace()`),
 // aucun point d'`await` possible dans leur pile d'appel.
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_WRITE_BODY, MU_LAYOUT_PREFIX_WRITE_BODY, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_RUNE_STORE_BODY, MU_MINMAX_RETIRE_BODY, cheminInspectPlat, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_WRITE_BODY, MU_LAYOUT_PREFIX_WRITE_BODY, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_RUNE_STORE_BODY, MU_MINMAX_RETIRE_BODY, cheminInspectPlat, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { skipQuotedSpan } from '../quoted-span.js'
 import { maskInertSameLength, finValeurContexte, ecritureContexte, incrementContexteRe, rewriteIncrement, convertCoffeeInterpolations } from '../lexer/index.js'
 import { createRequire } from 'node:module'
 import * as acorn from 'acorn'
@@ -92,9 +93,7 @@ function mapCodeSegments(src: string, fn: (code: string) => string): string {
     if (ch === '"' || ch === "'") {
       // Chaîne littérale inerte : copiée verbatim (aucun sucre à l'intérieur).
       res += fn(src.slice(codeStart, i))
-      let j = i + 1
-      while (j < n && src[j] !== ch) { if (src[j] === '\\') j++; j++ }
-      const end = Math.min(j + 1, n)
+      const end = skipQuotedSpan(src, i)
       res += src.slice(i, end)
       i = end
       codeStart = i
@@ -483,9 +482,9 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   // parenthèse ouvrante FRAÎCHE remplace `µwrite(`, la fermante d'origine (non consommée)
   // referme celle-là.
   const rawWriteParenOut = (_m: string, dollar: string, name: string) =>
-    RAW_WRITE_PAREN_OUT_OPEN + (dollar ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + name + ' = '
+    RAW_WRITE_PAREN_OUT_OPEN + (dollar ? RAW_WRITE_STORE_OUT : RAW_WRITE_OUT) + name + ' = '
   const rawWriteOut = (_m: string, dollar: string, name: string) =>
-    (dollar ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + name + ' = '
+    (dollar ? RAW_WRITE_STORE_OUT : RAW_WRITE_OUT) + name + ' = '
   res = res.replace(RE_RAW_WRITE_PAREN_G, rawWriteParenOut).replace(RE_RAW_WRITE_G, rawWriteOut)
 
   // Ancienne forme `µwrite $x = v` / `µwrite($x) = v` (RETIRÉE) : message dédié

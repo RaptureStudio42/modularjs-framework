@@ -446,18 +446,35 @@ describe('MJS-WS — intégration des paquets', () => {
   })
 
   describe('4. CSS à chaud (dev-only) — orthogonalité avec les paquets serveur (dist/ statique)', () => {
-    it('dist/mjs-ws.js ne contient AUCUNE trace de µ._hotCss (mécanisme dev runtime/cli, jamais côté serveur)', function () {
+    // code que charge une entrée de dist/ : le fichier et les morceaux communs qu'il importe, de proche en proche
+    // (build:self pose les modules partagés entre entrées dans des morceaux voisins)
+    function codeCharge(entree: string): string {
+      const vus  = new Set<string>()
+      const pile = [entree]
+      let code   = ''
+      while (pile.length) {
+        const f = pile.pop()!
+        if (vus.has(f)) continue
+        vus.add(f)
+        const texte = readFileSync(f, 'utf8')
+        code += texte
+        for (const m of texte.matchAll(/(?:from|import)\s*\(?\s*"(\.\/[^"]+)"/g)) pile.push(join(dirname(f), m[1]))
+      }
+      return code
+    }
+
+    it('dist/mjs-ws.js et ses morceaux ne contiennent AUCUNE trace de µ._hotCss (mécanisme dev runtime/cli, jamais côté serveur)', function () {
       const distMjsWs = join(__dirname, '../dist/mjs-ws.js')
       if (!existsSync(distMjsWs)) { this.skip(); return }   // dist/ gitignored, non reconstruit ici (build:self interdit ici)
-      const contenu = readFileSync(distMjsWs, 'utf8')
-      assert.ok(!contenu.includes('_hotCss'), 'le rechargement CSS à chaud (commit 4cdc26e) est un mécanisme dev runtime/cli — jamais dans le bundle serveur mjs-ws')
+      const contenu = codeCharge(distMjsWs)
+      assert.ok(!contenu.includes('_hotCss'), 'le rechargement CSS à chaud (commit 4cdc26e) est un mécanisme dev runtime/cli — jamais dans le paquet serveur mjs-ws')
     })
 
-    it('dist/index.js contient bien µ._hotCss (bundler/cli)', function () {
+    it('dist/index.js et ses morceaux contiennent bien µ._hotCss (bundler/cli)', function () {
       const distIndex = join(__dirname, '../dist/index.js')
       if (!existsSync(distIndex)) { this.skip(); return }
-      const contenu = readFileSync(distIndex, 'utf8')
-      assert.ok(contenu.includes('_hotCss'), 'µ._hotCss (commit 4cdc26e) doit être présent dans le bundle bundler/cli (dist/index.js)')
+      const contenu = codeCharge(distIndex)
+      assert.ok(contenu.includes('_hotCss'), 'µ._hotCss (commit 4cdc26e) doit être présent dans le code bundler/cli que charge dist/index.js')
     })
   })
 })

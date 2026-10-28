@@ -110,7 +110,7 @@ const DEFAULT_STYLE_LANG: 'css' | 'sass' | 'scss' = 'sass'
 // espaces autour du `=` tolérés — même forme que SECTION_ATTR_RE (checkSectionAttrs, plus bas) :
 // `lang = "js"` validait déjà SANS erreur mais compilait avec le langage par DÉFAUT (Civet),
 // la valeur écrite n'étant jamais lue — panne muette, aucun message
-function extractLang(attrs: string): string | null {
+export function extractLang(attrs: string): string | null {
   const m = attrs.match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
   return m ? m[1] : null
 }

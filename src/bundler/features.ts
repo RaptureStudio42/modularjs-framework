@@ -20,6 +20,7 @@
  * mise en page, `<style name="…">`) : `used === undefined` pour un module de script autonome
  * (aucun TranspileData, jamais de <style name>), le scan retombe alors sur le texte compilé. */
 import * as acorn from 'acorn'
+import * as walk from 'acorn-walk'
 import { EFFECTS, playsOnce } from '../effects/catalog.js'
 
 export type FeatureScanData = {
@@ -92,6 +93,16 @@ export const I18N_USED = 'i18n_used'
 // `<boucles>` de mjs_init.ts et de `_mjs_invalidate`, mjs_element.ts) n'entre au cœur que si une unité de ce build en a une. Signal à part, comme
 // I18N_PAQUETS : une appli sans boucle enveloppée reçoit un cœur identique à l'octet
 export const BOUCLES = 'boucles'
+// une liaison filtrée par valeur dans un `{for}` (`checked={x is $choix}`, generator/attributes/index.ts, liaisonFiltree) : chaque ligne range sa
+// clé dans `_mjs_filtIdxKeys` ; l'index, ses purges et sa vidange en masse (blocs balisés `<liaisons-filtrees>` de mjs_for.ts) n'entrent au cœur
+// que si une unité de ce build en écrit une. Signal à part, comme BOUCLES
+export const FILTERED_BINDINGS = 'filtered_bindings'
+// `<@view>` compilé en `<metamjs-view>` (generator/compile.ts, preprocess) : la déclaration de cette balise (bloc balisé `<vue>` de mjs_init.ts)
+// n'entre au cœur que si une unité de ce build l'écrit, ou avec le routeur ou les liens (bundler/index.ts). Signal à part, comme BOUCLES
+export const VIEW_TAG = 'view_tag'
+// `matches`/`animate` de la balise, insensibles à une méthode du composant du même nom (blocs balisés `<natifs>` de mjs_element.ts) : appelés
+// par du code compilé (`µ._mjs_matches(` de <@@field>) ; les modules du runtime qui s'en servent posent leur copie. Signal à part, comme BOUCLES
+export const NATIVE_HELPERS = 'native_helpers'
 // les appels `µ?.Autoloader?.observe?.(` et `µ.Autoloader?.load?.(` sont écrits par le compilateur dans CHAQUE composant : ils ne comptent pas
 const REGEX_AUTOLOADER_MENTION = /\bAutoloader\b(?!\?\.(?:observe|load)\?\.\()/
 const REGEX_PRELOAD_MENTION    = /\bpreload\b/
@@ -280,6 +291,229 @@ const REGEX_I18N_LOADER = /\b_mjs_i18n = \[(?:null|"[a-z0-9_-]+"),"\*loader"/
 const REGEX_TYPES =/\._mjs_types = |\._mjs_storeTypes\(/
 // l'ouverture de l'enveloppe d'une boucle qui écrit l'état, cherchée sans son objet (`µ`/`mjs` selon la config du projet)
 const REGEX_BOUCLES = /\._mjs_lq\+\+;\s*try\s*\{/
+// la passe d'une ligne à liaison filtrée, toujours émise avec elle ; la balise de `<@view>` sous toutes ses formes (gabarit cloné, création
+// impérative) ; un appel des aides natives, cherché sans son objet (`µ`/`mjs` selon la config du projet). Faux positifs acceptés
+const REGEX_FILTERED_BINDINGS = /\b_mjs_filtIdxKeys\b/
+const REGEX_VIEW_TAG          = /metamjs-view/
+const REGEX_NATIVE_HELPERS    = /\._mjs_(?:matches|animate)\(/
+
+// --------------------------------------------------------------------------
+// modules OPTIONNELS repérés (config.ts, OPTIONAL_RUNTIME_MODULES) : lus quand mjs.config.json n'écrit pas de clé `runtime`, pour ne
+// joindre au cœur que ceux dont le projet se sert (bundler/index.ts, resolveRuntimeFiles). Un signal par module, `opt:<nom>`, cherché
+// sur le texte compilé ENTIER (chaînes et commentaires compris) : faux positifs acceptés — le module part pour rien —, jamais de faux
+// négatif. Leurs noms publics (`µ.modal`, `µ.ajax`…) après un point, blancs et chaînage optionnel compris, les rubriques que leur
+// sucre compile (`µmodal` → `µ.modal`), les attributs que le compilateur pose pour eux (`mjs-method`, `mjs-confirm`, `mjs-flip`).
+// Ce qu'une page servie hors construction écrit (vue serveur, HTML statique, script de la page) reste invisible ici : la sélection
+// garde d'office les modules de page quand le projet a des vues serveur, et nomme ce qui reste de côté (resolveRuntimeFiles)
+// --------------------------------------------------------------------------
+export const optionalSignal = (module: string) => 'opt:' + module
+const MU = String.raw`µ\s*\??\.\s*`
+const REGEX_OPTIONAL: Record<string, RegExp> = {
+  // le moteur des animations (`µ.anim`, les courbes `µ.easing`, `animate` de la balise d'un composant)
+  easing:     new RegExp(MU + String.raw`(?:anim|easing)\b|\.animate\s*\(`),
+  spring:     new RegExp(MU + String.raw`[sS]pring\b`),
+  smooth:     new RegExp(MU + String.raw`smooth\b`),
+  // le magasin global (`$$x` → `µ._storeDeclare`/`µ._storeSet`/`µ.store`, `µonline`, `µvisible`, `µready`, `µ.nav`, `µ.res`, `µ.server`)
+  vault:      new RegExp(MU + String.raw`(?:store|online|visible|ready|nav|res|server)\b|\._storeDeclare\(|\._storeSet\(|\._mjs_store[A-Z]\w*\(`),
+  ajax:       new RegExp(MU + String.raw`(?:ajax|csrfToken)\b`),
+  socket:     new RegExp(MU + String.raw`socket\b|\bMjsSocket\b`),
+  // µschema, et `µ.ajax.binary(url, { schema })`, qui décode la réponse avec son codec
+  schema:     new RegExp(MU + String.raw`(?:schema|list|bits)\b|` + MU + String.raw`ajax\s*\??\.\s*binary\b`),
+  optimistic: new RegExp(MU + String.raw`optimistic\b`),
+  // les poignées d'une connexion (`sock.game`, `sock.chat`, `sock.account`, `sock.lobby`), quel que soit le nom de la variable
+  game:       /\.\s*game\b/,
+  chat:       /\.\s*chat\b/,
+  accounts:   /\.\s*account\b/,
+  lobby:      /\.\s*lobby\b/,
+  interp:     new RegExp(MU + String.raw`interp\b`),
+  predict:    new RegExp(MU + String.raw`predict\b`),
+  det:        new RegExp(MU + String.raw`(?:det|random)\b`),
+  lockstep:   new RegExp(MU + String.raw`lockstep\b`),
+  // `<@view>`, `µ.Router`, `µurl`, le crochet `µurlChange`, un lien vers une route `#/…`
+  router:     new RegExp(String.raw`metamjs-view|\burlChange\b|href=\\?['"]?#\/|` + MU + String.raw`(?:Router|url)\b`),
+  // `µmodal`, `µsound`, et `@confirm`, dont la question passe par la modale
+  modal:      new RegExp(MU + String.raw`(?:modal|sound)\b|\bmjs-confirm\b`),
+  // les attributs de la navigation (`@method`, `@confirm`, `@flash`, `@callback`, `@noDisable`, `@vt`, le préchargement) et ses noms publics
+  ujs:        new RegExp(String.raw`\bmjs-(?:method|confirm|no-disable|flash|callback|vt)\b|data-mjs-preload|` + MU + String.raw`(?:confirm|pageCache|realTarget)\b`),
+  flip:       /\bmjs-flip\b/,
+  // l'étage client du journal, ouvert par le code (`µ.config.journal = true`)
+  journal:    /\bconfig\s*\??\.\s*journal\b|\bjournal\s*:\s*true\b/,
+}
+
+// --------------------------------------------------------------------------
+// accès à `µ` que le relevé des modules ne sait pas résoudre : un module optionnel se repère à son nom public écrit après un point
+// (`µ.modal`, `µ?.ajax`, `window.µ.socket`). Un indice calculé (`µ[nom]`, `µ?.[nom]`), une déstructuration (`{ ajax } = µ`), `µ`
+// passé à une fonction, rangé dans une variable, un objet ou une liste, rendu par une fonction, ne disent pas lequel sert : sans clé
+// `runtime`, la sélection garde alors tous les modules optionnels (bundler/index.ts, repereOptionalModules). Lu sur l'arbre d'acorn,
+// jamais sur le texte : `µ` cité dans une chaîne, un gabarit ou un commentaire — la prose d'une page de documentation — ne compte pas.
+// Restent lisibles `typeof µ`, une comparaison ou un calcul (`µ === undefined`, `'modal' in µ`), un test (`if (µ)`, `µ && µ.x`) et
+// `µ = window.µ`. Un code qu'acorn ne lit pas n'a aucun accès relevé (les noms publics, eux, s'y lisent sur le texte entier)
+// --------------------------------------------------------------------------
+export const OPAQUE_MU = 'opaque_mu'
+// le même signal, situé par le bundler dans la source de l'unité : `opaque_mu@<fichier>:<ligne>`, ou `opaque_mu@<fichier>` quand la
+// source ne montre pas la ligne
+export const OPAQUE_MU_AT = OPAQUE_MU + '@'
+export const opaqueMuSignal = (fichier: string, ligne: number | null) => OPAQUE_MU_AT + fichier + (ligne === null ? '' : ':' + ligne)
+
+// un `µ` (ou `window.µ`) qui n'est ni le début ni la fin d'un nom plus long (la rune `µmodal` compile en `µ.modal`), ni suivi d'un nom
+// après un point
+const LECTURE_OPAQUE = /(?<![\w$\u00b5])µ(?![\w$\u00b5]|\s*\??\.\s*[A-Za-z_$])/
+// la ligne d'import du cœur que porte chaque unité (`import { µ } from '…'`)
+const IMPORT_DU_COEUR = /^[ \t]*import\s*\{[^}\n]*\}\s*from\s*['"][^'"\n]*['"];?[ \t]*$/gm
+
+// l'occurrence de µ (dernier des `ancetres`, chemin d'acorn-walk depuis la racine) laisse-t-elle µ partir sans nom après un point ?
+function lectureOpaque(ancetres: any[]): boolean {
+  let enfant = ancetres[ancetres.length - 1]
+  for (let i = ancetres.length - 2; i >= 0; i--) {
+    const p = ancetres[i]
+    switch (p.type) {
+      case 'MemberExpression':     return p.object === enfant ? p.computed : true
+      case 'UnaryExpression':
+      case 'BinaryExpression':
+      case 'ExpressionStatement':
+      case 'IfStatement':
+      case 'WhileStatement':
+      case 'DoWhileStatement':
+      case 'ForStatement':         return false
+      case 'LogicalExpression':
+        if (p.operator === '&&' && p.left === enfant) return false
+        break
+      case 'ConditionalExpression':
+        if (p.test === enfant) return false
+        break
+      case 'SequenceExpression':
+        if (p.expressions[p.expressions.length - 1] !== enfant) return false
+        break
+      case 'AwaitExpression':
+      case 'ParenthesizedExpression':
+        break
+      // `const µ = window.µ`, `µ = window.µ`, `window.µ = µ` : µ reste µ
+      case 'VariableDeclarator':   return !(p.id.type === 'Identifier' && p.id.name === 'µ')
+      case 'AssignmentExpression':
+        if (p.left === enfant) return false
+        return !((p.left.type === 'Identifier' && p.left.name === 'µ') || (p.left.type === 'MemberExpression' && !p.left.computed && p.left.property.name === 'µ'))
+      default:                     return true
+    }
+    enfant = p
+  }
+  return true
+}
+
+// l'arbre d'acorn d'un code compilé, lu en module puis en script ; null quand acorn ne le lit pas
+function arbreJs(js: string): acorn.Node | null {
+  for (const sourceType of ['module', 'script'] as const) {
+    try {
+      return acorn.parse(js, { ecmaVersion: 'latest', sourceType })
+    }
+    catch {
+      continue
+    }
+  }
+  return null
+}
+
+// position (dans `js`) du premier accès à µ que le relevé des modules ne sait pas résoudre, -1 sans aucun
+export function opaqueMuOffset(js: string): number {
+  if (!LECTURE_OPAQUE.test(js.replace(IMPORT_DU_COEUR, ''))) return -1
+  const ast = arbreJs(js)
+  if (ast === null) return -1
+  let premier = -1
+  const lire  = (noeud: any, ancetres: any[]): void => {
+    if ((premier === -1 || noeud.start < premier) && lectureOpaque(ancetres)) premier = noeud.start
+  }
+  walk.ancestor(ast, {
+    Identifier(noeud: any, _st: unknown, ancetres: any[]) { if (noeud.name === 'µ') lire(noeud, ancetres) },
+    MemberExpression(noeud: any, _st: unknown, ancetres: any[]) { if (!noeud.computed && noeud.property.type === 'Identifier' && noeud.property.name === 'µ') lire(noeud, ancetres) },
+  })
+  return premier
+}
+
+// --------------------------------------------------------------------------
+// `µ.ajax` lu en entier : rangé dans une variable (`a := µ.ajax`), décomposé (`{ binary } := µ.ajax`), passé à une fonction, lu sous un indice
+// calculé (`µ.ajax[verbe]`). La méthode appelée ne se lit pas, et `binary` décode la réponse avec le codec de schema : sans clé `runtime`, la
+// sélection garde alors schema avec ajax (bundler/index.ts, repereOptionalModules). Lu sur l'arbre d'acorn, comme un accès à µ (cf. lectureOpaque) :
+// `µ.ajax.get(…)`, `µ.ajax?.binary(…)`, `typeof µ.ajax`, un test (`if (µ.ajax)`), `µ.ajax` dans une chaîne ou un commentaire ne comptent pas
+// --------------------------------------------------------------------------
+export const OPAQUE_AJAX = 'opaque_ajax'
+// le même signal, situé par le bundler dans la source de l'unité (cf. OPAQUE_MU_AT)
+export const OPAQUE_AJAX_AT = OPAQUE_AJAX + '@'
+export const opaqueAjaxSignal = (fichier: string, ligne: number | null) => OPAQUE_AJAX_AT + fichier + (ligne === null ? '' : ':' + ligne)
+
+// `µ.ajax` (`µ?.ajax`, `window.µ.ajax`, la rune `µajax` de la source) que ne suit pas un nom après un point
+const LECTURE_AJAX = /(?<![\w$\u00b5])µ(?:\s*\??\.\s*)?ajax(?![\w$])(?!\s*\??\.\s*[A-Za-z_$])/
+
+// position (dans `js`) du premier `µ.ajax` lu en entier, -1 sans aucun
+export function opaqueAjaxOffset(js: string): number {
+  if (!LECTURE_AJAX.test(js)) return -1
+  const ast = arbreJs(js)
+  if (ast === null) return -1
+  let premier = -1
+  walk.ancestor(ast, {
+    MemberExpression(noeud: any, _st: unknown, ancetres: any[]) {
+      const objet = noeud.object
+      const mu    = objet.type === 'Identifier' ? objet.name === 'µ' : objet.type === 'MemberExpression' && !objet.computed && objet.property.type === 'Identifier' && objet.property.name === 'µ'
+      if (mu && !noeud.computed && noeud.property.type === 'Identifier' && noeud.property.name === 'ajax' && (premier === -1 || noeud.start < premier) && lectureOpaque(ancetres)) premier = noeud.start
+    },
+  })
+  return premier
+}
+
+// la ligne (à partir de 1) de cet accès dans le texte SOURCE d'une unité : le code compilé ne garde pas les lignes du fichier. La
+// première lecture de µ qui ne soit pas un nom après un point, chaînes et commentaires d'une ligne mis de côté : dans les blocs
+// `<script>` d'un composant d'abord (le texte du gabarit peut citer µ en prose), puis dans tout le fichier, puis telle qu'écrite
+// (une interpolation de chaîne) ; null si aucune. `lecture` : la forme cherchée, un accès à µ par défaut
+const INERTE_LIGNE = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\\n]|\\.)*`|\/\*.*?\*\/|\/\/.*|#(?!\{).*|<!--.*?-->/g
+export function opaqueMuSourceLine(source: string, lecture: RegExp = LECTURE_OPAQUE): number | null {
+  const lignes     = source.split('\n')
+  const masquees   = lignes.map(l => l.replace(INERTE_LIGNE, m => ' '.repeat(m.length)))
+  const dansScript = new Array<boolean>(lignes.length).fill(false)
+  let ouvert       = false
+  for (let i = 0; i < lignes.length; i++) {
+    if (/<script\b/.test(lignes[i])) ouvert = true
+    dansScript[i] = ouvert
+    if (/<\/script\s*>/.test(lignes[i])) ouvert = false
+  }
+  for (const [texte, script] of [[masquees, true], [masquees, false], [lignes, false]] as const) {
+    for (let i = 0; i < lignes.length; i++) {
+      if (script && !dansScript[i]) continue
+      if (lecture.test(texte[i])) return i + 1
+    }
+  }
+  return null
+}
+
+// la ligne d'un `µ.ajax` lu en entier dans le texte SOURCE d'une unité (cf. opaqueMuSourceLine)
+export const opaqueAjaxSourceLine = (source: string): number | null => opaqueMuSourceLine(source, LECTURE_AJAX)
+
+// une balise `<a …>` ou `<form …>` du gabarit compilé (attributs entre apostrophes dans la chaîne du code émis)
+const REGEX_NAV_TAG = /<(a|form)\b([^<>]*)>/gi
+
+// un lien ou un formulaire que la navigation prendrait (mjs_ujs.ts) : un formulaire, sauf `@noUJS` (`mjs-no-ujs`) ou `method="dialog"` ;
+// un lien de même origine, sauf `@noUJS`, `download`, une autre cible que `_self`, une ancre de la page (`#section`, le navigateur la
+// suit). Un `href` posé à l'exécution (lié à une variable : vide ou absent du gabarit), une balise créée par le code ou du HTML brut
+// (`{{…}}`, `innerHTML`) comptent : leur adresse ne se lit pas ici
+function navigationTargets(js: string): boolean {
+  if (/createElement\(\s*['"](?:a|form)['"]/i.test(js) || /\._mjs_updHtml\(|\binnerHTML\b|insertAdjacentHTML\(/.test(js)) return true
+  for (const m of js.matchAll(REGEX_NAV_TAG)) {
+    const attrs = m[2]
+    if (/\bmjs-no-ujs\b/.test(attrs)) continue
+    if (m[1].toLowerCase() === 'form') {
+      if (/\bmethod=\\?['"]?dialog\b/i.test(attrs)) continue
+      return true
+    }
+    if (/\bdownload\b/.test(attrs)) continue
+    const cible = /\btarget=\\?['"]?([^'"\s>\\]*)/.exec(attrs)
+    if (cible && cible[1] !== '' && cible[1] !== '_self') continue
+    const href = /\bhref=(?:'([^']*)'|"([^"]*)"|([^\s>]+))/.exec(attrs)
+    if (!href) return true
+    const adresse = (href[1] ?? href[2] ?? href[3] ?? '').trim()
+    if (adresse === '') return true
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(adresse)) continue
+    if (adresse.startsWith('#') && !adresse.startsWith('#/')) continue
+    return true
+  }
+  return false
+}
 
 // la valeur d'un réglage écrit dans une pose, en texte : un mot, un nombre ou un booléen en toutes lettres ; `*` quand le build ne
 // sait pas la lire (une variable `($.s)`, sa règle `["l", …]`, une liste, un objet)
@@ -495,6 +729,9 @@ export function scanCompiledFeatures(js: string, data?: FeatureScanData, aliases
   if (REGEX_I18N_USED.test(js)) used.add(I18N_USED)
   if (REGEX_I18N_PAQUETS.test(js)) used.add(I18N_PAQUETS)
   if (REGEX_BOUCLES.test(js)) used.add(BOUCLES)
+  if (REGEX_FILTERED_BINDINGS.test(js)) used.add(FILTERED_BINDINGS)
+  if (REGEX_VIEW_TAG.test(js)) used.add(VIEW_TAG)
+  if (REGEX_NATIVE_HELPERS.test(js)) used.add(NATIVE_HELPERS)
   if (REGEX_I18N_LOADER.test(js)) {
     used.add(I18N_LOADER)
     used.add('fx')
@@ -523,6 +760,12 @@ export function scanCompiledFeatures(js: string, data?: FeatureScanData, aliases
   if (REGEX_TYPES.test(js)) used.add('types')
   if (REGEX_LANG.test(js)) used.add('lang')
   if (REGEX_STATE.test(js)) used.add('state')
+  for (const [module, regex] of Object.entries(REGEX_OPTIONAL)) {
+    if (regex.test(js)) used.add(optionalSignal(module))
+  }
+  if (!used.has(optionalSignal('ujs')) && navigationTargets(js)) used.add(optionalSignal('ujs'))
+  if (opaqueMuOffset(js) !== -1) used.add(OPAQUE_MU)
+  if (opaqueAjaxOffset(js) !== -1) used.add(OPAQUE_AJAX)
   for (const m of js.matchAll(REGEX_FX)) {
     used.add('fx')
     if (EFFECTS[m[1]]) used.add(EFFECTS[m[1]].transition ? 'fx_transition' : 'fx_' + m[1].replace(/-/g, '_'))

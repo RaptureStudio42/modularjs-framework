@@ -266,13 +266,16 @@ export class FileAccountsPersistAdapter implements MjsWsAccountsPersistAdapter {
 // par l'OWASP — 32 Mio de mémoire par calcul (N = 2^17, p = 1, en demanderait 128, à multiplier par les connexions
 // simultanées). Un hachage hexadécimal nu (compte écrit avant que les réglages ne soient enregistrés) vaut les réglages
 // de Node par défaut (N = 2^14, r = 8, p = 1) : il se vérifie tel quel et se refait aux réglages actuels à la première
-// connexion réussie (cf. verifierSecret)
+// connexion réussie (cf. verifierSecret). Coût réduit des essais (option `weakHashForTests`, jamais par défaut) : N = 2^10,
+// r = 8, p = 1, le plus bas que readHash relise, environ cent fois moins de calcul — une suite qui crée des comptes en rafale
+// tient sur une machine chargée
 
 interface ScryptSettings { ln: number; r: number; p: number }
 
 const SCRYPT_KEYLEN                  = 64
 const SCRYPT_CURRENT: ScryptSettings = { ln: 15, r: 8, p: 3 }
 const SCRYPT_LEGACY: ScryptSettings  = { ln: 14, r: 8, p: 1 }
+const SCRYPT_TESTS: ScryptSettings   = { ln: 10, r: 8, p: 1 }
 const SCRYPT_FORMAT                  = /^\$scrypt\$ln=(\d{1,2}),r=(\d{1,2}),p=(\d{1,2})\$([0-9a-f]+)$/
 // réglages lus avec un hachage : au plus un cran au-dessus de ceux qu'écrit le framework — N ≤ 2^16, r ≤ 8, p ≤ 4 —, et un coût
 // total (N·r·p) d'au plus deux connexions aux réglages actuels ; scrypt exige en outre N < 2^(16·r). Au-delà, un enregistrement
@@ -317,17 +320,22 @@ const DUMMY_SALT = Buffer.from('0'.repeat(32), 'hex')
 // vérifie `secret` contre le hachage du compte. Hachage aux réglages anciens : il est refait EN MÊME TEMPS aux réglages
 // actuels, sur un sel neuf, et le nouveau n'est gardé (`redone`) que si le secret est le bon — la réponse prend le temps
 // d'un calcul aux réglages actuels, comme pour un compte à jour ou un pseudo absent : l'âge d'un hachage ne se lit pas
-// au chronomètre. Pseudo absent ou hachage illisible : hachage FACTICE de même coût (cf. DUMMY_SALT)
-async function verifierSecret(secret: string, account: MjsWsAccountRecord | undefined): Promise<{ ok: boolean; redone?: { hash: string; salt: string } }> {
+// au chronomètre. Pseudo absent ou hachage illisible : hachage FACTICE de même coût (cf. DUMMY_SALT). `current` : réglages du
+// paquet (coût réduit des essais sous `weakHashForTests`), qui ne refait jamais un hachage enregistré plus faible
+async function verifierSecret(secret: string, account: MjsWsAccountRecord | undefined, current: ScryptSettings = SCRYPT_CURRENT): Promise<{ ok: boolean; redone?: { hash: string; salt: string } }> {
   const stored = account ? readHash(account.hash) : null
   if (!account || !stored) {
-    await hacherSecret(secret, DUMMY_SALT)
+    await hacherSecret(secret, DUMMY_SALT, current)
     return { ok: false }
   }
   const salt = Buffer.from(account.salt, 'hex')
   const s    = stored.settings
-  if (s.ln === SCRYPT_CURRENT.ln && s.r === SCRYPT_CURRENT.r && s.p === SCRYPT_CURRENT.p) {
+  if (s.ln === current.ln && s.r === current.r && s.p === current.p) {
     return { ok: safeEqual(await hacherSecret(secret, salt, s), stored.key, 'hex') }
+  }
+  if (current !== SCRYPT_CURRENT) {
+    const essai = await hacherSecret(secret, salt, s).catch(() => null)
+    return { ok: essai !== null && safeEqual(essai, stored.key, 'hex') }
   }
   const newSalt         = randomBytes(16)
   // réglages enregistrés que scrypt refuserait malgré les bornes de readHash : refus ordinaire, jamais le message d'OpenSSL,
@@ -513,6 +521,12 @@ export interface MjsWsAccountsOptions {
   /** Plafond OPTIONNEL du nombre TOTAL de comptes — au-delà, account:create refuse avec
    *  'account-limit-reached'. Absent = illimité (v1 par défaut, comportement historique). */
   maxAccounts?: number
+  /** ESSAIS SEULEMENT — `true` hache les secrets à un coût réduit (scrypt N = 2^10, r = 8, p = 1, environ cent fois moins de
+   *  calcul) pour qu'une suite de tests qui crée des comptes en rafale tienne sur une machine chargée. Jamais en production : un
+   *  tel hachage se casse d'autant plus vite. Sous l'option, un hachage déjà enregistré se vérifie tel quel et n'est jamais
+   *  refait plus faible. Un avertissement le rappelle au démarrage, une fois par paquet (`onLog`, sinon la console). Absent ou
+   *  toute autre valeur que `true` : coût de production (N = 2^15, r = 8, p = 3). */
+  weakHashForTests?: boolean
   /** défaut : console, préfixe '[mjs-ws:accounts]' (même sobriété que mjs-ws/index.ts defaultLog) */
   onLog?: MjsWsLogFn
 }
@@ -529,7 +543,7 @@ const NAME_FAILURES_FACTOR           = 10               // plafond dur par pseud
 // clés des options du paquet, dans l'ordre de MjsWsAccountsOptions — toute autre lève dès la construction, avec la plus
 // proche en suggestion (cf. accountsPackage). Une option lue par le paquet s'ajoute ici : un test garde l'accord entre
 // cette liste et les lectures `opts.…` d'accountsPackage
-const ACCOUNTS_OPTION_KEYS: readonly string[] = ['secret', 'persist', 'ttl', 'audience', 'issuer', 'roles', 'bruteForce', 'createPerIp', 'nameCheckPerIp', 'maxAccounts', 'onLog']
+const ACCOUNTS_OPTION_KEYS: readonly string[] = ['secret', 'persist', 'ttl', 'audience', 'issuer', 'roles', 'bruteForce', 'createPerIp', 'nameCheckPerIp', 'maxAccounts', 'weakHashForTests', 'onLog']
 
 // clé de seau-échecs d'un nom qui n'est pas une chaîne ou dépasse NOM_CLE_MAX — un SEUL panier partagé par tout
 // payload malformé (pas d'explosion de clés ni de clé de 60 Ko, cf. ECHEC_SWEEP_MAX) ; le seau par adresse reste, lui,
@@ -609,6 +623,10 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
     onLog('warn', t('ws.accounts.adaptateur-memoire-defaut'))
   }
   const ttl = opts.ttl ?? DEFAULT_TTL
+  // coût du hachage des secrets : celui de la production, sauf `weakHashForTests: true` (essais seulement)
+  const reglages = opts.weakHashForTests === true ? SCRYPT_TESTS : SCRYPT_CURRENT
+  // l'option se voit : un avertissement au démarrage, une fois par paquet, par le journal du paquet (la console sans `onLog`)
+  if (reglages === SCRYPT_TESTS) onLog('warn', t('ws.accounts.hachage-reduit-essais'))
   const forceBruteCapacity = opts.bruteForce?.capacity ?? DEFAULT_FORCE_BRUTE_CAPACITY
   const forceBruteWindowMs = opts.bruteForce?.windowMs ?? DEFAULT_FORCE_BRUTE_WINDOW_MS
   const failuresByIp     = new FailureBucket(forceBruteCapacity, forceBruteWindowMs)
@@ -733,7 +751,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
         if (!createFailuresByIp.recordFailure(ip)) throw new Error('account-throttled')
 
         const salt  = randomBytes(16)
-        const hash = writeHash(SCRYPT_CURRENT, await hacherSecret(secret, salt))
+        const hash = writeHash(reglages, await hacherSecret(secret, salt, reglages))
         const now = Date.now()
         const account: MjsWsAccountRecord = {
           id: genId(), name, hash, salt: salt.toString('hex'), roles: [], createdAt: now, seenAt: now, meta: {},
@@ -793,7 +811,7 @@ export function accountsPackage(opts: MjsWsAccountsOptions): MjsPackage {
       let redone: { hash: string; salt: string } | undefined
       try {
         // pseudo absent : hachage FACTICE de même coût — anti-énumération par le temps (cf. verifierSecret)
-        const verdict = await verifierSecret(secret, account)
+        const verdict = await verifierSecret(secret, account, reglages)
         ok     = verdict.ok
         redone = verdict.redone
       } finally {

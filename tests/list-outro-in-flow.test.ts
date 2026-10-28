@@ -39,6 +39,6 @@ describe('régression — {for} : outro en flux (sans flip) vs évacué (avec fl
   })
 
   it('SANS flip : lastNode retombe sur endNode (dying laissés inline, pas en tail)', function () {
-    assert.match(src, /lastNode\s*=\s*\(__hasFlip\s*&&\s*dyingTail\.length\s*>\s*0\)\s*\?\s*dyingTail\[0\]\s*:\s*endNode/, 'ancrage lastNode conditionnel au flip attendu')
+    assert.match(src, /lastNode\s*=\s*endNode;[\s\S]*?if\s*\(__hasFlip\s*&&\s*dyingTail\.length\s*>\s*0\)\s*lastNode\s*=\s*dyingTail\[0\]/, 'ancrage lastNode conditionnel au flip attendu')
   })
 })

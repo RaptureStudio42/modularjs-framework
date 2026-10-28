@@ -9,6 +9,12 @@
 // wantsIf).
 
 if (µ.Element) {
+  // rejet d'une destruction lancée sans être attendue : même prise que mjs_if.ts (`_mjsIfDestroyErr`), une seule
+  // fonction, posée seulement sur une promesse qui peut rejeter — jamais sur la promesse résolue partagée du chemin rapide
+  var _mjsKeyDestroyErr = function(err) {
+    return µ.error(µ._mjs_msg('keyDestroy', null, 'destruction de l\'ancienne clé {key} en erreur :'), err);
+  };
+
   // _mjs_updKey prend une createFn qui retourne {fragment, refs}.
   µ.Element.prototype._mjs_updKey = function(id, val, createFn) {
     var built, childMode, e, firstNew, n, outroNodes, range, ref, s, t;
@@ -24,9 +30,11 @@ if (µ.Element) {
       return false;
     }
     this._mjs_key_cache[id] = val;
+    // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
       return true;
     }
+    // </transitions>
     childMode = (ref = s.parentNode) != null ? typeof ref.getAttribute === "function" ? ref.getAttribute('mjs-childtransition') : void 0 : void 0;
     n = s.nextSibling;
     outroNodes = []; // accroche d'appariement, lue par les sorties de reveal/flip/cube/turn
@@ -41,13 +49,9 @@ if (µ.Element) {
       t = range[__ni];
       if (!t.parentNode) continue;
       if (!t._mjs_dying) {
-        // `.catch` défensif : jamais attendue ici (asynchrone, fire-and-
-        // forget par design), un rejet resterait sinon non géré et la
-        // structure sortante ne serait jamais retirée (doublon avec la
-        // nouvelle clé, cf. mjs_if.ts _mjs_updIf pour le même choix).
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error(µ._mjs_msg('keyDestroy', null, 'destruction de l\'ancienne clé {key} en erreur :'), err);
-        });
+        // jamais attendue ici (asynchrone par choix) : un rejet resterait sinon non géré (cf. `_mjsKeyDestroyErr`)
+        var __d = this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        if (__d !== MJS_RESOLVED_DESTROY) __d.catch(_mjsKeyDestroyErr);
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }
     }

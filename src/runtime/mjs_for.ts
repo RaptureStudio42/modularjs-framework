@@ -16,6 +16,9 @@
 // `µ._mjs_inside` (test d'inclusion insensible à une méthode `contains` du composant) : posé par
 // mjs_element.ts, toujours au cœur avant ce fichier
 
+// blocs `<liaisons-filtrees>` : retirés du cœur par le bundler quand aucune unité du build n'écrit de liaison filtrée par valeur
+// (generator/attributes/index.ts, liaisonFiltree) — sans elle, aucune ligne ne range de clé dans `_mjs_filtIdxKeys`
+// <liaisons-filtrees>
 // index des lignes d'une liaison filtrée par valeur (`_mjs_filt[<liaison>].idx`, cf. generator/attributes/index.ts) : une clé porte la fonction de sa ligne ;
 // quand plusieurs lignes portent la même valeur, un Set de leurs fonctions (`multi` : la purge en masse ne peut plus compter une entrée par ligne)
 µ._mjs_filtPut = function(fe, k, f) {
@@ -35,8 +38,10 @@
   if (e instanceof Set) e.forEach(function(f) { f(m); });
   else if (e) e(m);
 };
+// </liaisons-filtrees>
 
 if (µ.Element) {
+  // <liaisons-filtrees>
   // retire de l'index filtré la fonction de chaque liaison d'une ligne qui disparaît (`_mjs_filterKeys` dit sous quelle clé, `_mjs_filterFns` laquelle) : l'index la garderait,
   // avec le nœud mort qu'elle ferme, et une ligne recyclée par le pool y retrouverait celle de son ancien usage
   µ.Element.prototype._mjs_filtPurgeEntry = function(entry) {
@@ -54,6 +59,8 @@ if (µ.Element) {
   µ.Element.prototype._mjs_filtPurgeCache = function(cache) {
     if (cache) for (var entry of cache.values()) this._mjs_filtPurgeEntry(entry);
   };
+  // </liaisons-filtrees>
+
 
   // fuite non bornée des caches de
   // {for} imbriqués : `_mjs_list_cache`/`_mjs_list_order`/`_mjs_list_anchor`/`_mjs_list_pool`
@@ -75,7 +82,9 @@ if (µ.Element) {
       if (anchor && (anchor === root || (root.contains && µ._mjs_inside(root, anchor)))) {
         delete anchors[cacheId];
         if (this._mjs_list_cache) {
+          // <liaisons-filtrees>
           this._mjs_filtPurgeCache(this._mjs_list_cache[cacheId]);
+          // </liaisons-filtrees>
           delete this._mjs_list_cache[cacheId];
         }
         if (this._mjs_list_order) delete this._mjs_list_order[cacheId];
@@ -226,15 +235,37 @@ if (µ.Element) {
     }
   };
 
-  // ligne pure (`_mjs_p`, posé par le compilateur) d'une collection µraw : mêmes élément et index
-  // que ceux de la dernière mise à jour → rien à relire (renvoie 1) ; sinon note le couple.
+  // ligne pure (`_mjs_p`, posé par le compilateur) d'une collection µraw : même élément que celui de la dernière mise à jour, et même
+  // index quand la ligne le lit (`_mjs_p` vaut 2 quand elle ne le lit pas) → rien à relire (rend vrai). L'entrée garde toujours
+  // l'élément et l'index d'aujourd'hui, la ligne sautée comme les autres : les gestionnaires d'une ligne pure les y lisent.
   // l'élément est une valeur simple ou lui-même µraw : un objet ordinaire d'une liste µraw reste
   // modifiable sur place par un autre chemin suivi (tableau réactif d'origine, store), comme le proxy
   // suivi d'un objet marqué µraw après coup
   function _mjs_skipRow(en, it, ix, raw) {
-    if (raw && en._mjs_p && en._mjs_it === it && en._mjs_ix === ix && (Object(it) !== it || µ._mjs_rawSet.has(it) && µ._mjs_toRaw(it) === it)) return 1;
+    const p    = en._mjs_p;
+    const same = en._mjs_it === it && (p > 1 || en._mjs_ix === ix);
     en._mjs_it = it;
     en._mjs_ix = ix;
+    return raw && p && same && (Object(it) !== it || µ._mjs_rawSet.has(it) && µ._mjs_toRaw(it) === it);
+  }
+
+  // passe des liaisons, dans l'ordre de la liste : chaque ligne reçoit son élément et son index (`ens` : les entrées dans cet ordre, sinon
+  // lues dans le cache par leur clé). Une ligne dont le gabarit vient de poser l'état (`_mjs_init`) attend la passe suivante, une ligne
+  // pure inchangée est sautée. Les lignes relisent le parent (retenue des écritures liées, en bas de fichier)
+  function _mjs_updRows(cache, keys, ens, items, isArray, ix, keysArr, raw, updateFn) {
+    µ._mjs_holdPush = 1;
+    for (let i = 0; i < keys.length; i++) {
+      const en = ens ? ens[i] : cache.get(keys[i]);
+      if (en._mjs_init) {
+        en._mjs_init = 0;
+        continue;
+      }
+      const it = items[i];
+      const x  = isArray ? (ix ? ix[i] : i) : keysArr[i];
+      if (_mjs_skipRow(en, it, x, raw)) continue;
+      if (en._mjs_updFn) en._mjs_updFn(it, x);
+      else if (updateFn) updateFn(en.__nodes, it, x);
+    }
   }
 
   // clé `by` d'une ligne : une valeur simple par String() ; un objet qui s'écrit lui-même (date, tableau, classe à toString)
@@ -254,6 +285,204 @@ if (µ.Element) {
     let id = _mjs_keyIds.get(k);
     if (id === void 0) _mjs_keyIds.set(k, id = 'mjs-o' + ++_mjs_idGen);
     return id;
+  }
+  // <reprise-serveur>
+  // l'identifiant que la WeakMap des clés garde pour l'objet `k`, lu sans en poser (undefined pour un objet jamais suivi par son
+  // identité) : la reprise des lignes rendues par le serveur (mjs_hydrate.ts) y reconnaît une clé fabriquée à chaque page
+  µ.Element.prototype._mjs_keyId = function(k) {
+    return _mjs_keyIds.get(µ._mjs_toRaw(k));
+  };
+  // </reprise-serveur>
+
+  // réserve de lignes détachées, par liste : 256 au plus. Rendue au repos : 5 s sans dépôt ni reprise (toutes listes confondues),
+  // les réserves sont vidées et leurs lignes partent au ramasse-miettes ; la ligne suivante est refaite par son gabarit
+  const __mjsPoolLimit = 256;
+  const __mjsPoolIdle  = 5000;
+  const __mjsPools     = new Set();
+  let __mjsPoolTimer   = 0;
+  let __mjsPoolHot     = 0;
+  function _mjs_poolSweep() {
+    if (__mjsPoolHot) __mjsPoolTimer = setTimeout(_mjs_poolSweep, __mjsPoolIdle);
+    else {
+      __mjsPoolTimer = 0;
+      __mjsPools.forEach(function(p) { p.length = 0; });
+      __mjsPools.clear();
+    }
+    __mjsPoolHot = 0;
+  }
+  // dépose une ligne détachée ; une réserve vide qui reçoit sa première ligne rejoint celles à vider au repos
+  function _mjs_poolPut(pool, entry) {
+    if (!pool.length) {
+      __mjsPools.add(pool);
+      if (!__mjsPoolTimer) __mjsPoolTimer = setTimeout(_mjs_poolSweep, __mjsPoolIdle);
+    }
+    __mjsPoolHot = 1;
+    pool.push(entry);
+  }
+
+  // entrée d'une ligne neuve : reprise de la réserve (DOM intact, la passe des liaisons la remet à jour), sinon fabriquée par son
+  // gabarit. tplFn rend {fragment, refs}, et parfois sa closure de mise à jour (`updateFn`, refs fermées) que la réconciliation
+  // appelle avec (item, index) ; `_mjs_init` = 1 quand le tplFn a déjà posé l'état initial (première passe des liaisons sautée)
+  function _mjs_rowEntry(el, pool, tplFn, item, index) {
+    if (pool.length) {
+      const en = pool.pop();
+      // l'élément noté est l'entrée elle-même, qui n'est l'élément d'aucune liste : la ligne reprise n'est jamais sautée
+      en._mjs_it   = en;
+      __mjsPoolHot = 1;
+      return en;
+    }
+    const built = tplFn(item, index);
+    const refs  = built.refs || {};
+    // éléments enregistrés pour le routage des événements, sauf si le tplFn l'a fait (`_mjs_reg`)
+    if (!refs._mjs_reg) el._mjs_registerRefs(refs);
+    // nœuds de tête relevés AVANT insertion (une fois inséré, le fragment est vide) ; une seule racine le plus souvent
+    const frag = built.fragment;
+    const en   = {nodes: frag.childNodes.length === 1 ? [frag.firstChild] : Array.from(frag.childNodes), __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: item, _mjs_ix: index};
+    refs._mjs_en = en;
+    return en;
+  }
+
+  // retire une ligne en mode réserve (ni sortie animée, ni crochet de destruction : `__canPool && !__wait`). Gardée quand la
+  // réserve a de la place et que son sous-arbre ne porte aucun état hors gabarit, détruite sinon : la place se regarde AVANT le
+  // parcours de l'arbre, une ligne que la réserve refuserait n'est pas parcourue
+  function _mjs_dropRow(el, entry, pool) {
+    const ens  = el._mjs_liveEntryNodes(entry.nodes);
+    const form = µ._mjs_reusableFormNodes ||= [];
+    form.length = 0;
+    if (pool.length < __mjsPoolLimit && !el._mjs_mjsHasOwnState(ens, form)) {
+      // retrait direct, sans `_mjs_destroyNodeAndChildren` : la purge des {for} imbriqués se fait ici (pas de sortie, pas de reprise)
+      for (let i = 0; i < ens.length; i++) {
+        const nd = ens[i];
+        if (nd.nodeType === 1) el._mjs_mjsPurgeNestedListCaches(nd);
+        if (nd.parentNode) nd.parentNode.removeChild(nd);
+      }
+      // champs remis au gabarit une fois le sous-arbre détaché du document (cf. `_mjs_mjsHasOwnState`)
+      if (form.length) el._mjs_mjsResetFormFields(form);
+      // la ligne recyclée remettra à l'écran ses nœuds VIVANTS, pas l'instantané de sa création
+      entry.nodes = ens;
+      _mjs_poolPut(pool, entry);
+    }
+    else for (const nd of ens) el._mjs_destroyNodeAndChildren(nd, false);
+    form.length = 0;
+    // index filtré purgé : la ligne recyclée y retrouverait sinon la fonction de son ancien usage
+    // <liaisons-filtrees>
+    if (el._mjs_filtIdxKeys) el._mjs_filtPurgeEntry(entry);
+    // </liaisons-filtrees>
+  }
+
+  // `keys[a..b)` égales, position par position, à `oldKeys[a+d..b+d)`
+  function _mjs_sameRun(keys, oldKeys, a, b, d) {
+    for (let i = a; i < b; i++) {
+      if (keys[i] !== oldKeys[i + d]) return false;
+    }
+    return true;
+  }
+
+  // déplace les nœuds vivants d'une ligne avant `ref`
+  function _mjs_moveRow(el, parent, en, ref) {
+    for (const nd of el._mjs_liveEntryNodes(en.nodes)) parent.insertBefore(nd, ref);
+  }
+
+  // milieux de même longueur `[p, e)` : deux lignes échangées, ou une seule ligne déplacée (les autres glissent d'un cran) — un
+  // ou deux déplacements, le reste ne bouge pas. Rend faux pour tout autre ordre
+  function _mjs_forMove(el, parent, cache, keys, oldKeys, p, e) {
+    const A    = cache.get(oldKeys[p]);
+    const B    = cache.get(oldKeys[e - 1]);
+    const finB = B.nodes[B.nodes.length - 1].nextSibling;
+    if (keys[p] === oldKeys[e - 1]) {
+      // la dernière ligne du milieu remonte en tête : échange (la première descend à sa place), ou déplacement vers le haut
+      const swap = keys[e - 1] === oldKeys[p];
+      if (swap ? _mjs_sameRun(keys, oldKeys, p + 1, e - 1, 0) : _mjs_sameRun(keys, oldKeys, p + 1, e, -1)) {
+        _mjs_moveRow(el, parent, B, A.nodes[0]);
+        if (swap && A.nodes[A.nodes.length - 1].nextSibling !== finB) _mjs_moveRow(el, parent, A, finB);
+        return true;
+      }
+    }
+    if (keys[e - 1] === oldKeys[p] && _mjs_sameRun(keys, oldKeys, p, e - 1, 1)) {
+      _mjs_moveRow(el, parent, A, finB);
+      return true;
+    }
+    return false;
+  }
+
+  // chemins courts, sans Set, sans Map de positions ni sous-suite croissante : les clés se comparent par position à celles de la passe
+  // d'avant, début et fin communs rognés. Mêmes clés : la passe des liaisons seule. En mode réserve (`pool` : ni sortie animée, ni crochet
+  // de destruction), un seul changement au milieu : lignes échangées ou une ligne déplacée, sinon un bloc neuf à la place d'un bloc ancien
+  // (ligne supprimée, ajout en fin, insertion, tout remplacé). Les lignes gardées ne bougent pas. Rend vrai quand la liste est faite,
+  // faux pour le chemin général (rien n'a été touché)
+  function _mjs_forCourt(el, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, raw, pool) {
+    const n   = keys.length;
+    const on  = oldKeys.length;
+    const min = n < on ? n : on;
+    let p = 0;
+    let s = 0;
+    let c = cache;
+    while (p < min && keys[p] === oldKeys[p]) p++;
+    while (s < min - p && keys[n - 1 - s] === oldKeys[on - 1 - s]) s++;
+    // milieux : `[p, ne)` dans la liste neuve, `[p, oe)` dans l'ancienne
+    const ne = n - s;
+    const oe = on - s;
+    if (ne > p || oe > p) {
+      if (!pool) return false;
+      if (!(ne === oe && _mjs_forMove(el, parentNode, c, keys, oldKeys, p, ne))) {
+        // bloc neuf (vide pour une suppression) : ses clés, toutes absentes de la liste et distinctes, sont vérifiées avant de rien
+        // construire — posées à vide dans le cache (dans un cache neuf quand tout est remplacé) et retirées si l'une renvoie au chemin général
+        const tout = p + s === 0;
+        if (tout) c = new Map();
+        let j = p;
+        for (; j < ne; j++) {
+          const k = keys[j];
+          if (cache.has(k) || tout && c.has(k)) break;
+          c.set(k, null);
+        }
+        if (j < ne) {
+          if (!tout) while (j > p) cache.delete(keys[--j]);
+          return false;
+        }
+        const ref  = s ? cache.get(oldKeys[oe]).nodes[0] : endNode;
+        // lignes neuves réunies dans un fragment, pris en exclusivité jusqu'à son insertion (cf. la création fraîche : un rendu réveillé
+        // pendant l'insertion en prend un autre)
+        const frag = µ._mjs_reusableFragment || document.createDocumentFragment();
+        µ._mjs_reusableFragment = null;
+        for (let i = p; i < ne; i++) {
+          const en = _mjs_rowEntry(el, pool, tplFn, items[i], isArray ? i : keysArr[i]);
+          const ns = en.nodes;
+          c.set(keys[i], en);
+          for (let k = 0; k < ns.length; k++) frag.appendChild(ns[k]);
+        }
+        // tout remplacé dans un conteneur que la liste occupe seule : retrait groupé (relevé vivant des lignes à plusieurs nœuds de
+        // tête pris avant : détachés, leurs nœuds ne se retrouvent plus entre leurs bornes), puis réserve ou destruction ligne à ligne
+        if (tout && startNode.previousSibling === null && endNode.nextSibling === null && startNode.parentNode === parentNode) {
+          if (cache.get(oldKeys[0]).nodes.length > 1) {
+            for (const eo of cache.values()) eo.nodes = el._mjs_liveEntryNodes(eo.nodes);
+          }
+          parentNode.textContent = '';
+          parentNode.appendChild(startNode);
+          parentNode.appendChild(endNode);
+        }
+        for (let i = p; i < oe; i++) {
+          _mjs_dropRow(el, cache.get(oldKeys[i]), pool);
+          if (!tout) cache.delete(oldKeys[i]);
+        }
+        // une suppression seule n'insère rien
+        if (ne > p) parentNode.insertBefore(frag, ref);
+        µ._mjs_reusableFragment = frag;
+      }
+    }
+    // <transitions>
+    // mêmes clés hors mode réserve : une ligne dont la sortie joue encore, ou s'est achevée, se reprend par le chemin général
+    else if (!pool) {
+      for (const k of keys) {
+        for (const nd of cache.get(k).nodes) {
+          if (nd._mjs_dead || nd._mjs_dying) return false;
+        }
+      }
+    }
+    // </transitions>
+    _mjs_updRows(c, keys, null, items, isArray, null, keysArr, raw, updateFn);
+    el._mjs_list_order[cacheId] = keys;
+    el._mjs_list_cache[cacheId] = c;
+    return true;
   }
 
   // un `{for}` de racine se rejoue-t-il dans cette passe de structure ? Oui si l'une de ses variables a
@@ -303,10 +532,11 @@ if (µ.Element) {
   // 'object'` posée avant l'appel des deux côtés). Un objet non extensible (gelé, scellé) ne peut pas porter le
   // tatouage : son identifiant vit dans la WeakMap des clés, le même d'un rendu à l'autre — un identifiant neuf à
   // chaque appel changeait le cache de la liste interne à chaque passe (éléments affichés en double sous une clé
-  // `by` gelée, lignes d'éléments gelés refaites à chaque réaffectation). Jamais d'exception.
-  µ.Element.prototype._mjs_mjsTag = function(item) {
+  // `by` gelée, lignes d'éléments gelés refaites à chaque réaffectation). Jamais d'exception. `peek` : le tatouage lu
+  // seulement, rien n'est posé (un objet jamais suivi par son identité rend undefined)
+  µ.Element.prototype._mjs_mjsTag = function(item, peek) {
     let key = item._mjsId || _mjs_keyIds.get(item);
-    if (!key) {
+    if (!key && !peek) {
       // compteur unique pour toute la page : le tatouage est posé sur l'objet, qu'un autre composant peut afficher aussi
       key = 'mjs-' + ++_mjs_idGen;
       if (Object.isExtensible(item)) Object.defineProperty(item, '_mjsId', { value: key, enumerable: false, configurable: true, writable: false });
@@ -316,7 +546,7 @@ if (µ.Element) {
   };
 
   µ.Element.prototype._mjs_reconcileList = function(cacheId, startNode, endNode, childMode, col, tplFn, keyFn, updateFn, keyAttr) {
-    var cache, d, dyingTail, entry, i, index, isArray, item, items, j, keysArr, l, lastItemNode, lastNode, len, len1, len2, m, n, newEntries, newKeySet, newKeys, o, oldKey, oldKeys, parentNode;
+    var cache, d, dyingTail, entry, i, isArray, items, j, keysArr, l, lastItemNode, lastNode, len, len1, len2, n, newEntries, newKeySet, o, oldKey, oldKeys, parentNode;
     if (!col) {
       // Collection falsy (null/undefined) : au lieu d'un early-return qui
       // laissait les anciennes rows en fantômes (incohérence `[]` vide vs `null`
@@ -369,83 +599,26 @@ if (µ.Element) {
     // menu d'un tuto fermé puis rouvert → {for} interne vide).
     this._mjs_list_anchor ??= {};
     if (this._mjs_list_anchor[cacheId] !== startNode) {
+      // <liaisons-filtrees>
       this._mjs_filtPurgeCache(this._mjs_list_cache[cacheId]);
+      // </liaisons-filtrees>
       this._mjs_list_cache[cacheId] = new Map();
       this._mjs_list_order[cacheId] = [];
       if (this._mjs_list_pool != null) {
         this._mjs_list_pool[cacheId] = void 0;
       }
       this._mjs_list_anchor[cacheId] = startNode;
+      // <reprise-serveur>
+      // le nom de la clé `by` de la liste, le même à chaque passe : le rendu serveur le relit pour écrire ses lignes (`µ._ssrRows`, mjs_hydrate.ts)
+      startNode._mjs_by = keyAttr;
+      // </reprise-serveur>
     }
     // Simplify Coffee ternaire (var ref = X) != null ? ref : default.
     cache = this._mjs_list_cache[cacheId] || new Map();
     oldKeys = this._mjs_list_order[cacheId] || [];
-    // #2 — Dé-doublonnage défensif des clés AVANT la reconcile. Deux items de
-    // même clé (`by id` avec ids dupliqués) font planter la phase d'insertion
-    // (`insertBefore` sur un nœud déjà déplacé : "Failed to execute
-    // 'insertBefore' on 'Node'"). On ne garde que la 1ère occurrence de chaque
-    // clé + un warn une fois — parité Svelte/React — au lieu de crasher. Scan
-    // O(n) (early-break au 1er doublon) ; le re-filtrage (allocation) ne
-    // s'exécute QUE si un doublon est réellement présent (cas anormal).
-    // PERF — dans le cas commun (aucun doublon, aucune clé null), le Set construit
-    // ici EST exactement `new Set(newKeys)` → on le réutilise comme `newKeySet`
-    // plus bas (`__dupKeySet`), de sorte que l'update (update10th/swap1k) ne paie
-    // PAS de 2e construction de Set : coût net ~nul. Seul le fresh create alloue
-    // un Set en plus (négligeable sur create1k).
-    let __dupKeySet = null;
-    // clé de chaque élément, lue UNE fois par passe et déjà convertie : le chemin rapide et la boucle principale la reprennent
-    let __mk = null;
     // rang d'origine de chaque élément retenu quand des doublons sont écartés : l'index de la ligne reste celui de la
     // collection (sinon les lignes après le doublon recevaient un index décalé, et `splice(i, 1)` retirait un autre élément)
     let __ix = null;
-    if (keyAttr || keyFn || __mapK) {
-      const __n = items.length;
-      __mk = new Array(__n);
-      let __seen = new Set(), __hasDup = false, __hadNull = false;
-      for (let __i = 0; __i < __n; __i++) {
-        const __it = items[__i];
-        let __k = keyAttr ? (__it != null ? __it[keyAttr] : null) : keyFn ? keyFn(__it, isArray ? __i : keysArr[__i]) : __mapK[__i];
-        if (__k == null) { __hadNull = true; __mk[__i] = null; continue; }
-        if (typeof __k !== 'string') __k = _mjs_keyOf(__k);
-        __mk[__i] = __k;
-        if (__seen.has(__k)) __hasDup = true;
-        else __seen.add(__k);
-      }
-      if (__hasDup) {
-        const __seen2 = new Set();
-        const __fi = [], __fk = keysArr ? [] : null;
-        __ix = [];
-        // les clés retenues se tassent sur place dans `__mk` (l'écriture ne dépasse jamais la lecture)
-        for (let __i = 0; __i < __n; __i++) {
-          const __k = __mk[__i];
-          if (__k !== null) {
-            if (__seen2.has(__k)) continue;
-            __seen2.add(__k);
-          }
-          __mk[__fi.length] = __k;
-          __fi.push(items[__i]);
-          __ix.push(__i);
-          if (__fk) __fk.push(keysArr[__i]);
-        }
-        items = __fi;
-        __mk.length = __fi.length;
-        if (keysArr) keysArr = __fk;
-        if (!this._mjs_dupKeyWarned) {
-          this._mjs_dupKeyWarned = true;
-          µ.warn(µ._mjs_msg('forDupKeys', { id: cacheId }, '{for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues. Vérifiez l\'unicité de la clé `by`. (cacheId: {id})'));
-        }
-        // Après dé-dup : ne PAS réutiliser (clés null possibles, fallback _mjsId
-        // dans la boucle principale → divergence) → newKeySet reconstruit (rare).
-      } else if (!__hadNull) {
-        // Cas commun : __seen == set des clés de newKeys → réutilisable.
-        __dupKeySet = __seen;
-      }
-    }
-    // Pré-allouer la capacité au lieu de let-V8-grow. Sur 1k items,
-    // évite ~log2(1000) = ~10 reallocs/copies. Le `[]` puis push N fois
-    // (V8 commence à 4 capacité, double à chaque grow).
-    newKeys = new Array(items.length);
-    newEntries = new Array(items.length);
     // Pool d'entries détruites par cacheId. Sur replace1k, la destruction
     // puis re-création immédiate du même template au même endroit (1000 tr
     // détruits → 1000 tr créés) bénéficie d'un pool : on réutilise les sous-
@@ -454,9 +627,8 @@ if (µ.Element) {
     // (cf. _mjs_noDestroyHooks) — sinon le node pourrait avoir des
     // listeners / _mjs_td / _mjs_outro résiduels.
     this._mjs_list_pool ??= {};
-    var __pool = this._mjs_list_pool[cacheId];
+    var __pool = this._mjs_list_pool[cacheId] ||= [];
     var __canPool = this.constructor._mjs_noDestroyHooks === true;
-    var __poolLimit = 256;
     parentNode = startNode.parentNode;
     // Si le startNode a déjà été détaché (un bloc parent {if}/{key}/{await}
     // est en train d'être démonté), on ne tente PAS de réconcilier — le
@@ -465,61 +637,87 @@ if (µ.Element) {
     if (!parentNode) {
       return;
     }
+    const __raw = µ._mjs_rawSet.has(col);
+    const __wait = childMode === 'all' || childMode === 'out' || childMode === 'transition';
+
+    // clé de chaque élément, lue UNE fois par passe et déjà convertie : la clé `by` ou celle de la Map ; sans clé (ou clé nulle),
+    // un objet se suit par son identité (`_mjs_mjsTag` : tatouage non énumérable, repli silencieux sur un objet non extensible ; le
+    // rang d'apparition sépare les occurrences d'un même objet, la 1re garde sa clé) et une valeur simple par sa position. Elle se
+    // compare d'abord PAR POSITION aux clés de la passe d'avant (chemins courts) : le Set qui cherche les doublons n'est construit
+    // que pour le chemin général
+    const keys = new Array(items.length);
+    let __occ = null;
+    for (let __i = 0; __i < items.length; __i++) {
+      const __it = items[__i];
+      let __k = keyAttr ? (__it != null ? __it[keyAttr] : null) : keyFn ? keyFn(__it, isArray ? __i : keysArr[__i]) : __mapK ? __mapK[__i] : null;
+      if (__k == null) {
+        if (__it !== null && typeof __it === 'object') {
+          __k = this._mjs_mjsTag(__it);
+          const __nb = (__occ ||= new Map()).get(__k) | 0;
+          __occ.set(__k, __nb + 1);
+          if (__nb) __k += '#' + __nb;
+        }
+        else __k = 'idx-' + (isArray ? __i : keysArr[__i]);
+      }
+      else if (typeof __k !== 'string') __k = _mjs_keyOf(__k);
+      keys[__i] = __k;
+    }
+
+    // <reprise-serveur>
+    // premier rendu d'une liste dont le serveur a écrit les lignes (hydratation par repères, mjs_hydrate.ts) : ses lignes sont reprises,
+    // nœuds compris, et deviennent la passe d'avant de cette réconciliation, qui refait seulement celles qui ne correspondaient pas
+    if (startNode._mjs_srv && cache.size === 0) oldKeys = this._mjs_adoptRows(startNode, endNode, cache, keys, items, isArray, keysArr, tplFn, keyAttr);
+    // </reprise-serveur>
     // Fast path "fresh creation". Si le cache est vide, tous les
     // `cache.get(key)` retournent undefined → on peut skip toute la logique
     // hasDead/hasDying. Sur create 1k items, gain ~3-5ms (1000 × Map.get +
     // 1000 × .some() évités).
     const isFreshCreate = cache.size === 0;
-    const __raw = µ._mjs_rawSet.has(col);
 
-    // ── Fast-path allStays ANTICIPÉ ──────────────────────
-    // Cas dominant de `{for}` après mutation d'items (ex. update-every-10th :
-    // mêmes clés, même ordre, seules les DONNÉES changent). Avant, on payait
-    // 1000 objets `newEntries` + `new Set(newKeys)` + Map lookups AVANT de
-    // découvrir l'allStays en bas. Ici on confirme l'ordre par une simple
-    // comparaison de clés position-par-position (zéro allocation), puis on
-    // appelle directement les updateFn. C'est l'équivalent du « zéro re-touch
-    // structurel » de Solid/Svelte, sans signaux.
-    // Garde-fous : pas de fresh-create, pas de transitions/await (childMode),
-    // pas d'invalidation structurelle en cours, longueurs égales.
-    const __wait0 = childMode === 'all' || childMode === 'out' || childMode === 'transition';
-    if (!isFreshCreate && !__wait0 && items.length === oldKeys.length && cache.size === oldKeys.length) {
-      let __same = true;
-      // Passe 1 — VÉRIFICATION seule (zéro effet de bord, zéro allocation) :
-      // mêmes clés dans le même ordre ET aucune entry en cours de mort/transition
-      // (un nœud dead/dying invaliderait le skip structurel).
-      for (let __qi = 0; __qi < items.length; __qi++) {
-        // `__qi` est la POSITION NUMÉRIQUE ; pour
-        // une collection OBJET (`{for cle, item in $obj}`), le chemin normal
-        // (ex. ligne ~2554 dans cette même fonction) utilise
-        // `isArray ? __i : keysArr[__i]` comme « index » (= la CLÉ objet).
-        // Ce fast-path passait `__qi` nu partout → interpolation de la
-        // variable d'index affichait 0,1,2… au lieu des clés, et tout `by`
-        // fondé sur l'index basculait silencieusement hors fast-path.
-        const __k = __mk !== null ? __mk[__qi] : null;
-        if (__k === null) { __same = false; break; }
-        if (__k !== oldKeys[__qi]) { __same = false; break; }
-        const __en = cache.get(__k);
-        const __n0 = __en && __en.nodes ? __en.nodes[0] : null;
-        if (__n0 == null || __n0._mjs_dead || __n0._mjs_dying) { __same = false; break; }
+    // chemins courts (cf. `_mjs_forCourt`) : mêmes clés dans tous les modes, un changement de structure en mode réserve seulement
+    // (aucune sortie animée, aucune ligne mourante)
+    if (!isFreshCreate && keys.length > 0 && oldKeys.length > 0 && cache.size === oldKeys.length && _mjs_forCourt(this, cacheId, startNode, endNode, parentNode, cache, oldKeys, keys, items, isArray, keysArr, tplFn, updateFn, __raw, __canPool && !__wait ? __pool : null)) return;
+
+    // #2 — Dé-doublonnage défensif des clés AVANT la reconcile. Deux items de
+    // même clé (`by id` avec ids dupliqués) font planter la phase d'insertion
+    // (`insertBefore` sur un nœud déjà déplacé : "Failed to execute
+    // 'insertBefore' on 'Node'"). On ne garde que la 1ère occurrence de chaque
+    // clé + un warn une fois — parité Svelte/React — au lieu de crasher. Le Set des
+    // clés gardées sert ensuite de `newKeySet`. Une liste sans clé n'a pas de doublon :
+    // ses clés d'identité et de position sont uniques par construction
+    let __seen = null;
+    if (keyAttr || keyFn || __mapK) {
+      __seen = new Set();
+      let __hasDup = false;
+      for (const __k of keys) {
+        if (__seen.has(__k)) { __hasDup = true; break; }
+        __seen.add(__k);
       }
-      if (__same) {
-        // Passe 2 — seules les updateFn tournent. Aucune allocation d'entries,
-        // aucun Set de clés, aucun toucher DOM structurel.
-        // les lignes relisent le parent (retenue des écritures liées, en bas de fichier)
-        µ._mjs_holdPush = 1;
-        for (let __qi = 0; __qi < items.length; __qi++) {
-          const __entry = cache.get(oldKeys[__qi]);
-          if (__entry == null) continue;
-          const __it = items[__qi];
-          const __idxArg = isArray ? (__ix !== null ? __ix[__qi] : __qi) : keysArr[__qi];
-          if (_mjs_skipRow(__entry, __it, __idxArg, __raw)) continue;
-          if (__entry._mjs_updFn) __entry._mjs_updFn(__it, __idxArg);
-          else if (updateFn) updateFn(__entry.__nodes, __it, __idxArg);
+      if (__hasDup) {
+        const __fi = [], __fk = keysArr ? [] : null;
+        __seen = new Set();
+        __ix = [];
+        // les clés retenues se tassent sur place dans `keys` (l'écriture ne dépasse jamais la lecture)
+        for (let __i = 0; __i < items.length; __i++) {
+          const __k = keys[__i];
+          if (__seen.has(__k)) continue;
+          __seen.add(__k);
+          keys[__fi.length] = __k;
+          __fi.push(items[__i]);
+          __ix.push(__i);
+          if (__fk) __fk.push(keysArr[__i]);
         }
-        return;
+        items = __fi;
+        keys.length = __fi.length;
+        if (keysArr) keysArr = __fk;
+        if (!this._mjs_dupKeyWarned) {
+          this._mjs_dupKeyWarned = true;
+          µ.warn(µ._mjs_msg('forDupKeys', { id: cacheId }, '{for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues. Vérifiez l\'unicité de la clé `by`. (cacheId: {id})'));
+        }
       }
     }
+    // l'entrée de chaque ligne, dans l'ordre neuf ; son élément et son index se relisent dans `items`
+    newEntries = new Array(items.length);
 
     // Track les indices de newEntries qui correspondent à des entries DEAD
     // invalidées (cache.delete + nouvelle entry fresh sans insertion DOM).
@@ -532,63 +730,30 @@ if (µ.Element) {
     // facilite l'inlining V8 sur le hot loop create/update 1000 items.
     // Hoist let scope au lieu de var redéclaré (hidden classes V8 stables).
     const __itemsLen = items.length;
-    const __occ = new Map();
     for (let __loopIdx = 0; __loopIdx < __itemsLen; __loopIdx++) {
       const item = items[__loopIdx];
-      const loopIndex = __loopIdx;
-      const index = isArray ? (__ix !== null ? __ix[loopIndex] : loopIndex) : keysArr[loopIndex];
-      let key;
+      const index = isArray ? (__ix !== null ? __ix[__loopIdx] : __loopIdx) : keysArr[__loopIdx];
       // clé lue et convertie par la pré-passe ci-dessus
-      const manualKey = __mk !== null ? __mk[__loopIdx] : null;
-      if (manualKey !== null) {
-        key = manualKey;
-      } else if (item !== null && typeof item === 'object') {
-        // cf. _mjs_mjsTag : tatouage non-énumérable,
-        // repli silencieux sur objet non extensible.
-        key = this._mjs_mjsTag(item);
-        // même objet déjà vu dans la liste : le rang d'apparition sépare les occurrences (la 1re garde sa clé)
-        const __nb = __occ.get(key) | 0;
-        __occ.set(key, __nb + 1);
-        if (__nb) key += '#' + __nb;
-      } else {
-        key = `idx-${index}`;
-      }
-      newKeys[__loopIdx] = key;
-      let entry, hasDead, hasDying;
-      if (isFreshCreate) {
-        entry = void 0;
-        hasDead = false;
-        hasDying = false;
-      } else if (__canPool) {
-        // Composant sans destroy hooks : aucune entry ne peut être
-        // _mjs_dying/_mjs_dead (le pool détache sans poser ces flags,
-        // et le fast path retire le node du cache via cache.delete).
-        // Skip le scan `.some()` ~25× plus rapide qu'un cache hit.
-        entry = cache.get(key);
-        hasDead = false;
-        hasDying = false;
-      } else {
-        entry = cache.get(key);
-        // Inline les .some() au lieu de chaining ternaire (4 niveaux
-        // imbriqués Coffee). Aussi rapide en cache hit normal, beaucoup plus
-        // léger en cache miss (entry == null → skip entire chain).
+      const key = keys[__loopIdx];
+      let entry = isFreshCreate ? void 0 : cache.get(key);
+      // <transitions>
+      // Composant sans destroy hooks (`__canPool`) : aucune entry ne peut être
+      // _mjs_dying/_mjs_dead (le pool détache sans poser ces flags,
+      // et le fast path retire le node du cache via cache.delete).
+      // Skip le scan `.some()` ~25× plus rapide qu'un cache hit.
+      let hasDead = false;
+      let hasDying = false;
+      if (!__canPool && entry && entry.nodes) {
         // Le tplFn produit du HTML avec des espaces/newlines autour du `<div>`,
         // donc `entry.nodes` peut contenir [textNode, divNode, textNode].
         // On scanne TOUS les nodes pour trouver l'état effectif (un text node
         // n'aura jamais de _mjs_dying/_mjs_dead).
-        if (entry && entry.nodes) {
-          hasDead = false;
-          hasDying = false;
-          const __ens = entry.nodes;
-          for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
-            const __en = __ens[__ei];
-            if (__en._mjs_dead) hasDead = true;
-            if (__en._mjs_dying) hasDying = true;
-            if (hasDead && hasDying) break;
-          }
-        } else {
-          hasDead = false;
-          hasDying = false;
+        const __ens = entry.nodes;
+        for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
+          const __en = __ens[__ei];
+          if (__en._mjs_dead) hasDead = true;
+          if (__en._mjs_dying) hasDying = true;
+          if (hasDead && hasDying) break;
         }
       }
       // Si une entry pointe vers un node dont l'outro est complète (removed
@@ -599,7 +764,9 @@ if (µ.Element) {
         }
         // Anti-leak : purge symétrique des filtered indexes pour
         // une entry invalidée DEAD (l'updateFn ne sera plus jamais appelée).
+        // <liaisons-filtrees>
         this._mjs_filtPurgeEntry(entry);
+        // </liaisons-filtrees>
         cache.delete(key);
         entry = void 0;
         hasDying = false;
@@ -650,7 +817,9 @@ if (µ.Element) {
             })(__dn);
           }
         }
-      } else if (entry) {
+      } else
+      // </transitions>
+      if (entry) {
         if (µ.debug) {
           µ.log(`[mjs-tx] reconcile ${cacheId} key=${key} → cache hit (alive)`);
         }
@@ -660,63 +829,18 @@ if (µ.Element) {
         }
       }
       if (!entry) {
-        // Pool : essaie de récupérer une entry déjà construite.
-        // Le DOM des nodes est intact (attributes statiques préservés), seule
-        // updateFn est ré-appliquée plus tard pour bind les valeurs dynamiques.
-        let __reused = false;
-        if (__pool && __pool.length > 0) {
-          entry = __pool.pop();
-          entry._mjs_ix = void 0;
-          __reused = true;
-        }
-        if (!__reused) {
-          // tplFn retourne maintenant {fragment, refs} directement.
-          // Optim #5 — tplFn peut aussi retourner updateFn (refs en closure).
-          const __built = tplFn(item, index);
-          const __nodes = __built.refs || {};
-          // Enregistre les éléments dans _nodeIds pour le routing événementiel.
-          // Optim #5 — si tplFn a déjà appelé _mjs_registerRefs (cas closure refs),
-          // skip pour éviter le double appel. Le tplFn pose __nodes._mjs_reg = true.
-          if (!__nodes._mjs_reg) this._mjs_registerRefs(__nodes);
-          // Capture les top-level nodes du fragment AVANT insertion. Une
-          // fois inséré dans le DOM, le fragment est vidé.
-          const __frag0 = __built.fragment;
-          const __cnLen = __frag0.childNodes.length;
-          // Optim #4 — fast-path single root : la majorité des row-templates
-          // ont 1 seul top-level node. On évite new Array + boucle.
-          let nodes;
-          if (__cnLen === 1) {
-            nodes = [__frag0.firstChild];
-          } else {
-            nodes = new Array(__cnLen);
-            let __cn = __frag0.firstChild;
-            for (let __ci = 0; __cn; __ci++) {
-              nodes[__ci] = __cn;
-              __cn = __cn.nextSibling;
-            }
-          }
-          // Optim #5 — _mjs_updFn : closure updateFn capturant les refs locales.
-          // Quand présent, _mjs_reconcileList l'appelle avec (item, index) au lieu
-          // de l'updateFn global avec (__nodes, item, index).
-          // `_mjs_init` = 1 quand le tplFn a DÉJÀ posé l'état initial (fusion
-          // de la pose dans la factory, composants sans transitions). Le 1er
-          // pass-updateFn est alors sauté (et `_mjs_init` remis à 0 → updates
-          // futurs normaux).
-          entry = {nodes, __nodes, _mjs_updFn: __built.updateFn || null, _mjs_init: __built._mjs_init || 0, _mjs_p: __built._mjs_p, _mjs_it: item, _mjs_ix: index};
-          __nodes._mjs_en = entry;
-        }
+        // réserve d'abord (DOM intact, la passe des liaisons remet les valeurs), gabarit sinon
+        entry = _mjs_rowEntry(this, __pool, tplFn, item, index);
         cache.set(key, entry);
       }
-      newEntries[__loopIdx] = {key, entry, item, index};
+      newEntries[__loopIdx] = entry;
     }
     // Skip newKeySet alloc si oldKeys.length === 0 (fresh create) :
-    // pas besoin de tester si chaque oldKey est encore dans newKeys.
-    // #2/perf — réutilise le Set du pré-passage de dé-doublonnage quand il est
-    // garanti égal à `new Set(newKeys)` (cas commun sans doublon ni clé null).
-    newKeySet = oldKeys.length > 0 ? (__dupKeySet !== null ? __dupKeySet : new Set(newKeys)) : null;
+    // pas besoin de tester si chaque oldKey est encore dans la liste.
+    // #2/perf — réutilise le Set du dé-doublonnage (les clés gardées).
+    newKeySet = oldKeys.length > 0 ? __seen || new Set(keys) : null;
     // Boucle for classique au lieu de forEach (évite alloc closure
     // par entry destroyed). Sur clear 1k items, gain ~1-2ms.
-    const __wait = childMode === 'all' || childMode === 'out' || childMode === 'transition';
 
     // Bulk clear inspired par Solid `cleanChildren` (parent.textContent = "").
     // Condition stricte : full clear (newLen === 0), pas de hooks destroy, pas
@@ -731,11 +855,11 @@ if (µ.Element) {
       // Pool : on push les entries détachées (sans coût de removeChild individuel).
       // NB: Range.deleteContents détache TOUS les nodes du Range — ils restent
       // valides comme objets JS (intacts pour réutilisation).
-      if (!__pool) __pool = this._mjs_list_pool[cacheId] = [];
       // Anti-leak : si la classe a des filtered indexes
       // (`_mjs_filt[<clé>].idx`), purger les entrées correspondantes pour les rows clear.
       // Sinon la Map garde des fns qui capturent les nodes → fuite mémoire
       // (typique des benchs cycliques create/clear×N et des feeds infinis).
+      // <liaisons-filtrees>
       var __fk = this._mjs_filtIdxKeys;
       var __filtB = this._mjs_filt;
       // Optim #E — Bulk clear des filter Maps en UNE opération native.
@@ -754,12 +878,13 @@ if (µ.Element) {
         // une liaison dont l'index porte d'autres lignes que celles-ci : ligne par ligne (multi-{for} ou plusieurs lignes par valeur)
         if (__lent) for (j = 0, len = oldKeys.length; j < len; j++) this._mjs_filtPurgeEntry(cache.get(oldKeys[j]));
       }
+      // </liaisons-filtrees>
       // Fix — vidange du cache en itérant les VALEURS, sans
       // get-par-clé : on ne reset _mjs_filterKeys que pour les entries qui partent
       // au pool (les autres sont GC avec leur objet), puis cache.clear() O(1)
       // au lieu de N×delete. Au clear mesuré (pool plein dès les warmups),
       // cette boucle ne fait quasi plus rien.
-      var __room = __poolLimit - __pool.length;
+      var __room = __mjsPoolLimit - __pool.length;
       // Tableau RÉUTILISÉ (comme `_mjs_reusableFragment`/`_mjs_reusableRange`
       // plus bas) : accumule les champs de formulaire des entries qui partent
       // au pool, remis au gabarit plus bas UNE FOIS l'effacement DOM fait
@@ -770,7 +895,9 @@ if (µ.Element) {
       __formNodesBulk.length = 0;
       if (__room > 0) {
         for (const __e of cache.values()) {
+          // <liaisons-filtrees>
           if (__e && __e.__nodes && __e.__nodes._mjs_filterKeys) { __e.__nodes._mjs_filterKeys = null; __e.__nodes._mjs_filterFns = null; }
+          // </liaisons-filtrees>
           // Même garde que le retrait un-par-un ci-dessous : un sous-arbre à
           // état propre ne part pas au pool (recyclage cross-clé interdit),
           // il est simplement abandonné au GC (déjà détaché du DOM par le
@@ -789,7 +916,7 @@ if (µ.Element) {
             }
             __e.nodes = __live;
           }
-          __pool.push(__e);
+          _mjs_poolPut(__pool, __e);
           if (--__room <= 0) break;
         }
       }
@@ -823,7 +950,7 @@ if (µ.Element) {
       if (__formNodesBulk.length) this._mjs_mjsResetFormFields(__formNodesBulk);
       __formNodesBulk.length = 0;
       // Reset cache state (sera ré-écrit en bas de la fn).
-      this._mjs_list_order[cacheId] = newKeys;
+      this._mjs_list_order[cacheId] = keys;
       this._mjs_list_cache[cacheId] = cache;
       return;
     }
@@ -831,115 +958,27 @@ if (µ.Element) {
     // Anti-leak : hoist le Set _mjs_filtIdxKeys hors de la boucle.
     // Si la classe n'utilise aucun filtered dispatch, le check est `null` →
     // l'overhead se limite à 1 lecture de prop par _mjs_reconcileList.
+    // <liaisons-filtrees>
     var __fkSet = this._mjs_filtIdxKeys;
-    // Destruction groupée pour le « replace total » (replace1k : AUCUNE
-    // ancienne clé réutilisée). Au lieu de N removeChild individuels (poste
-    // dominant au profil : ~76 ms sur replace1k), on détache TOUT le contenu du
-    // {for} en UNE fois via `textContent=''` (chemin RemoveChildren natif
-    // groupé, comme le clear). La boucle de destruction ci-dessous tourne
-    // ensuite normalement : le `removeChild` y devient un no-op (parentNode
-    // déjà null), mais le pooling et la purge filtered restent identiques —
-    // donc aucune logique de réconciliation n'est court-circuitée. Conditions :
-    // pas de transitions (__canPool && !__wait) et le {for} occupe tout son
-    // conteneur (markers aux deux extrémités), exactement comme le fast-path
-    // clear. Les nouvelles lignes (déjà construites, encore détachées) seront
-    // insérées après par la phase de placement.
-    if (__canPool && !__wait && oldKeys.length > 0 &&
-        startNode.previousSibling === null && endNode.nextSibling === null &&
-        startNode.parentNode === parentNode) {
-      let __anyReused = false;
-      for (let __ri = 0; __ri < oldKeys.length; __ri++) {
-        if (newKeySet.has(oldKeys[__ri])) { __anyReused = true; break; }
-      }
-      if (!__anyReused) {
-        // lignes à plusieurs nœuds de tête (un `{if}` à leur racine) : relevé VIVANT de chacune
-        // AVANT le retrait groupé — détachés, ses nœuds ne se retrouvent plus entre ses bornes, et
-        // l'instantané de création, périmé après une bascule de branche, partirait à la réserve
-        const __e0 = cache.get(oldKeys[0]);
-        if (__e0 && __e0.nodes.length > 1) {
-          for (let __ri = 0; __ri < oldKeys.length; __ri++) {
-            const __eo = cache.get(oldKeys[__ri]);
-            if (__eo) __eo.nodes = this._mjs_liveEntryNodes(__eo.nodes);
-          }
-        }
-        parentNode.textContent = '';
-        parentNode.appendChild(startNode);
-        parentNode.appendChild(endNode);
-      }
-    }
-    // Tableau RÉUTILISÉ (même singleton que le chemin bulk-clear plus haut) :
-    // collecte les champs de formulaire d'UNE entry à la fois, remis au
-    // gabarit juste après son removeChild (jamais avant, cf.
-    // `_mjs_mjsHasOwnState`). Nettoyé au tout début de chaque itération
-    // concernée pour ne jamais faire fuiter les nœuds d'une entry précédente.
-    var __formNodes = µ._mjs_reusableFormNodes;
-    if (!__formNodes) __formNodes = µ._mjs_reusableFormNodes = [];
+    // </liaisons-filtrees>
+    // le « tout remplacé » d'une liste en mode réserve (retrait groupé) est un chemin court, cf. `_mjs_forCourt`
     for (j = 0, len = oldKeys.length; j < len; j++) {
       oldKey = oldKeys[j];
       if (!newKeySet.has(oldKey)) {
         entry = cache.get(oldKey);
-        const __ens = this._mjs_liveEntryNodes(entry.nodes);
-        // Pool des entries au lieu de destroy si pas de hooks destroy,
-        // qu'on n'a pas de cascade outro à jouer, ET que le sous-arbre ne
-        // porte aucun état hors gabarit (sinon la ligne recyclée pour une
-        // AUTRE clé emporterait avec elle un input tapé/un composant enfant —
-        // une clé doit garantir l'identité). Détection SEULE (aucune
-        // écriture) : le node est encore CONNECTÉ ici, le removeChild vient
-        // plus bas.
-        let __hasOwnState = true;
-        if (__canPool && !__wait) {
-          __formNodes.length = 0;
-          __hasOwnState = this._mjs_mjsHasOwnState(__ens, __formNodes);
-        }
-        if (__canPool && !__wait && !__hasOwnState) {
-          // anti-leak {for} imbriqué :
-          // le chemin pool fait un `removeChild` DIRECT (jamais
-          // `_mjs_destroyNodeAndChildren`), donc la purge du sous-arbre doit se faire
-          // ICI. Sûr car `__canPool && !__wait` ⇒ pas d'outro ⇒ pas de revive.
-          // La branche `else` (destroy réel avec outro) purge, elle, à la mort
-          // DÉFINITIVE via `_mjs_mjsPurgeSubtreeState` : y purger tôt casserait le
-          // revival dying-tail (une row `@out` ré-apparue PENDANT son outro
-          // dupliquerait le {for} imbriqué — cache purgé mais DOM ressuscité).
-          if (this._mjs_list_anchor != null) {
-            for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
-              const __rn = __ens[__ei];
-              if (__rn.nodeType === 1) this._mjs_mjsPurgeNestedListCaches(__rn);
-            }
-          }
-          if (!__pool) __pool = this._mjs_list_pool[cacheId] = [];
-          if (__pool.length < __poolLimit) {
-            // Détache les nodes du DOM (les laisse intacts pour réutilisation).
-            for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
-              var __nd = __ens[__ei];
-              if (__nd.parentNode) __nd.parentNode.removeChild(__nd);
-            }
-            // Remise au gabarit — seulement maintenant que le sous-arbre est
-            // détaché du document vivant (plus aucun risque de mutuelle
-            // exclusion native sur un radio étranger).
-            if (__formNodes.length) this._mjs_mjsResetFormFields(__formNodes);
-            // la ligne recyclée remettra à l'écran ses nœuds VIVANTS, pas l'instantané de sa
-            // création (périmé si un `{if}` à sa racine a basculé depuis)
-            entry.nodes = __ens;
-            __pool.push(entry);
-          } else {
-            // Pool plein : on peut quand même bypass le walk DFS car
-            // __canPool implique _mjs_noDestroyHooks (pas de transitions).
-            // Entry jetée au GC juste après : pas la peine de la remettre au gabarit.
-            for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
-              var __ndr = __ens[__ei];
-              if (__ndr.parentNode) __ndr.parentNode.removeChild(__ndr);
-            }
-          }
-        } else {
+        // mode réserve (ni sortie à jouer, ni crochet de destruction) : gardée ou détruite, cf. `_mjs_dropRow`
+        if (__canPool && !__wait) _mjs_dropRow(this, entry, __pool);
+        else {
+          const __ens = this._mjs_liveEntryNodes(entry.nodes);
           for (let __ei = 0, __eln = __ens.length; __ei < __eln; __ei++) {
             this._mjs_destroyNodeAndChildren(__ens[__ei], __wait);
           }
+          // Anti-leak : purger les filtered indexes (cf. note plus haut) — sinon
+          // une entrée fantôme reste dans `_mjs_filt[X].idx`, liée à l'ANCIEN node.
+          // <liaisons-filtrees>
+          if (__fkSet) this._mjs_filtPurgeEntry(entry);
+          // </liaisons-filtrees>
         }
-        // Anti-leak : purger les filtered indexes (cf. note plus
-        // haut). Critique pour le pool : sinon l'entry retournera avec une
-        // entrée fantôme dans `_mjs_filt[X].idx` liée à l'ANCIEN node (rebound via
-        // closure capture) → fuite + résultats erronés au prochain mute.
-        if (__fkSet) this._mjs_filtPurgeEntry(entry);
         cache.delete(oldKey);
       }
     }
@@ -963,8 +1002,12 @@ if (µ.Element) {
     //   glissement (saut à la fin de l'outro). Le flip masque lui-même le trou.
     //
     // `__canPool` (`_mjs_noDestroyHooks`) ⇒ pas de transitions ⇒ aucun dying.
-    var __hasFlip = this.constructor._mjs_hasFlip === true;
     dyingTail = [];
+    // Avec flip : insérer les vivants avant le 1er dying évacué. Sinon (in-flow) :
+    // relativement à endNode (le skip `_mjs_dying` backward gère les dying inline).
+    lastNode = endNode;
+    // <transitions>
+    var __hasFlip = this.constructor._mjs_hasFlip === true;
     if (!__canPool) {
       n = startNode.nextSibling;
       while (n && n !== endNode) {
@@ -984,9 +1027,8 @@ if (µ.Element) {
         }
       }
     }
-    // Avec flip : insérer les vivants avant le 1er dying évacué. Sinon (in-flow) :
-    // relativement à endNode (le skip `_mjs_dying` backward gère les dying inline).
-    lastNode = (__hasFlip && dyingTail.length > 0) ? dyingTail[0] : endNode;
+    if (__hasFlip && dyingTail.length > 0) lastNode = dyingTail[0];
+    // </transitions>
 
     // Fast path "fresh create" : si cache était vide AVANT cette itération
     // (isFreshCreate) ET qu'on n'a rien détruit (oldKeys.length === 0), tous les
@@ -1001,35 +1043,18 @@ if (µ.Element) {
       // revient au pool une fois vidé par l'insertion.
       var __freshFrag = µ._mjs_reusableFragment || document.createDocumentFragment();
       µ._mjs_reusableFragment = null;
-      const __ne = newEntries;
-      const __neLen = __ne.length;
-      for (let __ix = 0; __ix < __neLen; __ix++) {
-        const __ent = __ne[__ix];
-        const __entryNodes = __ent.entry.nodes;
-        const __enLen = __entryNodes.length;
-        for (let __ni = 0; __ni < __enLen; __ni++) {
-          __freshFrag.appendChild(__entryNodes[__ni]);
-        }
+      for (let __ni = 0; __ni < newEntries.length; __ni++) {
+        const __ns = newEntries[__ni].nodes;
+        for (let __k = 0; __k < __ns.length; __k++) __freshFrag.appendChild(__ns[__k]);
       }
       parentNode.insertBefore(__freshFrag, endNode);
       µ._mjs_reusableFragment = __freshFrag;
-      // Appel des updateFn APRÈS insertion (cohérent avec sémantique).
-      // Optim #5 — préférer entry._mjs_updFn (closure refs locales) si présent.
-      // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1)
-      // saute ce passage (et repasse en update normal aux tours suivants).
-      µ._mjs_holdPush = 1;
-      for (let __ix = 0; __ix < __neLen; __ix++) {
-        const __ent = __ne[__ix];
-        const __entry = __ent.entry;
-        if (__entry._mjs_init) {
-          __entry._mjs_init = 0;
-        } else if (__entry._mjs_updFn) {
-          __entry._mjs_updFn(__ent.item, __ent.index);
-        } else if (updateFn) {
-          updateFn(__entry.__nodes, __ent.item, __ent.index);
-        }
-      }
-      this._mjs_list_order[cacheId] = newKeys;
+      // Appel des updateFn APRÈS insertion (cohérent avec sémantique). Une entry
+      // fraîche dont le tplFn a déjà posé l'état (_mjs_init=1) saute ce passage
+      // (et repasse en update normal aux tours suivants) ; une ligne reprise de la
+      // réserve y note son élément et son index
+      _mjs_updRows(cache, keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+      this._mjs_list_order[cacheId] = keys;
       this._mjs_list_cache[cacheId] = cache;
       return;
     }
@@ -1051,10 +1076,10 @@ if (µ.Element) {
     // Si des entries DEAD ont été invalidées, on NE PEUT PAS prendre le fast
     // path allStays — les fresh nodes correspondants ne sont pas encore dans
     // le DOM, il faut passer par le LIS path qui les insère.
-    let allStays = __invalidatedIdx.size === 0 && newKeys.length === oldKeys.length;
+    let allStays = __invalidatedIdx.size === 0 && keys.length === oldKeys.length;
     if (allStays) {
-      for (let __ki = 0, __kln = newKeys.length; __ki < __kln; __ki++) {
-        if (newKeys[__ki] !== oldKeys[__ki]) { allStays = false; break; }
+      for (let __ki = 0; __ki < keys.length; __ki++) {
+        if (keys[__ki] !== oldKeys[__ki]) { allStays = false; break; }
       }
     }
     // Fast path allStays terminal : on bypass complètement la boucle
@@ -1062,21 +1087,8 @@ if (µ.Element) {
     // updateFn forward sur les entries. Économise ~N iterations + checks.
     // Mesure : sur update10thRow × 1000 rows, ~2-5ms.
     if (allStays) {
-      // Optim #5 — préférer entry._mjs_updFn (closure refs locales) si présent.
-      µ._mjs_holdPush = 1;
-      const __ne = newEntries;
-      const __neLen = __ne.length;
-      for (let __ix = 0; __ix < __neLen; __ix++) {
-        const __ent = __ne[__ix];
-        const __entry = __ent.entry;
-        if (_mjs_skipRow(__entry, __ent.item, __ent.index, __raw)) continue;
-        if (__entry._mjs_updFn) {
-          __entry._mjs_updFn(__ent.item, __ent.index);
-        } else if (updateFn) {
-          updateFn(__entry.__nodes, __ent.item, __ent.index);
-        }
-      }
-      this._mjs_list_order[cacheId] = newKeys;
+      _mjs_updRows(cache, keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+      this._mjs_list_order[cacheId] = keys;
       this._mjs_list_cache[cacheId] = cache;
       return;
     }
@@ -1091,7 +1103,7 @@ if (µ.Element) {
       // oldKeys mais le node n'est plus là. On la traite comme "nouvelle"
       // dans la LIS pour forcer son insertion DOM.
       if (__invalidatedIdx.has(__mi)) return -1;
-      const pos = oldKeyToIdx.get(e.key);
+      const pos = oldKeyToIdx.get(keys[__mi]);
       return pos === undefined ? -1 : pos;
     });
     lisSet = µ._mjs_lis(oldPosArr);
@@ -1136,8 +1148,8 @@ if (µ.Element) {
     // (`__frag`), donc !isConnected → getComputedStyle vide, offsetHeight=0,
     // sampling slide/fly à 0 → animation invisible. Cas vécu : recoche d'un
     // `{if}` qui contient un `{for}` avec `@transition.slide.global`.
-    for (i = m = newEntries.length - 1; m >= 0; i = m += -1) {
-      ({entry} = newEntries[i]);
+    for (i = newEntries.length - 1; i >= 0; i--) {
+      entry = newEntries[i];
       // µ-opt — hoist les nodes de l'entrée (relus 4× : last, first×2, ref3) + `nodes[0]`.
       // `_mjs_liveEntryNodes` et pas `entry.nodes` : une entrée dont un `{if}` racine a
       // basculé porte, dans le DOM, des nœuds absents de l'instantané. Les oublier
@@ -1151,7 +1163,9 @@ if (µ.Element) {
       // entre deux vivants ferait échouer le test → insertBefore inutile + ordre
       // faux (l'ancienne raison de la dying-tail).
       var __nsLiving = lastItemNode.nextSibling;
+      // <transitions>
       while (__nsLiving && __nsLiving._mjs_dying) { __nsLiving = __nsLiving.nextSibling; }
+      // </transitions>
       if (stays || __nsLiving === lastNode) {
         if (__fragHasChild) {
           parentNode.insertBefore(__frag, __domAnchor);
@@ -1175,20 +1189,8 @@ if (µ.Element) {
     // updateFn voit isConnected=true et le sampling fonctionne correctement.
     // Une entry fraîche dont le tplFn a déjà posé l'état (_mjs_init=1, émis
     // seulement pour les composants SANS transitions/@attach) saute ce passage.
-    µ._mjs_holdPush = 1;
-    for (i = m = newEntries.length - 1; m >= 0; i = m += -1) {
-      ({entry, item, index} = newEntries[i]);
-      if (entry._mjs_init) {
-        entry._mjs_init = 0;
-      } else if (_mjs_skipRow(entry, item, index, __raw)) {
-        continue;
-      } else if (entry._mjs_updFn) {
-        entry._mjs_updFn(item, index);
-      } else if (updateFn) {
-        updateFn(entry.__nodes, item, index);
-      }
-    }
-    this._mjs_list_order[cacheId] = newKeys;
+    _mjs_updRows(cache, keys, newEntries, items, isArray, __ix, keysArr, __raw, updateFn);
+    this._mjs_list_order[cacheId] = keys;
     return this._mjs_list_cache[cacheId] = cache;
   };
 

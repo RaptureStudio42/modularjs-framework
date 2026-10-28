@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { attendre } from './helpers/attendre.js'
 
 const stripEsm = (s: string) => s
   .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
@@ -39,13 +40,6 @@ const HOTE = [
   '<@reflet value={$n}></@reflet>',
 ].join('\n')
 
-// l'observateur d'attributs rend la main par micro-tâches ; sous charge (suite complète), un délai
-// fixe ne suffit pas toujours : on attend la condition, borné à 3 s
-async function attendre(cond: () => boolean, ms = 3000) {
-  const fin = Date.now() + ms
-  while (!cond() && Date.now() < fin) await new Promise((r) => setTimeout(r, 10))
-}
-
 describe('props — le reflet texte d\'une prop typée ne la remplace pas', function () {
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
@@ -68,20 +62,24 @@ describe('props — le reflet texte d\'une prop typée ne la remplace pas', func
     window.eval(`${code}\nglobalThis.µ = µ;`)
     window.document.body.innerHTML = '<mjs-hotereflet></mjs-hotereflet>'
     const hote = window.document.body.querySelector('mjs-hotereflet')
-    await attendre(() => hote._shadow?.querySelector('mjs-reflet')?.getAttribute('value') === '42')
+    // sous charge (suite complète), un délai fixe ne suffit pas toujours : on attend l'état, et l'attente qui n'aboutit
+    // pas le dit (l'ancienne, bornée à 3 s, continuait sans rien dire et l'assertion suivante ratait loin de la cause)
+    await attendre(() => hote._shadow?.querySelector('mjs-reflet')?.getAttribute('value') === '42', 'le composant reflète sa prop : value="42"')
     const reflet = hote._shadow.querySelector('mjs-reflet')
+    // l'observateur d'attributs rend la main par micro-tâches : 40 ms lui laissent relire le reflet s'il le faisait
+    // (assertion négative : une pause, qui ne peut pas rater parce que la machine est lente)
     await new Promise((r) => setTimeout(r, 40))
     assert.equal(reflet.getAttribute('value'), '42', 'le composant a bien reflété sa prop')
     assert.strictEqual(reflet._state.value, 42, 'le reflet n\'a pas remplacé le nombre par son texte')
     assert.equal(reflet._shadow.querySelector('.t').textContent, 'number')
 
     hote._set('n', 7)
-    await attendre(() => reflet.getAttribute('value') === '7')
+    await attendre(() => reflet.getAttribute('value') === '7', 'la nouvelle valeur du parent reflétée : value="7"')
     await new Promise((r) => setTimeout(r, 40))
     assert.strictEqual(reflet._state.value, 7, 'une nouvelle valeur du parent, reflétée à son tour, reste un nombre')
 
     reflet.setAttribute('value', 'autre')
-    await attendre(() => reflet._state.value === 'autre')
+    await attendre(() => reflet._state.value === 'autre', 'l\'attribut vraiment changé relu dans l\'état')
     assert.strictEqual(reflet._state.value, 'autre', 'un attribut vraiment changé se relit comme avant')
     window.close?.()
   })

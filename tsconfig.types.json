@@ -1,0 +1,17 @@
+{
+  // déclarations .d.ts des entrées du paquet (exports « types » de package.json), émises par `npm run build:types`
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    // nullité gardée dans les types émis : un champ qui peut valoir undefined le dit (le code, écrit sans, se vérifie par `npm run typecheck`) ;
+    // noCheck : l'émission ne revérifie pas le code sous cette règle
+    "strictNullChecks": true,
+    "noCheck": true,
+    "sourceMap": false,
+    "outDir": "dist/types"
+  },
+  "include": [],
+  "files": ["src/index.ts", "src/cli.ts", "src/testing/index.ts", "src/mjs-ws/index.ts", "src/mjs-server/index.ts"]
+}

@@ -102,6 +102,7 @@ export interface MjsRoomProxyLoose {
   send(type: string, p?: unknown, opts?: MjsSendOpts): boolean
   request(type: string, p?: unknown, opts?: MjsRequestOpts): Promise<any>
   stream(type: string, opts?: unknown): Record<string, unknown>
+  unstream(type: string): void
   presence(): Record<string, unknown>
   onLeft(fn: (reason?: string) => void): void
   leave(): void
@@ -121,6 +122,7 @@ export interface MjsSocketLoose {
   refresh(auth: unknown): Promise<unknown>
   off(type: string, handler?: (...args: any[]) => void): void
   stream(type: string, opts?: unknown): Record<string, unknown>
+  unstream(type: string): void
   presence(room?: string): Record<string, unknown>
   room(name: string): MjsRoomProxyLoose
   request(type: string, p?: unknown, opts?: MjsRequestOpts): Promise<any>

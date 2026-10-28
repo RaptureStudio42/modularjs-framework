@@ -4,7 +4,7 @@
 //   sock.state / sock.latency / sock.connected / sock.lastError / sock.resumed   # réactifs
 //   off = sock.on(type, (p) -> …) ; sock.send(type, p)
 //   await sock.request(type, p, {timeout})
-//   $$x = sock.stream(type) ; $$j = sock.presence(room?) ; zone = sock.room(name)
+//   $$x = sock.stream(type) ; sock.unstream(type) ; $$j = sock.presence(room?) ; zone = sock.room(name)
 //   sock.on('welcome', (p) -> …) ; sock.resumed   # accueil serveur + reprise ('welcome' réservé)
 //   sock.on('denied', (p) -> …)                   # auth refusée, fil fermé pour de bon ('denied' réservé)
 //
@@ -22,6 +22,15 @@ var MJSOCKET_STABLE_MS = 2000;
 // dépasse : à elles toutes, pas plus de MJSOCKET_FX_RATE par seconde — le reste est pour l'appli ;
 // `"effects": { "rate": n }` de mjs.config.json la règle (µ._fxConf, posé par le manifeste)
 var MJSOCKET_FX_RATE = 4;
+// un salon quitté attend la preuve de son départ, la réponse du serveur à une trame partie après son µ:leave sur la même connexion
+// (cf. _mjs_sendLeave) : faute de quoi, le client envoie lui-même un µ:ping, un pour tous les départs, une fois la ligne calme depuis
+// MJSOCKET_LEAVE_PING_MS (aucune trame partie) — jamais une trame de plus dans un échange suivi, une boucle rejoindre / quitter par
+// exemple —, ou sans attendre dès MJSOCKET_LEAVE_BATCH départs qu'aucun µ:ping n'a suivis : une reprise de session ne les redirait
+// pas tous d'un coup. Il retient au plus MJSOCKET_MAX_LEAVES départs, autant de salons qu'un client peut en tenir sur MJS-WS par
+// défaut (limits.maxRoomsPerClient) — au-delà, le plus ancien est oublié
+var MJSOCKET_LEAVE_PING_MS = 1000;
+var MJSOCKET_LEAVE_BATCH   = 10;
+var MJSOCKET_MAX_LEAVES    = 50;
 
 // la part des effets en direct, par seconde : celle de la config, sinon MJSOCKET_FX_RATE
 µ._mjs_fxRate = function() {
@@ -39,6 +48,8 @@ var MJSOCKET_FX_RATE = 4;
 µ._mjs_sockPoll = 250;
 // le numéro de la prochaine connexion propre à un effet (sa clé dans µ._mjs_sockets)
 var _mjsSockOwn = 0;
+// une trame binaire reçue sans le module 'schema' : illisible, ignorée — dite une fois par page (cf. _mjs_onMessage)
+var _mjsSockBinSaid = 0;
 
 // deux `auth` qui disent la même identité : `null`, `undefined` et l'absence disent « aucune » ; deux objets se
 // comparent par leurs clés (symboles compris), quel que soit l'ordre (une clé `undefined` n'est pas une clé : elle ne
@@ -371,6 +382,18 @@ function MjsSocket(url, opts) {
   this._mjs_rooms = Object.create(null);      // name -> {n: poignées qui le tiennent} (re-join auto, cf. room())
   this._mjs_presence = Object.create(null);   // room(key) -> store réactif
   this._mjs_streams = Object.create(null);    // type -> { store, lastSeq }
+  // flux quittés (unstream, refus du serveur) : type -> fil où son µ:unsub-stream est parti, null s'il n'a pas pu partir
+  // (hors ligne) — ses trames ne vont plus à personne ; vidé à un accueil neuf, qui n'a plus aucun abonnement
+  this._mjs_unsubs = Object.create(null);
+  // salons quittés (leave() de leur dernière poignée) dont le départ n'est pas encore sûr : nom -> { ws: fil où son µ:leave est parti,
+  // null s'il n'a pas pu partir, pings: µ:ping partis avant lui sur ce fil, req: numéro de la dernière requête d'avant lui, n: rang du
+  // départ } — redit à la reprise de session, qui garde ses salons, jusqu'à la preuve que le serveur l'a traité (cf. _mjs_sendLeave)
+  this._mjs_roomLeaves = Object.create(null);
+  this._mjs_leaveSeq   = 0;      // rang du dernier départ retenu
+  this._mjs_leaveTimer = null;   // µ:ping de preuve en attente (cf. _mjs_leavePing)
+  this._mjs_pings  = 0;   // µ:ping (battements et preuves de départ) partis sur le fil courant
+  this._mjs_pongs  = 0;   // leurs réponses (µ:pong) reçues sur ce fil
+  this._mjs_sentAt = 0;   // instant de la dernière trame partie (cf. _mjs_leavePing)
   this._mjs_reqs = Object.create(null);   // id -> { resolve, reject, timer } ; sans prototype : un µ:ack d'id `toString` n'y trouve rien
   this._mjs_reqSeq = 0;
   this._mjs_queue = [];             // [{type, payload}] hors-ligne
@@ -586,6 +609,19 @@ MjsSocket.prototype._mjs_onWelcome = function(msg) {
   // 2e `µ:resync` redondant si le tout premier delta post-reconnexion
   // ressemble par ailleurs à un trou (même garde anti-rafale que le chemin
   // existant).
+  // flux quittés : une session reprise garde ses abonnements, le désabonnement qui n'a pas pu partir (unstream() hors ligne)
+  // part ici, avant tout le reste ; un accueil neuf n'en a plus aucun, rien à défaire
+  if (!this._mjs_st.resumed) { this._mjs_unsubs = Object.create(null); }
+  for (var __uq in this._mjs_unsubs) {
+    if (this._mjs_unsubs[__uq] === null) { this._mjs_sendUnsub(__uq); }
+  }
+  // salons quittés dont le départ n'est pas encore sûr : une session reprise les garde — leur départ repart ici, une fois, avant les
+  // re-joins, suivi d'un µ:ping dont la réponse le prouve (cf. _mjs_sendLeave) sans attendre un battement : une reprise de plus, avant
+  // lui, le redirait encore ; un accueil neuf n'en a plus aucun
+  if (!this._mjs_st.resumed) { this._mjs_roomLeaves = Object.create(null); }
+  var __lvs = Object.keys(this._mjs_roomLeaves);
+  for (var __lv = 0; __lv < __lvs.length; __lv++) { this._mjs_sendLeave(__lvs[__lv]); }
+  if (__lvs.length) { this._mjs_beat(true); }
   // les salons D'ABORD : un flux réservé à un salon (`room`) ou gardé par l'appartenance, demandé avant le µ:join, serait
   // refusé sur-le-champ (lu hors du salon) — à la première connexion (paresseuse) comme à chaque reconnexion. Chaque re-join
   // peut LUI AUSSI être refusé par la garde (permissions changées entre-temps) : le refus nomme son salon, cf. _mjs_onJoinDenied
@@ -685,10 +721,12 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
   var msg;
   // µschema (mjs_schema.ts) — extension MINIME : une trame BINAIRE (jamais du
   // JSON valide, cf. binaryType posé dans _mjs_open) ne passe JAMAIS par JSON.parse — décodée par le hook
-  // µ._mjs_mjschemaOnBinary si le module 'schema' est chargé, sinon ignorée (comportement historique :
-  // avant µschema, une trame binaire n'était de toute façon jamais interprétée).
+  // µ._mjs_mjschemaOnBinary si le module 'schema' est chargé, sinon ignorée. Un serveur MJS-WS qui déclare un
+  // schéma (`app.schema`) encode en binaire sans regarder ce que la page sait lire : sans le module, le message
+  // n'arrive jamais — un avertissement le dit, une fois, avec le module à ajouter
   if (ev.data && typeof ev.data !== 'string') {
     if (µ._mjs_mjschemaOnBinary) { µ._mjs_mjschemaOnBinary(this, ev.data); }
+    else if (!_mjsSockBinSaid++) { µ.warn('[µ.socket] ' + µ._mjs_txt('sockBinaryNoSchema', null, 'trame binaire reçue et ignorée : sans le module \'schema\', le cœur ne sait pas la lire (un serveur MJS-WS encode en binaire les messages dont il déclare le schéma, app.schema) — ajoutez "schema" à la liste "runtime" de mjs.config.json, ou écrivez "runtime": "all"')); }
     return;
   }
   try { msg = (this.opts.parse || JSON.parse)(ev.data); } catch { return; }
@@ -719,6 +757,13 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
         if (isFinite(__lat) && __lat >= 0) { this._mjs_st.latency = __lat; }
       }
       this._mjs_petWatchdog();
+      // la réponse à un µ:ping (battement ou preuve) parti après un µ:leave sur ce fil : le serveur, qui traite les trames d'une
+      // connexion dans l'ordre, a traité ce départ (cf. _mjs_sendLeave)
+      this._mjs_pongs++;
+      for (var __lp in this._mjs_roomLeaves) {
+        var __lr = this._mjs_roomLeaves[__lp];
+        if (__lr.ws === this._mjs_ws && __lr.pings < this._mjs_pongs) { delete this._mjs_roomLeaves[__lp]; }
+      }
       return;
     case 'µ:ack':     return this._mjs_onAck(msg);
     case 'µ:error':
@@ -727,6 +772,8 @@ MjsSocket.prototype._mjs_onMessage = function(ev) {
       // seul le refus d'entrée nomme son salon : toute autre erreur (message de chat trop long, débit…) n'en fait
       // oublier aucun
       else if (msg.p && msg.p.code === 'join-denied' && typeof msg.p.room === 'string') this._mjs_onJoinDenied(msg.p.room);
+      // le refus d'un flux le nomme : ce flux seul est oublié
+      else if (msg.p && msg.p.code === 'stream-denied' && typeof msg.p.stream === 'string') this._mjs_onStreamDenied(msg.p.stream);
       return;
     case 'µ:presence':return this._mjs_onPresence(msg);
     case 'µ:left':    return this._mjs_onLeft(msg);
@@ -780,8 +827,12 @@ MjsSocket.prototype._mjs_teardown = function(final, unknown) {
     this._mjs_ws = null;
   }
   this._mjs_stopHeartbeat();
-  // le prochain fil repart sans µ:hello : rien ne part avant le sien
+  // le prochain fil repart sans µ:hello : rien ne part avant le sien ; ses µ:ping se comptent à partir de zéro, la preuve d'un départ
+  // attendue sur ce fil ne part plus (cf. _mjs_sendLeave)
   this._mjs_helloSent = false;
+  this._mjs_pings     = 0;
+  this._mjs_pongs     = 0;
+  if (this._mjs_leaveTimer) { clearTimeout(this._mjs_leaveTimer); this._mjs_leaveTimer = null; }
   // teardown incomplet : les request()
   // en attente d'un `µ:ack` sur ce socket ne seront JAMAIS ack'ées (le serveur
   // ne reverra jamais leur id, et une reconnexion = nouvelle poignée de main
@@ -843,6 +894,7 @@ MjsSocket.prototype._mjs_rawSend = function(obj) {
       // (JSON) — même choke point unique que sendRaw côté serveur (mjs-ws/core.ts).
       var __bin = µ._mjs_mjschemaEncode ? µ._mjs_mjschemaEncode(this, obj) : null;
       this._mjs_ws.send(__bin || (this.opts.serialize || JSON.stringify)(obj));
+      this._mjs_sentAt = this._mjs_now();
       return true;
     }
     catch { return false; }
@@ -880,6 +932,12 @@ MjsSocket.prototype._mjs_dispatch = function(type, msg) {
   // qui appelle _mjs_dispatch directement, sans jamais passer par _mjs_onMessage) — même contrat que
   // le texte : un type abonné en stream() n'est JAMAIS un message pub/sub ordinaire.
   if (this._mjs_streams[type]) { this._mjs_onStreamDelta(type, msg); return; }
+  // trame d'un flux quitté (en vol, rejouée par une reprise, ou poussée par un serveur que le désabonnement n'a pas atteint) :
+  // à personne, ni au magasin ni aux écouteurs on(type) ; le désabonnement repart, une fois par fil
+  if (type in this._mjs_unsubs) {
+    if (this._mjs_unsubs[type] !== this._mjs_ws) { this._mjs_sendUnsub(type); }
+    return;
+  }
   var hs = this._mjs_handlers[type];
   if (!hs) { return; }
   var copy = hs.slice();
@@ -1062,42 +1120,53 @@ MjsSocket.prototype._mjs_debounceSend = function(type, payload, wait, key, volat
 
 // --- heartbeat (placeholder enrichi en 2b) ---
 MjsSocket.prototype._mjs_startHeartbeat = function() {
-  var ms = (this.opts.heartbeat != null) ? this.opts.heartbeat : 15000;
+  var ms = this._mjs_hbMs = (this.opts.heartbeat != null) ? this.opts.heartbeat : 15000;
   if (!ms) { return; }
   var self = this;
   this._mjs_stopHeartbeat();
-  this._mjs_hbTimer = setInterval(function() {
-    self._mjs_rawSend({ t: 'µ:ping', p: { ts: self._mjs_now() } });
-    // AVANT : slot UNIQUE `_hbWatchdog`
-    // réassigné à CHAQUE tick, écrasant la RÉFÉRENCE JS sans `clearTimeout`
-    // du précédent — le timer natif du cycle d'AVANT continuait de courir en
-    // fantôme (orphelin) jusqu'à son propre terme. Comme l'intervalle par
-    // défaut (`ms`) est plus COURT que le délai du watchdog (`ms*2`), un
-    // 2ᵉ (voire 3ᵉ) ping part TOUJOURS avant l'échéance du 1ᵉʳ watchdog — un
-    // `µ:pong` reçu entre-temps n'annulait que le watchdog COURANT
-    // (`_mjs_petWatchdog`), jamais le(s) fantôme(s) plus ancien(s) : ils finissaient
-    // par fermer une connexion PARFAITEMENT SAINE à leur échéance, malgré un
-    // pong reçu depuis. Fix : TOUS les watchdogs en vol sont trackés (tableau,
-    // pas un slot) ; `_mjs_petWatchdog` (tout pong) les efface TOUS d'un coup — la
-    // preuve de vie la plus récente rend caduques toutes les échéances
-    // antérieures, pas seulement la plus proche. (Un simple "clear l'ancien
-    // avant de poser le nouveau", essayé puis abandonné : ça désactive
-    // ENTIÈREMENT la détection de connexion morte dès que l'intervalle < délai
-    // du watchdog, soit la config par défaut — le watchdog n'a alors JAMAIS le
-    // temps d'atteindre son échéance avant d'être supplanté par le suivant.)
-    var wd = setTimeout(function() {
-      // pas de pong → connexion morte → on relance
-      if (self._mjs_ws) { self._mjs_onClose({ code: 4000 }); }
-    }, ms * 2);
-    self._mjs_hbWatchdogs.push(wd);
-  }, ms);
+  this._mjs_hbTimer = setInterval(function() { self._mjs_beat(); }, ms);
+};
+// un battement : le µ:ping, compté s'il part, et sa garde — sans µ:pong d'ici deux périodes, la connexion est morte. `early` : le
+// µ:ping de preuve d'un départ (cf. _mjs_leavePing), marqué, dont le serveur ne relève aucun écart entre battements ; parti, le
+// battement repart de lui, une période plus tard. Sans battement, il part seul, sans garde
+MjsSocket.prototype._mjs_beat = function(early) {
+  var self = this, ms = this._mjs_hbMs, wd;
+  var sent = this._mjs_rawSend({ t: 'µ:ping', p: early ? { ts: this._mjs_now(), early: true } : { ts: this._mjs_now() } });
+  if (sent) { this._mjs_pings++; }
+  if (!this._mjs_hbTimer || (early && !sent)) { return; }
+  if (early) {
+    clearInterval(this._mjs_hbTimer);
+    this._mjs_hbTimer = setInterval(function() { self._mjs_beat(); }, ms);
+  }
+  // AVANT : slot UNIQUE `_hbWatchdog`
+  // réassigné à CHAQUE tick, écrasant la RÉFÉRENCE JS sans `clearTimeout`
+  // du précédent — le timer natif du cycle d'AVANT continuait de courir en
+  // fantôme (orphelin) jusqu'à son propre terme. Comme l'intervalle par
+  // défaut (`ms`) est plus COURT que le délai du watchdog (`ms*2`), un
+  // 2ᵉ (voire 3ᵉ) ping part TOUJOURS avant l'échéance du 1ᵉʳ watchdog — un
+  // `µ:pong` reçu entre-temps n'annulait que le watchdog COURANT
+  // (`_mjs_petWatchdog`), jamais le(s) fantôme(s) plus ancien(s) : ils finissaient
+  // par fermer une connexion PARFAITEMENT SAINE à leur échéance, malgré un
+  // pong reçu depuis. Fix : TOUS les watchdogs en vol sont trackés (tableau,
+  // pas un slot) ; `_mjs_petWatchdog` (tout pong) les efface TOUS d'un coup — la
+  // preuve de vie la plus récente rend caduques toutes les échéances
+  // antérieures, pas seulement la plus proche. (Un simple "clear l'ancien
+  // avant de poser le nouveau", essayé puis abandonné : ça désactive
+  // ENTIÈREMENT la détection de connexion morte dès que l'intervalle < délai
+  // du watchdog, soit la config par défaut — le watchdog n'a alors JAMAIS le
+  // temps d'atteindre son échéance avant d'être supplanté par le suivant.)
+  wd = setTimeout(function() {
+    // pas de pong → connexion morte → on relance
+    if (self._mjs_ws) { self._mjs_onClose({ code: 4000 }); }
+  }, ms * 2);
+  this._mjs_hbWatchdogs.push(wd);
 };
 MjsSocket.prototype._mjs_stopHeartbeat = function() {
   if (this._mjs_hbTimer) { clearInterval(this._mjs_hbTimer); this._mjs_hbTimer = null; }
   this._mjs_clearWatchdogs();
 };
 // Efface TOUS les watchdogs actuellement en vol (pas seulement le dernier) —
-// cf. commentaire dans _mjs_startHeartbeat.
+// cf. commentaire dans _mjs_beat.
 MjsSocket.prototype._mjs_clearWatchdogs = function() {
   var wds = this._mjs_hbWatchdogs;
   if (wds) { for (var i = 0; i < wds.length; i++) { clearTimeout(wds[i]); } }
@@ -1109,7 +1178,12 @@ MjsSocket.prototype._mjs_petWatchdog = function() {
 
 // --- placeholders remplis dans les sous-briques suivantes ---
 MjsSocket.prototype._mjs_onAck = function(msg) {
-  var r = this._mjs_reqs[msg.id];
+  var r = this._mjs_reqs[msg.id], k;
+  // la réponse à une requête partie après un µ:leave sur ce fil prouve le départ, comme un µ:pong (cf. _mjs_sendLeave) — celle d'une
+  // requête que le client n'attend plus (délai passé) aussi
+  for (k in this._mjs_roomLeaves) {
+    if (this._mjs_roomLeaves[k].ws === this._mjs_ws && this._mjs_roomLeaves[k].req < msg.id) { delete this._mjs_roomLeaves[k]; }
+  }
   if (!r) { return; }
   delete this._mjs_reqs[msg.id];
   if (r.timer) { clearTimeout(r.timer); }
@@ -1184,10 +1258,81 @@ MjsSocket.prototype.stream = function(type, opts) {
   var ex = this._mjs_streams[type];
   if (ex) { return ex.store; }
   var store = µ.state({});
+  delete this._mjs_unsubs[type];
   this._mjs_streams[type] = { store: store, lastSeq: 0, resyncing: false };
   this._mjs_subs['stream:' + type] = true;
   this._mjs_rawSend({ t: 'µ:sub-stream', p: { stream: type } });
   return store;
+};
+
+// le symétrique de stream() : le socket cesse de suivre le flux — µ:unsub-stream part si la connexion est ouverte, sinon au
+// welcome d'une session reprise, et rien n'est redemandé à la reconnexion. Le magasin, partagé par tous ceux qui l'ont reçu
+// de stream(), garde son dernier état sans plus rien recevoir, et aucune trame du flux n'atteint plus les écouteurs ; un
+// stream() ensuite repart d'un magasin neuf. Un type qui n'est pas suivi : rien, pas même une connexion ouverte
+MjsSocket.prototype.unstream = function(type) {
+  if (!this._mjs_streams[type]) { return; }
+  delete this._mjs_streams[type];
+  delete this._mjs_subs['stream:' + type];
+  this._mjs_sendUnsub(type);
+};
+
+// µ:unsub-stream d'un flux quitté : le fil où il est parti est retenu, null s'il n'a pas pu partir (cf. _mjs_onWelcome)
+MjsSocket.prototype._mjs_sendUnsub = function(type) {
+  this._mjs_unsubs[type] = this._mjs_rawSend({ t: 'µ:unsub-stream', p: { stream: type } }) ? this._mjs_ws : null;
+};
+
+// µ:leave d'un salon quitté, retenu jusqu'à la preuve que le serveur l'a traité : le fil où il est parti, le nombre de µ:ping partis
+// avant lui sur ce fil et le numéro de la dernière requête d'avant lui. Le serveur traite les trames d'une connexion dans l'ordre et
+// ne rejoue jamais un µ:pong ni un µ:ack d'une autre connexion : la réponse à une trame partie après lui sur le même fil le prouve —
+// le µ:pong d'un µ:ping (un battement, ou celui que le client envoie lui-même, cf. _mjs_leavePing), le µ:ack d'une requête (cf.
+// _mjs_onAck) —, un accueil neuf n'a plus aucun salon, un room() du même salon l'annule.
+// D'ici là, une reprise de session le redit (cf. _mjs_onWelcome), sans effet sur un serveur qui l'avait reçu. Au plus
+// MJSOCKET_MAX_LEAVES départs retenus : au-delà, le plus ancien est oublié. Le µ:ping de preuve part une fois la ligne calme (cf.
+// _mjs_leavePing), ou aussitôt quand MJSOCKET_LEAVE_BATCH départs partis sur ce fil n'ont été suivis d'aucun µ:ping
+MjsSocket.prototype._mjs_sendLeave = function(name) {
+  var sent = this._mjs_rawSend({ t: 'µ:leave', p: { room: name } }), leaves = this._mjs_roomLeaves, n = 0, wait = 0, old = null, k, l;
+  leaves[name] = { ws: sent ? this._mjs_ws : null, pings: this._mjs_pings, req: this._mjs_reqSeq, n: ++this._mjs_leaveSeq };
+  for (k in leaves) {
+    l = leaves[k];
+    n++;
+    if (old === null || l.n < leaves[old].n) { old = k; }
+    if (l.ws && l.ws === this._mjs_ws && l.pings === this._mjs_pings) { wait++; }
+  }
+  if (n > MJSOCKET_MAX_LEAVES) { delete leaves[old]; }
+  if (!sent) { return; }
+  if (wait >= MJSOCKET_LEAVE_BATCH) { this._mjs_beat(true); }
+  else { this._mjs_leavePing(); }
+};
+
+// la preuve des départs partis sur ce fil qu'aucune réponse du serveur n'a encore prouvés : un µ:ping, un seul pour tous, une fois la
+// ligne calme depuis MJSOCKET_LEAVE_PING_MS (aucune trame partie) — un échange suivi (une boucle rejoindre / quitter) n'en reçoit
+// pas une trame de plus, ni le limiteur du serveur une rafale ; aucun si un µ:ping est parti après eux, sa réponse les prouve. Marqué
+// (cf. _mjs_beat) : le serveur n'en relève aucun écart entre battements, le battement repart de lui
+MjsSocket.prototype._mjs_leavePing = function(wait) {
+  if (this._mjs_leaveTimer) { return; }
+  var self = this;
+  this._mjs_leaveTimer = setTimeout(function() {
+    var calm = self._mjs_now() - self._mjs_sentAt, k, l;
+    self._mjs_leaveTimer = null;
+    for (k in self._mjs_roomLeaves) {
+      l = self._mjs_roomLeaves[k];
+      if (l.ws && l.ws === self._mjs_ws && l.pings === self._mjs_pings) {
+        if (calm < MJSOCKET_LEAVE_PING_MS) { self._mjs_leavePing(MJSOCKET_LEAVE_PING_MS - calm); }
+        else { self._mjs_beat(true); }
+        return;
+      }
+    }
+  }, wait || MJSOCKET_LEAVE_PING_MS);
+};
+
+// le serveur refuse un flux (`µ:error { code: 'stream-denied', stream }`) et l'a déjà désabonné : ce flux seul est oublié,
+// plus redemandé au welcome suivant (aucun nouvel essai de lui-même) — l'appli peut rappeler sock.stream(name), qui repart
+// d'un magasin neuf ; une trame de ce flux qui arrive encore ne va à personne
+MjsSocket.prototype._mjs_onStreamDenied = function(name) {
+  if (!this._mjs_streams[name]) { return; }
+  delete this._mjs_streams[name];
+  delete this._mjs_subs['stream:' + name];
+  this._mjs_unsubs[name] = this._mjs_ws;
 };
 
 MjsSocket.prototype._mjs_onStreamDelta = function(type, msg) {
@@ -1357,6 +1502,7 @@ MjsSocket.prototype.room = function(name) {
   // (exclusion, entrée refusée) repart d'un compte neuf : une poignée d'avant n'y décompte plus rien.
   var held = this._mjs_rooms[name];
   if (!held) {
+    delete this._mjs_roomLeaves[name];   // rejoint : un départ encore retenu n'a plus lieu d'être
     held = this._mjs_rooms[name] = { n: 0 };
     this._mjs_sendJoin(name);   // join optimiste, cf. _mjs_sendJoin/_mjs_onJoinDenied
   }
@@ -1396,6 +1542,11 @@ MjsSocket.prototype.room = function(name) {
       if (gone) { late('stream'); return µ.state({}); }
       return self.stream(prefix + type, opts);
     },
+    // partie : rien, ses flux sont oubliés avec le salon, ou tenus par une autre poignée qui le garde
+    unstream: function(type) {
+      if (gone) { return; }
+      self.unstream(prefix + type);
+    },
     presence: function() {
       if (gone) { late('presence'); return µ.state({}); }
       return self.presence(name);
@@ -1415,7 +1566,8 @@ MjsSocket.prototype.room = function(name) {
       dropLeft();
       if (self._mjs_rooms[name] !== held || --held.n > 0) { return; }
       delete self._mjs_rooms[name];
-      self._mjs_rawSend({ t: 'µ:leave', p: { room: name } });
+      // retenu jusqu'à la preuve que le serveur l'a traité : une session reprise garde ses salons, le départ y repart (cf. _mjs_sendLeave)
+      self._mjs_sendLeave(name);
       // purge
       // COMPLÈTE du salon (handlers, streams, présence, onLeft), pas seulement
       // les handlers : sinon fuite mémoire (closures/stores retenus à vie sur

@@ -117,7 +117,9 @@ ou faite à travers un élément trouvé (`$$taches.find((t) -> t.id == id).fait
 
 Accès **non réactif** : `µread $$x` (lecture brute, n'enregistre aucun abonnement) et
 `µwrite $$x, v` (écriture brute, ne notifie personne) — utiles pour poser une valeur de départ ou
-lire ponctuellement sans provoquer de re-rendu.
+lire ponctuellement sans provoquer de re-rendu. Après `µwrite $$x, v`, les valeurs dérivées des
+composants qui lisent `$$x`, ou qui énumèrent le store, se recalculent à leur prochaine lecture :
+relues aussitôt, elles rendent la valeur à jour ; seul l'écran attend la prochaine écriture ordinaire.
 
 > ⚠️ **Règle d'aliasing.** Une mutation écrite **en clair** sur `$$obj.a.b` est suivie, **même** via un
 > alias local direct assigné dans le même bloc (`sous = $$obj.a` puis `sous.b = 5` reste tracké et

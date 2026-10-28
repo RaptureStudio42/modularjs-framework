@@ -4,7 +4,10 @@
   $value        = ''
   $min          = null
   $max          = null
-  $step         = 1
+  # sans `step` écrit, le pas vaut 1 ; avec `decimals`, la plus petite unité de ses décimales (voir $by)
+  $step         = null
+  # `decimals` : un nombre FIXE de décimales montrées, au format de la langue de la page (« 64,30 » en français, « 64.30 » en anglais)
+  $decimals     = null
   $name         = ''
   $label        = null
   $placeholder  = ''
@@ -53,7 +56,7 @@
   # « 1.234,56 ») ; sinon le premier séparateur est la virgule décimale et les suivants tombent ; un séparateur en fin de frappe attend la suite
   read = (text)->
     s = String(text ?? '').trim().replace(TAIL_SEP, '')
-    m = if $decimals is 0 then s.match(GROUPS) else null
+    m = if $digits is 0 then s.match(GROUPS) else null
     return toNum(s.split(m[1]).join('')) if m
     cut = s.search(SEPARATOR)
     s   = s.slice(0, cut + 1) + s.slice(cut + 1).replace(SEPARATORS, '') if cut >= 0
@@ -65,6 +68,21 @@
     return '' if n is null
     text = String(n)
     if text.includes('e') then n.toFixed(decimalsOf(n)) else text
+
+  # ce que le champ montre : avec `decimals`, toutes les décimales en vigueur, au séparateur de la langue de la page ; sans, la valeur en
+  # clair, comme la variable liée et le formulaire la reçoivent
+  view = (v, fixed, digits, mark)->
+    n = toNum(v)
+    if n is null or fixed is null then show(v) else n.toFixed(digits).replace('.', mark)
+
+  # le séparateur décimal de la langue de la page, virgule ou point, tel que le navigateur l'écrit pour elle (« 1,5 » en français, « 1.5 » en
+  # anglais) ; un nom de langue qu'il refuse, ou aucune langue, donne la virgule du français, comme les libellés (lire µlang rend le dérivé
+  # réactif à la bascule)
+  markOf = (lang)->
+    try
+      if (1.5).toLocaleString(µ._mjs_labelLang() or 'fr').includes(',') then ',' else '.'
+    catch
+      ','
 
   # la frappe gardée : des chiffres, un signe en tête si la borne basse le permet, et les séparateurs, virgule ou point : un seul sous un pas
   # décimal, comme un champ nombre natif, tous sous un pas entier (ceux des milliers, « 1,000,000 ») — retiré, le séparateur faisait de
@@ -78,19 +96,30 @@
 
   norm       = (v)-> toNum(v) ?? ''
   stepOf     = (v)-> if (toNum(v) ?? 0) > 0 then toNum(v) else 1
+  # `decimals` : un entier de 0 à 100 (toFixed n'en accepte pas plus), en chiffres (« 2 ») ou en nombre (`decimals={2}`), comme le `decimals` du graphique ;
+  # vide ou absent, il n'y en a pas. Une autre valeur (négative, fractionnaire, illisible, au-delà de 100) est une faute : il n'y en a pas non plus,
+  # et la console le dit (cf. le µeffect des fautes, plus bas)
+  placesIn   = (v)-> if v? and v isnt false then String(v).trim() else ''
+  placesBad  = (v)-> placesIn(v) isnt '' and not (/^\d+$/.test(placesIn(v)) and Number(placesIn(v)) <= 100)
+  placesOf   = (v)-> if placesIn(v) is '' or placesBad(v) then null else Number(placesIn(v))
   # les décimales d'un pas, notation exponentielle comprise (« 1e-7 » en a 7) ; toFixed n'en accepte pas plus de 100
   decimalsOf = (n)->
     parts = String(n).split('e')
     Math.min(100, Math.max(0, (parts[0].split('.')[1] or '').length - Number(parts[1] ?? 0)))
   strideOf   = (reps)-> if reps < 18 then 1 else (if reps < 40 then 5 else 10)
 
+  # avec `decimals` et sans `step` utilisable, le pas est la plus petite unité des décimales (0,01 pour deux) : une valeur tapée reste dans
+  # le pas, que le formulaire valide comme un champ nombre natif ; les décimales en vigueur sont celles du pas et du grand pas, et avec
+  # `decimals`, ce nombre, sauf si le pas, le grand pas ou une borne en ont davantage : la valeur montrée est toujours celle que tient le champ
   $lo       = toNum($min)
   $hi       = toNum($max)
-  $by       = stepOf($step)
+  $fixed    = placesOf($decimals)
+  $by       = if $fixed is null or (toNum($step) ?? 0) > 0 then stepOf($step) else Number('1e-' + $fixed)
   $wide     = boolAttr($big)
   $bigBy    = stepOf(if toNum($big) is null then 10 else $big)
-  $decimals = Math.max(decimalsOf(stepOf($step)), decimalsOf(stepOf(if toNum($big) is null then 10 else $big)))
-  $keypad   = if $decimals > 0 then 'decimal' else 'numeric'
+  $digits   = Math.max(decimalsOf($by), decimalsOf($bigBy), (if $fixed is null then 0 else Math.max($fixed, decimalsOf($lo ?? 0), decimalsOf($hi ?? 0))))
+  $keypad   = if $digits > 0 then 'decimal' else 'numeric'
+  $mark     = markOf(µlang)
   $cur      = toNum($value)
 
   $labelText = $label ?? tr('numberLabel', µlang)
@@ -100,7 +129,7 @@
   $bigMore   = if $bigMoreLabel then $bigMoreLabel else tr('numberBigMore', µlang, show($bigBy))
 
   $nullable = ($placeholder or '') isnt ''
-  $shown    = if $draft is null then show($value) else $draft
+  $shown    = if $draft is null then view($value, $fixed, $digits, $mark) else $draft
   # désactivé par lui-même ou par un `<fieldset disabled>` autour de lui (`$formDisabled`, posé par le socle du cœur, qui ôte `disabled="false"`)
   $off      = boolAttr($disabled) or $formDisabled
   $ro       = boolAttr($readonly)
@@ -112,7 +141,7 @@
     n = Math.max($lo, n) if $lo isnt null
     n
 
-  round = (n)-> Number(n.toFixed($decimals))
+  round = (n)-> Number(n.toFixed($digits))
 
   setValue = (v)->
     n = toNum(v)
@@ -175,7 +204,7 @@
   typed = (e)->
     return if $off
     field = e.target
-    raw   = clean(field.value, $lo is null or $lo < 0, $decimals is 0)
+    raw   = clean(field.value, $lo is null or $lo < 0, $digits is 0)
     field.value = raw if field.value isnt raw
     touch()
     $draft = raw
@@ -268,6 +297,10 @@
     probe.value        = show($value)
     µ._mjs_formNative @, inputRef, (if $off or $ro then null else probe)
 
+  # une précision fautive est ignorée (aucune décimale fixe) : une erreur le dit au montage, puis à chaque changement qui la laisse fautive
+  µeffect ->
+    µ.error(µ._mjs_msg('coreNumberDecimals', { value: placesIn($decimals) }, '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; sans decimals, la valeur s\'écrit telle quelle.')) if placesBad($decimals)
+
   # un min plus grand que le max bloque la valeur sur le min : un avertissement le dit au montage, puis à chaque changement de bornes qui les laisse inversées
   µeffect ->
     µ.warn(µ._mjs_msg('coreRangeInverted', { tag: 'number', min: show($min), max: show($max) }, '<@@{tag}> : min « {min} » est plus grand que max « {max} », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.')) if toNum($min) isnt null and toNum($max) isnt null and toNum($min) > toNum($max)
@@ -325,7 +358,7 @@
 
     &:focus-within
       border-color: var(--mjs-number-accent, var(--mjs-accent, #3b82f6))
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, .35)
+      box-shadow: 0 0 0 3px var(--mjs-number-focus, rgba(59, 130, 246, .35))
 
     &.off
       opacity: .5
@@ -353,7 +386,7 @@
     transition: background .12s ease
 
     &:hover:not(:disabled), &:active:not(:disabled)
-      background: rgba(127, 127, 127, .32)
+      background: var(--mjs-number-step-hover, rgba(127, 127, 127, .32))
 
     &:disabled
       opacity: .35

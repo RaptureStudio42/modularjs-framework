@@ -42,6 +42,9 @@ parentPort.on('message', async (msg: TranspileMsg) => {
     return
   }
 
+  // accusé de début : le délai du pool part d'ici, ni de l'envoi ni de l'attente du démarrage de ce thread (cf. worker-pool.ts)
+  parentPort!.postMessage({ id: msg.id, started: true })
+
   if (msg.lang) setMessagesLang(msg.lang)
 
   try {

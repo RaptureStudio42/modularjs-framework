@@ -137,7 +137,8 @@ describe('navigation interne — branchement aux sites d\'échange de page', () 
   it('les 4 sites qui installent un document reçu (rafraîchissement de fond, retour arrière, clic, soumission) appliquent la fiche juste avant la tête', () => {
     assert.equal(appelsTete.length, 4, 'quatre sites d\'échange HTML')
     for (const { i } of appelsTete) {
-      assert.ok(lignes[i - 1].includes('µ._mjs_navPageFile(doc);') || lignes[i].includes('µ._mjs_navPageFile(doc);'), `ligne ${i + 1} : la fiche doit être appliquée avant la tête`)
+      // la fiche dans les trois lignes qui précèdent la tête : la reprise du jeton préchargé peut s'intercaler
+      assert.ok(lignes.slice(Math.max(0, i - 3), i + 1).some((l) => l.includes('µ._mjs_navPageFile(doc);')), `ligne ${i + 1} : la fiche doit être appliquée avant la tête`)
     }
     assert.equal(lignes.filter(l => l.includes('µ._mjs_navPageFile(doc);')).length, 4, 'ni oubli ni appel en trop')
   })

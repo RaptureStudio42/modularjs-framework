@@ -47,6 +47,25 @@ function _mjsDeepInterdit(o) {
   return false;
 }
 
+// racine d'une écriture profonde : l'objet brut que tient l'enveloppe rangée dans l'état (`µ._mjs_toRaw`, qui passe par le
+// piège de l'enveloppe). Une enveloppe garde la même cible toute sa vie : la dernière déballée se retient le temps du tour,
+// oubliée à la microtâche suivante (rien n'est retenu au-delà) — une boucle d'écritures ne repasse pas par le piège à chaque
+// écriture
+let _mjsRacEnv, _mjsRacBrut, _mjsRacTour = 0;
+function _mjsRacOubli() {
+  _mjsRacEnv  = _mjsRacBrut = void 0;
+  _mjsRacTour = 0;
+}
+function _mjsDeepRacine(o) {
+  if (_mjsRacTour && o === _mjsRacEnv) return _mjsRacBrut;
+  if (!_mjsRacTour) {
+    _mjsRacTour = 1;
+    queueMicrotask(_mjsRacOubli);
+  }
+  _mjsRacEnv = o;
+  return _mjsRacBrut = µ._mjs_toRaw(o);
+}
+
 // `µ._mjs_deepSet(el, ['box', 'width'], 200)` : assigne sans Proxy, navigue
 // le chemin et notifie la mutation à la clé top-level. Le compilateur
 // génère cet appel pour tous les `$.X.Y... = Z` dont l'alias est trackable.
@@ -63,8 +82,7 @@ function _mjsDeepInterdit(o) {
   }
   // Naviguer sur la cible BRUTE : muter via le Proxy re-déclencherait le set
   // trap → double notification (avec la notif explicite ci-dessous).
-  o = el._state[topKey];
-  o = µ._mjs_toRaw(o);
+  o = _mjsDeepRacine(el._state[topKey]);
   // racine (avant navigation) : c'est TOUJOURS elle qui porte l'« époque » de
   // mutation comparée par `_set` côté two-way (`=!{}`) — peu importe la
   // profondeur réellement mutée, cf. bump plus bas.
@@ -111,7 +129,9 @@ function _mjsDeepInterdit(o) {
   // l'objet partagé ne fait jamais avancer l'époque que le parent compare dans
   // `_set` pour distinguer un écho d'une mutation réelle : le parent croit
   // recevoir un écho et ne se redessine jamais, quelle que soit la profondeur.
-  (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
+  // Tant qu'aucun objet de l'état n'est tenu par deux composants (`µ._mjs_partage`, posé par `_set`, mjs_element.ts),
+  // personne ne compare d'époque : l'écriture s'en dispense (une recherche et une écriture dans une WeakMap de moins)
+  if (µ._mjs_partage) (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
   // prévient toutes les variables qui atteignent l'objet écrit, pas seulement `topKey` : après
   // `$sel = it ; $sel.n = 'Z'`, la liste `$items` qui affiche le même objet se redessine aussi
   // (même geste que l'enveloppe ; idem pour `_mjs_deepCall` et `_mjs_deepDelete` plus bas)
@@ -122,15 +142,14 @@ function _mjsDeepInterdit(o) {
 // `µ._mjs_deepCall(el, ['list'], 'push', [item])` : appelle une méthode mutative
 // sur un sous-objet et notifie la mutation à la clé top-level.
 µ._mjs_deepCall = function(el, path, methodName, args) {
-  var i, o, result, topKey, isRaw, root;
+  var i, o, a, result, topKey, isRaw, root;
   if (!_mjsDeepChemin(path)) return void 0;
   if (methodName === '__proto__' || methodName === 'constructor' || methodName === 'prototype') { _mjsDeepRefus(methodName); return void 0; }
   topKey = path[0];
   // Naviguer + appeler sur la cible BRUTE : appeler la méthode mutative via le
   // Proxy re-déclencherait le set trap (index + length) → notifs multiples, en
   // plus de la notif explicite ci-dessous.
-  o = el._state[topKey];
-  o = µ._mjs_toRaw(o);
+  o = _mjsDeepRacine(el._state[topKey]);
   root = o; // racine (avant navigation) — cf. commentaire epoch de _mjs_deepSet
   // racine marquée µ.raw : mêmes sémantiques que `_mjs_wrapDeep`
   // (mjs_element.ts) — la méthode s'appelle, mais ne notifie JAMAIS.
@@ -142,8 +161,13 @@ function _mjsDeepInterdit(o) {
   }
   // objet modifié : ni une fonction ni un prototype (cf. _mjsDeepRefus)
   if (_mjsDeepInterdit(o)) return void 0;
-  // Déballe aussi chaque ARGUMENT (ex. `arr.push($objEnveloppé)`) — pas seulement `o` ci-dessus.
-  args = args.map(function(a) { return µ._mjs_toRaw(a); });
+  // Déballe aussi chaque ARGUMENT (ex. `arr.push($objEnveloppé)`) — pas seulement `o` ci-dessus. Sur place : le code
+  // compilé écrit la liste des arguments en littéral, neuve à chaque appel ; une valeur qui n'est pas un objet passe telle
+  // quelle (`µ._mjs_toRaw` la rendrait telle quelle), sans appel ni liste ni fonction fabriquées à chaque écriture
+  for (i = 0; i < args.length; i++) {
+    a = args[i];
+    if (a !== null && typeof a === 'object') args[i] = µ._mjs_toRaw(a);
+  }
   // types (mjs_types.ts) : une liste typée modifiée par une méthode (push, splice, sort…) fait
   // contrôler ce qu'elle a changé ; refusée, la méthode est défaite, et personne n'est prévenu
   var __treg = el._mjs_treg;
@@ -159,8 +183,8 @@ function _mjsDeepInterdit(o) {
   result = o[methodName].apply(o, args);
   if (__avant !== void 0 && !µ._mjs_tafter(el, __treg, o, __avant, methodName, args, result)) return result;
   // même geste que _mjs_deepSet : fait avancer l'époque AVANT de notifier, pour
-  // que le two-way (mjs-bind:X) distingue un écho d'une mutation réelle.
-  (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
+  // que le two-way (mjs-bind:X) distingue un écho d'une mutation réelle — si un objet de l'état est tenu par deux composants
+  if (µ._mjs_partage) (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
   el._mjs_notifyMutationAliased(o, topKey, __snap);
   return result;
 };
@@ -184,8 +208,7 @@ function _mjsDeepInterdit(o) {
     el._mjs_notifyMutation(topKey);
     return true;
   }
-  o = el._state[topKey];
-  o = µ._mjs_toRaw(o);
+  o = _mjsDeepRacine(el._state[topKey]);
   root = o; // racine (avant navigation) — cf. commentaire epoch de _mjs_deepSet
   // racine marquée µ.raw : mêmes sémantiques que `_mjs_wrapDeep`
   // (mjs_element.ts) — la suppression s'écrit, mais ne notifie JAMAIS.
@@ -203,11 +226,39 @@ function _mjsDeepInterdit(o) {
   }
   delete o[__cle];
   // même geste que _mjs_deepSet : fait avancer l'époque AVANT de notifier, pour
-  // que le two-way (mjs-bind:X) distingue un écho d'une mutation réelle.
-  (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
+  // que le two-way (mjs-bind:X) distingue un écho d'une mutation réelle — si un objet de l'état est tenu par deux composants
+  if (µ._mjs_partage) (el._mjs_bindEpochs || (el._mjs_bindEpochs = {}))[topKey] = µ._mjs_bumpEpoch(root);
   el._mjs_notifyMutationAliased(o, topKey);
   return true;
 };
+
+// `$` lu comme une valeur, et non comme `$.x` ou `$[k]` (`Object.assign($, …)`, `Reflect.set($, k, v)`, `const s = $`, `f($)`,
+// la tête d'une boucle `for ($x of l)`) : le compilateur le rend par `µ._mjs_makeDeepProxy(_mjsThis, [])` (transform-reactive.ts),
+// l'état du composant enveloppé. Une écriture par l'enveloppe passe par `_set`, comme `$x = v` ; une suppression par
+// `µ._mjs_deepDelete`, comme `delete $x` ; une définition (`Object.defineProperty`) prévient la variable : les valeurs dérivées qui
+// la lisent se recalculent, l'écran suit. Sous un nom réservé (`__proto__`, `constructor`, `prototype`), la définition pose une
+// propriété propre de l'état, comme sur un objet ordinaire (aucun prototype n'est touché), sans prévenir de variable. Une seule
+// enveloppe par composant (`$ === $` reste vrai), qui se déballe comme les autres (`µ._mjs_toRaw`) ; une lecture rend ce que rend l'état
+function _mjsStateProxy(el) {
+  return el._mjs_stateProxy ||= new Proxy(el._state, {
+    get(t, k) {
+      return k === µ._mjs_RAW ? t : t[k];
+    },
+    set(t, k, v) {
+      el._set(k, v);
+      return true;
+    },
+    deleteProperty(t, k) {
+      µ._mjs_deepDelete(el, [k]);
+      return true;
+    },
+    defineProperty(t, k, d) {
+      if (!Reflect.defineProperty(t, k, d)) return false;
+      if (µ._mjs_safeKey(k)) el._mjs_notifyMutation(k);
+      return true;
+    }
+  });
+}
 
 // `µ._mjs_makeDeepProxy(el, path)` : alias public pour _mjs_wrapDeep, utilisé
 // au point d'escape détecté par le compilateur (function call externe,
@@ -216,6 +267,8 @@ function _mjsDeepInterdit(o) {
 // l'état, que l'état enveloppé rend brut) ferait écrire dans ce prototype tout code qui la reçoit
 µ._mjs_makeDeepProxy = function(el, path) {
   var i, o, topKey;
+  // chemin vide : l'état lui-même (cf. _mjsStateProxy)
+  if (!path.length) return _mjsStateProxy(el);
   if (!_mjsDeepChemin(path)) return void 0;
   topKey = path[0];
   o = el._state[topKey];

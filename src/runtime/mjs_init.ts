@@ -19,23 +19,36 @@ if (µ.CSS == null) {
 
 // Shield FOUC : DEUX règles partagées entre le document et chaque
 // Shadow DOM (via _mjs_applyLayout, cf. mjs_element.ts).
-//   1. `:not(:defined)` couvre les modules imbriqués lazy-loadés (async
-//      import) tant qu'ils ne sont pas encore enregistrés. La règle doit
-//      être DANS chaque shadow car `:not(:defined)` du document ne traverse
-//      pas les frontières Shadow DOM. `:not([mjs-ssr])` en épargne les
+//   1. les balises que le chargeur va chercher (posée par µ.Autoloader, cf.
+//      _mjs_shieldTag dans mjs_autoloader.ts, pour chaque balise du manifeste qu'il charge)
+//      couvrent les modules imbriqués lazy-loadés (async import) tant qu'ils ne
+//      sont pas encore enregistrés. La règle doit être DANS chaque shadow car
+//      `:not(:defined)` du document ne traverse pas les frontières Shadow DOM.
+//      `:not([mjs-ssr])` en épargne les
 //      éléments que le RENDU SERVEUR a déjà peints (attribut posé par
 //      server/renderToString.ts et server/render-browser.ts sur chaque
 //      élément `mjs-*` rendu) : leur balisage est là, visible, et il reste
 //      à l'écran jusqu'au premier rendu client, qui le remplace.
 //      `:not([mjs-skel-host])` en épargne ceux qui montrent la silhouette de leur
 //      contenu en attendant leur code (mjs_fx_skeleton.ts, µ._mjs_skelShow).
+//      SEULEMENT les balises du manifeste, jamais tout `:not(:defined)` : la balise d'une autre bibliothèque (définie plus
+//      tard par elle, ou jamais) n'est jamais touchée, et une balise `mjs-*` mal écrite s'affiche telle qu'elle est écrite
+//      (l'Autoloader la dit absente du manifeste) au lieu de laisser un trou invisible à vie. Un fichier unique (`js: 'bundle'`,
+//      sans Autoloader) définit tous ses composants avant de rendre la main : rien à cacher
 //   2. `[mjs-loading]` couvre le gap entre customElements.define et la fin
 //      du premier render (posé par connectedCallback, retiré en microtask) —
 //      un élément prérendu compris, dont le contenu est alors remplacé.
 // Même instance CSSStyleSheet adoptée partout → coût mémoire constant.
+// INVISIBLE, PAS RETIRÉ (`visibility`, jamais `display:none`) : la balise garde sa place pendant l'attente — celle de son
+// contenu, et celle que la page lui donne (`mjs-core-number{display:block;height:3rem}`, qu'un `display:none!important`
+// écrasait) ; un module arrivé après sa page (fichiers séparés, chargés à la demande) ne pousse plus le reste à son
+// apparition. Rien n'est peint, rien ne se clique, rien ne prend le focus, rien n'est lu par un lecteur d'écran, comme avant :
+// la règle vise aussi TOUT ce que la balise contient (` *`, et `:host([mjs-loading]) *` pour ce que son ombre porte déjà, le
+// gabarit d'un module gelé par l'attente de sa langue), sinon un descendant en `visibility:visible` (classe `visible` de
+// Tailwind, `.visible` de Bootstrap) reparaîtrait au milieu de la balise cachée
 µ._mjs_shield = new CSSStyleSheet();
 
-µ._mjs_shield.replaceSync(':not(:defined):not([mjs-ssr]):not([mjs-skel-host]),[mjs-loading]{display:none!important}');
+µ._mjs_shield.replaceSync('[mjs-loading],[mjs-loading] *,:host([mjs-loading]) *{visibility:hidden!important}');
 
 // Feuille système : classes utilitaires utilisées par le runtime (overlays
 // d'erreur, fallback). Pas de style inline — tout passe par des classes pour
@@ -59,11 +72,15 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield, �
 // matérialiser la directive <@view>. Il contient un tiret → il est traité
 // comme custom element par le DOM, donc piégé en permanence par le shield
 // `:not(:defined)` s'il n'est pas enregistré. On le déclare en no-op.
+// bloc `<vue>` : retiré du cœur par le bundler quand aucune unité du build n'écrit `<@view>` et que ni le routeur ni
+// les liens (ujs) n'en font partie
+// <vue>
 MetaViewStub = class MetaViewStub extends HTMLElement {};
 
 if (!customElements.get('metamjs-view')) {
   customElements.define('metamjs-view', MetaViewStub);
 }
+// </vue>
 
 // SSR — flag d'activation de l'hydratation par adoption. Le serveur l'a posé soit via une
 // balise script inline (window.__mjs_ssrHydrate = true) AVANT le bundle, soit — sous `csp:
@@ -218,6 +235,61 @@ var mjsLogLevel = function() {
     console.error(...args);
   }
 };
+
+// bloc `<depart-de-page>` : retiré du cœur par le bundler quand aucun autre fichier du cœur ne se sert de cette aide (aucun
+// chargeur : appli en fichier unique sans langue, sans effet, sans feuille ni variante à la demande)
+// <depart-de-page>
+// DÉPART DE LA PAGE — un chargement du runtime (module d'un composant, fichier de langue, fragment de traduction, fichier
+// d'effet, feuille) coupé parce que le visiteur s'en va n'est pas une panne. Firefox et Safari coupent ce qui est en vol dès
+// que la navigation part (juste après `beforeunload`), la page restant affichée jusqu'à la réponse de la suivante ; Chromium
+// coupe après `pagehide`. Le départ est ANNONCÉ par une navigation vers un autre document (API Navigation : lien, formulaire,
+// script) ou par `beforeunload` (barre d'adresse, rechargement, retour), CONFIRMÉ par `pagehide`, oublié au `pageshow`
+// (page revenue du cache de navigation). `beforeunload`, seul signal d'un départ par la barre d'adresse, est écouté en
+// permanence (`_mjsInFlight` part de 1), sauf dans Firefox (`navigator.vendor` vide) : il y priverait la page du cache de
+// navigation, il n'y est écouté que tant qu'un chargement suivi par `µ._mjs_loading` est en vol.
+// `µ._mjs_loadFailed(err, report)` : `report` dit l'échec tout de suite quand aucun départ n'est annoncé ; départ annoncé
+// depuis moins de 10 s, il attend la fin de ces 10 s et ne dit l'échec que si la page est toujours là (navigation annulée :
+// réponse 204, téléchargement, départ refusé) ; page cachée par son départ, rien. Une requête annulée volontairement
+// (`AbortError`) ne se dit jamais. `µ._mjs_leaveWait()` : ce qui reste de ces 10 s (ms), 0 sans départ annoncé ou passé le
+// délai, -1 page cachée par son départ. `µ._mjs_left()` : un départ annoncé depuis que la page est montrée, quel que soit le
+// temps passé — rien ne recharge la page tant qu'une navigation peut être en route (une page suivante lente répond après 10 s).
+// La marque d'un départ resté sans suite (réponse 204, téléchargement, départ refusé) tombe à la navigation suivante
+// de la page : une navigation MJS lancée après lui (`mjs:visit`) et arrivée (`mjs:load`) ; un départ annoncé pendant
+// cette navigation reste en cours, sa marque date d'après elle
+var _mjsLeaveAt  = 0;
+var _mjsLeaveVu  = 0;
+var _mjsHides    = 0;
+var _mjsHidden   = 0;
+var _mjsInFlight = typeof navigator === 'object' && navigator !== null && navigator.vendor ? 1 : 0;
+var _mjsLeaving  = function() { _mjsLeaveAt = Date.now(); };
+if (typeof window !== 'undefined' && typeof addEventListener === 'function') {
+  if (_mjsInFlight) { addEventListener('beforeunload', _mjsLeaving); }
+  addEventListener('pagehide', function() { _mjsHides++; _mjsHidden = 1; });
+  addEventListener('pageshow', function() { _mjsHidden = _mjsLeaveAt = 0; });
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') { window.navigation.addEventListener('navigate', function(e) { if (!e.destination.sameDocument && !e.downloadRequest) { _mjsLeaving(); } }); }
+  if (typeof document === 'object' && document !== null && typeof document.addEventListener === 'function') {
+    document.addEventListener('mjs:visit', function() { _mjsLeaveVu = _mjsLeaveAt; });
+    document.addEventListener('mjs:load', function() { if (_mjsLeaveAt === _mjsLeaveVu) { _mjsLeaveAt = 0; } });
+  }
+}
+// la promesse `p` d'un chargement du runtime, suivie tant qu'elle est en vol ; rendue telle quelle
+µ._mjs_loading = function(p) {
+  if (typeof window === 'undefined' || typeof addEventListener !== 'function') { return p; }
+  if (!_mjsInFlight++) { addEventListener('beforeunload', _mjsLeaving); }
+  var end = function() { if (!--_mjsInFlight) { removeEventListener('beforeunload', _mjsLeaving); } };
+  Promise.resolve(p).then(end, end);
+  return p;
+};
+µ._mjs_leaveWait = function() { return _mjsHidden ? -1 : Math.max(0, _mjsLeaveAt + 10000 - Date.now()); };
+µ._mjs_left = function() { return !!(_mjsHidden || _mjsLeaveAt); };
+µ._mjs_loadFailed = function(err, report) {
+  var hides = _mjsHides;
+  var wait  = µ._mjs_leaveWait();
+  if (wait < 0 || (err && err.name === 'AbortError')) { return; }
+  if (!wait) { return report(); }
+  setTimeout(function() { if (hides === _mjsHides) { report(); } }, wait);
+};
+// </depart-de-page>
 
 // Écriture d'attribut DÉFENSIVE pour les valeurs/clés DYNAMIQUES (binding
 // `attr={…}`, spread `{...obj}` dont les clés/valeurs peuvent venir d'un objet

@@ -129,7 +129,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     await new Promise<void>((resolve) => {
       µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
     })
-    assert.deepEqual(receivedNav, { version: 'v7', target: null, method: null, cache: null, reload: null, type: 'text/html' }, 'target/method/cache/reload à null : aucun en-tête X-MJS-Target/X-MJS-Method/X-MJS-Cache/X-MJS-Reload sur cette réponse ; type = Content-Type reçu')
+    assert.deepEqual(receivedNav, { version: 'v7', target: null, method: null, cache: null, reload: null, type: 'text/html', csrf: null }, 'target/method/cache/reload/csrf à null : aucun en-tête X-MJS-Target/X-MJS-Method/X-MJS-Cache/X-MJS-Reload/X-CSRF-Token sur cette réponse ; type = Content-Type reçu')
   })
 
   it('en-têtes absents (serveur tiers muet) : le callback reçoit TOUJOURS un objet, chaque champ à null (jamais `null` lui-même), rétrocompatible', async function () {
@@ -143,7 +143,7 @@ describe("mjs_ajax — response.url transmis au callback success (2e argument)",
     await new Promise<void>((resolve) => {
       µ.ajax.post('https://x/posts', new FormData(), (_body: any, _url: any, _schemaNom: any, nav: any) => { receivedNav = nav; resolve() })
     })
-    assert.deepEqual(receivedNav, { version: null, target: null, method: null, cache: null, reload: null, type: 'text/html' })
+    assert.deepEqual(receivedNav, { version: null, target: null, method: null, cache: null, reload: null, type: 'text/html', csrf: null })
   })
 
   it('appelant à 2 paramètres (body, url) : aucune différence, rétrocompatible', async function () {

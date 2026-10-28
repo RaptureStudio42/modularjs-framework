@@ -53,6 +53,7 @@ function makeLink(opts: { pathname: string, search?: string, hash?: string }) {
     pathname: opts.pathname,
     search: opts.search || '',
     hash: opts.hash || '',
+    href: 'http://x' + opts.pathname + (opts.search || '') + (opts.hash || ''),
     closest: function (this: any) { return this },
   }
 }
@@ -71,9 +72,11 @@ describe("mjs_ujs — clic sur un lien vers la page+hash déjà affichés : pas 
   function makeCtx(currentHash: string) {
     const pushStateCalls: any[] = []
     const navigateCalls: any[] = []
+    const scrollCalls: any[] = []
     const win: any = {
       location: { pathname: '/dash', search: '', origin: 'http://x', hash: currentHash },
       history: { pushState: (...args: any[]) => pushStateCalls.push(args) },
+      scrollTo: (o: any) => scrollCalls.push(o),
     }
     const µ: any = {
       realTarget: (e: any) => e.target,
@@ -85,11 +88,11 @@ describe("mjs_ujs — clic sur un lien vers la page+hash déjà affichés : pas 
       _mjs_navWarnNoUjsMethod: () => {},
     }
     const fakeDoc: any = { getElementById: () => null }
-    return { win, µ, fakeDoc, pushStateCalls, navigateCalls }
+    return { win, µ, fakeDoc, pushStateCalls, navigateCalls, scrollCalls }
   }
 
   it("même pathname, même search, MÊME hash : aucun pushState ni navigate (juste preventDefault)", function () {
-    const { win, µ, fakeDoc, pushStateCalls, navigateCalls } = makeCtx('#/tab2')
+    const { win, µ, fakeDoc, pushStateCalls, navigateCalls, scrollCalls } = makeCtx('#/tab2')
     const link = makeLink({ pathname: '/dash', hash: '#/tab2' })
     const e = makeEvent(link)
     const handler = makeClickHandler()
@@ -98,10 +101,11 @@ describe("mjs_ujs — clic sur un lien vers la page+hash déjà affichés : pas 
     assert.equal(e.defaultPrevented, true, 'le clic reste pris en charge (pas de navigation native)')
     assert.equal(pushStateCalls.length, 0, "AVANT le fix : pushState empilait une 2e entrée identique à la courante")
     assert.equal(navigateCalls.length, 0, 'rien à re-router : la destination EST déjà ce qui est affiché')
+    assert.equal(scrollCalls.length, 0, 'la route affichée garde sa position')
   })
 
-  it('même pathname, AUCUN hash des deux côtés (ex. logo vers la page courante) : pas de doublon non plus', function () {
-    const { win, µ, fakeDoc, pushStateCalls, navigateCalls } = makeCtx('')
+  it('même pathname, AUCUN hash des deux côtés (ex. logo vers la page courante) : pas de doublon non plus, la page remonte en haut', function () {
+    const { win, µ, fakeDoc, pushStateCalls, navigateCalls, scrollCalls } = makeCtx('')
     const link = makeLink({ pathname: '/dash' })
     const e = makeEvent(link)
     const handler = makeClickHandler()
@@ -109,6 +113,7 @@ describe("mjs_ujs — clic sur un lien vers la page+hash déjà affichés : pas 
 
     assert.equal(pushStateCalls.length, 0)
     assert.equal(navigateCalls.length, 0)
+    assert.deepEqual(scrollCalls, [{ left: 0, top: 0, behavior: 'instant' }], 'AVANT : le lien vers la page affichée était sans effet (le navigateur seul la recharge, en haut)')
   })
 
   it('même page mais hash DIFFÉRENT : pushState + navigate partent normalement (comportement legitime inchangé)', function () {

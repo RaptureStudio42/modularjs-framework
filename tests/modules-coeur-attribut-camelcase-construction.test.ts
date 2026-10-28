@@ -1,6 +1,7 @@
 // modules du cœur : un attribut écrit en dur sur leur balise (`<@@x …>` ou `<mjs-core-x …>`) qui est l'écriture camelCase d'une prop du
-// module arrête la construction en donnant la bonne écriture. Le HTML met les noms d'attributs en minuscules : `emptyLabel="Rien"` arrive en
-// `emptylabel`, que le module ne lit pas, et la page partirait sans rien dire. Les formes liées (`emptyLabel={$x}` comme `empty-label={$x}`)
+// module arrête la construction en donnant l'écriture à tirets, la seule des attributs des modules du cœur. Le HTML met les noms d'attributs
+// en minuscules : `emptyLabel="Rien"` arrive en `emptylabel`, que le module recevrait pourtant sous son nom (comme toute prop déclarée d'un
+// composant) ; le refus garde une seule écriture. Les formes liées (`emptyLabel={$x}` comme `empty-label={$x}`)
 // passent la valeur par le code et marchent : permises. Dans le doute, rien : une variable que le module calcule lui-même (`labelText`), un
 // attribut natif (`tabIndex`), un attribut `data-*` ou `aria-*`, un composant de l'appli. Les props se lisent dans les sources du module.
 
@@ -37,7 +38,7 @@ const FAUTES = DONNEES + [
   '<@@gauge warnColor="red"></@@gauge>',
 ].join('\n') + '\n'
 
-const faute = (tag: string, attribut: string, kebab: string) => `<${tag} ${attribut}=…> — écrivez ${kebab} : le HTML met les noms d'attributs en minuscules, et ${attribut} écrit en dur arriverait en ${attribut.toLowerCase()}, ignoré.`
+const faute = (tag: string, attribut: string, kebab: string) => `<${tag} ${attribut}=…> — écrivez ${kebab} : sur un module du cœur, un attribut écrit en dur s'écrit à tirets, comme dans sa documentation. Écrit ainsi, ${attribut} arriverait en minuscules (${attribut.toLowerCase()}) et le module le recevrait pourtant sous son nom : la construction n'en garde qu'une écriture.`
 
 const ATTENDUS = [
   faute('@@chart', 'emptyLabel', 'empty-label'),
@@ -90,7 +91,7 @@ describe('modules du cœur — un attribut écrit en camelCase arrête la constr
     setMessagesLang('en')
     try {
       const { fichier, texte } = await construire('camel-fautes-en', { 'gc-page.mjs': DONNEES + '<@@field name="n" okLabel="Well done"><input name="n"></@@field>\n' })
-      const attendu = '<@@field okLabel=…> — write ok-label: HTML lowercases attribute names, and okLabel written as is would arrive as oklabel, ignored.'
+      const attendu = '<@@field okLabel=…> — write ok-label: on a core module, an attribute written as is takes the dashed form, as in its documentation. Written this way, okLabel would arrive lowercased (oklabel) and the module would still receive it under its name: the build keeps a single spelling.'
       assert.ok(texte.includes(`[bundler] ${fichier}: ${attendu}`), `message absent : ${attendu}\n--- erreurs :\n${texte}`)
     }
     finally {

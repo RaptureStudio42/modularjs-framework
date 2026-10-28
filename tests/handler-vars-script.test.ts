@@ -17,7 +17,13 @@
 // refusée AU BUILD au lieu d'attendre le premier clic.
 
 import assert from 'node:assert/strict'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { Window } from 'happy-dom'
+import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { stripEsm } from '../src/server/renderToString.js'
 import { transpile } from '../src/transpiler/index.js'
+import { mjsTmp } from './helpers/tmp.js'
 
 /** le corps du batch `_mjs_inline` seul — jamais le `<script>` qui le précède */
 async function batchInline(src: string): Promise<string> {
@@ -28,7 +34,33 @@ async function batchInline(src: string): Promise<string> {
   return output.slice(debut, fin > 0 ? fin : undefined)
 }
 
+const attendre = (ms = 30) => new Promise((r) => setTimeout(r, ms))
+
+/** le composant `card` construit en développement (le cœur, puis le composant) ou en production (le manifeste seul), monté dans happy-dom */
+async function monter(source: string, prod: boolean): Promise<{ win: any, ombre: any }> {
+  const root      = mjsTmp(`handler-vars-${prod ? 'prod' : 'dev'}`)
+  const srcDir    = join(root, 'src')
+  const outDir    = join(root, 'out')
+  const manifeste = join(root, 'bundle.js')
+  mkdirSync(srcDir, { recursive: true })
+  writeFileSync(join(srcDir, 'card.mjs'), source)
+  const bundler = new Bundler(prod ? { sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste, js: 'bundle', env: 'prod' } as any : { sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste })
+  const stats   = await bundler.compile()
+  await bundler.close()
+  assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
+  const rang = (f: string) => f.startsWith('mjs_core') ? 0 : f.startsWith('mjs_') ? 1 : 2
+  const code = prod ? stripEsm(readFileSync(manifeste, 'utf-8')) : readdirSync(outDir).filter((f) => f.endsWith('.js')).sort((a, b) => rang(a) - rang(b) || a.localeCompare(b)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;'
+  const win: any = new Window({ url: 'http://localhost/' })
+  win.eval(code)
+  win.document.body.innerHTML = '<mjs-card></mjs-card>'
+  await attendre(80)
+  const el: any = win.document.body.firstElementChild
+  return { win, ombre: el._shadow || el.shadowRoot }
+}
+
 describe('handlers — les variables ordinaires du <script>', function () {
+  after(async () => { await terminateSharedWorkerPool() })
+
   it('une écriture nue vise la var du <script>, elle n\'en déclare plus une copie locale', async function () {
     const batch = await batchInline("<script>\n  n = 'a'\n</script>\n<button @click={n = 'b'}>x</button>\n")
     assert.match(batch, /return n = 'b'/)
@@ -41,11 +73,41 @@ describe('handlers — les variables ordinaires du <script>', function () {
     assert.doesNotMatch(batch, /let compteur\b/, "AVANT : `let compteur = compteur + 1` — zone morte, « Cannot access before initialization »")
   })
 
+  // une ligne pure d'un {for} de racine (elle ne lit que son élément et son indice) les relit sur l'entrée de la ligne
+  // (`el._mjs_row._mjs_en`) ; le squelette en tête du handler les déclare toujours pour lui seul
   it('la variable de boucle reste LOCALE, même si le <script> porte un homonyme', async function () {
     const batch = await batchInline("<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}\n  <button @click={console.log(item)}>x</button>\n{end}\n")
-    assert.match(batch, /let item = _mjs_ra_0\[_mjs_ri_0\]/, 'le squelette DOIT garder sa propre déclaration')
-    assert.match(batch, /let index = _mjs_ri_0/)
+    assert.match(batch, /let item = _mjs_ra_0\._mjs_it\b/, 'le squelette DOIT garder sa propre déclaration')
+    assert.match(batch, /let index = _mjs_ra_0\._mjs_ix\b/)
   })
+
+  // le comportement, pas la forme : le bouton d'une ligne lit l'élément de SA ligne, et le bouton hors de la boucle lit encore
+  // l'homonyme du <script>, que les clics sur les lignes n'ont pas écrasé
+  for (const prod of [false, true]) {
+    it(`… au clic, en ${prod ? 'production' : 'développement'} : la ligne lit son élément, l'homonyme du <script> reste intact`, async function () {
+      this.timeout(60000)
+      const source = "<script>\n  item = 'du script'\n  $list = ['a', 'b']\n  $vu = ''\n</script>\n<p class=\"vu\">{$vu}</p>\n{for item in $list}\n  <button class=\"ligne\" @click={$vu = item}>{item}</button>\n{end}\n<button class=\"script\" @click={$vu = item}>script</button>\n"
+      const { win, ombre } = await monter(source, prod)
+      try {
+        const vu     = () => ombre.querySelector('.vu').textContent
+        const clique = async (b: any) => {
+          b.dispatchEvent(new win.Event('click', { bubbles: true }))
+          await attendre()
+        }
+        const lignes = Array.from(ombre.querySelectorAll('.ligne')) as any[]
+        assert.deepEqual(lignes.map((b) => b.textContent), ['a', 'b'])
+        await clique(lignes[1])
+        assert.equal(vu(), 'b', 'la deuxième ligne lit son élément')
+        await clique(lignes[0])
+        assert.equal(vu(), 'a', 'la première ligne lit le sien')
+        await clique(ombre.querySelector('.script'))
+        assert.equal(vu(), 'du script', 'hors de la boucle, le nom est celui du <script>, jamais le dernier élément cliqué')
+      }
+      finally {
+        await win.happyDOM.close()
+      }
+    })
+  }
 
   it('une locale de travail du handler reste une locale', async function () {
     const batch = await batchInline('<button @click={tmp = 3; console.log(tmp)}>x</button>\n')

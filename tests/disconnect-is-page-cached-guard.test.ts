@@ -1,12 +1,8 @@
 // disconnectedCallback() (mjs_element.ts) appelle µ._mjs_isPageCached(__self) dans la microtâche de
-// destruction DIFFÉRÉE, SANS garde. `_mjs_isPageCached` vit dans mjs_init.ts — un des 4 fichiers du
-// CŒUR STRICT (jamais retirés, quels que soient `runtime`/les faits détectés) : contrairement à
-// `_mjs_storeSubscribe`/`_mjs_storeUnsubscribe` (module optionnel `vault`, cf. tests/disconnect-store-
-// globals-guard.test.ts), il n'y a PAS de vrai risque de plantage aujourd'hui. Garde défensive
-// posée quand même, même patron que µ._mjs_cleanupUniversalDeps (tests/disconnect-cleanup-universal-
-// deps-guard.test.ts) : absence SIMULÉE par retrait après montage, pas une config réelle — un
-// prérequis de robustesse si un cœur futur s'en passait, jamais un changement de comportement
-// observable aujourd'hui.
+// destruction DIFFÉRÉE. `_mjs_isPageCached` vit dans mjs_page_cache.ts, qui ne part au cœur qu'avec router,
+// ujs ou modal : un cœur sans navigation ni modale s'en passe, la garde défensive le permet (même patron que
+// µ._mjs_cleanupUniversalDeps, cf. tests/disconnect-cleanup-universal-deps-guard.test.ts). Absence SIMULÉE par
+// retrait après montage, sur un cœur complet ('all') : le même cœur sert le cas normal, où la fonction est bien appelée.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
@@ -37,7 +33,8 @@ async function loadHarness() {
     '<p>x</p>',
   ].join('\n'))
 
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+  // le test lit µ._mjs_isPageCached depuis son propre code, hors des sources compilées : le composant n'a ni navigation ni modale, 'all' rend le cœur complet
+  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: 'all' })
   const stats = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
 
@@ -53,7 +50,7 @@ async function loadHarness() {
     globalThis.µ = µ;
     ${stripEsm(readFileSync(join(outDir, compFile!), 'utf-8'))}
   `)
-  assert.equal(typeof win.µ._mjs_isPageCached, 'function', 'préalable : mjs_init.ts est cœur strict, toujours présent')
+  assert.equal(typeof win.µ._mjs_isPageCached, 'function', 'préalable : mjs_page_cache.ts est dans le cœur complet')
   return { win, document }
 }
 

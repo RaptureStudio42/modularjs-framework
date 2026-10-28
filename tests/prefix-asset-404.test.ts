@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
+import { etape } from './helpers/attendre.js'
 import { StaticServer } from '../src/server/index.js'
 import { createRenderHandler } from '../src/server/render-request.js'
 import { createServeEntry } from '../src/server/serve-entry.js'
@@ -41,7 +42,10 @@ function setup() {
   return { root, outDir, config }
 }
 
-describe('assets sous pathPrefix : extension + fichier absent → 404, jamais le shell', () => {
+describe('assets sous pathPrefix : extension + fichier absent → 404, jamais le shell', function () {
+  // une réponse ne prend que quelques millisecondes une fois les moteurs de rendu créés ; sous charge, un rendu peut
+  // dépasser les 2 s par défaut de mocha sans que rien ne soit en défaut
+  this.timeout(30000)
   let root: string, outDir: string, config: any
   let dev: StaticServer
   let devPort: number
@@ -49,19 +53,27 @@ describe('assets sous pathPrefix : extension + fichier absent → 404, jamais le
   let renderHandler: Awaited<ReturnType<typeof createRenderHandler>>
   let entry: Awaited<ReturnType<typeof createServeEntry>>
 
+  // borné par ses étapes, chacune attendue pour de vrai et nommée dans l'erreur si elle n'aboutit pas, jamais par un
+  // chiffre global (20 s ne suffisaient pas toujours sous charge)
   before(async function () {
-    this.timeout(20000)
+    this.timeout(0)
     ;({ root, outDir, config } = setup())
-    renderHandler = await createRenderHandler(config, root)
-    entry = await createServeEntry(config, root)
+    renderHandler = await etape('création du rendu à la demande', createRenderHandler(config, root))
+    entry = await etape('création de l\'entrée de mjs serve', createServeEntry(config, root))
     dev = new StaticServer({
       rootDir: outDir, port: 0, host: '127.0.0.1',
       config, configDir: root, manifestPath: join(outDir, 'manifest.js'),
       renderHandle: renderHandler.handle, entry,
     })
-    await dev.start()
+    await etape('démarrage de mjs dev', dev.start())
     devPort = (dev.server!.address() as any).port
-    serve = await startRenderServer(config, root, { port: 0 })
+    serve = await etape('démarrage de mjs serve', startRenderServer(config, root, { port: 0 }))
+    // chaque serveur crée son moteur de rendu à sa première requête (compilation du projet, plusieurs secondes sous
+    // charge) : amorcé ici sur la route racine, hors des URL vérifiées, chaque test ne mesure plus que sa réponse
+    for (const [nom, port] of [['mjs dev', devPort], ['mjs serve', serve.port]] as const) {
+      const res = await etape(`premier rendu de ${nom}`, fetch(`http://127.0.0.1:${port}/`))
+      assert.equal(res.status, 200, `${nom} : la route racine doit se rendre`)
+    }
   })
 
   after(async () => {

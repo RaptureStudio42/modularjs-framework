@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { fileURLToPath } from 'node:url'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
@@ -234,10 +234,12 @@ describe('construction — la barre d\'outils de <@@chart> ne part que si une pa
   describe('les libellés propres à la barre', () => {
     const PARTIE = CORE_LABEL_PARTS['chart.toolbar']
 
-    it('chaque clé d\'une partie est une clé de son module', () => {
+    // ou d'un module qu'il pose dans son gabarit, qu'il emporte avec lui (<@@editor> pose <@@toolbar>)
+    it('chaque clé d\'une partie est une clé de son module, ou d\'un module qu\'il pose dans son gabarit', () => {
       for (const [partie, keys] of Object.entries(CORE_LABEL_PARTS)) {
         const module = partie.split('.')[0]
-        assert.deepEqual(keys.filter((k) => !CORE_LABEL_MODULES[module]?.includes(k)), [], partie)
+        const poses  = [...readFileSync(join(dirname(CHART), module + '.mjs'), 'utf-8').matchAll(/<@@([a-z]+)/g)].map((m) => m[1])
+        assert.deepEqual(keys.filter((k) => ![module, ...poses].some((m) => CORE_LABEL_MODULES[m]?.includes(k))), [], partie)
       }
     })
 

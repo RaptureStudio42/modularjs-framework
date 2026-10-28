@@ -16,7 +16,7 @@ const table: Table = CORE_LABEL_MODULES
 describe('libellés des modules du cœur — la table module → ses clés', () => {
   it('le groupe core a les mêmes clés en français et en anglais', () => {
     assert.deepEqual([...GROUPE_EN].sort(), [...GROUPE_FR].sort())
-    assert.equal(GROUPE_FR.size, 102)
+    assert.equal(GROUPE_FR.size, 115)
   })
 
   it('chaque clé du groupe core appartient à exactement un module de la table', () => {
@@ -160,13 +160,13 @@ describe('runtimeLabelsFor — le groupe core limité aux modules emportés', ()
 
   it('modules inconnus (faits manquants) : tout le groupe, comme avant', () => {
     const t = runtimeLabelsFor(false, GROUPES) as any
-    assert.equal(Object.keys(t.fr.core).length, 102)
-    assert.equal(Object.keys(t.en.core).length, 102)
+    assert.equal(Object.keys(t.fr.core).length, 115)
+    assert.equal(Object.keys(t.en.core).length, 115)
   })
 
   it('groupes inconnus : tout est gardé, la liste des modules n\'y change rien', () => {
     const t = runtimeLabelsFor(false, undefined, new Set(['select'])) as any
-    assert.equal(Object.keys(t.fr.core).length, 102)
+    assert.equal(Object.keys(t.fr.core).length, 115)
   })
 
   it('le groupe core n\'est pas demandé : il ne part pas, quels que soient les modules', () => {

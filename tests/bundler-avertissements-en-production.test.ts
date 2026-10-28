@@ -1,9 +1,9 @@
 // les avertissements du framework ne partent plus en production quand le niveau de console les tait
 //
-// build RÉEL d'une appli (cœur complet, une animation, un composant qui écrit ses propres messages) en production :
+// build RÉEL d'une appli (cœur sans clé `runtime`, une animation, un composant qui écrit ses propres messages) en production :
 //   - au défaut ('error') : aucun appel µ.warn du framework dans le code envoyé, ses appels µ.error restent ;
 //   - à 'silent', sans le journal des erreurs : ni µ.warn ni µ.error du framework ;
-//   - à 'silent', avec le journal (il lit chaque µ.error pour l'envoyer au serveur) : les µ.error restent ;
+//   - à 'silent', avec le journal (il lit chaque µ.error pour l'envoyer au serveur ; `runtime: 'all'` l'embarque) : les µ.error restent ;
 //   - à { prod: 'warn' } : avertissements et erreurs sont là, comme avant.
 // les appels µ.warn et µ.error écrits dans le code de l'appli restent à tous les niveaux, rendus muets à l'exécution.
 // les fichiers de messages perdent, aux niveaux 'error' et 'silent', les textes que seuls des avertissements retirés lisaient
@@ -15,6 +15,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { DEV_ONLY_MESSAGES } from '../src/bundler/minify.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const AVERTISSEMENT = 'appli : avertissement du programmeur'
@@ -71,7 +72,9 @@ describe('avertissements du framework en production — le niveau de console les
     built['warn']               = await build({ js: 'bundle', logLevel: 'warn' })
     built['silent-coeur']       = await build({ js: 'bundle', logLevel: 'silent', runtime: 'core' })
     built['warn-coeur']         = await build({ js: 'bundle', logLevel: 'warn', runtime: 'core' })
-    built['silent-journal']     = await build({ js: 'bundle', logLevel: 'silent' })
+    // le journal n'entre au cœur que si le code de l'appli écrit µ.config.journal ou si le projet a des vues serveur : 'all' l'embarque, la comparaison se fait à cœur égal
+    built['silent-journal']     = await build({ js: 'bundle', logLevel: 'silent', runtime: 'all' })
+    built['prod-warn-tout']     = await build({ js: 'bundle', logLevel: { prod: 'warn' }, runtime: 'all' })
     built['défaut-fichiers']    = await build({})
     built['prod-warn-fichiers'] = await build({ logLevel: { prod: 'warn' } })
   })
@@ -106,8 +109,9 @@ describe('avertissements du framework en production — le niveau de console les
 
   it('\'silent\' avec le journal des erreurs : les µ.error du framework restent (le journal les envoie au serveur), aucun µ.warn', () => {
     const { code } = built['silent-journal']
+    assert.ok(code.includes('/__mjs/errors'), 'le journal des erreurs est embarqué')
     assert.equal(appels(code, 'warn'), 1)
-    assert.equal(appels(code, 'error'), appels(built['prod-warn'].code, 'error'))
+    assert.equal(appels(code, 'error'), appels(built['prod-warn-tout'].code, 'error'))
   })
 
   it('fichiers séparés, défaut : le cœur n\'a plus aucun appel µ.warn, ses µ.error restent', () => {
@@ -118,11 +122,12 @@ describe('avertissements du framework en production — le niveau de console les
     assert.ok(built['défaut-fichiers'].code.includes(AVERTISSEMENT) && built['défaut-fichiers'].code.includes(ERREUR))
   })
 
-  it('fichiers de messages : au défaut, les textes que seuls des avertissements lisaient sont partis ; à { prod: \'warn\' }, ils sont là', () => {
+  it('fichiers de messages : au défaut, les textes que seuls des avertissements lisaient sont partis ; à { prod: \'warn\' }, ceux de production sont là', () => {
     const defaut = JSON.parse(built['défaut-fichiers'].messagesFr)
     const avant  = JSON.parse(built['prod-warn-fichiers'].messagesFr)
     assert.deepEqual(LUS_PAR_AVERTISSEMENTS.filter(k => k in defaut), [])
-    assert.deepEqual(LUS_PAR_AVERTISSEMENTS.filter(k => !(k in avant)), [])
+    // à { prod: 'warn' }, les avis du développement seul (fxEveryRefused, everyInit) partent aussi, avec leurs appels
+    assert.deepEqual(LUS_PAR_AVERTISSEMENTS.filter(k => !(k in avant)), LUS_PAR_AVERTISSEMENTS.filter(k => DEV_ONLY_MESSAGES.includes(k)))
     assert.deepEqual(LUS_AILLEURS.filter(k => !(k in defaut)), [], 'une clé lue aussi par une erreur ou par un module cœur reste')
   })
 })

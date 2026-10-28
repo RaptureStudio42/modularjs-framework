@@ -606,6 +606,10 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
 
   function extractComputedKey(node: any): string | number | DynSegment | null {
     if (!node) return null
+    // la clé que le moteur lit : une expression régulière vaut son texte (`/a/ig` → '/a/gi', drapeaux dans l'ordre du moteur), un BigInt
+    // ses chiffres en base dix (`0x10n` → '16') — jamais l'objet lui-même, que le chemin compilé ne sait pas écrire
+    if (node.type === 'Literal' && node.regex) return node.value instanceof RegExp ? String(node.value) : `/${node.regex.pattern}/${node.regex.flags}`
+    if (node.type === 'Literal' && typeof node.value === 'bigint') return String(node.value)
     if (node.type === 'Literal') return node.value as string | number
     // Identifier dynamique : on garde le nom de var, le code généré
     // utilisera la valeur runtime via interpolation
@@ -1020,8 +1024,9 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
     // du Proxy `µ.state` ne couvre que les STORES, pas les `$.` d'un composant).
     // On émet dès la profondeur 1 : le top-level `delete $.x` n'est PAS vu par
     // transformReactiveWrites (qui ne traite que les AssignmentExpression), donc
-    // c'est bien ici qu'on le câble. Les clés computées non littérales
-    // (`delete $.o[expr]`) donnent un path nul → laissées brutes (conservateur).
+    // c'est bien ici qu'on le câble ; `delete $[expr]` aussi (clé évaluée à l'exécution).
+    // Plus bas, les clés computées non littérales (`delete $.o[expr]`) donnent un path nul
+    // → laissées brutes : l'enveloppe de `$.o` prévient la suppression.
     //
     // Statisation $$ : `delete $$x` (profondeur racine, 1 segment) →
     // `µ._mjs_storeDelete('x')` (fonction TOP-LEVEL dédiée, contrat runtime) ;
@@ -1066,6 +1071,14 @@ export function applyPathTrackingMapped(js: string, opts: { storeOnly?: boolean 
       if (!target || target.type !== 'MemberExpression') return
       const tp = getPath(target)
       if (!tp) {
+        // `delete $[k]` (clé faite d'une expression) : comme `delete $.x`, par l'aide qui prévient la variable et périme les
+        // valeurs dérivées qui la lisent — la clé reste en place, évaluée une fois
+        if (!storeOnly && target.computed && target.object.type === 'Identifier' && target.object.name === '$') {
+          ms.overwrite(node.start, target.property.start, 'µ._mjs_deepDelete(_mjsThis, [')
+          ms.overwrite(target.property.end, node.end, '])')
+          changed = true
+          return
+        }
         // à travers un objet du magasin : `µ._mjs_storeDeleteOn(rootKey, objet, clé)`
         const root = findRoot(target.object)
         const p    = root ? foundParts(target) : null

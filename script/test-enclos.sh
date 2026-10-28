@@ -8,11 +8,14 @@
 #   MJS_TEST_MEM      plafond mémoire du run entier (défaut 4G)
 #   MJS_TEST_MAXSEC   garde-temps du GROUPE en secondes, 0 = aucune (défaut 0) — tue aussi les
 #                     mocha orphelins, ce qu'un `timeout npm test` ne sait pas faire
-# Sans systemd utilisateur (CI, conteneur, bac à sable), garde mémoire de repli : la mémoire réelle
-# (RSS cumulée) de l'arbre de processus de mocha est relevée toutes les 0,5 s, et l'arbre entier tué
-# au-delà de MJS_TEST_MEM, avec le même verdict ; MJS_TEST_MAXSEC n'y est pas appliqué.
-# TMPDIR COURT obligatoire (ex. /tmp/claude-1000/t1) : tsx ouvre une socket sous TMPDIR et un chemin
-# long donne `listen EINVAL … .pipe` sur 7 tests, faux rouges sans rapport avec le code.
+# Sans systemd utilisateur (CI, conteneur, bac à sable), garde de repli : la mémoire réelle (RSS
+# cumulée) de l'arbre de processus de mocha est relevée toutes les 0,5 s, et l'arbre entier tué
+# au-delà de MJS_TEST_MEM, avec le même verdict, ou au-delà de MJS_TEST_MAXSEC (un nombre de
+# secondes) ; un processus sorti de l'arbre lui échappe, seul l'enclos le rattrape.
+# TMPDIR court : tsx ouvre une socket sous TMPDIR (`tsx-<uid>/<pid>.pipe`) et le noyau refuse un
+# chemin de socket de plus de 107 octets (`listen EINVAL … .pipe`, faux rouges sans rapport avec le
+# code). Un TMPDIR trop long cède la place, le temps du run, à un dossier court à lui sous /tmp,
+# annoncé puis retiré à la fin ; s'il ne peut pas être créé, un message le dit.
 # Arguments : sans argument, la suite complète ; avec, les seuls fichiers passés.
 #   npm test                              → tout
 #   npm test -- tests/csp-runtime.test.ts → ce fichier seul, sous enclos
@@ -28,6 +31,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOCHA=("$ROOT/node_modules/.bin/mocha" --require tsx/esm --require "$ROOT/tests/helpers/tmp-sweep.ts" --exit)
 if [ "$#" -gt 0 ]; then MOCHA+=("$@")
 else MOCHA+=(--recursive "$ROOT/tests/" --extension ts)
+fi
+
+# --- 1 bis. TMPDIR assez court pour une socket Unix ---
+
+# la plus longue socket que les tests ouvrent sous TMPDIR : celle de tsx, au plus long numéro de processus (4194304) ; au-delà de
+# 107 octets, un dossier court à ce run sous /tmp (droits 700, cf. mktemp), retiré à la sortie du script
+SOCKET="${TMPDIR:-/tmp}"
+SOCKET="${SOCKET%/}/tsx-$UID/4194304.pipe"
+SOCKET_BYTES=$(( $(printf '%s' "$SOCKET" | wc -c) ))
+if [ "$SOCKET_BYTES" -gt 107 ]; then
+  SHORT_TMP="$(mktemp -d /tmp/enclos-XXXXXX)"
+  if [ -n "$SHORT_TMP" ] && [ -d "$SHORT_TMP" ]; then
+    trap 'rm -rf "${SHORT_TMP:?}"' EXIT
+    echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec celle de tsx, 107 au plus) — le run prend $SHORT_TMP, retiré à la fin"
+    export TMPDIR="$SHORT_TMP"
+  else
+    echo "⚠  TMPDIR trop long pour une socket Unix ($SOCKET_BYTES octets avec celle de tsx, 107 au plus) et aucun dossier court sous /tmp — les tests qui lancent tsx échoueront par « listen EINVAL » : prenez un TMPDIR court (ex. /tmp/claude-1000/t1)"
+  fi
 fi
 
 # --- 2. Verdict d'un run tué (enclos ou garde de repli) ---
@@ -90,10 +111,10 @@ tree_rss() {
 # repère mocha (l'autre enfant de ce script) dès qu'il apparaît et note sa date de départ, puis relève son arbre
 # toutes les 0,5 s jusqu'à sa mort, que le script soit encore là ou non : tué seul, il ne doit pas emporter la
 # surveillance ; au-delà du plafond, tue l'arbre entier d'un coup (un enfant tué après son parent serait déjà
-# rattaché ailleurs) et sort en 99 — sourde à l'arrêt que lui envoie le script dès la mort de mocha, pour que ce 99
-# lui parvienne
+# rattaché ailleurs) et sort en 99 ; passé l'échéance de MJS_TEST_MAXSEC (DEADLINE, en secondes), de même, et sort en 98 —
+# sourde à l'arrêt que lui envoie le script dès la mort de mocha, pour que ce code lui parvienne
 guard() {
-  local self="$BASHPID" root="" start total pid rss
+  local self="$BASHPID" root="" start total pid rss now
   local -a pids
   while [ -z "$root" ]; do
     [ -e "/proc/$$" ] || exit 0
@@ -102,7 +123,7 @@ guard() {
   done
   start="$(started_at "$root")"
   if [ -z "$start" ]; then
-    if [ -n "$(ps -o pid= -p "$root")" ]; then echo "⚠  garde mémoire : date de départ de mocha illisible dans /proc/$root/stat — run poursuivi SANS garde mémoire" >&2; fi
+    if [ -n "$(ps -o pid= -p "$root")" ]; then echo "⚠  garde de repli : date de départ de mocha illisible dans /proc/$root/stat — run poursuivi SANS garde mémoire ni garde-temps" >&2; fi
     exit 0
   fi
   while :; do
@@ -113,29 +134,55 @@ guard() {
       total=$(( total + rss ))
     done < <(tree_rss "$root" "$start")
     [ "${#pids[@]}" -gt 0 ] || exit 0
-    if [ "$total" -gt "$LIMIT_KB" ]; then
+    if [ -n "$LIMIT_KB" ] && [ "$total" -gt "$LIMIT_KB" ]; then
       trap '' TERM
       echo "🛑 garde mémoire : $(( total / 1024 )) Mo relevés sur l'arbre mocha, plafond $MEM — arrêt du run" >&2
       kill -KILL "${pids[@]}"
       exit 99
+    fi
+    printf -v now '%(%s)T' -1
+    if [ "$TIME_LIMIT" -gt 0 ] && [ "$now" -gt "$DEADLINE" ]; then
+      trap '' TERM
+      echo "⏱  garde-temps : plus de $TIME_LIMIT s écoulées (MJS_TEST_MAXSEC) — arrêt du run" >&2
+      kill -KILL "${pids[@]}"
+      exit 98
     fi
     sleep 0.5
   done
 }
 
 if ! systemd-run --user --scope --quiet -- /bin/true >/dev/null 2>&1; then
+  # les deux gardes de repli relèvent l'arbre de mocha : sans ps, awk ou /proc, ni l'une ni l'autre
+  TOOLS='oui'
+  if ! command -v ps >/dev/null || ! command -v awk >/dev/null || [ ! -r /proc/self/stat ]; then TOOLS=''; fi
+  LIMIT_KB=''
   if [ "$MEM" = 'infinity' ]; then
     echo "⚠  enclos cgroup indisponible (pas de systemd utilisateur) — MJS_TEST_MEM=infinity : tests lancés sans plafond mémoire"
+  else
+    LIMIT_KB="$(mem_kb "$MEM")"
+    if [ -z "$LIMIT_KB" ] || [ "$LIMIT_KB" -le 0 ] || [ -z "$TOOLS" ]; then
+      LIMIT_KB=''
+      echo "⚠  enclos cgroup indisponible (pas de systemd utilisateur) et garde mémoire de repli impossible (plafond MJS_TEST_MEM « $MEM » illisible, ou ps, awk, /proc absents) — tests lancés SANS garde mémoire"
+    else
+      echo "⚠  enclos cgroup indisponible (pas de systemd utilisateur) — garde mémoire de repli : arbre mocha relevé toutes les 0,5 s, tué au-delà de $MEM"
+    fi
+  fi
+  # garde-temps de repli : MJS_TEST_MAXSEC en secondes, échéance comptée depuis le départ de mocha
+  TIME_LIMIT=0
+  if ! [[ "$MAXSEC" =~ ^[0-9]+$ ]]; then
+    echo "⚠  MJS_TEST_MAXSEC « $MAXSEC » illisible sans systemd utilisateur (attendu : un nombre de secondes) — tests lancés SANS garde-temps"
+  elif [ "$(( 10#$MAXSEC ))" -gt 0 ] && [ -z "$TOOLS" ]; then
+    echo "⚠  garde-temps de repli impossible (ps, awk ou /proc absents) — MJS_TEST_MAXSEC=$MAXSEC n'est pas appliqué"
+  elif [ "$(( 10#$MAXSEC ))" -gt 0 ]; then
+    TIME_LIMIT="$(( 10#$MAXSEC ))"
+    echo "⏱  garde-temps de repli : arbre mocha tué au-delà de $TIME_LIMIT s"
+  fi
+  if [ -z "$LIMIT_KB" ] && [ "$TIME_LIMIT" -eq 0 ]; then
     "${MOCHA[@]}"
     exit $?
   fi
-  LIMIT_KB="$(mem_kb "$MEM")"
-  if [ -z "$LIMIT_KB" ] || [ "$LIMIT_KB" -le 0 ] || ! command -v ps >/dev/null || ! command -v awk >/dev/null || [ ! -r /proc/self/stat ]; then
-    echo "⚠  enclos cgroup indisponible (pas de systemd utilisateur) et garde mémoire de repli impossible (plafond MJS_TEST_MEM « $MEM » illisible, ou ps, awk, /proc absents) — tests lancés SANS garde mémoire"
-    "${MOCHA[@]}"
-    exit $?
-  fi
-  echo "⚠  enclos cgroup indisponible (pas de systemd utilisateur) — garde mémoire de repli : arbre mocha relevé toutes les 0,5 s, tué au-delà de $MEM"
+  printf -v DEADLINE '%(%s)T' -1
+  DEADLINE=$(( DEADLINE + TIME_LIMIT ))
   guard &
   GUARD=$!
   "${MOCHA[@]}"
@@ -144,6 +191,10 @@ if ! systemd-run --user --scope --quiet -- /bin/true >/dev/null 2>&1; then
   wait "$GUARD"
   FIRED=$?
   if [ "$FIRED" -eq 99 ] && [ "$CODE" -ge 128 ]; then verdict 'la garde mémoire de repli' "$CODE" ''; fi
+  if [ "$FIRED" -eq 98 ] && [ "$CODE" -ge 128 ]; then
+    echo
+    echo "⏱  run tué par la garde-temps de repli (code $CODE) — MJS_TEST_MAXSEC=$TIME_LIMIT s atteint."
+  fi
   exit $CODE
 fi
 

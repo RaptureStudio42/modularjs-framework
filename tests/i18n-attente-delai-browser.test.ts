@@ -79,7 +79,7 @@ const SONDE = () => {
     const h: any = document.querySelector('mjs-att-wait')
     const o      = h && (h._shadow || h.shadowRoot)
     const t      = o && o.querySelector('h1.t')
-    const vu     = !!h && h.getClientRects().length > 0 && !!t
+    const vu     = !!h && h.getClientRects().length > 0 && getComputedStyle(h).visibility !== 'hidden' && !!t
     if (vu && !w.__vu) w.__vu = performance.now()
     if (vu && w.__titres[w.__titres.length - 1] !== t.textContent) w.__titres.push(t.textContent)
     requestAnimationFrame(tick)

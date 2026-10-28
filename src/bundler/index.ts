@@ -21,20 +21,19 @@ import { createRequire } from 'node:module'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
-import { transpile, cssTrapWarnings } from '../transpiler/index.js'
+import { transpile } from '../transpiler/index.js'
 import { findConstReassignment } from '../transpiler/const-reassign.js'
 import { warnUnreachableCode } from '../transpiler/unreachable.js'
 import { INCLUDE_RE, resolvePartial } from '../transpiler/macros.js'
 import { scanImgTags, isResolvableSrc, parseWidths, rewriteImgTag, type ImgTag } from '../transpiler/img-tag.js'
 import { scanEffectImages, imageCall, type EffectImage } from '../transpiler/effect-images.js'
 import { getAdapter } from '../languages/index.js'
-import { build as esbuildBuild } from 'esbuild'
-import { minifyJs, stripMsgFallbacks, withMangleCacheLock, buildPureList, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, runtimeCallsCut, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
+import { minifyJs, stripMsgFallbacks, collectInstanceNames, reserveMangleNames, reserveDataMarkers, CORE_HELPER_NAMES, CORE_API_NAMES, PLATFORM_NAMES, TRACE_READ_MESSAGES, levelCutsTraces, messagesWithoutTraces, traceMessages, traceKeysIn } from './minify.js'
 import { readImageSize, generateVariants, animatedKind, type GeneratedVariant } from './image.js'
-import { compileCss } from '../transpiler/css.js'
 import { shiftGeneratedPosition, chainOverMap } from '../transpiler/source-map-chain.js'
 import { compileThemeFile, assembleThemes, isThemeFile } from './themes.js'
-import { chartProblems } from './core-chart.js'
+import { chartProblems, chartWarnings } from './core-chart.js'
+import { quoteClose } from '../quoted-span.js'
 import { coreCamelProps, camelAttrProblems } from './core-attrs.js'
 import { isTypesFile, collectTypeDefs } from './types-files.js'
 import { isEffectsFile, collectEffectDefs, countEffectUses, ALIAS_TABLE_MIN_USES } from './effects-files.js'
@@ -45,18 +44,17 @@ import { applyPathTrackingMapped } from '../generator/path-tracker.js'
 import { cpus } from 'node:os'
 import { WorkerPool, resolveWorkerScript } from './worker-pool.js'
 import { transpileFromMsg, tagSpans, effectDefsToWire, type TranspileMsg } from './transpile-msg.js'
-import { normalizePreload, normalizeUrlPrefix, OPTIONAL_RUNTIME_MODULES, DETECTED_CORE_MODULES, levenshtein, resolveLogLevel, resolveTerminalLogLevel, logLevelAllows, dureeEnMs, verifierPlafondDuree, cheminDansDossier, refusManifestPath } from './config.js'
+import { normalizeUrlPrefix, OPTIONAL_RUNTIME_MODULES, DETECTED_CORE_MODULES, RUNTIME_PRESETS, expandRuntimePresets, levenshtein, resolveLogLevel, resolveTerminalLogLevel, logLevelAllows, dureeEnMs, verifierPlafondDuree, cheminDansDossier } from './config.js'
 import type { PreloadConfig, RuntimeConfig, VtValue, I18nConfig, CssConfig, JsConfig, LogLevelConfig, RenderConfig, RenderMode, EffectsConfig, BundleGroupConfig } from './config.js'
 import { normalizeMode } from '../server/render-routes.js'
-import { feuillesConsignees, feuillesRenduPerimees } from '../server/sorties-rendu.js'
 import { assembleGroups, type GroupReport } from './startup.js'
 import { t, getMessagesLang } from '../messages/index.js'
 import { MU_IMPORT_BODY, rewriteMuImportAst } from '../sigils.js'
 import { runtimeLabelsFor, runtimeMessagesFor, coreLabelKeys, fxLabelKeys, RUNTIME_LANGS } from '../runtime-labels.js'
 import { typedLine, printDiagnostic, resolveColorsEnabled, type LintType, type LintToggles } from '../diagnostics.js'
-import { AT_RESERVED_NAMES, skeletonHtml, type TagRef, type TagRefKind } from '../parser/index.js'
+import { AT_RESERVED_NAMES, componentSkeleton, type TagRef, type TagRefKind } from '../parser/index.js'
 import { extractSections } from '../transpiler/sections.js'
-import { scanCompiledFeatures, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PAQUETS, I18N_LOADER, I18N_USED, BOUCLES } from './features.js'
+import { scanCompiledFeatures, optionalSignal, fxAliasSignal, FX_KEYS, FX_CHUNK_KEYS, FX_NAMED, FX_NAMEABLE_KEYS, AUTOLOADER_MENTION, PRELOAD_MENTION, I18N_PAQUETS, I18N_LOADER, I18N_USED, BOUCLES, FILTERED_BINDINGS, VIEW_TAG, NATIVE_HELPERS, OPAQUE_MU, OPAQUE_MU_AT, opaqueMuSignal, opaqueMuOffset, opaqueMuSourceLine, OPAQUE_AJAX, OPAQUE_AJAX_AT, opaqueAjaxSignal, opaqueAjaxOffset, opaqueAjaxSourceLine } from './features.js'
 import { parsePlaceholder, PLACEHOLDER_CONFIG, type Placeholder } from '../effects/placeholder.js'
 import { selectFxSections, type FxClient } from './fx-sections.js'
 import { selectCoreSections, TRANSITION_LABEL, RESUME_LABEL, TOOL_PREFIX, TOOL_GROUPS, STRICT_ATTRS } from './core-sections.js'
@@ -66,6 +64,15 @@ import { collectCoreCalls, missingCoreSymbols } from './core-contract.js'
 import { relativeJsImports, type JsImportSpecifier } from './js-imports.js'
 import { maskInertSameLength } from '../lexer/index.js'
 import { FX_TOOLS, FX_TOOL_KEYS, fxToolsWanted, fxToolsCalled, fxToolsMissing } from './fx-tools.js'
+import * as styles from './styles.js'
+import * as outputs from './outputs.js'
+import * as manifest from './manifest.js'
+import { CLE_MARQUE_SORTIE, VALEUR_MARQUE_SORTIE, sortieDuBuild, cacheDeNoms, type SorteSortie } from './outputs.js'
+import { decodePathValue } from './manifest.js'
+// marque des sorties, voisins du manifeste et table compacte des chemins : définis dans outputs.ts et manifest.ts, ré-exportés ici
+// (le code extérieur et les tests les importent de ce module)
+export { MARQUE_SORTIE, CLE_MARQUE_SORTIE, VALEUR_MARQUE_SORTIE, bundleNeighborFiles } from './outputs.js'
+export { decodePathValue, encodePathValue, PATHS_ENCODE_MIN_ENTRIES } from './manifest.js'
 
 // les fichiers d'effets dont les étiquettes de section ont leur vocabulaire, et leur passe de finition (cf. fx-sections.ts) ; les autres
 // fichiers se filtrent sans client
@@ -100,6 +107,16 @@ export async function terminateSharedWorkerPool(): Promise<void> {
     _sharedWorkerPoolPromise = null
     _sharedWorkerPoolRefCount = 0
   }
+}
+
+// avertissements que buildWarn() a écrits au terminal, par dossier de sources : le prérendu recompile le même projet pour
+// rendre ses pages, et la compilation lui rend les mêmes avertissements avec chaque rendu — ceux que le bilan de la
+// construction vient d'écrire n'y sont pas répétés (cf. prerenderPages, server/prerender.ts)
+const _writtenWarnings = new Map<string, Set<string>>()
+
+/** Cet avertissement a-t-il déjà été écrit au terminal par `buildWarn()` d'une construction de ce dossier de sources ? */
+export function warningAlreadyWritten(sourceDir: string, message: string): boolean {
+  return _writtenWarnings.get(resolve(sourceDir))?.has(message.trim()) === true
 }
 
 /** Un pool de threads est-il VIVANT dans ce processus ? Sonde de test : « ce projet
@@ -201,6 +218,8 @@ export interface BundlerOpts {
   contextAlias?: boolean
   /** Mode strict « politique de sécurité de contenu » : zéro `<style>`/`<script>` en ligne (opt-in, off déf.). */
   csp?: boolean
+  /** Chaque ancre d'une même page, une entrée d'historique (opt-in, off déf. : une vraie page). */
+  anchorHistory?: boolean
   /** Émission des cartes de source : `'prod'` (défaut, historique), `'dev'`, `'always'`, `'never'`. */
   sourceMap?: 'never' | 'dev' | 'prod' | 'always'
   /** Seuil du lint « trop de variables d'état » (entier ≥ 0, 0 = désactivé ; défaut 40 côté transpiler). */
@@ -358,7 +377,7 @@ export interface BundlerOpts {
    * DÉJÀ en vol avant d'abandonner avec une erreur explicite. Option interne
    * (pas dans `MjsConfig`/mjs.config.json — même statut que `minimalRuntime`),
    * exposée surtout pour les tests (permet un délai court plutôt que
-   * d'attendre la vraie valeur de prod). Défaut : 12000ms.
+   * d'attendre la vraie valeur de prod). Défaut : 600000ms (10 min).
    */
   dedupWaitTimeoutMs?: number
   /**
@@ -582,15 +601,10 @@ function scanDefaultReads(css: string, prefix: string): { name: string; value: s
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     let depth = 1
-    let quote = ''
     let i     = re.lastIndex
     for (; i < text.length && depth > 0; i++) {
       const c = text[i]
-      if (quote) {
-        if (c === '\\') i++
-        else if (c === quote) quote = ''
-      }
-      else if (c === '"' || c === '\'') quote = c
+      if (c === '"' || c === '\'') i = quoteClose(text, i)
       else if (c === '(') depth++
       else if (c === ')') depth--
     }
@@ -639,7 +653,6 @@ function scanPrivateVars(css: string, prefix: string): Set<string> {
   const inner = new Set<string>()
   const rules: string[] = []
   let start = 0
-  let quote = ''
   let depth = 0
   const declare = (end: number) => {
     const m = decl.exec(text.slice(start, end))
@@ -650,11 +663,7 @@ function scanPrivateVars(css: string, prefix: string): Set<string> {
   }
   for (let i = 0; i < text.length; i++) {
     const c = text[i]
-    if (quote) {
-      if (c === '\\') i++
-      else if (c === quote) quote = ''
-    }
-    else if (c === '"' || c === '\'') quote = c
+    if (c === '"' || c === '\'') i = quoteClose(text, i)
     else if (c === '(') depth++
     else if (c === ')') depth--
     else if (depth > 0) continue
@@ -804,7 +813,7 @@ type PendingUnit =
   | { kind: 'cold'; file: string; stem: string; ext: string; code: string; map?: string; deps: string[]; features: string[]; cacheFields?: Omit<CacheEntry, 'hashedPath' | 'gen' | 'embeds' | 'features'> }
   | { kind: 'cached'; file: string; stem: string; cached: CacheEntry }
 
-interface CacheEntry {
+export interface CacheEntry {
   hash: string
   /** Génération du compile() qui a écrit cette entrée (cf. `Bundler.compileGeneration`
    * et `cacheHitsThisCompile`) — distingue un cache-hit INTRA-compile (entrée posée PENDANT ce même
@@ -910,20 +919,23 @@ function matchingBracket(s: string, openIdx: number): number {
   return -1
 }
 
-/** Fin (exclue) d'une chaîne/d'un gabarit ouvert en `start` avec le délimiteur `quote` —
- *  un gabarit n'est PAS traversé caractère à caractère pour ses `${…}` (inutile ici : seule la
+/** Fin (exclue) d'une chaîne/d'un gabarit ouvert en `start` avec le délimiteur `quote`, -1 s'il ne se
+ *  ferme pas — une chaîne par le balayeur commun (quoteClose), un gabarit ici : il ne se ferme qu'hors
+ *  de ses accolades, sans être traversé caractère à caractère pour ses `${…}` (inutile ici : seule la
  *  position de la fermeture compte, jamais son contenu). */
 function skipQuotedOrTemplate(s: string, start: number, quote: string): number {
+  if (quote !== '`') {
+    const end = quoteClose(s, start)
+    return end < s.length ? end + 1 : -1
+  }
   let i = start + 1
   let depthAccolade = 0   // à l'intérieur d'un ${…} de gabarit
   while (i < s.length) {
     const c = s[i]
     if (c === '\\') { i += 2; continue }
-    if (quote === '`') {
-      if (depthAccolade === 0 && c === '`') return i + 1
-      if (c === '{') depthAccolade++
-      else if (c === '}' && depthAccolade > 0) depthAccolade--
-    } else if (c === quote) return i + 1
+    if (depthAccolade === 0 && c === '`') return i + 1
+    if (c === '{') depthAccolade++
+    else if (c === '}' && depthAccolade > 0) depthAccolade--
     i++
   }
   return -1
@@ -1289,91 +1301,6 @@ export function extractViewCssNames(content: string): string[] {
 export const ASSET_RE = /(['"]?)(?:µasset|µ\.asset|mjsasset|mjs\.asset)\((\\?)(['"])(.+?)\2\3\)\1/g
 /** `µimage('chemin')` ou `µimage('chemin', 480, 960)` : chemin littéral, largeurs entières facultatives. */
 export const IMAGE_CALL_RE = /(?:µimage|µ\.image|mjsimage|mjs\.image)\s*\(\s*['"]([^'"]+)['"]((?:\s*,\s*\d+)*)\s*\)/g
-/** pruneOrphans() — la famille des noms que LE BUNDLER LUI-MÊME
- * émet : `<base>-<empreinte5>.<ext>` et son `.map` (writeHashed : empreinte courte en base 36), `<base>-<empreinte8>.<ext>`
- * (copies brutes, ou fichiers d'un build d'avant l'empreinte courte), ou une variante
- * d'image `<base>-<largeur>-<empreinte8>.<format>` (image.ts, variantName). Un nom STABLE
- * (bundle.js, mjs-precache.json, card.wide.css…) ne la matche jamais. Aucune des deux formes ne
- * suffit à désigner une sortie du bundler : celle à 5 caractères est celle de n'importe quel mot
- * court (`theme-light.css`, `card-utils.js`), celle à 8 hexadécimaux celle d'un fichier déposé à la
- * main (`vendor-0123abcd.js`). Le ménage exige en plus que le registre la liste (cf. registeredOutputs). */
-const HASHED_OUTPUT_RE = /-[a-f0-9]{8}\.[a-z0-9]+(?:\.map)?$/
-/** forme d'un fichier à empreinte courte (`<base>-<5 caractères base 36>.<ext>`, `.map` compris) */
-const SHORT_HASHED_RE = /-[0-9a-z]{5}\.[a-z0-9]+(?:\.map)?$/
-/** nom de la famille qu'écrit le bundler, l'une ou l'autre forme d'empreinte */
-const isHashedOutputName = (name: string): boolean => HASHED_OUTPUT_RE.test(name) || SHORT_HASHED_RE.test(name)
-/** nom d'un fichier voisin du manifeste (un `.js` ou sa carte) : un nom simple, jamais un chemin ni un nom caché */
-const BUNDLE_NEIGHBOR_RE = /^[^/\\\0.][^/\\\0]*\.js(?:\.map)?$/
-
-/**
- * Les fichiers que des builds ont écrits à côté de `manifestPath` quand le fichier unique est coupé en morceaux (module chargé
- * à la demande, code qu'il partage avec le reste), tels que le registre `.mjs-outputs.json` les consigne (clé `chunks`) :
- * noms simples seulement, liste vide si le registre est absent ou illisible. C'est la seule liste de fichiers que le build
- * retire ou que les serveurs servent à côté du manifeste : jamais un nom reconnu à sa forme.
- */
-export function bundleNeighborFiles(manifestPath: string): string[] {
-  try {
-    const registre = JSON.parse(readFileSync(join(dirname(manifestPath), '.mjs-outputs.json'), 'utf-8'))
-    return Array.isArray(registre?.chunks) ? registre.chunks.filter((n: unknown): n is string => typeof n === 'string' && BUNDLE_NEIGHBOR_RE.test(n)) : []
-  } catch {
-    return []
-  }
-}
-
-/**
- * TABLE DES FICHIERS COMPACTE (`µPaths`, production) — forme d'une valeur et règle de lecture.
- * Une valeur SANS point est compacte : ses 5 derniers caractères sont l'empreinte, ce qui précède
- * (souvent rien) est le préfixe de dossier ; le fichier est `<préfixe><clé>-<empreinte>.js`. Une valeur
- * AVEC point est le nom de fichier entier, lu tel quel (fichier de groupe ou de page, alias dont le
- * fichier ne porte pas la clé). Tout fichier se termine par `.js` : le point est donc le marqueur, il
- * ne peut apparaître ni dans une empreinte ni dans un préfixe (l'écriture refuse alors la forme
- * compacte). Le manifeste publié recopie cette règle (`µPath`, writeManifest) : la changer ici sans
- * l'y changer casse tous les chargements.
- */
-export function decodePathValue(cle: string, valeur: string): string {
-  return valeur.includes('.') ? valeur : `${valeur.slice(0, -FINGERPRINT_LENGTH)}${cle}-${valeur.slice(-FINGERPRINT_LENGTH)}.js`
-}
-
-/** forme la plus courte d'un nom de fichier (sans préfixe d'URL) ; garantie : decodePathValue la rend à l'identique */
-export function encodePathValue(cle: string, fichier: string): string {
-  const m = /^(.*)-([0-9a-z]{5})\.js$/.exec(fichier)
-  if (!m || !m[1].endsWith(cle)) return fichier
-  const compact = m[1].slice(0, m[1].length - cle.length) + m[2]
-  return !compact.includes('.') && decodePathValue(cle, compact) === fichier ? compact : fichier
-}
-
-/**
- * Nombre d'entrées à partir duquel la table se compacte (production). Le décodeur du manifeste pèse
- * ~190 octets bruts ; chaque entrée compactée perd sa clé répétée et `-` + `.js`. Mesuré sur des sous-tables
- * tirées au hasard du manifeste du site de référence (manifeste entier compressé, `gzip -9`) : le
- * gain devient positif à ~40 entrées (−20 octets à 32, +25 à 48, +155 à 96) ; en brut, dès ~9.
- * En dessous du seuil, la table entière reste la plus légère à l'envoi.
- */
-export const PATHS_ENCODE_MIN_ENTRIES = 40
-
-/** pruneOrphans() — les assets que le RENDU SERVEUR écrit lui-même dans le dossier de sortie
- * (`writeHashedAsset`, server/ssr-head.ts) : feuille scopée d'un composant sous le mode strict
- * `csp` (`mjs_ssr_style…`), feuille de `<@head>` (`mjs_ssr_head…`), module de la visionneuse
- * (`mjs_viewer_…`). Ils portent la même forme de nom hachée que les sorties du bundler mais ne
- * sortent d'AUCUN `compile()` — un `mjs build` les prendrait donc pour des orphelins et les
- * retirerait juste après que le prérendu les a écrits, laissant les `<link>` des fragments pointer
- * dans le vide. Protégés PAR LEUR NOM, comme le manifeste.
- *
- * Trois familles NOMMÉES, jamais un préfixe large : `mjs_style_…` est le stem des unités que CE
- * bundler émet pour les feuilles PARTAGÉES (`css: 'split'` → un `.js` par feuille, `css: 'lazy'` →
- * un `.css`). L'exempter aurait rendu ces unités-là impurgeables — une feuille retirée du projet
- * laissant son fichier compilé à vie. D'où la famille propre au rendu, `mjs_ssr_style…` : aucune
- * sortie du bundler ne commence par `mjs_ssr`. */
-// `mjs_ssr_head` est un nom FIXE (server/ssr-head.ts) — ancré au tiret du suffixe haché
-// (`mjs_ssr_head-<empreinte8>.ext`) depuis le 23/09/2026 : un asset PROJET nommé par ex.
-// `mjs_ssr_headline-<empreinte8>.png` matchait à tort le préfixe non ancré (trouvé en revue),
-// impurgeable pour toujours même orphelin réel. `mjs_ssr_style_`/`mjs_viewer_` gardent, eux, un
-// suffixe LIBRE (nom de composant/module choisi par le projet) : un ancrage au tiret ne
-// fermerait rien pour eux (le nom réel a lui aussi un tiret avant son empreinte) — la même
-// collision résiduelle existe pour ces deux familles, non fermée, faute d'un marqueur qui les
-// distinguerait d'un nom de projet coïncidant.
-const SERVER_WRITTEN_RE = /^mjs_(?:ssr_style|viewer_)|^mjs_ssr_head-/
-
 // --------------------------------------------------------------------------
 // deriveUrlPrefix : convertit un outputDir système en path URL public.
 //
@@ -1413,6 +1340,17 @@ export function deriveUrlPrefix(outputDirRel: string): string {
   const stripped = normalized.replace(/^public\//, '')
   return '/' + stripped
 }
+
+// les modules optionnels qu'une page servie hors construction peut appeler sans laisser de trace dans les sources (cf. repereOptionalModules)
+const SERVER_PAGE_MODULES = ['ujs', 'router', 'ajax', 'modal', 'vault', 'journal']
+// les dossiers de vues d'un serveur, cherchés à la racine du projet (cf. hasServerPages)
+const SERVER_VIEW_DIRS = ['app/views', 'resources/views', 'templates', 'views']
+// les effets en direct branchés sur une connexion (un réglage de règle `socket` au catalogue : *follow, *cursors, *react, *heatmap), en
+// signaux du relevé : leurs aides vivent dans mjs_socket.ts, et `server:` ouvre la connexion sans laisser de `µsocket` dans les sources
+const SOCKET_EFFECTS = Object.keys(EFFECTS).filter(k => Object.values(EFFECTS[k].settings).some(s => s.rule === 'socket')).map(k => 'fx_' + k.replace(/-/g, '_'))
+// les effets à courbe hors transitions (un réglage de règle `curve` : *travel, *path, *flipcard), en signaux du relevé : une courbe nommée
+// (`easing: bounce-out`, ou une variable qui en tient une) se lit dans µ.easing, faute de quoi l'effet revient en silence à une courbe simple
+const CURVE_EFFECTS = Object.keys(EFFECTS).filter(k => !EFFECTS[k].transition && Object.values(EFFECTS[k].settings).some(s => s.rule === 'curve')).map(k => 'fx_' + k.replace(/-/g, '_'))
 
 // dossier de `mjs.config.json` au-dessus de `depart` (lui compris), cherché comme le fait findConfig() ; sans fichier de
 // config sur le chemin, `depart` lui-même
@@ -1517,102 +1455,6 @@ function suggestKebabCase(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')                        // espaces/points/etc -> tiret
     .replace(/^-+|-+$/g, '')                            // tirets de bord retirés
-}
-
-// marque des sorties à nom fixe d'une construction qui écrit dans le dossier des sources : première ligne du manifeste et des
-// feuilles de mise en page, clé de `mjs-precache.json` — la preuve, dans le fichier même, qu'il vient d'une construction ; seule
-// source de la marque, relue aussi par les serveurs (cf. server/render-server.ts)
-export const MARQUE_SORTIE        = '/* @generated by ModularJS */'
-export const CLE_MARQUE_SORTIE    = '@generated'
-export const VALEUR_MARQUE_SORTIE = 'ModularJS'
-
-// sorties à nom fixe : manifeste, `mjs-precache.json`, feuille `<module>.<nom>.css`, `.mjs-theme-vars.json`, `.mangle-cache.json`,
-// carte du fichier unique (`<manifeste>.map`), fragment de traduction à nom clair (`i18n/<langue>/<section>.json`)
-type SorteSortie = 'manifeste' | 'precache' | 'feuille' | 'registre-theme' | 'noms-courts' | 'carte' | 'traduction'
-
-// sortieDuBuild() : `chemin` vient-il d'une construction ? Il porte la marque, ou c'est le manifeste ou la liste de pré-cache
-// d'une version qui ne marquait pas ses sorties (2.5.0) : manifeste ouvert par `const µCore = '…';` avec sa ligne
-// `µ.version = "<empreinte>";` ou fichier unique qui finit par `//# mjsVersion=<empreinte>`, liste réduite à `{ version,
-// assets }`. Une feuille sans marque n'a aucun signe sûr : jamais reconnue. Les autres sorties JSON ne portent pas de clé de
-// marque (le registre et les fragments la liraient comme une donnée) : elles sont reconnues à leur forme, la même dans toutes
-// les versions — registre `{ <variable>: { declarations, readBy } }`, noms courts (cf. cacheDeNoms), carte de version 3,
-// fragment écrit d'un seul tenant (`JSON.stringify`, sans espace ni fin de ligne). Fichier illisible (dossier, droits) : pas
-// une sortie
-function sortieDuBuild(chemin: string, sorte: SorteSortie): boolean {
-  let texte: string
-  try {
-    texte = readFileSync(chemin, 'utf-8')
-  }
-  catch {
-    return false
-  }
-  if (sorte === 'noms-courts') return cacheDeNoms(texte)
-  if (sorte === 'manifeste' || sorte === 'feuille') {
-    if (texte.split('\n', 1)[0].replace(/\r$/, '') === MARQUE_SORTIE) return true
-    if (sorte === 'feuille') return false
-    return (/^const µCore = '[^'\r\n]*';\r?\n/.test(texte) && /^ *µ\.version = "[0-9a-f]{8}";\r?$/m.test(texte)) || /^\/\/# mjsVersion=(?:[0-9a-f]{8})?\r?$/m.test(texte)
-  }
-  let lu: any
-  try {
-    lu = JSON.parse(texte)
-  }
-  catch {
-    return false
-  }
-  if (lu === null || typeof lu !== 'object' || Array.isArray(lu)) return false
-  if (sorte === 'precache') {
-    if (lu[CLE_MARQUE_SORTIE] === VALEUR_MARQUE_SORTIE) return true
-    return Object.keys(lu).sort().join(',') === 'assets,version' && typeof lu.version === 'string' && Array.isArray(lu.assets) && lu.assets.every((a: unknown) => typeof a === 'string')
-  }
-  if (sorte === 'registre-theme') return Object.values(lu).every((v: any) => v !== null && typeof v === 'object' && Array.isArray(v.declarations) && Array.isArray(v.readBy))
-  if (sorte === 'carte') return lu.version === 3 && typeof lu.mappings === 'string'
-  return texte === JSON.stringify(lu)
-}
-
-// cacheDeNoms() : `texte` a-t-il la forme du cache des noms courts (`.mangle-cache.json`, cf. Bundler.saveMangleCache) ? Un objet
-// dont chaque clé est une propriété `_mjs_…` (son nom court, ou une valeur abîmée que le chargeur écarte) ou un nom réservé
-// (`false`). Versionné, il peut sortir d'une fusion git en conflit, illisible : marqueurs de conflit retirés (`<<<<<<<`, `|||||||`,
-// `>>>>>>>` et la fin de leur ligne, `=======`, collés à l'accolade finale quand ils la suivent : le cache ne finit pas par un saut
-// de ligne), chaque ligne y reste une accolade ou une paire de cette forme, une par ligne comme il est écrit. Coupé en cours
-// d'écriture ou de copie, sa dernière ligne n'est qu'un début de paire : une clé coupée, ou une clé suivie d'un début de valeur
-// (n'importe laquelle pour une propriété `_mjs_…`, un début de `false` pour un nom réservé)
-function cacheDeNoms(texte: string): boolean {
-  const entree = (cle: string, valeur: unknown): boolean => cle.startsWith('_mjs_') || valeur === false
-  try {
-    const lu = JSON.parse(texte)
-    return lu !== null && typeof lu === 'object' && !Array.isArray(lu) && Object.entries(lu).every(([cle, valeur]) => entree(cle, valeur))
-  }
-  catch {
-    const lignes = texte.split('\n').map(l => l.replace(/\r$/, '').replace(/(?:<{7}|\|{7}|>{7})(?: .*)?$|={7}$/, ''))
-    return lignes.every((l, i) => {
-      if (/^\s*(?:[{}],?)?\s*$/.test(l)) return true
-      const paire = /^\s*"((?:[^"\\]|\\.)*)"\s*:\s*(.*?),?\s*$/.exec(l)
-      if (paire !== null && entree(paire[1], paire[2] === 'false' ? false : paire[2])) return true
-      const debut = i === lignes.length - 1 ? /^\s*"((?:[^"\\]|\\.)*)(")?(?:\s*:\s*(.*))?$/.exec(l) : null
-      return debut !== null && (debut[2] === undefined || debut[3] === undefined || debut[1].startsWith('_mjs_') || 'false'.startsWith(debut[3]))
-    })
-  }
-}
-
-// fichierVide() : un fichier de 0 octet à la place du manifeste n'a rien à perdre (fichier créé d'avance, écriture interrompue) :
-// il est remplacé sans refus. Un seul octet suffit à le protéger
-function fichierVide(chemin: string): boolean {
-  try {
-    const st = statSync(chemin)
-    return st.isFile() && st.size === 0
-  }
-  catch {
-    return false
-  }
-}
-
-// une seule erreur pour toutes les sorties à nom fixe qui tomberaient sur des fichiers de l'auteur (cf. Bundler.refusSortiesAuteur) ;
-// `avant` : levée avant toute écriture de la construction, sinon au moment d'écrire ce fichier. La marque n'est réclamée que des
-// sorties qui la portent : les sorties JSON reconnues à leur seule forme (cf. sortieDuBuild) ne la portent jamais
-function erreurFichiersAuteur(fichiers: [string, SorteSortie][], sources: string, avant: boolean): Error {
-  const sansMarque = fichiers.filter(([, sorte]) => ['registre-theme', 'noms-courts', 'carte', 'traduction'].includes(sorte)).length
-  const raison     = sansMarque === 0 ? 'marque' : sansMarque === fichiers.length ? 'forme' : 'les-deux'
-  return new Error(t('bundler.index.sorties-fichiers-auteur', { nb: fichiers.length, fichiers: fichiers.map(([f]) => `\n  - ${f}`).join(''), sources, marque: MARQUE_SORTIE, cle: CLE_MARQUE_SORTIE, avant, raison }))
 }
 
 function pageAwareBaseName(filePath: string): string {
@@ -1780,6 +1622,7 @@ export class Bundler {
   sigil: BundlerOpts['sigil']
   contextAlias: BundlerOpts['contextAlias']
   csp: boolean
+  anchorHistory: boolean
   sourceMapMode: NonNullable<BundlerOpts['sourceMap']>
   maxStateVars: BundlerOpts['maxStateVars']
   a11y: BundlerOpts['a11y']
@@ -1889,8 +1732,9 @@ export class Bundler {
    * (cf. coreToolShown) : la barre que l'éditeur écrit dans son propre gabarit ne compte pas. */
   private pageTools: ReadonlySet<string> | null = null
   /** Les parties des modules cœur que mjsSource a ôtées ce tour (`dropped`) et celles qu'un module emporté garde (`kept` : un modèle en fichier, un module
-   * cité par le catalogue), nommées `<module>.<attribut>` (`chart.toolbar`, cf. STRICT_ATTRS) : les libellés propres à une partie (CORE_LABEL_PARTS) ne
-   * partent pas quand elle est ôtée et qu'aucun module emporté ne la garde. Remises à zéro au début de chaque compile(). */
+   * cité par le catalogue), nommées `<module>.<attribut>` (`chart.toolbar`, cf. STRICT_ATTRS) ou `<module>.tool-<outil>` (`toolbar.tool-color`, cf. coreToolShown) :
+   * les libellés propres à une partie (CORE_LABEL_PARTS) ne partent pas quand elle est ôtée et qu'aucun module emporté ne la garde. Remises à zéro au début de
+   * chaque compile(). */
   private coreParts = { dropped: new Set<string>(), kept: new Set<string>() }
   /** Dépendances DIRECTES brutes accumulées PAR COMPOSANT (balises du gabarit +
    * modules `@import`-és), jumeau de pendingTagRefs ci-dessus — consommée par
@@ -2202,6 +2046,7 @@ export class Bundler {
     this.sigil = opts.sigil ?? 'µ'
     this.contextAlias = opts.contextAlias ?? false
     this.csp = opts.csp ?? false           // mode strict OPT-IN : rien ne change tant qu'il n'est pas demandé
+    this.anchorHistory = opts.anchorHistory ?? false  // une vraie page tant qu'il n'est pas demandé
     this.sourceMapMode = opts.sourceMap ?? 'dev'    // défaut : la carte sert au développement, pas en prod où elle publie le source
     this.maxStateVars = opts.maxStateVars  // défaut (40) appliqué dans transpile() — source unique
     this.a11y = opts.a11y  // défaut (true) appliqué dans transpile() — source unique
@@ -2241,7 +2086,10 @@ export class Bundler {
       formats: opts.image?.formats ?? ['webp'],
       quality: opts.image?.quality ?? 78,
     }
-    this.dedupWaitTimeoutMs = opts.dedupWaitTimeoutMs ?? 12000
+    // la compilation attendue peut patienter au pool, puis y passer deux essais (attente du début, puis tâche : un délai
+    // de 60 s chacun) avant le repli dans ce processus — le filet ne parle que pour un vrai blocage, jamais pour une
+    // construction seulement lente (machine chargée). Les boucles d'imports, elles, sont dites tout de suite.
+    this.dedupWaitTimeoutMs = opts.dedupWaitTimeoutMs ?? 600_000
     this.inlineTranspileLimit = opts.inlineTranspileLimit ?? INLINE_LIMIT
     this.cache = new Map()
     this.manifest = {}
@@ -2313,29 +2161,23 @@ export class Bundler {
     // Fix : mémoïse la PROMESSE de création (`_sharedWorkerPoolPromise`), pas
     // juste la valeur — tout appel concurrent qui arrive AVANT la résolution
     // attend la MÊME promesse en vol plutôt que d'en lancer une nouvelle.
-    // Le nouveau pool n'est éligible au réemploi QUE si le pool RÉSOLU
-    // (`_sharedWorkerPool`) n'est pas mort ; `_sharedWorkerPool` est remis à
-    // `null` de façon SYNCHRONE (avant tout `await`) dès qu'une recréation
-    // démarre, pour qu'un appelant concurrent qui arrive juste après voie
-    // bien "recréation déjà en cours" plutôt que de retester l'ancien pool
-    // (encore marqué mort) et en déclencher une DEUXIÈME.
+    // Un pool MORT (plus aucun worker, plus de remplaçant) n'est jamais recréé : il fait lui-même la suite des tâches par
+    // son repli, sans relancer un fil (cf. WorkerPool.submit). Le recréer à chaque soumission relançait, avec un worker
+    // cassé dès son démarrage, la taille du pool et autant de remplaçants PAR FICHIER compilé ; la borne est maintenant
+    // celle d'un seul pool, jusqu'à ce que le dernier Bundler qui s'en sert le ferme (close) — le suivant en crée un neuf.
     let pool: WorkerPool
-    if (_sharedWorkerPoolPromise && (!_sharedWorkerPool || !_sharedWorkerPool.isDead())) {
+    if (_sharedWorkerPoolPromise) {
       pool = await _sharedWorkerPoolPromise
     } else {
-      const stalePool = _sharedWorkerPool
-      _sharedWorkerPool = null
       const creating = (async () => {
-        if (stalePool) {
-          // Pool précédent mort : on le remplace (terminate best-effort).
-          await stalePool.terminate().catch(() => {})
-        }
         const spec = await resolveWorkerScript()
         // Taille du pool = PARALLEL_LIMIT (dérivé de RAM disponible cf. supra).
         // Chaque worker_threads consomme ~700 MB à cause du bundle esbuild,
         // donc 8 workers = 5-6 GB de RAM → OOM-kill sur système 8 GB. On
         // dimensionne donc en fonction de la RAM (cf. PARALLEL_LIMIT).
-        const p = new WorkerPool(PARALLEL_LIMIT, spec)
+        // repli d'une tâche perdue deux fois par ses workers (morts, ou qui ne la commencent pas) : la même transpilation,
+        // dans ce processus, comme sous le seuil INLINE_LIMIT ; jamais pour un fichier qui, commencé, a dépassé le délai
+        const p = new WorkerPool(PARALLEL_LIMIT, spec, { fallback: transpileFromMsg })
         _sharedWorkerPool = p
         return p
       })()
@@ -4371,10 +4213,15 @@ export class Bundler {
       }))
     }
 
-    // <@@chart> : ses valeurs écrites en dur (mots de shape, stats, step et axis, couleurs des séries, combinaisons), cf. core-chart.ts
+    // <@@chart> : ses valeurs écrites en dur (mots de shape, stats, step et axis, couleurs des séries, combinaisons), cf. core-chart.ts ; une
+    // série écrite `axis: 'right'` sur une forme écrite à une seule échelle n'est qu'un avertissement, dit une fois : la construction continue
+    const chartNotes = new Set<string>()
     for (const ref of this.pendingTagRefs) {
-      if ((ref.kind === 'raccourci-coeur' || ref.kind === 'litteral-coeur') && ref.name.toLowerCase() === 'chart') problems.push(...chartProblems(ref))
+      if ((ref.kind !== 'raccourci-coeur' && ref.kind !== 'litteral-coeur') || ref.name.toLowerCase() !== 'chart') continue
+      problems.push(...chartProblems(ref))
+      for (const note of chartWarnings(ref)) chartNotes.add(note)
     }
+    warnings.push(...chartNotes)
 
     // les modules du cœur : un attribut écrit en dur en camelCase (`emptyLabel="…"`), que le HTML met en minuscules — les props d'un module
     // se lisent dans sa source, une fois par construction, cf. core-attrs.ts
@@ -4535,11 +4382,17 @@ export class Bundler {
   // vaut 'yes' : 'no' autorise un retrait. La réponse tranche le développement comme la production (cf. mjsSource) : le doute y est celui d'un attribut de
   // STRICT_ATTRS (coreTagDoubted) — une source du projet qui peut fabriquer un éditeur ou une barre hors du relevé (un script qui nomme <@@editor> ou <@@toolbar>,
   // une balise dynamique qui écrit `toolbar`, `tools` ou un étalement) répond 'unknown'.
+  // `color` n'a de bouton que pour un éditeur qui a une palette (toolbar.mjs le retire des autres) : sans `colors` sur aucun éditeur du projet (coreAttrWrittenStrict,
+  // la réponse qui ôte déjà le code de la palette), il répond 'no', même nommé par une liste, et ne compte pas dans son groupe. Une liste qui le nomme alors ne le
+  // reçoit pas d'un script : le groupe `script` y répond 'unknown', l'avertissement d'un outil reçu d'un script ne se réveille pas pour lui.
   // --------------------------------------------------------------------------
   coreToolShown(tool: string): 'yes' | 'unknown' | 'no' {
+    const hued = (name: string): boolean => name !== 'color' || this.coreAttrWrittenStrict('editor', 'colors') !== 'no'
+    if (!hued(tool)) return 'no'
     if (!this.tagRefsComplete || !this.pageTools) return 'unknown'
     const shown = this.pageTools
-    if ((Object.hasOwn(TOOL_GROUPS, tool) ? TOOL_GROUPS[tool] : [tool]).some(name => shown.has(name))) return 'yes'
+    if ((Object.hasOwn(TOOL_GROUPS, tool) ? TOOL_GROUPS[tool] : [tool]).some(name => shown.has(name) && hued(name))) return 'yes'
+    if (tool === 'script' && shown.has('color') && !hued('color')) return 'unknown'
     return this.coreTagDoubted([['editor', 'toolbar'], ['toolbar', 'tools']]) ? 'unknown' : 'no'
   }
 
@@ -4552,7 +4405,7 @@ export class Bundler {
   // avant la compilation ; 'yes' et 'unknown' (étalement, références pas encore lues) gardent tout. Les morceaux d'un attribut de STRICT_ATTRS (`toolbar` de
   // <@@chart>, `other` de <@@select>, `answer` de <@@editor>, `group` de <@@sortable>) et ceux d'un outil de la barre de l'éditeur se tranchent partout comme
   // en production, sur coreAttrWrittenStrict et coreToolShown, pour que le rendu serveur et le navigateur emportent le même gabarit quel que soit leur
-  // environnement ; mjsSource relève aussi les parties de STRICT_ATTRS, ôtées ou gardées (coreParts), pour les libellés du manifeste. Le DÉVELOPPEMENT garde
+  // environnement ; mjsSource relève aussi les parties de STRICT_ATTRS et celles des outils, ôtées ou gardées (coreParts), pour les libellés du manifeste. Le DÉVELOPPEMENT garde
   // les autres morceaux (`transition`, `reprise`, un attribut hors de STRICT_ATTRS). L'avertissement du développement ne reste que lorsqu'aucune page n'écrit
   // l'attribut. Le texte réduit est ce qui entre dans l'empreinte du cache et dans le message du pool de threads : ajouter ou
   // retirer l'attribut dans une page, en mode veille, recompile le module. Un fichier du projet (une copie éjectée d'un module cœur
@@ -4585,7 +4438,7 @@ export class Bundler {
         const tool = attr.startsWith(TOOL_PREFIX)
         const gone = !(model || (attr !== RESUME_LABEL && !tool && citedByCatalog())) && (attr === TRANSITION_LABEL ? this.coreTransitionWritten() : attr === RESUME_LABEL ? this.coreResumeWanted() : tool ? this.coreToolShown(attr.slice(TOOL_PREFIX.length)) : strictAttr(attr) ? this.coreAttrWrittenStrict(stem, attr) : this.coreAttrWritten(stem, attr)) === 'no'
         known.set(attr, gone)
-        if (strictAttr(attr)) (gone ? this.coreParts.dropped : this.coreParts.kept).add(family + '.' + attr)
+        if (tool || strictAttr(attr)) (gone ? this.coreParts.dropped : this.coreParts.kept).add(family + '.' + attr)
       }
       return known.get(attr)!
     }
@@ -4655,8 +4508,9 @@ export class Bundler {
 
   // --------------------------------------------------------------------------
   // resolveRuntimeFiles() : sélection des modules du bundle `mjs_core.js`
-  // (tree-shake EXPLICITE, opt-in). Le CŒUR (4 modules, jamais retirables) est
-  // toujours inclus ; les optionnels selon `runtime` (défaut 'all'), avec
+  // Le CŒUR (4 modules, jamais retirables) est toujours inclus ; les optionnels
+  // selon `runtime` ('all', 'core', une liste ; clé absente : ceux que le relevé
+  // `used` repère, cf. repereOptionalModules — faits inconnus : tous), avec
   // rétrocompat `minimalRuntime` (≡ 'core'). Pure et testable : retourne la
   // liste ORDONNÉE de fichiers (hors mjs_debug, inséré à part par bundleRuntime)
   // + avertissements ergonomiques non-bloquants + `coreOnly` (aucun optionnel →
@@ -4691,8 +4545,11 @@ export class Bundler {
   // (tests, intégrations) : un nom inconnu est ignoré AVEC avertissement — jamais
   // un crash, jamais un module fantôme (fail-safe).
   // --------------------------------------------------------------------------
-  resolveRuntimeFiles(used?: ReadonlySet<string>): { files: string[]; warnings: string[]; coreOnly: boolean } {
+  resolveRuntimeFiles(used?: ReadonlySet<string>): { files: string[]; warnings: string[]; infos: string[]; coreOnly: boolean } {
     const warnings: string[] = []
+    // les informations de construction (modules optionnels laissés de côté par le repérage) : imprimées par bundleRuntime comme
+    // une information, jamais comme un avertissement (ni étiquette `[lint.…]`, ni ligne d'aide)
+    const infos: string[] = []
     // Ordre CANONIQUE de concaténation — porte aussi les gardes de patch
     // prototype : mjs_flip DOIT rester APRÈS mjs_element (qui définit µ.Element).
     // mjs_vt_presets (bibliothèque de préréglages @viewTransition) DOIT précéder
@@ -4728,8 +4585,8 @@ export class Bundler {
     // inconnue qu'il rejetait est signalée par le point d'entrée du fichier unique
     // (cf. buildBundleEntry()).
     const CORE = this.jsMode === 'bundle'
-      ? ['mjs_init.ts', 'mjs_dom.ts', 'mjs_runes.ts', 'mjs_element.ts']
-      : ['mjs_init.ts', 'mjs_dom.ts', 'mjs_runes.ts', 'mjs_autoloader.ts', 'mjs_element.ts']
+      ? ['mjs_init.ts', 'mjs_dom.ts', 'mjs_element.ts']
+      : ['mjs_init.ts', 'mjs_dom.ts', 'mjs_autoloader.ts', 'mjs_element.ts']
     // Balises globales/dynamiques et runes détachées du cœur, chacune dans son propre
     // fichier : `mjs_ticker.ts` (µ.Ticker) tôt, avant ses 3 consommateurs possibles
     // (interpolate/spring/smooth) ; `mjs_rare_runes.ts`/`mjs_head.ts`/`mjs_body.ts`/
@@ -4773,8 +4630,16 @@ export class Bundler {
     // quelle que soit la sélection par ailleurs.
     const forced = new Set<string>()
     const rt = this.runtime
-    if (rt === undefined) {
-      // pas de `runtime` explicite → dérivé de `minimalRuntime` (rétrocompat).
+    // sans clé `runtime` et avec le relevé du build : seuls les modules optionnels REPÉRÉS (cf. repereOptionalModules) — ni un
+    // cœur nu (outils de développement et atelier restent, cf. `bare`), ni tout
+    const repere = rt === undefined && !this.minimalRuntime && used !== undefined
+    if (repere) {
+      const trouves = this.repereOptionalModules(used!)
+      selected = new Set([...trouves].map(moduleFile))
+      // la traduction suit la configuration, comme en 'all' (`i18n` ou dossier `i18n/`)
+      if (this.hasI18nConfigured()) selected.add('mjs_i18n.ts')
+    } else if (rt === undefined) {
+      // pas de `runtime` explicite → dérivé de `minimalRuntime` (rétrocompat) ; sans relevé (appel direct), faits inconnus = tout
       selected = this.minimalRuntime ? new Set() : allOptional()
       if (!this.minimalRuntime && !this.hasI18nConfigured()) { selected.delete('mjs_i18n.ts') }
     } else if (rt === 'all') {
@@ -4792,8 +4657,8 @@ export class Bundler {
       selected = new Set()
     } else if (rt.length > 0 && rt.every(m => FX_KEYS.includes(m) || FX_TOOL_KEYS.includes(m))) {
       // un tableau qui ne cite QUE des effets ou des outils d'effets (`runtime: ['fx_neon']`, `['fx_toolup']`, garder un
-      // effet au cœur plutôt que dans son propre fichier) : ils s'AJOUTENT au cœur, la sélection reste celle d'un projet
-      // sans clé `runtime` — sinon citer un effet retirerait en silence routeur, liens et requêtes
+      // effet au cœur plutôt que dans son propre fichier) : ils s'AJOUTENT au cœur, les modules optionnels restent tous là,
+      // comme en 'all' — sinon citer un effet retirerait en silence routeur, liens et requêtes
       selected = this.minimalRuntime ? new Set() : allOptional()
       if (!this.minimalRuntime && !this.hasI18nConfigured()) { selected.delete('mjs_i18n.ts') }
       for (const m of rt) forced.add(moduleFile(m))
@@ -4891,7 +4756,9 @@ export class Bundler {
     // le cœur de l'application. Ce que son code compilé appelle (mutations profondes, listes, blocs {if}, crochets de vie)
     // est donc joint à tout build de développement qui n'est pas un cœur nu, comme le panneau d'inspection — et jamais en
     // production, où l'atelier n'est pas servi. Passe par `forced` : aucune autre ligne de la méthode n'en dépend
-    if (!this.isProd() && selected.size > 0) for (const f of ATELIER_RUNTIME) forced.add(f)
+    // un cœur NU : `'core'`, une liste sans module optionnel, `minimalRuntime` — jamais le repérage, qui garde les outils de développement
+    const bare = !repere && selected.size === 0
+    if (!this.isProd() && !bare) for (const f of ATELIER_RUNTIME) forced.add(f)
     // Conditions AJOUTÉES au filtre, indépendantes de `selected` (donc de
     // `coreOnly`, qui ne regarde QUE les optionnels classiques — cf. commentaire en tête de
     // méthode) : wantsVt = forcé explicitement, OU 'router'/'ujs' sélectionné (config pure) ;
@@ -5001,9 +4868,9 @@ export class Bundler {
     // `<@head>` ou dans le repli d'un `<@failed>` émet l'appel), OU joint D'OFFICE dans un build
     // de DÉVELOPPEMENT non nu — mjs_devinspect.ts/mjs_devpanel.ts l'appellent sans garde pour
     // leur propre affichage, et ces trois-là ne sont insérés qu'aux MÊMES conditions
-    // (`!coreOnly && !isProd()`, cf. bundleRuntime). `selected.size > 0` ≡ `!coreOnly`, calculé
+    // (`!coreOnly && !isProd()`, cf. bundleRuntime). `!bare` ≡ `!coreOnly`, calculé
     // ici comme en fin de méthode.
-    const wantsEsc = forced.has('mjs_esc.ts') || used === undefined || used.has('esc') || (!this.isProd() && selected.size > 0)
+    const wantsEsc = forced.has('mjs_esc.ts') || used === undefined || used.has('esc') || (!this.isProd() && !bare)
     // Hydratation SSR par adoption (`_mjs_hydrate` + les 3 approches, mjs_hydrate.ts) : AUCUN
     // scan — signal de CONFIG pure, comme `wantsLazyCss` juste au-dessus. Le bloc `render` dit
     // le mode de chaque page ; seuls `ssr:markers`/`ssr:positional`/`ssr:diff` adoptent le DOM
@@ -5042,6 +4909,10 @@ export class Bundler {
     // dans tous les cas où le fichier part lui-même.
     const MODULES_A_STATE = ['mjs_router.ts', 'mjs_smooth.ts', 'mjs_socket.ts', 'mjs_game.ts', 'mjs_chat.ts', 'mjs_lobby.ts', 'mjs_accounts.ts', 'mjs_interp.ts', 'mjs_predict.ts', 'mjs_lockstep.ts', 'mjs_store_globals.ts']
     const wantsState = forced.has('mjs_state.ts') || used === undefined || used.has('state') || wantsContext || wantsStoreGlobals || MODULES_A_STATE.some(f => selected.has(f))
+    // le registre des dépendances de l'état partagé (mjs_runes.ts : `µ._mjs_registerUniversalDep`, `µ._mjs_notifyUniversalChange`,
+    // `µ._mjs_cleanupUniversalDeps`) : ses seuls appelants sont `µ.state` (mjs_state.ts) et les stores (mjs_store.ts) — le cœur
+    // n'appelle que le nettoyage, sous garde `typeof`. Il les suit, aucun scan à part
+    const wantsRunes = forced.has('mjs_runes.ts') || used === undefined || wantsState || wantsStore
     // Variants de mise en page nommés (tail de _mjs_applyLayout) : détecté par la DÉCLARATION
     // (`<style name="…">` dans une source, fichier `<module>.<nom>.css` déposé dans le dossier de
     // sortie) ou par les mots `layout=`/`template=` — la demande seule peut venir d'une page que
@@ -5155,12 +5026,95 @@ export class Bundler {
       'mjs_page_cache.ts':  wantsPageCache,
       'mjs_context.ts':     wantsContext,
       'mjs_state.ts':       wantsState,
+      'mjs_runes.ts':       wantsRunes,
       'mjs_lifecycle.ts':   wantsLifecycle,
       'mjs_layout_variant.ts': wantsLayoutVariant,
       'mjs_destroy_hooks.ts': wantsDestroyHooks,
     }
     const files = CANONICAL.filter(f => CORE.includes(f) || selected.has(f) || wantsByFile[f])
-    return { files, warnings, coreOnly: selected.size === 0 }
+    // l'information du repérage se lit sur le cœur tel qu'il part : un module emmené par un autre (easing sous une transition, vault
+    // sous la langue) compte comme gardé. Rien de laissé de côté, rien à dire ; `lint.runtimeHint: false` la coupe aussi
+    if (repere && typedLine('runtimeHint', '', this.lint) !== null) {
+      const gardes  = OPTIONAL_RUNTIME_MODULES.filter(m => files.includes(moduleFile(m)))
+      const laisses = OPTIONAL_RUNTIME_MODULES.filter(m => m !== 'i18n' && !gardes.includes(m))
+      if (used!.has(OPAQUE_MU)) {
+        // tout est gardé (cf. repereOptionalModules) : où µ est lu sans nom après un point, et comment l'éviter
+        const lieux = [...used!].filter(f => f.startsWith(OPAQUE_MU_AT)).map(f => f.slice(OPAQUE_MU_AT.length)).sort()
+        infos.push(t('bundler.index.runtime-repere-acces-opaque', { lieux: lieux.length > 5 ? lieux.slice(0, 5).join(', ') + ', …' : lieux.join(', ') }))
+      }
+      else if (laisses.length > 0 && gardes.length > 0) {
+        // un module gardé qui ne s'écrit dans une liste que par le préréglage du même nom, qui en emmène d'autres (chat, accounts et
+        // lobby emmènent smooth) : collée, la liste rendrait un autre cœur — aucune n'est proposée, la ligne dit pourquoi
+        const emmenes = expandRuntimePresets(gardes).modules.filter(m => !(gardes as readonly string[]).includes(m))
+        if (emmenes.length > 0) {
+          const prereglages = gardes.filter(m => Object.hasOwn(RUNTIME_PRESETS, m) && RUNTIME_PRESETS[m].some(x => emmenes.includes(x)))
+          infos.push(t('bundler.index.runtime-repere-sans-liste', { gardes: gardes.join(', '), laisses: laisses.join(', '), prereglages: prereglages.join(', '), nb: prereglages.length, emmenes: emmenes.join(', ') }))
+        }
+        else {
+          // la liste prête à coller : ce même cœur, écrit (les partenaires de chaque module y sont déjà)
+          const liste = '"runtime": [' + gardes.map(m => `"${m}"`).join(', ') + ']'
+          infos.push(t('bundler.index.runtime-repere-laisses', { gardes: gardes.join(', '), laisses: laisses.join(', '), liste }))
+        }
+      }
+      // rien de gardé : aucune liste proposée, `"runtime": []` écrit serait un cœur nu, sans les outils de développement (cf. `bare`)
+      else if (laisses.length > 0) infos.push(t('bundler.index.runtime-repere-rien-garde', { laisses: laisses.join(', ') }))
+      // schema gardé par le seul `µ.ajax` lu en entier (cf. repereOptionalModules) : où, et comment l'éviter
+      if (!used!.has(OPAQUE_MU) && used!.has(OPAQUE_AJAX) && !this.repereOptionalModules(new Set([...used!].filter(f => f !== OPAQUE_AJAX))).has('schema')) {
+        const lieux = [...used!].filter(f => f.startsWith(OPAQUE_AJAX_AT)).map(f => f.slice(OPAQUE_AJAX_AT.length)).sort()
+        infos.push(t('bundler.index.runtime-repere-ajax-entier', { lieux: lieux.length > 5 ? lieux.slice(0, 5).join(', ') + ', …' : lieux.join(', ') }))
+      }
+    }
+    return { files, warnings, infos, coreOnly: bare }
+  }
+
+  // --------------------------------------------------------------------------
+  // repereOptionalModules(used) : les modules OPTIONNELS d'un projet sans clé `runtime` — ceux dont le code compilé se sert (signaux
+  // `opt:<nom>`, features.ts), plus ce que la prudence garde : un usage qui ne laisse AUCUNE trace dans les sources (la navigation
+  // d'une vue serveur, `@confirm` écrit dans son HTML, un toast, une modale ou une requête lancés par un script de la page) garde
+  // ujs, router, ajax, modal, vault et journal dès que le projet a des vues serveur (cf. hasServerPages) ; un réglage de navigation
+  // écrit (`anchorHistory`, `viewTransition`, `preload`) garde ujs. Puis les partenaires : router ne suit une adresse `#/…` changée
+  // (lien tapé, `location.hash`, Précédent) que par l'écouteur `hashchange` de ujs ; ujs pilote la navigation par router et
+  // ajax (sans eux l'interception reste inerte) et montre par modal la question de `@confirm` et les messages que le serveur
+  // renvoie (sans lui, `window.confirm` et `alert`), game/chat/accounts/lobby se greffent sur la connexion
+  // (socket), interp/predict/lockstep observent une partie (game), lockstep tire sa graine de det ; un effet en direct
+  // (*follow, *cursors, *react, *heatmap) emmène socket, où vivent ses aides (salon, connexion ouverte par `server:`) ; un
+  // effet à courbe (*travel, *path, *flipcard) emmène easing, où se lit une courbe nommée (`bounce-out`) ; socket emmène schema :
+  // un serveur MJS-WS qui déclare un schéma (`app.schema`) encode ses messages en binaire sans regarder ce que la page sait lire,
+  // et l'écran qui les écoute par `sock.on` n'a rien à déclarer (le serveur pousse ses schémas) — sans schema, ces trames sont
+  // illisibles ; `µ.ajax` lu en entier (rangé dans une variable, décomposé, passé à une fonction, cf. opaqueAjaxOffset) emmène schema : la méthode
+  // appelée ne se lit pas, et binary décode sa réponse avec le codec de schema
+  // --------------------------------------------------------------------------
+  private repereOptionalModules(used: ReadonlySet<string>): Set<string> {
+    // un accès à µ que le relevé ne sait pas résoudre (indice calculé, déstructuration, µ passé à une fonction, cf. opaqueMuOffset) ne
+    // dit pas quel module sert : tous restent, comme avec "runtime": "all"
+    if (used.has(OPAQUE_MU)) return new Set(OPTIONAL_RUNTIME_MODULES.filter(m => m !== 'i18n'))
+    const trouves = new Set<string>(OPTIONAL_RUNTIME_MODULES.filter(m => used.has(optionalSignal(m))))
+    if (this.hasServerPages()) for (const m of SERVER_PAGE_MODULES) trouves.add(m)
+    if (this.anchorHistory || this.viewTransition !== undefined || this.preload !== undefined) trouves.add('ujs')
+    if (SOCKET_EFFECTS.some(e => used.has(e))) trouves.add('socket')
+    if (CURVE_EFFECTS.some(e => used.has(e))) trouves.add('easing')
+    if (trouves.has('router')) trouves.add('ujs')
+    if (trouves.has('ujs')) for (const m of ['router', 'ajax', 'modal']) trouves.add(m)
+    if (['interp', 'predict', 'lockstep'].some(m => trouves.has(m))) trouves.add('game')
+    if (trouves.has('lockstep')) trouves.add('det')
+    if (['game', 'chat', 'accounts', 'lobby'].some(m => trouves.has(m))) trouves.add('socket')
+    if (trouves.has('socket') || used.has(OPAQUE_AJAX)) trouves.add('schema')
+    trouves.delete('i18n')
+    return trouves
+  }
+
+  // --------------------------------------------------------------------------
+  // hasServerPages() : le projet sert-il des pages que la construction ne lit jamais ? Un bloc `render` (pages rendues par le serveur
+  // de rendu, reliées par la navigation), ou un dossier de vues d'un serveur à la racine du projet (dossier de mjs.config.json) —
+  // `app/views` (Rails), `resources/views` (Laravel), `templates` (Django, Flask, Symfony), `views` (Express). Faux positif accepté :
+  // les modules de page partent pour rien, comme avant
+  // --------------------------------------------------------------------------
+  private hasServerPages(): boolean {
+    if (this.render !== undefined) return true
+    return SERVER_VIEW_DIRS.some(d => {
+      const p = join(this.projectDir, d)
+      return existsSync(p) && statSync(p).isDirectory()
+    })
   }
 
   // --------------------------------------------------------------------------
@@ -5287,10 +5241,14 @@ export class Bundler {
 
   // --------------------------------------------------------------------------
   // componentSkeletons() : la silhouette des composants dont le code arrive (µ._skels, au
-  // manifeste) — pour chaque composant quand `effects.skeleton` cite 'components', sinon pour ceux
-  // dont une balise porte `*skeleton` dans un gabarit du projet (`<@carte *skeleton>`). Tirée de son
-  // gabarit par skeletonHtml ; un gabarit qui ne s'analyse pas n'en a pas (le composant arrive nu,
-  // comme avant). Clés : le nom de la balise sans `mjs-`, en minuscules.
+  // manifeste) — pour chaque composant qui attend un contenu (un {await} dans son gabarit) quand
+  // `effects.skeleton` cite 'components', et pour ceux dont une balise porte `*skeleton` dans un
+  // gabarit du projet (`<@carte *skeleton>`), quels qu'ils soient. Un composant sans attente (mise en
+  // page, cadre, en-tête) n'en a pas : il est rendu dès que son code arrive, et sa silhouette, dessinée
+  // sans son style (il arrive avec ce code, dans sa racine), n'aurait pas sa place — un tiroir hors de
+  // l'écran, une barre fixe s'y dessinaient dans le flux, puis la page sautait. Tirée de son gabarit en
+  // forme compacte par componentSkeleton (la page la remet en HTML) ; un gabarit qui ne s'analyse pas
+  // n'en a pas (le composant arrive nu, comme avant). Clés : le nom de la balise sans `mjs-`, en minuscules.
   // --------------------------------------------------------------------------
   private componentSkeletons(): Record<string, string> {
     const tous  = !!this.effectsConf?.skeleton?.includes('components')
@@ -5303,16 +5261,16 @@ export class Bundler {
       if (!f.endsWith('.mjs')) continue
       const nom = key.toLowerCase()
       if (!tous && !vises.has(nom)) continue
-      const html = this.scanSource('skeleton', f, '', (src) => {
+      const s = this.scanSource('skeleton', f, { forme: '', attente: false }, (src) => {
         try {
           const sections = extractSections(src)
-          return skeletonHtml(sections.html, sections.htmlStartLine)
+          return componentSkeleton(sections.html, sections.htmlStartLine)
         }
         catch {
-          return ''   // un gabarit qui ne s'analyse pas n'en a pas : le composant arrive nu, comme avant
+          return { forme: '', attente: false }   // un gabarit qui ne s'analyse pas n'en a pas : le composant arrive nu, comme avant
         }
       })
-      if (html) out[nom] = html
+      if (s.forme && (s.attente || vises.has(nom))) out[nom] = s.forme
     }
     return out
   }
@@ -5382,16 +5340,17 @@ export class Bundler {
     // V2 — mjs_element_int / mjs_element_bigint retirés : µ.Element gère tout
     // via le dispatch direct `_mjs_effectsByVar` (plus de bitmask Int/BigInt).
     //
-    // Sélection des modules (cœur + optionnels selon `runtime`, défaut 'all' ;
-    // rétrocompat `minimalRuntime` ≡ 'core'). mjs_flip reste en fin (patch
+    // Sélection des modules (cœur + optionnels selon `runtime`, clé absente : ceux
+    // que `used` repère ; rétrocompat `minimalRuntime` ≡ 'core'). mjs_flip reste en fin (patch
     // `µ.Element.prototype`, doit suivre mjs_element) ; mjs_debug est inséré
     // juste après, hors prod et hors cœur nu (splice ci-dessous).
     //
     // mjs_title.ts n'est plus BYTE-identique à l'historique en 'all'/'core' pour un projet SANS
     // aucun `@title`/`mjs-title` (il en sort désormais) — c'est le but recherché,
     // pas une régression. Un projet qui EN a au moins un reste identique à l'historique.
-    const { files: selectedFiles, warnings: runtimeWarnings, coreOnly } = this.resolveRuntimeFiles(used)
+    const { files: selectedFiles, warnings: runtimeWarnings, infos: runtimeInfos, coreOnly } = this.resolveRuntimeFiles(used)
     for (const w of runtimeWarnings) this.buildWarn(w)
+    for (const i of runtimeInfos) this.buildInfo(i)
     this.labelCoreModules = this.coreLabelModules()
     this.labelCoreDropped = new Set([...this.coreParts.dropped].filter(p => !this.coreParts.kept.has(p)))
     this.labelFxEffects   = new Set(selectedFiles.filter(f => /^mjs_fx_[a-z0-9_]+\.ts$/.test(f)).map(f => f.slice(7, -3)))
@@ -5512,7 +5471,29 @@ export class Bundler {
     // la file des boucles qui écrivent l'état (blocs balisés `<boucles>` de mjs_init.ts et de `_mjs_invalidate`, mjs_element.ts) : seulement si le
     // compilateur a enveloppé une boucle dans une unité de ce build (generator/loop-batch.ts) ; sinon le cœur est identique, à l'octet, à celui d'avant
     const avecBoucles  = used.has(BOUCLES) ? avecChargeur : avecChargeur.replace(/^[ \t]*\/\/ <boucles>\n[\s\S]*?^[ \t]*\/\/ <\/boucles>\n/gm, '')
-    const concatenated = this.isProd() ? stripMsgFallbacks(avecBoucles) : avecBoucles
+    // les blocs balisés du cœur qu'une appli qui n'écrit pas la fonction ne paie pas — le texte reste celui d'avant, à l'octet, quand elle
+    // l'écrit : la reprise d'une sortie en cours (`<transitions>` de mjs_if.ts, mjs_key.ts et mjs_for.ts) avec mjs_destroy_hooks.ts, seul
+    // fichier qui pose `_mjs_dying` ; l'index des liaisons filtrées par valeur (`<liaisons-filtrees>`, mjs_for.ts) quand une unité en écrit
+    // une ; la balise de `<@view>` (`<vue>`, mjs_init.ts) quand une unité en écrit une, ou avec le routeur ou les liens ; `matches` et
+    // `animate` insensibles à une méthode du composant (`<natifs>`, mjs_element.ts) quand une unité les appelle ; l'appel du moteur de
+    // reprise du DOM serveur (`<reprise-serveur>`, mjs_element.ts) avec mjs_hydrate.ts, seul fichier qui le pose. Un build de
+    // développement complet garde les liaisons filtrées, la balise de `<@view>` et les aides natives : l'atelier de thème, compilé à la
+    // volée hors de ce build, et le panneau d'inspection (l'éclair de *flash) partagent ce cœur
+    const complet  = !coreOnly && !this.isProd()
+    const sansBloc = (texte: string, nom: string): string => texte.replace(new RegExp(`^[ \\t]*\\/\\/ <${nom}>\\n[\\s\\S]*?^[ \\t]*\\/\\/ <\\/${nom}>\\n`, 'gm'), '')
+    let allege     = avecBoucles
+    if (!selectedFiles.includes('mjs_destroy_hooks.ts')) allege = sansBloc(allege, 'transitions')
+    if (!used.has(FILTERED_BINDINGS) && !complet) allege = sansBloc(allege, 'liaisons-filtrees')
+    if (!used.has(VIEW_TAG) && !selectedFiles.includes('mjs_router.ts') && !selectedFiles.includes('mjs_ujs.ts') && !complet) allege = sansBloc(allege, 'vue')
+    if (!used.has(NATIVE_HELPERS) && !complet) allege = sansBloc(allege, 'natifs')
+    if (!selectedFiles.includes('mjs_hydrate.ts')) allege = sansBloc(allege, 'reprise-serveur')
+    // l'aide qui tait un chargement coupé par le départ de la page (`<depart-de-page>`, mjs_init.ts) : seulement si un fichier
+    // du cœur, ou un fichier d'effet à part, l'appelle (les chargeurs des composants, des langues, des effets, des feuilles et
+    // des variantes à la demande) ; leurs appels la cherchent avant de s'en servir. Lu sur le texte : un chargeur ajouté
+    // demain la garde sans qu'on y pense
+    const sansDepart = sansBloc(allege, 'depart-de-page')
+    if (!/µ\._mjs_load(?:ing|Failed)\b/.test([sansDepart, ...chunkTexts].join('\n'))) allege = sansDepart
+    const concatenated = this.isProd() ? stripMsgFallbacks(allege) : allege
     this.traceKeys     = traceKeysIn(concatenated)
     // GARDE DU CONTRAT — dernier mot avant que ce cœur parte sur disque : chaque symbole interne
     // que les unités de ce build APPELLENT doit exister dans le texte qu'on vient d'assembler.
@@ -5668,8 +5649,23 @@ export class Bundler {
   // mjs.config.json elle-même, qui tourne avant que l'environnement dev/prod ne soit connu).
   // PUBLIC : cli.ts l'appelle aussi pour ses propres échos d'avertissements de build
   // (`stats.warnings`, purge d'orphelins) — même bundler, même niveau, un seul filtre.
+  // Chaque ligne écrite est retenue pour ce dossier de sources : le prérendu ne la répète pas (cf. warningAlreadyWritten).
   buildWarn(message: string): void {
-    if (logLevelAllows(resolveTerminalLogLevel(this.logLevel, this.isProd() ? 'prod' : 'dev'), 'warn')) printDiagnostic(message, this.colorsEnabled)
+    if (!logLevelAllows(resolveTerminalLogLevel(this.logLevel, this.isProd() ? 'prod' : 'dev'), 'warn')) return
+    printDiagnostic(message, this.colorsEnabled)
+    const written = _writtenWarnings.get(this.sourceDir) ?? new Set<string>()
+    written.add(message.trim())
+    _writtenWarnings.set(this.sourceDir, written)
+  }
+
+  // une INFORMATION de construction (les modules optionnels laissés de côté) : visible au même niveau que les avertissements, sans
+  // en être un — ni étiquette `[lint.…]`, ni ligne d'aide, ni place dans le bilan. Une fois tant qu'elle ne change pas : `mjs dev`
+  // reconstruit le cœur à chaque passe
+  private lastBuildInfo = ''
+  buildInfo(message: string): void {
+    if (message === this.lastBuildInfo) return
+    this.lastBuildInfo = message
+    if (logLevelAllows(resolveTerminalLogLevel(this.logLevel, this.isProd() ? 'prod' : 'dev'), 'warn')) console.log(message)
   }
 
   // où s'écrivent `@in=*nom`, `@out=*nom` et `@transition=*nom` (avec leurs modificateurs) : « fichier (ligne N) », un par fichier. Une directive s'écrit dans l'ouverture
@@ -6354,6 +6350,9 @@ export class Bundler {
     // APRÈS résolution des assets/imports split (repères compris — aucun marqueur recherché
     // ne s'y trouve). Alimente collectUsedFeatures() en phase B de compile().
     const features = [...scanCompiledFeatures(withSplitCss, data, this.aliasTable.map(n => this.effectDefs[n].fixed ?? {}))]
+    // un accès à µ que le relevé ne sait pas résoudre : situé dans la source, pour l'information du repérage (cf. resolveRuntimeFiles)
+    if (features.includes(OPAQUE_MU)) features.push(opaqueMuSignal(relative(this.projectDir, filePath), opaqueMuSourceLine(content)))
+    if (features.includes(OPAQUE_AJAX)) features.push(opaqueAjaxSignal(relative(this.projectDir, filePath), opaqueAjaxSourceLine(content)))
     for (const f of features) this.pendingFeatures.add(f)
     // le code de ses effets, un fichier par effet (cf. fxChunked) : importé en tête, il arrive avec
     // le composant — REPÈRE résolu en phase C, comme celui d'une feuille split
@@ -7127,6 +7126,9 @@ export class Bundler {
     // scanCompiledFeatures). Sur `withImport`, AVANT minify (mêmes raisons que
     // compileMjsCold : le minifieur mangle les symboles `_mjs_*`/`_upd*`).
     const features = [...scanCompiledFeatures(withImport)]
+    // un accès à µ que le relevé ne sait pas résoudre : situé dans la source, comme pour un composant
+    if (features.includes(OPAQUE_MU)) features.push(opaqueMuSignal(relative(this.projectDir, filePath), opaqueMuSourceLine(src)))
+    if (features.includes(OPAQUE_AJAX)) features.push(opaqueAjaxSignal(relative(this.projectDir, filePath), opaqueAjaxSourceLine(src)))
     for (const f of features) this.pendingFeatures.add(f)
     // symboles du CONTRAT — jumeau de compileMjsCold (cf. core-contract.ts).
     const coreCalls = [...collectCoreCalls(withImport)]
@@ -7362,165 +7364,12 @@ export class Bundler {
     return out + css.slice(cursor)
   }
 
-  // bundleSharedStyles() : compile les .sass/.scss/.css de stylesheetsDir et
-  // les expose via `µ.CSS[name] = sheet`. Le runtime les consomme à la demande
-  // via `_mjs_sharedCss`. Un fichier `mjs_root.{sass,scss}` est traité à part
-  // et adopté globalement (comme en V1).
-  // Retourne le nombre de stylesheets émis (0 si aucun) + les warnings
-  // `cssTrapWarnings` accumulés sur les feuilles NOMMÉES.
   // --------------------------------------------------------------------------
-  async bundleSharedStyles(): Promise<{ count: number; warnings: string[] }> {
-    // CSS de ce tour-ci par feuille (hors mjs_root) / de mjs_root, pour
-    // le diff "css-only" (trackSharedCssDiff, appelé à CHAQUE sortie de fonction
-    // ci-dessous, y compris les replis précoces — un stylesheetsDir qui disparaît
-    // ou se vide doit aussi pouvoir disqualifier un lot en cours).
-    const newSharedCss = new Map<string, string>()
-    let newRootCss: string | undefined
-    if (!existsSync(this.stylesheetsDir)) {
-      this.manifest['__styles'] = ''
-      this.trackSharedCssDiff(newSharedCss, newRootCss)
-      return { count: 0, warnings: [] }
-    }
-
-    // `readdirSync` NE GARANTIT AUCUN
-    // ORDRE (dépend du filesystem/OS, peut différer entre deux machines ou
-    // deux builds du même repo). Sans tri : (1) l'ORDRE DE CASCADE CSS entre
-    // stylesheets partagés dépend de cet ordre arbitraire — deux règles
-    // conflictuelles de même spécificité dans 2 fichiers différents peuvent
-    // "gagner" différemment selon la machine, pour un SOURCE IDENTIQUE ;
-    // (2) le hash de `mjs_styles-<hash>.js` (dérivé du JS concaténé DANS cet
-    // ordre) devient non déterministe d'un build à l'autre — casse les
-    // builds reproductibles. Même correctif déjà en place pour les
-    // animations (`compileUsedAnimations`, tri explicite du Set avant
-    // concaténation, cf. son propre commentaire) — mimé ici.
-    const files = readdirSync(this.stylesheetsDir)
-      .filter(f => /\.(sass|scss|css)$/.test(f))
-      .sort()
-
-    if (files.length === 0) {
-      this.manifest['__styles'] = ''
-      this.trackSharedCssDiff(newSharedCss, newRootCss)
-      return { count: 0, warnings: [] }
-    }
-
-    let js = `import { µ } from '${this.coreHashedPath}';\n`
-    let rootCount = 0
-    let sharedCount = 0
-    // `compileCss` throw désormais
-    // sur une erreur SASS/SCSS (cf. son propre commentaire) au lieu de
-    // l'avaler. Isolé PAR FICHIER ici : un stylesheet partagé cassé ne doit
-    // pas empêcher la compilation des AUTRES (contrairement au cas
-    // composant, où laisser l'erreur du worker remonter telle quelle est le
-    // comportement voulu) — les erreurs sont collectées et jetées ENSEMBLE
-    // à la fin, remontées par le try/catch déjà en place chez le caller de
-    // bundleSharedStyles() dans stats.errors.
-    const cssErrors: string[] = []
-    // une feuille NOMMÉE (`@css name`) atterrit, une fois
-    // consommée, dans le SHADOW ROOT du composant consommateur (`_mjs_sharedCss`,
-    // runtime/mjs_element.ts) : même piège @font-face/@import qu'un <style> de
-    // composant (cf. cssTrapWarnings). `mjs_root.{sass,scss}` échappe au piège
-    // (adopté en `document.adoptedStyleSheets`, HORS Shadow DOM) — volontairement
-    // exclu du scan (branche `if baseName === 'mjs_root'` ci-dessous).
-    const cssWarnings: string[] = []
-
-    for (const file of files) {
-      const path = join(this.stylesheetsDir, file)
-      const baseName = file.replace(/\.(sass|scss|css)$/, '')
-      const ext = file.match(/\.(sass|scss|css)$/)![1] as 'sass' | 'scss' | 'css'
-      // Même garde que macros.ts/transpiler/index.ts :
-      // ce chemin (feuille PARTAGÉE, mjs_root compris) ne passait JAMAIS par le
-      // strip \x00 posé pour <@include> — un NUL réel + un mot-clé sentinel dans
-      // CE fichier faisait passer STYLE_BLOCK_RE (transpiler/css.ts) pour un
-      // découpage multi-lang légitime et INJECTAIT le texte encadré tel quel
-      // dans le CSS livré (confirmé en conditions réelles). Un NUL n'est jamais un
-      // caractère utile en CSS/SASS (même raisonnement, aucune perte).
-      // Confinement RÉEL (cf. assertRealUnder) : un symlink DANS stylesheetsDir
-      // pointant HORS de lui était lu tel quel, son contenu publié dans mjs_styles-<hash>.js.
-      this.assertRealUnder(path, this.stylesheetsDir)
-      const src = readFileSync(path, 'utf-8').replace(/\x00/g, '')
-      let css: string
-      try {
-        css = await this.compileSharedSheet(path, src, ext)
-      } catch (e: any) {
-        cssErrors.push(`${file} : ${e?.message ?? e}`)
-        continue
-      }
-      if (css.trim() === '') continue
-
-      // mjs_root.{sass,scss} → adopté globalement
-      if (baseName === 'mjs_root') {
-        js += `{\n` +
-              `  const _root = new CSSStyleSheet();\n` +
-              `  _root.replaceSync(${JSON.stringify(css)});\n` +
-              `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-              // handle sinon perdu (scope de bloc) : nécessaire à
-              // µ._hotCss (dev) pour un replaceSync ultérieur en place.
-              `  µ._mjs_rootStyleSheet = _root;\n` +
-              `}\n`
-        rootCount++
-        newRootCss = css
-      } else {
-        for (const w of cssTrapWarnings(css, this.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
-        const safeVar = baseName.replace(/[^a-zA-Z0-9]/g, '_')
-        // FAILLE — la CLÉ était injectée
-        // brute entre apostrophes (`µ.CSS['${baseName}']`) : un nom de fichier
-        // stylesheet contenant une `'` (ou `\`) sortait de la chaîne et injectait
-        // du JS arbitraire dans mjs_styles.js. `JSON.stringify` échappe la clé
-        // (la VALEUR css l'était déjà). safeVar reste sûr (déjà assaini ci-dessus).
-        const keyLit = JSON.stringify(baseName)
-        js += `µ.CSS = µ.CSS || {};\n` +
-              `if (!µ.CSS[${keyLit}]) {\n` +
-              `  const s_${safeVar} = new CSSStyleSheet();\n` +
-              `  s_${safeVar}.replaceSync(${JSON.stringify(css)});\n` +
-              `  µ.CSS[${keyLit}] = s_${safeVar};\n` +
-              `}\n`
-        sharedCount++
-        newSharedCss.set(baseName, css)
-      }
-    }
-
-    if (rootCount + sharedCount === 0) {
-      this.manifest['__styles'] = ''
-      this.trackSharedCssDiff(newSharedCss, newRootCss)
-      // Si TOUS les fichiers ont échoué (aucun succès), pas de quoi écrire —
-      // mais surtout ne PAS avaler l'erreur silencieusement.
-      if (cssErrors.length > 0) {
-        throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
-      }
-      return { count: 0, warnings: cssWarnings }
-    }
-
-    const minified = await minifyJs(js, {
-      force: this.shouldMinify(),
-      filename: 'mjs_styles.js',
-      mangleCache: this.mangleCache,
-      logLevel: this.prodLogLevel(),
-      dev: !this.isProd(),
-    })
-    // mode 'bundle' : jamais un fichier `mjs_styles-<hash>.js` — gardé en mémoire, résolu par
-    // le plugin esbuild d'emitSingleFile() sous 'mjs:styles' (cf. bandeau de bundleRuntime()
-    // pour la même logique côté cœur).
-    let hashedPath: string
-    if (this.jsMode === 'bundle') {
-      this.bundleVirtualSources.set('mjs_styles', this.withInlineSourceMap(minified.code, minified.map))
-      hashedPath = 'mjs:styles'
-    } else {
-      hashedPath = this.writeHashed('mjs_styles', '.js', minified.code)
-    }
-    this.manifest['__styles'] = hashedPath
-    // diff sémantique feuille par feuille (avant le throw éventuel
-    // ci-dessous : la baseline doit refléter ce qui vient d'être écrit, même
-    // si un AUTRE fichier de stylesheetsDir a échoué — les erreurs, elles,
-    // disqualifient déjà le verdict via stats.errors).
-    this.trackSharedCssDiff(newSharedCss, newRootCss)
-    // Écrit d'abord le sous-ensemble RÉUSSI (comme pour les composants .mjs,
-    // un fichier cassé ne doit pas priver les autres de leur sortie), PUIS
-    // signale l'échec — remonté par le try/catch déjà en place chez le
-    // caller dans stats.errors (le build ENTIER n'est pas vert pour autant).
-    if (cssErrors.length > 0) {
-      throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
-    }
-    return { count: rootCount + sharedCount, warnings: cssWarnings }
+  // feuilles de style (partagées, découpées, à la demande) : le travail vit dans styles.ts ; chaque méthode garde son nom et sa
+  // signature et passe l'instance à la fonction du même nom
+  // --------------------------------------------------------------------------
+  bundleSharedStyles(): Promise<{ count: number; warnings: string[] }> {
+    return styles.bundleSharedStyles(this)
   }
 
   // compileSharedSheet() : une feuille partagée compilée (SASS) — reprise du tour précédent quand son texte, adresses µasset
@@ -7528,313 +7377,32 @@ export class Bundler {
   // résout aucun fichier voisin (compileString sans chemin de chargement), la sortie ne dépend que du texte et de la syntaxe
   private sharedSheetMemo: Map<string, { ext: string, src: string, css: string }> = new Map()
 
-  private async compileSharedSheet(path: string, src: string, ext: 'sass' | 'scss' | 'css'): Promise<string> {
-    const resolved = await this.resolveCssAssets(src)
-    const memo     = this.sharedSheetMemo.get(path)
-    if (memo !== undefined && memo.ext === ext && memo.src === resolved) return memo.css
-    const css = compileCss(resolved, ext)
-    this.sharedSheetMemo.set(path, { ext, src: resolved, css })
-    return css
+  private compileSharedSheet(path: string, src: string, ext: 'sass' | 'scss' | 'css'): Promise<string> {
+    return styles.compileSharedSheet(this, path, src, ext)
   }
 
-  // --------------------------------------------------------------------------
-  // trackSharedCssDiff : diff sémantique des feuilles partagées entre
-  // le compile PRÉCÉDENT et celui-ci. Une feuille présente des deux côtés avec un
-  // CSS différent est éligible au hot-swap (`µ.CSS[name].replaceSync` côté client) ;
-  // une feuille qui APPARAÎT ou DISPARAÎT disqualifie le lot (µ.CSS[name] naît au
-  // chargement de mjs_styles.js, un composant doit être recompilé pour la
-  // référencer — repli reload complet, au moindre doute). Idem pour mjs_root.
-  // Hors watch : simple mise à jour de baseline, aucun verdict.
-  // --------------------------------------------------------------------------
   private trackSharedCssDiff(newSharedCss: Map<string, string>, newRootCss: string | undefined): void {
-    if (this.cssOnlyTracking) {
-      for (const [name, css] of newSharedCss) {
-        const prev = this.lastSharedCss.get(name)
-        if (prev === undefined) this.cssOnlyDisqualified = true
-        else if (prev !== css) this.cssOnlySheets[name] = css
-      }
-      for (const name of this.lastSharedCss.keys()) {
-        if (!newSharedCss.has(name)) this.cssOnlyDisqualified = true
-      }
-      if (newRootCss !== undefined && this.lastRootCss !== undefined) {
-        if (newRootCss !== this.lastRootCss) this.cssOnlyRoot = newRootCss
-      } else if (newRootCss !== this.lastRootCss) {
-        this.cssOnlyDisqualified = true  // mjs_root apparu/disparu
-      }
-      // mjs_styles.js est RÉÉMIS dès qu'une feuille change : émission attendue
-      // d'un lot css-only, exemptée du diff central de writeHashed (cf. compile()).
-      this.cssOnlyAllowedWrites.add('mjs_styles.js')
-    }
-    this.lastSharedCss = newSharedCss
-    this.lastRootCss = newRootCss
+    styles.trackSharedCssDiff(this, newSharedCss, newRootCss)
   }
 
-  // --------------------------------------------------------------------------
-  // emitSplitStyles() : mode css='split', étape « 1.5 » de compile()
-  // (AVANT les composants, même précédent que mjs_core/coreHashedPath). Compile
-  // CHAQUE feuille de stylesheetsDir dans SON PROPRE fichier `mjs_style_<nom>-<hash>.js`
-  // (au lieu du `mjs_styles-<hash>.js` unique de bundleSharedStyles) — c'est ce qui
-  // permet à un module de n'importer QUE les feuilles qu'il déclare (`@css`), plutôt
-  // que de faire voyager tout stylesheetsDir avec chaque page.
-  //
-  // Duplique VOLONTAIREMENT la boucle de compilation par fichier de bundleSharedStyles()
-  // (même lecture, même compileCss, même cssTrapWarnings, même gabarit `µ.CSS[nom] = …`)
-  // plutôt que de factoriser : bundleSharedStyles() reste la seule responsable du mode
-  // 'bundle' (défaut), et doit rester une sortie BYTE-IDENTIQUE à ce qu'elle a toujours
-  // produit — un refactor partagé ferait courir un risque de régression sur ce contrat.
-  //
-  // Ne fait AUCUNE hypothèse sur `requestedSharedSheets` (rempli PAR les composants,
-  // compilés APRÈS cette étape) : compile toutes les feuilles PRÉSENTES sur disque, sans
-  // savoir encore lesquelles seront déclarées — c'est finalizeSplitStyles() (étape 2c,
-  // après les composants) qui décide lesquelles restent eager.
-  // --------------------------------------------------------------------------
-  async emitSplitStyles(): Promise<{ warnings: string[] }> {
-    this.splitStyleHashedPaths = {}
-    this.splitRootHashedPath = undefined
-    this.lastSharedCss = new Map()
-    this.lastRootCss = undefined
-    if (!existsSync(this.stylesheetsDir)) return { warnings: [] }
-    const files = readdirSync(this.stylesheetsDir)
-      .filter(f => /\.(sass|scss|css)$/.test(f))
-      .sort()
-    if (files.length === 0) return { warnings: [] }
-    const cssErrors: string[] = []
-    const cssWarnings: string[] = []
-    // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
-    const newSharedCss = new Map<string, string>()
-    let newRootCss: string | undefined
-    for (const file of files) {
-      const path = join(this.stylesheetsDir, file)
-      const baseName = file.replace(/\.(sass|scss|css)$/, '')
-      const ext = file.match(/\.(sass|scss|css)$/)![1] as 'sass' | 'scss' | 'css'
-      // même garde \x00 que bundleSharedStyles() — cf. son commentaire.
-      // Même confinement RÉEL que bundleSharedStyles() (cf. assertRealUnder).
-      this.assertRealUnder(path, this.stylesheetsDir)
-      const src = readFileSync(path, 'utf-8').replace(/\x00/g, '')
-      let css: string
-      try {
-        css = await this.compileSharedSheet(path, src, ext)
-      } catch (e: any) {
-        cssErrors.push(`${file} : ${e?.message ?? e}`)
-        continue
-      }
-      if (css.trim() === '') continue
-      if (baseName === 'mjs_root') {
-        // mjs_root : toujours eager (adopté sur le document, aucun composant ne le
-        // déclare) — son propre fichier, importé par le manifeste dans TOUS les modes
-        // qui splittent (jamais en mode 'bundle', où il reste dans mjs_styles.js).
-        const js = `import { µ } from '${this.coreHashedPath}';\n` +
-                   `{\n` +
-                   `  const _root = new CSSStyleSheet();\n` +
-                   `  _root.replaceSync(${JSON.stringify(css)});\n` +
-                   `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-                   `  µ._mjs_rootStyleSheet = _root;\n` +
-                   `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
-        this.splitRootHashedPath = this.writeHashed('mjs_style_root', '.js', minified.code)
-        newRootCss = css
-      } else {
-        for (const w of cssTrapWarnings(css, this.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
-        // safeVar sert AUSSI de base de nom de fichier ici (contrairement à
-        // bundleSharedStyles, où il ne sert qu'à l'identifiant JS local) : un nom de
-        // feuille avec espace/accent produirait sinon un chemin fragile.
-        // MÊME DÉSAMBIGUÏSATION QU'EN 'lazy' : `dark-theme` et `dark_theme` se
-        // normalisent tous deux en `mjs_style_dark_theme`. Ici le CONTENU diffère bien (le
-        // module embarque `µ.CSS['<nom>']`), donc les hachages diffèrent — mais `writeHashed`
-        // passe par `cleanupOldHashes`, qui balaie le STEM : écrire la seconde SUPPRIMAIT le
-        // fichier de la première, le composant importait une URL morte (404 → tout le graphe
-        // de modules de la page tombe), et le build annonçait 0 erreur, 0 avertissement.
-        // Dès que la normalisation a changé le nom, on suffixe une empreinte du nom D'ORIGINE :
-        // deux noms distincts ne peuvent plus jamais partager un stem.
-        const safeVar = baseName.replace(/[^a-zA-Z0-9]/g, '_')
-        const stem    = this.splitStyleStem(baseName)
-        const keyLit = JSON.stringify(baseName)
-        const js = `import { µ } from '${this.coreHashedPath}';\n` +
-                   `µ.CSS = µ.CSS || {};\n` +
-                   `if (!µ.CSS[${keyLit}]) {\n` +
-                   `  const s_${safeVar} = new CSSStyleSheet();\n` +
-                   `  s_${safeVar}.replaceSync(${JSON.stringify(css)});\n` +
-                   `  µ.CSS[${keyLit}] = s_${safeVar};\n` +
-                   `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: `mjs_style_${baseName}.js`, mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
-        this.splitStyleHashedPaths[baseName] = this.writeHashed(stem, '.js', minified.code)
-        newSharedCss.set(baseName, css)
-      }
-    }
-    // baseline seulement : en 'split' et 'lazy', le suivi « css seul » de trackSharedCssDiff ne s'applique pas
-    this.lastSharedCss = newSharedCss
-    this.lastRootCss = newRootCss
-    if (cssErrors.length > 0) {
-      throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
-    }
-    return { warnings: cssWarnings }
+  emitSplitStyles(): Promise<{ warnings: string[] }> {
+    return styles.emitSplitStyles(this)
   }
 
-  // --------------------------------------------------------------------------
-  // finalizeSplitStyles() : mode css='split', étape « 2c » (même
-  // position que bundleSharedStyles() en mode 'bundle') — APRÈS les composants, donc
-  // `requestedSharedSheets` (feuilles déclarées par au moins un `@css`) ET
-  // `viewRequestedSheets` (feuilles réclamées par au moins un `<@view css="…">` littéral,
-  // cf. extractViewCssNames) sont désormais complets. DEUX FILETS DE SÉCURITÉ distincts,
-  // chacun forçant eager pour une raison différente :
-  //   1. une feuille compilée par emitSplitStyles() qu'AUCUN module ne déclare resterait
-  //      invisible de tout le monde si elle n'était importée par personne.
-  //   2. une feuille DÉCLARÉE par un module (donc PAS orpheline) mais réclamée AUSSI par
-  //      un `<@view css="…">` d'un AUTRE module — la page qui charge cette vue peut très
-  //      bien ne jamais charger le module déclarant, et hériterait alors d'un `µ.CSS[nom]`
-  //      vide (cf. runtime/mjs_element.ts, `_mjs_applyLayout`, avertissement « Orphelin CSS
-  //      hérité »). Rien ne relie ces deux modules au build : seul le fait de forcer la
-  //      feuille eager referme ce trou.
-  // Les deux restent importées par le MANIFESTE, exactement comme en mode 'bundle'. Deux
-  // avertissements DISTINCTS (un par raison) : l'auteur doit comprendre pourquoi son gain
-  // n'est pas total, et pourquoi ajouter `@css` ne suffit pas toujours (raison 2).
-  // --------------------------------------------------------------------------
   finalizeSplitStyles(): { count: number; warnings: string[] } {
-    const known = Object.keys(this.splitStyleHashedPaths).sort()
-    // raison 1 — personne ne la déclare (@css) : le filet historique.
-    const undeclared = known.filter(name => !this.requestedSharedSheets.has(name))
-    // raison 2 — déclarée par un module, mais un <@view css="…">
-    // la réclame AUSSI (disjoint de `undeclared` par construction : un nom ne peut pas
-    // être à la fois « personne ne le déclare » et « un module le déclare »).
-    const viewOnly = known.filter(name => this.requestedSharedSheets.has(name) && this.viewRequestedSheets.has(name))
-    this.splitEagerHashedPaths = [...undeclared, ...viewOnly].sort().map(name => this.splitStyleHashedPaths[name])
-    const warnings: string[] = []
-    if (undeclared.length > 0) {
-      this.lintPush(warnings, 'cssSplit', t('bundler.index.css-split-feuilles-eager', { feuilles: undeclared.join(', ') }))
-    }
-    if (viewOnly.length > 0) {
-      this.lintPush(warnings, 'cssSplit', t('bundler.index.css-split-feuilles-eager-view', { feuilles: viewOnly.join(', ') }))
-    }
-    const count = known.length + (this.splitRootHashedPath ? 1 : 0)
-    return { count, warnings }
+    return styles.finalizeSplitStyles(this)
   }
 
-  // --------------------------------------------------------------------------
-  // emitLazyStyles() : mode css='lazy', étape « 1.5 » de compile(),
-  // à la même place que emitSplitStyles(). Différence de fond avec 'split' : la
-  // feuille n'est PAS emballée dans un module JS importé statiquement par le
-  // composant — elle devient un VRAI fichier `.css` haché, que le runtime va
-  // chercher au montage du PREMIER composant qui la déclare (`@css`), et garde en
-  // cache PAR URL : dix composants qui déclarent la même feuille = UNE requête.
-  //
-  // Conséquence sur la compilation des composants : rien à injecter en tête de
-  // leur JS (contrairement à prependSplitCssImports), donc AUCUN sel de cache à
-  // ajouter — le composant ne connaît que le NOM de la feuille, la table des URLs
-  // vit au manifeste (`µ._cssLazy`, cf. writeManifest).
-  //
-  // `mjs_root` reste EAGER, comme en 'split' : personne ne le déclare, il est
-  // adopté sur le document, et il porte typiquement les variables de thème — le
-  // charger en différé ferait clignoter TOUTE la page, pas un composant.
-  // --------------------------------------------------------------------------
-  async emitLazyStyles(): Promise<{ warnings: string[] }> {
-    this.lazyStyleUrls = {}
-    this.splitRootHashedPath = undefined
-    this.lastSharedCss = new Map()
-    this.lastRootCss = undefined
-    if (!existsSync(this.stylesheetsDir)) return { warnings: [] }
-    const files = readdirSync(this.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
-    if (files.length === 0) return { warnings: [] }
-    const cssErrors: string[]   = []
-    const cssWarnings: string[] = []
-    // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
-    const newSharedCss = new Map<string, string>()
-    let newRootCss: string | undefined
-    for (const file of files) {
-      const path     = join(this.stylesheetsDir, file)
-      const baseName = file.replace(/\.(sass|scss|css)$/, '')
-      const ext      = file.match(/\.(sass|scss|css)$/)![1] as 'sass' | 'scss' | 'css'
-      // même garde \x00 que bundleSharedStyles()/emitSplitStyles()
-      // Même confinement RÉEL que bundleSharedStyles() (cf. assertRealUnder).
-      this.assertRealUnder(path, this.stylesheetsDir)
-      const src = readFileSync(path, 'utf-8').replace(/\x00/g, '')
-      let css: string
-      try {
-        css = await this.compileSharedSheet(path, src, ext)
-      } catch (e: any) {
-        cssErrors.push(`${file} : ${e?.message ?? e}`)
-        continue
-      }
-      if (css.trim() === '') continue
-      if (baseName === 'mjs_root') {
-        const js = `import { µ } from '${this.coreHashedPath}';\n` +
-                   `{\n` +
-                   `  const _root = new CSSStyleSheet();\n` +
-                   `  _root.replaceSync(${JSON.stringify(css)});\n` +
-                   `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-                   `  µ._mjs_rootStyleSheet = _root;\n` +
-                   `}\n`
-        const minified = await minifyJs(js, { force: this.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: this.mangleCache, logLevel: this.prodLogLevel(), dev: !this.isProd() })
-        this.splitRootHashedPath = this.writeHashed('mjs_style_root', '.js', minified.code)
-        newRootCss = css
-      } else {
-        for (const w of cssTrapWarnings(css, this.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
-        // même normalisation de nom qu'en 'split' : un nom de feuille avec espace ou
-        // accent produirait un chemin fragile. MAIS ici le fichier écrit est le CSS NU,
-        // sans le nom dedans (en 'split' le module JS embarque `µ.CSS['<nom>']`, ce qui
-        // écarte les hachages tout seul) : `dark-theme.sass` et `dark_theme.sass` au
-        // contenu identique se réduisaient au MÊME fichier, donc à la même URL pour deux
-        // noms — et le second nom n'obtenait jamais sa feuille, en silence (défaut mesuré).
-        // Dès que la normalisation a changé le nom,
-        // on désambiguïse par une empreinte du nom D'ORIGINE : deux noms distincts ne
-        // peuvent plus jamais tomber sur le même chemin
-        const stem = this.splitStyleStem(baseName)
-        this.lazyStyleUrls[baseName] = this.writeHashed(stem, '.css', css)
-        newSharedCss.set(baseName, css)
-      }
-    }
-    // baseline seulement, comme en 'split'
-    this.lastSharedCss = newSharedCss
-    this.lastRootCss = newRootCss
-    if (cssErrors.length > 0) {
-      throw new Error(t('bundler.index.css-sass-erreurs', { erreurs: cssErrors.join('\n') }))
-    }
-    return { warnings: cssWarnings }
+  emitLazyStyles(): Promise<{ warnings: string[] }> {
+    return styles.emitLazyStyles(this)
   }
 
-  // --------------------------------------------------------------------------
-  // finalizeLazyStyles() : étape « 2c », APRÈS les composants (donc
-  // `requestedSharedSheets` est complet). Contrairement à 'split', il n'y a AUCUN
-  // filet à poser :
-  //   1. une feuille que personne ne déclare n'est tout simplement JAMAIS chargée
-  //      (décision explicite : c'est le sens même du mode). Le fichier est écrit et
-  //      son URL reste au manifeste — un `<@view css="…">` peut la réclamer à
-  //      l'exécution — mais aucune requête ne part tant que personne ne la demande.
-  //      Une information de build la nomme, pour que ce ne soit pas une surprise.
-  //   2. le trou « orphelin CSS hérité » de 'split' (une feuille déclarée par un
-  //      module A et réclamée par un `<@view css>` d'un module B jamais chargé) se
-  //      referme tout seul ici : le runtime résout par NOM dans `µ._cssLazy`, il n'a
-  //      besoin d'aucun module déclarant pour trouver l'URL.
-  // --------------------------------------------------------------------------
   finalizeLazyStyles(): { count: number; warnings: string[] } {
-    const known      = Object.keys(this.lazyStyleUrls).sort()
-    const undeclared = known.filter(name => !this.requestedSharedSheets.has(name) && !this.viewRequestedSheets.has(name))
-    const warnings: string[] = []
-    if (undeclared.length > 0) {
-      this.lintPush(warnings, 'cssSplit', t('bundler.index.css-lazy-feuilles-jamais-reclamees', { feuilles: undeclared.join(', ') }))
-    }
-    const count = known.length + (this.splitRootHashedPath ? 1 : 0)
-    return { count, warnings }
+    return styles.finalizeLazyStyles(this)
   }
 
-  // --------------------------------------------------------------------------
-  // prependSplitCssImports() : mode css='split' — ajoute en tête du JS
-  // d'un composant les `import '<chemin>';` des feuilles qu'il déclare (`@css`,
-  // cf. sharedCssNames). `emitSplitStyles()` tourne désormais en PHASE C (après les
-  // composants, le cœur connu) : `this.splitStyleHashedPaths` est encore VIDE ici (phase A).
-  // Chaque nom demandé reçoit donc le REPÈRE de son propre stem (`splitStyleStem`, résolu en
-  // chemin réel par l'émission topologique de la phase C) — jamais filtré sur une existence
-  // qu'on ne peut pas encore connaître : une feuille demandée mais absente/en échec reste un
-  // dep jamais résolu, détecté par le garde-fou de compile() (§ 3.13), même sort qu'avant
-  // (validateSharedSheets()/erreurs SASS déjà couvertes par ailleurs). Tri alphabétique :
-  // ordre déterministe, sans effet sur la cascade (l'ordre qui compte pour le navigateur est
-  // celui de `_mjs_sharedCss`, posé par le transpiler — inchangé par cette méthode).
-  // --------------------------------------------------------------------------
   private prependSplitCssImports(code: string, sharedCssNames: string[]): string {
-    if (sharedCssNames.length === 0) return code
-    const imports = [...sharedCssNames].sort()
-      .map(name => `import '${this.placeholderPath(this.splitStyleStem(name), '.js')}';`)
-      .join('\n')
-    return imports === '' ? code : `${imports}\n${code}`
+    return styles.prependSplitCssImports(this, code, sharedCssNames)
   }
 
   // --------------------------------------------------------------------------
@@ -8331,10 +7899,14 @@ export class Bundler {
     // à chaque build (mesuré sur le site de doc). L'information ne sort donc que si au moins
     // un composant du PROJET est dans le lot.
     const coeur = new Set(this.pendingVarData.filter(c => resolve(c.file).startsWith(this.coreModulesDir)).map(c => c.moduleName))
+    // une variable qu'un module du cœur lit avec sa propre valeur par défaut (`var(--mjs-number-border, …)`) est sa variable de
+    // restylage, documentée avec lui (<@@number> : --mjs-number-border, --mjs-number-step-bg…) : la poser dans chaque composant qui
+    // habille ce module est l'usage prévu, pas un partage à rappeler
+    const restylage = new Set([...defaultReads].filter(([, lues]) => lues.some(d => coeur.has(d.declaredBy))).map(([name]) => name))
     for (const name of [...declaredByModule.keys()].sort()) {
       const mods = declaredByModule.get(name)!
       if (mods.size < 2) continue
-      if ([...mods].every(m => coeur.has(m))) continue
+      if ([...mods].every(m => coeur.has(m)) || restylage.has(name)) continue
       this.lintPush(warnings, 'themeShared', t('bundler.variable-partagee', { nom: name, modules: [...mods].sort().join(', ') }))
     }
 
@@ -8370,296 +7942,88 @@ export class Bundler {
     else warnings.push(t('bundler.index.registre-theme-garde', { chemin: registre }))
   }
 
-  // Écriture NON ATOMIQUE : un
-  // `writeFileSync` direct sur le chemin FINAL peut être interrompu à
-  // mi-chemin (crash process, OOM-kill, coupure d'alim) — le fichier reste
-  // alors TRONQUÉ sur disque. Le nom étant dérivé du hash du CONTENU SOURCE
-  // (jamais revérifié contre les octets RÉELLEMENT écrits), `existsSync
-  // (target)` renvoie ensuite `true` pour ce fichier CORROMPU à CHAQUE build
-  // suivant → l'écriture est skippée (« il existe déjà ») → le fichier
-  // tronqué n'est JAMAIS réparé, à vie, jusqu'à suppression manuelle.
-  // Fix : écriture dans un fichier temporaire PUIS `renameSync` — un rename
-  // sur le même volume est ATOMIQUE au niveau filesystem (POSIX comme NTFS) :
-  // soit l'ancien contenu reste intact, soit le nouveau le remplace
-  // ENTIÈREMENT, jamais un état intermédiaire visible depuis `target`. Si
-  // deux compilations concurrentes produisent par coïncidence le MÊME hash
-  // (donc le même contenu, par construction), l'écriture atomique de l'une
-  // ou l'autre suffit — inoffensif.
+  // --------------------------------------------------------------------------
+  // écritures, registre des sorties, refus et purges : le travail vit dans outputs.ts ; chaque méthode garde son nom et sa
+  // signature et passe l'instance à la fonction du même nom
+  // --------------------------------------------------------------------------
   private writeFileAtomic(target: string, content: string | Buffer): void {
-    if (existsSync(target)) return // même hash = même contenu (collision négligeable)
-    const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    writeFileSync(tmp, content, 'utf-8')
-    try {
-      renameSync(tmp, target)
-    } catch (e) {
-      try { unlinkSync(tmp) } catch {}
-      throw e
-    }
-    // tient la liste mémoïsée de outputDir à jour (cf. son bandeau) : un fichier qui vient
-    // d'apparaître doit être visible du PROCHAIN cleanupOldHashes() de CE tour, sans reforcer
-    // une lecture disque. `dirname(target) === this.outputDir` : cette méthode sert aussi à
-    // d'autres dossiers (aucun cas réel actuellement, filet).
-    if (this.outputDirListingCache && dirname(target) === this.outputDir) {
-      this.outputDirListingCache.push(basename(target))
-    }
+    outputs.writeFileAtomic(this, target, content)
   }
 
-  // currentOutputDirListing() : jumeau lazy de outputDirListingCache (cf. son bandeau) — lit
-  // outputDir UNE fois par compile(), au premier besoin, jamais plus.
   private currentOutputDirListing(): string[] {
-    if (this.outputDirListingCache === null) this.outputDirListingCache = readdirSync(this.outputDir)
-    return this.outputDirListingCache
+    return outputs.currentOutputDirListing(this)
   }
 
-  // writeIfChanged() : jumeau de la garde déjà en place dans writeManifest() (même motif
-  // exact), généralisé ici pour tout fichier à nom STABLE dont le CONTENU varie d'un build
-  // à l'autre (variants `<style name="…">`, registre `.mjs-theme-vars.json`).
-  // `writeFileAtomic` NE CONVIENT PAS : il skippe dès que `target` existe, quel
-  // que soit son contenu (pensé pour un nom HASHÉ, jamais pour un nom stable). Un build qui
-  // ne change rien ne doit pas non plus TOUCHER le fichier (nouveau mtime → le watcher se
-  // redéclencherait pour rien).
-  // feuille de mise en page `<module>.<nom>.css` : nom stable, sans empreinte, donc lue tout de suite par le site servi.
-  // En build (`keepFailedComponents: false`), elle attend la publication du manifeste (compile(), étape 4) : un build en
-  // échec ne publie rien et laisse les feuilles du dernier build réussi
-  // construction qui écrit dans le dossier des sources : la feuille porte la marque, et un fichier de l'auteur du même nom n'est
-  // jamais réécrit (cf. refusFichierAuteur ; refusé dès la tête de compile() quand la recherche des variantes l'a trouvé)
   private writeLayoutCss(target: string, content: string): void {
-    const refus = this.refusFichierAuteur(target, 'feuille')
-    if (refus) {
-      this.authorRefusals.set(target, refus)
-      return
-    }
-    const texte = this.ecritDansSources() ? `${MARQUE_SORTIE}\n${content}` : content
-    if (this.keepFailedComponents) this.writeIfChanged(target, texte)
-    else this.pendingLayoutWrites.push({ target, content: texte })
+    outputs.writeLayoutCss(this, target, content)
   }
 
-  // fragment de traduction à nom clair (`i18n/<langue>/<section>.json`) et registre des variables de thème : même règle que la
-  // feuille de mise en page, le site servi (ou l'atelier du thème) les lit tout de suite — un build en échec laisse ceux du dernier
-  // build réussi ; un fichier de l'auteur du même nom n'est jamais réécrit (cf. refusFichierAuteur)
   private writeSortieDifferee(target: string, content: string, sorte: SorteSortie): void {
-    const refus = this.refusFichierAuteur(target, sorte)
-    if (refus) {
-      this.authorRefusals.set(target, refus)
-      return
-    }
-    if (this.keepFailedComponents) this.writeIfChanged(target, content)
-    else this.pendingLayoutWrites.push({ target, content })
+    outputs.writeSortieDifferee(this, target, content, sorte)
   }
 
   private writeIfChanged(target: string, content: string): void {
-    if (existsSync(target)) {
-      const current = readFileSync(target, 'utf-8')
-      if (current === content) return
-    }
-    this.writeFileAtomicAlways(target, content)
+    outputs.writeIfChanged(this, target, content)
   }
 
-  // Cette logique de nettoyage était
-  // DUPLIQUÉE (quasi identique) 2 fois DANS writeHashed() lui-même, et
-  // ABSENTE d'un 3e site qui en aurait eu tout autant besoin (copie
-  // d'assets binaires, cf. resolveOneAsset ci-dessous) : un binaire
-  // (logo.png, etc.) réédité au fil du temps voyait CHAQUE ANCIENNE
-  // version (`logo-<vieuxhash>.png`) s'accumuler indéfiniment dans
-  // outputDir, jamais nettoyée — contrairement au JS compilé (writeHashed),
-  // qui purge déjà ses anciennes versions. Factorisé ici pour les 3 sites.
-  // La suppression n'est plus IMMÉDIATE : elle est mise EN ATTENTE
-  // (pendingHashCleanup), purgée pour de bon seulement après que writeManifest() ait republié le
-  // manifeste (cf. flushPendingHashCleanup, appelée en fin d'étape 4 de compile()). Sans ce
-  // report, un composant qui recompile supprimait son ancien fichier haché DÈS cette étape 2 —
-  // AVANT que writeManifest() (étape 4) ne republie la nouvelle URL — fenêtre où le manifeste
-  // ENCORE PUBLIÉ (celui qu'un navigateur/CDN a déjà chargé) nommait un fichier déjà disparu.
-  // Seul un fichier qu'un build a écrit (registre, cf. registeredOutputs) est remplacé, jamais un fichier de l'auteur qui n'a
-  // que la forme d'une sortie : `card-utils.js` à côté d'un composant `card.mjs`, `logo-white.png` à côté d'une image
-  // `logo.png`, un fichier source quand le dossier de sortie est le dossier source. `prune: false` : rien n'est retiré.
   private cleanupOldHashes(baseName: string, ext: string, keepFilenames: string[]): void {
-    if (!this.prune) return
-    const re = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(?:[0-9a-z]{5}|[a-f0-9]{8})${ext.replace('.', '\\.')}(\\.map)?$`)
-    const ecrits = this.registeredOutputs()
-    // mémoïsée le temps du compile() (cf. currentOutputDirListing) plutôt que relue à CHAQUE
-    // appel : un projet de plusieurs centaines d'unités relisait sinon outputDir en entier une
-    // fois PAR fichier écrit.
-    for (const f of this.currentOutputDirListing()) {
-      if (re.test(f) && !keepFilenames.includes(f) && ecrits.has(f.replace(/\.map$/, ''))) {
-        this.pendingHashCleanup.push(join(this.outputDir, f))
-      }
-    }
+    outputs.cleanupOldHashes(this, baseName, ext, keepFilenames)
   }
 
-  // registeredOutputs() : les fichiers que des builds de ce constructeur ont écrits, tels que le registre les consigne (clé
-  // `files`) — la seule liste de ce que le ménage peut retirer. Lue une fois par compile(), comme la liste de outputDir
   private registeredOutputs(): Set<string> {
-    if (this.registryFilesCache === null) this.registryFilesCache = new Set(this.readRegistryFiles())
-    return this.registryFilesCache
+    return outputs.registeredOutputs(this)
   }
 
-  // flushPendingHashCleanup() : supprime pour de bon les anciens fichiers hachés mis en attente
-  // par cleanupOldHashes() ci-dessus. Appelée UNIQUEMENT après que writeManifest() ait réussi
-  // (compile(), étape 4) : avant cet instant, l'ancien fichier peut encore être celui que le
-  // manifeste PUBLIÉ sur disque promet à un visiteur/CDN.
-  // PUBLIC : bundler/startup.ts écrit ses fichiers de page APRÈS compile() et suit la même
-  // discipline — nouveau fichier écrit, fragment réécrit, ANCIEN supprimé seulement ensuite.
-  // Le registre des sorties suit (cf. writeOutputsRegistry) : les fichiers retirés en sortent, ceux écrits depuis le compile()
-  // (fichiers de page de startup.ts) y entrent — le ménage du build suivant les connaîtra.
   flushPendingHashCleanup(): void {
-    for (const f of this.pendingHashCleanup) {
-      if (this.flushWillRemove(basename(f))) try { unlinkSync(f) } catch {}
-    }
-    this.pendingHashCleanup = []
-    this.writeOutputsRegistry()
+    outputs.flushPendingHashCleanup(this)
   }
 
-  // flushWillRemove() : un fichier en attente part-il au prochain flushPendingHashCleanup() ? Non s'il a été émis par CE compile
-  // (homonyme d'un autre dossier, a/util.js et b/util.js, ou réémis depuis sa mise en attente), ou cité par une unité que le
-  // cache a resservie CE tour-ci (un homonyme resté en cache, donc non réécrit) : encore référencé, jamais supprimé — sa carte
-  // `.map` non plus. Un fichier dont la source existe toujours mais que plus personne ne cite n'est pas protégé : il part.
-  // `prune: false` : rien ne part, quelle que soit la file qui l'a mis en attente (ménage des empreintes, fichiers voisins
-  // du manifeste en mode 'bundle')
   private flushWillRemove(nom: string): boolean {
-    return this.prune && !this.emittedThisCompile.has(nom) && !this.cachedAssetNames.has(nom) && !(nom.endsWith('.map') && this.emittedThisCompile.has(nom.slice(0, -4)))
+    return outputs.flushWillRemove(this, nom)
   }
 
-  // keepCachedAssets() : les images, sons et .js voisins d'une unité que le cache resert ne sont pas réécrits
-  // ce tour-ci (cf. cachedAssetNames) : le précache les garde
   private keepCachedAssets(cached: CacheEntry): void {
-    for (const dep of cached.importedModules ?? []) {
-      const published = this.publishedAssets.get(dep)
-      if (!published) continue
-      this.cachedAssetNames.add(published.name)
-      for (const variant of published.variants) this.cachedAssetNames.add(variant)
-    }
+    outputs.keepCachedAssets(this, cached)
   }
 
-  // notePublished() : le nom que porte, sous outputDir, la copie de CETTE source — l'ancien nom du même
-  // chemin cesse d'être protégé (il part au prochain ménage), le nom d'un autre chemin reste protégé
   private notePublished(source: string, filename: string): void {
-    if (this.publishedAssets.get(source)?.name === filename) return
-    this.publishedAssets.set(source, { name: filename, variants: new Set() })
+    outputs.notePublished(this, source, filename)
   }
 
-  // --------------------------------------------------------------------------
-  // outputsRegistry — `.mjs-outputs.json`, à côté du manifeste, réécrit à
-  // CHAQUE build réussi. Ne mémorise PAS les noms de fichiers (déjà couverts par
-  // emittedThisCompile, qui ne survit pas d'un compile() à l'autre) mais les EXTENSIONS que ce
-  // bundler sait produire : `.js`/`.css`/`.map` toujours, les formats image CONFIGURÉS
-  // (imageConfig.formats, même si aucune image n'a encore été compilée), et toute extension
-  // RÉELLEMENT vue dans emittedThisCompile (assets µasset() génériques : .png, .woff2, un .pdf
-  // légitimement servi…) — le tout ACCUMULÉ avec ce qui était déjà dans le registre (une
-  // extension vue un jour le reste, même si un rebuild n'y touche plus ou que la config change).
-  //
-  // Sert de garde-fou à pruneOrphans() (ci-dessous) : un fichier au nom hachage-compatible mais
-  // dont l'extension n'y a JAMAIS figuré n'est pas un candidat, même s'il en a la forme — c'est
-  // exactement le cas d'un fichier étranger déposé à la main (rapport-1a2b3c4d.pdf), que
-  // docs/32-cli-et-configuration.md promet intact et que HASHED_OUTPUT_RE seul ne peut pas
-  // distinguer d'une vraie sortie.
-  // --------------------------------------------------------------------------
   private outputsRegistryPath(): string {
-    return join(dirname(this.manifestPath), '.mjs-outputs.json')
+    return outputs.outputsRegistryPath(this)
   }
 
   private writeOutputsRegistry(): void {
-    const known = new Set<string>(['.js', '.css', '.map'])
-    for (const fmt of this.imageConfig.formats) known.add(`.${fmt}`)
-    for (const f of this.emittedThisCompile) known.add(extname(f.endsWith('.map') ? f.slice(0, -4) : f))
-    // fragments de traduction : ceux d'avant (que la purge n'a pas encore retirés) + ceux de ce build
-    const fragments = new Map<string, Set<string>>()
-    const ajoute    = (lang: string, nom: string): void => { (fragments.get(lang) ?? fragments.set(lang, new Set()).get(lang)!).add(nom) }
-    try {
-      const prev = JSON.parse(readFileSync(this.outputsRegistryPath(), 'utf-8'))
-      if (Array.isArray(prev?.extensions)) for (const e of prev.extensions) if (typeof e === 'string') known.add(e)
-      for (const [lang, noms] of Object.entries(prev?.i18nFragments ?? {})) if (Array.isArray(noms)) for (const nom of noms) if (typeof nom === 'string') ajoute(lang, nom)
-    } catch { /* registre absent ou périmé : repart d'une base saine, réécrite juste après */ }
-    for (const [lang, noms] of this.i18nWritten) for (const nom of noms) ajoute(lang, nom)
-    // fichiers écrits par les builds, l'une ou l'autre forme d'empreinte : ceux d'avant + ceux de ce build — la seule liste de ce
-    // que le ménage peut retirer (cf. registeredOutputs, pruneOrphans)
-    // (ceux que le build a déjà remplacés n'existent plus : ils sortent de la liste, qui ne grossit pas à chaque édition)
-    const fichiers = new Set<string>(this.readRegistryFiles().filter(f => existsSync(join(this.outputDir, f))))
-    for (const f of this.emittedThisCompile) if (isHashedOutputName(f)) fichiers.add(f)
-    // premier build en échec : le dossier du manifeste n'existe pas encore (writeManifest(), qui le crée, n'a pas tourné)
-    mkdirSync(dirname(this.outputsRegistryPath()), { recursive: true })
-    this.writeIfChanged(this.outputsRegistryPath(), this.serializeOutputsRegistry(known, fragments, fichiers, this.registryChunks()))
+    outputs.writeOutputsRegistry(this)
   }
 
-  /** `chunks` du registre : les fichiers écrits à côté du manifeste (cf. bundleNeighborFiles) qui existent encore, avec ceux de ce build */
   private registryChunks(): Set<string> {
-    const dossier = dirname(this.manifestPath)
-    const voisins = new Set<string>(bundleNeighborFiles(this.manifestPath).filter(f => existsSync(join(dossier, f))))
-    for (const f of this.bundleChunkFiles) voisins.add(f)
-    return voisins
+    return outputs.registryChunks(this)
   }
 
-  /** `files` du registre : les fichiers à empreinte que des builds ont écrits (liste vide si registre absent ou illisible) */
   private readRegistryFiles(): string[] {
-    try {
-      const prev = JSON.parse(readFileSync(this.outputsRegistryPath(), 'utf-8'))
-      return Array.isArray(prev?.files) ? prev.files.filter((n: unknown): n is string => typeof n === 'string') : []
-    } catch {
-      return []
-    }
+    return outputs.readRegistryFiles(this)
   }
 
-  // ecritDansSources() : le dossier de sortie ou le manifeste sont dans le dossier des sources. Les sorties à nom fixe y côtoient
-  // les fichiers de l'auteur : elles portent la marque des fichiers produits, et seul un fichier qui la porte est remplacé
-  // (cf. sortieDuBuild). Hors de ce cas, aucune marque
   private ecritDansSources(): boolean {
-    return cheminDansDossier(this.outputDir, this.sourceDir) || cheminDansDossier(this.manifestPath, this.sourceDir)
+    return outputs.ecritDansSources(this)
   }
 
-  // refusFichierAuteur() : dans une construction qui écrit dans le dossier des sources, une sortie à nom fixe tomberait sur un
-  // fichier qui existe sans être une sortie du build (cf. sortieDuBuild) : c'est peut-être un fichier de l'auteur, jamais remplacé
   private refusFichierAuteur(target: string, sorte: SorteSortie): Error | null {
-    if (!existsSync(target) || !this.ecritDansSources() || sortieDuBuild(target, sorte)) return null
-    return erreurFichiersAuteur([[target, sorte]], this.sourceDir, false)
+    return outputs.refusFichierAuteur(this, target, sorte)
   }
 
-  // refusSortiesAuteur() : la même règle pour toutes les sorties à nom fixe d'un coup — le manifeste, `mjs-precache.json` et
-  // les feuilles de mise en page trouvées par feuillesAttendues() : une seule erreur les nomme toutes, avant toute écriture
-  // Hors du dossier des sources, seul le manifeste peut tomber sur un fichier de l'auteur (`manifestPath` vise
-  // `app/assets/javascripts/application.js`) : il ne porte jamais la marque, il est reconnu à sa forme, de cette version ou
-  // d'une précédente (cf. sortieDuBuild) ; un dossier à sa place n'est pas un fichier à protéger, son écriture échoue d'elle-même.
-  // Dans les sources comme dehors, un fichier vide à la place du manifeste est remplacé (cf. fichierVide), et un manifeste déjà
-  // refusé (`manifeste` faux, cf. refusCheminManifeste) n'est pas nommé une seconde fois
   private refusSortiesAuteur(manifeste = true, fragments = true): Error | null {
-    if (!this.ecritDansSources()) {
-      if (!manifeste || !existsSync(this.manifestPath) || !statSync(this.manifestPath).isFile() || fichierVide(this.manifestPath) || sortieDuBuild(this.manifestPath, 'manifeste')) return null
-      return new Error(t('bundler.index.manifeste-fichier-auteur', { chemin: this.manifestPath }))
-    }
-    const cibles: [string, SorteSortie][] = manifeste ? [[this.manifestPath, 'manifeste']] : []
-    cibles.push([join(this.outputDir, 'mjs-precache.json'), 'precache'])
-    if (!this.isProd()) cibles.push([join(this.outputDir, '.mjs-theme-vars.json'), 'registre-theme'])
-    if (this.shouldMinify()) cibles.push([this.mangleCachePath, 'noms-courts'])
-    if (this.jsMode === 'bundle' && this.shouldEmitSourceMap()) cibles.push([`${this.manifestPath}.map`, 'carte'])
-    if (fragments) for (const f of this.fragmentsAttendus()) cibles.push([f, 'traduction'])
-    const fichiers = cibles.filter(([f, sorte]) => existsSync(f) && !(sorte === 'manifeste' && fichierVide(f)) && !sortieDuBuild(f, sorte))
-    for (const f of this.feuillesAttendues()) fichiers.push([f, 'feuille'])
-    return fichiers.length > 0 ? erreurFichiersAuteur(fichiers, this.sourceDir, true) : null
+    return outputs.refusSortiesAuteur(this, manifeste, fragments)
   }
 
-  // i18nHashed() : fragments de traduction sous empreinte (`i18n.hash`, `'auto'` = en production seulement) ou à nom clair
   private i18nHashed(): boolean {
-    const hashMode = this.i18n?.hash ?? 'auto'
-    return hashMode === 'auto' ? this.isProd() : hashMode
+    return outputs.i18nHashed(this)
   }
 
-  // fragmentsAttendus() : les fragments à nom clair que les traductions par sections (`i18n/<langue>/<section>.json|yml`)
-  // feront écrire dans `outputDir/i18n/<langue>/` ; un fragment qui échapperait à cette liste reste refusé au moment de
-  // l'écrire (cf. writeSortieDifferee)
   private fragmentsAttendus(): string[] {
-    const i18nDir = join(this.sourceDir, 'i18n')
-    if (this.i18nHashed() || !this.hasI18nConfigured()) return []
-    const fragments: string[] = []
-    try {
-      for (const lang of readdirSync(i18nDir).sort()) {
-        if (!statSync(join(i18nDir, lang)).isDirectory()) continue
-        for (const f of readdirSync(join(i18nDir, lang)).sort()) {
-          if (['.yml', '.yaml', '.json'].includes(extname(f))) fragments.push(join(this.outputDir, 'i18n', lang, `${basename(f, extname(f))}.json`))
-        }
-      }
-    }
-    catch {
-      // dossier illisible : refusI18nSurPlace() rend son erreur
-    }
-    return fragments
+    return outputs.fragmentsAttendus(this)
   }
 
   // feuillesAttendues() : les feuilles `<module>.<nom>.css` que les `<style name="…">` des composants feront écrire dans outputDir
@@ -8697,266 +8061,32 @@ export class Bundler {
     return [...trouvees].sort()
   }
 
-  // refusAvantEcriture() : ce que compile() refuse avant d'écrire quoi que ce soit — un manifeste qui remplacerait un fichier source
-  // (cf. refusCheminManifeste), le dossier des traductions comme dossier de sortie (cf. refusI18nSurPlace), et des sorties à nom fixe
-  // sur des fichiers de l'auteur (cf. refusSortiesAuteur)
   private refusAvantEcriture(): Error[] {
-    const manifeste = this.refusCheminManifeste()
-    const i18n      = this.refusI18nSurPlace()
-    // un manifeste ou des traductions déjà refusés ne sont pas nommés une seconde fois comme fichiers de l'auteur
-    return [manifeste, i18n, this.refusSortiesAuteur(manifeste === null, i18n === null)].filter((e): e is Error => e !== null)
+    return outputs.refusAvantEcriture(this)
   }
 
-  // refusCheminManifeste() : les refus de `manifestPath` que mjs.config.json et la ligne de commande appliquent déjà (cf.
-  // refusManifestPath, config.ts), pour `new Bundler()` appelé par l'API — sinon le fichier visé était écrasé à chaque construction
   private refusCheminManifeste(): Error | null {
-    const refus = refusManifestPath({ manifestPath: this.manifestPath, sourceDir: this.sourceDir, outputDir: this.outputDir, manifestExternal: this.manifestExternal })
-    if (refus === null) return null
-    if (refus.raison === 'extension') return new Error(t('bundler.index.manifeste-refuse-extension', { chemin: this.manifestPath, extension: refus.extension }))
-    if (refus.raison === 'externe') return new Error(t('bundler.index.manifeste-refuse-externe', { chemin: this.manifestPath }))
-    return new Error(t('bundler.index.manifeste-refuse-sources', { chemin: this.manifestPath, sourceDir: this.sourceDir, outputDir: this.outputDir }))
+    return outputs.refusCheminManifeste(this)
   }
 
-  // refusI18nSurPlace() : traductions par sections (`i18n/<langue>/*.json|yml`) et dossier de sortie qui mène au dossier des
-  // traductions — même règle que scanI18n(), qui ne tourne qu'après l'écriture des sorties. Une entrée illisible du dossier des
-  // traductions ferait échouer scanI18n() : son erreur est rendue ici, avant toute écriture
   private refusI18nSurPlace(): Error | null {
-    const i18nDir = join(this.sourceDir, 'i18n')
-    try {
-      if (!existsSync(i18nDir) || !statSync(i18nDir).isDirectory()) return null
-      for (const lang of readdirSync(i18nDir).sort()) {
-        const dossier = join(i18nDir, lang)
-        if (!statSync(dossier).isDirectory()) continue
-        if (!readdirSync(dossier).some(f => ['.yml', '.yaml', '.json'].includes(extname(f)))) continue
-        const outDir = join(this.outputDir, 'i18n', lang)
-        if (cheminDansDossier(outDir, i18nDir)) return new Error(t('bundler.index.i18n-sortie-dans-sources', { dossier: outDir, sources: i18nDir }))
-      }
-    } catch (e: any) {
-      return e instanceof Error ? e : new Error(String(e))
-    }
-    return null
+    return outputs.refusI18nSurPlace(this)
   }
 
-  /** Forme écrite de `.mjs-outputs.json` : `extensions` toujours, `i18nFragments` (langue → noms) seulement s'il y en a. */
   private serializeOutputsRegistry(known: Set<string>, fragments: Map<string, Set<string>>, files: Set<string> = new Set(), chunks: Set<string> = new Set()): string {
-    const body: { extensions: string[], i18nFragments?: Record<string, string[]>, files?: string[], chunks?: string[], ssrStyles?: string[] } = { extensions: [...known].sort() }
-    if (files.size > 0) body.files = [...files].sort()
-    // fichiers écrits à côté du manifeste quand le fichier unique est coupé en morceaux : la seule liste de ceux que le build peut retirer ou que les serveurs servent
-    if (chunks.size > 0) body.chunks = [...chunks].sort()
-    // feuilles partagées que le rendu serveur a écrites (cf. server/sorties-rendu.ts) : gardées d'un build au suivant, celles qui n'existent plus sortent de la liste
-    const rendu = feuillesConsignees(dirname(this.manifestPath)).filter(f => existsSync(join(this.outputDir, f)))
-    if (rendu.length > 0) body.ssrStyles = rendu
-    const langs = [...fragments.keys()].filter(l => fragments.get(l)!.size > 0).sort()
-    if (langs.length > 0) {
-      body.i18nFragments = {}
-      for (const l of langs) body.i18nFragments[l] = [...fragments.get(l)!].sort()
-    }
-    return JSON.stringify(body, null, 2) + '\n'
+    return outputs.serializeOutputsRegistry(this, known, fragments, files, chunks)
   }
 
-  // retire de `i18n/<langue>/` les fragments que le registre dit écrits par un build et que CE build n'a pas
-  // réécrits ; seuls des noms simples (jamais un chemin) sont suivis. Le registre est réécrit avec ce qui reste
   private pruneI18nFragments(knownExt: Set<string>, purged: Set<string>): { removed: string[], failed: string[] } {
-    const removed: string[] = []
-    const failed: string[]  = []
-    let prev: any
-    try {
-      prev = JSON.parse(readFileSync(this.outputsRegistryPath(), 'utf-8'))
-    } catch {
-      return { removed, failed }
-    }
-    const simple  = (n: string): boolean => n !== '' && n !== '.' && n !== '..' && !n.startsWith('.') && !/[\\/\0]/.test(n)
-    const restant = new Map<string, Set<string>>()
-    for (const [lang, noms] of Object.entries(prev?.i18nFragments ?? {})) {
-      if (!Array.isArray(noms) || !simple(lang)) continue
-      const courants = this.i18nWritten.get(lang) ?? new Set<string>()
-      for (const nom of noms) {
-        if (typeof nom !== 'string' || !simple(nom) || !nom.endsWith('.json')) continue
-        if (!courants.has(nom)) {
-          const chemin = join(this.outputDir, 'i18n', lang, nom)
-          // jamais une traduction de l'auteur (sortie = sources), même nommée par le registre : elle reste, et sort du registre
-          if (cheminDansDossier(chemin, join(this.sourceDir, 'i18n'))) continue
-          try {
-            if (existsSync(chemin)) unlinkSync(chemin)
-            removed.push(`i18n/${lang}/${nom}`)
-            continue
-          } catch {
-            failed.push(`i18n/${lang}/${nom}`)
-          }
-        }
-        ;(restant.get(lang) ?? restant.set(lang, new Set()).get(lang)!).add(nom)
-      }
-    }
-    const fichiers = new Set(this.readRegistryFiles().filter(f => !purged.has(f)))
-    this.writeIfChanged(this.outputsRegistryPath(), this.serializeOutputsRegistry(knownExt, restant, fichiers, this.registryChunks()))
-    return { removed, failed }
+    return outputs.pruneI18nFragments(this, knownExt, purged)
   }
 
-  // --------------------------------------------------------------------------
-  // pruneBundleChunks() : la purge du mode 'bundle'. Le cœur est dans le fichier unique : `mjs_core-….js` n'existe pas, la garde
-  // `no-core` de pruneOrphans() ne dit rien ici. Les seuls candidats sont les fichiers que le registre dit écrits à côté du
-  // manifeste par un build (clé `chunks`) et que CE build n'a pas réécrits — un module retiré ou renommé laisse les siens d'un
-  // processus à l'autre —, jamais un fichier reconnu à la forme de son nom : un fichier d'auteur nommé `chunk-deadbeef.js`, posé à
-  // côté du manifeste (dans le dossier de sortie ou ailleurs), n'y figure pas. Un registre présent mais illisible bloque tout.
-  // --------------------------------------------------------------------------
   private pruneBundleChunks(): { removed: string[], failed: string[], skipped?: 'registry-unreadable' } {
-    const dossier = dirname(this.manifestPath)
-    const chemin  = this.outputsRegistryPath()
-    if (!existsSync(chemin)) return { removed: [], failed: [] }
-    try {
-      JSON.parse(readFileSync(chemin, 'utf-8'))
-    } catch {
-      return { removed: [], failed: [], skipped: 'registry-unreadable' }
-    }
-    const removed: string[] = []
-    const failed: string[]  = []
-    const manifeste = basename(this.manifestPath)
-    for (const nom of bundleNeighborFiles(this.manifestPath)) {
-      if (this.bundleChunkFiles.has(nom) || nom.replace(/\.map$/, '') === manifeste) continue // écrit ce tour-ci, ou le manifeste lui-même
-      const fichier = join(dossier, nom)
-      if (!existsSync(fichier)) continue
-      try {
-        unlinkSync(fichier)
-        removed.push(nom)
-      } catch {
-        failed.push(nom)
-      }
-    }
-    if (removed.length > 0) this.writeOutputsRegistry() // le registre ne consigne plus ce qui n'existe plus
-    removed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    failed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    return { removed, failed }
+    return outputs.pruneBundleChunks(this)
   }
 
-  // --------------------------------------------------------------------------
-  // pruneOrphans() : purge — le build remplace déjà l'empreinte
-  // d'un fichier qui CHANGE (cleanupOldHashes ci-dessus), mais jamais un NOM qui DISPARAÎT
-  // (composant renommé ou supprimé) : mesuré sur un vrai projet, 893 fichiers / 17 Mo dans
-  // outputDir pour 330 écrits par le dernier build. Rien n'est SERVI (le manifeste ne les
-  // référence plus), mais le dossier MENT sur ce que le site contient réellement.
-  //
-  // Retire d'outputDir tout fichier qu'un build a écrit (registre `.mjs-outputs.json`, clé `files`, au nom de la famille
-  // émise par CE bundler) qu'AUCUNE émission de ce compile() n'a produit (`emittedThisCompile`) — jamais un fichier sur la
-  // seule forme de son nom, même à huit hexadécimaux (`vendor-0123abcd.js` déposé à la main). `prune: false` : rien.
-  //
-  // Dans `i18n/<langue>/`, seuls partent les fragments que le registre dit écrits par un build et que ce build
-  // n'a pas réécrits (cf. pruneI18nFragments) : jamais un fichier de l'utilisateur, jamais d'après la forme du nom.
-  //
-  // JAMAIS touché : un SOUS-DOSSIER (i18n/, mjs_pages/… — readdirSync filtré à `isFile()`) ; un
-  // DOTFILE (`.mangle-cache.json`, `.mjs-theme-vars.json`) ; un nom STABLE qui ne matche pas la
-  // famille hachée (le manifeste, un CSS de layout `<module>.<layout>.css`, `mjs-precache.json`) ;
-  // tout fichier ÉTRANGER au build ; ni sur un compile qui a resservi son cache. LE MANIFESTE, PAR
-  // SON NOM, même s'il matche la famille hachée par collision de config
-  // (`manifestPath`/`--manifest` en `<base>-<empreinte>.<ext>`) : `writeManifest()` écrit hors de
-  // `emittedThisCompile`, un nom qui matche s'auto-détruisait sinon au build qui vient de l'écrire.
-  //
-  // Mode `js: 'bundle'` : le cœur est dans le fichier unique, le reste de cette méthode ne s'applique pas ; seule tourne la
-  // purge des fichiers écrits à côté du manifeste que le registre consigne (cf. pruneBundleChunks).
-  //
-  // GARDES, sans exception (rendent `{ removed: [], failed: [], skipped: '…' }` sans rien lire ni
-  // supprimer — `skipped` absent seulement quand la purge a tourné) :
-  //  - aucun compile() n'a encore tourné, OU le dernier est EN ERREUR (`skipped: 'errors'`) : un
-  //    build partiel garde tout (cf. recoverFailedComponentManifest) — purger sur un ensemble
-  //    d'émissions incomplet effacerait des fichiers ENCORE valides.
-  //  - `emittedThisCompile` est vide (`skipped: 'empty'`) : rien de fiable à quoi comparer.
-  //  - AUCUNE entrée de `emittedThisCompile` n'est le runtime `mjs_core-<empreinte>.js`
-  //    (`skipped: 'no-core'`) — il est émis par TOUT build sain ; son absence signale un
-  //    ensemble non fiable plutôt qu'un site sans runtime — une garde MUETTE ici effacerait TOUT
-  //    outputDir.
-  //  - outputDir n'existe pas (`skipped: 'no-dir'`).
-  //  - CE compile() a resservi au moins un composant depuis un compile() PRÉCÉDENT (`skipped:
-  //    'cache'`, cf. `cacheHitsThisCompile`/
-  //    `compileGeneration`) : `_compileMjsInner`/`_compileScriptModuleInner` réinjectent le `.js` du
-  //    cache hit dans `emittedThisCompile` mais jamais ses assets annexes (`µasset`, variantes
-  //    d'image — `resolveOneAsset` n'est rappelé QUE sur recompilation) ; purger sur cet ensemble
-  //    partiel retirerait un asset encore référencé en dur par le `.js` resservi. NE COMPTE PAS un
-  //    hit sur une entrée posée PENDANT ce même compile() (composant redemandé 2 fois dans le même
-  //    tour — resolveTagShortcuts, une inclusion…) : ses assets annexes ont déjà été émis ce
-  //    tour-ci, hit inoffensif (11 hits de ce genre mesurés sur un build FROID d'un site réel,
-  //    685 fichiers — la garde se déclenchait alors sur CHAQUE `mjs build` d'un vrai
-  //    projet, la purge n'y tournait donc JAMAIS). Cette garde ne vise plus que l'instance réutilisée
-  //    entre au moins 2 `compile()` (watcher, `mjs dev`, API).
-  // --------------------------------------------------------------------------
   pruneOrphans(): { removed: string[], failed: string[], skipped?: 'errors' | 'empty' | 'no-core' | 'no-dir' | 'cache' | 'registry-unreadable' | 'registry-empty' | 'disabled' } {
-    if (!this.prune) return { removed: [], failed: [], skipped: 'disabled' } // `prune: false` : rien n'est retiré
-    if (this.lastCompileErrors !== 0) return { removed: [], failed: [], skipped: 'errors' } // aucun compile, ou un compile en erreur
-    if (this.jsMode === 'bundle') return this.pruneBundleChunks() // fichier unique : pas de cœur à part, seuls les fichiers consignés à côté du manifeste
-    if (this.emittedThisCompile.size === 0) return { removed: [], failed: [], skipped: 'empty' } // rien à comparer
-    if (![...this.emittedThisCompile].some(f => /^mjs_core-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f))) return { removed: [], failed: [], skipped: 'no-core' } // ensemble non fiable
-    if (!existsSync(this.outputDir)) return { removed: [], failed: [], skipped: 'no-dir' }
-    if (this.cacheHitsThisCompile > 0) return { removed: [], failed: [], skipped: 'cache' } // assets annexes non réinjectés par le(s) cache hit(s)
-
-    // Extensions que CE bundler sait produire (cf. writeOutputsRegistry) :
-    // garde-fou EN PLUS de emittedThisCompile, pas à sa place — un fichier qui matche
-    // HASHED_OUTPUT_RE par pure coïncidence de nom (rapport-1a2b3c4d.pdf déposé à la main) mais
-    // dont l'extension n'a JAMAIS figuré au registre n'est pas un candidat. Registre absent (jamais
-    // écrit encore) : base sûre minimale, rien de perdu — PRÉSENT mais illisible : garde muette
-    // interdite, la purge ENTIÈRE est bloquée plutôt que de deviner.
-    let knownExt: Set<string>
-    const registryPath = this.outputsRegistryPath()
-    if (existsSync(registryPath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(registryPath, 'utf-8'))
-        if (!Array.isArray(parsed?.extensions) || !parsed.extensions.every((e: unknown) => typeof e === 'string')) throw new Error('forme inattendue')
-        knownExt = new Set<string>(parsed.extensions)
-      } catch {
-        return { removed: [], failed: [], skipped: 'registry-unreadable' }
-      }
-      // `{"extensions":[]}` est un JSON PARFAITEMENT valide
-      // (tableau, `.every()` vacuement vrai sur un tableau vide) : sans cette garde, `knownExt`
-      // restait VIDE, chaque fichier échouait silencieusement le test d'extension connue plus bas,
-      // removed:[] était rendu SANS jamais poser `skipped` — même silhouette qu'un run sain « rien
-      // à purger ». Un zombie survivait indéfiniment, indiscernable d'un build propre.
-      if (knownExt.size === 0) return { removed: [], failed: [], skipped: 'registry-empty' }
-    } else {
-      knownExt = new Set<string>(['.js', '.css', '.map'])
-      for (const fmt of this.imageConfig.formats) knownExt.add(`.${fmt}`)
-    }
-    const hashedOutputExt = (name: string): string => extname(name.endsWith('.map') ? name.slice(0, -4) : name)
-
-    // le manifeste ne passe jamais par emittedThisCompile (écrit par writeManifest(), hors filet) :
-    // protégé PAR SON NOM quand il est logé DANS outputDir, sans condition de motif — sur les chemins
-    // RÉELS : un lien symbolique vers outputDir faisait échouer l'égalité de chaînes, manifeste retiré
-    const sameDir      = (a: string, b: string): boolean => { try { return realpathSync(a) === realpathSync(b) } catch { return a === b } }
-    const manifestName = sameDir(dirname(this.manifestPath), this.outputDir) ? basename(this.manifestPath) : null
-
-    const removed: string[] = []
-    const failed: string[]  = []
-    const registreFichiers  = new Set(this.readRegistryFiles())
-    // feuilles partagées du rendu serveur que ce processus n'a pas réécrites : celles que le dernier prérendu n'utilise plus
-    const feuillesRenduInutiles = new Set(feuillesRenduPerimees(dirname(this.manifestPath)))
-    const purgesCourtes     = new Set<string>()
-    for (const entry of readdirSync(this.outputDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue // jamais un sous-dossier (i18n/, mjs_pages/…)
-      const name = entry.name
-      if (name.startsWith('.')) continue // jamais un dotfile (.mangle-cache.json…, .mjs-outputs.json compris)
-      if (manifestName !== null && name.replace(/\.map$/, '') === manifestName) continue // jamais le manifeste, ni son .map
-      // seul un fichier qu'un build a écrit est candidat (registre, clé `files`), ou une feuille partagée que le registre dit
-      // écrite par un prérendu : aucune forme de nom ne suffit, ni à cinq caractères (`theme-light.css`) ni à huit
-      // hexadécimaux (`vendor-0123abcd.js` déposé à la main)
-      const consigne = registreFichiers.has(name.replace(/\.map$/, '')) || feuillesRenduInutiles.has(name)
-      if (!consigne || !isHashedOutputName(name)) continue // jamais un nom STABLE (bundle.js, mjs-precache.json, CSS de layout…)
-      if (SERVER_WRITTEN_RE.test(name) && !feuillesRenduInutiles.has(name)) continue // jamais un asset écrit par le rendu serveur (cf. SERVER_WRITTEN_RE), sauf une feuille partagée que le registre dit écrite par un prérendu précédent et que celui-ci n'a pas réécrite
-      if (this.emittedThisCompile.has(name)) continue // émis ce tour-ci
-      if (name.endsWith('.map') && this.emittedThisCompile.has(name.slice(0, -4))) continue // .map d'un .js émis ce tour-ci
-      if (!knownExt.has(hashedOutputExt(name))) continue // Extension jamais produite par CE bundler : jamais un candidat
-      if (name.endsWith('.json') && !name.startsWith('mjs_err-')) continue // en JSON, ce bundler n'écrit que les fichiers de messages : tout autre nom est au projet
-      try {
-        unlinkSync(join(this.outputDir, name))
-        removed.push(name)
-        purgesCourtes.add(name)
-      } catch {
-        failed.push(name)
-      }
-    }
-    if (existsSync(registryPath)) {
-      const fragments = this.pruneI18nFragments(knownExt, purgesCourtes)
-      removed.push(...fragments.removed)
-      failed.push(...fragments.failed)
-    }
-    removed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    failed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    return { removed, failed }
+    return outputs.pruneOrphans(this)
   }
 
   // --------------------------------------------------------------------------
@@ -9670,6 +8800,19 @@ export class Bundler {
     const header = `import { µ } from '${this.placeholderPath('mjs_core', '.js')}';`
     const concatenated = [header, ...buffer].join('\n')
     const features = [...scanCompiledFeatures(concatenated)]
+    // un accès à µ que le relevé ne sait pas résoudre : le fichier qui le porte (retrouvé par l'en-tête de son morceau, les trois
+    // derniers segments de son chemin), sa ligne lue dans sa source ; le manifeste lui-même à défaut
+    if (features.includes(OPAQUE_MU)) {
+      const nom     = /^\/\/ === (.*) ===/.exec(buffer.find(b => opaqueMuOffset(b) !== -1) ?? '')?.[1]
+      const porteur = (nom === undefined || nom === '(manifest)' ? undefined : [...visited].find(v => v.split('/').slice(-3).join('/') === nom)) ?? this.manifestExternal
+      features.push(opaqueMuSignal(relative(this.projectDir, porteur), opaqueMuSourceLine(readFileSync(porteur, 'utf-8'))))
+    }
+    // `µ.ajax` lu en entier : situé de la même façon
+    if (features.includes(OPAQUE_AJAX)) {
+      const nom     = /^\/\/ === (.*) ===/.exec(buffer.find(b => opaqueAjaxOffset(b) !== -1) ?? '')?.[1]
+      const porteur = (nom === undefined || nom === '(manifest)' ? undefined : [...visited].find(v => v.split('/').slice(-3).join('/') === nom)) ?? this.manifestExternal
+      features.push(opaqueAjaxSignal(relative(this.projectDir, porteur), opaqueAjaxSourceLine(readFileSync(porteur, 'utf-8'))))
+    }
     for (const f of features) this.pendingFeatures.add(f)
     // symboles du CONTRAT — jumeau de compileMjsCold (cf. core-contract.ts). Le manifeste externe
     // n'a pas d'entrée de cache : rien à réinjecter ailleurs, il est reconstruit à chaque tour.
@@ -10191,631 +9334,39 @@ export class Bundler {
   }
 
   // --------------------------------------------------------------------------
-  // manifestBodyLines(pathsLine) : lignes du CORPS partagées par writeManifest() (mode
-  // 'split') ET emitSingleFile() (mode 'bundle', cf. buildBundleSetupBody()) — tout ce que
-  // le manifeste pose AVANT que les composants ne s'exécutent, SAUF DEUX choses qui diffèrent
-  // selon le mode et restent du ressort de chaque appelant : `µ.paths` lui-même (`pathsLine`,
-  // JSON réel en split, `import.meta.url` partagé en bundle) et `µ.Autoloader.observe` (juste
-  // après cette liste en split, après TOUS les composants en bundle — l'Autoloader ne doit
-  // chercher des enfants qu'une fois leurs propres `customElements.define` exécutés).
-  // EXTRAITE ici (refactor pur, sortie de writeManifest() INCHANGÉE à l'octet près, cf.
-  // tests/bundler-js-bundle.test.ts « défaut split ») plutôt que dupliquée : ce corps est
-  // long et déjà abondamment commenté ligne par ligne, une seule définition à tenir à jour.
+  // manifeste et fichier unique : le travail vit dans manifest.ts (l'écriture atomique du manifeste, dans outputs.ts) ; chaque
+  // méthode garde son nom et sa signature et passe l'instance à la fonction du même nom
   // --------------------------------------------------------------------------
   private manifestBodyLines(pathsLine: string): string[] {
-    return [
-      // Mode strict « politique de sécurité de contenu » (clé `csp`) — RIEN émis hors de ce
-      // mode. Le runtime le lit pour choisir une feuille constructible là où il créait un
-      // `<style>` : c'est une décision de BUILD, jamais un réglage à basculer à chaud, d'où
-      // la propriété interne plutôt qu'une clé de `µ.config` (qui peut être forgé à la main).
-      this.csp ? `µ._csp = true;` : '',
-      pathsLine,
-      // table nom de feuille → URL du `.css` haché. RIEN émis hors du mode
-      // 'lazy' : le runtime ne teste `µ._cssLazy` que lorsque `µ.CSS[nom]` est absent,
-      // ce qui n'arrive jamais dans les deux autres modes.
-      this.cssMode === 'lazy' && Object.keys(this.lazyStyleUrls).length > 0 ? `µ._cssLazy = ${JSON.stringify(Object.fromEntries(Object.entries(this.lazyStyleUrls).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)))};` : '',
-      `µ.preload = ${JSON.stringify(normalizePreload(this.preload))};`,
-      // Niveau EFFECTIF de la console (clé `logLevel`, cf. resolveLogLevel/config.ts), CELUI de
-      // CET environnement (dev ou prod selon la commande) — ÉMIS INCONDITIONNELLEMENT, comme
-      // `µ.preload` juste au-dessus : la clé a toujours un défaut, jamais de bloc absent à gérer.
-      // Consommé par `µ.log`/`µ.warn`/`µ.error` (mjs_init.ts).
-      `µ._logLevel = ${JSON.stringify(this.currentLogLevel())};`,
-      // Libellés par défaut (fr/en) des petits bouts d'UI runtime (mjs_modal.ts, mjs_router.ts,
-      // mjs_ujs.ts) — contrairement à `µ._i18nData` juste en dessous, ÉMIS INCONDITIONNELLEMENT :
-      // ces libellés doivent être dans TOUS les builds, y compris les apps qui n'utilisent jamais
-      // le module i18n optionnel. TOUTES les langues sont émises, plus une
-      // seule figée au build : c'est le runtime qui choisit celle AFFICHÉE (`µ._mjs_label`,
-      // mjs_init.ts) — un site basculé en anglais montrait des toasts « Succès »/« Erreur ».
-      // `µ._runtimeLabelsLang` = langue de repli : celle du projet (`i18n.default`), sinon la
-      // clé `lang` de mjs.config.json (cf. labelsLang). Le rendu serveur pose la même langue et la même table, sans les messages de la console.
-      `µ._runtimeLabels = ${JSON.stringify(this.manifestLabels())};`,
-      `µ._runtimeLabelsLang = ${JSON.stringify(this.labelsLang())};`,
-      // adresse du fichier de messages de chaque langue (production seulement) : lue par le cœur au
-      // premier message de la console. Nom SANS `_mjs_` : le manifeste n'est pas raccourci avec le cœur
-      this.msgUrlsLine(),
-      (this.viewTransition && this.viewTransition !== 'none') ? `µ.viewTransition = ${JSON.stringify(this.viewTransition)};` : '',
-      // i18n — RIEN émis si `sourceDir/i18n/` est absent
-      // (scanI18n() laisse `i18nManifestData` à `undefined`, cf. compile()).
-      // `µ._i18nRecheck` (cascade de modules — mjs_i18n.ts ne peut plus compter sur un
-      // timing de microtâche implicite pour redécouvrir `µ._i18nData`, cf. son bandeau
-      // détaillé) : même patron que `µ._themeAdopt` juste en dessous pour `µ._themeCss`.
-      // `i18nPublicData()` et pas `i18nManifestData` : les dictionnaires et la table des
-      // sections vivent dans le fichier de LEUR langue (cf. scanI18n) — ne reste ici que
-      // de quoi CHOISIR la langue (`langs`) et aller chercher son fichier (`files`).
-      this.i18nManifestData ? `µ._i18nData = ${JSON.stringify(this.i18nPublicData())}; if (typeof µ._i18nRecheck === 'function') { µ._i18nRecheck(); }` : '',
-      // Thèmes de l'application (`*.theme.mjs`) — RIEN émis quand il n'y en a aucun.
-      // `µ._themes` autorise la rune `µtheme` à accepter ces noms ; `µ._themeCss` est
-      // adopté par `µ._themeAdopt()` (mjs_init.ts), appelé ici ET au boot du runtime,
-      // pour que l'ordre de chargement manifeste/runtime n'ait aucune importance.
-      this.themeNames.length > 0 ? `µ._themes = ${JSON.stringify(this.themeNames)};` : '',
-      this.themeCss !== '' ? `µ._themeCss = ${JSON.stringify(this.themeCss)}; if (typeof µ._themeAdopt === 'function') { µ._themeAdopt(); }` : '',
-      // `µ._themeCssByName` : jumeau de `µ._themeCss` ci-dessus, mais PAR THÈME (nom →
-      // son propre css, cf. `themeVarData`, rempli par compileThemeFiles() avec un
-      // `css` par CompiledTheme, bundler/themes.ts) — le rendu serveur en a besoin pour
-      // inliner UN SEUL thème dans le <head> d'une page rendue au serveur, sans le CSS
-      // des thèmes non utilisés par cette page. N'écarte rien de `µ._themeCss`.
-      this.themeNames.length > 0 ? `µ._themeCssByName = ${JSON.stringify(Object.fromEntries(this.themeVarData.map(td => [td.name, td.css])))};` : '',
-      // Types et valeurs permises : ce que fait une valeur ramenée ou refusée en DÉVELOPPEMENT (clé
-      // `types`, 'warn' par défaut) — RIEN émis en production (le runtime s'y tait), ni pour un
-      // projet sans <vars> ni effet (le moteur des effets s'en sert pour un réglage tenu par une
-      // variable, `*neon(size: $s)`). Nom SANS `_mjs_` : le manifeste n'est pas raccourci avec le cœur.
-      !this.isProd() && (this.pendingFeatures.has('types') || this.pendingFeatures.has('fx')) ? `µ._typesMode = ${JSON.stringify(this.typesMode ?? 'warn')};` : '',
-      // Effets que MJS pose de lui-même (clé `effects` : thème en cercle, effets économes) — rien
-      // quand la clé n'est pas écrite : le runtime prend ses défauts. Nom SANS `_mjs_`, comme au-dessus.
-      this.effectsConf && Object.keys(this.effectsConf).length > 0 ? `µ._fxConf = ${JSON.stringify(this.effectsConf)};` : '',
-      // la silhouette des composants dont le code arrive (cf. componentSkeletons) ; rien sans elle
-      (() => {
-        const skels = this.componentSkeletons()
-        return Object.keys(skels).length > 0 ? `µ._skels = ${JSON.stringify(skels).replace(/</g, '\\u003c')};` : ''
-      })(),
-    ].filter(l => l.length > 0)
+    return manifest.manifestBodyLines(this, pathsLine)
   }
 
-  // --------------------------------------------------------------------------
-  // pathsCompaction() : forme des valeurs de `µ.paths` — préfixe commun factorisé (`compact:
-  // true`, chaque valeur réduite à son basename) ou chemins entiers. Décision UNIQUE, partagée par
-  // writeManifest() (qui l'applique) et par bundler/startup.ts (dont la fiche `__mjs_page` doit
-  // poser des valeurs de la MÊME forme, sinon l'Autoloader recollerait le préfixe deux fois ou pas
-  // du tout). Repli PRUDENT sur la forme entière : préfixe vide ou réduit à `/` (les suffixes
-  // deviendraient des URLs RELATIVES à la page, plus du tout la même cible), ou une seule valeur
-  // qui n'en relève pas — rien à factoriser sans risque, on n'y touche pas.
-  // --------------------------------------------------------------------------
   pathsCompaction(): { prefix: string; compact: boolean } {
-    const prefix = `${this.urlPrefix}/`
-    const values = Object.entries(this.manifest).filter(([k]) => k !== '__animations' && k !== '__styles' && k !== '__external').map(([, v]) => v)
-    return { prefix, compact: this.urlPrefix.length > 1 && values.every(v => v.startsWith(prefix)) }
+    return manifest.pathsCompaction(this)
   }
 
-  // --------------------------------------------------------------------------
-  // writeManifest() : écrit l'entrypoint `bundle_modular.js`
-  // --------------------------------------------------------------------------
   writeManifest(): void {
-    const animsPath = this.manifest['__animations']
-    const stylesPath = this.manifest['__styles']
-    const externalPath = this.manifest['__external']
-    // mode 'bundle' (défaut) : chemin historique intact, `stylesPath`
-    // (posé par bundleSharedStyles() dans this.manifest['__styles']) inchangé. Mode
-    // 'split' : bundleSharedStyles() ne tourne jamais (cf. compile(), étape 2c) —
-    // `stylesPath` reste undefined — le manifeste importe seulement mjs_root (toujours
-    // eager) et les feuilles forcées eager par les DEUX filets de sécurité (aucun module
-    // ne les déclare, OU un `<@view css="…">` les réclame — cf. finalizeSplitStyles) ;
-    // chaque module qui déclare une feuille l'importe en plus lui-même (cf.
-    // prependSplitCssImports, _compileMjsInner) — pour une feuille forcée eager PAR
-    // AILLEURS DÉCLARÉE (raison 2 ci-dessus), les deux imports pointent le MÊME chemin
-    // haché : l'ESM du navigateur ne l'exécute qu'une fois, `µ.CSS[nom]` posé une seule
-    // fois (garde `if (!µ.CSS[nom])` en prime côté fichier émis).
-    // en 'lazy', le manifeste n'importe QUE la feuille racine (adoptée sur
-    // le document, personne ne la déclare) : les autres n'arrivent que quand un composant
-    // les réclame, par leur URL publiée juste en dessous (`µ._cssLazy`).
-    // TABLEAU (plus une seule chaîne `import '…';`) : chaque chemin sert AUSSI de
-    // href de préchargement (cf. bloc `document` plus bas), en plus de son
-    // `await import(…);` après le cœur.
-    const stylesPaths: string[] = this.cssMode === 'split'
-      ? [this.splitRootHashedPath, ...this.splitEagerHashedPaths].filter((p): p is string => !!p)
-      : this.cssMode === 'lazy'
-      ? (this.splitRootHashedPath ? [this.splitRootHashedPath] : [])
-      : (stylesPath ? [stylesPath] : [])
-    // On retire les clés internes du manifest exposé
-    const rawPublicManifest = { ...this.manifest }
-    delete rawPublicManifest['__animations']
-    delete rawPublicManifest['__styles']
-    delete rawPublicManifest['__external']
-    // les fichiers d'effets (`mjs_fx_<nom>`, cf. compileFxChunks) : préchargés avec les composants qui
-    // les importent (µDeps), importés à la demande par le moteur
-    for (const [k, path] of this.fxChunkPaths) rawPublicManifest[k] = path
-    // un composant groupé (`bundles`) se charge par le fichier de son groupe
-    for (const [k, path] of this.groupPaths) rawPublicManifest[k] = path
-    // ORDRE STABLE — les modules cœur entrent au manifeste dans l'ordre d'ARRIVÉE des
-    // compilations PARALLÈLES (chaque fichier terminé annonce ce qu'il réclame) : deux
-    // builds du même code produisaient un `µ.paths` identique au contenu près mais
-    // PERMUTÉ, d'où un diff git bruyant à chaque build sur une ligne de 90 000
-    // caractères. On y cherche toujours par nom, jamais par rang — le tri n'a aucun
-    // effet fonctionnel. Comparaison par point de code (pas `localeCompare`, dépendant
-    // de la locale de la machine : le tri doit être le MÊME partout)
-    const publicManifest = Object.fromEntries(Object.entries(rawPublicManifest).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
-    // PRÉFIXE FACTORISÉ — toutes les valeurs commencent par le même `<urlPrefix>/`
-    // (writeHashed), répété autant de fois qu'il y a de composants : 1 398 entrées sur un
-    // vrai site, 37 Ko de préfixe recopié dans une ligne servie sur CHAQUE page. Publié une
-    // seule fois (`µ.pathsPrefix`, posé juste avant `µ.paths`), les valeurs ne gardent que
-    // leur suffixe ; qui lit un CHEMIN recolle les deux (Autoloader, bloc de préchargement
-    // ci-dessous). Les CLÉS ne bougent pas — c'est tout ce que lit mjs_ujs.ts.
-    // La décision elle-même (et son repli prudent) vit dans pathsCompaction() ci-dessus : le
-    // fichier de page d'une route prérendue (bundler/startup.ts) doit poser la MÊME forme.
-    const { prefix: pathsPrefix, compact: compactable } = this.pathsCompaction()
-    const basenamePaths = compactable
-      ? Object.fromEntries(Object.entries(publicManifest).map(([k, v]) => [k, v.slice(pathsPrefix.length)]))
-      : publicManifest
-    // forme COMPACTE des valeurs (cf. encodePathValue) : production seulement, et seulement quand la
-    // table est assez grosse pour payer le décodeur `µPath` (PATHS_ENCODE_MIN_ENTRIES) ; sinon table entière
-    const encodedPaths = compactable && this.isProd() && Object.keys(basenamePaths).length >= PATHS_ENCODE_MIN_ENTRIES
-    const emittedPaths = encodedPaths
-      ? Object.fromEntries(Object.entries(basenamePaths).map(([k, v]) => [k, encodePathValue(k, v)]))
-      : basenamePaths
-    // même tri, même raison — `this.manifestDeps` (buildManifestDeps) est déjà trié
-    // clé par clé, mais chaque VALEUR (tableau de noms) l'est aussi (cf. son commentaire) :
-    // rien à refaire ici, JSON.stringify respecte l'ordre d'insertion des deux.
-    const manifestDeps = this.manifestDeps
-
-    // cascade de modules à 3 niveaux et plus (mesuré sur l'appli météo du banc : 8 niveaux,
-    // le navigateur découvrait le cœur PUIS chaque composant un par un, à la file) —
-    // `bundle.js` n'importe donc plus le cœur STATIQUEMENT : un import statique aurait
-    // forcé le navigateur à résoudre TOUT le graphe ESM (cœur, feuilles, animations,
-    // manifeste externe) avant d'exécuter la moindre ligne de ce fichier, la découverte des
-    // composants de la page (Autoloader) ne démarrant qu'ENSUITE, en série avec chaque import
-    // suivant. `µCore` reste un littéral de chaîne (le layout Rails du site le cherche par
-    // regex, cf. tête de fichier) : le cœur est désormais `import()`é DYNAMIQUEMENT, APRÈS
-    // avoir posé des `<link rel="modulepreload">` pour lui, les feuilles/animations/manifeste
-    // externe (toujours eager, quelle que soit la page) ET les composants DÉJÀ présents dans
-    // le document au moment de l'exécution + la FERMETURE de leurs dépendances directes
-    // (`µDeps`, cf. buildManifestDeps) — le navigateur télécharge tout ça EN PARALLÈLE pendant
-    // que le cœur s'exécute, au lieu de le découvrir un par un après coup. Sans `document`
-    // (moteur de rendu serveur sans DOM, cf. renderToString.ts qui n'exécute d'ailleurs jamais
-    // CE fichier tel quel) : aucun préchargement, seul l'import du cœur reste inconditionnel.
-    const eagerHrefsLiteral = [this.coreHashedPath, ...stylesPaths, ...(animsPath ? [animsPath] : []), ...(externalPath ? [externalPath] : [])]
-      .map(p => JSON.stringify(p)).join(', ')
-    // Fiche du FICHIER DE PAGE (`render.startup: 'bundle'`, cf. bundler/startup.ts) : le fragment
-    // prérendu porte, quand il en a un, un `<script type="application/json" id="__mjs_page">`
-    // nommant le fichier qui assemble LES COMPOSANTS DE CETTE PAGE et les noms qu'il définit. Chaque
-    // nom est repointé sur ce fichier AVANT le bloc de préchargement juste en dessous (qui ne
-    // redemande donc aucun fichier séparé déjà assemblé) et avant `µ.paths` plus bas (l'Autoloader
-    // importe alors le fichier de page, déjà en cache, qui définit tous ces composants d'un coup).
-    // Fiche absente (autre mode, autre page, rendu sans DOM) ou JSON abîmé : rien de posé, la table
-    // reste celle du manifeste — jamais d'exception, la page doit démarrer quoi qu'il arrive.
-    const pageBlock = [
-      `let _mjs_page = null;`,
-      `if (typeof document !== 'undefined') {`,
-      `  const _mjs_pageTag = document.getElementById('__mjs_page');`,
-      `  try { _mjs_page = _mjs_pageTag ? JSON.parse(_mjs_pageTag.textContent) : null; } catch (e) { _mjs_page = null; }`,
-      `}`,
-      // la fiche ne peut désigner qu'un fichier de page du site : jamais une adresse à schéma ni `//hôte`
-      `if (_mjs_page && typeof _mjs_page.file === 'string' && /^(?!\\/\\/)[\\w.\\/-]*mjs_page-[\\w.-]+\\.js$/.test(_mjs_page.file) && Array.isArray(_mjs_page.names)) { _mjs_page.names.forEach((n) => { µPaths[n] = _mjs_page.file; }); }`,
-    ].join('\n')
-    const preloadBlock = [
-      `if (typeof document !== 'undefined') {`,
-      `  const µHrefs = new Set([${eagerHrefsLiteral}]);`,
-      `  const µSeen = new Set();`,
-      `  const µWalkDeps = (name) => {`,
-      `    if (µSeen.has(name)) return;`,
-      `    µSeen.add(name);`,
-      // valeurs COMPACTES (préfixe factorisé, cf. `pathsPrefix` plus haut) : un href se
-      // recolle ici, comme l'Autoloader le fait de son côté (`µPath` quand la table est encodée).
-      ...(encodedPaths ? [
-        `    const path = µPath(name);`,
-        `    if (path) µHrefs.add(path);`,
-      ] : [
-        `    const path = Object.prototype.hasOwnProperty.call(µPaths, name) && µPaths[name];`,
-        `    if (path) µHrefs.add(µPathsPrefix + path);`,
-      ]),
-      // les dépendances propres d'une balise : une balise inconnue n'en a aucune, jamais une valeur héritée d'un prototype pollué
-      `    (Object.prototype.hasOwnProperty.call(µDeps, name) ? µDeps[name] : []).forEach(µWalkDeps);`,
-      `  };`,
-      // même sélecteur/même critère que µ.Autoloader.observe (mjs_autoloader.ts) : les
-      // tags CUSTOM ELEMENT `mjs-*` déjà présents dans le document (HTML statique ou
-      // rendu serveur) au moment où ce script s'exécute — jamais ceux qu'un `{for}`/`{if}`
-      // insérera PLUS TARD (l'Autoloader, plus bas, les rattrape normalement).
-      `  document.body.querySelectorAll(':not(:defined)').forEach((node) => {`,
-      `    if (node.tagName && node.tagName.startsWith('MJS-')) µWalkDeps(node.tagName.slice(4).toLowerCase());`,
-      `  });`,
-      `  µHrefs.forEach((href) => {`,
-      `    const link = document.createElement('link');`,
-      `    link.rel = 'modulepreload';`,
-      `    link.href = href;`,
-      `    document.head.appendChild(link);`,
-      `  });`,
-      `}`,
-    ].join('\n')
-    // `µ.Autoloader.preload(nom)` : charge d'avance, sans l'exécuter, le fichier d'un composant et ceux de toute
-    // sa descendance (`µDeps`, fichiers d'effets compris). Émise SEULEMENT quand le build voit l'appel dans le
-    // projet (signaux AUTOLOADER_MENTION et PRELOAD_MENTION) : une appli qui n'appelle jamais `preload` ne paie rien. Même
-    // lecture du nom que `load` (minuscules, `mjs-` retiré) ; un nom inconnu ne fait rien. Un fichier déjà
-    // demandé — par un appel précédent, ou par un lien `modulepreload` déjà dans la page (en-tête de page
-    // prérendue, bloc de préchargement ci-dessus) — n'est pas redemandé ; un composant déjà défini non plus.
-    // Les valeurs de `µPaths` sont COMPACTES : le préfixe se recolle ici, comme le fait l'Autoloader.
-    const preloadFn = this.preloadCalled ? [
-      `const µAsked = new Set();`,
-      `const µPreload = (name) => {`,
-      `  if (typeof document === 'undefined') return;`,
-      `  const µHas = (table, key) => Object.prototype.hasOwnProperty.call(table, key);`,
-      `  const raw = String(name);`,
-      `  const key = raw.toLowerCase().replace(/^mjs-/, '');`,
-      `  const root = µHas(µPaths, key) ? key : (µHas(µPaths, raw) ? raw : null);`,
-      `  if (root === null) return;`,
-      `  const present = new Set(Array.from(document.querySelectorAll('link[rel="modulepreload"]')).map((l) => l.href));`,
-      `  const seen = new Set();`,
-      `  const walk = (n) => {`,
-      `    if (seen.has(n)) return;`,
-      `    seen.add(n);`,
-      `    if (µHas(µPaths, n) && !(typeof customElements !== 'undefined' && customElements.get('mjs-' + n.toLowerCase()))) {`,
-      encodedPaths ? `      const path = µPath(n);` : `      const path = µPathsPrefix + µPaths[n];`,
-      `      const href = new URL(path, document.baseURI).href;`,
-      `      if (!µAsked.has(href) && !present.has(href)) {`,
-      `        µAsked.add(href);`,
-      `        const link = document.createElement('link');`,
-      `        link.rel = 'modulepreload';`,
-      `        link.href = path;`,
-      `        document.head.appendChild(link);`,
-      `      }`,
-      `    }`,
-      `    if (µHas(µDeps, n)) µDeps[n].forEach(walk);`,
-      `  };`,
-      `  walk(root);`,
-      `};`,
-    ].join('\n') : ''
-    // `import '<chemin>';` STATIQUE → `import('<chemin>')` DYNAMIQUE : ces fichiers
-    // importent eux-mêmes le cœur (déjà résolu à ce point, l'ESM du navigateur ne l'exécute
-    // qu'une fois, cf. tête de fichier) — les laisser statiques aurait réintroduit l'attente
-    // du cœur avant tout le reste. Styles + animations en `Promise.all` (PAS un `await`
-    // par fichier, séquentiel) : régression mesurée (tests/render-browser.test.ts, rendu
-    // Chromium réel) — un `await` par chemin sérialise leurs ALLERS-RETOURS réseau, quand
-    // le graphe ESM statique d'avant les résolvait tous EN PARALLÈLE (déjà préchargés par
-    // le bloc `modulepreload` plus haut de toute façon ; la sérialisation était donc un
-    // pur coût ajouté par CE fichier, pas un besoin réel — aucune dépendance entre eux).
-    const eagerAsyncPaths = [...stylesPaths, ...(animsPath ? [animsPath] : [])]
-    const stylesImport = eagerAsyncPaths.length > 0
-      ? `await Promise.all([${eagerAsyncPaths.map(p => `import(${JSON.stringify(p)})`).join(', ')}]);`
-      : ''
-    const externalImport = externalPath ? `await import(${JSON.stringify(externalPath)});` : ''
-
-    const bodyLines = [
-      stylesImport,
-      // Préfixe commun des chemins (cf. `pathsPrefix` plus haut) — posé AVANT `µ.paths`,
-      // donc avant que le moindre consommateur ne tourne : l'Autoloader recolle
-      // `µ.pathsPrefix + µ.paths[nom]` (mjs_autoloader.ts). Rien d'émis quand la
-      // factorisation n'est pas sûre : le runtime lit alors un préfixe absent (chaîne
-      // vide) et les valeurs sont déjà des chemins entiers.
-      compactable ? `µ.pathsPrefix = ${JSON.stringify(pathsPrefix)};` : '',
-      // `µPaths` (déjà posé plus haut, réutilisé pour le préchargement) plutôt qu'un
-      // 2e JSON.stringify — la ligne reste `µ.paths = …;`, cherchée par ce nom précis
-      // ailleurs (recoverFailedComponentManifest ci-dessous, readBuildVersion,
-      // extractJsonAfter côté ssr-head.ts, splice de µ.version juste plus bas).
-      ...this.manifestBodyLines(`µ.paths = µPaths;`),
-      // le cœur lit les chemins par µ.pathOf : même décodeur que le manifeste (table encodée)
-      encodedPaths ? `µ.pathOf = µPath;` : '',
-      // les dépendances directes, lues par l'Autoloader : les fichiers d'effets d'un composant partent
-      // en même temps que lui (cf. µ._mjs_fxPrefetch, mjs_fx.ts)
-      this.fxChunkPaths.size > 0 ? `µ.deps = µDeps;` : '',
-      externalImport,
-      this.preloadCalled ? `if (µ.Autoloader) { µ.Autoloader.preload = µPreload; }` : '',
-      `if (µ.Autoloader) { µ.Autoloader.observe(document.body); }`,
-    ].filter(l => l.length > 0)
-    // Utilisait `NODE_ENV` directement
-    // (2e définition de "prod", divergente de `isProd()`/`shouldEmitSourceMap()`
-    // ci-dessus) : cf. le commentaire détaillé de `isProd()`.
-    if (!this.isProd()) {
-      bodyLines.push(`window.µ = µ;`)
-    }
-    // Le corps entier (styles/anims/csp/paths/…/Autoloader.observe) tourne APRÈS la
-    // résolution du cœur, dans un `.then()` — JAMAIS un top-level `await` : `bundle.js`
-    // resterait alors évaluable tel quel dans un script CLASSIQUE (`eval`, harnais de
-    // test — stripEsm/renderToString.ts, tests qui `window.eval()` core+manifest en
-    // happy-dom) — un top-level `await` y est une ERREUR DE SYNTAXE (grammaire réservée
-    // aux vrais modules ES, `eval()` évalue toujours en grammaire "script"). Une fonction
-    // ASYNC ordinaire passée à `.then()` reste, elle, valide PARTOUT.
-    // `µReady` exposée sur `window` (SEULEMENT s'il existe) : un IMPORTEUR STATIQUE de ce
-    // fichier (`import '/__mjs/bundle.js';`, cf. render-browser.ts) voit son évaluation
-    // reprendre dès la fin du corps SYNCHRONE de bundle.js (l'appel `.then()` posé, pas la
-    // promesse résolue) — sans ce signal explicite, un tel importeur ne peut pas savoir
-    // quand le cœur + les composants de la page sont réellement prêts.
-    const lines = [
-      `const µCore = '${this.coreHashedPath}';`,
-      `const µPathsPrefix = ${JSON.stringify(compactable ? pathsPrefix : '')};`,
-      `const µPaths = ${JSON.stringify(emittedPaths)};`,
-      // décodeur de la table encodée (règle : cf. decodePathValue) — total : clé inconnue, clé du prototype → '' ;
-      // une clé propre seulement : un nom posé par un prototype pollué est inconnu, jamais une adresse importée
-      ...(encodedPaths ? [`const µPath = (n) => { const v = Object.prototype.hasOwnProperty.call(µPaths, n) ? µPaths[n] : null; return typeof v === 'string' ? µPathsPrefix + (v.includes('.') ? v : v.slice(0, -5) + n + '-' + v.slice(-5) + '.js') : ''; };`] : []),
-      `const µDeps = ${JSON.stringify(manifestDeps)};`,
-      pageBlock,
-      preloadBlock,
-      ...(preloadFn ? [preloadFn] : []),
-      `const µReady = import(µCore).then(async ({ µ }) => {`,
-      ...bodyLines.map(l => `  ${l}`),
-      `});`,
-      `if (typeof window !== 'undefined') { window.__mjsBundleReady = µReady; }`,
-    ]
-    // (protocole de navigation) — id de build GLOBAL, dérivé du CONTENU
-    // assemblé ci-dessus (SAUF la ligne de version elle-même) : même style que
-    // writeHashed (md5), jamais une horloge → même build = même id, un seul
-    // asset qui change = id différent. La garde skip-si-identique juste plus bas
-    // reste cohérente par construction (contenu identique ⇒ id identique ⇒ ligne
-    // insérée identique). `lastBuildId` posé à CHAQUE writeManifest, y compris
-    // quand l'écriture est skippée (id déjà correct, recalculé à l'identique).
-    const buildId = createHash('md5').update(lines.join('\n')).digest('hex').slice(0, 8)
-    this.lastBuildId = buildId
-    // `.trim()` : la ligne vit maintenant DANS le corps indenté de 2 espaces (cf. bodyLines.map ci-dessus).
-    const pathsLineIdx = lines.findIndex(l => l.trim().startsWith('µ.paths = '))
-    lines.splice(pathsLineIdx + 1, 0, `  µ.version = "${buildId}";`)
-    if (!existsSync(dirname(this.manifestPath))) {
-      mkdirSync(dirname(this.manifestPath), { recursive: true })
-    }
-    // Écrivait INCONDITIONNELLEMENT, à
-    // CHAQUE compile, même si le contenu généré est BYTE-POUR-BYTE identique
-    // à ce qui est déjà sur disque. Cas concret : `manifestPath` configuré
-    // (par erreur, ou par nécessité selon l'hébergement) SOUS `sourceDir` —
-    // sous `watch()`, cette écriture-sans-changement touche quand même le
-    // fichier (nouveau mtime/inode), le watcher la détecte comme une
-    // modification, redéclenche un compile(), qui réécrit le manifest à
-    // l'identique, qui redéclenche le watcher… boucle de recompilation
-    // infinie. Fix : lit le contenu existant et skip l'écriture si identique
-    // (comportement fonctionnel inchangé pour tout le reste — seul le
-    // TOUCHER inutile du fichier est évité).
-    // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. sortieDuBuild), hors de l'id de build
-    const newContent = (this.ecritDansSources() ? `${MARQUE_SORTIE}\n` : '') + lines.join('\n')
-    if (existsSync(this.manifestPath)) {
-      const current = readFileSync(this.manifestPath, 'utf-8')
-      if (current === newContent) return
-    }
-    // garde-fou ESM (cf. assertValidEsm) — bundle_modular.js est lui aussi du
-    // JS émis, même exposé au risque « build vert qui ment ».
-    this.assertValidEsm(newContent, basename(this.manifestPath))
-    this.writeFileAtomicAlways(this.manifestPath, newContent)
+    manifest.writeManifest(this)
   }
 
-  // --------------------------------------------------------------------------
-  // bundleUnitOrder() : mode 'bundle' — ordre d'import des unités dans `mjs:entry`, ENFANTS
-  // AVANT PARENTS (tri topologique inverse de `this.manifestDeps`, cf. buildManifestDeps()) :
-  // un parent se définit APRÈS ses enfants, l'upgrade d'un élément déjà présent dans la page
-  // (rendu serveur, HTML statique) trouve alors ses enfants déjà définis. Post-ordre DFS,
-  // départ trié par stem (déterministe) ; `mjs_external` EXCLU (importé séparément, à part,
-  // juste après styles/animations — cf. buildBundleEntry()) ; une dep absente de
-  // `this.pendingUnits` (échouée, ou résolue autrement) est simplement ignorée, jamais suivie.
-  // --------------------------------------------------------------------------
   private bundleUnitOrder(): string[] {
-    const stems = [...this.pendingUnits.keys()].filter(s => s !== 'mjs_external').sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    const order: string[] = []
-    const done = new Set<string>()
-    const visiting = new Set<string>()
-    const visit = (stem: string): void => {
-      if (done.has(stem) || visiting.has(stem)) return  // déjà placé, ou cycle (rompu ailleurs) : jamais revisité
-      visiting.add(stem)
-      for (const dep of [...(this.manifestDeps[stem] ?? [])].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)) {
-        if (this.pendingUnits.has(dep)) visit(dep)
-      }
-      visiting.delete(stem)
-      done.add(stem)
-      order.push(stem)
-    }
-    // un module chargé à la demande n'est pas importé d'office par l'entrée : un composant qui l'`@import`e le tire
-    // par ses dépendances (visit ci-dessus), sinon il sort dans son propre fichier (cf. runBundleEsbuild) ; de même un module que
-    // seuls des modules chargés à la demande importent
-    const reserves = this.bundleLazyOnlyModules()
-    for (const stem of stems) if (!this.bundleLazyStems.has(stem) && !reserves.has(stem)) visit(stem)
-    return order
+    return manifest.bundleUnitOrder(this)
   }
 
-  // --------------------------------------------------------------------------
-  // bundleLazyOnlyModules() : mode 'bundle' avec des modules chargés à la demande — les modules (.civet/.coffee) que SEULS des
-  // modules chargés à la demande atteignent par un `import` statique. L'entrée ne les importe pas d'office : ils partent avec ceux
-  // qui les importent, téléchargés et évalués à l'appel. Un module que l'entrée atteint aussi — par un composant qui l'`@import`,
-  // par un module importé d'office — reste dans l'entrée ou dans le morceau partagé : une seule instance, comme avant. Lu sur le
-  // code final des unités (`import … from 'mjs:unit/<stem>'` est un lien statique ; `import('mjs:unit/<stem>')` est l'appel à la
-  // demande, pas un lien).
-  // --------------------------------------------------------------------------
   private bundleLazyOnlyModules(): Set<string> {
-    const reserves = new Set<string>()
-    if (this.bundleLazyStems.size === 0) return reserves
-    const re        = /(\bimport\s*\(\s*)?(['"])mjs:unit\/([^'"]+)\2/g
-    const statiques = new Map<string, string[]>()
-    const liens     = (stem: string): string[] => {
-      let l = statiques.get(stem)
-      if (!l) {
-        l = []
-        for (const m of (this.bundleVirtualSources.get(stem) ?? '').matchAll(re)) if (!m[1]) l.push(m[3])
-        statiques.set(stem, l)
-      }
-      return l
-    }
-    const fermeture = (depart: Iterable<string>): Set<string> => {
-      const vus  = new Set<string>()
-      const pile = [...depart]
-      while (pile.length > 0) {
-        const s = pile.pop()!
-        if (vus.has(s)) continue
-        vus.add(s)
-        for (const d of liens(s)) pile.push(d)
-      }
-      return vus
-    }
-    const estModule = (stem: string): boolean => /\.(?:civet|coffee)$/.test(this.pendingUnits.get(stem)?.file ?? '')
-    const candidats = new Set([...fermeture(this.bundleLazyStems)].filter(s => !this.bundleLazyStems.has(s) && estModule(s)))
-    const atteints  = fermeture([...this.bundleVirtualSources.keys()].filter(s => !this.bundleLazyStems.has(s) && !candidats.has(s)))
-    for (const s of candidats) if (!atteints.has(s)) reserves.add(s)
-    return reserves
+    return manifest.bundleLazyOnlyModules(this)
   }
 
-  // --------------------------------------------------------------------------
-  // buildBundleSetupBody() : mode 'bundle' — corps du module virtuel 'mjs:setup' (importe
-  // 'mjs:core', pose tout ce que le manifeste éclaté pose AVANT ses composants), SAUF
-  // `µ.Autoloader.observe` (déplacé dans `mjs:entry`, APRÈS l'import de tous les composants —
-  // cf. buildBundleEntry()) ET sans la ligne `µ.version` (posée par l'appelant, cf.
-  // writeBundleManifest() : dépend du hash de TOUT le contenu, elle-même comprise). `µ.paths` :
-  // CHAQUE nom du projet pointe vers `import.meta.url` — le fichier lui-même (un fichier UNIQUE
-  // sert tout le monde ; un `import()` d'une URL déjà chargée est un no-op pour le navigateur) —
-  // SEUL l'ensemble des CLÉS compte, jamais les valeurs de `this.manifest` (repères résolus en
-  // spécificateurs virtuels par emitSingleFile(), plus jamais lus après ce point).
-  // --------------------------------------------------------------------------
   private buildBundleSetupBody(): string {
-    const publicNames = Object.keys(this.manifest)
-      .filter(k => k !== '__styles' && k !== '__animations' && k !== '__external')
-      .sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    const pathsLine = `const µSelfUrl = import.meta.url;\nµ.paths = { ${publicNames.map(n => `${JSON.stringify(n)}: µSelfUrl`).join(', ')} };`
-    const lines = this.manifestBodyLines(pathsLine)
-    if (!this.isProd()) lines.push(`window.µ = µ;`)
-    return lines.join('\n')
+    return manifest.buildBundleSetupBody(this)
   }
 
-  // --------------------------------------------------------------------------
-  // buildBundleEntry(unitOrder) : mode 'bundle' — corps du module virtuel 'mjs:entry' (SEUL
-  // point d'entrée réel du fichier assemblé, `entryPoints: ['mjs:entry']` d'esbuild.build(),
-  // cf. runBundleEsbuild() — jamais un `stdin` qui l'IMPORTERAIT : esbuild ne garde les EXPORTS
-  // d'un module que s'il est LUI-MÊME le point d'entrée, un simple `import 'mjs:entry';` depuis
-  // un stdin wrapper les aurait fait passer pour un intermédiaire inutilisé et les aurait
-  // supprimés au tree-shaking — `export { µ };` disparaissait entièrement, mesuré). Importe le
-  // cœur (pour `µ.Autoloader`/l'export final), le setup,
-  // styles/animations/manifeste externe s'ils existent, PUIS chaque unité du projet dans
-  // `unitOrder` (enfants avant parents) — TOUT est statique et eager, contrairement au manifeste
-  // éclaté (plus de cascade à découvrir : un seul fichier, déjà tout chargé). Le corps ne
-  // s'exécute jamais dans un `.then()` : rien n'est plus async à attendre (le cœur n'est plus un
-  // import DYNAMIQUE d'un AUTRE fichier, cf. bandeau de bundleRuntime()) — `__mjsBundleReady`
-  // est donc directement une promesse déjà résolue (contrat lu par render-browser.ts).
-  // --------------------------------------------------------------------------
   private buildBundleEntry(unitOrder: string[]): string {
-    const lines: string[] = [`import { µ } from 'mjs:core';`, `import 'mjs:setup';`]
-    if (this.manifest['__styles']) lines.push(`import 'mjs:styles';`)
-    if (this.manifest['__animations']) lines.push(`import 'mjs:anims';`)
-    if (this.pendingUnits.has('mjs_external')) lines.push(`import 'mjs:unit/mjs_external';`)
-    for (const stem of unitOrder) lines.push(`import 'mjs:unit/${stem}';`)
-    // µ.Autoloader n'est du cœur qu'en 'split' (cf. resolveRuntimeFiles) : ici il n'y est que
-    // demandé explicitement (`runtime: ['autoloader']`), et on garde alors son observer. Sans lui,
-    // un contrôle UNIQUE remplace son seul apport dans ce mode — signaler une balise `mjs-*` que
-    // ce fichier ne définit pas (faute de frappe, composant oublié du projet) : tous les
-    // `customElements.define` ont déjà tourné au-dessus, tout ce qui reste `:not(:defined)` avec
-    // ce préfixe est inconnu pour de bon. Les balises insérées PLUS TARD ne sont pas suivies (pas
-    // d'observer) : il n'y aurait rien à charger pour elles non plus. Ce contrôle ne sert qu'à un avertissement : aux niveaux de
-    // production qui retirent ceux du framework ('error', 'silent', cf. runtimeCallsCut), il ne s'écrit pas
-    const warns = !(this.isProd() && this.shouldMinify() && runtimeCallsCut(this.prodLogLevel()).includes('warn'))
-    lines.push(`if (typeof document !== 'undefined') {`)
-    lines.push(`  if (µ.Autoloader) { µ.Autoloader.observe(document.body); }`)
-    if (warns) lines.push(`  else { document.querySelectorAll(':not(:defined)').forEach((n) => { if (n.tagName.indexOf('MJS-') === 0) µ.warn('[ModularJS] <' + n.tagName.toLowerCase() + '> inconnue : aucun composant de ce nom dans le fichier unique'); }); }`)
-    lines.push(`}`)
-    lines.push(`if (typeof window !== 'undefined') { window.__mjsBundleReady = Promise.resolve(); }`)
-    lines.push(`export { µ };`)
-    return lines.join('\n')
+    return manifest.buildBundleEntry(this, unitOrder)
   }
 
-  // --------------------------------------------------------------------------
-  // runBundleEsbuild() : mode 'bundle' — assemble `this.bundleVirtualSources` (cœur, styles,
-  // animations, manifeste externe, setup, entry, chaque unité) en UN SEUL module ES, via
-  // esbuild.build() EN MÉMOIRE (`write: false`, jamais le disque). Plugin `onResolve`/`onLoad` :
-  // tout spécificateur `mjs:...` est résolu dans le namespace `mjsv` et servi depuis
-  // `this.bundleVirtualSources` — un spécificateur SANS entrée est un bogue du bundler (aucun
-  // ne devrait jamais atteindre ce point, `emitSingleFile()` en garantit l'existence pour
-  // chaque unité), jamais une 404 silencieuse. Options MIROIR de `minifyJs()` (cf. minify.ts) :
-  // même `define`/`pure`/`mangleProps`, `mangleCache` PARTAGÉ sous le MÊME verrou
-  // (`withMangleCacheLock`) que les minifications de phase A — cohérence du mangle de props
-  // `_mjs_*` garantie même si rien de neuf ne reste à mangler ici (déjà fait par unité).
-  // --------------------------------------------------------------------------
-  private async runBundleEsbuild(): Promise<{ code: string; map?: string; chunks: Array<{ name: string; code: string; map?: string }> }> {
-    const sources = this.bundleVirtualSources
-    const virtualPlugin = {
-      name: 'mjs-virtual-bundle',
-      setup: (b: any) => {
-        b.onResolve({ filter: /^mjs:/ }, (args: any) => ({ path: args.path, namespace: 'mjsv' }))
-        b.onLoad({ filter: /.*/, namespace: 'mjsv' }, (args: any) => {
-          const key = args.path === 'mjs:core' ? 'mjs_core'
-            : args.path === 'mjs:styles' ? 'mjs_styles'
-            : args.path === 'mjs:anims' ? 'mjs_anims'
-            : args.path === 'mjs:setup' ? 'mjs_setup'
-            : args.path === 'mjs:entry' ? 'mjs_entry'
-            : args.path.startsWith('mjs:unit/') ? args.path.slice('mjs:unit/'.length)
-            : null
-          const contents = key !== null ? sources.get(key) : undefined
-          if (contents === undefined) {
-            throw new Error(t('bundler.index.js-bundle-module-virtuel-introuvable', { specificateur: args.path }))
-          }
-          return { contents, loader: 'js' }
-        })
-      },
-    }
-    const shouldMinify = this.shouldMinify()
-    const wantsMap = this.shouldEmitSourceMap()
-    // des modules chargés à la demande (µimport d'un module, cf. lazyModuleImports) : esbuild coupe l'assemblage à chaque import
-    // dynamique — l'entrée garde le nom du manifeste, chaque module chargé à la demande sort dans son fichier, et le code que
-    // l'entrée et ces modules partagent (le cœur, un module `@import`é des deux côtés) dans un fichier à part, importé par les
-    // deux : une seule instance de chaque module. Sans eux, un seul fichier, comme toujours
-    const lazy      = this.bundleLazyStems.size > 0
-    const entryName = basename(this.manifestPath).replace(/\.js$/, '')
-    const runOnce = () => esbuildBuild({
-      entryPoints: lazy ? { [entryName]: 'mjs:entry' } : ['mjs:entry'],
-      absWorkingDir: this.root,
-      ...(lazy ? { outdir: 'mjs-bundle', splitting: true, entryNames: '[name]', chunkNames: '[name]-[hash]' } : { outfile: basename(this.manifestPath) }),
-      bundle: true,
-      write: false,
-      format: 'esm',
-      target: 'es2022',
-      // Sans ceci, esbuild échappe TOUT non-ASCII en `\uXXXX` (y compris le sigil `µ` lui-même,
-      // qu'il minifie ou non) — un manifeste 'bundle' ne contenait alors plus jamais le
-      // caractère littéral `µ`, cassant tout lecteur regex du manifeste (readBuildVersion,
-      // server/build-version.ts) et rendant la sortie visuellement méconnaissable face au
-      // manifeste éclaté (jamais échappé, cf. writeManifest()). `charset: 'utf8'` aligne les deux.
-      charset: 'utf8',
-      treeShaking: true,
-      minify: shouldMinify,
-      define: { 'µ.debug': 'false' },
-      // en développement, minifié ou non, rien n'est retiré : le niveau de la console s'applique à l'exécution
-      pure: this.isProd() ? buildPureList(this.prodLogLevel()) : [],
-      mangleProps: shouldMinify ? /^_mjs_/ : undefined,
-      mangleCache: shouldMinify ? this.mangleCache : undefined,
-      keepNames: false,
-      legalComments: 'none',
-      // Filet pour server/build-version.ts (readBuildVersion) : en prod, esbuild MINIFIE aussi
-      // les IDENTIFIANTS — le sigil `µ` porté par `mjs:setup` (`µ.version = "…";`) devient un nom
-      // court QUELCONQUE (`n.version="…"`, cf. son bandeau), le texte littéral `µ.version` ne
-      // survit alors nulle part. Un `footer` esbuild est ajouté APRÈS la passe de minification,
-      // donc JAMAIS renommé/compacté : sert de repère STABLE, lisible sans exécuter le fichier,
-      // quel que soit le nom que `µ` a fini par prendre à l'intérieur. Coupé en morceaux, le pied ne va QUE sur l'entrée
-      // (ajouté plus bas) : sur chaque morceau il changerait à chaque build et renommerait, avec l'empreinte du contenu, un
-      // module qu'aucune édition n'a touché.
-      footer: lazy ? undefined : { js: `//# mjsVersion=${this.lastBuildId ?? ''}` },
-      sourcemap: wantsMap ? 'external' : false,
-      logLevel: 'silent',
-      plugins: [virtualPlugin],
-    })
-    let result: Awaited<ReturnType<typeof esbuildBuild>>
-    try {
-      result = shouldMinify ? await withMangleCacheLock(this.mangleCache, runOnce) : await runOnce()
-    } catch (e: any) {
-      throw new Error(t('bundler.index.js-bundle-echec', { raison: e?.message ?? String(e) }))
-    }
-    // esbuild N'AJOUTE PAS ses nouvelles entrées AU mangleCache passé — il ne fait que les
-    // RENDRE dans `result.mangleCache` (mesuré, même contrat que transform()/minifyJs()) :
-    // sans ce merge, chaque compile() reparlerait de zéro, un `_mjs_*` pourrait recevoir un nom
-    // court DIFFÉRENT d'un build à l'autre pour un projet pourtant inchangé.
-    if (shouldMinify && result.mangleCache) Object.assign(this.mangleCache, result.mangleCache)
-    if (!lazy) {
-      const jsFile = result.outputFiles!.find(f => f.path.endsWith('.js')) ?? result.outputFiles![0]
-      const mapFile = result.outputFiles!.find(f => f.path.endsWith('.map'))
-      return { code: jsFile.text, map: mapFile?.text, chunks: [] }
-    }
-    // fichier unique coupé : chaque sortie autre que l'entrée prend un nom `<base>-<8 hexadécimaux>.js` de la famille des
-    // fichiers du projet (l'empreinte d'esbuild, déterministe, en est la graine) et chaque renvoi d'un fichier à l'autre suit
-    const sorties = result.outputFiles!
-    const js      = sorties.filter(f => f.path.endsWith('.js'))
-    const noms    = new Map<string, string>()
-    for (const f of js) {
-      const nom = basename(f.path)
-      if (nom === `${entryName}.js`) continue
-      noms.set(nom, `${nom.replace(/-[A-Z0-9]{8}\.js$/, '').replace(/\.js$/, '')}-${createHash('md5').update(nom).digest('hex').slice(0, 8)}.js`)
-    }
-    const renomme = (texte: string): string => { let out = texte; for (const [ancien, nouveau] of noms) out = out.split(ancien).join(nouveau); return out }
-    const carteDe = (f: { path: string }): string | undefined => { const c = sorties.find(o => o.path === `${f.path}.map`); return c ? renomme(c.text) : undefined }
-    const entree  = js.find(f => basename(f.path) === `${entryName}.js`)
-    if (!entree) throw new Error(t('bundler.index.js-bundle-echec', { raison: `${entryName}.js` }))
-    const texteEntree = renomme(entree.text)
-    return {
-      code:   `${texteEntree}${texteEntree.endsWith('\n') ? '' : '\n'}//# mjsVersion=${this.lastBuildId ?? ''}\n`,
-      map:    carteDe(entree),
-      chunks: js.filter(f => f !== entree).map(f => ({ name: noms.get(basename(f.path))!, code: renomme(f.text), map: carteDe(f) })),
-    }
+  private runBundleEsbuild(): Promise<{ code: string; map?: string; chunks: Array<{ name: string; code: string; map?: string }> }> {
+    return manifest.runBundleEsbuild(this)
   }
 
   // --------------------------------------------------------------------------
@@ -10829,107 +9380,15 @@ export class Bundler {
   private bundleChunkFiles: Set<string> = new Set()
 
   private writeBundleChunks(chunks: Array<{ name: string; code: string; map?: string }>): void {
-    const dir      = dirname(this.manifestPath)
-    const sameDir  = (a: string, b: string): boolean => { try { return realpathSync(a) === realpathSync(b) } catch { return a === b } }
-    const enSortie = sameDir(dir, this.outputDir)
-    const courants = new Set<string>()
-    if (chunks.length > 0 && !existsSync(dir)) mkdirSync(dir, { recursive: true })
-    for (const c of chunks) {
-      this.assertValidEsm(c.code, c.name)
-      const contenu = c.map ? `${c.code}\n//# sourceMappingURL=${c.name}.map\n` : c.code
-      if (c.map) this.writeFileAtomic(join(dir, `${c.name}.map`), c.map)
-      this.writeFileAtomic(join(dir, c.name), contenu)
-      courants.add(c.name)
-      if (c.map) courants.add(`${c.name}.map`)
-      if (enSortie) this.emittedThisCompile.add(c.name)
-    }
-    // Ce que ce build a écrit avant — lui-même, ou un build d'un autre processus que le registre a consigné — et qu'il n'écrit plus
-    // part après la publication du manifeste s'il est REMPLACÉ (un morceau de même base y prend sa place) ou s'il vient de cette
-    // instance. Un fichier que personne n'a consigné n'est jamais retiré, quelle que soit la forme de son nom (`chunk-deadbeef.js`
-    // d'un auteur) ; un module disparu sans successeur laisse ses fichiers à la purge de `mjs build` (cf. pruneBundleChunks).
-    const base   = (n: string): string => n.replace(/-[a-f0-9]{8}\.js(?:\.map)?$/, '')
-    const bases  = new Set([...courants].map(base))
-    const avant  = new Set([...this.bundleChunkFiles, ...bundleNeighborFiles(this.manifestPath)])
-    for (const f of avant) {
-      if (courants.has(f)) continue
-      if (this.bundleChunkFiles.has(f) || bases.has(base(f))) this.pendingHashCleanup.push(join(dir, f))
-    }
-    this.bundleChunkFiles = courants
+    manifest.writeBundleChunks(this, chunks)
   }
 
-  // --------------------------------------------------------------------------
-  // writeBundleManifest() : mode 'bundle' — même point d'appel que writeManifest() (étape « 4.
-  // Manifest entrypoint » de compile(), que cette méthode remplace dans ce mode). `µ.version` :
-  // dérivé du md5 de TOUT le contenu AVANT assemblage (chaque source virtuelle triée par nom +
-  // le corps du setup + le texte de l'entrée) plutôt que du texte assemblé lui-même (comme
-  // writeManifest()) — deux constructions esbuild identiques en ENTRÉE produisent une sortie
-  // identique (déterminisme déjà garanti par le mangleCache partagé/trié, cf. bandeau de
-  // pendingMinifyTasks), la belle propriété recherchée (même build ⇒ même id) tient donc tout
-  // autant, sans le coût d'un 2e passage esbuild pour connaître l'id AVANT de l'injecter dans le
-  // texte qu'on hache. Écriture : skip-si-identique, comme writeManifest() (jamais de `touch`
-  // inutile sous watch).
-  // --------------------------------------------------------------------------
-  private async writeBundleManifest(): Promise<void> {
-    const unitOrder = this.bundleUnitOrder()
-    const setupBody = this.buildBundleSetupBody()
-    const entryText = this.buildBundleEntry(unitOrder)
-    const hashInput = [...this.bundleVirtualSources.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([k, v]) => `${k}\0${v}`).join('\0\0')
-      + '\0\0setup\0' + setupBody
-      + '\0\0entry\0' + entryText
-    const buildId = createHash('md5').update(hashInput).digest('hex').slice(0, 8)
-    this.lastBuildId = buildId
-    this.bundleVirtualSources.set('mjs_setup', `import { µ } from 'mjs:core';\nµ.version = ${JSON.stringify(buildId)};\n${setupBody}`)
-    this.bundleVirtualSources.set('mjs_entry', entryText)
-
-    const { code, map, chunks } = await this.runBundleEsbuild()
-    this.writeBundleChunks(chunks)
-    // dossier du manifeste d'abord : la carte s'y écrit
-    if (!existsSync(dirname(this.manifestPath))) {
-      mkdirSync(dirname(this.manifestPath), { recursive: true })
-    }
-    // construction qui écrit dans le dossier des sources : la marque en première ligne (cf. sortieDuBuild), et la carte suit ce
-    // décalage d'une ligne (un `;` de plus en tête de `mappings`)
-    const marque   = this.ecritDansSources()
-    let newContent = marque ? `${MARQUE_SORTIE}\n${code}` : code
-    if (map) {
-      const mapName = `${basename(this.manifestPath)}.map`
-      newContent = `${newContent}\n//# sourceMappingURL=${mapName}\n`
-      let carte = map
-      if (marque) {
-        const lue = JSON.parse(map)
-        lue.mappings = `;${lue.mappings}`
-        carte = JSON.stringify(lue)
-      }
-      // carte identique non retouchée : sous un dossier surveillé, chaque écriture relançait une construction
-      this.writeIfChanged(join(dirname(this.manifestPath), mapName), carte)
-    }
-    // même garde skip-si-identique que writeManifest() (cf. son commentaire détaillé) : un
-    // `mjs dev` dont rien n'a changé ne doit pas toucher le fichier (mtime stable, jamais de
-    // boucle de recompilation).
-    if (existsSync(this.manifestPath)) {
-      const current = readFileSync(this.manifestPath, 'utf-8')
-      if (current === newContent) return
-    }
-    // garde-fou ESM (cf. assertValidEsm) — même exigence que writeManifest().
-    this.assertValidEsm(newContent, basename(this.manifestPath))
-    this.writeFileAtomicAlways(this.manifestPath, newContent)
+  private writeBundleManifest(): Promise<void> {
+    return manifest.writeBundleManifest(this)
   }
 
-  // même motif que writeFileAtomic ci-dessus, non réutilisable ici : le
-  // manifest change de contenu à chaque build, alors que writeFileAtomic
-  // skippe si `target` existe déjà — inadapté à un chemin FIXE dont le
-  // contenu varie. Extrait de writeManifest() pour rester testable isolément
-  // (cf. tests/bundler-manifest-atomic.test.ts).
   private writeFileAtomicAlways(target: string, content: string | Buffer): void {
-    const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    writeFileSync(tmp, content, 'utf-8')
-    try {
-      renameSync(tmp, target)
-    } catch (e) {
-      try { unlinkSync(tmp) } catch {}
-      throw e
-    }
+    outputs.writeFileAtomicAlways(this, target, content)
   }
 
   // --------------------------------------------------------------------------

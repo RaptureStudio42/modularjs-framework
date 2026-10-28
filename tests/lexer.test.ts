@@ -35,13 +35,13 @@ describe('lexer.tokenize', () => {
     })
   })
 
-  describe('µread $x / µwrite $x, v → _mjsThis._state.x (accès NON réactif)', () => {
+  describe('µread $x → _mjsThis._state.x / µwrite $x, v → µ._mjs_rawWrite(_mjsThis).x (accès NON réactif)', () => {
     it('µread lit le slot brut, sans poser de dépendance', () => {
       assert.equal(tokenize('µread $count'), '_mjsThis._state.count')
     })
 
     it('µwrite écrit le slot brut — la valeur après la virgule suit telle quelle (sans notify)', () => {
-      assert.equal(tokenize('µwrite $count, 5'), '_mjsThis._state.count = 5')
+      assert.equal(tokenize('µwrite $count, 5'), 'µ._mjs_rawWrite(_mjsThis).count = 5')
     })
 
     it('ancienne forme `µwrite $x = v` (RETIRÉE) : ERREUR DE COMPILATION dédiée', () => {
@@ -71,7 +71,7 @@ describe('lexer.tokenize', () => {
     })
 
     it('µwrite $_secret, 5 (underscore juste après $) : reconnu', () => {
-      assert.equal(tokenize('µwrite $_secret, 5'), '_mjsThis._state._secret = 5')
+      assert.equal(tokenize('µwrite $_secret, 5'), 'µ._mjs_rawWrite(_mjsThis)._secret = 5')
     })
 
     it('$__x n\'est PLUS un sigil brut (retiré) → règle $x standard', () => {

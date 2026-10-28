@@ -107,6 +107,13 @@ export interface MjsConfig {
    * l'application. Exige `css: 'split'` ou `css: 'lazy'` (le build refuse en `'bundle'`).
    */
   csp?: boolean
+  /**
+   * Ancres d'une même page dans l'historique, opt-in, `false` par défaut (une vraie page : une ancre remplace l'adresse de
+   * l'entrée courante, Précédent ramène à la page d'avant). À `true`, chaque ancre suivie est une entrée : Précédent et
+   * Suivant vont d'ancre en ancre. Émis au manifeste (`µ._anchorHistory = true;`) seulement à `true` ; lu par la navigation
+   * (mjs_ujs.ts) à chaque clic d'ancre.
+   */
+  anchorHistory?: boolean
   /** Purge des orphelins d'outputDir après un `mjs build` sans erreur (défaut true) — `false` la
    * désactive. Cf. Bundler.pruneOrphans. */
   prune?: boolean
@@ -214,11 +221,20 @@ export interface MjsConfig {
   /**
    * Sélection des modules runtime du bundle `mjs_core.js`. Deux familles :
    * - les modules OPTIONNELS (easing, spring, smooth, vault, ajax, socket, game, router,
-   *   ujs, flip…) : choix EXPLICITE, jamais d'auto-détection. `'all'` (défaut) les prend
-   *   tous, `'core'` aucun, un tableau ceux qu'il nomme ; une faute de frappe LÈVE.
-   *   Seul `easing` fait exception : il porte le moteur qui joue les transitions, donc il
-   *   est joint dès qu'une source écrit `@in`, `@out` ou `@transition`, quelle que soit la
-   *   valeur ;
+   *   ujs, flip…) : `'all'` les prend tous, `'core'` aucun, un tableau ceux qu'il nomme ; une
+   *   faute de frappe LÈVE. Clé ABSENTE : seuls ceux REPÉRÉS dans le code compilé du projet
+   *   (features.ts) — avec, par prudence, ujs/router/ajax/modal/vault/journal dès que le projet
+   *   a des vues serveur (bloc `render`, dossier de vues à sa racine) et ujs (avec router, ajax,
+   *   modal) dès qu'un réglage de navigation est écrit (`anchorHistory`, `viewTransition`, `preload`) ;
+   *   un effet en direct (`*follow`, `*cursors`, `*react`, `*heatmap`) emmène socket, où vivent ses aides, un
+   *   effet à courbe (`*travel`, `*path`, `*flipcard`) emmène easing, où se lit une courbe nommée ; socket
+   *   emmène schema (un serveur MJS-WS qui déclare un schéma encode en binaire sans regarder ce que la page
+   *   sait lire) ; ce qui reste de côté est nommé par une information de construction (`runtimeHint`), lue
+   *   sur le cœur tel qu'il part (un module emmené par un autre y compte comme gardé), avec la liste gardée
+   *   prête à coller.
+   *   `i18n` suit la configuration (`i18n` ou dossier `i18n/`). `easing` est en plus joint dès
+   *   qu'une source écrit `@in`, `@out` ou `@transition` (il porte le moteur des transitions),
+   *   quelle que soit la valeur ;
    * - les éléments du cœur DÉTECTÉS (`DETECTED_CORE_MODULES` : title, store, interpolate,
    *   blocs {for}/{if}/{key}/{await}, balises globales et dynamiques, runes rares, cycle de
    *   vie, contexte §/§§, émission d'événement, variantes de mise en page, chemin lent de
@@ -227,8 +243,9 @@ export interface MjsConfig {
    *   sert, si la CONFIGURATION l'exige (css: 'lazy', router/ujs/modal sélectionné…), ou si
    *   le tableau les nomme.
    * Un tableau qui ne cite QUE des effets (`['fx_neon']` : leur code au cœur plutôt que dans leur
-   * propre fichier) les ajoute sans rien retirer : les modules optionnels restent ceux du défaut.
-   * Seuls init, runes, autoloader et element sont toujours là. Généralise l'ancien flag
+   * propre fichier) les ajoute sans rien retirer : les modules optionnels restent tous là, comme en `'all'`.
+   * Seuls init et element sont toujours là, et autoloader en `js: 'split'` (runes est détecté,
+   * comme les autres éléments du cœur ci-dessus). Généralise l'ancien flag
    * interne `minimalRuntime` (≡ `'core'`).
    */
   runtime?: RuntimeConfig
@@ -336,7 +353,8 @@ export interface EffectsConfig {
   theme?: 'circle' | 'none'
   lite?: 'auto' | 'on' | 'off'
   /** les chargements qui montrent un squelette d'eux-mêmes : `await` (un {await} sans branche
-   *  d'attente), `components` (la balise d'un composant dont le code arrive) — défaut `['await']`, `[]` : aucun.
+   *  d'attente), `components` (la balise d'un composant qui attend un contenu — un {await} — le temps que son
+   *  code arrive ; un composant sans attente n'en a pas) — défaut `['await']`, `[]` : aucun.
    *  Les barres des textes traduits ne passent pas par ici : cf. `i18n.placeholder` (`*skeleton`) et `i18n.timeout` */
   skeleton?: Array<'await' | 'components'>
   /** *guard d'office sur tout champ lié à une variable typée (`<input value=!{$age}>`) — défaut
@@ -379,8 +397,8 @@ export type CssConfig = 'bundle' | 'split' | 'lazy'
 export type JsConfig = 'split' | 'bundle'
 
 /**
- * Modules runtime OPTIONNELS (retirables). Le CŒUR — init, runes, autoloader, element — est
- * toujours inclus. `debug` est dev-only (géré à part par le bundler, jamais listable). Source
+ * Modules runtime OPTIONNELS (retirables). Le CŒUR — init, element, et autoloader en `js: 'split'` —
+ * est toujours inclus ; runes est détecté (DETECTED_CORE_MODULES). `debug` est dev-only (géré à part par le bundler, jamais listable). Source
  * unique, partagée avec le bundler (ordre de concaténation) et les tests.
  */
 export const OPTIONAL_RUNTIME_MODULES = [
@@ -530,7 +548,7 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * props retenues jusqu'au montage, `µ._mjs_pending`).
  */
 export const DETECTED_CORE_MODULES = [
-  'title', 'vt_presets', 'nav_progress', 'store', 'interpolate',
+  'title', 'vt_presets', 'nav_progress', 'store', 'runes', 'interpolate',
   'head', 'body', 'dynamic', 'rare_runes', 'on', 'effect', 'every', 'ticker', 'failed',
   'for', 'if', 'key', 'await', 'emit', 'lazy_css', 'page_cache', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'autoloader', 'hydrate', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone',
   'fx',
@@ -1485,7 +1503,16 @@ export interface RenderConfig {
   method?: 'update' | 'replace' | 'append'
   /** Politique de cache de PAGE côté client (µ.pageCache) pour les pages qui n'en déclarent pas la leur (fiche JSON `cache` / en-tête `X-MJS-Cache` / balise `<meta name="mjs-cache">`) : `cache-first` = la page hiberne normalement (défaut) · `revalidate` = affichée depuis le cache puis vérifiée en fond, remplacée seulement si la réponse diffère · `no-cache` = jamais archivée, un retour arrière re-demande la page. */
   cache?: 'cache-first' | 'revalidate' | 'no-cache'
+  /** Taille la plus grande, en octets, du corps qu'une action (verbe mutant d'une page, `.server.mjs`) accepte, sous `mjs serve` comme sous
+   *  `mjs dev` ; au-delà : 413, lecture arrêtée. Entier de `RENDER_MAX_BODY_MIN` à `RENDER_MAX_BODY_MAX`, défaut `RENDER_MAX_BODY_DEFAULT` (1 Mo). */
+  maxBody?: number
 }
+
+// plafond du corps d'une action du serveur de rendu (`render.maxBody`) : défaut 1 Mo, de 1 Ko à 100 Mo (le corps est gardé en mémoire le temps de
+// la lecture, une borne haute reste due)
+export const RENDER_MAX_BODY_DEFAULT = 1_048_576
+export const RENDER_MAX_BODY_MIN     = 1024
+export const RENDER_MAX_BODY_MAX     = 104_857_600
 
 /**
  * Cherche `mjs.config.json` à partir de `startDir` en remontant jusqu'à la
@@ -1501,7 +1528,7 @@ const KNOWN_KEYS = new Set([
   'sourceDir', 'outputDir', 'manifestPath', 'manifestExternal', 'urlPrefix',
   'defaultScriptLang', 'languages', 'minify', 'dev',
   'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'runtime', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
-  'varPrefix', 'defaultTheme', 'image', 'csp', 'sourceMap', 'prune', 'effects', 'bundles',
+  'varPrefix', 'defaultTheme', 'image', 'csp', 'anchorHistory', 'sourceMap', 'prune', 'effects', 'bundles',
 ])
 const KNOWN_IMAGE_KEYS = new Set(['widths', 'formats', 'quality'])
 // la plus grande largeur d'image acceptée dans `image.widths`, en pixels
@@ -1515,7 +1542,7 @@ const VALID_SIGILS = new Set(['µ', 'mjs'])
 const VALID_CSS_MODES = new Set(['bundle', 'split', 'lazy'])
 const VALID_JS_MODES = new Set(['split', 'bundle'])
 const VALID_SOURCE_MAP_MODES = new Set(['never', 'dev', 'prod', 'always'])
-const KNOWN_RENDER_KEYS = new Set(['default', 'header', 'outDir', 'routes', 'locales', 'engine', 'browserPool', 'renderQueue', 'forwardOrigin', 'entry', 'allowedOrigins', 'target', 'method', 'cache', 'startup'])
+const KNOWN_RENDER_KEYS = new Set(['default', 'header', 'outDir', 'routes', 'locales', 'engine', 'browserPool', 'renderQueue', 'forwardOrigin', 'entry', 'allowedOrigins', 'target', 'method', 'cache', 'startup', 'maxBody'])
 const VALID_RENDER_MODES = new Set([
   'csr', 'prerender', 'ssr', 'ssr:replace', 'ssr:markers', 'ssr:positional', 'ssr:diff',
 ])
@@ -1744,6 +1771,9 @@ function validateConfig(config: any, path: string): void {
   }
   if (config.csp !== undefined && typeof config.csp !== 'boolean') {
     throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'csp', valeur: JSON.stringify(config.csp), type: typeof config.csp }))
+  }
+  if (config.anchorHistory !== undefined && typeof config.anchorHistory !== 'boolean') {
+    throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'anchorHistory', valeur: JSON.stringify(config.anchorHistory), type: typeof config.anchorHistory }))
   }
   if (config.prune !== undefined && typeof config.prune !== 'boolean') {
     throw new Error(t('bundler.config.doit-etre-booleen', { cle: 'prune', valeur: JSON.stringify(config.prune), type: typeof config.prune }))
@@ -1983,9 +2013,10 @@ function validateRuntimeConfig(runtime: any, path: string, lint?: LintToggles): 
       throw new Error(t('bundler.config.runtime-module-doit-etre-chaine', { valeur: JSON.stringify(m), type: typeof m }))
     }
   }
-  // 'autoloader' n'y figure plus : il n'est du cœur qu'en `js: 'split'` et se demande
-  // explicitement en `js: 'bundle'` — accepté juste en dessous, avec les DETECTED_CORE_MODULES.
-  const CORE = new Set(['init', 'runes', 'element'])
+  // 'autoloader' et 'runes' n'y figurent pas : le premier n'est du cœur qu'en `js: 'split'` et se
+  // demande explicitement en `js: 'bundle'`, le second est détecté — acceptés juste en dessous, avec
+  // les DETECTED_CORE_MODULES.
+  const CORE = new Set(['init', 'element'])
   const { modules: expanded, warnings } = expandRuntimePresets(runtime as string[])
   // thread PRINCIPAL uniquement (la validation de config tourne AVANT tout Bundler/worker) :
   // couleur calculée directement ici, jamais transmise par des options
@@ -2986,6 +3017,9 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
   if (render.entry !== undefined && typeof render.entry !== 'string') {
     throw new Error(t('bundler.config.doit-etre-chaine', { cle: 'render.entry', valeur: JSON.stringify(render.entry), type: typeof render.entry }))
   }
+  if (render.maxBody !== undefined && (typeof render.maxBody !== 'number' || !Number.isInteger(render.maxBody) || render.maxBody < RENDER_MAX_BODY_MIN || render.maxBody > RENDER_MAX_BODY_MAX)) {
+    throw new Error(t('bundler.config.render-max-body', { valeur: JSON.stringify(render.maxBody) }))
+  }
 }
 
 /**
@@ -3163,6 +3197,7 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     css: config.css,
     js: config.js,
     csp: config.csp,
+    anchorHistory: config.anchorHistory,
     sourceMap: config.sourceMap,
     image: config.image,
     // `"prune": false` : ni purge des orphelins ni retrait des anciennes empreintes (cf. Bundler.prune)

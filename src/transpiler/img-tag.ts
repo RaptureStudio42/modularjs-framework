@@ -5,6 +5,7 @@
 // bundler (le bundler importe CE module ; un retour créerait un cycle).
 
 import { findMacroTagEnd } from './macro-tag.js'
+import { skipQuotedSpan } from '../quoted-span.js'
 
 export interface ImgTagAttr {
   name: string
@@ -66,13 +67,7 @@ function scanTemplateLiteral(raw: string, openIdx: number): number {
         if (e === '{') { d++; j++; continue }
         if (e === '}') { d--; j++; continue }
         if (e === '`') { const end = scanTemplateLiteral(raw, j); if (end < 0) return -1; j = end; continue }
-        if (e === '"' || e === "'") {
-          const q = e
-          j++
-          while (j < raw.length && raw[j] !== q) { if (raw[j] === '\\') j++; j++ }
-          j++
-          continue
-        }
+        if (e === '"' || e === "'") { j = skipQuotedSpan(raw, j); continue }
         j++
       }
       if (d > 0) return -1

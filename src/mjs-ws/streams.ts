@@ -13,7 +13,7 @@
 // une seule comparaison : « le 1er élément du journal a une seq ≤ from+1 ».
 
 import type { MjsWsClient, MjsWsLogFn, MjsWsFanSend } from './core.js'
-import { putOwn } from './guard.js'
+import { putOwn, checkSetting } from './guard.js'
 import type { MjsWsStatsRegistry } from './stats.js'
 import { t } from '../messages/index.js'
 
@@ -35,6 +35,12 @@ export interface MjsWsStreamOptions {
    * `public` ci-dessous, le flux est FERMÉ : servi à personne — cf. docs/23-mjs-ws.md « Les flux qui se rattrapent ».
    */
   canSubscribe?: MjsWsStreamAccessFn
+  /**
+   * délai de la garde `canSubscribe` asynchrone, en ms (entier ≥ 1, défaut 5000) — à son terme, sans réponse, elle compte
+   * comme un refus, appliqué par la même règle que ses réponses (cf. appliquerReponse) : la connexion n'attend plus sans
+   * fin un appel au back perdu. Au-delà de ce qu'une minuterie tient (2 147 483 647 ms), borné
+   */
+  guardTimeout?: number
   /**
    * ouvre le flux à tout client authentifié — sans elle, ni `room`, ni `canSubscribe`, un flux n'est servi à
    * personne (un avertissement le dit à la déclaration, pendant le développement). Une garde (`room`,
@@ -88,8 +94,8 @@ interface JournalEntry { seq: number; p: unknown }
 // (delta d'un autre process, POST /stream du pont, premier app.stream() sans garde) la resserre, ou l'ouvre (`public`),
 // jamais ne la jette (cf. tightenAccess). `remoteGuard` : une garde `canSubscribe` posée par un AUTRE process,
 // annoncée avec ses deltas (cf. wireDelta) — une fonction ne voyage pas : tout abonnement est refusé ici tant que le
-// code local ne déclare pas ce flux avec la sienne
-interface StreamAccess { canSubscribe?: MjsWsStreamAccessFn; room?: string; remoteGuard?: boolean; public?: boolean }
+// code local ne déclare pas ce flux avec la sienne. `delai` : celui de `canSubscribe` (option guardTimeout), qu'il suit
+interface StreamAccess { canSubscribe?: MjsWsStreamAccessFn; room?: string; remoteGuard?: boolean; public?: boolean; delai?: number }
 
 interface StreamState {
   name: string
@@ -124,7 +130,13 @@ interface StreamState {
   /** en grappe, numéro où ce flux a repris celui d'un flux détruit sous le même nom (cf. planchers) : un rejeu demandé
    *  depuis ce numéro ou avant vient de l'ancien flux, il reçoit l'état complet */
   base?: number
+  /** connexions qui se sont désabonnées de ce flux (cf. abandons) : destroy() les oublie */
+  abandons?: Set<MjsWsClient>
 }
+
+// évaluations de garde lancées pour une connexion et un flux (cf. lancerEvaluation) : la dernière tant qu'elle attend sa
+// réponse, le nombre de réponses encore attendues, et l'échéance de chaque évaluation asynchrone (cf. echeance)
+interface Evaluations { lues: ReadonlySet<string> | null; enAttente: number; echeances?: Map<ReadonlySet<string>, ReturnType<typeof setTimeout>> }
 
 // vérification de la garde repassée au départ d'un salon, par connexion et par flux (cf. demanderVerification)
 interface Verif {
@@ -140,6 +152,11 @@ interface Verif {
 interface Demande { etat: boolean; depuis: number | null }
 
 const DEFAULT_JOURNAL = 200
+
+// délai par défaut d'une garde `canSubscribe` asynchrone (option guardTimeout), celui du proxy de décisions (proxy.ts) ; au-delà
+// de MAX_TIMER_MS, setTimeout partirait tout de suite
+const DEFAULT_GUARD_TIMEOUT = 5000
+const MAX_TIMER_MS          = 2147483647
 
 // Faille HAUTE comblée — profondeur bornée AVANT toute écriture (add/update/
 // reset) : SANS cette garde, une SEULE entrée trop imbriquée (JSON.stringify lève un RangeError,
@@ -261,8 +278,17 @@ export function createStreamsEngine(
   const luesHors = new WeakMap<Set<string>, Set<string>>()
   // dernière évaluation de garde lancée, par connexion et par flux, tant qu'elle attend sa réponse (cf. lancerEvaluation),
   // et réponses encore attendues : seule compte celle de la dernière (cf. appliquerReponse) ; l'entrée tombe avec la
-  // dernière réponse attendue, ou à la déconnexion
-  const dernieres = new Map<MjsWsClient, Map<StreamState, { lues: ReadonlySet<string> | null; enAttente: number }>>()
+  // dernière réponse attendue, à la déconnexion, au destroy() du flux ou au désabonnement (cf. oublierEvaluations)
+  const dernieres = new Map<MjsWsClient, Map<StreamState, Evaluations>>()
+  // entrée de chaque évaluation dans `dernieres` : une évaluation dont l'entrée est partie (déconnexion, destroy(),
+  // désabonnement) ne compte plus, jamais dans l'entrée d'une demande suivante (cf. derniereLancee)
+  const entreeDe = new WeakMap<ReadonlySet<string>, Evaluations>()
+  // évaluations dont la réponse est le refus de l'échéance (cf. echeance) : leur µ:error le dit (cf. denyStreamAccess)
+  const echues = new WeakSet<ReadonlySet<string>>()
+  // désabonnements (µ:unsub-stream), par connexion : rien ne lui rend plus ces flux de lui-même — ni la reprise au retour
+  // dans un salon, ni l'entrée dans un salon qu'un refus a lu (cf. rendreAuRetour) ; oublié quand elle les redemande (cf.
+  // noterDemande), à sa déconnexion et au destroy() du flux
+  const abandons = new Map<MjsWsClient, Set<StreamState>>()
   // demandes (µ:sub-stream, µ:resync, flux rendu au retour) qui attendent une réponse de garde, par connexion et par flux :
   // servies ou refusées par la réponse qui s'applique, qu'elle vienne de leur évaluation, d'une demande plus récente, de la
   // vérification d'un départ ou de la garde posée après coup — une demande dépassée n'est jamais oubliée (cf. servir)
@@ -311,9 +337,12 @@ export function createStreamsEngine(
   // getOrCreateStream) — `room` sans accroche câblée (hasRoomMember absent) = throw IMMÉDIAT,
   // jamais un refus silencieux à l'usage (cf. MjsWsStreamOptions.room)
   function accessOf(name: string, streamOpts?: MjsWsStreamOptions): StreamAccess | undefined {
+    if (streamOpts?.guardTimeout !== undefined) checkSetting(`app.stream('${name}', { guardTimeout })`, streamOpts.guardTimeout, 'entier')
     if (!streamOpts || (streamOpts.canSubscribe == null && streamOpts.room == null && streamOpts.public !== true)) return undefined
     if (streamOpts.room != null && !hasRoomMember) throw new Error(t('ws.streams.room-sans-accroche', { name, room: streamOpts.room }))
-    return streamOpts.public === true ? { canSubscribe: streamOpts.canSubscribe, room: streamOpts.room, public: true } : { canSubscribe: streamOpts.canSubscribe, room: streamOpts.room }
+    const access: StreamAccess = streamOpts.public === true ? { canSubscribe: streamOpts.canSubscribe, room: streamOpts.room, public: true } : { canSubscribe: streamOpts.canSubscribe, room: streamOpts.room }
+    if (streamOpts.canSubscribe != null && streamOpts.guardTimeout !== undefined) access.delai = Math.min(streamOpts.guardTimeout, MAX_TIMER_MS)
+    return access
   }
 
   // déclaré par le code sans aucun accès : un avertissement, pendant le développement, après les déclarations du même
@@ -456,17 +485,18 @@ export function createStreamsEngine(
     let siennes = dernieres.get(client)
     if (!siennes) { siennes = new Map(); dernieres.set(client, siennes) }
     const d = siennes.get(st)
-    if (!d) { siennes.set(st, { lues, enAttente: 1 }); suivreEnCours(st, client); return }
+    if (!d) { const neuve: Evaluations = { lues, enAttente: 1 }; siennes.set(st, neuve); entreeDe.set(lues, neuve); suivreEnCours(st, client); return }
     if (d.lues) retenir(st, client, false)
     d.lues = lues
     d.enAttente++
+    entreeDe.set(lues, d)
   }
 
   // réponse arrivée : vrai si elle vient de la dernière évaluation lancée pour cette connexion et ce flux
   function derniereLancee(client: MjsWsClient, st: StreamState, lues: ReadonlySet<string>): boolean {
     const siennes = dernieres.get(client)
     const d = siennes?.get(st)
-    if (!siennes || !d) return false   // purgée par la déconnexion
+    if (!siennes || !d || entreeDe.get(lues) !== d) return false   // entrée partie (déconnexion, destroy(), désabonnement)
     const derniere = d.lues === lues
     if (derniere) d.lues = null
     if (--d.enAttente === 0) { siennes.delete(st); if (siennes.size === 0) dernieres.delete(client); lacherEnCours(client, st) }
@@ -527,6 +557,7 @@ export function createStreamsEngine(
     const cur          = st.access
     const room         = cur?.room ?? added.room
     const canSubscribe = cur?.canSubscribe ?? added.canSubscribe
+    const delai        = cur?.canSubscribe != null ? cur.delai : added.delai
     const remoteGuard  = canSubscribe == null && (cur?.remoteGuard === true || added.remoteGuard === true)
     const ouvert       = cur?.public === true || added.public === true
     if (cur && cur.room === room && cur.canSubscribe === canSubscribe && (cur.remoteGuard === true) === remoteGuard) {
@@ -535,6 +566,7 @@ export function createStreamsEngine(
     }
     st.access = remoteGuard ? { room, canSubscribe, remoteGuard } : { room, canSubscribe }
     if (ouvert) st.access.public = true
+    if (delai !== undefined) st.access.delai = delai
     recheckSubscribers(name, st)
   }
 
@@ -598,7 +630,7 @@ export function createStreamsEngine(
   // entrée dans un salon que ce refus a lu en son absence (cf. onJoinRoom)
   function refuser(client: MjsWsClient, st: StreamState, avertir: boolean, via: string, lues?: Set<string>): void {
     const demande = prendreDemande(client, st)
-    if (avertir || demande) { denyStreamAccess(client, st.name, via); return }
+    if (avertir || demande) { denyStreamAccess(client, st.name, via, !!lues && echues.has(lues)); return }
     unsubscribe(client, st)
     const hors = lues ? luesHors.get(lues) : undefined
     if (!hors || hors.size === 0) return
@@ -639,6 +671,7 @@ export function createStreamsEngine(
 
   function noterDemande(client: MjsWsClient, st: StreamState, etat: boolean, depuis: number | null): void {
     oublierSilence(client, st)
+    oublierAbandon(client, st)
     let siennes = demandes.get(client)
     if (!siennes) { siennes = new Map(); demandes.set(client, siennes) }
     const d = siennes.get(st)
@@ -681,9 +714,42 @@ export function createStreamsEngine(
     let result: boolean | Promise<boolean>
     try { result = access.canSubscribe(client, name) }
     catch { fermerLectures(client, lues); return false }
-    if (result instanceof Promise) return result.then(ok => ok === true, () => false)   // lectures fermées à l'application (cf. appliquerReponse)
+    if (result instanceof Promise) return echeance(client, st, lues, result.then(ok => ok === true, () => false), access.delai ?? DEFAULT_GUARD_TIMEOUT)   // lectures fermées à l'application (cf. appliquerReponse)
     fermerLectures(client, lues)
     return result === true
+  }
+
+  // garde asynchrone : sa réponse, ou le refus de l'échéance (option guardTimeout) — la première des deux, une seule fois :
+  // la règle commune ne voit jamais deux réponses d'une même évaluation (cf. derniereLancee), et celle qui arrive après
+  // l'échéance est ignorée. L'échéance tombe avec l'évaluation (déconnexion, destroy(), désabonnement, cf. oublierEvaluations)
+  function echeance(client: MjsWsClient, st: StreamState, lues: Set<string>, reponse: Promise<boolean>, ms: number): Promise<boolean> {
+    const d = dernieres.get(client)?.get(st)
+    if (!d || entreeDe.get(lues) !== d) return reponse   // entrée partie pendant l'appel de la garde : sa réponse ne compte pas
+    return new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => {
+        d.echeances?.delete(lues)
+        echues.add(lues)
+        logRefusal('timeout', () => t('ws.streams.garde-sans-reponse-journal', { name: loggedName(st.name), ms }), client)
+        resolve(false)
+      }, ms)
+      if (typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()   // jamais elle ne retient le process
+      if (!d.echeances) d.echeances = new Map()
+      d.echeances.set(lues, timer)
+      reponse.then(ok => { clearTimeout(timer); d.echeances?.delete(lues); resolve(ok) })
+    })
+  }
+
+  // évaluations encore sans réponse pour ce flux et cette connexion (désabonnement, destroy()) : leurs échéances tombent,
+  // leurs lectures se ferment, leur entrée part — une réponse qui arrive ensuite ne compte plus (cf. derniereLancee)
+  function oublierEvaluations(client: MjsWsClient, st: StreamState): void {
+    const siennes = dernieres.get(client)
+    const d = siennes?.get(st)
+    if (!siennes || !d) return
+    if (d.lues) fermerLectures(client, d.lues as Set<string>)
+    if (d.echeances) for (const [lues, timer] of d.echeances) { clearTimeout(timer); fermerLectures(client, lues as Set<string>) }
+    d.echeances = undefined
+    siennes.delete(st)
+    if (siennes.size === 0) dernieres.delete(client)
   }
 
   // décrit un descripteur d'opération SANS muter st.values — c'est CE delta qui voyage sur le
@@ -816,13 +882,12 @@ export function createStreamsEngine(
         s.seaux = undefined
         // évaluations et demandes encore sans réponse, même d'une garde qui ne répondra jamais (cf. enCours)
         if (s.enCours) for (const client of Array.from(s.enCours)) {
-          const siennes = dernieres.get(client)
-          const d = siennes?.get(s)
-          if (siennes && d) { if (d.lues) fermerLectures(client, d.lues as Set<string>); siennes.delete(s); if (siennes.size === 0) dernieres.delete(client) }
+          oublierEvaluations(client, s)
           prendreDemande(client, s)
         }
         s.enCours = undefined
         if (s.silencieux) for (const client of Array.from(s.silencieux)) oublierSilence(client, s)
+        if (s.abandons) for (const client of Array.from(s.abandons)) oublierAbandon(client, s)
         s.subscribers.clear()
         s.retenus = undefined
         const rs = reorderByStream.get(name)
@@ -848,7 +913,7 @@ export function createStreamsEngine(
   const REFUSAL_LOG_MS   = 60000
   const LOGGED_NAME_MAX  = 200
   const UNKNOWN_NAME_MAX = 200   // même borne que les noms de salon (rooms.ts)
-  const refusalLog      = { unknown: { since: -Infinity, muted: 0 }, denied: { since: -Infinity, muted: 0 }, bridged: { since: -Infinity, muted: 0 }, closed: { since: -Infinity, muted: 0 } }
+  const refusalLog      = { unknown: { since: -Infinity, muted: 0 }, denied: { since: -Infinity, muted: 0 }, bridged: { since: -Infinity, muted: 0 }, closed: { since: -Infinity, muted: 0 }, timeout: { since: -Infinity, muted: 0 } }
 
   function logRefusal(motive: keyof typeof refusalLog, line: () => string, client: MjsWsClient): void {
     const state = refusalLog[motive]
@@ -878,14 +943,17 @@ export function createStreamsEngine(
 
   // refus d'abonnement : log + µ:error catalogué, JAMAIS un simple silence (la
   // « garde muette » serait indiscernable d'un flux non déclaré ou d'un bogue réseau côté client). Une connexion qui
-  // suivait déjà le flux (sa redemande refusée) le perd : plus aucun delta, ni le rejeu d'une vérification en attente
-  function denyStreamAccess(client: MjsWsClient, name: string, via: string): void {
+  // suivait déjà le flux (sa redemande refusée) le perd : plus aucun delta, ni le rejeu d'une vérification en attente.
+  // `echue` : la garde n'a pas répondu à temps (cf. echeance), le µ:error le dit — le journal l'a dit à l'échéance. Quelle
+  // que soit la cause, le µ:error nomme le flux (`code: 'stream-denied'`, `stream`), comme le refus d'un salon nomme le sien
+  function denyStreamAccess(client: MjsWsClient, name: string, via: string, echue = false): void {
     const st = streams.get(name)
     if (st) unsubscribe(client, st)
+    if (echue) { rawSend(client, { t: 'µ:error', p: { message: t('ws.streams.garde-sans-reponse'), code: 'stream-denied', stream: name } }); return }
     if (st && st.bridged && !st.declared) logRefusal('bridged', () => t('ws.streams.flux-pont-non-declare', { via, name: loggedName(name) }), client)
     else if (st && !st.access) logRefusal('closed', () => t('ws.streams.abonnement-flux-ferme', { via, name: loggedName(name) }), client)
     else logRefusal('denied', () => t('ws.streams.abonnement-refuse', { via, name: loggedName(name) }), client)
-    rawSend(client, { t: 'µ:error', p: { message: t('ws.streams.acces-flux-refuse') } })
+    rawSend(client, { t: 'µ:error', p: { message: t('ws.streams.acces-flux-refuse'), code: 'stream-denied', stream: name } })
   }
 
   // --- µ:sub-stream — garde d'accès (cf. checkAccess), puis abonne + instantané reset (cf. servir) ---
@@ -898,6 +966,42 @@ export function createStreamsEngine(
     const allowed = checkAccess(st, client, name, lues)
     if (allowed === true || allowed === false) appliquerReponse(client, st, lues, allowed, relance, undefined, 'µ:sub-stream')
     else allowed.then(ok => appliquerReponse(client, st, lues, ok, relance, undefined, 'µ:sub-stream'))
+  }
+
+  // --- µ:unsub-stream — la connexion cesse de suivre le flux (cf. lacher) ; un flux inconnu (jamais déclaré, ou détruit)
+  // est refusé d'un µ:error, sans rien créer, et un nom inconnu trop long ne revient pas au client (cf. unknownStreamFallback) ---
+  function handleUnsubStream(client: MjsWsClient, name: string): void {
+    const st = streams.get(name)
+    if (st) { lacher(client, st); return }
+    if (name.length > UNKNOWN_NAME_MAX) { unknownStreamFallback(client, name, 'µ:unsub-stream'); return }
+    logRefusal('unknown', () => t('ws.streams.desabonnement-flux-non-declare', { name: loggedName(name) }), client)
+    rawSend(client, { t: 'µ:error', p: { message: t('ws.streams.desabonnement-flux-inconnu') } })
+  }
+
+  // désabonnement : plus aucun delta, et rien de ce que la connexion attendait ne la réabonne — demande en attente,
+  // évaluation de garde encore sans réponse (son échéance tombe, sa réponse ne comptera pas), vérification ou flux rendu au
+  // retour qui attendait son jeton, flux écarté en silence, reprise au retour dans un salon (cf. abandons). Sans effet sur
+  // un flux qu'elle ne suit pas : un second désabonnement ne change rien
+  function lacher(client: MjsWsClient, st: StreamState): void {
+    let siens = abandons.get(client)
+    if (!siens) { siens = new Set(); abandons.set(client, siens) }
+    siens.add(st)
+    if (!st.abandons) st.abandons = new Set()
+    st.abandons.add(client)
+    prendreDemande(client, st)
+    oublierEvaluations(client, st)
+    lacherEnCours(client, st)
+    oublierSilence(client, st)
+    unsubscribe(client, st)   // abonnement, retenue, vérification et son attente (cf. lacherVerif)
+    const enAttente = quittees.get(client)?.get(st.name)
+    if (enAttente?.timer) { clearTimeout(enAttente.timer); enAttente.timer = null }
+  }
+
+  function oublierAbandon(client: MjsWsClient, st: StreamState): void {
+    const siens = abandons.get(client)
+    if (!siens?.delete(st)) return
+    if (siens.size === 0) abandons.delete(client)
+    if (st.abandons?.delete(client) && st.abandons.size === 0) st.abandons = undefined
   }
 
   // rejeu incrémental ou reset complet — servi seulement APRÈS la garde d'accès (cf. servir)
@@ -930,7 +1034,13 @@ export function createStreamsEngine(
 
   function onDisconnect(client: MjsWsClient): void {
     lecturesEnCours.delete(client)
-    for (const st of dernieres.get(client)?.keys() ?? []) if (st.enCours?.delete(client) && st.enCours.size === 0) st.enCours = undefined
+    for (const [st, d] of dernieres.get(client) ?? []) {
+      if (d.echeances) for (const timer of d.echeances.values()) clearTimeout(timer)
+      if (st.enCours?.delete(client) && st.enCours.size === 0) st.enCours = undefined
+    }
+    const lachees = abandons.get(client)
+    if (lachees) for (const st of lachees) if (st.abandons?.delete(client) && st.abandons.size === 0) st.abandons = undefined
+    abandons.delete(client)
     for (const st of demandes.get(client)?.keys() ?? []) if (st.enCours?.delete(client) && st.enCours.size === 0) st.enCours = undefined
     demandes.delete(client)
     const siens = silences.get(client)
@@ -987,10 +1097,11 @@ export function createStreamsEngine(
   // détruit entre-temps (redevenu comme jamais déclaré) ni pour un flux qu'elle suit encore. La garde rappelée suit la
   // cadence des départs (cf. verifs), même celle d'un flux réservé au salon : sans jeton, le flux attend son tour, et un
   // départ entre-temps le reporte au retour suivant (cf. onLeaveRoom). Une demande de ce flux déjà repassée, qui attend
-  // son jeton, tranche seule : une seule attente par connexion et par flux
+  // son jeton, tranche seule : une seule attente par connexion et par flux. Rien pour un flux dont elle s'est désabonnée
+  // (µ:unsub-stream) sans le redemander depuis (cf. abandons)
   function rendreAuRetour(client: MjsWsClient, name: string, room: string, jetonPris = false): void {
     const st = streams.get(name)
-    if (!st || st.subscribers.has(client)) return
+    if (!st || st.subscribers.has(client) || abandons.get(client)?.has(st)) return
     const v = quittees.get(client)?.get(name) ?? verifs.get(client)?.get(st)
     if (v) v.salon = room
     if (v && !jetonPris && !quandJeton(v, () => { if (!hasRoomMember || hasRoomMember(client, room)) rendreAuRetour(client, name, room, true) })) return
@@ -1202,5 +1313,5 @@ export function createStreamsEngine(
     return { nombre: streams.size }
   }
 
-  return { stream, handleSubStream, handleResync, onDisconnect, onLeaveRoom, onJoinRoom, onIdentityChange, noteMembershipRead, receiveRemote, statsSnapshot }
+  return { stream, handleSubStream, handleResync, handleUnsubStream, onDisconnect, onLeaveRoom, onJoinRoom, onIdentityChange, noteMembershipRead, receiveRemote, statsSnapshot }
 }

@@ -26,11 +26,26 @@
 µ._mjs_textPool = [];
 µ._mjs_textPoolMax = 1024;
 
+// Pool rendu au repos : 5 s sans service ni retour, il est vidé et ses nœuds partent au ramasse-miettes (même délai que la réserve
+// de lignes des listes, mjs_for.ts). Minuterie armée au premier retour d'un pool vide, relancée tant que le pool sert
+µ._mjs_textPoolT   = 0;
+µ._mjs_textPoolHot = 0;
+µ._mjs_textPoolSweep = function() {
+  if (µ._mjs_textPoolHot) {
+    µ._mjs_textPoolHot = 0;
+    µ._mjs_textPoolT   = setTimeout(µ._mjs_textPoolSweep, 5000);
+    return;
+  }
+  µ._mjs_textPoolT = 0;
+  µ._mjs_textPool.length = 0;
+};
+
 µ._mjs_getTextNode = function(txt) {
   var n;
   if (µ._mjs_textPool.length > 0) {
     n = µ._mjs_textPool.pop();
     n._mjs_pooled = false;
+    µ._mjs_textPoolHot = 1;
     // lecture avant écriture : un nœud propre (le cas courant) ne reçoit aucune propriété de plus
     if (n._mjs_old_branch !== void 0) n._mjs_old_branch = void 0;
     if (n._mjs_old_key !== void 0) n._mjs_old_key = void 0;
@@ -55,6 +70,8 @@
   if (µ._mjs_textPool.length * 4 >= µ._mjs_textPoolMax * 3) return;
   // Approche : DFS sur les childNodes en collectant les text nodes (nodeType=3).
   // On stack la racine et descend itérativement.
+  µ._mjs_textPoolHot = 1;
+  if (!µ._mjs_textPoolT) µ._mjs_textPoolT = setTimeout(µ._mjs_textPoolSweep, 5000);
   var stack = [node];
   var safety = 256; // garde-fou contre les arbres trop profonds.
   while (stack.length > 0 && safety-- > 0) {

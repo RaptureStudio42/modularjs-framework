@@ -128,6 +128,23 @@ describe('@import µ$$X — forme unique d\'import d\'un singleton', () => {
     assert.match(output, /Le symbole µ\$\$count identifie ce compteur\./, 'texte statique préservé littéralement')
   })
 
+  // l'interpolation d'une chaîne est du code : `"#{$Boite.a}"` lit vraiment `$Boite`, le masquage des chaînes ne doit effacer que
+  // leur texte littéral
+  it('`$X` / `§§X` d\'un singleton importé DANS l\'interpolation d\'une chaîne (`#{…}`, `${…}` d\'un gabarit) → même refus qu\'en dehors', async () => {
+    const script = (ligne: string) => `@import µ$$Boite 'p'\n<script>\n  ${ligne}\n</script>\n<p>{msg}</p>`
+    await assert.rejects(() => transpile(script('msg = "valeur #{$Boite.a}"'), { moduleName: 'importsingle16a' }), /µ\$\$Boite/)
+    await assert.rejects(() => transpile(script('msg = "#{§§Boite}"'), { moduleName: 'importsingle16b' }), /µ\$\$Boite/)
+    await assert.rejects(() => transpile(script('msg = `v ${$Boite.a}`'), { moduleName: 'importsingle16c' }), /µ\$\$Boite/)
+  })
+
+  it('le texte littéral d\'une chaîne reste masqué : mention en clair, `#{…}` échappé ou dans un gabarit, chaîne dans une interpolation', async () => {
+    const script = (ligne: string) => `@import µ$$Boite 'p'\n<script>\n  f = (x) -> x\n  ${ligne}\n</script>\n<p>{msg} {µ$$Boite.a}</p>`
+    const lignes = ['msg = "écrivez µ$$Boite, jamais $Boite ni §§Boite #{1 + 1}"', 'msg = "\\#{$Boite}"', 'msg = `v #{$Boite.a}`', 'msg = "#{f(\'$Boite\')}"', 'msg = "valeur #{µ$$Boite.a}"']
+    for (const [i, ligne] of lignes.entries()) {
+      await transpile(script(ligne), { moduleName: 'importsingle17' + 'abcde'[i] })
+    }
+  })
+
   it('non-régression — µ$$orphelin en CODE RÉEL (hors chaîne/commentaire/texte statique) sans import → throw TOUJOURS', async () => {
     const src = `<p>{µ$$orphelin.value}</p>`
     await assert.rejects(

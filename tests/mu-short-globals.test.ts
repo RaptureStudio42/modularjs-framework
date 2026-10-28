@@ -62,8 +62,8 @@ describe('sucre µurl & co — globales framework en forme courte', function () 
     it('identifiant plus long, ALIGNÉ sur le script (µnavFoo → µ.navFoo)', () => assert.equal(cleanJs('µnavFoo'), 'µ.navFoo'))
     it('µread $x → _mjsThis._state.x (parité lexer §3.5b, non réactif)', () =>
       assert.equal(cleanJs('µread $cache'), '_mjsThis._state.cache'))
-    it('µwrite $x, v → _mjsThis._state.x = v (écrit sans notify)', () =>
-      assert.equal(cleanJs('µwrite $cache, 5'), '_mjsThis._state.cache = 5'))
+    it('µwrite $x, v → µ._mjs_rawWrite(_mjsThis).x = v (écrit sans notify, périme les dérivées)', () =>
+      assert.equal(cleanJs('µwrite $cache, 5'), 'µ._mjs_rawWrite(_mjsThis).cache = 5'))
     it('ancienne forme `µwrite $x = v` (RETIRÉE) : ERREUR DE COMPILATION dédiée', () =>
       assert.throws(() => cleanJs('µwrite $cache = 5'), /µwrite écrit un symbole d'état avec une virgule/))
     it('µread laisse le $x réactif voisin intact', () =>
@@ -73,7 +73,7 @@ describe('sucre µurl & co — globales framework en forme courte', function () 
       assert.equal(cleanJs('µread $_secret'), '_mjsThis._state._secret',
         "AVANT la source unique sigils.ts : 'µread $._secret' — µread jamais consommé, ReferenceError au runtime"))
     it('µwrite $_secret, 5 (underscore en tête) : reconnu', () =>
-      assert.equal(cleanJs('µwrite $_secret, 5'), '_mjsThis._state._secret = 5'))
+      assert.equal(cleanJs('µwrite $_secret, 5'), 'µ._mjs_rawWrite(_mjsThis)._secret = 5'))
 
     it('µmount dans une interpolation : ERREUR claire (hooks = <script> seulement)', () =>
       assert.throws(() => cleanJs('µmount -> x'), /µmount[\s\S]*<script>/))
@@ -90,7 +90,7 @@ describe('sucre µurl & co — globales framework en forme courte', function () 
   describe('sucre universel — les runes lexer survivent au routage µfoo → µ.foo', function () {
     it('µread/µwrite non pointés (pipeline complet : sucre puis lexer)', () => {
       assert.equal(tokenize(applyMjsSugarToScript('µread $cache')), '_mjsThis._state.cache')
-      assert.equal(tokenize(applyMjsSugarToScript('µwrite $cache, 5')), '_mjsThis._state.cache = 5')
+      assert.equal(tokenize(applyMjsSugarToScript('µwrite $cache, 5')), 'µ._mjs_rawWrite(_mjsThis).cache = 5')
     })
 
     it('µmount non pointé (pipeline complet → _mjs_hook)', () => {

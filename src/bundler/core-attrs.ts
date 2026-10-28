@@ -1,7 +1,8 @@
 // bundler/core-attrs — un attribut écrit en dur sur la balise d'un module du cœur (`<@@x …>` ou `<mjs-core-x …>`) qui est l'écriture
-// camelCase d'une prop du module arrête la construction : le HTML met les noms d'attributs en minuscules, `emptyLabel="Rien"` arriverait en
-// `emptylabel`, que le module ne lit pas, et la page partirait sans rien dire. Une valeur liée (`emptyLabel={$x}`) passe par le code et
-// garde sa casse : elle marche, elle reste permise. Les props se lisent dans les sources du module ; dans le doute, rien.
+// camelCase d'une prop du module arrête la construction, qui donne l'écriture à tirets : les attributs des modules du cœur n'en ont qu'une,
+// celle de leur documentation. Ce n'est pas une panne évitée : le HTML met les noms d'attributs en minuscules (`emptyLabel="Rien"` arrive en
+// `emptylabel`) et le module le recevrait sous son nom, comme toute prop déclarée d'un composant. Une valeur liée (`emptyLabel={$x}`) passe
+// par le code et garde sa casse : permise. Les props se lisent dans les sources du module ; dans le doute, rien.
 // tests/modules-coeur-attribut-camelcase-construction.test.ts
 
 import type { TagRefAttrs } from '../parser/index.js'

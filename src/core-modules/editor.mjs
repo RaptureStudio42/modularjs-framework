@@ -10,7 +10,7 @@
   # de blocs, puis un HTML canonique reconstruit depuis lui ; le résultat est le même quel que soit le navigateur qui a
   # fabriqué le DOM (<b> ou <strong>, <div> ou <p>, <p><ul> mal imbriqué…), et rien d'autre que la liste permise n'en sort
   # un bloc : { k: 'p'|'h2'|'h3'|'q', r: passages } ou une liste { k: 'ul'|'ol'|'cl', i: [{ r, c, k: listes }] }
-  # un passage : { t: texte ('\n' = retour à la ligne), m: marques (s gras, e italique, u souligné, d barré), h: adresse }
+  # un passage : { t: texte ('\n' = retour à la ligne), m: marques (s gras, e italique, u souligné, d barré), h: adresse, c: couleur (un nom de COLORS) }
   DROP      = /^(script|style|noscript|template|iframe|object|embed|svg|math|head|title|textarea|select|button|input|canvas|audio|video|form|link|meta)$/
   BLOCK     = /^(p|div|pre|section|article|header|footer|main|aside|nav|figure|figcaption|address|hr|dl|dt|dd|details|summary|fieldset|center|table|thead|tbody|tfoot|tr|td|th|caption|li)$/
   MARKS     = { s: 'strong', e: 'em', u: 'u', d: 's' }
@@ -27,6 +27,9 @@
   DEPTH     = 100
   UNSTICK   = 'mjs-editor-unstick'
   NOTEXT    = /^(button|submit|reset|checkbox|radio|file|image|color|range|hidden)$/
+  # les couleurs du texte qu'une page peut donner à l'éditeur (`colors`), nommées en anglais ; chacune est rendue par la règle du thème `--mjs-editor-color-<nom>`
+  # (style, plus bas), le HTML ne porte que son nom (`<span data-color="red">`), jamais un style
+  COLORS    = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red']
 
   # @@ dev answer
   # answerTold = false # @@ !answer
@@ -50,6 +53,11 @@
   editors  = new Set()
   # les composants tiers à ombre fermée qui ont reçu une frappe (plus bas)
   typed    = new WeakSet()
+  # la palette de l'éditeur qui lit un HTML (readBlocks), posée à chaque lecture ; les noms de couleur inconnus déjà signalés
+  tint     = []
+  toldHue  = new Set()
+  # les éditeurs qui demandent le focus d'`autofocus` en même temps (plus bas)
+  wanted   = []
 
 
   # un geste de défaire qu'aucun éditeur n'a pris (le navigateur l'a fait lui-même) : il a défait la saisie hors des éditeurs
@@ -110,6 +118,25 @@
     a = (a._shadow ?? a.shadowRoot).activeElement while (a?._shadow ?? a?.shadowRoot)?.activeElement
     a
 
+  # a vient-il avant b dans la page ? chacun remonte d'hôte en hôte, à travers les ombres, jusqu'à un arbre qu'ils partagent
+  precedes = (a, b)->
+    up = (n)->
+      out = [n]
+      out.push(n = n.getRootNode().host) while n.getRootNode().host
+      out
+    ups = up(b)
+    for x in up(a)
+      y = ups.find((z)-> z.getRootNode() == x.getRootNode())
+      return x != y and !!(x.compareDocumentPosition(y) & 4) if y
+    false
+
+  # `autofocus` : parmi les éditeurs qui se montrent ensemble, le PREMIER de la page prend le focus, comme un champ natif ; un éditeur qui se montre
+  # ensuite le prend à son tour, même à un autre éditeur (un {if} ouvert par un clic, un minuteur, un message)
+  settle = ->
+    list   = wanted.filter((h)-> h.isConnected)
+    wanted = []
+    list.reduce((a, b)-> if precedes(b, a) then b else a).focus() if list.length
+
   # la balise de l'éditeur où est un nœud (sa zone, sa barre, un lien de sa zone), avec ou sans ombre (`@lightDom`) ; aucune hors des éditeurs
   editorOf = (n)->
     n = n.parentNode ?? n.host while n and n.localName != 'mjs-core-editor'
@@ -163,6 +190,25 @@
     m += 'u' if (tag == 'u' or tag == 'ins' or UNDERLINE.test(st)) and not m.includes('u')
     m += 'd' if (tag == 's' or tag == 'strike' or tag == 'del' or STRIKE.test(st)) and not m.includes('d')
     m
+
+  # la couleur d'une balise : son `data-color`, quand il nomme une couleur de la palette de l'éditeur qui lit ; toute autre couleur (un style, un <font>, un nom
+  # hors de la palette) est ignorée, le texte garde celle qui l'enveloppe
+  hueOf = (el, hue)->
+    v = el.getAttribute('data-color')
+    if v and tint.includes(v) then v else hue
+
+  # la palette que la page donne (`colors="red green"`, ou un tableau) : les noms de COLORS, dans l'ordre écrit, sans doublon ; un nom inconnu est ignoré,
+  # un avertissement le dit une fois par nom
+  paletteOf = (list)->
+    list = list.join(' ') if Array.isArray(list)
+    out  = []
+    for w in String(list ?? '').split(/\s+/).filter(Boolean)
+      if COLORS.includes(w)
+        out.push(w) unless out.includes(w)
+      else unless toldHue.has(w)
+        toldHue.add(w)
+        µ.warn(µ._mjs_msg('coreEditorColorUnknown', { n: w, list: COLORS.join(' ') }, '<@@editor> : la couleur « {n} » n\'existe pas, elle est ignorée — couleurs connues : {list}.'))
+    out
 
   # un bloc fait de ses passages en ligne, les retours à la ligne des blocs imbriqués mis bout à bout
   inlineOf = (node)->
@@ -236,22 +282,22 @@
     flush = ->
       out.push({ k: 'p', r: runs }) if runs
       runs = null
-    walk  = (node, m, h)->
+    walk  = (node, m, h, hue)->
       if node.nodeType == 3
         t = node.nodeValue.replace(/[\u200b\ufeff]/g, '')
         if pre and t.includes('\n')
           lines = t.split(/\r?\n/)
           for i in [0...lines.length]
-            (runs ?= []).push({ t: '\n', m: m, h: h }) if i
-            (runs ?= []).push({ t: lines[i], m: m, h: h }) if lines[i]
+            (runs ?= []).push({ t: '\n', m: m, h: h, c: hue }) if i
+            (runs ?= []).push({ t: lines[i], m: m, h: h, c: hue }) if lines[i]
         else
-          (runs ?= []).push({ t: t, m: m, h: h }) if t
+          (runs ?= []).push({ t: t, m: m, h: h, c: hue }) if t
         return
       return unless node.nodeType == 1
       tag = node.localName
       return if DROP.test(tag)
       if tag == 'br'
-        (runs ?= []).push({ t: '\n', m: m, h: h })
+        (runs ?= []).push({ t: '\n', m: m, h: h, c: hue })
       else if tag == 'ul' or tag == 'ol'
         flush()
         out.push(readList(node))
@@ -266,15 +312,15 @@
         flush()
         pre++ if tag == 'pre'
         for c in node.childNodes
-          walk(c, m, h)
+          walk(c, m, h, hue)
         pre-- if tag == 'pre'
         flush()
       else
         h2 = if tag == 'a' then (safeUrl(node.getAttribute('href')) ?? h) else h
         for c in node.childNodes
-          walk(c, marksOf(node, m), h2)
+          walk(c, marksOf(node, m), h2, hueOf(node, hue))
     for c in parent.childNodes
-      walk(c, '', null)
+      walk(c, '', null, null)
     flush()
     out
 
@@ -306,17 +352,17 @@
         t = r.t.replace(/\s+/g, ' ')
         t = t.replace(/^ /, '') if start or (last and last.t.endsWith(' '))
         if t
-          out.push({ t: t, m: r.m, h: r.h })
+          out.push({ t: t, m: r.m, h: r.h, c: r.c })
           start = false
     out.pop() while out.length and out[out.length - 1].t == '\n'
     trimEnd(out)
     out
 
-  openTag  = (w)-> if w.startsWith('a:') then '<a href="' + escA(w.slice(2)) + '">' else '<' + MARKS[w] + '>'
-  closeTag = (w)-> if w.startsWith('a:') then '</a>' else '</' + MARKS[w] + '>'
+  openTag  = (w)-> if w.startsWith('a:') then '<a href="' + escA(w.slice(2)) + '">' else if w.startsWith('c:') then '<span data-color="' + escA(w.slice(2)) + '">' else '<' + MARKS[w] + '>'
+  closeTag = (w)-> if w.startsWith('a:') then '</a>' else if w.startsWith('c:') then '</span>' else '</' + MARKS[w] + '>'
 
   # les passages en HTML : une pile de balises ouvertes, comparée à celle que veut chaque passage (lien dehors, puis
-  # gras, italique, souligné, barré), ne ferme et n'ouvre que la différence — pas de <strong></strong><strong> en miettes
+  # couleur, gras, italique, souligné, barré), ne ferme et n'ouvre que la différence — pas de <strong></strong><strong> en miettes
   runsHtml = (runs)->
     html = ''
     open = []
@@ -326,6 +372,7 @@
         continue
       want = []
       want.push('a:' + r.h) if r.h
+      want.push('c:' + r.c) if r.c
       for k in ['s', 'e', 'u', 'd']
         want.push(k) if r.m.includes(k)
       i = 0
@@ -401,18 +448,22 @@
         html += '<' + b.k + '>' + t + '</' + b.k + '>' if t
     html
 
-  htmlOf = (parent)-> blocksHtml(readBlocks(parent))
+  # `pal` : la palette de l'éditeur qui lit (sa liste `colors`) ; une couleur hors d'elle tombe
+  htmlOf = (parent, pal)->
+    tint = pal ?? []
+    blocksHtml(readBlocks(parent))
 
 
   # le HTML d'entrée est lu dans un <template> : inerte, rien ne s'y exécute ni ne s'y charge
-  parse = (html)->
+  parse = (html, pal)->
     t = document.createElement('template')
     t.innerHTML = html
+    tint = pal ?? []
     readBlocks(t.content)
 
-  clean = (html)-> blocksHtml(parse(html))
+  clean = (html, pal)-> blocksHtml(parse(html, pal))
 
-  answerHtml = (html, ctx)-> blocksHtml(parse(html), ctx) # @@ answer
+  answerHtml = (html, ctx, pal)-> blocksHtml(parse(html, pal), ctx) # @@ answer
 
   textHtml = (text)->
     text.split(/\r?\n\s*\r?\n/).map((p)-> p.trim()).filter(Boolean).map((p)-> '<p>' + esc(p).replace(/\r?\n/g, '<br>') + '</p>').join('')
@@ -490,6 +541,9 @@
   $label       = null
   $toolbar     = null
   $paste       = null
+  $caret       = null
+  $colors      = null
+  $autofocus   = false
   $readonly    = false
   $disabled    = false
   $required    = false
@@ -504,6 +558,10 @@
   $linkOpen = false # @@ tool-link
   $linkUrl  = '' # @@ tool-link
   $linkHas  = false # @@ tool-link
+  # @@ colors
+  $hueOpen  = false # @@ tool-color
+  $hueNow   = null # @@ tool-color
+  # @@
 
 
   $hostLabel    = null
@@ -521,6 +579,10 @@
   atFocus    = ''
   savedRange = null
   linkRange  = null # @@ tool-link
+  # @@ colors
+  hueRef     = null # @@ tool-color
+  hueRange   = null # @@ tool-color
+  # @@
   dragging   = false
   waiting    = 0
   running    = false
@@ -579,8 +641,18 @@
   # $nameText = $hostLabel or $labelText
   # @@
 
+  # les couleurs du texte que la page permet (`colors`) : le nettoyeur ne garde qu'elles, le bouton de la barre n'existe qu'avec elles
+  $palette = paletteOf($colors)
+
   # la barre intégrée : tous les outils par défaut, `toolbar="none"` n'en met aucune (une barre séparée la remplace) ; la liste, texte ou tableau de noms, va telle quelle à la barre
   $barTools = if $toolbar == 'none' then null else ($toolbar or '')
+
+  # @@ colors
+  # @@ tool-color
+  # le nom de chaque couleur dans la langue de la page (« Rouge », « Red »)
+  namesOf = (lang)-> { gray: tr('colorGray', lang), brown: tr('colorBrown', lang), orange: tr('colorOrange', lang), yellow: tr('colorYellow', lang), green: tr('colorGreen', lang), blue: tr('colorBlue', lang), purple: tr('colorPurple', lang), pink: tr('colorPink', lang), red: tr('colorRed', lang) }
+  # @@
+  # @@
 
   textsOf = (lang)->
     {
@@ -588,6 +660,11 @@
       apply:  tr('linkApply', lang) # @@ tool-link
       remove: tr('linkRemove', lang) # @@ tool-link
       cancel: tr('linkCancel', lang) # @@ tool-link
+      # @@ colors
+      colors: tr('colorsLabel', lang) # @@ tool-color
+      none:   tr('colorNone', lang) # @@ tool-color
+      names:  namesOf(lang) # @@ tool-color
+      # @@
       on:     cssStr(tr('boxChecked', lang))
       off:    cssStr(tr('boxUnchecked', lang))
     }
@@ -667,7 +744,8 @@
 
 
   # la valeur liée : ce qui vient du dehors est nettoyé puis posé dans la surface ; ce que le module vient d'envoyer lui-même ne la
-  # réécrit pas (le curseur ne bouge jamais sous la frappe). En mode « répondre » le texte est le modèle de l'auteur, jamais modifié
+  # réécrit pas (le curseur ne bouge jamais sous la frappe). En mode « répondre » le texte est le modèle de l'auteur, jamais modifié. Avec `caret="end"`,
+  # le curseur d'une zone qui a le focus va à la fin du texte posé, une fois rendu
   # @@ answer
   µeffect ->
     v    = if $value? then String($value) else ''
@@ -677,13 +755,13 @@
     inMode = mode
     if $ans
       ctx     = { n: 0, ids: [], set: tickSet, off: $off, ro: $ro }
-      built   = answerHtml(v, ctx)
+      built   = answerHtml(v, ctx, $palette)
       $raw    = built
       $empty  = not built
       lineIds = ctx.ids
       canon   = ''
     else
-      html    = clean(v)
+      html    = clean(v, $palette)
       canon   = html
       $raw    = html or '<p><br></p>'
       $empty  = not html
@@ -693,13 +771,14 @@
     setTimeout(emitState, 0)
     setTimeout(decorate, 0)
     setTimeout(syncTicks, 0)
+    setTimeout(toEnd, 0) if $caret == 'end'
   # @@
   # @@ !answer
   # µeffect ->
   #   v = if $value? then String($value) else ''
   #   return if v == inSync
   #   inSync = v
-  #   html   = clean(v)
+  #   html   = clean(v, $palette)
   #   canon  = html
   #   $raw   = html or '<p><br></p>'
   #   $empty = not html
@@ -707,6 +786,7 @@
   #   syncHidden()
   #   setTimeout(emitState, 0)
   #   setTimeout(decorate, 0)
+  #   setTimeout(toEnd, 0) if $caret == 'end'
   # @@
 
   µeffect ->
@@ -744,7 +824,7 @@
     upTo(caretOf(), 'li', surface)
 
   stateNow = ->
-    st = { bold: false, italic: false, underline: false, strike: false, h2: false, h3: false, quote: false, ul: false, ol: false, check: false, link: false, inList: false, frozen: not $edit, undo: past.length > 0, redo: ahead.length > 0 }
+    st = { bold: false, italic: false, underline: false, strike: false, h2: false, h3: false, quote: false, ul: false, ol: false, check: false, link: false, inList: false, frozen: not $edit, undo: past.length > 0, redo: ahead.length > 0, color: null, colors: $palette.length > 0 }
     r = rangeNow()
     return st unless r
     n = caretNode(r)
@@ -766,6 +846,8 @@
         else if n.hasAttribute('data-checklist') then st.check = true
         else st.ul = true
       st.inList = true if tag == 'li'
+      hue       = n.getAttribute('data-color')
+      st.color ?= hue if hue and $palette.includes(hue)
       n = n.parentNode
     st
 
@@ -879,7 +961,7 @@
     waiting = 0
     decorate()
     nameLines() if barShows('check') # @@ tool-check
-    html   = htmlOf(surface)
+    html   = htmlOf(surface, $palette)
     $empty = not html
     if html != canon
       canon  = html
@@ -1077,7 +1159,7 @@
 
   # cet éditeur au registre de la page (plus haut) : l'heure de sa dernière étape, le focus en lui, défaire et refaire hors de sa zone, ce qui reste à
   # refaire, le texte que le navigateur a touché sans le lui annoncer (la sélection dans sa zone) et sa remise
-  mine = { at: (-> if $edit and surface?.isConnected then (past[past.length - 1]?.n ?? 0) else 0), has: (-> $edit and focusIn()), undo: (-> undoAside()), redo: (-> redoAside()), left: (-> ahead.length > 0), hit: (-> !!surface?.isConnected and !!rangeNow() and htmlOf(surface) != canon), keep: (-> keepText()) }
+  mine = { at: (-> if $edit and surface?.isConnected then (past[past.length - 1]?.n ?? 0) else 0), has: (-> $edit and focusIn()), undo: (-> undoAside()), redo: (-> redoAside()), left: (-> ahead.length > 0), hit: (-> !!surface?.isConnected and !!rangeNow() and htmlOf(surface, $palette) != canon), keep: (-> keepText()) }
 
   undoAside = ->
     return unless $edit
@@ -1103,6 +1185,9 @@
     left       = surface.scrollLeft
     savedRange = still(savedRange)
     linkRange  = still(linkRange) # @@ tool-link
+    # @@ colors
+    hueRange   = still(hueRange) # @@ tool-color
+    # @@
     surface.parentNode.insertBefore(surface, surface.nextSibling)
     surface.scrollTop  = top
     surface.scrollLeft = left
@@ -1175,6 +1260,41 @@
     surface.focus()
     restoreRange(savedRange) if savedRange
 
+  # le focus que la page donne (`autofocus` au montage, `.focus()` de la balise) : avec `caret="end"`, le curseur se pose à la fin du texte, qui défile
+  # jusqu'à lui (un texte rouvert se continue) ; la zone qui a déjà le focus garde son curseur. Une valeur que la page pose n'est rendue qu'au tour suivant,
+  # même quand la page donne le focus dans le même geste : le curseur y retourne alors (plus haut, la valeur liée). Un autre nom que `focusIn` (plus haut, « le
+  # focus est dans cet éditeur ») : du même nom, l'une remplaçait l'autre
+  giveFocus = (o)->
+    return unless surface
+    had = surface.getRootNode().activeElement == surface
+    surface.focus(o)
+    toEnd() if $caret == 'end' and not had
+
+  # la fin du texte, quand la zone a le focus : au bout de son dernier texte, ou dans son dernier bloc vide (avant le <br> qui le tient ouvert)
+  toEnd = ->
+    return unless surface.getRootNode().activeElement == surface
+    n  = surface
+    n  = n.lastChild while n.nodeType == 1 and n.lastChild and n.lastChild.localName != 'br'
+    at = if n.nodeType == 3 then n.length else n.childNodes.length - (if n.lastChild?.localName == 'br' then 1 else 0)
+    document.getSelection().setBaseAndExtent(n, at, n, at)
+    surface.scrollTop = surface.scrollHeight
+
+  # `autofocus` : le focus dès que l'éditeur se montre. Sa balise reste cachée (`mjs-loading`, le bouclier du premier affichage) jusqu'au bout de son premier
+  # rendu, après `µmount` ; un `.focus()` appelé quand la page pose la balise tombe aussi avant : le focus attend qu'elle se montre. Les éditeurs qui se
+  # montrent dans le même geste le demandent ensemble (plus haut, `settle`), un éditeur désactivé ne le demande pas
+  autoFocus = ->
+    host  = @@closest('mjs-core-editor')
+    claim = ->
+      return if $off
+      setTimeout(settle, 0) unless wanted.length
+      wanted.push(host)
+    return claim() unless host.hasAttribute('mjs-loading')
+    shown = new MutationObserver ->
+      return if host.hasAttribute('mjs-loading')
+      shown.disconnect()
+      claim()
+    shown.observe(host, { attributes: true, attributeFilter: ['mjs-loading'] })
+
   setCheck = (li, on)->
     if on then li.setAttribute('data-checked', '') else li.removeAttribute('data-checked')
     say(if on then tr('checked', µlang) else tr('unchecked', µlang))
@@ -1227,6 +1347,9 @@
   run = (cmd)->
     return unless $edit
     return openLink() if cmd == 'link' # @@ tool-link
+    # @@ colors
+    return openHues() if cmd == 'color' # @@ tool-color
+    # @@
     ensureFocus()
     return travel(cmd == 'undo') if cmd == 'undo' or cmd == 'redo'
     return if cmd == 'bold' and (stateNow().h2 or stateNow().h3)
@@ -1235,6 +1358,12 @@
       else if cmd == 'h2' or cmd == 'h3' or cmd == 'quote' then block(cmd)
       else if cmd == 'ul' or cmd == 'ol' or cmd == 'check' then list(cmd)
       else if cmd == 'clear'
+        # @@ colors
+        # la couleur part d'abord ; la suite peut ne rien changer (aucun `input` sous Firefox), la surface est relue ici
+        if $palette.length
+          recolor(null)
+          touch()
+        # @@
         exec('removeFormat')
         exec('unlink')
         exec('formatBlock', '<p>') unless stateNow().inList
@@ -1288,6 +1417,139 @@
       e.preventDefault()
       e.stopPropagation()
       closeLink()
+  # @@
+
+
+  # @@ colors
+  # la couleur du texte choisi : chaque morceau de texte de la sélection sort de la couleur qui l'enveloppe (elle est coupée autour de lui, ses marques et
+  # son lien restent), puis prend la sienne, `<span data-color>` ; `null`, « aucune couleur », l'en laisse sans. Un curseur sans sélection colore le mot
+  # où il se tient ; la sélection couvre ensuite le texte coloré
+  hueAround = (n)->
+    n = n.parentNode
+    while n and n != surface
+      return n if n.nodeType == 1 and n.hasAttribute('data-color')
+      n = n.parentNode
+    null
+
+  # un fragment qui garde du texte ou un retour à la ligne
+  worth = (f)-> !!(f.textContent or f.querySelector('br'))
+
+  lift = (t)->
+    a = hueAround(t)
+    while a
+      r = document.createRange()
+      r.setStartAfter(t)
+      r.setEnd(a, a.childNodes.length)
+      tail = r.extractContents()
+      r.setStart(a, 0)
+      r.setEndBefore(t)
+      head = r.extractContents()
+      if worth(head)
+        b = a.cloneNode(false)
+        b.append(head)
+        a.before(b)
+      if worth(tail)
+        b = a.cloneNode(false)
+        b.append(tail)
+        a.after(b)
+      a.replaceWith(...Array.from(a.childNodes))
+      a = hueAround(t)
+
+  # les textes de la plage, coupés à ses bords ; un blanc seul (entre deux blocs, deux lignes de liste) n'en est pas. La plage lue à travers l'ombre est
+  # figée (`StaticRange`) : une plage vivante la reprend
+  textsIn = (s)->
+    r = document.createRange()
+    r.setStart(s.startContainer, s.startOffset)
+    r.setEnd(s.endContainer, s.endOffset)
+    sc   = r.startContainer
+    so   = r.startOffset
+    ec   = r.endContainer
+    eo   = r.endOffset
+    root = r.commonAncestorContainer
+    list = []
+    if root.nodeType == 3 then list.push(root)
+    else
+      w = document.createTreeWalker(root, 4)
+      n = w.nextNode()
+      while n
+        list.push(n) if r.intersectsNode(n)
+        n = w.nextNode()
+    ec.splitText(eo) if ec.nodeType == 3 and eo < ec.length and list.includes(ec)
+    list[list.indexOf(sc)] = sc.splitText(so) if sc.nodeType == 3 and so > 0 and list.includes(sc)
+    list.filter((t)-> /\S/.test(t.nodeValue) and surface.contains(t))
+
+  # le mot du curseur, dans son texte
+  wordAt = (r)->
+    n = r.startContainer
+    return null unless n.nodeType == 3
+    s = n.nodeValue
+    a = r.startOffset
+    b = a
+    a-- while a > 0 and /[\p{L}\p{N}_'’-]/u.test(s[a - 1])
+    b++ while b < s.length and /[\p{L}\p{N}_'’-]/u.test(s[b])
+    return null if a == b
+    w = document.createRange()
+    w.setStart(n, a)
+    w.setEnd(n, b)
+    w
+
+  recolor = (name)->
+    r = rangeNow()
+    r = wordAt(r) if r?.collapsed
+    return unless r and not r.collapsed
+    bits = textsIn(r)
+    for t in bits
+      lift(t)
+      continue unless name
+      span = document.createElement('span')
+      span.setAttribute('data-color', name)
+      t.before(span)
+      span.append(t)
+    return unless bits.length
+    last = bits[bits.length - 1]
+    document.getSelection().setBaseAndExtent(bits[0], 0, last, last.length)
+  # @@
+
+  # @@ colors
+  # @@ tool-color
+  # le choix de la couleur : une ligne sous la barre, un bouton par couleur de la palette puis « aucune couleur » ; la couleur du texte choisi y est enfoncée.
+  # Les flèches, Début et Fin passent d'un bouton à l'autre, Échap ferme ; la sélection de la surface est gardée pendant le choix
+  openHues = ->
+    return unless $palette.length
+    ensureFocus()
+    hueRange = rangeNow() ?? savedRange
+    $hueNow  = stateNow().color
+    $hueOpen = true
+    setTimeout((-> (hueRef?.querySelector('[aria-pressed="true"]') ?? hueRef?.querySelector('button'))?.focus()), 0)
+
+  closeHues = ->
+    $hueOpen = false
+    surface.focus()
+    restoreRange(hueRange) if hueRange
+
+  paint = (name)->
+    closeHues()
+    return unless $edit
+    gesture ->
+      recolor(name)
+      touch()
+    say(if name then $t.names[name] else $t.none)
+    emitState()
+
+  onHueKey = (e)->
+    if e.key == 'Escape'
+      e.preventDefault()
+      e.stopPropagation()
+      return closeHues()
+    return unless ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)
+    list = Array.from(hueRef.querySelectorAll('button'))
+    here = list.indexOf(e.target.closest('button'))
+    return if here < 0
+    step = if e.key == 'ArrowRight' or e.key == 'ArrowDown' then 1 else -1
+    to   = if e.key == 'Home' then 0 else if e.key == 'End' then list.length - 1 else (here + step + list.length) % list.length
+    e.preventDefault()
+    list[to].focus()
+  # @@
   # @@
 
 
@@ -1418,7 +1680,7 @@
   # le collage et le dépôt : seul le HTML permis entre ; un seul paragraphe s'insère dans la ligne en cours ; avec `paste="text"` seul le texte
   # brut entre, en paragraphes
   insertClean = (html, text)->
-    out = if html and $paste != 'text' then clean(html) else textHtml(text ?? '')
+    out = if html and $paste != 'text' then clean(html, $palette) else textHtml(text ?? '')
     return unless out
     own() if barShows('check') # @@ tool-check
     one = /^<p>((?:(?!<\/?p>).)*)<\/p>$/s.exec(out)
@@ -1514,7 +1776,7 @@
     @@_mjsExec  = run
     @@_mjsState = stateNow
     @@_mjs_hold = holdNative
-    @@focus     = (o)-> surface?.focus(o)
+    @@focus     = (o)-> giveFocus(o)
     watchAria   = new MutationObserver(syncAria)
     watchAria.observe(@@closest('mjs-core-editor'), { attributes: true, attributeFilter: ['aria-label', 'aria-invalid'] })
     syncAria()
@@ -1546,6 +1808,8 @@
       document.addEventListener('beforeinput', noteAsked, true)
       document.addEventListener('keydown', onRedoKey)
       window.addEventListener('input', holdUndo, true)
+    # `autofocus` (plus haut) ; un éditeur désactivé ne prend pas le focus
+    autoFocus() if must($autofocus)
 
   # retiré de la page pendant la pause d'un grand texte : le texte tapé est reconstruit avant de partir (Chromium envoie un `blur` au retrait, pas les autres navigateurs)
   µdestroy ->
@@ -1558,19 +1822,31 @@
 
 <div class="box" part="box" @class{$off}="off" @class{$ro}="readonly" @class{$focused}="focused" --mjs-editor-on={$t.on} --mjs-editor-off={$t.off}>
   {if $barTools != null and $edit}
-    <@@toolbar class="bar" part="toolbar" tools={$barTools} disabled={$off}></@@toolbar>
+    <@@toolbar class="bar" part="toolbar" exportparts="bar: toolbar-bar, button: toolbar-button, down" tools={$barTools} disabled={$off}></@@toolbar>
   {end}
   <!-- @@ tool-link -->
   {if $linkOpen}
     <div class="link" part="link" role="group" aria-label={$t.link} @keydown={onLinkKey(e)}>
       <input class="link-url" part="link-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://" aria-label={$t.link} value=!{$linkUrl} @this=!{linkRef} @input={e.stopPropagation()}>
-      <button type="button" class="link-ok" @click={applyLink()}>{$t.apply}</button>
+      <button type="button" class="link-ok" part="link-button link-apply" @click={applyLink()}>{$t.apply}</button>
       {if $linkHas}
-        <button type="button" class="link-no" @click={removeLink()}>{$t.remove}</button>
+        <button type="button" class="link-no" part="link-button link-remove" @click={removeLink()}>{$t.remove}</button>
       {end}
-      <button type="button" class="link-x" @click={closeLink()}>{$t.cancel}</button>
+      <button type="button" class="link-x" part="link-button link-cancel" @click={closeLink()}>{$t.cancel}</button>
     </div>
   {end}
+  <!-- @@ -->
+  <!-- @@ colors -->
+  <!-- @@ tool-color -->
+  {if $hueOpen}
+    <div class="hues" part="colors" role="group" aria-label={$t.colors} @this=!{hueRef} @keydown={onHueKey(e)}>
+      {for name in $palette}
+        <button type="button" part="color-button" aria-pressed={$hueNow == name ? 'true' : 'false'} @click={paint(name)}><span class="dot" data-color={name} aria-hidden="true"></span>{$t.names[name]}</button>
+      {end}
+      <button type="button" part="color-button color-none" aria-pressed={$hueNow ? 'false' : 'true'} @click={paint(null)}><span class="dot none" aria-hidden="true"></span>{$t.none}</button>
+    </div>
+  {end}
+  <!-- @@ -->
   <!-- @@ -->
   <!-- @@ answer -->
   <div class="surface" part="surface" role={$ans ? 'group' : 'textbox'} aria-multiline={$ans ? null : 'true'} aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$textRo ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and not $ans and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($textRo and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div>
@@ -1646,6 +1922,56 @@
 
     &:focus-visible
       outline: 3px solid var(--mjs-editor-focus, rgba(#3b82f6, .45))
+  // @@
+
+  // @@ colors
+  // @@ tool-color
+  .hues
+    display: flex
+    flex-wrap: wrap
+    gap: 6px
+    padding: 8px
+    border-bottom: 1px solid var(--mjs-editor-border, var(--mjs-border, rgba(#7f7f7f, .45)))
+    background: var(--mjs-editor-bar-bg, var(--mjs-hover, rgba(#7f7f7f, .1)))
+
+    button
+      display: inline-flex
+      align-items: center
+      gap: 6px
+      height: 32px
+      padding: 0 10px
+      border: 1px solid var(--mjs-editor-border, var(--mjs-border, rgba(#7f7f7f, .45)))
+      border-radius: 7px
+      background: var(--mjs-editor-bg, var(--mjs-surface, transparent))
+      color: inherit
+      font: inherit
+      cursor: pointer
+
+      &:focus-visible
+        outline: 3px solid var(--mjs-editor-focus, rgba(#3b82f6, .45))
+
+      &[aria-pressed="true"]
+        border-color: var(--mjs-editor-accent, var(--mjs-accent, #3b82f6))
+        box-shadow: inset 0 0 0 1px var(--mjs-editor-accent, var(--mjs-accent, #3b82f6))
+
+    .dot
+      width: 12px
+      height: 12px
+      border-radius: 50%
+      background: currentColor
+
+      &.none
+        box-sizing: border-box
+        border: 1px solid currentColor
+        background: none
+  // @@
+  // @@
+
+  // @@ colors
+  // les couleurs du texte : la règle de chaque couleur de COLORS, que le thème règle par `--mjs-editor-color-<nom>` (le texte de la surface, la pastille de son bouton)
+  @each $name, $value in ("gray": #6b7280, "brown": #a16207, "orange": #ea580c, "yellow": #ca8a04, "green": #16a34a, "blue": #2563eb, "purple": #9333ea, "pink": #db2777, "red": #dc2626)
+    [data-color="#{$name}"]
+      color: var(--mjs-editor-color-#{$name}, #{$value})
   // @@
 
   .surface

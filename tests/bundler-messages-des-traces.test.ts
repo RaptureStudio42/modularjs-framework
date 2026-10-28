@@ -4,7 +4,8 @@
 // production dans un fichier par langue, `mjs_err-<langue>-<empreinte>.json`, chargé quand un message s'écrit.
 //  - niveau de console 'warn', 'error' (défaut) ou 'silent' : la construction retire les traces du code envoyé, personne
 //    ne lira leur texte : les fichiers de messages ne le portent plus. Aux niveaux 'error' et 'silent', les avertissements
-//    du runtime partent aussi, et les textes qu'eux seuls lisent (WARNING_ONLY_MESSAGES). Les autres messages n'en bougent pas
+//    du runtime partent aussi, et les textes qu'eux seuls lisent (WARNING_ONLY_MESSAGES) ; aux trois niveaux, ceux du développement
+//    seul aussi (DEV_ONLY_MESSAGES). Les autres messages n'en bougent pas
 //  - niveau 'log' : les traces restent, leur texte part avec le manifeste (groupe `err` réduit à ces textes), si bien que
 //    la première trace s'écrit en texte, tout de suite, dans la langue de la page. Les fichiers de messages restent complets
 //  - sans minification les traces restent dans le code : les fichiers aussi. En développement, rien ne change
@@ -15,7 +16,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
-import { WARNING_ONLY_MESSAGES } from '../src/bundler/minify.js'
+import { WARNING_ONLY_MESSAGES, DEV_ONLY_MESSAGES } from '../src/bundler/minify.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 // les textes que seules des traces du routeur lisent
@@ -26,7 +27,8 @@ const ROUTEUR = [
 // le texte de la trace d'un {await} rejeté sans branche {error} : seule une trace le lit, il quitte les fichiers avec ceux du routeur
 const AWAIT = 'awaitUnhandled'
 // le texte de la trace d'une poignée de salon partie (on() ou onLeft() après leave()) : seule une trace le lit, il quitte les fichiers
-// avec ceux du routeur, et part au manifeste avec eux quand le texte du cœur la nomme (traceKeysIn)
+// avec ceux du routeur, et part au manifeste avec eux quand le texte du cœur la nomme (traceKeysIn) : le cœur n'a le socket que si l'appli
+// s'en sert, ou avec `runtime: 'all'`
 const SOCKET = 'sockHandleGone'
 // UJS écrit ce texte dans sa trace du mode 'silent' et dans l'avertissement des autres modes : une trace le lit, un avertissement aussi
 const UJS = 'ujsNoPage'
@@ -83,8 +85,8 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
       const b = await construire({ env: 'prod', ...(niveau ? { logLevel: niveau } : {}) })
       for (const lang of ['fr', 'en'] as const) {
         const complet = cles(RUNTIME_LABELS[lang].err)
-        // aux niveaux qui retirent les avertissements (le défaut 'error', et 'silent'), leurs textes partent aussi
-        const avertissements = niveau === 'warn' ? [] : [...WARNING_ONLY_MESSAGES]
+        // aux niveaux qui retirent les avertissements (le défaut 'error', et 'silent'), leurs textes partent aussi ; au niveau 'warn', ceux du développement seul
+        const avertissements = niveau === 'warn' ? [...DEV_ONLY_MESSAGES] : [...WARNING_ONLY_MESSAGES]
         assert.deepEqual(cles(b.fichiers[lang]), sans(complet, [...ROUTEUR, AWAIT, SOCKET, RUNES, ...avertissements]), `fichier ${lang}`)
         assert.ok(b.fichiers[lang][UJS], 'le texte de l\'avertissement d\'UJS reste')
         assert.equal(b.table[lang].err, undefined, `manifeste ${lang} : aucun message`)
@@ -103,10 +105,19 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
     const b = await construire({ env: 'prod', logLevel: 'log' })
     for (const lang of ['fr', 'en'] as const) {
       assert.deepEqual(b.fichiers[lang], RUNTIME_LABELS[lang].err, `fichier ${lang} complet`)
-      assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, SOCKET, RUNES].sort(), `manifeste ${lang} : les textes des traces, et eux seuls`)
-      for (const k of [...ROUTEUR, UJS, SOCKET, RUNES]) assert.equal(b.table[lang].err?.[k], (RUNTIME_LABELS[lang].err as any)[k], `${lang} ${k}`)
+      // l'appli ne se sert pas du socket : le cœur ne l'a pas, le texte de sa trace ne part pas au manifeste
+      assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, RUNES].sort(), `manifeste ${lang} : les textes des traces, et eux seuls`)
+      for (const k of [...ROUTEUR, UJS, RUNES]) assert.equal(b.table[lang].err?.[k], (RUNTIME_LABELS[lang].err as any)[k], `${lang} ${k}`)
       // le reste de la table est celui d'un build sans ces textes
       assert.ok(b.table[lang].modal && b.table[lang].router && b.table[lang].toast && b.table[lang].ujs)
+    }
+  })
+
+  it('production, niveau log, runtime \'all\' : le socket est au cœur, le texte de sa trace part au manifeste avec ceux du routeur', async () => {
+    const b = await construire({ env: 'prod', logLevel: 'log', runtime: 'all' })
+    for (const lang of ['fr', 'en'] as const) {
+      assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, SOCKET, RUNES].sort(), `manifeste ${lang} : les textes des traces, et eux seuls`)
+      assert.equal(b.table[lang].err?.[SOCKET], (RUNTIME_LABELS[lang].err as any)[SOCKET], `${lang} ${SOCKET}`)
     }
   })
 
@@ -122,7 +133,7 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
     const b = await construire({ env: 'prod', minify: false, logLevel: 'log' })
     for (const lang of ['fr', 'en'] as const) {
       assert.deepEqual(b.fichiers[lang], RUNTIME_LABELS[lang].err)
-      assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, SOCKET, RUNES].sort())
+      assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, RUNES].sort())
     }
   })
 

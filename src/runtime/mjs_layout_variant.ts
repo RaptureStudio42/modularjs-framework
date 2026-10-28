@@ -15,6 +15,34 @@
 // silencieusement les feuilles déjà adoptées (même repli que les autres gardes défensives du
 // fichier, ex. `_mjs_isPageCached`) plutôt que de planter.
 if (µ.Element) {
+  // RENDU SERVEUR — page prérendue : les variants que le serveur a écrits dans l'ombre déclarative de chaque composant
+  // (`<style mjs-layout="adresse">`) entrent au cache avant la reprise, qui vide ces ombres : le composant repris garde son
+  // modèle, sans requête ni passage par le modèle par défaut
+  if (typeof document !== 'undefined' && document.querySelectorAll) {
+    (function seed(root) {
+      root.querySelectorAll('[mjs-ssr]').forEach(function(host) {
+        var shadow = host.shadowRoot;
+        if (!shadow) { return; }
+        shadow.querySelectorAll('style[mjs-layout]').forEach(function(s) {
+          (µ._mjs_styleVariantCache || (µ._mjs_styleVariantCache = {}))[s.getAttribute('mjs-layout')] = Promise.resolve(s.textContent);
+        });
+        seed(shadow);
+      });
+    })(document);
+  }
+  // ce que le rendu serveur relit d'un composant (`µ._ssrInfo`, mjs_element.ts), plus son variant appliqué (adresse et texte) : le
+  // serveur l'écrit dans la page après la feuille propre ; un variant encore en route tient le rendu pour inachevé (le serveur
+  // attend son arrivée avant d'écrire la page)
+  var ssrInfo = µ._ssrInfo;
+  µ._ssrInfo = function(el) {
+    var info = ssrInfo(el);
+    var applied = el._mjs_layoutSsr;
+    if (applied && applied[0] === el._mjs_layoutSeq) {
+      if (applied[1] == null) { info.renderScheduled = true; }
+      else { info.layoutCss = applied[1]; info.layoutUrl = applied[2]; }
+    }
+    return info;
+  };
   µ.Element.prototype._mjs_applyLayoutVariant = async function(name, sheets, _seq) {
     var sheet, url, variantCss;
     // Variant demandé : `_mjs_layouts` liste les noms
@@ -56,11 +84,16 @@ if (µ.Element) {
     if (µ._mjs_styleVariantCache == null) {
       µ._mjs_styleVariantCache = {};
     }
+    // rendu serveur : le fichier du variant lu sur le disque par le serveur (`µ._ssrLayoutRead`, posé par lui), sans requête
+    var read = !µ._mjs_styleVariantCache[url] && µ._ssrLayoutRead ? µ._ssrLayoutRead(this._mjs_modName, name) : null;
+    if (typeof read === 'string') {
+      µ._mjs_styleVariantCache[url] = Promise.resolve(read);
+    }
     if (!µ._mjs_styleVariantCache[url]) {
       // promesse gardée en cache PENDANT LE VOL (dédoublonne 2 composants qui montent
       // ensemble) — .catch : un fetch qui rejette (réseau coupé) ne doit jamais laisser
       // de promesse rejetée en cache ni faire remonter d'exception hors de _mjs_applyLayout
-      µ._mjs_styleVariantCache[url] = fetch(url).then(function(r) {
+      µ._mjs_styleVariantCache[url] = (µ._mjs_loading ? µ._mjs_loading(fetch(url)) : fetch(url)).then(function(r) {
         if (r.ok) {
           return r.text();
         } else {
@@ -70,21 +103,28 @@ if (µ.Element) {
         return '';
       });
     }
+    // variant en route (relu par `µ._ssrInfo`)
+    this._mjs_layoutSsr = [_seq, null, url];
     variantCss = (await µ._mjs_styleVariantCache[url]);
     if (_seq !== this._mjs_layoutSeq) { return; }
+    this._mjs_layoutSsr = variantCss ? [_seq, variantCss, url] : null;
     if (!variantCss) {
       // résultat vide (404, réseau, fichier vide) : on retire l'entrée — le montage
       // suivant doit pouvoir retenter (fichier peut-être redevenu disponible) — et on
       // avertit 1 fois par URL (même double-appel que ci-dessus)
       delete µ._mjs_styleVariantCache[url];
-      if (µ._mjs_layoutMissingWarned == null) {
-        µ._mjs_layoutMissingWarned = new Set();
-      }
-      if (!µ._mjs_layoutMissingWarned.has(url)) {
-        µ._mjs_layoutMissingWarned.add(url);
-        const knownNames = this._mjs_layouts ? (Object.keys(this._mjs_layouts).join(', ') || µ._mjs_txt('layoutNone', null, 'aucune')) : µ._mjs_txt('layoutNone', null, 'aucune');
-        µ.warn(µ._mjs_msg('layoutFile', { tag: this.tagName.toLowerCase(), name: name, url: url, known: knownNames }, '<{tag}> : fichier du variant \'{name}\' introuvable ({url}) — noms connus : {known}.'));
-      }
+      // fichier coupé par le départ de la page : rien n'est dit (cf. µ._mjs_loadFailed, mjs_init.ts)
+      const report = () => {
+        if (µ._mjs_layoutMissingWarned == null) {
+          µ._mjs_layoutMissingWarned = new Set();
+        }
+        if (!µ._mjs_layoutMissingWarned.has(url)) {
+          µ._mjs_layoutMissingWarned.add(url);
+          const knownNames = this._mjs_layouts ? (Object.keys(this._mjs_layouts).join(', ') || µ._mjs_txt('layoutNone', null, 'aucune')) : µ._mjs_txt('layoutNone', null, 'aucune');
+          µ.warn(µ._mjs_msg('layoutFile', { tag: this.tagName.toLowerCase(), name: name, url: url, known: knownNames }, '<{tag}> : fichier du variant \'{name}\' introuvable ({url}) — noms connus : {known}.'));
+        }
+      };
+      µ._mjs_loadFailed ? µ._mjs_loadFailed(null, report) : report();
       return;
     }
     if (this._mjs_isLight) {

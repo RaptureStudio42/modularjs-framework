@@ -29,7 +29,7 @@ if (µ._mjs_lazyCssCache == null) {
     return Promise.resolve(null);
   }
   if (!µ._mjs_lazyCssCache[url]) {
-    µ._mjs_lazyCssCache[url] = fetch(url).then(function(r) {
+    µ._mjs_lazyCssCache[url] = (µ._mjs_loading ? µ._mjs_loading(fetch(url)) : fetch(url)).then(function(r) {
       return r.ok ? r.text() : '';
     }).catch(function() {
       return '';
@@ -41,13 +41,17 @@ if (µ._mjs_lazyCssCache == null) {
       // pouvoir retenter) et on avertit UNE seule fois par URL. Jamais d'exception
       // qui remonterait dans le montage du composant
       delete µ._mjs_lazyCssCache[url];
-      if (µ._mjs_lazyCssMissing == null) {
-        µ._mjs_lazyCssMissing = new Set();
-      }
-      if (!µ._mjs_lazyCssMissing.has(url)) {
-        µ._mjs_lazyCssMissing.add(url);
-        µ.warn(µ._mjs_msg('lazyCss', { name: name, url: url }, 'Feuille partagée \'{name}\' introuvable ({url}) — le composant s\'affichera sans elle.'));
-      }
+      // feuille coupée par le départ de la page : rien n'est dit (cf. µ._mjs_loadFailed, mjs_init.ts)
+      var report = function() {
+        if (µ._mjs_lazyCssMissing == null) {
+          µ._mjs_lazyCssMissing = new Set();
+        }
+        if (!µ._mjs_lazyCssMissing.has(url)) {
+          µ._mjs_lazyCssMissing.add(url);
+          µ.warn(µ._mjs_msg('lazyCss', { name: name, url: url }, 'Feuille partagée \'{name}\' introuvable ({url}) — le composant s\'affichera sans elle.'));
+        }
+      };
+      µ._mjs_loadFailed ? µ._mjs_loadFailed(null, report) : report();
       return null;
     }
     if (µ._mjs_lazyCssSheets == null) {

@@ -27,9 +27,10 @@ function _mjsFxCurve(v) {
   return µ.easing && typeof µ.easing[nom] === 'function' ? µ.easing[nom] : void 0;
 }
 
-// les réglages d'une transition → les options de son animation
+// les réglages d'une transition → les options de son animation, sans prototype : une option que les réglages ne donnent pas reste
+// absente, jamais lue sur un prototype pollué
 µ._mjs_fxAnimOpts = function(name, s) {
-  var o = {};
+  var o = Object.create(null);
   var p;
   if (s.duration !== void 0) o.duration = µ._mjs_fxMs(s.duration);
   if (s.delay !== void 0) o.delay = µ._mjs_fxMs(s.delay, 0);

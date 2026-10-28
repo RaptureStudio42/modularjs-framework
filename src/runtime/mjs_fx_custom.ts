@@ -13,7 +13,8 @@
 
 µ._mjs_fxCustom = function(name, d) {
   if (µ._mjs_fxDefs[name]) return;
-  var dflt = {};
+  // valeurs par défaut des réglages, sans prototype : `$constructor` non déclaré n'y trouve rien, un réglage `__proto__` y est un nom comme un autre
+  var dflt = Object.create(null);
   for (var i = 0; i < d.params.length; i++) dflt[d.params[i][0]] = d.params[i][1];
   // `$réglage` → sa variable CSS, repliée sur sa valeur par défaut
   var css = function(v) {

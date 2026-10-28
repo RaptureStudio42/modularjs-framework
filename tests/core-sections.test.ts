@@ -123,7 +123,8 @@ describe('repères des modules cœur — le vrai select.mjs', () => {
     // le seul reste : le sélecteur d'un champ de réponse libre dans la règle du texte d'attente, une règle d'un autre morceau du fichier
     const reste = lean.match(/select-other[\w-]*/g) ?? []
     assert.ok(reste.length <= 1 && reste.every((x) => x === 'select-other-input'), `restes : ${reste.join(', ')}`)
-    assert.ok(lean.replace(/\n{2,}/g, '\n').length < src.length * 0.75, `${lean.replace(/\n{2,}/g, '\n').length} octets contre ${src.length}`)
+    // 0,76 : le module de base a grandi (largeur du panneau ouvert), la part propre à « Autre » ne change pas
+    assert.ok(lean.replace(/\n{2,}/g, '\n').length < src.length * 0.76, `${lean.replace(/\n{2,}/g, '\n').length} octets contre ${src.length}`)
   })
 
   it('les deux formes se compilent ; le fichier tel quel aussi (copie dans un projet : les repères y sont des commentaires)', async function () {

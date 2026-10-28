@@ -130,7 +130,7 @@ describe('mjs_ujs — µ._mjs_preloadLink/µ._mjs_ajaxGet : canal interne + nav 
     await wait(0)
 
     assert.equal(cbCalls.length, 1)
-    assert.deepEqual(cbCalls[0], ['<p>html</p>', 'http://x/page2', void 0, navPayload], 'cb doit recevoir (html, finalUrl, undefined, nav)')
+    assert.deepEqual(cbCalls[0], ['<p>html</p>', 'http://x/page2', void 0, navPayload, true], 'cb doit recevoir (html, finalUrl, undefined, nav, true) — true : page servie depuis le préchargement')
   })
 
   it('(p3) réponse JSON (objet, protocole X-MJS-Nav) — mémorisée telle quelle (par référence), rendue telle quelle au clic', async function () {
@@ -183,7 +183,7 @@ describe('mjs_ujs — µ._mjs_preloadLink/µ._mjs_ajaxGet : canal interne + nav 
     await wait(0)
 
     assert.equal(cbCalls.length, 1)
-    assert.deepEqual(cbCalls[0], ['html-brut', void 0, void 0, void 0])
+    assert.deepEqual(cbCalls[0], ['html-brut', void 0, void 0, void 0, true])
   })
 })
 

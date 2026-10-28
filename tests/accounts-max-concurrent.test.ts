@@ -38,7 +38,9 @@ async function startApp(opts: Partial<MjsWsAccountsOptions> = {}, wsOpts: MjsWsO
   const transport = new MemoryTransport()
   const persist = new MemoryAccountsPersistAdapter()
   const app = mjsWs({ transport, heartbeat: 0, auth: accountsAuth(SECRET), onLog: () => {}, ...wsOpts })
-  app.use(accountsPackage({ secret: SECRET, persist, ...opts } as MjsWsAccountsOptions))
+  // coût de hachage réduit des essais : chaque cas hache (création, connexion), et aux réglages de production le délai de
+  // 2 s ne tenait plus sous charge
+  app.use(accountsPackage({ secret: SECRET, persist, weakHashForTests: true, ...opts } as MjsWsAccountsOptions))
   await app.listen()
   return { transport, app, persist }
 }

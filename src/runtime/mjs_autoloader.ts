@@ -27,6 +27,27 @@
     this._mjs_pendingSel = this._mjs_pending.size ? Array.from(this._mjs_pending).join(',') : '';
     return this._mjs_pending;
   },
+  // le bouclier du cœur (µ._mjs_shield, mjs_init.ts), règle 1 : `tag` ('mjs-carte'), une balise que ce chargeur va chercher —
+  // cachée, elle et ce qu'elle contient, jusqu'à sa définition ; '*' à l'arrivée du chargeur, toute balise pas encore définie, le
+  // temps qu'il ne sache pas encore lesquelles il va chercher (le manifeste pose `µ.paths` juste avant d'observer) — la balise
+  // seule : happy-dom, où le rendu serveur fait tourner ce cœur, tient les balises natives pour non définies, et ` *` y cacherait
+  // la page entière ; '' à la première observation, la règle de '*' s'en va. Une règle par balise, posée une fois, et seulement
+  // pour les balises que la page charge : le moteur range les règles par nom de balise, mais chaque règle ` *` est essayée sur
+  // chaque élément restylé. Une balise hors du manifeste (autre bibliothèque, nom mal écrit) n'est jamais touchée
+  _mjs_shieldTags: new Set(),
+  _mjs_shieldTag: function(tag) {
+    var f = µ._mjs_shield, s = (tag === '*' ? '' : tag) + ':not(:defined):not([mjs-ssr]):not([mjs-skel-host])', i;
+    if (!f) { return; }
+    if (!tag) {
+      for (i = f.cssRules.length - 1; i >= 0; i--) { if (f.cssRules[i].selectorText.indexOf(':not(:defined)') === 0) { f.deleteRule(i); } }
+      return;
+    }
+    if (this._mjs_shieldTags.has(tag)) { return; }
+    this._mjs_shieldTags.add(tag);
+    // un nom que le moteur refuse (caractère hors des sélecteurs CSS) : la balise se montre telle quelle, le chargement continue
+    try { f.insertRule(s + (tag === '*' ? '' : ',' + s + ' *') + '{visibility:hidden!important}', 0); }
+    catch { /* balise montrée telle quelle */ }
+  },
   _mjs_drop: function(tag) {
     // un tag vient d'être défini : le retirer + reconstruire le sélecteur ciblé
     if (this._mjs_pending && this._mjs_pending.delete(tag)) {
@@ -45,27 +66,35 @@
   // sur sessionStorage DÉSARME la garde (navigation privée Safari, harnais sans sessionStorage,
   // window absent) au lieu de la forcer : mieux vaut une page muette qu'une boucle de rechargement.
   // Opt-out : µ.config.staleReload = false.
-  _mjs_reloadOnStale: function(fileName, err) {
-    var flagVal, stored;
-    if (µ.config && µ.config.staleReload === false) {
-      return false;
+  // LA PREUVE VIENT DU SERVEUR, JAMAIS DE L'ÉCHEC : Safari refuse tout fichier demandé pendant que la page s'en va (lien,
+  // barre d'adresse), Firefox et Safari coupent ceux qui sont en route au départ, une connexion qui tombe échoue de même — un
+  // rechargement remplaçait alors la navigation du visiteur. Le fichier est redemandé (`path`, sans cache) : seul un serveur
+  // qui RÉPOND sans module JavaScript (404, page HTML de repli) dit le bundle périmé ; pas de réponse, pas de rechargement. Et
+  // jamais après un départ annoncé (µ._mjs_left, mjs_init.ts), quel que soit le temps que met la page suivante. Rend la
+  // promesse du verdict (true : rechargement lancé)
+  _mjs_reloadOnStale: function(fileName, err, path) {
+    if ((µ.config && µ.config.staleReload === false) || !(typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') || typeof fetch !== 'function') {
+      return Promise.resolve(false);
     }
-    if (!(typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function')) {
-      return false;
-    }
-    flagVal = µ.version || '1';
-    try {
-      stored = sessionStorage.getItem('mjs-stale-reload');
-      if (stored === flagVal) {
+    return (µ._mjs_loading ? µ._mjs_loading(fetch(path, { cache: 'no-store' })) : fetch(path, { cache: 'no-store' })).then((r) => {
+      var flagVal, stored;
+      if ((r.ok && /javascript|ecmascript/i.test(r.headers.get('content-type') || '')) || (µ._mjs_left && µ._mjs_left())) {
         return false;
       }
-      sessionStorage.setItem('mjs-stale-reload', flagVal);
-    } catch {
-      return false;
-    }
-    µ.warn('[Autoloader] ' + µ._mjs_txt('autoloaderStale', { fileName: fileName }, 'bundle périmé : \'{fileName}\' introuvable — rechargement de la page (une seule fois par build).'));
-    window.location.reload();
-    return true;
+      flagVal = µ.version || '1';
+      try {
+        stored = sessionStorage.getItem('mjs-stale-reload');
+        if (stored === flagVal) {
+          return false;
+        }
+        sessionStorage.setItem('mjs-stale-reload', flagVal);
+      } catch {
+        return false;
+      }
+      µ.warn('[Autoloader] ' + µ._mjs_txt('autoloaderStale', { fileName: fileName }, 'bundle périmé : \'{fileName}\' introuvable — rechargement de la page (une seule fois par build).'));
+      window.location.reload();
+      return true;
+    }, () => false);
   },
   load: async function(tag) {
     var err, fileName, path;
@@ -83,13 +112,16 @@
         this._mjs_giveUp(tag);
         return;
       }
+      // la balise, et tout ce qu'elle contient, reste cachée jusqu'à sa définition (cf. _mjs_shieldTag)
+      this._mjs_shieldTag(tag);
       µ.log(`[Autoloader] 🚀 Downloading ${fileName} -> ${path}`);
       // ses effets partent en même temps que lui (il les importe aussi : même fichier, chargé une
       // fois) — sans attendre qu'il arrive pour les découvrir
       if (typeof µ._mjs_fxPrefetch === 'function') µ._mjs_fxPrefetch(fileName);
       try {
-        // 3. Import dynamique via le chemin public haché absolu
-        await import(path);
+        // 3. Import dynamique via le chemin public haché absolu, suivi tant qu'il est en vol (départ de la page : cf.
+        // µ._mjs_loading, mjs_init.ts)
+        await (µ._mjs_loading ? µ._mjs_loading(import(path)) : import(path));
         // un composant de la page préparée par le serveur est défini plus tard, d'un seul geste avec les autres (cf. _mjs_launch) : son
         // module est arrivé et sa définition retenue, il reste en attente jusque-là
         if (this._mjs_wave && this._mjs_wave.held.has(tag)) {
@@ -126,8 +158,14 @@
           this.pendingComponents.delete(tag);
           return this.load(tag);
         }
-        µ.error(`[Autoloader] ❌ Failed to import ${fileName}:`, err);
-        this._mjs_reloadOnStale(fileName, err);
+        // un import coupé par le départ de la page n'est ni une panne ni un bundle périmé : rien n'est dit, rien n'est rechargé
+        // (un rechargement remplaçait la navigation du visiteur) — cf. µ._mjs_loadFailed, mjs_init.ts ; le bundle ne se dit périmé
+        // que sur la réponse du serveur (cf. _mjs_reloadOnStale)
+        var report = () => {
+          µ.error(`[Autoloader] ❌ Failed to import ${fileName}:`, err);
+          this._mjs_reloadOnStale(fileName, err, path);
+        };
+        µ._mjs_loadFailed ? µ._mjs_loadFailed(err, report) : report();
         this._mjs_giveUp(tag);
         return this.pendingComponents.delete(tag);
       }
@@ -238,6 +276,9 @@
     var nodes, observer, launched = null;
     if (this._mjs_pending === null) {
       this._mjs_refreshPending();
+      // le chargeur sait désormais quelles balises il va chercher : le bouclier du cœur ne cache plus qu'elles (cf. load), plus
+      // toute balise pas encore définie (cf. _mjs_shieldTag)
+      this._mjs_shieldTag('');
     }
     nodes = root.querySelectorAll(':not(:defined)');
     // la page préparée par le serveur d'abord, si une autre n'est pas déjà en route : ses composants partent ensemble (cf. _mjs_launch),
@@ -293,6 +334,10 @@
     });
   }
 };
+
+// le bouclier du cœur, du démarrage à la première observation : toute balise pas encore définie — le chargeur ne sait pas encore
+// lesquelles il va chercher (cf. _mjs_shieldTag)
+µ.Autoloader._mjs_shieldTag('*');
 
 // chemin entier du fichier d'une clé de `µ.paths` (préfixe commun `µ.pathsPrefix` recollé), '' si la clé
 // est inconnue. UNE seule lecture pour tout le cœur (Autoloader, fichiers d'effets) : quand la table est

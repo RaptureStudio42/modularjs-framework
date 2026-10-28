@@ -121,8 +121,8 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
         return
       }
       // Store universel `$$x` (→ `µ.store.x`) — namespace préfixé '$$'.
-      // NB : `µ._mjs_storeRaw.x` (µread/µwrite $$x) ne matche jamais (property
-      // du membre intermédiaire = '_mjs_storeRaw', pas 'store') — non tracké,
+      // NB : `µ._mjs_storeRaw.x` (µread $$x) et `µ._mjs_storeRawWrite.x` (µwrite $$x) ne matchent jamais (property
+      // du membre intermédiaire = '_mjs_storeRaw…', pas 'store') — non tracké,
       // par construction, exactement comme voulu (accès brut, non réactif).
       collectStoreMemberDep(node, ancestors, deps)
     },
@@ -1138,15 +1138,19 @@ export class Analyzer {
   }
 
   // ------------------------------------------------------------------------
-  /** Stub legacy maintenu pour les tests historiques — V2 ne calcule plus
-   * de bitmask. Retourne 0 (aucun bit). À supprimer quand les tests passent
-   * sur la nouvelle API. */
+  // l'ancienne API des masques de bits, gardée dans la classe exportée pour le code qui l'appelle encore : il n'y a plus de
+  // masque (dispatch direct par variable, cf. en-tête), ces deux méthodes ne calculent rien de plus que leurs remplaçantes
+  // ------------------------------------------------------------------------
+  /** Ancien nom de `batchCalculateVars()` : analyse les snippets et garde en cache les variables d'état dont chacun dépend,
+   * lues ensuite par `getEffectVars()`. Ne rend rien : il n'y a plus de masque à calculer.
+   * @deprecated écrivez `batchCalculateVars(snippets)` */
   batchCalculateMasks(snippets: string[]): void {
     this.batchCalculateVars(snippets)
   }
 
-  /** Stub legacy — V2 retourne toujours 0 (plus de bitmask). Préservé pour
-   * les call-sites externes pas encore migrés. */
+  /** Rend toujours 0, quel que soit le snippet : il n'y a plus de masque de bits. Les variables d'état dont un snippet dépend se
+   * lisent par `getEffectVars(snippet)`, après `batchCalculateVars()`.
+   * @deprecated écrivez `getEffectVars(snippet)` */
   getMaskFromCache(_snippetCode: string): number {
     return 0
   }

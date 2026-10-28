@@ -5,16 +5,15 @@
 // restent brutes ; un élément de Set tenu par son enveloppe se retrouve (`has`) et se retire (`delete`).
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { monterHote } from './helpers/coeur-monter.js'
 
 // valeur venue de la fenêtre happy-dom (autre contexte JS) : recopiée en objets ordinaires pour la comparaison
 const brut = (x: any) => JSON.parse(JSON.stringify(x))
 
-const ICI = dirname(fileURLToPath(import.meta.url))
-const RT  = join(ICI, '../src/runtime/')
+// l'hôte écrit µ.state et µ.Store : sans clé `runtime`, le cœur ne porte que ce que le code compilé emploie, et c'est ainsi
+// qu'il reçoit les deux avec le registre des dépendances (mjs_runes.ts) qu'ils appellent — un fichier du runtime évalué à
+// part n'emmène pas ce registre
+const HOTE = ['<script>', '@etat = µ.state({})', '@magasin = new µ.Store({})', '</script>', '<p>x</p>'].join('\n')
 
 // chaque écriture compte ses notifications : celle faite après `get` sert d'étalon
 const SCENARIO = `
@@ -42,9 +41,8 @@ describe('µ.state / µ.Store — objet d’une Map ou d’un Set lu par itérat
   let window: any
 
   before(async () => {
-    ({ window } = await monterHote('<p>x</p>', 'etat-map-set-iteration'))
-    if (!window.eval('typeof µ.state === "function"')) window.eval(readFileSync(RT + 'mjs_state.ts', 'utf-8'))
-    if (!window.eval('typeof µ.Store === "function"')) window.eval(readFileSync(RT + 'mjs_store.ts', 'utf-8'))
+    ({ window } = await monterHote(HOTE, 'etat-map-set-iteration'))
+    assert.ok(window.eval('typeof µ.state === "function" && typeof µ.Store === "function"'), 'le cœur d\'un hôte qui écrit µ.state et µ.Store les porte')
   })
 
   it('µ.state : forEach, for…of, values, entries notifient comme get', () => {

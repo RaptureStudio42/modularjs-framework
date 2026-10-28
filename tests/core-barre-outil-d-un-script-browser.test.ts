@@ -41,7 +41,7 @@ const PAGE: Page = {
 
 const AVIS_FR  = (n: string) => `[ModularJS] <@@toolbar> : une barre reçoit l'outil « ${n} » d'un script, mais aucune page de l'application n'écrit cet outil — il n'est pas envoyé, ni en développement ni en production. Écrivez « ${n} » dans la liste d'outils d'une barre de votre page (l'attribut toolbar d'un éditeur, ou tools d'une barre) plutôt que de le poser par un script.`
 const AVIS_EN  = (n: string) => `[ModularJS] <@@toolbar>: a toolbar gets the tool "${n}" from a script, but no page of the application writes that tool — it is not shipped, neither in development nor in production. Write "${n}" in the tool list of a toolbar in your page (the toolbar attribute of an editor, or tools of a toolbar) instead of setting it from a script.`
-const INCONNU  = (n: string) => `[ModularJS] <@@toolbar> : l'outil « ${n} » n'existe pas, il est ignoré — outils connus : h2 h3 quote bold italic underline strike ul ol check link undo redo clear.`
+const INCONNU  = (n: string) => `[ModularJS] <@@toolbar> : l'outil « ${n} » n'existe pas, il est ignoré — outils connus : h2 h3 quote bold italic underline strike color ul ol check link undo redo clear.`
 const TEXTES   = ['une barre reçoit l\'outil', 'a toolbar gets the tool', 'toolbarToolScript']
 
 for (const build of BUILDS) for (const nom of MOTEURS) describe(`barre d'outils : un outil qu'un script donne et qu'aucune page ne nomme (${build}, ${nom} réel)`, function () {

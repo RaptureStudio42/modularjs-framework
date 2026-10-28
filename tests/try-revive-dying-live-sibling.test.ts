@@ -38,9 +38,10 @@ describe('_mjs_tryReviveDying — n\'agit plus si un nœud VIVANT partage la pla
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'stub.mjs'), '<p>stub</p>')
 
-    // `runtime: ['if']` : le stub n'écrit aucun `{if}` lui-même (le scan ne détecterait donc
+    // `runtime: ['if', 'destroy_hooks']` : le stub n'écrit aucun `{if}` lui-même (le scan ne détecterait donc
     // pas mjs_if.ts, où vit `_mjs_tryReviveDying` depuis son détachement de mjs_element.ts).
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if'] })
+    // (`destroy_hooks` : la reprise d'une sortie en cours n'entre au cœur qu'avec le fichier des transitions, seul à poser `_mjs_dying`)
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if', 'destroy_hooks'] })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0)
 
@@ -106,8 +107,8 @@ describe('_mjs_tryReviveDying — n\'agit plus si un nœud VIVANT partage la pla
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'stub2.mjs'), '<p>stub</p>')
-    // `runtime: ['if']` : même raison que le 1er test de ce fichier ci-dessus.
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if'] })
+    // `runtime: ['if', 'destroy_hooks']` : même raison que le 1er test de ce fichier ci-dessus.
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if', 'destroy_hooks'] })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0)
 

@@ -1,6 +1,6 @@
 {
   "name": "modularjs-framework",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "ModularJS (MJS) — framework front compile-time : réactivité résolue à la compilation (sans Proxy au runtime), Custom Elements + Shadow DOM, syntaxe .mjs (Civet par défaut). Compilateur + runtime + CLI dev/HMR.",
   "license": "MIT",
   "author": "Matrix",
@@ -29,21 +29,24 @@
   "main": "dist/index.js",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./src/index.ts"
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
     },
-    "./cli": "./dist/cli.js",
+    "./cli": {
+      "types": "./dist/types/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
     "./testing": {
-      "import": "./dist/testing.js",
-      "types": "./src/testing/index.ts"
+      "types": "./dist/types/testing/index.d.ts",
+      "import": "./dist/testing.js"
     },
     "./ws": {
-      "import": "./dist/mjs-ws.js",
-      "types": "./src/mjs-ws/index.ts"
+      "types": "./dist/types/mjs-ws/index.d.ts",
+      "import": "./dist/mjs-ws.js"
     },
     "./mjs-server": {
-      "import": "./dist/mjs-server.js",
-      "types": "./src/mjs-server/index.ts"
+      "types": "./dist/types/mjs-server/index.d.ts",
+      "import": "./dist/mjs-server.js"
     },
     "./package.json": "./package.json"
   },
@@ -51,21 +54,29 @@
     "mjs": "bin/mjs"
   },
   "scripts": {
-    "build:self": "esbuild src/cli.ts src/index.ts src/bundler/worker.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --entry-names=[name] && esbuild src/testing/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/testing.js && esbuild src/mjs-ws/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/mjs-ws.js && esbuild src/mjs-server/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=dist/mjs-server.js",
+    "build:self": "rm -f dist/chunk-*.js && esbuild cli=src/cli.ts index=src/index.ts worker=src/bundler/worker.ts testing=src/testing/index.ts mjs-ws=src/mjs-ws/index.ts mjs-server=src/mjs-server/index.ts --bundle --splitting --platform=node --target=node20 --format=esm --packages=external --outdir=dist --chunk-names=chunk-[hash]",
+    "build:types": "rm -rf dist/types && tsc -p tsconfig.types.json",
+    "check:publish": "node --import tsx script/check-publish.ts",
     "typecheck": "tsc --noEmit",
     "test": "bash script/test-enclos.sh",
+    "test:lies": "node --import tsx script/related-tests.ts",
     "test:brut": "mocha --recursive tests/ --extension ts --require tsx/esm --require ./tests/helpers/tmp-sweep.ts --exit",
     "test:browser": "mocha tests/browser-smoke/smoke.browser.mts tests/browser-smoke/transitions.browser.mts tests/browser-smoke/effets.browser.mts tests/browser-smoke/curseurs.browser.mts tests/browser-smoke/direct.browser.mts tests/browser-smoke/squelettes.browser.mts tests/browser-smoke/effets-visuels-rendu.browser.mts tests/browser-smoke/effets-visuels-ecran.browser.mts tests/browser-smoke/effets-grande-balise.browser.mts tests/browser-smoke/coeur-accessibilite.browser.mts --require tsx/esm --exit --timeout 600000",
     "lint": "eslint .",
     "bench:ws": "tsx bench/mjs-ws-bench.ts",
+    "prepack": "npm run build:types",
     "prepublishOnly": "npm run build:self && npm run typecheck && npm run lint && npm run test:browser",
     "repetition": "bash script/repetition-publication.sh"
   },
   "files": [
     "dist",
-    "src",
+    "src/runtime",
+    "src/core-modules",
+    "src/assets",
+    "src/server/*.mjs",
     "bin",
     "docs",
+    "!docs/img",
     "README.md",
     "LICENSE"
   ],
@@ -99,11 +110,15 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
+    "@types/node": "*",
     "happy-dom": ">=20.11.2",
     "sharp": ">=0.33",
     "yaml": "^2.9.0"
   },
   "peerDependenciesMeta": {
+    "@types/node": {
+      "optional": true
+    },
     "yaml": {
       "optional": true
     },

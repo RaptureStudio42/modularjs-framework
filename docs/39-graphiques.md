@@ -42,8 +42,9 @@ Deux props portent les données : `rows` et `series`.
 | `unit` | l'unité, écrite après chaque valeur (« 72 kg ») | aucune |
 | `color` | une teinte du thème (`1` à `6`, ou `blue`, `orange`, `green`, `pink`, `violet`, `gold`) ou une couleur CSS ; voir [Les couleurs](#les-couleurs) | les teintes dans l'ordre |
 | `kind` | `'text'` pour une série de mots | une série de nombres |
+| `axis` | `'right'` : la série prend sa propre échelle, graduée à droite ; voir [Deux échelles](#deux-échelles--axis-right) | `'left'` |
 
-**Une mesure** est un nombre fini, ou un texte qui se lit tout entier en nombre, comme le `Float` de Ruby le lit côté serveur : des blancs autour, un signe, des décimales (`'12'`, `'.5'`, `'5.'`, `'1e3'`), un hexadécimal (`'0x1A'`, `'0x1.8p1'`), un souligné seul entre deux chiffres (`'1_000'`). Ne se lisent pas : la virgule décimale (`'1,5'`), le binaire (`'0b101'`), l'octal (`'0o17'`), `'Infinity'`, deux soulignés de suite. Toute autre valeur laisse la case vide : un mot, un texte vide, `null`, une clé absente. Une case vide coupe la courbe et retire la barre ; la bulle l'écrit « — ».
+**Une mesure** est un nombre fini, ou un texte qui se lit tout entier en nombre, comme le `Float` de Ruby le lit côté serveur : des blancs autour, un signe, des décimales (`'12'`, `'.5'`, `'5.'`, `'1e3'`), un hexadécimal (`'0x1A'`, `'0x1.8p1'`), un souligné seul entre deux chiffres (`'1_000'`). Ne se lisent pas : la virgule décimale (`'1,5'`), le binaire (`'0b101'`), l'octal (`'0o17'`), `'Infinity'`, deux soulignés de suite. Toute autre valeur laisse la case vide : un mot, un texte vide, `null`, une clé absente. Une case vide coupe la courbe et retire la barre ; la bulle l'écrit « — ». Avec `bridge`, la courbe et l'aire passent par-dessus ([Relier par-dessus une case vide](#relier-par-dessus-une-case-vide--bridge)).
 
 **Une série de mots** (`kind: 'text'`) porte une note par ligne (« bien », « fatigué »). Le dessin l'ignore, elle ne compte dans aucun calcul ; la bulle et le tableau montrent ses mots. Quand les lignes sont regroupées par période (`step`), elle quitte la bulle et le tableau : un mot ne se moyenne pas.
 
@@ -78,7 +79,7 @@ Les six premières formes sont des **graphiques à axes** : ils partagent le cad
 
 Un trait par série visible, un point par ligne. Au-delà de 40 lignes affichées, la courbe garde son trait et perd ses points. L'axe y s'ajuste aux valeurs, sur des graduations rondes (quatre intervalles environ) : les multiples du pas, écrits justes (0,3 et non 0,30000000000000004), distincts à toute grandeur. Une graduation s'écrit court, avec tous ses chiffres : deux graduations voisines ne s'écrivent jamais pareil. Elle s'abrège dès 10 000 (« 12 k », « 1,25 M ») et passe en notation scientifique sous 0,0001 et dès 10^15 (« 3E-5 ») ; avec `decimals`, elle s'écrit en entier ([Les décimales](#les-décimales--decimals)). Les étiquettes de l'axe x restent entières et ne se chevauchent pas : elles se choisissent à la largeur réelle du tracé, relue à chaque changement de taille ; la première et la dernière restent.
 
-**Des unités différentes** (`kg` et `cm`) ne partagent pas une échelle : chaque série prend la sienne. Les graduations disparaissent et une note le dit : « Une échelle par série : leurs unités diffèrent ». Ce choix vaut pour les courbes, les aires, les points et les barres.
+**Des unités différentes** (`kg` et `cm`) ne partagent pas une échelle : chaque série prend la sienne. Les graduations disparaissent et une note le dit : « Une échelle par série : leurs unités diffèrent ». Ce choix vaut pour les courbes, les aires, les points et les barres. Pour garder des graduations, rangez une série à droite : elle prend sa propre échelle, graduée de son côté ([Deux échelles](#deux-échelles--axis-right)).
 
 ### `area` — aire
 
@@ -271,6 +272,8 @@ Une statistique demandée à une forme qui ne la trace pas est une faute. Écrit
 
 Sur un axe de temps (`date` ou `datetime`), `step` regroupe les lignes : une colonne par période, la moyenne des valeurs de chaque série de nombres, l'abscisse au premier jour de la période. La moyenne se calcule sans la poussière des flottants, à quinze chiffres significatifs : celle de 0,1 et 0,2 vaut 0,15, et une petite valeur garde ses chiffres. La bulle dit la période (« Semaine du 31 août 2026 », « octobre 2026 ») et le nombre de lignes réunies (« Moyenne de 3 valeurs »). La première colonne du tableau devient « Période ». Une période d'une seule ligne garde son `id` pour `@pick` ; une période de plusieurs lignes n'en a pas, son clic ne choisit rien.
 
+Une ligne dont la date n'existe pas (le 30 février, le 31 novembre) ou dont l'abscisse ne se lit pas ne se range dans aucune période : elle quitte le graphique, et une erreur le dit, une fois par abscisse ([Les fautes](#les-fautes)). Le calendrier fait de même. Sans regroupement, elle reste une colonne, écrite telle quelle ([Les heures](#les-heures)).
+
 `step` regroupe les formes qui suivent les lignes : courbe, aire, points, barres et barres empilées. Sur un axe qui n'est pas le temps, il est sans effet. L'histogramme, l'anneau, la carte et le radar lisent les lignes telles quelles. Le calendrier se sert de `step` pour choisir ses cases : `day` (et `auto`), `week` ou `month`.
 
 ## Cacher des séries — `hidden`
@@ -290,6 +293,39 @@ Une liste de clés de séries, en tableau ou en texte (`'tour taille'`). Une sé
 `[min, max]` : des bornes que l'échelle garde, même quand les valeurs restent loin d'elles. Une valeur qui les dépasse élargit l'échelle. `null` d'un côté laisse ce côté libre : `bounds={[0, null]}` fixe le bas seulement. Une valeur qui n'est pas un tableau est ignorée. Sur une carte et un calendrier, `bounds` règle l'échelle des cinq niveaux ; sur un radar, l'échelle comprend toujours 0.
 
 Sans `bounds`, les barres, les barres empilées, les aires et le radar partent de 0 ; la courbe et les points s'ajustent aux valeurs.
+
+## Deux échelles — `axis: 'right'`
+
+```html
+<script>
+  $meteo = [
+    { x: '2026-10-01', temperature: 14.2, pluie: 3 }
+    { x: '2026-10-02', temperature: 16.8, pluie: 0 }
+    { x: '2026-10-03', temperature: 12.5, pluie: 11 }
+  ]
+  $series = [{ key: 'temperature', name: 'Température', unit: '°C' }, { key: 'pluie', name: 'Pluie', unit: 'mm', axis: 'right' }]
+</script>
+
+<@@chart rows={$meteo} series={$series} shape="bar"></@@chart>
+```
+
+Une série écrite `axis: 'right'` prend sa propre échelle, graduée à droite du tracé ; les autres (`axis: 'left'`, le défaut) gardent celle de gauche. Chaque côté s'ajuste à ses séries comme un graphique à lui seul : des grandeurs éloignées (des degrés et des millimètres, un poids et une note de 1 à 5) se lisent toutes les deux. L'unité d'un côté s'écrit au bout de sa plus haute graduation (« 20 °C », « 12 mm ») quand ses séries la partagent. L'axe de droite se dessine, ses graduations ont leur gouttière, à la mesure de la plus longue. La grille suit les graduations de gauche, celles de droite quand aucune série de gauche n'a de valeur. Tant qu'aucune série de droite n'a de valeur, le graphique garde une seule échelle.
+
+- **Les formes** : la courbe, l'aire, les points et les barres. Sur des barres, les séries des deux côtés restent côte à côte dans chaque case, chacune depuis le zéro de son échelle.
+- **`bounds`** règle l'échelle de gauche ; celle de droite s'ajuste à ses séries (elle comprend 0 pour les barres et les aires).
+- **Des unités différentes d'un même côté** : ce côté prend une échelle par série, sans graduations, et la note « Une échelle par série » le dit, comme sur un graphique à une seule échelle.
+- **Les statistiques et la tendance** d'une série se tracent sur son échelle.
+- **La bulle** donne chaque série avec son unité, quel que soit son axe ; ses points allumés se posent sur l'échelle de leur série. **Le tableau caché** des lecteurs d'écran ne change pas : chaque valeur y est écrite avec son unité. **La légende** de la barre d'outils garde une pastille par série ; cacher toutes les séries de droite rend une seule échelle.
+- **Les autres formes** (barres empilées, histogramme, anneau, carte, radar, calendrier) n'ont qu'une échelle, ou aucune : `axis: 'right'` y est ignoré, et un avertissement de développement le dit ([Les fautes](#les-fautes)), sauf quand la forme vient d'un choix de la barre d'outils ; quand la forme et la série sont écrites sur la balise, la construction le dit aussi. Une série de mots n'a pas d'axe.
+- **Un autre mot** que `left` ou `right` est une faute : la série reste à gauche, et une erreur le dit.
+
+## Relier par-dessus une case vide — `bridge`
+
+```html
+<@@chart rows={$pesees} series={$series} bridge></@@chart>
+```
+
+Sans `bridge`, une case vide (une mesure qui manque) coupe la courbe : le trait s'arrête au point d'avant et reprend au point d'après. Avec `bridge`, la courbe et l'aire passent d'un point au suivant par-dessus les cases vides : le trait et la surface restent d'un seul tenant. Aucun point ne se dessine sur une case vide, la bulle et le tableau l'écrivent toujours « — », et rien ne se prolonge avant le premier point ni après le dernier. Les points, les barres et les autres formes ne relient rien : `bridge` ne les change pas.
 
 ## L'axe x — `axis` et `axis-unit`
 
@@ -437,7 +473,7 @@ Une liste garde sa forme : un texte reste un texte (`'mean trend'`), un tableau 
 | Prop | Valeurs | Défaut |
 |---|---|---|
 | `rows` | les lignes : `{ id, x, readings }`, ou les mesures à plat | `[]` |
-| `series` | les séries : `{ key, name, unit, color, kind }` | `[]` |
+| `series` | les séries : `{ key, name, unit, color, kind, axis }` | `[]` |
 | `shape` | `line`, `area`, `dots`, `bar`, `stack`, `histogram`, `pie`, `heatmap`, `radar`, `calendar` — à deux sens | `'line'` |
 | `stats` | `mean`, `median`, `q1`, `q3`, `trend`, en texte ou en tableau — à deux sens | aucune |
 | `step` | `auto`, `day`, `week`, `month`, `year` — à deux sens | `'auto'` |
@@ -449,6 +485,7 @@ Une liste garde sa forme : un texte reste un texte (`'mean trend'`), un tableau 
 | `empty-label` | le texte d'un graphique vide | « Aucune valeur » |
 | `timezone` | `local`, ou une zone IANA (`Europe/Paris`, `UTC`) : l'heure des instants affichés | l'heure telle qu'écrite |
 | `decimals` | un entier de 0 à 10 : les chiffres après la virgule de chaque mesure | l'écriture automatique |
+| `bridge` | relie les points d'une courbe ou d'une aire par-dessus une case vide | non |
 | `pickable` | un clic ou Entrée choisit une ligne (`@pick`) | non |
 | `toolbar` | les outils de la barre : `legend`, `shapes`, `stats`, `step` | pas de barre |
 | `shapes` | les formes du menu de la barre, dans l'ordre du module | les dix formes |
@@ -478,9 +515,9 @@ Une couleur CSS part telle quelle : `'#c0392b'`, `'rgb(192 57 43)'`, `'oklch(62%
 
 À la construction, une couleur écrite dans une série sur la balise est aussi refusée quand le navigateur ne saurait pas la lire, à coup sûr : un mot qui n'est ni une teinte, ni une couleur nommée ou système du CSS (`'bleu'`) ; un `#` qui n'a pas 3, 4, 6 ou 8 chiffres ; une fonction qui n'est pas une couleur. Les fonctions de couleur sont `rgb`, `rgba`, `hsl`, `hsla`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `color`, `color-mix`, `light-dark` et `var`. Dans le doute (deux mots, une fonction suivie d'autre chose), rien n'est refusé à la construction. À l'exécution, une couleur venue d'une variable est vérifiée par le navigateur (`CSS.supports`) : une couleur qu'il ne sait pas lire est refusée comme les autres (voir [Les fautes](#les-fautes)).
 
-### Les treize variables
+### Les quatorze variables
 
-Le reste se règle par treize variables de thème :
+Le reste se règle par quatorze variables de thème :
 
 | Variable | Ce qu'elle colore | Sans réglage |
 |---|---|---|
@@ -490,6 +527,7 @@ Le reste se règle par treize variables de thème :
 | `$$chart-tip-bg` | le fond de la bulle et du menu des formes | `$$surface`, sinon `Canvas` |
 | `$$chart-tip-fg` | le texte de la bulle, du menu des formes et d'une pastille allumée | `$$fg`, sinon `CanvasText` |
 | `$$chart-tip-border` | le bord de la bulle et du menu des formes, le filet au-dessus du total | `$$border`, sinon la couleur du texte à 22 % |
+| `$$chart-tip-title` | le titre de la bulle | la couleur du texte de la bulle |
 | `$$chart-stat-mean` | le trait de la moyenne | la teinte de la série (la teinte neutre sur un histogramme) |
 | `$$chart-stat-median` | le trait de la médiane | idem |
 | `$$chart-stat-q1` | le trait du premier quartile | idem |
@@ -515,6 +553,7 @@ Elles se règlent partout où se règle une variable de thème ([31 · Thèmes](
 
 ### Taille, parts et autres variables
 
+- `$$chart-grid-opacity` : l'opacité des lignes de la grille des graphiques à axes, de 0 à 1. Défaut : 0,5.
 - `$$chart-height` : la hauteur du tracé des graphiques à axes, et le diamètre de l'anneau. Défaut : 180 px. La carte prend 26 px par ligne ; le radar et le calendrier ont leur taille, et se resserrent sur un écran étroit.
 - `$$accent` colore le contour du focus et le curseur d'un graphique qui se choisit (`#3b82f6` sans réglage) ; `$$surface`, le liseré entre deux parts de l'anneau et autour des points allumés ; `$$shadow`, l'ombre de la bulle.
 - **Parts**, pour `::part()` : `chart` (le tout), `tools` (la barre d'outils), `menu` (le menu des formes), `frame`, `plot`, `hit` (la zone qui reçoit le pointeur), `tip` (la bulle), `empty`, `note`, `keys` (la légende des statistiques), `pie`, `ring`, `center`, `legend`, `heat`, `radar`, `dial`, `calendar`, `ramp` (la légende d'intensité), `blank` (le cadre d'une carte, d'un radar ou d'un calendrier vides).
@@ -529,6 +568,7 @@ Quand la valeur est écrite en texte sur la balise, la construction s'arrête, a
 
 - un mot inconnu de `shape`, `stats`, `step`, `axis`, `toolbar` ou `shapes` ;
 - une couleur refusée, dans une série écrite sur la balise (`series={[{ key: 'v', color: 'red;x' }]}`, `color: 'bleu'`, `color: '#12345'`, `color: '0'`, `color: 0` écrit en nombre) ;
+- un axe de série qui n'est ni `left` ni `right`, dans une série écrite sur la balise (`series={[{ key: 'pluie', axis: 'droite' }]}`, `axis: 'Right'`) ;
 - des statistiques que la forme ne trace pas : `stats` sur `stack`, `pie`, `heatmap`, `radar` ou `calendar`, `trend` sur `histogram` ;
 - `step="year"`, ou un axe qui n'est pas une date, sur un calendrier ;
 - un radar dont les lignes, écrites sur la balise, sont moins de 3 ;
@@ -540,16 +580,25 @@ Quand la valeur est écrite en texte sur la balise, la construction s'arrête, a
 [bundler] …/src/page.mjs : <@@chart shape="courbe"> — « courbe » n'est pas une valeur connue de shape (valeurs connues : line area dots bar stack histogram pie heatmap radar calendar). Corrigez la faute de frappe.
 [bundler] …/src/page.mjs : <@@chart toolbar="legend tableau"> — « tableau » n'est pas une valeur connue de toolbar (valeurs connues : legend shapes stats step). Corrigez la faute de frappe.
 [bundler] …/src/page.mjs : <@@chart series={…}> — la couleur « bleu » est refusée : écrivez un nom de teinte (blue orange green pink violet gold), un entier de 1 ou plus (au-delà de 6, on reprend au début) ou une couleur CSS que le navigateur sait lire, sans « ; », « : », guillemet, accolade, « < », « > », « \ », « /* » ni url(…).
+[bundler] …/src/page.mjs : <@@chart series={…}> — axis « droite » d'une série n'est pas une valeur connue (valeurs connues : left right). Corrigez la faute de frappe.
 [bundler] …/src/page.mjs : <@@chart shape="pie" stats="mean"> — la forme pie ne trace pas stats « mean » (formes qui tracent des statistiques : line area dots bar histogram ; trend : line area dots bar). Retirez « mean » de stats ou changez de forme.
 [bundler] …/src/page.mjs : <@@chart shape="histogram" stats="mean trend"> — la forme histogram ne trace pas stats « trend » (formes qui tracent des statistiques : line area dots bar histogram ; trend : line area dots bar). Retirez « trend » de stats ou changez de forme.
 [bundler] …/src/page.mjs : <@@chart shape="calendar" step="year"> — step="year" ne va pas avec la forme calendar (valeurs possibles : auto day week month).
 [bundler] …/src/page.mjs : <@@chart shape="radar" rows={…}> — un radar demande au moins 3 lignes, une par axe : 2 sont écrites.
 [bundler] …/src/page.mjs : <@@chart timezone="Europe/Pari"> — « Europe/Pari » n'est pas un fuseau connu : écrivez local (l'heure de l'écran du visiteur) ou le nom d'une zone IANA (Europe/Paris, America/New_York, UTC…), ou retirez timezone pour afficher les heures telles qu'elles sont écrites.
 [bundler] …/src/page.mjs : <@@chart decimals="12"> — decimals attend un nombre entier de 0 à 10, le nombre de chiffres après la virgule : « 12 » ne convient pas.
-[bundler] …/src/page.mjs : <@@chart emptyLabel=…> — écrivez empty-label : le HTML met les noms d'attributs en minuscules, et emptyLabel écrit en dur arriverait en emptylabel, ignoré.
+[bundler] …/src/page.mjs : <@@chart emptyLabel=…> — écrivez empty-label : sur un module du cœur, un attribut écrit en dur s'écrit à tirets, comme dans sa documentation. Écrit ainsi, emptyLabel arriverait en minuscules (emptylabel) et le module le recevrait pourtant sous son nom : la construction n'en garde qu'une écriture.
 ```
 
-Une combinaison ne se vérifie que si ses deux côtés sont écrits en texte, et qu'aucun étalement (`{...reglages}`) ne peut poser l'autre côté. Les lignes d'un radar ne se comptent que si `rows` est un tableau écrit sur la balise, objet par objet. Une valeur calculée (`shape={$forme}`) passe la construction : le module la vérifie à l'exécution.
+Une combinaison ne se vérifie que si ses deux côtés sont écrits en texte, et qu'aucun étalement (`{...reglages}`) ne peut poser l'autre côté. Les lignes d'un radar ne se comptent que si `rows` est un tableau écrit sur la balise, objet par objet. Une valeur calculée (`shape={$forme}`, et dans une série un texte suivi d'autre chose : `axis: $mode == 'x' ? 'right' : 'left'`, `axis: 'droite' + $suffixe`, `color: 'bleu' + $nuance`) passe la construction : le module la vérifie à l'exécution. Un commentaire derrière la valeur (`// …`, `/* … */`), ou la fin de la ligne quand la suivante ouvre la clé suivante au même retrait, la laissent écrite seule : `axis: 'droite' // à revoir` arrête la construction. Une ligne suivante plus en retrait la continue (Civet en fait un appel de la valeur), comme un `#` derrière elle : le gabarit n'a pas de commentaire `#`.
+
+Une série écrite `axis: 'right'` sur une forme écrite qui n'a qu'une échelle, ou aucune, n'arrête pas la construction : la série reste sur l'échelle du graphique, et un avertissement le dit ([Deux échelles](#deux-échelles--axis-right)) :
+
+```
+[bundler] …/src/page.mjs : <@@chart shape="stack" series={…}> — la forme stack n'a qu'une échelle, axis « right » est ignoré pour pluie (formes à deux échelles : line area dots bar). Retirez axis: 'right' ou changez de forme.
+```
+
+Il vient quand la forme est écrite en texte, sans étalement sur la balise, et que la série est un objet écrit dans le tableau `series={[…]}`, avec sa clé et `axis: 'right'` écrits, sans `kind: 'text'` (une série de mots n'a pas d'axe). Un radar dont les lignes écrites sont 1 ou 2 n'en a pas : une courbe le remplace. Une forme, une série ou une valeur calculée ne se lit pas à la construction : le module le dit à l'exécution.
 
 ### Venue d'une variable : une erreur dans la console
 
@@ -569,6 +618,8 @@ Le module vérifie la valeur qu'il reçoit. Une faute écrit une erreur (`µ.err
 | un axe qui n'est pas une date sur un calendrier | l'axe deviné sur les abscisses |
 | une zone inconnue dans `timezone` | les heures telles qu'écrites |
 | une valeur de `decimals` hors de 0 à 10 | l'écriture automatique |
+| un mot inconnu de `axis` dans une série | la série reste sur l'axe de gauche |
+| une ligne dont la date n'existe pas, quand `step` regroupe ou sur un calendrier | la ligne quitte le graphique |
 
 ```
 <@@chart> : « courbe » n'est pas une valeur connue de shape, elle est ignorée — valeurs connues : line area dots bar stack histogram pie heatmap radar calendar.
@@ -578,7 +629,11 @@ Le module vérifie la valeur qu'il reçoit. Une faute écrit une erreur (`µ.err
 <@@chart> : step « year » ne va pas avec la forme calendar, il est ignoré — valeurs possibles : auto day week month.
 <@@chart> : « Europe/Pari » n'est pas un fuseau connu, il est ignoré — écrivez local ou le nom d'une zone IANA (Europe/Paris, UTC…) ; sans fuseau, les heures s'affichent telles qu'elles sont écrites.
 <@@chart> : decimals « 12 » est ignoré — écrivez un nombre entier de 0 à 10 ; sans decimals, les nombres gardent leur écriture automatique.
+<@@chart> : axis « droite » de la série « pluie » n'est pas une valeur connue, la série reste sur l'axe de gauche — valeurs connues : left right.
+<@@chart> : « 2026-02-30 » n'est pas une date qui existe, sa ligne ne se range dans aucune période et quitte le graphique — écrivez un jour possible (AAAA-MM-JJ) ou un instant qui se lit.
 ```
+
+`axis` d'une série venue d'une variable se vérifie ici, à l'exécution ; écrite sur la balise, elle arrête la construction (voir plus haut). La date d'une ligne ne se contrôle que lorsqu'elle doit se ranger dans une période ; après un pas ou une forme choisis dans la barre d'outils, rien n'est écrit en console.
 
 ### Une limite des données : un avertissement en développement
 
@@ -590,9 +645,10 @@ Certaines données dépassent ce qu'une forme montre bien. Ce n'est pas une faut
 <@@chart> : un radar demande au moins 3 lignes, une par axe ; il en reçoit 2, une courbe le remplace.
 <@@chart> : la série « remboursements » n'a pas de total positif, l'anneau ne lui donne aucune part.
 <@@chart> : le libellé « Bâle » n'a pas de total positif, l'anneau ne lui donne aucune part.
+<@@chart> : la forme stack n'a qu'une échelle, axis « right » est ignoré pour pluie — formes à deux échelles : line area dots bar.
 ```
 
-Le premier vient des barres empilées, du radar et de la carte par série, quand les séries visibles qui ont une valeur n'ont pas la même unité. Le deuxième vient d'un radar de plus de 24 lignes. Le troisième vient d'un radar qui reçoit 1 ou 2 lignes d'une variable : ce n'est pas une erreur, une courbe le remplace. Le quatrième vient d'un anneau par série : une série sans total positif n'y a pas de part. Le cinquième vient d'un anneau par libellé : un libellé dont le total n'est pas positif (des valeurs négatives, ou qui s'annulent) n'y a pas de part. Aucun ne vient d'un choix fait dans la barre d'outils.
+Le premier vient des barres empilées, du radar et de la carte par série, quand les séries visibles qui ont une valeur n'ont pas la même unité. Le deuxième vient d'un radar de plus de 24 lignes. Le troisième vient d'un radar qui reçoit 1 ou 2 lignes d'une variable : ce n'est pas une erreur, une courbe le remplace. Le quatrième vient d'un anneau par série : une série sans total positif n'y a pas de part. Le cinquième vient d'un anneau par libellé : un libellé dont le total n'est pas positif (des valeurs négatives, ou qui s'annulent) n'y a pas de part. Le sixième vient d'une série écrite `axis: 'right'` sur une forme qui n'a qu'une échelle, ou aucune : la série reste sur l'échelle du graphique ; écrites toutes deux sur la balise, la forme et la série le font dire aussi à la construction (voir plus haut). Aucun ne vient d'un choix fait dans la barre d'outils.
 
 ## Les limites
 
@@ -615,6 +671,7 @@ Le premier vient des barres empilées, du radar et de la carte par série, quand
 
 - **Un tableau caché double le dessin.** Les lecteurs d'écran lisent un tableau des valeurs affichées ; son titre est `label`. La première colonne donne l'abscisse (« Date », « Date et heure », « Valeur », « Libellé », ou « Période » après un regroupement), puis une colonne par série visible, avec son unité ; les séries de mots en font partie tant que rien n'est regroupé, et les barres empilées ajoutent « Total ». L'histogramme donne une ligne par classe ; l'anneau une ligne par part, avec sa valeur et son pourcentage ; la carte jour × heure et le calendrier, une ligne par case qui a des relevés. Le dessin et la bulle sont cachés aux lecteurs d'écran.
 - **Le clavier.** Un graphique à axes se parcourt au clavier quand il est `pickable` ; l'histogramme, l'anneau, la carte, le radar et le calendrier se parcourent toujours. La zone reçoit le focus, avec un nom qui dit les touches (« Flèches pour parcourir les valeurs »). Les flèches gauche et droite vont d'une colonne, d'une part ou d'une case à l'autre ; sur une grille, haut et bas changent de ligne (sur la carte jour × heure, d'un jour à l'autre ; sur le calendrier par jour, gauche et droite changent de semaine, haut et bas de jour). Début et Fin vont au premier et au dernier ; Échap ferme la bulle ; Entrée ou Espace choisit, quand le graphique se choisit.
+- **Deux échelles.** Le tableau caché donne chaque valeur avec son unité, que sa série soit graduée à gauche ou à droite.
 - **Une région annoncée.** Pendant le parcours au clavier, chaque position s'annonce : le titre de la bulle, puis chaque ligne (« Poids 72 kg »).
 - **Au doigt**, un appui ouvre la bulle, l'appui suivant ailleurs dans la page la ferme ; le défilement vertical reste libre sur le dessin.
 - **La bulle** s'ouvre à droite du curseur, à gauche quand la place manque, sinon au mieux : jamais coupée par le cadre du graphique ni par l'écran.
@@ -622,7 +679,7 @@ Le premier vient des barres empilées, du radar et de la carte par série, quand
 
 ## Le rendu serveur
 
-Dans une page rendue par le serveur, le graphique est dessiné dans le HTML servi : le cadre, les graduations, les étiquettes, les séries, les statistiques et le tableau ; les barres empilées, l'histogramme et l'anneau avec son centre et sa légende ; le calendrier, le radar et la carte avec leurs cases, leurs axes et leur légende. Aucune teinte du thème n'est écrite en style dans les balises : elles passent par des classes. Le serveur ne connaît pas la largeur du tracé : il espace les étiquettes de l'axe x selon la plus longue, et règle la gouttière des graduations sur une estimation de leur largeur ; dans le navigateur, le graphique mesure son tracé et ses graduations, choisit de nouveau les étiquettes et ajuste la gouttière. La page reprise par le navigateur garde le dessin du serveur, sans saut, puis répond au pointeur. Les heures sont les mêmes des deux côtés, quelle que soit leur écriture (ISO 8601, `Time#to_s` de Ruby, RFC 2822), sauf avec `timezone="local"` : elles passent à l'heure du visiteur à la reprise (voir [Les heures](#les-heures)).
+Dans une page rendue par le serveur, le graphique est dessiné dans le HTML servi : le cadre, les graduations (des deux côtés avec `axis: 'right'`), les étiquettes, les séries, les statistiques et le tableau ; les barres empilées, l'histogramme et l'anneau avec son centre et sa légende ; le calendrier, le radar et la carte avec leurs cases, leurs axes et leur légende. Aucune teinte du thème n'est écrite en style dans les balises : elles passent par des classes. Le serveur ne connaît pas la largeur du tracé : il espace les étiquettes de l'axe x selon la plus longue, et règle les gouttières des graduations sur une estimation de leur largeur ; dans le navigateur, le graphique mesure son tracé et ses graduations, choisit de nouveau les étiquettes et ajuste la gouttière. La page reprise par le navigateur garde le dessin du serveur, sans saut, puis répond au pointeur. Les heures sont les mêmes des deux côtés, quelle que soit leur écriture (ISO 8601, `Time#to_s` de Ruby, RFC 2822), sauf avec `timezone="local"` : elles passent à l'heure du visiteur à la reprise (voir [Les heures](#les-heures)).
 
 ## Le poids
 

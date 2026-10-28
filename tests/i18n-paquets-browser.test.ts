@@ -141,7 +141,7 @@ const construire = (env: Env) => {
 const SONDE = (balise: string) => {
   const w = window as any
   w.__images = []
-  const vu     = (el: any) => !!el && el.getClientRects().length > 0
+  const vu     = (el: any) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
   const ombre  = (el: any) => el && (el._shadow || el.shadowRoot)
   const texte  = (racine: any, sel: string) => { const e = racine && racine.querySelector(sel); return e ? e.textContent.trim() : null }
   const tick = () => {

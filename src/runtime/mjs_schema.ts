@@ -48,6 +48,18 @@
 // Limite ACTÉE (cf. src/schema/core.ts) : l'enveloppe binaire ne porte AUCUN id de
 // corrélation → jamais utilisée pour sock.request() (accusés de réception, rares) — un frame avec
 // `id` reste TOUJOURS JSON, même si son type a un schéma déclaré (cf. µ._mjs_mjschemaEncode).
+//
+// Fichier AUTONOME : il s'évalue aussi seul, sans le cœur (`new Function('µ', source)(µ)`, test Node d'une application qui
+// éprouve son fil binaire). Ce qu'il demande au cœur, il le pose lui-même quand il manque : le texte des messages
+// (`µ._mjs_txt`, mjs_init.ts : sans la table, le texte français de secours, variables posées) et le journal (`µ.error`,
+// `µ.warn` : la console). Dans un build, le cœur est toujours évalué avant lui : rien de tout cela ne sert.
+if (typeof µ._mjs_txt !== 'function') {
+  µ._mjs_txt = function(key, vars, fr) {
+    return String(fr == null ? key : fr).replace(/\{(\w+)\}/g, function(m, n) { return vars && Object.prototype.hasOwnProperty.call(vars, n) ? String(vars[n]) : m; });
+  };
+}
+if (typeof µ.error !== 'function') { µ.error = function(...args) { console.error(...args); }; }
+if (typeof µ.warn !== 'function') { µ.warn = function(...args) { console.warn(...args); }; }
 
 // --- registre pur (port de src/schema/core.ts) ---------------------------------------------------
 

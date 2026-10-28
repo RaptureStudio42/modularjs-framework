@@ -131,6 +131,23 @@ describe('les refus gardent leur rôle dans une interpolation', () => {
     assert.match(await erreurDe(`${IMPORT}<p>{"n#{$$Boite.a}"}</p>\n`), /« \$\$Boite » : « Boite » est un singleton importé/)
   })
 
+  // le lint des singletons laisse `$$X` d'une interpolation au lexeur et au générateur : chaque forme garde leur refus
+  it('`$$Boite` dans toute forme d\'interpolation : le même refus, situé dans un script', async () => {
+    const formes: Array<[string, RegExp | null]> = [
+      [ script([ 'lire := ->', '  s := `n${$$Boite.a}`', '  console.log s' ]), /sonde\.script:4:\d+ / ],
+      [ script([ 'lire = ->', '  s = "n#{$$Boite.a}"', '  console.log s' ], '<p>x</p>', ' lang="coffee"'), /sonde\.script:4:\d+ / ],
+      [ `${IMPORT}<script module>\nmsg := "n#{$$Boite.a}"\n</script>\n<p>x</p>\n`, /sonde\.module:3:\d+ / ],
+      [ `${IMPORT}<p>{\`n\${$$Boite.a}\`}</p>\n`, null ],
+      [ `${IMPORT}<p title={"n#{$$Boite.a}"}>t</p>\n`, null ],
+      [ `${IMPORT}<button @click={console.log "n#{$$Boite.a}"}>t</button>\n`, null ]
+    ]
+    for (const [ source, position ] of formes) {
+      const message = await erreurDe(source)
+      assert.match(message, /« \$\$Boite » : « Boite » est un singleton importé/, `${source}\n→ ${message}`)
+      if (position) assert.match(message, position, `${source}\n→ ${message}`)
+    }
+  })
+
   it('témoin : le store global `$$panier`, non importé, se lit toujours `µ.store.panier` dans une interpolation', async () => {
     const out = await compile(script([ 'lire := ->', '  s := "n#{$$panier.total}"', '  console.log s' ], '<p>{"m#{$$panier.total}"}</p>'))
     assert.match(out, /const s = `n\$\{µ\.store\.panier\.total\}`/)
@@ -160,6 +177,43 @@ describe('les refus gardent leur rôle dans une interpolation', () => {
     const dans = await erreurDe(`<script module>\nexport µ$$Boite = { a: 1 }\nmsg := "n#{µ$$Boite.a}"\n</script>\n<p>x</p>\n`)
     assert.match(hors, /« µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
     assert.match(dans, /sonde\.module:3:12 \[ModularJS\] « µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
+  })
+})
+
+// `$X` (la forme compilée du singleton) n'est refusé que là où il est lu : le code d'une interpolation suit la grammaire des
+// chaînes du langage du bloc — `#{…}` interpole en Civet et en Coffee (guillemets doubles, `"""…"""`, imbriquée dans une autre
+// interpolation), jamais en JavaScript, où une chaîne entre guillemets doubles reste du texte
+describe('lecture `$X` d\'un singleton importé : refusée là où la chaîne interpole', () => {
+  const REFUS = /Le singleton importé « Boite » se consomme avec « µ\$\$Boite »/
+
+  it('<script lang="js"> : `"n#{$Boite.a}"` est du texte en JavaScript, la compilation passe', async () => {
+    const out = await compile(script([ 'function lire() { const s = "n#{$Boite.a}"; console.log(s) }' ], '<p>x</p>', ' lang="js"'))
+    assert.match(out, /"n#\{\$Boite\.a\}"/)
+  })
+
+  it('<script lang="js"> : `` `n${$Boite.a}` `` reste refusé', async () => {
+    assert.match(await erreurDe(script([ 'function lire() { const s = `n${$Boite.a}`; console.log(s) }' ], '<p>x</p>', ' lang="js"')), REFUS)
+  })
+
+  it('interpolation imbriquée `"a #{"b #{$Boite.a}"}"` : refusée, comme hors interpolation', async () => {
+    assert.match(await erreurDe(script([ 'lire := ->', '  s := "a #{"b #{$Boite.a}"}"', '  console.log s' ])), REFUS)
+  })
+
+  it('chaîne sur plusieurs lignes `"""…#{$Boite.a}…"""` : refusée', async () => {
+    assert.match(await erreurDe(script([ 'lire := ->', '  s := """', '    x #{$Boite.a}', '  """', '  console.log s' ])), REFUS)
+  })
+
+  it('Coffee : imbriquée et `"""…"""`, refusées', async () => {
+    assert.match(await erreurDe(script([ 'lire = ->', '  s = "a #{"b #{$Boite.a}"}"', '  console.log s' ], '<p>x</p>', ' lang="coffee"')), REFUS)
+    assert.match(await erreurDe(script([ 'lire = ->', '  s = """', '    x #{$Boite.a}', '  """', '  console.log s' ], '<p>x</p>', ' lang="coffee"')), REFUS)
+  })
+
+  it('gabarit : `{"""…#{$Boite.a}…"""}` refusé', async () => {
+    assert.match(await erreurDe(`${IMPORT}<p>{"""\n  x #{$Boite.a}\n"""}</p>\n`), REFUS)
+  })
+
+  it("témoins : `'''…#{$Boite.a}…'''`, `'#{$Boite.a}'` et `\\#{…}` restent du texte", async () => {
+    await compile(script([ 'lire := ->', "  s := '''", '    x #{$Boite.a}', "  '''", "  t := 'n#{$Boite.a}'", '  u := "n\\#{$Boite.a}"', '  console.log s, t, u' ]))
   })
 })
 
@@ -210,5 +264,22 @@ describe('module autonome compilé par le bundler : singleton lu dans une interp
     finally {
       await bundler.close()
     }
+  })
+})
+
+// le gabarit n'a pas de commentaire `#` : sa prose (« N° #1 », « C# ») est du texte, ses expressions du Civet, où `#` vaut `this.length`.
+// Un `#` écrit avant une lecture `{$Boite.a}` sur la même ligne la laissait passer sans refus
+describe('un `#` dans le texte du gabarit ne cache pas la lecture qui le suit', () => {
+  const REFUS = /Le singleton importé « Boite » se consomme avec « µ\$\$Boite »/
+
+  it('`N° #1 : {$Boite.a}`, `Le C# et {$Boite.a}`, `### {$Boite.a}` : refusés, comme sans `#`', async () => {
+    for (const gabarit of [ '<p>N° 1 : {$Boite.a}</p>', '<p>N° #1 : {$Boite.a}</p>', '<p>Le C# et {$Boite.a}</p>', '<p>### {$Boite.a}</p>', '<p>#{$Boite.a}</p>', '<p><a href="#x">#1</a> {$Boite.a}</p>' ]) {
+      assert.match(await erreurDe(`${IMPORT}${gabarit}\n`), REFUS, gabarit)
+    }
+  })
+
+  it('témoins : `#` ordinaire (prose, lien, couleur du style) avec la forme juste `{µ$$Boite.a}`, la compilation passe', async () => {
+    const out = await compile(`${IMPORT}<p class="n">N° #1, le C# et <a href="#x">#ancre</a> : {µ$$Boite.a}</p>\n<style>\n  .n\n    color: #333\n</style>\n`)
+    sansResidu(out)
   })
 })

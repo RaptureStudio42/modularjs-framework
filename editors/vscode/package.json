@@ -1,8 +1,8 @@
 {
   "name": "modularjs",
   "displayName": "ModularJS",
-  "description": "Coloration syntaxique des composants ModularJS (.mjs), complétion et aide au survol des 117 effets — script Civet, gabarit, table de routes (bloc <routes> et forme calculée @routes), types et valeurs permises (blocs <vars> et <types>), blocs theme et style en SASS (ou le langage de lang=\"…\", côté script comme côté style), symboles $ $$ § µ @.",
-  "version": "1.15.0",
+  "description": "Coloration syntaxique des composants ModularJS (.mjs), complétion et aide au survol des 117 effets, des 200 alias que ModularJS livre et des effets de l'appli (fichiers *.effects.mjs), en français ou en anglais selon la langue de VS Code — script Civet, gabarit, table de routes (bloc <routes> et forme calculée @routes), types et valeurs permises (blocs <vars> et <types>), blocs theme et style en SASS (ou le langage de lang=\"…\", côté script comme côté style), symboles $ $$ § µ @.",
+  "version": "1.16.0",
   "publisher": "rapturestudio",
   "license": "MIT",
   "categories": ["Programming Languages"],

@@ -24,7 +24,7 @@
 // l'appli hôte → erreur claire immédiate) :
 //
 // Requêtes CLIENT → SERVEUR (app.serve, µ:ack en retour — succès = valeur, throw = ack d'erreur) :
-//   µgame:play   { type, code?, spectator? } → { queue: n } (file, pas encore complet)
+//   µgame:play   { type, code?, spectator?, snapshots? } → { queue: n } (file, pas encore complet)
 //                                         | { game, seat, phase, turn, seq, code, ...info } (assis)
 //                                       `code` discriminé par TYPE, jamais par sa seule présence :
 //                                         absent = file publique ; `true` = crée une partie privée
@@ -44,13 +44,16 @@
 //                                       `...info` (game.ts::_infoMode) = `{ view }` (authoritative)
 //                                         | `{ seed, journal }` (lockstep — journal
 //                                         COMPLET des ordres à ce jour, cf. mjs-server/lockstep.ts).
+//                                       `snapshots: true` — le client sait repartir d'un instantané lockstep (toujours
+//                                         envoyé par mjs_game.ts, ici et dans µgame:resync) : une partie dont le journal est
+//                                         coupé refuse la requête qui ne le porte pas (cf. game.ts::_requireSnapshotReader).
 //   µgame:move   { game, move, p? }    → { ok: true, result } — throw (garde interne OU le move
 //                                       lui-même) → ack d'erreur, comme tout app.serve() normal.
 //                                       Mode lockstep : `result` toujours `undefined`
 //                                       — le coup n'est PAS exécuté, il devient un ORDRE mis en file
 //                                       pour le tick courant (diffusé à tous, cf. µgame:orders).
 //   µgame:leave  { game }              → { ok: true } — vide le siège (≠ déconnexion, qui le garde)
-//   µgame:resync { game }              → { game, seat, phase, turn, seq, code, ...info } (cf.
+//   µgame:resync { game, snapshots? }  → { game, seat, phase, turn, seq, code, ...info } (cf.
 //                                       µgame:play ci-dessus pour `...info`) — rattache CETTE
 //                                       connexion à son siège (identité stable requise, cf.
 //                                       peerIdOf/game.ts) et renvoie une info fraîche COMPLÈTE ;
@@ -96,6 +99,7 @@
 // `onDisconnect` déjà fourni par l'appli hôte (les deux tournent, jamais l'un à la place de l'autre).
 
 import { mjsWs } from '../mjs-ws/index.js'
+import { DEFAULT_MAX_PAYLOAD } from '../mjs-ws/transport.js'
 import type { MjsWsApp, MjsWsLogFn, MjsWsOptions, MjsWsStatsSnapshot } from '../mjs-ws/index.js'
 import { resolveGameDef, receivedReadable } from './game-def.js'
 import type { MjsServerGameDef, MjsServerResolvedDef } from './game-def.js'
@@ -339,6 +343,9 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
     // plus aucun coup accepté dès le début de l'arrêt : la rafale finale ci-dessous ne le contiendrait pas, il serait acquitté puis
     // perdu au redémarrage
     matchmaking!.refuseMoves()
+    // plus aucune minuterie de partie ne part non plus : une grâce échue pendant la rafale finale (stockage lent) détruisait la partie
+    // en plein arrêt (hooks.onDestroy appelé, sauvegarde retirée) ; l'échéance reste dans la sauvegarde et part au redémarrage
+    matchmaking!.holdTimers()
     // rafale finale de persistance AVANT destroyAll() — capture les minuteries encore vivantes
     // (à - maintenant) ; destroyAll() les VIDE (cf. game.ts _destroy), un ordre inversé
     // sauverait des parties SANS leurs minuteries en cours (perdues au prochain redémarrage)
@@ -355,7 +362,8 @@ export function mjsServer(opts: MjsServerOptions = {}): MjsServerApp {
     // resolveGameDef reste une fonction PURE par défaut (log no-op si appelée directement, cf. les
     // ~15 call-sites de tests) ; seule CETTE app réelle branche le vrai logger (anti-triche,
     // avertissement def.view absente).
-    gameDefs.set(type, resolveGameDef(type, def, log))
+    // la taille de trame que ce serveur accepte borne l'instantané qu'un client lockstep peut proposer (cf. game-def.ts lockstepSnapshot)
+    gameDefs.set(type, resolveGameDef(type, def, log, typeof opts.limits?.maxPayload === 'number' ? opts.limits.maxPayload : DEFAULT_MAX_PAYLOAD))
   }
 
   return app

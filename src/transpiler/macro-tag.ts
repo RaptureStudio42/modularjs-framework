@@ -5,6 +5,8 @@
 // sections.ts vers macros.ts créerait un cycle. Fonction PURE, aucune dépendance
 // sur le reste du transpileur (ni messages, ni sections, ni macros).
 
+import { skipQuotedSpan } from '../quoted-span.js'
+
 // findMacroTagEnd — localise le `>` qui ferme RÉELLEMENT une
 // balise de macro `<@nom …>`, à partir de `from` (index juste après `<@nom`).
 // AVANT : chaque site ci-dessous utilisait une regex `[^>]*`/`[^>]+?` qui
@@ -83,13 +85,7 @@ function scanTemplateLiteral(html: string, openIdx: number): number {
         if (e === '{') { d++; j++; continue }
         if (e === '}') { d--; j++; continue }
         if (e === '`') { const end = scanTemplateLiteral(html, j); if (end < 0) return -1; j = end; continue }
-        if (e === '"' || e === "'") {
-          const q = e
-          j++
-          while (j < html.length && html[j] !== q) { if (html[j] === '\\') j++; j++ }
-          j++
-          continue
-        }
+        if (e === '"' || e === "'") { j = skipQuotedSpan(html, j); continue }
         j++
       }
       if (d > 0) return -1

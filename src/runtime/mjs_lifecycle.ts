@@ -29,6 +29,11 @@
 //     défait à la destruction (tâche Ticker immortelle, abonnement jamais retiré, propriétaire
 //     retenu jusqu'à la prochaine notification) — forcés eux aussi. `vault` : aucun appel.
 if (µ.Element) {
+  // erreur de µdestroy, levée ou rejet d'un µdestroy asynchrone : un avertissement, la destruction continue
+  var _mjsDestroyErr = function(e) {
+    µ.warn(µ._mjs_msg('lifeHook', null, 'hook destroy en erreur :'), e);
+  };
+
   // Forme canonique : les RUNES µ, compilées vers `this._mjs_hook(name, fn)` :
   //   µmount   ->                  1× après le 1er rendu — retourner une fn =
   //                                nettoyage, rejoué UNE fois à µdestroy (jamais
@@ -148,9 +153,12 @@ if (µ.Element) {
       }
     }
     // µdestroy une fois par montage : gardé par `_mjs_torn` (et non plus effacé) pour rejouer
-    // après une remise dans le DOM
+    // après une remise dans le DOM. Asynchrone, son rejet est signalé comme une erreur levée
     if (typeof this._mjs_hooks?.destroy === 'function' && !this._mjs_torn) {
-      try { this._mjs_hooks.destroy.call(this); } catch (e) { µ.warn(µ._mjs_msg('lifeHook', null, 'hook destroy en erreur :'), e); }
+      try {
+        const r = this._mjs_hooks.destroy.call(this);
+        if (r && typeof r.then === 'function') r.then(void 0, _mjsDestroyErr);
+      } catch (e) { _mjsDestroyErr(e); }
     }
     this._mjs_torn = true;
     // détruit mais peut revenir (panneau gardé en mémoire, défilement virtuel, déplacement après un

@@ -7,8 +7,9 @@
 // externalVars : noms `$foo` à préserver tels quels (imports cross-module)
 // moduleMode   : si true, tous les `$foo` restent littéraux (modules .coffee externes)
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_OUT, MU_LAYOUT_WRITE_BODY, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, ouvreUneRegex, scanRegexLiteral, PORTEE_OUVRE_UNE_REGEX } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_OUT, MU_LAYOUT_WRITE_BODY, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, ouvreUneRegex, scanRegexLiteral, PORTEE_OUVRE_UNE_REGEX } from '../sigils.js'
 import { t } from '../messages/index.js'
+import { skipQuotedSpan } from '../quoted-span.js'
 
 // regex ancrées du scanner — bâties UNE fois sur les corps partagés (sigils.ts,
 // source unique lexer↔cleanJs) ; l'ancre `^` reste locale à ce moteur
@@ -286,9 +287,7 @@ export function convertCoffeeInterpolations(src: string): string {
       continue
     }
     if (ch === '`') {
-      let j = i + 1
-      while (j < n && src[j] !== '`') { if (src[j] === '\\') j++; j++ }
-      const end = Math.min(j + 1, n)
+      const end = skipQuotedSpan(src, i)
       res += src.slice(i, end); i = end; continue
     }
     if (src.startsWith('"""', i)) {
@@ -864,13 +863,13 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
       // consommée ici) referme celle-là.
       m = rest.match(RE_RAW_WRITE_PAREN)
       if (m) {
-        result += RAW_WRITE_PAREN_OUT_OPEN + (m[1] ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + m[2] + ' = '
+        result += RAW_WRITE_PAREN_OUT_OPEN + (m[1] ? RAW_WRITE_STORE_OUT : RAW_WRITE_OUT) + m[2] + ' = '
         i += m[0].length
         continue
       }
       m = rest.match(RE_RAW_WRITE)
       if (m) {
-        result += (m[1] ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + m[2] + ' = '
+        result += (m[1] ? RAW_WRITE_STORE_OUT : RAW_WRITE_OUT) + m[2] + ' = '
         i += m[0].length
         continue
       }

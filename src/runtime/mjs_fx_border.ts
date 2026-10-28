@@ -1,6 +1,7 @@
 // mjs_fx_border — `*border(style)` : une bordure animée. Les styles :
 //   gradient : un liseré en dégradé et son halo lumineux autour de la balise (deux
-//              pseudo-éléments, sous le contenu : le halo reste dehors, le liseré sur le bord)
+//              pseudo-éléments, sous le contenu : le halo reste dehors, le liseré sur le bord ;
+//              posé avec *spotlight, qui garde ceux de la balise, les deux d'un calque posé dans la balise)
 //   wave     : les quatre bords se découpent en dentelle qui défile (la dentelle prend la couleur
 //              du fond derrière la balise)
 //   run      : un trait de lumière court le long des quatre bords, l'un après l'autre
@@ -15,11 +16,12 @@
   // réglage `radius` : l'arrondi posé par le cœur (mjs_fx.ts)
   radius: true,
   css: '[mjs-fx~="border"]{isolation:isolate}'
-    // gradient
-    + '[mjs-fx~="border"][mjs-fx-border="gradient"]::after{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;box-sizing:border-box;padding:var(--mjs-fx-border-w);background:var(--mjs-fx-border-g);background-size:300% 300%;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}'
-    + '[mjs-fx~="border"][mjs-fx-border="gradient"]::before{content:"";position:absolute;inset:calc(-1 * var(--mjs-border-glow,30px));z-index:-1;border-radius:calc(var(--mjs-fx-border-r,0px) + var(--mjs-border-glow,30px));pointer-events:none;box-sizing:border-box;padding:var(--mjs-border-glow,30px);background:var(--mjs-fx-border-g);background-size:300% 300%;background-clip:content-box;filter:blur(calc(var(--mjs-border-glow,30px) / 2));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}'
-    + '[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]::after{animation:mjs-fx-border-flow var(--mjs-border-speed,4s) linear infinite}'
-    + '[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]::before{animation:mjs-fx-border-flow var(--mjs-border-speed,4s) linear infinite}'
+    // gradient : dans les deux pseudo-éléments de la balise ; posé avec *spotlight, qui les garde, dans ceux d'un calque (le même dessin)
+    + '[mjs-fx~="border"][mjs-fx-border="gradient"]:where(:not([mjs-fx~="spotlight"]))::after,[mjs-fx-layer="border-gradient"]::after{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;box-sizing:border-box;padding:var(--mjs-fx-border-w);background:var(--mjs-fx-border-g);background-size:300% 300%;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}'
+    + '[mjs-fx~="border"][mjs-fx-border="gradient"]:where(:not([mjs-fx~="spotlight"]))::before,[mjs-fx-layer="border-gradient"]::before{content:"";position:absolute;inset:calc(-1 * var(--mjs-border-glow,30px));z-index:-1;border-radius:calc(var(--mjs-fx-border-r,0px) + var(--mjs-border-glow,30px));pointer-events:none;box-sizing:border-box;padding:var(--mjs-border-glow,30px);background:var(--mjs-fx-border-g);background-size:300% 300%;background-clip:content-box;filter:blur(calc(var(--mjs-border-glow,30px) / 2));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}'
+    + '[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]:where(:not([mjs-fx~="spotlight"]))::after,[mjs-fx-layer="border-gradient"][mjs-fx-border-spin]::after{animation:mjs-fx-border-flow var(--mjs-border-speed,4s) linear infinite}'
+    + '[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]:where(:not([mjs-fx~="spotlight"]))::before,[mjs-fx-layer="border-gradient"][mjs-fx-border-spin]::before{animation:mjs-fx-border-flow var(--mjs-border-speed,4s) linear infinite}'
+    + '[mjs-fx-layer="border-gradient"]{position:absolute;inset:0;border-radius:inherit;pointer-events:none}'
     + '@keyframes mjs-fx-border-flow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}'
     // wave : quatre bandes, une par bord ; creux et bosses dans la couleur du fond
     + '[mjs-fx-layer="border"]{position:absolute;inset:0;overflow:hidden;pointer-events:none;border-radius:inherit}'
@@ -42,13 +44,42 @@
     + '@keyframes mjs-fx-border-run-right{0%,25%{transform:translateY(-100%)}50%,100%{transform:translateY(100%)}}'
     + '@keyframes mjs-fx-border-run-bottom{0%,50%{transform:translateX(100%)}75%,100%{transform:translateX(-100%)}}'
     + '@keyframes mjs-fx-border-run-left{0%,75%{transform:translateY(100%)}100%{transform:translateY(-100%)}}'
-    + '@media (prefers-reduced-motion:reduce){[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]::after{animation:none}[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]::before{animation:none}[mjs-fx-layer="border"] i::before{animation:none}[mjs-fx-layer="border"] i::after{animation:none}[mjs-fx-layer="border-run"] i{animation:none}}',
+    + '@media (prefers-reduced-motion:reduce){[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]:where(:not([mjs-fx~="spotlight"]))::after,[mjs-fx~="border"][mjs-fx-border="gradient"][mjs-fx-border-spin]:where(:not([mjs-fx~="spotlight"]))::before,[mjs-fx-layer="border-gradient"][mjs-fx-border-spin]::after,[mjs-fx-layer="border-gradient"][mjs-fx-border-spin]::before{animation:none}[mjs-fx-layer="border"] i::before{animation:none}[mjs-fx-layer="border"] i::after{animation:none}[mjs-fx-layer="border-run"] i{animation:none}}',
   vars: { glow: 'px' },
   setup: function(el, s) {
     var style   = /^(gradient|wave|run)$/.test(s.style) ? s.style : 'gradient';
     var restore = µ._mjs_fxRelative(el);
     var undo    = [];
     var tour    = null;
+    var turns   = 0;
+    var owed    = null;
+    var again   = false;
+    // un calque emporté par un script qui réécrit le contenu de la balise (`textContent`, `innerHTML`, `replaceChildren`) : remis aussitôt à
+    // sa place, le même, avec ses réglages ; au plus 20 fois par tâche (un script qui réécrirait la balise à chaque retour du calque ne fige pas
+    // la page) : au-delà, il revient à la tâche suivante (`put`, la pose à refaire), une seule fois — emporté encore plus de 20 fois à ce
+    // retour, il attend l'écriture d'après, qui le remet
+    var back = function(node, home, put) {
+      if (node.parentNode === home) return;
+      if (++turns > 20) {
+        if (!again) owed = put;
+        return;
+      }
+      if (turns === 1 && typeof MessageChannel === 'function') {
+        var tick = new MessageChannel();
+        tick.port1.onmessage = function() {
+          var f = owed;
+          tick.port1.close();
+          turns = 0;
+          owed  = null;
+          again = !!f;
+          if (f) f();
+          // rien à remettre : la tâche suivante ne compte plus pour un retour
+          if (!turns) again = false;
+        };
+        tick.port2.postMessage(0);
+      }
+      µ._mjs_dom.appendChild(home, node);
+    };
     µ._mjs_dom.setAttribute(el, 'mjs-fx-border', style);
     undo.push(function() { µ._mjs_dom.removeAttribute(el, 'mjs-fx-border'); });
     if (style === 'gradient') {
@@ -69,7 +100,37 @@
       if (s.animate) µ._mjs_dom.setAttribute(el, 'mjs-fx-border-spin', '');
       // le tour des couleurs (animate) : la vitesse écrite, sinon celle du thème ($$border-speed), 4s
       if (s.speed) el.style.setProperty('--mjs-border-speed', s.speed);
+      // *spotlight sur la même balise garde les deux pseudo-éléments de la balise (la feuille n'y pose plus rien) : le liseré et le halo
+      // passent dans ceux d'un calque, posé dans la balise (dans le composant, sur un composant) ; *spotlight posé ou retiré ensuite, le
+      // calque vient ou part (un observateur de `mjs-fx`, la liste des effets de la balise) ; emporté par une réécriture du contenu, il revient
+      // (le même observateur suit les enfants de la balise)
+      var lay  = null;
+      var home = null;
+      var seat = function() {
+        var spot = (µ._mjs_dom.getAttribute(el, 'mjs-fx') || '').split(' ').indexOf('spotlight') >= 0;
+        if (spot === !!lay) {
+          if (lay) back(lay, home, seat);
+          return;
+        }
+        if (lay) {
+          lay.remove();
+          lay = null;
+          return;
+        }
+        home = µ._mjs_fxInner(el) || el;
+        if (home !== el) µ._mjs_fxAdopt(home, 'border');
+        lay = document.createElement('span');
+        lay.setAttribute('mjs-fx-layer', 'border-gradient');
+        lay.setAttribute('aria-hidden', 'true');
+        if (s.animate) lay.setAttribute('mjs-fx-border-spin', '');
+        µ._mjs_dom.appendChild(home, lay);
+      };
+      seat();
+      var mo = typeof MutationObserver === 'function' ? new MutationObserver(seat) : null;
+      if (mo) mo.observe(el, { attributes: true, attributeFilter: ['mjs-fx'], childList: true });
       undo.push(function() {
+        if (mo) mo.disconnect();
+        if (lay) lay.remove();
         el.style.removeProperty('--mjs-fx-border-g');
         el.style.removeProperty('--mjs-fx-border-w');
         el.style.removeProperty('--mjs-fx-border-r');
@@ -106,12 +167,18 @@
       var ro = typeof ResizeObserver === 'function' ? new ResizeObserver(size) : null;
       if (ro) ro.observe(el);
       µ._mjs_dom.appendChild(host, layer);
+      // la dentelle ou le trait emporté par une réécriture du contenu de la balise revient
+      var put  = function() { back(layer, host, put); };
+      var keep = typeof MutationObserver === 'function' ? new MutationObserver(put) : null;
+      if (keep) keep.observe(el, { childList: true });
       undo.push(function() {
         if (ro) ro.disconnect();
+        if (keep) keep.disconnect();
         layer.remove();
       });
     }
     var stop = function() {
+      owed = null;
       for (var u = undo.length - 1; u >= 0; u--) undo[u]();
       restore();
     };

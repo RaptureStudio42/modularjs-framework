@@ -46,7 +46,7 @@ async function startApp(
 ): Promise<{ transport: MemoryTransport; app: MjsWsApp }> {
   const transport = new MemoryTransport()
   const app = mjsWs({ transport, heartbeat: 0, auth: accountsAuth(SECRET), onLog: () => {}, ...wsOpts })
-  app.use(accountsPackage({ secret: SECRET, ...comptesOpts } as MjsWsAccountsOptions))
+  app.use(accountsPackage({ secret: SECRET, weakHashForTests: true, ...comptesOpts } as MjsWsAccountsOptions))
   if (avecChat) app.use(chatPackage())
   await app.listen()
   return { transport, app }
@@ -69,7 +69,12 @@ function connectAvecJeton(transport: MemoryTransport, url: string, token: string
 
 const SECRET_LONG = 'motdepasse123'
 
-describe('MJS-WS — paquet COMPTES & IDENTITÉS (accounts.ts)', () => {
+describe('MJS-WS — paquet COMPTES & IDENTITÉS (accounts.ts)', function () {
+  // chaque paquet de ce fichier hache au coût réduit des essais (`weakHashForTests: true`) : aux réglages de production (N = 2^15,
+  // r = 8, p = 3), environ 0,25 s par hachage sur une machine chargée, et certains tests en enchaînent jusqu'à sept (création puis
+  // échecs de connexion, créations en rafale) — sous forte charge, même 20 s n'y tenaient plus. Le coût de production reste vérifié
+  // à part (tests accounts-hachage-reduit-pour-les-essais et accounts-scrypt-reglages-enregistres)
+  this.timeout(20000)
 
   describe('création — account:create', () => {
     it('1. succès — { ok, token } bien formé, payload décodable { id, pseudo, roles, iat, exp }', async () => {
@@ -350,7 +355,7 @@ describe('MJS-WS — paquet COMPTES & IDENTITÉS (accounts.ts)', () => {
       // encore vivant survit, contrairement à un vrai restart — cf. test 19 pour le cas RÉEL disque)
       const transport2 = new MemoryTransport()
       const app2 = mjsWs({ transport: transport2, heartbeat: 0, auth: accountsAuth(SECRET), onLog: () => {} })
-      app2.use(accountsPackage({ secret: SECRET, persist: adapter }))
+      app2.use(accountsPackage({ secret: SECRET, persist: adapter, weakHashForTests: true }))
       await app2.listen()
       const s2 = makeClient(transport2).socket('memory://c18b', { auth: () => undefined, reconnect: { enabled: false } })
       s2.connect(); await tick()
@@ -373,7 +378,7 @@ describe('MJS-WS — paquet COMPTES & IDENTITÉS (accounts.ts)', () => {
       // d'écriture atomique reprise à l'identique, cf. accounts.ts::FileAccountsPersistAdapter).
       const transport2 = new MemoryTransport()
       const app2 = mjsWs({ transport: transport2, heartbeat: 0, auth: accountsAuth(SECRET), onLog: () => {} })
-      app2.use(accountsPackage({ secret: SECRET, persist: new FileAccountsPersistAdapter({ dir, onLog: () => {} }) }))
+      app2.use(accountsPackage({ secret: SECRET, persist: new FileAccountsPersistAdapter({ dir, onLog: () => {} }), weakHashForTests: true }))
       await app2.listen()
       const s2 = makeClient(transport2).socket('memory://c19b', { auth: () => undefined, reconnect: { enabled: false } })
       s2.connect(); await tick()

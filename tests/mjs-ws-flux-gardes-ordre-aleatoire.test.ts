@@ -3,11 +3,15 @@
 // expulsions, demandes, rejeux, réponses des gardes asynchrones dans n'importe quel ordre, deltas, temps qui passe, garde
 // posée après coup, destroy() puis redéclaration, coupures suivies d'une reconnexion à l'ordre du client du framework (ses
 // salons, puis ses flux). Oracle : le droit réel de la connexion au moment où chaque trame lui arrive, et l'état du client
-// du framework (même logique que runtime/mjs_socket.ts) comparé au serveur à la fin. Aucune trame sans droit, pas même le
-// temps que la garde réponde au départ d'un salon ; aucune connexion autorisée figée, à l'état faux ou privée de son flux
+// du framework (même logique que runtime/mjs_socket.ts, refus nommés compris) comparé au serveur à la fin. Aucune trame
+// sans droit, pas même le temps que la garde réponde au départ d'un salon ; aucune connexion autorisée figée, à l'état faux
+// ou privée de son flux. Deux délais de garde : plus long que toute suite (les gardes répondent quand le banc le veut), ou
+// court (une seconde) — des gardes répondent alors avant l'échéance, d'autres après (réponse ignorée, l'échéance a compté
+// comme un refus)
 import assert from 'node:assert/strict'
 import { mjsWs } from '../src/mjs-ws/index.js'
 import { MemoryTransport } from '../src/mjs-ws/transport.js'
+import { t } from '../src/messages/index.js'
 
 // horloge virtuelle : Date.now, setTimeout, clearTimeout (posée le temps de ces tests, rendue ensuite)
 let now = 1_700_000_000_000
@@ -48,10 +52,11 @@ function rng(seed: number) { let a = seed >>> 0; return () => { a = (a + 0x6D2B7
 type S = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H'
 const ROOMS = ['R1', 'R2'] as const
 
-interface Bilan { suites: number; trames: number; fuite: number; perte: number; perdu: number; exemples: string[] }
+interface Bilan { suites: number; trames: number; fuite: number; perte: number; perdu: number; exemples: string[]; aTemps: number; tardives: number; echues: number; refusEchu: number }
 
-// une suite de `longueur` événements ; `ou` ajoute le flux H, gardé par « R1 OU R2 »
-async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) {
+// une suite de `longueur` événements ; `ou` ajoute le flux H, gardé par « R1 OU R2 » ; `delai` : celui des gardes
+// asynchrones (guardTimeout), plus long que toute suite par défaut
+async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan, delai = 3_600_000) {
   const STREAMS: S[] = ou ? ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] : ['A', 'B', 'C', 'D', 'E', 'F', 'G']
   const r = rng(seed)
   const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]
@@ -66,27 +71,44 @@ async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) 
   let tightened = false
   const destroyed = new Set<S>()
   const handles = new Map<S, any>()
-  const pending: Array<{ conn: Conn; s: S; resolve: (v: boolean | null) => void; compute: () => boolean; done: boolean }> = []
+  interface Appel { conn: Conn; s: S; resolve: (v: boolean | null) => void; compute: () => boolean; done: boolean; at: number; repondue?: number }
+  const pending: Appel[] = []
+  // dernière évaluation de la garde pour une connexion et un flux : seule elle compte (règle commune des réponses)
+  const derniere = new Map<string, Appel>()
+  const echue = (a: Appel) => (a.repondue ?? now) >= a.at + delai
   let current: { type: string; conn: Conn | null } = { type: '', conn: null }
   const has = (room: string, client: any) => app.room(room).has(client)
   const connOf = (client: any): Conn => byHeader.get(client.meta?.headers?.['x-cv'])!
   function asyncGuard(s: S, client: any, compute: () => boolean): Promise<boolean> {
     const conn = connOf(client)
-    const rec = { conn, s, resolve: null as any, compute, done: false }
+    const rec: Appel = { conn, s, resolve: null as any, compute, done: false, at: now }
+    derniere.set(conn.key + ' ' + s, rec)
     log.push(`appel ${conn.key} ${s} (${current.type})`)
-    return new Promise<boolean>((res, rej) => { rec.resolve = (v: boolean | null) => { rec.done = true; if (v === null) rej(new Error('garde')); else res(v) }; pending.push(rec) })
+    return new Promise<boolean>((res, rej) => {
+      rec.resolve = (v: boolean | null) => {
+        rec.done = true
+        rec.repondue = now
+        if (echue(rec)) bilan.tardives++
+        else bilan.aTemps++
+        if (v === null) rej(new Error('garde'))
+        else res(v)
+      }
+      pending.push(rec)
+    })
   }
+  // gardes asynchrones que le banc tranche quand il veut, parfois des minutes d'horloge virtuelle après l'appel
+  const lent = { guardTimeout: delai }
   const opts: Record<S, any> = {
-    A: { canSubscribe: (c: any) => { const v = has('R1', c) || connOf(c).perm.A; return asyncGuard('A', c, () => v) } },
-    B: { canSubscribe: (c: any) => { const v = connOf(c).perm.B; return asyncGuard('B', c, () => v) } },
+    A: { ...lent, canSubscribe: (c: any) => { const v = has('R1', c) || connOf(c).perm.A; return asyncGuard('A', c, () => v) } },
+    B: { ...lent, canSubscribe: (c: any) => { const v = connOf(c).perm.B; return asyncGuard('B', c, () => v) } },
     C: { canSubscribe: (c: any) => has('R1', c) && has('R2', c) },
-    D: { room: 'R2', canSubscribe: (c: any) => { const v = connOf(c).perm.D; return asyncGuard('D', c, () => v) } },
-    E: { canSubscribe: (c: any) => asyncGuard('E', c, () => has('R2', c) || connOf(c).perm.E) },
+    D: { ...lent, room: 'R2', canSubscribe: (c: any) => { const v = connOf(c).perm.D; return asyncGuard('D', c, () => v) } },
+    E: { ...lent, canSubscribe: (c: any) => asyncGuard('E', c, () => has('R2', c) || connOf(c).perm.E) },
     F: { public: true },
     G: { room: 'R1' },
-    H: { canSubscribe: (c: any) => { const v = has('R1', c) || has('R2', c); return asyncGuard('H', c, () => v) } },
+    H: { ...lent, canSubscribe: (c: any) => { const v = has('R1', c) || has('R2', c); return asyncGuard('H', c, () => v) } },
   }
-  const tightF = { canSubscribe: (c: any) => { const v = has('R1', c) || connOf(c).perm.F; return asyncGuard('F', c, () => v) } }
+  const tightF = { ...lent, canSubscribe: (c: any) => { const v = has('R1', c) || connOf(c).perm.F; return asyncGuard('F', c, () => v) } }
   function right(conn: Conn, s: S): boolean {
     const inR = (x: string) => conn.rooms.has(x)
     switch (s) {
@@ -106,8 +128,14 @@ async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) 
   const stOf = (conn: Conn, s: string) => { let x = conn.st.get(s); if (!x) { x = { lastSeq: 0, resyncing: false, store: new Map(), intent: false, probe: 0 }; conn.st.set(s, x) } return x }
   // client du framework (runtime/mjs_socket.ts) : seq strictement croissant, trou (dès 0 après un reset numéroté) → un seul µ:resync, reset accepté partout
   function onFrame(conn: Conn, f: any) {
-    // un refus : le client le sait, et redemandera s'il le veut
-    if (f.t === 'µ:error') { if (f.p?.code) return; if (conn.single) { const x = conn.st.get(conn.single); if (x) x.intent = false } log.push(`${conn.key} µ:error`); return }
+    // un refus nomme son flux : le client du framework l'oublie (plus redemandé aux reconnexions) et redemandera s'il le veut
+    if (f.t === 'µ:error') {
+      if (f.p?.code === 'stream-denied') { if (f.p.message === echuMessage) bilan.refusEchu++; conn.st.delete(f.p.stream); log.push(`${conn.key} µ:error ${f.p.stream}`); return }
+      if (f.p?.code) return
+      if (conn.single) { const x = conn.st.get(conn.single); if (x) x.intent = false }
+      log.push(`${conn.key} µ:error`)
+      return
+    }
     // reconnexion : à l'accueil, le client du framework rentre dans ses salons, puis redemande ses flux (rejeu depuis le
     // dernier numéro vu, ou état complet)
     if (f.t === 'µ:welcome') {
@@ -179,8 +207,10 @@ async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) 
     else if (x < 0.91) { log.push(`${conn.key} coupe`); const idx = conns.indexOf(conn); conn.ws.close(); conn.alive = false; await flush(); await connect(idx, conn.single, conn.perm, conn.gen + 1, conn); const nc = conns[idx]; for (let j = 0; j < chauds.length; j++) if (chauds[j] === conn) chauds[j] = nc }
     else { const t = pick(STREAMS); if (destroyed.has(t)) continue; log.push(`update ${t}`); await act('produce', null, () => handles.get(t).update('k' + (val % 4), { v: val++ })) }
   }
-  // repos : toutes les gardes répondent, le temps passe ; puis deux sondes par flux
-  async function repos() { for (let i = 0; i < 30; i++) { const open = pending.filter(p => !p.done); if (!open.length && timers.size === 0) break; for (const p of open) { p.resolve(p.compute()); await flush() } await advance(2500) } }
+  // repos : toutes les gardes répondent, le temps passe — par pas plus courts que le délai des gardes, qui répondent donc à
+  // temps ; puis deux sondes par flux
+  const pas = Math.min(2500, Math.floor(delai / 2))
+  async function repos() { for (let i = 0; i < Math.ceil(75000 / pas); i++) { const open = pending.filter(p => !p.done); if (!open.length && timers.size === 0) break; for (const p of open) { p.resolve(p.compute()); await flush() } await advance(pas) } }
   await repos()
   for (const t of STREAMS) if (!destroyed.has(t)) { handles.get(t).add('probe', 1); await flush() }
   await repos()
@@ -193,7 +223,11 @@ async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) 
       const snap = handles.get(s as S).snapshot()
       const same = y.store.size === Object.keys(snap).length && Object.entries(snap).every(([k, v]) => JSON.stringify(y.store.get(k)) === JSON.stringify(v))
       if (y.probe > 0 && (!same || y.resyncing)) { bilan.perte++; if (bilan.exemples.length < 8) bilan.exemples.push(`graine ${seed} : ${c.key} ${s} figé ou à l'état faux (resyncing ${y.resyncing}) — ${log.slice(-10).join(' ; ')}`) }
-      if (c.single === s && y.intent && right(c, s as S) && y.probe === 0) { bilan.perdu++; if (bilan.exemples.length < 8) bilan.exemples.push(`graine ${seed} : ${c.key} ${s} demandé, autorisé, rien reçu — ${log.slice(-10).join(' ; ')}`) }
+      const a = derniere.get(c.key + ' ' + s)
+      // sa dernière évaluation a échu : refusée, peut-être en silence (départ d'un salon), elle n'attend rien
+      if (a && echue(a)) { bilan.echues++; continue }
+      // chaque flux demandé de chaque connexion : un refus nomme son flux, le client sait lequel il perd
+      if (y.intent && right(c, s as S) && y.probe === 0) { bilan.perdu++; if (bilan.exemples.length < 8) bilan.exemples.push(`graine ${seed} : ${c.key} ${s} demandé, autorisé, rien reçu — ${log.slice(-10).join(' ; ')}`) }
     }
   }
   bilan.suites++
@@ -201,13 +235,14 @@ async function suite(seed: number, longueur: number, ou: boolean, bilan: Bilan) 
   timers.clear()
 }
 
-async function banc(graines: number[], longueur: number, ou: boolean): Promise<Bilan> {
-  const bilan: Bilan = { suites: 0, trames: 0, fuite: 0, perte: 0, perdu: 0, exemples: [] }
-  for (const g of graines) await suite(g, longueur, ou, bilan)
+async function banc(graines: number[], longueur: number, ou: boolean, delai?: number): Promise<Bilan> {
+  const bilan: Bilan = { suites: 0, trames: 0, fuite: 0, perte: 0, perdu: 0, exemples: [], aTemps: 0, tardives: 0, echues: 0, refusEchu: 0 }
+  for (const g of graines) await suite(g, longueur, ou, bilan, delai)
   return bilan
 }
 
 const plage = (de: number, n: number) => Array.from({ length: n }, (_, i) => de + i)
+const echuMessage = t('ws.streams.garde-sans-reponse')
 
 describe('MJS-WS — gardes des flux : suites d’événements dans un ordre aléatoire, contre le droit réel', function () {
   this.timeout(60000)
@@ -224,5 +259,13 @@ describe('MJS-WS — gardes des flux : suites d’événements dans un ordre al�
     const b = await banc([...plage(1, 200), 185, 463, 2709, ...plage(20001, 30)], 100, true)
     assert.ok(b.trames > 10000, `le banc a tourné (${b.trames} trames)`)
     assert.deepEqual({ fuite: b.fuite, perte: b.perte, perdu: b.perdu }, { fuite: 0, perte: 0, perdu: 0 }, b.exemples.join('\n'))
+  })
+
+  it('délai de garde court (1 s) : des gardes répondent avant l’échéance, d’autres après — de même, et l’échéance refuse', async () => {
+    const b = await banc([...plage(1, 200), ...plage(20001, 30)], 100, true, 1000)
+    assert.ok(b.trames > 10000, `le banc a tourné (${b.trames} trames)`)
+    assert.ok(b.aTemps > 1000 && b.tardives > 100, `réponses à temps ${b.aTemps}, après l’échéance ${b.tardives}`)
+    assert.ok(b.refusEchu > 100, `refus de l’échéance reçus : ${b.refusEchu}`)
+    assert.deepEqual({ fuite: b.fuite, perte: b.perte, perdu: b.perdu }, { fuite: 0, perte: 0, perdu: 0 }, `${b.echues} flux à la dernière évaluation échue\n` + b.exemples.join('\n'))
   })
 })

@@ -23,10 +23,11 @@ interface Projet { root: string; srcDir: string; outDir: string }
 interface Ligne { t: number; valeurs: string[] }
 interface Releve { jalons: Record<string, string[]>; trames: Ligne[]; textes: Record<string, string>; textesFinaux: Record<string, string> }
 
-// le cœur arrive après le premier affichage ; les modules de composants sont RETENUS jusqu'au relevé « cœur évalué » — la
-// fenêtre « cœur là, composant pas encore défini » devient alors observable, et dure le temps du relevé quelle que soit la
-// vitesse de la machine (avec un retard fixe, une machine chargée relevait parfois après l'arrivée des modules)
-const RETARD_COEUR = 1000
+// le cœur est RETENU jusqu'au relevé « avant le cœur », les modules de composants jusqu'au relevé « cœur évalué » : chaque
+// fenêtre (« rien n'est arrivé », « cœur là, composant pas encore défini ») dure le temps de son relevé quelle que soit la
+// vitesse de la machine (avec un retard fixe — le cœur à 1 s, relevé à 800 ms —, une machine chargée relevait parfois
+// après l'arrivée de ce qu'elle attendait)
+const COEUR        = ['mjs_core-']
 const MODULES      = ['racine-', 'enfant-', 'leger-', 'tardif-']
 const SELECTEURS   = ['mjs-racine', 'mjs-leger', 'mjs-tardif']
 
@@ -61,11 +62,17 @@ function ilotLight(html: string): string {
 }
 
 // sert la coquille puis out/ tel quel ; chaque préfixe de `retards` diffère l'envoi du fichier, chaque préfixe de `retenus`
-// le garde jusqu'à `liberer()`
-async function servir(p: Projet, corps: string, tete: string, retards: Record<string, number>, retenus: string[]): Promise<{ url: string; server: Server; liberer: () => void }> {
+// le garde jusqu'à `liberer(préfixes)` (sans argument : tous)
+async function servir(p: Projet, corps: string, tete: string, retards: Record<string, number>, retenus: string[]): Promise<{ url: string; server: Server; liberer: (prefixes?: string[]) => void }> {
   const html    = `<!doctype html><html><head><meta charset="utf-8">${tete}<script type="module" src="/out/bundle.js"></script></head><body>${corps}</body></html>`
-  let liberer   = () => {}
-  const libere  = new Promise<void>(resolve => { liberer = resolve })
+  const liberes = new Set<string>()
+  let tenus: { prefixe: string; envoyer: () => void }[] = []
+  const liberer = (prefixes: string[] = retenus) => {
+    for(const x of prefixes) liberes.add(x)
+    const prets = tenus.filter(t => liberes.has(t.prefixe))
+    tenus       = tenus.filter(t => !liberes.has(t.prefixe))
+    for(const t of prets) t.envoyer()
+  }
   const server = createServer((req, res) => {
     const chemin  = decodeURIComponent((req.url ?? '/').split('?')[0])
     const envoyer = () => {
@@ -85,7 +92,8 @@ async function servir(p: Projet, corps: string, tete: string, retards: Record<st
     }
     const nom    = chemin.split('/').pop() ?? ''
     const retard = Object.entries(retards).find(([prefixe]) => nom.startsWith(prefixe))
-    if(retenus.some(prefixe => nom.startsWith(prefixe))) libere.then(envoyer)
+    const tenu   = retenus.find(prefixe => nom.startsWith(prefixe))
+    if(tenu && !liberes.has(tenu)) tenus.push({ prefixe: tenu, envoyer })
     else if(retard) setTimeout(envoyer, retard[1])
     else envoyer()
   })
@@ -93,13 +101,14 @@ async function servir(p: Projet, corps: string, tete: string, retards: Record<st
   return { url: `http://127.0.0.1:${(server.address() as any).port}/`, server, liberer }
 }
 
-// le cœur est évalué : son bouclier (`:not(:defined)…{display:none}`) est adopté par le document
+// le cœur est évalué : son bouclier (`:not(:defined)…{visibility:hidden}`) est adopté par le document
 function bouclierAdopte(): boolean {
   return document.adoptedStyleSheets.some((feuille) => Array.from(feuille.cssRules).some((r) => r.cssText.includes(':not(:defined)')))
 }
 
 // posée AVANT tout script de la page : relève `display` de chaque sélecteur à CHAQUE trame, pour que
-// la moindre fenêtre de masquage entre deux `requestAnimationFrame` laisse une trace
+// la moindre fenêtre de masquage entre deux `requestAnimationFrame` laisse une trace — `none` pour un élément masqué, que ce
+// soit par `display` ou par `visibility` (le bouclier cache sans retirer la place)
 function poserSonde(sels: string[]): void {
   const trames: { t: number; valeurs: string[] }[] = []
   ;(window as any).__mjsTrames = trames
@@ -108,7 +117,8 @@ function poserSonde(sels: string[]): void {
       t: Math.round(performance.now()),
       valeurs: sels.map((s) => {
         const el = document.querySelector(s)
-        return el ? getComputedStyle(el).display : 'absent'
+        const cs = el ? getComputedStyle(el) : null
+        return cs ? (cs.visibility === 'hidden' ? 'none' : cs.display) : 'absent'
       }),
     })
     requestAnimationFrame(tick)
@@ -117,11 +127,12 @@ function poserSonde(sels: string[]): void {
 }
 
 // `display` de chaque sélecteur MAINTENANT, lu hors de la sonde (jamais un nœud ne franchit la
-// frontière de la page : des chaînes seulement)
+// frontière de la page : des chaînes seulement) — `none` aussi pour un élément invisible (`visibility`)
 function lireDisplay(sels: string[]): string[] {
   return sels.map((s) => {
     const el = document.querySelector(s)
-    return el ? getComputedStyle(el).display : 'absent'
+    const cs = el ? getComputedStyle(el) : null
+    return cs ? (cs.visibility === 'hidden' ? 'none' : cs.display) : 'absent'
   })
 }
 
@@ -137,7 +148,7 @@ function lireTextes(sels: string[]): Record<string, string> {
 }
 
 async function sonder(browser: any, p: Projet, corps: string, tete: string): Promise<{ releve: Releve; erreurs: string[] }> {
-  const { url, server, liberer } = await servir(p, corps, tete, { 'mjs_core-': RETARD_COEUR }, MODULES)
+  const { url, server, liberer } = await servir(p, corps, tete, {}, [...COEUR, ...MODULES])
   const page              = await browser.newPage()
   const erreurs: string[] = []
   page.on('pageerror', (e: Error) => erreurs.push(e.message))
@@ -146,17 +157,20 @@ async function sonder(browser: any, p: Projet, corps: string, tete: string): Pro
   try {
     await page.addInitScript(poserSonde, SELECTEURS)
     await page.goto(url, { waitUntil: 'commit' })
-    // 800 ms : le cœur n'est pas encore arrivé, rien ne masque — le contenu prérendu est peint
-    await page.waitForTimeout(800)
+    // le cœur retenu, rien ne masque : la page analysée et peinte (quelques trames), le contenu prérendu est là
+    await page.waitForFunction(() => document.readyState !== 'loading' && ((window as any).__mjsTrames ?? []).length >= 10, null, { timeout: 30000 })
     jalons.avantCoeur = await page.evaluate(lireDisplay, SELECTEURS)
     const textes      = await page.evaluate(lireTextes, SELECTEURS)
-    // cœur évalué (bouclier adopté), aucun composant défini (modules encore retenus) : un état attendu, pas une heure fixe
-    await page.waitForFunction(bouclierAdopte, null, { timeout: 15000 })
+    // cœur servi et évalué (bouclier adopté), aucun composant défini (modules encore retenus) : un état attendu, pas une heure fixe
+    liberer(COEUR)
+    await page.waitForFunction(bouclierAdopte, null, { timeout: 30000 })
     jalons.coeurSansModule = await page.evaluate(lireDisplay, SELECTEURS)
-    // modules servis, composants définis et montés, puis 2 s de trames
+    // modules servis, composants définis et montés, puis 2 s de trames — et au moins 60 en tout : une machine chargée en
+    // peint moins par seconde, la sonde attend d'en avoir assez pour conclure
     liberer()
-    await page.waitForFunction(() => !!customElements.get('mjs-racine') && !!customElements.get('mjs-leger'), null, { timeout: 15000 })
+    await page.waitForFunction(() => !!customElements.get('mjs-racine') && !!customElements.get('mjs-leger'), null, { timeout: 30000 })
     await page.waitForTimeout(2000)
+    await page.waitForFunction(() => (window as any).__mjsTrames.length > 60, null, { timeout: 30000 })
     jalons.apresMontage = await page.evaluate(lireDisplay, SELECTEURS)
     const trames: Ligne[]  = await page.evaluate(() => (window as any).__mjsTrames)
     const textesFinaux     = await page.evaluate(lireTextes, SELECTEURS)

@@ -11,11 +11,13 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-// `@dummy = new µStore({})` force l'inclusion du module µ.Store dans le core compilé — un
-// composant qui ne le mentionne jamais ne l'embarque pas (détection de features au build).
+// `@dummy = new µStore({})` et `@etat = µ.state({})` forcent l'inclusion de µ.Store et de µ.state dans le core
+// compilé — sans clé `runtime`, un composant qui ne les mentionne jamais ne les embarque pas (détection de
+// features au build), et les cas ci-dessous les appellent depuis la page
 const NEUTRE = [
   '<script lang="coffee">',
   '@dummy = new µStore({})',
+  '@etat = µ.state({})',
   '$x ?= 1',
   '</script>',
   '<p>{$x}</p>',

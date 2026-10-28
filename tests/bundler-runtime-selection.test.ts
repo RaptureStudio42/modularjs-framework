@@ -49,7 +49,9 @@ const FX_FILES = ['mjs_fx.ts', ...FX_TOOL_FILES, ...FX_KEYS.map(k => 'mjs_' + k 
 // mjs_for_nested.ts (`{for}` dans une liste ou dans une branche {await}, détaché de mjs_for.ts) et
 // mjs_alias.ts (alias COURT d'une balise, détaché de mjs_dom.ts) suivent la MÊME doctrine que les
 // autres détectés : gardés quand les faits sont inconnus.
-const CORE_HARD = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_runes.ts', 'mjs_autoloader.ts', 'mjs_element.ts']
+// mjs_runes.ts (registre des dépendances de l'état partagé) n'en est plus : il suit `µ.state` et les stores, comme eux gardé
+// quand les faits sont inconnus
+const CORE_HARD = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_autoloader.ts', 'mjs_element.ts']
 // 'core' SANS `used` (API directe) = CORE_HARD + les modules DÉTECTÉS gardés par défaut
 // (used===undefined). mjs_page_cache.ts N'Y FIGURE PAS : signal 100% `selected`
 // (router/ujs/modal), toujours VIDE en 'core' (aucun optionnel classique sélectionné) — il ne
@@ -57,7 +59,7 @@ const CORE_HARD = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_runes.ts', 'mjs_autoloader.
 const CORE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_textpool.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_ticker.ts', 'mjs_interpolate.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_types.ts', ...FX_FILES, 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts']
 // CORE_HARD + mjs_title.ts SEUL (used = new Set(['title']), rien d'autre détecté) —
 // sert la distinction faits CONNUS mais partiels, cf. tests plus bas.
-const CORE_HARD_TITLE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_theme.ts', 'mjs_runes.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_title.ts']
+const CORE_HARD_TITLE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_theme.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_title.ts']
 // CORE_HARD + mjs_ticker.ts/mjs_interpolate.ts/mjs_store.ts/mjs_title.ts/mjs_lifecycle.ts SEULS
 // (used = new Set(['title', 'store', 'interpolate']) EXPLICITE : les modules détachés depuis
 // (scan seul, sans force structurelle) — head/body/dynamic/rare_runes/on/effect/every/failed/

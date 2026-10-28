@@ -44,7 +44,8 @@ for (const nom of ['chromium', 'firefox'] as const) describe(`atelier /__mjs/the
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'hote.mjs'), HOTE)
-    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', urlPrefix: '/out', defaultScriptLang: 'civet', lint: { a11y: false } }))
+    // le registre ne lit que les variables des modules joints au cœur, et l'application du test n'en emploie aucun : 'all' les joint tous, pour que le registre ait au moins dix lignes à déplier
+    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', urlPrefix: '/out', defaultScriptLang: 'civet', lint: { a11y: false }, runtime: 'all' }))
     const found = findConfig(root)
     assert.ok(found, 'mjs.config.json doit être trouvé')
     const bundler = new Bundler(resolveBundlerOpts(found!.config, found!.configDir) as any)

@@ -34,7 +34,7 @@ parentPort.on('message', (msg) => { parentPort.postMessage({ id: msg.id, ok: tru
 describe('WorkerPool — délai maximal par tâche', function () {
   this.timeout(15000)
 
-  it('worker qui ne répond JAMAIS : submit() est REJETÉ après le délai (raccourci ici), le worker est retiré du pool', async () => {
+  it('worker qui ne répond JAMAIS, sans repli : submit() est REJETÉ après le délai (raccourci ici) de la seconde chance, chaque worker muet est retiré du pool', async () => {
     const dir = mjsTmp('worker-pool-timeout')
     const badWorker = writeBadWorker(dir)
     const pool = new WorkerPool(1, { workerPath: badWorker }, { timeoutMs: 300 })
@@ -44,8 +44,9 @@ describe('WorkerPool — délai maximal par tâche', function () {
         /mjs-coince/,
         'AVANT le fix : submit() ne rejette JAMAIS — la promesse pend indéfiniment sur un worker mort/bloqué',
       )
-      // le worker fautif ne doit plus jamais être dispatché : isDead() (aucun worker vivant) —
-      // taille de pool 1, un seul worker, mort après son timeout.
+      // un worker fautif ne doit plus jamais être dispatché : isDead() (aucun worker vivant) — taille de pool 1, le
+      // worker muet puis son remplaçant (seconde chance), muet lui aussi ; deux pertes d'affilée sans une réponse :
+      // plus de remplaçant.
       assert.ok(pool.isDead(), 'le worker qui a débordé doit être RETIRÉ du pool, jamais laissé éligible au prochain dispatch')
     } finally {
       await pool.terminate()

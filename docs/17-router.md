@@ -247,12 +247,14 @@ Le routeur maintient un objet réactif dédié, **`µurl`** (forme courte de `µ
 µurl.path      # chemin de route (ce qui suit le #)
 µurl.params    # params de route matchés — sucre de lecture : &id
 µurl.query     # query string parsée, ex. {tri: 'date'}
-µurl.hash      # fragment brut
+µurl.hash      # fragment brut, ancre ordinaire comprise
 ```
 
 Une clé dupliquée dans la query (`?a=1&a=2`) garde la **dernière** valeur : pas de support multi-valeurs (tableau).
 
 Navigation programmatique : **`µRouter.to '/produits/42'`** — jamais de `#`, le routeur travaille par définition sur le fragment. `µurl` se met à jour dans la foulée.
+
+Une route neuve — lien `#/…` suivi, `µRouter.to`, `µRouter.navigate` — part du haut de la page, comme une page qui arrive ; `Précédent` et `Suivant` rendent à chaque route la position qu'elle avait quand vous l'avez quittée (cf. [21 · Navigation](21-navigation.md)). `µRouter.to(route, {replace: true})` et `µRouter.to(route, false)` gardent l'entrée d'historique, et la page reste où elle est. Une ancre ordinaire suivie depuis une route (`#section`) laisse la vue en place et met à jour `µurl.hash` et `µurl.href`.
 
 ## Réagir à la navigation — `µurlChange`
 

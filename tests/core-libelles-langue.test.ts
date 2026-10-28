@@ -52,7 +52,7 @@ describe('libellés des modules cœur — table fr/en', () => {
   it('le groupe core existe dans les deux langues, mêmes clés', () => {
     const fr = Object.keys((RUNTIME_LABELS.fr as any).core ?? {}).sort()
     const en = Object.keys((RUNTIME_LABELS.en as any).core ?? {}).sort()
-    assert.equal(fr.length, 102)
+    assert.equal(fr.length, 115)
     assert.deepEqual(en, fr)
   })
 })

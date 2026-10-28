@@ -225,6 +225,11 @@ if (typeof MjsSocket !== 'undefined') {
     };
   }
 
+  // la page sait lire un instantané du lockstep : µ.lockstep chargé (modules 'lockstep' et 'det'), qui en repart (cf. _mjs_sendPlay)
+  function _readsSnapshots() {
+    return typeof µ.lockstep === 'function';
+  }
+
   function _dispatchGame(h, evt, payload) {
     var hs = h._mjs_handlers[evt], copy, i;
     if (!hs) { return; }
@@ -276,6 +281,18 @@ if (typeof MjsSocket !== 'undefined') {
       _hash: function(tick, hashValue) {
         if (h._mjs_gameId == null) { return; }
         self.send('µgame:hash', { game: h._mjs_gameId, tick: tick, h: hashValue });
+      },
+      // mode lockstep — µgame:snapshot, instantané proposé (cf. mjs_lockstep.ts), fire-and-forget comme _hash ; `volatile` : il ne
+      // vaut que pour son tick, jamais mis en file hors ligne (la file garderait l'objet d'état, muté depuis par les ticks suivants)
+      _snapshot: function(tick, state, rng) {
+        if (h._mjs_gameId == null) { return; }
+        self.send('µgame:snapshot', { game: h._mjs_gameId, tick: tick, state: state, rng: rng }, { volatile: true });
+      },
+      // mode lockstep — reprend l'état du serveur (µgame:resync, comme à la reconnexion) : un apply() qui a levé (cf. mjs_lockstep.ts) ;
+      // rend la promesse de la demande, tenue quand sa réponse est traitée (jamais rejetée), rien si la partie ne joue pas
+      _resync: function() {
+        if (h._mjs_gameId == null || h._mjs_status !== 'playing') { return; }
+        return self._mjs_resyncGame(h);
       }
     };
     _syncGameStore(h);
@@ -315,7 +332,11 @@ if (typeof MjsSocket !== 'undefined') {
   // son propre doublon, `def.seats` atteint tout seul).
   MjsSocket.prototype._mjs_sendPlay = function(h) {
     var self = this;
+    // `snapshots` : la page sait repartir d'un instantané du lockstep quand elle charge µ.lockstep (mjs_lockstep.ts), elle le déclare
+    // ici comme au resync ; sans µ.lockstep, rien ne lit l'instantané — une partie dont le journal est coupé refuse la page qui ne le
+    // déclare pas (cf. mjs-server/game.ts::_requireSnapshotReader)
     var payload = { type: h._mjs_type };
+    if (_readsSnapshots()) { payload.snapshots = true; }
     if (h._mjs_playOpts.code !== undefined) { payload.code = h._mjs_playOpts.code; }
     if (h._mjs_playOpts.spectator) { payload.spectator = true; }
     h._mjs_playInFlight = true;
@@ -455,7 +476,9 @@ if (typeof MjsSocket !== 'undefined') {
   // --- resync (reconnexion) --------------------------------------------------------------------
   MjsSocket.prototype._mjs_resyncGame = function(h) {
     var self = this;
-    this.request('µgame:resync', { game: h._mjs_gameId }, { waitForOpen: true }).then(
+    var payload = { game: h._mjs_gameId };
+    if (_readsSnapshots()) { payload.snapshots = true; }   // cf. _mjs_sendPlay
+    return this.request('µgame:resync', payload, { waitForOpen: true }).then(
       function(frame) { self._mjs_onResyncResolved(h, frame); },
       function(err) { self._mjs_onResyncRejected(h, err); }
     );

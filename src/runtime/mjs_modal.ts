@@ -103,6 +103,7 @@
 :where(.mjs-toast-close:hover){opacity:1}
 :where(.mjs-toast-action){position:absolute!important;top:0!important;left:0!important;box-sizing:border-box!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:inherit!important;background:transparent!important;color:inherit!important;font:inherit!important;appearance:none!important;cursor:pointer;outline-offset:-4px!important}
 :where(.mjs-toast-action:hover){background:var(--mjs-toast-hover-bg, color-mix(in srgb, var(--mjs-toast-fg, #fff) 10%, transparent))!important}
+:where(.mjs-toast-action:hover){box-shadow:inset 0 0 0 1px var(--mjs-toast-hover-border, transparent)}
 :where(.mjs-toast-action:active){background:var(--mjs-toast-active-bg, color-mix(in srgb, var(--mjs-toast-fg, #fff) 18%, transparent))!important}
 :where(.mjs-toast-action:focus-visible){outline:2px solid var(--mjs-toast-focus, var(--mjs-toast-fg, #fff))!important}
 :where(.mjs-toast-action ~ .mjs-toast-close){position:relative}
@@ -1097,7 +1098,10 @@ var __toastLastClick = null;
 // preventDefault() retient le lien) ; le toast se ferme ensuite quoi qu'il arrive — une erreur de fn remonte sans le retenir.
 // Structure (position, taille, fond, bordure, remplissage, marge, police, couleur, apparence) et états en !important dans la
 // feuille : une règle de balise de l'appli (`button{…}`, `a:hover{…}`) ne doit ni peindre un aplat sur le message ni déplacer
-// la couverture ; l'appli règle ses états par variables (--mjs-toast-hover-bg, --mjs-toast-active-bg, --mjs-toast-focus)
+// la couverture ; l'appli règle ses états par variables (--mjs-toast-hover-bg, --mjs-toast-active-bg, --mjs-toast-focus). Le filet de 1px
+// qui borde le toast au survol (--mjs-toast-hover-border) est une ombre intérieure, transparente par défaut : rien ne change au survol tant
+// que l'appli ne la colore pas (une bordure, même transparente, décalait d'un cran la couleur du voile dans WebKit) ; hors !important, une
+// ombre que l'appli pose sur `a:hover` ou `button:hover` reste la sienne, comme avant
 function __toastAction(rec, opts, titleEl, msgEl) {
   var el, fn;
   fn = typeof opts.onClick === 'function' ? opts.onClick : null;

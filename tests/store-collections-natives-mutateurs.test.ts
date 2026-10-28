@@ -25,11 +25,13 @@ async function mount(name: string) {
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  // `new µStore({})` dans la source : force la détection du module optionnel
-  // mjs_store.ts (scan de features, cf. bundler/features.ts REGEX_STORE) —
-  // sans ce signal textuel, `µ.Store` est absent du bundle et `new µ.Store(…)`
-  // lève « is not a constructor » dans les tests ci-dessous.
-  const src = ['<script lang="coffee">', '@dummy = new µStore({})', '</script>', '<p>x</p>'].join('\n') + '\n'
+  // `new µStore({})` et `µ.state({})` dans la source : forcent la détection de
+  // mjs_store.ts et de mjs_state.ts (scan de features, cf. bundler/features.ts
+  // REGEX_STORE et REGEX_STATE) — sans clé `runtime`, le cœur ne porte que ce que
+  // le code compilé emploie : sans ce signal textuel, `new µ.Store(…)` lève « is
+  // not a constructor » et `µ.state(…)` « is not a function » dans les tests
+  // ci-dessous, qui les appellent depuis la page
+  const src = ['<script lang="coffee">', '@dummy = new µStore({})', '@etat = µ.state({})', '</script>', '<p>x</p>'].join('\n') + '\n'
   writeFileSync(join(srcDir, `${name}.mjs`), src)
 
   const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })

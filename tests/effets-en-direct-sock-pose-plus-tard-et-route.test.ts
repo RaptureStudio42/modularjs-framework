@@ -61,7 +61,8 @@ describe('*follow, *cursors, *react, *heatmap — la connexion posée plus tard,
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     for (const [nom, src] of Object.entries(COMPOSANTS)) writeFileSync(join(srcDir, nom + '.mjs'), src)
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // le test navigue par µ.Router.navigate depuis son propre code, hors des sources compilées : rien ne révèle le routeur au repérage, 'all' rend le cœur complet
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: 'all' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
     await bundler.close()

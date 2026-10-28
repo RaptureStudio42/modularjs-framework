@@ -157,7 +157,12 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   const window: any   = new HappyDOM.Window({ url: opts.url ?? 'http://localhost/' })
   const document: any = window.document
   const outDir        = bundler.outputDir
-  const fichiers      = existsSync(outDir) ? readdirSync(outDir) : []
+  const fichiers      = existsSync(outDir) ? readdirSync(outDir).sort() : []
+  // le runtime (cœur, feuilles partagées, effets) ne se prend que parmi les fichiers que CETTE compilation a écrits ou repris : le
+  // dossier de sortie d'un vrai projet garde des sorties de builds antérieurs que le ménage des empreintes ne retire pas (celles
+  // d'une 2.5 par exemple), dont les noms ressemblent aux siens — même règle que le rendu serveur (renderToString.ts)
+  const emisCeTour    = new Set(stats.sizes.map(s => basename(s.path)))
+  const sortiesDuTour = fichiers.filter(f => emisCeTour.has(f))
   // fenêtre et compilateur fermés — en fin de tests, ou quand le chargement échoue : sans quoi le pool de threads du
   // compilateur garde le processus de test en vie
   const fermer = async () => {
@@ -178,9 +183,10 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   // page lève une TypeError
   const evaluer = (code: string) => window.eval(`(function () {\n'use strict';\n${code}\n})();`)
 
-  // 1. le cœur du runtime, puis `µ` en global — même amorce que le rendu serveur
-  const coreFile = fichiers.find(f => /^mjs_core-[0-9a-z]{5}\.js$/.test(f))
-  if (!coreFile) {
+  // 1. le cœur du runtime, puis `µ` en global — même amorce que le rendu serveur : le cœur que CETTE compilation vient d'écrire
+  //    (`coreHashedPath`), jamais le premier `mjs_core-*` que liste le dossier, qui pouvait être celui d'un build antérieur
+  const coreFile = basename(bundler.coreHashedPath)
+  if (!coreFile || !sortiesDuTour.includes(coreFile)) {
     await fermer()
     throw new Error(t('testing.runtime-introuvable', { dossier: outDir }))
   }
@@ -207,14 +213,14 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
 
   // 2. les feuilles partagées émises en module (modes 'bundle' et 'split' ; en 'lazy'
   //    ce sont de vrais `.css` que le runtime ira chercher lui-même)
-  for (const f of fichiers.filter(f => /^mjs_styles?(_[a-zA-Z0-9_]+)?-[0-9a-z]{5}\.js$/.test(f))) {
+  for (const f of sortiesDuTour.filter(f => /^mjs_styles?(_[a-zA-Z0-9_]+)?-[0-9a-z]{5}\.js$/.test(f))) {
     try { evaluer(lire(f)) } catch { /* une feuille qui refuse ne doit pas tuer le harnais */ }
   }
 
   // 2b. le code de chaque effet du projet (un fichier par effet, importé par les composants qui
   //     l'écrivent — l'import retiré ici, le fichier chargé d'avance) ; un effet qui refuse ne doit
   //     pas tuer le harnais : le composant qui le pose le dira à son montage
-  for (const f of fichiers.filter(f => /^mjs_fx_[a-z0-9_]+-[0-9a-z]{5}\.js$/.test(f))) {
+  for (const f of sortiesDuTour.filter(f => /^mjs_fx_[a-z0-9_]+-[0-9a-z]{5}\.js$/.test(f))) {
     try { evaluer(lire(f)) } catch { /* cf. ci-dessus */ }
   }
 

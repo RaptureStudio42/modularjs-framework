@@ -43,11 +43,14 @@ async function setupProject(): Promise<{ window: any; document: any }> {
   seedI18nDict(srcDir)
   writeFileSync(join(srcDir, 'hop.mjs'), '<p>hop</p>\n')
 
+  // le test appelle les toasts et µ.modal.fire depuis son propre code, hors des sources compilées (en production, une page n'atteint pas µ) :
+  // rien ne le révèle au repérage, 'all' rend le cœur complet
   const bundler = new Bundler({
     sourceDir: srcDir,
     outputDir: outDir,
     manifestPath: join(root, 'bundle.js'),
     i18n: { default: 'fr' },
+    runtime: 'all',
   } as any)
   const stats = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

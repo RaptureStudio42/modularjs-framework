@@ -4,19 +4,21 @@
 // une ancre non-route (`#footnote`, SANS le `/` de route) d'une vraie route
 // (`#/xxx`) via `isHashRoute`.
 //
-// `popstate` tire AUSSI pour un retour PAR-DESSUS un simple ancrage en page :
-// cliquer `<a href="#footnote">` est une navigation NATIVE (jamais interceptée
-// par notre code — le handler de clic l'exclut explicitement), qui empile
-// quand même une entrée d'historique. Un retour arrière dessus déclenche
+// `popstate` tire AUSSI pour un retour PAR-DESSUS une entrée d'ancre de la page :
+// une par ancre cliquée avec le réglage `µ._anchorHistory` (le clic est suivi par
+// la navigation elle-même, µ._mjs_anchorGo), ou posée par le navigateur (adresse
+// tapée, `location.hash` d'un script). Un retour arrière dessus déclenche
 // `popstate` avec `window.location.hash === '#footnote'`. Sans distinction,
 // `_mjs_getMatchPath` prend `footnote` (tout ce qui suit `#`) et le route comme
 // `/footnote` — qui ne matche AUCUNE route déclarée → `_mjs_injectViewsForComponent`
 // VIDE TOUTES les `<@view>` (aucune route ne correspond), alors qu'aucune
-// navigation de page n'a réellement eu lieu (juste un scroll en page, déjà
-// géré nativement par le navigateur).
+// navigation de page n'a réellement eu lieu (juste un défilement dans la page).
 //
 // Fix : même garde que le handler de clic (`hash && !hash.startsWith('#/')`)
-// ajoutée en tête du handler popstate — sort immédiatement, ne touche à RIEN.
+// ajoutée en tête du handler popstate — sort sans toucher aux vues : seule la
+// position change (gardée au départ de l'entrée, sinon l'ancre elle-même, par la
+// cible d'ancre commune µ._mjs_anchorScroll). Le `popstate` que le clic d'une
+// ancre émet lui-même (µ._mjs_anchorNav posé) n'est pas un retour : rien ne bouge.
 //
 // mjs_ujs.ts attache des listeners PERMANENTS à document/window dès l'import
 // — convention déjà établie (cf. ujs-pagecache-race-poisoning.test.ts) :
@@ -224,7 +226,34 @@ describe("mjs_ujs — popstate sur une ancre non-route (#footnote) ne vide plus 
     const win: any = { location: { pathname: '/app', search: '', hash: '#footnote' } }
     const handler = makeHandler(µ, win, fakeDoc)
     handler({}, µ, win, fakeDoc, undefined)
-    assert.equal(µ.navigateCalls.length, 0, 'un vrai ancrage en page (page identique) laisse le scroll natif, aucune navigation')
+    assert.equal(µ.navigateCalls.length, 0, 'un vrai ancrage en page (page identique) : aucune navigation')
     assert.equal(µ.pageCacheSets.length, 0)
+  })
+
+  it("ancre non-route jamais quittée (aucune position gardée) : la page défile jusqu'à l'ancre elle-même, sans glisser, par la cible d'ancre commune", function () {
+    const µ: any = makeMu()
+    const defilements: any[] = []
+    µ._mjs_anchorScroll = (hash: string, instant: boolean) => { defilements.push([hash, instant]) }
+    const win: any = { location: { pathname: '/app', search: '', hash: '#footnote' } }
+    const handler = makeHandler(µ, win, fakeDoc)
+    handler({}, µ, win, fakeDoc, undefined)
+    assert.deepEqual(defilements, [['#footnote', true]], 'AVANT : getElementById seul — ni `<a name>`, ni `#top`, ni cible dans l\'ombre d\'un composant')
+    assert.equal(µ.navigateCalls.length, 0)
+  })
+
+  it("popstate émis par le clic d'une ancre que la navigation suit elle-même (µ._mjs_anchorNav posé) : sort sans rien toucher, route comprise", function () {
+    for (const hash of ['#footnote', '#/products']) {
+      const µ: any = makeMu()
+      const defilements: any[] = []
+      µ._mjs_anchorNav = true
+      µ._mjs_anchorScroll = (h: string) => { defilements.push(h) }
+      µ._mjs_scrollPos = new Map([['/app#footnote', [0, 900]]])
+      µ._mjs_restoreScroll = (k: string) => { defilements.push('rendu ' + k) }
+      const win: any = { location: { pathname: '/app', search: '', hash } }
+      const handler = makeHandler(µ, win, fakeDoc)
+      handler({}, µ, win, fakeDoc, undefined)
+      assert.deepEqual(defilements, [], 'AVANT : la position gardée au départ de l\'ancre était rejouée — un second clic sur l\'ancre ramenait là où l\'utilisateur l\'avait quittée')
+      assert.equal(µ.navigateCalls.length, 0)
+    }
   })
 })

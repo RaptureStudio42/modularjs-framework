@@ -423,8 +423,8 @@ describe('éditeur riche — la production n\'envoie que ce que l\'appli utilise
       })
     }
 
-    it('chaque étiquette est l\'attribut answer de l\'éditeur, le fait « reprise » ou un outil (tool-<nom>) connu', () => {
-      const connus = new Set(['answer', RESUME_LABEL, ...['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike', 'ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear', 'icons', 'glyphs', 'heads', 'separator', 'keys', 'script'].map((t) => `tool-${t}`)])
+    it('chaque étiquette est un attribut de l\'éditeur (answer, colors), le fait « reprise » ou un outil (tool-<nom>) connu', () => {
+      const connus = new Set(['answer', 'colors', RESUME_LABEL, ...['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike', 'color', 'ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear', 'icons', 'glyphs', 'heads', 'separator', 'keys', 'script'].map((t) => `tool-${t}`)])
       for (const nom of ['editor', 'toolbar']) {
         const vues = new Set<string>()
         selectCoreSections(`${nom}.mjs`, lire(nom), (_kind, attr) => { vues.add(attr); return true })

@@ -25,11 +25,15 @@ const AUTRES   = ['codeCopy', 'codeCopied', 'gaugeLabel', 'knobLabel', 'progress
 
 // l'éditeur et sa barre : les clés qui n'ont pas le préfixe de leur module (link*, box*, checked, unchecked pour l'éditeur ; tool* pour la barre)
 const EDITEUR  = ['editorLabel', 'editorPlaceholder', 'linkLabel', 'linkApply', 'linkRemove', 'linkCancel', 'linkDone', 'boxChecked', 'boxUnchecked', 'checked', 'unchecked']
-const BARRE    = ['toolbarLabel', 'toolH2', 'toolH3', 'toolQuote', 'toolBold', 'toolItalic', 'toolUnderline', 'toolStrike', 'toolUl', 'toolOl', 'toolCheck', 'toolLink', 'toolUndo', 'toolRedo', 'toolClear']
+const BARRE    = ['toolbarLabel', 'toolH2', 'toolH3', 'toolQuote', 'toolBold', 'toolItalic', 'toolUnderline', 'toolStrike', 'toolUl', 'toolOl', 'toolCheck', 'toolLink', 'toolUndo', 'toolRedo', 'toolClear', 'toolColor', 'toolbarShift']
+// la couleur du texte : la ligne des couleurs de l'éditeur et le bouton `color` de la barre ne partent qu'avec `colors` sur un éditeur, leurs textes aussi
+const COULEURS = ['colorsLabel', 'colorNone', 'colorGray', 'colorBrown', 'colorOrange', 'colorYellow', 'colorGreen', 'colorBlue', 'colorPurple', 'colorPink', 'colorRed']
+const BARRE_SANS_COULEUR = BARRE.filter((k) => k !== 'toolColor')
 
 const PAGES = {
   select:  '<@@select name="s"><@@option value="a">Alpha</@@option></@@select>',
   editor:  '<@@editor name="t"></@@editor>',
+  couleur: '<@@editor name="t" colors="red green"></@@editor>',
   barre:   '<@@toolbar for="zone"></@@toolbar>\n<div id="zone"></div>',
   trois:   '<@@select name="s"><@@option value="a">Alpha</@@option></@@select>\n<@@number big></@@number>\n<@@carousel><div>un</div><div>deux</div></@@carousel>',
   sansLib: '<@@sortable><div>a</div><div>b</div></@@sortable>\n<@@field name="n"><input></@@field>',
@@ -75,10 +79,12 @@ describe('libellés du manifeste — seulement ceux des modules du cœur que le 
       }
       try {
         assert.deepEqual(await tour(PAGES.select), [...SELECT].sort())
-        assert.deepEqual(await tour(PAGES.select + '\n' + PAGES.editor), [...SELECT, ...EDITEUR, ...BARRE].sort())
+        assert.deepEqual(await tour(PAGES.select + '\n' + PAGES.editor), [...SELECT, ...EDITEUR, ...BARRE_SANS_COULEUR].sort())
+        assert.deepEqual(await tour(PAGES.couleur), [...EDITEUR, ...COULEURS, ...BARRE].sort())
         assert.deepEqual(await tour(PAGES.select), [...SELECT].sort())
         assert.deepEqual(await tour(PAGES.nu), [])
-        assert.deepEqual(await tour(PAGES.barre), [...BARRE].sort())
+        // une barre seule ne montre jamais l'outil `color` (aucun éditeur, donc aucune palette) : le texte de son bouton ne part pas
+        assert.deepEqual(await tour(PAGES.barre), [...BARRE_SANS_COULEUR].sort())
       }
       finally {
         await bundler.close()
@@ -97,18 +103,29 @@ describe('libellés du manifeste — seulement ceux des modules du cœur que le 
 
       it('<@@editor> : les clés de l\'éditeur et celles de la barre qu\'il pose, aucune d\'un autre module', async () => {
         const t = await construire('editor', { 'hote.mjs': PAGES.editor }, env, js)
-        assert.deepEqual(cles(t), [...EDITEUR, ...BARRE].sort())
-        assert.deepEqual(cles(t, 'en'), [...EDITEUR, ...BARRE].sort())
+        assert.deepEqual(cles(t), [...EDITEUR, ...BARRE_SANS_COULEUR].sort())
+        assert.deepEqual(cles(t, 'en'), [...EDITEUR, ...BARRE_SANS_COULEUR].sort())
         for (const k of [...SELECT, ...CAROUSEL, ...NUMBER, ...AUTRES]) assert.equal(k in t.fr.core, false, `${k} ne doit pas partir pour <@@editor>`)
+      })
+
+      it('<@@editor> sans `colors` : ni les noms des couleurs ni le texte du bouton `color` ; avec `colors`, tous partent', async () => {
+        const sans = await construire('editor-sans-couleur', { 'hote.mjs': PAGES.editor }, env, js)
+        for (const lang of ['fr', 'en']) for (const k of [...COULEURS, 'toolColor']) assert.equal(k in sans[lang].core, false, `${k} (${lang}) ne doit pas partir sans \`colors\``)
+        const avec = await construire('editor-couleur', { 'hote.mjs': PAGES.couleur }, env, js)
+        assert.deepEqual(cles(avec), [...EDITEUR, ...COULEURS, ...BARRE].sort())
+        assert.deepEqual(cles(avec, 'en'), [...EDITEUR, ...COULEURS, ...BARRE].sort())
+        assert.equal(avec.fr.core.toolColor, RUNTIME_LABELS.fr.core.toolColor)
+        assert.equal(avec.en.core.toolColor, 'Text color')
       })
     })
   }
 
   for (const [env, js] of [['dev', 'split'], ['prod', 'bundle']] as Array<[Env, Js]>) {
     describe(`autres pages, ${env}, js: '${js}'`, () => {
-      it('<@@toolbar for="…"> posée à part : les clés de la barre, aucune de l\'éditeur', async () => {
+      // la barre ne montre le bouton `color` qu'à un éditeur qui a une palette : posée seule, elle ne le montre jamais, son texte ne part pas
+      it('<@@toolbar for="…"> posée à part : les clés de la barre sauf celle du bouton `color`, aucune de l\'éditeur', async () => {
         const t = await construire('barre', { 'hote.mjs': PAGES.barre }, env, js)
-        assert.deepEqual(cles(t), [...BARRE].sort())
+        assert.deepEqual(cles(t), [...BARRE_SANS_COULEUR].sort())
         for (const k of [...EDITEUR.filter((c) => c !== 'checked' && c !== 'unchecked'), ...SELECT]) assert.equal(k in t.fr.core, false, `${k} ne doit pas partir pour <@@toolbar>`)
       })
 

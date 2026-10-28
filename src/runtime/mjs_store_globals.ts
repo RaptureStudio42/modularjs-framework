@@ -39,10 +39,14 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
 // Notifie TOUS les abonnés d'UNE clé : composants (`_mjs_invalidate('$$'+clé)`) et
 // watchers génériques (callback reçoit la valeur COURANTE, déballée comme
 // `µ.store[clé]`, donc les computed y arrivent résolus).
+// nom sous lequel un composant suit une clé (`$$clé`) : fait une fois par clé, le même texte à chaque écriture — une boucle
+// d'écritures ne refabrique pas le nom à chaque tour
+const _mjsStoreNoms = new Map();
 µ._mjs_storeNotifyKey = function(key) {
   var subs = µ._mjs_storeSubs.get(key);
   if (subs) {
-    var sk = '$$' + key;
+    var sk = _mjsStoreNoms.get(key);
+    if (sk === void 0) _mjsStoreNoms.set(key, sk = '$$' + key);
     for (var comp of subs) {
       comp._mjs_invalidate(sk);
       // écriture faite hors de tout effet (`µ._mjs_effRun`, posé par _mjs_runEffectsV2, mjs_element.ts) : elle relance aussi les
@@ -66,6 +70,26 @@ if (!µ._mjs_storeWatchers) { µ._mjs_storeWatchers = new Map(); }
     for (var comp of subs) { comp._mjs_invalidate('$$*'); }
   }
 };
+
+// `µwrite $$x, v` (lexer : `µ._mjs_storeRawWrite.x = v`) : la valeur brute écrite sans prévenir personne (ni rendu, ni effet,
+// ni observateur), mais les valeurs dérivées des composants qui lisent la clé, ou énumèrent le magasin, se recalculent à leur
+// prochaine lecture — un compte de plus à leur horloge (`_mjsCompte`, mjs_element.ts), comme après `µwrite $x, v`
+function _mjsStorePerime(subs, k) {
+  if (!subs) return;
+  for (var comp of subs) {
+    if (comp._mjs_computeds) _mjsCompte(comp._mjs_computeds, k);
+  }
+}
+if (!µ._mjs_storeRawWrite) {
+  µ._mjs_storeRawWrite = new Proxy({}, {
+    set: function(t, key, value) {
+      µ._mjs_storeRaw[key] = value;
+      _mjsStorePerime(µ._mjs_storeSubs.get(key), '$$' + key);
+      _mjsStorePerime(µ._mjs_storeSubs.get('*'), '$$*');
+      return true;
+    }
+  });
+}
 
 // `µ._storeDeclare(['session','game'])` : crée les accesseurs manquants sur
 // `µ.store` — get déballe les computed (`_mjs_c`, parité mjs_runes.ts

@@ -727,9 +727,22 @@ export async function settleRender(el: any, maxMs: number): Promise<boolean> {
 // code qui n'a pas été compilé avec ce bundle — elles ne rendent rien, et le `<style>` du
 // `<template shadowrootmode>` comme le mode light partiraient en silence. `baseCss` est rendu BRUT
 // (le trim appartient à chaque point d'usage).
-function ssrInfo(node: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any; awaitStates: any; renderScheduled: boolean } {
+// `layoutCss`/`layoutUrl` : le variant appliqué (`layout="x"` d'un `<style name="x">`, cf. runtime/mjs_layout_variant.ts), vide sans variant.
+function ssrInfo(node: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any; awaitStates: any; renderScheduled: boolean; layoutCss: string; layoutUrl: string } {
   const info: any = ssrCoreOf(node)._ssrInfo(node)
-  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes, awaitStates: info.awaitStates, renderScheduled: info.renderScheduled === true }
+  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes, awaitStates: info.awaitStates, renderScheduled: info.renderScheduled === true, layoutCss: typeof info.layoutCss === 'string' ? info.layoutCss : '', layoutUrl: typeof info.layoutUrl === 'string' ? info.layoutUrl : '' }
+}
+
+// Le variant appliqué d'un composant à ombre, après sa feuille propre, dans l'ordre où le montage les adopte : la page prérendue a
+// déjà le bon modèle. En ligne, la balise porte l'adresse du fichier (`mjs-layout`), que le runtime relit avant la reprise
+// (runtime/mjs_layout_variant.ts) : le composant repris garde son modèle sans attendre le fichier. Sous le mode strict, un
+// `<link>` comme les autres feuilles
+function feuilleModele(node: any, feuille: FeuilleBalise, tag: string): string {
+  const info = ssrInfo(node)
+  const css  = info.layoutCss.trim()
+  if (!css) return ''
+  const out = feuille(css, tag + '--modele')
+  return out.startsWith('<style>') ? `<style mjs-layout="${escapeAttr(info.layoutUrl)}">` + out.slice('<style>'.length) : out
 }
 
 // Texte d'une feuille du registre du cœur (`µ.CSS`). Le rendu serveur note le texte reçu par
@@ -899,6 +912,10 @@ function etiqueterReprise(node: any, doc: any): void {
       while (following && following.nodeType === 3 && following.data === '') following = following.nextSibling
       if (following && following.nodeType === 3) n.parentNode.insertBefore(doc.createComment(''), n.nextSibling)
     }
+    // les lignes des listes dont les ancres sont reprises : repérées à leur tour par le cœur (runtime/mjs_hydrate.ts), qui seul lit ses listes ;
+    // le client les reprend au lieu de les refaire. Un cœur sans le module d'hydratation n'en repère aucune : le client les refait
+    const core: any = ssrCoreOf(node)
+    if (core && typeof core._ssrRows === 'function') core._ssrRows(node)
   }
   if (propre) { for (const child of Array.from(node._shadow.children) as any[]) etiqueterReprise(child, doc) }
   if (node.children) { for (const child of Array.from(node.children) as any[]) etiqueterReprise(child, doc) }
@@ -963,7 +980,7 @@ function serializeShadowHost(node: any, shadowMode: 'open' | 'closed', lightSeen
   const isLight = (node.hasAttribute && node.hasAttribute('mjs-light')) || (node.constructor && node.constructor.mjsLight === true)
   if (hasOwnShadow && !isLight) {
     const nestedCss = ssrInfo(node).baseCss.trim()
-    const nestedStyleTag = feuillesPartagees(node, feuille) + feuille(nestedCss, tagName)
+    const nestedStyleTag = feuillesPartagees(node, feuille) + feuille(nestedCss, tagName) + feuilleModele(node, feuille, tagName)
     let shadowContent = ''
     // NOUVELLE frontière <template> physique : dédoublonnage propre à ELLE
     const nestedSeen = new Set<string>()
@@ -1332,6 +1349,14 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     }
   }
 
+  // Fichier d'un variant (`<module>.<nom>.css`, à plat dans le dossier de sortie, cf. bundler/index.ts), lu sur le disque pour
+  // le runtime de la fenêtre de rendu (`µ._ssrLayoutRead`, runtime/mjs_layout_variant.ts) : le variant s'applique pendant le rendu,
+  // sans requête. Un nom qui n'a pas la forme d'un module ou d'un modèle ne lit rien
+  function layoutRead(mod: unknown, nom: unknown): string | null {
+    if (!/^[\w-]+(?:\.[\w-]+)*$/.test(String(mod)) || !/^[A-Za-z][\w-]*$/.test(String(nom))) return null
+    try { return readFileSync(join(outputDir, `${String(mod)}.${String(nom)}.css`), 'utf-8') } catch { return null }
+  }
+
   // happy-dom est une dépendance optionnelle (utile seulement pour le SSR).
   // Import dynamique avec message clair si absent.
   let HappyDOM: any
@@ -1485,10 +1510,11 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
           i18nSectionsLine = `if (typeof µ._i18nLang === 'function') { ${langLines.join(' ')} }\nµ._i18nLoadSync = window.__mjsI18nLoadSync;`
           ;(window as any).__mjsI18nLoadSync = i18nLoadSync
         }
+        ;(window as any).__mjsLayoutRead = layoutRead
         noterTexteFeuilles(window)
         // thèmes de l'application : le navigateur les reçoit par le manifeste (`µ._themeCss`), la fenêtre de rendu n'évalue pas le manifeste
         const themeLine = bundler.themeCss ? `µ._themeCss = ${JSON.stringify(bundler.themeCss)}; if (typeof µ._themeAdopt === 'function') { µ._themeAdopt(); }\n` : ''
-        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${labelsLine}\n${i18nDataLine}\n${i18nSectionsLine}\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
+        window.eval(`${coreCode}\nglobalThis.µ = µ;\n${labelsLine}\n${i18nDataLine}\n${i18nSectionsLine}\nµ._ssrLayoutRead = window.__mjsLayoutRead;\nµ._isServer = true;\nµ._i18nTrackRoot = true;\nµ.server = true;\n${themeLine}${componentCode}`)
       } catch (e: any) {
         throw new Error(t('server.ssr-eval-echec', { message: e.message }))
       }
@@ -1760,7 +1786,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
         // (mode `csp`) — un `<style>` en ligne DANS un `<template shadowrootmode>` est BLOQUÉ
         // par `style-src` sans 'unsafe-inline' (vérifié en navigateur) ; un `<link>`, lui,
         // s'applique dans une racine d'ombre — prouvé. `csp: false` (défaut) : chemin INCHANGÉ.
-        const styleTag = feuillesPartagees(el, feuilleRendu) + feuille(css, tag)
+        const styleTag = feuillesPartagees(el, feuilleRendu) + feuille(css, tag) + feuilleModele(el, feuille, tag)
         html = `<${tag}${attrs}><template shadowrootmode="${sm}">${styleTag}${shadowHtml}</template></${tag}>`
         // `shadowMode:'closed'` produit un
         // DSD `<template shadowrootmode="closed">` que le NAVIGATEUR attache tel

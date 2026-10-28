@@ -54,14 +54,24 @@ function hasAwaitOrYield(n: any): boolean {
   return trouve
 }
 
+// `$` lu comme une valeur, et non comme l'objet de `$.x` ou de `$[k]` (cf. visiteur Identifier plus bas) : l'état enveloppé
+// (runtime/mjs_deep.ts) — une écriture, une suppression ou une définition par lui prévient la variable
+const STATE = 'µ._mjs_makeDeepProxy(_mjsThis, [])'
+
+// pré-filtre du texte : un `$` seul, ni nom (`$x`, `a$`), ni membre (`a.$`), ni `$.`, `$[`, ni `${` d'un gabarit de texte
+const BARE_STATE = /(?<![\w$.])\$(?![\w$.[{])/
+
+// cible `$.x` / `$[k]` de premier niveau, l'objet est l'état lui-même
+const isStateRoot = (n: any): boolean => n?.type === 'MemberExpression' && n.object.type === 'Identifier' && n.object.name === '$'
+
 export function transformReactiveWrites(js: string): string {
   return transformReactiveWritesMapped(js).code
 }
 
 // Variante qui rend AUSSI la carte de source de cette passe — cf. pass-map.ts.
 export function transformReactiveWritesMapped(js: string): PassResult {
-  // `$[` aussi : un bloc qui n'écrit l'état que par une clé calculée (`$[k] = v`) n'a aucun `$.`
-  if (!js || (!js.includes('$.') && !js.includes('$['))) return { code: js }
+  // `$[` aussi : un bloc qui n'écrit l'état que par une clé calculée (`$[k] = v`) n'a aucun `$.` ; un `$` seul (`Object.assign($, …)`)
+  if (!js || (!js.includes('$.') && !js.includes('$[') && !BARE_STATE.test(js))) return { code: js }
 
   let ast: acorn.Node
   try {
@@ -72,6 +82,19 @@ export function transformReactiveWritesMapped(js: string): PassResult {
 
   const ms = new MagicString(js)
   let changed = false
+
+  // tête d'une boucle qui écrit l'état à chaque tour (`for ($x of l)`, `for ($k in o)`, `for ([$a, $b] of paires)`) : la cible de
+  // premier niveau passe par l'état enveloppé (STATE), son écriture prévient la variable comme `$x = v`. Un chemin plus profond
+  // (`for ($o.a of l)`) s'écrit déjà dans l'enveloppe de son objet
+  const forHead = (node: any) => {
+    const l = node.left
+    if (l.type === 'VariableDeclaration') return
+    const targets: any[] = []
+    if (isStateRoot(l)) targets.push(l)
+    else if (l.type === 'ArrayPattern' || l.type === 'ObjectPattern') forEachPatternLeaf(l, (leaf: any) => { if (isStateRoot(leaf)) targets.push(leaf) })
+    for (const c of targets) ms.overwrite(c.object.start, c.object.end, STATE)
+    if (targets.length) changed = true
+  }
 
   // `ancestor` (et non `simple`) : on a besoin du PARENT pour distinguer une
   // assignation STATEMENT (`$.x = v`, valeur ignorée) d'une assignation en
@@ -92,7 +115,7 @@ export function transformReactiveWritesMapped(js: string): PassResult {
       // dans le MÊME motif (`[$.a, $.b = $.a] = [1]`) lit l'état AVANT les
       // `_set` (les défauts s'évaluent pendant la déstructuration, les `_set`
       // après). Un `for ([$.a] of xs)` (ForOfStatement, pas une
-      // AssignmentExpression) reste hors de portée de ce visiteur.
+      // AssignmentExpression) est traité à part (forHead plus haut).
       if (node.operator === '=' && (node.left.type === 'ArrayPattern' || node.left.type === 'ObjectPattern')) {
         const targets: any[] = []
         collectStateTargets(node.left, targets)
@@ -204,6 +227,26 @@ export function transformReactiveWritesMapped(js: string): PassResult {
         emitAssign(ms, js, node, ancestors, localTarget(varName))
         changed = true
       }
+    },
+
+    ForInStatement: forHead,
+    ForOfStatement: forHead,
+
+    // `$` lu comme une valeur (`Object.assign($, …)`, `Reflect.set($, k, v)`, `Object.defineProperty($, …)`, `const s = $`,
+    // `f($)`, `{ $ }`) : l'état enveloppé (STATE), par lequel une écriture, une suppression ou une définition prévient la
+    // variable et périme les valeurs dérivées qui la lisent. Restent tels quels : `$.x` et `$[k]` (lectures directes, écritures
+    // réécrites par ce visiteur et par path-tracker.ts), `$(…)`, `new $()` et `` $`…` `` (des appels), `$++` et `delete $` (sans
+    // objet), la variable d'une tête de boucle (`for ($ of l)`)
+    Identifier(node: any, _st: any, ancestors: any[]) {
+      if (node.name !== '$') return
+      const p = ancestors[ancestors.length - 2]
+      if (!p || (p.type === 'MemberExpression' && p.object === node)) return
+      if ((p.type === 'CallExpression' || p.type === 'NewExpression') && p.callee === node) return
+      if (p.type === 'TaggedTemplateExpression' || p.type === 'UpdateExpression' || (p.type === 'UnaryExpression' && p.operator === 'delete')) return
+      if ((p.type === 'ForInStatement' || p.type === 'ForOfStatement') && p.left === node) return
+      if (p.type === 'Property' && p.shorthand) ms.overwrite(p.start, p.end, `$: ${STATE}`)
+      else ms.overwrite(node.start, node.end, STATE)
+      changed = true
     },
 
     UpdateExpression(node: any, _st: any, ancestors: any[]) {

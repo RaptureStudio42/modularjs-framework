@@ -82,6 +82,8 @@ Appelé une fois par vie du composant, au démontage définitif (le composant qu
 
 Équivalent au retour de `µmount` (ci-dessus) pour une ressource unique ; `µdestroy` reste préférable pour **regrouper** plusieurs nettoyages sans rapport entre eux dans un seul bloc.
 
+> 💡 Une erreur dans `µdestroy` — levée, ou rejet d'un `µdestroy` asynchrone (après un `await`) — est écrite dans la console (avertissement « hook destroy en erreur : … ») sans arrêter la destruction, où que soit le composant : dans un `{if}`, un `{key}`, un contenu `{{…}}` ou une ligne de `{for}`.
+
 > 💡 Pour ce cas précis — **un timer qui se répète** — la rune [`µevery`](#µevery--répéter-en-partant-tout-de-suite) fait les deux moitiés d'un coup, et tire dès le montage.
 
 > 💡 Pour une ressource attachée à un nœud précis du template (lib tierce, observateur d'intersection), préférez la directive **`@attach`** (chapitre [Directives DOM](09-directives-dom.md)) : elle co-localise mise en place et nettoyage sur l'élément, et se rejoue à chaque apparition/disparition (utile sous un `{if}`).

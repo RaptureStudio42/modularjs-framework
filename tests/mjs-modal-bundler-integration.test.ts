@@ -3,7 +3,8 @@
 // mjs_init.ts + mjs_modal.ts directement (harnais rapide, isolé) ; celui-ci prouve que le VRAI
 // pipeline Bundler produit bien la même chose :
 //   1. `mjs_modal.ts` est réellement dans le CANONICAL du bundler (src/bundler/index.ts) —
-//      présent en 'all'/défaut, ABSENT en 'core' (tree-shake du module optionnel 'modal').
+//      présent en 'all' et, sans clé `runtime`, dès que le code compilé s'en sert ; ABSENT sans usage et en 'core'
+//      (tree-shake du module optionnel 'modal').
 //   2. Le manifest (writeManifest) émet `µ._runtimeLabels = {...}` INCONDITIONNELLEMENT — même
 //      en 'core' (sans le module 'modal' lui-même), et reflète la clé `lang` de mjs.config.json
 //      (fr par défaut, en si `lang:"en"`) via `getMessagesLang()`/`RUNTIME_LABELS`
@@ -38,12 +39,15 @@ function manifestSync(raw: string): string {
 // lui-même, juste un point d'entrée .mjs minimal.
 const COMPONENT = `<p>hop</p>\n`
 
-async function buildProject(cfgExtra: any): Promise<{ root: string; outDir: string; manifestPath: string }> {
+// un composant qui ouvre une modale : le repérage voit µ.modal dans son code compilé
+const AVEC_MODALE = ['<script>', '  ouvrir = -> µ.modal.fire({ text: \'x\' })', '</script>', '', '<button @click=ouvrir>Ouvrir</button>'].join('\n') + '\n'
+
+async function buildProject(cfgExtra: any, component: string = COMPONENT): Promise<{ root: string; outDir: string; manifestPath: string }> {
   const root = mjsTmp('modal-e2e')
   const srcDir = join(root, 'app/modularjs')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, 'hop.mjs'), COMPONENT)
+  writeFileSync(join(srcDir, 'hop.mjs'), component)
   const manifestPath = join(root, 'bundle.js')
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
     sourceDir: 'app/modularjs', outputDir: 'out', manifestPath: 'bundle.js', ...cfgExtra,
@@ -75,8 +79,22 @@ describe('mjs_modal — CANONICAL/tree-shake (module optionnel \'modal\')', func
   this.timeout(30000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it("runtime absent (défaut 'all') : mjs_modal.ts RÉELLEMENT dans le core bundlé", async function () {
+  it('runtime absent, aucun usage de la modale : mjs_modal.ts ABSENT du core bundlé (module optionnel non repéré)', async function () {
     const { outDir } = await buildProject({})
+    const core = coreContent(outDir)
+    assert.equal(core.includes('mjs-modal-backdrop'), false, 'sans clé runtime, un module que le code compilé ne nomme pas reste de côté')
+    assert.equal(/µ\.modal\s*=\s*\{/.test(core), false)
+  })
+
+  it('runtime absent, un composant qui ouvre une modale : mjs_modal.ts RÉELLEMENT dans le core bundlé', async function () {
+    const { outDir } = await buildProject({}, AVEC_MODALE)
+    const core = coreContent(outDir)
+    assert.ok(core.includes('mjs-modal-backdrop'), 'la feuille CSS de mjs_modal.ts doit être concaténée dans mjs_core-*.js')
+    assert.ok(/µ\.modal\s*=\s*\{/.test(core), 'µ.modal = {...} doit être défini dans le core')
+  })
+
+  it("runtime:'all' : mjs_modal.ts RÉELLEMENT dans le core bundlé, sans usage", async function () {
+    const { outDir } = await buildProject({ runtime: 'all' })
     const core = coreContent(outDir)
     assert.ok(core.includes('mjs-modal-backdrop'), 'la feuille CSS de mjs_modal.ts doit être concaténée dans mjs_core-*.js')
     assert.ok(/µ\.modal\s*=\s*\{/.test(core), 'µ.modal = {...} doit être défini dans le core')
@@ -107,12 +125,13 @@ describe('mjs_modal — µ._runtimeLabels : émission INCONDITIONNELLE du manife
   // `lang` du CLI) — le choix de la langue AFFICHÉE se fait au runtime, via µ._mjs_label
   // (mjs_init.ts, cf. tests/runtime-labels-langue-affichee.test.ts).
   // seuls les groupes que le build lit partent au manifeste : ici l'hôte n'écrit ni effet à libellé ni module
-  // cœur, donc ni `fx` ni `core` (cf. tests/bundler-detection-libelles-manifeste.test.ts)
+  // cœur, donc ni `fx` ni `core` (cf. tests/bundler-detection-libelles-manifeste.test.ts). Les groupes modal, router, toast et ujs ne partent
+  // qu'avec leurs modules, que le composant trivial ne nomme pas : 'all' les embarque, la table se relit en entier
   const FR = { modal: { ok: 'OK', cancel: 'Annuler', deny: 'Non' }, router: { notFound: 'Page introuvable', noRoute: 'Aucune route ne correspond à cette adresse.', declared: 'Routes déclarées' }, toast: { success: 'Succès', error: 'Erreur', warning: 'Attention', info: 'Info' }, ujs: { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' }, err: RUNTIME_LABELS.fr.err, dev: RUNTIME_LABELS.fr.dev }
   const EN = { modal: { ok: 'OK', cancel: 'Cancel', deny: 'No' }, router: { notFound: 'Page not found', noRoute: 'No route matches this address.', declared: 'Declared routes' }, toast: { success: 'Success', error: 'Error', warning: 'Warning', info: 'Info' }, ujs: { sendFailed: 'Sending failed — the server did not respond.' }, err: RUNTIME_LABELS.en.err, dev: RUNTIME_LABELS.en.dev }
 
   it('lang absente (défaut fr) : µ._runtimeLabels sert les DEUX langues, µ._runtimeLabelsLang vaut "fr"', async function () {
-    const { manifestPath } = await buildProject({})
+    const { manifestPath } = await buildProject({ runtime: 'all' })
     const labels = readRuntimeLabels(manifestPath)
     assert.deepEqual(labels.fr, FR)
     assert.deepEqual(labels.en, EN)
@@ -121,7 +140,7 @@ describe('mjs_modal — µ._runtimeLabels : émission INCONDITIONNELLE du manife
   })
 
   it("lang:'en' : µ._runtimeLabels sert QUAND MÊME les deux langues, µ._runtimeLabelsLang vaut \"en\"", async function () {
-    const { manifestPath } = await buildProject({ lang: 'en' })
+    const { manifestPath } = await buildProject({ lang: 'en', runtime: 'all' })
     const labels = readRuntimeLabels(manifestPath)
     assert.deepEqual(labels.fr, FR)
     assert.deepEqual(labels.en, EN)
@@ -148,7 +167,8 @@ describe('mjs_modal — bout-en-bout RÉEL : µ.config.confirm=true → µ.confi
   after(async () => { await terminateSharedWorkerPool() })
 
   it('core + manifest compilés et chargés réellement : µ.confirm("Sûr ?") ouvre la VRAIE modale, clic confirm résout true', async function () {
-    const { outDir, manifestPath } = await buildProject({})
+    // le test appelle µ.confirm et µ.modal depuis son propre code, hors des sources compilées (en production, une page n'atteint pas µ) : rien ne le révèle au repérage, 'all' rend le cœur complet
+    const { outDir, manifestPath } = await buildProject({ runtime: 'all' })
     const core = readFileSync(join(outDir, readdirSync(outDir).find((f) => /^mjs_core-/.test(f))!), 'utf-8')
     const manifest = readFileSync(manifestPath, 'utf-8')
     const stripEsm = (s: string) => s
@@ -179,7 +199,8 @@ describe('mjs_modal — bout-en-bout RÉEL : µ.config.confirm=true → µ.confi
   })
 
   it('core + manifest compilés (build fr par défaut) : le titre du toast suit la langue AFFICHÉE (<html lang>), pas la langue figée au build', async function () {
-    const { outDir, manifestPath } = await buildProject({})
+    // le test appelle µ.modal.notify depuis son propre code, hors des sources compilées (en production, une page n'atteint pas µ) : rien ne le révèle au repérage, 'all' rend le cœur complet
+    const { outDir, manifestPath } = await buildProject({ runtime: 'all' })
     const core = readFileSync(join(outDir, readdirSync(outDir).find((f) => /^mjs_core-/.test(f))!), 'utf-8')
     const manifest = readFileSync(manifestPath, 'utf-8')
     const stripEsm = (s: string) => s

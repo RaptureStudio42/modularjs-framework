@@ -103,7 +103,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
     const p = fixture('prerendu-partagees-sans')
     ecrire(p, 'simple.mjs', '<p class="propre">S</p>\n<style>\n  .propre\n    color: red\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-simple', bundlerOpts: SANS_THEME })
-    assert.equal(res.html, '<mjs-simple mjs-ssr><template shadowrootmode="open"><style>:host{display:block}.propre{color:red}</style><p class="propre">S</p></template></mjs-simple>')
+    assert.equal(res.html, '<mjs-simple mjs-ssr><template shadowrootmode="open"><style>:host{display:block}:host([hidden]:not([hidden=until-found i])){display:none}.propre{color:red}</style><p class="propre">S</p></template></mjs-simple>')
   })
 
   it('mode strict (csp) : chaque feuille partagée sort en <link> vers un fichier, jamais en <style> en ligne', async function () {
@@ -180,7 +180,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
     ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-grosse">\n  .propre\n    color: red\n</style>\n')
     ecrire(p, 'liste.mjs', '<section>\n' + '<@carte></@carte>\n'.repeat(300) + '</section>\n')
     const { html, sortie } = await rendre(p, 'mjs-liste')
-    assert.ok(html.length < 80000, `HTML de ${html.length} octets (48 Ko de feuilles propres + un lien d'environ 80 octets par racine) : la feuille de 30 Ko ne doit pas être répétée par racine`)
+    assert.ok(html.length < 90000, `HTML de ${html.length} octets (57 Ko de feuilles propres, la règle de \`hidden\` comprise, + un lien d'environ 80 octets par racine) : la feuille de 30 Ko ne doit pas être répétée par racine`)
     assert.equal((html.match(/<style>/g) ?? []).length, 301, 'chaque racine garde sa feuille PROPRE en ligne (petite)')
     assert.equal(liens(html).length, 300, 'chaque carte désigne la feuille partagée par un <link>')
     assert.equal(new Set(liens(html)).size, 1, 'une seule URL : le navigateur ne la demande qu\'une fois')
@@ -264,16 +264,18 @@ describe('prérendu — thème, modèle et @import des feuilles partagées', fun
     assert.doesNotMatch(res.html, /--mjs-surface/)
   })
 
-  // LIMITE ASSUMÉE : la feuille d'un modèle (`layout="alt"` + `<style name="alt">`) est un FICHIER que
-  // le navigateur va chercher à l'exécution, pour un nom de modèle qui peut être calculé : elle n'est
-  // pas dans le HTML prérendu (docs/19-ssr.md le dit). Ce test fige la limite.
-  it('modèle (layout="alt") : sa feuille n\'est pas portée, la feuille propre et les partagées le sont', async function () {
+  // la feuille d'un modèle (`layout="alt"` + `<style name="alt">`) est appliquée pendant le rendu : elle est portée après les
+  // feuilles partagées et la feuille propre, comme le montage l'adopte, et sa balise porte l'adresse de son fichier (`mjs-layout`)
+  it('modèle (layout="alt") : sa feuille est portée après les feuilles partagées et la feuille propre', async function () {
     const p = fixture('prerendu-modele')
     ecrire(p, 'carte.mjs', '<div class="zone-a">C</div>\n<style @css="feuille-a">\n  .propre\n    color: red\n</style>\n<style name="alt">\n  .variante-alt\n    width: 555px\n</style>\n')
     ecrire(p, 'page.mjs', '<@carte layout="alt"></@carte>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-page' })
-    assert.doesNotMatch(res.html, /variante-alt/, 'la feuille du modèle n\'est pas dans le HTML prérendu')
-    assert.match(res.html, /\.zone-a/, 'la feuille partagée de la carte reste portée')
+    const im = res.html.indexOf('variante-alt')
+    assert.ok(im > -1, `la feuille du modèle est dans le HTML prérendu — HTML : ${res.html.slice(0, 1500)}`)
+    assert.ok(res.html.indexOf('.zone-a') > -1 && res.html.indexOf('.zone-a') < im, 'la feuille partagée de la carte est portée, avant celle du modèle')
+    assert.ok(res.html.indexOf('.propre') > -1 && res.html.indexOf('.propre') < im, 'la feuille propre de la carte est portée, avant celle du modèle')
+    assert.match(res.html, /<style mjs-layout="[^"]*carte\.alt\.css[^"]*">[^<]*variante-alt/, 'sa balise porte l\'adresse du fichier du modèle')
   })
 
   it('@import dans une feuille partagée : retiré du texte prérendu, le reste de la feuille est porté', async function () {

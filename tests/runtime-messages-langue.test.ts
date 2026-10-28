@@ -253,6 +253,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['sockBadUrl', { url: 'url1' }, 'URL invalide, connexion abandonnée : url1', false],
   ['sockDuplicateAuth', { url: 'url1' }, 'url1 : une connexion à cette adresse existe déjà avec un autre auth — elle vous revient telle quelle, sous sa première identité ; fermez-la (destroy()) avant d\'en ouvrir une autre sous une autre identité', false],
   ['sockHandleGone', { fn: 'fn1', room: 'room1' }, 'fn1() sur une poignée du salon « room1 » déjà partie (leave()) : rien n\'est inscrit ni envoyé — pour reprendre ce salon, prenez une poignée neuve avec sock.room()', false],
+  ['sockBinaryNoSchema', {}, 'trame binaire reçue et ignorée : sans le module \'schema\', le cœur ne sait pas la lire (un serveur MJS-WS encode en binaire les messages dont il déclare le schéma, app.schema) — ajoutez "schema" à la liste "runtime" de mjs.config.json, ou écrivez "runtime": "all"', false],
   ['ajaxBinVersionDiff', { hashLocal: 'hashLocal1', version: 'version1' }, 'version de schéma différente (client hashLocal1, serveur version1) — rafraîchissement en arrière-plan', false],
   ['ajaxBinTooShort', { size: 'size1' }, 'réponse trop courte pour porter une version de schéma (8 octets attendus, size1 reçus)', false],
   ['ajaxBinRefreshFailed', { url: 'url1', status: 'status1' }, 'rafraîchissement du schéma en échec (url1) : HTTP status1', false],
@@ -277,8 +278,12 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['autoloaderNotRegistered', { fileName: 'fileName1', tag: 'tag1' }, '❌ Import de \'fileName1\' réussi mais <tag1> n\'a jamais été enregistré (customElements.define manquant dans le module ?).', false],
   ['autoloaderRejected', { fileName: 'fileName1' }, '❌ Rejet : Composant \'fileName1\' absent du manifeste de distribution.', false],
   ['autoloaderStale', { fileName: 'fileName1' }, 'bundle périmé : \'fileName1\' introuvable — rechargement de la page (une seule fois par build).', false],
+  ['lockstepApplyThrew', { tick: 'tick1' }, 'apply() a levé une erreur au tick tick1 : l\'ordre n\'est appliqué qu\'en partie et l\'état local de la partie n\'est plus sûr — corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur', false],
   ['lockstepJournalTruncated', { tick: 'tick1', expected: 'expected1' }, 'journal tronqué au resync (tick tick1 reçu, tick expected1 attendu) — resync déterministe impossible, état local potentiellement faux', false],
+  ['lockstepResyncLimit', { tick: 'tick1', max: 'max1', s: 's1', wait: 'wait1' }, 'apply() a levé une erreur au tick tick1 alors que max1 reprises de l\'état en s1 s ont déjà été demandées : l\'état local de la partie reste faux jusqu\'à la prochaine reprise, dans wait1 s au plus — la partie le signale (événement \'divergence\', raison \'apply-threw\') ; corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur', false],
+  ['lockstepReplayThrew', { tick: 'tick1' }, 'apply() a levé une erreur au tick tick1 pendant le rejeu de la reprise : la reprise ne rend pas l\'état local de la partie sûr, il diffère de celui des autres joueurs si apply() ne lève pas chez eux — la partie le signale (événement \'divergence\', raison \'apply-threw\') ; corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur', false],
   ['lockstepNotLockstep', { game: 'game1' }, 'partie \'game1\' n\'est pas en mode lockstep côté serveur (def.mode) — µ.lockstep restera inerte', false],
+  ['lockstepSnapshotTooBig', { size: 'size1', tick: 'tick1', max: 'max1' }, 'instantané de size1 octets au tick tick1, au-delà des max1 octets permis par le serveur (limits.maxPayload, lockstepJournal.maxBytes) — non proposé, le journal de la partie n\'est pas coupé', false],
   ['lruEvictError', {}, 'onEvict en erreur :', false],
   ['optimisticBadStore', {}, 'store invalide (objet attendu, ex. µ.state({...}))', false],
   ['smoothNonFinite', { id: 'id1' }, 'échantillon non fini (Infinity/NaN) ignoré pour \'id1\'', false],
@@ -310,6 +315,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['coreFieldNoName', {}, 'aucun « name » : ni sur <@@field>, ni sur le champ enveloppé.', false],
   ['coreColorNoValue', {}, 'l\'attribut « value » est requis.', false],
   ['coreToolbarUnknown', { n: 'gras', list: 'h2 h3' }, '[ModularJS] <@@toolbar> : l\'outil « gras » n\'existe pas, il est ignoré — outils connus : h2 h3.', true],
+  ['coreEditorColorUnknown', { n: 'rouge', list: 'red orange green' }, '[ModularJS] <@@editor> : la couleur « rouge » n\'existe pas, elle est ignorée — couleurs connues : red orange green.', true],
   ['coreChartWord', { word: 'courbe', prop: 'shape', list: 'line area dots bar' }, '[ModularJS] <@@chart> : « courbe » n\'est pas une valeur connue de shape, elle est ignorée — valeurs connues : line area dots bar.', true],
   ['coreChartColor', { color: 'red;x', key: 'poids', hue: '1', list: 'blue orange green pink violet gold' }, '[ModularJS] <@@chart> : la couleur « red;x » de la série « poids » est refusée, la série prend la teinte 1 — écrivez un nom de teinte (blue orange green pink violet gold), un entier de 1 ou plus (au-delà de 6, on reprend au début) ou une couleur CSS que le navigateur sait lire, sans « ; », « : », guillemet, accolade, « < », « > », « \\ », « /* » ni url(…).', true],
   ['coreChartNoStats', { shape: 'histogram', word: 'trend', list: 'line area dots bar histogram', trend: 'line area dots bar' }, '[ModularJS] <@@chart> : la forme histogram ne trace pas stats « trend », il est ignoré — formes qui tracent des statistiques : line area dots bar histogram ; trend : line area dots bar.', true],
@@ -321,7 +327,11 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['coreChartDecimals', { value: '11' }, '[ModularJS] <@@chart> : decimals « 11 » est ignoré — écrivez un nombre entier de 0 à 10 ; sans decimals, les nombres gardent leur écriture automatique.', true],
   ['coreChartPieDrop', { key: 'moins' }, '[ModularJS] <@@chart> : la série « moins » n\'a pas de total positif, l\'anneau ne lui donne aucune part.', true],
   ['coreChartPieLabelDrop', { label: 'Bâle' }, '[ModularJS] <@@chart> : le libellé « Bâle » n\'a pas de total positif, l\'anneau ne lui donne aucune part.', true],
+  ['coreChartSide', { word: 'droite', key: 'pluie', list: 'left right' }, '[ModularJS] <@@chart> : axis « droite » de la série « pluie » n\'est pas une valeur connue, la série reste sur l\'axe de gauche — valeurs connues : left right.', true],
+  ['coreChartSideShape', { shape: 'stack', keys: 'pluie', list: 'line area dots bar' }, '[ModularJS] <@@chart> : la forme stack n\'a qu\'une échelle, axis « right » est ignoré pour pluie — formes à deux échelles : line area dots bar.', true],
+  ['coreChartDay', { x: '2026-02-30' }, '[ModularJS] <@@chart> : « 2026-02-30 » n\'est pas une date qui existe, sa ligne ne se range dans aucune période et quitte le graphique — écrivez un jour possible (AAAA-MM-JJ) ou un instant qui se lit.', true],
   ['coreGaugeStep', { n: '-1' }, '[ModularJS] <@@gauge> : le pas « -1 » n\'est pas un nombre positif, la jauge avance de 1. Écrivez un pas plus grand que 0.', true],
+  ['coreNumberDecimals', { value: '2,5' }, '[ModularJS] <@@number> : decimals « 2,5 » est ignoré — écrivez un nombre entier de 0 à 100 ; sans decimals, la valeur s\'écrit telle quelle.', true],
   ['coreRangeInverted', { tag: 'knob', min: '80', max: '20' }, '[ModularJS] <@@knob> : min « 80 » est plus grand que max « 20 », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.', true],
   ['dev.majEffect', {}, 'effet', false],
   ['dev.majColor', {}, 'couleur', false],
@@ -688,7 +698,8 @@ describe('messages du navigateur — le groupe dev ne part que dans un build de 
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'hote.mjs'), '<div>x</div>\n')
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js'), env })
+    // les libellés d'interface (modal, router, toast, ujs) ne partent qu'avec leurs modules, que l'hôte ne nomme pas : 'all' les embarque
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js'), env, runtime: 'all' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
     const ligne = libellesDuManifeste(join(root, 'bundle.js')).split('\n').find((l) => l.startsWith('µ._runtimeLabels ='))!

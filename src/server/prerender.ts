@@ -14,7 +14,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, unlink
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
 import { resolveBundlerOpts, type MjsConfig, type RenderEngine } from '../bundler/config.js'
 import { stripStartupHeader } from '../bundler/startup.js'
-import type { Bundler } from '../bundler/index.js'
+import { warningAlreadyWritten, type Bundler } from '../bundler/index.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
 import { resolvePage, isBuildPrerenderable } from './render-routes.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
@@ -235,6 +235,33 @@ export function collectTags(html: string): string[] {
   return [...vus].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
 }
 
+/** Au-delà de ce nombre de pages, la ligne d'un avertissement les compte au lieu de les nommer. */
+const NAMED_PAGES = 3
+
+/** Ligne déjà étiquetée par la compilation : son type entre crochets en fin de ligne (cf. typedLine, diagnostics.ts). */
+const LABELLED = / \[lint\.[a-zA-Z0-9]+\]$/
+
+/**
+ * Tête de la ligne d'un avertissement du prérendu : les pages qui l'ont vu, chacune avec ses langues. Une page dans une
+ * langue garde la tête d'un rendu seul (`/a [fr]`, `/a` sans langues déclarées) ; plusieurs langues s'énumèrent
+ * (`/a [fr, en]`), plusieurs pages se séparent par des virgules (`/a, /b [fr, en]` quand elles ont les mêmes langues,
+ * `/a [fr], /b [en]` sinon) ; au-delà de NAMED_PAGES, elles se comptent (`8 pages [fr, en]`, les langues de toutes).
+ */
+function warningScope(renders: { url: string; lang?: string }[]): string {
+  const byUrl = new Map<string, string[]>()
+  const all: string[] = []
+  for (const { url, lang } of renders) {
+    const langs = byUrl.get(url) ?? []
+    if (lang && !langs.includes(lang)) langs.push(lang)
+    if (lang && !all.includes(lang)) all.push(lang)
+    byUrl.set(url, langs)
+  }
+  const tag = (langs: string[]): string => langs.length > 0 ? ` [${langs.join(', ')}]` : ''
+  if (byUrl.size > NAMED_PAGES) return t('server.prerender-avertissement-pages', { nb: byUrl.size }) + tag(all)
+  if ([...byUrl.values()].every(langs => langs.join() === all.join())) return [...byUrl.keys()].join(', ') + tag(all)
+  return [...byUrl].map(([url, langs]) => url + tag(langs)).join(', ')
+}
+
 /**
  * Prérend au build toutes les pages `prerender` concrètes du bloc `render`.
  * Sans bloc `render` (ou sans route prérendable), c'est un no-op silencieux.
@@ -358,6 +385,10 @@ export async function prerenderPages(
   // (rétro-compat stricte, chemin plat, aucun sous-dossier).
   const locales = render.locales && render.locales.length >= 2 ? render.locales : null
 
+  // avertissements du rendu, par ligne : chacun avec les pages et les langues qui l'ont vu. Ceux de la compilation
+  // reviennent dans le rendu de CHAQUE page et de CHAQUE langue — une ligne par avertissement distinct, pas une par rendu
+  const renderWarnings = new Map<string, { url: string; lang?: string }[]>()
+
   try {
     for (const { url, component, settleMs, engine, light } of resolved) {
       const targets: { lang?: string; file: string }[] = locales
@@ -390,9 +421,17 @@ export async function prerenderPages(
           // Étiquetés `[lint.prerender]` ICI (pas dans renderToString.ts/render-browser.ts :
           // les MÊMES clés servent aussi le rendu par requête hors build, jamais concerné) —
           // coupables via `lint.prerender: false`, colorés (thread principal, jamais un worker).
+          // Mis de côté avec la page et la langue, imprimés une fois la passe finie (cf. warningScope). Un avertissement de
+          // la compilation que le bilan de la construction a déjà écrit n'est pas répété ; celui qu'elle a étiqueté garde sa
+          // seule étiquette (`[lint.<type>]`, le type à couper), sans `[lint.prerender]` derrière
           for (const w of warnings) {
-            const line = typedLine('prerender', w, config.lint)
-            if (line !== null) log(`   ⚠️  ${url}${langTag} : ${paintDiagnostic(line, colorsEnabled)}`)
+            if (warningAlreadyWritten(sourceDir, w)) continue
+            const typed = typedLine('prerender', w, config.lint)
+            if (typed === null) continue
+            const line = LABELLED.test(w) ? w : typed
+            const seen = renderWarnings.get(line)
+            if (seen) seen.push({ url, lang })
+            else renderWarnings.set(line, [{ url, lang }])
           }
           mkdirSync(dirname(file), { recursive: true })
           const banner = `${prerenderBanner(url, lang)}\n`
@@ -425,6 +464,7 @@ export async function prerenderPages(
         }
       }
     }
+    for (const [line, renders] of renderWarnings) log(`   ⚠️  ${warningScope(renders)} : ${paintDiagnostic(line, colorsEnabled)}`)
   } finally {
     await closeQuietly(happyRenderer, browserRenderer)
   }

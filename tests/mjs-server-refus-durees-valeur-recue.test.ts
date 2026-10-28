@@ -66,6 +66,7 @@ describe('MJS-Server — le refus d\'une durée dit la valeur reçue telle quell
         setMessagesLang(langue)
         const marque = langue === 'fr' ? ', reçu : ' : ', received: '
         for (const [option, poser] of DUREES) {
+          if (option === 'turns.timeout' && valeur[1] === null) continue   // null y est permis : aucune minuterie de tour
           const err = refus(option, poser, valeur[1])
           assert.equal(err.name, 'Error', `${option} a levé ${err.name} au lieu du refus prévu (${err.message})`)
           assert.ok(err.message.includes('.' + option + ' '), `${option} : le message ne nomme pas l'option : ${err.message}`)

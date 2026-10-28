@@ -112,6 +112,7 @@ describe('µ._mjs_fixPosition / µ._mjs_unfixPosition — épinglage et nettoyag
       mkdirSync(srcDir, { recursive: true })
       writeFileSync(join(srcDir, 'stub.mjs'), '<p>stub</p>')
 
+      // `destroy_hooks` : la reprise d'une ligne encore en sortie n'entre au cœur qu'avec le fichier des transitions, seul à poser `_mjs_dying`
       // `runtime: [...]` explicite : le stub `<p>stub</p>` n'utilise ni `{for}` ni aucun
       // module optionnel classique — sans forçage, le scan ne détecte ni 'for' ni
       // 'for_nested' (µ.Element.prototype._mjs_updList, mjs_for_nested.ts, jumeau de `_mjs_updFor`
@@ -120,7 +121,7 @@ describe('µ._mjs_fixPosition / µ._mjs_unfixPosition — épinglage et nettoyag
       // _mjs_unfixPosition) hors de la sélection implicite par défaut (`allOptional()`,
       // rétrocompat `runtime` absent) — le lister ici aussi, pas de scan possible pour un
       // module optionnel classique.
-      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['easing', 'for', 'for_nested'] })
+      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['easing', 'for', 'for_nested', 'destroy_hooks'] })
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0)
 

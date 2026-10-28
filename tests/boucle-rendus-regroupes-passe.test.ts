@@ -65,8 +65,8 @@ describe('regroupement des rendus d\'une boucle — la passe du compilateur', ()
   it('une boucle sans écriture de l\'état ne paie rien : le texte sort tel quel', () => {
     const src = 'function f(l) {\n  let t = 0\n  for (const x of l) t += x\n  µ.warn(t)\n  return t\n}'
     assert.equal(batchLoopWrites(src), src)
-    // un `.forEach` écrit hors de toute boucle n'est pas regroupé
-    assert.equal(enveloppes(passe(`l.forEach((i) => ${W})`)), 0)
+    // un `.forEach` écrit hors de toute boucle, dont le rappel écrit l'état, est regroupé comme une boucle
+    assert.equal(enveloppes(passe(`l.forEach((i) => ${W})`)), 1)
   })
 
   it('une boucle qui attend n\'est pas enveloppée ; sa boucle intérieure sans attente l\'est', () => {

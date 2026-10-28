@@ -38,21 +38,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts'), 'utf-8')
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
 
-// Globals posés/restaurés PAR TEST (même garde que router-navigate-reentrance.
-// test.ts) : Node fournit un CustomEvent NATIF incompatible avec les instances
-// happy-dom (dispatchEvent d'un autre realm rejeté).
-let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any
-beforeEach(() => {
-  __prevWindow = (globalThis as any).window
-  __prevDocument = (globalThis as any).document
-  __prevCustomEvent = (globalThis as any).CustomEvent
-})
-afterEach(() => {
-  ;(globalThis as any).window = __prevWindow
-  ;(globalThis as any).document = __prevDocument
-  ;(globalThis as any).CustomEvent = __prevCustomEvent
-})
-
 // µ.Router RÉEL (mjs_router.ts exécuté tel quel) sur une fenêtre happy-dom
 // fraîche à l'URL donnée. L'IIFE de boot (bas de mjs_router.ts) s'exécute donc
 // ICI aussi, `µ.state` étant défini — comme au chargement réel du runtime.
@@ -81,6 +66,23 @@ function makeRouterWithUjs(url: string) {
 }
 
 describe('routeur — µ.url ne reste plus sale après un slash final', function () {
+  // Globals posés/restaurés PAR TEST (même garde que router-navigate-reentrance.
+  // test.ts) : Node fournit un CustomEvent NATIF incompatible avec les instances
+  // happy-dom (dispatchEvent d'un autre realm rejeté). Crochets DANS ce describe :
+  // posés à la racine du fichier, mocha les rattache à la suite racine et les
+  // joue autour de chaque test de TOUS les fichiers du run
+  let __prevWindow: any, __prevDocument: any, __prevCustomEvent: any
+  beforeEach(() => {
+    __prevWindow = (globalThis as any).window
+    __prevDocument = (globalThis as any).document
+    __prevCustomEvent = (globalThis as any).CustomEvent
+  })
+  afterEach(() => {
+    ;(globalThis as any).window = __prevWindow
+    ;(globalThis as any).document = __prevDocument
+    ;(globalThis as any).CustomEvent = __prevCustomEvent
+  })
+
   it('#1 — "#/x/" : _mjs_canonicalizeUrl() puis _mjs_updateUrlStore() nettoient µ.url.hash ET location.hash', function () {
     const { win, Router, µ } = makeRouter('http://localhost/#/x/')
 

@@ -187,8 +187,9 @@ describe('Bundler.compile()', () => {
   // source, immédiatement après le readdirSync+filter concerné.
   it("bundleSharedStyles trie les fichiers (déterminisme cascade CSS + hash de build)", function () {
     const here = fileURLToPath(new URL('.', import.meta.url))
-    const src = fs.readFileSync(join(here, '..', 'src', 'bundler', 'index.ts'), 'utf-8')
-    const m = src.match(/const files = readdirSync\(this\.stylesheetsDir\)[\s\S]{0,150}/)
+    // le corps de bundleSharedStyles vit dans styles.ts (la méthode de la classe lui passe l'instance, `bundler`)
+    const src = fs.readFileSync(join(here, '..', 'src', 'bundler', 'styles.ts'), 'utf-8')
+    const m = src.match(/const files = readdirSync\(bundler\.stylesheetsDir\)[\s\S]{0,150}/)
     assert.ok(m, 'lecture des fichiers de stylesheetsDir introuvable (structure du bundler a changé ?)')
     assert.match(
       m![0], /\.sort\(\)/,

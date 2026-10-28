@@ -75,9 +75,12 @@ function _mjsFxLoad(key) {
   var w = _mjsFxLoads[key];
   if (!w) {
     w = _mjsFxLoads[key] = µ._mjs_fxImport(p);
+    if (µ._mjs_loading) µ._mjs_loading(w);
     w.then(null, function(e) {
       delete _mjsFxLoads[key];
-      µ.error(µ._mjs_msg('fxLoad', { name: key.slice(7) }, 'effet « {name} » : son fichier ne s\'est pas chargé —'), e);
+      // fichier coupé par le départ de la page : rien n'est dit (cf. µ._mjs_loadFailed, mjs_init.ts)
+      var report = function() { µ.error(µ._mjs_msg('fxLoad', { name: key.slice(7) }, 'effet « {name} » : son fichier ne s\'est pas chargé —'), e); };
+      µ._mjs_loadFailed ? µ._mjs_loadFailed(e, report) : report();
     });
   }
   return w;

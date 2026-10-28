@@ -13,6 +13,9 @@
 // (bundler/index.ts, wantsKey/wantsAwait forcent wantsIf).
 
 if (µ.Element) {
+  // blocs `<transitions>` (reprise d'une sortie en cours) : retirés du cœur par le bundler quand il n'embarque pas
+  // mjs_destroy_hooks.ts, seul fichier qui pose `_mjs_dying` — sans transition écrite, aucun nœud n'est jamais en sortie
+  // <transitions>
   // Tente de réutiliser des nœuds en outro plutôt que de les détruire :
   // on REVERSE l'animation en cours (Web Animations API). Avantage vs
   // cancel+create : continuité parfaite peu importe l'easing (linéaire ou
@@ -116,6 +119,18 @@ if (µ.Element) {
     }
     return true;
   };
+  // </transitions>
+
+  // rejet d'une destruction lancée sans être attendue (l'ancienne branche ne retarde jamais la neuve) : une seule
+  // fonction par message, posée sur la seule promesse qui peut rejeter, celle du chemin des transitions et des
+  // nettoyages (`_mjs_destroyWithHooks`, mjs_destroy_hooks.ts). Le chemin rapide rend la promesse résolue partagée
+  // (`MJS_RESOLVED_DESTROY`, mjs_element.ts) : un `.catch` par nœud y coûtait une fonction, une promesse et une microtâche
+  var _mjsIfDestroyErr = function(err) {
+    return µ.error(µ._mjs_msg('ifDestroy', null, 'destruction de branche {if} en erreur :'), err);
+  };
+  var _mjsIfNestedDestroyErr = function(err) {
+    return µ.error(µ._mjs_msg('ifDestroyNested', null, 'destruction de branche {if}/{key} imbriquée en erreur :'), err);
+  };
 
   // _mjs_updIf prend une createFn qui retourne {fragment, refs}.
   // Plus de parse HTML, plus de cache template, plus de walk paths.
@@ -129,9 +144,11 @@ if (µ.Element) {
     if (µ.debug) {
       µ.log(`[mjs-tx] _mjs_updIf ${id} createFn=${!!createFn} childMode=${(ref = s.parentNode) != null ? typeof ref.getAttribute === "function" ? ref.getAttribute('mjs-childtransition') : void 0 : void 0}`);
     }
+    // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
       return;
     }
+    // </transitions>
     childMode = s.parentNode && s.parentNode.getAttribute
       ? s.parentNode.getAttribute('mjs-childtransition')
       : null;
@@ -154,14 +171,9 @@ if (µ.Element) {
         dyingCount++;
       } else {
         destroyCount++;
-        // `.catch` défensif : `_mjs_destroyNodeAndChildren` est asynchrone et
-        // jamais attendue ici (l'ancienne branche ne doit pas retarder la
-        // nouvelle) — un rejet resterait sinon non géré (mjs_destroy_hooks.ts
-        // ne devrait plus en produire, mais {if} ne doit dépendre de rien côté
-        // appelant pour rester sans fuite).
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error(µ._mjs_msg('ifDestroy', null, 'destruction de branche {if} en erreur :'), err);
-        });
+        // jamais attendue ici : un rejet resterait sinon non géré (cf. `_mjsIfDestroyErr`)
+        var __d = this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        if (__d !== MJS_RESOLVED_DESTROY) __d.catch(_mjsIfDestroyErr);
         if (t._mjs_dying && t._mjs_outro) outroNodes.push(t);
       }
     }
@@ -206,9 +218,11 @@ if (µ.Element) {
     if (!(startNode && endNode)) {
       return;
     }
+    // <transitions>
     if (this._mjs_tryReviveDying(startNode, endNode, createFn)) {
       return;
     }
+    // </transitions>
     // Simplify Coffee ternaire chain. parentNode existe (asserted plus haut).
     childMode = startNode.parentNode && startNode.parentNode.getAttribute
       ? startNode.parentNode.getAttribute('mjs-childtransition')
@@ -224,10 +238,9 @@ if (µ.Element) {
       t = range[__ni];
       if (!t.parentNode) continue;
       if (!t._mjs_dying) {
-        // `.catch` défensif — même raison que `_mjs_updIf` ci-dessus.
-        this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition').catch(function(err) {
-          return µ.error(µ._mjs_msg('ifDestroyNested', null, 'destruction de branche {if}/{key} imbriquée en erreur :'), err);
-        });
+        // même prise que `_mjs_updIf` ci-dessus
+        var __d = this._mjs_destroyNodeAndChildren(t, childMode === 'all' || childMode === 'out' || childMode === 'transition');
+        if (__d !== MJS_RESOLVED_DESTROY) __d.catch(_mjsIfNestedDestroyErr);
       }
     }
     if (!createFn) {

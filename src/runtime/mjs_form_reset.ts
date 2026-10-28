@@ -7,7 +7,7 @@
 // Un formulaire reçoit UN écouteur du `reset`, posé à l'arrivée de son premier module et retiré au départ du dernier : le formulaire porte
 // lui-même l'ensemble de ses modules. L'écoute se pose sur le formulaire, jamais sur `document` : l'événement `reset` remonte mais ne
 // traverse pas une ombre, et un formulaire posé dans l'ombre d'un composant ne serait pas vu d'en haut. Chaque module est suivi à sa
-// connexion (`_mjs_onAwake`, mjs_lifecycle.ts) : déplacé dans un autre formulaire il le rejoint, retiré de la page il quitte le sien.
+// connexion et à sa déconnexion (files rejouées par le cœur) : déplacé dans un autre formulaire il le rejoint, retiré de la page il quitte le sien.
 
 // les modules de chaque formulaire, gardés hors de lui : lue sur un <form>, une propriété (même une donnée posée dessus) est d'abord
 // cherchée parmi les champs du formulaire, liste que le navigateur refait après l'arrivée de chaque champ associé — une lecture par
@@ -47,6 +47,8 @@ function _mjsResetOn(e) {
   }
   setTimeout(() => (el._mjs_reset = start()));
   follow();
-  el._mjs_onAwake(follow);
-  el._mjs_onSleep(follow);
+  // les files que le cœur rejoue à chaque connexion et déconnexion (`_mjs_lifeRun`, mjs_element.ts) : `_mjs_onAwake` et `_mjs_onSleep`
+  // y écrivent aussi, mais vivent dans mjs_lifecycle.ts, que rien n'embarque avec ce fichier — sans lui, l'appel levait au montage
+  (el._mjs_awake_cbs ||= []).push(follow);
+  (el._mjs_sleep_cbs ||= []).push(follow);
 };

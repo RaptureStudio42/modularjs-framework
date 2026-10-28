@@ -1,7 +1,8 @@
 // La silhouette d'un composant dont le code arrive (`µ._skels`, au manifeste) : `<@carte *skeleton>`
 // la demande pour le composant du projet, `<@@switch *skeleton>` pour le module cœur — sous sa clé,
 // `core-switch`, jamais celle d'un composant du projet homonyme. Avec `effects.skeleton: ['components']`,
-// chaque composant a la sienne ; un module `.civet` n'a pas de gabarit, donc pas de silhouette.
+// chaque composant qui attend un contenu (un {await}) a la sienne ; un module `.civet` n'a pas de gabarit,
+// donc pas de silhouette.
 // Un projet qui change entre deux tours de `mjs dev` (même instance du bundler) voit sa demande suivie.
 
 import assert from 'node:assert/strict'
@@ -41,15 +42,15 @@ describe('silhouettes : modules cœur, modules de script, suivi entre deux tours
     await p.bundler.close()
   })
 
-  it('effects.skeleton: [\'components\'] : chaque composant, jamais un module .civet', async () => {
+  it('effects.skeleton: [\'components\'] : chaque composant qui attend un contenu, jamais un module .civet', async () => {
     const p = projet('components', {
-      'carte.mjs':  '<div class="c"><h2>Titre</h2><p>texte</p></div>\n',
+      'carte.mjs':  '<div class="c">{await $c}{success v}<h2>{v.titre}</h2><p>texte</p>{end}</div>\n',
       'util.civet': 'export f := (x) -> x + 1\n',
       'page.mjs':   "@import util 'util.civet'\n<@carte></@carte>\n",
     }, { skeleton: ['components'] })
     const stats = await p.bundler.compile()
     assert.equal(stats.errors.length, 0, erreurs(stats))
-    assert.deepEqual(p.cles(), ['carte', 'page'])
+    assert.deepEqual(p.cles(), ['carte'])
     await p.bundler.close()
   })
 

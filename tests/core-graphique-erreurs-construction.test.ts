@@ -55,6 +55,7 @@ const FAUTES = DONNEES + [
   '<@@chart rows={$lignes} series={$series} decimals="-1"></@@chart>',
   '<@@chart rows={$lignes} series={$series} decimals={12}></@@chart>',
   '<@@chart rows={$lignes} series={[{ key: \'v\', color: \'0\' }, { key: \'w\', color: \'1.5\' }]}></@@chart>',
+  '<@@chart rows={$lignes} series={[{ key: \'v\', axis: \'droite\' }, { key: \'w\', "axis": "Right" }, { key: \'z\', axis: \'right\' }, { key: \'u\', axis: 2 }]}></@@chart>',
 ].join('\n') + '\n'
 
 const ATTENDUS = [
@@ -92,12 +93,15 @@ const ATTENDUS = [
   '<@@chart decimals={12}> — decimals attend un nombre entier de 0 à 10, le nombre de chiffres après la virgule : « 12 » ne convient pas.',
   `<@@chart series={…}> — la couleur « 0 » est refusée : ${COULEUR}`,
   `<@@chart series={…}> — la couleur « 1.5 » est refusée : ${COULEUR}`,
+  '<@@chart series={…}> — axis « droite » d\'une série n\'est pas une valeur connue (valeurs connues : left right). Corrigez la faute de frappe.',
+  '<@@chart series={…}> — axis « Right » d\'une série n\'est pas une valeur connue (valeurs connues : left right). Corrigez la faute de frappe.',
+  '<@@chart series={…}> — axis « 2 » d\'une série n\'est pas une valeur connue (valeurs connues : left right). Corrigez la faute de frappe.',
 ]
 
 // tout passe : des valeurs venues de variables (même fausses, le module les vérifie à l'exécution), des valeurs justes écrites en dur,
 // une combinaison dont un côté est une variable, des valeurs vides (la valeur par défaut), un radar vide, des lignes qui ne sont pas un
 // tableau écrit, un étalement (ce qu'il pose ne se sait pas au build)
-const JUSTES = `<script>\n  $lignes = [{ x: '2026-10-01', v: 1 }]\n  $series = [{ key: 'v', color: 'url(x)' }]\n  $forme = 'courbe'\n  $stats = 'moyenne'\n  $pas = 'quinzaine'\n  $axe = 'heure'\n  $reglages = { stats: 'mean' }\n  $outils = 'legend legende'\n  $formes = 'line courbe'\n  $teinte = 'bleu'\n  $zone = 'Lune/Mer'\n  $chiffres = 42\n</script>\n` + [
+const JUSTES = `<script>\n  $lignes = [{ x: '2026-10-01', v: 1 }]\n  $series = [{ key: 'v', color: 'url(x)' }]\n  $forme = 'courbe'\n  $stats = 'moyenne'\n  $pas = 'quinzaine'\n  $axe = 'heure'\n  $reglages = { stats: 'mean' }\n  $outils = 'legend legende'\n  $formes = 'line courbe'\n  $teinte = 'bleu'\n  $zone = 'Lune/Mer'\n  $chiffres = 42\n  $cote = 'droite'\n</script>\n` + [
   '<@@chart rows={$lignes} series={$series} timezone="local" decimals="0"></@@chart>',
   '<@@chart rows={$lignes} series={$series} timezone="Europe/Paris" decimals="10"></@@chart>',
   '<@@chart rows={$lignes} series={$series} timezone=" UTC " decimals={2}></@@chart>',
@@ -119,6 +123,8 @@ const JUSTES = `<script>\n  $lignes = [{ x: '2026-10-01', v: 1 }]\n  $series = [
   '<@@chart {...$reglages} shape="calendar"></@@chart>',
   '<@@chart rows={$lignes} series={[{ key: \'a\', color: \'rebeccapurple\' }, { key: \'b\', color: \'Canvas\' }, { key: \'c\', color: \'currentColor\' }, { key: \'d\', color: \'transparent\' }, { key: \'e\', color: \'#abcd\' }, { key: \'f\', color: \'#A1B2C3D4\' }, { key: \'g\', color: \'oklch(70% 0.1 200)\' }, { key: \'h\', color: \'color-mix(in srgb, red 50%, blue)\' }, { key: \'i\', color: \'light-dark(#000, #fff)\' }, { key: \'j\', color: \'HSL(200 50% 50%)\' }, { key: \'k\', color: \'-webkit-link\' }, { key: \'l\', color: \'red blue\' }, { key: \'m\', color: \'rgb(1 2 3) x\' }]} toolbar="legend shapes stats step" shapes="line, bar pie"></@@chart>',
   '<@@chart rows={$lignes} series={$series} toolbar={$outils} shapes={$formes}></@@chart>',
+  '<@@chart rows={$lignes} series={[{ key: \'v\', axis: \'left\' }, { key: \'w\', axis: " right " }, { key: \'z\', axis: \'\' }, { key: \'y\', axis: $cote }, { key: \'x\', name: "le champ axis: \'gauche\'" }]}></@@chart>',
+  '<@@chart rows={$lignes} series={[{ key: \'v\', axis: \'gauche\', name: "#{$cote}" }]}></@@chart>',
   '<@@chart rows={$lignes} series={[{ key: \'v\', name: "le champ color: \'x;y\'" }, { key: \'w\', color: \'oklch(from var(--marque) calc(l * 0.8) c h)\' }, { key: \'z\', color: "#{$teinte}" }]} shape=" pie " step=" week " axis=" category " toolbar=" legend , shapes " shapes=" pie bar "></@@chart>',
 ].join('\n') + '\n'
 
@@ -141,7 +147,7 @@ describe('<@@chart> — ce qui est écrit en dur se vérifie à la construction'
   it('en anglais aussi', async () => {
     setMessagesLang('en')
     try {
-      const { fichier, texte } = await construire('graphique-fautes-en', DONNEES + '<@@chart rows={$lignes} series={$series} shape="calendar" step="year" stats="moyenne"></@@chart>\n<@@chart rows={$lignes} series={[{ key: \'v\', color: \'a:b\' }]} shape="radar" stats="mean"></@@chart>\n<@@chart rows={[{ x: \'a\', v: 1 }]} series={$series} shape="radar"></@@chart>\n<@@chart rows={$lignes} series={$series} shape="stack" stats="mean"></@@chart>\n<@@chart rows={$lignes} series={$series} timezone="Mars/Olympus" decimals="12"></@@chart>\n')
+      const { fichier, texte } = await construire('graphique-fautes-en', DONNEES + '<@@chart rows={$lignes} series={$series} shape="calendar" step="year" stats="moyenne"></@@chart>\n<@@chart rows={$lignes} series={[{ key: \'v\', color: \'a:b\' }]} shape="radar" stats="mean"></@@chart>\n<@@chart rows={[{ x: \'a\', v: 1 }]} series={$series} shape="radar"></@@chart>\n<@@chart rows={$lignes} series={$series} shape="stack" stats="mean"></@@chart>\n<@@chart rows={$lignes} series={$series} timezone="Mars/Olympus" decimals="12"></@@chart>\n<@@chart rows={$lignes} series={[{ key: \'v\', axis: \'droite\' }]}></@@chart>\n')
       for (const attendu of [
         '<@@chart stats="moyenne"> — "moyenne" is not a known value of stats (known values: mean median q1 q3 trend). Fix the typo.',
         '<@@chart shape="calendar" step="year"> — step="year" does not go with the calendar shape (possible values: auto day week month).',
@@ -152,6 +158,7 @@ describe('<@@chart> — ce qui est écrit en dur se vérifie à la construction'
         '<@@chart shape="radar" rows={…}> — a radar needs at least 3 rows, one per axis: 1 written.',
         '<@@chart timezone="Mars/Olympus"> — "Mars/Olympus" is not a known time zone: write local (the visitor\'s screen time) or the name of an IANA zone (Europe/Paris, America/New_York, UTC…), or remove timezone to show the hours as they are written.',
         '<@@chart decimals="12"> — decimals expects a whole number from 0 to 10, the number of digits after the decimal point: "12" does not fit.',
+        '<@@chart series={…}> — axis "droite" of a series is not a known value (known values: left right). Fix the typo.',
       ]) assert.ok(texte.includes(`[bundler] ${fichier}: ${attendu}`), `message absent : ${attendu}\n--- erreurs :\n${texte}`)
     }
     finally {
@@ -180,6 +187,7 @@ describe('<@@chart> — ce qui est écrit en dur se vérifie à la construction'
     assert.deepEqual(CHART_WORDS.shapes, CHART_WORDS.shape)
     assert.deepEqual(coreChart.CHART_STATS_SHAPES, [.../^ {2}STATS_SHAPES = \[([^\]]*)\]/m.exec(module)![1].matchAll(/'(\w+)'/g)].map((m) => m[1]))
     assert.deepEqual(coreChart.CHART_TREND_SHAPES, [.../^ {2}TREND_SHAPES = \[([^\]]*)\]/m.exec(module)![1].matchAll(/'(\w+)'/g)].map((m) => m[1]))
+    assert.deepEqual(coreChart.CHART_SERIES_AXES, [.../^ {2}SIDES\s*= \[([^\]]*)\]/m.exec(module)![1].matchAll(/'(\w+)'/g)].map((m) => m[1]))
     assert.deepEqual(CHART_HUES, cles(/^ {2}HUES = \{([^}]*)\}/m.exec(module)![1]))
     assert.equal(CHART_SAFE_COLOR.source, /^ {2}SAFE_COLOR = \/(.*)\/i$/m.exec(module)![1])
     assert.equal(CHART_SAFE_COLOR.flags, 'i')

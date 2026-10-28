@@ -54,11 +54,13 @@ describe('@confirm / @title forme objet — compile', () => {
   it('(4) objet tout littéral : sortie compilée identique, octet pour octet, à celle d\'avant', async () => {
     const c = await compiler(`<button @confirm={ text: 'Archiver ?', ok: 'Archiver', cancel: 'Non' }>a</button>`)
     assert.ok(c.includes(`_mjs_cloneTpl("<button mjs-confirm='&#123;&quot;text&quot;:&quot;Archiver ?&quot;,&quot;ok&quot;:&quot;Archiver&quot;,&quot;cancel&quot;:&quot;Non&quot;&#125;'>a</button>")`))
-    // empreintes de la sortie entière, où le fragment du gabarit se nomme _mjs_fr
-    assert.equal(createHash('sha256').update(c).digest('hex'), '414191fbe442373a0368ddb34927f383caaf71181f1c2b344dbd7bc1f8385a55')
+    // empreintes de la sortie entière, où le fragment du gabarit se nomme _mjs_fr, feuille de base mise à part : celle-ci
+    // change pour tout composant (règle qui cache un composant `hidden`), sans rapport avec @confirm et @title
+    const empreinte = (out: string): string => createHash('sha256').update(out.replace(/this\._mjs_baseCss = `[^`]*`;/, '')).digest('hex')
+    assert.equal(empreinte(c), '6bb6d8ee308773fe0f7277a988d14d76a7d3242f89bbe19d8a50cb0776b73ece')
     const t = await compiler(`<span @title={ text: 'Aide', side: 'top', delay: 200 }>a</span>`)
     assert.ok(t.includes(`_mjs_cloneTpl("<span mjs-title='Aide' mjs-title-conf='&#123;&quot;side&quot;:&quot;top&quot;,&quot;delay&quot;:200&#125;'>a</span>")`))
-    assert.equal(createHash('sha256').update(t).digest('hex'), '978a39d28871365f09846486080fdde567e973952479c162444e49d0e1bfe010')
+    assert.equal(empreinte(t), '436eff599351af8849af1b18128afce17d3dcbcbadd832e74922de87fb48ad72')
   })
 
   it('(5) variable, concaténation, autre appel : erreur du build, message qui cite µt(…) (confirm et title)', async () => {

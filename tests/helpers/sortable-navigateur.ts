@@ -45,7 +45,11 @@ export async function construire(etiquette: string, sources: Record<string, stri
   if (prod) return { root, script: '' }
   const files = readdirSync(outDir).filter((f) => f.endsWith('.js'))
   const rang  = (f: string) => f.startsWith('mjs_core') ? 0 : f.startsWith('mjs_') ? 1 : 2
-  return { root, script: [...files].sort((a, b) => rang(a) - rang(b) || a.localeCompare(b)).map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;\n' + libellesDuManifeste(join(root, 'bundle.js')) }
+  // le cœur et ses parties (`mjs_…`) dans la portée commune ; chaque composant (un module du cœur, la page) dans un bloc à lui, comme au vrai
+  // chargement où chaque fichier est un module : `<@@select>` sans `other` et la barre d'outils de `<@@editor>` déclarent chacun `told` au
+  // niveau du module, et une seule portée les ferait se heurter (`SyntaxError`, la page ne démarre pas)
+  const code  = (f: string) => { const c = stripEsm(readFileSync(join(outDir, f), 'utf-8')); return f.startsWith('mjs_') ? c : `{\n${c}\n}` }
+  return { root, script: [...files].sort((a, b) => rang(a) - rang(b) || a.localeCompare(b)).map(code).join('\n') + '\nglobalThis.µ = µ;\n' + libellesDuManifeste(join(root, 'bundle.js')) }
 }
 
 export type Options = { lang?: string, viewport?: { width: number, height: number }, reducedMotion?: boolean, listes?: number, script?: string }

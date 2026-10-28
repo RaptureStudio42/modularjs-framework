@@ -27,7 +27,8 @@ async function mount(name: string) {
   const src = ['<script lang="coffee">', '@dummy = new µStore({})', '</script>', '<p>x</p>'].join('\n') + '\n'
   writeFileSync(join(srcDir, `${name}.mjs`), src)
 
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+  // le test appelle µ.state depuis son propre code, hors des sources compilées (en production, une page n'atteint pas µ) : rien ne le révèle au repérage, 'all' rend le cœur complet
+  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: 'all' })
   const stats = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
 

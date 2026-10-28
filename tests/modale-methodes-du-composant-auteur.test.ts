@@ -43,7 +43,8 @@ describe('µ.modal — les méthodes @contains et @focus de l\'auteur ne sont ja
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'scene.mjs'), SCENE)
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // le test appelle µ.modal depuis son propre code, hors des sources compilées (en production, une page n'atteint pas µ) : rien ne le révèle au repérage, 'all' rend le cœur complet
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: 'all' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
     await bundler.close()

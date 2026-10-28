@@ -11,7 +11,8 @@
 // bulle.
 // Réglages : text (la bulle ; ce que la règle permet, écrit en clair), fx (l'effet du refus ; *shake
 // — none : aucun), color (la bulle et le liseré du champ ; #dc2626), duration (le temps de la bulle ;
-// 2s), place (bottom, top, right : sous le champ, au-dessus, à sa droite ; bottom), delay (la pause
+// 2s), place (bottom, top, right : sous le champ, au-dessus, à sa droite, sous lui quand la place y manque ; bottom ; la bulle
+// reste dans la largeur de la fenêtre et se replace quand celle-ci change de taille), delay (la pause
 // après la dernière frappe ; celle de la config — `"effects": { "guard": { "delay": "1s" } }` —, sinon
 // 1s ; 0 : dès la frappe), silent (ni effet ni bulle : la valeur est seulement ramenée à la sortie —
 // le garde d'office sous `"effects": { "guard": false }`).
@@ -118,8 +119,17 @@ function _mjsFxGuardSure(el, cs) {
       if (Array.isArray(r.n) && r.n.length > 0) out += ' — ' + L('except') + ' ' + r.n.map(function(x) { return x !== null && typeof x === 'object' ? put(L('range'), x) : String(x); }).join(', ');
       return out;
     };
+    // la fenêtre change de taille (ou se tourne) : la mise en page bouge sous la bulle ouverte, qui se replace contre son champ
+    // (laissée à son ancienne place, elle sortait d'une fenêtre rétrécie et la page débordait de côté) ; le champ retiré de la page par un
+    // script hors du framework (lui ou un parent) : la bulle se ferme, et cet écouteur avec elle
+    var fit = function() {
+      if (!tip) return;
+      if (el.isConnected) lay();
+      else hide();
+    };
     var hide = function() {
       clearTimeout(wait);
+      window.removeEventListener('resize', fit);
       if (moved) moved.disconnect();
       moved = null;
       if (tip) tip.remove();
@@ -211,7 +221,11 @@ function _mjsFxGuardSure(el, cs) {
     // (sa boîte, bordure retirée, défilement compris ; la page, sans ancêtre positionné), en pixels de ce repère.
     // UNE seule mise en page forcée : toutes les écritures (la bulle à l'origine, sans l'animation d'entrée qui la fait
     // glisser de quelques pixels) avant toutes les lectures (la boîte du champ, celle de la bulle) ; la bulle à l'origine
-    // donne l'origine du repère, sa largeur à l'écran contre celle de son style donne la taille d'un pixel (1, sauf sous un `zoom`)
+    // donne l'origine du repère, sa largeur à l'écran contre celle de son style donne la taille d'un pixel (1, sauf sous un `zoom`).
+    // Jamais hors de la largeur de la fenêtre (barre de défilement retirée), à 8 px de ses bords, sans quoi la page déborde de côté :
+    // `right` sans la place à droite du champ passe sous lui, une bulle qui dépasserait le bord droit glisse vers l'intérieur (pas
+    // plus loin que le bord gauche). Sa largeur lue à l'origine est la plus grande qu'elle puisse prendre : plus loin dans son bloc
+    // conteneur, elle ne peut que se plier
     var lay = function() {
       for (var i = 0; i < _MJS_FX_GUARD_MOVES.length; i++) tip.style.setProperty(_MJS_FX_GUARD_MOVES[i], 'none', 'important');
       tip.style.left = '0px';
@@ -223,27 +237,34 @@ function _mjsFxGuardSure(el, cs) {
       if (ts.boxSizing !== 'border-box') tw += parseFloat(ts.paddingLeft) + parseFloat(ts.paddingRight) + parseFloat(ts.borderLeftWidth) + parseFloat(ts.borderRightWidth);
       var z  = a.width / tw || 1;
       var f  = rest(getComputedStyle(el), r, z);
+      // le bord droit permis à la bulle, à l'écran ; aucun sans mise en page (une fenêtre de largeur nulle)
+      var vw   = document.documentElement.clientWidth;
+      var edge = vw ? vw - 8 : 1 / 0;
       for (i = 0; i < _MJS_FX_GUARD_MOVES.length; i++) tip.style.removeProperty(_MJS_FX_GUARD_MOVES[i]);
       var x = (f.x - a.left) / z;
       var y = (f.y - a.top) / z;
       var w = f.w;
       var h = f.h;
       if (s.place === 'top') y -= a.height / z + 6;
-      else if (s.place === 'right') {
+      else if (s.place === 'right' && f.x + (w + 8) * z + a.width <= edge) {
         x += w + 8;
         y += (h - a.height / z) / 2;
       }
       else y += h + 6;
+      // son bord gauche à l'écran
+      var sx = a.left + x * z;
+      if (sx + a.width > edge) x += (Math.max(8, edge - a.width) - sx) / z;
       tip.style.left = Math.round(x * 100) / 100 + 'px';
       tip.style.top  = Math.round(y * 100) / 100 + 'px';
     };
     // le champ bouge dans son parent (une ligne de liste à clé réordonnée) : la liste ne déplace que les nœuds de
     // la ligne, la bulle restait derrière les autres lignes, à l'ancienne place de son champ, sous un autre. Chaque
-    // ajout ou retrait d'enfant du parent la ramène juste après son champ et la replace. D'autres frères d'effet
+    // ajout ou retrait d'enfant du parent la ramène juste après son champ et la replace ; le champ parti, elle se ferme. D'autres frères d'effet
     // (la boîte de *reflect) peuvent s'être glissés entre les deux : ils comptent pour rien, deux effets sur la
     // même balise ne se disputent jamais la place
     var follow = function() {
-      if (!tip || !el.parentNode) return;
+      if (!tip) return;
+      if (!el.parentNode || !el.isConnected) return hide();
       var n = el.nextSibling;
       while (n && n !== tip && n.nodeType === 1 && (µ._mjs_dom.hasAttribute(n, 'mjs-fx-layer') || µ._mjs_dom.hasAttribute(n, 'mjs-fx-guard-tip'))) n = n.nextSibling;
       if (n !== tip) µ._mjs_dom.insertBefore(el.parentNode, tip, el.nextSibling);
@@ -266,6 +287,7 @@ function _mjsFxGuardSure(el, cs) {
         moved = new MutationObserver(follow);
         moved.observe(el.parentNode, { childList: true });
       }
+      window.addEventListener('resize', fit);
       wait = setTimeout(hide, µ._mjs_fxMs(s.duration, 2000));
     };
     // l'effet du refus, rejoué à chaque fois

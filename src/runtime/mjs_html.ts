@@ -8,6 +8,12 @@
 // {await}, le code de la branche construit le nœud lui-même. Un composant qui n'émet aucun appel
 // n'a donc jamais besoin de la méthode, elle peut manquer sans risque.
 if (µ.Element) {
+  // rejet d'une destruction lancée sans être attendue : même prise que mjs_if.ts (`_mjsIfDestroyErr`), une seule
+  // fonction, posée seulement sur une promesse qui peut rejeter — jamais sur la promesse résolue partagée du chemin rapide
+  var _mjsHtmlDestroyErr = function(err) {
+    return µ.error(µ._mjs_msg('htmlDestroy', null, 'destruction de contenu {@html} en erreur :'), err);
+  };
+
   µ.Element.prototype._mjs_updHtml = function(id, val) {
     // Skip String() si déjà string + skip Array.from alloc.
     // Snapshot childNodes via firstChild/nextSibling pour éviter live-list mutations
@@ -22,11 +28,9 @@ if (µ.Element) {
     const __children = [];
     while (__c) { __children.push(__c); __c = __c.nextSibling; }
     for (let __ci = 0, __cln = __children.length; __ci < __cln; __ci++) {
-      // `.catch` défensif — même raison que mjs_if.ts/mjs_key.ts : jamais
-      // attendue ici, un rejet resterait sinon non géré.
-      this._mjs_destroyNodeAndChildren(__children[__ci]).catch(function(err) {
-        return µ.error(µ._mjs_msg('htmlDestroy', null, 'destruction de contenu {@html} en erreur :'), err);
-      });
+      // jamais attendue ici : un rejet resterait sinon non géré (cf. `_mjsHtmlDestroyErr`)
+      const __d = this._mjs_destroyNodeAndChildren(__children[__ci]);
+      if (__d !== MJS_RESOLVED_DESTROY) __d.catch(_mjsHtmlDestroyErr);
     }
     node.innerHTML = strVal;
     node._mjs_h = strVal;

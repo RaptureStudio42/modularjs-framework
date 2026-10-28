@@ -66,8 +66,9 @@ if (!µ._i18nData) {
 // Peuplé par `µ._i18nLang` — soit depuis le fichier de langue importé par
 // `__i18nLoadLang` (navigateur), soit semé en bloc par le rendu serveur avant le
 // démarrage. Une langue absente d'ici n'a simplement aucun texte : toute clé
-// retombe sur le placeholder ou sur la langue par défaut, jamais d'exception.
-if (!µ._i18nLangs) { µ._i18nLangs = {}; }
+// retombe sur le placeholder ou sur la langue par défaut, jamais d'exception. Table sans prototype : une langue nommée `__proto__`
+// y est une entrée comme une autre, jamais le prototype de la table.
+if (!µ._i18nLangs) { µ._i18nLangs = Object.create(null); }
 
 // Chargements EN ÉCHEC (404, réseau coupé, JSON illisible), `{langue: true}` pour le fichier d'une langue et `{'langue/section': true}` pour le
 // fragment d'une section : un texte que l'échec laisse sans valeur paraît en barres (`__i18nEnEchec`), jamais en vide. La marque tombe quand le
@@ -84,6 +85,19 @@ var __i18nEchecs = Object.create(null);
 // framework lu pendant l'attente est déjà le bon : rien ne bouge
 var __i18nLabelReaders = new Map();
 var __i18nLabelWriter  = null;
+// les écritures d'un affichage qui dure (µ._mjs_labelKeep) faites avant le démarrage d'une page rendue par le serveur, dans la langue de la
+// page, celle du serveur : la première bascule qui aboutit ensuite (celle du démarrage, vers la langue voulue — `?lang=`, langue mémorisée)
+// les récrit avec la page. Un toast tiré pendant le chargement passe à la langue de l'adresse en même temps qu'elle, jamais avant
+var __i18nBootWriters = new Set();
+function __i18nBootRewrite() {
+  var ecrits = __i18nBootWriters;
+  __i18nBootWriters = new Set();
+  ecrits.forEach(function(l) {
+    // une écriture qui lève n'arrête ni les autres ni la bascule
+    try { µ._mjs_labelKeep(l); }
+    catch (e) { µ.error(e); }
+  });
+}
 function __i18nWakeLabelReaders(lang, racine) {
   var lecteurs = __i18nLabelReaders.get(lang);
   if (!lecteurs) { return; }
@@ -160,13 +174,13 @@ function __i18nKnownLang(code) {
 // DÉPART DE PAGE — un fetch en vol est annulé par le NAVIGATEUR quand la page
 // s'en va (rechargement, lien sortant) : la promesse rejette avec un TypeError
 // générique (« Failed to fetch »), rigoureusement indistinguable d'une vraie
-// panne réseau. Ce drapeau porte la distinction que l'erreur ne porte pas —
-// même parti pris que mjs_ajax.ts, où un abandon VOULU est un chemin
-// SILENCIEUX (`options.signal`, l.220). Tant qu'on est SUR la page, un échec
-// reste crié : seul le départ fait taire.
-var __i18nLeaving = false;
-if (!µ._isServer && typeof addEventListener === 'function') {
-  addEventListener('pagehide', function() { __i18nLeaving = true; });
+// panne réseau. Le cœur porte la distinction que l'erreur ne porte pas : les
+// chargements de la langue et des fragments sont suivis (`µ._mjs_loading`), leur
+// échec passe par `µ._mjs_loadFailed` (mjs_init.ts), qui ne dit rien quand la page
+// s'en va. Tant qu'on est SUR la page, un échec reste crié
+function __i18nFailed(err, report) {
+  if (typeof µ._mjs_loadFailed === 'function') { return µ._mjs_loadFailed(err, report); }
+  report();
 }
 
 // Dictionnaires fusionnés PAR LANGUE : `root[lang]` (embarqué au build) +
@@ -323,8 +337,8 @@ function __i18nUnEchec() {
 }
 var __i18nSkelTimer = 0;
 var __i18nSkelRoots = typeof WeakMap === 'function' ? new WeakMap() : null;
-var __i18nSkelSheets = {};
-// la feuille qui peint les barres d'une couleur ('' : le gris d'avant)
+var __i18nSkelSheets = Object.create(null);
+// la feuille qui peint les barres d'une couleur ('' : le gris d'avant) ; table sans prototype, une couleur `constructor` y trouve sa feuille
 function __i18nSkelSheet(couleur) {
   var f = __i18nSkelSheets[couleur];
   if (!f) {
@@ -503,6 +517,8 @@ function __i18nLabelLang() {
   // en cours (µ._mjs_labelKeep), jamais le composant actif
   var g = typeof node !== 'string' && !µ._isServer && !__i18nLangOf(lang) && Object.prototype.hasOwnProperty.call(µ._i18nData.files || {}, lang) && /^mjs\.(\w+)\./.exec(cle);
   var lecteur = g && (g[1] === 'core' ? µ._mjs_computing || µ.activeComponent : __i18nLabelWriter);
+  // écriture d'un affichage qui dure avant le démarrage d'une page rendue par le serveur : récrite par la bascule du démarrage
+  if (__i18nLabelWriter && __i18nSeedLang && !µ._mjs_i18nBooted && !µ._isServer) { __i18nBootWriters.add(__i18nLabelWriter); }
   if (lecteur) {
     var lecteurs = __i18nLabelReaders.get(lang) || __i18nLabelReaders.set(lang, new Map()).get(lang);
     var groupes  = lecteurs.get(lecteur) || lecteurs.set(lecteur, {}).get(lecteur);
@@ -511,8 +527,8 @@ function __i18nLabelLang() {
   return typeof node === 'string' ? node : undefined;
 };
 
-// Pluriel CLDR — cache par langue, repli binaire si absent.
-var __i18nPluralRulesCache = {};
+// Pluriel CLDR — cache par langue (sans prototype : une langue `__proto__` y est gardée comme les autres), repli binaire si absent.
+var __i18nPluralRulesCache = Object.create(null);
 function __i18nPluralRulesFor(lang) {
   if (Object.prototype.hasOwnProperty.call(__i18nPluralRulesCache, lang)) { return __i18nPluralRulesCache[lang]; }
   var r = null;
@@ -909,7 +925,7 @@ var __i18nFallbackWarned = new Set();
       }
       return Promise.resolve(null);
     }
-    var promise = fetch(path).then(function(res) {
+    var promise = (µ._mjs_loading ? µ._mjs_loading(fetch(path)) : fetch(path)).then(function(res) {
       if (!res || !res.ok) { throw new Error(µ._mjs_txt('i18nHttp', { status: (res && res.status), path: path }, 'i18n : HTTP {status} sur {path}')); }
       return res.json();
     }).then(function(json) {
@@ -946,10 +962,10 @@ var __i18nFallbackWarned = new Set();
       }
       return json;
     }).catch(function(err) {
-      if (!__i18nLeaving) {
+      __i18nFailed(err, function() {
         µ.error(µ._mjs_msg('i18nLoadSection', { section: section, lang: lang, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de « {section} » ({lang}) — {reason}'));
         __i18nEchecs[key] = true;
-      }
+      });
       µ._i18nCache.delete(key);
       throw err;
     });
@@ -1051,9 +1067,10 @@ function __i18nPaquetsVol(comp, vol) {
 // n'est plus redemandée à chaque rendu — pas de rafale de requêtes pour un composant qui se rend souvent —
 // avant une bascule de langue ou le chargement par un module qui la déclare, qui préviennent les lecteurs
 // à l'arrivée (`__i18nWakeReaders`, appelé par `_ensure`). Rend `true` si la section est demandée, `false`
-// si la clé manque pour de bon (pas une section, ou section arrivée sans elle)
-var __i18nAsked = {};
-var __i18nRetried = {};
+// si la clé manque pour de bon (pas une section, ou section arrivée sans elle). Tables sans prototype : un nom ajouté à
+// Object.prototype ne fait jamais croire une section déjà demandée ou déjà redemandée
+var __i18nAsked   = Object.create(null);
+var __i18nRetried = Object.create(null);
 var __i18nAskedSections = new Set();
 // les composants i18n qui ne déclarent pas la section se rendent à nouveau : on ne sait pas lesquels l'ont lue
 function __i18nWakeReaders(section) {
@@ -1220,17 +1237,30 @@ function __i18nLoadLang(lang, strict) {
     p = Promise.resolve(µ._i18nLangs[lang]);
   } else {
     var charger = (typeof µ._i18nImport === 'function') ? µ._i18nImport(url) : import(url);
+    if (µ._mjs_loading) { µ._mjs_loading(charger); }
     p = Promise.resolve(charger).then(function(mod) {
       µ._i18nLang(lang, (mod && mod.default) || mod);
       return µ._i18nLangs[lang];
     }, function(err) {
-      if (!__i18nLeaving) { µ.error(µ._mjs_msg('i18nLoadLang', { lang: lang, url: url, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de la langue « {lang} » ({url}) — {reason}')); }
       delete __i18nLangPromises[lang]; // langue rechargée à la bascule suivante
       __i18nLabelReaders.delete(lang); // ses lecteurs ne l'attendent plus, même quand la bascule est annulée
-      if (strict) { throw err; } // bascule annulée
-      µ._i18nLang(lang, null); // langue vide : repli sur le défaut, jamais de gel
-      if (!__i18nLeaving) { __i18nEchecs[lang] = true; } // ce que le défaut ne porte pas paraît en barres
-      return µ._i18nLangs[lang];
+      // l'échec dit, et ce que le défaut ne porte pas paraît en barres (marque posée APRÈS `_i18nLang`, qui l'efface) — rien
+      // quand la page s'en va
+      var dire = function() {
+        µ.error(µ._mjs_msg('i18nLoadLang', { lang: lang, url: url, reason: (err && err.message ? err.message : err) }, 'i18n : échec de chargement de la langue « {lang} » ({url}) — {reason}'));
+        if (!strict) { __i18nEchecs[lang] = true; }
+      };
+      if (strict) { __i18nFailed(err, dire); throw err; } // bascule annulée
+      // langue vide : repli sur le défaut, jamais de gel. Départ annoncé (µ._mjs_leaveWait, mjs_init.ts) : le repli, et les fragments
+      // de la langue par défaut qu'il demande, attendent comme le message — Safari refuse tout fichier demandé pendant que la page
+      // s'en va, et l'écrit lui-même en console ; la page partie, rien ne part
+      var vide = function() {
+        µ._i18nLang(lang, null);
+        __i18nFailed(err, dire);
+        return µ._i18nLangs[lang];
+      };
+      var reste = µ._mjs_leaveWait ? µ._mjs_leaveWait() : 0;
+      return reste > 0 ? new Promise(function(r) { setTimeout(r, reste); }).then(vide) : vide();
     });
   }
   __i18nLangPromises[lang] = p;
@@ -1368,6 +1398,7 @@ function __i18nBoot() {
         // les modules gelés depuis le démarrage se rendent dans la langue voulue ; celle du démarrage ne se voit pas comme un changement : ni crochets
         // (`*lang`), ni mémoire de la langue, ni adresse (la page n'a rien demandé de plus que son adresse)
         __i18nApres.splice(0).forEach(function(r) { r(); });
+        __i18nBootRewrite();
         if (demarrage) {
           µ._mjs_i18nComps.forEach(function(comp) { comp._mjs_invalidate('_awaits_'); });
           return;
@@ -1420,6 +1451,7 @@ function __i18nBoot() {
   var voulue = __i18nDisplayedLang;
   var depart = !!__i18nSeedLang && !!voulue && voulue !== __i18nSeedLang && !!guetteur;
   if (depart) { __i18nDisplayedLang = __i18nSeedLang; }
+  else { __i18nBootWriters.clear(); } // sans bascule du démarrage, la page garde la langue du serveur : ce qui s'y est écrit est déjà juste
   // Rejoue la VRAIE logique de montage pour chaque
   // composant mis en file AVANT ce boot (registre + `_ensure` + notification
   // à l'arrivée, cf. `_mjs_mountReal`). Un composant en mode 'wait' avait reçu une

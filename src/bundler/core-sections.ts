@@ -59,7 +59,7 @@ export const TOOL_PREFIX = 'tool-'
  */
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   icons:     ['ul', 'ol', 'check', 'link', 'undo', 'redo', 'clear'],
-  glyphs:    ['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike'],
+  glyphs:    ['h2', 'h3', 'quote', 'bold', 'italic', 'underline', 'strike', 'color'],
   heads:     ['h2', 'h3'],
   keys:      ['link', 'check'],
   separator: ['|'],
@@ -70,11 +70,11 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
  * Les attributs que le développement tranche comme la production, par module : leur morceau part dès qu'aucune page ne les écrit (cf.
  * Bundler.coreAttrWrittenStrict, qui en décide), leur autre forme (`!attr`) revient alors partout. `toolbar` de <@@chart> : la barre d'outils,
  * ses fonctions, son gabarit, son style et ses icônes (ses libellés : CORE_LABEL_PARTS, runtime-labels.ts) ; `answer` de <@@editor> : le mode
- * « répondre » ; `other` de <@@select> : la réponse libre « Autre » ; `group` de <@@sortable> : les groupes.
+ * « répondre », `colors` : la couleur du texte (ses règles de style, ses gestes, les noms des couleurs) ; `other` de <@@select> : la réponse libre « Autre » ; `group` de <@@sortable> : les groupes.
  */
 export const STRICT_ATTRS: Readonly<Record<string, readonly string[]>> = {
   chart:    ['toolbar'],
-  editor:   ['answer'],
+  editor:   ['answer', 'colors'],
   select:   ['other'],
   sortable: ['group'],
 }

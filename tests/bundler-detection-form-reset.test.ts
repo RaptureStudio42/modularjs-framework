@@ -61,12 +61,13 @@ describe('mjs_form_reset.ts — détecté, build RÉEL', function () {
     }
   })
 
-  it('la sélection du runtime n\'y change rien : cœur nu, sans UJS, liste à la main, défaut, fichier unique', async () => {
+  it('la sélection du runtime n\'y change rien : cœur nu, sans UJS, liste à la main, défaut, \'all\', fichier unique', async () => {
     const source = AVEC['la case']
-    for (const [nom, conf] of [['core', { runtime: 'core' }], ['sans-ujs', { runtime: ['router', 'easing'] }], ['defaut', {}], ['bundle', { js: 'bundle' }], ['bundle-core', { js: 'bundle', runtime: 'core' }]] as Array<[string, any]>) {
+    for (const [nom, conf] of [['core', { runtime: 'core' }], ['sans-ujs', { runtime: ['router', 'easing'] }], ['defaut', {}], ['tout', { runtime: 'all' }], ['bundle', { js: 'bundle' }], ['bundle-core', { js: 'bundle', runtime: 'core' }]] as Array<[string, any]>) {
       const { sortie } = await construire('sel-' + nom, conf, source)
       assert.ok(sortie.includes(MARK), nom)
-      assert.equal(sortie.includes('µ._mjs_ujsOnClick = function'), nom === 'defaut' || nom === 'bundle', nom + ' : l\'UJS suit la sélection, la remise à zéro n\'en dépend pas')
+      // sans clé runtime, le formulaire @noUJS n'est pas une cible de la navigation : rien ne repère ujs, seul 'all' l'embarque ici
+      assert.equal(sortie.includes('µ._mjs_ujsOnClick = function'), nom === 'tout', nom + ' : l\'UJS suit la sélection, la remise à zéro n\'en dépend pas')
     }
   })
 

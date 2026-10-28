@@ -27,8 +27,20 @@
 //
 // RÉINITIALISATION — 'start' (1re assise) ET 'state' (résync après reconnexion, cf. mjs_game.ts
 // _mjs_onResyncResolved) portent TOUS DEUX `{seed, journal}` (cf. mjs-server/game.ts::_infoMode) : MÊME
-// traitement pour les deux (_mjlockstepReinit) — repart de `etat0()`, REJOUE le journal COMPLET reçu
-// (déjà connu ou manqué pendant la coupure), puis reprend le direct au tick suivant.
+// traitement pour les deux (_mjlockstepReset) — repart de `etat0()`, ou de l'instantané `snapshot` que le
+// serveur a gardé (cf. INSTANTANÉS ci-dessous), REJOUE le journal reçu (déjà connu ou manqué pendant la
+// coupure), puis reprend le direct au tick suivant.
+//
+// INSTANTANÉS — quand le serveur les accepte (mjs-server lockstepJournal.snapshotEvery), 'start'/'state' portent
+// aussi `snapshotEvery` (cadence en ticks) et `snapshotMax` (taille permise d'une proposition, en octets du JSON) :
+// à chaque tick de la cadence reçu EN DIRECT (jamais pendant le rejeu d'un resync : ticks déjà certifiés ou
+// périmés), le client propose `{tick, state, rng}` (µgame:snapshot, cf. partie._snapshot) — l'état à la fin du
+// tick et celui du générateur partagé. Le serveur ne le garde que si au moins deux sièges et la majorité des
+// sièges proposent le même, puis le renvoie au resync (`snapshot`) avec les seuls ordres qui le suivent : l'état
+// repart d'une COPIE JSON de `snapshot.state` (d'où un état fait de JSON pur : objets, tableaux, nombres finis,
+// chaînes, booléens, null) et le générateur de `snapshot.rng`. Une proposition plus grosse que `snapshotMax` n'est
+// pas envoyée (MJS-WS couperait la connexion sur une trame trop grosse) : signalée une fois (µ.error), la partie
+// continue sans instantané, son journal n'est pas coupé.
 //
 // JOURNAL TRONQUÉ — `def.lockstepJournal.maxTicks` CÔTÉ SERVEUR (mjs-server/lockstep.ts)
 // borne le journal en anneau : un client trop longtemps déconnecté (raté plus de `maxTicks` ticks) reçoit
@@ -60,13 +72,94 @@ function _mjlockstepAnnounceHash(st, tick) {
   st.game._hash(tick, _mjlockstepFnv(JSON.stringify(st.state)));
 }
 
+// générateur partagé SUIVI — mulberry32 (µ.random, mjs_det.ts) n'a pour état qu'un entier de 32 bits qui avance du même pas
+// à chaque tirage (next() comme int()) : `st.rngState` le tient à jour, l'instantané le porte, et µ.random(rngState) repart
+// exactement de là (cf. tête de fichier « INSTANTANÉS » ; tests/socket-lockstep-instantanes.test.ts garde l'accord avec mjs_det.ts)
+var MJLOCKSTEP_RNG_STEP = 0x6D2B79F5;
+
+function _mjlockstepRng(st, a) {
+  var rng = µ.random(a);
+  st.rngState = a >>> 0;
+  return {
+    next: function() { st.rngState = (st.rngState + MJLOCKSTEP_RNG_STEP) >>> 0; return rng.next(); },
+    int: function(min, max) { st.rngState = (st.rngState + MJLOCKSTEP_RNG_STEP) >>> 0; return rng.int(min, max); }
+  };
+}
+
+// propose l'instantané du tick au serveur — jamais au-delà de `snapshotMax` : une trame plus grosse que la limite du serveur lui
+// ferait couper la connexion ; un état trop gros est signalé une fois et n'est pas proposé (cf. tête de fichier « INSTANTANÉS »)
+function _mjlockstepProposeSnapshot(st, tick) {
+  var size = new TextEncoder().encode(JSON.stringify({ tick: tick, state: st.state, rng: st.rngState })).length;
+  if (size > st.snapMax) {
+    if (!st.snapWarned) {
+      st.snapWarned = true;
+      µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepSnapshotTooBig', { size: size, tick: tick, max: st.snapMax }, 'instantané de {size} octets au tick {tick}, au-delà des {max} octets permis par le serveur (limits.maxPayload, lockstepJournal.maxBytes) — non proposé, le journal de la partie n\'est pas coupé'));
+    }
+    return;
+  }
+  st.game._snapshot(tick, st.state, st.rngState);
+}
+
+// reprises de l'état demandées après un apply() qui lève en direct : au plus MJLOCKSTEP_RESYNC_MAX par MJLOCKSTEP_RESYNC_WINDOW ms
+var MJLOCKSTEP_RESYNC_MAX    = 3;
+var MJLOCKSTEP_RESYNC_WINDOW = 60000;
+
+// un apply() qui lève (un défaut du jeu) laisse son ordre à mi-chemin : l'état local n'est plus sûr. L'erreur est dite (µ.error, la
+// première fois), la suite du tick est jouée — jamais un tick perdu ni une partie figée — et, en direct, l'état est repris du serveur
+// (µgame:resync : état initial ou instantané, puis le journal rejoué, cf. _mjlockstepReset), cf. _mjlockstepResync ; d'ici là, ni hash
+// ni instantané : un état faux n'est ni comparé ni proposé. Au rejeu, rien ne dit qu'il lève chez tous au même ordre (un défaut propre
+// à ce joueur lève là aussi) : une reprise de plus rejouerait le même défaut, aucune n'est demandée — le rejeu est dit et la partie
+// signalée, une fois (cf. _mjlockstepReset) ; un défaut du direct plus tard demande sa reprise comme le premier
+function _mjlockstepApply(st, tick, order, live) {
+  try { st.apply(st.state, order); }
+  catch (e) {
+    if (!st.applyWarned) {
+      st.applyWarned = true;
+      µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepApplyThrew', { tick: tick }, 'apply() a levé une erreur au tick {tick} : l\'ordre n\'est appliqué qu\'en partie et l\'état local de la partie n\'est plus sûr — corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur'), e);
+    }
+    if (live) {
+      st.suspect = true;
+      _mjlockstepResync(st, tick);
+    }
+    else if (st.replayFault === null) { st.replayFault = tick; }
+  }
+}
+
+// reprise de l'état faux (cf. _mjlockstepApply) : une à la fois (une demande en vol couvre les ticks reçus avant sa réponse, que le
+// serveur a déjà fermés), au plus MJLOCKSTEP_RESYNC_MAX par MJLOCKSTEP_RESYNC_WINDOW ms — sans quoi un apply() qui lève à chaque ordre
+// en demanderait une par tick. Au-delà, l'erreur est dite et la partie signalée (événement 'divergence', raison 'apply-threw'), une fois
+// par attente : la reprise part dès que la fenêtre le permet, relue à chaque tick reçu (cf. _mjlockstepOnOrders)
+function _mjlockstepResync(st, tick) {
+  var now = Date.now(), times = st.resyncTimes, done, p;
+  if (st.resyncing || !st.game._resync) { return; }
+  if (times.length >= MJLOCKSTEP_RESYNC_MAX && now - times[0] < MJLOCKSTEP_RESYNC_WINDOW) {
+    if (!st.limitSaid) {
+      st.limitSaid = true;
+      µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepResyncLimit', { tick: tick, max: MJLOCKSTEP_RESYNC_MAX, s: MJLOCKSTEP_RESYNC_WINDOW / 1000, wait: Math.ceil((times[0] + MJLOCKSTEP_RESYNC_WINDOW - now) / 1000) }, 'apply() a levé une erreur au tick {tick} alors que {max} reprises de l\'état en {s} s ont déjà été demandées : l\'état local de la partie reste faux jusqu\'à la prochaine reprise, dans {wait} s au plus — la partie le signale (événement \'divergence\', raison \'apply-threw\') ; corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur'));
+      _mjlockstepDispatchEvent(st, 'divergence', { tick: tick, reason: 'apply-threw' });
+    }
+    return;
+  }
+  times.push(now);
+  if (times.length > MJLOCKSTEP_RESYNC_MAX) { times.shift(); }
+  st.limitSaid = false;
+  st.resyncing = true;
+  done = function() { st.resyncing = false; };
+  p = st.game._resync();
+  if (p && typeof p.then === 'function') { p.then(done, done); }
+  else { done(); }
+}
+
 // applique CHAQUE ordre du tick (dans l'ordre du tableau — MÊME ordre pour tous, cf. tête de fichier),
-// avance `prochainTick`, annonce le hash toutes les `chaque` ticks (0 = jamais)
-function _mjlockstepReplayTick(st, tick, orders) {
+// avance `prochainTick`, annonce le hash toutes les `chaque` ticks (0 = jamais) ; EN DIRECT (`live`), propose
+// l'instantané aux ticks de la cadence du serveur — ni l'un ni l'autre tant qu'un état faux attend sa reprise (cf. _mjlockstepApply)
+function _mjlockstepReplayTick(st, tick, orders, live) {
   var i;
-  for (i = 0; i < orders.length; i++) { st.apply(st.state, orders[i]); }
+  for (i = 0; i < orders.length; i++) { _mjlockstepApply(st, tick, orders[i], live); }
   st.nextTick = tick + 1;
+  if (st.suspect) { return; }
   if (st.every > 0 && tick % st.every === 0) { _mjlockstepAnnounceHash(st, tick); }
+  if (live && st.snapEvery > 0 && tick % st.snapEvery === 0) { _mjlockstepProposeSnapshot(st, tick); }
 }
 
 // draine le tampon — applique tout tick CONSÉCUTIF déjà arrivé, jamais de saut (cf. tête de fichier)
@@ -74,7 +167,7 @@ function _mjlockstepDrain(st) {
   var group;
   while ((group = st.buffer[st.nextTick]) !== undefined) {
     delete st.buffer[st.nextTick];
-    _mjlockstepReplayTick(st, group.tick, group.orders);
+    _mjlockstepReplayTick(st, group.tick, group.orders, true);
   }
 }
 
@@ -84,6 +177,8 @@ function _mjlockstepOnOrders(st, frame) {
   if (frame.tick < st.nextTick) { return; }
   st.buffer[frame.tick] = frame;
   _mjlockstepDrain(st);
+  // un état faux dont la reprise attend la fenêtre, ou dont la demande n'a pas abouti : relue à chaque tick (cf. _mjlockstepResync)
+  if (st.suspect) { _mjlockstepResync(st, st.nextTick - 1); }
   _mjlockstepPublish(st);
 }
 
@@ -101,14 +196,14 @@ function _mjlockstepPublish(st) {
 }
 
 // continuité du journal reçu au resync (cf. tête de fichier « JOURNAL TRONQUÉ ») — deux
-// anomalies possibles : (a) `journal[0].tick > 1` (tête tronquée, cf. lockstepJournal.maxTicks côté
-// serveur) ; (b) trou entre deux entrées consécutives (tick n → tick n+2 — jamais produit par le vrai
+// anomalies possibles : (a) `journal[0].tick > first` (tête tronquée, cf. lockstepJournal.maxTicks côté
+// serveur ; `first` = 1, ou le tick qui suit l'instantané reçu) ; (b) trou entre deux entrées consécutives (tick n → tick n+2 — jamais produit par le vrai
 // serveur, closeTick incrémente TOUJOURS de 1, cf. mjs-server/lockstep.ts — filet défensif). Journal
 // VIDE = partie neuve, RAS (aucune anomalie, chemin nominal INCHANGÉ).
-function _mjlockstepJournalAnomaly(journal) {
+function _mjlockstepJournalAnomaly(journal, first) {
   var i;
   if (journal.length === 0) { return null; }
-  if (journal[0].tick > 1) { return { tick: journal[0].tick, expected: 1 }; }
+  if (journal[0].tick > first) { return { tick: journal[0].tick, expected: first }; }
   for (i = 1; i < journal.length; i++) {
     if (journal[i].tick !== journal[i - 1].tick + 1) { return { tick: journal[i].tick, expected: journal[i - 1].tick + 1 }; }
   }
@@ -130,24 +225,45 @@ function _mjlockstepDispatchEvent(st, type, p) {
 // `frame.seed` absent (typeof !== 'number') = partie PAS en mode lockstep côté serveur (def.mode
 // oublié/mal réglé) — signalé (µ.error) puis INERTE, jamais un throw qui casserait l'appelant.
 function _mjlockstepReset(st, frame) {
-  var i, g, journal, anomaly;
+  var i, g, journal, anomaly, snap = frame.snapshot;
   if (typeof frame.seed !== 'number') {
     µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepNotLockstep', { game: (frame.game || '?') }, 'partie \'{game}\' n\'est pas en mode lockstep côté serveur (def.mode) — µ.lockstep restera inerte'));
     return;
   }
   st.seed = frame.seed;
-  st.rng = µ.random(frame.seed);
-  st.state = st.state0();
+  st.suspect = false;   // repris du serveur (cf. _mjlockstepApply)
+  st.limitSaid = false;
+  st.snapEvery = typeof frame.snapshotEvery === 'number' ? frame.snapshotEvery : 0;
+  st.snapMax = typeof frame.snapshotMax === 'number' ? frame.snapshotMax : 0;
   st.buffer = {};
-  st.nextTick = 1;
+  if (snap && typeof snap.tick === 'number') {
+    // instantané gardé par le serveur : l'état (copié, la trame reste à l'appli) et le générateur à la fin de son tick
+    st.state = JSON.parse(JSON.stringify(snap.state));
+    st.rng = _mjlockstepRng(st, snap.rng);
+    st.nextTick = snap.tick + 1;
+  }
+  else {
+    st.state = st.state0();
+    st.rng = _mjlockstepRng(st, frame.seed);
+    st.nextTick = 1;
+  }
   journal = frame.journal || [];
-  anomaly = _mjlockstepJournalAnomaly(journal);
+  anomaly = _mjlockstepJournalAnomaly(journal, st.nextTick);
   if (anomaly) {
     µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepJournalTruncated', { tick: anomaly.tick, expected: anomaly.expected }, 'journal tronqué au resync (tick {tick} reçu, tick {expected} attendu) — resync déterministe impossible, état local potentiellement faux'));
     _mjlockstepDispatchEvent(st, 'divergence', { tick: anomaly.tick, expected: anomaly.expected, reason: 'journal-truncated' });
   }
-  for (i = 0; i < journal.length; i++) { g = journal[i]; _mjlockstepReplayTick(st, g.tick, g.orders); }
+  st.replayFault = null;
+  for (i = 0; i < journal.length; i++) { g = journal[i]; _mjlockstepReplayTick(st, g.tick, g.orders, false); }
   _mjlockstepPublish(st);
+  // un rejeu qui lève ne répare rien : l'état garde un ordre appliqué en partie, que les autres joueurs n'ont peut-être pas — dit et
+  // signalé (événement 'divergence', raison 'apply-threw') une fois, puis de nouveau seulement après un rejeu qui passe sans lever
+  if (st.replayFault === null) { st.replaySaid = false; }
+  else if (!st.replaySaid) {
+    st.replaySaid = true;
+    µ.error('[µ.lockstep] ' + µ._mjs_txt('lockstepReplayThrew', { tick: st.replayFault }, 'apply() a levé une erreur au tick {tick} pendant le rejeu de la reprise : la reprise ne rend pas l\'état local de la partie sûr, il diffère de celui des autres joueurs si apply() ne lève pas chez eux — la partie le signale (événement \'divergence\', raison \'apply-threw\') ; corrigez apply(), qui doit appliquer chaque ordre sans lever d\'erreur'));
+    _mjlockstepDispatchEvent(st, 'divergence', { tick: st.replayFault, reason: 'apply-threw' });
+  }
 }
 
 // --- entrée publique -----------------------------------------------------------------------------
@@ -159,7 +275,9 @@ function _mjlockstepReset(st, frame) {
   var every    = opts.every != null ? opts.every : 60;
   var st = {
     game: game, state0: state0, apply: apply, every: every,
-    state: state0(), seed: null, rng: null, buffer: {}, nextTick: 1, store: µ.state({})
+    state: state0(), seed: null, rng: null, rngState: 0, buffer: {}, nextTick: 1, store: µ.state({}),
+    snapEvery: 0, snapMax: 0, snapWarned: false, applyWarned: false, suspect: false, resyncing: false, resyncTimes: [], limitSaid: false,
+    replayFault: null, replaySaid: false
   };
 
   _mjlockstepPublish(st);   // amorce le store avec l'état LOCAL initial — pas d'attente du réseau

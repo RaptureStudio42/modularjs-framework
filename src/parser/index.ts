@@ -1085,6 +1085,67 @@ export function skeletonHtml(template: string, firstLine = 1): string {
   return skelSerialize(skeletonOf(racine.children, null)).replace(/>\s+</g, '><').trim()
 }
 
+// la silhouette au manifeste, en forme compacte : le HTML de skeletonHtml une fois remis en balises par la page
+// (runtime/mjs_fx_skeleton.ts, _mjsSkelHtml), sans chevrons ni fermetures écrites — une barre est un chiffre (son
+// rang dans SKEL_KINDS, à partir de 1), une balise `nom.classe attributs>` (`nom/>` une balise vide, `img…>` une
+// image et sa boîte), sa fermeture `)`, tues en fin de chaîne ; trois fois de suite la même suite (un {for})
+// s'écrit `[suite]` ; `[` et `]` d'une valeur, `&#91;` et `&#93;`. Les blancs entre balises ne restent pas (cf. skeletonHtml)
+const SKEL_KINDS = ['s', 'm', 'l', 'title', 'lines', 'block', 'media']
+const SKEL_CLASS = /^[^\s."<>&\[\]\/]+(?: [^\s."<>&\[\]\/]+)*$/
+function skelParts(nodes: Node[]): string[] {
+  const parts: string[] = []
+  for (const n of nodes) {
+    if (n.type !== 'tag' || !n.name) continue
+    const barre = n.name === 'i' && n.attrs.length === 1 && n.attrs[0].name === 'mjs-skel' ? SKEL_KINDS.indexOf(n.attrs[0].val ?? '') : -1
+    if (barre >= 0) {
+      parts.push(String(barre + 1))
+      continue
+    }
+    const image = n.name === 'img' && n.attrs[n.attrs.length - 1]?.name === 'mjs-skel'
+    let attrs   = image ? n.attrs.slice(0, -1) : n.attrs
+    let tete    = n.name
+    // la classe en tête, à la façon d'un sélecteur (`li.message`), quand ses noms s'y prêtent
+    if (attrs[0]?.name === 'class' && attrs[0].type === 'static' && SKEL_CLASS.test(attrs[0].val ?? '')) {
+      tete += '.' + attrs[0].val!.split(' ').join('.')
+      attrs = attrs.slice(1)
+    }
+    tete += attrs.map(a => a.type === 'boolean' ? ' ' + a.name : ' ' + a.name + '="' + skelEsc(a.val ?? '') + '"').join('')
+    tete  = tete.replace(/\[/g, '&#91;').replace(/\]/g, '&#93;')
+    parts.push(image ? tete + '>' : SKEL_VOID.has(n.name) ? tete + '/>' : tete + '>' + skelRepeat(skelParts(n.children)) + ')')
+  }
+  return parts
+}
+
+// trois fois de suite la même suite de nœuds : `[suite]`, la plus longue d'abord, elle-même réduite
+function skelRepeat(parts: string[]): string {
+  let out = ''
+  for (let i = 0; i < parts.length;) {
+    let k = Math.floor((parts.length - i) / 3)
+    for (; k > 0; k--) {
+      const a = parts.slice(i, i + k).join('')
+      if (a.length > 1 && a === parts.slice(i + k, i + 2 * k).join('') && a === parts.slice(i + 2 * k, i + 3 * k).join('')) break
+    }
+    if (k > 0) {
+      out += '[' + skelRepeat(parts.slice(i, i + k)) + ']'
+      i   += 3 * k
+    }
+    else out += parts[i++]
+  }
+  return out
+}
+
+// un contenu attendu quelque part dans le gabarit : un {await}, dans une balise ou une branche
+function skelWaits(nodes: Node[]): boolean {
+  return nodes.some(n => n.type === 'await' || skelWaits(n.children) || n.branches.some(b => skelWaits(b.children)))
+}
+
+/** la silhouette d'un gabarit de composant pour le manifeste : sa forme compacte (vide : pas de silhouette) et s'il
+ *  attend un contenu — sans {await}, il est rendu dès que son code arrive (cf. componentSkeletons, bundler) */
+export function componentSkeleton(template: string, firstLine = 1): { forme: string, attente: boolean } {
+  const racine = parse(template, undefined, { firstLine })
+  return { forme: skelRepeat(skelParts(skeletonOf(racine.children, null))).replace(/\)+$/, ''), attente: skelWaits(racine.children) }
+}
+
 function poseSkeleton(node: Node, settings: string, line: number): void {
   const pending = node.branches.find(b => b.type === 'pending')!
   const success = node.branches.find(b => b.type === 'success')

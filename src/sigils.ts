@@ -16,6 +16,7 @@ import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 
 import { t } from './messages/index.js'
+import { quoteClose, skipQuotedSpan } from './quoted-span.js'
 
 // identifiant après sigil : underscore admis en TÊTE, jamais le chiffre
 export const SIGIL_ID = '[a-zA-Z_][a-zA-Z0-9_]*'
@@ -29,6 +30,11 @@ export const SIGIL_ID = '[a-zA-Z_][a-zA-Z0-9_]*'
 export const RAW_ACCESS_BODY = `µread[ \\t]+\\$(\\$?)(${SIGIL_ID})`
 export const RAW_ACCESS_OUT       = '_mjsThis._state.'
 export const RAW_ACCESS_STORE_OUT = 'µ._mjs_storeRaw.'
+// `µwrite $x, v` : la case brute du composant, par une enveloppe qui ne prévient personne mais périme les valeurs dérivées
+// qui la lisent (`µ._mjs_rawWrite`, mjs_element.ts) — `µwrite $$x, v` : la valeur brute du magasin, par la même sorte
+// d'enveloppe, qui périme les valeurs dérivées des composants qui lisent la clé (`µ._mjs_storeRawWrite`, mjs_store_globals.ts)
+export const RAW_WRITE_OUT        = 'µ._mjs_rawWrite(_mjsThis).'
+export const RAW_WRITE_STORE_OUT  = 'µ._mjs_storeRawWrite.'
 
 // PARENTHÈSES — `µread($x)` ≡ `µread $x`. Civet rend les parenthèses d'appel
 // facultatives : la rune suit la même liberté, les DEUX formes compilent. Sans ce corps, la
@@ -275,9 +281,8 @@ export function rewriteMuImport(src: string, sectionLabel: string): string {
     if (ch === '"' || ch === '`') {
       out += src.slice(codeStart, i)
       const quote = ch
-      let j = i + 1
-      while (j < n && src[j] !== quote) { if (src[j] === '\\') j++; j++ }
-      const content = src.slice(i + 1, Math.min(j, n))
+      const j = quoteClose(src, i)
+      const content = src.slice(i + 1, j)
       const marker = quote === '`' ? '$' : '#'
       out += quote + rewriteMuImportWindows(content, marker, sectionLabel) + quote
       i = Math.min(j + 1, n)
@@ -299,8 +304,7 @@ export function rewriteMuImport(src: string, sectionLabel: string): string {
         throw new Error(t('transpiler.rune-import-litteral-requis', { section: sectionLabel }))
       }
       const pathStart = k + 1
-      let j = pathStart
-      while (j < n && src[j] !== quote) { if (src[j] === '\\') j++; j++ }
+      const j = quoteClose(src, k)
       const chemin = src.slice(pathStart, j)
       let e = j + 1
       while (e < n && /\s/.test(src[e])) e++
@@ -513,11 +517,7 @@ function skipInertFrom(src: string, i: number, diese = true): number {
     return -1
   }
   if (diese && ch === '#' && src[i + 1] !== undefined && !/[a-zA-Z_!]/.test(src[i + 1])) { const e = src.indexOf('\n', i); return e < 0 ? n : e }
-  if (ch === "'" || ch === '"' || ch === '`') {
-    let j = i + 1
-    while (j < n && src[j] !== ch) { if (src[j] === '\\') j++; j++ }
-    return Math.min(j + 1, n)
-  }
+  if (ch === "'" || ch === '"' || ch === '`') return skipQuotedSpan(src, i)
   return -1
 }
 
@@ -632,9 +632,8 @@ export function rewriteMuToggle(src: string, sectionLabel: string): string {
     const ch = src[i]
     if (ch === '"' || ch === '`') {
       out += src.slice(codeStart, i)
-      let j = i + 1
-      while (j < n && src[j] !== ch) { if (src[j] === '\\') j++; j++ }
-      const contenu = src.slice(i + 1, Math.min(j, n))
+      const j = quoteClose(src, i)
+      const contenu = src.slice(i + 1, j)
       out += ch + rewriteMuToggleWindows(contenu, ch === '`' ? '$' : '#', sectionLabel) + ch
       i = Math.min(j + 1, n)
       codeStart = i

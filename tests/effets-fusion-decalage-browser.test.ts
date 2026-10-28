@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendre } from './helpers/attendre.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -185,6 +186,30 @@ async function ecartsRegion(page: any): Promise<Ecart[]> {
     return out
   })
 }
+// les bornes que l'effet pose sur chaque boîte d'une page (région du filtre et de son remplissage) : une page décalée a
+// fini de suivre ses boîtes quand elle porte les mêmes que la page chargée dans l'état final
+async function bornes(page: any, tag: string): Promise<string> {
+  return await page.evaluate((t: string) => {
+    const sh = (document.querySelector(t) as any)._shadow
+    return ['t', 'u', 'v', 'x'].map((c) => {
+      const el = sh.querySelector('.' + c)
+      const m  = /#([^"')]+)/.exec(getComputedStyle(el).filter)
+      const f  = m && sh.querySelector('#' + m[1])
+      const a  = (e: any) => e ? ['x', 'y', 'width', 'height'].map((n) => e.getAttribute(n)).join(',') : '-'
+      return f ? `${c} ${a(f)} ${a(f.querySelector('feFlood'))}` : `${c} sans filtre`
+    }).join(' | ')
+  }, tag)
+}
+// les deux pages portent les mêmes bornes, relues tant qu'elles diffèrent (une porte : sous charge, l'effet relit la
+// position de ses boîtes plus tard que les 500 ms qu'on lui laissait)
+async function memesBornes(fin: any, tagFin: string, autre: any, tagAutre: string): Promise<void> {
+  let lu = ['', '']
+  await attendre(async () => {
+    lu = [await bornes(fin, tagFin), await bornes(autre, tagAutre)]
+    return lu[0] === lu[1]
+  }, () => `les bornes de la page décalée suivent ses boîtes — état final : ${lu[0]} ; page décalée : ${lu[1]}`)
+}
+
 // les boîtes élargies ou ramenées à leur taille : l'observateur de chacune relit la sienne
 const bascule = (page: any, ajoute: boolean) => page.evaluate((a: boolean) => {
   const sh = (document.querySelector('mjs-fb-decale-fin') as any)._shadow
@@ -241,8 +266,8 @@ for (const nom of ['chromium', 'firefox'] as const) {
       return page
     }
 
-    // le nombre de pixels qui diffèrent d'une page à l'autre
-    async function ecart(p: any, q: any): Promise<number> {
+    // les pixels qui diffèrent d'une page à l'autre : leur nombre, et les premiers (position, couleur dans chaque page)
+    async function ecart(p: any, q: any): Promise<{ n: number, premiers: string }> {
       const a = (await p.screenshot()).toString('base64')
       const b = (await q.screenshot()).toString('base64')
       return await q.evaluate(async ([a64, b64]: string[]) => {
@@ -250,8 +275,14 @@ for (const nom of ['chromium', 'firefox'] as const) {
         const A = await charge(a64)
         const B = await charge(b64)
         let n = 0
-        for (let i = 0; i < A.data.length; i += 4) if (Math.abs(A.data[i] - B.data[i]) > 8 || Math.abs(A.data[i + 1] - B.data[i + 1]) > 8 || Math.abs(A.data[i + 2] - B.data[i + 2]) > 8) n++
-        return n
+        const premiers: string[] = []
+        for (let i = 0; i < A.data.length; i += 4) {
+          if (Math.abs(A.data[i] - B.data[i]) > 8 || Math.abs(A.data[i + 1] - B.data[i + 1]) > 8 || Math.abs(A.data[i + 2] - B.data[i + 2]) > 8) {
+            n++
+            if (premiers.length < 12) premiers.push(`(${(i / 4) % A.width},${Math.floor(i / 4 / A.width)}) ${A.data.slice(i, i + 3).join('.')}≠${B.data.slice(i, i + 3).join('.')}`)
+          }
+        }
+        return { n, premiers: premiers.join(' ') }
       }, [a, b])
     }
 
@@ -266,8 +297,9 @@ for (const nom of ['chromium', 'firefox'] as const) {
           const img = await ouvre(contexte, 'mjs-fb-decale-img')
           const pos = await img.evaluate(() => { const sh = (document.querySelector('mjs-fb-decale-img') as any)._shadow; const r = sh.querySelector('.t').getBoundingClientRect(); return [r.left, r.top] })
           assert.deepEqual(pos, [30.5, 10.5], 'les images tardives ont décalé la boîte de 20,5 px et 10,5 px')
+          await memesBornes(fin, 'mjs-fb-decale-fin', img, 'mjs-fb-decale-img')
           const diff = await ecart(fin, img)
-          assert.equal(diff, 0, `${diff} pixels diffèrent entre la page décalée par des images tardives et la page chargée dans l'état final`)
+          assert.equal(diff.n, 0, `${diff.n} pixels diffèrent entre la page décalée par des images tardives et la page chargée dans l'état final : ${diff.premiers}`)
         } finally {
           await browser.close()
         }
@@ -314,9 +346,9 @@ for (const nom of ['chromium', 'firefox'] as const) {
             const pose = await ouvre(contexte, 'mjs-fb-decale-var')
             await pose.evaluate((vars: Record<string, string>) => { for (const k in vars) document.documentElement.style.setProperty(k, vars[k]) }, sc.vars)
             if (sc.signal) await pose.evaluate(sc.signal)
-            await pose.waitForTimeout(500)
+            await memesBornes(fin, 'mjs-fb-decale-var', pose, 'mjs-fb-decale-var')
             const diff = await ecart(fin, pose)
-            assert.equal(diff, 0, `${diff} pixels diffèrent entre la page décalée (${sc.nom}) et la page chargée dans l'état final`)
+            assert.equal(diff.n, 0, `${diff.n} pixels diffèrent entre la page décalée (${sc.nom}) et la page chargée dans l'état final : ${diff.premiers}`)
           } finally {
             await browser.close()
           }

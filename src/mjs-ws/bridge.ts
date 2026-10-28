@@ -113,14 +113,13 @@ export interface MjsWsResolvedBridgeOptions {
 }
 
 // longueur conseillée d'un secret de signature, même règle que le secret des jetons (token.ts) : en deçà, il se devine
-// hors ligne à partir d'une seule requête signée interceptée. Un secret court passe, avec un avertissement unique pour
-// tout le processus
+// hors ligne à partir d'une seule requête signée interceptée. Un secret court passe, avec un avertissement pour chaque
+// serveur qui l'emploie : ses options se résolvent une fois, à sa création (resolveBridgeOptions). Les serveurs /ws et
+// /mjs-server d'un même processus partagent ce module, un avertissement unique par processus taisait le second
 const SECRET_MIN_LENGTH = 32
-let shortSecretWarned   = false
 
 function warnShortSecret(secret: string, label: string): void {
-  if (secret.length >= SECRET_MIN_LENGTH || shortSecretWarned) return
-  shortSecretWarned = true
+  if (secret.length >= SECRET_MIN_LENGTH) return
   console.warn(t('ws.bridge.secret-court', { label, length: secret.length, min: SECRET_MIN_LENGTH }))
 }
 

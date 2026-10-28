@@ -35,8 +35,9 @@ describe('_mjs_tryReviveDying efface _mjs_pairedWith sur le noeud ressuscité', 
     writeFileSync(join(srcDir, 'stub.mjs'), '<p>stub</p>')
 
     // `runtime: ['if']` : le stub n'écrit aucun `{if}` lui-même (le scan ne détecterait donc
-    // pas mjs_if.ts, où vit `_mjs_tryReviveDying` depuis son détachement de mjs_element.ts).
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if'] })
+    // pas mjs_if.ts, où vit `_mjs_tryReviveDying` depuis son détachement de mjs_element.ts) ; `destroy_hooks` : la reprise
+    // d'une sortie en cours n'entre au cœur qu'avec le fichier des transitions, seul à poser `_mjs_dying`.
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['if', 'destroy_hooks'] })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
 

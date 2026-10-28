@@ -68,35 +68,76 @@ export function buildPureList(level: LogLevelName): string[] {
 // au niveau 'silent' (cf. runtimeCallsCut), avec leurs arguments — le texte tiré de la table (µ._mjs_txt, µ._mjs_msg)
 // ne sert qu'à l'écriture, le reste ne fait que lire (même garde que les traces). Le journal des erreurs
 // (mjs_journal.ts) enveloppe µ.error pour envoyer chaque erreur au serveur : un cœur qui l'embarque garde ses µ.error
+//
+// messages du développement seul (cf. DEV_ONLY_MESSAGES) : un appel µ.warn(…) ou µ.error(…) du runtime qui lit l'un de leurs textes
+// part dès que le niveau coupe les traces, à 'warn' comme au-dessus, journal ou non (méthode `dev`, cf. runtimeCallsCut)
 // ============================================================================
 
 // repères de l'aide `µ._mjs_logger` (mjs_init.ts) : le bloc part avec les traces qu'elle garde
 const TRACE_LOGGER_BLOCK_RE = /^\/\/ <trace-logger>\n[\s\S]*?^\/\/ <\/trace-logger>\n?/m
 
-/** les méthodes de console du runtime que la construction peut retirer du code envoyé */
-export type RuntimeConsoleMethod = 'log' | 'warn' | 'error'
+/** les appels du runtime que la construction peut retirer du code envoyé : ceux des méthodes de console `log`, `warn` et `error`, et
+ *  `dev` : les appels µ.warn(…) / µ.error(…) qui lisent un message du développement seul (cf. DEV_ONLY_MESSAGES) */
+export type RuntimeConsoleMethod = 'log' | 'warn' | 'error' | 'dev'
 
 /** les appels du runtime qu'un niveau de PROD retire du code envoyé (cf. cutRuntimeTraces) : les traces `log` au-dessus de
- *  'log', les avertissements `warn` aux niveaux 'error' et 'silent', les erreurs `error` au niveau 'silent' quand le cœur
- *  n'embarque pas le journal des erreurs (`journal` faux), qui les lit pour les envoyer au serveur */
+ *  'log', et avec elles les messages du développement seul (`dev`) ; les avertissements `warn` aux niveaux 'error' et 'silent',
+ *  les erreurs `error` au niveau 'silent' quand le cœur n'embarque pas le journal des erreurs (`journal` faux), qui les lit pour
+ *  les envoyer au serveur */
 export function runtimeCallsCut(level: LogLevelName, journal = true): RuntimeConsoleMethod[] {
   if (!levelCutsTraces(level)) return []
-  if (level === 'warn') return ['log']
-  if (level === 'error' || journal) return ['log', 'warn']
-  return ['log', 'warn', 'error']
+  if (level === 'warn') return ['log', 'dev']
+  if (level === 'error' || journal) return ['log', 'warn', 'dev']
+  return ['log', 'warn', 'error', 'dev']
 }
 
-// l'appelé d'un appel retiré : `µ.<méthode>` suivi d'une parenthèse, ou `µ._mjs_logger()` suivi de `?.(`
+// l'appelé d'un appel retiré : `µ.<méthode>` suivi d'une parenthèse, ou `µ._mjs_logger()` suivi de `?.(` avec les traces (`log`) ;
+// `dev` n'est pas une méthode, ses appels se cherchent à part (cf. readsDevMessage)
 function calleeRe(methods: readonly RuntimeConsoleMethod[]): RegExp {
-  return new RegExp(`(?<![\\w$µ.])µ\\.(?:(?:${methods.join('|')})(?=\\s*\\()|_mjs_logger\\(\\)(?=\\?\\.\\())`, 'g')
+  const named = methods.filter(m => m !== 'dev')
+  const parts = [...(named.length > 0 ? [`(?:${named.join('|')})(?=\\s*\\()`] : []), ...(methods.includes('log') ? ['_mjs_logger\\(\\)(?=\\?\\.\\()'] : [])]
+  return parts.length > 0 ? new RegExp(`(?<![\\w$µ.])µ\\.(?:${parts.join('|')})`, 'g') : /(?!)/g
+}
+
+// un appel µ.warn(…) ou µ.error(…), que la méthode `dev` retire quand il lit un message du développement seul
+const DEV_CALLEE_RE = /(?<![\w$µ.])µ\.(?:warn|error)(?=\s*\()/g
+
+// une lecture de la table des messages, cherchée sur la vue masquée ; sa clé se lit sur le texte réel, juste après la parenthèse
+const MSG_READ_RE = /µ\._mjs_(?:msg|txt)\(/g
+const MSG_KEY_RE  = /^\s*(['"])([\w$.]+)\1/
+
+// parenthèse fermante de celle qui s'ouvre en `open`, sur la vue masquée (chaînes, gabarits, commentaires blanchis) ; -1 sans fermante
+function closingParen(masked: string, open: number): number {
+  let depth = 0
+  for (let i = open; i < masked.length; i++) {
+    if (masked[i] === '(') depth++
+    else if (masked[i] === ')' && --depth === 0) return i
+  }
+  return -1
+}
+
+// l'appel dont l'appelé finit en `end` lit-il, par µ._mjs_msg ou µ._mjs_txt, n'importe où dans ses arguments, un message du
+// développement seul : une clé de DEV_ONLY_MESSAGES, ou du groupe `dev` des libellés (`dev.<clé>`)
+function readsDevMessage(source: string, masked: string, end: number): boolean {
+  const open  = masked.indexOf('(', end)
+  const close = open < 0 ? -1 : closingParen(masked, open)
+  if (close < 0) return false
+  for (const m of masked.slice(open, close).matchAll(MSG_READ_RE)) {
+    const at  = open + m.index! + m[0].length
+    const key = MSG_KEY_RE.exec(source.slice(at, at + 120))?.[2]
+    if (key !== undefined && (key.startsWith('dev.') || DEV_ONLY_MESSAGES.includes(key))) return true
+  }
+  return false
 }
 
 // le nom `_mjs_logger`, seul ou derrière un point
 const TRACE_LOGGER_NAME_RE = /(?<![\w$])_mjs_logger(?![\w$])/g
 
-// ce que le texte doit porter pour qu'il y ait quelque chose à lire : un appel de ces méthodes, l'aide ou ses repères
+// ce que le texte doit porter pour qu'il y ait quelque chose à lire : un appel de ces méthodes (avec `dev`, un µ.warn ou un
+// µ.error), l'aide ou ses repères
 function hintRe(methods: readonly RuntimeConsoleMethod[]): RegExp {
-  return new RegExp(`µ\\.(?:${methods.join('|')})|_mjs_logger|<trace-logger>`)
+  const named = methods.includes('dev') ? [...new Set([...methods.filter(m => m !== 'dev'), 'warn', 'error'])] : methods
+  return new RegExp(`µ\\.(?:${named.join('|')})|_mjs_logger|<trace-logger>`)
 }
 
 // le texte avec chaînes, morceaux de gabarit, expressions régulières et commentaires blanchis (même longueur, retours
@@ -130,8 +171,8 @@ function maskInertTokens(text: string): string {
 }
 
 // `µ.log(` devient `MJS_TRACE?.(` et `µ._mjs_logger()?.(` aussi ; `µ.warn(` et `µ.error(` de même quand `methods` les
-// nomme (cf. runtimeCallsCut) ; l'appelant pose `define: { MJS_TRACE: 'null' }` (minifyJs, option runtimeSource), sans
-// lui le résultat ne tourne pas
+// nomme (cf. runtimeCallsCut), ou, avec `dev`, quand l'appel lit un message du développement seul ; l'appelant pose
+// `define: { MJS_TRACE: 'null' }` (minifyJs, option runtimeSource), sans lui le résultat ne tourne pas
 // le bloc de l'aide `µ._mjs_logger` (repères `// <trace-logger>`) est retiré, ses lignes laissées vides, quand
 // plus rien d'autre ne la nomme ; un autre usage la garde en place
 export function cutRuntimeTraces(source: string, methods: readonly RuntimeConsoleMethod[] = ['log']): string {
@@ -141,6 +182,10 @@ export function cutRuntimeTraces(source: string, methods: readonly RuntimeConsol
   const masked = maskInertTokens(source)
   const calls  = [...masked.matchAll(calleeRe(methods))]
   const helper = TRACE_LOGGER_BLOCK_RE.exec(source)
+  if (methods.includes('dev')) {
+    const taken = new Set(calls.map(m => m.index))
+    for (const m of masked.matchAll(DEV_CALLEE_RE)) if (!taken.has(m.index) && readsDevMessage(source, masked, m.index! + m[0].length)) calls.push(m)
+  }
 
   let edits: Array<[number, number, string]> = calls.map(m => [m.index!, m.index! + m[0].length, m[0].endsWith(')') ? 'MJS_TRACE' : 'MJS_TRACE?.'])
   if (helper !== null) {
@@ -165,7 +210,8 @@ export function cutRuntimeTraces(source: string, methods: readonly RuntimeConsol
 // vit dans un fichier par langue, chargé quand un message s'écrit. selon le niveau de console :
 //   - 'warn', 'error' (défaut), 'silent' : la construction retire les traces du code envoyé, personne ne lira leur texte :
 //     les fichiers de messages ne le portent plus (messagesWithoutTraces) ; aux niveaux 'error' et 'silent', les avertissements
-//     partent aussi, et les textes qu'eux seuls lisent avec eux (WARNING_ONLY_MESSAGES)
+//     partent aussi, et les textes qu'eux seuls lisent avec eux (WARNING_ONLY_MESSAGES) ; à ces trois niveaux, les messages du
+//     développement seul partent du code envoyé et des fichiers de messages (DEV_ONLY_MESSAGES)
 //   - 'log' : les traces restent, leur texte part avec le manifeste (traceMessages) : sans lui la première trace sortirait
 //     en clés, puis serait rejouée dans le désordre à l'arrivée du fichier de messages. Les fichiers restent complets
 // tests/runtime-messages-des-traces.test.ts relit le runtime et garde ces listes
@@ -222,7 +268,7 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'schemaUnknownIdReceived',
   'scratchBadMany', 'scratchBadOne', 'scratchColors', 'scratchIgnMany', 'scratchIgnNone', 'scratchIgnOne', 'scratchImage',
   'smoothNonFinite',
-  'sockDuplicateAuth', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
+  'sockBinaryNoSchema', 'sockDuplicateAuth', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
   'spotlightWhere',
   'spriteFps', 'spriteImage', 'spritePoses', 'spriteRow',
   'storeGCycle', 'storeGKey', 'storeGResKey', 'storeGResTag', 'storeGTheme', 'storeGWatch', 'storeKey', 'storeProto',
@@ -233,6 +279,35 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'vtBadDir', 'vtBadDur', 'vtBadPrio', 'vtDirName', 'vtDupKey', 'vtLevitation', 'vtLevitationIn', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey', 'vtUnknownPreset',
 ]
 
+/** clés du groupe `err` des messages du développement seul : un conseil d'écriture, une mauvaise utilisation que la construction
+ *  de développement signale déjà (le code tel qu'il est écrit la déclenche, pas les données, le réseau ni le navigateur du visiteur),
+ *  ou un message que seule une construction de développement peut écrire (bloc µ.debug, section `// @@ dev`, drapeau `dev` de
+ *  l'i18n). Un appel µ.warn(…) ou µ.error(…) du runtime qui lit l'une d'elles est du développement seul : en production, dès que le
+ *  niveau coupe les traces ('warn', 'error', 'silent'), la construction le retire du code envoyé avec ses arguments, et ces textes
+ *  des fichiers de messages ; au niveau 'log', ils restent. Même règle pour le groupe `dev` des libellés, que la production n'écrit
+ *  jamais. Dans le doute (une valeur qui peut venir d'une variable, des données reçues ou de la page), le message reste en production.
+ *  Une clé lue hors d'un tel appel, ou nommée ailleurs, ne peut pas y être (tests/bundler-messages-du-developpement-en-production.test.ts) */
+export const DEV_ONLY_MESSAGES: readonly string[] = [
+  'adoptSheetNoShadow',
+  'blendFilter', 'chromaticFilter', 'liquidFilter', 'pixelateFilter',
+  'dynAccept',
+  'effectInit',
+  'everyHash', 'everyInit', 'everyUnknownOpt', 'everyWhileAsync',
+  'fluidTextComponent',
+  'fxBrought', 'fxEveryRefused', 'fxRefused',
+  'hoverIgnored', 'hoverOfAlone',
+  'i18nMissing', 'i18nSecours',
+  'modalNotifyFlow', 'modalNotifyPos', 'modalSoundUnknown', 'modalUnknownInput',
+  'optimisticBadStore',
+  'pileOverflow',
+  'runesInspectInit',
+  'spotlightWhere',
+  'spriteFps', 'spriteRow',
+  'txBezierRange', 'txEasingUnknown',
+  'ujsCallbackMissing', 'ujsConfirmValue', 'ujsFlashUnknown', 'ujsMethodNoUjs', 'ujsVerbUnknown',
+  'vtDirName', 'vtDupKey', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey',
+]
+
 /** clés qu'une trace lit : les précédentes, et le texte d'UJS que sa trace du mode 'silent' partage avec son avertissement */
 export const TRACE_READ_MESSAGES: readonly string[] = [...TRACE_ONLY_MESSAGES, 'ujsNoPage']
 
@@ -241,11 +316,12 @@ export function levelCutsTraces(level: LogLevelName): boolean {
   return buildPureList(level).includes('µ.log')
 }
 
-/** le groupe `err` d'une langue sans les textes que seules des traces lisent ; au niveau de PROD `level` 'error' ou 'silent', sans
- *  ceux que seuls des avertissements lisent non plus */
+/** le groupe `err` d'une langue sans les textes que seules des traces lisent, ni ceux du développement seul ; au niveau de PROD
+ *  `level` 'error' ou 'silent', sans ceux que seuls des avertissements lisent non plus */
 export function messagesWithoutTraces(messages: Record<string, string>, level: LogLevelName = 'warn'): Record<string, string> {
   const rest = { ...messages }
   for (const key of TRACE_ONLY_MESSAGES) delete rest[key]
+  for (const key of DEV_ONLY_MESSAGES) delete rest[key]
   if (level === 'error' || level === 'silent') for (const key of WARNING_ONLY_MESSAGES) delete rest[key]
   return rest
 }
@@ -893,9 +969,9 @@ export interface MinifyOpts {
    * Le texte est celui du runtime du framework (cœur, morceau d'effet), jamais du code d'une appli, et le build
    * est un build de PRODUCTION (le développement garde ses traces, minifié ou non) : à un niveau de PROD qui
    * coupe `log` (cf. `logLevel`), ses traces `µ.log(…)` et `µ._mjs_logger()?.(…)` partent avec leurs arguments
-   * et l'aide `µ._mjs_logger` avec elles (cf. `cutRuntimeTraces`) ; aux niveaux 'error' et 'silent', ses appels
-   * `µ.warn(…)` aussi, et au niveau 'silent' ses appels `µ.error(…)` (cf. `journal`, `runtimeCallsCut`). Absent : rien
-   * de plus que la liste `pure`.
+   * et l'aide `µ._mjs_logger` avec elles (cf. `cutRuntimeTraces`), et ses appels `µ.warn(…)` / `µ.error(…)` qui écrivent un
+   * message du développement seul (cf. `DEV_ONLY_MESSAGES`) ; aux niveaux 'error' et 'silent', ses appels `µ.warn(…)` aussi,
+   * et au niveau 'silent' ses appels `µ.error(…)` (cf. `journal`, `runtimeCallsCut`). Absent : rien de plus que la liste `pure`.
    */
   runtimeSource?: boolean
   /**
@@ -984,7 +1060,7 @@ export async function minifyJs(
   cleaned += source.slice(cursor)
 
   // traces du texte du runtime : retirées du code envoyé quand le niveau de PROD coupe `log` (même
-  // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log') ; ses avertissements aux niveaux
+  // critère que la liste `pure`, `µ.log` y figure à tout niveau sauf 'log'), avec les messages du développement seul ; ses avertissements aux niveaux
   // 'error' et 'silent', ses erreurs au niveau 'silent' sans le journal, cf. `cutRuntimeTraces` ; en développement,
   // le niveau 'log' : ni liste `pure`, ni trace retirée
   const level      = dev ? 'log' : (opts.logLevel ?? 'error')

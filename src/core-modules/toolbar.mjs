@@ -3,7 +3,7 @@
   # `tool-heads`, `tool-keys` : l'inscription auprès de l'éditeur, pour son raccourci) ou au séparateur `|` (`tool-separator`) : la construction les ôte quand aucune barre de l'application ne peut afficher l'outil, en développement comme en production ; la copie dans un projet
   # garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé. `!tool-separator` est l'autre forme des lignes qui existent avec et sans séparateur ;
   # `dev tool-script` l'avertissement du développement quand une barre reçoit d'un script un outil que la construction a ôté (écrit en commentaire, réveillé quand la construction tranche les outils)
-  # chaque outil : le glyphe ou le dessin du bouton, son raccourci (Mod = Ctrl ou ⌘), s'il est un interrupteur
+  # chaque outil : le glyphe ou le dessin du bouton, son raccourci (Mod = Ctrl ou ⌘ ; Shift, que le titre écrit dans la langue de la page : Maj, Shift, ⇧ sur Mac), s'il est un interrupteur
   # (aria-pressed) et la clé du libellé ; l'ordre de ALL dit l'ordre par défaut, `|` pose un séparateur
   ICON = {
     ul:    '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="2.6" cy="4" r="1.1"/><circle cx="2.6" cy="8" r="1.1"/><circle cx="2.6" cy="12" r="1.1"/><path d="M6.5 4h8M6.5 8h8M6.5 12h8"/></svg>' # @@ tool-ul
@@ -23,18 +23,19 @@
     bold:      { glyph: 'B',  label: 'toolBold',      key: 'Mod+B',           toggle: true,  cls: 'g-bold' } # @@ tool-bold
     italic:    { glyph: 'I',  label: 'toolItalic',    key: 'Mod+I',           toggle: true,  cls: 'g-italic' } # @@ tool-italic
     underline: { glyph: 'U',  label: 'toolUnderline', key: 'Mod+U',           toggle: true,  cls: 'g-underline' } # @@ tool-underline
-    strike:    { glyph: 'S',  label: 'toolStrike',    key: 'Mod+Maj+X',       toggle: true,  cls: 'g-strike' } # @@ tool-strike
-    ul:        { icon: ICON.ul,    label: 'toolUl',    key: 'Mod+Maj+8',     toggle: true } # @@ tool-ul
-    ol:        { icon: ICON.ol,    label: 'toolOl',    key: 'Mod+Maj+7',     toggle: true } # @@ tool-ol
-    check:     { icon: ICON.check, label: 'toolCheck', key: 'Mod+Maj+9',     toggle: true } # @@ tool-check
+    strike:    { glyph: 'S',  label: 'toolStrike',    key: 'Mod+Shift+X',     toggle: true,  cls: 'g-strike' } # @@ tool-strike
+    color:     { glyph: 'A',  label: 'toolColor',     key: '',                toggle: true,  cls: 'g-color' } # @@ tool-color
+    ul:        { icon: ICON.ul,    label: 'toolUl',    key: 'Mod+Shift+8',   toggle: true } # @@ tool-ul
+    ol:        { icon: ICON.ol,    label: 'toolOl',    key: 'Mod+Shift+7',   toggle: true } # @@ tool-ol
+    check:     { icon: ICON.check, label: 'toolCheck', key: 'Mod+Shift+9',   toggle: true } # @@ tool-check
     link:      { icon: ICON.link,  label: 'toolLink',  key: 'Mod+K',         toggle: true } # @@ tool-link
     undo:      { icon: ICON.undo,  label: 'toolUndo',  key: 'Mod+Z',         toggle: false } # @@ tool-undo
-    redo:      { icon: ICON.redo,  label: 'toolRedo',  key: 'Mod+Maj+Z',     toggle: false } # @@ tool-redo
+    redo:      { icon: ICON.redo,  label: 'toolRedo',  key: 'Mod+Shift+Z',   toggle: false } # @@ tool-redo
     clear:     { icon: ICON.clear, label: 'toolClear', key: '',              toggle: false } # @@ tool-clear
   }
 
 
-  ALL   = 'h2 h3 quote | bold italic underline strike | ul ol check | link | undo redo | clear'
+  ALL   = 'h2 h3 quote | bold italic underline strike color | ul ol check | link | undo redo | clear'
   NAMES = ALL.split(' ').filter((n)-> n != '|').join(' ')
   MAC   = /Mac|iPhone|iPad/
   isMac = typeof navigator != 'undefined' and MAC.test(navigator.platform ?? '')
@@ -89,9 +90,10 @@
   #   out
   # @@
 
-  shortcutOf = (key)->
+  # le raccourci tel que le titre l'écrit : `shift`, le nom de la touche dans la langue de la page (Maj, Shift) ; ⌘, ⌥ et ⇧ sur Mac
+  shortcutOf = (key, shift)->
     return '' unless key
-    k = key.replace('Mod', (if isMac then '⌘' else 'Ctrl')).replace('Maj', (if isMac then '⇧' else 'Maj')).replace('Alt', (if isMac then '⌥' else 'Alt'))
+    k = key.replace('Mod', (if isMac then '⌘' else 'Ctrl')).replace('Alt', (if isMac then '⌥' else 'Alt')).replace('Shift', (if isMac then '⇧' else shift))
     if isMac then k.replace(/\+/g, '') else k
 </script>
 
@@ -104,6 +106,7 @@
 
   $state = {}
   $rove  = ''
+  $down  = ''
 
 
   barRef = null
@@ -122,16 +125,23 @@
   $off = on($disabled)
 
 
-  # les boutons : libellé et titre suivent la langue de la page (lire µlang rend le dérivé réactif à la bascule)
+  # les boutons : libellé et titre suivent la langue de la page, le nom des touches du raccourci aussi (lire µlang rend le dérivé réactif à la bascule)
   itemsOf = (tools, lang)->
+    shift = tr('toolbarShift', lang)
     listOf(tools).map (n, i)->
       return { key: "sep#{i}", sep: true } if n == '|' # @@ tool-separator
       t = TOOLS[n]
-      s = shortcutOf(t.key)
+      s = shortcutOf(t.key, shift)
       l = tr(t.label, lang)
       { key: n, name: n, sep: false, glyph: t.glyph, icon: t.icon, cls: t.cls, toggle: t.toggle, label: l, title: (if s and l then "#{l} (#{s})" else l) }
 
-  $items = itemsOf($tools, µlang)
+  $all = itemsOf($tools, µlang)
+
+  # la couleur du texte n'a de bouton que pour un éditeur qui a une palette (son attribut `colors`) : sans elle, la barre est celle d'avant
+  $items = $all.filter((it)-> it.name != 'color' or $state.colors) # @@ tool-color
+  # @@ !tool-color
+  # $items = $all
+  # @@
 
   # un seul bouton entre dans l'ordre de tabulation, les flèches mènent aux autres ; celui qu'elles ont pris n'est plus dans la barre (`tools` a changé) :
   # le premier bouton reprend la tabulation
@@ -215,6 +225,15 @@
     bound._mjsExec?(name)
 
 
+  # l'appui d'un bouton (souris, doigt, stylet) : la barre annule le `mousedown` pour garder la sélection du texte, et Firefox n'allume alors jamais `:active` ;
+  # le bouton enfoncé porte aussi la part `down` jusqu'au relâchement, où qu'il ait lieu : le même retour d'appui dans les trois moteurs. Un bouton grisé ne s'enfonce pas
+  press = (e)->
+    name  = e.target.closest('button')?.dataset.tool
+    $down = name if name and e.button == 0 and not blocked(name, $state, $off)
+
+  release = -> $down = '' if $down
+
+
   # flèches, début, fin : le bouton voisin prend la tabulation
   onKey = (e)->
     return unless ['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)
@@ -241,14 +260,14 @@
     bound = null
 </script>
 
-<div class="bar" part="bar" role="toolbar" aria-orientation="horizontal" aria-label={$labelText} @this=!{barRef} @keydown={onKey(e)} @mousedown={e.preventDefault()}>
+<div class="bar" part="bar" role="toolbar" aria-orientation="horizontal" aria-label={$labelText} @this=!{barRef} @keydown={onKey(e)} @mousedown={e.preventDefault()} @pointerdown={press(e)}>
   {for it in $items by key}
     <!-- @@ tool-separator -->
     {if it.sep}
       <span class="sep" role="separator" aria-orientation="vertical"></span>
     {else}
     <!-- @@ -->
-      <button type="button" part="button" class="btn" data-tool={it.name} tabindex={it.name == $tab ? 0 : -1} title={it.title} aria-label={it.label} aria-pressed={it.toggle ? pressed(it.name, $state) : null} aria-disabled={blocked(it.name, $state, $off)} @class{blocked(it.name, $state, $off)}="blocked" @click={fire(it.name)}>
+      <button type="button" part={it.name == $down ? 'button down' : 'button'} class="btn" data-tool={it.name} tabindex={it.name == $tab ? 0 : -1} title={it.title} aria-label={it.label} aria-pressed={it.toggle ? pressed(it.name, $state) : null} aria-disabled={blocked(it.name, $state, $off)} @class{blocked(it.name, $state, $off)}="blocked" @click={fire(it.name)}>
         <!-- @@ tool-icons -->
         {if it.icon}
           <span class="ico" aria-hidden="true">{{ it.icon }}</span>
@@ -264,6 +283,8 @@
     <!-- @@ -->
   {end}
 </div>
+
+<@document @pointerup={release()} @pointercancel={release()}>
 
 <style @display="block">
   :host
@@ -372,6 +393,13 @@
   // @@ tool-strike
   .g-strike
     text-decoration: line-through
+  // @@
+
+  // @@ tool-color
+  .g-color
+    font-weight: 700
+    text-decoration: underline 3px var(--mjs-editor-color-red, #dc2626)
+    text-underline-offset: 2px
   // @@
 
   // @@ tool-heads

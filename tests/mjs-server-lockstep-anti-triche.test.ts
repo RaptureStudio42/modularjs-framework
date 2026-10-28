@@ -29,6 +29,12 @@ import { createLockstep, resolveGameDef, createGame } from '../src/mjs-server/in
 // --- harnais DIRECT (sans transport) — MÊME patron que tests/mjs-server-anti-triche.test.ts section 4,
 // pour les mécaniques internes non observables sur le fil (quorum, auto-contradiction, seau à jetons) --
 function fakeApp(): any { return { send() {} } }
+// joueurs assis passés à receiveHash (identités, relues à chaque appel) — CENT : cent joueurs distincts, dont chaque 'flood<t>' de la section 3
+const XYZ    = ['x', 'y', 'z']
+const AB     = ['a', 'b']
+const ABCDE  = ['a', 'b', 'c', 'd', 'e']
+const POISON = ['mechant', 'honnete1', 'honnete2']
+const CENT   = ['flood', ...Array.from({ length: 99 }, (_, i) => 'flood' + (i - 64))]
 function fakeClient(identityId: string): any {
   return { id: 'fake-' + identityId, identity: { id: identityId }, latency: null, meta: {}, send() {}, close() {} }
 }
@@ -39,62 +45,62 @@ describe("MJS-Server — anti-triche (lockstep : détection de divergence PAR QU
     it("3 sièges, 2 hash CONCORDANTS (A) + 1 DIFFÉRENT (B) → divergence AVEC le siège minoritaire identifié, JAMAIS la majorité — ordre d'arrivée INDIFFÉRENT (minoritaire en dernier OU en premier)", () => {
       // minoritaire (z) en DERNIER
       const ls1 = createLockstep('p1')
-      assert.equal(ls1.receiveHash('x', 1, 'A', 3), null, '1er vote — quorum(3)=2 pas encore atteint')
-      assert.equal(ls1.receiveHash('y', 1, 'A', 3), null, '2e vote POUR A — majorité atteinte, mais x/y CONCORDENT (rien à signaler)')
-      assert.deepEqual(ls1.receiveHash('z', 1, 'B', 3), { tick: 1, suspects: ['z'], reason: 'quorum' })
+      assert.equal(ls1.receiveHash('x', 1, 'A', XYZ), null, '1er vote — quorum(3)=2 pas encore atteint')
+      assert.equal(ls1.receiveHash('y', 1, 'A', XYZ), null, '2e vote POUR A — majorité atteinte, mais x/y CONCORDENT (rien à signaler)')
+      assert.deepEqual(ls1.receiveHash('z', 1, 'B', XYZ), { tick: 1, suspects: ['z'], reason: 'quorum' })
 
       // minoritaire (z) en PREMIER — MÊME verdict (la référence se fige à la MAJORITÉ, jamais au 1er
       // arrivé — c'est précisément le trou comblé ici : « 1er hash = référence » aurait ici blâmé x et y)
       const ls2 = createLockstep('p2')
-      assert.equal(ls2.receiveHash('z', 1, 'B', 3), null)
-      assert.equal(ls2.receiveHash('x', 1, 'A', 3), null, '1 seul vote pour A — pas encore la majorité')
-      assert.deepEqual(ls2.receiveHash('y', 1, 'A', 3), { tick: 1, suspects: ['z'], reason: 'quorum' }, 'A franchit la majorité — z (arrivé AVANT) identifié suspect a posteriori')
+      assert.equal(ls2.receiveHash('z', 1, 'B', XYZ), null)
+      assert.equal(ls2.receiveHash('x', 1, 'A', XYZ), null, '1 seul vote pour A — pas encore la majorité')
+      assert.deepEqual(ls2.receiveHash('y', 1, 'A', XYZ), { tick: 1, suspects: ['z'], reason: 'quorum' }, 'A franchit la majorité — z (arrivé AVANT) identifié suspect a posteriori')
     })
 
     it("le cas « 1 seul siège rapporte un hash bidon » ne déclenche RIEN à lui seul, MÊME pour un tick dans la fenêtre valide (pas de quorum atteignable par 1 vote seul — cf. section 3 pour le cas complémentaire, tick hors fenêtre)", () => {
       const ls = createLockstep('p3')
-      assert.equal(ls.receiveHash('mechant', 3, 'bidon', 5), null, 'sieges=5 → majorité=3, un seul vote ne peut jamais suffire')
+      assert.equal(ls.receiveHash('mechant', 3, 'bidon', ['mechant', 'b', 'c', 'd', 'e']), null, 'sieges=5 → majorité=3, un seul vote ne peut jamais suffire')
     })
 
     it("N pair strictement scindé (2 sièges, 1 hash chacun, DIFFÉRENTS) → AUCUNE déclaration, MÊME en répétant — politique ASSUMÉE (indécidable sans arbitre extérieur, cf. tête de fichier lockstep.ts)", () => {
       const ls = createLockstep('p4')
-      assert.equal(ls.receiveHash('a', 1, 'aaa', 2), null)
-      assert.equal(ls.receiveHash('b', 1, 'bbb', 2), null, "floor(2/2)+1=2 : AUCUNE des 2 valeurs (1 vote chacune) n'atteint jamais ce seuil")
+      assert.equal(ls.receiveHash('a', 1, 'aaa', AB), null)
+      assert.equal(ls.receiveHash('b', 1, 'bbb', AB), null, "floor(2/2)+1=2 : AUCUNE des 2 valeurs (1 vote chacune) n'atteint jamais ce seuil")
       // répéter la MÊME valeur ne fait PAS gonfler le décompte (dédup par siège) — le tie reste un tie
-      assert.equal(ls.receiveHash('a', 1, 'aaa', 2), null)
-      assert.equal(ls.receiveHash('b', 1, 'bbb', 2), null)
+      assert.equal(ls.receiveHash('a', 1, 'aaa', AB), null)
+      assert.equal(ls.receiveHash('b', 1, 'bbb', AB), null)
     })
 
     it('non-régression : hash CONCORDANTS (tous les sièges, même valeur) ne déclenchent JAMAIS de divergence', () => {
       const ls = createLockstep('p5')
-      assert.equal(ls.receiveHash('a', 3, 'pareil', 2), null)
-      assert.equal(ls.receiveHash('b', 3, 'pareil', 2), null, 'quorum(2)=2 atteint, mais AUCUN suspect (tout le monde concorde) — silence')
+      assert.equal(ls.receiveHash('a', 3, 'pareil', AB), null)
+      assert.equal(ls.receiveHash('b', 3, 'pareil', AB), null, 'quorum(2)=2 atteint, mais AUCUN suspect (tout le monde concorde) — silence')
     })
 
     it('pré-empoisonnement DÉSAMORCÉ : 1 seul siège pose un hash bidon EN AVANCE pour un tick pas encore atteint → n\'impose RIEN (1 vote ne peut jamais fixer la référence) ; les honnêtes qui arrivent ENSUITE établissent la VRAIE référence et identifient le POSEUR comme suspect — jamais l\'inverse (c\'est exactement le trou fermé ici)', () => {
       const ls = createLockstep('p6')
       // 'mechant' pose un hash bidon pour le tick 2 AVANT même que le jeu ne l'ait atteint (tickCompte=0)
-      assert.equal(ls.receiveHash('mechant', 2, 'poison', 3), null, '1 seul vote — quorum(3)=2 jamais atteint par ce seul hash')
+      assert.equal(ls.receiveHash('mechant', 2, 'poison', POISON), null, '1 seul vote — quorum(3)=2 jamais atteint par ce seul hash')
       ls.closeTick(); ls.closeTick()   // le jeu avance réellement jusqu'au tick 2
-      assert.equal(ls.receiveHash('honnete1', 2, 'vrai', 3), null, '2 valeurs DIFFÉRENTES à 1 vote chacune — pas encore de majorité')
-      assert.deepEqual(ls.receiveHash('honnete2', 2, 'vrai', 3), { tick: 2, suspects: ['mechant'], reason: 'quorum' }, 'la VRAIE valeur (2 votes honnêtes) devient la référence — le poison isolé est identifié suspect')
+      assert.equal(ls.receiveHash('honnete1', 2, 'vrai', POISON), null, '2 valeurs DIFFÉRENTES à 1 vote chacune — pas encore de majorité')
+      assert.deepEqual(ls.receiveHash('honnete2', 2, 'vrai', POISON), { tick: 2, suspects: ['mechant'], reason: 'quorum' }, 'la VRAIE valeur (2 votes honnêtes) devient la référence — le poison isolé est identifié suspect')
     })
   })
 
   describe('2. lockstep.ts::receiveHash — auto-contradiction (preuve interne, IMMÉDIATE, sans attendre le quorum)', () => {
     it('un même siège qui rapporte 2 hash DIFFÉRENTS pour le MÊME tick est flaggé suspect IMMÉDIATEMENT — jamais 2 fois pour le même tick ensuite', () => {
       const ls = createLockstep('p7')
-      assert.equal(ls.receiveHash('a', 1, 'h1', 5), null, '1er rapport — rien à signaler')
-      assert.deepEqual(ls.receiveHash('a', 1, 'h2', 5), { tick: 1, suspects: ['a'], reason: 'auto-contradiction' }, 'MÊME siège, hash DIFFÉRENT, MÊME tick — suspect immédiat, 5 sièges mais AUCUN quorum requis')
-      assert.equal(ls.receiveHash('a', 1, 'h3', 5), null, 'déjà signalé pour ce tick — jamais 2 fois')
-      assert.equal(ls.receiveHash('a', 1, 'h1', 5), null, 'même le 1er hash (revu) ne re-signale pas — a reste flaggé une fois pour toutes sur ce tick')
+      assert.equal(ls.receiveHash('a', 1, 'h1', ABCDE), null, '1er rapport — rien à signaler')
+      assert.deepEqual(ls.receiveHash('a', 1, 'h2', ABCDE), { tick: 1, suspects: ['a'], reason: 'auto-contradiction' }, 'MÊME siège, hash DIFFÉRENT, MÊME tick — suspect immédiat, 5 sièges mais AUCUN quorum requis')
+      assert.equal(ls.receiveHash('a', 1, 'h3', ABCDE), null, 'déjà signalé pour ce tick — jamais 2 fois')
+      assert.equal(ls.receiveHash('a', 1, 'h1', ABCDE), null, 'même le 1er hash (revu) ne re-signale pas — a reste flaggé une fois pour toutes sur ce tick')
     })
   })
 
   describe('3. lockstep.ts — fenêtre bornée [tickCourant-64, tickCourant+4] (ferme le pré-empoisonnement lointain ET la fuite mémoire)', () => {
     it('hash pour un tick TRÈS futur (tickCourant+10000) → rejeté d\'emblée, jamais stocké (_tailleHash reste à 0)', () => {
       const ls = createLockstep('p8')
-      assert.equal(ls.receiveHash('mechant', 10000, 'poison', 3), null)
+      assert.equal(ls.receiveHash('mechant', 10000, 'poison', ['mechant', 'b', 'c']), null)
       assert.equal(ls._hashSize(), 0, 'rejeté à l\'entrée — jamais entré dans la structure')
     })
 
@@ -103,12 +109,12 @@ describe("MJS-Server — anti-triche (lockstep : détection de divergence PAR QU
       // tickCompte=0 — inonde TOUS les ticks valides de la fenêtre [-64, +4] avec un hash chacun,
       // sieges=100 pour ne JAMAIS déclencher de quorum (chaque siège 'flood<t>' est distinct — 1 vote
       // isolé par hash) : ce test porte UNIQUEMENT sur le STOCKAGE, pas sur la détection
-      for (let t = -64; t <= 4; t++) ls.receiveHash('flood' + t, t, 'x' + t, 100)
+      for (let t = -64; t <= 4; t++) ls.receiveHash('flood' + t, t, 'x' + t, CENT)
       assert.equal(ls._hashSize(), 69, 'exactement les 69 ticks valides (-64..+4 inclus)')
       // tente D'AUTRES ticks hors fenêtre — n'ajoutent RIEN (déjà couvert plus haut, reconfirmé ici
       // dans le contexte du flood — la fenêtre plafonne la structure INDÉPENDAMMENT du nombre de tentatives)
-      ls.receiveHash('flood', 5, 'y', 100)
-      ls.receiveHash('flood', -65, 'y', 100)
+      ls.receiveHash('flood', 5, 'y', CENT)
+      ls.receiveHash('flood', -65, 'y', CENT)
       assert.equal(ls._hashSize(), 69, 'toujours 69 — hors fenêtre = jamais stocké, même après des dizaines de tentatives')
       // avance le jeu de 70 ticks RÉELS (closeTick est synchrone — pas besoin d'attendre) : l'éviction
       // active purge au fil de l'eau tout ce qui sort de la fenêtre, jusqu'à ce qu'AUCUNE des 69

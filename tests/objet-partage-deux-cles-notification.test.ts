@@ -19,7 +19,9 @@ async function mount(name: string) {
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  const src = ['<script lang="coffee">', '@dummy = new µStore({})', '</script>', '<p>x</p>'].join('\n') + '\n'
+  // l'hôte écrit µ.Store et µ.state : sans clé `runtime`, le cœur ne porte que ce que le code compilé emploie, et les cas
+  // ci-dessous appellent l'un ou l'autre depuis la page, hors du code compilé
+  const src = ['<script lang="coffee">', '@dummy = new µStore({})', '@etat = µ.state({})', '</script>', '<p>x</p>'].join('\n') + '\n'
   writeFileSync(join(srcDir, `${name}.mjs`), src)
 
   const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })

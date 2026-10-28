@@ -175,6 +175,7 @@ describe('sock.chat / sock.lobby rattachés au composant qui les ouvre, sock.gam
     assert.equal(evenements, 1, 'ses événements arrivent encore')
     assert.equal(partie.state.seq, 2, 'son store est encore mis à jour')
     const ws2 = await reconnecter()
+    // page sans µ.lockstep : elle ne lit pas d'instantané, elle n'en déclare pas (`snapshots`)
     assert.deepEqual(envoyes(ws2, 'µgame:resync').map(m => m.p), [{ game: 'g1' }], 'reprise à la reconnexion')
     comp.monter()
     assert.equal(envoyes(ws2, 'µgame:play').length, 0, 'le retour du composant ne la relance pas')

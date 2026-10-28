@@ -177,14 +177,27 @@ export type Session = { page: any, ctx: any, browser: any, logs: string[], ferme
 // une page à part : sa source, sa clé de construction, l'expression vraie quand elle est prête et ses aides (sinon l'hôte commun)
 export type Page = { source: string, cle: string, attente: string, aides: string }
 
-// la page de l'hôte ouverte dans ce moteur, les aides posées, la console écoutée ; `null` quand le moteur n'est pas installé
+// la page de l'hôte ouverte dans ce moteur, les aides posées, la console écoutée ; `null` quand le moteur n'est pas installé. Une étape
+// qui échoue après le lancement (la page, son attente, ses aides) ferme le navigateur avant que l'erreur remonte : la session n'est
+// jamais rendue, personne d'autre ne pourrait le fermer
 export async function ouvrir(nom: Moteur, build: Build, autre?: Page): Promise<Session | null> {
   const playwright: any = await import('playwright')
   if (!existsSync(playwright[nom].executablePath())) return null
   const fait    = await construire(build, autre?.source, autre?.cle)
   const browser = await playwright[nom].launch({ headless: true })
-  const ctx     = await browser.newContext({ viewport: { width: 1000, height: 1400 } })
-  const page    = await ctx.newPage()
+  try {
+    return await preparer(browser, build, fait, autre)
+  }
+  catch (e) {
+    await browser.close().catch(() => {})
+    throw e
+  }
+}
+
+// la page de l'hôte dans le navigateur lancé par `ouvrir()`, prête et ses aides posées
+async function preparer(browser: any, build: Build, fait: Construction, autre?: Page): Promise<Session> {
+  const ctx  = await browser.newContext({ viewport: { width: 1000, height: 1400 } })
+  const page = await ctx.newPage()
   const logs: string[] = []
   await page.addInitScript('window.__name = (f) => f')
   page.on('console', (m: any) => { if (['error', 'warning'].includes(m.type())) logs.push(m.type() + ': ' + m.text().slice(0, 300)) })

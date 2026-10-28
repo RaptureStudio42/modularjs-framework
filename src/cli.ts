@@ -378,7 +378,7 @@ async function run(argv: string[]): Promise<void> {
     // resolveBundlerOpts() (bundler/config.ts) : même piège structurel que le reste de ce
     // littéral (cf. commentaire ci-dessus).
     // `render` (bloc des pages, lu par le bundler pour le seul module d'hydratation) : idem.
-    : { sourceDir: undefined, outputDir: undefined, manifestPath: undefined, manifestExternal: undefined, stylesheetsDir: undefined, assetDirs: undefined, runtimeDir: undefined, urlPrefix: undefined, defaultScriptLang: undefined, templateLang: undefined, sigil: undefined, contextAlias: undefined, varPrefix: undefined, defaultTheme: undefined, preload: undefined, viewTransition: undefined, logLevel: undefined, messages: undefined, types: undefined, effects: undefined, bundles: undefined, maxStateVars: undefined, a11y: undefined, ujsForm: undefined, lint: undefined, image: undefined, minify: 'auto' as const, devPort: undefined, devHost: undefined, runtime: undefined, css: undefined, js: undefined, csp: undefined, sourceMap: undefined, i18n: undefined, render: undefined, prune: undefined }
+    : { sourceDir: undefined, outputDir: undefined, manifestPath: undefined, manifestExternal: undefined, stylesheetsDir: undefined, assetDirs: undefined, runtimeDir: undefined, urlPrefix: undefined, defaultScriptLang: undefined, templateLang: undefined, sigil: undefined, contextAlias: undefined, varPrefix: undefined, defaultTheme: undefined, preload: undefined, viewTransition: undefined, logLevel: undefined, messages: undefined, types: undefined, effects: undefined, bundles: undefined, maxStateVars: undefined, a11y: undefined, ujsForm: undefined, lint: undefined, image: undefined, minify: 'auto' as const, devPort: undefined, devHost: undefined, runtime: undefined, css: undefined, js: undefined, csp: undefined, anchorHistory: undefined, sourceMap: undefined, i18n: undefined, render: undefined, prune: undefined }
   if (found) {
     console.log(t('cli.config-trouve', { dossier: found.configDir }))
   }
@@ -541,6 +541,9 @@ async function run(argv: string[]): Promise<void> {
     // (clé `sourceMap`) : même piège que css/runtime/contextAlias ci-dessus — résolues
     // par resolveBundlerOpts() mais INERTES tant qu'elles n'arrivent pas ici.
     csp:               cfgOpts.csp,
+    // chaque ancre d'une même page, une entrée d'historique (clé `anchorHistory`) : même piège, la ligne du manifeste n'est
+    // écrite que si l'option arrive ici
+    anchorHistory:     cfgOpts.anchorHistory,
     sourceMap:         cfgOpts.sourceMap,
     // image (mjs.config.json, défauts résolus au constructeur du Bundler) — même
     // piège que contextAlias/maxStateVars/css ci-dessus si on oublie la ligne

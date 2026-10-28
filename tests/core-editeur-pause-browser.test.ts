@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { AIDES, BUILDS, MOTEURS, ouvrir, type Page, type Session } from './helpers/editeur-riche.js'
+import { attendre } from './helpers/attendre.js'
 
 const PRET = (classes: string[]) => `(() => {
   const h = document.querySelector('mjs-hote')
@@ -89,6 +90,11 @@ const COLLAGE: Page = {
 `,
 }
 
+// l'éditeur qui reçoit chaque texte posé par `__poser(clé, texte)`
+const EDITEUR: Record<string, string> = { gros: 'g', deux: 'd' }
+// les lettres d'un texte HTML, sans balises ni espaces : ce que la surface d'un éditeur doit afficher
+const lettres = (html: string) => html.replace(/<[^>]+>/g, '').replace(/[\s\u200b-\u200d\ufeff]+/g, '')
+
 const PARA = '<p>Paragraphe de texte avec <b>gras</b> et <a href="https://exemple.fr/page">lien</a>, assez long pour peser.</p>'
 const GROS = PARA.repeat(220)
 
@@ -101,13 +107,16 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche 
   const pause = (ms = 150) => s!.page.waitForTimeout(ms)
   const check = (nomEssai: string, ok: any, detail: any = '') => { if (!ok) bilan.push(`${nomEssai} — ${String(detail).slice(0, 400)}`) }
   const fin   = () => assert.deepEqual(bilan, [], 'essais en échec')
+  // l'éditeur `.c` a fini de rendre le texte posé : sa surface en affiche toutes les lettres (une porte, pas une pause —
+  // un grand texte se rend en plus de 900 ms sur une machine chargée, la frappe partait alors dans un document en chantier)
+  const affiche = (c: string, html: string) => attendre(async () => (await E(`__sf(${JSON.stringify(c)}).textContent.replace(/[\\s\\u200b-\\u200d\\ufeff]+/g, '')`)) === lettres(html), `l'éditeur .${c} affiche le texte posé`)
 
   // la page ouverte, le grand texte posé dans les éditeurs demandés (rendu fini avant toute frappe)
   async function page(p: Page, textes: Record<string, string> = {}) {
     s = await ouvrir(nom, build, p)
     if (!s) return false
     for (const [cle, texte] of Object.entries(textes)) await E(`window.__poser(${JSON.stringify(cle)}, ${JSON.stringify(texte)})`)
-    if (Object.keys(textes).length) await pause(900)
+    for (const [cle, texte] of Object.entries(textes)) await affiche(EDITEUR[cle], texte)
     return true
   }
 
@@ -128,12 +137,14 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche 
   // (il envoie un `blur` au retrait, balise encore en place), Firefox et WebKit n'envoient rien — c'est la limite que dit la documentation de l'éditeur
   const retire = async (geste: string | (() => Promise<void>)) => {
     await E(`window.__poser(${JSON.stringify(GROS)})`)
-    await pause(900)
+    await affiche('g', GROS)
     check('le grand texte est posé', (await E(`__etat().gros.length`)) > 20000, await E(`__etat().gros.length`))
     await E(`window.__direct = []; __ed('g').addEventListener('input', (e) => window.__direct.push(e.data))`)
     if (typeof geste === 'string') await E(geste)
     else await geste()
-    await pause(700)
+    // l'éditeur parti après son dernier input (et, dans Chromium, la variable liée à jour) : attendu, pas une pause ; au
+    // délai, les vérifications qui suivent disent ce qui manque
+    await attendre(async () => (await E(`__ed('g') === null && window.__direct.length >= 1`)) && (nom !== 'chromium' || (await E(`__etat().gros`)).includes('ParaZZZgraphe')), 'l\'éditeur parti après son dernier input').catch(() => {})
     const recus: string[] = await E(`window.__direct`)
     check('l\'éditeur est parti', (await E(`__ed('g') === null`)) === true)
     check('un input est parti avant le retrait, avec le texte complet', recus.length >= 1 && recus[recus.length - 1].includes('ParaZZZgraphe'), JSON.stringify(recus.map((t) => t.slice(0, 40))))
@@ -183,11 +194,13 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche 
     })()`)
     check('le premier garde son texte', !seul[0].includes('YYY') && seul[0].length > 20000, String(seul[0]).slice(0, 60))
     check('le second porte le texte tapé', seul[1].includes('ParaYYYgraphe'), String(seul[1]).slice(0, 60))
-    await pause(400)
+    // la pause du second finie : sa reconstruction a écrit le texte tapé dans sa variable liée
+    await attendre(async () => (await E(`__etat().deux`)).includes('ParaYYYgraphe'), 'la pause du second éditeur finie, sa variable liée à jour')
     // les deux sont en pause, avec le même texte de départ (celui du premier a déjà changé : ils diffèrent)
     await E(`window.__poser('gros', ${JSON.stringify(GROS)})`)
     await E(`window.__poser('deux', ${JSON.stringify(GROS)})`)
-    await pause(900)
+    await affiche('g', GROS)
+    await affiche('d', GROS)
     const deux = await E(`(() => {
       __caret('g', 'Paragraphe', 4)
       document.execCommand('insertText', false, 'AAA')
@@ -208,7 +221,8 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche 
       const urls: string[] = []
       s!.page.on('request', (r: any) => { if (r.url().includes('/envoi')) urls.push(r.url()) })
       await E(`(() => { __caret('g', 'Paragraphe', 4); document.execCommand('insertText', false, 'ZZZ'); ${geste} })()`)
-      await pause(1200)
+      // la requête partie : attendue, pas une pause ; au délai, les vérifications qui suivent disent ce qui manque
+      await attendre(() => urls.length >= 1, `${libelle} : une requête partie`).catch(() => {})
       const q = new URL(urls[0] ?? 'http://localhost/vide').searchParams
       check(`${libelle} : une requête est partie`, urls.length >= 1, urls.length)
       check(`${libelle} : l'entrée de l'éditeur porte le texte tapé`, (q.getAll('notes[]')[0] ?? '').includes('ParaZZZgraphe'), (q.getAll('notes[]')[0] ?? '').slice(0, 60))
@@ -230,6 +244,8 @@ for (const build of BUILDS) for (const nom of MOTEURS) describe(`éditeur riche 
     })()`)
     check('le texte collé est dans la surface', r.contient === true)
     check('un input est déjà parti, au geste même', r.apres.length === 1 && r.apres[0].startsWith('input:'), JSON.stringify(r.apres))
+    await attendre(async () => (await E(`__etat().gros`)).includes('collé'), 'la variable liée porte le texte collé').catch(() => {})
+    // et rien d'autre ensuite : aucun second input (assertion négative, une pause)
     await pause(400)
     check('la variable liée porte le texte collé', (await E(`__etat().gros`)).includes('collé'))
     check('un seul input en tout', (await E(`window.__evts.length`)) === 1, await E(`window.__evts.join(',')`))

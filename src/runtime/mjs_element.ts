@@ -30,9 +30,7 @@ MJS_DATE_MUTATORS = new Set([
 // clés qui atteignent l'objet
 function _mjsSnapBefore(el, rootKey, obj) {
   const ins = el._mjs_inspections;
-  return (ins && ins.has(rootKey))
-    ? (Array.isArray(obj) ? obj.slice() : (obj instanceof Map ? new Map(obj) : (obj instanceof Set ? new Set(obj) : {...obj})))
-    : void 0;
+  return (ins && ins.has(rootKey)) ? µ._mjs_snap(obj) : void 0;
 }
 function _mjsMutated(el, rootKey, obj, snap) {
   (el._mjs_bindEpochs ||= {})[rootKey] = µ._mjs_bumpEpoch(obj);
@@ -46,11 +44,74 @@ function _mjsEnvRefus(seg) {
   return true;
 }
 
+// pièges des enveloppes qui retiennent leur dernier enfant lu (`k`, `p`, cf. `_mjs_wrapDeep`) : oubliés à la microtâche qui suit
+// la première lecture du tour — un objet retiré de l'état ne survit pas au tour, même si plus rien n'est relu dans son conteneur
+const _mjsKids = [];
+function _mjsKidsOubli() {
+  for (const h of _mjsKids) h.k = h.p = void 0;
+  _mjsKids.length = 0;
+}
+
 // enveloppe d'une valeur dérivée compilée (`{ _mjs_c: true, f }`) : elle porte toujours sa fonction `f` — une donnée
 // reçue qui a la clé `_mjs_c` (JSON, dictionnaire aux clés choisies par un utilisateur) n'en est pas une
 function _mjsDerive(x) {
   return x?._mjs_c && typeof x.f === 'function';
 }
+
+// horloge des valeurs dérivées d'un composant, rangée sous ce symbole dans la table de ses dérivées (`_mjs_computeds`, que
+// ses miroirs partagent) : `n` compte les écritures du composant, `v` garde pour chaque variable le compte de sa dernière
+// écriture. Une valeur dérivée retient le compte de son dernier calcul (`_mjs_vu`) : relue, elle sert sa valeur tant que
+// le compte n'a pas bougé, se recalcule sinon. Toute écriture du composant périme donc toutes ses valeurs dérivées, mais
+// une écriture coûte un compte, quel que soit leur nombre ; une écriture qui ne change rien ne compte pas
+const _MJS_HORLOGE = Symbol('mjs-horloge');
+function _mjsCompte(cs, k) {
+  const h = cs[_MJS_HORLOGE];
+  h.v[k] = ++h.n;
+}
+
+// `µwrite $x, v` (lexer : `µ._mjs_rawWrite(_mjsThis).x = v`) : la case écrite sans rendu ni liaison, mais les valeurs dérivées
+// qui la lisent se recalculent à leur prochaine lecture — un compte de plus à leur horloge, APRÈS l'écriture (la valeur est
+// calculée avant). Une seule enveloppe par composant
+µ._mjs_rawWrite = function(el) {
+  return el._mjs_rawProxy ||= new Proxy(el._state, {
+    set(t, k, v) {
+      t[k] = v;
+      if (el._mjs_computeds) _mjsCompte(el._mjs_computeds, k);
+      return true;
+    }
+  });
+};
+
+// époques des liaisons (`µ._mjs_epochs`, mjs_init.ts) : seul `_set` les compare, quand il reçoit l'objet qu'une de ses
+// variables tient déjà — prop d'un enfant, liaison à deux sens, objet partagé par deux composants. Tant qu'aucun objet de
+// l'état n'est tenu par deux composants, personne n'en compare : une écriture profonde ne fait pas avancer l'époque de
+// l'objet écrit (mjs_deep.ts). Le premier objet rangé dans l'état d'un second composant le dit, une fois pour toutes
+const _mjsTenus = new WeakMap();
+µ._mjs_partage = false;
+function _mjsTenu(el, raw) {
+  const t = _mjsTenus.get(raw);
+  if (t === void 0) _mjsTenus.set(raw, el);
+  else if (t !== el) µ._mjs_partage = true;
+}
+
+// <boucles>
+// prop liée à deux sens (`v=!{$x}`) écrite pendant une boucle qui écrit l'état (generator/loop-batch.ts) : son nom est noté
+// (`_mjs_lqb`) et le composant entre dans la file des boucles (`µ._mjs_lqq`, mjs_init.ts) sous le nom `_MJS_LIENS` ; la
+// sortie de la boucle la plus extérieure le repasse par `_mjs_invalidate`, qui envoie alors un `mjs-bind` par nom noté,
+// avec la valeur finale : un événement par liaison et par boucle, au lieu d'un par écriture
+const _MJS_LIENS = Symbol('mjs-liens');
+function _mjsLieEnBoucle(el, k) {
+  if (el._mjs_lqb) el._mjs_lqb.add(k);
+  else el._mjs_lqb = new Set([k]);
+  if (el._mjs_lqk) {
+    el._mjs_lqk.add(_MJS_LIENS);
+  }
+  else {
+    el._mjs_lqk = new Set([_MJS_LIENS]);
+    µ._mjs_lqq.push(el);
+  }
+}
+// </boucles>
 
 // expression du gabarit qui lit l'état par une clé calculée sans rien appeler (`{$[$k]}`, ou valeur dérivée qui en lit
 // une) : la variable lue n'est connue qu'à l'exécution, le compilateur lui donne la dépendance `*` (analyzer/index.ts),
@@ -75,6 +136,67 @@ function _mjsShadowReady(el) {
   if (typeof µ._mjs_ujsShadowAttach === 'function') { µ._mjs_ujsShadowAttach(el._shadow); }
   if (typeof µ._mjs_titleAttach === 'function') { µ._mjs_titleAttach(el._shadow); }
   if (el._shadow.addEventListener) { el._shadow.addEventListener('scroll', µ._mjs_innerScroll, { capture: true, passive: true }); }
+}
+
+// valeur d'un attribut relue comme la prop qu'il porte, selon son type déclaré (`static props` du composant)
+function _mjsParseProp(schema, key, v) {
+  var typeStr, val;
+  typeStr = schema[key];
+  if (typeStr === Number) {
+    val = Number(v);
+    if (isNaN(val)) {
+      return 0;
+    } else {
+      return val;
+    }
+  }
+  if (typeStr === Boolean) {
+    return v !== 'false' && v !== null;
+  }
+  if (typeStr === Object || typeStr === Array) {
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (typeStr === String) {
+    return String(v);
+  }
+  if (v === 'true') {
+    return true;
+  }
+  if (v === 'false') {
+    return false;
+  }
+  if (v === 'null') {
+    return null;
+  }
+  if (v === 'undefined') {
+    return void 0;
+  }
+  // Props objet (SSR / passage de données) : une valeur d'attribut qui EST
+  // un JSON objet/array est auto-ré-hydratée (ex. <mjs-x item='{"a":1}'>).
+  // Fallback string si le JSON est invalide → aucun impact sur les attributs
+  // string classiques (qui ne commencent pas par { ou [, ou ne sont pas du
+  // JSON valide).
+  if (typeof v === 'string' && v.length > 1) {
+    const _c0 = v.charCodeAt(0);
+    if (_c0 === 123 || _c0 === 91) { // '{' ou '['
+      try {
+        return JSON.parse(v);
+      } catch {
+        // garder la valeur brute
+      }
+    }
+  }
+  return v;
+}
+
+// l'observateur d'attributs de chaque composant appelle cette même fonction (sa propre fermeture retenait tout le contexte
+// du montage, une par instance) : il n'observe que les attributs de sa balise, la cible de ses relevés est le composant
+function _mjsAttrsMoved(records) {
+  records[0].target._mjs_onAttrs(records);
 }
 
 // Attributs HTML natifs / d'accessibilité à NE PAS exposer comme props
@@ -106,11 +228,6 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   var p = n.parentNode;
   if (p) Node.prototype.removeChild.call(p, n);
 };
-µ._mjs_swap ||= function(cur, nn) {
-  if (typeof Node !== 'function' || !(cur instanceof Node)) return cur.replaceWith(nn);
-  var p = cur.parentNode;
-  if (p) Node.prototype.replaceChild.call(p, nn, cur);
-};
 µ._mjs_inside ||= function(a, b) {
   return typeof Node === 'function' && a instanceof Node ? Node.prototype.contains.call(a, b) : a.contains(b);
 };
@@ -119,18 +236,25 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 // navigation sur le composant, `@closest` répondait aux clics à la place de la balise, `@animate`
 // remplaçait sa transition. Un objet qui n'est pas un élément (nœud texte, banc de test) garde les siennes
 // >>> extrait-test natifs-de-balise
+// blocs `<natifs>` : retirés du cœur par le bundler quand aucune unité du build n'appelle `µ._mjs_matches`/`µ._mjs_animate`
+// (<@@field>), hors build de développement complet (l'éclair du panneau) ; les modules du runtime qui s'en servent posent leur
+// copie ou viennent avec un fichier qui la pose (mjs_fx.ts)
+// <natifs>
 µ._mjs_matches ||= function(n, sel) {
   if (typeof Element === 'function' && n instanceof Element) return Element.prototype.matches.call(n, sel);
   return !!n && typeof n.matches === 'function' && n.matches(sel);
 };
+// </natifs>
 µ._mjs_closest ||= function(n, sel) {
   if (typeof Element === 'function' && n instanceof Element) return Element.prototype.closest.call(n, sel);
   return n && typeof n.closest === 'function' ? n.closest(sel) : null;
 };
+// <natifs>
 µ._mjs_animate ||= function(n, frames, opts) {
   if (typeof Element === 'function' && n instanceof Element && typeof Element.prototype.animate === 'function') return Element.prototype.animate.call(n, frames, opts);
   return n.animate(frames, opts);
 };
+// </natifs>
 // <<< extrait-test natifs-de-balise
 
 // valeur liée d'un <select>, en liaison simple ou double sens (code généré par attributes/index.ts) : un tableau
@@ -700,9 +824,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     //
     // NB: on appelle quand même _mjs_invalidate(k) pour respecter le contrat API
     // (tests runtime override _mjs_invalidate pour les assertions).
+    // Valeurs dérivées : une écriture de plus à leur horloge (cf. _MJS_HORLOGE), sans en marquer aucune
     if (
       (tv === 'string' || tv === 'number' || tv === 'boolean') &&
-      !this._mjs_computeds &&
       (!this._mjs_effects || this._mjs_effects.length === 0) &&
       !this._mjs_binds &&
       !this._mjs_inspections &&
@@ -710,6 +834,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       !(oldObj && µ._mjs_interpolatorSet.has(old))
     ) {
       this._state[k] = v;
+      if (this._mjs_computeds) _mjsCompte(this._mjs_computeds, k);
       this._mjs_invalidate(k);
       return true;
     }
@@ -784,6 +909,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       var __raw = µ._mjs_rawIn(parsed);
       parsed = this._mjs_wrapDeep(__raw, k);
       (this._mjs_bindEpochs ||= {})[k] = µ._mjs_epochs.get(__raw) || 0;
+      // un objet qu'un autre composant tient déjà : les époques servent désormais (cf. _mjsTenu)
+      if (!µ._mjs_partage) _mjsTenu(this, __raw);
     }
     this._state[k] = parsed;
     this._mjs_notifyMutation(k, old);
@@ -816,6 +943,17 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // stable peu importe le pair qui nous l'a transmis (jamais de Proxy-de-
     // Proxy à la frontière). Un Proxy MJS n'est jamais une Promise/Node.
     target = µ._mjs_toRaw(target);
+    // cible déjà enveloppée par ce composant (objet de l'état relu, ligne d'une liste) : son enveloppe, rendue avant les
+    // contrôles de type, déjà passés à sa création ; seule la marque µraw, qui peut venir après coup, se relit, et les
+    // clés qui l'atteignent s'ajoutent aux siennes, comme plus bas
+    const __pc = this._mjs_proxyCache;
+    const __pv = __pc !== void 0 ? __pc.get(target) : void 0;
+    if (__pv !== void 0 && !µ._mjs_rawSet.has(target)) {
+      const __rs = this._mjs_rootsByTarget.get(target);
+      __rs.add(rootKey);
+      if (via !== void 0 && via.size > 1) via.forEach((k) => __rs.add(k));
+      return __pv;
+    }
     if (target instanceof Promise || µ._mjs_rawSet.has(target) || target instanceof Node) {
       return target;
     }
@@ -903,8 +1041,16 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // appelée via `$box.embiggen(10)` — sans ce bind sur proxy, `this = box`
     // (raw) et `@width = ...` mute en silence sans re-render.
     let proxy;
-    // pièges écrits en méthodes : le paquet en garde quelques octets de moins
+    // pièges écrits en méthodes : le paquet en garde quelques octets de moins. Le piège tient aussi le dernier objet rendu par
+    // cette enveloppe (`k`, brut) et son enveloppe (`p`), avec le nombre de clés qui atteignaient alors le conteneur (`n`) : relu
+    // dans le même tour (`$o.a.b` dans une boucle, ligne d'un rendu), il est déjà rangé sous toutes ces clés, son enveloppe se rend
+    // sans repasser par le carnet. Une clé de plus pour le conteneur, ou un autre objet, repasse par `_mjs_wrapDeep`. Oublié à la
+    // microtâche suivante (`_mjsKidsOubli`) : retiré de l'état, il part au ramasse-miettes. Rangé sur le piège (`this`), jamais
+    // dans une fonction faite pendant une lecture, qui garderait cette lecture et l'objet lu
     const handler = {
+      k: void 0,
+      p: void 0,
+      n: 0,
       get(obj, prop, _receiver) {
         // Fast-path Symbol (Symbol.iterator, Symbol.toPrimitive, etc.)
         if (typeof prop === 'symbol') {
@@ -983,7 +1129,15 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
 
         // Plain object/array : fast path.
         if (val !== null && typeof val === 'object' && !µ._mjs_rawSet.has(val)) {
-          return µ._mjs_fixed(obj, prop) ? val : el._mjs_wrapDeep(val, rootKey, __roots);
+          if (µ._mjs_fixed(obj, prop)) return val;
+          if (val === this.k && this.n === __roots.size) return this.p;
+          const kp = el._mjs_wrapDeep(val, rootKey, __roots);
+          // premier enfant retenu depuis le dernier oubli : le piège s'inscrit, la microtâche suivante l'oublie
+          if (!this.k && _mjsKids.push(this) === 1) queueMicrotask(_mjsKidsOubli);
+          this.k = val;
+          this.p = kp;
+          this.n = __roots.size;
+          return kp;
         }
         return val;
       },
@@ -1087,11 +1241,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // _mjs_setComputed : enregistre une fonction calculée et installe un getter sur _state.
   //
   // **Memoization (parité Svelte 5)** :
-  // Le getter cache le résultat dans `v._mjs_cached` et le sert tant que `v._mjs_dirty`
-  // est false. Quand une dep change → `_mjs_notifyMutation` met `_mjs_dirty = true` pour
-  // tous les computeds dont le `_mjs_var_bits` matche. Une lecture suivante réévalue
-  // une fois et re-cache. Évite la ré-évaluation O(n) sur lectures multiples
-  // dans le même frame.
+  // Le getter cache le résultat dans `v._mjs_cached` et le sert tant que l'horloge du
+  // composant (`v._mjs_h.n`, cf. _MJS_HORLOGE) n'a pas bougé depuis son calcul
+  // (`v._mjs_vu`). Une lecture qui suit une écriture réévalue une fois et re-cache.
+  // Évite la ré-évaluation O(n) sur lectures multiples dans le même frame.
   //
   // Détection de cycle conservée via `_mjs_evaluating`. Réassignation primitive
   // `$.x = 5` route via le setter qui convertit en value writable.
@@ -1100,6 +1253,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (this._mjs_computeds == null) {
       this._mjs_computeds = {};
       this._mjs_computedKeys = [];
+      // horloge de la table, partagée avec elle par les miroirs (cf. _MJS_HORLOGE)
+      this._mjs_computeds[_MJS_HORLOGE] = { n: 0, v: {} };
     }
     if (!(k in this._mjs_computeds)) {
       this._mjs_computedKeys.push(k);
@@ -1109,7 +1264,9 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       _mjs_evaluating: false,
       _mjs_c: true,
       _mjs_cached: void 0,
-      _mjs_dirty: true
+      // jamais calculée : aucun compte de l'horloge ne vaut -1
+      _mjs_vu: -1,
+      _mjs_h: this._mjs_computeds[_MJS_HORLOGE]
     };
     // Installer le getter (idempotent)
     descriptor = Object.getOwnPropertyDescriptor(this._state, k);
@@ -1133,8 +1290,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
             µ.warn(µ._mjs_msg('elCycle', { k: k }, 'Cycle réactif détecté sur \'{k}\' — retourne undefined'));
             return void 0;
           }
-          // Cache hit : retourne la valeur mémorisée sans ré-évaluer.
-          if (!v._mjs_dirty) {
+          // Cache hit : aucune écriture du composant depuis le dernier calcul, la valeur mémorisée sert
+          if (v._mjs_vu === v._mjs_h.n) {
             return v._mjs_cached;
           }
           v._mjs_evaluating = true;
@@ -1144,7 +1301,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           µ._mjs_computing = el;
           try {
             v._mjs_cached = v.f.call(el._state);
-            v._mjs_dirty = false;
+            // compte relu APRÈS le calcul : une écriture faite par le calcul lui-même ne le périme pas
+            v._mjs_vu = v._mjs_h.n;
             return v._mjs_cached;
           } finally {
             v._mjs_evaluating = false;
@@ -1204,32 +1362,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // affichage de `µinspect` (tout `$x`, ou ses seuls chemins) : dans mjs_inspect.ts, le
     // module qui pose `_mjs_inspections` — un projet qui n'inspecte rien n'en embarque pas une ligne
     if (__ins && __ins.size > 0 && __ins.has(k)) µ._mjs_inspectAffiche(this, k, oldValue);
-    // V2 — invalidation memo computed : marquer dirty TOUS les computeds.
-    // Sans bitmask, on ne peut plus filtrer "qui dépend de k" en O(1) côté
-    // runtime — mais marker tous les computeds dirty est sûr (chaque getter
-    // re-vérifie via `_mjs_evaluating`/cache). Le coût supplémentaire est ~0 :
-    // un computed reste dirty=true tant qu'on ne le lit pas.
-    // Cache des keys de computeds : `for...in` recrée un iterateur
-    // hidden-class à chaque appel. On stocke un array `_mjs_computedKeys` mis à
-    // jour à chaque `_mjs_setComputed`. Pour un composant sans computed (cas
-    // bench), le test `this._mjs_computeds` court-circuite directement.
+    // Valeurs dérivées : toute écriture les périme toutes, d'un compte de plus à leur horloge (cf. _MJS_HORLOGE) — une
+    // écriture coûte la même chose quel que soit leur nombre ; chacune se recalcule à sa prochaine lecture
     const __cs = this._mjs_computeds;
-    if (__cs) {
-      const __cks = this._mjs_computedKeys;
-      if (__cks) {
-        for (let __ci = 0, __cln = __cks.length; __ci < __cln; __ci++) {
-          // Garde null (aligne sur le jumeau `_awaits_`) : une
-          // désynchro `_mjs_computedKeys`/`_mjs_computeds` (delete direct futur d'un
-          // computed) ferait un TypeError dans le hub des mutations.
-          const __c = __cs[__cks[__ci]];
-          if (__c) __c._mjs_dirty = true;
-        }
-      } else {
-        for (const ck in __cs) {
-          __cs[ck]._mjs_dirty = true;
-        }
-      }
-    }
+    if (__cs) _mjsCompte(__cs, k);
     this._mjs_invalidate(k);
     // Ne créer le CustomEvent (alloc + dispatch) qu'une fois la condition
     // validée. Avant, l'allocation se faisait quand même.
@@ -1242,6 +1378,10 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       // pendant la réconciliation d'un `{for}`, une ligne déplacée voit ses enfants déconnectés puis reconnectés alors que les indices gardés
       // sur les nœuds sont ceux de l'ancienne place : l'écriture attend la fin de la réconciliation (cf. mjs_for.ts) et part vers la ligne d'arrivée
       if (µ._mjs_hold) return µ._mjs_holdBind(this, k, oldValue);
+      // <boucles>
+      // une boucle qui écrit l'état tourne : la prop remonte une fois, à sa sortie, avec sa valeur finale (cf. _mjsLieEnBoucle)
+      if (µ._mjs_lq) return _mjsLieEnBoucle(this, k);
+      // </boucles>
       return this._mjs_emitBind(k);
     }
   }
@@ -1276,7 +1416,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   // classe, même technique que mjs_on.ts.
 
   connectedCallback() {
-    var parseProp, propDe, ref, schema, syncProps;
+    var ref;
     // Reprise du fragment différé par `_mjs_mount` en mode léger (cf. son
     // commentaire) : `connectedCallback` n'a pas la contrainte
     // « pas d'enfants » du constructeur, l'insertion peut se faire ici sans
@@ -1287,7 +1427,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     }
     if (!this._mjs_mjsInitialized) {
       // Anti-FOUC : pose [mjs-loading] AVANT tout travail de montage. La règle
-      // globale [mjs-loading]{display:none!important} (cf. build_fouc_shield)
+      // globale [mjs-loading]{visibility:hidden!important} (cf. µ._mjs_shield)
       // prend le relais du :not(:defined) qui vient de s'éteindre à l'upgrade.
       // Retiré en fin du premier render ci-dessous.
       this.setAttribute('mjs-loading', '');
@@ -1307,122 +1447,6 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // On le ressuscite en tête de (re)connexion (+ `_mjs_dying` par symétrie).
     this._mjs_dead = false;
     this._mjs_dying = false;
-    schema = this.constructor.props || {};
-    parseProp = (key, v) => {
-      var typeStr, val;
-      typeStr = schema[key];
-      if (typeStr === Number) {
-        val = Number(v);
-        if (isNaN(val)) {
-          return 0;
-        } else {
-          return val;
-        }
-      }
-      if (typeStr === Boolean) {
-        return v !== 'false' && v !== null;
-      }
-      if (typeStr === Object || typeStr === Array) {
-        try {
-          return JSON.parse(v);
-        } catch {
-          return null;
-        }
-      }
-      if (typeStr === String) {
-        return String(v);
-      }
-      if (v === 'true') {
-        return true;
-      }
-      if (v === 'false') {
-        return false;
-      }
-      if (v === 'null') {
-        return null;
-      }
-      if (v === 'undefined') {
-        return void 0;
-      }
-      // Props objet (SSR / passage de données) : une valeur d'attribut qui EST
-      // un JSON objet/array est auto-ré-hydratée (ex. <mjs-x item='{"a":1}'>).
-      // Fallback string si le JSON est invalide → aucun impact sur les attributs
-      // string classiques (qui ne commencent pas par { ou [, ou ne sont pas du
-      // JSON valide).
-      if (typeof v === 'string' && v.length > 1) {
-        const _c0 = v.charCodeAt(0);
-        if (_c0 === 123 || _c0 === 91) { // '{' ou '['
-          try {
-            return JSON.parse(v);
-          } catch {
-            // garder la valeur brute
-          }
-        }
-      }
-      return v;
-    };
-    // nom d'attribut, ou clé de `mjs-props` (plus bas) → clé de la prop (`user-id` → `userId`) ; null s'il n'en désigne
-    // jamais une. Skip : préfixes MJS internes, attributs natifs HTML, et conventions
-    // ARIA/data-* (gérés par le browser, jamais exposés comme props).
-    // EXCEPTION : si l'attribut natif (`title`, `src`, `name`, …) correspond
-    // à une prop DÉCLARÉE du composant (`_mjs_var_bits`), c'est une vraie prop
-    // — le browser pose aussi l'attribut natif mais le composant veut la
-    // valeur dans `_state` (cas `<mjs-audio-player title="…">`).
-    propDe = (nom) => {
-      const _nameL = nom.toLowerCase();
-      const key = nom.replace(/-([a-z])/g, function(g) {
-        return g[1].toUpperCase();
-      });
-      const _isDeclaredProp = this._mjs_var_bits != null
-        && hasProp.call(this._mjs_var_bits, key);
-      if (nom.startsWith('mjs-')
-          || (MJS_NATIVE_ATTRS.has(_nameL) && !_isDeclaredProp)
-          || _nameL.startsWith('aria-')
-          || _nameL.startsWith('data-')
-          // Anti-`onclick` ciblé : seulement les VRAIS handlers DOM (présents
-          // sur le prototype). L'ancien `startsWith('on')` avalait aussi des
-          // props légitimes : `online`, `onboarding-step`, `onyx-color`…
-          || (_nameL.startsWith('on') && (_nameL in HTMLElement.prototype))) {
-        return null;
-      }
-      return key;
-    };
-    // `only` : les seuls attributs à relire (ceux qui ont bougé, cf. l'observateur plus bas) ; absent,
-    // tous — au montage. `deja` : les props que le parent a posées TYPÉES dans le registre, relu plus bas
-    // (au montage seulement) : leur attribut, reflet texte ou posé par le rendu serveur, n'est pas relu
-    syncProps = (only, deja) => {
-      var attr, j, key, len, parsed, ref, results;
-      // une copie : un `_set` qui ôte un attribut pendant la lecture (la prop `readonly` d'un module du cœur relue fausse) ne décale plus la liste
-      ref = [...this.attributes];
-      results = [];
-      for (j = 0, len = ref.length; j < len; j++) {
-        attr = ref[j];
-        if (only && !only.has(attr.name)) continue;
-        key = propDe(attr.name);
-        // relu en chaîne, 7 deviendrait "7" chez l'enfant, puis chez le parent par la liaison à deux sens
-        if (key === null || (deja && hasProp.call(deja, key))) continue;
-        parsed = parseProp(key, attr.value);
-        // l'attribut n'est que le REFLET texte de la prop courante (le module `option` pose
-        // `value="18"` pour `value={18}`, et cet observateur le relit aussitôt) : le relire
-        // remplaçait le nombre ou le booléen posé par le parent par son texte
-        const __cur = this._state[key];
-        if (__cur !== parsed && (typeof __cur === 'number' || typeof __cur === 'boolean' || typeof __cur === 'bigint') && String(__cur) === attr.value) {
-          results.push(void 0);
-          continue;
-        }
-        if (this._state[key] !== parsed) {
-          this._set(key, parsed);
-          if (key === 'template' || key === 'layout') {
-            results.push(this._mjs_applyLayout(attr.value));
-          } else {
-            results.push(void 0);
-          }
-        } else {
-          results.push(void 0);
-        }
-      }
-      return results;
-    };
     // `_mjs_layoutName` (dernier variant RÉELLEMENT appliqué) avant les attributs : un
     // variant posé en prop par le parent (`layout={expr}`) doit survivre à une
     // reconnexion. On ne lit surtout pas `_state` — un composant peut avoir un `$layout`
@@ -1444,7 +1468,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         if (typeof __tp === 'object') {
           const __tc = Object.create(null);
           for (const __n in __tp) {
-            const __k = propDe(__n);
+            const __k = this._mjs_propKey(__n);
             if (__k !== null) __tc[__k] = __tp[__n];
           }
           __pend = Object.assign(__tc, __pend);
@@ -1457,7 +1481,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // registre peuvent être périmées (le défaut qu'un composant du milieu a posé avant d'avoir reçu la sienne), l'attribut d'une page rendue par le
     // serveur reste celui de la page servie ; leur écho écraserait la variable du parent — la prop liée reste fermée jusqu'à la fin de cette reprise
     this._mjs_bindOpen = false;
-    syncProps(void 0, __pend);
+    this._mjs_syncProps(void 0, __pend);
     // Props posées par un parent AVANT la mise à niveau : elles n'ont jamais touché
     // l'élément, un registre hors instance les tenait (`µ._mjs_pend`, cf. mjs_init.ts).
     // CHAQUE clé passe par `_set`, dans l'ordre où elle est arrivée : le chemin exact d'un
@@ -1495,21 +1519,13 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         }
       }
     }
-    // seuls les attributs qui ont bougé sont relus : relire les autres rendait leur valeur de
-    // départ aux props écrites depuis (µmount, liaison qui remonte de l'enfant) — le simple retrait
-    // de `mjs-loading`, juste après le premier rendu, y suffisait
-    const _onAttrs = (records) => {
-      var names = new Set(), i;
-      for (i = 0; i < records.length; i++) if (records[i].attributeName !== 'mjs-loading') names.add(records[i].attributeName);
-      if (names.size) syncProps(names);
-    };
     // retire `mjs-loading` ET vide l'enregistrement que ce retrait vient de poser dans le guetteur
     // d'attributs : il se réveillait pour rien, une fois par composant. Un autre attribut changé
     // entre-temps (posé par le parent) est relu ici, comme le guetteur l'aurait fait juste après
     const _dropLoading = () => {
       if (!this._mjs_is_mounted) return;
       this.removeAttribute('mjs-loading');
-      _onAttrs(this._mjs_propObserver.takeRecords());
+      this._mjs_onAttrs(this._mjs_propObserver.takeRecords());
     };
     this._mjs_invalidate('_awaits_');
     // i18n (mjs_i18n.ts, module OPTIONNEL — `µ.i18n` peut être absent si le
@@ -1540,7 +1556,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     } else {
       queueMicrotask(_dropLoading);
     }
-    this._mjs_propObserver ??= new MutationObserver(_onAttrs);
+    this._mjs_propObserver ??= new MutationObserver(_mjsAttrsMoved);
     this._mjs_propObserver.observe(this, {
       attributes: true
     });
@@ -1579,6 +1595,93 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     if (this._mjs_is_router_aware) {
       return (ref = µ.Router) != null ? typeof ref.register === "function" ? ref.register(this) : void 0 : void 0;
     }
+  }
+
+  // nom d'attribut, ou clé de `mjs-props` (cf. connectedCallback) → clé de la prop (`user-id` → `userId`) ; null s'il n'en désigne
+  // jamais une. Skip : préfixes MJS internes, attributs natifs HTML, et conventions
+  // ARIA/data-* (gérés par le browser, jamais exposés comme props).
+  // EXCEPTION : si l'attribut natif (`title`, `src`, `name`, …) correspond
+  // à une prop DÉCLARÉE du composant (`_mjs_var_bits`), c'est une vraie prop
+  // — le browser pose aussi l'attribut natif mais le composant veut la
+  // valeur dans `_state` (cas `<mjs-audio-player title="…">`).
+  _mjs_propKey(nom) {
+    const _nameL = nom.toLowerCase();
+    let key = nom.replace(/-([a-z])/g, function(g) {
+      return g[1].toUpperCase();
+    });
+    let _isDeclaredProp = this._mjs_var_bits != null
+      && hasProp.call(this._mjs_var_bits, key);
+    // le nom d'attribut et la prop déclarée se comparent sans la casse, comme tout nom d'attribut HTML : écrits en clair, `tabIndex="3"` et `userName="u"`
+    // arrivent en minuscules (`tabindex`, `username`), ils vont aux props déclarées `$tabIndex` et `$userName`, sous leur nom. Vers une prop déclarée
+    // seulement : un nom sans prop de ce nom reste tel quel, et la prop au nom exact passe devant (`$username` et `$userName` déclarées : `username` va à
+    // `$username`). Un nom à tiret n'a pas d'égal parmi les props (`user-name` est déjà `userName`, `data-*` et `aria-*` n'en sont pas)
+    if (!_isDeclaredProp && this._mjs_var_bits != null && _nameL.indexOf('-') < 0) {
+      for (const k in this._mjs_var_bits) {
+        if (k.length === _nameL.length && k.toLowerCase() === _nameL && hasProp.call(this._mjs_var_bits, k)) {
+          key = k;
+          _isDeclaredProp = true;
+          break;
+        }
+      }
+    }
+    if (nom.startsWith('mjs-')
+        || (MJS_NATIVE_ATTRS.has(_nameL) && !_isDeclaredProp)
+        || _nameL.startsWith('aria-')
+        || _nameL.startsWith('data-')
+        // Anti-`onclick` ciblé : seulement les VRAIS handlers DOM (présents
+        // sur le prototype). L'ancien `startsWith('on')` avalait aussi des
+        // props légitimes : `online`, `onboarding-step`, `onyx-color`…
+        || (_nameL.startsWith('on') && (_nameL in HTMLElement.prototype))) {
+      return null;
+    }
+    return key;
+  }
+
+  // `only` : les seuls attributs à relire (ceux qui ont bougé, cf. `_mjs_onAttrs`) ; absent,
+  // tous — au montage. `deja` : les props que le parent a posées TYPÉES dans le registre, relu par connectedCallback
+  // (au montage seulement) : leur attribut, reflet texte ou posé par le rendu serveur, n'est pas relu
+  _mjs_syncProps(only, deja) {
+    var attr, j, key, len, parsed, ref, results, schema;
+    schema = this.constructor.props || {};
+    // une copie : un `_set` qui ôte un attribut pendant la lecture (la prop `readonly` d'un module du cœur relue fausse) ne décale plus la liste
+    ref = [...this.attributes];
+    results = [];
+    for (j = 0, len = ref.length; j < len; j++) {
+      attr = ref[j];
+      if (only && !only.has(attr.name)) continue;
+      key = this._mjs_propKey(attr.name);
+      // relu en chaîne, 7 deviendrait "7" chez l'enfant, puis chez le parent par la liaison à deux sens
+      if (key === null || (deja && hasProp.call(deja, key))) continue;
+      parsed = _mjsParseProp(schema, key, attr.value);
+      // l'attribut n'est que le REFLET texte de la prop courante (le module `option` pose
+      // `value="18"` pour `value={18}`, et cet observateur le relit aussitôt) : le relire
+      // remplaçait le nombre ou le booléen posé par le parent par son texte
+      const __cur = this._state[key];
+      if (__cur !== parsed && (typeof __cur === 'number' || typeof __cur === 'boolean' || typeof __cur === 'bigint') && String(__cur) === attr.value) {
+        results.push(void 0);
+        continue;
+      }
+      if (this._state[key] !== parsed) {
+        this._set(key, parsed);
+        if (key === 'template' || key === 'layout') {
+          results.push(this._mjs_applyLayout(attr.value));
+        } else {
+          results.push(void 0);
+        }
+      } else {
+        results.push(void 0);
+      }
+    }
+    return results;
+  }
+
+  // seuls les attributs qui ont bougé sont relus : relire les autres rendait leur valeur de
+  // départ aux props écrites depuis (µmount, liaison qui remonte de l'enfant) — le simple retrait
+  // de `mjs-loading`, juste après le premier rendu, y suffisait
+  _mjs_onAttrs(records) {
+    var names = new Set(), i;
+    for (i = 0; i < records.length; i++) if (records[i].attributeName !== 'mjs-loading') names.add(records[i].attributeName);
+    if (names.size) this._mjs_syncProps(names);
   }
 
   disconnectedCallback() {
@@ -2044,17 +2147,24 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
         const lightCss = µ._lightHostCss(css, tag);
         // sous CSP : une feuille adoptée par `root` (shadow de l'ancêtre ou document). Seule table
         // qui la retient pour µ._hotCss : pas de <style data-mjs-css> sous CSP, et
-        // µ._mjs_componentStyleByTag (chemin ombre) ne la voit pas
+        // µ._mjs_componentStyleByTag (chemin ombre) ne la voit pas. Une feuille par balise et par texte,
+        // partagée par toutes les racines qui l'adoptent : une neuve par ombre, et une de plus à chaque
+        // reconnexion de l'hôte, faisait grossir la table sans fin (liste d'hôtes montés puis retirés)
         const adopt = (root) => {
-          const lightSheet = new CSSStyleSheet();
-          lightSheet.replaceSync(lightCss);
-          root.adoptedStyleSheets = [...root.adoptedStyleSheets, lightSheet];
-          µ._mjs_lightSheetsByTag ??= new Map();
-          if (!µ._mjs_lightSheetsByTag.has(tag)) {
-            µ._mjs_lightSheetsByTag.set(tag, []);
+          const entries = (µ._mjs_lightSheetsByTag ??= new Map()).get(tag) || [];
+          let entry = entries.find((x) => x.text === lightCss);
+          if (!entry) {
+            entry = { sheet: new CSSStyleSheet(), text: lightCss };
+            entry.sheet.replaceSync(lightCss);
+            // gardée quand l'hôte repose ses feuilles (`_mjs_keep`, plus bas) : créé par le constructeur de l'hôte, le léger
+            // se connecte avant lui, et sa feuille partait au premier montage. Tenue par la table, la marque survit (WebKit
+            // recrée sans elle une feuille que plus aucun code ne tient)
+            entry.sheet._mjs_keep = true;
+            entries.push(entry);
+            µ._mjs_lightSheetsByTag.set(tag, entries);
           }
-          µ._mjs_lightSheetsByTag.get(tag).push({ sheet: lightSheet, text: lightCss });
-          return lightSheet;
+          root.adoptedStyleSheets = [...root.adoptedStyleSheets, entry.sheet];
+          return entry.sheet;
         };
         // sinon un <style> ; `data-mjs-css` : marqueur pour le rechargement CSS à chaud en dev
         // (µ._hotCss : remplacement du textContent par tag) — distinct de data-mjs-light
@@ -2098,7 +2208,7 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
       }
     } else {
       // les feuilles posées en route (`_mjs_keep` : un effet, une bulle, une traduction en
-      // attente) restent — leur module ne les reposerait pas
+      // attente, un léger de l'ombre sous CSP) restent — leur module ne les reposerait pas
       var kept = this._shadow.adoptedStyleSheets.filter(function(s) { return s._mjs_keep; });
       this._shadow.adoptedStyleSheets = kept.length ? sheets.concat(kept) : sheets;
     }
@@ -2127,6 +2237,8 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
     // existants au lieu de les recréer. Tout échec retombe silencieusement sur
     // la création normale → jamais de page cassée.
     if (this._mjs_ssrAdopt && µ._mjs_ssrHydrate) {
+      // bloc `<reprise-serveur>` : retiré du cœur par le bundler quand mjs_hydrate.ts, seul fichier qui pose `_mjs_hydrate`, n'est pas du build
+      // <reprise-serveur>
       if (typeof this._mjs_hydrate === 'function') {
         try {
           if (this._mjs_hydrate(factory)) {
@@ -2136,12 +2248,14 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
           // fallback : création normale ci-dessous
         }
       }
+      else
+      // </reprise-serveur>
       // Les trois approches d'adoption vivent dans mjs_hydrate.ts, joint selon le bloc
       // `render` du projet (cf. son en-tête) : la PAGE peut demander l'hydratation à un cœur
       // qui ne les embarque pas (serveur qui rend par l'API, mode posé par en-tête HTTP). Rien
       // n'est cassé — la vue est reconstruite juste en dessous, à l'identique — mais le gain
       // attendu n'a pas lieu : on le dit UNE fois, pas une par composant.
-      else if (!µ._mjs_hydrateWarned) {
+      if (!µ._mjs_hydrateWarned) {
         µ._mjs_hydrateWarned = true;
         µ.warn(µ._mjs_msg('elHydrate', null, 'hydratation demandée par la page mais absente du cœur : mode ssr:markers/positional/diff dans render, ou runtime: [\'hydrate\'].'));
       }
@@ -2256,27 +2370,33 @@ MJS_BOOLEAN_PROPS = new Set(['value', 'checked', 'disabled', 'open', 'readonly',
   }
 
   _mjs_invalidate(k) {
+    // <boucles>
+    // sortie d'une boucle qui écrit l'état : les props liées écrites pendant la boucle remontent, une fois chacune, avec leur
+    // valeur finale (cf. _mjsLieEnBoucle)
+    if (k === _MJS_LIENS) {
+      const __b = this._mjs_lqb;
+      this._mjs_lqb = null;
+      if (__b) __b.forEach((__k) => this._mjs_emitBind(__k));
+      return;
+    }
+    // </boucles>
     if (this._mjs_has_crashed) return;
     // #7 — `_awaits_` = notification externe (store universel, await, mount) :
     // une source lue par un computed (contexte, store partagé) a pu changer
-    // sans que ce computed soit abonné par varName. On invalide leur cache pour
-    // forcer la ré-évaluation au prochain accès — sinon un derived sur store /
+    // sans que ce computed soit abonné par varName. Un compte de plus à leur horloge
+    // (cf. _MJS_HORLOGE) force la ré-évaluation au prochain accès — sinon un derived sur store /
     // contexte sert une valeur périmée. Coût négligeable : `_awaits_` est rare,
-    // et au mount les computeds sont déjà `_mjs_dirty`.
+    // et au mount les computeds n'ont encore jamais été calculés.
     //
     // STATISATION — même trou pour les clés store (`$$clé`/`$$*`) : le
     // store statisé (mjs_store_globals.ts) appelle `comp._mjs_invalidate('$$'+key)`
     // DIRECTEMENT (pas de passage par `_mjs_notifyMutation`, réservé aux mutations
-    // LOCALES), donc le marquage dirty des computeds ci-dessous ne se
-    // déclenchait jamais pour un `$X = $$y*2` — le getter `_state.X` servait la
+    // LOCALES), donc le compte de l'horloge ci-dessous ne se
+    // faisait jamais pour un `$X = $$y*2` — le getter `_state.X` servait la
     // valeur `_mjs_cached` périmée indéfiniment après une écriture `$$y = …`.
     // clé qui n'est pas un texte (symbole, appelant direct ; `_set` convertit les autres) : jamais un magasin
-    if ((k === '_awaits_' || (typeof k === 'string' && k.charCodeAt(0) === 36 && k.charCodeAt(1) === 36)) && this._mjs_computedKeys) {
-      const __ck = this._mjs_computedKeys, __cs = this._mjs_computeds;
-      for (let __ci = 0, __cn = __ck.length; __ci < __cn; __ci++) {
-        const __c = __cs[__ck[__ci]];
-        if (__c) __c._mjs_dirty = true;
-      }
+    if ((k === '_awaits_' || (typeof k === 'string' && k.charCodeAt(0) === 36 && k.charCodeAt(1) === 36)) && this._mjs_computeds) {
+      _mjsCompte(this._mjs_computeds, k);
     }
     // GEL i18n en mode 'wait' — tant que le fragment n'est pas là, on ne peint
     // RIEN : le rendu COMPLET déclenché à la levée du gel rattrape tout ce qui a

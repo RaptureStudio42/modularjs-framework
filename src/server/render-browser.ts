@@ -218,9 +218,11 @@ function mjsSsrSafeCss(css: any): string {
 // esbuild mangleProps) : cette page charge le bundle TEL QUEL, les nommer depuis ce code injecté ne
 // rendrait rien — le `<style>` du `<template shadowrootmode>` comme le mode light partiraient en
 // silence. `baseCss` est rendu BRUT (le trim appartient à chaque point d'usage).
-function mjsSsrInfo(el: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any } {
+// `layoutCss`/`layoutUrl` : le variant appliqué (`layout="x"` d'un `<style name="x">`, cf. runtime/mjs_layout_variant.ts), vide sans
+// variant ; il suit la feuille propre, et la balise en ligne porte son adresse (`mjs-layout`), relue par le runtime avant la reprise
+function mjsSsrInfo(el: any): { baseCss: string; sheets: string[]; isLight: boolean; nodes: any; layoutCss: string; layoutUrl: string } {
   const info = (window as any).__mjsCore._ssrInfo(el)
-  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes }
+  return { baseCss: info.baseCss == null ? '' : String(info.baseCss), sheets: Array.isArray(info.sheets) ? info.sheets : [], isLight: info.isLight === true, nodes: info.nodes, layoutCss: typeof info.layoutCss === 'string' ? info.layoutCss : '', layoutUrl: typeof info.layoutUrl === 'string' ? info.layoutUrl : '' }
 }
 
 // Feuilles partagées d'une racine d'ombre (remise à zéro, thème, héritées d'une vue, déclarées par
@@ -336,6 +338,8 @@ function mjsSsrCollectCss(root: any): { css: string; tag: string }[] {
       for (let k = 0; k < partagees.length; k++) list.push(partagees[k])
       const css = mjsSsrInfo(el).baseCss
       if (css.trim() !== '') list.push({ css, tag: String(el.tagName).toLowerCase() })
+      const modele = mjsSsrInfo(el).layoutCss
+      if (modele.trim() !== '') list.push({ css: modele, tag: String(el.tagName).toLowerCase() + '--modele' })
     } else {
       const orphelin = mjsSsrOrphanLightCss(el, vus, true)
       if (orphelin !== '') list.push({ css: orphelin, tag: String(el.tagName).toLowerCase() })
@@ -394,9 +398,11 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
       shadowRoots.push(el._shadow)
       // feuilles partagées d'abord, feuille propre en dernier (même cascade que le montage) :
       // chacune est posée AVANT le premier enfant d'origine, dans l'ordre de `mjsSsrCollectCss`
-      const css = mjsSsrInfo(el).baseCss
-      const feuilles = mjsSsrSharedCss(el)
+      const info = mjsSsrInfo(el)
+      const css = info.baseCss
+      const feuilles: { css: string; tag: string; layout?: string }[] = mjsSsrSharedCss(el)
       if (css.trim() !== '') feuilles.push({ css, tag: String(el.tagName).toLowerCase() })
+      if (info.layoutCss.trim() !== '') feuilles.push({ css: info.layoutCss, tag: String(el.tagName).toLowerCase() + '--modele', layout: info.layoutUrl })
       if (feuilles.length > 0 && !el._shadow.querySelector('style[data-mjs-ssr], link[data-mjs-ssr]')) {
         const premier = el._shadow.firstChild
         for (let f = 0; f < feuilles.length; f++) {
@@ -410,6 +416,7 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
           } else {
             const styleEl = document.createElement('style')
             styleEl.setAttribute('data-mjs-ssr', '')
+            if (feuilles[f].layout !== undefined) styleEl.setAttribute('mjs-layout', String(feuilles[f].layout))
             styleEl.textContent = mjsSsrSafeCss(feuilles[f].css)
             el._shadow.insertBefore(styleEl, premier)
           }
@@ -447,6 +454,10 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
         while (following && following.nodeType === 3 && following.data === '') following = following.nextSibling
         if (following && following.nodeType === 3) t.parentNode.insertBefore(document.createComment(''), t.nextSibling)
       }
+      // les lignes des listes dont les ancres sont reprises : repérées à leur tour par le cœur (runtime/mjs_hydrate.ts), qui seul lit ses
+      // listes ; le client les reprend au lieu de les refaire. Un cœur sans le module d'hydratation n'en repère aucune : le client les refait
+      const core = (window as any).__mjsCore
+      if (core && typeof core._ssrRows === 'function') core._ssrRows(el)
     }
     if (isShadow) { for (let i = 0; i < el._shadow.children.length; i++) walk(el._shadow.children[i]) }
     if (el.children) { for (let j = 0; j < el.children.length; j++) walk(el.children[j]) }

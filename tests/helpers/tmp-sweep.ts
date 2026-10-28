@@ -16,6 +16,11 @@ import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { sweepRegistered } from './tmp.js'
 import { closeFinishedFiles, countFinishedTest } from './happy-dom-fermeture.js'   //close() réel des fenêtres happy-dom des tests, et filet de fin de fichier
+import { installTestTrace, flushTestTrace } from './test-trace.js'                //relevé : ce que chaque fichier de test lit vraiment, sa durée, ses rouges
+import { installEngineFilter, engineFilterReport } from './engine-filter.js'     //MJS_MOTEURS : les seuls moteurs que les tests lancent
+
+installTestTrace()
+await installEngineFilter()
 
 
 function mjsDirsNow(): Set<string> {
@@ -161,6 +166,9 @@ export const mochaHooks = {
   beforeEach: closeFinishedFiles,
   afterEach:  countFinishedTest,
   afterAll() {
+    flushTestTrace(true)
+    const engines = engineFilterReport()
+    if (engines) console.log(engines)
     clearInterval(beat)
     if (!otherRunAlive()) {
       for (const name of mjsDirsNow()) {

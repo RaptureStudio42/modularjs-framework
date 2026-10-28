@@ -6,6 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { MjsConfig, RenderConfig } from '../bundler/config.js'
+import { RENDER_MAX_BODY_DEFAULT } from '../bundler/config.js'
 import type { ServeEntry } from './serve-entry.js'
 import { isPlainObject } from './serve-entry.js'
 import { resolvePage } from './render-routes.js'
@@ -206,8 +207,9 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
     return true
   }
 
-  // c. corps plafonné à 1 Mo — au-delà : 413, lecture arrêtée (jamais de buffer illimité
+  // c. corps plafonné (`render.maxBody`, 1 Mo par défaut) — au-delà : 413, lecture arrêtée (jamais de buffer illimité
   // en mémoire sur un corps hostile), connexion fermée proprement.
+  const maxBody          = config.render?.maxBody ?? RENDER_MAX_BODY_DEFAULT
   const chunks: Buffer[] = []
   let total = 0
   let rejected = false
@@ -216,7 +218,7 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
     req.on('data', (chunk: Buffer) => {
       if (rejected) return
       total += chunk.length
-      if (total > 1_048_576) {
+      if (total > maxBody) {
         rejected = true
         res.statusCode = 413
         res.setHeader('Connection', 'close')

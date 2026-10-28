@@ -106,7 +106,7 @@ const SONDE = `(() => {
       if (!el) return false;
     }
     const r = el._shadow || el.shadowRoot || el;
-    return getComputedStyle(el).display !== 'none' && r.textContent.includes(c.texte);
+    return getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' && r.textContent.includes(c.texte);
   };
   const tick = () => {
     trames.push({ t: Math.round(performance.now()), v: cibles.map(lire) });

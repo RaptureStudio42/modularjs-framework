@@ -6,7 +6,7 @@
 // fichier les BRANCHE mais n'en réimplémente aucune.
 //
 // Salons/présence (µ:join/µ:leave/µ:sub-presence) et flux (µ:sub-stream/
-// µ:resync) suivent le MÊME principe : moteurs autonomes (rooms.ts/streams.ts),
+// µ:resync/µ:unsub-stream) suivent le MÊME principe : moteurs autonomes (rooms.ts/streams.ts),
 // ce fichier les BRANCHE au routage des trames et au cycle de vie de la
 // connexion (onWelcome juste après le µ:welcome, onDisconnect dans
 // cleanupClient) sans réimplémenter leur logique.
@@ -1492,6 +1492,7 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
       case 'µ:refresh':      return handleRefresh(client, msg)   // await : re-vérifie via opts.auth (peut être async) — la FIFO par connexion doit l'attendre, même garde que µ:join
       case 'µ:sub-stream':   handleSubStream(client, msg); return
       case 'µ:resync':       handleResync(client, msg); return
+      case 'µ:unsub-stream': handleUnsubStream(client, msg); return
       case 'µ:sub-presence': return handleSubPresence(client, msg)   // await : la garde rooms.canSeePresence peut être async — même FIFO que µ:join (cf. son commentaire)
       case 'µ:join':         return handleJoin(client, msg)   // await : la garde rooms.join peut être async — la FIFO par connexion doit l'attendre (un µ:leave qui suit ne double pas le join)
       case 'µ:leave':        handleLeave(client, msg); return
@@ -1871,12 +1872,14 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
   }
 
   // --- ping/pong -----------------------------------------------------------
+  // `early: true` : un µ:ping hors battement (le client prouve le départ d'un salon, cf. docs/25) dont son battement repart — l'écart
+  // avec le précédent n'est pas une période, il n'est pas relevé ; le suivant se mesure à partir de lui
   function handlePing(client: MjsWsClientImpl, msg: any): void {
     const ts = msg.p && msg.p.ts
     sendRaw(client, { t: 'µ:pong', p: { ts } })   // verbatim — même non-numérique, cf. contrat piège #5
     const now = Date.now()
     // l'écart entre deux pings reçus (≈ période du battement client), pas un aller-retour : cf. stats.ts
-    if (client.lastPingAt != null) { client.latency = now - client.lastPingAt; stats.intervallesPing.push(client.latency) }
+    if (client.lastPingAt != null && !(msg.p && msg.p.early === true)) { client.latency = now - client.lastPingAt; stats.intervallesPing.push(client.latency) }
     client.lastPingAt = now
   }
 
@@ -1935,6 +1938,12 @@ export function createCore(transport: MjsWsTransport, opts: MjsWsResolvedOptions
     // from absent/non-numérique → 0 : rejeu complet si le journal couvre tout, sinon reset — jamais un trou silencieux
     const from = (typeof rawFrom === 'number' && isFinite(rawFrom)) ? rawFrom : 0
     streamsEngine.handleResync(client, stream, from)
+  }
+
+  function handleUnsubStream(client: MjsWsClientImpl, msg: any): void {
+    const stream = msg.p && msg.p.stream
+    if (typeof stream !== 'string') return
+    streamsEngine.handleUnsubStream(client, stream)
   }
 
   async function handleSubPresence(client: MjsWsClientImpl, msg: any): Promise<void> {

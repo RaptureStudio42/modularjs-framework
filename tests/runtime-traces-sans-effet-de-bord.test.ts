@@ -206,17 +206,17 @@ describe('traces du runtime — aucune ne porte d\'effet de bord', () => {
   })
 })
 
-// ce qu'un avertissement ou une erreur du runtime peut appeler dans ses arguments : le texte de la table, des lectures, et quatre
-// aides qui ne font que composer un texte (mjs_fx_reflect.ts, mjs_i18n.ts, mjs_modal.ts, et mjs_debug.ts : la balise telle que
-// l'auteur l'écrit, `<@@select>` pour `mjs-core-select`)
-const CONSOLE_PERMIS = ['µ._mjs_txt', 'µ._mjs_msg', 'String', 'JSON.stringify', 'Object.keys', 'join', 'toLowerCase', 'slice', 'replace', 'getAttribute', 'test', 'map', '_mjsFxReflectWarn', '__i18nDelai', '__modalReason', '_mjsBaliseEcrite']
+// ce qu'un avertissement ou une erreur du runtime peut appeler dans ses arguments : le texte de la table, des lectures, un calcul
+// sans effet (Math.ceil : l'attente en secondes de mjs_lockstep.ts), et quatre aides qui ne font que composer un texte
+// (mjs_fx_reflect.ts, mjs_i18n.ts, mjs_modal.ts, et mjs_debug.ts : la balise telle que l'auteur l'écrit, `<@@select>` pour `mjs-core-select`)
+const CONSOLE_PERMIS = ['µ._mjs_txt', 'µ._mjs_msg', 'String', 'JSON.stringify', 'Object.keys', 'join', 'toLowerCase', 'slice', 'replace', 'getAttribute', 'test', 'map', 'Math.ceil', '_mjsFxReflectWarn', '__i18nDelai', '__modalReason', '_mjsBaliseEcrite']
 
 // la seule affectation : le temporaire `ref` de mjs_element.ts, local à _mjs_catchError et lu par le seul message
 const CONSOLE_EXCEPTIONS = [{ file: 'mjs_element.ts', fragment: '(ref = this.tagName)' }]
 
 // les usages indirects, qui restent dans le code envoyé (rendus muets par le niveau) : le repli de mjs_dom.ts, celui de
 // mjs_interpolate.ts et sa garde, l'enveloppe du journal des erreurs
-const STRAYS_CONSOLE: Record<string, number> = { 'mjs_dom.ts': 1, 'mjs_interpolate.ts': 3, 'mjs_journal.ts': 1 }
+const STRAYS_CONSOLE: Record<string, number> = { 'mjs_dom.ts': 1, 'mjs_interpolate.ts': 3, 'mjs_journal.ts': 1, 'mjs_schema.ts': 2 } // mjs_schema.ts : le codec chargé seul pose µ.warn et µ.error s'ils manquent
 
 const CONSOLE_CALL_RE = /(?<![\w$µ.])µ\.(warn|error)\s*\(/g
 const CONSOLE_USE_RE  = /(?<![\w$µ.])µ\.(warn|error)(?![\w$])/g

@@ -283,6 +283,7 @@ Options:
   'bundler.config.effects-guard-delay': ({ valeur }: MsgVars) => `[mjs.config.json] "effects.guard.delay" est une durée : un nombre de millisecondes (800), ou "800ms", "1.5s" — reçu ${valeur}.`,
   'bundler.config.effects-guard-delay-trop-long': ({ valeur }: MsgVars) => `[mjs.config.json] "effects.guard.delay" ne peut pas dépasser 24 h (86 400 000 ms). Donnez une durée plus courte, par exemple 1000, "1s" ou "800ms" — reçu ${valeur}.`,
   'bundler.config.effects-skeleton-i18n': () => `[mjs.config.json] "effects.skeleton" ne porte plus « i18n » : les barres des textes traduits se règlent par "i18n.placeholder" (*skeleton) et par le délai de secours "i18n.timeout" — retirez "i18n" de la liste.`,
+  'bundler.config.render-max-body': ({ valeur }: MsgVars) => `[mjs.config.json] "render.maxBody" est la taille la plus grande du corps qu'une action du serveur de rendu accepte, en octets : un entier de 1024 (1 Ko) à 104857600 (100 Mo), 1048576 (1 Mo) par défaut — reçu ${valeur}.`,
   'bundler.config.effects-rate': ({ valeur }: MsgVars) => `[mjs.config.json] "effects.rate" est la part des effets en direct, en messages par seconde : un entier de 1 à 1000 (4 par défaut) — reçu ${valeur}.`,
   'bundler.config.csp-exige-css-decoupe': () => `[mjs.config.json] csp: true est incompatible avec css: 'bundle'.\n  Le mode strict remplace les <style> en ligne du rendu serveur par des <link> vers les feuilles émises, qui n'existent qu'en CSS découpé.\n  Correctif : posez css: 'split' (une feuille par module) ou css: 'lazy' (chargée à la demande).`,
   'bundler.config.lint-doit-etre-objet': ({ chemin }: MsgVars) => `[mjs.config.json] 'lint' doit être un objet, par exemple { "a11y": false, "maxStateVars": 60 } (${chemin})`,
@@ -401,6 +402,15 @@ Options:
   'bundler.index.transition-inconnue-creer': ({ nom }: MsgVars) => ` Pour la créer : *${nom} = *fade(…) dans un fichier *.effects.mjs de votre projet, ou µanim.create '${nom}', … (µanim.crossfade 'base' pour la paire baseSend et baseReceive) dans un <script>, écrit tel quel avec le nom entre guillemets : la construction ne lit ni un nom calculé, ni un appel fait par une variable (a = µ.anim) ou une déstructuration ({ create } = µ.anim).`,
   'bundler.index.collision-basename-module': ({ nom, precedent, fichier }: MsgVars) => `[bundler] Collision de basename : '${nom}' présent dans ${precedent} ET ${fichier}. Les deux modules compilent vers le même fichier → écrasement + import 404 dans le .mjs qui référence le perdant. Renommez l'un des fichiers.`,
   'bundler.index.runtime-module-inconnu-ignore': ({ module, modules }: MsgVars) => `[bundler] runtime : module inconnu '${module}' ignoré (optionnels : ${modules})`,
+  'bundler.index.runtime-repere-laisses': ({ gardes, laisses, liste }: MsgVars) => `[bundler] runtime : sans clé "runtime", le cœur ne prend que les modules optionnels dont le projet se sert — gardés : ${gardes} ; laissés de côté : ${laisses}. Une page servie hors construction (vue serveur, HTML statique, script de la page) ou un serveur temps réel qui parle à la page peut réclamer un module que le code de la page ne montre pas : écrivez dans mjs.config.json la liste complète des modules voulus, ceux gardés ici (${liste}) et ceux qu'il faut en plus, ou "runtime": "all".`,
+  // un module gardé qui ne s'écrit dans une liste que par le préréglage du même nom, qui en emmène d'autres : aucune liste à coller
+  'bundler.index.runtime-repere-sans-liste': ({ gardes, laisses, prereglages, nb, emmenes }: MsgVars) => `[bundler] runtime : sans clé "runtime", le cœur ne prend que les modules optionnels dont le projet se sert — gardés : ${gardes} ; laissés de côté : ${laisses}. Aucune liste à coller : écrit${Number(nb) > 1 ? 's' : ''} dans une liste, ${prereglages} ${Number(nb) > 1 ? 'sont les préréglages' : 'est le préréglage'} du même nom, qui emmène${Number(nb) > 1 ? 'nt' : ''} aussi ${emmenes} ; si une page servie hors construction ou un serveur temps réel qui parle à la page réclame un module de plus, écrivez la liste vous-même, avec ${emmenes}, ou "runtime": "all", sinon gardez le défaut sans clé.`,
+  // rien de gardé : aucune liste à coller (`"runtime": []` écrit serait un cœur nu, sans les outils de développement)
+  'bundler.index.runtime-repere-rien-garde': ({ laisses }: MsgVars) => `[bundler] runtime : sans clé "runtime", le cœur ne prend que les modules optionnels dont le projet se sert — gardés : aucun ; laissés de côté : ${laisses}. Une page servie hors construction (vue serveur, HTML statique, script de la page) ou un serveur temps réel qui parle à la page peut réclamer un module que le code de la page ne montre pas : écrivez dans mjs.config.json la liste des modules qu'il lui faut ("runtime": [ … ]), ou "runtime": "all".`,
+  // un accès à µ que le relevé ne sait pas résoudre : tout est gardé, `lieux` = fichier:ligne
+  'bundler.index.runtime-repere-acces-opaque': ({ lieux }: MsgVars) => `[bundler] runtime : sans clé "runtime", le cœur garde tous les modules optionnels, comme "runtime": "all" : µ est lu par un accès d'où la construction ne peut pas tirer le nom d'un module (indice calculé comme µ[nom], déstructuration comme { ajax } = µ, µ passé à une fonction ou rangé dans une variable), dans ${lieux}. Pour n'embarquer que les modules dont le projet se sert, écrivez le nom après le point (µ.modal.fire, µ.ajax), ou la liste des modules voulus dans mjs.config.json ("runtime": [ … ]).`,
+  // schema gardé par le seul `µ.ajax` lu en entier, `lieux` = fichier:ligne
+  'bundler.index.runtime-repere-ajax-entier': ({ lieux }: MsgVars) => `[bundler] runtime : sans clé "runtime", schema est gardé avec ajax : µ.ajax est lu en entier (rangé dans une variable, décomposé comme { binary } = µ.ajax, ou passé à une fonction), dans ${lieux}, et sa méthode binary décode la réponse avec le codec de schema. Si le projet n'appelle pas binary, écrivez la méthode après le point (µ.ajax.get, µ.ajax.post) : schema reste de côté.`,
   'bundler.index.runtime-hint-ujs': `[bundler] runtime : 'ujs' intercepte les liens vers µ.Router, absent de votre sélection — l'interception restera inerte. Ajoutez 'router' (et 'ajax' pour le préchargement) pour la nav SPA.`,
   'bundler.index.runtime-hint-game': `[bundler] runtime : 'game' ajoute sock.game() à µ.socket, absent de votre sélection — sock.game restera indéfini. Ajoutez 'socket'.`,
   'bundler.index.runtime-hint-chat': `[bundler] runtime : 'chat' ajoute sock.chat() à µ.socket, absent de votre sélection — sock.chat restera indéfini. Ajoutez 'socket'.`,
@@ -583,13 +593,15 @@ Options:
   // <@@chart> : valeurs écrites en dur sur la balise (bundler/core-chart.ts) — un mot inconnu, une couleur refusée, une combinaison impossible
   'bundler.index.chart-mot-inconnu': ({ fichier, tag, attribut, valeur, mot, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} ${attribut}="${valeur}"> — « ${mot} » n'est pas une valeur connue de ${attribut} (valeurs connues : ${connus}). Corrigez la faute de frappe.`,
   'bundler.index.chart-couleur-refusee': ({ fichier, tag, couleur, teintes }: MsgVars) => `[bundler] ${fichier} : <${tag} series={…}> — la couleur « ${couleur} » est refusée : écrivez un nom de teinte (${teintes}), un entier de 1 ou plus (au-delà de 6, on reprend au début) ou une couleur CSS que le navigateur sait lire, sans « ; », « : », guillemet, accolade, « < », « > », « \\ », « /* » ni url(…).`,
+  'bundler.index.chart-axe-serie-inconnu': ({ fichier, tag, mot, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} series={…}> — axis « ${mot} » d'une série n'est pas une valeur connue (valeurs connues : ${connus}). Corrigez la faute de frappe.`,
   'bundler.index.chart-sans-statistiques': ({ fichier, tag, forme, valeur, mots, formes, tendance }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="${forme}" stats="${valeur}"> — la forme ${forme} ne trace pas stats « ${mots} » (formes qui tracent des statistiques : ${formes} ; trend : ${tendance}). Retirez « ${mots} » de stats ou changez de forme.`,
   'bundler.index.chart-combinaison': ({ fichier, tag, forme, attribut, valeur, connus }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="${forme}" ${attribut}="${valeur}"> — ${attribut}="${valeur}" ne va pas avec la forme ${forme} (valeurs possibles : ${connus}).`,
   // un module du cœur : un attribut écrit en dur en camelCase, que le HTML met en minuscules (bundler/core-attrs.ts)
-  'bundler.index.coeur-attribut-camel': ({ fichier, tag, attribut, kebab, minuscules }: MsgVars) => `[bundler] ${fichier} : <${tag} ${attribut}=…> — écrivez ${kebab} : le HTML met les noms d'attributs en minuscules, et ${attribut} écrit en dur arriverait en ${minuscules}, ignoré.`,
+  'bundler.index.coeur-attribut-camel': ({ fichier, tag, attribut, kebab, minuscules }: MsgVars) => `[bundler] ${fichier} : <${tag} ${attribut}=…> — écrivez ${kebab} : sur un module du cœur, un attribut écrit en dur s'écrit à tirets, comme dans sa documentation. Écrit ainsi, ${attribut} arriverait en minuscules (${minuscules}) et le module le recevrait pourtant sous son nom : la construction n'en garde qu'une écriture.`,
   'bundler.index.chart-fuseau-inconnu': ({ fichier, tag, valeur }: MsgVars) => `[bundler] ${fichier} : <${tag} timezone="${valeur}"> — « ${valeur} » n'est pas un fuseau connu : écrivez local (l'heure de l'écran du visiteur) ou le nom d'une zone IANA (Europe/Paris, America/New_York, UTC…), ou retirez timezone pour afficher les heures telles qu'elles sont écrites.`,
   'bundler.index.chart-decimales': ({ fichier, tag, ecrit, valeur }: MsgVars) => `[bundler] ${fichier} : <${tag} ${ecrit}> — decimals attend un nombre entier de 0 à 10, le nombre de chiffres après la virgule : « ${valeur} » ne convient pas.`,
   'bundler.index.chart-radar-axes': ({ fichier, tag, nb }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="radar" rows={…}> — un radar demande au moins 3 lignes, une par axe : ${nb} ${Number(nb) > 1 ? 'sont écrites' : 'est écrite'}.`,
+  'bundler.index.chart-axe-droite-ignore': ({ fichier, tag, forme, cles, formes }: MsgVars) => `[bundler] ${fichier} : <${tag} shape="${forme}" series={…}> — la forme ${forme} n'a qu'une échelle, axis « right » est ignoré pour ${cles} (formes à deux échelles : ${formes}). Retirez axis: 'right' ou changez de forme.`,
   // — minify.ts
   'bundler.minify.label-acces-indexe': "accès indexé `obj['_mjs_X']`",
   'bundler.minify.label-acces-template': 'accès template literal `obj[`_mjs_${...}`]`',
@@ -609,8 +621,14 @@ Options:
   'bundler.worker-pool.terminate-queue': `WorkerPool: terminate() pendant tâche en queue`,
   'bundler.worker-pool.terminate-inflight': `WorkerPool: terminate() pendant tâche in-flight`,
   'bundler.worker-pool.worker-ts-introuvable': ({ chemin }: MsgVars) => `[worker-pool] worker.ts introuvable : ${chemin}`,
-  // délai maximal par tâche dispatchée
+  // délai maximal d'une tâche, compté depuis son début dans le worker
   'bundler.worker-pool.tache-timeout': ({ fichier, ms }: MsgVars) => `WorkerPool: tâche '${fichier}' sans réponse après ${ms}ms — worker retiré du pool`,
+  // tâche dont le worker est perdu (mort, délai dépassé) : seconde chance, puis repli dans le processus principal
+  'bundler.worker-pool.nouvel-essai': ({ fichier, raison }: MsgVars) => `[bundler] ${fichier} : ${raison} — nouvel essai sur un autre worker`,
+  'bundler.worker-pool.repli-principal': ({ fichier, raison }: MsgVars) => `[bundler] ${fichier} : ${raison} — compilé dans le processus principal`,
+  'bundler.worker-pool.repli-direct': `[bundler] plus aucun worker : les fichiers suivants sont compilés dans le processus principal`,
+  // tâche commencée qui a dépassé le délai : jamais reprise dans le processus principal, où rien ne la bornerait
+  'bundler.worker-pool.delai-depasse': ({ fichier, ms, fois }: MsgVars) => `la compilation de « ${fichier} » a dépassé ${Number(fois) > 1 ? 'deux fois ' : ''}le délai de ${Number(ms) % 1000 === 0 ? `${Number(ms) / 1000} s` : `${ms} ms`} : elle est arrêtée, et n'est pas reprise dans le processus principal, où rien ne la limiterait. Cherchez ce qui, dans ce fichier, retient le compilateur ; sur une machine très chargée, réessayez.`,
   // — worker.ts
   'bundler.worker.parent-port-manquant': `worker.ts doit être exécuté à l'intérieur d'un Worker (parentPort manquant)`,
   // — fx-sections.ts
@@ -1304,6 +1322,8 @@ Extrait incriminé : ${extrait}
   'server.prerender-fragment-sans-route': ({ file }: MsgVars) => `fragment sans route supprimé (${file})`,
   'server.prerender-dossier-vide-retire': ({ dir }: MsgVars) => `dossier vidé de ses fragments retiré (${dir})`,
   'server.prerender-echec-suppression': ({ file, err }: MsgVars) => `échec de la suppression du fichier périmé ${file} : ${err}`,
+  // un avertissement vu sur plus de pages qu'on n'en nomme (toujours plus de trois)
+  'server.prerender-avertissement-pages': ({ nb }: MsgVars) => `${nb} pages`,
 
   // --- src/mjs-server/index.ts ---
   'serveur.index-movesperidentity-invalide': ({ received }: MsgVars) => `[MJS-Server] opts.antiCheat.movesPerIdentity doit être [n entier ≥ 1, fenêtreMs finie > 0] ou null/absent (désactivez le quota), reçu : ${received}`,
@@ -1354,9 +1374,12 @@ Extrait incriminé : ${extrait}
   'serveur.persist-debounce-invalide': ({ prefix, received }: MsgVars) => `${prefix}.debounce doit être un nombre ≥ 0 (ms), reçu : ${received}`,
   'serveur.persist-snapshotevery-invalide': ({ prefix, received }: MsgVars) => `${prefix}.snapshotEvery doit être un nombre ≥ 0 (ms, 0 = désactivé), reçu : ${received}`,
   'serveur.persist-save-echoue': ({ id }: MsgVars) => `[MJS-Server] persist.save('${id}') a échoué`,
+  'serveur.persist-save-echoue-nouvel-essai': ({ id, delai }: MsgVars) => `[MJS-Server] persist.save('${id}') a échoué — nouvel essai dans ${delai} s`,
   'serveur.persist-remove-echoue': ({ id }: MsgVars) => `[MJS-Server] persist.remove('${id}') a échoué`,
-  'serveur.persist-save-sans-reponse': ({ id, delai }: MsgVars) => `[MJS-Server] persist.save('${id}') : aucune réponse de l'adaptateur en ${String(Math.round(Number(delai) * 10) / 10).replace('.', ',')} s — écriture abandonnée, la sauvegarde de la partie continue ; si elle finit par aboutir, l'état courant de la partie est réécrit par-dessus (vérifiez votre stockage)`,
-  'serveur.persist-remove-sans-reponse': ({ id, delai }: MsgVars) => `[MJS-Server] persist.remove('${id}') : aucune réponse de l'adaptateur en ${String(Math.round(Number(delai) * 10) / 10).replace('.', ',')} s — suppression abandonnée, la partie pourra revenir au prochain démarrage ; si elle finit par aboutir alors que l'identifiant a été réutilisé, la nouvelle partie est réécrite (vérifiez votre stockage)`,
+  'serveur.persist-remove-echoue-nouvel-essai': ({ id, delai }: MsgVars) => `[MJS-Server] persist.remove('${id}') a échoué — nouvel essai dans ${delai} s`,
+  'serveur.persist-serialisation-echoue': ({ id }: MsgVars) => `[MJS-Server] la partie '${id}' ne se sérialise pas (serialize() a levé) : sauvegarde abandonnée, sans nouvel essai — sa prochaine modification en tentera une autre`,
+  'serveur.persist-save-sans-reponse': ({ id, delai, essai }: MsgVars) => `[MJS-Server] persist.save('${id}') : aucune réponse de l'adaptateur en ${String(Math.round(Number(delai) * 10) / 10).replace('.', ',')} s — écriture abandonnée, ${Number(essai) > 0 ? `nouvel essai dans ${String(Math.round(Number(essai) * 10) / 10).replace('.', ',')} s` : 'la sauvegarde de la partie continue'} ; si elle finit par aboutir, l'état courant de la partie est réécrit par-dessus (vérifiez votre stockage)`,
+  'serveur.persist-remove-sans-reponse': ({ id, delai, essai }: MsgVars) => `[MJS-Server] persist.remove('${id}') : aucune réponse de l'adaptateur en ${String(Math.round(Number(delai) * 10) / 10).replace('.', ',')} s — suppression abandonnée, ${Number(essai) > 0 ? `nouvel essai dans ${String(Math.round(Number(essai) * 10) / 10).replace('.', ',')} s` : 'la partie pourra revenir au prochain démarrage'} ; si elle finit par aboutir alors que l'identifiant a été réutilisé, la nouvelle partie est réécrite (vérifiez votre stockage)`,
   'serveur.persist-flush-sans-reponse': ({ delai }: MsgVars) => `[MJS-Server] persist.flush() : aucune réponse de l'adaptateur en ${String(Math.round(Number(delai) * 10) / 10).replace('.', ',')} s — l'arrêt continue sans l'attendre (vérifiez votre stockage)`,
   'serveur.persist-save-tardive': ({ id }: MsgVars) => `[MJS-Server] persist.save('${id}') : l'écriture abandonnée a fini par répondre et a pu remplacer un état plus récent — l'état courant de la partie est réécrit`,
   'serveur.persist-remove-tardive': ({ id }: MsgVars) => `[MJS-Server] persist.remove('${id}') : la suppression abandonnée a fini par répondre et a pu effacer la partie recréée sous le même identifiant — son état courant est réécrit`,
@@ -1405,15 +1428,17 @@ Extrait incriminé : ${extrait}
   'serveur.game-ondivergence-hors-lockstep': ({ prefix }: MsgVars) => `${prefix}.onDivergence nécessite mode: 'lockstep' — aucune détection de divergence hors lockstep`,
   'serveur.game-ondivergence-invalide': ({ prefix, received }: MsgVars) => `${prefix}.onDivergence doit être une fonction (partie, {tick, suspects, reason}) => void, reçu : ${received}`,
   'serveur.game-lockstepjournal-hors-lockstep': ({ prefix }: MsgVars) => `${prefix}.lockstepJournal nécessite mode: 'lockstep' — aucun journal d'ordres hors lockstep`,
-  'serveur.game-lockstepjournal-invalide': ({ prefix }: MsgVars) => `${prefix}.lockstepJournal doit être un objet { maxTicks?, maxBytes?, maxOrderBytes? }`,
+  'serveur.game-lockstepjournal-invalide': ({ prefix }: MsgVars) => `${prefix}.lockstepJournal doit être un objet { maxTicks?, maxBytes?, maxOrderBytes?, snapshotEvery? }`,
   'serveur.game-lockstepjournal-maxticks-invalide': ({ prefix, received }: MsgVars) => `${prefix}.lockstepJournal.maxTicks doit être un entier ≥ 1, reçu : ${received}`,
+  'serveur.game-lockstepjournal-snapshotevery-invalide': ({ prefix, received }: MsgVars) => `${prefix}.lockstepJournal.snapshotEvery doit être un entier ≥ 1 (une cadence en ticks), reçu : ${received}`,
+  'serveur.game-lockstepjournal-maxticks-sous-fenetre': ({ prefix, maxTicks, window }: MsgVars) => `${prefix}.lockstepJournal.maxTicks (${maxTicks}) ne couvre pas la fenêtre des propositions d'instantané (${window} ticks : deux secondes de ticks, ou snapshotEvery s'il est plus long) — un instantané accordé en fin de fenêtre laisserait un trou avant le journal ; déclarez maxTicks à ${window} au moins, ou retirez-le`,
   'serveur.game-lockstepjournal-maxbytes-invalide': ({ prefix, received }: MsgVars) => `${prefix}.lockstepJournal.maxBytes doit être un entier ≥ 1 (octets), reçu : ${received}`,
   'serveur.game-lockstepjournal-maxorderbytes-invalide': ({ prefix, received }: MsgVars) => `${prefix}.lockstepJournal.maxOrderBytes doit être un entier ≥ 1 (octets), reçu : ${received}`,
   'serveur.game-phases-invalide': ({ prefix }: MsgVars) => `${prefix}.phases doit être un objet { phase: [coups permis] }`,
   'serveur.game-phases-valeur-invalide': ({ prefix, phase, received }: MsgVars) => `${prefix}.phases.${phase} doit être un tableau de noms de coups (string[]), reçu : ${received}`,
   'serveur.game-turns-invalide': ({ prefix }: MsgVars) => `${prefix}.turns doit être un objet { order?, timeout? }`,
   'serveur.game-turns-order-invalide': ({ prefix, received }: MsgVars) => `${prefix}.turns.order doit être 'roundrobin' ou une fonction (partie) => joueur, reçu : ${received}`,
-  'serveur.game-turns-timeout-invalide': ({ prefix, received }: MsgVars) => `${prefix}.turns.timeout doit être un nombre > 0 (ms), reçu : ${received}`,
+  'serveur.game-turns-timeout-invalide': ({ prefix, received }: MsgVars) => `${prefix}.turns.timeout doit être un nombre > 0 (ms), ou null pour n'armer aucune minuterie de tour, reçu : ${received}`,
   'serveur.game-timers-invalide': ({ prefix }: MsgVars) => `${prefix}.timers doit être un objet { nom: (partie) => void }`,
   'serveur.game-timers-nom-reserve': ({ prefix, nom }: MsgVars) => `${prefix}.timers.${nom} : nom de minuterie RÉSERVÉ (interne à MJS-Server) — choisissez un autre nom`,
   'serveur.game-timers-nom-invalide': ({ prefix, nom, received }: MsgVars) => `${prefix}.timers.${nom} doit être une fonction, reçu : ${received}`,
@@ -1425,7 +1450,7 @@ Extrait incriminé : ${extrait}
   'serveur.game-endttl-invalide': ({ prefix, received }: MsgVars) => `${prefix}.endTtl doit être un nombre > 0 (ms), reçu : ${received}`,
   'serveur.valeur-recue-fonction': '[fonction]',
   'serveur.valeur-recue-objet': '[objet]',
-  'serveur.game-hooks-invalide': ({ prefix }: MsgVars) => `${prefix}.hooks doit être un objet { onCreate?, onJoin?, onLeave?, onEnd?, onTurnTimeout? }`,
+  'serveur.game-hooks-invalide': ({ prefix }: MsgVars) => `${prefix}.hooks doit être un objet { onCreate?, onJoin?, onLeave?, onEnd?, onTurnTimeout?, onDestroy? }`,
   'serveur.game-hooks-nom-invalide': ({ prefix, nom, received }: MsgVars) => `${prefix}.hooks.${nom} doit être une fonction, reçu : ${received}`,
   'serveur.game-intents-interdit-lockstep': ({ prefix }: MsgVars) => `${prefix}.intents interdit en mode 'lockstep' — chaque µgame:move devient un ORDRE diffusé tel quel, cf. def.mode`,
   'serveur.game-intents-invalide': ({ prefix }: MsgVars) => `${prefix}.intents doit être un objet { nom: (partie, joueur, p) => void }`,
@@ -1467,6 +1492,7 @@ Extrait incriminé : ${extrait}
   'serveur.partie-instantvupar-sans-histo': '[MJS-Server] game.timeSeenBy() nécessite def.history — cf. game.ts',
   'serveur.partie-complete': 'partie complète',
   'serveur.partie-pas-dans-partie': "vous n'êtes pas dans cette partie",
+  'serveur.partie-page-sans-instantane': "cette page ne sait pas reprendre la partie : son journal a été coupé par un instantané, que seule une version plus récente de la page sait lire — rechargez la page pour la reprendre",
   'serveur.partie-spectateur-sans-vue': ({ type }: MsgVars) => `game('${type}') : spectateur sans def.spectatorView/def.view — aucun état diffusé (anti-fuite)`,
   'serveur.partie-pas-assis': "vous n'êtes pas assis dans cette partie",
   'serveur.partie-terminee': 'partie terminée',
@@ -1502,6 +1528,8 @@ Extrait incriminé : ${extrait}
   'serveur.partie-onjoin-rejete-file': ({ msg }: MsgVars) => `[MJS-Server] hooks.onJoin a rejeté — joueur refusé, le groupe de la file n'est pas annoncé : ${msg}`,
   'serveur.partie-onend-rejete': ({ msg }: MsgVars) => `[MJS-Server] hooks.onEnd a rejeté — la fin de partie a eu lieu : ${msg}`,
   'serveur.partie-oncreate-rejete': ({ msg }: MsgVars) => `[MJS-Server] hooks.onCreate a rejeté — la partie est créée quand même : ${msg}`,
+  'serveur.partie-ondestroy-leve': ({ msg }: MsgVars) => `[MJS-Server] hooks.onDestroy a levé — la partie est détruite quand même : ${msg}`,
+  'serveur.partie-ondestroy-rejete': ({ msg }: MsgVars) => `[MJS-Server] hooks.onDestroy a rejeté — la partie est détruite quand même : ${msg}`,
   'serveur.partie-histo-extraire-leve': ({ msg }: MsgVars) => `[MJS-Server] def.history.extract a levé — tick ignoré pour l'historique : ${msg}`,
   'serveur.restore-invalide': ({ champ, attendu }: MsgVars) => `[MJS-Server] restoreGame() : champ '${champ}' invalide (attendu ${attendu})`,
   'serveur.restore-attendu-objet': 'un objet',
@@ -1510,6 +1538,8 @@ Extrait incriminé : ${extrait}
   'serveur.restore-attendu-tableau': 'un tableau',
   'serveur.restore-attendu-siege': '{seat:number, id:string} ou null',
   'serveur.restore-attendu-minuterie': '{name:string, at:number}',
+  'serveur.restore-attendu-instantane-lockstep': '{tick:entier ≥ 1, state, rng:entier de 0 à 4294967295}',
+  'serveur.restore-attendu-journal-apres-instantane': ({ tick }: MsgVars) => `un journal qui reprend au tick ${tick}, juste après l'instantané`,
 
   // --- src/mjs-server/persist-redis.ts + persist-bridge.ts + persist-sql.ts + persist-file.ts (mutualisées) ---
   'serveur.persist-backend-rejet-non-intercepte': ({ backend, label }: MsgVars) => `persist-${backend} : ${label} — rejet non intercepté`,
@@ -1576,7 +1606,7 @@ Extrait incriminé : ${extrait}
 
   // — bridge.ts
   'ws.bridge.secret-manquant': ({ label }: MsgVars) => `[MJS-WS] ${label} manquant — un secret est OBLIGATOIRE pour activer le pont (chaîne littérale, ou 'env:NOM_VAR')`,
-  'ws.bridge.secret-court': ({ label, length, min }: MsgVars) => `[MJS-WS] ${label} ne fait que ${length} caractères — ${min} au moins sont conseillés (openssl rand -hex 32, par exemple) : un secret court se devine hors ligne à partir d'une seule requête signée interceptée. Ce message n'apparaît qu'une fois`,
+  'ws.bridge.secret-court': ({ label, length, min }: MsgVars) => `[MJS-WS] ${label} ne fait que ${length} caractères — ${min} au moins sont conseillés (openssl rand -hex 32, par exemple) : un secret court se devine hors ligne à partir d'une seule requête signée interceptée. Ce message apparaît une fois pour chaque serveur`,
   'ws.bridge.secret-env-absent': ({ label, varName }: MsgVars) => `[MJS-WS] ${label} référence la variable d'environnement '${varName}' — absente ou vide`,
   'ws.bridge.webhooks-url-manquant': '[MJS-WS] opts.bridge.webhooks.url manquant',
   'ws.bridge.webhooks-events-vide': "[MJS-WS] opts.bridge.webhooks.events doit être un tableau non vide (ex. ['connect', 'message:chat'])",
@@ -1657,6 +1687,7 @@ Extrait incriminé : ${extrait}
   'ws.accounts.save-echoue': ({ id }: MsgVars) => `comptes:file : save('${id}') a échoué`,
   'ws.accounts.secret-manquant': '[MJS-WS] accountsPackage : opts.secret manquant — DOIT être le MÊME secret que accountsAuth(secret) posé en mjsWs({ auth }) (cf. docs/27-accounts.md « Élévation »)',
   'ws.accounts.adaptateur-memoire-defaut': 'adaptateur mémoire (défaut) — les comptes NE SURVIVENT PAS à un redémarrage. DEV SEULEMENT : fournissez opts.persist (FileAccountsPersistAdapter, ou un adaptateur maison) en production.',
+  'ws.accounts.hachage-reduit-essais': 'weakHashForTests : les secrets des comptes sont hachés à coût réduit (scrypt N = 2^10, r = 8, p = 1) — réservé aux tests, ne l\'activez jamais en production',
   'ws.accounts.persist-load-echoue': 'persist.load() a échoué — démarrage SANS comptes restaurés',
   'ws.accounts.persist-echec': ({ name }: MsgVars) => `persist.save() a échoué — compte '${name}' non créé`,
   'ws.accounts.enregistrement-incomplet-ignore': ({ id }: MsgVars) => `enregistrement de compte incomplet ignoré (id '${id}') : id, name, hash et salt doivent être des chaînes — son pseudo, s'il est lisible, reste réservé`,
@@ -1814,6 +1845,10 @@ Extrait incriminé : ${extrait}
   'ws.streams.abonnement-flux-ferme': ({ via, name }: MsgVars) => `${via} refusé vers le flux '${name}' — flux fermé, déclaré sans accès : écrivez app.stream('${name}', { public: true }) pour l'ouvrir à tous, ou { room } / { canSubscribe } pour le réserver`,
   'ws.streams.flux-non-declare-nom-trop-long': ({ via, name, max }: MsgVars) => `${via} vers un flux non déclaré au nom trop long '${name}' (${max} caractères au plus) — erreur renvoyée`,
   'ws.streams.nom-trop-long': ({ max }: MsgVars) => `nom de flux trop long (${max} caractères au plus)`,
+  'ws.streams.desabonnement-flux-non-declare': ({ name }: MsgVars) => `µ:unsub-stream vers un flux non déclaré '${name}' — refusé, aucun abonnement à retirer (µ:error renvoyé)`,
+  'ws.streams.desabonnement-flux-inconnu': 'désabonnement refusé : flux inconnu',
+  'ws.streams.garde-sans-reponse': "accès au flux refusé : sa garde n'a pas répondu à temps",
+  'ws.streams.garde-sans-reponse-journal': ({ name, ms }: MsgVars) => `flux '${name}' — la garde canSubscribe n'a pas répondu en ${ms} ms (guardTimeout) : comptée comme un refus ; vérifiez l'appel qu'elle attend (back, base de données…) ou allongez guardTimeout`,
   // garde de profondeur/sérialisation (add/update/reset)
   'ws.streams.entree-non-serialisable': ({ name, op, depth }: MsgVars) => `flux '${name}' — ${op}() refusé : valeur non sérialisable ou trop imbriquée (> ${depth} niveaux) — jamais stockée (empoisonnerait durablement snapshot()/µ:sub-stream pour tout futur abonné)`,
 
@@ -2050,6 +2085,7 @@ Extrait incriminé : ${extrait}
   'effets.remplace-correspondance': ({ liste }: MsgVars) => ` (correspondance des réglages : ${liste})`,
   'effets.remplace-sans-equivalent': ({ alias, liste }: MsgVars) => ` Sans équivalent direct dans ${alias}, à reporter d'après la correspondance ou à retirer : ${liste}.`,
   'effets.pseudo-partage': ({ balise, liste }: MsgVars) => `<${balise}> : deux effets dessinent dans le même pseudo-élément — ${liste} ; un seul apparaîtra. Posez l'un d'eux sur une balise qui englobe celle-ci.`,
+  'effets.hauteur-sans-effet': ({ balise, nom, valeur }: MsgVars) => `<${balise}> *${nom} : height = ${valeur} — une hauteur nulle ou négative ne donne rien à la silhouette ; écrivez une longueur positive (120, 8rem, 100%), ou retirez height : la silhouette prend alors la hauteur de ses barres.`,
   'effets.remplace-ramene': ({ alias, liste }: MsgVars) => ` Valeur hors de la plage de ${alias}, ramenée à sa borne dans l'écriture proposée : ${liste}.`,
   'effets.alias-retire': ({ nom, effet, ecriture }: MsgVars) => `[ModularJS] *${nom} : aucun alias de ce nom pour *${effet} — il a été retiré de la bibliothèque : écrivez à la place ${ecriture}.`,
   'effets.valeur-retiree': ({ nom, reglage, valeur, nouveau, note, regle }: MsgVars) => `[ModularJS] *${nom} : ${reglage} = ${valeur} n'existe plus — écrivez ${reglage}: ${nouveau}${note} ; permis : ${regle}.`,
@@ -2131,7 +2167,16 @@ Extrait incriminé : ${extrait}
   'transitions.declencheur-alias': ({ nom, reglage, valeur, directive }: MsgVars) => `[ModularJS] ${directive}=*${nom} : l'alias *${nom} porte un déclencheur (${reglage}: ${valeur}) — il ne s'emploie donc pas après ${directive}=, c'est ${directive} qui déclenche l'effet. Posez-le directement sur la balise : *${nom}, ou déclarez un alias sans ${reglage} dans un fichier *.effects.mjs.`,
   'transitions.continu': ({ nom, directive }: MsgVars) => `[ModularJS] ${directive}=*${nom} : *${nom} est un effet continu (ou à état), il ne se joue pas une fois à l'entrée ou à la sortie d'une balise. Posez-le directement sur elle : *${nom}.`,
   'transitions.ancienne': ({ ecrite, directive, nom, reglage, modificateurs }: MsgVars) => `[ModularJS] ${ecrite} : une transition est un effet — écrivez ${directive}=*${nom}, ses réglages entre parenthèses (${directive}=*${nom}(${reglage}))${modificateurs ? '' : ` ; les modificateurs restent sur la directive (${directive}.global=*${nom})`}.`,
-  'transitions.retiree': ({ ecrite, directive, effet }: MsgVars) => `[ModularJS] ${ecrite} : cette animation n'existe plus — écrivez ${directive}=${effet}.`,
+  'transitions.ancienne-reglee': ({ ecrite, ecriture, notes, directive, nom, modificateurs }: MsgVars) => `[ModularJS] ${ecrite} : une transition est un effet — écrivez ${ecriture}${notes}${modificateurs ? '' : ` ; les modificateurs restent sur la directive (${directive}.global=*${nom})`}.`,
+  // toutes celles d'un composant, une ligne chacune
+  'transitions.anciennes': ({ nb, lignes }: MsgVars) => `[ModularJS] ${nb} transitions de ce composant s'écrivent en effets, leurs réglages entre parenthèses — écrivez :${lignes}`,
+  'transitions.ancienne-ligne': ({ ligne, ecrite, ecriture, notes }: MsgVars) => `\n  ${ligne ? `ligne ${ligne} : ` : ''}${ecrite} → ${ecriture}${notes}`,
+  'transitions.ancienne-retiree': ({ nom }: MsgVars) => ` ; ${nom} n'existe plus`,
+  'transitions.ancienne-calcul': ({ reglage, calcul, variable }: MsgVars) => ` ; ${reglage} se calcule (${calcul}) : un effet prend une valeur fixe ou une variable écrite telle quelle — posez ${variable} = ${calcul} dans le <script>`,
+  'transitions.ancienne-objet': ({ calcul, exemple }: MsgVars) => ` ; ses réglages se calculent (${calcul}) : un effet prend une valeur fixe ou une variable écrite telle quelle, réglage par réglage (${exemple})`,
+  'transitions.ancienne-xy': ({ x, y }: MsgVars) => ` ; x et y se calculent (${x}, ${y}) : écrivez une direction (un mot comme up-left, ou un angle) et une distance, fixes ou dans des variables $…`,
+  'transitions.ancienne-sans': ({ reglages, nb }: MsgVars) => ` ; ${reglages} : aucun équivalent, ${Number(nb) > 1 ? 'retirés' : 'retiré'}`,
+  'transitions.retiree': ({ ecrite, directive, effet, notes }: MsgVars) => `[ModularJS] ${ecrite} : cette animation n'existe plus — écrivez ${directive}=${effet}${notes ?? ''}.`,
   'transitions.attend-effet': ({ directive }: MsgVars) => `[ModularJS] ${directive} attend un effet : ${directive}=*fade, ${directive}=*fly(up, distance: 40px).`,
   'transitions.guillemets': ({ directive, effet }: MsgVars) => `[ModularJS] ${directive}="${effet}" : un effet s'écrit sans guillemets — ${directive}=${effet}.`,
   'transitions.modificateur': ({ directive, mod }: MsgVars) => `[ModularJS] ${directive}.${mod} : modificateur inconnu — une transition n'en connaît que deux, .global et .shared (${directive}.global=*fade).`,

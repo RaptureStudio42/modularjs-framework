@@ -1,5 +1,6 @@
 // {for} de racine sur une collection `µraw` — une ligne dont l'élément et l'index n'ont pas bougé,
-// et qui ne lit rien d'autre que cet élément et cet index, n'est plus rappelée à la mise à jour.
+// et qui ne lit rien d'autre que cet élément et cet index, n'est plus rappelée à la mise à jour
+// (drapeau 1 ; drapeau 2 quand elle ne lit pas son index : elle est sautée même quand il bouge).
 // On compte les lectures par un accesseur posé sur les objets (aucun appel de fonction dans la ligne).
 
 import assert from 'node:assert/strict'
@@ -308,7 +309,7 @@ $selected = -1;
 </ul>
 `
     const { el, code } = await compileAndMount('lis-sel', src, 'mjs-lis-sel')
-    assert.ok(/_mjs_p: 1/.test(code), 'drapeau présent')
+    assert.ok(/_mjs_p: 2/.test(code), 'drapeau présent (la ligne ne lit pas son index)')
     const lus: Record<number, number> = {}
     const rows = Array.from({ length: 5 }, (_, k) => ligne(lus, k + 1, 'r' + k))
     const danger = () => [...el._shadow.querySelectorAll('li')].map((n: any, k: number) => n.classList.contains('danger') ? k : -1).filter((k: number) => k >= 0)
@@ -365,13 +366,15 @@ $data = µ.raw($all.filter((r) => r.id > 0));
   it('appel sans parenthèses de Civet et appel conditionnel : drapeau absent', async () => {
     for (const corps of ['<li>{row.fmt i}</li>', '<li>{row.fmt?(i)}</li>', '<li>{row.fmt row}</li>', '<li>{row.fmt -i}</li>', '<li>{row.fmt -1}</li>', '<li>{row.fmt !i}</li>', '<li>{row.fmt +i}</li>', '<li>{row.fmt not i}</li>', '<li>{row.x? 1}</li>', '<li>{row.x? -i}</li>', '<li>{row.x . y}</li>', '<li>{row.x ?.y}</li>']) {
       const { output } = await transpile(`<script>\n$data = µraw([])\n</script>\n<ul>\n{for i, row in $data by id}\n${corps}\n{end}\n</ul>\n`, { moduleName: 'flisciv' })
-      assert.doesNotMatch(output, /_mjs_p: 1/, corps)
+      assert.doesNotMatch(output, /_mjs_p: \d/, corps)
     }
   })
   it('expressions de ligne ordinaires : drapeau présent', async () => {
     for (const corps of ['<li>{row.label}</li>', '<li>{row.a + row.b}</li>', '<li>{row.a - i}</li>', '<li>{row.on ? row.a : row.b}</li>', '<li>{row.a?.b}</li>', '<li>{i + 1}</li>', '<li title={row.a + \' \' + row.b}>{row.n * 2}</li>']) {
       const { output } = await transpile(`<script>\n$data = µraw([])\n</script>\n<ul>\n{for i, row in $data by id}\n${corps}\n{end}\n</ul>\n`, { moduleName: 'flisok' })
-      assert.match(output, /_mjs_p: 1/, corps)
+      assert.match(output, /_mjs_p: [12]/, corps)
+      // 1 quand la ligne lit son index, 2 sinon
+      assert.match(output, /\bi\b/.test(corps) ? /_mjs_p: 1/ : /_mjs_p: 2/, corps)
     }
   })
 })

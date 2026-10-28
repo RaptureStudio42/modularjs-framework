@@ -337,6 +337,28 @@ const DOM_ATTR_COMPOSANT = /^(?:data|aria)-/i
 // des props : ils gardent leur nom, comme sur une balise ordinaire ou tierce
 const NOT_A_PROP = /^(?:data|aria|mjs)-/i
 
+// les attributs globaux que le navigateur lit sur la balise d'un composant (son `id`, que visent `<@@toolbar for>`, `<label for>` et `aria-labelledby` ;
+// sa classe, sa bulle, son rôle, sa langue, son sens d'écriture, son emplacement, son ordre de tabulation, `hidden`) : écrits en valeur calculée,
+// ils s'y posent comme leur forme fixe (cf. logiqueComposant)
+const ATTR_GLOBAL_COMPOSANT = /^(?:id|class|title|role|hidden|tabindex|lang|dir|slot)$/i
+
+/** Le code qui livre la valeur calculée `jsVar` d'un attribut à la balise d'un composant `mjs-…` (`_mjs_node`) : toujours sa prop (`_set`, ou le
+ * registre d'attente avant sa mise à niveau, cf. µ._mjs_pend) ; `data-*` et `aria-*` se posent en plus sur la balise, un attribut global
+ * (ATTR_GLOBAL_COMPOSANT) aussi, sauf quand le composant déclare lui-même une prop de ce nom (`_mjs_var_bits`) : il la garde pour lui, sans
+ * attribut (`<@@chart hidden={['a']}>` ne cache pas le graphique). Le nom se compare sans la casse, comme un attribut HTML : `tabIndex={…}`
+ * va à une prop `$tabindex`, `tabindex={…}` à une prop `$tabIndex`, qui reçoit alors la valeur sous son nom. Une balise pas encore mise à
+ * niveau (ligne de {for}, branche, module chargé plus tard) ne dit pas ses props : l'attribut attend que la balise soit définie, et c'est la
+ * dernière valeur écrite (`_mjs_ha`) qui se pose */
+function logiqueComposant(attrName: string, prop: string, pendProp: string, jsVar: string, recue: string): string {
+  if (DOM_ATTR_COMPOSANT.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
+  if (!ATTR_GLOBAL_COMPOSANT.test(attrName)) return `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
+  const nom = attrName.toLowerCase()
+  return `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }${recue} ` +
+    `{ const _mjs_h = _mjs_node, _mjs_w = () => { const _mjs_d = _mjs_h._mjs_var_bits && Object.keys(_mjs_h._mjs_var_bits).find((_mjs_k) => _mjs_k.toLowerCase() === '${nom}'); ` +
+    `if (!_mjs_d) µ._mjs_updAttrNode(_mjs_h, '${nom}', _mjs_h._mjs_ha['${nom}']${attrSur(nom)}); else if (_mjs_d !== '${prop}') _mjs_h._set(_mjs_d, _mjs_h._mjs_ha['${nom}']); }; ` +
+    `(_mjs_h._mjs_ha ??= {})['${nom}'] = __mjsV; if (_mjs_h._mjs_var_bits) _mjs_w(); else customElements.whenDefined(_mjs_h.localName).then(_mjs_w); }`
+}
+
 function propName(name: string): string {
   if (!name.includes('-') || NOT_A_PROP.test(name)) return name
   return name.toLowerCase().replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())
@@ -514,10 +536,8 @@ function dynamic(env: AttrCtx): AttrResult {
   if (env.ctx.type === 'root') {
     let code: string
     if (isWc) {
-      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
-      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
-        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
+      // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
       code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     } else {
       code = ecrireAttrRacine('this', id, adj, jsVar)
@@ -527,10 +547,8 @@ function dynamic(env: AttrCtx): AttrResult {
     if (!isWc && !(sansTemoin && env.ctx.enBloc)) attrStr += ` ${nom}=''`
   } else if (env.ctx.type === 'for') {
     if (isWc) {
-      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
-      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
-        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
+      // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
       env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     } else {
       // Filtered dispatch pour les attributs dynamiques génériques
@@ -632,10 +650,8 @@ function dynamic(env: AttrCtx): AttrResult {
       // même chemin que la branche `for` ci-dessus :
       // sans ça, une prop dynamique de composant (`<mjs-card item={d}>`) en
       // branche `{await}` ne posait RIEN — `item` disparaissait en silence.
-      // la valeur reste aussi une prop de l'état du composant ; data-* / aria-* se posent en plus sur sa balise
-      const updateLogic = DOM_ATTR_COMPOSANT.test(attrName)
-        ? `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-        : `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
+      // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
       env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
       // la prop suit ses variables : effet de la racine, comme à la racine (la pose ci-dessus la vaut à la construction de la branche)
       suivreEnBranche(env, id, jsVar, updateLogic, vars, true)
@@ -953,6 +969,14 @@ function eventListener(env: AttrCtx): AttrResult {
     // L'élément se relit dans la collection : position d'un tableau, clé d'un objet, position parmi les éléments d'un Set ou d'une Map (cf.
     // ligneBoucleLiaison) — cette conversion seulement quand l'élément est lu : par le gestionnaire, par l'itérable d'une boucle
     // intérieure ou par un `{const}` recréé après la boucle (texteLuApres)
+    // ligne pure d'un `{for}` de racine (cf. LoopInfo.parEntree) : l'élément et l'indice se lisent sur l'entrée de la ligne, que la
+    // réconciliation tient à jour même quand elle saute la ligne (`_mjs_it`, `_mjs_ix`) ; la balise y mène par `_mjs_row` (posé par le
+    // gabarit de la ligne). Le temporaire garde le nom du squelette, que le contrôle des constantes reconnaît (cf. const-reassign.ts)
+    if (l.parEntree) {
+      return `  _mjs_ra_${d} = el._mjs_row._mjs_en\n` +
+        `  ${item} = _mjs_ra_${d}._mjs_it\n` +
+        `  ${idxVar} = _mjs_ra_${d}._mjs_ix\n`
+    }
     const lu = new RegExp(`(?<![\\w$.])${item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`).test(luApres)
     return `  _mjs_ri_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
       `  _mjs_ra_${d} = ${iterable}\n` +
@@ -3376,6 +3400,237 @@ function exampleSetting(nom: string): string {
   return 'duration: 400ms'
 }
 
+// les réglages que chaque animation d'avant lisait dans son objet (`@in.fly={ y: 200 }`) : un autre n'y faisait rien et ne passe
+// pas dans la proposition ; `steps` (la finesse de ses images clés) n'a pas d'équivalent dans un effet
+const OLD_COMMON = ['delay', 'duration', 'easing', 'steps']
+const OLD_DIR    = ['dir', 'direction', ...OLD_COMMON]
+const OLD_SETTINGS: Record<string, string[]> = {
+  fade:          OLD_COMMON,
+  iris:          OLD_COMMON,
+  fly:           ['x', 'y', 'opacity', ...OLD_COMMON],
+  slide:         ['axis', ...OLD_COMMON],
+  scale:         ['start', 'opacity', ...OLD_COMMON],
+  zoom:          ['start', 'opacity', ...OLD_COMMON],
+  zoomOut:       ['start', 'opacity', ...OLD_COMMON],
+  blur:          ['amount', 'opacity', ...OLD_COMMON],
+  draw:          ['speed', ...OLD_COMMON],
+  typewriter:    ['speed', 'duration'],
+  volet:         OLD_DIR,
+  reveal:        OLD_DIR,
+  flip:          OLD_DIR,
+  cube:          OLD_DIR,
+  turn:          OLD_DIR,
+  swipe:         OLD_DIR,
+  bars:          ['count', ...OLD_DIR],
+  blocks:        ['cols', 'rows', ...OLD_COMMON],
+  elastic_fly:   ['y', 'delay', 'duration', 'steps'],
+  elastic_scale: ['start', 'delay', 'duration', 'steps']
+}
+
+// une valeur de l'objet d'avant : fixe (un nombre, un texte), une variable écrite telle quelle (`$h`, `item.delay`), ou un calcul
+type OldValue = { fixe: string | number | boolean } | { variable: string } | { calcul: string }
+
+function oldValue(n: any, src: string): OldValue {
+  const texte = src.slice(n.start, n.end).replace(/\s+/g, ' ')
+  if (n.type === 'Literal' && ['number', 'string', 'boolean'].includes(typeof n.value)) return { fixe: n.value }
+  if (n.type === 'UnaryExpression' && (n.operator === '-' || n.operator === '+') && n.argument.type === 'Literal' && typeof n.argument.value === 'number') return { fixe: n.operator === '-' ? -n.argument.value : n.argument.value }
+  if (n.type === 'TemplateLiteral' && n.expressions.length === 0) return { fixe: n.quasis[0].value.cooked }
+  if (/^[$\p{L}_][$\p{L}\w]*(?:\.[$\p{L}_][$\p{L}\w]*)*$/u.test(texte)) return { variable: texte }
+  return { calcul: texte }
+}
+
+const oldText = (v: OldValue | undefined): string => !v ? '0' : 'fixe' in v ? String(v.fixe) : 'variable' in v ? v.variable : v.calcul
+// une durée d'avant, en ms → celle d'un effet : 2000 → 2s, 220 → 220ms
+const oldTime = (ms: number): string => ms !== 0 && ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`
+// une courbe d'avant (`'cubicOut'`, `µ.easing.quadInOut`, `'ease-in'`) → son nom dans un effet (cubic-out, quad-in-out, ease-in)
+const oldCurve = (nom: string): string => /^cubic-bezier\(/.test(nom) ? nom : nom.split('.').pop()!.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
+const round2   = (x: number): number => Math.round(x * 100) / 100
+
+// une longueur d'avant (`22`, `'-50%'`) : son nombre et son unité ; absente, nulle ; null pour une variable, un calcul, un texte illisible
+function oldLength(v: OldValue | undefined): { n: number, unit: string } | null {
+  if (!v) return { n: 0, unit: '' }
+  if (!('fixe' in v)) return null
+  const m = /^(-?\d*\.?\d+)(px|%|em|rem|vw|vh)?$/.exec(String(v.fixe).trim())
+  return m ? { n: Number(m[1]), unit: m[2] ?? '' } : null
+}
+
+// la valeur convient à ce réglage de l'effet (sa règle au catalogue) ; une transition de l'appli (µanim.create) n'en a pas
+function fitsSetting(effect: string, key: string, value: string): boolean {
+  if (!effectSpec(effect)) return true
+  try {
+    parseEffect(effect, `${key}: ${value}`, [], true)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+interface OldTransition {
+  ligne?: number
+  ecrite: string
+  directive: string
+  nom: string
+  effet: string
+  notes: string
+  reglee: boolean
+  remplacee: boolean
+  modificateurs: boolean
+}
+
+/** une ancienne écriture (`@in.fly={ y: 22, duration: 220 }`) et l'effet qui la remplace, ses réglages écrits convertis
+ * (`*fly(up, distance: 22, duration: 220ms)`) ; un réglage calculé devient une variable `$…` à poser dans le `<script>` — un
+ * effet ne prend qu'une valeur fixe ou une variable écrite telle quelle, jamais `{…}` */
+function rewriteOldTransition(attr: Attr, ligne?: number): OldTransition {
+  const nom         = ANCIENNE_TRANSITION.exec(attr.name ?? '')![2]
+  const directive   = transitionDirective(attr.name ?? '')
+  const ecrit       = attr.type === 'boolean' ? '' : String(attr.expr ?? attr.val ?? '')
+  const ecrite      = (attr.name ?? '') + (attr.type === 'dynamic' ? `={${ecrit.replace(/\s+/g, ' ')}}` : ecrit ? `="${ecrit}"` : '')
+  const remplacante = REMOVED_ANIMATIONS.get(nom)
+  // l'effet qui la remplace et ses réglages : `*scale(start: 0.55)` → scale, [start, 0.55] ; une valeur sans nom va au principal
+  const [, effect, args] = /^\*(\w+)(?:\((.*)\))?$/.exec(remplacante ?? '*' + nom)!
+  const spec     = effectSpec(effect)
+  const reglages = (args ? args.split(', ') : []).map((a): [string, string] => a.includes(': ') ? a.split(': ') as [string, string] : [spec?.main ?? '', a])
+  const notes: string[] = []
+  const sans: string[]  = []
+  // le corps de l'objet, comme le lisait l'écriture d'avant : `{ y: 200 }` et `{{ y: 200 }}` se valent
+  let corps = ecrit.trim()
+  if (corps.startsWith('{') && corps.endsWith('}')) corps = corps.slice(1, -1).trim()
+  if (corps.endsWith(';')) corps = corps.slice(0, -1).trim()
+  const poser = (key: string, value: string): void => {
+    const i = reglages.findIndex(([k]) => k === key)
+    if (i >= 0) reglages[i] = [key, value]
+    else reglages.push([key, value])
+  }
+  const enVariable = (key: string, calcul: string): void => {
+    poser(key, '$' + key)
+    notes.push(t('transitions.ancienne-calcul', { reglage: key, calcul, variable: '$' + key }))
+  }
+  // l'objet entier se calcule (`{$reglages}`, une condition) : un effet se règle réglage par réglage
+  let objet: any = null
+  let entier      = false
+  if (corps !== '') {
+    try {
+      entier = (acorn.parse(`(${corps})`, { ecmaVersion: 'latest' }) as any).body.length === 1
+    }
+    catch {
+      entier = false
+    }
+    if (!entier) {
+      try {
+        const e = (acorn.parse(`({${corps}})`, { ecmaVersion: 'latest' }) as any).body
+        if (e.length === 1 && e[0].expression?.type === 'ObjectExpression' && e[0].expression.properties.every((p: any) => p.type === 'Property' && !p.computed && p.kind === 'init')) objet = e[0].expression
+      }
+      catch {
+        objet = null
+      }
+      entier = !objet
+    }
+  }
+  if (entier) notes.push(t('transitions.ancienne-objet', { calcul: corps.replace(/\s+/g, ' '), exemple: `*${effect}(duration: $duration)` }))
+  if (objet) {
+    const src  = `({${corps}})`
+    const lus  = new Map<string, OldValue>(objet.properties.map((p: any) => [p.key.type === 'Identifier' ? p.key.name : String(p.key.value), oldValue(p.value, src)]))
+    const lit  = OLD_SETTINGS[nom]
+    let flyVu  = false
+    for (const [cle, val] of lus) {
+      // un réglage que l'animation ne lisait pas, ou sans équivalent ; une transition de l'appli garde tous les siens
+      if ((lit && !lit.includes(cle)) || cle === 'steps') {
+        sans.push(cle)
+        continue
+      }
+      // `x`, `y` (où la balise partait) → la direction où elle va et sa distance, à la place du premier des deux
+      if (effect === 'fly' && (cle === 'x' || cle === 'y')) {
+        if (flyVu) continue
+        flyVu = true
+        const x  = lus.get('x')
+        const y  = lus.get('y')
+        const lx = oldLength(x)
+        const ly = oldLength(y)
+        if (lx && ly && (lx.n === 0 || ly.n === 0 || lx.unit === ly.unit)) {
+          const unit = lx.n !== 0 ? lx.unit : ly.unit
+          if (lx.n !== 0 || ly.n !== 0) poser('direction', lx.n === 0 ? (ly.n > 0 ? 'up' : 'down') : ly.n === 0 ? (lx.n > 0 ? 'left' : 'right') : Math.abs(lx.n) === Math.abs(ly.n) ? `${ly.n > 0 ? 'up' : 'down'}-${lx.n > 0 ? 'left' : 'right'}` : String(round2((Math.atan2(-lx.n, ly.n) * 180 / Math.PI + 360) % 360)))
+          poser('distance', round2(Math.hypot(lx.n, ly.n)) + unit)
+          continue
+        }
+        // une seule des deux tenue par une variable ou un calcul, l'autre absente ou nulle : la direction de son axe, le signe suit
+        const seul = lx?.n === 0 && y && !('fixe' in y) ? ['up', y] as const : ly?.n === 0 && x && !('fixe' in x) ? ['left', x] as const : null
+        if (!seul) {
+          notes.push(t('transitions.ancienne-xy', { x: oldText(x), y: oldText(y) }))
+          continue
+        }
+        poser('direction', seul[0])
+        if ('variable' in seul[1]) poser('distance', seul[1].variable)
+        else enVariable('distance', oldText(seul[1]))
+        continue
+      }
+      const key = cle === 'dir' ? 'direction' : cle
+      // la vitesse de *draw se compte en px par seconde, celle d'avant en px par ms
+      const parMs = nom === 'draw' && cle === 'speed'
+      if ('calcul' in val) {
+        enVariable(key, parMs ? `(${val.calcul}) * 1000` : val.calcul)
+        continue
+      }
+      if ('variable' in val) {
+        const courbe = key === 'easing' && !val.variable.startsWith('$') ? oldCurve(val.variable) : ''
+        if (courbe && fitsSetting(effect, key, courbe)) poser(key, courbe)
+        else if (parMs) enVariable(key, `${val.variable} * 1000`)
+        else poser(key, val.variable)
+        continue
+      }
+      const v      = val.fixe
+      const nombre = typeof v === 'number' ? v : typeof v === 'string' && /^-?\d*\.?\d+$/.test(v.trim()) ? Number(v) : null
+      const valeur = key === 'duration' || key === 'delay' ? (nombre !== null ? oldTime(nombre) : String(v))
+        : key === 'easing' ? oldCurve(String(v))
+        : parMs && nombre !== null ? String(Math.max(1, Math.round(nombre * 1000)))
+        : typeof v === 'string' && !/^[\w.%#-]+$/.test(v) ? `'${v.replace(/'/g, '\\\'')}'`
+        : String(v)
+      if (fitsSetting(effect, key, valeur)) poser(key, valeur)
+      else sans.push(cle)
+    }
+  }
+  if (sans.length > 0) notes.push(t('transitions.ancienne-sans', { reglages: sans.join(', '), nb: sans.length }))
+  // le réglage principal, quand c'est un mot (une direction, un axe), s'écrit en tête sans son nom : *fly(up, distance: 200)
+  const i      = reglages.findIndex(([k, v]) => k === spec?.main && /^[a-z]+(?:-[a-z]+)?$/.test(v))
+  const ecrits = reglages.map(([k, v]) => `${k}: ${v}`)
+  const ordre  = i < 0 ? ecrits : [reglages[i][1], ...ecrits.filter((_, j) => j !== i)]
+  return {
+    ligne,
+    ecrite,
+    directive,
+    nom,
+    effet:         '*' + effect + (ordre.length > 0 ? `(${ordre.join(', ')})` : ''),
+    notes:         notes.join(''),
+    reglee:        corps !== '',
+    remplacee:     !!remplacante,
+    modificateurs: directive !== (attr.name ?? '').split('.')[0]
+  }
+}
+
+/** le message d'une ou de plusieurs anciennes écritures d'un composant : une seule, la phrase entière ; plusieurs, une ligne chacune */
+function oldTransitionsMessage(cas: OldTransition[]): string {
+  if (cas.length > 1) return t('transitions.anciennes', { nb: cas.length, lignes: cas.map((c) => t('transitions.ancienne-ligne', { ligne: c.ligne, ecrite: c.ecrite, ecriture: `${c.directive}=${c.effet}`, notes: c.notes + (c.remplacee ? t('transitions.ancienne-retiree', { nom: c.nom }) : '') })).join('') })
+  const c = cas[0]
+  if (c.remplacee) return t('transitions.retiree', { ecrite: c.ecrite, directive: c.directive, effet: c.effet, notes: c.notes })
+  if (!c.reglee) return t('transitions.ancienne', { ecrite: c.ecrite, directive: c.directive, nom: c.nom, reglage: exampleSetting(c.nom), modificateurs: c.modificateurs })
+  return t('transitions.ancienne-reglee', { ecrite: c.ecrite, ecriture: `${c.directive}=${c.effet}`, notes: c.notes, directive: c.directive, nom: c.nom, modificateurs: c.modificateurs })
+}
+
+/** l'ancienne écriture des transitions dans tout le gabarit d'un composant (`@in.fly={…}`, `@out.zoom`) : une seule erreur les
+ * donne toutes, chacune avec sa ligne et sa nouvelle écriture — le build du projet les donne ainsi toutes en une construction */
+export function refuseOldTransitions(root: Node): void {
+  const cas: OldTransition[] = []
+  const pile: Node[]         = [root]
+  while (pile.length > 0) {
+    const n = pile.pop()!
+    // `@in.local=*fly` : l'écriture d'aujourd'hui avec un modificateur inconnu, que le répartiteur refuse à part
+    for (const a of n.attrs) if (a.name && DIRECTIVES.ancienne(a.name, '') && !/^\*/.test(String(a.val ?? ''))) cas.push(rewriteOldTransition(a, n.line))
+    const suite = [...n.children, ...n.branches.flatMap((b) => b.children)]
+    for (let i = suite.length - 1; i >= 0; i--) pile.push(suite[i])
+  }
+  if (cas.length > 0) throw new Error(oldTransitionsMessage(cas))
+}
+
 export function dispatchAttribute(env: AttrCtx): AttrResult {
   // Spread
   if (env.attr.type === 'spread') return spread(env)
@@ -3563,11 +3818,9 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   if (vieille && DIRECTIVES.ancienne(attrName, rawVal)) {
     // `@in.local=*fly` : l'écriture d'aujourd'hui, avec un modificateur inconnu (habitude Svelte)
     if (/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.modificateur', { directive: '@' + vieille[1], mod: vieille[2] }))
-    // le nom d'une ancienne animation tombe, les modificateurs écrits (`@in.fly.shared`) restent sur la directive proposée
-    const directive   = transitionDirective(attrName)
-    const replacement = REMOVED_ANIMATIONS.get(vieille[2])
-    if (replacement) throw new Error(t('transitions.retiree', { ecrite: attrName, directive, effet: replacement }))
-    throw new Error(t('transitions.ancienne', { ecrite: attrName, directive, nom: vieille[2], reglage: exampleSetting(vieille[2]), modificateurs: directive !== '@' + vieille[1] }))
+    // le nom d'une ancienne animation tombe, les modificateurs écrits (`@in.fly.shared`) restent sur la directive proposée, les
+    // réglages écrits passent dans l'effet ; le gabarit entier est relu avant (refuseOldTransitions), ceci vaut pour une balise hors de lui
+    throw new Error(oldTransitionsMessage([rewriteOldTransition(env.attr, env.node.line)]))
   }
   if (DIRECTIVES.transition(attrName, rawVal)) {
     if (!/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.attend-effet', { directive: attrName.split('.')[0] }))

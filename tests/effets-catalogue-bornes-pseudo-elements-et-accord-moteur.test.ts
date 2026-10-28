@@ -3,7 +3,8 @@
 // - un ancien nom traduit (`*lens(blur: 55)` → `*filter.lens`) ramène la valeur dans la plage de l'effet qui le remplace, et le dit :
 //   l'écriture proposée se compile ;
 // - deux effets d'une même balise qui dessinent dans le même pseudo-élément (`::before`, `::after`) : un avertissement du build les
-//   nomme (un seul des deux apparaîtrait) ; des effets qui n'y dessinent pas, ou pas avec ces réglages, ne disent rien ;
+//   nomme (un seul des deux apparaîtrait) ; des effets qui n'y dessinent pas, ou pas avec ces réglages, ne disent rien ; *border
+//   (dégradé) posé avec *spotlight dessine dans un calque : rien à dire ;
 // - les réglages d'image et de texte de la page que le moteur reconnaît par leur nom (mjs_fx.ts) sont ceux du catalogue.
 
 import assert from 'node:assert/strict'
@@ -46,10 +47,23 @@ describe('catalogue des effets — bornes de *weight, ancien nom ramené dans la
     assert.match(w[0], /\*shine/)
     assert.match(w[0], /\*noise/)
     assert.match(w[0], /\[lint\.\w+\]$/)
-    const avant = await avertissements('<div *spotlight *border>x</div>')
+    const avant = await avertissements('<div *spotlight *iso>x</div>')
     assert.equal(avant.length, 1, JSON.stringify(avant))
     assert.match(avant[0], /::before/)
     assert.match(avant[0], /::after/)
+    // *border (dégradé) cède les pseudo-éléments de la balise à *spotlight seulement : avec un autre, l'avertissement reste
+    assert.equal((await avertissements('<div *border *glitch>x</div>')).length, 1)
+  })
+
+  it('*border (dégradé) et *spotlight sur une balise : aucun avertissement, le dégradé passe dans un calque', async () => {
+    assert.deepEqual(await avertissements('<div *spotlight *border>x</div>'), [])
+    assert.deepEqual(await avertissements('<div *border(animate: true) *spotlight(where: fill)>x</div>'), [])
+    assert.deepEqual(await avertissements('<script>\n$s = \'gradient\'\n</script>\n<div *border(style: $s) *spotlight>x</div>'), [])
+    // *spotlight garde les siens : un troisième effet qui y dessine est signalé avec lui seul
+    const w = await avertissements('<div *border *spotlight *noise>x</div>')
+    assert.equal(w.length, 1, JSON.stringify(w))
+    assert.match(w[0], /::after \(\*spotlight, \*noise\)/)
+    assert.doesNotMatch(w[0], /\*border/)
   })
 
   it('pseudo-éléments : pas d\'avertissement quand les effets n\'y dessinent pas ensemble', async () => {

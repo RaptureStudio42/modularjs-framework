@@ -1,5 +1,5 @@
 // Barre d'outils de l'éditeur riche du cœur (<@@toolbar>, et celle que <@@editor toolbar="…"> intègre) : les NOMS des outils, joués dans happy-dom.
-// - les noms sont ceux du code, en anglais seulement : h2 h3 quote bold italic underline strike ul ol check link undo redo clear ; `|` pose un séparateur ;
+// - les noms sont ceux du code, en anglais seulement : h2 h3 quote bold italic underline strike color ul ol check link undo redo clear ; `|` pose un séparateur ;
 // - sans liste, tous les outils dans l'ordre par défaut ; un nom en double ne compte qu'une fois, un séparateur de bord ou en double tombe ;
 // - un nom inconnu (un mot français comme « gras », une faute de frappe) est IGNORÉ, avec un avertissement par nom dans la console, qui rappelle les noms connus ;
 // - la barre d'un éditeur suit le même chemin que la barre posée à part ; `toolbar="none"` n'en met aucune.
@@ -73,7 +73,7 @@ describe('éditeur riche : les noms des outils de la barre (happy-dom)', functio
     for (const mot of ['gras', 'italique', 'titres']) {
       const dits = avertissements.filter((a) => a.includes('« ' + mot + ' »'))
       assert.equal(dits.length, 1, `« ${mot} » signalé une fois : ${JSON.stringify(avertissements)}`)
-      assert.ok(dits[0].includes('h2 h3 quote bold italic underline strike ul ol check link undo redo clear'), 'la liste des noms connus est rappelée')
+      assert.ok(dits[0].includes('h2 h3 quote bold italic underline strike color ul ol check link undo redo clear'), 'la liste des noms connus est rappelée')
     }
     assert.equal(avertissements.length, 3, JSON.stringify(avertissements))
   })

@@ -10,8 +10,8 @@
 //    joueur (_intentQueue, dernière valeur gagne par nom) au lieu d'être exécutées ; la boucle
 //    (setInterval, _startTickLoop/_runTick) déroule à chaque tick : intentions en file
 //    (ordre des SIÈGES) → def.simulate(game, dt RÉEL mesuré) → UNE diffusion (_broadcastTick).
-//    `_markDirty` (microtâche) devient un NO-OP tant que tick>0 : la cadence de diffusion
-//    appartient exclusivement à la boucle dans ce mode (jamais les deux à la fois). Les moves
+//    `_markDirty` ne diffuse plus rien tant que tick>0 (il n'y pose que la marque de sauvegarde, cf. _markTick) : la cadence de
+//    diffusion appartient exclusivement à la boucle dans ce mode (jamais les deux à la fois). Les moves
 //    classiques restent exécutés IMMÉDIATEMENT, hors boucle (ex. chat) — cf. _onMove.
 //    def.slowTick optionnel = 2e setInterval à sa propre cadence, indépendante de `tick`.
 //    Boucle démarrée dès le 1er siège CONNECTÉ (_checkEmpty, y compris _createSeat), coupée à la
@@ -20,15 +20,22 @@
 //    (deepDiff plus bas) entre la vue courante et `_lastViews` (dernière vue ENVOYÉE à CE
 //    joueur) ; repli vue complète en 1re diffusion/resync/delta trop gros (>60% du JSON de la vue).
 //    Défaut false = frame IDENTIQUE au v1 (compatibilité stricte, cf. tests/socket-game.test.ts).
-//  - persistance (_onMutate) — à cadence de tick, l'appeler à CHAQUE tick serait trop bavard ;
-//    _markDirty() throttle localement (TICK_PERSIST_THROTTLE_MS), le lissage/l'écriture
-//    réels restent 100% gouvernés par persist.ts (débounce/snapshotEvery, inchangés).
+//  - persistance (_onMutate) — la partie n'est marquée à sauvegarder que si quelque chose a pu la changer (cf. _markTick) : un
+//    coup, une intention, un siège, la phase, le tour, la fin, game.changed() la font écrire ; simulate, slowTick et les minuteries
+//    de l'appli, dont l'effet ne se voit pas, seulement si elle diffère de sa dernière sauvegarde, comparée au moment d'écrire (cf.
+//    _prepareSave) — une empreinte par sauvegarde tentée, pas par tick, sauf ticks plus espacés que le débounce de persist.ts (chacun
+//    tente alors la sienne). La boucle passe la marque au plus une fois par TICK_PERSIST_THROTTLE_MS
+//    (_markDirtyTick) ; arrêtée, la marque part tout de suite, et à l'arrêt du serveur aussi (_releaseMark). Boucle arrêtée, ce
+//    que change une minuterie ou game.changed() est diffusé tout de suite (_broadcastWithoutLoop). Le lissage et l'écriture réels restent gouvernés par persist.ts
+//    (débounce/snapshotEvery). La suite d'une intention asynchrone (la Promise qu'elle rend) marque la partie à sa fin, comme un coup ;
+//    celle de simulate ou de slowTick aussi, comparée à la dernière sauvegarde comme leur début — boucle arrêtée entre-temps, elle est
+//    diffusée tout de suite (_broadcastWithoutLoop).
 //
 // Sièges/tour/minuteries — quelques décisions v1 assumées :
 //  - .next() (roundrobin) fait tourner le tour parmi TOUS les sièges occupés, connectés ou non —
 //    aucun « saut » automatique d'un siège déconnecté (fidèle à « pas de kick automatique v1 »).
-//    Le VRAI filet contre un tour bloqué par un absent, c'est turns.timeout (générique, déjà
-//    demandé), pas un filtrage caché en plus.
+//    Le VRAI filet contre un tour bloqué par un absent, c'est turns.timeout (générique, 30 s par
+//    défaut, `null` pour s'en passer : partie par correspondance), pas un filtrage caché en plus.
 //  - .end() n'impose AUCUNE phase — si l'auteur veut fermer les coups après la fin, il déclare sa
 //    propre phase 'fin' à coups vides dans `def.phases` et l'atteint lui-même via `.to('fin')`.
 //  - .end() arme une grâce de destruction = `def.endTtl` (défaut `def.emptyTtl`, qui reste la vie d'une
@@ -48,7 +55,7 @@ import { createHistory } from './history.js'
 import type { MjsServerHistory, MjsServerHistoryPositions, MjsServerHistoryMeta } from './history.js'
 // mode lockstep — la salle ne simule rien, cf. lockstep.ts pour le contrat complet
 import { createLockstep } from './lockstep.js'
-import type { MjsServerLockstep, MjsServerLockstepTick } from './lockstep.js'
+import type { MjsServerLockstep, MjsServerLockstepTick, MjsServerLockstepSnapshot } from './lockstep.js'
 import { t } from '../messages/index.js'
 import type { MsgKey } from '../messages/index.js'
 
@@ -97,7 +104,7 @@ function joinRefusedResult(): { refused: true; reason: 'join-refused' } {
 // refusé au-delà (game-def.ts)
 export const MAX_TIMEOUT_MS = 2147483647
 const JOURNAL_MAX = 200
-// mode action — throttle LOCAL de _markDirty (persistance), INDÉPENDANT de def.tick (jusqu'à
+// mode action — throttle LOCAL de la marque de sauvegarde que passe la boucle (_markDirtyTick), INDÉPENDANT de def.tick (jusqu'à
 // 60 Hz) : borne la fréquence d'APPEL du hook _onMutate, jamais la logique d'écriture elle-même
 // (100% chez persist.ts, débounce/snapshotEvery inchangés) — cf. commentaire de tête du fichier
 const TICK_PERSIST_THROTTLE_MS = 100
@@ -106,7 +113,8 @@ const TICK_PERSIST_THROTTLE_MS = 100
 // DEFAULT_MOVES_LIMIT (game-def.ts, 30/1000ms) — largement au-dessus d'un usage légitime (µ.lockstep
 // hache par défaut toutes les 60 ticks, cf. mjs_lockstep.ts), bloque un flood de hash par ailleurs
 // VALIDES mais coûteux à traiter (Map par tick, cf. lockstep.ts) ; canal DISTINCT de `_buckets`
-// (coups) — jamais mélangé, cf. _bucketsHash.
+// (coups) — jamais mélangé, cf. _bucketsHash. Les propositions d'instantané (µgame:snapshot) ont le leur, à la cadence du jeu (cf.
+// _consumeSnapshotToken) : au-delà de 30 Hz, une cadence de 1 en enverrait plus que ces 30 jetons.
 const HASH_LIMIT: [number, number] = [30, 1000]
 // anti-triche (détection par coup) — anneau borné DÉDIÉ (JAMAIS mélangé à `journal`, le
 // journal COURT v1 des coups CLASSIQUEMENT appliqués ci-dessus, cf. commentaire de tête du fichier)
@@ -276,8 +284,9 @@ export interface MjsServerGameSnapshot {
   unconfirmedSeats?: string[] | null
   /** mode lockstep — µpersist = JOURNAL D'ORDRES (cf. lockstep.ts) — `undefined` pour
    *  une partie 'authoritative' (absent après un aller-retour JSON, rétro-compat totale des anciens
-   *  instantanés). Pas de `seed` : ré-dérivée de `id` à la restauration, cf. deterministicSeed. */
-  lockstep?: { journal: MjsServerLockstepTick[] }
+   *  instantanés). Pas de `seed` : ré-dérivée de `id` à la restauration, cf. deterministicSeed. `snapshot` : le dernier
+   *  instantané gardé (cf. lockstep.ts « INSTANTANÉS »), le journal ne portant alors que les ticks qui le suivent ; absent sans lui */
+  lockstep?: { journal: MjsServerLockstepTick[]; snapshot?: MjsServerLockstepSnapshot }
 }
 
 export class Game {
@@ -298,7 +307,28 @@ export class Game {
   // confiance) et les factory functions plus bas (hors de la classe) y accèdent directement.
   _onDestroy: (game: Game) => void
   _dirty = false
+  /** la diffusion groupée en attente (`_dirty`) sauvegarde aussi la partie — faux quand seules des minuteries de l'appli qui laissent
+   *  la partie identique à sa dernière sauvegarde l'ont demandée (cf. _markDirty, _markTimerDirty) */
+  _saveWanted = false
+  /** empreinte (cf. _savedPrint) de la dernière sauvegarde RÉUSSIE, prise quand persist.ts a sérialisé la partie pour l'écrire (cf.
+   *  _prepareSave) et retenue quand l'écriture aboutit (cf. _noteSaved) — une écriture refusée ou restée sans réponse ne la change pas :
+   *  le stockage porte peut-être encore la précédente. Le tir d'une minuterie de l'appli s'y compare pour savoir s'il faut sauvegarder
+   *  (mode événementiel, cf. _markTimerDirty), la sauvegarde suivante pour savoir s'il faut écrire (mode action). `null` = inconnue
+   *  (aucune sauvegarde réussie dans ce processus, partie restaurée, empreinte non calculée) : la minuterie qui part, ou la sauvegarde
+   *  suivante, fait alors écrire la partie */
+  _lastSavePrint: string | null = null
+  /** mode action — une marque de sauvegarde attend que la boucle de tick la passe à la persistance (cf. _markTick, _markDirtyTick) */
+  _tickMark = false
+  /** mode action — depuis la dernière sauvegarde, la partie a changé à coup sûr (coup, intention, siège, phase, tour, game.changed()…) :
+   *  la sauvegarde suivante s'écrit sans comparaison ; sinon seul du code dont l'effet ne se voit pas a tourné (simulate, slowTick,
+   *  minuterie de l'appli), et elle ne s'écrit que si la partie diffère de sa dernière sauvegarde (cf. _prepareSave) */
+  _saveSure = false
   _destroyed = false
+  /** arrêt du serveur commencé (matchmaking.ts, holdTimers) : plus aucune minuterie de la partie ne part — ni grâce, ni tour, ni
+   *  minuterie de l'appli. L'échéance reste dans `_timers`, donc dans la sauvegarde de la rafale finale, et part au redémarrage : une
+   *  grâce échue pendant que l'arrêt attendait un stockage lent détruisait la partie en plein arrêt (hooks.onDestroy appelé, sauvegarde
+   *  retirée), alors que l'arrêt ne finit aucune partie. Jamais remis à `false` : la partie est détruite à la fin de l'arrêt */
+  _held = false
   /** `true` dès le PREMIER .end() réussi (cf. .end() plus bas) — SÉPARÉE de `_destroyed` : une partie
    *  finie mais encore dans sa fenêtre de grâce `endTtl` est `_ended=true, _destroyed=false` (toujours
    *  interrogeable, cf. commentaire de tête). Rend .end() IDEMPOTENT — sans elle, un move métier
@@ -321,6 +351,8 @@ export class Game {
   /** anti-triche (µgame:hash) — seau à jetons DÉDIÉ par siège, canal DISTINCT de `_buckets`
    *  (coups) : cf. HASH_LIMIT/_consumeHashToken plus bas. */
   _bucketsHash: Array<TokenBucket | null> = []
+  /** mode lockstep avec instantanés (µgame:snapshot) — seau à jetons DÉDIÉ par siège, jamais celui des hash : cf. _consumeSnapshotToken */
+  _bucketsSnapshot: Array<TokenBucket | null> = []
   _unconfirmedSeats: Set<string> | null = null
   _timers = new Map<string, { at: number; handle: ReturnType<typeof setTimeout> }>()
   /** couture persistance (persist.ts) — posée par MjsServerPersistEngine.armGame()
@@ -335,6 +367,9 @@ export class Game {
   _history: MjsServerHistory | null = null
   /** mode lockstep (def.mode:'lockstep') — `null` hors lockstep, cf. lockstep.ts */
   _lockstep: MjsServerLockstep | null = null
+  /** mode lockstep avec instantanés — connexions qui ont déjà proposé un instantané (µgame:snapshot) : elles savent le lire au resync.
+   *  Tant qu'une connexion assise n'y est pas, aucun accord ne coupe le journal (cf. _receiveSnapshot) */
+  _snapshotReaders = new WeakSet<MjsWsClient>()
   _tickHandle: ReturnType<typeof setInterval> | null = null
   _slowTickHandle: ReturnType<typeof setInterval> | null = null
   /** Date.now() du tick précédent — sert à mesurer `dt` RÉEL (cf. _runTick) */
@@ -415,7 +450,7 @@ export class Game {
     this.phase      = def.phases ? (Object.keys(def.phases)[0] ?? null) : null
     this.space      = def.space ? createSpace(def.space.cell, msg => def.log('warn', msg)) : null
     this._history     = def.history ? createHistory(def.history.ticks) : null
-    this._lockstep  = def.mode === 'lockstep' ? createLockstep(id, def.lockstepJournal?.maxTicks ?? null, { maxBytes: def.lockstepJournal?.maxBytes, maxOrderBytes: def.lockstepJournal?.maxOrderBytes }) : null
+    this._lockstep  = def.mode === 'lockstep' ? createLockstep(id, def.lockstepJournal?.maxTicks ?? null, { maxBytes: def.lockstepJournal?.maxBytes, maxOrderBytes: def.lockstepJournal?.maxOrderBytes }, def.lockstepSnapshot?.every ?? null, def.lockstepSnapshot?.window ?? null) : null
   }
 
   // --- API publique (contrat du design MJS-Server) --------------------------------------------
@@ -445,8 +480,10 @@ export class Game {
     this._markDirty()
   }
 
-  /** arme/réarme une minuterie NOMMÉE — à l'échéance, appelle `def.timers[name](game)`.
-   *  Sérialisable ({name, at}, cf. serialize()) : jamais de fermeture stockée. Sans effet une fois la partie finie :
+  /** arme/réarme une minuterie NOMMÉE — à l'échéance, appelle `def.timers[name](game)` : l'état est rediffusé, la partie sauvegardée
+   *  seulement si elle diffère alors de sa dernière sauvegarde — état, phase, tour, sièges, fin, minuteries présentes ; une minuterie
+   *  réarmée sous le même nom ne compte pas (cf. _markTimerDirty). Sérialisable ({name, at}, cf. serialize()) :
+   *  jamais de fermeture stockée. Sans effet une fois la partie finie :
    *  .end() coupe les minuteries de l'appli, et celle qu'on armerait ensuite (depuis hooks.onEnd, par exemple) ne part pas. Sans effet non
    *  plus sur une partie détruite : un hooks.onJoin asynchrone peut rendre la main après la destruction du groupe de la file.
    *  Un nom absent de `def.timers` lève tout de suite (propriété PROPRE, comme moves/intents : un nom hérité, 'toString'…, n'est pas
@@ -465,6 +502,20 @@ export class Game {
     this._broadcastTo('µgame:event', { type, p })
   }
 
+  /** annonce un changement que MJS-Server ne voit pas seul : celui que fait du code qui tourne hors d'un coup, d'une minuterie et de
+   *  la Promise qu'ils rendent (la suite d'un appel lancé sans être attendu, une réponse reçue plus tard…). Mode événementiel : l'état
+   *  est diffusé et la partie sauvegardée, comme après un coup (une seule diffusion par microtâche, cf. _markDirty). Mode action : la
+   *  sauvegarde est demandée tout de suite, sans attendre la cadence de la boucle ; la diffusion reste celle de la boucle tant qu'elle
+   *  tourne (au tick suivant) — arrêtée (partie finie, plus aucun siège connecté), aucun tick ne porterait le changement : il part ici
+   *  (cf. _broadcastWithoutLoop). Sans effet sur une partie détruite ou muette (appariement de la file en cours : _announce() la marque
+   *  elle-même) */
+  changed(): void {
+    if (this._destroyed || this._silent) return
+    if (this.def.tick <= 0) { this._markDirty(); return }
+    if (this._onMutate) { this._saveSure = true; this._onMutate(this) }
+    this._broadcastWithoutLoop()
+  }
+
   /** vue filtrée par joueur (`def.view`, défaut = état entier) — jamais accédée à `def` en dehors de
    *  ce fichier. Throw en mode 'lockstep' (def.view est `null`, cf. game-def.ts) — ne devrait jamais être
    *  appelée pour une partie lockstep (aucun état serveur), cf. _infoMode/_broadcastTickOrders. */
@@ -474,13 +525,31 @@ export class Game {
   }
 
   /** partie du protocole SPÉCIFIQUE au mode — 'authoritative' : `{ view: viewFor(player) }` ;
-   *  'lockstep' : `{ seed, journal }` (graine + historique COMPLET des ordres, cf. lockstep.ts) — le
-   *  client rejoue le journal pour rattraper l'état commun (cf. µ.lockstep, mjs_lockstep.ts). Point
+   *  'lockstep' : `{ seed, journal }` (graine + historique des ordres, cf. lockstep.ts) — le client rejoue le journal pour
+   *  rattraper l'état commun (cf. µ.lockstep, mjs_lockstep.ts) ; avec des instantanés (def.lockstepJournal.snapshotEvery), en plus
+   *  `snapshotEvery` et `snapshotMax` (cadence et taille permise d'une proposition), et `snapshot`, le dernier gardé, dont le client
+   *  repart avant de rejouer les ordres qui le suivent. Point
    *  UNIQUE consommé par les 3 réponses qui portent l'identité de siège (seatResponse/pushStart
    *  côté matchmaking.ts, _resync ci-dessous) — jamais dupliqué. */
   _infoMode(player: MjsServerSeat | null): Record<string, unknown> {
-    if (this.def.mode === 'lockstep') return { seed: this._lockstep!.seed, journal: this._lockstep!.journal() }
+    if (this.def.mode === 'lockstep') {
+      const info: Record<string, unknown> = { seed: this._lockstep!.seed, journal: this._lockstep!.journal() }
+      const every = this.def.lockstepSnapshot
+      if (every) { info.snapshotEvery = every.every; info.snapshotMax = every.max }
+      const snapshot = this._lockstep!.snapshot()
+      if (snapshot) info.snapshot = snapshot
+      return info
+    }
     return { view: this.viewFor(player) }
+  }
+
+  /** mode lockstep — une page qui ne sait pas lire un instantané ne se déclare pas (`snapshots: true` dans µgame:play et µgame:resync,
+   *  cf. mjs_game.ts) : face à un journal déjà coupé, elle repartirait de son état initial sans les ordres retirés (journal tronqué, état
+   *  faux). Refusée franchement dès qu'un instantané est gardé, avec de quoi recharger la page, avant de prendre ou de retrouver son
+   *  siège ; tant que le journal est entier, elle joue comme les autres (sa présence retient alors toute coupe, cf. _receiveSnapshot).
+   *  Lève l'erreur que reçoit sa requête ; rien hors du mode lockstep */
+  _requireSnapshotReader(reads: boolean): void {
+    if (!reads && this._lockstep?.snapshot()) throw new Error(t('serveur.partie-page-sans-instantane'))
   }
 
   /** compensation de lag serveur (def.history) — rembobine le tampon d'historique à l'instant
@@ -573,7 +642,7 @@ export class Game {
       result: this._endResult,
       started: this._started,
       unconfirmedSeats: this._unconfirmedSeats ? Array.from(this._unconfirmedSeats) : null,
-      lockstep: this._lockstep ? { journal: this._lockstep.journal() } : undefined,
+      lockstep: this._lockstep ? lockstepData(this._lockstep) : undefined,
     }
   }
 
@@ -1012,9 +1081,10 @@ export class Game {
    *  auto-contradiction + fenêtre) — SILENCIEUX en fonctionnement normal (hashs concordants, ou
    *  quorum pas encore atteint) ; une divergence identifiée (auto-contradiction OU minorité face au
    *  hash majoritaire, JAMAIS la majorité elle-même) → µgame:event 'divergence' à TOUS +
-   *  def.onDivergence (le jeu décide). `seats` = TOUS les sièges OCCUPÉS de cette
+   *  def.onDivergence (le jeu décide). `seated` = identités de TOUS les sièges OCCUPÉS de cette
    *  partie, connectés ou non (MÊME politique que le tour par tour roundrobin, cf. commentaire de
-   *  tête) — relu à CET appel (jamais figé), sert de base à la majorité absolue côté lockstep.ts.
+   *  tête) — relu à CET appel (jamais figé) : seuls leurs hash comptent, la majorité absolue se prend sur leur nombre (le hash
+   *  d'un joueur parti est oublié, cf. lockstep.ts « QUORUM »).
    *  Anti-abus dédié AVANT tout traitement (_consumeHashToken, cf. HASH_LIMIT) : au-delà du
    *  budget, le rapport est silencieusement ignoré (comme toute autre garde ICI). No-op si
    *  non-lockstep/joueur inconnu — jamais un throw : trame reçue via app.on (fire-and-forget, cf.
@@ -1027,11 +1097,36 @@ export class Game {
     const player = this._findSeatOf(client)
     if (!player) return
     if (!this._consumeHashToken(player)) return
-    const seats = this.players.filter((j): j is MjsServerSeat => j !== null).length
-    const divergence = this._lockstep.receiveHash(player.id, tick, h, seats)
+    const seated: string[] = []
+    for (const j of this.players) if (j) seated.push(j.id)
+    const divergence = this._lockstep.receiveHash(player.id, tick, h, seated)
     if (!divergence) return
     this.send('divergence', divergence)
     this.def.onDivergence?.(this, divergence)
+  }
+
+  /** µgame:snapshot (mode lockstep, def.lockstepJournal.snapshotEvery) — un siège propose l'état de sa simulation à la fin de `tick`
+   *  et celui du générateur partagé ; lockstep.ts ne le garde que quand au moins deux joueurs assis et la majorité absolue des joueurs
+   *  assis (connectés ou non, comme _receiveHash) proposent le même, en ne comptant que les votes des joueurs assis à ce décompte (cf. son
+   *  « INSTANTANÉS »). Gardé, il coupe le journal : la partie est marquée à sauvegarder. Un client qui ne sait pas lire les instantanés
+   *  n'en propose jamais, et repartirait au resync de son état initial sans les ordres retirés : tant qu'une connexion assise n'a jamais
+   *  proposé d'instantané (cf. _snapshotReaders), l'accord est retenu et le journal reste entier. Mêmes gardes silencieuses que
+   *  _receiveHash — partie finie, joueur inconnu, seau à jetons (le sien, à la cadence du jeu, cf. _consumeSnapshotToken) : trame reçue
+   *  via app.on, sans réponse possible */
+  _receiveSnapshot(client: MjsWsClient, tick: number, state: unknown, rng: number): void {
+    if (this._ended || this.def.mode !== 'lockstep' || !this._lockstep) return
+    const player = this._findSeatOf(client)
+    if (!player) return
+    this._snapshotReaders.add(client)
+    if (!this._consumeSnapshotToken(player)) return
+    const seated: string[] = []
+    let hold = false
+    for (const j of this.players) {
+      if (!j) continue
+      seated.push(j.id)
+      for (const c of j.clients) if (!this._snapshotReaders.has(c)) hold = true
+    }
+    if (this._lockstep.receiveSnapshot(player.id, tick, state, rng, seated, hold)) this._markTick(true)
   }
 
   /** ouvre la fenêtre de confirmation seatTtl (parties issues de la file, cf. matchmaking.ts) —
@@ -1050,9 +1145,11 @@ export class Game {
     if (this._unconfirmedSeats.size === 0) { this._disarm('µmatch'); this._unconfirmedSeats = null }
   }
 
-  /** force la destruction (timers coupés) — appelée par les échéances internes ET par
-   *  index.ts (app.stop()) pour ne laisser AUCUN setTimeout survivre à l'arrêt du serveur */
-  _destroy(): void {
+  /** force la destruction (timers coupés) — appelée par les échéances internes, par matchmaking.ts (appariement défait) ET à
+   *  l'arrêt du serveur (app.stop(), `stopping`) pour ne laisser AUCUN setTimeout survivre. hooks.onDestroy part ensuite, une
+   *  seule fois, la partie déjà retirée du registre — jamais à l'arrêt du serveur, qui laisse la partie sauvegardée revivre au
+   *  redémarrage. Code JEU sans requête à qui répondre : un throw ou une Promise rejetée est journalisé, la destruction a eu lieu */
+  _destroy(stopping = false): void {
     if (this._destroyed) return
     this._destroyed = true
     this._stopTickLoop()   // garde-fou ULTIME — inconditionnel, même si des sièges restaient connectés (cf. .end()/_checkEmpty pour les arrêts normaux)
@@ -1062,6 +1159,12 @@ export class Game {
     for (const t of this._timers.values()) clearTimeout(t.handle)
     this._timers.clear()
     this._onDestroy(this)
+    if (stopping) return
+    try {
+      this._followRejection('serveur.partie-ondestroy-rejete', this.def.hooks.onDestroy?.(this))
+    } catch (err) {
+      this.def.log('error', t('serveur.partie-ondestroy-leve', { msg: errMessage(err) }))
+    }
   }
 
   // --- diffusion ------------------------------------------------------------------------------
@@ -1198,12 +1301,15 @@ export class Game {
     for (const client of this._spectators) this.app.send(client, type, frame)
   }
 
-  /** mode événementiel (tick=0) — groupe les mutations d'une même microtâche en UNE diffusion */
+  /** mode événementiel (tick=0) — groupe les mutations d'une même microtâche en UNE diffusion, suivie de la sauvegarde si une des
+   *  marques la voulait (cf. `_saveWanted`) */
   _broadcastState(): void {
-    this._dirty = false
+    const save       = this._saveWanted
+    this._dirty      = false
+    this._saveWanted = false
     if (this._destroyed || this._silent) return   // muette : ni trame ni sauvegarde, _announce() marque la partie à nouveau
     this._broadcastToPlayers()
-    this._onMutate?.(this)
+    if (save) this._onMutate?.(this)
   }
 
   /** mode action (tick>0) — UNE diffusion PAR TICK, après def.simulate (cf. _runTick) ;
@@ -1243,33 +1349,72 @@ export class Game {
     if (!group) {
       this.def.log('warn', t('serveur.partie-journal-lockstep-plein', { id: this.id, max: this.def.lockstepJournal?.maxBytes }))
       this._guardTick('hooks.onEnd', () => this.end({ ended: true, reason: 'journal-full' }))
-      this._markDirtyTick()
+      this._markTick(true)
       return
     }
     this.seq = group.tick
     this._broadcastTo('µgame:orders', { tick: group.tick, orders: group.orders })
     this._broadcastToSpectators()
+    // le journal d'ordres s'allonge d'un tick, même vide : l'horloge commune avance, la partie a changé
+    this._markTick(true)
     this._markDirtyTick()
   }
 
   /** groupe les mutations d'une même microtâche en UNE diffusion — SUSPENDU
    *  en mode action (def.tick > 0) : la cadence de diffusion appartient alors exclusivement à la
-   *  boucle de tick (_broadcastTick), jamais à une microtâche (cf. commentaire de tête du fichier) */
-  _markDirty(): void {
-    if (this.def.tick > 0) return
+   *  boucle de tick (_broadcastTick), jamais à une microtâche (cf. commentaire de tête du fichier) ; seule la marque de sauvegarde
+   *  y est posée (cf. _markTick, `save` = changement sûr).
+   *  `save` faux : diffusion seule, sans sauvegarde (minuterie de l'appli qui laisse la partie identique à sa dernière sauvegarde, cf.
+   *  _markTimerDirty) — une autre marque de la même microtâche qui sauvegarde l'emporte */
+  _markDirty(save = true): void {
+    if (this.def.tick > 0) { this._markTick(save); return }
+    if (save) this._saveWanted = true
     if (this._dirty || this._destroyed) return
     this._dirty = true
     queueMicrotask(() => this._broadcastState())
   }
 
-  /** persistance en mode action — cf. commentaire de tête (throttle LOCAL, indépendant du débounce
-   *  de persist.ts qui reste seul maître du LISSAGE/de l'ÉCRITURE réels) */
-  _markDirtyTick(): void {
+  /** mode action : la partie a pu changer — `sure` : à coup sûr (coup, intention, siège, phase, tour, fin, journal d'ordres), la
+   *  sauvegarde s'écrit sans comparaison ; sinon par du code dont l'effet ne se voit pas (simulate, slowTick, minuterie de l'appli), elle
+   *  ne s'écrit que si la partie diffère de sa dernière sauvegarde (cf. _prepareSave). Boucle en marche, la marque attend son tick
+   *  (_markDirtyTick) ; arrêtée (plus aucun siège connecté, partie finie), elle part tout de suite : une minuterie qui part alors est
+   *  sauvegardée. Rien sans persistance ni sur une partie détruite ; une partie muette garde sa marque (_announce() la fait partir) */
+  _markTick(sure: boolean): void {
     if (this._destroyed || !this._onMutate) return
+    if (sure) this._saveSure = true
+    this._tickMark = true
+    if (!this._tickHandle && !this._silent) this._passTickMark(Date.now())
+  }
+
+  /** persistance en mode action, à chaque tick — passe la marque posée depuis le précédent passage (cf. _markTick), au plus une fois
+   *  par TICK_PERSIST_THROTTLE_MS (throttle LOCAL, indépendant du débounce de persist.ts qui reste seul maître du LISSAGE/de
+   *  l'ÉCRITURE réels) ; rien quand rien n'a tourné qui puisse changer la partie */
+  _markDirtyTick(): void {
+    if (!this._tickMark || this._destroyed || !this._onMutate) return
     const now = Date.now()
     if (now - this._lastPersistMark < TICK_PERSIST_THROTTLE_MS) return
+    this._passTickMark(now)
+  }
+
+  /** passe la marque de sauvegarde du mode action à la persistance (cf. _markTick, _markDirtyTick, _stopTickLoop) */
+  _passTickMark(now: number): void {
+    this._tickMark        = false
     this._lastPersistMark = now
-    this._onMutate(this)
+    this._onMutate?.(this)
+  }
+
+  /** mode action, boucle arrêtée (partie finie, plus aucun siège connecté) : le changement annoncé par game.changed() ou fait par une
+   *  minuterie (cf. _markTimerDirty) part ici, aucun tick ne le porterait — aux spectateurs qui regardent encore, notamment. Une
+   *  diffusion par microtâche, comme en mode événementiel (`_dirty`, dont _markDirty ne se sert pas en mode
+   *  action). Rien tant que la boucle tourne (elle diffuse au tick suivant), ni en mode lockstep (aucune vue à diffuser) */
+  _broadcastWithoutLoop(): void {
+    if (this._tickHandle || this.def.mode === 'lockstep' || this._dirty) return
+    this._dirty = true
+    queueMicrotask(() => {
+      this._dirty = false
+      if (this._destroyed || this._silent || this._tickHandle) return
+      this._broadcastToPlayers()
+    })
   }
 
   /** aucun siège CONNECTÉ → arme la destruction après `emptyTtl` (+ coupe la boucle de tick) ; un
@@ -1313,13 +1458,35 @@ export class Game {
     this._tickHandle = setInterval(() => this._runTick(), period)
     if (this.def.slowTick) {
       const slowPeriod = 1000 / this.def.slowTick.hz
-      this._slowTickHandle = setInterval(() => { if (!this._destroyed) this._guardTick('slowTick', () => this.def.slowTick!.fn(this)) }, slowPeriod)
+      this._slowTickHandle = setInterval(() => {
+        if (this._destroyed) return
+        // la suite d'une Promise rendue change encore la partie à sa fin : marquée comme le début, diffusée si la boucle s'est arrêtée
+        this._guardTick('slowTick', () => this.def.slowTick!.fn(this), () => { this._markTick(false); this._broadcastWithoutLoop() })
+        this._markTick(false)
+      }, slowPeriod)
     }
   }
 
+  /** arrêt du serveur (persist.ts, avant la rafale finale) : la marque de sauvegarde que la boucle retenait (une passe au plus par
+   *  TICK_PERSIST_THROTTLE_MS) part tout de suite — sinon le dernier changement de la partie manquait à la sauvegarde, et au
+   *  redémarrage. Mode événementiel, la sauvegarde que la diffusion groupée attend (cf. `_saveWanted`) aussi : un coup, une minuterie
+   *  ou game.changed() juste avant app.stop(), dans le même tour, la faisait partir après la rafale finale, quand la persistance ne
+   *  programme plus rien ; la diffusion reste celle de la microtâche. Rien sans marque, ni sur une partie détruite ou muette */
+  _releaseMark(): void {
+    if (this._destroyed || this._silent) return
+    if (this.def.tick <= 0) {
+      if (this._saveWanted) { this._saveWanted = false; this._onMutate?.(this) }
+      return
+    }
+    if (this._tickMark) this._passTickMark(Date.now())
+  }
+
+  /** arrête la boucle — la marque de sauvegarde qui attendait son tick part tout de suite (départ du dernier siège connecté, fin de
+   *  la partie, ce que le dernier tick a changé) ; rien sur une partie détruite ou muette */
   _stopTickLoop(): void {
     if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null }
     if (this._slowTickHandle) { clearInterval(this._slowTickHandle); this._slowTickHandle = null }
+    if (this._tickMark && !this._destroyed && !this._silent) this._passTickMark(Date.now())
   }
 
   /** garde-fou boucle de tick — capture SYNC (throw) et ASYNC (rejet) du seul code
@@ -1327,12 +1494,14 @@ export class Game {
    *  exception y est invisible (diffusion broadcast, aucun client à qui répondre). Log seul, AUCUN
    *  changement de gameplay. NE PAS l'étendre au code interne du framework (_broadcastTick,
    *  _broadcastTickOrders, _applyIntents elle-même) — un throw là est un bug framework à
-   *  laisser remonter, pas à masquer. */
-  _guardTick(what: string, fn: () => unknown): void {
+   *  laisser remonter, pas à masquer. `settled` : appelé à la fin d'une Promise rendue, qu'elle aboutisse ou rejette (une intention,
+   *  simulate ou slowTick asynchrone marque alors la partie, cf. _applyIntents, _runTick, _startTickLoop) */
+  _guardTick(what: string, fn: () => unknown, settled?: () => void): void {
     try {
       const r = fn()
       if (r && typeof (r as any).then === 'function') {
-        (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('serveur.partie-tick-rejete', { quoi: what, msg: errMessage(err) })))
+        const pending = (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t('serveur.partie-tick-rejete', { quoi: what, msg: errMessage(err) })))
+        if (settled) void pending.then(settled)
       }
     } catch (err) {
       this.def.log('error', t('serveur.partie-tick-leve', { quoi: what, msg: errMessage(err) }))
@@ -1353,7 +1522,12 @@ export class Game {
     this._applyIntents()
     // une intention a terminé la partie : plus de simulation (elle modifiait l'état final), l'état final part encore
     if (this._ended) { this._broadcastTick(); return }
-    this._guardTick('simulate', () => this.def.simulate?.(this, dt))
+    if (this.def.simulate) {
+      // son effet ne se voit pas : la sauvegarde se compare à la dernière au moment d'écrire (cf. _prepareSave) — la suite d'une Promise
+      // rendue aussi, à sa fin, et elle est diffusée si la boucle s'est arrêtée entre-temps (aucun tick ne la porterait)
+      this._guardTick('simulate', () => this.def.simulate!(this, dt), () => { this._markTick(false); this._broadcastWithoutLoop() })
+      this._markTick(false)
+    }
     this._broadcastTick()
   }
 
@@ -1363,7 +1537,9 @@ export class Game {
    *  l'appel à `fn` — le jeu reçoit un payload STRICTEMENT identique à ce qu'il recevrait sans la
    *  couture, aucune fuite de méta-donnée protocole dans `def.intents`.
    *  Une intention qui termine la partie (.end()) arrête la file : celles qui suivent dans ce tick ne tournent pas (le score de
-   *  l'autre joueur était compté après la victoire). */
+   *  l'autre joueur était compté après la victoire). Une intention qui rend une Promise change encore l'état à sa fin : une 2e marque,
+   *  sûre comme la première, la fait sauvegarder (elle était diffusée au tick suivant, jamais écrite) ; boucle arrêtée entre-temps,
+   *  aucun tick ne la porterait : elle est diffusée aussi (cf. _broadcastWithoutLoop) */
   _applyIntents(): void {
     if (this._intentQueue.size === 0) return
     for (const player of this.players) {
@@ -1374,10 +1550,12 @@ export class Game {
       for (const [name, p] of queue) {
         if (this._ended) break
         const fn = this.def.intents[name]
-        if (fn) this._guardTick('intent:'+ name, () => fn(this, player, this._extractN(player.id, p)))
+        if (fn) this._guardTick('intent:'+ name, () => fn(this, player, this._extractN(player.id, p)), () => { this._markTick(true); this._broadcastWithoutLoop() })
       }
     }
     this._intentQueue.clear()
+    // des coups de joueurs ont tourné (leur numéro de séquence part aussi avec la sauvegarde) : changement sûr
+    this._markTick(true)
   }
 
   /** détache `_n` (numéro d'ordre CLIENT optionnel, cf. commentaire de `_lastAppliedN`) d'un
@@ -1428,34 +1606,90 @@ export class Game {
     this._arm(name, ms, onExpire)
   }
 
-  /** minuterie APPLICATIVE (def.timers[name], cf. _armByName) — appel gardé par _guardTimerCall ; un nom non déclaré (sauvegarde
-   *  d'une version antérieure de l'appli, nom hérité d'Object.prototype) ne lance rien */
+  /** minuterie APPLICATIVE (def.timers[name], cf. _armByName) — appel gardé par _guardTimerCall, qui ne sauvegarde la partie que si
+   *  elle diffère de sa dernière sauvegarde (cf. _markTimerDirty) ; un nom non déclaré (sauvegarde d'une version antérieure de
+   *  l'appli, nom hérité d'Object.prototype) ne lance rien */
   _guardApplicativeTimer(name: string): void {
     const fn = Object.hasOwn(this.def.timers, name) ? this.def.timers[name] : undefined
     if (!fn) return
-    this._guardTimerCall(name, () => fn(this))
+    this._guardTimerCall(name, () => fn(this), TIMER_CALL_KEYS, true)
   }
 
   /** garde-fou d'un appel de code JEU fait par une minuterie (def.timers[name], hooks.onTurnTimeout, passage de tour
    *  automatique) — capture SYNC (throw) ET ASYNC (rejet, si l'auteur renvoie malgré tout une Promise) : log error par
    *  le canal déjà utilisé par le serveur (def.log), AUCUN changement de gameplay — même esprit que _guardTick pour la
    *  boucle de tick, adapté à un appel HORS tick (arme/réarme n'importe quand). `keys` choisit le message du journal selon
-   *  l'appel (une minuterie applicative par défaut, `name` la nomme ; les crochets et le passage de tour ont le leur). */
-  _guardTimerCall(name: string, call: () => unknown, keys: TimerCallKeys = TIMER_CALL_KEYS): void {
+   *  l'appel (une minuterie applicative par défaut, `name` la nomme ; les crochets et le passage de tour ont le leur).
+   *  `changesOnly` (minuteries de l'appli, def.timers) : l'état est rediffusé (une vue peut dépendre d'autre chose que de l'état),
+   *  mais la partie n'est sauvegardée que si elle diffère de sa dernière sauvegarde (cf. _markTimerDirty) — une veille récurrente
+   *  qui ne change rien faisait écrire le stockage de l'appli à chacune de ses échéances. Sans lui (hooks.onTurnTimeout, passage de
+   *  tour automatique), chaque appel sauvegarde, comme un coup. */
+  _guardTimerCall(name: string, call: () => unknown, keys: TimerCallKeys = TIMER_CALL_KEYS, changesOnly = false): void {
     try {
       // `call` est typé `() => unknown` : def.timers et les hooks sont typés `=> void`, un auteur peut malgré tout
       // renvoyer une Promise À L'EXÉCUTION (le type ne l'empêche pas) — MÊME idiome que _guardTick
       // (fn: () => unknown) pour la boucle de tick, de quoi la détecter.
       const r = call()
       if (r && typeof (r as any).then === 'function') {
-        // l'état change aussi après l'attente (même si elle est rejetée, la minuterie a pu le modifier avant) : une 2e marque à la fin
-        (r as Promise<unknown>).catch((err: unknown) => this.def.log('error', t(keys.rejected ?? keys.thrown, { nom: name, msg: errMessage(err) }))).then(() => this._markDirty())
+        // l'état change aussi après l'attente (même si elle est rejetée, la minuterie a pu le modifier avant) : une 2e marque à la fin,
+        // comparée elle aussi à la dernière sauvegarde (changesOnly) — un coup ou une autre minuterie a pu changer l'état pendant
+        // l'attente, et la suite le remettre à la valeur d'avant
+        const pending = r as Promise<unknown>
+        pending.catch((err: unknown) => this.def.log('error', t(keys.rejected ?? keys.thrown, { nom: name, msg: errMessage(err) }))).then(() => this._markTimerDirty(changesOnly))
       }
     } catch (err) {
       this.def.log('error', t(keys.thrown, { nom: name, msg: errMessage(err) }))
     }
-    // l'état a pu changer (même si la minuterie a levé après l'avoir modifié) : diffusion + sauvegarde, comme après un coup
-    this._markDirty()
+    // l'état a pu changer (même si la minuterie a levé après l'avoir modifié) : diffusion, et sauvegarde comme après un coup (changesOnly :
+    // si la partie diffère de sa dernière sauvegarde)
+    this._markTimerDirty(changesOnly)
+  }
+
+  /** marque de diffusion d'un appel gardé par _guardTimerCall — `changesOnly` faux : sauvegarde, comme après un coup ; vrai (minuteries
+   *  de l'appli) : la sauvegarde n'est demandée que si l'empreinte de la partie diffère de celle de sa dernière sauvegarde
+   *  (`_lastSavePrint`). Une empreinte par appel, et seulement quand elle sert : sans persistance (`_onMutate` absent), rien à
+   *  sauvegarder ; en mode action, aucune au tir : la marque de sauvegarde (cf. _markTick, qui la passe tout de suite quand la boucle
+   *  est arrêtée) se compare à la dernière sauvegarde au moment d'écrire (cf. _prepareSave), et la diffusion est celle de la boucle —
+   *  arrêtée, celle de _broadcastWithoutLoop, sans quoi les spectateurs ne voyaient pas le changement */
+  _markTimerDirty(changesOnly: boolean): void {
+    if (this.def.tick > 0) { this._markTick(!changesOnly); this._broadcastWithoutLoop(); return }
+    if (!changesOnly || this._destroyed || !this._onMutate) { this._markDirty(); return }
+    const print = this._savedPrint()
+    this._markDirty(print === null || print !== this._lastSavePrint)
+  }
+
+  /** empreinte de ce que la sauvegarde porte et que le code de l'appli peut changer — état, phase, tour, sièges, fin et résultat, et
+   *  la PRÉSENCE des minuteries (leurs noms, triés) : une minuterie partie sans être réarmée, ou une minuterie neuve, la change (la
+   *  sauvegarde garderait sinon une minuterie déjà partie, qui repartirait au redémarrage) ; une minuterie réarmée sous le même nom
+   *  ne la change pas, seule son échéance a bougé (la sauvegarde suivante la portera ; après un redémarrage, l'échéance sauvegardée,
+   *  déjà passée, part tout de suite, une fois). `null` quand JSON ne sait pas l'écrire (objet circulaire, BigInt…) */
+  _savedPrint(): string | null {
+    try {
+      return JSON.stringify([this.state, this.phase, this.turn, this.players.map(j => j && j.id), this._ended, this._endResult, Array.from(this._timers.keys()).sort()])
+    } catch {
+      return null
+    }
+  }
+
+  /** persist.ts vient de sérialiser la partie pour l'écrire (cf. runSave) : rend l'empreinte de ce qui part (`print`, cf. _savedPrint —
+   *  retenue par persist.ts jusqu'à la fin de l'écriture, cf. _noteSaved) et si l'écriture est utile (`useful`) : faux en mode action
+   *  quand rien n'a changé à coup sûr depuis la dernière sauvegarde (cf. `_saveSure`) et que la partie est identique à la dernière
+   *  sauvegarde réussie — persist.ts ne l'écrit pas si le stockage porte bien celle-ci. Empreinte calculée seulement quand elle peut
+   *  servir — `def.timers` non vide, ou, en mode action, simulate ou slowTick déclarés —, sinon inconnue (`null`) */
+  _prepareSave(): { print: string | null; useful: boolean } {
+    const action = this.def.tick > 0
+    const sure   = !action || this._saveSure
+    const hidden = Object.keys(this.def.timers).length > 0 || (action && !!(this.def.simulate || this.def.slowTick))
+    const print  = hidden ? this._savedPrint() : null
+    this._saveSure = false
+    return { print, useful: sure || print === null || print !== this._lastSavePrint }
+  }
+
+  /** l'écriture qui portait `print` (cf. _prepareSave) a abouti, la plus récente à aboutir : son empreinte devient celle de la dernière
+   *  sauvegarde, à laquelle se comparent le tir d'une minuterie de l'appli (mode événementiel, cf. _markTimerDirty) et la sauvegarde
+   *  suivante (mode action). Une écriture refusée ou restée sans réponse ne la change pas : persist.ts la refait */
+  _noteSaved(print: string | null): void {
+    this._lastSavePrint = print
   }
 
   /** une Promise rendue par du code JEU que personne n'attend (crochet async : onJoin, onLeave, onEnd, onCreate) : son rejet est
@@ -1486,7 +1720,7 @@ export class Game {
     const at    = Date.now() + (Number.isFinite(span) ? span : 0)
     const entry = { at, handle: undefined as unknown as ReturnType<typeof setTimeout> }
     const wait  = (left: number): void => {
-      entry.handle = left > MAX_TIMEOUT_MS ? setTimeout(() => wait(at - Date.now()), MAX_TIMEOUT_MS) : setTimeout(() => { this._timers.delete(name); onExpire() }, left)
+      entry.handle = left > MAX_TIMEOUT_MS ? setTimeout(() => wait(at - Date.now()), MAX_TIMEOUT_MS) : setTimeout(() => { if (this._held) return; this._timers.delete(name); onExpire() }, left)
     }
     wait(ms)
     this._timers.set(name, entry)
@@ -1505,7 +1739,8 @@ export class Game {
   }
 
   _armTurnTimeout(): void {
-    if (this._ended || !this.def.turns || !this.def.turns.timeout) return   // partie finie : plus de tour à chronométrer (un .next() après .end() n'arme rien)
+    // partie finie : plus de tour à chronométrer (un .next() après .end() n'arme rien) ; turns.timeout null : aucune minuterie de tour
+    if (this._ended || !this.def.turns || !this.def.turns.timeout) return
     this._armByName('µturn', this.def.turns.timeout)
   }
 
@@ -1518,9 +1753,11 @@ export class Game {
   /** hooks.onTurnTimeout et, sans lui, le passage de tour automatique (turns.order peut être une fonction de l'auteur) :
    *  code JEU appelé par une minuterie, gardé comme une minuterie applicative (cf. _guardTimerCall) — le crochet garde son
    *  appel en méthode de `hooks` (`this` = hooks). Sans effet sur une partie finie : .end() désarme `µturn`, mais la sauvegarde
-   *  d'une version antérieure, qui ne le désarmait pas, la porte encore et la restauration la réarme. */
+   *  d'une version antérieure, qui ne le désarmait pas, la porte encore et la restauration la réarme. Sans effet non plus quand la
+   *  définition n'arme plus de minuterie de tour (turns.timeout null, ou turns retiré) : celle d'une sauvegarde écrite avant, que la
+   *  restauration réarme, ne fait rien. */
   _onTurnExpired(): void {
-    if (this._ended) return
+    if (this._ended || !this.def.turns?.timeout) return
     if (this.def.hooks.onTurnTimeout) this._guardTimerCall('hooks.onTurnTimeout', () => this.def.hooks.onTurnTimeout!(this), TURN_TIMEOUT_KEYS)
     else this._guardTimerCall('turns.order', () => this.next(), TURN_ORDER_AUTO_KEYS)
   }
@@ -1555,6 +1792,19 @@ export class Game {
     const [n, windowMs] = HASH_LIMIT
     let bucket = this._bucketsHash[player.seat]
     if (!bucket) { bucket = new TokenBucket(n, n / (windowMs / 1000)); this._bucketsHash[player.seat] = bucket }
+    return bucket.take()
+  }
+
+  // propositions d'instantané (µgame:snapshot) — seau DÉDIÉ par siège, canal distinct des hash : un joueur en fait au plus
+  // `tick / every` par seconde (60 à 60 Hz pour une cadence de 1, deux à 20 Hz pour une cadence de 10), d'où le débit du seau ; et
+  // autant d'un coup que la fenêtre de réception compte de ticks de la cadence (les ticks arrivés en rafale après un silence du
+  // réseau), d'où sa réserve, plus un — 121 jetons à 60 Hz pour une cadence de 1, 5 à 20 Hz pour une cadence de 10. Sans instantanés
+  // déclarés, aucune proposition ne sert : refusée d'emblée
+  _consumeSnapshotToken(player: MjsServerSeat): boolean {
+    const snap = this.def.lockstepSnapshot
+    if (!snap) return false
+    let bucket = this._bucketsSnapshot[player.seat]
+    if (!bucket) { bucket = new TokenBucket(Math.ceil(snap.window / snap.every) + 1, this.def.tick / snap.every); this._bucketsSnapshot[player.seat] = bucket }
     return bucket.take()
   }
 
@@ -1707,11 +1957,50 @@ function validateSnapshot(data: MjsServerGameSnapshot): void {
       throw new Error(t('serveur.restore-invalide', { champ: 'timers[]', attendu: t('serveur.restore-attendu-minuterie') }))
     }
   }
+  // instantané lockstep (cf. lockstep.ts « INSTANTANÉS ») : un tick entier ≥ 1, un état, un générateur entier de 32 bits — faux, la
+  // numérotation des ticks et l'état renvoyé aux clients partiraient d'une valeur fausse
+  const snapshot = (data.lockstep as { snapshot?: unknown } | undefined)?.snapshot
+  if (snapshot !== undefined && snapshot !== null) {
+    const s = snapshot as Partial<MjsServerLockstepSnapshot>
+    const ok = typeof snapshot === 'object' && Number.isInteger(s.tick) && s.tick! >= 1 && s.state !== undefined && Number.isInteger(s.rng) && s.rng! >= 0 && s.rng! <= 0xFFFFFFFF
+    if (!ok) throw new Error(t('serveur.restore-invalide', { champ: 'lockstep.snapshot', attendu: t('serveur.restore-attendu-instantane-lockstep') }))
+    // le journal reprend au tick qui suit l'instantané : un chevauchement ferait rejouer aux clients des ordres déjà dans l'état, un
+    // trou leur en ferait manquer
+    const journal = (data.lockstep as { journal?: unknown } | undefined)?.journal
+    if (Array.isArray(journal) && journal.length > 0 && (journal[0] as { tick?: unknown } | null)?.tick !== s.tick! + 1) {
+      throw new Error(t('serveur.restore-invalide', { champ: 'lockstep.journal', attendu: t('serveur.restore-attendu-journal-apres-instantane', { tick: s.tick! + 1 }) }))
+    }
+  }
+}
+
+/** ce que serialize() garde d'une partie lockstep — le journal, et l'instantané gardé s'il y en a un (cf. lockstep.ts « INSTANTANÉS ») */
+function lockstepData(lockstep: MjsServerLockstep): { journal: MjsServerLockstepTick[]; snapshot?: MjsServerLockstepSnapshot } {
+  const snapshot = lockstep.snapshot()
+  return snapshot ? { journal: lockstep.journal(), snapshot } : { journal: lockstep.journal() }
+}
+
+/** diffusions couvertes par milliseconde depuis le démarrage, en moyenne, par le `seq` d'une partie restaurée (cf. restoredSeq) : une
+ *  rafale de `changed()` en diffuse bien plus d'une par milliseconde (5 000 en 160 ms : 31 par ms). L'heure en millisecondes multipliée
+ *  par 2 000 reste un entier exact (sous 2^53, Number.MAX_SAFE_INTEGER) jusqu'en 2112 */
+const SEQ_PER_MS = 2000
+
+/** `seq` d'une partie restaurée (hors lockstep, où il est le numéro de tick repris du journal) — il ordonne les trames : un client ignore
+ *  celle dont le `seq` ne dépasse pas le dernier qu'il a vu, réponse de µgame:resync comprise, et le client déjà publié ne changera pas.
+ *  La sauvegarde ne le suit pas : une diffusion qui ne change rien n'écrit pas (veille récurrente, boucle d'action dont simulate ne
+ *  change rien), et la dernière écriture précède au plus le dernier état diffusé. Repris tel quel, il restait sous ce que les joueurs
+ *  avaient vu, qui restaient figés après le redémarrage. Il repart donc de l'heure en millisecondes multipliée par SEQ_PER_MS quand elle
+ *  le dépasse : une diffusion n'avance `seq` que d'un, jamais plus de SEQ_PER_MS par milliseconde en moyenne depuis le démarrage, si
+ *  bien que le redémarrage suivant dépasse tout ce qu'une exécution précédente a diffusé — sans écriture de plus, même après un arrêt
+ *  brutal suivi d'un redémarrage aussitôt. Seule limite : une horloge qui recule entre deux démarrages. Un `seq` sauvegardé illisible
+ *  (absent, non numérique) compte pour 0 */
+function restoredSeq(stored: unknown): number {
+  const seq = typeof stored === 'number' && Number.isFinite(stored) ? stored : 0
+  return Math.max(seq, Date.now() * SEQ_PER_MS)
 }
 
 /** Restaure une partie depuis un instantané `serialize()` — sièges reconstruits SANS connexion
  *  live (`clients` vide, `connected: false` : personne n'est encore rattaché après un redémarrage,
- *  cf. µgame:resync pour le rattachement). Minuteries réarmées au DÉLAI RESTANT (à - maintenant,
+ *  cf. µgame:resync pour le rattachement). `seq` repart au-dessus de ce que les joueurs ont vu (cf. restoredSeq). Minuteries réarmées au DÉLAI RESTANT (à - maintenant,
  *  jamais négatif). Ni `def.state()` ni `hooks.onCreate` ne re-tournent (restaurer ≠ créer). Mode
  *  lockstep : `data.lockstep.journal` repeuple `game._lockstep` (déjà construit avec
  *  la MÊME graine, ré-dérivée de `data.id`, cf. lockstep.ts deterministicSeed) — no-op si absent
@@ -1725,7 +2014,7 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
   game.state   = data.state
   game.phase   = data.phase
   game.turn    = data.turn
-  game.seq     = data.seq
+  game.seq     = def.mode === 'lockstep' ? data.seq : restoredSeq(data.seq)
   game.journal = data.journal.slice()
   game.players = data.seats.map(s => s ? { seat: s.seat, id: s.id, clients: new Set<MjsWsClient>(), connected: false } : null)
   // cf. `_ended`/`_endResult`/`_started`/`_unconfirmedSeats` (game.ts) — absents d'un instantané
@@ -1742,7 +2031,7 @@ export function restoreGame(app: MjsWsApp, def: MjsServerResolvedDef, onDestroy:
     if (s.lastAntiReplaySeq != null) game._lastAntiReplaySeq.set(s.id, s.lastAntiReplaySeq)
     if (s.lastMoveAt != null) game._lastMoveAt.set(s.id, s.lastMoveAt)
   }
-  if (game._lockstep && data.lockstep) game._lockstep._restoreJournal(data.lockstep.journal)
+  if (game._lockstep && data.lockstep) game._lockstep._restoreJournal(data.lockstep.journal, data.lockstep.snapshot ?? null)
   // AVANT le ré-armement des minuteries SAUVÉES juste en dessous — si la partie était DÉJÀ vide
   // avant le redémarrage, `µempty` fait partie de `data.timers` et sera réarmée au délai RESTANT
   // juste après (_arm remplace toujours l'existant, le plus précis des deux gagne) ; si elle était

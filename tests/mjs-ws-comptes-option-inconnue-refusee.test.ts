@@ -91,7 +91,7 @@ describe('comptes : une clé inconnue d\'accountsPackage est refusée dès la co
 })
 
 describe('comptes : rien de valable n\'est refusé', () => {
-  it('les onze options du paquet passent ensemble, et servent : le jeton émis porte le site, l\'émetteur, les rôles et la durée', async () => {
+  it('les douze options du paquet passent ensemble, et servent : le jeton émis porte le site, l\'émetteur, les rôles et la durée', async () => {
     const transport = new MemoryTransport()
     const app       = mjsWs({ transport, heartbeat: 0, auth: accountsAuth(SECRET, SITE), onLog: () => {} })
     app.use(accountsPackage({
@@ -105,6 +105,7 @@ describe('comptes : rien de valable n\'est refusé', () => {
       createPerIp: { capacity: 3, windowMs: 60000 },
       nameCheckPerIp: { capacity: 10, windowMs: 60000 },
       maxAccounts: 10,
+      weakHashForTests: true,
       onLog: () => {}
     }))
     await app.listen()

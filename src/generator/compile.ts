@@ -14,7 +14,7 @@ import type { TagRef } from '../parser/index.js'
 import { state, reset, getEffectVars, registerEffect } from './state.js'
 import type { EventRoute } from './state.js'
 import { cleanJsExpr, freeIdentifiers, decodeHtmlEntities } from './utils.js'
-import { dispatchAttribute, detectFilteredPattern, isRawExpr, texteDeBranche, suiviDeBloc, brancheCourante, MJS_BOOLEAN_PROPS, SELECT_VALUE_DEFER_PREFIX, type AttrCtx } from './attributes/index.js'
+import { dispatchAttribute, detectFilteredPattern, isRawExpr, texteDeBranche, suiviDeBloc, brancheCourante, refuseOldTransitions, MJS_BOOLEAN_PROPS, SELECT_VALUE_DEFER_PREFIX, type AttrCtx } from './attributes/index.js'
 import { generateCreateFnBody, SVG_NS, MATH_NS, marqueLigne, retenirLignesRacine } from './paths.js'
 import { finExpression } from '../sigils.js'
 import { t } from '../messages/index.js'
@@ -193,6 +193,9 @@ export interface LoopInfo {
   key: string | null
   /** Place de chaque balise `@flip` du gabarit de la ligne, quand il y a plusieurs places (cf. `placesFlip`) */
   flipPlaces?: Map<Node, number>
+  /** Ligne pure d'un `{for}` de racine (cf. ligneEstPure) : ses gestionnaires lisent l'élément et l'indice sur l'entrée de la ligne
+   * (`_mjs_row` de la balise → `_mjs_en`, tenue à jour par la réconciliation), aucun indice n'est posé sur ses balises */
+  parEntree?: boolean
 }
 
 // ============================================================================
@@ -422,6 +425,8 @@ export function compileTag(node: Node, ctx: Ctx): string {
   if (hasEvent && ctx.loops.length > 0) {
     const currentDepth = ctx.loops[ctx.loops.length - 1].depth
     for (const l of ctx.loops) {
+      // ligne lue sur son entrée (cf. LoopInfo.parEntree) : aucun indice à poser
+      if (l.parEntree) continue
       const idxVar = l.depth === currentDepth ? l.index : l.internalIndex
       // Ne PAS poser l'attribut data-mjs-idx-X dans le HTML du template.
       // L'updateFn (appelée immédiatement après create + à chaque mutation)
@@ -898,6 +903,9 @@ export function compileFor(node: Node, ctx: Ctx): string {
     depth: ctx.loops.length,
     key: node.key ?? null,
   }
+  // ligne pure d'un `{for}` de racine : ses gestionnaires liront l'élément et l'indice sur l'entrée de la ligne, décidé avant le corps
+  // (les balises de la ligne le consultent en se compilant)
+  if (ctx.type === 'root' && ctx.loops.length === 0 && ligneEstPure(node.children, node.item, indexVar)) loopInfo.parEntree = true
   // plusieurs places : l'étiquette de chaque balise `@flip` ajoute la sienne à celle de la ligne (attributes/index.ts) ; une seule : l'étiquette de la ligne
   const places = new Map<Node, number>()
   if (placesFlip(node.children, places) > 1) loopInfo.flipPlaces = places
@@ -919,6 +927,10 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // l'overhead d'un appel de fonction par iteration. Sur 1000 items, gain
   // ~3-5ms.
   const keyAttrLit = node.key ? `'${node.key}'` : 'null'
+  // fonction de clé : seulement avec `by` ; sans `by`, `null` — une ligne d'un tableau est suivie par son objet ou sa position,
+  // celle d'une `Map` par la clé de la `Map` (mjs_for.ts, `_mjs_reconcileList`), qu'une fonction qui rend `null` masquait : chaque
+  // passe refaisait toutes les lignes d'une `Map`
+  const keyFnLit = node.key ? `(${node.item}, ${indexVar}) => ${keyExpr}` : 'null'
 
   const loopCtx: Ctx = { type: 'for', loops: newLoops, updates: [], locals, portee: ctx.portee.concat([{ kind: 'for', loop: loopInfo }]), svgNs: ctx.svgNs, foreign: ctx.foreign }
   // sous un `{await}` : les variables du dehors que les lignes lisent sont mises de côté, puis rendues
@@ -1039,23 +1051,27 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // pas d'alloc/maintenance de WeakMap, lookup au clic plus direct.
     const inlineRegister = evtIdsInFor.map((eid) => {
       const refExpr = `_nref_${safeRefVarName(eid)}`
-      return `{ const __n = ${refExpr}; if (__n && __n.nodeType === 1) { const __ex = __n._mjs_ids; if (__ex) { if (!__ex.includes('${eid}')) __ex.push('${eid}'); } else { __n._mjs_ids = ['${eid}']; } __n._mjs_eo = this; } }`
+      return `{ const __n = ${refExpr}; if (__n && __n.nodeType === 1) { const __ex = __n._mjs_ids; if (__ex) { if (!__ex.includes('${eid}')) __ex.push('${eid}'); } else { __n._mjs_ids = ['${eid}']; } __n._mjs_eo = this;${loopInfo.parEntree ? ' __n._mjs_row = __nodes;' : ''} } }`
     }).join(' ')
     registerRefsCode = `{ ${inlineRegister} }`
   }
 
   // saut des lignes inchangées : seulement le `{for}` de racine, ligne pure (cf. ligneEstPure), pose
-  // initiale fusionnée (`_mjs_init`) : le runtime note alors l'élément et l'index posés dès la création
+  // initiale fusionnée (`_mjs_init`) : le runtime note alors l'élément et l'index posés dès la création.
+  // `2` : la mise à jour de la ligne ne lit pas son index (ni à l'écran ni posé sur une balise), une ligne qui glisse est sautée aussi
   const lignePure = keepUpdFn && __fuseInit && ctx.type === 'root' && ligneEstPure(node.children, node.item, indexVar)
-  const tplFn = `(${node.item || '_item'}, ${indexVar}) => {
-    const __built = (() => { ${createBody.body} })();
+  const sansIndex = lignePure && ligneEstPure(node.children, node.item, '') && !localUpdates.includes('_mjs_idx_')
+  // `__a` : les réfs d'une ligne écrite par le serveur et reprise telle quelle (hydratation par repères, runtime/mjs_hydrate.ts) — le
+  // gabarit n'est alors pas fabriqué, la ligne garde ses nœuds ; le reste du tplFn (événements, closure, pose initiale) est le même
+  const tplFn = `(${node.item || '_item'}, ${indexVar}, __a) => {
+    const __built = __a ? { refs: __a } : (() => { ${createBody.body} })();
     const __nodes = __built.refs;
     __nodes._mjs_reg = true;
     ${refExtractLines}
     ${registerRefsCode}
     ${closureUpd ? `const _mjs_updFn = (${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdatesClosure} };` : ''}
     ${__fuseInit ? `_mjs_updFn(${node.item || '_item'}, ${indexVar});` : ''}
-    return { fragment: __built.fragment, refs: __nodes${keepUpdFn ? ', updateFn: _mjs_updFn' : ''}${__fuseInit ? ', _mjs_init: 1' : ''}${lignePure ? ', _mjs_p: 1' : ''} };
+    return { fragment: __built.fragment, refs: __nodes${keepUpdFn ? ', updateFn: _mjs_updFn' : ''}${__fuseInit ? ', _mjs_init: 1' : ''}${lignePure ? `, _mjs_p: ${sansIndex ? 2 : 1}` : ''} };
   }`
 
   // fonction de mise à jour passée à CHAQUE rendu, recréée avec la portée courante, refs lues sur
@@ -1072,7 +1088,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // l'analyse ne suit pas : fonction, constante, `let` ou objet du script, import, global à état
     // (cf. `identifiantsNonSuivis`) ; la liste reste alors rejouée à chaque passe de structure
     const garde = racine && varsDuFor.size > 0 && identifiantsNonSuivis(jsIterable, `(${node.item || '_item'}, ${indexVar}) => { const ${internalIndex} = ${indexVar}; ${localUpdates} }`).length === 0 ? `if(this._mjs_chg([${[...varsDuFor].map((v) => `'${v}'`).join(',')}])) ` : ''
-    ctx.updates.push(`{ const _mjsThis = this; ${garde}this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); }`)
+    ctx.updates.push(`{ const _mjsThis = this; ${garde}this._mjs_updFor('${id}', ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}); }`)
     return `<script type='mjs/marker' mjs-t='s-${id}'></script><script type='mjs/marker' mjs-t='e-${id}'></script>`
   }
 
@@ -1105,7 +1121,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
     // soit l'appelant, une liste dont la branche n'est plus affichée n'est jamais refaite
     const affichee   = brancheCourante({ ctx, compiler: state })
     const siAffichee = affichee ? `${affichee} && ` : ''
-    ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${id}']; const _mjs_forEnd = __nodes['e-${id}']; if(_mjs_forStart && _mjs_forEnd) { const _mjs_refaire = () => { if(${siAffichee}_mjs_forStart.parentNode && _mjs_forEnd.parentNode) this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); }; (this._mjs_awaitFors ??= {})['${id}'] = _mjs_refaire; _mjs_refaire(); (this._mjs_awaitFresh ??= {})['${id}'] = ${valeursLues}; queueMicrotask(() => { this._mjs_awaitFresh['${id}'] = null; }); } }`)
+    ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${id}']; const _mjs_forEnd = __nodes['e-${id}']; if(_mjs_forStart && _mjs_forEnd) { const _mjs_refaire = () => { if(${siAffichee}_mjs_forStart.parentNode && _mjs_forEnd.parentNode) this._mjs_updList('${id}', _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}); }; (this._mjs_awaitFors ??= {})['${id}'] = _mjs_refaire; _mjs_refaire(); (this._mjs_awaitFresh ??= {})['${id}'] = ${valeursLues}; queueMicrotask(() => { this._mjs_awaitFresh['${id}'] = null; }); } }`)
     // une ligne qui lit un texte traduit suit aussi la langue : l'effet rappelle la liste à chaque rendu complet
     if (varsSuivies.size > 0 || /µ\.t\(|__mjsLang/.test(localUpdates)) registerEffect(`{ const _mjs_f = this._mjs_awaitFors && this._mjs_awaitFors['${id}']; const _mjs_w = this._mjs_awaitFresh; const _mjs_s = _mjs_w && _mjs_w['${id}']; if(_mjs_s) _mjs_w['${id}'] = null; const _mjs_v = ${valeursLues}; if(${siAffichee}_mjs_f && !(_mjs_s && _mjs_s.every((_mjs_a, _mjs_i) => _mjs_a === _mjs_v[_mjs_i]))) _mjs_f(); }`, [...varsSuivies])
     return `<script type='mjs/marker' mjs-l-t='s-${id}'></script><script type='mjs/marker' mjs-l-t='e-${id}'></script>`
@@ -1166,10 +1182,14 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // Clé `by` du parent lue comme la clé de ligne (`_mjs_keyOf`, mjs_for.ts) : une valeur simple, ou un objet
   // qui s'écrit lui-même (date, tableau), par son texte ; un objet ordinaire ou une fonction par son identité.
   // Recollé en texte, un tel objet valait « [object Object] » pour toutes les lignes : leurs listes internes
-  // partageaient un seul cache, et les éléments de l'une passaient dans l'autre
+  // partageaient un seul cache, et les éléments de l'une passaient dans l'autre.
+  // Ligne d'objet sans clé réelle (`{for}` sans `by`, ou clé `by` vide : `null`, `undefined`) : la liste interne suit la ligne
+  // elle-même, par l'identité de son repère de début (`_mjs_forStart`, propre à chaque ligne affichée, déplacé avec elle, purgé
+  // avec elle). Deux lignes à clé vide, ou deux lignes du même objet, ne partagent jamais leurs lignes internes, et la ligne d'une
+  // `Map`, gardée par la clé de la `Map` alors que sa paire `[clé, valeur]` est neuve à chaque passe, garde les siennes
   const discriminant = (loop: LoopInfo, idx: string) => loop.key
-    ? `(${loop.item} != null && typeof ${loop.item} === 'object' ? ((_mjs_k) => Object(_mjs_k) !== _mjs_k || typeof _mjs_k === 'object' && !String(_mjs_k).startsWith('[object ') ? _mjs_k : this._mjs_mjsTag(_mjs_k))(${loop.item}.${loop.key}) : ${idx})`
-    : `(typeof ${loop.item} === 'object' && ${loop.item} !== null ? this._mjs_mjsTag(${loop.item}) : ${idx})`
+    ? `(${loop.item} != null && typeof ${loop.item} === 'object' ? ((_mjs_k) => _mjs_k == null ? this._mjs_mjsTag(_mjs_forStart) : Object(_mjs_k) !== _mjs_k || typeof _mjs_k === 'object' && !String(_mjs_k).startsWith('[object ') ? _mjs_k : this._mjs_mjsTag(_mjs_k))(${loop.item}.${loop.key}) : ${idx})`
+    : `(typeof ${loop.item} === 'object' && ${loop.item} !== null ? this._mjs_mjsTag(_mjs_forStart) : ${idx})`
 
   const ancestors = ctx.loops.slice(0, -1).map(loop => `${discriminant(loop, loop.internalIndex)} + '\\x1f' + `).join('')
   const uniqueCacheId = `'${id}_' + ${ancestors}${discriminant(parent, parentIdx)}`
@@ -1179,7 +1199,7 @@ export function compileFor(node: Node, ctx: Ctx): string {
   // la boucle PARENTE est en scope. Un item parent nommé `startNode` était shadowé
   // par l'ancre interne → itérable/clé/keyFn lisaient le MARQUEUR DOM (corruption
   // silencieuse). Cf. reserved-names-collision.test.ts ({for}+{for}).
-  ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${wrapperLid}']; const _mjs_forEnd = __nodes['e-${wrapperLid}']; if(_mjs_forStart && _mjs_forEnd) { this._mjs_updList(${uniqueCacheId}, _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, (${node.item}, ${indexVar}) => ${keyExpr}, ${updateFn}, ${keyAttrLit}); } }`)
+  ctx.updates.push(`{ const _mjsThis = this; const _mjs_forStart = __nodes['s-${wrapperLid}']; const _mjs_forEnd = __nodes['e-${wrapperLid}']; if(_mjs_forStart && _mjs_forEnd) { this._mjs_updList(${uniqueCacheId}, _mjs_forStart, _mjs_forEnd, ${jsIterable}, ${tplFn}, ${keyFnLit}, ${updateFn}, ${keyAttrLit}); } }`)
 
   // Wrapper start/end markers : ces 2 placeholders matchent les ids
   // `s-${wrapperLid}` et `e-${wrapperLid}` dans le __paths du contexte parent
@@ -1762,6 +1782,8 @@ function ligneLaPlusProfonde(racine: Node): number {
 function compileArbre(ast: Node, tagRefs: TagRef[], opts: CompileOpts): CompileResult {
   warnCivetInterpolationInAttrs(ast, opts.moduleName, opts.lint, opts.colorsEnabled)
   warnSilentHtmlTraps(ast, opts.moduleName, opts.lint, opts.colorsEnabled)
+  // l'ancienne écriture des transitions (`@in.fly={…}`) : toutes celles du composant dans une seule erreur
+  refuseOldTransitions(ast)
 
   // dépendances directes de balises — comparaison par point de code (jamais
   // localeCompare, cf. writeManifest) pour que deux builds du même code

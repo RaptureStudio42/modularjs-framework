@@ -14,8 +14,8 @@ const RUNTIME_GLOBALS = Object.fromEntries(['µ', 'window', 'document', 'navigat
 
 // globales de concaténation : le build assemble tous les fichiers du runtime en UN script, les
 // fonctions déclarées dans l'un sont donc visibles des autres (le module qui les définit est
-// toujours livré avec ceux qui les appellent : µsocket avec jeu/salon/chat/comptes, schéma avec ajax)
-const RUNTIME_SHARED = Object.fromEntries(['hasProp', 'MjsSocket', '_mjs_safeKey', 'mjschemaEncode', 'mjschemaDecode', 'mjschemaHashRegistre', 'mjschemaChargerDefinitions'].map(n => [n, 'readonly']))
+// toujours livré avec ceux qui les appellent : µsocket avec jeu/salon/chat/comptes, schéma avec ajax, le magasin avec le cœur)
+const RUNTIME_SHARED = Object.fromEntries(['hasProp', 'MJS_RESOLVED_DESTROY', '_mjsCompte', 'MjsSocket', '_mjs_safeKey', 'mjschemaEncode', 'mjschemaDecode', 'mjschemaHashRegistre', 'mjschemaChargerDefinitions'].map(n => [n, 'readonly']))
 
 export default tseslint.config(
   {

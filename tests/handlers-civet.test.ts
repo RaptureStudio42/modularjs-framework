@@ -121,7 +121,8 @@ describe('handlers inline — Civet par défaut', () => {
       '<script>',
       '$items = [1,2,3]',
       '</script>',
-      '<div>{for item, i in $items}<button @click={$n = item}>x</button>{end}</div>',
+      // la ligne lit une variable du composant (`{$n}`) : pas une ligne pure, le gestionnaire relit l'élément par l'indice posé sur la balise
+      '<div>{for item, i in $items}<button @click={$n = item}>{$n}</button>{end}</div>',
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'hc-loop' })
     assert.match(output, /_mjs_idx_0 \?\? el\.getAttribute\('data-mjs-idx-0'\)/, 'civet : existentiel `??`')
@@ -132,7 +133,8 @@ describe('handlers inline — Civet par défaut', () => {
       '<script>',
       '$items = [1,2,3]',
       '</script>',
-      '<div>{for item, i in $items}<button @click={$n = item}>x</button>{end}</div>',
+      // la ligne lit une variable du composant (`{$n}`) : pas une ligne pure, le gestionnaire relit l'élément par l'indice posé sur la balise
+      '<div>{for item, i in $items}<button @click={$n = item}>{$n}</button>{end}</div>',
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'hc-loop-js', templateLang: 'js' })
     assert.match(output, /\(ref = el\._mjs_idx_0\) != null \? ref : el\.getAttribute\('data-mjs-idx-0'\)/, 'coffee : existentiel `a ? b` compilé en ternaire null-check')

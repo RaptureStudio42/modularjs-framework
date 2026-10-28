@@ -6,20 +6,12 @@
 // copie sert de repli sinon. Cache par balise + texte, comme côté client — une réécriture par
 // composant, jamais par appel.
 
+import { skipQuotedSpan } from '../quoted-span.js'
+
 const lightHostCssCache = new Map<string, string>()
 // séparateur clé de cache : jamais présent dans du CSS, String.fromCharCode plutôt qu'un octet de
 // contrôle littéral dans la source (fragile aux diffs/éditeurs)
 const CACHE_KEY_SEP = String.fromCharCode(1)
-
-// fin d'une chaîne entre guillemets ouverte à l'indice `k` (échappements sautés) : indice qui suit le guillemet fermant
-function skipQuoted(css: string, k: number): number {
-  const quote = css[k]
-  while (++k < css.length) {
-    if (css[k] === '\\') k++
-    else if (css[k] === quote) return k + 1
-  }
-  return k
-}
 
 // position de la parenthèse FERMANTE appariée à celle d'indice `open` (parenthèses imbriquées
 // possibles, `:host(:not(.a))` → la bonne, pas la première rencontrée)
@@ -27,7 +19,7 @@ function findParenEnd(css: string, open: number): number {
   let depth = 0
   for (let j = open; j < css.length; j++) {
     // une parenthèse dans une chaîne ne compte pas (`:host([title=")"])`), comme au navigateur
-    if (css[j] === '"' || css[j] === '\'') j = skipQuoted(css, j) - 1
+    if (css[j] === '"' || css[j] === '\'') j = skipQuotedSpan(css, j) - 1
     else if (css[j] === '(') depth++
     else if (css[j] === ')') {
       depth--
@@ -50,13 +42,7 @@ export function lightHostCss(css: string, tag: string): string {
   while (i < css.length) {
     // guillemets : contenu recopié tel quel, jamais de :host à réécrire dedans (`content: ":host"`)
     if (css[i] === '"' || css[i] === '\'') {
-      const quote = css[i]
-      let j = i + 1
-      while (j < css.length) {
-        if (css[j] === '\\') { j += 2; continue }
-        if (css[j] === quote) { j++; break }
-        j++
-      }
+      const j = skipQuotedSpan(css, i)
       out += css.slice(i, j)
       i = j
       continue

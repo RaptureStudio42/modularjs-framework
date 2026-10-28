@@ -60,7 +60,7 @@ describe("mjs_ujs — _mjs_restoreScroll diffère window.scrollTo d'une frame (�
 
   it("ne scrolle PAS synchroneement : window.scrollTo attend le prochain requestAnimationFrame", function () {
     const scrollCalls: any[] = []
-    const fakeWindow = { scrollTo: (x: number, y: number) => scrollCalls.push([x, y]) }
+    const fakeWindow = { scrollTo: (o: any) => scrollCalls.push([o.left, o.top, o.behavior]) }
     const rafCallbacks: any[] = []
     const fakeRaf = (cb: any) => { rafCallbacks.push(cb); return 1 }
     const µ: any = { _mjs_scrollPos: new Map([['/x', [10, 200]]]) }
@@ -71,24 +71,24 @@ describe("mjs_ujs — _mjs_restoreScroll diffère window.scrollTo d'une frame (�
     assert.equal(rafCallbacks.length, 1, 'un requestAnimationFrame doit avoir été programmé')
 
     rafCallbacks[0]()
-    assert.deepEqual(scrollCalls[0], [10, 200])
+    assert.deepEqual(scrollCalls[0], [10, 200, 'instant'], 'sans glisser, même sous `scroll-behavior: smooth`')
   })
 
   it('sans requestAnimationFrame disponible (repli) : scrollTo part immédiatement', function () {
     const scrollCalls: any[] = []
-    const fakeWindow = { scrollTo: (x: number, y: number) => scrollCalls.push([x, y]) }
+    const fakeWindow = { scrollTo: (o: any) => scrollCalls.push([o.left, o.top, o.behavior]) }
     const µ: any = { _mjs_scrollPos: new Map([['/x', [5, 50]]]) }
     // Pas de paramètre requestAnimationFrame du tout : `typeof requestAnimationFrame`
     // doit rester sûr (pas de ReferenceError) et retomber sur l'appel synchrone.
     new Function('µ', 'window', extractRestoreScroll())(µ, fakeWindow)
 
     µ._mjs_restoreScroll('/x')
-    assert.deepEqual(scrollCalls[0], [5, 50])
+    assert.deepEqual(scrollCalls[0], [5, 50, 'instant'])
   })
 
   it('chemin jamais sauvegardé : scrolle en (0,0) (comportement inchangé)', function () {
     const scrollCalls: any[] = []
-    const fakeWindow = { scrollTo: (x: number, y: number) => scrollCalls.push([x, y]) }
+    const fakeWindow = { scrollTo: (o: any) => scrollCalls.push([o.left, o.top, o.behavior]) }
     const rafCallbacks: any[] = []
     const fakeRaf = (cb: any) => rafCallbacks.push(cb)
     const µ: any = { _mjs_scrollPos: new Map() }
@@ -96,6 +96,6 @@ describe("mjs_ujs — _mjs_restoreScroll diffère window.scrollTo d'une frame (�
 
     µ._mjs_restoreScroll('/jamais-visite')
     rafCallbacks[0]()
-    assert.deepEqual(scrollCalls[0], [0, 0])
+    assert.deepEqual(scrollCalls[0], [0, 0, 'instant'])
   })
 })

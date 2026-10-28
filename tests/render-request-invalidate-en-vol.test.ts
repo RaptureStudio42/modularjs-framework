@@ -13,10 +13,10 @@
 // test skippé proprement si Chromium n'est pas installé.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { execSync } from 'node:child_process'
 import { mjsTmp } from './helpers/tmp.js'
+import { attendre } from './helpers/attendre.js'
 import { createRenderHandler } from '../src/server/render-request.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 
@@ -50,11 +50,33 @@ function projectAvecDelai(prefix: string, delaiMs: number): string {
   return root
 }
 
-// compte les process Chromium/chrome du système — utilisé en DELTA (avant/après), jamais en
-// absolu : cette machine fait tourner plusieurs agents en parallèle, d'autres tests Playwright
-// peuvent avoir leurs propres processus déjà ouverts, sans lien avec CE test.
-function countChromiumProcesses(): number {
-  try { return parseInt(execSync("pgrep -af 'chrome|chromium' | grep -v pgrep | wc -l").toString().trim(), 10) } catch { return -1 }
+// compte les processus Chromium DESCENDANTS de ce processus de tests (arbre lu dans /proc), utilisé en DELTA
+// (avant/après) : un autre processus de tests qui tourne en même temps (une autre suite, un autre agent) ouvre et
+// ferme ses propres navigateurs ; comptés sur toute la machine (`pgrep`), ils passaient pour des survivants de ce
+// test, rouge au hasard. `null` sans /proc lisible : la vérification est alors dite sautée, jamais réussie en silence
+function countChromiumProcesses(): number | null {
+  if (!existsSync('/proc/self/stat')) return null
+  const enfants = new Map<number, number[]>()
+  const lignes  = new Map<number, string>()
+  for (const d of readdirSync('/proc')) {
+    if (!/^\d+$/.test(d)) continue
+    try {
+      const stat = readFileSync(`/proc/${d}/stat`, 'utf8')
+      const reste = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      if (reste[0] === 'Z') continue
+      const ppid = Number(reste[1])
+      enfants.set(ppid, [...(enfants.get(ppid) ?? []), Number(d)])
+      lignes.set(Number(d), readFileSync(`/proc/${d}/cmdline`, 'utf8').replace(/\0/g, ' '))
+    } catch { /* processus parti entre deux lectures */ }
+  }
+  let n = 0
+  const pile = [...(enfants.get(process.pid) ?? [])]
+  while (pile.length > 0) {
+    const pid = pile.pop()!
+    if (/chrome|chromium/i.test(lignes.get(pid) ?? '')) n++
+    pile.push(...(enfants.get(pid) ?? []))
+  }
+  return n
 }
 
 describe("render-request — invalidate() n'interrompt jamais une requête déjà en vol", function () {
@@ -74,6 +96,10 @@ describe("render-request — invalidate() n'interrompt jamais une requête déj�
       const premier = await handler.handle('/', {})
       assert.equal(premier.status, 200)
       assert.match(premier.body, /V1/)
+      // le décompte des Chromium de ce test voit bien celui que le moteur vient de lancer (sinon la vérification
+      // de la rafale, plus bas, ne prouverait rien)
+      const lances = countChromiumProcesses()
+      if (lances !== null) assert.ok(lances > 0, `le décompte doit voir le Chromium lancé par ce test (vu : ${lances})`)
 
       const enVol = handler.handle('/', {})
       // laisse le rendu démarrer réellement (acquisition du slot + navigation Playwright) avant
@@ -158,15 +184,15 @@ describe("render-request — invalidate() n'interrompt jamais une requête déj�
       for (const r of results) assert.match((r as PromiseFulfilledResult<any>).value.body, /V1/)
 
       await handler.close()
-      // aucun Chromium SUPPLÉMENTAIRE ne doit survivre à close() — poll bornée (l'arrêt d'un
-      // process n'est pas forcément instantané), comparé au NIVEAU DE DÉPART (delta, jamais
-      // l'absolu — cf. countChromiumProcesses).
-      let restants = countChromiumProcesses()
-      for (let attempt = 0; attempt < 10 && restants > baseline; attempt++) {
-        await new Promise(r => setTimeout(r, 300))
-        restants = countChromiumProcesses()
+      // aucun Chromium SUPPLÉMENTAIRE ne doit survivre à close() : l'arrêt d'un processus n'est pas instantané (plus
+      // lent encore sur une machine chargée), on attend que le décompte redescende au NIVEAU DE DÉPART (delta, jamais
+      // l'absolu — cf. countChromiumProcesses)
+      if (baseline === null) {
+        console.log('  ℹ️  /proc illisible : décompte des Chromium survivants sauté')
+        return
       }
-      assert.ok(restants <= baseline, `aucun Chromium supplémentaire ne doit survivre à close() (avant=${baseline}, après=${restants})`)
+      let restants = countChromiumProcesses()!
+      await attendre(() => (restants = countChromiumProcesses()!) <= baseline, () => `aucun Chromium supplémentaire ne doit survivre à close() (avant=${baseline}, après=${restants})`)
     })
   }
 })

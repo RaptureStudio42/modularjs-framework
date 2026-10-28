@@ -1,7 +1,8 @@
 # ModularJS pour VS Code
 
-Coloration syntaxique des composants ModularJS, et, pour les 117 effets `*nom`, complétion pendant la
-frappe et aide au survol. Un fichier `.mjs` du framework n'est pas un
+Coloration syntaxique des composants ModularJS, et, pour les 117 effets `*nom`, les 200 alias que
+ModularJS livre (`*filter.frosted_glass`) et les effets de votre appli (fichiers `*.effects.mjs`),
+complétion pendant la frappe et aide au survol, en français ou en anglais. Un fichier `.mjs` du framework n'est pas un
 module JavaScript de Node : c'est un composant qui réunit un script Civet, un gabarit, des
 variables de thème et un style SASS. Sans cette extension, l'éditeur le lit comme du
 JavaScript et le souligne en erreurs de la première à la dernière ligne.
@@ -236,19 +237,48 @@ Le banc `tests/vscode-grammar-effets.test.ts` tokenise ces formes avec le vrai m
 Pendant la frappe, l'extension propose :
 
 - après `*` : les 117 effets, avec leur famille et ce qu'ils font (`*ne` → `neon`, `*fly` après
-  `@in=`) ;
-- entre les parenthèses de `*nom(` : ses réglages pas encore écrits, chacun avec sa règle et son
-  défaut (`*neon(` → `color`, `where`, `size`…) — la première valeur sans nom compte pour le réglage
-  principal ; au début, les mots permis du principal (`*loader(` → `bloom`…) ;
-- après `réglage:` : ses mots permis (`*lift(on: ` → `hover`, `view`, `click`, `always`).
+  `@in=`), puis les effets de votre appli (`*titre`, `*halo`) ;
+- après `*effet.` : ses alias — ceux que ModularJS livre, avec ce qu'on voit (`*filter.` →
+  `frosted_glass`, `gray_spot`…), et ceux de votre appli (`*filter.net`) ; un alias de votre appli
+  remplace celui de ModularJS qui porte le même nom, comme au build ;
+- entre les parenthèses de `*nom(` ou de `*effet.alias(` : ses réglages pas encore écrits, chacun avec
+  sa règle et son défaut (`*neon(` → `color`, `where`, `size`…) — la première valeur sans nom compte
+  pour le réglage principal ; au début, les mots permis du principal (`*loader(` → `bloom`…). Un alias,
+  ou un effet de votre appli qui règle un effet de la bibliothèque, propose les réglages de cet effet,
+  avec la valeur qu'il leur donne à la place du défaut (`*filter.gray_spot(` → `spot` … `(alias : 280)`) ;
+  un effet CSS de votre appli, ceux qu'il déclare, puis `on`, `duration`, `delay` et `easing` ;
+- après `réglage:` : ses mots permis (`*lift(on: ` → `hover`, `view`, `click`, `always`), y compris
+  ceux d'une règle qui mêle un type et des mots (`*hologram(zoom: ` → `true`, `false`, `spin`).
 
 Au survol d'un effet : sa famille, ce qu'il fait, son réglage principal et le tableau de ses réglages
-(règle, défaut). Au survol d'un réglage entre les parenthèses : sa règle et son défaut. Un effet
-donné en réglage (`*delta(fx: *scramble(`) se complète comme les autres.
+(règle, défaut). Au survol d'un alias, sur l'effet comme sur l'alias (`*filter.frosted_glass` se lit
+d'un seul tenant) : d'où il vient, ce qu'on voit, son écriture (`*filter(style: none, blur: 12, …)`)
+et le tableau des réglages de son effet, la valeur de l'alias marquée `(alias)`. Au survol d'un effet
+de votre appli : son fichier et sa ligne, et de même son écriture et ses réglages. Au survol d'un
+réglage entre les parenthèses : sa règle et son défaut, ou la valeur de l'alias. Un effet donné en
+réglage (`*delta(fx: *scramble(`) se complète comme les autres.
+
+Les effets de votre appli sont lus dans les fichiers `*.effects.mjs` de l'espace de travail (hors
+`node_modules`) à l'ouverture, relus à chaque enregistrement et oubliés quand le fichier disparaît :
+une modification pas encore enregistrée n'est pas lue. Comme au build, un nom déjà pris par un effet
+de la bibliothèque, ou déjà défini par un autre fichier (lus dans l'ordre de leur chemin), est écarté,
+et une déclaration que le build refuserait est sautée sans gêner les autres.
+
+L'aide suit la langue de VS Code : en français pour une langue française, en anglais pour toute
+autre. Ce que fait un effet et ce qu'on voit d'un alias viennent du chapitre 38 de la documentation
+en français, et des fiches du site du framework en anglais ; un effet ou un alias que le site ne
+décrit pas garde sa phrase française dans l'aide anglaise.
 
 Les effets viennent du catalogue du framework et du chapitre 38 de sa documentation, recopiés dans
-`effects.json`. Un effet ajouté ou un réglage changé : `node --import tsx/esm script/vscode-effects.mjs`
-le régénère (le test `tests/vscode-effects.test.ts` échoue tant qu'il n'est pas à jour).
+`effects.json` avec les alias que ModularJS livre (`src/effects/aliases-mjs.ts`) ; `effects-app.json`
+porte les réglages que tout effet CSS d'une appli reçoit. Un effet ou un alias ajouté, un réglage
+changé : `node --import tsx/esm script/vscode-effects.mjs` les régénère (les tests
+`tests/vscode-effects.test.ts` et `tests/vscode-effets-alias-appli.test.ts` échouent tant qu'ils ne
+sont pas à jour). Les phrases anglaises sont recopiées du site dans `effects-help-en.json`, une par
+effet ou par alias, puis dans `effects.json` : la construction de l'extension ne lit jamais le site.
+Quand le site change ses textes, ou qu'un effet ou un alias s'ajoute,
+`node --import tsx/esm script/vscode-effects.mjs --site <racine du site>` les recopie, puis régénère
+`effects.json`.
 
 ## Les autres blocs — ce qui a été vérifié
 

@@ -47,6 +47,200 @@ if (µ.Element) {
     return key.charCodeAt(0) === 115 && key.charCodeAt(1) === 45; // 's-'
   };
 
+  // Repères des LIGNES d'une liste, écrits par le serveur en `markers` (`µ._ssrRows`) et relevés par le client (`_mjs_adoptRows`), à part de
+  // ceux de la racine (`mjs-h`, `mjs-e`) que l'étape 1 ramasse dans toute la racine d'ombre : `<!--mjs-l:<clé>-->` devant la tête de chaque
+  // ligne (clé passée par `encodeURIComponent`, jamais `-->` dans un commentaire ; `#` pour une clé d'identité), `mjs-r="<réf> …"` sur un élément repris,
+  // `<!--mjs-r:<réf> …-->` devant un texte repris, `<!--mjs-q:<réf> …-->` à la place d'un texte vide (l'ancre d'un bloc imbriqué)
+  var rowHead = function(n, to) {
+    return !!n && n !== to && n.nodeType === 8 && n.data.slice(0, 6) === 'mjs-l:';
+  };
+  var refsOn = function(refs, keys, node) {
+    var ks = keys.split(' ');
+    for (var i = 0; i < ks.length; i++) refs[ks[i]] = node;
+  };
+  // l'ancre de fin d'un bloc imbriqué (repère `mjs-q:e-<id>`) parmi les frères qui suivent `n`, avant `stop` ; null si le parseur l'a déplacée
+  var blockEnd = function(n, d, stop) {
+    var fin = 'mjs-q:e-' + d.slice(8).split(' ')[0];
+    for (var x = n.nextSibling; x && x !== stop; x = x.nextSibling) {
+      if (x.nodeType === 8 && x.data.split(' ')[0] === fin) return x;
+    }
+    return null;
+  };
+
+  // relève les repères de `n` à `stop` exclu (frères, puis leurs descendants) dans `refs` et les retire ; `out` reçoit les nœuds de tête de
+  // la ligne. Un bloc imbriqué court de son ancre de tête à son ancre de fin : gardé quand c'est une liste dont le serveur a écrit les lignes
+  // (reprises à son premier rendu), vidé sinon (son premier rendu le refait). Rend faux quand un repère n'est plus à sa place
+  var rowMarks = function(n, stop, refs, out) {
+    while (n && n !== stop) {
+      var d = n.nodeType === 8 ? n.data : '';
+      var q = d.slice(0, 6) === 'mjs-q:';
+      if (n.nodeType === 1) {
+        var a = n.getAttribute('mjs-r');
+        if (a !== null) {
+          n.removeAttribute('mjs-r');
+          refsOn(refs, a, n);
+        }
+        if (n.firstChild && !rowMarks(n.firstChild, null, refs, null)) return false;
+      }
+      else if (q || d.slice(0, 6) === 'mjs-r:') {
+        var c = n;
+        // un texte repris suit son repère (sinon le parseur l'a sorti de là) ; un texte vide, que le HTML n'écrit pas, naît à la place du sien
+        n = q ? µ._tm(c) : c.nextSibling;
+        if (!q) {
+          if (!n || n.nodeType !== 3) return false;
+          c.parentNode.removeChild(c);
+        }
+        refsOn(refs, d.slice(6), n);
+        if (q && d.charCodeAt(6) === 115 && d.charCodeAt(7) === 45) { // 's-'
+          var fin = blockEnd(n, d, stop);
+          if (!fin) return false;
+          var keep = rowHead(n.nextSibling, fin);
+          if (keep) n._mjs_srv = 1;
+          if (out) out.push(n);
+          while (n.nextSibling !== fin) {
+            if (keep) {
+              n = n.nextSibling;
+              if (out) out.push(n);
+            }
+            else n.parentNode.removeChild(n.nextSibling);
+          }
+          // l'ancre de fin, relevée au tour suivant
+          n = fin;
+          continue;
+        }
+      }
+      if (out) out.push(n);
+      n = n.nextSibling;
+    }
+    return true;
+  };
+
+  // une clé d'identité se fabrique à chaque page : celle du serveur n'est jamais celle du navigateur, la ligne se reprend alors par son
+  // rang. C'est le tatouage de l'élément de la ligne (`_mjs_mjsTag` : liste sans `by`, clé `by` vide ; rang d'occurrence `#<n>` compris),
+  // ou l'identifiant d'une clé objet sans texte propre (`_mjs_keyOf`, mjs_for.ts : clé `by` objet, gelé ou non, ou fonction ; clé objet
+  // d'une Map sans `by`, premier élément de la paire). Reconnue sur l'objet lui-même (lu sans rien poser), jamais sur sa forme : une clé
+  // écrite par l'auteur (texte, nombre, objet qui s'écrit lui-même comme une date ; `by` ou clé d'une Map), même `mjs-1`, se compare
+  // telle quelle. Le serveur l'écrit `#`, qu'aucune clé encodée ne donne. `by` : le nom de la clé `by` de la liste
+  var identKey = function(el, it, k, by) {
+    var v = by && it != null ? it[by] : null;
+    if (v != null) return Object(v) === v && el._mjs_keyId(v) === k;
+    var t = it !== null && typeof it === 'object' ? el._mjs_mjsTag(it, 1) : void 0;
+    return !!t && (k === t || k.slice(0, t.length + 1) === t + '#') || !by && Array.isArray(it) && Object(it[0]) === it[0] && el._mjs_keyId(it[0]) === k;
+  };
+
+  // Premier rendu d'une liste dont le serveur a écrit les lignes (ancre `_mjs_srv`, posée à la reprise) : chaque ligne est REPRISE — ses
+  // nœuds gardés (focus, saisie, défilement), ses repères relevés puis retirés, son gabarit appelé sur ces nœuds (`tplFn(élément, index,
+  // réfs)`) au lieu d'en fabriquer de neufs — quand sa clé est celle de l'élément de même rang, une fois les doublons écartés comme le fait
+  // la réconciliation (la première occurrence d'une clé reste, avec son rang dans la collection). Une ligne qui ne correspond pas (autre
+  // clé, repère déplacé par le parseur, gabarit qui échoue) part, la réconciliation qui suit la refait avec les éléments restés sans ligne.
+  // Rend les clés reprises, dans l'ordre : la passe d'avant de la réconciliation ; `by` : le nom de la clé `by` de la liste
+  µ.Element.prototype._mjs_adoptRows = function(start, end, cache, keys, items, isArray, keysArr, tplFn, by) {
+    start._mjs_srv = 0;
+    var parent = start.parentNode;
+    var heads  = [];
+    var done   = [];
+    var seen   = new Set();
+    var last   = start;
+    var j      = 0;
+    // têtes de ligne ; un bloc imbriqué posé en tête d'une ligne est sauté d'un tenant (ses propres lignes ne sont pas celles-ci)
+    for (var n = start.nextSibling; n && n !== end; n = n.nextSibling) {
+      if (rowHead(n, end)) heads.push(n);
+      else if (n.nodeType === 8 && n.data.slice(0, 8) === 'mjs-q:s-') n = blockEnd(n, n.data, end) || n;
+    }
+    for (var i = 0; i < heads.length; i++) {
+      var h    = heads[i];
+      var stop = heads[i + 1] || end;
+      var key  = h.data.slice(6);
+      // l'élément de même rang, doublons écartés : `at`, son rang dans la collection
+      while (j < keys.length && seen.has(keys[j])) j++;
+      var at = j++;
+      var k  = at < keys.length ? keys[at] : null;
+      var it = k !== null ? items[at] : void 0;
+      var en = null;
+      if (k !== null) seen.add(k);
+      parent.removeChild(h);
+      // clé d'identité des deux côtés : reprise par le rang ; sinon la même clé, écrite par l'auteur des deux côtés
+      if (k !== null && (key === '#' ? identKey(this, it, k, by) : key === encodeURIComponent(k) && !identKey(this, it, k, by))) {
+        var refs  = {};
+        var nodes = [];
+        if (rowMarks(last.nextSibling, stop, refs, nodes) && nodes.length) {
+          try {
+            var ix    = isArray ? at : keysArr[at];
+            var built = tplFn(it, ix, refs);
+            // éléments enregistrés pour le routage des événements, sauf si le tplFn l'a fait (`_mjs_reg`)
+            if (!refs._mjs_reg) this._mjs_registerRefs(refs);
+            en = {nodes: nodes, __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: it, _mjs_ix: ix};
+            refs._mjs_en = en;
+          }
+          catch {
+            en = null;
+          }
+        }
+      }
+      if (en) {
+        cache.set(k, en);
+        done.push(k);
+        last = en.nodes[en.nodes.length - 1];
+      }
+      else {
+        while (last.nextSibling && last.nextSibling !== stop) parent.removeChild(last.nextSibling);
+      }
+    }
+    return done;
+  };
+
+  // Rendu serveur, mode `markers` : les lignes de chaque liste dont les ancres sont reprises (celles de la racine, puis celles des lignes
+  // repérées, de proche en proche) reçoivent leurs repères. Appelé par le rendu serveur juste après ceux de la racine
+  µ._ssrRows = function(el) {
+    var lists = el._mjs_list_anchor;
+    if (!lists || !el._mjs_nodes) return;
+    var doc      = el.ownerDocument;
+    var byAnchor = new Map();
+    for (var id in lists) byAnchor.set(lists[id], id);
+    var mark = function(refs) {
+      for (var a in refs) {
+        var cid   = blockAnchor(a) ? byAnchor.get(refs[a]) : void 0;
+        var cache = cid !== void 0 && el._mjs_list_cache && el._mjs_list_cache[cid];
+        var order = cache && el._mjs_list_order[cid];
+        if (!order) continue;
+        // le nom de la clé `by` de la liste, posé sur son ancre par la réconciliation (mjs_for.ts)
+        var by = refs[a]._mjs_by;
+        for (var i = 0; i < order.length; i++) {
+          var en = cache.get(order[i]);
+          var ns = en && el._mjs_liveEntryNodes(en.nodes);
+          if (!ns || !ns[0] || !ns[0].parentNode) continue;
+          // clé d'identité : `#`, reprise par le rang (cf. identKey) ; toute autre clé, encodée
+          var key = order[i];
+          ns[0].parentNode.insertBefore(doc.createComment('mjs-l:' + (identKey(el, en._mjs_it, key, by) ? '#' : encodeURIComponent(key))), ns[0]);
+          // un nœud qui porte plusieurs réfs n'a qu'un repère, réfs séparées par une espace
+          var r     = en.__nodes;
+          var byRef = new Map();
+          for (var k in r) {
+            var t = r[k];
+            if (!t || !(t.nodeType === 1 || t.nodeType === 3 && t.parentNode)) continue;
+            var ks = byRef.get(t);
+            if (ks) ks.push(k);
+            else byRef.set(t, [k]);
+          }
+          byRef.forEach(function(ks, t) {
+            if (t.nodeType === 1) {
+              t.setAttribute('mjs-r', ks.join(' '));
+              return;
+            }
+            t.parentNode.insertBefore(doc.createComment((t.data === '' ? 'mjs-q:' : 'mjs-r:') + ks.join(' ')), t);
+            if (t.data === '') return;
+            // un texte repris que suit un autre texte : le parseur les fusionnerait, un commentaire vide les sépare (le client le laisse)
+            var f = t.nextSibling;
+            while (f && f.nodeType === 3 && f.data === '') f = f.nextSibling;
+            if (f && f.nodeType === 3) t.parentNode.insertBefore(doc.createComment(''), t.nextSibling);
+          });
+          mark(r);
+        }
+      }
+    };
+    mark(el._mjs_nodes);
+  };
+
   // Le serveur et le navigateur lisent le même module, mais pas forcément le même build : un serveur construit en développement et un navigateur construit en production
   // (qui a retiré des morceaux du module) numérotent leurs repères autrement, et la vue du navigateur lirait alors d'autres nœuds que les siens. Chaque nœud qui porte un
   // événement dans la vue du navigateur (`_mjs_evt_ids`, qui compte aussi ceux des blocs, que le serveur n'étiquette pas) doit avoir été repris. Quand l'un manque, le gabarit de
@@ -126,7 +320,8 @@ if (µ.Element) {
       }
     }
     // 3. Blocs : ce que le serveur a rendu d'un bloc ({for}, {if}, {key}, {await}) entre ses deux ancres est refait par son premier
-    // rendu côté client, qui s'appuie sur ces ancres : il part ici, sinon une liste y ajouterait ses lignes à celles du serveur.
+    // rendu côté client, qui s'appuie sur ces ancres : il part ici, sinon une liste y ajouterait ses lignes à celles du serveur. Sauf les
+    // lignes d'une liste que le serveur a repérées (`mjs-l:` en tête) : gardées, la liste les reprend à son premier rendu (`_mjs_adoptRows`)
     for (var b in refs) {
       if (b.charCodeAt(0) === 115 && b.charCodeAt(1) === 45) { // 's-'
         var from = refs[b];
@@ -134,6 +329,10 @@ if (µ.Element) {
         // le parseur range parfois les deux ancres chez des parents différents (un <tr> sous un <table>, un <div> sous un <p>…) ; sans jumelle
         // ou dans l'ordre inverse, elles n'encadrent plus rien : la vue n'est pas reprise, elle est rebâtie
         if (!to || !(from.compareDocumentPosition(to) & 4) || from.parentNode !== to.parentNode) return false;
+        if (rowHead(from.nextSibling, to)) {
+          from._mjs_srv = 1;
+          continue;
+        }
         while (from.nextSibling !== to) {
           from.parentNode.removeChild(from.nextSibling);
         }

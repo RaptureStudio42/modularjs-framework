@@ -201,7 +201,7 @@ Côté client, `typingUsers` expire après ~5 secondes sans nouvelle frappe reç
 - **Suppression = tombstone, jamais une réécriture d'historique.** Cf. [§5](#moderation) — `room().history()` n'expose pas de primitive pour retirer une entrée précise de son journal.
 - **`canJoin` ne gouverne pas l'adhésion `µ:join`.** Cf. l'encart du [§3](#options) — seule `mjsWs({ rooms: { join } })` le peut ; `canJoin` est un filet de second niveau, réévalué par message.
 - **Pas de page de démonstration dédiée** sur le site vitrine — laissé à une itération ultérieure.
-- **`sock.chat` n'est pas auto-sélectionné.** Comme `sock.game`, il exige le module runtime `chat` (cf. [§8](#annexe)) — absent de la sélection `runtime`, `sock.chat` reste indéfini (avertissement du bundler à la construction, jamais un crash silencieux).
+- **Dans une liste `runtime`, `sock.chat` exige le module `chat`.** Sans clé `runtime`, il est repéré dans le code (`sock.chat`) et joint avec `socket`. Dans une liste, comme `sock.game`, il exige le module runtime `chat` (cf. [§8](#annexe)) — absent de la liste, `sock.chat` reste indéfini (avertissement du bundler à la construction, jamais un crash silencieux).
 
 ---
 

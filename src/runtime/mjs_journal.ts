@@ -2,10 +2,11 @@
 // 'journal', cf. bundler/index.ts CANONICAL + config.ts OPTIONAL_RUNTIME_MODULES).
 //
 // Le GATE est LU À CHAQUE ÉVÉNEMENT (jamais une seule fois au chargement du module) : même bundlé,
-// ce module n'arme rien tant que `µ.config.journal !== true` (mjs_init.ts, défaut false) — et
-// inversement, une app qui bascule `µ.config.journal = true` APRÈS le chargement du cœur (cas
-// normal : le cœur charge et s'exécute AVANT tout code applicatif) voit le veilleur s'activer sans
-// rien recharger. Double porte VOULUE (cf. JournalConfig, bundler/config.ts) : le serveur doit
+// ce module n'arme rien tant que `µ.config.journal !== true` (mjs_init.ts, défaut false) — aucun
+// écouteur posé sur window : le réglage devient un accesseur qui pose `error`/`unhandledrejection`
+// quand il passe à true et les retire quand il en sort. Une app qui bascule `µ.config.journal = true`
+// APRÈS le chargement du cœur (cas normal : le cœur charge et s'exécute AVANT tout code applicatif)
+// voit donc le veilleur s'activer sans rien recharger. Double porte VOULUE (cf. JournalConfig, bundler/config.ts) : le serveur doit
 // AUSSI ouvrir `journal.client` — l'un sans l'autre ne fait jamais fuiter la moindre trame.
 //
 // Capture : écoute error (addEventListener, erreurs non interceptées) + unhandledrejection (promesses rejetées
@@ -76,16 +77,16 @@
     } catch { /* veilleur muet — jamais de crash en cascade */ }
   };
 
-  window.addEventListener('error', function(e) {
+  var onError = function(e) {
     try {
       if (!enabled()) return;
       var msg = (e && e.message) || 'Error';
       var stack = (e && e.error && e.error.stack) || msg;
       µ._mjs_journalSend(buildPayload(msg, stack));
     } catch { /* muet */ }
-  });
+  };
 
-  window.addEventListener('unhandledrejection', function(e) {
+  var onRejection = function(e) {
     try {
       if (!enabled()) return;
       var reason = e && e.reason;
@@ -93,7 +94,28 @@
       var stack = (reason && reason.stack) || msg;
       µ._mjs_journalSend(buildPayload(msg, stack));
     } catch { /* muet */ }
-  });
+  };
+
+  // les deux écouteurs suivent le réglage : posés à true, retirés hors de true — rien sur window tant que le journal est coupé
+  var armed = false;
+  var arm = function(on) {
+    if (on === armed || typeof window === 'undefined') return;
+    armed = on;
+    var method = on ? 'addEventListener' : 'removeEventListener';
+    window[method]('error', onError);
+    window[method]('unhandledrejection', onRejection);
+  };
+
+  try {
+    var current = µ.config.journal;
+    Object.defineProperty(µ.config, 'journal', {
+      configurable: true,
+      enumerable: true,
+      get: function() { return current; },
+      set: function(v) { current = v; arm(v === true); }
+    });
+    arm(current === true);
+  } catch { /* muet */ }
 
   // enrobage de µ.error — TOUJOURS posé (que le journal soit actif ou non) : le gate se joue à
   // l'INTÉRIEUR (enabled(), via µ._mjs_journalSend), jamais sur la présence du wrapper lui-même.

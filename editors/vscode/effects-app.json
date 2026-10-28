@@ -1,0 +1,80 @@
+{
+  "css": {
+    "rule": "une valeur CSS (#0ff, 12px, 0 0 20px red), sans ; ni accolades",
+    "rule_en": "a CSS value (#0ff, 12px, 0 0 20px red), without ; or braces"
+  },
+  "still": {
+    "on": {
+      "rule": "always, hover, view, click, load",
+      "default": "always",
+      "values": [
+        "always",
+        "hover",
+        "view",
+        "click",
+        "load"
+      ]
+    },
+    "duration": {
+      "rule": "une durée (300ms, 1.5s, 0)",
+      "rule_en": "a duration (300ms, 1.5s, 0)",
+      "default": "400ms",
+      "values": null
+    },
+    "delay": {
+      "rule": "une durée (300ms, 1.5s, 0)",
+      "rule_en": "a duration (300ms, 1.5s, 0)",
+      "default": "0s",
+      "values": null
+    },
+    "easing": {
+      "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+      "default": "ease",
+      "values": [
+        "linear",
+        "ease",
+        "ease-in",
+        "ease-out",
+        "ease-in-out"
+      ]
+    }
+  },
+  "animated": {
+    "on": {
+      "rule": "always, hover, view, click, load, success, error",
+      "default": "always",
+      "values": [
+        "always",
+        "hover",
+        "view",
+        "click",
+        "load",
+        "success",
+        "error"
+      ]
+    },
+    "duration": {
+      "rule": "une durée (300ms, 1.5s, 0)",
+      "rule_en": "a duration (300ms, 1.5s, 0)",
+      "default": "1s",
+      "values": null
+    },
+    "delay": {
+      "rule": "une durée (300ms, 1.5s, 0)",
+      "rule_en": "a duration (300ms, 1.5s, 0)",
+      "default": "0s",
+      "values": null
+    },
+    "easing": {
+      "rule": "linear, ease, ease-in, ease-out, ease-in-out",
+      "default": "ease",
+      "values": [
+        "linear",
+        "ease",
+        "ease-in",
+        "ease-out",
+        "ease-in-out"
+      ]
+    }
+  }
+}

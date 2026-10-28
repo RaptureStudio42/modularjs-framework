@@ -9,6 +9,10 @@
 //          transition place où elle veut dans son objet (ou remplace par la sienne) ; rest est l'opacité de la balise (1 si on ne peut
 //          pas la lire), style son style calculé à cet instant ; sans add, l'image est { opacity: o }
 (function(opts, spec) {
+  // options, définition et configuration rendue sans prototype : un nom que la transition n'a pas reçu reste absent, jamais lu sur un
+  // prototype pollué (un `add` hérité serait appelé, un `tick` hérité joué par le moteur à la place de l'enveloppe)
+  opts = Object.assign(Object.create(null), opts);
+  spec = Object.assign(Object.create(null), spec);
   var setup = function(node) {
     var style = window.getComputedStyle(node);
     var rest  = parseFloat(style.opacity);
@@ -16,7 +20,7 @@
     if (!(rest >= 0)) rest = 1;
     far = rest - (spec.opacity ?? 0);
     add = spec.add && spec.add(node, style, rest);
-    return {
+    return Object.assign(Object.create(null), {
       delay: opts.delay ?? 0,
       duration: opts.duration ?? spec.duration ?? 400,
       easing: µ.easing.resolve(opts.easing ?? spec.easing),
@@ -25,7 +29,7 @@
         var o = rest - far * u;
         return add ? add(t, u, o) : { opacity: o };
       }
-    };
+    });
   };
   setup._isCfgFactory = true;
   return {

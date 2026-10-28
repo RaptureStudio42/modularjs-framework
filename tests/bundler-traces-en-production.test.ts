@@ -39,7 +39,9 @@ async function build(opts: { env: 'prod' | 'dev', logLevel?: string, js?: 'bundl
   const outDir = join(root, 'dist', 'assets')
   mkdirSync(srcDir, { recursive: true })
   for (const [nom, contenu] of Object.entries(SOURCES)) writeFileSync(join(srcDir, nom), contenu + '\n')
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), ...opts } as any)
+  // le compte des traces porte sur le cœur complet (routeur, navigation, connexion), que les sources ne citent pas : 'all', sauf
+  // demande contraire du cas
+  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), runtime: 'all', ...opts } as any)
   const stats   = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
   const files = readdirSync(outDir).filter(f => f.endsWith('.js')).sort()

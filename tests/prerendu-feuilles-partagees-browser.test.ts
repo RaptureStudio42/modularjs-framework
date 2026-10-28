@@ -198,8 +198,8 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
 
   // rend `tag`, charge la page scripts bloqués (seul le JavaScript est refusé) puis lancée, et rend
   // les deux relevés, les requêtes de feuilles de la page bloquée et les 404
-  async function comparer(projet: ReturnType<typeof fixture>, tag: string, monte: string, releve: () => any): Promise<{ avant: any; apres: any; html: string; css: string[]; erreurs404: string[] }> {
-    const renderer = await createSSRRenderer({ sourceDir: projet.srcDir, outputDir: projet.outDir, manifestPath: join(projet.outDir, 'bundle.js'), stylesheetsDir: projet.stylesDir, bundlerOpts: { urlPrefix: '/out' } })
+  async function comparer(projet: ReturnType<typeof fixture>, tag: string, monte: string, releve: () => any, runtime?: 'all'): Promise<{ avant: any; apres: any; html: string; css: string[]; erreurs404: string[] }> {
+    const renderer = await createSSRRenderer({ sourceDir: projet.srcDir, outputDir: projet.outDir, manifestPath: join(projet.outDir, 'bundle.js'), stylesheetsDir: projet.stylesDir, bundlerOpts: { urlPrefix: '/out', ...(runtime ? { runtime } : {}) } })
     let res
     try {
       res = await renderer.renderToString(tag)
@@ -260,8 +260,10 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
       const cartes: any[] = h && h.shadowRoot ? Array.from(h.shadowRoot.querySelectorAll('mjs-carte')) : []
       return !!customElements.get('mjs-carte') && cartes.length === 300 && cartes.every(c => c.shadowRoot && c.shadowRoot.adoptedStyleSheets.length > 0)
     }
-    const r = await comparer(p, 'mjs-liste', monte as any, releve)
-    // cœur complet ici : la feuille du thème (liée aussi) s'ajoute à celle de 30 Ko, soit deux liens d'environ 85 octets par racine
+    // sans clé runtime, le thème ne part qu'avec un composant qui lit ses variables, la modale ou @title, et la carte n'en a aucun : 'all' le garde,
+    // sa feuille se compte avec celle de 30 Ko
+    const r = await comparer(p, 'mjs-liste', monte as any, releve, 'all')
+    // cœur complet : la feuille du thème (liée aussi) s'ajoute à celle de 30 Ko, soit deux liens d'environ 85 octets par racine
     assert.ok(r.html.length < 110000, `HTML de ${r.html.length} octets`)
     assert.equal(r.avant.n, 300)
     assert.equal(r.avant.boites[0].split(',')[2], '123', `la feuille liée s'applique à la page prérendue — relevé : ${r.avant.boites[0]}`)

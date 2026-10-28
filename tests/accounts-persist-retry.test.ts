@@ -36,7 +36,9 @@ const SECRET = 'secret-test-loadfail'
 async function startApp(persist: MjsWsAccountsPersistAdapter, opts: Partial<MjsWsAccountsOptions> = {}, wsOpts: MjsWsOptions = {}): Promise<{ transport: MemoryTransport; app: MjsWsApp }> {
   const transport = new MemoryTransport()
   const app = mjsWs({ transport, heartbeat: 0, auth: accountsAuth(SECRET), onLog: () => {}, ...wsOpts })
-  app.use(accountsPackage({ secret: SECRET, persist, ...opts } as MjsWsAccountsOptions))
+  // coût de hachage réduit des essais : chaque cas hache (création, connexion), et aux réglages de production le délai de
+  // 2 s ne tenait plus sous charge
+  app.use(accountsPackage({ secret: SECRET, persist, weakHashForTests: true, ...opts } as MjsWsAccountsOptions))
   await app.listen()
   return { transport, app }
 }

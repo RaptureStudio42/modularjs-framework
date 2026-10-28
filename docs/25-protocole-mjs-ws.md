@@ -63,7 +63,7 @@ Déclenche, dans l'ordre : `opts.auth` (ou le proxy) → si `session` est fourni
 
 #### `µ:ping` — battement
 
-`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`), et l'échantillon `intervallesPing` de l'état du serveur ([23 §10](23-mjs-ws.md#etat-serveur)) : un **intervalle entre deux pings**, pas un aller-retour — l'aller-retour se mesure côté client, au `µ:pong`.
+`p = { ts: any }` — valeur libre (généralement un timestamp numérique), renvoyée **verbatim** par le serveur dans le `µ:pong` correspondant (même en cas de valeur non numérique — jamais recalculée côté serveur). Émis par le client à intervalle régulier (option cliente `heartbeat`, défaut 15000 ms — indépendante de l'option **serveur** du même nom, qui ne fixe qu'un seuil de watchdog, cf. [23 §3](23-mjs-ws.md#protections)). Déclenche `µ:pong` + met à jour `client.latency` côté serveur (mesuré entre deux `µ:ping` reçus, pas via `ts`), et l'échantillon `intervallesPing` de l'état du serveur ([23 §10](23-mjs-ws.md#etat-serveur)) : un **intervalle entre deux pings**, pas un aller-retour — l'aller-retour se mesure côté client, au `µ:pong`. Champ facultatif `early: true` : un `µ:ping` hors battement — le client de référence l'envoie pour prouver le départ d'un salon (cf. `µ:leave`), et son battement repart de lui. Le serveur y répond par un `µ:pong` comme à tout autre, mais n'en relève aucun intervalle (ni `client.latency`, ni `intervallesPing`) : l'intervalle suivant se mesure à partir de lui. Un serveur qui ignore ce champ relève l'intervalle qui le précède, plus court que la période du battement.
 
 #### `µ:refresh` — rafraîchit le jeton en vol
 
@@ -78,11 +78,15 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:sub-stream` — abonnement à un flux
 
-`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse. Un flux fermé (déclaré sans `public`, `room` ni `canSubscribe` : un flux est fermé par défaut), un flux dont la garde refuse ce client (`canSubscribe`, `room` — [23 §5](23-mjs-ws.md#flux)), ou un flux écrit par le pont mais jamais déclaré par ce processus, répond `µ:error { message }` (accès refusé), sans abonnement.
+`p = { stream: string }` (obligatoire — une charge sans `stream` de type `string` est ignorée **silencieusement**, aucune trame en retour). Déclenche un abonnement + un delta `reset` immédiat (§2) — instantané complet même si le flux n'a jamais changé depuis l'abonnement précédent. Un flux jamais déclaré côté serveur (`app.stream(nom)` jamais appelé) répond honnêtement un `reset` **vide** (`seq: 0`) plutôt que de laisser le client sans réponse. Un flux fermé (déclaré sans `public`, `room` ni `canSubscribe` : un flux est fermé par défaut), un flux dont la garde refuse ce client (`canSubscribe`, `room` — [23 §5](23-mjs-ws.md#flux)), ou un flux écrit par le pont mais jamais déclaré par ce processus, répond `µ:error { message, code: 'stream-denied', stream }` (accès refusé, `stream` nomme le flux), sans abonnement. Une garde `canSubscribe` asynchrone sans réponse dans son délai (`guardTimeout`, 5 000 ms par défaut, [23 §5](23-mjs-ws.md#flux)) compte comme un refus : même forme, le `message` dit « sa garde n'a pas répondu à temps ». Un abonné qui perd le flux (garde posée après coup, vérification d'un départ ou d'une entrée) reçoit le même refus.
 
 #### `µ:resync` — rattrapage après un trou
 
 `p = { stream: string, from: number }` — `stream` obligatoire (même garde silencieuse que `µ:sub-stream`) ; `from` absent ou non-numérique-fini retombe sur `0` (rejeu complet si le journal le permet, sinon `reset`). Détail complet de la logique de rattrapage : §2.
+
+#### `µ:unsub-stream` — désabonnement d'un flux
+
+`p = { stream: string }` (obligatoire, même garde silencieuse que `µ:sub-stream`). La connexion cesse de suivre ce flux : plus aucun delta, **sans** trame en retour — comme pour `µ:leave`, le client sait déjà qu'il part. Rien de ce qu'elle attendait encore ne la réabonne : ni une demande dont la garde répond après coup, ni une vérification en vol, ni son retour dans un salon quitté (cf. `µ:join`). Désabonner un flux qu'elle ne suit pas (déjà désabonnée, jamais abonnée) ne fait rien. Un flux **inconnu** (jamais déclaré, ou détruit par `destroy()`) répond `µ:error { message }` (désabonnement refusé), sans rien créer ; un nom inconnu de plus de 200 caractères reçoit l'erreur courte « nom de flux trop long », sans son nom. Un `µ:sub-stream` (ou `µ:resync`) ultérieur la réabonne. **Jamais de `µ:ack`**, même si la trame portait un `id`. Une session reprise (`resumed: true`, [23 §8](23-mjs-ws.md#reprise-session)) garde ses abonnements : un client qui a quitté un flux pendant la coupure envoie son `µ:unsub-stream` après le `µ:welcome`, et ignore les trames de ce flux qui arrivent encore (tampon de la reprise rejoué, deltas partis avant le désabonnement) — le client de référence le fait, et renvoie le désabonnement à un serveur qui pousse encore un flux quitté, une fois par connexion.
 
 #### `µ:sub-presence` — abonnement à la présence
 
@@ -90,11 +94,11 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 #### `µ:join` — rejoindre un salon
 
-`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche la garde `opts.rooms.join` (fonction ou proxy, [23 §7.11](23-mjs-ws.md#pont), async autorisée) puis, si acceptée : adhésion, delta de présence `join` (**seulement** si c'est la 1ʳᵉ connexion de cette identité dans ce salon — agrégation multi-onglets, [23 §4](23-mjs-ws.md#salons-presence)), et rejeu de l'historique du salon s'il en a un ([23 §4.1](23-mjs-ws.md#salons-presence)). Si cette connexion avait quitté ce salon en suivant un flux qui lui est réservé (ou dont la garde `canSubscribe` l'avait alors refusée), ce flux lui est rendu sans `µ:sub-stream` : `reset` au `seq` courant, puis les deltas ([23 §5](23-mjs-ws.md#flux)) — sauf un flux `salon/…` (le client du framework le redemande lui-même) et au-delà des 50 derniers salons quittés par cette connexion. Un `µ:join` en double (déjà membre) est un no-op silencieux. Un refus (`false`/`throw` de la garde, nom trop long, plafond de salons) répond `µ:error { message, code: 'join-denied', room }`, throttlé à 1/s — `room` nomme le salon refusé : le client n'oublie que lui. **Jamais de `µ:ack`**, même si la trame portait un `id`.
+`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche la garde `opts.rooms.join` (fonction ou proxy, [23 §7.11](23-mjs-ws.md#pont), async autorisée) puis, si acceptée : adhésion, delta de présence `join` (**seulement** si c'est la 1ʳᵉ connexion de cette identité dans ce salon — agrégation multi-onglets, [23 §4](23-mjs-ws.md#salons-presence)), et rejeu de l'historique du salon s'il en a un ([23 §4.1](23-mjs-ws.md#salons-presence)). Si cette connexion avait quitté ce salon en suivant un flux qui lui est réservé (ou dont la garde `canSubscribe` l'avait alors refusée), ce flux lui est rendu sans `µ:sub-stream` : `reset` au `seq` courant, puis les deltas ([23 §5](23-mjs-ws.md#flux)) — sauf un flux `salon/…` (le client du framework le redemande lui-même), un flux dont elle s'est désabonnée depuis (`µ:unsub-stream`), et au-delà des 50 derniers salons quittés par cette connexion. Un `µ:join` en double (déjà membre) est un no-op silencieux. Un refus (`false`/`throw` de la garde, nom trop long, plafond de salons) répond `µ:error { message, code: 'join-denied', room }`, throttlé à 1/s — `room` nomme le salon refusé : le client n'oublie que lui. **Jamais de `µ:ack`**, même si la trame portait un `id`.
 
 #### `µ:leave` — quitter un salon
 
-`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche le retrait + delta de présence `leave` (dernière connexion de cette identité dans ce salon). Client-initié : contrairement à un `kick` serveur, **aucun `µ:left` n'est renvoyé à l'émetteur** — il sait déjà qu'il part. `µ:leave` d'un non-membre est un no-op silencieux. Les flux réservés à ce salon cessent aussitôt d'être envoyés à cette connexion, sans trame, comme ceux dont la garde `canSubscribe`, qui avait lu l'appartenance à ce salon, la refuse désormais (ils lui sont rendus à son retour, cf. `µ:join`).
+`p = { room: string }` (obligatoire, même garde silencieuse). Déclenche le retrait + delta de présence `leave` (dernière connexion de cette identité dans ce salon). Client-initié : contrairement à un `kick` serveur, **aucun `µ:left` n'est renvoyé à l'émetteur** — il sait déjà qu'il part. `µ:leave` d'un non-membre est un no-op silencieux. Le client du framework retient chaque départ jusqu'à la preuve que le serveur l'a traité : la réponse à une trame partie après lui sur la même connexion — le `µ:pong` d'un `µ:ping`, le `µ:ack` d'une requête — (le serveur traite les trames d'une connexion dans l'ordre et ne rejoue jamais un `µ:pong` ni un `µ:ack` à la reprise), ou un accueil neuf. Faute de quoi, le client envoie lui-même un `µ:ping` marqué `early: true`, un pour tous les départs en attente, une fois la connexion calme depuis une seconde (aucune trame partie), ou aussitôt dès dix départs qu'aucun `µ:ping` n'a suivis — avec ou sans battement (`heartbeat: 0`). Une session reprise ([23 §8](23-mjs-ws.md#reprise-session)) garde ses salons : il y redit `µ:leave` pour chaque départ encore retenu, une fois par reprise, suivi aussitôt d'un `µ:ping` — hors ligne, le départ n'avait pas pu partir ; parti, il a pu se perdre avec la connexion, celle d'une reprise précédente comprise — et le redire est sans effet sur un serveur qui l'avait reçu. Il retient au plus 50 départs : au-delà, le plus ancien est oublié. Les flux réservés à ce salon cessent aussitôt d'être envoyés à cette connexion, sans trame, comme ceux dont la garde `canSubscribe`, qui avait lu l'appartenance à ce salon, la refuse désormais (ils lui sont rendus à son retour, cf. `µ:join`).
 
 #### *(requête applicative)* — **sans** préfixe `µ:`
 
@@ -107,7 +111,7 @@ Un `µ:refresh` raté ne ferme **jamais** la connexion — elle continue de vivr
 
 `p` = fusion de trois sources, dans cet ordre : le retour libre de `opts.welcome(client)` (`{}` si absent, ou si `welcome()` a levé — l'erreur est loguée, jamais fatale) ; **puis** `schemaHash` (`string`) SI le registre µschema serveur n'est pas vide (§4) ; **puis**, **seulement** si `opts.resume` est actif côté serveur ([23 §8](23-mjs-ws.md#reprise-session)) : `session: { id: string, key: string }` (clé **tournée** à chaque welcome — y compris une reprise) et `resumed: boolean` (`true` = ce welcome clôt une reprise réussie). Sans `opts.resume`, `session`/`resumed` sont **absents** — pas même `resumed: false` — comportement byte-identique à avant l'existence de la reprise.
 
-Obligatoire — envoyé quoi qu'il arrive dès l'authentification acceptée (sauf coupure de la connexion **pendant** `opts.welcome()`, cas limite où rien n'est envoyé à personne). Déclenche côté client : état → `open`, la file d'attente hors-ligne est rejouée, le heartbeat démarre, et le client renvoie lui-même ses abonnements (`µ:join` d'abord, puis `µ:sub-stream`/`µ:resync`/`µ:sub-presence`, cf. note ⚠️ du hello en §1.1).
+Obligatoire — envoyé quoi qu'il arrive dès l'authentification acceptée (sauf coupure de la connexion **pendant** `opts.welcome()`, cas limite où rien n'est envoyé à personne). Déclenche côté client : état → `open`, la file d'attente hors-ligne est rejouée, le heartbeat démarre, et le client renvoie lui-même ses abonnements (`µ:join` d'abord, puis `µ:sub-stream`/`µ:resync`/`µ:sub-presence`, cf. note ⚠️ du hello en §1.1). Sur un accueil repris (`resumed: true`), il redit avant eux les départs que la session a pu garder : `µ:unsub-stream` d'un flux quitté hors ligne, `µ:leave` de chaque salon quitté dont le départ n'a pas encore été traité, suivi d'un `µ:ping` marqué `early: true` dont la réponse le prouve (cf. `µ:leave` ci-dessus).
 
 #### `µ:denied` — authentification refusée
 
@@ -131,19 +135,20 @@ Une seule trame `µ:ack` par requête, jamais plus. `id` est le **seul** lien en
 
 #### `µ:error` — erreur non fatale
 
-Six formes possibles, **jamais** combinées dans la même trame :
+Huit formes possibles, **jamais** combinées dans la même trame :
 
 | Forme | Quand |
 |---|---|
 | `{ message: string, type: string }` | un message applicatif d'un **type inconnu** (ni `serve()` ni `on()` pour lui) — `type` le nomme : le client y reconnaît le paquet d'un effet en direct qui manque au serveur (`follow:…` → `followPackage`) et le dit en console |
 | `{ message: string, code: 'join-denied', room: string }` | un `µ:join` refusé (garde `rooms.join`, nom trop long, plafond de salons) — `room` nomme le salon : le client l'oublie, lui seul, et ne le rejoint plus aux reconnexions |
+| `{ message: string, code: 'stream-denied', stream: string }` | un `µ:sub-stream` ou `µ:resync` refusé (flux fermé, garde `canSubscribe` qui refuse ou ne répond pas dans son délai `guardTimeout`, salon `room`, flux du pont non déclaré), ou un abonné qui perd le flux — `stream` nomme le flux : le client l'oublie, lui seul, et ne le redemande plus aux reconnexions |
 | `{ message: string, code: 'presence-denied', room: string }` | un `µ:sub-presence` de salon refusé (présence réservée aux membres, garde `rooms.canSeePresence`) — `room` nomme le salon ; aucun abonnement |
 | `{ message: string, code: 'presence-denied' }` | un `µ:sub-presence` **global** (sans `room`) refusé : présence globale fermée (option `presence` du serveur absente) ; aucun abonnement |
 | `{ message: string }` | forme **générique** — débit dépassé, `µ:refresh` refusé, `welcome()`/`on()` qui a levé, désaccord µschema en mode strict (§4)… tous les cas non listés ci-dessous |
 | `{ code: 'token-expired' }` | l'échéance du jeton authentifié est dépassée ([23 §7.9](23-mjs-ws.md#pont)) — précède **toujours** une fermeture serveur **sans** `µ:bye` (reconnexion possible avec un jeton neuf) |
 | `{ code: 'refresh-denied' }` | un `µ:refresh` a échoué — la connexion n'est **pas** affectée, elle continue de vivre jusqu'à son échéance courante |
 
-Jamais fatal en lui-même — alimente `lastError` côté client, rien de plus. Plusieurs causes protocolaires partagent la **même** forme générique `{message}` avec un **texte** différent (throttlé à 1/s pour la plupart — débit, désaccord µschema) : un client tiers doit traiter `message` comme un texte **d'affichage**, jamais comme une clé de branchement (seuls les `code` ci-dessus, le `room` d'un `join` ou d'une présence refusés et le `type` d'un type inconnu sont des valeurs stables destinées à être testées par égalité).
+Jamais fatal en lui-même — alimente `lastError` côté client, rien de plus. Plusieurs causes protocolaires partagent la **même** forme générique `{message}` avec un **texte** différent (throttlé à 1/s pour la plupart — débit, désaccord µschema) : un client tiers doit traiter `message` comme un texte **d'affichage**, jamais comme une clé de branchement (seuls les `code` ci-dessus, le `room` d'un `join` ou d'une présence refusés, le `stream` d'un flux refusé et le `type` d'un type inconnu sont des valeurs stables destinées à être testées par égalité).
 
 #### `µ:presence` — delta de présence
 
@@ -230,6 +235,7 @@ Source de vérité côté serveur : `app.stream(nom)` ([23 §5](23-mjs-ws.md#flu
 1. `µ:sub-stream { stream }` (§1.1) → réponse **immédiate** `{ op: 'reset', values: <état courant> }` au `seq` courant (état vide si le flux n'a encore rien reçu).
 2. Chaque mutation serveur (`stream.add/update/remove/reset(...)`) diffuse `{ t, seq: ++compteur, p }` à **tous** les abonnés de ce flux, et journalise l'entrée dans un anneau borné (sauf `reset`, qui **vide** le journal — taille par défaut 200 deltas, réglable **par** flux).
 3. Un abonné qui reçoit un `seq` ≠ (dernier `seq` vu + 1) — donc un **trou** — envoie lui-même `µ:resync { stream, from: dernierSeqVu }` (§1.1). Entièrement automatique côté client de référence : rien à coder.
+4. `µ:unsub-stream { stream }` (§1.1) → plus aucun delta de ce flux pour cette connexion, sans trame en retour ; un nouveau `µ:sub-stream` repart de l'étape 1. Un refus (`µ:error { code: 'stream-denied', stream }`, §1.2) mène au même point, sans `µ:unsub-stream`.
 
 ### `µ:resync` — la décision serveur
 
@@ -258,7 +264,7 @@ Préfixe **réservé** par [24 · MJS-Server](24-mjs-server.md), une couche comp
 
 #### `µgame:play` — s'asseoir (file publique ou partie privée)
 
-`p = { type: string, code?: true | string }` — `type` = nom du jeu déclaré (`app.game(type, def)`) ; `code` discriminé par **type**, jamais par sa seule présence :
+`p = { type: string, code?: true | string, snapshots?: true }` — `type` = nom du jeu déclaré (`app.game(type, def)`) ; `snapshots` : ci-dessous ; `code` discriminé par **type**, jamais par sa seule présence :
 
 | `code` | Effet |
 |---|---|
@@ -269,7 +275,9 @@ Préfixe **réservé** par [24 · MJS-Server](24-mjs-server.md), une couche comp
 Réponse `µ:ack.p` — **deux** formes :
 
 - **pas encore assis** (file publique, quota pas atteint) : `{ attente: number }` (position dans la file) ;
-- **assis** : `{ game: string, seat: number, phase, turn, seq, code: string | undefined, ...infoMode }`, où `infoMode` vaut `{ view: any }` en mode `'authoritative'` (défaut), ou `{ seed: number, journal: [...] }` en mode `'lockstep'` ([24 §13](24-mjs-server.md#netcode)) — la graine déterministe + l'historique **complet** des ordres depuis la genèse, à rejouer côté client.
+- **assis** : `{ game: string, seat: number, phase, turn, seq, code: string | undefined, ...infoMode }`, où `infoMode` vaut `{ view: any }` en mode `'authoritative'` (défaut), ou `{ seed: number, journal: [...] }` en mode `'lockstep'` ([24 §13](24-mjs-server.md#netcode)) — la graine déterministe + l'historique des ordres depuis la genèse, à rejouer côté client. Quand la partie garde des instantanés (`lockstepJournal.snapshotEvery`), `infoMode` porte en plus `snapshotEvery: number` (cadence en ticks) et `snapshotMax: number` (taille maximale d'une proposition, en octets du JSON `{ tick, state, rng }`), et, dès qu'un instantané est gardé, `snapshot: { tick: number, state: any, rng: number }` : `journal` ne porte alors que les ticks qui suivent `snapshot.tick` (au moins un), à rejouer à partir de cet état et de ce générateur.
+
+`snapshots: true` dit que le client sait repartir de cet instantané : le client du framework l'envoie quand la page charge `µ.lockstep` (modules `'lockstep'` et `'det'`), ici comme dans `µgame:resync`. Une partie `'lockstep'` dont le journal est coupé (un instantané gardé) refuse la requête qui ne le porte pas — celle d'une page d'une version qui ne sait pas lire les instantanés, qui repartirait sinon d'un journal tronqué avec un état faux : `µ:ack` d'erreur `"cette page ne sait pas reprendre la partie : son journal a été coupé par un instantané, que seule une version plus récente de la page sait lire — rechargez la page pour la reprendre"`, sans siège pris ni retrouvé. Tant que le journal est entier, une requête sans `snapshots` est servie comme les autres.
 
 Une reconnexion sur la **même** identité (déjà assise) via `code` est **idempotente** — renvoie la même réponse de siège, ne recrée rien.
 
@@ -285,11 +293,15 @@ Une reconnexion sur la **même** identité (déjà assise) via `code` est **idem
 
 #### `µgame:resync` — vue fraîche complète (reconnexion)
 
-`p = { game: string }`. Réponse `µ:ack.p = { game, seat, phase, turn, seq, code, ...infoMode }` — **même** forme que la réponse « assis » de `µgame:play` ci-dessus. **Toujours une vue complète**, jamais un delta même si `def.deltas: true` — ce qui vient d'être envoyé devient la nouvelle baseline pour le **prochain** delta (3.2).
+`p = { game: string, snapshots?: true }` — `snapshots` comme pour `µgame:play` ci-dessus (refus d'une page qui ne sait pas lire l'instantané d'un journal coupé). Réponse `µ:ack.p = { game, seat, phase, turn, seq, code, ...infoMode }` — **même** forme que la réponse « assis » de `µgame:play` ci-dessus. **Toujours une vue complète**, jamais un delta même si `def.deltas: true` — ce qui vient d'être envoyé devient la nouvelle baseline pour le **prochain** delta (3.2).
 
 #### `µgame:hash` — annonce de hash (lockstep seul) — **aucun** `µ:ack`
 
 `p = { game: string, tick: number, h: string }` — trois champs obligatoires (sinon ignoré silencieusement, best-effort). **fire-and-forget** : jamais de réponse, même avec un `id`. Significatif **seulement** en mode `def.mode: 'lockstep'` ([24 §13](24-mjs-server.md#netcode)) — anti-triche par **quorum** (majorité absolue des sièges courants, jamais le premier hash vu) : la référence d'un tick se fige au premier hash qui atteint ce quorum, un siège en auto-contradiction (deux hash différents pour le même tick) est flaggé suspect immédiatement (cf. `µgame:event` de type `'divergence'`, 3.2).
+
+#### `µgame:snapshot` — instantané proposé (lockstep, `snapshotEvery`) — **aucun** `µ:ack`
+
+`p = { game: string, tick: number, state: any, rng: number }` — `tick` et `rng` entiers, `state` présent (sinon ignoré silencieusement). **fire-and-forget**, comme `µgame:hash`. Envoyé par chaque siège au tick `tick` de la cadence `snapshotEvery`, en direct seulement : `state` = l'état de sa simulation à la fin de ce tick, `rng` = l'état du générateur partagé (entier de 32 bits non signé). Le serveur ne garde la proposition que quand au moins deux joueurs assis et la majorité absolue des joueurs assis proposent exactement le même JSON pour ce tick — seuls comptent les votes des joueurs assis au moment du décompte, celui d'un joueur parti est oublié —, et jamais tant qu'une connexion assise n'a envoyé aucun `µgame:snapshot` (un client qui ne sait pas lire les instantanés). Une proposition est reçue tant que moins de deux secondes de ticks ont suivi son tick, ou toute la cadence si elle est plus longue, et un seul tick est en cours à la fois (le premier proposé depuis le dernier accord) ; le serveur ignore une proposition pour un tick hors de cette fenêtre ou autre que celui en cours, un second vote du même joueur, et toute proposition hors de ce mode. La trame entière tient dans `limits.maxPayload` (§0) : le client ne propose jamais plus que `snapshotMax` (3.1, `µgame:play`) — au-delà, MJS-WS couperait sa connexion.
 
 <a id="jeu-s2c"></a>
 ### 3.2 Serveur → Client (poussées, sans `µ:ack`)

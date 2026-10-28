@@ -448,8 +448,11 @@
     }
     return params;
   },
-  navigate: function(destination, pushHistory = true, replaceHistory = false) {
-    var comp, matchPath, ref, results, gen;
+  // `fresh` : l'appelant vient de poser lui-même une entrée neuve (lien `#/…` suivi par la navigation, mjs_ujs.ts) —
+  // comme une entrée que `navigate` ajoute (`pushHistory` sans `replaceHistory`), la route part du haut de la page ;
+  // le retour arrière, lui, rend sa position (mjs_ujs.ts, popstate)
+  navigate: function(destination, pushHistory = true, replaceHistory = false, fresh = false) {
+    var comp, matchPath, ref, results, gen, toTop = fresh || (pushHistory && !replaceHistory);
     // garde de RÉ-ENTRANCE : un `@urlChange`
     // qui redirige (garde d'authentification typique : "si pas connecté →
     // navigate('/login')") ré-entre dans CETTE MÊME fonction PENDANT que la
@@ -530,6 +533,9 @@
     ref = this._mjs_awareComponents;
     results = [];
     var _mjsInject = () => {
+      // route neuve : le haut de la page, posé avec les vues qui changent (sous une transition, l'image de départ garde
+      // la position quittée)
+      if (toTop && typeof window.scrollTo === 'function') { window.scrollTo({ left: 0, top: 0, behavior: 'instant' }); }
       // la navigation finit (barre de navigation) même si un `urlChange` ou une vue lève : l'erreur
       // reste visible, la barre ne reste pas à l'écran jusqu'à la navigation suivante
       try {

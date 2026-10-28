@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
-import { WARNING_ONLY_MESSAGES, TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, messagesWithoutTraces } from '../src/bundler/minify.js'
+import { WARNING_ONLY_MESSAGES, TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, DEV_ONLY_MESSAGES, messagesWithoutTraces } from '../src/bundler/minify.js'
 
 const SRC         = join(dirname(fileURLToPath(import.meta.url)), '../src')
 const RUNTIME_DIR = join(SRC, 'runtime')
@@ -111,9 +111,9 @@ describe('messages des avertissements — l\'aide de la construction', () => {
     assert.equal(Object.keys(table).length, avant, 'la table d\'origine est intacte')
   })
 
-  it('messagesWithoutTraces au niveau \'warn\' (et sans niveau) : les textes des avertissements restent', () => {
+  it('messagesWithoutTraces au niveau \'warn\' (et sans niveau) : les textes des avertissements restent, sauf ceux du développement seul', () => {
     for (const reste of [messagesWithoutTraces(table, 'warn'), messagesWithoutTraces(table)]) {
-      for (const k of WARNING_ONLY_MESSAGES) assert.equal(typeof reste[k], 'string', k)
+      for (const k of WARNING_ONLY_MESSAGES) assert.equal(typeof reste[k], DEV_ONLY_MESSAGES.includes(k) ? 'undefined' : 'string', k)
     }
   })
 })

@@ -352,8 +352,9 @@ de ce paquet.
   — le paquet se contente de notifier et de transmettre.
 - **Pas de page de démonstration dédiée** sur le site vitrine — laissé à une
   itération ultérieure.
-- **`sock.lobby` n'est pas auto-sélectionné.** Comme `sock.chat`/`sock.account`, il exige le module
-  runtime `lobby` (cf. [§10](#annexe)) — absent de la sélection `runtime`, `sock.lobby` reste
+- **Dans une liste `runtime`, `sock.lobby` exige le module `lobby`.** Sans clé `runtime`, il est repéré dans le code
+  (`sock.lobby`) et joint avec `socket`. Dans une liste, comme `sock.chat`/`sock.account`, il exige le module
+  runtime `lobby` (cf. [§10](#annexe)) — absent de la liste, `sock.lobby` reste
   indéfini (avertissement du bundler à la construction, jamais un crash silencieux).
 
 ---

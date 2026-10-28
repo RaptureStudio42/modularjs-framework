@@ -206,7 +206,7 @@ describe('MJS-Server — sauvegarde : une écriture abandonnée qui aboutit bien
     } finally { process.off('unhandledRejection', surRejet) }
   })
 
-  it('une écriture abandonnée qui aboutit alors que rien de plus récent n\'a abouti ne déclenche aucune réécriture (témoin : vert aussi sans le correctif)', async () => {
+  it('une écriture abandonnée est refaite une seconde après ; sa réponse tardive, du même état que la plus récente, ne déclenche aucune réécriture', async () => {
     const base                 = baseSimulee({ insert: { 1: 40000 } })
     const adapter              = new SqlPersistAdapter({ query: base.query, onLog: () => {} })
     const { engine, warns }    = moteur(adapter)
@@ -216,9 +216,9 @@ describe('MJS-Server — sauvegarde : une écriture abandonnée qui aboutit bien
     mute(game, 1)
     await avance(100)                        // la seule écriture part : son INSERT reste coincé 40 s
     await avance(DELAI)                      // elle est abandonnée
-    await avance(10000)                      // elle aboutit : c'est l'état le plus récent
+    await avance(10000)                      // refaite une seconde après (et aboutie), puis elle aboutit à son tour : même état
     assert.equal(base.lignes.get('g-seule'), etat('g-seule', 1))
-    assert.equal(base.inserts(), 1, 'rien n\'est réécrit : la ligne est déjà à jour')
+    assert.equal(base.inserts(), 2, 'l\'écriture sans réponse est refaite une fois, sa réponse tardive ne réécrit rien')
     assert.equal(warns.length, 1, `seul l'abandon est signalé : ${JSON.stringify(warns)}`)
   })
 

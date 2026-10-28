@@ -21,6 +21,7 @@ import type { MjsWsLogFn } from '../mjs-ws/index.js'
 // anti-triche (durcissement quorum, cf. lockstep.ts tête de fichier) — type SEUL, aucun
 // cycle runtime (lockstep.ts n'importe rien de MJS-Server, cf. son commentaire de tête)
 import type { MjsServerLockstepDivergence } from './lockstep.js'
+import { DEFAULT_MAX_PAYLOAD } from '../mjs-ws/transport.js'
 import { t } from '../messages/index.js'
 import { keyUnknown } from './util.js'
 
@@ -57,8 +58,9 @@ function extractFromSpace(game: Game): Record<string, { x: number; y: number }> 
 export interface MjsServerTurnsDef {
   /** 'roundrobin' = ordre des sièges (ordre d'arrivée) ; fn = calcule le prochain joueur soi-même */
   order?: 'roundrobin' | ((game: Game) => MjsServerSeat | string | null)
-  /** ms — minuterie de tour auto-réarmée à chaque changement de `game.turn` */
-  timeout?: number
+  /** ms — minuterie de tour auto-réarmée à chaque changement de `game.turn` ; absente = DEFAULT_TURN_TIMEOUT (30 s) ; `null` = aucune
+   *  minuterie de tour (partie par correspondance : le tour attend son joueur aussi longtemps qu'il le faut) */
+  timeout?: number | null
 }
 
 export interface MjsServerLimitsDef {
@@ -86,6 +88,9 @@ export interface MjsServerHooksDef {
   onLeave?: (game: Game, player: MjsServerSeat) => void
   onEnd?: (game: Game, result: unknown) => void
   onTurnTimeout?: (game: Game) => void
+  /** la partie disparaît pour de bon (grâce endTtl ou emptyTtl échue, table abandonnée, annulation, appariement défait) — jamais à
+   *  l'arrêt du serveur, qui la laisse revivre au redémarrage ; cf. game.ts::_destroy */
+  onDestroy?: (game: Game) => void
 }
 
 /** mode ACTION (tick > 0 requis) — tampon circulaire de positions passées pour la
@@ -153,9 +158,13 @@ export interface MjsServerGameDef {
    *  jamais de troncature. `maxTicks` (opt-in, absent = aucun anneau) plafonne en plus le journal aux
    *  `maxTicks` DERNIERS ticks, en ANNEAU (les plus vieux purgés à chaque tick clos). TRADE-OFF assumé
    *  de l'anneau : un client qui rate plus de `maxTicks` ticks (déconnexion longue) reçoit à la
-   *  reconnexion un journal TRONQUÉ — resync déterministe impossible à reconstituer pour lui (aucun
-   *  snapshot d'état ici, cf. def.mode). */
-  lockstepJournal?: { maxTicks?: number; maxBytes?: number; maxOrderBytes?: number }
+   *  reconnexion un journal TRONQUÉ — resync déterministe impossible à reconstituer pour lui, sauf
+   *  instantané gardé depuis. `snapshotEvery` (opt-in, en ticks, absent = aucun instantané) : à cette
+   *  cadence, chaque client propose l'état de sa simulation ; le serveur le garde quand au moins deux
+   *  sièges et la majorité absolue des sièges occupés proposent le même, et coupe le journal avant lui
+   *  (cf. lockstep.ts « INSTANTANÉS ») — `maxBytes` compte alors l'instantané et le journal ensemble, et `maxTicks`, s'il est déclaré,
+   *  doit couvrir la fenêtre de réception des propositions (deux secondes de ticks, ou la cadence si elle est plus longue). */
+  lockstepJournal?: { maxTicks?: number; maxBytes?: number; maxOrderBytes?: number; snapshotEvery?: number }
   /** mode ACTION (tick > 0 requis) — intentions NOMMÉES reçues via µgame:move, mises en FILE par
    *  joueur (la DERNIÈRE valeur gagne par nom) et appliquées à CHAQUE tick, jamais à réception —
    *  cf. game.ts _onMove/_applyIntents. Un nom ne peut pas être à la fois dans
@@ -229,7 +238,8 @@ export interface MjsServerResolvedDef {
   /** `null` en mode 'lockstep' (interdit — aucun état serveur à filtrer, cf. def.mode) */
   readonly view: ((game: Game, player: MjsServerSeat | null) => unknown) | null
   readonly phases: Record<string, string[]> | null
-  readonly turns: { order: 'roundrobin' | ((game: Game) => MjsServerSeat | string | null); timeout: number } | null
+  /** `timeout: null` = aucune minuterie de tour (cf. MjsServerTurnsDef.timeout) */
+  readonly turns: { order: 'roundrobin' | ((game: Game) => MjsServerSeat | string | null); timeout: number | null } | null
   readonly timers: Record<string, (game: Game) => void>
   readonly limits: { moves: [number, number] | null; moveIntervalMs: number | null; moveWaitMs: number }
   readonly emptyTtl: number
@@ -240,6 +250,12 @@ export interface MjsServerResolvedDef {
   /** cf. MjsServerGameDef.lockstepJournal — en 'lockstep', TOUJOURS résolu (défauts appliqués,
    *  `maxTicks: null` = aucun anneau) ; `null` hors lockstep */
   readonly lockstepJournal: { maxTicks: number | null; maxBytes: number; maxOrderBytes: number } | null
+  /** cf. MjsServerGameDef.lockstepJournal.snapshotEvery — `every` : cadence en ticks ; `max` : taille maximale (octets du JSON
+   *  `{ tick, state, rng }`) d'une proposition, annoncée au client (`snapshotMax`) pour qu'il n'envoie jamais une trame que MJS-WS
+   *  refuserait (cf. LOCKSTEP_SNAPSHOT_ENVELOPE_BYTES) ni un instantané qui ne tiendrait pas dans `maxBytes` ; `window` : nombre de ticks
+   *  pendant lesquels une proposition reste reçue après la clôture de son tick (cf. LOCKSTEP_SNAPSHOT_WINDOW_MS). `null` sans instantané
+   *  (ou hors lockstep) */
+  readonly lockstepSnapshot: { every: number; max: number; window: number } | null
   readonly intents: Record<string, (game: Game, player: MjsServerSeat, p: unknown) => unknown>
   readonly simulate: ((game: Game, dt: number) => void) | null
   readonly slowTick: { hz: number; fn: (game: Game) => void } | null
@@ -265,6 +281,8 @@ export interface MjsServerResolvedDef {
 
 export const DEFAULT_SEAT_TTL  = 10000
 export const DEFAULT_EMPTY_TTL = 60000
+/** minuterie de tour quand `turns` est déclaré sans `timeout` (cf. MjsServerTurnsDef.timeout ; `null` n'en arme aucune) */
+export const DEFAULT_TURN_TIMEOUT = 30000
 /** anti-triche (durcissement) — quota de coups PAR SIÈGE appliqué QUAND
  *  `limits.moves` est ABSENT (jamais si l'auteur a déclaré SA propre valeur, `null` compris, cf.
  *  resolveGameDef) : 30 coups/s (capacité 30, refill 30/s — même ordre de grandeur que
@@ -279,21 +297,32 @@ export const DEFAULT_MOVES_LIMIT: [number, number] = [30, 1000]
  *  chaque resync et à chaque sauvegarde) */
 export const DEFAULT_LOCKSTEP_ORDER_BYTES   = 2048
 export const DEFAULT_LOCKSTEP_JOURNAL_BYTES = 16 * 1024 * 1024
+/** mode 'lockstep', instantanés — octets laissés sous la taille de trame permise par MJS-WS (`limits.maxPayload`) pour l'enveloppe
+ *  d'une proposition (`{"t":"µgame:snapshot","p":{"game":…}}`) : la proposition elle-même ne dépasse jamais `maxPayload` moins cette marge */
+export const LOCKSTEP_SNAPSHOT_ENVELOPE_BYTES = 1024
+/** mode 'lockstep', instantanés — durée pendant laquelle une proposition reste reçue après la clôture de son tick, en ms (convertie en
+ *  ticks au `tick` du jeu, jamais moins que la cadence) : de quoi couvrir un aller-retour réseau ordinaire et l'écart entre les joueurs
+ *  (cf. lockstep.ts « INSTANTANÉS ») */
+export const LOCKSTEP_SNAPSHOT_WINDOW_MS = 2000
+
+/** fenêtre de réception d'une proposition d'instantané, en ticks : LOCKSTEP_SNAPSHOT_WINDOW_MS au `tick` du jeu, ou la cadence si elle est
+ *  plus longue */
+const snapshotWindow = (every: number, tickHz: number): number => Math.max(every, Math.ceil(LOCKSTEP_SNAPSHOT_WINDOW_MS * tickHz / 1000))
 
 const KNOWN_GAME_KEYS              = new Set(['mode', 'seats', 'code', 'seatTtl', 'tick', 'state', 'moves', 'view', 'phases', 'turns', 'timers', 'limits', 'emptyTtl', 'endTtl', 'hooks', 'onDivergence', 'lockstepJournal', 'intents', 'simulate', 'slowTick', 'deltas', 'space', 'history', 'suspect', 'antiReplay', 'onSuspicion', 'spectatorView'])
 const KNOWN_TURNS_KEYS             = new Set(['order', 'timeout'])
 const KNOWN_LIMITS_KEYS            = new Set(['moves', 'moveIntervalMs', 'moveWaitMs'])
-const KNOWN_HOOKS_KEYS             = new Set(['onCreate', 'onJoin', 'onLeave', 'onEnd', 'onTurnTimeout'])
+const KNOWN_HOOKS_KEYS             = new Set(['onCreate', 'onJoin', 'onLeave', 'onEnd', 'onTurnTimeout', 'onDestroy'])
 const KNOWN_SLOWTICK_KEYS          = new Set(['hz', 'fn'])
 const KNOWN_SPACE_KEYS             = new Set(['cell'])
 const KNOWN_HISTORY_KEYS             = new Set(['ticks', 'extract', 'interp'])
 // mode 'lockstep' SEULEMENT — cf. MjsServerGameDef.lockstepJournal
-const KNOWN_LOCKSTEP_JOURNAL_KEYS = new Set(['maxTicks', 'maxBytes', 'maxOrderBytes'])
+const KNOWN_LOCKSTEP_JOURNAL_KEYS = new Set(['maxTicks', 'maxBytes', 'maxOrderBytes', 'snapshotEvery'])
 
 /** Valide + résout `def` pour `type` — throw immédiat (message français, préfixé) au premier
  *  problème rencontré. Jamais de valeur par défaut SILENCIEUSE sur une clé mal typée : soit elle
  *  est absente (défaut appliqué), soit elle est présente et DOIT être du bon type. */
-export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLogFn = () => {}): MjsServerResolvedDef {
+export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLogFn = () => {}, maxPayload: number = DEFAULT_MAX_PAYLOAD): MjsServerResolvedDef {
   const prefix = `[MJS-Server] game('${type}')`
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error(t('serveur.game-def-invalide', { prefix: prefix }))
@@ -353,8 +382,8 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
       throw new Error(t('serveur.game-lockstepjournal-invalide', { prefix: prefix }))
     }
     for (const k of Object.keys(raw.lockstepJournal)) if (!KNOWN_LOCKSTEP_JOURNAL_KEYS.has(k)) throw keyUnknown(`${prefix}.lockstepJournal`, k, KNOWN_LOCKSTEP_JOURNAL_KEYS)
-    // trois clés facultatives : absente = défaut (ou aucun anneau pour maxTicks), présente = entier ≥ 1
-    const { maxTicks, maxBytes, maxOrderBytes } = raw.lockstepJournal
+    // quatre clés facultatives : absente = défaut (aucun anneau pour maxTicks, aucun instantané pour snapshotEvery), présente = entier ≥ 1
+    const { maxTicks, maxBytes, maxOrderBytes, snapshotEvery } = raw.lockstepJournal
     if (maxTicks !== undefined && (!Number.isInteger(maxTicks) || maxTicks < 1)) {
       throw new Error(t('serveur.game-lockstepjournal-maxticks-invalide', { prefix: prefix, received: JSON.stringify(maxTicks) }))
     }
@@ -363,6 +392,15 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     }
     if (maxOrderBytes !== undefined && (!Number.isInteger(maxOrderBytes) || maxOrderBytes < 1)) {
       throw new Error(t('serveur.game-lockstepjournal-maxorderbytes-invalide', { prefix: prefix, received: receivedValue(maxOrderBytes) }))
+    }
+    if (snapshotEvery !== undefined && (!Number.isInteger(snapshotEvery) || snapshotEvery < 1)) {
+      throw new Error(t('serveur.game-lockstepjournal-snapshotevery-invalide', { prefix: prefix, received: receivedValue(snapshotEvery) }))
+    }
+    // un instantané accordé en fin de fenêtre coupe le journal avant les ticks qui le suivent : un anneau plus court les aurait déjà
+    // purgés, et laisserait un trou entre l'instantané et le journal
+    const windowTicks = maxTicks !== undefined && snapshotEvery !== undefined ? snapshotWindow(snapshotEvery, tickHz) : 0
+    if (maxTicks !== undefined && maxTicks < windowTicks) {
+      throw new Error(t('serveur.game-lockstepjournal-maxticks-sous-fenetre', { prefix: prefix, maxTicks: maxTicks, window: windowTicks }))
     }
   }
   if (raw.phases !== undefined) {
@@ -383,7 +421,8 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     if (raw.turns.order !== undefined && raw.turns.order !== 'roundrobin' && typeof raw.turns.order !== 'function') {
       throw new Error(t('serveur.game-turns-order-invalide', { prefix: prefix, received: JSON.stringify(raw.turns.order) }))
     }
-    if (raw.turns.timeout !== undefined && (typeof raw.turns.timeout !== 'number' || !Number.isFinite(raw.turns.timeout) || raw.turns.timeout <= 0)) {
+    // `null` = aucune minuterie de tour ; sinon un nombre fini > 0 (Infinity refusé, comme pour les autres durées)
+    if (raw.turns.timeout !== undefined && raw.turns.timeout !== null && (typeof raw.turns.timeout !== 'number' || !Number.isFinite(raw.turns.timeout) || raw.turns.timeout <= 0)) {
       throw new Error(t('serveur.game-turns-timeout-invalide', { prefix: prefix, received: receivedValue(raw.turns.timeout) }))
     }
   }
@@ -551,7 +590,8 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
     moves:    raw.moves,
     view:     mode === 'lockstep' ? null : (raw.view ?? ((game: Game) => (game as unknown as { state: unknown }).state)),
     phases:   raw.phases ?? null,
-    turns:    raw.turns ? { order: raw.turns.order ?? 'roundrobin', timeout: raw.turns.timeout ?? 30000 } : null,
+    // `??` confondrait `null` (aucune minuterie, voulu) avec une clé absente (le défaut)
+    turns:    raw.turns ? { order: raw.turns.order ?? 'roundrobin', timeout: raw.turns.timeout === undefined ? DEFAULT_TURN_TIMEOUT : raw.turns.timeout } : null,
     timers:   raw.timers ?? {},
     // `??` serait FAUX ici : il confondrait `null` explicite (désactivation VOULUE) avec `undefined`
     // (clé absente) et réappliquerait le défaut dans les DEUX cas — seule une comparaison stricte à
@@ -565,6 +605,12 @@ export function resolveGameDef(type: string, raw: MjsServerGameDef, log: MjsWsLo
       maxTicks:      raw.lockstepJournal?.maxTicks ?? null,
       maxBytes:      raw.lockstepJournal?.maxBytes ?? DEFAULT_LOCKSTEP_JOURNAL_BYTES,
       maxOrderBytes: raw.lockstepJournal?.maxOrderBytes ?? DEFAULT_LOCKSTEP_ORDER_BYTES,
+    } : null,
+    // `maxPayload` : la taille de trame que le serveur accepte (index.ts, limits.maxPayload) — une proposition plus grosse ferait couper le client
+    lockstepSnapshot: mode === 'lockstep' && raw.lockstepJournal?.snapshotEvery !== undefined ? {
+      every:  raw.lockstepJournal.snapshotEvery,
+      max:    Math.max(0, Math.min(raw.lockstepJournal.maxBytes ?? DEFAULT_LOCKSTEP_JOURNAL_BYTES, maxPayload - LOCKSTEP_SNAPSHOT_ENVELOPE_BYTES)),
+      window: snapshotWindow(raw.lockstepJournal.snapshotEvery, tickHz),
     } : null,
     intents:  raw.intents ?? {},
     simulate: raw.simulate ?? null,

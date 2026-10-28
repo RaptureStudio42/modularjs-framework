@@ -53,11 +53,11 @@ C'est le point à retenir. `µraw` ne suit **pas** les mutations en place :
 
 Quand une liste `µraw` est remplacée, MJS ne relit pas les lignes qui n'ont pas bougé. Une ligne est laissée telle quelle si toutes ces conditions sont réunies :
 
-- l'élément est le **même** qu'avant, à la **même position** ;
+- l'élément est le **même** qu'avant, à la **même position** — ou à une autre quand la ligne n'affiche pas sa position (`{index}`) : une ligne qui ne fait que glisser (suppression, échange, insertion avant elle) n'est pas relue ;
 - l'élément est une valeur simple (nombre, texte) ou un objet lui-même marqué `µraw` ;
 - la ligne ne lit que son élément et sa position : texte `{ligne.champ}`, `{index}`, attributs construits avec eux seuls, classe par sélection `@class{$choix === ligne.id}`.
 
-Une ligne qui lit une variable du composant, appelle une fonction, ou contient un `{if}`, un `{for}` ou un composant est toujours relue.
+Une ligne qui lit une variable du composant, appelle une fonction, ou contient un `{if}`, un `{for}` ou un composant est toujours relue. Laissée telle quelle ou non, ses gestionnaires (`@click`…) reçoivent l'élément de la ligne et sa position d'aujourd'hui.
 
 ```html
 <script>
@@ -101,7 +101,7 @@ Dans le doute, restez sur `$` : `µraw` est une **optimisation** pour un cas pr�
 `µraw` (ci-dessus) marque une **donnée** entière comme non tracée. `µread` / `µwrite`, eux, sont un **accès ponctuel** au *même* slot qu'un `$x`, mais **hors du circuit réactif** :
 
 - **`µread $x`** — lit la valeur courante **sans poser de dépendance**. Dans un `µeffect` ou un dérivé, le reffet ne se ré-exécute **pas** quand `$x` change.
-- **`µwrite $x, v`** — écrit le slot **sans déclencher de re-rendu**.
+- **`µwrite $x, v`** — écrit le slot **sans déclencher de re-rendu**. Les valeurs dérivées qui lisent le slot se recalculent, elles, à leur prochaine lecture : `$total` relu juste après rend la valeur à jour, seul l'écran attend. Même règle pour le store : `µwrite $$x, v` écrit la valeur brute sans prévenir personne, et les valeurs dérivées des composants qui lisent `$$x` se recalculent à leur prochaine lecture.
 
 Les **parenthèses sont optionnelles**, comme pour tout appel en Civet : `µread($x)` et `µread $x` compilent à l'identique, `µwrite($x, v)` et `µwrite $x, v` aussi. Ce qui n'est **pas** accepté : autre chose qu'un symbole d'état en premier argument, ou une valeur introduite par un signe égal plutôt qu'une virgule — `µread(compteur)`, `µwrite($x) = v` sont refusés au build.
 

@@ -63,10 +63,22 @@ describe('mjs_title.ts / mjs_vt_presets.ts — détachés du cœur, build RÉEL'
     assert.ok(core.includes('_mjs_titleAttach = function'), '_mjs_titleAttach doit être bundlé dès qu\'une source pose @title')
   })
 
-  it("composant SANS @title, runtime par défaut : _mjs_titleAttach ABSENT, _mjs_vtApplyPreset présent (router+ujs dans 'all')", async function () {
+  it('composant SANS @title ni navigation, runtime par défaut : _mjs_titleAttach ABSENT, _mjs_vtApplyPreset ABSENT (ni router ni ujs repérés)', async function () {
     const { outDir } = await buildProject({}, { 'hop.mjs': '<p>x</p>\n' })
     const core = coreContent(outDir)
     assert.equal(core.includes('_mjs_titleAttach = function'), false, 'aucune source ne pose @title : _mjs_titleAttach ne doit pas être bundlé')
+    assert.equal(core.includes('_mjs_vtApplyPreset = function'), false, 'sans clé runtime, rien ne repère router ni ujs : mjs_vt_presets.ts ne suit pas')
+  })
+
+  it('runtime par défaut, un lien interne : ujs repéré, il emmène router → _mjs_vtApplyPreset présent', async function () {
+    const { outDir } = await buildProject({}, { 'hop.mjs': '<a href="/aide">aide</a>\n' })
+    const core = coreContent(outDir)
+    assert.ok(core.includes('_mjs_vtApplyPreset = function'), 'un lien interne repère ujs et router : mjs_vt_presets.ts doit suivre')
+  })
+
+  it("runtime:'all' sans @title : _mjs_vtApplyPreset présent (router+ujs dans 'all')", async function () {
+    const { outDir } = await buildProject({ runtime: 'all' }, { 'hop.mjs': '<p>x</p>\n' })
+    const core = coreContent(outDir)
     assert.ok(core.includes('_mjs_vtApplyPreset = function'), "'all' embarque router+ujs → mjs_vt_presets.ts doit suivre")
   })
 

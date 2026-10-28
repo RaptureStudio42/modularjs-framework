@@ -10,9 +10,10 @@
 // Limite de happy-dom (20.11.0) rencontrée ICI, absente des suites existantes qui
 // n'appellent jamais `.innerText` : `:defined` y est mal évalué sur les éléments NATIFS
 // (pre/code/div…), qui matchent donc `:not(:defined)` — la feuille anti-FOUC du cœur
-// (`[mjs-loading],:not(:defined):not([mjs-ssr])`, runtime/mjs_init.ts) leur pose alors
-// `display:none!important` dès qu'elle est adoptée par le document, et `getComputedStyle`
-// fait retomber `innerText` à `''` pour n'importe quel élément. Sans conséquence ICI :
+// (runtime/mjs_init.ts) leur pose alors `visibility:hidden!important` le temps du démarrage
+// (jusqu'à la première observation de l'Autoloader), et un navigateur ne rend aucun
+// `innerText` pour un élément invisible, garde les sauts de ligne d'un `<pre>` (règles que le
+// harnais rend à happy-dom, qui les ignore : cf. l'amorçage plus bas). Sans conséquence ICI :
 // `sourceOf()` (code.mjs) lit `el.innerText or el.textContent`, et `textContent` — non
 // affecté par ce bug, lui — préserve exactement le texte d'un `<pre>` (retours à la ligne
 // et blancs de fin compris), donc les blocs projetés se lisent correctement malgré tout.
@@ -141,6 +142,11 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
     const combined = [coreFile, codeFile, hoteFile].map((f: string) => stripEsm(readFileSync(join(outDir, f!), 'utf-8'))).join('\n')
     window.eval(`${combined}\nglobalThis.µ = µ;`)
     window.eval(libellesDuManifeste(join(root, 'bundle.js')))
+    // happy-dom écrit dans `innerText` le texte d'un élément sans ses sauts de ligne, même dans un `<pre>`, et le texte d'un élément
+    // invisible (`visibility: hidden`) ; un navigateur rend le texte RENDU (spécification HTML) : les sauts de ligne d'un `<pre>`
+    // gardés, rien pour un élément invisible. Le harnais rend à `innerText` ces deux règles du navigateur
+    const innerText = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'innerText')!
+    Object.defineProperty(window.HTMLElement.prototype, 'innerText', { ...innerText, get() { return window.getComputedStyle(this).visibility === 'hidden' ? '' : this.closest('pre') ? this.textContent : innerText.get!.call(this) } })
 
     document.body.innerHTML = '<mjs-hote></mjs-hote>'
     await new Promise((r) => setTimeout(r, 80))

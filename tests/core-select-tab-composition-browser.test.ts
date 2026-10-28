@@ -12,6 +12,7 @@ import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
+import { attendreEgal } from './helpers/attendre.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
@@ -66,9 +67,12 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await page.waitForTimeout(150)
   }
 
+  // la frappe part quand la recherche a le focus, et elle y arrive : deux portes, pas une pause (sous charge, la frappe
+  // partait parfois avant que le focus n'y soit) ; ce qu'elle déclenche (search, filtre) s'attend dans chaque test
   async function taper(texte: string) {
+    await attendre(`${coque}.activeElement === ${coque}.querySelector('.select-search')`)
     await page.keyboard.type(texte)
-    await page.waitForTimeout(100)
+    await attendre(`${coque}.querySelector('.select-search').value.endsWith(${JSON.stringify(texte)})`)
   }
 
   async function ferme() {
@@ -109,7 +113,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     if (!present) { this.skip(); return }
     await ouvrir()
     await taper('al')
-    assert.deepEqual(await recus(), ['a', 'al'])
+    await attendreEgal(recus, ['a', 'al'], 'une recherche par frappe')
     await page.keyboard.press('Tab')
     await ferme()
     assert.equal(await lire(`__q('.liste')._state.value`), null)
@@ -151,9 +155,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     assert.deepEqual(await recus(), [])
     assert.equal(await nbOptions(), 3)
     await page.evaluate(`${coque}.querySelector('.select-search').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, composed: true, data: 'ga' }))`)
-    await page.waitForTimeout(150)
-    assert.deepEqual(await recus(), ['ga'])
-    assert.equal(await nbOptions(), 1)
+    await attendreEgal(recus, ['ga'], 'une seule recherche, à compositionend')
+    await attendreEgal(nbOptions, 1, 'le filtre appliqué à compositionend')
     await page.evaluate(`${coque}.querySelector('.select-search').dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', isComposing: false }))`)
     await page.waitForTimeout(100)
     assert.deepEqual(await recus(), ['ga'])
@@ -231,8 +234,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await page.evaluate('window.__recus.length = 0')
     await ouvrir()
     await taper('ga')
-    assert.deepEqual(await recus(), ['g', 'ga'])
-    assert.equal(await nbOptions(), 1)
+    await attendreEgal(recus, ['g', 'ga'], 'la saisie prise, une recherche par frappe')
+    await attendreEgal(nbOptions, 1, 'le filtre appliqué')
     await page.keyboard.press('Escape')
     await ferme()
   })
@@ -248,8 +251,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await attendre(`!!${coque}.querySelector('.select-search')`)
     await page.evaluate(`${coque}.querySelector('.select-search').focus()`)
     await taper('ga')
-    assert.deepEqual(await recus(), ['g', 'ga'])
-    assert.equal(await nbOptions(), 1)
+    await attendreEgal(recus, ['g', 'ga'], 'la saisie prise, une recherche par frappe')
+    await attendreEgal(nbOptions, 1, 'le filtre appliqué')
     await page.keyboard.press('Escape')
     await ferme()
   })
@@ -269,8 +272,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await page.evaluate('window.__recus.length = 0')
     await ouvrir()
     await taper('g')
-    assert.deepEqual(await recus(), ['g'])
-    assert.equal(await nbOptions(), 1)
+    await attendreEgal(recus, ['g'], 'la saisie identique prise')
+    await attendreEgal(nbOptions, 1, 'le filtre appliqué')
     await page.keyboard.press('Escape')
     await ferme()
   })
@@ -288,8 +291,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await page.evaluate('window.__recus.length = 0')
     await page.keyboard.press('ControlOrMeta+A')
     await page.keyboard.type('g')
-    await page.waitForTimeout(100)
-    assert.deepEqual(await recus(), ['g'])
+    await attendreEgal(recus, ['g'], 'le même texte retapé pris')
     await page.keyboard.press('Escape')
     await ferme()
   })
@@ -303,8 +305,8 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`<@@selec
     await page.evaluate('window.__recus.length = 0')
     await ouvrir()
     await taper('ga')
-    assert.deepEqual(await recus(), ['g', 'ga'])
-    assert.equal(await nbOptions(), 1)
+    await attendreEgal(recus, ['g', 'ga'], 'la saisie prise, une recherche par frappe')
+    await attendreEgal(nbOptions, 1, 'le filtre appliqué')
     await page.keyboard.press('Escape')
     await ferme()
   })

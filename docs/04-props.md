@@ -34,6 +34,8 @@ Différence accolades vs guillemets : `answer={42}` passe le **nombre** 42 (expr
 
 </details>
 
+**Un nom en camelCase écrit en clair** (`<@fiche userName="Léa">`) arrive à la prop que l'enfant déclare (`$userName`, écrite dans son script ou lue dans son gabarit) : le HTML met les noms d'attributs en minuscules, la balise porte donc `username="Léa"`, et la prop déclarée reçoit la valeur sous son nom, puis la suit quand la page change l'attribut ; en développement, en production comme au rendu serveur. Seule une prop déclarée est visée : un enfant qui n'a pas de `$userName` reçoit la valeur sous le nom en minuscules (`$username`). Un enfant qui déclare deux props qui ne diffèrent que par la casse (`$userName` et `$username`) la donne à celle dont le nom est exactement celui de l'attribut en minuscules, `$username`. Une exception : sur la balise d'un module du cœur (`<@@number lessLabel="Moins">`), cette écriture arrête la construction, qui donne l'écriture à tirets (`less-label`) — les attributs des modules du cœur n'en ont qu'une, celle de leur documentation (voir [30 · Modules cœur](30-modules-coeur.md)).
+
 ## Attribut sans valeur
 
 Sur une balise de composant, un attribut écrit sans valeur passe `true` — `<@@checkbox disabled>` équivaut à `disabled={true}`, exactement comme `<input disabled>` en HTML natif. `title=""` (valeur écrite mais vide) passe `''`.
@@ -49,6 +51,14 @@ Sur une balise de composant, un attribut écrit sans valeur passe `true` — `<@
 Un attribut `data-*` ou `aria-*` écrit sur un composant (`<@x>`, composant léger, `<@@x>` du cœur) se pose sur la balise du composant, comme sur une balise HTML. Fixe (`data-cle="abc"`), lié (`data-cle={$cle}`, `data-cle=!{$cle}`, store `$$cle`) ou sans valeur (`data-vide` donne `data-vide=""`), il arrive toujours sur la balise, et un attribut lié suit sa variable. Mêmes règles qu'en natif : `null` et `undefined` retirent l'attribut, `false` aussi pour un `data-*`, mais `aria-*` à `false` s'écrit `"false"` ; `true` s'écrit `"true"`.
 
 Le composant lit la valeur sur sa propre balise : `@getAttribute('data-cle')`.
+
+## Les attributs globaux : sur la balise aussi
+
+`id`, `class`, `title`, `role`, `hidden`, `tabindex`, `lang`, `dir` et `slot` écrits sur un composant se posent sur sa balise, comme sur une balise HTML, fixes comme calculés (`id={'note-' + n.key}`), à la racine, dans un `{for}` ou dans un `{if}` : le navigateur et les autres composants les lisent là (`<@@toolbar for="…">`, `<label for>`, `aria-labelledby`, `getElementById`, un sélecteur CSS de la page). Une valeur calculée suit sa variable — `null` et `undefined` retirent l'attribut, `hidden` est un booléen que `false` retire — et le composant la reçoit aussi comme prop.
+
+Une balise de composant qui porte `hidden` est cachée, comme une balise HTML, l'attribut écrit en clair (`<@carte hidden>`) comme calculé (`hidden={$replie}`), avec ou sans Shadow DOM, module du cœur compris (`<@@select hidden={…}>`). Comme pour une balise HTML, le style de la page passe devant : un `display` que la page pose sur la balise la montre. `hidden="until-found"` reste au navigateur, comme sur une balise HTML : la balise garde son affichage, le navigateur cache son contenu, et la recherche de la page le trouve et le révèle en retirant l'attribut.
+
+**Un composant qui déclare lui-même une prop de ce nom la garde pour lui** (`$title` d'une carte qui l'affiche, `$hidden` de `<@@chart>`, la liste des séries cachées) : une valeur calculée ne lui arrive qu'en prop, sans attribut sur sa balise — `<@@chart hidden={['tour']}>` ne cache pas le graphique, une carte `title={$t}` ne reçoit pas de bulle. Le nom se compare sans la casse, comme un attribut HTML : `tabIndex={$t}` va à une prop `$tabindex`, `tabindex={$t}` à une prop `$tabIndex`. Écrite en dur (`title="Bonjour"`), la valeur est un attribut de la balise dans tous les cas, puisque le HTML l'y pose, et une prop déclarée la reçoit aussi, sans la casse elle aussi : `tabIndex="3"` pose `tabindex="3"` sur la balise (le HTML écrit le nom en minuscules) et donne `"3"` à la prop `$tabIndex`, puis la prop suit l'attribut quand la page le change ; une balise qui déclare `$hidden` n'est pas cachée par l'attribut : `<@@chart hidden>` reste affiché. La donnée étalée (`{...p}`) et la liaison à deux sens (`id=!{$x}`) ne livrent que la prop.
 
 ## Valeurs par défaut
 

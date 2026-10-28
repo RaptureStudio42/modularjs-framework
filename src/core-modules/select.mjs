@@ -27,6 +27,7 @@
   $activeIndex = -1
   $panelUp     = false
   $panelMax    = '280px'
+  $panelLeft   = null
 
   $comboLabel   = null
   $comboInvalid = null
@@ -317,21 +318,26 @@
     $panelUp  = below < 280 and above > below
     available = if $panelUp then above else below
     $panelMax = "#{Math.round(Math.max(Math.min(available - 12, 280), 0))}px"
-    # @@ other
-    queueMicrotask(fitOther) if $otherMax
+    queueMicrotask fitPanel
+    queueMicrotask(fitOther) if $otherMax # @@ other
 
-  # une liste `other` ne sort jamais de la fenêtre (trop à droite : le bord droit du panneau suit celui de la balise, puis la fenêtre le borne) et le bloc de son champ se voit en entier dans le panneau, qui défile (jamais la page) ; le champ de recherche collant masque le haut du panneau
-  # le panneau est posé d'abord sur le bord droit de la balise (rien ne dépasse à droite avant la mesure : WebKit garde le débordement d'une première pose et en fait un défilement horizontal de la page)
-  fitOther = ->
+  # le panneau, jamais moins large que la balise, s'élargit pour ses libellés et ne sort jamais de la fenêtre : il part du bord gauche de la balise s'il tient, sinon son bord droit suit celui de la balise, puis la fenêtre le borne
+  # sa largeur ne dépend pas de sa place : il est posé d'abord sur le bord droit de la balise (rien ne dépasse à droite avant la mesure : WebKit garde le débordement d'une première pose et en fait un défilement horizontal de la page)
+  fitPanel = ->
     panel = wrapperRef?.querySelector('.select-panel')
-    return unless panel
-    panel.style.removeProperty('--mjs-select-panel-left')
+    return unless panel and buttonRef
     box  = buttonRef.getBoundingClientRect()
     wide = panel.getBoundingClientRect().width
     room = document.documentElement.clientWidth
     left = if box.left + wide > room then box.right - wide else box.left
-    panel.style.setProperty('--mjs-select-panel-left', "#{Math.max(Math.min(left, room - wide), 0) - box.left}px")
-    block = panel.querySelector('.select-other-edit')
+    $panelLeft = "#{Math.max(Math.min(left, room - wide), 0) - box.left}px"
+
+  # @@ other
+  # le bloc du champ d'une liste `other` se voit en entier dans le panneau, qui défile (jamais la page) ; le champ de recherche collant masque le haut du panneau
+  fitOther = ->
+    fitPanel()
+    panel = wrapperRef?.querySelector('.select-panel')
+    block = panel?.querySelector('.select-other-edit')
     return unless block
     view = panel.getBoundingClientRect()
     edit = block.getBoundingClientRect()
@@ -437,11 +443,14 @@
     idx = $optionsData.findIndex (o)-> isSelected(o.value, $value, $multiple)
     $activeIndex = if idx >= 0 then idx else 0
     $activeIndex = $optionsData.length if $given # @@ other
-    $open = true
+    # posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel)
+    $panelLeft = null
+    $open      = true
     updatePlacement()
     queueMicrotask -> reveal($activeIndex)
 
   closePanel = ->
+    was = $open
     # la recherche qui portait du texte se vide : la page remet sa liste
     if $open and $query
       $query = ''
@@ -454,6 +463,15 @@
     $otherEditing = false
     $otherText    = ''
     # @@
+    queueMicrotask(forget) if was
+
+  # le panneau refermé ne compte plus dans la largeur de la page : WebKit garde le débordement d'un panneau élargi puis retiré (la fenêtre
+  # réduite ensuite, la page défilait de côté) ; la boîte du select, refaite une fois le panneau parti, l'oublie
+  forget = ->
+    return unless wrapperRef
+    wrapperRef.classList.add('reflow')
+    wrapperRef.offsetWidth
+    wrapperRef.classList.remove('reflow')
 
   # le geste d'une ligne : une option ou une réponse libre, choisie ou retirée de la même façon. Le champ du formulaire est à jour AVANT `change` (un gestionnaire qui lit `new FormData(form)` voit le choix d'après), puis `other` part si les réponses libres ont changé
   toggleValue = (v)->
@@ -800,7 +818,7 @@
     <span class="select-label" @class{waitingOf($value, $multiple, $choices, $match)}="placeholder">{$currentLabel}</span>
   </button>
   {if $open}
-    <div class="select-panel" part="panel" @class{$panelUp}="up" --mjs-select-panel-max={$panelMax}>
+    <div class="select-panel" part="panel" @class{$panelUp}="up" --mjs-select-panel-max={$panelMax} --mjs-select-panel-left={$panelLeft}>
       {if searchOnOf($search)}
         <input type="text" part="search" class="select-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={panelId} aria-activedescendant={$activeDescendant} aria-label={$searchText} placeholder={$searchText} value={$query} @this=!{searchInputRef} @input={onSearchInput()} @compositionstart={composing = true} @compositionend={onCompositionEnd()}>
       {end}
@@ -830,6 +848,7 @@
         {end}
         <!-- @@ -->
       </div>
+      <span class="select-sizer select-panel-sizer" aria-hidden="true">{for opt in widestOf($optionsData)}<span @class{opt.group}="select-sizer-group">{if $multi}<i class="select-check"></i>{end}{if opt.icon?.src}<i class="select-icon select-img"></i>{elsif opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}<!-- @@ other -->{if $otherMax}<span>{if $multi}<i class="select-check"></i>{end}{$otherTexts.label}</span>{end}<!-- @@ --></span>
       <!-- @@ other -->
       {if $otherMax and $otherEditing}
         <div class="select-other-edit">
@@ -854,15 +873,21 @@
 <slot @this=!{slotRef}></slot>
 
 <style @display="inline-block">
+  // jamais plus large que sa boîte : une boîte plus étroite que la plus longue étiquette coupe celle du bouton (points de suspension)
   :host
     position: relative
     min-width: 0
+    max-width: 100%
     font: inherit
 
   .select
     position: relative
     display: inline-block
     width: 100%
+
+    // refaite une fois le panneau refermé (cf. forget)
+    &.reflow
+      display: block
 
   .select-btn
     display: flex
@@ -923,12 +948,16 @@
     height: 1.2em
     object-fit: contain
 
+  // jamais moins large que la balise, élargi pour ses libellés dans la fenêtre : posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel)
   .select-panel
     position: absolute
     top: calc(100% + 4px)
-    left: 0
+    left: var(--mjs-select-panel-left, auto)
+    right: 0
     z-index: 20
-    width: 100%
+    width: max-content
+    min-width: 100%
+    max-width: calc(100vw - 32px)
     max-height: var(--mjs-select-panel-max, 280px)
     overflow-y: auto
     box-sizing: border-box
@@ -942,11 +971,17 @@
       top: auto
       bottom: calc(100% + 4px)
 
+  // la largeur du panneau : celle de ses plus longs libellés, la même pendant qu'on filtre ; le champ de recherche n'y compte pas
+  .select-panel-sizer
+    max-width: none
+    border-inline: 0
+
   .select-search
     position: sticky
     top: 0
     box-sizing: border-box
     width: 100%
+    contain: inline-size
     padding: 8px 10px
     border: 0
     border-bottom: 1px solid var(--mjs-select-border, var(--mjs-border, #d0d0d0))
@@ -1021,15 +1056,14 @@
     contain: inline-size
 
   .with-other .select-panel
-    min-width: min(16rem, 90vw)
-    left: var(--mjs-select-panel-left, auto)
-    right: 0
+    min-width: max(100%, min(16rem, 90vw))
 
   .select-other, .select-other-edit
     border-top: 1px solid var(--mjs-select-border, var(--mjs-border, #d0d0d0))
 
   .select-other-edit
     padding: 8px 12px
+    contain: inline-size
 
   .select-other-line
     display: flex

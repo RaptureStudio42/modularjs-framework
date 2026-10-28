@@ -457,7 +457,8 @@ describe('catalogue et pont des réglages', function () {
     new Function('µ', ENGINE + '\n' + TRANSITION)(µ)
     // le pont de fly lit sa distance avec la lecture de longueur de fly (shared/len.ts), qui part avec elle
     chargerAnimation('fly', µ)
-    return µ._mjs_fxAnimOpts(name, s)
+    // options sans prototype : leur contenu propre est comparé
+    return { ...µ._mjs_fxAnimOpts(name, s) }
   }
 
   it('*iris : origin accepte pointer, shape accepte ellipse, start de 0 à 1, angle de -180 à 180 — les défauts sont le comportement d\'avant', function () {

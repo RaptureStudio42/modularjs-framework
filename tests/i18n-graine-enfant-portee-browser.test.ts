@@ -95,7 +95,7 @@ type Sonde = { chemin: string[], sel: string }
 interface Releve { vus: string[], etats: string[], erreurs: string[], stockage: string | null, recherche: string }
 
 // relève à chaque image le texte de chaque sonde, réunis par « | » : '-' pour ce qui n'est pas là (ou n'a pas encore de contenu), le
-// texte suivi de « [C] » quand un hôte du chemin est caché (`mjs-loading` ou `display: none`)
+// texte suivi de « [C] » quand un hôte du chemin est caché (`mjs-loading`, `display: none` ou `visibility: hidden`)
 async function relever(browser: any, url: string, sondes: Sonde[]): Promise<Releve> {
   const page = await browser.newPage()
   const erreurs: string[] = []
@@ -114,7 +114,7 @@ async function relever(browser: any, url: string, sondes: Sonde[]): Promise<Rele
         const liste = (lumiere ? hote : racine).querySelectorAll(nom)
         hote = liste[rang ? Number(rang) : 0]
         if (!hote) return '-'
-        if (hote.hasAttribute('mjs-loading') || getComputedStyle(hote).display === 'none') cache = true
+        if (hote.hasAttribute('mjs-loading') || getComputedStyle(hote).display === 'none' || getComputedStyle(hote).visibility === 'hidden') cache = true
         racine = hote._shadow || hote.shadowRoot || hote
       }
       const noeud = racine.querySelector(s.sel)

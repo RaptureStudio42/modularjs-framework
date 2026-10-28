@@ -317,7 +317,8 @@ describe('build de production — messages hors du manifeste', function () {
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'hote.mjs'), '<div>x</div>\n')
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), env, js })
+    // les libellés d'interface (modal, router, toast, ujs) ne partent qu'avec leurs modules, que l'hôte ne nomme pas : 'all' les embarque
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), env, js, runtime: 'all' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
     const fichiers = readdirSync(outDir)
