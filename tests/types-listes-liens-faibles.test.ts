@@ -20,7 +20,7 @@ async function ramasser() {
   }
 }
 
-const LIGNES = '{ id: int, t: string, tags: string[] }[]'
+const LIGNES = 'Ligne[]'
 
 // une liste de n lignes inscrite sous `$rows` ; ne reste à l'appli qu'une ligne gardée, et des références faibles
 // vers la liste et vers une autre ligne, pour voir si le contrôle les retient
@@ -116,7 +116,7 @@ describe('types — la liste ramassée, un élément gardé se nomme au chemin o
   })
 
   it('écrit dans un champ d’objet (`$fiche.auteur = …`), ses propres champs avec lui', async () => {
-    const s = await sansConteneur({ fiche: '{ nom: string, auteur: { prenom: string, tags: string[] } }' }, (µ, el) => {
+    const s = await sansConteneur({ fiche: 'nom  string\nauteur\n  prenom  string\n  tags  string[]' }, (µ, el) => {
       const fiche: any = { nom: 'a', auteur: { prenom: 'p', tags: [] } }
       µ._mjs_tset(el, 'fiche', fiche)
       const neuf = { prenom: 'q', tags: ['t'] }
@@ -139,7 +139,7 @@ describe('types — la liste ramassée, un élément gardé se nomme au chemin o
   })
 
   it('ajouté dans une liste imbriquée : le chemin d’inscription de la liste, puis la position', async () => {
-    const s = await sansConteneur({ board: '{ rows: { cells: { v: int }[] }[] }' }, (µ, el) => {
+    const s = await sansConteneur({ board: 'Plateau' }, (µ, el) => {
       const board: any = { rows: [0, 1].map((r) => ({ cells: [{ v: r }, { v: r + 10 }] })) }
       µ._mjs_tset(el, 'board', board)
       const x = { v: 5 }

@@ -15,8 +15,8 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const COMPOSANTS: Record<string, string> = {
-  'eclats-sortie': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<img class="i" src="x.png" alt="" @out=*shatter(size: 20, duration: 60ms)>{end}</div>',
-  'eclats-aller-retour': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<img class="i" src="x.png" alt="" @transition=*shatter(size: 20, duration: 60ms)>{end}</div>',
+  'eclats-sortie': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<img class="i" src="x.png" alt="" :out=*shatter(size: 20, duration: 60ms)>{end}</div>',
+  'eclats-aller-retour': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<img class="i" src="x.png" alt="" :transition=*shatter(size: 20, duration: 60ms)>{end}</div>',
   'eclats-relance': '<script>\n$s = 20\n</script>\n<div class="box"><img class="j" src="x.png" alt="" *shatter(size: $s, on: load, duration: 400ms)></div>',
   'eclats-attente': '<script>\n$s = 20\n</script>\n<div class="box"><img class="k" src="x.png" alt="" *shatter(size: $s, on: view, duration: 60ms)></div>',
   'eclats-defile': '<div class="box"><img class="d" src="x.png" alt="" *shatter(on: scroll, range: 0 1000px)></div>',

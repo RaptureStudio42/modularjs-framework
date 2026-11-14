@@ -40,7 +40,7 @@ const SOURCES: Record<string, string> = {
     '$sorties = 0',
     '</script>',
     '<div class="zone hote" @pointerenter={$entrees++} @pointerleave={$sorties++}>hôte</div>',
-    '<@survol-feuille @lightDom/>',
+    '<@survol-feuille :lightDom/>',
     '<p class="r">{$entrees}/{$sorties}</p>'
   ].join('\n') + '\n' + STYLE
 }

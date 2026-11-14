@@ -86,7 +86,7 @@ describe('µasset dans une feuille de style', function () {
     for (const mode of ['bundle', 'split', 'lazy']) {
       it(`feuilles partagées (stylesheetsDir, css: '${mode}'), police ${ou} : mjs_root.sass et une feuille nommée sont remplacées`, async () => {
         const p = projet(`assetdirs-partagee-${mode}-${police}`, police)
-        writeFileSync(join(p.srcDir, 'comp.mjs'), '<style @css="base">\n</style>\n<p>x</p>\n')
+        writeFileSync(join(p.srcDir, 'comp.mjs'), '<style :css="base">\n</style>\n<p>x</p>\n')
         writeFileSync(join(p.styles, 'mjs_root.sass'), "@font-face\n  font-family: Y\n  src: url(µasset('fonts/x.woff2'))\n")
         writeFileSync(join(p.styles, 'base.scss'), "@font-face { font-family: Z; src: url(µasset(\"fonts/x.woff2\")); }\n")
         const stats = await construire(p, { css: mode, ...(police === 'images' ? { assetDirs: [p.images] } : {}) })

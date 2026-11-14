@@ -38,13 +38,13 @@ describe('animations : l\'enveloppe et la longueur sont des aides internes, pas 
   after(async () => { await terminateSharedWorkerPool() })
 
   it('µ.anim ne porte que les animations de l\'appli : ni « from » ni « len »', async () => {
-    const { anims } = await construire('cles', '{if $on}<p @in=*fade @out=*fly(up)>x</p><p @in=*blur>y</p>{end}')
+    const { anims } = await construire('cles', '{if $on}<p :in=*fade :out=*fly(up)>x</p><p :in=*blur>y</p>{end}')
     jouer(anims, (µ) => assert.deepEqual(Object.keys(µ.anim).sort(), ['blur', 'fade', 'fly']))
   })
 
   // `*len` est déjà refusé à la construction (aucun effet ne porte ce nom) : seul `*from` passait pour une animation de l'appli
   it('@in=*from : le nom n\'est pas une animation, la construction s\'arrête comme pour une faute de frappe', async () => {
-    const { erreurs } = await construire('inconnue-from', '{if $on}<p @in=*from>x</p>{end}', true)
+    const { erreurs } = await construire('inconnue-from', '{if $on}<p :in=*from>x</p>{end}', true)
     const erreur = erreurs.find((m) => /transition inconnue/.test(m) && m.includes('*from'))
     assert.ok(erreur, `*from n'arrête pas la construction. erreurs :\n${erreurs.join('\n')}`)
     // l'erreur dit aussi où la directive s'écrit : le fichier et la ligne de sa balise
@@ -52,7 +52,7 @@ describe('animations : l\'enveloppe et la longueur sont des aides internes, pas 
   })
 
   it('créer des animations nommées « from » et « len » (µanim.create) ne casse ni fade, ni fly, ni blur', async () => {
-    const { anims } = await construire('ecrasees', '{if $on}<p @in=*fade @out=*fly(up)>x</p><p @in=*blur>y</p>{end}')
+    const { anims } = await construire('ecrasees', '{if $on}<p :in=*fade :out=*fly(up)>x</p><p :in=*blur>y</p>{end}')
     jouer(anims, (µ) => {
       // ce que µanim.create 'from' et µanim.create 'len' font : ranger une fabrique sous ce nom dans µ.anim
       µ.anim.from = () => { throw new Error('« from » de l\'auteur appelée par une transition du framework') }

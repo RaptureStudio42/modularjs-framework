@@ -75,7 +75,7 @@ describe('une adresse entre guillemets dans les réglages d\'un effet', () => {
       ['scrub', '<canvas class="a" *scrub(images: [\'//cdn/a.png\', \'//cdn/b.png\'])></canvas>', /"images":\["\/\/cdn\/a\.png","\/\/cdn\/b\.png"\]/],
       ['gradient', '<h1 class="a" *gradient(image: \'//cdn/a.png\')>x</h1>', /"image":"\/\/cdn\/a\.png"/],
       ['behind', '<div class="a" *behind(\'//cdn/a.png\')>x</div>', /"image":"\/\/cdn\/a\.png"/],
-      ['ink, en transition @in', '<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*ink(image: \'//cdn/a.png\')>x</p>{end}\n', /"image":"\/\/cdn\/a\.png"/]
+      ['ink, en transition @in', '<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*ink(image: \'//cdn/a.png\')>x</p>{end}\n', /"image":"\/\/cdn\/a\.png"/]
     ]
     for (const [effet, source, attendu] of POSES) {
       it(effet.startsWith('ink') ? effet : '*' + effet, async () => {

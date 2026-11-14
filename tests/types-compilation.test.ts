@@ -48,11 +48,11 @@ describe('types — le bloc <vars> dans un composant', () => {
   })
 
   it('stores : leurs règles partent au chargement du module, et le build les reçoit pour les comparer', async () => {
-    const src = ['<vars>', '  $$cart  { quantity: int 1..99 }', '</vars>', '<script>', '  $$cart = { quantity: 1 }', '</script>', '<p>{$$cart.quantity}</p>'].join('\n')
+    const src = ['<vars>', '  $$cart', '    quantity  int 1..99', '</vars>', '<script>', '  $$cart = { quantity: 1 }', '</script>', '<p>{$$cart.quantity}</p>'].join('\n')
     const { output, data } = await transpile(src, { moduleName: 'types-store' })
-    assert.match(output, /µ\._mjs_storeTypes\(\{cart:\{t:'o',f:\{quantity:\{t:'i',a:1,b:99,d:"int 1\.\.99"\}\},d:"\{ quantity: int 1\.\.99 \}"\}\}\);/)
+    assert.match(output, /µ\._mjs_storeTypes\(\{cart:\{t:'o',f:\{quantity:\{t:'i',a:1,b:99,d:"int 1\.\.99"\}\},d:"\\n {2}quantity {2}int 1\.\.99"\}\}\);/)
     assert.doesNotMatch(output, /this\._mjs_types =/)
-    assert.deepEqual(data.storeTypes, { cart: '{ quantity: int 1..99 }' })
+    assert.deepEqual(data.storeTypes, { cart: '\n  quantity  int 1..99' })
     assert.equal(data.usesNamedTypes, false)
   })
 

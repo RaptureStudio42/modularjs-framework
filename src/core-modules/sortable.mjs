@@ -1,7 +1,7 @@
 <script module>
   # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'aux groupes (attribut `group`) : la construction les ôte quand aucune liste de l'appli ne l'écrit, en développement comme en production, au serveur comme au navigateur ; la copie dans un projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
   # `group` : le morceau propre aux groupes ; `!group` : l'autre forme des lignes qui existent avec et sans `group`, écrite en commentaire et remise en code quand `group` part ; `dev group` : l'avertissement du développement, écrit en commentaire et réveillé quand `group` part
-  # `transition` : le morceau propre au fondu des lignes (une ligne que la page fait sortir avec une transition, que `*crossfade` fait voler), ôté en production quand aucune page de l'application n'écrit de transition (`@in`, `@out`, `@transition`) ; `!transition` sur le même modèle que `!group` ; `dev transition` : l'avertissement du développement, gardé tant qu'aucune page n'écrit de transition
+  # `transition` : le morceau propre au fondu des lignes (une ligne que la page fait sortir avec une transition, que `*crossfade` fait voler), ôté en production quand aucune page de l'application n'écrit de transition (`:in`, `:out`, `:transition`) ; `!transition` sur le même modèle que `!group` ; `dev transition` : l'avertissement du développement, gardé tant qu'aucune page n'écrit de transition
   # @@ group
   # les listes vivantes, tous groupes confondus : chacune s'y inscrit à son réveil et s'en retire à son sommeil
   sortableLists = new Set()
@@ -91,10 +91,10 @@
   say = (key, n, total, list)->
     text = textOf(key).replace('{n}', n).replace('{total}', total).replace('{list}', -> list) # @@ group
     # text = textOf(key).replace('{n}', n).replace('{total}', total) # @@ !group
-    clearTimeout(sayTimer)
+    sayTimer?.()
     if text is $announce
       $announce = ''
-      sayTimer  = setTimeout((-> $announce = text), SAY_WAIT)
+      sayTimer  = µafter SAY_WAIT, -> $announce = text
     else
       $announce = text
     return
@@ -472,13 +472,13 @@
       e.stopPropagation()
       e.preventDefault()
       unswallow()
-    swallow = { block: block, timer: setTimeout(unswallow, CLICK_WAIT) }
+    swallow = { block: block, timer: µafter(CLICK_WAIT, unswallow) }
     window.addEventListener('click', block, true)
     return
 
   unswallow = ->
     return unless swallow
-    clearTimeout(swallow.timer)
+    swallow.timer?.()
     window.removeEventListener('click', swallow.block, true)
     swallow = null
     return
@@ -486,7 +486,7 @@
   # plus rien du geste : écouteurs de window, minuteries, observateur ; les marques des lignes sont à `clear`
   release = ->
     return unless g
-    clearTimeout(g.timer)
+    g.timer?.()
     cancelAnimationFrame(g.frame)
     g.observer?.disconnect()
     window.removeEventListener('pointermove', onMove)
@@ -544,7 +544,7 @@
     return
     # @@
 
-  # chaque ligne qui n'était pas à sa place glisse de là où elle est jusqu'à sa place, sans toucher à `transform` (que `@flip` utilise) ; la ligne arrivée dans une autre liste est une ligne neuve, qui part d'où l'ancienne a été lâchée ; si la page fait voler l'ancienne (`arrived` est null), la transition de la page amène la neuve : ici elle ne glisse pas
+  # chaque ligne qui n'était pas à sa place glisse de là où elle est jusqu'à sa place, sans toucher à `transform` (que `:flip` utilise) ; la ligne arrivée dans une autre liste est une ligne neuve, qui part d'où l'ancienne a été lâchée ; si la page fait voler l'ancienne (`arrived` est null), la transition de la page amène la neuve : ici elle ne glisse pas
   glide = (before, old, arrived)->
     return if matchMedia('(prefers-reduced-motion: reduce)').matches
     # @@ group
@@ -639,7 +639,7 @@
 
   begin = ->
     return unless g and not g.started
-    clearTimeout(g.timer)
+    g.timer?.()
     refresh()
     cands = targetsFor(g.row)
     unless rows.includes(g.row) and (rows.length > 1 or cands.length > 1)
@@ -724,7 +724,7 @@
     e._mjs_sortable = true
     row = rowOf(path, hit)
     return unless row
-    g = { mode: 'pointer', row: row, id: e.pointerId, type: e.pointerType, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, started: false, shown: new Map(), timer: 0, frame: 0 }
+    g = { mode: 'pointer', row: row, id: e.pointerId, type: e.pointerType, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, started: false, shown: new Map(), timer: null, frame: 0 }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)
@@ -732,7 +732,7 @@
     window.addEventListener('contextmenu', onMenu)
     window.addEventListener('selectstart', onSelect)
     window.addEventListener('dragstart', onSelect)
-    g.timer = setTimeout(begin, TOUCH_HOLD) unless e.pointerType is 'mouse'
+    g.timer = µafter(TOUCH_HOLD, begin) unless e.pointerType is 'mouse'
     return
 
   # la ligne (ou sa poignée) qui a le focus : Espace la saisit
@@ -745,7 +745,7 @@
   grab = (row)->
     cands = targetsFor(row)
     return if rows.length < 2 and cands.length < 2
-    g = { mode: 'key', row: row, started: true, src: me, geo: new Map(), first: new Map(), shown: new Map(), timer: 0, frame: 0 }
+    g = { mode: 'key', row: row, started: true, src: me, geo: new Map(), first: new Map(), shown: new Map(), timer: null, frame: 0 }
     g.start = rows.indexOf(row)
     g.n     = rows.length
     ready(cands)
@@ -899,7 +899,7 @@
       release()
       clear(s)
     unswallow()
-    clearTimeout(sayTimer)
+    sayTimer?.()
     return
 
   # une bascule de langue réécrit les textes des lignes
@@ -952,12 +952,12 @@
     deco.clear()
 </script>
 
-<div class="list" part="list" role="list" @class{$handle}="handled">
-  <slot @this=!{slotRef}></slot>
+<div class="list" part="list" role="list" :class{$handle}="handled">
+  <slot :this=!{slotRef}></slot>
 </div>
 <div class="live" role="status" aria-live="assertive" aria-atomic="true">{$announce}</div>
 
-<style @display="block">
+<style :display="block">
   .live
     position: absolute
     width: 1px

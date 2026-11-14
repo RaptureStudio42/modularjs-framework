@@ -389,10 +389,12 @@ function __modalNormalize(raw) {
     throw __modalErr(µ._mjs_txt('modalOptsObject', { type: typeof raw }, 'les options doivent être un objet, reçu {type}.'));
   }
 
+  // une valeur TrustedHTML donnée à `html` (l'appli l'a fabriquée par sa propre politique) reste telle quelle : en texte, le
+  // navigateur la refuserait sous l'en-tête strict
   for (i = 0; i < __MODAL_TEXT_KEYS.length; i++) {
     k = __MODAL_TEXT_KEYS[i];
     v = __modalPick(raw, k, k);
-    if (v != null) { o[k] = __modalText(v, k); }
+    if (v != null) { o[k] = k === 'html' && window.trustedTypes?.isHTML(v) ? v : __modalText(v, k); }
   }
 
   // `!!` sur tout ce qui est fourni : `showCancelButton: 0` reste faux, comme avant.
@@ -1069,7 +1071,8 @@ var __TOAST_SVG_TAGS = /^(svg|g|a|path|circle|ellipse|line|polyline|polygon|rect
 
 function __toastSvg(text) {
   var t = document.createElement('template'), svg, els, i, j, el, a, v;
-  t.innerHTML = text.trim();
+  // lu dans un <template> inerte puis filtré ci-dessous : le filtre est celui du framework, la lecture passe par sa politique `mjs`
+  t.innerHTML = µ._mjs_th(text.trim());
   svg = t.content.firstChild;
   if (t.content.childNodes.length !== 1 || svg.nodeName.toLowerCase() !== 'svg') { return null; }
   els = [svg].concat(Array.prototype.slice.call(svg.querySelectorAll('*')));
@@ -1160,6 +1163,15 @@ function __toastWatchResize() {
 
 var __modalUidSeq = 0;
 
+// les menus de MJS ouverts (µ._mjs_menus : liste de <@@select>, bulle `@title`, menu de <@@chart>) se ferment : le focus qu'ils
+// portaient revient à leur bouton. Vrai quand une liste ou un menu l'était (sa fermeture rend `true`) ; la bulle, fermée aussi, ne
+// compte pas. Un menu qui échoue (composant détruit) n'empêche rien
+function __modalShutMenus() {
+  var shut = false;
+  µ._mjs_menus?.forEach(function(f) { try { if (f() === true) { shut = true; } } catch { /* sans conséquence pour la modale */ } });
+  return shut;
+}
+
 // closure de fermeture de la modale COURANTE (une seule à la fois, cf. en-tête — empilement hors
 // périmètre) — posée à l'ouverture de fire(), nettoyée à la fermeture ; consommée par
 // µ.modal.close() (fermeture programmatique globale).
@@ -1193,6 +1205,8 @@ function __modalDismissResult(result) {
       if (__modalCurrentClose) { __modalCurrentClose(__modalDismissResult()); }
 
       uid = ++__modalUidSeq;
+      // les menus de MJS ouverts se ferment d'abord : le focus qu'ils portaient revient à leur bouton, que la modale rendra à sa fermeture
+      __modalShutMenus();
       previouslyFocused = __modalActiveDeep();
       closed = false;
       confirming = false;
@@ -1215,12 +1229,12 @@ function __modalDismissResult(result) {
       box.setAttribute('tabindex', '-1');
       __modalApplyClass(box, options.customClass && options.customClass.box);
 
-      if (options.icon && __modalIcons[options.icon]) {
+      if (options.icon && Object.prototype.hasOwnProperty.call(__modalIcons, options.icon)) {
         iconEl = document.createElement('div');
         iconEl.className = 'mjs-modal-icon mjs-modal-icon-' + options.icon;
         iconEl.setAttribute('aria-hidden', 'true');
         __modalApplyClass(iconEl, options.customClass && options.customClass.icon);
-        iconEl.innerHTML = __modalIcons[options.icon];
+        iconEl.innerHTML = µ._mjs_th(__modalIcons[options.icon]);
         box.appendChild(iconEl);
       }
 
@@ -1248,7 +1262,9 @@ function __modalDismissResult(result) {
         contentEl.id = 'mjs-modal-content-' + uid;
         __modalApplyClass(contentEl, options.customClass && options.customClass.htmlContainer);
         // `html` = contenu de confiance (option EXPLICITE, même contrat que @html côté template) ;
-        // `text` = texte brut, jamais interprété (textContent échappe nativement).
+        // `text` = texte brut, jamais interprété (textContent échappe nativement). `html` ne passe jamais par la politique
+        // `mjs` : sous Trusted Types, une valeur TrustedHTML de l'appli (gardée telle quelle à la lecture des options) ou sa
+        // politique `default`, sinon le navigateur refuse
         if (options.html != null) { contentEl.innerHTML = options.html; } else { contentEl.textContent = options.text; }
         box.appendChild(contentEl);
         box.setAttribute('aria-describedby', contentEl.id);
@@ -1327,6 +1343,7 @@ function __modalDismissResult(result) {
         document.removeEventListener('fullscreenchange', onFullscreenChange);
         document.removeEventListener('mjs:load', onGone);
         backdrop.removeEventListener('click', onBackdropClick);
+        µ._mjs_modalLayer = null;
         if (backdrop.parentNode) { backdrop.parentNode.removeChild(backdrop); }
         if (mark) { mark.remove(); }
         if (previouslyFocused) { __modalRestoreFocus(previouslyFocused); }
@@ -1429,7 +1446,8 @@ function __modalDismissResult(result) {
       // Focus trap (Tab/Shift+Tab bouclent DANS la boîte) + Échap (si autorisée). Posé sur
       // `document` en capture, retiré dans cleanup() — une seule modale à la fois en v1
       // (empilement hors périmètre, cf. en-tête), pas besoin d'un registre de handlers actifs.
-      // Échap qui ferme s'arrête à la modale : un tiroir ou un menu en dessous ne se ferme pas avec elle
+      // Échap qui ferme s'arrête à la modale : un tiroir ou un menu en dessous ne se ferme pas avec elle. Une liste ou un menu de MJS
+      // ouvert (liste de <@@select>, menu de <@@chart>) se ferme d'abord, seul, son focus rendu à son bouton : la modale reste ouverte
       function onKeydown(e) {
         var focusable, first, last, active, activeInBox;
         if (onGone()) { return; }
@@ -1437,7 +1455,7 @@ function __modalDismissResult(result) {
           if (allowEscapeKey && !confirming) {
             e.preventDefault();
             e.stopPropagation();
-            close({ isConfirmed: false, isDenied: false, isDismissed: true, value: void 0, dismiss: 'esc' });
+            if (!__modalShutMenus()) { close({ isConfirmed: false, isDenied: false, isDismissed: true, value: void 0, dismiss: 'esc' }); }
           }
           return;
         }
@@ -1460,7 +1478,10 @@ function __modalDismissResult(result) {
       // repère laissé dans le corps tant que la modale vit hors de lui (plein écran) : une page remplacée l'emporte avec le
       // reste, un élément plein écran que l'appli retire, non (même règle que les toasts, cf. __toastMark)
       var mark = null;
+      // la modale ouverte, laissée hors de la photo du cache de pages (cf. mjs_ujs.ts) : partie avec la page, elle ne revient pas
+      // avec elle au retour par `Précédent`
       function place(next) {
+        µ._mjs_modalLayer = backdrop;
         __modalAdoptSheet(next);
         next.appendChild(backdrop);
         if (mark) { mark.remove(); }
@@ -1595,7 +1616,7 @@ function __modalDismissResult(result) {
         iconEl.appendChild(img);
       }
       else if (icon && icon.nodeType === 1) { iconEl.appendChild(icon); }
-      else { iconEl.innerHTML = Object.prototype.hasOwnProperty.call(__modalIcons, type) ? __modalIcons[type] : ''; }
+      else { iconEl.innerHTML = µ._mjs_th(Object.prototype.hasOwnProperty.call(__modalIcons, type) ? __modalIcons[type] : ''); }
       rec.el.appendChild(iconEl);
     }
 

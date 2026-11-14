@@ -109,7 +109,7 @@ describe("render-browser — close() pendant qu'un emplacement démarre, et doub
     const root = mjsTmp('close-requete-en-file')
     mkdirSync(join(root, 'src'), { recursive: true })
     writeFileSync(join(root, 'src', 'lente.mjs'),
-      '<script lang="coffee">\n$p = new Promise (resolve) -> setTimeout((-> resolve(\'V1\')), 300)\n</script>\n' +
+      '<script module lang="coffee">\nplusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))\n</script>\n<script lang="coffee">\n$p = plusTard \'V1\', 300\n</script>\n' +
       '<div class="wrap">\n{await $p}\n  <p class="pending">chargement…</p>\n{success val}\n  <p class="ok">{val}</p>\n{end}\n</div>\n')
 
     const renderer = await createBrowserRenderer(

@@ -29,11 +29,11 @@ describe('bundler — invalidation des .mjs qui @import un module .civet appelan
 
     const vendorPath = join(srcDir, 'vendor', 'lib.js')
     writeFileSync(vendorPath, 'export const v = 1\n')
-    writeFileSync(join(srcDir, 'helper.module.civet'), [
+    writeFileSync(join(srcDir, 'helper.module.civet.mjs'), [
       "export loadLib = -> await µimport 'vendor/lib.js'",
     ].join('\n'))
     writeFileSync(join(srcDir, 'app.mjs'), [
-      "@import loadLib 'helper.module.civet'",
+      "@import loadLib 'helper.module.civet.mjs'",
       '<script>val = 1</script>',
       '<p>{val}</p>',
     ].join('\n'))

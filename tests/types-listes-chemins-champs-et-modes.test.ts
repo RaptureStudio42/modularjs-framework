@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { makeMu, composant, appeler, refuser } from './helpers/types-runtime.js'
 
 describe('types — le mode erreur nomme les mêmes chemins que l’avertissement', () => {
-  const MESSAGES = '{ id: int, t: string }[]'
+  const MESSAGES = 'Message[]'
 
   function messages(n: number) {
     const µ  = makeMu('error')
@@ -35,7 +35,7 @@ describe('types — le mode erreur nomme les mêmes chemins que l’avertissemen
 
   it('une méthode refusée, une longueur refusée, un champ obligatoire supprimé : la liste, ou son élément, à la position d’à présent', () => {
     const µ  = makeMu('error')
-    const el = composant({ board: '{ rows: { cells: { v: int }[] 0..3 }[] }' })
+    const el = composant({ board: 'Plateau3' })
     const board: any = { rows: [0, 1, 2].map((r) => ({ cells: [{ v: r }, { v: r + 10 }] })) }
     µ._mjs_tset(el, 'board', board)
     const reg = el._mjs_treg
@@ -52,7 +52,7 @@ describe('types — le mode erreur nomme les mêmes chemins que l’avertissemen
 
   it('une valeur ramenée dans sa plage par une méthode, sur une liste qui a bougé : l’erreur la nomme, la liste revient à son état d’avant', () => {
     const µ  = makeMu('error')
-    const el = composant({ board: '{ rows: { notes: int 0..100[] }[] }' })
+    const el = composant({ board: 'Carnet' })
     const board: any = { rows: [{ notes: [5] }, { notes: [6] }] }
     µ._mjs_tset(el, 'board', board)
     const reg = el._mjs_treg
@@ -69,7 +69,7 @@ describe('types — un champ ou un élément remplacé par une liste neuve se no
   for (const mode of ['warn', 'error'] as const) {
     it(mode + ' : un champ d’objet remplacé par une liste, puis la liste qui bouge', () => {
       const µ  = makeMu(mode)
-      const el = composant({ fiche: '{ nom: string, tags: { label: string }[] }' })
+      const el = composant({ fiche: 'nom  string\ntags  Etiquette[]' })
       const fiche: any = { nom: 'a', tags: [{ label: 'x' }] }
       µ._mjs_tset(el, 'fiche', fiche)
       const reg   = el._mjs_treg
@@ -84,7 +84,7 @@ describe('types — un champ ou un élément remplacé par une liste neuve se no
 
     it(mode + ' : un élément de liste remplacé par une liste, puis la liste qui bouge', () => {
       const µ  = makeMu(mode)
-      const el = composant({ grille: '{ v: int }[][]' })
+      const el = composant({ grille: 'Cellule[][]' })
       const grille: any[] = [[{ v: 1 }], [{ v: 2 }]]
       µ._mjs_tset(el, 'grille', grille)
       const reg   = el._mjs_treg
@@ -99,7 +99,7 @@ describe('types — un champ ou un élément remplacé par une liste neuve se no
 
   it('un objet remplacé dans un champ, ses propres champs ensuite : le champ de leur parent', () => {
     const µ  = makeMu('warn')
-    const el = composant({ fiche: '{ nom: string, auteur: { prenom: string, tags: string[] } }' })
+    const el = composant({ fiche: 'nom  string\nauteur\n  prenom  string\n  tags  string[]' })
     const fiche: any = { nom: 'a', auteur: { prenom: 'p', tags: [] } }
     µ._mjs_tset(el, 'fiche', fiche)
     const reg   = el._mjs_treg
@@ -112,7 +112,7 @@ describe('types — un champ ou un élément remplacé par une liste neuve se no
 })
 
 describe('types — un choix entre plusieurs formes garde les liens de ce qu’il contrôle', () => {
-  const DEFS = { Item: '{ id: int } | { name: string }' }
+  const DEFS = { Item: 'Id | Nomme' }
 
   for (const mode of ['warn', 'error'] as const) {
     it(mode + ' : une liste d’un type nommé qui est un choix : un élément qui bouge se nomme à sa place', () => {
@@ -131,7 +131,7 @@ describe('types — un choix entre plusieurs formes garde les liens de ce qu’i
 
     it(mode + ' : un champ qui est un choix, dans une ligne qui bouge', () => {
       const µ  = makeMu(mode)
-      const el = composant({ l: '{ choix: Item, note: string }[]' }, DEFS)
+      const el = composant({ l: 'Choix[]' }, DEFS)
       const l: any[] = [{ choix: { id: 1 }, note: 'a' }, { choix: { name: 'b' }, note: 'b' }]
       µ._mjs_tset(el, 'l', l)
       const reg = el._mjs_treg
@@ -143,7 +143,7 @@ describe('types — un choix entre plusieurs formes garde les liens de ce qu’i
 
   it('un choix entre une liste et un objet : la liste d’un champ, quand sa ligne bouge', () => {
     const µ  = makeMu('warn')
-    const el = composant({ l: '{ contenu: Contenu }[]' }, { Contenu: '{ id: int }[] | { name: string }' })
+    const el = composant({ l: 'Boite[]' }, { Contenu: 'Id[] | Nomme' })
     const l: any[] = [{ contenu: [{ id: 1 }] }, { contenu: { name: 'b' } }]
     µ._mjs_tset(el, 'l', l)
     const reg = el._mjs_treg
@@ -154,7 +154,7 @@ describe('types — un choix entre plusieurs formes garde les liens de ce qu’i
 })
 
 describe('types — une clé qui n’est pas un identifiant se nomme entre crochets', () => {
-  const REGLE = "{ 'a-b': { c: int }, \"it's\": { c: int }, 'a b': { c: int }[] }"
+  const REGLE = "'a-b'\n  c  int\n\"it's\"\n  c  int\n'a b'  C[]"
 
   for (const mode of ['warn', 'error'] as const) {
     it(mode + ' : à la racine, par une écriture profonde', () => {
@@ -182,7 +182,7 @@ describe('types — une clé qui n’est pas un identifiant se nomme entre croch
 
     it(mode + ' : dans une ligne qui bouge', () => {
       const µ  = makeMu(mode)
-      const el = composant({ x: "{ rows: { 'a-b': { c: int } }[] }" })
+      const el = composant({ x: 'Rangs' })
       const x: any = { rows: [{ 'a-b': { c: 1 } }, { 'a-b': { c: 2 } }] }
       µ._mjs_tset(el, 'x', x)
       const reg = el._mjs_treg

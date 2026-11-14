@@ -232,9 +232,10 @@ function _mjsFxMarqueeMirror(o, run) {
   return m;
 }
 
-// la copie montre ce que montre l'original : son texte, ses attributs, ses enfants, la valeur d'un champ ; elle porte ses identifiants de routage (`_mjs_ids`,
-// `_mjs_eo` : le composant qui a écrit la balise y joue ses gestionnaires) et, dans une liste, le rang de sa ligne (`_mjs_idx_<n>`, que lit le gestionnaire ;
-// quatre listes imbriquées au plus) — des noms que la construction de production raccourcit, écrits ici en toutes lettres.
+// la copie montre ce que montre l'original : son texte, ses attributs, ses enfants, la valeur d'un champ ; elle route ses événements comme lui
+// (`µ._mjs_evCopy` : le composant qui a écrit la balise y joue ses gestionnaires, et, d'une ligne qui ne lit que son élément, la ligne d'origine,
+// où il relit l'élément et son rang) et porte, dans une liste, le rang de la ligne que lit le gestionnaire (`_mjs_idx_<n>` ; les quatre
+// premiers niveaux nommés ici, les suivants par la ligne) — des noms que la construction de production raccourcit, écrits en toutes lettres.
 // Un miroir se dessine lui-même : il prend les feuilles collées par µ.adoptSheet dans l'ombre de l'original (marquées `_mjs_keep`) à la place des siennes ;
 // un composant léger (`mjs-light`) se dessine dans ses enfants, rien à y recopier
 function _mjsFxMarqueePatch(m, o, run) {
@@ -243,12 +244,15 @@ function _mjsFxMarqueePatch(m, o, run) {
     return;
   }
   _mjsFxMarqueeAttrs(m, o, run);
-  m._mjs_ids   = o._mjs_ids;
-  m._mjs_eo    = o._mjs_eo;
+  µ._mjs_evCopy(o, m);
   m._mjs_idx_0 = o._mjs_idx_0;
   m._mjs_idx_1 = o._mjs_idx_1;
   m._mjs_idx_2 = o._mjs_idx_2;
   m._mjs_idx_3 = o._mjs_idx_3;
+  // au-delà, les rangs que nomme la description de la ligne (`ix`, posée par generator/compile.ts dans un gabarit qui porte un
+  // *marquee), sans plafond
+  var rg = o._mjs_ev && o._mjs_ev._mjs_reg, n;
+  if (rg && rg.ix) for (n in rg.ix) m[n] = o[n];
   var r = o instanceof µ.Element ? o._shadow : null;
   if (r && r !== o) {
     var had = m._shadow && m._shadow.adoptedStyleSheets;
@@ -510,6 +514,7 @@ function _mjsFxMarqueeTell(el, comp) {
       var dirty   = 0;
       var touched = [];
       var all     = false;
+      var early   = false;
       var arrive, depart;
       // @@ drag=true axis=both on=scroll
       // décalage de la main (px), position écrite, boucle d'une image à la fois (rendez-vous, minuterie de repos, calque promu)
@@ -623,6 +628,8 @@ function _mjsFxMarqueeTell(el, comp) {
         if (!force && tx === otx && ty === oty && nx === cx && ny === cy) return;
         cx = nx;
         cy = ny;
+        // toutes les copies revues ici : la revue d'après le rendu du composant (`review`) n'a plus lieu d'être
+        if (force || tx !== otx || ty !== oty) early = false;
         // les copies déjà là restent, leurs miroirs avec elles (rien n'est remonté) : à leur nouvelle place, revues entières si les enfants d'origine ont changé
         // (`force`) ou si le tour change (ce qui n'a changé aucun nœud, la valeur d'un champ posée par un script, les rejoint) ; il en vient ou il en part selon
         // le compte (les miroirs d'une copie qui part, sortis de la page, quittent le groupe de leur original). L'observateur suit la bande : le reprendre ne perd
@@ -855,6 +862,19 @@ function _mjsFxMarqueeTell(el, comp) {
           }
         }
       };
+      // les copies posées avec l'effet, au milieu du rendu du composant : la valeur qu'il lie à un champ n'y est posée qu'après, en propriété (l'observateur ne
+      // la voit pas) ; ce rendu fini, avant l'image, elles se revoient entières, une fois, sans relire de taille — sauf si une refonte des copies l'a déjà
+      // fait (`build`)
+      var review = function() {
+        if (!early) return;
+        var src = _mjsFxMarqueeKept(originals());
+        early          = false;
+        run._mjs_mqIds = _mjsFxMarqueeIds(src);
+        for (var m = 0; m < copies.length; m++) {
+          run._mjs_mqN = m + 1;
+          _mjsFxMarqueeSync(copies[m], src, run);
+        }
+      };
       var touch = function(t) {
         if (!all && touched[touched.length - 1] !== t) {
           touched.push(t);
@@ -922,6 +942,8 @@ function _mjsFxMarqueeTell(el, comp) {
       µ._mjs_dom.addEventListener(root, 'reset', reset, { capture: true });
       run._mjs_mqTouch = touch;
       build(true);
+      early = copies.length > 0;
+      if (early) Promise.resolve().then(review);
       if (ro) {
         ro.observe(run);
         ro.observe(el);
@@ -958,6 +980,7 @@ function _mjsFxMarqueeTell(el, comp) {
         if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
         // @@
         if (later && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(later);
+        early = false;
         if (dirty) {
           if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(dirty);
           clearTimeout(dirty);

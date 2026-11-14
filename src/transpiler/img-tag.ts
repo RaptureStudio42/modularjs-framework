@@ -4,8 +4,7 @@
 // aucun accès disque ici (seul le bundler l'a, via resolveOneImage) et aucun import de
 // bundler (le bundler importe CE module ; un retour créerait un cycle).
 
-import { findMacroTagEnd } from './macro-tag.js'
-import { skipQuotedSpan } from '../quoted-span.js'
+import { balisesDe, composantLu, nomDe } from './template-tree.js'
 
 export interface ImgTagAttr {
   name: string
@@ -33,7 +32,7 @@ export interface ResolvedImage {
 }
 
 // extractQuotedValue — `attrRaw` est le texte COMPLET d'un attribut tel que rendu par
-// parseAttrs (`nom="valeur"`, `nom='valeur'`) : rend la valeur ET le guillemet utilisé,
+// l'arbre (`nom="valeur"`, `nom='valeur'`) : rend la valeur ET le guillemet utilisé,
 // ou null si l'attribut n'est pas sous forme guillemetée (accolade, nu, ou autre nom).
 function extractQuotedValue(attrRaw: string, name: string): { value: string; quote: string } | null {
   const m = attrRaw.match(new RegExp(`^${name}\\s*=\\s*(["'])([\\s\\S]*)\\1$`))
@@ -41,141 +40,27 @@ function extractQuotedValue(attrRaw: string, name: string): { value: string; quo
   return { quote: m[1], value: m[2] }
 }
 
-// stringDelimAt/scanTemplateLiteral — PORT LOCAL du même algorithme que findMacroTagEnd
-// (macro-tag.ts, non exportées là-bas — guillemets triples et gabarit à interpolations imbriquées
-// gardés internes à ce module) : dupliquer ces deux petites fonctions évite d'alourdir la
-// dépendance de ce fichier, déjà limitée à `findMacroTagEnd` lui-même.
-function stringDelimAt(raw: string, i: number): string | null {
-  const three = raw.slice(i, i + 3)
-  if (three === "'''" || three === '"""') return three
-  const c = raw[i]
-  return c === '\'' || c === '"' || c === '`' ? c : null
-}
+// ni le contenu d'un exemple (<pre>, <code>), ni un script ou un style écrits dans le gabarit ; lu aussi par le repli d'un <@failed> (macros.ts)
+export const HORS_BALISAGE = new Set(['pre', 'code', 'script', 'style'])
 
-function scanTemplateLiteral(raw: string, openIdx: number): number {
-  let j = openIdx + 1
-  while (j < raw.length) {
-    const c = raw[j]
-    if (c === '\\') { j += 2; continue }
-    if (c === '`') return j + 1
-    if (c === '$' && raw[j + 1] === '{') {
-      let d = 1
-      j += 2
-      while (j < raw.length && d > 0) {
-        const e = raw[j]
-        if (e === '\\') { j += 2; continue }
-        if (e === '{') { d++; j++; continue }
-        if (e === '}') { d--; j++; continue }
-        if (e === '`') { const end = scanTemplateLiteral(raw, j); if (end < 0) return -1; j = end; continue }
-        if (e === '"' || e === "'") { j = skipQuotedSpan(raw, j); continue }
-        j++
-      }
-      if (d > 0) return -1
-      continue
-    }
-    j++
-  }
-  return -1
-}
-
-// parseAttrs — découpe le texte ENTRE `<@@img` et le `>`/`/>` fermant en attributs.
-// Profondeur `{`/`}` suivie pour les valeurs accolades (`name={ {a:1} }`), guillemet
-// respecté pour les valeurs `"…"`/`'…'` — même esprit que `findMacroTagEnd`, à l'échelle
-// d'un seul attribut plutôt que de la balise entière.
-function parseAttrs(raw: string): ImgTagAttr[] {
-  const attrs: ImgTagAttr[] = []
-  const n = raw.length
-  let i = 0
-  while (i < n) {
-    while (i < n && /\s/.test(raw[i])) i++
-    if (i >= n) break
-    const nameStart = i
-    while (i < n && !/[\s=/]/.test(raw[i])) i++
-    const name = raw.slice(nameStart, i)
-    if (!name) { i++; continue }   // caractère isolé imprévu (`/` déjà retiré par l'appelant) : on avance sans planter
-    while (i < n && /\s/.test(raw[i])) i++
-    if (raw[i] === '=') {
-      i++
-      while (i < n && /\s/.test(raw[i])) i++
-      if (raw[i] === '"' || raw[i] === '\'') {
-        const quote = raw[i]
-        i++
-        while (i < n && raw[i] !== quote) i++
-        if (i < n) i++   // consomme le guillemet fermant
-      } else if (raw[i] === '{') {
-        // profondeur `{`/`}` CONSCIENTE des chaînes/gabarits/commentaires — même grammaire que
-        // findMacroTagEnd (macro-tag.ts) à profondeur > 0 : une accolade/un guillemet LITTÉRAL
-        // dans une chaîne, un gabarit ou un commentaire `//`/`/* */` ne compte plus dans la
-        // profondeur. AVANT : une accolade LITTÉRALE dans une chaîne (`title={"{"}`) comptait
-        // comme une vraie ouverture/fermeture (corrigé une première fois), et un commentaire
-        // `/* { */` (accolade OUVRANTE non appariée) ne se refermait JAMAIS — dans les deux cas,
-        // tout le reste de la balise (dont `src`) était avalé dans la valeur de l'attribut.
-        let depth = 0
-        let strDelim: string | null = null
-        while (i < n) {
-          const c = raw[i]
-          if (strDelim !== null) {
-            if (c === '\\') { i += 2; continue }
-            if (raw.slice(i, i + strDelim.length) === strDelim) { i += strDelim.length; strDelim = null; continue }
-            i++
-            continue
-          }
-          const delim = stringDelimAt(raw, i)
-          if (delim !== null) {
-            if (delim === '`') {
-              const end = scanTemplateLiteral(raw, i)
-              if (end < 0) { i = n; break }   // gabarit jamais refermé : on avale le reste (même repli que ci-dessous)
-              i = end
-              continue
-            }
-            strDelim = delim
-            i += delim.length
-            continue
-          }
-          if (c === '/' && raw[i + 1] === '/') {
-            const nl = raw.indexOf('\n', i)
-            i = nl === -1 ? n : nl
-            continue
-          }
-          if (c === '/' && raw[i + 1] === '*') {
-            const end = raw.indexOf('*/', i + 2)
-            if (end === -1) { i = n; break }   // commentaire jamais refermé : idem
-            i = end + 2
-            continue
-          }
-          if (c === '{') depth++
-          else if (c === '}') depth--
-          i++
-          if (depth === 0) break
-        }
-      } else {
-        while (i < n && !/\s/.test(raw[i])) i++
-      }
-    }
-    attrs.push({ name, raw: raw.slice(nameStart, i) })
-  }
-  return attrs
-}
-
-// scanImgTags — repère chaque `<@@img …>` littéral d'un texte (déjà masqué par
-// maskCodeBlocks côté bundler, pour qu'un exemple affiché dans <pre>/<code> ne matche
-// jamais). Limite de mot (`<@@imgx` n'est pas une balise), fin réelle via findMacroTagEnd
-// (accolades/guillemets suivis) — jamais le premier `>` textuel. `src` n'est candidat que
-// s'il est entre guillemets et sans `{` dans la valeur (une valeur à accolade est une
-// interpolation pour le pipeline d'attributs, jamais un chemin littéral).
+// scanImgTags — chaque balise `<@@img …>` d'un gabarit ou d'un composant entier, lue par le lecteur unique
+// (template-tree.ts) : jamais dans un exemple affiché dans <pre>/<code>, un script, un style, un commentaire, une
+// chaîne d'une expression `{…}` ou la valeur d'un attribut ; le nom entier (`<@@imgx` n'en est pas une), la fin réelle
+// de la balise ouvrante (accolades et guillemets lus). `src` n'est candidat que s'il est entre guillemets et sans `{`
+// dans la valeur (une valeur à accolade est une interpolation pour le pipeline d'attributs, jamais un chemin littéral).
 // CASSE IGNORÉE : la résolution de module (resolveTagShortcuts) et le
 // lint a11y sont insensibles à la casse — un scan sensible laissait `<@@IMG src="absent.png">`
 // traverser tout le build sans un mot. Le nom écrit est conservé (`tagOpen`) : la balise
-// ressort telle que l'auteur l'a tapée, sa fermeture `</@@IMG>` reste appariée.
-export function scanImgTags(text: string): ImgTag[] {
+// ressort telle que l'auteur l'a tapée, sa fermeture `</@@IMG>` reste appariée. `langue` : celle d'un <script> sans `lang`, que
+// reçoit le compilateur : chaque section se referme où il la referme.
+export function scanImgTags(text: string, langue?: string): ImgTag[] {
   const tags: ImgTag[] = []
-  for (const m of text.matchAll(/<@@img\b/gi)) {
-    const afterName = m.index! + m[0].length
-    const tagEnd = findMacroTagEnd(text, afterName)
-    if (tagEnd === -1) continue   // jamais refermée : hors périmètre de ce scan, signalé ailleurs
-    const selfClosing = text[tagEnd - 1] === '/'
-    const attrsRaw = text.slice(afterName, selfClosing ? tagEnd - 1 : tagEnd)
-    const attrs = parseAttrs(attrsRaw)
+  for (const b of balisesDe(composantLu(text, langue).enfants, HORS_BALISAGE)) {
+    if (nomDe(b) !== '@@img') continue
+    const attrs = b.attributs.map(a => {
+      const raw = text.slice(a.debut, a.fin)
+      return { name: /^[^\s=/]*/.exec(raw)![0], raw }
+    })
 
     let src: string | null = null
     let srcQuote = '"'
@@ -196,9 +81,18 @@ export function scanImgTags(text: string): ImgTag[] {
       else widthsDynamique = widthsAttr.raw.slice('widths'.length).replace(/^\s*=\s*/, '') || widthsAttr.raw
     }
 
-    tags.push({ text: text.slice(m.index!, tagEnd + 1), tagOpen: m[0], start: m.index!, end: tagEnd + 1, src, srcQuote, widthsRaw, widthsDynamique, attrs })
+    tags.push({ text: text.slice(b.debut, b.finOuvrante), tagOpen: text.slice(b.debut, b.debut + 1 + b.nom.length), start: b.debut, end: b.finOuvrante, src, srcQuote, widthsRaw, widthsDynamique, attrs })
   }
   return tags
+}
+
+// imgTagsInBlock — les <@@img> du contenu d'un bloc <@head> ou <@failed> (`macro`), tel qu'écrit entre ses balises (non rogné :
+// chaque ligne garde son début), lu dans son bloc comme le relevé des images lit le fichier (scanImgTags, qui prépare leur image) :
+// un <script> ou un <style> y court jusqu'à sa fermante exacte, où qu'il soit posé, une autre section après des commentaires posés
+// avant elle sur sa ligne, et un exemple cité dans leur texte n'est pas une balise ; positions dans `content`
+export function imgTagsInBlock(content: string, macro: 'head' | 'failed'): ImgTag[] {
+  const open = `<@${macro}>`
+  return scanImgTags(open + content + `</@${macro}>`).map(tag => ({ ...tag, start: tag.start - open.length, end: tag.end - open.length }))
 }
 
 // isResolvableSrc — chemin RELATIF seulement : un `src` vide, absolu (`/…`), une ancre

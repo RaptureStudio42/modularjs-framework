@@ -7,9 +7,9 @@ import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 import { collectEffectDefs } from '../src/bundler/effects-files.js'
 
-const A = '<script>\n$show = true\n</script>\n{if $show}\n<p @transition=*fade>x</p>\n{end}\n<button @click={$show = !$show}>t</button>'
+const A = '<script>\n$show = true\n</script>\n{if $show}\n<p :transition=*fade>x</p>\n{end}\n<button @click={$show = !$show}>t</button>'
 const B = '<script>\n$n = 0\n</script>\n<button @click={$n++}>{$n}</button>'
-const C = '<script>\nµmount -> console.log(el)\n</script>\n<button @this=!{el} @click={$k = 1}>x</button>'
+const C = '<script>\nµmount -> console.log(el)\n</script>\n<button :this=!{el} @click={$k = 1}>x</button>'
 
 describe('transpile() — deux compilations en même temps ne se mêlent pas', function () {
   this.timeout(60000)

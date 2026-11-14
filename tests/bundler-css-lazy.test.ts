@@ -49,7 +49,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     const p = makeProject('lazy-emit')
     writeFileSync(join(p.stylesDir, 'theme.sass'), '.card\n  color: teal\n')
     writeFileSync(join(p.stylesDir, 'grid.sass'), '.grid\n  display: grid\n')
-    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style @css="theme grid"></style>\n\n<div class="card">x</div>')
+    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style :css="theme grid"></style>\n\n<div class="card">x</div>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'lazy' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -70,7 +70,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
   it("le composant n'importe RIEN de la feuille : c'est toute la différence avec 'split'", async function () {
     const p = makeProject('lazy-noimport')
     writeFileSync(join(p.stylesDir, 'theme.sass'), '.card\n  color: teal\n')
-    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style @css="theme"></style>\n\n<div class="card">x</div>')
+    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style :css="theme"></style>\n\n<div class="card">x</div>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'lazy' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -132,8 +132,8 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     const p = makeProject('lazy-collision')
     writeFileSync(join(p.stylesDir, 'dark-theme.sass'), '.x\n  color: red\n')
     writeFileSync(join(p.stylesDir, 'dark_theme.sass'), '.x\n  color: red\n')
-    writeFileSync(join(p.srcDir, 'comp-a.mjs'), '<style @css="dark-theme"></style>\n\n<div class="x">a</div>')
-    writeFileSync(join(p.srcDir, 'comp-b.mjs'), '<style @css="dark_theme"></style>\n\n<div class="x">b</div>')
+    writeFileSync(join(p.srcDir, 'comp-a.mjs'), '<style :css="dark-theme"></style>\n\n<div class="x">a</div>')
+    writeFileSync(join(p.srcDir, 'comp-b.mjs'), '<style :css="dark_theme"></style>\n\n<div class="x">b</div>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'lazy' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -149,7 +149,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
     const build = async (css: 'bundle' | undefined) => {
       const p = makeProject('lazy-nonregression')
       writeFileSync(join(p.stylesDir, 'theme.sass'), '.card\n  color: teal\n')
-      writeFileSync(join(p.srcDir, 'comp.mjs'), '<style @css="theme"></style>\n\n<div class="card">x</div>')
+      writeFileSync(join(p.srcDir, 'comp.mjs'), '<style :css="theme"></style>\n\n<div class="card">x</div>')
       const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, ...(css ? { css } : {}) })
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -171,7 +171,7 @@ describe("bundler — css: 'lazy' (feuilles partagées différées)", function (
 
 const COMPONENT_LAZY = [
   '<p class="t">salut</p>',
-  '<style @css="theme">',
+  '<style :css="theme">',
   '  .t',
   '    color: red',
   '</style>',
@@ -180,7 +180,7 @@ const COMPONENT_LAZY = [
 // même feuille différée + un variant de mise en page déclaré (servi par un satellite `.large.css`)
 const COMPONENT_LAZY_VARIANT = [
   '<p class="t">salut</p>',
-  '<style @css="theme">',
+  '<style :css="theme">',
   '  .t',
   '    color: red',
   '</style>',

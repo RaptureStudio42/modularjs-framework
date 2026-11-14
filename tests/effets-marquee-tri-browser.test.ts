@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendrePage } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -90,9 +91,10 @@ const APPLIS: Appli[] = [
       assert.deepEqual(await lit(etat('t')), { strip: null, piste: false, copies: 0, animation: null, calque: true }, 'le texte garde son calque')
       assert.equal(await lit(`getComputedStyle(window.__racine(TAG).querySelector('.t [mjs-fx-marquee-track]')).animationName`), 'mjs-fx-marquee')
       await page.evaluate(remplir('v'))
-      await page.waitForTimeout(500)
+      await attendrePage(page, `window.__racine(TAG).querySelectorAll('.v .logo').length === 3`, undefined, 'les trois balises sont arrivées', 500)
       const avant = await lit(gauche('v'))
       assert.equal(await lit(`window.__racine(TAG).querySelectorAll('.v .logo').length`), 3, 'les trois balises sont arrivées')
+      // vérification négative : rien ne doit bouger pendant ce temps
       await page.waitForTimeout(900)
       assert.deepEqual(await lit(etat('v')), { strip: null, piste: false, copies: 0, animation: null, calque: true }, 'aucune piste des enfants : le code n\'est pas là')
       assert.equal(await lit(gauche('v')), avant, 'les balises ajoutées restent en place : la première ne bouge pas')
@@ -128,6 +130,7 @@ const APPLIS: Appli[] = [
       await page.evaluate(remplir('s'))
       await attend(page, `!!window.__racine(TAG).querySelector('.s > [mjs-fx-marquee-run]')`)
       assert.equal((await lit(etat('s'))).strip, 'kids')
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(300)
       assert.deepEqual(avis, [], 'aucun avertissement en production')
     }
@@ -142,17 +145,20 @@ const APPLIS: Appli[] = [
       + `<button class="remplir" @click={$l = [1, 2, 3]}>remplir</button>` + STYLE,
     verifie: async ({ page, lit, avis, tag }) => {
       // rien n'a encore été rempli, et le gabarit n'a rien promis de faux : aucun avertissement
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(400)
       assert.deepEqual(avis, [], 'la balise à balises du gabarit, la liste vide et unit: child ne disent rien')
       await page.evaluate(`window.__racine(TAG).querySelector('.remplir').click()`)
       await attend(page, `!!window.__racine(TAG).querySelector('.l > [mjs-fx-marquee-run]')`)
       await page.evaluate(remplir('u'))
       await attend(page, `!!window.__racine(TAG).querySelector('.u > [mjs-fx-marquee-run]')`)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(300)
       assert.deepEqual(avis, [], 'la liste {for} qui grandit et la pose à unit: child ne disent rien non plus')
       // la balise que le gabarit ne promettait pas de remplir : elle défile (le fichier entier est là) et le développement le dit
       await page.evaluate(remplir('s'))
       await attend(page, `!!window.__racine(TAG).querySelector('.s > [mjs-fx-marquee-run]')`)
+      // vérification négative en partie : le compte exact d'avertissements (pas un de plus) se lit au bout de la pause
       await page.waitForTimeout(300)
       assert.equal(avis.length, 1, 'un avertissement : ' + JSON.stringify(avis))
       assert.match(avis[0], /^\[ModularJS\] \*marquee/)
@@ -166,6 +172,7 @@ const APPLIS: Appli[] = [
         await page.evaluate(remplir('s'))
         await attend(page, `!!window.__racine(TAG).querySelector('.s > [mjs-fx-marquee-run]')`)
       }
+      // vérification négative en partie : le compte exact d'avertissements (pas un de plus) se lit au bout de la pause
       await page.waitForTimeout(600)
       assert.equal(avis.length, 1, 'toujours un seul avertissement après trois bascules : ' + JSON.stringify(avis))
       assert.equal((await lit(etat('b'))).strip, 'kids', 'la balise à balises du gabarit défile')
@@ -176,7 +183,7 @@ const APPLIS: Appli[] = [
     env: 'prod',
     source: SCRIPT_BIS + `<div class="a n" *marquee(speed: 4s, gap: 10)>&nbsp;${LOGOS}</div>`
       + `<div class="a e" *marquee(speed: 4s, gap: 10)><div class="logo">A</div>&ensp;<div class="logo">B</div>&#32;<div class="logo">C</div>&Tab;</div>`
-      + `<div class="a h" *marquee(speed: 4s, gap: 10) @html=!{$h}></div>`
+      + `<div class="a h" *marquee(speed: 4s, gap: 10) :html=!{$h}></div>`
       + `<div class="a x" *marquee(speed: 4s, gap: 10)>Soldes&nbsp;${LOGOS}</div>` + STYLE,
     verifie: async ({ page, lit, avis }) => {
       for (const c of ['n', 'e', 'h']) {
@@ -187,6 +194,7 @@ const APPLIS: Appli[] = [
         assert.equal(e.animation, 'mjs-fx-marquee-run')
       }
       assert.deepEqual(await lit(etat('x')), { strip: null, piste: false, copies: 0, animation: null, calque: true }, 'un texte nu avec des balises garde le calque du texte')
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(300)
       assert.deepEqual(avis, [])
     }
@@ -196,12 +204,13 @@ const APPLIS: Appli[] = [
     env: 'dev',
     source: SCRIPT_BIS + `<div class="a n" *marquee(speed: 4s, gap: 10)>&nbsp;${LOGOS}</div>`
       + `<div class="a e" *marquee(speed: 4s, gap: 10)><div class="logo">A</div>&ensp;<div class="logo">B</div>&#32;<div class="logo">C</div>&Tab;</div>`
-      + `<div class="a h" *marquee(speed: 4s, gap: 10) @html=!{$h}></div>` + STYLE,
+      + `<div class="a h" *marquee(speed: 4s, gap: 10) :html=!{$h}></div>` + STYLE,
     verifie: async ({ page, lit, avis }) => {
       for (const c of ['n', 'e', 'h']) {
         await attend(page, `!!window.__racine(TAG).querySelector('.${c} > [mjs-fx-marquee-run]')`)
         assert.equal((await lit(etat(c))).strip, 'kids', `.${c} défile sur la piste`)
       }
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(600)
       assert.deepEqual(avis, [], 'le gabarit écrit ces balises : le développement ne dit rien')
     }
@@ -213,6 +222,7 @@ const APPLIS: Appli[] = [
     verifie: async ({ page, lit, avis }) => {
       await attend(page, `!!window.__racine(TAG).querySelector('.v > [mjs-fx-marquee-run]')`)
       assert.equal((await lit(etat('v'))).strip, 'kids')
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(600)
       assert.deepEqual(avis, [], 'unit est tenu par une variable : le défilé des balises est gardé en production, quelle que soit sa valeur')
     }
@@ -232,6 +242,7 @@ const APPLIS: Appli[] = [
       await attend(page, `!!window.__racine(TAG).querySelector('.g [mjs-fx-marquee-track]')`)
       assert.deepEqual(await lit(etat('g')), { strip: null, piste: false, copies: 0, animation: null, calque: true }, 'un texte reste un texte : le calque')
       assert.match(await lit(`window.__racine(TAG).querySelector('.g [mjs-fx-marquee-track]').textContent`), /b\]\]>/)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(300)
       assert.deepEqual(avis, [])
     }
@@ -247,6 +258,7 @@ const APPLIS: Appli[] = [
       }
       await attend(page, `!!window.__racine(TAG).querySelector('.g [mjs-fx-marquee-track]')`)
       assert.equal((await lit(etat('g'))).calque, true, 'un texte reste un texte : le calque')
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(600)
       assert.deepEqual(avis, [], 'le compilateur a écrit unit: child : le développement ne dit rien')
     }
@@ -255,10 +267,11 @@ const APPLIS: Appli[] = [
     nom: 'développement : @attach et @attach.once qui remplissent la balise, avant la pose ou après, avertissent, une fois par balise',
     env: 'dev',
     // `k` et `o` : la fonction remplit la balise AVANT la pose de l'effet (l'attribut est écrit avant lui) ; `a` et `p` : après
-    source: SCRIPT_FILL + `<div class="a k" @attach={fill} *marquee(speed: 4s, gap: 10)></div><div class="a o" @attach.once={fill} *marquee(speed: 4s, gap: 10)></div>`
-      + `<div class="a a2" *marquee(speed: 4s, gap: 10) @attach={fill}></div><div class="a p" *marquee(speed: 4s, gap: 10) @attach.once={fill}></div>` + STYLE,
+    source: SCRIPT_FILL + `<div class="a k" :attach={fill} *marquee(speed: 4s, gap: 10)></div><div class="a o" :attach.once={fill} *marquee(speed: 4s, gap: 10)></div>`
+      + `<div class="a a2" *marquee(speed: 4s, gap: 10) :attach={fill}></div><div class="a p" *marquee(speed: 4s, gap: 10) :attach.once={fill}></div>` + STYLE,
     verifie: async ({ page, avis, tag }) => {
       for (const c of ['k', 'o', 'a2', 'p']) await attend(page, `!!window.__racine(TAG).querySelector('.${c} > [mjs-fx-marquee-run]')`)
+      // vérification négative en partie : le compte exact d'avertissements (pas un de plus) se lit au bout de la pause
       await page.waitForTimeout(500)
       assert.equal(avis.length, 4, 'un avertissement par balise : ' + JSON.stringify(avis))
       for (const a of avis) {
@@ -274,6 +287,7 @@ const APPLIS: Appli[] = [
         await page.evaluate(remplir(c))
         await attend(page, `!!window.__racine(TAG).querySelector('.${c} > [mjs-fx-marquee-run]')`)
       }
+      // vérification négative en partie : le compte exact d'avertissements (pas un de plus) se lit au bout de la pause
       await page.waitForTimeout(600)
       assert.equal(avis.length, 4, 'toujours un seul avertissement par balise : ' + JSON.stringify(avis))
     }
@@ -285,17 +299,20 @@ const APPLIS: Appli[] = [
       + `<div class="a v" *marquee(unit: $u, speed: 4s, gap: 10)></div>`
       + `<div class="a x" *marquee(speed: 4s, gap: 10)>Bonjour <b>vous</b></div>` + STYLE,
     verifie: async ({ page, lit, avis }) => {
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(500)
       assert.deepEqual(avis, [], 'rien n\'est rempli, et un texte avec des balises en ligne garde son calque : rien à dire')
       assert.equal((await lit(etat('x'))).calque, true)
       // la variable vaut auto : le build garde le mode, la production fait défiler ces balises ; le développement se tait
       await page.evaluate(remplir('v'))
       await attend(page, `!!window.__racine(TAG).querySelector('.v > [mjs-fx-marquee-run]')`)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(400)
       assert.deepEqual(avis, [], 'unit: $u valant auto sur une balise vide remplie par un script : aucun avertissement')
       // auto écrit en clair vaut le défaut : le compilateur n'envoie pas le mode pour une balise vide, le développement le dit
       await page.evaluate(remplir('e'))
       await attend(page, `!!window.__racine(TAG).querySelector('.e > [mjs-fx-marquee-run]')`)
+      // vérification négative en partie : le compte exact d'avertissements (pas un de plus) se lit au bout de la pause
       await page.waitForTimeout(400)
       assert.equal(avis.length, 1, 'un avertissement : ' + JSON.stringify(avis))
       assert.match(avis[0], /unit: child/)
@@ -305,13 +322,15 @@ const APPLIS: Appli[] = [
     nom: 'développement : une pose qui demande déjà le défilé des balises (unit: child, drag, axis: both, on: scroll) n\'avertit pas quand un script lui donne des balises',
     env: 'dev',
     // `c`, `d`, `x`, `s` : la fonction remplit la balise AVANT la pose ; `u` : vide à la pose, un script la remplit après (la balise passe du calque à la piste)
-    source: SCRIPT_FILL + DEMANDES.map(([c, r]) => `<div class="a ${c}" @attach={fill} *marquee(${r}, speed: 4s, gap: 10)></div>`).join('') + `<div class="a u" *marquee(unit: child, speed: 4s, gap: 10)></div>` + STYLE,
+    source: SCRIPT_FILL + DEMANDES.map(([c, r]) => `<div class="a ${c}" :attach={fill} *marquee(${r}, speed: 4s, gap: 10)></div>`).join('') + `<div class="a u" *marquee(unit: child, speed: 4s, gap: 10)></div>` + STYLE,
     verifie: async ({ page, lit, avis }) => {
       for (const [c] of DEMANDES) await attend(page, `window.__racine(TAG).querySelector('.${c}').getAttribute('mjs-fx-marquee-strip') === 'kids'`)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(500)
       assert.deepEqual(avis, [], 'des balises déjà là à la pose, sur une pose qui demande le défilé : rien à dire')
       await page.evaluate(remplir('u'))
       await attend(page, `window.__racine(TAG).querySelector('.u').getAttribute('mjs-fx-marquee-strip') === 'kids'`)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(500)
       assert.deepEqual(avis, [], 'des balises qui arrivent après la pose, sur une pose à unit: child : rien à dire non plus')
       assert.equal((await lit(etat('u'))).piste, true)
@@ -322,11 +341,12 @@ const APPLIS: Appli[] = [
     env: 'prod',
     options: { runtime: ['fx_marquee'] },
     // `k` : la fonction remplit la balise avant la pose ; `s` : vide, un script la remplit après
-    source: SCRIPT_FILL + `<div class="a k" @attach={fill} *marquee(speed: 4s, gap: 10)></div><div class="a s" *marquee(speed: 4s, gap: 10)></div>` + STYLE,
+    source: SCRIPT_FILL + `<div class="a k" :attach={fill} *marquee(speed: 4s, gap: 10)></div><div class="a s" *marquee(speed: 4s, gap: 10)></div>` + STYLE,
     verifie: async ({ page, lit, avis }) => {
       await attend(page, `!!window.__racine(TAG).querySelector('.k > [mjs-fx-marquee-run]')`)
       await page.evaluate(remplir('s'))
       await attend(page, `!!window.__racine(TAG).querySelector('.s > [mjs-fx-marquee-run]')`)
+      // vérification négative : aucun avertissement ne doit venir pendant ce temps, aucun évènement ne le dit
       await page.waitForTimeout(500)
       assert.deepEqual(avis, [], 'le fichier entier est là mais pas le registre des composants : ni avertissement ni clé de libellé affichée')
       assert.equal((await lit(etat('k'))).strip, 'kids')

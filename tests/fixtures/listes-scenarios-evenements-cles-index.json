@@ -1,0 +1,326 @@
+{
+  "evif": {
+    "log": [
+      "a1",
+      "a2",
+      "b1",
+      "b2",
+      "nb b=0",
+      "a1",
+      "a2",
+      "b1",
+      "b2"
+    ],
+    "errs": []
+  },
+  "evkey": {
+    "log": [
+      "k1:1",
+      "k2:1",
+      "k1:2",
+      "k2:2"
+    ],
+    "errs": []
+  },
+  "evdyn": {
+    "log": [
+      "tag=span",
+      "dy:span",
+      "tag=em",
+      "dy:em",
+      "tag=span",
+      "dy:span"
+    ],
+    "errs": []
+  },
+  "evnest": {
+    "log": [
+      "g1",
+      "g2",
+      "it1/10",
+      "it1/11",
+      "it2/20",
+      "g2",
+      "g1",
+      "it2/20",
+      "it1/11",
+      "it1/10"
+    ],
+    "errs": []
+  },
+  "evonce": {
+    "log": [
+      "c1",
+      "m1",
+      "c2",
+      "m2"
+    ],
+    "errs": []
+  },
+  "evpool": {
+    "log": [
+      "A sel=3 rows=1,2,3*,4,5",
+      "B sel=12 rows=11,12*,13,14,15",
+      "C sel=14 rows=11,14*,13,12,15",
+      "D sel=14 rows=14*,13,12,15",
+      "E sel=15 rows=14,13,12,15*",
+      "F sel=18 rows=13,14,15,16,17,18*"
+    ],
+    "errs": []
+  },
+  "evawait": {
+    "log": [
+      "w1",
+      "w2"
+    ],
+    "errs": []
+  },
+  "evifor": {
+    "log": [
+      "f1",
+      "f2",
+      "f1",
+      "f2"
+    ],
+    "errs": []
+  },
+  "evstop": {
+    "log": [
+      ">.st",
+      "st1",
+      ">.pr",
+      "pr1",
+      "o1",
+      ">.kid",
+      ">.sf",
+      "sf1",
+      ">.kid2",
+      "cur:cur",
+      ">.cur",
+      "cur:cur"
+    ],
+    "errs": []
+  },
+  "evmouse": {
+    "log": [
+      "en1",
+      "le1",
+      "en2",
+      "le2"
+    ],
+    "errs": []
+  },
+  "evtwo": {
+    "log": [
+      "in:abc",
+      "ri1",
+      "rc1"
+    ],
+    "errs": []
+  },
+  "leger": {
+    "log": [
+      "leger=true",
+      "hz1",
+      "hostOnLeger"
+    ],
+    "errs": []
+  },
+  "k-nan-1": {
+    "li": [
+      "nan#neuf",
+      "one#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-nan-2": {
+    "li": [
+      "one#2",
+      "nan#1"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-nan-3": {
+    "li": [
+      "one#2",
+      "nan#1"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-z-1": {
+    "li": [
+      "z#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-z-2": {
+    "li": [
+      "z#3"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-bool": {
+    "li": [
+      "t#neuf",
+      "ts#neuf"
+    ],
+    "avis": [
+      "[ModularJS] {for} : une liste de <@cles> reçoit la même clé sous deux types, true et 'true"
+    ],
+    "errs": []
+  },
+  "k-big-1": {
+    "li": [
+      "b#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-big-2": {
+    "li": [
+      "b#6",
+      "n#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-sym": {
+    "li": [
+      "s1#neuf"
+    ],
+    "avis": [
+      "[ModularJS] {for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues."
+    ],
+    "errs": []
+  },
+  "k-tostr": {
+    "li": [
+      "k1#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-obj-1": {
+    "li": [
+      "o1#neuf",
+      "o2#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-obj-2": {
+    "li": [
+      "o2#11",
+      "o1#10"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-dup": {
+    "li": [
+      "a#neuf",
+      "c#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-type-1": {
+    "li": [
+      "s#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-type-2": {
+    "li": [
+      "s#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-type-3": {
+    "li": [
+      "s#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-mix-1": {
+    "li": [
+      "n1#neuf",
+      "vide#neuf",
+      "t2#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-map": {
+    "li": [
+      "un#neuf",
+      "texte#neuf",
+      "deux#neuf"
+    ],
+    "avis": [
+      "[ModularJS] {for} : une liste de <@cles> reçoit la même clé sous deux types, 1 et '1' : ce"
+    ],
+    "errs": []
+  },
+  "k-map-2": {
+    "li": [
+      "deux#19",
+      "un#17",
+      "texte#18"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-nest-1": {
+    "li": [
+      "a#neuf",
+      "b#neuf",
+      "c#neuf"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "k-nest-2": {
+    "li": [
+      "c#22",
+      "b#21",
+      "a#20"
+    ],
+    "avis": [],
+    "errs": []
+  },
+  "f-1": "1,2,3,4,5",
+  "f-touchees-pick3": 1,
+  "f-2": "1,2,3*[h3]{red},4,5",
+  "f-3": "1A,2,3*[h3]A{red},4,5A",
+  "f-4": "1A,3*[h3]A{red},5A",
+  "f-5": "1A,3*[h3]A{red},5A,8,9A",
+  "f-touchees-pick2": 1,
+  "f-6": "1A,3A,5A,8,9A",
+  "f-touchees-pick8": 1,
+  "f-7": "1A,3A,5A,8*[h8]{red},9A",
+  "f-8": "1,3A,5A,8*[h8]A{red},9A",
+  "f-9": "1A,3,5,8*[h8]{red},9",
+  "f-10": "3,8*[h8]A{red},20A",
+  "f-11": "3,8A,20*[h20]A{red}",
+  "f-12": "3*[h3]{red},8A,20A",
+  "f-13": "20A,3",
+  "f-14": "20A,3,8*[h8]A{red},30A,31",
+  "f-touchees-pick31": 2,
+  "f-15": "20A,3,8A,30A,31*[h31]{red}",
+  "f-idx": {
+    "sel__danger__l2": "3|20|8|30|31",
+    "sel__attr_data_h__l2": "3|20|8|30|31",
+    "sel__style_color__l4": "3|20|8|30|31",
+    "ville__actif__l4": "A|B"
+  },
+  "__errs": []
+}

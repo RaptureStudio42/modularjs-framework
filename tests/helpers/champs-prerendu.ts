@@ -33,7 +33,7 @@ $cr         = '\\rcr'
 $secret     = '${ETAT.secret}'
 cocher      = (n) -> n.checked = true
 </script>
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <input class="lum" type="range" name="lum" min="0" max="3" step="0.01" value={$luminosite} aria-label="luminosité">
   <input class="lum2" type="range" name="lum2" min="0" max="3" step="0.01" value=!{$luminosite} aria-label="luminosité liée dans les deux sens">
   <input class="teinte" type="color" name="teinte" value={$teinte} aria-label="teinte">
@@ -42,7 +42,7 @@ cocher      = (n) -> n.checked = true
   <input class="inactif" type="checkbox" name="inactif" checked={not $actif} aria-label="inactif">
   <input class="free" type="radio" name="offre" value="free" checked={$offre is 'free'} aria-label="offre libre">
   <input class="pro" type="radio" name="offre" value="pro" checked={$offre is 'pro'} aria-label="offre pro">
-  <input class="imperatif" type="checkbox" name="imperatif" aria-label="case cochée par le script" @attach={cocher}>
+  <input class="imperatif" type="checkbox" name="imperatif" aria-label="case cochée par le script" :attach={cocher}>
   <select class="langue" name="langue" value={$langue} aria-label="langue"><option value="fr">Français</option><option value="en">English</option><optgroup label="autres"><option value="de">Deutsch</option></optgroup></select>
   <textarea class="note" name="note" value={$note} aria-label="note"></textarea>
   <textarea class="suite" name="suite" value={$suite} aria-label="suite"></textarea>
@@ -86,9 +86,9 @@ $coche = true
 const RADIOS = `<script lang="coffee">
 choisir = (n) -> n.checked = true
 </script>
-<form @noUJS>
+<form :noUJS>
   <input class="premier" type="radio" name="i" value="1" aria-label="premier">
-  <input class="second" type="radio" name="i" value="2" aria-label="second" @attach={choisir}>
+  <input class="second" type="radio" name="i" value="2" aria-label="second" :attach={choisir}>
 </form>
 `
 

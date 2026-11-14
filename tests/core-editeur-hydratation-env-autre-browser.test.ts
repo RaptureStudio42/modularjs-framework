@@ -29,7 +29,7 @@ const HOTE = `<script>
   $choix = '1'
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="e" name="contrat" toolbar="bold italic" value=!{$texte}></@@editor>
   <@@select class="s" name="choix" value=!{$choix}><@@option value="1">Un</@@option><@@option value="2">Deux</@@option></@@select>
 </form>

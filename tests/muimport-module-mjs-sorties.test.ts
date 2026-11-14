@@ -15,11 +15,11 @@ import { readBuildVersion } from '../src/server/build-version.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const PARTAGE = "window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := 'partage'\nexport compteur := { n: 0 }\n"
-const BOUGIE  = "@import marque 'partage.module.civet'\n@import compteur 'partage.module.civet'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
-const HOTE    = ["@import compteur 'partage.module.civet'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
-const HOTE_SANS = ["@import compteur 'partage.module.civet'", '', '<script>', '  @compter = -> compteur.n++', '</script>', '', '<button class="compter" @click=@compter>compter</button>', ''].join('\n')
+const BOUGIE  = "@import marque 'partage.module.civet.mjs'\n@import compteur 'partage.module.civet.mjs'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
+const HOTE    = ["@import compteur 'partage.module.civet.mjs'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet.mjs')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
+const HOTE_SANS = ["@import compteur 'partage.module.civet.mjs'", '', '<script>', '  @compter = -> compteur.n++', '</script>', '', '<button class="compter" @click=@compter>compter</button>', ''].join('\n')
 
-const FICHIERS: Record<string, string> = { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE }
+const FICHIERS: Record<string, string> = { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE }
 
 // ce qu'un auteur peut poser à côté du manifeste, sous des noms qui ressemblent à ceux des morceaux
 const ETRANGERS: Record<string, string> = {
@@ -166,8 +166,8 @@ describe('fichier unique coupé — orphelins d\'un processus à l\'autre', func
     assert.deepEqual((await construire(p)).errors, [])
     const avant = morceaux(p)
     poserEtrangers(p)
-    ecrire(p, 'hote.mjs', HOTE.replace('moteurs/bougie.module.civet', 'moteurs/flamme.module.civet'))
-    ecrire(p, 'moteurs/flamme.module.civet', BOUGIE)
+    ecrire(p, 'hote.mjs', HOTE.replace('moteurs/bougie.module.civet.mjs', 'moteurs/flamme.module.civet.mjs'))
+    ecrire(p, 'moteurs/flamme.module.civet.mjs', BOUGIE)
     const { errors, purge } = await construire(p, {}, true)
     assert.deepEqual(errors, [])
     assert.equal(purge?.skipped, undefined, `la purge tourne : ${JSON.stringify(purge)}`)
@@ -184,7 +184,7 @@ describe('fichier unique coupé — orphelins d\'un processus à l\'autre', func
     const avant = morceaux(p)
     assert.ok(avant.length >= 2)
     poserEtrangers(p)
-    ecrire(p, 'partage.module.civet', PARTAGE + "export modifie := 'modifie'\n")
+    ecrire(p, 'partage.module.civet.mjs', PARTAGE + "export modifie := 'modifie'\n")
     assert.deepEqual((await construire(p)).errors, [])
     const apres = readdirSync(p.dossier)
     for (const f of avant) assert.equal(apres.includes(f), false, `${f} (ancienne version) est remplacé : ${apres.join(', ')}`)
@@ -281,8 +281,8 @@ describe('fichier unique coupé — un module que seuls les modules chargés à 
   })
 
   const PROFOND    = "window.__profond = (window.__profond ?? 0) + 1\nexport texte := 'texte-profond-unique'\n"
-  const BOUGIE_PRO = "@import texte 'profond.module.civet'\n" + BOUGIE + "export lireProfond = -> texte\n"
-  const AVEC_PRO   = { ...FICHIERS, 'moteurs/bougie.module.civet': BOUGIE_PRO, 'profond.module.civet': PROFOND }
+  const BOUGIE_PRO = "@import texte 'profond.module.civet.mjs'\n" + BOUGIE + "export lireProfond = -> texte\n"
+  const AVEC_PRO   = { ...FICHIERS, 'moteurs/bougie.module.civet.mjs': BOUGIE_PRO, 'profond.module.civet.mjs': PROFOND }
 
   for (const env of [undefined, 'prod'] as const) it(`${env ? 'production' : 'développement'} : le module n'est ni dans l'entrée ni dans le morceau partagé, il est dans le fichier du module qui l'importe`, async () => {
     const p = projet('sort-profond-' + (env ?? 'dev'), AVEC_PRO)
@@ -296,10 +296,10 @@ describe('fichier unique coupé — un module que seuls les modules chargés à 
   })
 
   it('un module atteint des deux côtés reste une instance unique, dans le morceau partagé, pendant que le module réservé aux modules chargés à la demande part avec eux', async () => {
-    const hote = ["@import vu 'commun.module.civet'", '', '<script>', "  @charger = -> await µimport('moteurs/bougie.module.civet')", '</script>', '<p>{vu}</p>', ''].join('\n')
+    const hote = ["@import vu 'commun.module.civet.mjs'", '', '<script>', "  @charger = -> await µimport('moteurs/bougie.module.civet.mjs')", '</script>', '<p>{vu}</p>', ''].join('\n')
     const commun = "window.__communs = (window.__communs ?? 0) + 1\nexport vu := 'texte-commun'\n"
-    const bougie = "@import texte 'profond.module.civet'\n@import vu 'commun.module.civet'\nexport go = -> texte + vu\n"
-    const p = projet('sort-profond-commun', { 'hote.mjs': hote, 'moteurs/bougie.module.civet': bougie, 'profond.module.civet': PROFOND, 'commun.module.civet': commun })
+    const bougie = "@import texte 'profond.module.civet.mjs'\n@import vu 'commun.module.civet.mjs'\nexport go = -> texte + vu\n"
+    const p = projet('sort-profond-commun', { 'hote.mjs': hote, 'moteurs/bougie.module.civet.mjs': bougie, 'profond.module.civet.mjs': PROFOND, 'commun.module.civet.mjs': commun })
     assert.deepEqual((await construire(p, { env: 'prod' })).errors, [])
     const js = readdirSync(p.dossier).filter(f => f.endsWith('.js'))
     const dans = (marque: string): string[] => js.filter(f => readFileSync(join(p.dossier, f), 'utf8').includes(marque))
@@ -330,11 +330,11 @@ describe('fichier unique coupé — dans Chromium, le module réservé n\'est ni
   })
 
   const PROFOND    = "window.__profond = (window.__profond ?? 0) + 1\nexport texte := 'texte-profond-unique'\n"
-  const BOUGIE_PRO = "@import texte 'profond.module.civet'\n" + BOUGIE + "export lireProfond = -> texte\n"
+  const BOUGIE_PRO = "@import texte 'profond.module.civet.mjs'\n" + BOUGIE + "export lireProfond = -> texte\n"
 
   for (const env of [undefined, 'prod'] as const) it(`${env ? 'production' : 'développement'} : avant le clic, rien du module réservé ; après, une évaluation et le partage évalué une fois`, async function () {
     if (!present) { this.skip(); return }
-    const p = projet('sort-nav-' + (env ?? 'dev'), { ...FICHIERS, 'moteurs/bougie.module.civet': BOUGIE_PRO, 'profond.module.civet': PROFOND })
+    const p = projet('sort-nav-' + (env ?? 'dev'), { ...FICHIERS, 'moteurs/bougie.module.civet.mjs': BOUGIE_PRO, 'profond.module.civet.mjs': PROFOND })
     assert.deepEqual((await construire(p, env ? { env } : {})).errors, [])
     const demandes: string[] = []
     const erreurs: string[]  = []

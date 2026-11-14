@@ -32,19 +32,19 @@ const PAGE = `<script>
     window.__poserR = (v)-> $r = v
 </script>
 
-<form class="f-pile" method="get" action="/envoi" @noUJS>
+<form class="f-pile" method="get" action="/envoi" :noUJS>
   <@@editor class="ea" name="a" value=!{$a}></@@editor>
   <@@editor class="eb" name="b" value=!{$b}></@@editor>
   <@@editor class="el" name="l" toolbar="none" value=!{$l}></@@editor>
 </form>
 
-<form class="f-oblig" method="get" action="/envoi" @noUJS>
+<form class="f-oblig" method="get" action="/envoi" :noUJS>
   <@@editor class="er" id="er" name="r" required toolbar="none" value=!{$r}></@@editor>
   <label class="l-er" for="er">étiquette de l'éditeur</label>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-fieldset" method="get" action="/envoi" @noUJS>
+<form class="f-fieldset" method="get" action="/envoi" :noUJS>
   <fieldset class="fs" disabled>
     <@@editor class="ef" name="f" required></@@editor>
   </fieldset>

@@ -20,11 +20,12 @@ import { join, extname, normalize } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // `tard` peint son ancre `#tardo` 600 ms après son montage, sous 1 500 px de contenu ; `champ` porte un champ
 // `autofocus` dans son ombre
 const SOURCES: Record<string, string> = {
-  'tard.mjs':  '<script>\n  $montre = false\n  µmount =>\n    setTimeout (=> $montre = true), 600\n</script>\n\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardo">Tard</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
+  'tard.mjs':  '<script>\n  $montre = false\n  µmount =>\n    µafter 600, => $montre = true\n</script>\n\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardo">Tard</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
   'champ.mjs': '<input id="champ-ombre" aria-label="Champ" autofocus>\n\n<style>\n  :host\n    display: block\n</style>\n',
 }
 
@@ -100,7 +101,7 @@ describe('mjs_ujs navigateur réel, vrai projet — Suivant avant la réponse, p
   })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(`${nom}`, function () {
+    playTogether(describe(`${nom}`, function () {
       let browser: Browser | null = null
       let server: Server | null  = null
       let origin  = ''
@@ -348,6 +349,6 @@ describe('mjs_ujs navigateur réel, vrai projet — Suivant avant la réponse, p
         assert.deepEqual(erreurs, [])
         await page.close()
       })
-    })
+    }))
   }
 })

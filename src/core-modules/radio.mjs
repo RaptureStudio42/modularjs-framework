@@ -258,7 +258,7 @@
     reflect() # @@ reprise
 </script>
 
-<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled">
+<label class="wrap" part="wrap" :class{on($disabled) or $formDisabled}="disabled">
   <input type="radio" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} @change={@onChange(e)} @keydown={@onKey(e)}>
   <span class="ring" part="dot" aria-hidden="true">
     <span class="dot"></span>

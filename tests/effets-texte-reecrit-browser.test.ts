@@ -116,7 +116,7 @@ function source(appli: Appli): string {
   if (appli.duo) lignes.push('<p class="duo" *rainbow(speed: 600ms) *bounce(speed: 500ms)>Un texte</p>')
   if (appli.duo) lignes.push('<p class="duo2" *rainbow(speed: 600ms) *count(duration: 300ms, on: load)>1234</p>')
   if (appli.duo) lignes.push('<p class="decor" *rainbow(speed: 600ms)>Un texte</p>')
-  if (appli.duo) lignes.push('<p class="html" *rainbow(speed: 600ms) @html=!{$h}></p>', "<button class=\"btn-html\" @click={$h = 'Un autre <i>texte</i>'}>x</button>")
+  if (appli.duo) lignes.push('<p class="html" *rainbow(speed: 600ms) :html=!{$h}></p>', "<button class=\"btn-html\" @click={$h = 'Un autre <i>texte</i>'}>x</button>")
   if (appli.piste) lignes.push('<div class="piste" *marquee(drag: true, speed: 4s)><div>A</div><div>B</div></div>')
   for (const e of appli.effets) lignes.push(`<button class="btn-${e.nom}" @click={$v_${e.nom} = '${e.neuf}'}>x</button>`)
   lignes.push('<style>', ':host', '  display: block', 'p', '  margin: 0', '  width: 220px', '  height: 20px', '  overflow: hidden', '  font: 14px sans-serif', '.piste', '  width: 220px', 'button', '  width: 14px', '  height: 14px', '  padding: 0', '</style>')

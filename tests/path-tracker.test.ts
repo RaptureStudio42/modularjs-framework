@@ -230,23 +230,22 @@ describe('applyPathTracking', () => {
   // temporel possible, `i` y est lu au même endroit que l'original).
   // magasin : la variable vise l'OBJET qu'elle tient (`µ._mjs_storeSetOn("list", it, …)`), aucun chemin rejoué —
   // le `i` d'après ne détourne rien non plus
-  describe('alias à index DYNAMIQUE : jamais rejoué par son chemin (état local : filet Proxy, magasin : objet tenu)', () => {
-    it("répro exacte : it=$.list[i]; i++; it.x=1 → PAS de _mjs_deepSet (le Proxy du filet mute le bon élément)", () => {
+  describe('alias à index DYNAMIQUE : rejoué par son chemin seulement si, relu avec l\'indice du moment, il mène encore à l\'objet tenu', () => {
+    // l'alias à indice dynamique est gardé : le chemin relu avec l'indice du moment ; s'il ne mène plus à l'objet tenu, l'écriture d'avant ;
+    // au magasin, un objet tenu nul prend aussi l'écriture d'avant, qui lève comme JavaScript (le chemin ne lèverait rien, racine retirée)
+    const GARDE_MAGASIN = 'it != null && µ.store.list?.[i] === it ? µ._mjs_storeDeepSet("list", [i, "x"], 1) : µ._mjs_storeSetOn("list", it, "x", 1)'
+    const GARDE_SANS    = 'µ._mjs_toRaw($.list?.[i]) === µ._mjs_toRaw(it) ? µ._mjs_deepSet(_mjsThis, ["list", i, "x"], 1) : µ._mjs_deepSetOn("list", it, "x", 1)'
+    it("répro exacte : it=$.list[i]; i++; it.x=1 → enveloppe : l'écriture telle quelle ; magasin et proxy: false : garde d'identité, repli = l'appel d'avant", () => {
       const out = applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`)
-      assert.equal(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)).includes('_mjs_storeDeepSet'), false)
-      // magasin : l'alias vise l'objet qu'il tient, jamais le chemin rejoué avec le `i` d'après
-      assert.match(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)), /µ\._mjs_storeSetOn\("list", it, "x", 1\)/)
-      assert.equal(out.includes('_mjs_deepSet'), false,
-        "AVANT le fix : émettait _mjs_deepSet(_mjsThis, ['list', i, 'x'], 1) — " +
-        "'i' réévalué APRÈS i++, mutation du MAUVAIS élément de la liste")
+      assert.equal(out, `let it = $.list[i]; i++; it.x = 1;`)
+      assert.ok(applyPathTracking(auMagasin(`let it = $.list[i]; i++; it.x = 1;`)).includes(GARDE_MAGASIN))
+      assert.ok(applyPathTracking(`let it = $.list[i]; i++; it.x = 1;`, { sansProxy: true }).includes(GARDE_SANS))
     })
 
-    it('alias à index dynamique + mutation directe (sans i++) : PAS de _mjs_deepSet ; magasin : l\'objet tenu', () => {
-      const out = applyPathTracking(`let it = $.list[i]; it.x = 1;`)
-      assert.equal(out.includes('_mjs_deepSet'), false)
-      const magasin = applyPathTracking(auMagasin(`let it = $.list[i]; it.x = 1;`))
-      assert.match(magasin, /let it = µ\.store\.list\[i\]; µ\._mjs_storeSetOn\("list", it, "x", 1\)/)
-      assert.equal(magasin.includes('_mjs_storeDeepSet'), false)
+    it('alias à index dynamique + mutation directe (sans i++) : enveloppe : telle quelle ; magasin et proxy: false : la même garde', () => {
+      assert.equal(applyPathTracking(`let it = $.list[i]; it.x = 1;`), `let it = $.list[i]; it.x = 1;`)
+      assert.equal(applyPathTracking(auMagasin(`let it = $.list[i]; it.x = 1;`)), `let it = µ.store.list[i]; ;(${GARDE_MAGASIN});`)
+      assert.equal(applyPathTracking(`let it = $.list[i]; it.x = 1;`, { sansProxy: true }), `let it = $.list[i]; ;(${GARDE_SANS});`)
     })
 
     it('alias à index dynamique + méthode mutative : PAS de _mjs_deepCall ; magasin : l\'objet tenu', () => {
@@ -323,25 +322,27 @@ describe('applyPathTracking', () => {
 
     it('`µ.store.x++`/`--µ.store.x` top-level → µ._storeSet, fidélité pré/postfixe, conversion numérique', () => {
       const outPost = applyPathTracking(`y = µ.store.x++;`)
-      assert.match(outPost, /\(\(_v\) => \(µ\._storeSet\("x", \(\+_v\) \+ 1\), \+_v\)\)\(µ\.store\.x\)/)
+      assert.match(outPost, /\(\(_mjs_n, _mjs_v = _mjs_n\+\+\) => \(µ\._storeSet\("x", _mjs_n\), _mjs_v\)\)\(µ\.store\.x\)/)
       const outPre = applyPathTracking(`y = --µ.store.x;`)
-      assert.match(outPre, /\(µ\._storeSet\("x", \(\+µ\.store\.x\) - 1\), µ\.store\.x\)/)
+      assert.match(outPre, /\(µ\._storeSet\("x", \(\(_mjs_n\) => --_mjs_n\)\(µ\.store\.x\)\), µ\.store\.x\)/)
     })
 
     it('µ.store.obj.a++ (postfix, depth 2) → _mjs_storeDeepSet + valeur ANCIENNE retournée, conversion numérique', () => {
       const out = applyPathTracking(`x = µ.store.obj.a++;`)
-      assert.match(out, /\(_v\) => \(µ\._mjs_storeDeepSet\("obj", \["a"\], \(\+_v\) \+ 1\), \+_v\)/)
+      assert.match(out, /\(_mjs_n, _mjs_v = _mjs_n\+\+\) => \(µ\._mjs_storeDeepSet\("obj", \["a"\], _mjs_n\), _mjs_v\)/)
     })
 
     it('++µ.store.obj.a (prefix, depth 2) → _mjs_storeDeepSet + valeur NOUVELLE retournée, conversion numérique', () => {
       const out = applyPathTracking(`y = ++µ.store.obj.a;`)
-      assert.match(out, /µ\._mjs_storeDeepSet\("obj", \["a"\], \(\+µ\.store\.obj\.a\) \+ 1\), µ\.store\.obj\.a\)/)
+      assert.match(out, /µ\._mjs_storeDeepSet\("obj", \["a"\], \(\(_mjs_n\) => \+\+_mjs_n\)\(µ\.store\.obj\.a\)\), µ\.store\.obj\.a\)/)
     })
 
-    it('compound sur alias LOCAL profond ($.box.width += 1) : toujours SKIP (filet Proxy _mjs_wrapDeep suffisant, non-régression)', () => {
-      const out = applyPathTracking(`$.box.width += 1;`)
-      assert.equal(out.includes('_mjs_deepSet'), false)
-      assert.match(out, /\$\.box\.width \+= 1/, 'laissé brut, le Proxy runtime intercepte')
+    it('affectation composée sur un chemin LOCAL profond ($.box.width += 1) → _mjs_deepSet, avec ou sans le réglage proxy: false', () => {
+      const attendu = /µ\._mjs_deepSet\(_mjsThis, \["box", "width"\], \$\.box\.width \+ \(1\)\)/
+      assert.match(applyPathTracking(`$.box.width += 1;`), attendu)
+      assert.match(applyPathTracking(`$.box.width += 1;`, { sansProxy: true }), attendu)
+      assert.match(applyPathTracking(`$.box.n++;`), /\{let _mjs_n;\(_mjs_n = \$\.box\.n, µ\._mjs_deepSet\(_mjsThis, \["box", "n"\], \+\+_mjs_n\)\);\}/)
+      assert.match(applyPathTracking(`$.box.c ||= 3;`), /µ\._mjs_deepSet\(_mjsThis, \["box", "c"\], \$\.box\.c \|\| \(3\)\)/)
     })
   })
 

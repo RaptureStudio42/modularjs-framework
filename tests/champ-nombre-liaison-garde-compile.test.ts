@@ -1,7 +1,7 @@
 // La liaison à deux sens d'un champ (`value=!{$n}`) ignore le pas incomplet d'un champ nombre
 // (« 1. », « - » : le navigateur ne rend alors pas de valeur, `validity.badInput` est vrai) au lieu
-// de le convertir en 0 : la garde est émise dans le gestionnaire du champ, en Civet comme en
-// JavaScript (`templateLang: 'js'`), et nulle part ailleurs (une case à cocher n'en a pas).
+// de le convertir en 0 : la garde est émise dans le gestionnaire du champ, en Civet,
+// et nulle part ailleurs (une case à cocher n'en a pas).
 // Aucun champ n'a de gestionnaire de SORTIE (`change`, `focusout`) : une saisie refusée reste dans le champ à la
 // sortie, comme dans un champ natif, et seule une écriture du code la remplace. Le texte lu en nombre
 // (`value.number`, `.int`, `.float`) ne met jamais NaN dans le modèle.
@@ -31,7 +31,7 @@ async function gestionnaires(templateLang: 'civet' | 'js'): Promise<string[]> {
   return output.slice(debut, fin > 0 ? fin : undefined).split(/\n\s*\(_mjs_e,\s*_mjs_el\) => \{/).slice(1)
 }
 
-for (const templateLang of ['civet', 'js'] as const) {
+for (const templateLang of ['civet'] as const) {
   describe(`liaison à deux sens d'un champ — garde du pas incomplet (gabarit ${templateLang})`, function () {
     this.timeout(60000)
 

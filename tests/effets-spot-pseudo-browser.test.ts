@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendreEtat, attendrePage } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -158,9 +159,11 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           const avant = await lire()
           const b = await boite(page, '.survol')
           await page.mouse.move(b.x + 40, b.y + 20, { steps: 4 })
+          // vérification négative : rien ne doit bouger pendant ce temps, aucun évènement ne le dit
           await page.waitForTimeout(700)
           const pendant = await lire()
           await page.mouse.move(3, 3, { steps: 4 })
+          // vérification négative : rien ne doit bouger pendant ce temps, aucun évènement ne le dit
           await page.waitForTimeout(900)
           const apres = await lire()
           assert.deepEqual(pendant, avant, 'pendant le survol : même hauteur, mêmes enfants, même marge')
@@ -181,7 +184,12 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           await page.waitForTimeout(500)
           const b = await boite(page, '.carte')
           await page.mouse.move(b.x + 120, b.y + 30, { steps: 5 })
-          await page.waitForTimeout(500)
+          await attendrePage(page, () => {
+            const e = (document.querySelector('mjs-fx-spot-pseudo') as any)._shadow.querySelector('.carte')
+            const a = getComputedStyle(e, '::after')
+            const [x, y] = a.translate.split(' ').map(parseFloat)
+            return a.opacity === '1' && getComputedStyle(e, '::before').opacity === '1' && e.childElementCount === 1 && Math.abs(x - 120) < 1.5 && Math.abs(y - 30) < 1.5
+          }, null, 'halo et liseré allumés, la lumière sous la souris', 500)
           const r = await page.evaluate(() => {
             const e = (document.querySelector('mjs-fx-spot-pseudo') as any)._shadow.querySelector('.carte')
             const apres = getComputedStyle(e, '::after')
@@ -204,7 +212,11 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
         try {
           const b = await boite(page, '.carte')
           await page.mouse.move(b.x + 100, b.y + 40, { steps: 6 })
-          await page.waitForTimeout(500)
+          await attendrePage(page, () => {
+            const e = (document.querySelector('mjs-fx-spot-pseudo') as any)._shadow.querySelector('.carte')
+            const [x, y] = getComputedStyle(e, '::after').translate.split(' ').map(parseFloat)
+            return Math.abs(x - 100) < 1.5 && Math.abs(y - 40) < 1.5 && Math.abs(parseFloat(e.style.getPropertyValue('--mjs-fx-spot-x')) - 100) < 1.5 && Math.abs(parseFloat(e.style.getPropertyValue('--mjs-fx-spot-y')) - 40) < 1.5
+          }, null, 'halo et liseré sous la souris', 500)
           const r = await page.evaluate(() => {
             const e = (document.querySelector('mjs-fx-spot-pseudo') as any)._shadow.querySelector('.carte')
             return { place: getComputedStyle(e, '::after').translate, vx: e.style.getPropertyValue('--mjs-fx-spot-x'), vy: e.style.getPropertyValue('--mjs-fx-spot-y') }
@@ -224,6 +236,7 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
         try {
           const b = await boite(page, '.rogne')
           await page.mouse.move(b.x + b.w - 2, b.y + b.h - 2, { steps: 6 })
+          // vérification négative : aucune barre horizontale ne doit naître pendant ce temps
           await page.waitForTimeout(500)
           const r = await page.evaluate(() => ({ vue: document.documentElement.clientWidth, zone: document.documentElement.scrollWidth }))
           assert.equal(r.zone, r.vue, 'aucune barre horizontale en plus')
@@ -239,6 +252,7 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
         try {
           const a = await boite(page, '.rogne')
           await page.mouse.move(a.x + 6, a.y + 6, { steps: 6 })
+          // lecture mixte : une part négative (le fond reste blanc) se lit au bout de la pause, qui reste
           await page.waitForTimeout(700)
           const [dehors, dedans] = await pixels(page, [[a.x - 3, a.y + 6], [a.x + 6, a.y + 6]])
           assert.ok(Math.min(...dehors) >= 250, 'hors du cadre, le fond de la page reste blanc : ' + dehors)
@@ -246,6 +260,7 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           await page.mouse.move(3, 3, { steps: 4 })
           const c = await boite(page, '.coin')
           await page.mouse.move(c.x + 20, c.y + 20, { steps: 6 })
+          // lecture mixte : une part négative (le fond reste blanc) se lit au bout de la pause, qui reste
           await page.waitForTimeout(700)
           const [coin, arc] = await pixels(page, [[c.x + 2, c.y + 2], [c.x + 40, c.y + 40]])
           assert.ok(Math.min(...coin) >= 250, 'dans le coin que l\'arrondi de 40 px enlève, le fond reste blanc : ' + coin)
@@ -271,17 +286,25 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           await cacher('.carte', false)
           await page.waitForTimeout(300)
           await cacher('.carte', true)
+          // vérification négative : le halo d'avant ne doit pas changer après la remise à l'écran
           await page.waitForTimeout(700)
           const r1 = await place('.carte')
           assert.deepEqual([r1.translate, r1.largeur], ['none', r1.interieur], 'cachée puis montrée : le même halo')
           const k = await boite(page, '.carte')
           await page.mouse.move(k.x + 80, k.y + 30, { steps: 5 })
-          await page.waitForTimeout(500)
+          await attendreEtat(async () => {
+            const v = await place('.carte')
+            const [x, y] = v.translate.split(' ').map(parseFloat)
+            return v.largeur === '0px' && Math.abs(x - 80) < 1.5 && Math.abs(y - 30) < 1.5
+          }, 'au survol : un point sous la souris', 500)
           const rh = await place('.carte')
           const [hx, hy] = rh.translate.split(' ').map(parseFloat)
           assert.ok(rh.largeur === '0px' && Math.abs(hx - 80) < 1.5 && Math.abs(hy - 30) < 1.5, 'au survol : un point sous la souris : ' + JSON.stringify(rh))
           await page.mouse.move(3, 3, { steps: 4 })
-          await page.waitForTimeout(900)
+          await attendreEtat(async () => {
+            const v = await place('.carte')
+            return v.translate === 'none' && v.largeur === v.interieur
+          }, 'après la sortie : le halo d\'avant revient', 900)
           const r3 = await place('.carte')
           assert.deepEqual([r3.translate, r3.largeur], ['none', r3.interieur], 'après la sortie : le halo d\'avant revient, l\'animation est défaite')
           // au survol : caché, montré, puis la souris entre : la lumière est sous elle
@@ -291,7 +314,10 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           await page.waitForTimeout(300)
           const c = await boite(page, '.coin')
           await page.mouse.move(c.x + 60, c.y + 40, { steps: 5 })
-          await page.waitForTimeout(500)
+          await attendreEtat(async () => {
+            const [x, y] = (await place('.coin')).translate.split(' ').map(parseFloat)
+            return Math.abs(x - 60) < 1.5 && Math.abs(y - 40) < 1.5
+          }, 'au survol suivant, le halo sous la souris', 500)
           const r2 = await place('.coin')
           const [x, y] = r2.translate.split(' ').map(parseFloat)
           assert.ok(Math.abs(x - 60) < 1.5 && Math.abs(y - 40) < 1.5, 'au survol suivant, le halo est sous la souris : ' + r2.translate)
@@ -315,12 +341,14 @@ describe('*spotlight : le halo et le liseré sont des pseudo-éléments, la stru
           assert.deepEqual(etats, [], 'le halo toujours allumé, au repos : aucune animation, aucun calque (le texte garde son antialiasing d\'avant)')
           const a = await boite(page, '.anneau')
           await page.mouse.move(a.x + 150, a.y + 40, { steps: 6 })
+          // lecture mixte : une part négative (le fond reste blanc) se lit au bout de la pause, qui reste
           await page.waitForTimeout(700)
           const [bord, milieu] = await pixels(page, [[a.x + 150, a.y + 1], [a.x + 150, a.y + 40]])
           assert.ok(bord[0] > 200 && bord[1] < 160, 'sur le bord, au-dessus de la souris, le liseré est rouge : ' + bord)
           assert.ok(Math.min(...milieu) >= 250, 'à l\'intérieur, sous la souris, le masque en anneau laisse le fond blanc : ' + milieu)
           const v = await boite(page, '.voile')
           await page.mouse.move(v.x + 150, v.y + 40, { steps: 6 })
+          // lecture mixte : une part négative (le coin n'est pas voilé) se lit au bout de la pause, qui reste
           await page.waitForTimeout(700)
           const [coin, sombre] = await pixels(page, [[v.x + 2, v.y + 2], [v.x + 350, v.y + 45]])
           assert.ok(Math.min(...coin) >= 250, 'le coin que l\'arrondi de 40 px enlève n\'est pas voilé : ' + coin)

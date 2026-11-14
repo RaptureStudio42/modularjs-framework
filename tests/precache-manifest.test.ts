@@ -60,7 +60,7 @@ describe('bundler — mjs-precache.json', function () {
 
   it("un build en ÉCHEC n'écrit pas de liste : mieux vaut pas de liste qu'une liste fausse", async () => {
     const p = projet('precache-echec')
-    writeFileSync(join(p.srcDir, 'casse.mjs'), '<script>\n@import truc \'nexistepas.civet\'\n</script>\n<p>x</p>')
+    writeFileSync(join(p.srcDir, 'casse.mjs'), '<script>\n@import truc \'nexistepas.civet.mjs\'\n</script>\n<p>x</p>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     const stats = await bundler.compile()
     assert.ok(stats.errors.length > 0, 'ce projet doit échouer')

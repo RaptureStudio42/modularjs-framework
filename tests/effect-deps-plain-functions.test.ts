@@ -50,7 +50,9 @@ let helper2 = function() { if ($.d) { return helper() } return $.d }
     const src = `let helper = function() { return $.e }
 µ.effect(function() { list.forEach(helper) })`
     const out = annotateEffectDeps(src)
-    assert.match(out, /,\s*\["e"\]\)/, `deps attendues ["e"]. got:\n${out}`)
+    // passée comme valeur, `helper` peut tourner après le passage (`setTimeout(helper)`) : `~e` garde `e` au relevé du runtime,
+    // à côté du graphe des signaux, qui ne note que le passage synchrone
+    assert.match(out, /,\s*\["e", "~e"\]\)/, `deps attendues ["e", "~e"]. got:\n${out}`)
   })
 
   it('aucune fuite : membre d\'un autre objet, clé d\'objet, appel externe — rien d\'ajouté, pas de crash', () => {

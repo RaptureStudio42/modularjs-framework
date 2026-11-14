@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, unlink
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
 import { resolveBundlerOpts, type MjsConfig, type RenderEngine } from '../bundler/config.js'
 import { stripStartupHeader } from '../bundler/startup.js'
+import { fontSizeFragmentHead } from './ssr-head.js'
 import { warningAlreadyWritten, type Bundler } from '../bundler/index.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
 import { resolvePage, isBuildPrerenderable } from './render-routes.js'
@@ -68,6 +69,8 @@ export interface PrerenderOverrides {
   /** Environnement du build appelant (`mjs build --prod`) — le prérendu recompile dans le
    *  VRAI dossier de sortie : sans lui, il repasserait ce build en développement. */
   env?: 'dev' | 'prod'
+  /** `mjs build --cache` : la compilation du prérendu est servie par le cache de la construction (cf. Bundler.loadDiskCache) */
+  cache?: boolean
 }
 
 /** URL de page → chemin de fichier relatif : '/' → 'index.html',
@@ -368,8 +371,8 @@ export async function prerenderPages(
   let happyRenderer: SSRRenderer | null = null
   let browserRenderer: BrowserRenderer | null = null
   try {
-    if (needsHappy) happyRenderer = await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env })
-    if (needsBrowser) browserRenderer = await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env })
+    if (needsHappy) happyRenderer = await createSSRRenderer({ sourceDir, outputDir, manifestPath, bundlerOpts, env: overrides.env, cache: overrides.cache })
+    if (needsBrowser) browserRenderer = await createBrowserRenderer(config, { configDir, log, sourceDir, outputDir, manifestPath, env: overrides.env, cache: overrides.cache })
   } catch (e) {
     // Le moteur DÉJÀ construit (happy-dom, créé en premier) ne doit jamais fuir si le second
     // (navigateur) échoue à se construire — sans ce filet, il restait ouvert pour toujours.
@@ -377,6 +380,8 @@ export async function prerenderPages(
     throw e
   }
   const dernier = (browserRenderer ?? happyRenderer)?.bundler
+  // `--cache` : la ligne de bilan de chaque moteur qui a compilé, comme celle de la construction
+  for (const r of [happyRenderer, browserRenderer]) if (r?.bundler.diskCacheLine) log(t('server.prerendu-cache', { ligne: r.bundler.diskCacheLine }))
   if (dernier) Object.defineProperty(report, 'bundler', { value: dernier, enumerable: false, writable: true, configurable: true })
 
   // Prérendu multi-langue OPT-IN : `render.locales` avec ≥ 2 entrées déclenche
@@ -435,7 +440,8 @@ export async function prerenderPages(
           }
           mkdirSync(dirname(file), { recursive: true })
           const banner = `${prerenderBanner(url, lang)}\n`
-          const out = banner + (sharedScript ? sharedScript + '\n' : '') + html + '\n'
+          // tailles du texte adaptées à l'écran : le fragment porte le bloc :root de ses variables, un hôte qui le pose dans sa page n'a pas la tête du serveur
+          const out = banner + fontSizeFragmentHead(config, outputDir, manifestPath) + (sharedScript ? sharedScript + '\n' : '') + html + '\n'
           // Écriture SAUTÉE quand le CORPS rendu est celui déjà sur disque : le fragment porte, en
           // plus, l'en-tête de démarrage de `bundler/startup.ts` (borné par ses lignes-repères),
           // qu'on retire avant de comparer. Sans cette garde, chaque passe réécrivait le fragment —

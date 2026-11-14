@@ -13,10 +13,11 @@ const acorn    = require('acorn')
 async function introstartCallbackBody(assignment: string): Promise<string> {
   const source = [
     '<script>', '$x = \'\'', '</script>',
-    `<p @transition=*fade @introstart={${assignment}}>test</p>`,
+    `<p :transition=*fade @introstart={${assignment}}>test</p>`,
   ].join('\n')
   const { output } = await transpile(source, { moduleName: 'transCallback' })
-  const m = output.match(/node\._mjs_cb_introstart = \(\) => \{([\s\S]*?)\n?\s*\};/)
+  // le saut de ligne qui ferme un `//` en fin de corps reste dans le corps : seuls les blancs de la ligne du `};` sont retirés
+  const m = output.match(/node\._mjs_cb_introstart = \(\) => \{([\s\S]*?)[ \t]*\};/)
   assert.ok(m, 'le callback _mjs_cb_introstart doit être présent dans la sortie')
   return m![1]
 }

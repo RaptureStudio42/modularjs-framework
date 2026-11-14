@@ -99,6 +99,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
   let window: any = null
   let document: any = null
   let hote: any = null
+  let innerTextAvant: PropertyDescriptor | undefined
 
   function code(id: string): any {
     return hote._shadow.querySelector(`#${id} mjs-core-code`)
@@ -145,7 +146,7 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
     // happy-dom écrit dans `innerText` le texte d'un élément sans ses sauts de ligne, même dans un `<pre>`, et le texte d'un élément
     // invisible (`visibility: hidden`) ; un navigateur rend le texte RENDU (spécification HTML) : les sauts de ligne d'un `<pre>`
     // gardés, rien pour un élément invisible. Le harnais rend à `innerText` ces deux règles du navigateur
-    const innerText = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'innerText')!
+    const innerText = innerTextAvant = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'innerText')!
     Object.defineProperty(window.HTMLElement.prototype, 'innerText', { ...innerText, get() { return window.getComputedStyle(this).visibility === 'hidden' ? '' : this.closest('pre') ? this.textContent : innerText.get!.call(this) } })
 
     document.body.innerHTML = '<mjs-hote></mjs-hote>'
@@ -155,6 +156,8 @@ describe('core-code — comportement runtime (happy-dom, bundler réel)', functi
   })
 
   after(async () => {
+    // le prototype est partagé par les fenêtres de happy-dom : rendu tel qu'il était
+    if (innerTextAvant) Object.defineProperty(window.HTMLElement.prototype, 'innerText', innerTextAvant)
     window?.close?.()
     await terminateSharedWorkerPool()
   })

@@ -49,8 +49,8 @@ const ENTETE = `<script>
 </script>
 `
 
-const PAGE = ENTETE + `<b class="s" @style.width={[1..$n].length * 10 + 'px'}>x</b>
-<b class="m" @style.width="{[1..$n].length * 10}px">x</b>
+const PAGE = ENTETE + `<b class="s" :style.width={[1..$n].length * 10 + 'px'}>x</b>
+<b class="m" :style.width="{[1..$n].length * 10}px">x</b>
 <b class="v" --w={[1..$n].length * 10 + 'px'}>x</b>
 <b class="vm" --w="{[1..$n].length * 10}px">x</b>
 <b class="t" title="$min..$max">x</b>
@@ -66,11 +66,11 @@ const PAGE = ENTETE + `<b class="s" @style.width={[1..$n].length * 10 + 'px'}>x<
 
 // chaque écriture seule : (nom, balise, variables que la vue doit suivre)
 const ECRITURES: [string, string, string[]][] = [
-  ['@style.x={[1..$n]…}',           '<b @style.width={[1..$n].length * 10 + \'px\'}>x</b>',         ['n']],
-  ['@style.x="{[1..$n]…}px"',       '<b @style.width="{[1..$n].length * 10}px">x</b>',              ['n']],
+  ['@style.x={[1..$n]…}',           '<b :style.width={[1..$n].length * 10 + \'px\'}>x</b>',         ['n']],
+  ['@style.x="{[1..$n]…}px"',       '<b :style.width="{[1..$n].length * 10}px">x</b>',              ['n']],
   ['--v={[1..$n]…}',                '<b --w={[1..$n].length * 10 + \'px\'}>x</b>',                  ['n']],
   ['--v="{[1..$n]…}px"',            '<b --w="{[1..$n].length * 10}px">x</b>',                       ['n']],
-  ['@style.x={[$min..$max]…}',      '<b @style.width={[$min..$max].length * 10 + \'px\'}>x</b>',    ['min', 'max']],
+  ['@style.x={[$min..$max]…}',      '<b :style.width={[$min..$max].length * 10 + \'px\'}>x</b>',    ['min', 'max']],
   ['title="$min..$max"',            '<b title="$min..$max">x</b>',                                  ['min', 'max']],
   ['placeholder="$min..$max"',      '<input aria-label="p" placeholder="$min..$max">',              ['min', 'max']],
   ['title="$n..."',                 '<b title="$n...">x</b>',                                       ['n']],

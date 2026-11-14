@@ -227,8 +227,10 @@ describe('les ancêtres qui retiennent une balise fixe ou absolue (navigateurs r
         }
 
         // ce que jugerait `on: view` si l'observateur rendait `visible` px de la zone (sur 100) : `µ._mjs_fxSeen` sur une entrée faite de la géométrie réelle
+        // `offsetWidth` d'abord : sous `content-visibility: hidden`, Chromium rend une boîte vide (0 × 0) à `getBoundingClientRect` d'une balise que rien n'a encore mise en page, avec ou sans bouclier du cœur ; la lecture d'`offsetWidth` la met en page
         const juge = (id: string, visible: number): Promise<boolean> => page.evaluate(([i, v]: [string, number]) => {
           const el = (window as any).__trouve(i)
+          void el.offsetWidth
           const b  = el.getBoundingClientRect()
           return (window as any).µ._mjs_fxSeen({ isIntersecting: true, intersectionRatio: v / b.height, target: el, boundingClientRect: { width: b.width, height: b.height }, intersectionRect: { width: b.width, height: v }, rootBounds: { width: window.innerWidth, height: window.innerHeight } }, 0.2)
         }, [id, visible])

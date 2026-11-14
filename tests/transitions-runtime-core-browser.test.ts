@@ -26,23 +26,23 @@ const SOURCES: Record<string, string> = {
   @ajouter = -> $items = [...$items, 'b']
 </script>
 
-<div class="racine" @in=*fade(duration: 3s)>bonjour</div>
-<p class="global" @in.global=*fade(duration: 3s)>global</p>
+<div class="racine" :in=*fade(duration: 3s)>bonjour</div>
+<p class="global" :in.global=*fade(duration: 3s)>global</p>
 {if $show}
-  <div class="si-in" @in=*fade(duration: 3s)>entre</div>
-  <div class="si-slide" @transition=*slide(duration: 3s)>glisse</div>
-  <div class="si-fly" @in=*fly(up, duration: 3s)>vole</div>
-  <@enfant class="si-comp" @in=*fade(duration: 3s)></@enfant>
+  <div class="si-in" :in=*fade(duration: 3s)>entre</div>
+  <div class="si-slide" :transition=*slide(duration: 3s)>glisse</div>
+  <div class="si-fly" :in=*fly(up, duration: 3s)>vole</div>
+  <@enfant class="si-comp" :in=*fade(duration: 3s)></@enfant>
 {end}
-{if $vu}<div class="si-out" @out=*fade(duration: 800ms)>sort</div>{end}
-<ul>{for x in $items}<li class="pour" @in=*fade(duration: 3s)>{x}</li>{end}</ul>
+{if $vu}<div class="si-out" :out=*fade(duration: 800ms)>sort</div>{end}
+<ul>{for x in $items}<li class="pour" :in=*fade(duration: 3s)>{x}</li>{end}</ul>
 `,
   'enfant.mjs': '<p>enfant</p>\n',
 }
 
 // l'appli la plus petite qui porte une transition hors de tout bloc
 const MISSION: Record<string, string> = {
-  'essai-app.mjs': '<div class="a" @in=*fade>bonjour</div>\n',
+  'essai-app.mjs': '<div class="a" :in=*fade>bonjour</div>\n',
 }
 
 // le nombre d'animations de chaque balise repérée par sa classe (`-` quand elle n'est pas là), et le texte de la première

@@ -200,6 +200,63 @@ describe('runtime — µ._hotCss (rechargement CSS à chaud)', function () {
     assert.ok(!µ._mjs_lightStyleInjected.has(oldText), 'Set de dédup : ancien texte retiré')
   })
 
+  // un léger posé dans l'ombre d'un autre composant y pose son <style> : le document ne franchit pas une ombre, le style y restait
+  // l'ancien et la réponse `true` disait le remplacement fait
+  describe('mode mjs-light dans l\'ombre d\'un autre composant', function () {
+    async function ombres() {
+      const root   = mjsTmp('hotcss-ombre')
+      const srcDir = join(root, 'src')
+      const outDir = join(root, 'out')
+      mkdirSync(srcDir, { recursive: true })
+      writeFileSync(join(srcDir, 'feuille.mjs'), '<p class="t">léger</p>\n<style lang="css">\n  .t { color: red }\n</style>\n')
+      writeFileSync(join(srcDir, 'hote.mjs'), '<@feuille :lightDom></@feuille><p>hôte</p>\n')
+      writeFileSync(join(srcDir, 'grand.mjs'), '<@hote></@hote><p>grand</p>\n')
+      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+      const stats   = await bundler.compile()
+      assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
+      const window: any   = new Window({ url: 'http://localhost/' })
+      const document: any = window.document
+      const files         = readdirSync(outDir)
+      const lu            = (motif: RegExp): string => stripEsm(readFileSync(join(outDir, files.find((f: string) => motif.test(f))!), 'utf-8'))
+      window.eval([lu(/^mjs_core-/), 'globalThis.µ = µ;', lu(/^feuille-/), lu(/^hote-/), lu(/^grand-/)].join('\n'))
+      // happy-dom ne pose pas l'attribut avant le constructeur : repli officiel du runtime, la propriété statique
+      window.eval('customElements.get("mjs-feuille").mjsLight = true')
+      document.body.innerHTML = '<mjs-grand></mjs-grand>'
+      await new Promise(r => setTimeout(r, 120))
+      const hote = document.body.firstElementChild._shadow.querySelector('mjs-hote')
+      assert.ok(hote && hote._shadow.querySelector('mjs-feuille p.t'), 'le léger est rendu dans l\'ombre de son hôte, elle-même dans une ombre')
+      return { window, document, hote, µ: window.µ as any }
+    }
+    const NEUF    = '.t{color:blue}'
+    const duStyle = (racine: any): any => racine.querySelector('style[data-mjs-css="mjs-feuille"]')
+
+    it('le <style> posé dans l\'ombre est remplacé ; la table du document, qui ne compte que les styles du document, n\'est pas touchée', async () => {
+      const { document, hote, µ } = await ombres()
+      const style = duStyle(hote._shadow)
+      assert.ok(style, 'le léger a posé son <style> dans l\'ombre de son hôte')
+      assert.ok(duStyle(document) === null, 'aucun <style> de ce léger dans le document')
+      assert.match(style.textContent, /color:\s*red/)
+      assert.equal(µ._hotCss({ components: { 'mjs-feuille': NEUF } }), true)
+      assert.equal(style.textContent, NEUF, 'le <style> de l\'ombre porte le nouveau CSS')
+      assert.ok(!µ._mjs_lightStyleInjected || !µ._mjs_lightStyleInjected.has(NEUF), 'la table du document ne note pas un style qu\'il ne porte pas : un léger posé plus tard hors de toute ombre y posera le sien')
+    })
+
+    it('le même léger dans le document et dans une ombre : les deux <style> remplacés, la table du document suit le sien', async () => {
+      const { document, hote, µ } = await ombres()
+      document.body.appendChild(document.createElement('mjs-feuille'))
+      await new Promise(r => setTimeout(r, 80))
+      const tete  = duStyle(document.head)
+      const ombre = duStyle(hote._shadow)
+      assert.ok(tete && ombre, 'un <style> dans le document, un autre dans l\'ombre')
+      const ancien = tete.textContent
+      assert.ok(µ._mjs_lightStyleInjected.has(ancien))
+      assert.equal(µ._hotCss({ components: { 'mjs-feuille': NEUF } }), true)
+      assert.equal(tete.textContent, NEUF)
+      assert.equal(ombre.textContent, NEUF)
+      assert.ok(µ._mjs_lightStyleInjected.has(NEUF) && !µ._mjs_lightStyleInjected.has(ancien), 'table du document : nouveau texte noté, ancien retiré')
+    })
+  })
+
   it('payload vide/nul : true (rien à faire), jamais un crash', async () => {
     const { window, document } = await loadHarness()
     document.body.innerHTML = '<mjs-hotcss></mjs-hotcss>'
@@ -235,7 +292,8 @@ describe('runtime — µ._hotCss (rechargement CSS à chaud)', function () {
       ].join('\n')
       writeFileSync(join(srcDir, 'hotcsslight.mjs'), component)
 
-      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+      // `csp: true` : le cœur ne porte la voie CSP des légers qu'avec ce réglage (`µ._csp`, posé ici à la main, l'est par le manifeste de l'appli)
+      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), csp: true })
       const stats = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
 

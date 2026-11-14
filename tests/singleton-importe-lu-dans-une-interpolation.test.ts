@@ -20,7 +20,7 @@ import { tokenize } from '../src/lexer/index.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const IMPORT = `@import µ$$Boite 'stores/boite.module.civet'\n`
+const IMPORT = `@import µ$$Boite 'stores/boite.module.civet.mjs'\n`
 
 async function compile(source: string): Promise<string> {
   const { output } = await transpile(source, { moduleName: 'sonde' })
@@ -123,7 +123,7 @@ describe('singleton importé lu dans une interpolation du gabarit', () => {
 describe('les refus gardent leur rôle dans une interpolation', () => {
   it('`"#{$$Boite.a}"` sur un nom importé : refusé, situé', async () => {
     const message = await erreurDe(script([ 'lire := ->', '  s := "n#{$$Boite.a}"', '  console.log s' ]))
-    assert.match(message, /sonde\.script:4:\d+ /)
+    assert.match(message, /sonde\.mjs:4:\d+ /)
     assert.match(message, /« \$\$Boite » : « Boite » est un singleton importé/)
   })
 
@@ -134,9 +134,9 @@ describe('les refus gardent leur rôle dans une interpolation', () => {
   // le lint des singletons laisse `$$X` d'une interpolation au lexeur et au générateur : chaque forme garde leur refus
   it('`$$Boite` dans toute forme d\'interpolation : le même refus, situé dans un script', async () => {
     const formes: Array<[string, RegExp | null]> = [
-      [ script([ 'lire := ->', '  s := `n${$$Boite.a}`', '  console.log s' ]), /sonde\.script:4:\d+ / ],
-      [ script([ 'lire = ->', '  s = "n#{$$Boite.a}"', '  console.log s' ], '<p>x</p>', ' lang="coffee"'), /sonde\.script:4:\d+ / ],
-      [ `${IMPORT}<script module>\nmsg := "n#{$$Boite.a}"\n</script>\n<p>x</p>\n`, /sonde\.module:3:\d+ / ],
+      [ script([ 'lire := ->', '  s := `n${$$Boite.a}`', '  console.log s' ]), /sonde\.mjs:4:\d+ / ],
+      [ script([ 'lire = ->', '  s = "n#{$$Boite.a}"', '  console.log s' ], '<p>x</p>', ' lang="coffee"'), /sonde\.mjs:4:\d+ / ],
+      [ `${IMPORT}<script module>\nmsg := "n#{$$Boite.a}"\n</script>\n<p>x</p>\n`, /sonde\.mjs:3:\d+ / ],
       [ `${IMPORT}<p>{\`n\${$$Boite.a}\`}</p>\n`, null ],
       [ `${IMPORT}<p title={"n#{$$Boite.a}"}>t</p>\n`, null ],
       [ `${IMPORT}<button @click={console.log "n#{$$Boite.a}"}>t</button>\n`, null ]
@@ -169,14 +169,14 @@ describe('les refus gardent leur rôle dans une interpolation', () => {
     const hors = await erreurDe(`<script module>\nmsg := µ$$Inconnu.a\n</script>\n<p>x</p>\n`)
     const dans = await erreurDe(`<script module>\nmsg := "n#{µ$$Inconnu.a}"\n</script>\n<p>x</p>\n`)
     assert.match(hors, /« µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
-    assert.match(dans, /sonde\.module:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
+    assert.match(dans, /sonde\.mjs:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
   })
 
   it('<script module> du composant : `"#{µ$$Boite.a}"` sur son propre `export µ$$Boite`, même verdict que hors interpolation', async () => {
     const hors = await erreurDe(`<script module>\nexport µ$$Boite = { a: 1 }\nmsg := µ$$Boite.a\n</script>\n<p>x</p>\n`)
     const dans = await erreurDe(`<script module>\nexport µ$$Boite = { a: 1 }\nmsg := "n#{µ$$Boite.a}"\n</script>\n<p>x</p>\n`)
     assert.match(hors, /« µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
-    assert.match(dans, /sonde\.module:3:12 \[ModularJS\] « µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
+    assert.match(dans, /sonde\.mjs:3:12 \[ModularJS\] « µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
   })
 })
 
@@ -219,7 +219,7 @@ describe('lecture `$X` d\'un singleton importé : refusée là où la chaîne in
 
 describe('module autonome : son propre singleton lu dans une interpolation', () => {
   // même chaîne que le bundler pour un `.module.civet` : sucre du script, puis lexeur en mode module
-  const module = (source: string) => tokenize(applyMjsSugarToScript(source, 'civet', undefined, '<script module>', 1), { moduleMode: true, singletons: singletonsDeclares(source), fileName: 'boite.module.civet', firstLine: 1 })
+  const module = (source: string) => tokenize(applyMjsSugarToScript(source, 'civet', undefined, '<script module>', 1), { moduleMode: true, singletons: singletonsDeclares(source), fileName: 'boite.module.civet.mjs', firstLine: 1 })
 
   it('`"#{µ$$Boite.a}"` compile comme `µ$$Boite.a` hors interpolation', () => {
     assert.match(module('export µ$$Boite = { a: 1 }\nmsg := µ$$Boite.a'), /msg := \$Boite\.a\b/)
@@ -230,12 +230,12 @@ describe('module autonome : son propre singleton lu dans une interpolation', () 
 
   it('`"#{µ$$Inconnu.a}"`, un nom que le module ne déclare pas : refusé comme hors interpolation, situé', () => {
     assert.throws(() => module('msg := µ$$Inconnu.a'), /« µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
-    assert.throws(() => module('n := 1\nmsg := "n#{µ$$Inconnu.a}"'), /boite\.module\.civet:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
+    assert.throws(() => module('n := 1\nmsg := "n#{µ$$Inconnu.a}"'), /boite\.module\.civet\.mjs:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
   })
 
   it('`export µ$Boite` déclare une variable, pas un singleton : `"#{µ$$Boite.a}"` refusé, comme hors interpolation', () => {
     assert.throws(() => module('export µ$Boite = { a: 1 }\nmsg := µ$$Boite.a'), /« µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
-    assert.throws(() => module('export µ$Boite = { a: 1 }\nmsg := "n#{µ$$Boite.a}"'), /boite\.module\.civet:2:12 \[ModularJS\] « µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
+    assert.throws(() => module('export µ$Boite = { a: 1 }\nmsg := "n#{µ$$Boite.a}"'), /boite\.module\.civet\.mjs:2:12 \[ModularJS\] « µ\$\$Boite » utilisé sans « @import µ\$\$Boite »/)
   })
 })
 
@@ -251,13 +251,13 @@ describe('module autonome compilé par le bundler : singleton lu dans une interp
     const sources = join(racine, 'src')
     const sortie  = join(racine, 'out')
     mkdirSync(sources, { recursive: true })
-    writeFileSync(join(sources, 'boite.module.civet'), 'export µ$$Boite = { a: 1 }\nexport msg = -> "n#{µ$$Boite.a}"\n')
-    writeFileSync(join(sources, 'faute.module.civet'), 'n := 1\nmsg := "n#{µ$$Inconnu.a}"\n')
+    writeFileSync(join(sources, 'boite.module.civet.mjs'), 'export µ$$Boite = { a: 1 }\nexport msg = -> "n#{µ$$Boite.a}"\n')
+    writeFileSync(join(sources, 'faute.module.civet.mjs'), 'n := 1\nmsg := "n#{µ$$Inconnu.a}"\n')
     const bundler = new Bundler({ sourceDir: sources, outputDir: sortie, manifestPath: join(racine, 'bundle.js'), urlPrefix: '/assets' })
     try {
       const stats   = await bundler.compile()
       const erreurs = stats.errors.map((e) => e.message).join('\n')
-      assert.match(erreurs, /faute\.module\.civet:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
+      assert.match(erreurs, /faute\.module\.civet\.mjs:2:12 \[ModularJS\] « µ\$\$Inconnu » utilisé sans « @import µ\$\$Inconnu »/)
       assert.doesNotMatch(erreurs, /boite\.module/)
       assert.ok(bundler.manifest['boite.module'], `module compilé attendu, manifeste : ${JSON.stringify(Object.keys(bundler.manifest))}`)
     }

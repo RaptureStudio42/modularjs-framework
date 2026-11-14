@@ -39,7 +39,7 @@ const CAS: Cas[] = [
   { nom: '{await} non fermé', genre: 'erreur', html: P + '{await $p}x\n', cite: p => ['BLOC NON FERMÉ', `\`{await $p}\` ouvert ligne ${p + 1} n'a pas de`] },
   { nom: '{key} non fermé', genre: 'erreur', html: P + '{key $a}x\n', cite: p => ['BLOC NON FERMÉ', `\`{key $a}\` ouvert ligne ${p + 1} n'a pas de`] },
   { nom: 'effet : espace avant la parenthèse', genre: 'erreur', html: P + '<p *neon (#0ff)>x</p>\n', cite: p => [`*neon (…) (ligne ${p + 1})`] },
-  { nom: 'transition : espace avant la parenthèse', genre: 'erreur', html: P + '<p @in=*neon (#0ff)>x</p>\n', cite: p => [`*neon (…) (ligne ${p + 1})`] },
+  { nom: 'transition : espace avant la parenthèse', genre: 'erreur', html: P + '<p :in=*neon (#0ff)>x</p>\n', cite: p => [`*neon (…) (ligne ${p + 1})`] },
   { nom: 'effet : réglages après un =', genre: 'erreur', html: P + '<p *neon=#0ff>x</p>\n', cite: p => [`*neon=… (ligne ${p + 1})`] },
   { nom: 'attribut écrit deux fois', genre: 'erreur', html: P + '<p class="a" class="b">x</p>\n', cite: p => ['ATTRIBUT DUPLIQUÉ', `(ligne ${p + 1})`] },
   { nom: 'accolade seule dans une balise', genre: 'erreur', html: P + '<div {$a ? \'x\' : \'y\'}>x</div>\n', cite: p => [`(ligne ${p + 1}) : un \`{expr}\` seul`] },

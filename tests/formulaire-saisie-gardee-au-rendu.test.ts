@@ -68,7 +68,7 @@ const EDIT_FORM = `<script>
           <div class="form" @input={@typed(e)}>
             <small class="n">{$blanks.n or 0}</small>
             {for l in $$langs by code}
-              <label>{l.code}<input type="text" data-field={l.code} value={r[l.code] or ''} @class{l.code isnt $lang}="hidden"></label>
+              <label>{l.code}<input type="text" data-field={l.code} value={r[l.code] or ''} :class{l.code isnt $lang}="hidden"></label>
             {end}
             <label>code<input type="text" data-field="code" value={r.code}></label>
             <label>note<textarea data-field="note" value={r.fr + ' !'}></textarea></label>
@@ -106,9 +106,9 @@ const RECORD = `<script>
 <label>nom<input type="text" class="name" value={$name}></label>
 `
 
-// une liste dont les lignes SONT les options (composant sans nettoyage : les lignes retirées sont
-// recyclées pour les clés suivantes) ; le choix fait à la main sur une option ne doit pas suivre
-// cette option recyclée vers une autre clé
+// une liste dont les lignes SONT les options : une clé neuve a son option neuve, jamais celle d'une
+// clé retirée ; le choix fait à la main sur une option retirée ne passe à aucune autre clé, l'option
+// du modèle est choisie
 const OPTIONS = `<script>
   $opts = [{id: 'a'}, {id: 'b'}, {id: 'c'}]
   $sel  = 'b'
@@ -191,7 +191,7 @@ describe('liaison simple d\'un champ : la saisie en cours survit au rendu', func
     }
   })
 
-  it('options recyclées d\'une clé à l\'autre : l\'option du modèle est choisie, pas celle cochée à la main sur l\'ancienne clé', async () => {
+  it('options remplacées par des clés neuves : chaque clé a son option neuve, l\'option du modèle est choisie, pas celle cochée à la main sur l\'ancienne clé', async () => {
     const window = await monter('saisie-options', { 'demo-options.mjs': OPTIONS }, 'http://localhost/')
     try {
       window.document.body.innerHTML = '<mjs-demo-options></mjs-demo-options>'
@@ -201,13 +201,16 @@ describe('liaison simple d\'un champ : la saisie en cours survit au rendu', func
       assert.equal(choix.value, 'b')
       choix.value = 'c'
       const premieres = [...c._shadow.querySelectorAll('option')]
+      assert.equal(premieres.length, 3, 'options de départ')
       c._shadow.querySelector('button.replace').click()
       await attendre(() => choix.value === 'e')
       c._shadow.querySelector('button.again').click()
       await attendre(() => c._shadow.querySelector('option')?.value === 'g')
       await pause(20)
-      const recyclees = [...c._shadow.querySelectorAll('option')].filter((o: any) => premieres.includes(o)).length
-      assert.equal(recyclees, 3, 'le second jeu réutilise les options du premier')
+      const options  = [...c._shadow.querySelectorAll('option')]
+      const reprises = options.filter((o: any) => premieres.includes(o)).length
+      assert.deepEqual(options.map((o: any) => o.value), ['g', 'h', 'i'], 'options du second jeu')
+      assert.equal(reprises, 0, 'aucune option du premier jeu reprise par le second')
       assert.equal(choix.value, 'h', 'l\'option choisie est celle du modèle')
     }
     finally {

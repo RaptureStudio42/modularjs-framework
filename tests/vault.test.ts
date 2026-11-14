@@ -6,12 +6,12 @@
 // store-static-dispatch.test.ts. (Fichier source : mjs_store_globals.ts,
 // renommé — le « vault »/`&$` a fusionné dans µ.store depuis longtemps.)
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(__dirname, '../src/runtime/mjs_store_globals.ts'), 'utf8')
+const src = lireRuntime(join(__dirname, '../src/runtime/mjs_store_globals.ts'))
 
 function makeMu(): any {
   // µ.state minimal — sert encore à µ.nav/µ._mjs_env (INTACTS), pas à µ.store.

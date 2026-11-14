@@ -122,17 +122,17 @@ $items = [1, 2]
 <ul>{for it in $items}<li><input disabled></li>{end}</ul>
 `)
     assert.deepEqual(errors, [])
-    assert.match(code!, /_mjs_cloneTpl\("<li><input disabled=''><\/li>"\)/,
+    assert.match(code!, /_mjs_clone(?:Tpl|El)\("<li><input disabled=''><\/li>"\)/,
       'la valeur initiale est posée dans le HTML du gabarit cloné à chaque ligne')
     assert.doesNotMatch(code!, /µ\._mjs_updAttrNode\(\w+,\s*'disabled'/,
       'AVANT ce fix : un updateFn rejouait la constante à chaque réconciliation de la boucle')
   })
 
-  it('GARDE @ — <details @open> compile EXACTEMENT comme avant (chemin dédié intact)', async () => {
+  it('GARDE @ — <details :open> compile EXACTEMENT comme avant (chemin dédié intact)', async () => {
     const { errors, code } = await compileComp(`
 <script lang="coffee">
 </script>
-<details @open><summary>s</summary>contenu</details>
+<details :open><summary>s</summary>contenu</details>
 `)
     assert.deepEqual(errors, [])
     assert.match(code!, /_mjs_cloneTpl\("<details open>/,
@@ -167,7 +167,7 @@ $items = [1, 2]
   it('GARDE <@slot> — `<@slot default>` reste le slot NOMMÉ "default" (régression précise visée)', async () => {
     // `default` est À LA FOIS un booléen HTML5 valide (<track default>) et un nom
     // de slot on ne peut plus plausible : sans la garde sur node.name === 'slot',
-    // parseDom (~520) ne trouverait plus un premier attribut `type:'boolean'` à
+    // ouvreBalise (parser/index.ts) ne trouverait plus un premier attribut `type:'boolean'` à
     // convertir en name="…" → le slot perdait son nom.
     const { errors, code } = await compileComp(`
 <script lang="coffee">

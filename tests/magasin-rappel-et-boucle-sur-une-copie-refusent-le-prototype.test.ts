@@ -38,10 +38,10 @@ export trouveModule = (s, k) ->
   return
 `
 
-const CIVET = `@import rappelModule 'garde-rappel-aides.civet'
-@import copieModule 'garde-rappel-aides.civet'
-@import cocherModule 'garde-rappel-aides.civet'
-@import trouveModule 'garde-rappel-aides.civet'
+const CIVET = `@import rappelModule 'garde-rappel-aides.civet.mjs'
+@import copieModule 'garde-rappel-aides.civet.mjs'
+@import cocherModule 'garde-rappel-aides.civet.mjs'
+@import trouveModule 'garde-rappel-aides.civet.mjs'
 
 <script>
   $$prefs = { a: { x: 1 }, b: { x: 2 } }
@@ -255,10 +255,10 @@ export trouveModuleC = (s, k) ->
   return
 `
 
-const COFFEE = `@import rappelModuleC 'garde-rappel-aides.coffee'
-@import copieModuleC 'garde-rappel-aides.coffee'
-@import cocherModuleC 'garde-rappel-aides.coffee'
-@import trouveModuleC 'garde-rappel-aides.coffee'
+const COFFEE = `@import rappelModuleC 'garde-rappel-aides.coffee.mjs'
+@import copieModuleC 'garde-rappel-aides.coffee.mjs'
+@import cocherModuleC 'garde-rappel-aides.coffee.mjs'
+@import trouveModuleC 'garde-rappel-aides.coffee.mjs'
 
 <script lang="coffee">
 $$fprefs = { a: { x: 1 }, b: { x: 2 } }
@@ -475,8 +475,8 @@ const FORMES: [string, string, string[]][] = [
 ]
 
 const FICHIERS: Record<string, string> = {
-  'garde-rappel-aides.civet': AIDES_CIVET,
-  'garde-rappel-aides.coffee': AIDES_COFFEE,
+  'garde-rappel-aides.civet.mjs': AIDES_CIVET,
+  'garde-rappel-aides.coffee.mjs': AIDES_COFFEE,
   'garde-rappel-civet.mjs': CIVET,
   'garde-rappel-coffee.mjs': COFFEE,
   'garde-rappel-js.mjs': JS,
@@ -676,16 +676,24 @@ describe('magasin $$ : le paramètre d\'un rappel et la variable d\'une boucle s
     }
   })
 
-  it('témoins, compilation : ces formes restent telles qu\'écrites', () => {
+  it('témoins, compilation : ces formes restent telles qu\'écrites ; l\'élément d\'une copie faite par map ou flatMap sort gardé', () => {
     const temoins = [
       'µ.store.liste.forEach((t) => { µ.__vu = t.id })',
       '[{ x: 0 }].forEach((t) => { t.x = 1 }); for (const u of [{ x: 0 }].filter((y) => y)) u.x = 1',
-      'const n = µ.store.liste.map((t) => ({ ...t, x: 1 })); n[0].x = 2; µ.store.liste.flatMap((t) => [{ ...t }])[0].x = 3',
       'structuredClone(µ.store.liste).forEach((t) => { t.x = 1 }); for (const t of JSON.parse(JSON.stringify(µ.store.liste))) t.x = 1',
       'const c = µ.store.liste.slice(); c.push(1); c[0] = 2; c.length = 0; Object.values(µ.store.prefs).push(3)',
       'const marquer = (t) => { t.fait = true }; marquer(µ.store.liste[0]); µ.store.liste.forEach(marquer)',
     ]
     for (const js of temoins) assert.equal(applyPathTracking(js), js)
+    // pas un témoin : l'élément d'une copie faite par `map` ou `flatMap` passe par l'aide gardée, même quand le rappel fait des objets
+    // neufs (`({ ...t })`). La copie peut recevoir une valeur venue d'ailleurs (`fill`, `with`, `toSpliced`, `concat`, un étalement mêlé,
+    // `push`, `unshift`, `n[0] = …`, `Object.assign`), qui peut être un prototype rangé par une clé venue de données (`$$cfg[k]`, `k`
+    // vaut `'__proto__'`) ; une clé calculée (`n[k]`) ou `constructor` mène de la copie à `Array.prototype` ou `Array`. Écrite telle
+    // quelle, l'écriture poserait son champ sur `Object.prototype`, `Array.prototype` ou `Array` : gardée, elle est refusée, comme le dit
+    // `docs/14-stores.md` (« L'élément d'une copie faite par `map` ou `flatMap` […] passe le même refus ») ; scènes jouées dans
+    // `magasin-copie-par-map-garde-meme-remplie-d-ailleurs.test.ts`
+    const copies = 'const n = µ.store.liste.map((t) => ({ ...t, x: 1 })); n[0].x = 2; µ.store.liste.flatMap((t) => [{ ...t }])[0].x = 3'
+    assert.equal(applyPathTracking(copies), 'const n = µ.store.liste.map((t) => ({ ...t, x: 1 })); µ._mjs_softSetOn(n[0], "x", 2); µ._mjs_softSetOn(µ.store.liste.flatMap((t) => [{ ...t }])[0], "x", 3)')
   })
 
   it('compilation : le paramètre d\'un rappel est suivi dans son rappel, pas un autre paramètre du même nom', () => {

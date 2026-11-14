@@ -5,8 +5,9 @@
   // customElements. Ensemble VIDE ⇒ l'observer n'a plus rien à charger et
   // court-circuite en O(1), au lieu de sérialiser `outerHTML` pour CHAQUE
   // nœud inséré (poste caché majeur de create1k/runlots : 1000 tr insérés =
-  // 1000 sérialisations). `µ.paths` est figé après le boot (émis une seule
-  // fois dans le manifeste, jamais muté au runtime) → ce cache est sûr.
+  // 1000 sérialisations). Les CLÉS de `µ.paths` sont figées après le boot (émises
+  // une seule fois dans le manifeste) ; seules des valeurs changent au runtime (fichier
+  // de page, adresse neuve après un préchargement raté au repos) → ce cache de balises est sûr.
   _mjs_pending: null,
   _mjs_pendingSel: '',
   _mjs_refreshPending: function() {
@@ -36,17 +37,22 @@
   // chaque élément restylé. Une balise hors du manifeste (autre bibliothèque, nom mal écrit) n'est jamais touchée
   _mjs_shieldTags: new Set(),
   _mjs_shieldTag: function(tag) {
-    var f = µ._mjs_shield, s = (tag === '*' ? '' : tag) + ':not(:defined):not([mjs-ssr]):not([mjs-skel-host])', i;
-    if (!f) { return; }
-    if (!tag) {
-      for (i = f.cssRules.length - 1; i >= 0; i--) { if (f.cssRules[i].selectorText.indexOf(':not(:defined)') === 0) { f.deleteRule(i); } }
-      return;
+    var s = (tag === '*' ? '' : tag) + ':not(:defined):not([mjs-ssr]):not([mjs-skel-host])', i;
+    if (tag) {
+      if (this._mjs_shieldTags.has(tag)) { return; }
+      this._mjs_shieldTags.add(tag);
     }
-    if (this._mjs_shieldTags.has(tag)) { return; }
-    this._mjs_shieldTags.add(tag);
-    // un nom que le moteur refuse (caractère hors des sélecteurs CSS) : la balise se montre telle quelle, le chargement continue
-    try { f.insertRule(s + (tag === '*' ? '' : ',' + s + ' *') + '{visibility:hidden!important}', 0); }
-    catch { /* balise montrée telle quelle */ }
+    // la même règle dans la feuille des ombres et dans celle de la page (µ._mjs_shield, µ._mjs_shieldDoc, mjs_init.ts)
+    [µ._mjs_shield, µ._mjs_shieldDoc].forEach(function(f) {
+      if (!f) { return; }
+      if (!tag) {
+        for (i = f.cssRules.length - 1; i >= 0; i--) { if (f.cssRules[i].selectorText.indexOf(':not(:defined)') === 0) { f.deleteRule(i); } }
+        return;
+      }
+      // un nom que le moteur refuse (caractère hors des sélecteurs CSS) : la balise se montre telle quelle, le chargement continue
+      try { f.insertRule(s + (tag === '*' ? '' : ',' + s + ' *') + '{visibility:hidden!important;transition:none!important}', 0); }
+      catch { /* balise montrée telle quelle */ }
+    });
   },
   _mjs_drop: function(tag) {
     // un tag vient d'être défini : le retirer + reconstruire le sélecteur ciblé
@@ -100,6 +106,11 @@
     var err, fileName, path;
     tag = tag.toLowerCase();
     if (!customElements.get(tag) && !this.pendingComponents.has(tag)) {
+      // <routes-repos>
+      // ratée pendant l'attente de la navigation en cours : ni le montage de la page ni le guetteur ne la redemandent, la visite
+      // suivante le fera (un essai par visite, mjs_router.ts)
+      if (this._mjs_failedKey && this._mjs_failedKey[tag] != null && µ.Router && this._mjs_failedKey[tag] === µ.Router._mjs_navWaitKey) { return; }
+      // </routes-repos>
       this.pendingComponents.add(tag);
       fileName = tag.replace('mjs-', '');
       // 1. Interrogation du dictionnaire de hachage (Manifest) : le chemin entier se lit par
@@ -112,6 +123,13 @@
         this._mjs_giveUp(tag);
         return;
       }
+      // <routes-repos>
+      // un import raté reste raté à la même adresse (le navigateur garde l'échec, Chromium, Firefox et WebKit) : après un échec, le
+      // fichier est redemandé sous une adresse neuve, une par échec ; le premier essai n'a rien évalué, aucun double n'est possible
+      if (this._mjs_failed && this._mjs_failed[tag]) { path += (path.indexOf('?') < 0 ? '?' : '&') + 'mjs-retry=' + this._mjs_failed[tag]; }
+      // la page est préchargée au repos en ce moment (µ._mjs_routesIdle, mjs_router.ts) : cet import partage son vol
+      var pre = µ._mjs_routesPre === tag;
+      // </routes-repos>
       // la balise, et tout ce qu'elle contient, reste cachée jusqu'à sa définition (cf. _mjs_shieldTag)
       this._mjs_shieldTag(tag);
       µ.log(`[Autoloader] 🚀 Downloading ${fileName} -> ${path}`);
@@ -150,6 +168,12 @@
         return µ.log(`⚙️ ES6 Module instantiated: ${fileName}`);
       } catch (error) {
         err = error;
+        // <routes-repos>
+        this._mjs_failed = this._mjs_failed || {};
+        this._mjs_failed[tag] = (this._mjs_failed[tag] || 0) + 1;
+        // le préchargement partagé a échoué : la page est redemandée aussitôt, sous une adresse neuve, comme une visite, une fois
+        if (pre) { µ._mjs_routesPre = null; this.pendingComponents.delete(tag); return this.load(tag); }
+        // </routes-repos>
         // fichier de page désigné par une navigation interne et resté introuvable : le composant
         // retrouve son fichier séparé, une seule fois — celui que la navigation a gardé pour lui (clé
         // propre), jamais un chemin lu sur un prototype pollué
@@ -161,6 +185,11 @@
         // un import coupé par le départ de la page n'est ni une panne ni un bundle périmé : rien n'est dit, rien n'est rechargé
         // (un rechargement remplaçait la navigation du visiteur) — cf. µ._mjs_loadFailed, mjs_init.ts ; le bundle ne se dit périmé
         // que sur la réponse du serveur (cf. _mjs_reloadOnStale)
+        // <routes-repos>
+        // échec d'une visite, pendant l'attente de sa navigation : retenu avec elle (cf. plus haut) ; un essai au repos ne compte pas
+        this._mjs_failedKey = this._mjs_failedKey || {};
+        this._mjs_failedKey[tag] = µ.Router && µ.Router._mjs_navWait ? µ.Router._mjs_navWaitKey : null;
+        // </routes-repos>
         var report = () => {
           µ.error(`[Autoloader] ❌ Failed to import ${fileName}:`, err);
           this._mjs_reloadOnStale(fileName, err, path);
@@ -274,6 +303,10 @@
   },
   observe: function(root) {
     var nodes, observer, launched = null;
+    // <reveil>
+    // la page d'une instance qui attend son réveil n'est observée qu'à son réveil (`@wake`, mjs_wake.ts)
+    if (µ._mjs_wakeLater?.(root)) { return; }
+    // </reveil>
     if (this._mjs_pending === null) {
       this._mjs_refreshPending();
       // le chargeur sait désormais quelles balises il va chercher : le bouclier du cœur ne cache plus qu'elles (cf. load), plus
@@ -349,3 +382,21 @@
   var v = µ.paths && Object.prototype.hasOwnProperty.call(µ.paths, name) ? µ.paths[name] : null;
   return v && typeof v === 'string' ? (µ.pathsPrefix || '') + v : '';
 };
+
+// <repos>
+// l'attente commune des deux files du repos — pages d'une table de routes (µ._mjs_routesIdle, mjs_router.ts), composants écrits
+// seulement sous un `{if}` fermé (`µIdle` du manifeste) : `f` part après l'événement load de la fenêtre, quand ce chargeur n'a plus
+// rien en route et qu'aucune demande de MJS n'est en vol (µ._mjs_busy : µ.ajax, µload, navigation par les liens, mjs_ajax.ts),
+// puis au repos (requestIdleCallback, 2 s au plus ; setTimeout à défaut). Plafond : 10 s après le premier passage qui suit load,
+// plus rien en vol n'est attendu — une demande qui ne finit jamais ne retient pas les files pour toujours
+// nom sans `_mjs_` : le manifeste, qui n'est pas raccourci comme le cœur, l'appelle par ce nom
+var _mjsRestEnd = 0;
+µ._idle = function(f) {
+  var go = function() {
+    _mjsRestEnd = _mjsRestEnd || Date.now() + 10000;
+    if ((µ.Autoloader.pendingComponents.size || µ._mjs_busy) && Date.now() < _mjsRestEnd) { return setTimeout(go, 100); }
+    window.requestIdleCallback ? window.requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 200);
+  };
+  document.readyState === 'complete' ? go() : window.addEventListener('load', go, { once: true });
+};
+// </repos>

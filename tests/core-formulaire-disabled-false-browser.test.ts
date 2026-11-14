@@ -42,38 +42,38 @@ const PAGE = `<script>
     window.__poser = (v)-> $off = v
 </script>
 
-<form class="f-faux" method="get" action="/envoi" @noUJS>
+<form class="f-faux" method="get" action="/envoi" :noUJS>
   ${huit('disabled="false" required')}
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-fs" method="get" action="/envoi" @noUJS>
+<form class="f-fs" method="get" action="/envoi" :noUJS>
   <fieldset class="fs" disabled>
   ${huit('disabled="false"', DEPART)}
   </fieldset>
 </form>
 
-<form class="f-actif" method="get" action="/envoi" @noUJS>
+<form class="f-actif" method="get" action="/envoi" :noUJS>
   ${huit('', DEPART)}
 </form>
 
-<form class="f-vrai" method="get" action="/envoi" @noUJS>
+<form class="f-vrai" method="get" action="/envoi" :noUJS>
   ${huit('disabled', DEPART)}
 </form>
 
-<form class="f-vide" method="get" action="/envoi" @noUJS>
+<form class="f-vide" method="get" action="/envoi" :noUJS>
   ${huit('disabled=""', DEPART)}
 </form>
 
-<form class="f-mot" method="get" action="/envoi" @noUJS>
+<form class="f-mot" method="get" action="/envoi" :noUJS>
   ${huit('disabled="disabled"', DEPART)}
 </form>
 
-<form class="f-lie" method="get" action="/envoi" @noUJS>
+<form class="f-lie" method="get" action="/envoi" :noUJS>
   ${huit('disabled={$off}', DEPART)}
 </form>
 
-<form class="f-requis" method="get" action="/envoi" @noUJS>
+<form class="f-requis" method="get" action="/envoi" :noUJS>
   ${huit('required="false"')}
 </form>
 `

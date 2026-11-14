@@ -40,7 +40,7 @@ function coldUnit(bundler: any, stem: string, deps: string[], phantom?: string):
   const phantomLine = phantom ? `\nconst _p = '${bundler.placeholderPath(phantom, '.js')}'` : ''
   return {
     kind: 'cold',
-    file: `/fake/${stem}.civet`,
+    file: `/fake/${stem}.civet.mjs`,
     stem,
     ext: '.js',
     code: `${imports}\nexport const marker = '${stem}'${phantomLine}\n`,

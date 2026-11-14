@@ -68,7 +68,7 @@ $tag = 'p'
 $c = 'red'
 $t = 'A'
 </script>
-<@element $tag @style.color={$c} title={$t}>contenu</@element>
+<@element $tag :style.color={$c} title={$t}>contenu</@element>
 <button id="tospan" @click={$tag = 'span'}>tospan</button>
 <button id="topagain" @click={$tag = 'p'}>topagain</button>
 <button id="c2" @click={$c = 'blue'}>c2</button>
@@ -138,7 +138,7 @@ $t = 'A'
 $tag = 'div'
 $c = 'red'
 </script>
-<@element $tag @style.color={$c}>contenu</@element>
+<@element $tag :style.color={$c}>contenu</@element>
 <button id="c2" @click={$c = 'blue'}>c2</button>
 `
     const { window, el } = await mountComponent('dynelrefb', src)
@@ -164,7 +164,7 @@ $c = 'red'
 $comp = 'span'
 $o = '0.5'
 </script>
-<@module $comp @style.opacity={$o}>contenu</@module>
+<@module $comp :style.opacity={$o}>contenu</@module>
 <button id="o2" @click={$o = '0.9'}>o2</button>
 `
     const { window, el } = await mountComponent('dynelrefc', src)
@@ -189,7 +189,7 @@ $o = '0.5'
 $tag = null
 $c = 'red'
 </script>
-<@element $tag @style.color={$c}>contenu</@element>
+<@element $tag :style.color={$c}>contenu</@element>
 <button id="c2" @click={$c = 'blue'}>c2</button>
 <button id="show" @click={$tag = 'p'}>show</button>
 `

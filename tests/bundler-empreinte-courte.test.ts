@@ -115,8 +115,8 @@ describe('empreinte courte — les fichiers du build', function () {
 
   it('chaque fichier JS du build (composants, module, cœur, effets, langues, groupe) porte cinq caractères base 36', async () => {
     const p = projet('empreinte-forme', {
-      'carte.mjs':           '@import marque \'outils.module.civet\'\n\n<p class="carte">{marque}</p>\n',
-      'outils.module.civet': 'export marque := \'outils\'\n',
+      'carte.mjs':           '@import marque \'outils.module.civet.mjs\'\n\n<p class="carte">{marque}</p>\n',
+      'outils.module.civet.mjs': 'export marque := \'outils\'\n',
       'accueil.mjs':         '<p fx="fade">accueil</p>\n',
       'i18n/fr.json':        JSON.stringify({ titre: 'Bonjour' })
     })
@@ -197,7 +197,7 @@ describe('empreinte courte — les fichiers du build', function () {
     let p: Projet
     let t: Record<string, string>
     before(async () => {
-      const fichiers: Record<string, string> = { 'carte.mjs': '<p>carte</p>\n', 'tuto/tuto-ajax.mjs': '<p>ajax</p>\n', 'outils.module.civet': 'export marque := \'outils\'\n' }
+      const fichiers: Record<string, string> = { 'carte.mjs': '<p>carte</p>\n', 'tuto/tuto-ajax.mjs': '<p>ajax</p>\n', 'outils.module.civet.mjs': 'export marque := \'outils\'\n' }
       for (let i = 1; i <= 60; i++) fichiers[`fiche-${String(i).padStart(2, '0')}.mjs`] = `<p>fiche ${i}</p>\n`
       p = projet('empreinte-table', fichiers)
       await construire(p, { env: 'prod' })

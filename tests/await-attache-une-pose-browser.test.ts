@@ -31,24 +31,24 @@ ${FABRIQUE}</script>
   <i class="att">attente</i>
 {success v}
   {const t = $theme}
-  <b class="ok" @attach={marque('ok', $theme)}>{v.label}</b>
-  <b class="okc" @attach={marque('okc', t)}>{v.label}</b>
+  <b class="ok" :attach={marque('ok', $theme)}>{v.label}</b>
+  <b class="okc" :attach={marque('okc', t)}>{v.label}</b>
 {end}
-<u class="temoin" @attach={marque('tem', $theme)}>témoin</u>
+<u class="temoin" :attach={marque('tem', $theme)}>témoin</u>
 `,
   // `{error err}` : la promesse est rejetée après un court délai, pour que le composant la tienne déjà
   'at-erreur.mjs': `<script>
   $theme = 'clair'
-  $p     = new Promise((res, rej) -> setTimeout((-> rej('boom')), 40))
+  $p     = µafter(40).then(-> Promise.reject('boom'))
 ${FABRIQUE}</script>
 {await $p}
   <i class="att">attente</i>
 {success v}
   <b class="ok">{v}</b>
 {error err}
-  <b class="ko" @attach={marque('ko', $theme)}>{err}</b>
+  <b class="ko" :attach={marque('ko', $theme)}>{err}</b>
 {end}
-<u class="temoin" @attach={marque('tem', $theme)}>témoin</u>
+<u class="temoin" :attach={marque('tem', $theme)}>témoin</u>
 `
 }
 const BALISES = Object.keys(SOURCES).map((f) => 'mjs-' + f.replace('.mjs', ''))

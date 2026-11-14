@@ -64,8 +64,9 @@ function makeClickHandler() {
 function extractPopstateBody(): string {
   return extractMarkedBody(UJS_SRC, 'popstate-listener')
 }
+// `DOMParser` en paramètre : l'entrée passe son analyseur à la visite commune (µ._mjs_navVisit), même quand le cache sert la page
 function makePopstateHandler() {
-  return new Function('e', 'µ', 'window', 'document', extractPopstateBody())
+  return new Function('e', 'µ', 'window', 'document', 'DOMParser', extractPopstateBody())
 }
 function extractNavDispatchStatement(): string {
   return extractMarked(UJS_SRC, '_mjs_navDispatch')

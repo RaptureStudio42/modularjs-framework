@@ -73,8 +73,8 @@ $titre = "Page indépendante"
     const root = mjsTmp('ssr-realexport')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'tint.module.civet'), `export tint := -> 'ROUGE'\n`)
-    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet'\n\n<p class="r">{tint()}</p>\n`)
+    writeFileSync(join(srcDir, 'tint.module.civet.mjs'), `export tint := -> 'ROUGE'\n`)
+    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet.mjs'\n\n<p class="r">{tint()}</p>\n`)
 
     const res = await renderToString({ sourceDir: srcDir, tag: 'mjs-page' })
     assert.match(res.html, /ROUGE/, 'un VRAI export cross-module doit toujours fonctionner')
@@ -87,11 +87,11 @@ $titre = "Page indépendante"
     // Module à EXPORT DÉFAUT (civet) — versant export : `export default fn` laissait
     // une fonction anonyme en statement après retrait du mot-clé → "Function
     // statements require a function name", et n'exposait jamais le défaut.
-    writeFileSync(join(srcDir, 'greet.module.civet'), `export default -> 'BONJOUR-DEFAUT'\n`)
+    writeFileSync(join(srcDir, 'greet.module.civet.mjs'), `export default -> 'BONJOUR-DEFAUT'\n`)
     // Composant qui l'importe via `@import default` (compile en `import greet from
     // '...'`) — versant import : cette forme n'était NI destructurée NI retirée →
     // `import` orphelin jusqu'à l'éval → SyntaxError avortant TOUT le bundle SSR.
-    writeFileSync(join(srcDir, 'page.mjs'), `@import default greet 'greet.module.civet'\n\n<p class="g">{greet()}</p>\n`)
+    writeFileSync(join(srcDir, 'page.mjs'), `@import default greet 'greet.module.civet.mjs'\n\n<p class="g">{greet()}</p>\n`)
 
     const res = await renderToString({ sourceDir: srcDir, tag: 'mjs-page' })
     assert.match(res.html, /BONJOUR-DEFAUT/,
@@ -104,11 +104,11 @@ $titre = "Page indépendante"
     mkdirSync(srcDir, { recursive: true })
     // Le composant MENTIONNE aussi "from" en texte libre (piège potentiel :
     // masquer par erreur l'URL réelle si le masquage était trop agressif).
-    writeFileSync(join(srcDir, 'tint.module.civet'), `export tint := -> 'BLEU'\n`)
+    writeFileSync(join(srcDir, 'tint.module.civet.mjs'), `export tint := -> 'BLEU'\n`)
     writeFileSync(join(srcDir, 'page.mjs'), `
 <script lang="coffee">
 </script>
-@import tint 'tint.module.civet'
+@import tint 'tint.module.civet.mjs'
 <p class="txt">Cette couleur vient from un module externe.</p>
 <p class="r">{tint()}</p>
 `)

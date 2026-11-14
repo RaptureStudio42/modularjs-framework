@@ -146,12 +146,13 @@ describe('graine de traduction du document reçu — relue à chaque échange de
   })
 
   describe('branchement dans UJS', () => {
-    const appels = [...UJS_SRC.matchAll(/\n\s*(if \(µ\._mjs_navI18nSeed\) \{ µ\._mjs_navI18nSeed\(doc\); \})\n\s*µ\._mjs_navPageFile\(doc\);\n\s*µ\._mjs_navApplyHead\(doc\);/g)]
+    // à l'échange commun (µ._mjs_navSwapPage : clic, soumission, retour arrière), la reprise du jeton CSRF d'une réponse préchargée (`o.head`) passe entre le fichier de page et la tête : seule cette ligne est admise entre les deux
+    const appels = [...UJS_SRC.matchAll(/\n\s*(if \(µ\._mjs_navI18nSeed\) \{ µ\._mjs_navI18nSeed\(doc\); \})\n\s*µ\._mjs_navPageFile\(doc\);\n(?:\s*if \(o\.head\) \{ o\.head\(\); \}[^\n]*\n)?\s*µ\._mjs_navApplyHead\(doc\);/g)]
 
-    it('les quatre sites d\'échange appellent la graine juste avant le fichier de page (donc avant la tête), seulement si elle existe', () => {
-      assert.equal(appels.length, 4, 'clic, soumission, retour arrière, rafraîchissement de fond')
+    it('les deux sites d\'échange appellent la graine juste avant le fichier de page (donc avant la tête), seulement si elle existe', () => {
+      assert.equal(appels.length, 2, 'échange commun (clic, soumission, retour arrière), rafraîchissement de fond')
       for (const m of appels) { assert.equal(m[1], 'if (µ._mjs_navI18nSeed) { µ._mjs_navI18nSeed(doc); }') }
-      assert.equal((UJS_SRC.match(/_mjs_navI18nSeed\(doc\)/g) || []).length, 4, 'aucun appel ailleurs')
+      assert.equal((UJS_SRC.match(/_mjs_navI18nSeed\(doc\)/g) || []).length, 2, 'aucun appel ailleurs')
     })
 
     it('UJS ne dépend pas d\'i18n : la fonction n\'y est jamais définie', () => {

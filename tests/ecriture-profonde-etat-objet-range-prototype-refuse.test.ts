@@ -2,7 +2,7 @@
 // variable d'état entière `$racine = $$o[k]`), puis `$loc.p.x = v`, `$loc.q.push(v)`, `delete $loc.p.x`. Une clé qui vaut
 // `__proto__` y range le prototype, `constructor` la fonction (`Object`, `Array`) : les aides d'écriture de l'état
 // (`µ._mjs_deepSet`, `µ._mjs_deepCall`, `µ._mjs_deepDelete`) refusent d'écrire dans un prototype ou dans une fonction —
-// rien n'est écrit, aucune erreur, un avertissement nomme le segment qui y mène (développement). `prototype` y range
+// rien n'est écrit, aucune erreur, un avertissement nomme le segment qui y mène (pour une fonction du navigateur, il explique le piège) (développement). `prototype` y range
 // `undefined`, comme en JavaScript : l'écriture lève sa TypeError, rien n'est écrit. Civet et CoffeeScript,
 // développement et production. Un objet permis rangé de la même façon, un objet sans prototype, une Map, un objet dont
 // une donnée s'appelle `constructor` écrivent toujours ; une écriture refusée rend sa valeur, une méthode `undefined`,
@@ -15,6 +15,10 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
+
+// avertissement qui nomme le segment refusé : pour `constructor`, le nom réservé écrit dans le chemin, ou la fonction du navigateur
+// qu'il range (`Object`, `Array`), dont l'avertissement explique le piège
+const nomme = (a: string, seg: string) => a.includes(`segment « ${seg} »`) || seg === 'constructor' && / contient la fonction (Object|Array) du navigateur, sans doute amenée par une clé venue de l'extérieur /.test(a)
 
 const CIVET = `<script>
   $$o = { a: { b: 0 }, l: [], d: JSON.parse('{"constructor":1,"prototype":2}'), n: Object.create(null), m: new Map() }
@@ -157,7 +161,7 @@ function ecart(t: ReturnType<typeof tracer>, ref: ReturnType<typeof tracer>, seg
   if (t.pollue.length || t.donnees !== ref.donnees) return JSON.stringify(t)
   if (vide ? !/^(|TypeError: .*)$/.test(t.erreur) : t.erreur !== '') return JSON.stringify(t)
   if (prod) return ''
-  const bon = vide ? avis.length === 0 : avis.length === 1 && avis[0].includes(`segment « ${seg} »`)
+  const bon = vide ? avis.length === 0 : avis.length === 1 && nomme(avis[0], seg)
   return bon ? '' : `avertissements ${JSON.stringify(avis)}`
 }
 

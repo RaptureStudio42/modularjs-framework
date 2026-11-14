@@ -64,9 +64,11 @@ Un composant est un fichier `.mjs` en kebab-case (`mon-compteur.mjs` → balise 
 Compiler un projet, ou lancer le serveur de dev avec rechargement à chaud (HMR) :
 
 ```bash
-npx mjs build --root /chemin/vers/app      # compile .mjs → .js
-npx mjs dev --port 3939                     # dev + HMR
+npx --no -- mjs build --root /chemin/vers/app      # compile .mjs → .js
+npx --no -- mjs dev --port 3939                     # dev + HMR
 ```
+
+`--no` interdit à npx d'installer quoi que ce soit : hors d'un projet où `modularjs-framework` est installé, npx irait sinon chercher sur npm un paquet nommé `mjs`, qui n'est pas ModularJS. `--` laisse à `mjs` les options écrites après lui.
 
 ```html
 <!-- snippet HMR à inclure en mode dev -->
@@ -189,9 +191,11 @@ A component is a kebab-case `.mjs` file (`my-counter.mjs` → tag `<mjs-my-count
 Compile a project, or start the dev server with hot module reload (HMR):
 
 ```bash
-npx mjs build --root /path/to/app      # compiles .mjs → .js
-npx mjs dev --port 3939                # dev + HMR
+npx --no -- mjs build --root /path/to/app      # compiles .mjs → .js
+npx --no -- mjs dev --port 3939                # dev + HMR
 ```
+
+`--no` forbids npx from installing anything: outside a project where `modularjs-framework` is installed, npx would otherwise fetch from npm a package named `mjs`, which is not ModularJS. `--` leaves to `mjs` the options written after it.
 
 ```html
 <!-- HMR snippet to include in dev mode -->

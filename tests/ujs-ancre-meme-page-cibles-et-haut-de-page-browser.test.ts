@@ -20,7 +20,7 @@ import type { Browser, Page } from 'playwright'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME   = join(__dirname, '..', 'src', 'runtime')
 const LIB       = ['mjs_page_cache.ts', 'mjs_ajax.ts', 'mjs_router.ts', 'mjs_ujs.ts'].map(f => '(function(µ){\n' + readFileSync(join(RUNTIME, f), 'utf-8') + '\n})(window.µ);').join('\n')
-const STUB      = 'window.µ={log(){},warn(){},error(){},_mjs_txt:(k,p,f)=>f,_mjs_msg:(k,p,f)=>f,_mjs_logger:()=>null,config:{},state:(o)=>o||{}}'
+const STUB      = 'window.µ={log(){},warn(){},error(){},_mjs_txt:(k,p,f)=>f,_mjs_msg:(k,p,f)=>f,_mjs_logger:()=>null,_mjs_th:(h)=>h,config:{},state:(o)=>o||{}}'
 const OMBRE     = '<script>(function(){var h=document.getElementById(\'hote\'),r=h.attachShadow({mode:\'closed\'});r.innerHTML=\'<div style="height:600px"></div><h3 id="ombre">ombre</h3>\';h._shadow=r;window.ombre=function(){return Math.round(r.getElementById(\'ombre\').getBoundingClientRect().top+scrollY)}})()</script>'
 
 // la page `chemin` : ses ancres, un lien vers elle-même et un lien vers une autre page (`?p=2`)

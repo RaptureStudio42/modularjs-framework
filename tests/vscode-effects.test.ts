@@ -30,7 +30,7 @@ describe('extension VS Code — les effets', () => {
 
   it('après * : les effets', () => {
     assert.ok(labels(help.suggest('<h1 *ne')).includes('neon'))
-    assert.ok(labels(help.suggest('<div @in=*')).includes('fly'))
+    assert.ok(labels(help.suggest('<div :in=*')).includes('fly'))
     assert.deepEqual(help.suggest('{$a*'), [], 'pas dans un calcul')
   })
 

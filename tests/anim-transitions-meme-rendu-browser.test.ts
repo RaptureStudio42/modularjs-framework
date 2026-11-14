@@ -28,7 +28,7 @@ const SOURCE = [
   '<script>',
   '$on = true',
   '</script>',
-  '{if $on}<p @in=*fade @out=*fly(up)>a</p><p @in=*scale @out=*blur>b</p><p @in=*rotate @out=*slide>c</p>{end}',
+  '{if $on}<p :in=*fade :out=*fly(up)>a</p><p :in=*scale :out=*blur>b</p><p :in=*rotate :out=*slide>c</p>{end}',
   ''
 ].join('\n')
 

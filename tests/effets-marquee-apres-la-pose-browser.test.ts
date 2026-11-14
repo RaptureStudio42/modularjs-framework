@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -271,7 +272,7 @@ describe('*marquee — des balises qui arrivent après la pose, une balise vidé
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Array<'chromium' | 'firefox' | 'webkit'>) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -565,6 +566,6 @@ describe('*marquee — des balises qui arrivent après la pose, une balise vidé
           }
         })
       })
-    })
+    }))
   }
 })

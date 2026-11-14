@@ -2,8 +2,8 @@
 // cite la ligne EXACTE de sa balise, juste après le nom de l'effet : `*titre (ligne 6) : effet inconnu`. Le générateur
 // la lit sur la balise elle-même et la porte sur l'erreur ; le bundler l'écrit dans le message. La recherche de `*nom`
 // dans le texte du fichier n'est plus qu'un repli, pour les fautes que le générateur ne situe pas (une transition
-// `@in=*nom`). La ligne du générateur est celle du HTML recollé : un partiel inclus ou une macro de balise (`<@head>`,
-// `<@window>`) qui précède la décale. Le bundler la garde donc seulement quand c'est la ligne d'une balise du fichier
+// `@in=*nom`). La ligne du générateur suit la table des lignes des partiels (une balise écrite après un partiel inclus a sa
+// ligne du fichier) ; une macro de balise (`<@head>`, `<@window>`) qui précède peut la décaler. Le bundler la garde donc seulement quand c'est la ligne d'une balise du fichier
 // qui écrit cet effet ; sinon il revient à la recherche dans le texte, jamais une ligne devinée. Un appel direct à
 // `transpile()` garde le message tel quel : la faute porte seulement la ligne (`cause.mjsLine`).
 
@@ -83,7 +83,7 @@ describe('une faute d\'effet cite la ligne de sa balise', function () {
   })
 
   it('repli : une transition fautive que le générateur ne situe pas prend les lignes du texte', async () => {
-    const m = await faute('<p @in=*fdae>a</p>\n<p>b</p>\n<p @in=*fdae>c</p>\n')
+    const m = await faute('<p :in=*fdae>a</p>\n<p>b</p>\n<p :in=*fdae>c</p>\n')
     assert.match(m, /\*fdae \(lignes 1, 3\) : effet inconnu/)
   })
 })
@@ -97,10 +97,10 @@ describe('la ligne du générateur est contrôlée contre le fichier', function 
     assert.deepEqual(lignes(m), ['(ligne 6)'])
   })
 
-  it('un partiel inclus avant la balise : la ligne du HTML recollé n\'est pas celle du fichier, aucune n\'est citée', async () => {
+  it('un partiel inclus avant la balise : la table des lignes des partiels rend sa ligne du fichier, elle est citée', async () => {
     const m = await faute('<p>x</p>\n<@include bas>\n<p *titre>y</p>\n')
-    assert.match(m, /\*titre : effet inconnu/)
-    assert.deepEqual(lignes(m), [])
+    assert.match(m, /\*titre \(ligne 3\) : effet inconnu/)
+    assert.deepEqual(lignes(m), ['(ligne 3)'])
   })
 
   it('un partiel inclus APRÈS la balise : les lignes d\'avant ne bougent pas, la ligne est citée', async () => {
@@ -109,15 +109,15 @@ describe('la ligne du générateur est contrôlée contre le fichier', function 
     assert.deepEqual(lignes(m), ['(ligne 1)'])
   })
 
-  it('un effet qui vient d\'un partiel : aucune ligne, jamais celle du HTML recollé', async () => {
+  it('un effet qui vient d\'un partiel : sa ligne dans le partiel, avec son fichier, jamais celle du HTML recollé', async () => {
     const m = await faute('<p>x</p>\n<@include effet>\n')
-    assert.match(m, /\*titre : effet inconnu/)
+    assert.match(m, /\*titre \(ligne 2 de _effet\.mjs\) : effet inconnu/)
     assert.deepEqual(lignes(m), [])
   })
 
-  it('le même effet écrit dans le fichier et dans un partiel : on ne sait pas laquelle est fautive, aucune ligne', async () => {
+  it('le même effet écrit dans un partiel puis dans le fichier : la première faute, celle du partiel, citée dans le partiel', async () => {
     const m = await faute('<@include effet>\n<p>x</p>\n<p *titre>y</p>\n')
-    assert.match(m, /\*titre : effet inconnu/)
+    assert.match(m, /\*titre \(ligne 2 de _effet\.mjs\) : effet inconnu/)
     assert.deepEqual(lignes(m), [])
   })
 })

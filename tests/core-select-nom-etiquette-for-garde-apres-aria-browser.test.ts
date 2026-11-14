@@ -14,7 +14,7 @@ import { assembler } from './helpers/editeur-riche.js'
 
 const OPTIONS = '<@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option>'
 
-const PAGE = `<form class="f" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f" method="get" action="/envoi" :noUJS>
   <label for="pays">Pays</label>
   <@@select id="pays" class="pays" name="pays" required>${OPTIONS}</@@select>
   <label for="ville">Ville</label>

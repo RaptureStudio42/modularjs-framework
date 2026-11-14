@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { MOTEURS, ouvrir } from './helpers/editeur-riche.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 
-const SOURCE = `<form class="f" @noUJS>
+const SOURCE = `<form class="f" :noUJS>
   <@@select class="simple" name="s"><@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option><@@option value="it">Italie</@@option></@@select>
   <@@select class="multi" name="m" multiple><@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option></@@select>
   <@@select class="cherche" name="c" search><@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option><@@option value="it">Italie</@@option></@@select>

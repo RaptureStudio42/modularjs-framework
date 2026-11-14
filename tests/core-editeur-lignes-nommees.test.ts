@@ -47,7 +47,7 @@ const HOTE = `<script>
     window.__etat = -> { texte: $texte, coches: $coches, vieux: $vieux, cancien: $cancien }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="a" name="modele" value=!{$texte}></@@editor>
   <@@editor class="v" name="vieux" value=!{$vieux}></@@editor>
   <@@editor class="i" name="inval" toolbar="none" value={$inval}></@@editor>

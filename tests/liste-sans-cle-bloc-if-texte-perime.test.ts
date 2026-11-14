@@ -1,10 +1,9 @@
 // Un `{for}` SANS clé dont chaque ligne est un `{if}` (icône ou texte, l'aperçu d'un texte à
-// icônes) n'affiche plus un vieux morceau de texte quand la liste change. Les éléments sont des
-// objets neufs à chaque frappe : chaque ligne part et une ligne recyclée la remplace. La réserve de
-// recyclage gardait la liste des nœuds de la ligne prise à sa CRÉATION ; après une bascule de son
-// `{if}`, ce relevé était périmé — la ligne recyclée remettait à l'écran l'ancien nœud de texte
-// (« ◊ Bon Bonne nuit » au lieu de « ◊◊ Bonne nuit » après la frappe, puis une icône posée au
-// début), ou gardait son icône fantôme au lieu du texte neuf. Couvre les deux chemins de retrait :
+// icônes) n'affiche jamais un vieux morceau de texte quand la liste change. Les éléments sont des
+// objets neufs à chaque frappe : chaque ligne part et une ligne neuve, faite par le gabarit, la
+// remplace ; elle ne montre que les nœuds de sa propre donnée, jamais l'ancien nœud de texte
+// d'une autre (« ◊ Bon Bonne nuit » au lieu de « ◊◊ Bonne nuit » après la frappe, puis une icône
+// posée au début), ni une icône fantôme au lieu du texte neuf. Couvre les deux chemins de retrait :
 // la liste qui occupe tout son parent (retrait groupé) et celle qui a un voisin (retrait ligne à
 // ligne), avec un composant ou une simple balise dans la branche.
 
@@ -89,8 +88,8 @@ function frappe(): string[] {
   return out
 }
 
-// une ligne d'icône reprise pour un texte, la liste vidée d'un coup, puis un texte de nouveau :
-// la ligne recyclée doit montrer ce texte, pas l'icône qu'elle portait à sa création
+// une ligne d'icône remplacée par un texte, la liste vidée d'un coup, puis un texte de nouveau :
+// la ligne neuve doit montrer ce texte, pas une icône d'avant
 const VIDEE = ['A', '[[i:b]]', 'C', 'D', '', 'E']
 
 // compile l'aperçu avec ce gabarit de texte à icônes, joue les saisies, rend les écarts à l'écran

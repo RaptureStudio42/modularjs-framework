@@ -86,7 +86,7 @@
   µmount -> onScroll()
 </script>
 
-<div class="progress" part="progress" role="progressbar" aria-label={$labelText} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round($pct)} @class{boolAttr($follow)}="follow" @class{$shown}="shown" --mjs-progress-size={num($size, 100) + 'px'} --mjs-progress-x={$x + 'px'} --mjs-progress-y={$y + 'px'}>
+<div class="progress" part="progress" role="progressbar" aria-label={$labelText} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round($pct)} :class{boolAttr($follow)}="follow" :class{$shown}="shown" --mjs-progress-size={num($size, 100) + 'px'} --mjs-progress-x={$x + 'px'} --mjs-progress-y={$y + 'px'}>
   <svg viewBox="0 0 100 100" aria-hidden="true">
     <circle class="track" cx="50" cy="50" r="25" stroke={$track} stroke-width={num($thickness, 4)}></circle>
     <circle class="bar" cx="50" cy="50" r="25" stroke={$color} stroke-width={num($thickness, 4)} stroke-dasharray={C} stroke-dashoffset={$offset}></circle>
@@ -96,7 +96,7 @@
   </svg>
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .progress
     width: var(--mjs-progress-size)
     height: var(--mjs-progress-size)

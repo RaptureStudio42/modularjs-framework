@@ -1,9 +1,10 @@
 // `@click=nom` (ou `@click={nom}`) appelle la fonction `nom` du <script> au clic. Le défaut : quand
 // `nom` n'est pas une fonction du <script> mais une méthode du composant (`@nom = ->`), rien ne se
 // passait au clic, et le build ne disait rien (le nom nu n'existe pas : « nom is not defined »,
-// seulement en console, au clic). Le build prévient désormais (lint.events, sans bloquer) et dit
-// quoi écrire, sur une balise comme sur <@window>/<@document> ; une fonction du <script> citée nue,
-// elle, marche comme avant, sans un mot.
+// seulement en console, au clic). Dans un appel entre accolades (`@click={nom(1)}`) et sur
+// <@window>/<@document>, le build prévient (lint.events, sans bloquer) et dit quoi écrire ; écrite
+// seule sur une balise (`@click=nom`, `@click={nom}`), la référence est refusée à la construction ;
+// une fonction du <script> citée nue, elle, marche comme avant, sans un mot.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -60,19 +61,23 @@ describe('gestionnaire — un nom cité nu', function () {
     }
   })
 
-  it('une méthode du composant (`@valider = ->`) citée nue : un avertissement par nom, avec l\'écriture juste', async () => {
+  it('une méthode du composant (`@valider = ->`) citée nue dans un appel entre accolades : un avertissement par nom, avec l\'écriture juste', async () => {
     const methode = '<script>\n$n = 0\n@valider = -> $n++\n</script>\n'
-    for (const bouton of ['<button @click=valider>ok</button>', '<button @click={valider}>ok</button>', '<button @click={valider(1)}>ok</button>']) {
+    for (const bouton of ['<button @click={valider(1)}>ok</button>', '<button @click={valider()}>ok</button>']) {
       const vus = await avertissements(methode + bouton + '\n')
       assert.equal(vus.length, 1, bouton)
       assert.match(vus[0], /valider[\s\S]*@valider/)
     }
-    assert.equal((await avertissements(methode + '<button @click=valider>a</button>\n<button @click={valider()}>b</button>\n')).length, 1, 'un seul par nom')
+    assert.equal((await avertissements(methode + '<button @click={valider(1)}>a</button>\n<button @click={valider()}>b</button>\n')).length, 1, 'un seul par nom')
+    // seul, avec ou sans accolades, le nom d'une méthode citée nue est refusé à la construction, avec l'écriture juste
+    await assert.rejects(transpile(methode + '<button @click=valider>ok</button>\n', { moduleName: 'formulaire' }), /@click=@valider/)
+    await assert.rejects(transpile(methode + '<button @click={valider}>ok</button>\n', { moduleName: 'formulaire' }), /@click=\{@valider\}/)
   })
 
-  it('même avertissement sur <@window>/<@document> : `@keydown=touche` quand `touche` est la méthode `@touche`', async () => {
+  it('<@window>/<@document> : `@keydown=touche` refusé, `{touche()}` averti, quand `touche` est la méthode `@touche`', async () => {
     const methode = '<script>\n$n = 0\n@touche = -> $n++\n</script>\n'
-    assert.match((await avertissements(methode + '<@window @keydown=touche>\n<p>x</p>\n', 'clavier')).join('\n'), /touche[\s\S]*@touche/)
+    // écrit seul (`@keydown=touche`), le nom suit la règle des éléments : refusé à la construction, avec la bonne écriture
+    await assert.rejects(transpile(methode + '<@window @keydown=touche>\n<p>x</p>\n', { moduleName: 'clavier' }), /« @keydown=@touche »/)
     assert.match((await avertissements(methode + '<@document @click={touche()}>\n<p>x</p>\n', 'clavier')).join('\n'), /touche[\s\S]*@touche/)
     assert.deepEqual(await avertissements(methode + '<@window @keydown=@touche>\n<p>x</p>\n', 'clavier'), [])
     assert.deepEqual(await avertissements('<script>\n$n = 0\ntouche = -> $n++\n</script>\n<@window @keydown=touche>\n<p>x</p>\n', 'clavier'), [])

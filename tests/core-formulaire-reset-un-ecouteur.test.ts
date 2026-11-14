@@ -18,12 +18,12 @@ const TROIS = [
   '  $b = false',
   '  $c = false',
   '</script>',
-  '<form id="f" @noUJS>',
+  '<form id="f" :noUJS>',
   '  {if $a}<@@checkbox class="c" name="c" checked>Case</@@checkbox>{end}',
   '  {if $b}<@@gauge class="g" name="g" value={3}></@@gauge>{end}',
   '  {if $c}<@@select class="p" name="pays" value="fr"><@@option value="fr">France</@@option><@@option value="be">Belgique</@@option></@@select>{end}',
   '</form>',
-  '<form id="g" @noUJS></form>',
+  '<form id="g" :noUJS></form>',
 ].join('\n')
 
 const formulaire = (hote: any, id = 'f') => hote._shadow.querySelector('#' + id)

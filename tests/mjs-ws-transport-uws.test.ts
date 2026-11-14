@@ -253,13 +253,13 @@ function poserWebSocket(valeur: any): void {
   webSocketAvant.push({ present: 'WebSocket' in globalThis, valeur: (globalThis as any).WebSocket })
   ;(globalThis as any).WebSocket = valeur
 }
-afterEach(() => {
+function restoreWebSocket(): void {
   const avant = webSocketAvant[0]
   webSocketAvant.length = 0
   if (!avant) return
   if (avant.present) (globalThis as any).WebSocket = avant.valeur
   else delete (globalThis as any).WebSocket
-})
+}
 
 /** branche `globalThis.WebSocket` sur le faux module — expose aussi le dernier bout SERVEUR
  *  connecté (getLastServer), utile pour piloter bufferedAmount depuis le test (backpressure). */
@@ -304,6 +304,7 @@ describe('mjs-ws/transport-uws — boucle complète (faux module uWS injecté, V
   // une connexion encore ouverte quand le serveur s'arrête programme une reconnexion qui part pendant les fichiers suivants,
   // sur leur WebSocket : fermée ici, même si le test échoue
   afterEach(() => { while (clientsOuverts.length) clientsOuverts.pop().destroy() })
+  afterEach(restoreWebSocket)
 
   it("hello→welcome→request→ack à travers l'adaptateur uWS", async () => {
     const fakeUws    = makeFakeUwsModule()
@@ -672,6 +673,8 @@ const REAL_UWS_ENTRY = join(UWS_DIR, 'ESM_wrapper.mjs')
 
 describe('mjs-ws/transport-uws — SMOKE RÉEL (uWebSockets.js, si présent)', function () {
   this.timeout(15000)
+
+  afterEach(restoreWebSocket)
 
   it('boucle complète avec le VRAI module uWebSockets.js, sur un port éphémère (rapporté — jamais bloquant si le paquet est absent)', async function () {
     if (!existsSync(REAL_UWS_ENTRY)) {

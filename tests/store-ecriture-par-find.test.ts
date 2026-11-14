@@ -68,9 +68,13 @@ export cumule = (id) ->
 export optModule = (k) -> $$m.get(k)?.n = 9
 `
 
-const TACHES = `@import marque 'taches-aides.civet'
-@import cumule 'taches-aides.civet'
-@import optModule 'taches-aides.civet'
+const TACHES = `@import marque 'taches-aides.civet.mjs'
+@import cumule 'taches-aides.civet.mjs'
+@import optModule 'taches-aides.civet.mjs'
+
+<script module>
+  attendre = (ms) -> new Promise((r) -> setTimeout(r, ms))
+</script>
 
 <script>
   $$taches = [{ id: 1, groupe: 'a', fait: false, n: 0, note: 'x', meta: { vu: false }, tags: [] }, { id: 2, groupe: 'a', fait: false, n: 0, note: 'y', meta: { vu: false }, tags: [] }, { id: 3, groupe: 'b', fait: false, n: 0, note: '', meta: { vu: false }, tags: [] }]
@@ -132,7 +136,7 @@ const TACHES = `@import marque 'taches-aides.civet'
   @tenu        = (id) ->
     t9 := $$taches.find((x) -> x.id == id)
     $$taches.unshift({ id: 0, groupe: 'z', fait: false, n: 0, note: '', meta: { vu: false }, tags: [] })
-    await new Promise((r) -> setTimeout(r, 40))
+    await attendre(40)
     t9.fait = true
   @reassigne   = (id) ->
     t7 = $$taches.find((x) -> x.id == id)
@@ -165,10 +169,10 @@ export sinonC = (id) -> $$liste.find((x) -> x.id == id).note ||= 'module'
 export optEcritC = (k) -> $$carte.get(k)?.n = 9
 `
 
-const COFFEE = `@import marqueC 'liste-aides.coffee'
-@import optionC 'liste-aides.coffee'
-@import sinonC 'liste-aides.coffee'
-@import optEcritC 'liste-aides.coffee'
+const COFFEE = `@import marqueC 'liste-aides.coffee.mjs'
+@import optionC 'liste-aides.coffee.mjs'
+@import sinonC 'liste-aides.coffee.mjs'
+@import optEcritC 'liste-aides.coffee.mjs'
 
 <script lang="coffee">
 $$liste = [{ id: 1, fait: false, n: 0, note: 'x', meta: { vu: false }, tags: [] }, { id: 2, fait: false, n: 0, note: '', meta: { vu: false }, tags: [] }]
@@ -223,8 +227,16 @@ $$obj = { a: { b: 1 } }
 <p class="obj">{JSON.stringify($$obj)}</p>
 `
 
+// une liste d'objets passe par un type nommé, rangé dans un fichier *.types.mjs
+const FLUX_TYPES = `<types>
+  Flux
+    id    int 0..100
+    tags  string[]
+</types>
+`
+
 const FLUX = `<vars>
-  $$flux { id: int 0..100, tags: string[] }[]
+  $$flux  Flux[]
 </vars>
 
 <script>
@@ -402,13 +414,13 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
 
   before(async function () {
     this.timeout(180000)
-    codeTaches = await construire('store-find-taches', { 'taches-aides.civet': AIDES, 'taches-find.mjs': TACHES })
-    codeFlux   = await construire('store-find-flux', { 'flux-find.mjs': FLUX })
+    codeTaches = await construire('store-find-taches', { 'taches-aides.civet.mjs': AIDES, 'taches-find.mjs': TACHES })
+    codeFlux   = await construire('store-find-flux', { 'flux.types.mjs': FLUX_TYPES, 'flux-find.mjs': FLUX })
     codeEffet  = await construire('store-find-effet', { 'effet-find.mjs': EFFET })
-    codeCoffee = await construire('store-find-coffee', { 'liste-aides.coffee': AIDES_COFFEE, 'liste-coffee.mjs': COFFEE })
+    codeCoffee = await construire('store-find-coffee', { 'liste-aides.coffee.mjs': AIDES_COFFEE, 'liste-coffee.mjs': COFFEE })
     codeRegle  = await construire('store-regle-civet', { 'regle-civet.mjs': REGLE })
     codeRegleC = await construire('store-regle-coffee', { 'regle-coffee.mjs': REGLE_COFFEE })
-    codeProd   = await construireProd('store-find-prod', { 'taches-aides.civet': AIDES, 'taches-find.mjs': TACHES, 'liste-aides.coffee': AIDES_COFFEE, 'liste-coffee.mjs': COFFEE, 'regle-civet.mjs': REGLE, 'regle-coffee.mjs': REGLE_COFFEE })
+    codeProd   = await construireProd('store-find-prod', { 'taches-aides.civet.mjs': AIDES, 'taches-find.mjs': TACHES, 'liste-aides.coffee.mjs': AIDES_COFFEE, 'liste-coffee.mjs': COFFEE, 'regle-civet.mjs': REGLE, 'regle-coffee.mjs': REGLE_COFFEE })
   })
 
   after(async () => {
@@ -602,9 +614,9 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
   })
 
   it('clé calculée entre l\'élément trouvé et la cible : le prototype et la fonction où mènent __proto__ et constructor sont refusés, comme par le chemin', async () => {
-    // [forme, arguments, objet visé, segment que nomme l'avertissement]
-    const formes: [string, string[], string, string][] = [['proto', ['__proto__', 'pollueA'], 'Object.prototype', '__proto__'], ['proto', ['constructor', 'pollueB'], 'Object', 'constructor'], ['protoVar', ['__proto__', 'pollueC'], 'Object.prototype', '__proto__'], ['protoPlus', ['__proto__', 'pollueD'], 'Object.prototype', '__proto__']]
-    for (const [methode, args, cible, seg] of formes) {
+    // [forme, arguments, objet visé, texte de l'avertissement : le segment qui mène au prototype, ou le piège de la clé qui mène à une fonction du navigateur]
+    const formes: [string, string[], string, string][] = [['proto', ['__proto__', 'pollueA'], 'Object.prototype', 'segment « __proto__ »'], ['proto', ['constructor', 'pollueB'], 'Object', 'contient la fonction Object du navigateur'], ['protoVar', ['__proto__', 'pollueC'], 'Object.prototype', 'segment « __proto__ »'], ['protoPlus', ['__proto__', 'pollueD'], 'Object.prototype', 'segment « __proto__ »']]
+    for (const [methode, args, cible, attendu] of formes) {
       const messages: string[] = []
       const { window, comp } = await taches()
       try {
@@ -612,7 +624,7 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
         comp[methode](...args)
         assert.equal(window.eval(`Object.prototype.hasOwnProperty.call(${cible}, '${args[1]}')`), false, `${methode}(${args}) : ${cible} intact`)
         assert.equal(messages.length, 1, `${methode}(${args}) : un avertissement`)
-        assert.match(messages[0], new RegExp(`segment « ${seg} »`))
+        assert.ok(messages[0].includes(attendu), `${methode}(${args}) : ${messages[0]}`)
       }
       finally {
         window.eval(`delete ${cible}.${args[1]}`)
@@ -895,7 +907,8 @@ describe('magasin $$ : une écriture par find(), findLast(), at(), get() prévie
       assert.equal(window.eval('Object.hasOwnProperty("pollueC")'), false, 'constructor : Object intact')
       assert.equal(window.eval('Object.prototype.hasOwnProperty("pollueP")'), false, '__proto__ : Object.prototype intact')
       window.eval('delete Object.pollueC; delete Object.prototype.pollueP')
-      assert.deepEqual(avis.map((m) => (m.match(/segment « (\w+) »/) || [])[1]), ['constructor', '__proto__'])
+      // la fonction atteinte : l'avertissement dit que `constructor` est écrit dans le code ; le prototype atteint : il nomme le segment
+      assert.deepEqual(avis.map((m) => m.includes('`constructor`, écrit dans le code, mène à la fonction Object du navigateur') ? 'Object' : (m.match(/segment « (\w+) »/) || [])[1]), ['Object', '__proto__'])
       avis.length = 0
       assert.throws(() => comp.absentReserve('__proto__'), /TypeError: Cannot read properties of undefined \(reading '__proto__'\)/)
       const natif = window.eval('(() => { try { const o = undefined; return o[[\'__proto__\']] } catch (e) { return e.message } })()')

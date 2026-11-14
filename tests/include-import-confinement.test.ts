@@ -49,10 +49,10 @@ describe('confinement sourceDir — <@include>/@import', function () {
     await bundler.close()
   })
 
-  it('@import \'../dehors/x.civet\' (chemin relatif hors sourceDir) → refusé, rien copié', async function () {
+  it('@import \'../dehors/x.civet.mjs\' (chemin relatif hors sourceDir) → refusé, rien copié', async function () {
     const { srcDir, dehors, outDir, manifest } = makeProject('import-escape')
-    writeFileSync(join(dehors, 'secret.civet'), "console.log 'SECRET-IMPORT-HORS'\n")
-    writeFileSync(join(srcDir, 'ok.mjs'), "<div>ok</div>\n<script>\n@import Secret '../dehors/secret.civet'\n</script>\n")
+    writeFileSync(join(dehors, 'secret.civet.mjs'), "console.log 'SECRET-IMPORT-HORS'\n")
+    writeFileSync(join(srcDir, 'ok.mjs'), "<div>ok</div>\n<script>\n@import Secret '../dehors/secret.civet.mjs'\n</script>\n")
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     const stats = await bundler.compile()
@@ -63,10 +63,10 @@ describe('confinement sourceDir — <@include>/@import', function () {
     await bundler.close()
   })
 
-  it('µimport(\'../dehors/x.civet\') (forme nue, chemin hors sourceDir) → refusé, rien copié', async function () {
+  it('µimport(\'../dehors/x.civet.mjs\') (forme nue, chemin hors sourceDir) → refusé, rien copié', async function () {
     const { srcDir, dehors, outDir, manifest } = makeProject('muimport-escape')
-    writeFileSync(join(dehors, 'secret2.civet'), "console.log 'SECRET-MUIMPORT-HORS'\n")
-    writeFileSync(join(srcDir, 'ok.mjs'), "<div>ok</div>\n<script>\nx = µimport('../dehors/secret2.civet')\n</script>\n")
+    writeFileSync(join(dehors, 'secret2.civet.mjs'), "console.log 'SECRET-MUIMPORT-HORS'\n")
+    writeFileSync(join(srcDir, 'ok.mjs'), "<div>ok</div>\n<script>\nx = µimport('../dehors/secret2.civet.mjs')\n</script>\n")
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     const stats = await bundler.compile()

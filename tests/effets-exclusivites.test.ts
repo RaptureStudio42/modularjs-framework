@@ -13,7 +13,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { parseEffect, checkPlacement } from '../src/effects/catalog.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const COMPOSANTS: Record<string, string> = {
   'fx-jauge': '<vars>\n  $volume  int 0..200\n</vars>\n<script>\n$volume = 50\n$p = 3\n</script>\n<span class="g" *gauge>{$volume}</span>\n<span class="h" *gauge(min: 0, max: 10, style: line, direction: left)>5</span>\n<div class="v" *gauge(value: $p, max: 12, colors: [#00ff00, #ff0000])></div>\n<button class="max" @click={$volume = 200}>+</button>\n<button class="p6" @click={$p = 6}>6</button>',
@@ -82,6 +82,7 @@ describe('effets — exclusivités MJS', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`

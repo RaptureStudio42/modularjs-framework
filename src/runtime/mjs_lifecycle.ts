@@ -60,8 +60,21 @@ if (µ.Element) {
       // NUS (sans `.call`), d'où le `res.call(self)` explicite.
       const self = this;
       const wrapped = function() {
-        const res = fn.call(self);
-        if (typeof res === 'function') {
+        // passage du µmount : une minuterie posée pendant lui lui appartient (marque 3, mjs_every.ts), arrêtée au retrait
+        // du composant ; le µmount rejoué au retour en pose une neuve
+        const avant      = µ._mjs_mountPass;
+        µ._mjs_mountPass = self;
+        let res;
+        try {
+          res = fn.call(self);
+        }
+        finally {
+          µ._mjs_mountPass = avant;
+        }
+        // main d'arrêt d'un `µafter … always: true` (marque 2, mjs_every.ts) : son tir part même après la disparition,
+        // ce n'est pas un nettoyage ; celle d'une autre minuterie en est un (arrêtée au démontage, µmount rejoué au
+        // retour du composant en pose une neuve)
+        if (typeof res === 'function' && res._mjs_timer !== 2) {
           self._mjs_onDestroy(function() {
             return res.call(self);
           });

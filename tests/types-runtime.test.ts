@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseRule, resolveRule, emitRuntimeRule } from '../src/transpiler/var-types.js'
+import { parseRule, resolveRule, emitRuntimeRule, parseVarsBlock } from '../src/transpiler/var-types.js'
 import { poserMessages } from './helpers/messages-stub.js'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
 
@@ -38,7 +38,8 @@ function makeMu(mode?: 'warn' | 'error'): any {
 const DEFS = { Percent: parseRule('int 0..100', { bloc: '<types>', ligne: 1 }) }
 function regle(texte: string): any {
   const ou  = { bloc: '<vars>', ligne: 1 }
-  const ast = resolveRule(parseRule(texte, ou), DEFS, ou)
+  // un texte de plusieurs lignes : les champs d'un objet en retrait, comme sous une variable du <vars>
+  const ast = resolveRule(texte.includes('\n') ? parseVarsBlock(`$v\n${texte.split('\n').map(l => '  ' + l).join('\n')}`, 0)[0].rule : parseRule(texte, ou), DEFS, ou)
   return new Function(`return ${emitRuntimeRule(ast, true, texte)}`)()
 }
 
@@ -112,11 +113,11 @@ describe('types — contrôle d’une valeur', () => {
     assert.equal(passe('string[] 0..1', ['a', 'b']).s, -1, 'trop d’éléments : refusé')
     assert.equal(passe('int[]', [1, 'x']).s, -1, 'un élément refusé refuse toute la liste')
     const reglages = { volume: 150, bass: '-2', autre: 'libre' }
-    assert.deepEqual(passe('{ volume: Percent, bass?: int -10..10 }', reglages), { s: 2, v: reglages })
+    assert.deepEqual(passe('volume  Percent\nbass?  int -10..10', reglages), { s: 2, v: reglages })
     assert.deepEqual(reglages, { volume: 100, bass: -2, autre: 'libre' })
-    assert.deepEqual(passe('{ volume: Percent, bass?: int -10..10 }', { volume: 5 }).s, 0, 'champ facultatif absent')
-    assert.equal(passe('{ volume: Percent }', {}).s, -1, 'champ obligatoire absent')
-    assert.equal(passe('{ volume: Percent }', [1]).s, -1, 'une liste n’est pas un objet')
+    assert.deepEqual(passe('volume  Percent\nbass?  int -10..10', { volume: 5 }).s, 0, 'champ facultatif absent')
+    assert.equal(passe('\nvolume  Percent', {}).s, -1, 'champ obligatoire absent')
+    assert.equal(passe('\nvolume  Percent', [1]).s, -1, 'une liste n’est pas un objet')
   })
 
   it('une liste refusée n’est jamais modifiée à moitié', () => {
@@ -198,7 +199,7 @@ describe('types — écriture d’une variable de composant', () => {
 describe('types — écriture sous une valeur typée (champ, élément, clé calculée)', () => {
   it('un champ passe la règle de son objet ; un champ sans règle passe tel quel', () => {
     const µ  = makeMu('warn')
-    const el = composant(µ, { settings: '{ volume: Percent, bass?: int -10..10 }' })
+    const el = composant(µ, { settings: 'volume  Percent\nbass?  int -10..10' })
     const s  = { volume: 50 }
     assert.equal(µ._mjs_tset(el, 'settings', s), s)
     assert.equal(µ._mjs_tdeep(el, el._mjs_treg, s, 'volume', 150), 100)
@@ -238,7 +239,7 @@ describe('types — écriture sous une valeur typée (champ, élément, clé cal
 
   it('supprimer un champ obligatoire est refusé', () => {
     const µ  = makeMu()
-    const el = composant(µ, { settings: '{ volume: Percent, bass?: int }' })
+    const el = composant(µ, { settings: 'volume  Percent\nbass?  int' })
     const s  = { volume: 50, bass: 2 }
     µ._mjs_tset(el, 'settings', s)
     assert.equal(µ._mjs_tdelete(el, el._mjs_treg, s, 'volume'), false)
@@ -247,7 +248,7 @@ describe('types — écriture sous une valeur typée (champ, élément, clé cal
 
   it('un objet remplacé à l’intérieur passe sa règle, puis ses propres champs sont suivis', () => {
     const µ  = makeMu()
-    const el = composant(µ, { x: '{ son: { volume: Percent } }' })
+    const el = composant(µ, { x: 'son\n  volume  Percent' })
     const x: any = { son: { volume: 1 } }
     µ._mjs_tset(el, 'x', x)
     const neuf = { volume: 500 }
@@ -261,7 +262,7 @@ describe('types — stores ($$x)', () => {
   it('la règle d’un store vaut pour toute l’appli ; la valeur déjà présente la passe tout de suite', () => {
     const µ = makeMu('warn')
     µ._mjs_storeRaw.cart = { quantity: 500 }
-    µ._mjs_storeTypes({ cart: regle('{ quantity: int 1..99 }'), level: regle('int 1..3') })
+    µ._mjs_storeTypes({ cart: regle('\nquantity  int 1..99'), level: regle('int 1..3') })
     assert.equal(µ._mjs_storeRaw.cart.quantity, 99)
     assert.deepEqual(µ.notified, ['cart'])
     assert.equal(µ._mjs_tstore('level', 7), 3)

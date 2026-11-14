@@ -42,8 +42,14 @@
 µ._def = function(tag, C) {
   // la silhouette d'un composant dont le code arrivait (mjs_fx_skeleton.ts) part AVANT l'enregistrement,
   // qui monte les balises déjà là : elle n'est jamais vue à côté du vrai rendu
-  if (µ._mjs_skelOff) µ._mjs_skelOff(tag);
-  if (!customElements.get(tag)) customElements.define(tag, C);
+  µ._mjs_skelOff?.(tag);
+  // `µ._mjs_defining`, le temps de l'enregistrement, au navigateur : les balises déjà dans la page y sont mises à niveau, elles seules
+  // ont pu être stylées avant leur définition (`mjs-appearing`, constructeur de mjs_element.ts)
+  if (!customElements.get(tag)) {
+    µ._mjs_defining = !µ.server;
+    customElements.define(tag, C);
+    µ._mjs_defining = 0;
+  }
   // un fichier de page ou de groupe rapporte aussi des composants déjà chargés seuls : c'est attendu, rien à dire
   else if (!(µ.pathOf && /mjs_(page|group)-/.test(µ.pathOf(tag.slice(4))))) (µ.warn || console.warn)(µ._mjs_msg('domDefined', { tag: tag }, '{tag} déjà défini par un autre bundle : cette définition est ignorée'));
 };

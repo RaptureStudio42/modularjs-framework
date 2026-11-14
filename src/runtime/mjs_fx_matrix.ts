@@ -204,6 +204,16 @@
       });
       each(el, 'pointerleave', function() { hot = false; });
     }
+    // @@ visible
+    // `on: view` avec `visible: 60%` : la pluie tombe tant que cette part de la balise est à l'écran (µ._mjs_fxRun la lit, cf. µ._mjs_fxSight)
+    if (s.on === 'view' && s.visible) {
+      hot = false;
+      undo.push(µ._mjs_fxRun(el, 'view', function() {
+        hot = true;
+        go();
+      }, function() { hot = false; }));
+    }
+    // @@
     var off = function() {
       for (var u = undo.length - 1; u >= 0; u--) undo[u]();
       if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);

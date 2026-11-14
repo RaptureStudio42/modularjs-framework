@@ -35,10 +35,10 @@ const GROUPE_RE = /^mjs_group-onglet-[0-9a-z]{5}\.js$/
 
 // un onglet (`onglet`) : deux cartes, une puce partagée par les deux, un module partagé, un effet
 const BASE: Record<string, string> = {
-  'partage.module.civet': 'export marque := \'valeur-du-module-partage\'\n',
+  'partage.module.civet.mjs': 'export marque := \'valeur-du-module-partage\'\n',
   'puce.mjs':             '<i class="puce">puce</i>\n',
-  'carte-a.mjs':          '@import marque \'partage.module.civet\'\n\n<p class="a" *glitch>{marque}</p>\n<mjs-puce></mjs-puce>\n',
-  'carte-b.mjs':          '@import marque \'partage.module.civet\'\n\n<p class="b">{marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte-a.mjs':          '@import marque \'partage.module.civet.mjs\'\n\n<p class="a" *glitch>{marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte-b.mjs':          '@import marque \'partage.module.civet.mjs\'\n\n<p class="b">{marque}</p>\n<mjs-puce></mjs-puce>\n',
   'onglet.mjs':           '<h2 class="o">onglet</h2>\n<mjs-carte-a></mjs-carte-a>\n<mjs-carte-b></mjs-carte-b>\n',
   'accueil.mjs':          '<h1 class="t">accueil</h1>\n<mjs-onglet></mjs-onglet>\n',
   'libre.mjs':            '<p class="l">libre</p>\n',

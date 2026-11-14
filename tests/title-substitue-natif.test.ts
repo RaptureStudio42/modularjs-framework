@@ -205,9 +205,9 @@ describe('runtime @title — non-régression : les 3 formes affichent toujours l
 <script>
 $msg = 'Expression réactive'
 </script>
-<button id="f1" @title="Chaîne statique">a</button>
-<button id="f2" @title={$msg}>b</button>
-<button id="f3" @title={ text: 'Objet options', side: 'bottom' }>c</button>
+<button id="f1" :title="Chaîne statique">a</button>
+<button id="f2" :title={$msg}>b</button>
+<button id="f3" :title={ text: 'Objet options', side: 'bottom' }>c</button>
 `
     const { coreCode, compCode } = await buildCore({ name: 'titleforms', src: COMPONENT })
     window = new Window({ url: 'http://localhost/' })

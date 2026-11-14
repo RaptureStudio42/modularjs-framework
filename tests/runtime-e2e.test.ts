@@ -242,11 +242,11 @@ incr = => $count = $count + 1
     assert.ok(button, 'le shadow root doit contenir un button')
     assert.match(button.textContent ?? '', /Hits: 0/, 'render initial')
 
-    // Le node doit porter un tableau d'ids en prop `_mjs_ids` (fix
-    // collision), au lieu d'une WeakMap.
-    const ids = button._mjs_ids
-    if (ids) {
-      assert.ok(Array.isArray(ids), 'button._mjs_ids doit être un tableau')
+    // la balise mène à la table de son bloc par une seule propriété (`_mjs_ev`), jamais un tableau ; la table la désigne sous ses
+    // identifiants de routage
+    const tab = button._mjs_ev
+    if (tab) {
+      assert.ok(!Array.isArray(tab) && tab._mjs_reg.ids.some((id: string) => tab[id] === button), 'button._mjs_ev doit mener à la table de son bloc')
     }
 
     // Click → incrémente le compteur (vérifie que le routing événementiel
@@ -285,7 +285,7 @@ while i < 100
 $selected = -1
 </script>
 {for row in $rows}
-  <div @class{row.id === $selected}="danger">{row.label}</div>
+  <div :class{row.id === $selected}="danger">{row.label}</div>
 {end}
 `)
 
@@ -406,7 +406,7 @@ while i < 100
 $selected = -1
 </script>
 {for row in $rows}
-  <div @class{row.id === $selected}="danger">{row.label}</div>
+  <div :class{row.id === $selected}="danger">{row.label}</div>
 {end}
 `)
 
@@ -548,7 +548,7 @@ while i < 100
 $selected = -1
 </script>
 {for row in $rows}
-  <div @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>
+  <div :style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>
 {end}
 `)
     const bundler = new Bundler({

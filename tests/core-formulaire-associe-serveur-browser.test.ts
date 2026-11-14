@@ -10,7 +10,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 
-const HOTE = `<form class="f" method="get" action="/envoi" @noUJS>
+const HOTE = `<form class="f" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked={true} required>case</@@checkbox>
   <@@checkbox class="cb2" name="cb2">case libre</@@checkbox>
   <@@switch class="sw" name="sw" required>interrupteur</@@switch>

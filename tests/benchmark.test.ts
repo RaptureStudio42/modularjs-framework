@@ -13,6 +13,7 @@ import { performance } from 'node:perf_hooks'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const ITER = 1_000_000
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -114,7 +115,7 @@ describe.skip('benchmark : µ.state (ancien chemin store) vs µ.store statisé (
     // -----------------
     // Nouveau chemin : µ.store (accesseurs, mjs_store_globals.ts RÉEL)
     // -----------------
-    const storeSrc = readFileSync(join(__dirname, '../src/runtime/mjs_store_globals.ts'), 'utf-8')
+    const storeSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_store_globals.ts'))
     // `state` minimal : mjs_store_globals.ts pose aussi µ.nav/µ._mjs_env via
     // µ.state({...}) (fonctionnalités hors périmètre de ce bench store $$,
     // cf. en-tête du fichier) — un stub suffit, non mesuré ici.

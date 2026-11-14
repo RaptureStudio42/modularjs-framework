@@ -20,30 +20,6 @@ const ONIG_WASM = require.resolve('vscode-oniguruma/release/onig.wasm')
 type Jeton = { txt: string, scopes: string[] }
 let tokenise: (src: string) => Jeton[][]
 
-before(async () => {
-  await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
-  const registry = new vsctm.Registry({
-    onigLib: Promise.resolve({
-      createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
-      createOnigString:  (s: string)   => new oniguruma.OnigString(s),
-    }),
-    loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
-      ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
-      : null,
-  })
-  const grammar = await registry.loadGrammar('text.html.modularjs')
-  assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
-  tokenise = (src) => {
-    let state = vsctm.INITIAL
-    return src.split('\n').map((ligne) => {
-      const r = grammar.tokenizeLine(ligne, state)
-      state = r.ruleStack
-      return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
-        ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
-    })
-  }
-})
-
 /** les scopes du jeton `txt` de la ligne `n` */
 function scopes(lignes: Jeton[][], n: number, txt: string): string[] {
   const trouve = lignes[n].find(j => j.txt === txt)
@@ -57,6 +33,30 @@ function peint(lignes: Jeton[][], n: number, nom: string): string {
 }
 
 describe('extension VS Code — alias d\'effet *effet.nom(réglages)', () => {
+  before(async () => {
+    await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
+    const registry = new vsctm.Registry({
+      onigLib: Promise.resolve({
+        createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
+        createOnigString:  (s: string)   => new oniguruma.OnigString(s),
+      }),
+      loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
+        ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
+        : null,
+    })
+    const grammar = await registry.loadGrammar('text.html.modularjs')
+    assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
+    tokenise = (src) => {
+      let state = vsctm.INITIAL
+      return src.split('\n').map((ligne) => {
+        const r = grammar.tokenizeLine(ligne, state)
+        state = r.ruleStack
+        return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
+          ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
+      })
+    }
+  })
+
   it('sur une balise : *filter.frosted_glass porte la couleur du nom d\'un effet, ses réglages celle des réglages', () => {
     const l = tokenise('<img src="a.png" *filter.frosted_glass(blur: 20, soft: $s)>')
     assert.ok(scopes(l, 0, '*').includes('punctuation.definition.effect.modularjs'))
@@ -80,7 +80,7 @@ describe('extension VS Code — alias d\'effet *effet.nom(réglages)', () => {
   })
 
   it('après @in= / @out= / @transition= : l\'alias et ses réglages sont peints comme un effet', () => {
-    const l = tokenise('<div @in=*fade.lent(duration: 3s) @out=*fade.lent @transition.global=*fade.lent(up)>x</div>')
+    const l = tokenise('<div :in=*fade.lent(duration: 3s) :out=*fade.lent :transition.global=*fade.lent(up)>x</div>')
     assert.equal(peint(l, 0, 'entity.name.function.effect.modularjs'), 'fade.lentfade.lentfade.lent', 'trois fois le nom pointé')
     assert.ok(scopes(l, 0, 'duration').includes('variable.parameter.effect.modularjs'))
     assert.ok(scopes(l, 0, '3s').includes('constant.numeric.modularjs'))

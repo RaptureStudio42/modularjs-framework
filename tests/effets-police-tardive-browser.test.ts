@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Moteur = 'chromium' | 'firefox' | 'webkit'
 
@@ -253,7 +254,7 @@ function construit(): Promise<string> {
 }
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`une police qui arrive tard (${nom} réel) — *spoiler, *weight, *delta, *count`, function () {
+  playTogether(describe(`une police qui arrive tard (${nom} réel) — *spoiler, *weight, *delta, *count`, function () {
     this.timeout(120000)
     let present = false
     let script  = ''
@@ -471,5 +472,5 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         })
       })
     }
-  })
+  }))
 }

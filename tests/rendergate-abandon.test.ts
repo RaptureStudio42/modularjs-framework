@@ -26,9 +26,12 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // assez longtemps pour que les suivants trouvent la porte fermée (même patron que
 // tests/serve-ssr-throttle.test.ts).
 const LENT_SRC = `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
 @id = ''
-$p = new Promise (resolve) -> setTimeout((-> resolve('fini')), 500)
+$p = plusTard 'fini', 500
 </script>
 {await $p}{success v}<h1>{@id}</h1>{end}
 `

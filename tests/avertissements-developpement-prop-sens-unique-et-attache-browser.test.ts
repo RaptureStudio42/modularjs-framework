@@ -5,8 +5,8 @@
 //   à sa construction (avant ou après la définition du parent), pour une variable que le parent ne passe pas, pour une valeur fixe écrite en
 //   attribut, ni quand la balise porte un gestionnaire d'événement (`@change`, `@ferme` : le parent suit par l'événement, comme le module cœur
 //   « contrôlé » `<@@select value={$z} @change…>`) ; une prop étalée (`{...$data}`) et une ligne de `{for}` comptent
-// - un `@attach` qui rend autre chose qu'une fonction (le nombre de `requestAnimationFrame`, un objet) : la valeur est ignorée, ce n'est pas un
-//   nettoyage. Dit une fois par balise, `@attach` et `@attach.once`, `_node` et `el`, et la fonction d'une attache sans `_node` ; rien pour une
+// - un `:attach` qui rend autre chose qu'une fonction (le nombre de `requestAnimationFrame`, un objet) : la valeur est ignorée, ce n'est pas un
+//   nettoyage. Dit une fois par balise, `:attach` et `:attach.once`, `_node` et `el`, et la fonction d'une attache sans `_node` ; rien pour une
 //   fonction, `undefined` ou `null`
 // En production : ni l'avertissement, ni son code, ni son texte (fichiers envoyés lus), et la page se comporte de même.
 
@@ -30,14 +30,14 @@ const ATTACHE = `<script>
   fabrique = (node) -> 42
 </script>
 
-<b class="n" @attach={nombre(_node)}>n</b>
-<i class="o" @attach.once={objet(el)}>o</i>
-<u class="f" @attach={nettoie(_node)}>f</u>
-<s class="r" @attach={rien(_node)}>r</s>
-<small class="z" @attach={nul(_node)}>z</small>
-<em class="fab" @attach={fabrique}>fab</em>
+<b class="n" :attach={nombre(_node)}>n</b>
+<i class="o" :attach.once={objet(el)}>o</i>
+<u class="f" :attach={nettoie(_node)}>f</u>
+<s class="r" :attach={rien(_node)}>r</s>
+<small class="z" :attach={nul(_node)}>z</small>
+<em class="fab" :attach={fabrique}>fab</em>
 {for v in $rows}
-  <q class="l" @attach={nombre(_node)}>{v}</q>
+  <q class="l" :attach={nombre(_node)}>{v}</q>
 {end}
 <p class="vu">attaches</p>
 `
@@ -315,7 +315,7 @@ const cible  = (mode: Mode) => {
 const enAnglais = (c: Cible): Cible => ({ ...c, document: (b, v) => c.document(b, v).replace('<html lang="fr">', '<html lang="en">') })
 
 // ce que la console a dit de nos deux avertissements
-const nosAvis = (avis: string[]) => avis.filter((a) => /écrit sa prop|writes its prop|@attach (de|on) </.test(a)).sort()
+const nosAvis = (avis: string[]) => avis.filter((a) => /écrit sa prop|writes its prop|:attach (de|on) </.test(a)).sort()
 
 const jouerScenario = async (browser: any, c: Cible, mode: Mode, balise: string, langue: Langue) => {
   const o = await charger(browser, c, balise)
@@ -333,7 +333,7 @@ const jouerScenario = async (browser: any, c: Cible, mode: Mode, balise: string,
   }
 }
 
-for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`avertissements du développement : prop à sens unique écrite par l'enfant, @attach qui ne rend pas une fonction (${mode}, ${nav} réel)`, function () {
+for (const nav of NAVIGATEURS) for (const mode of MODES_JOUES[nav]) describe(`avertissements du développement : prop à sens unique écrite par l'enfant, :attach qui ne rend pas une fonction (${mode}, ${nav} réel)`, function () {
   this.timeout(180000)
   let browser: any = null
   let present = false

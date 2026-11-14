@@ -36,12 +36,12 @@ const SHORT_HELPERS = new Set<string>(CORE_HELPER_NAMES)
 
 // les fonctions publiques, relevées sur les jetons d'acorn (jamais sur le texte : une mention en
 // chaîne, en gabarit ou en commentaire — la prose d'une page de documentation — ne réclame rien) et
-// sous la même forme que le relevé des briques : `µ.every`, `µ.inspect`, `µ.play` et `µ.effect` seulement
+// sous la même forme que le relevé des briques : `µ.every`, `µ.after`, `µ.inspect`, `µ.play` et `µ.effect` seulement
 // appelés, les trois autres dès qu'ils sont écrits, après un point ou un chaînage optionnel (`µ?.Store`).
 // Le nom réclamé garde son `µ.` : missingCoreSymbols y reconnaît une fonction publique, dont elle exige
 // la DÉFINITION
 const PUBLIQUES        = new Set(['Store', 'interpolate', 'Ticker'])
-const APPELEES         = new Set(['every', 'inspect', 'play', 'effect'])
+const APPELEES         = new Set(['every', 'after', 'inspect', 'play', 'effect'])
 
 function publicCalls(js: string): string[] {
   // le même indice que le relevé des briques, commentaires compris entre les jetons (`µ /* c */ .Store`)

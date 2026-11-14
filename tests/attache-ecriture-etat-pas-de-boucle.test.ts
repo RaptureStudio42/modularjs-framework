@@ -50,8 +50,8 @@ const CARTES = `<script>
     -> log('retrait racine')
 </script>
 
-<div class="racine" @attach={suivreRacine(_node)}>{$light}</div>
-{for p in $tiers by key}<div class="carte" @class{$light is p.key}="on" @attach={suivre(p.key)}>{p.key}</div>{end}
+<div class="racine" :attach={suivreRacine(_node)}>{$light}</div>
+{for p in $tiers by key}<div class="carte" :class{$light is p.key}="on" :attach={suivre(p.key)}>{p.key}</div>{end}
 `
 
 describe('@attach dont le rappel écrit un état : pas de relance par ses propres écritures', function () {

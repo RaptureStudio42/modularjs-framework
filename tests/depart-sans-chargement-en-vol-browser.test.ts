@@ -144,6 +144,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         await page.evaluate(() => { setTimeout(() => document.body.appendChild(document.createElement('mjs-lent')), 1500) })
         let nav = 'ok'
         await page.goto(s.base + '/ailleurs', { waitUntil: 'commit', timeout: 30000 }).catch((e: Error) => { nav = String(e.message).split('\n')[0] })
+        // vérification négative : aucun rechargement ne doit venir pendant ce temps, aucun évènement ne le dit
         await page.waitForTimeout(1000)
         assert.equal(nav, 'ok', 'la navigation du visiteur n\'est pas remplacée — ' + JSON.stringify(lignes))
         assert.equal(new URL(page.url()).pathname, '/ailleurs')
@@ -173,6 +174,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         await attendreVu(page, 'module')
         await page.waitForTimeout(200)
         await page.evaluate(() => { location.href = '/ailleurs' })
+        // scénario minuté et vérification négative : la page suivante répond au bout de 13 s, aucun rechargement d'ici là
         await page.waitForTimeout(14500)
         assert.equal(new URL(page.url()).pathname, '/ailleurs', 'la navigation du visiteur aboutit — ' + JSON.stringify(lignes))
         assert.equal(s.etat.racines, 1, 'la page n\'est jamais redemandée (aucun rechargement) — ' + JSON.stringify(lignes))
@@ -192,6 +194,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         await page.waitForTimeout(300)
         await page.evaluate(() => { location.href = '/ailleurs' })
         await page.waitForURL('**/ailleurs', { timeout: 15000 })
+        // vérification négative : rien ne doit s'écrire pendant ce temps
         await page.waitForTimeout(1000)
         assert.deepEqual(lignes, [])
       }
@@ -205,6 +208,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
       try {
         const debut = Date.now()
         while (s.etat.racines < 2 && Date.now() - debut < 10000) await page.waitForTimeout(100)
+        // vérification négative : un seul rechargement, pas un second, pendant ce temps
         await page.waitForTimeout(1500)
         assert.equal(s.etat.racines, 2, 'un seul rechargement — ' + JSON.stringify(lignes))
         assert.ok(lignes.some((l) => /^warning \[Autoloader\].*(périmé|stale)/i.test(l)), 'le rechargement est annoncé — ' + JSON.stringify(lignes))
@@ -219,6 +223,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
       try {
         const debut = Date.now()
         while (!lignes.some((l) => /Failed to import lent/.test(l)) && Date.now() - debut < 10000) await page.waitForTimeout(100)
+        // vérification négative : aucun rechargement ne doit venir pendant ce temps, aucun évènement ne le dit
         await page.waitForTimeout(1500)
         assert.ok(lignes.some((l) => /^error \[Autoloader\] ❌ Failed to import lent/.test(l)), 'le module perdu est dit — ' + JSON.stringify(lignes))
         assert.equal(s.etat.racines, 1, 'une panne réseau ne fait pas recharger la page — ' + JSON.stringify(lignes))

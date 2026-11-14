@@ -20,7 +20,7 @@ const hote  = (n: number) => `<script>
 </script>
 
 <p class="n">{$n}</p>
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
 ${cases(n)}
   <button type="submit" class="go">envoyer</button>
 </form>

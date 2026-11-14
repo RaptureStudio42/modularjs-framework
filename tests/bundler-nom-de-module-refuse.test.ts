@@ -16,8 +16,8 @@ async function construire(nom: string, js: 'split' | 'bundle') {
   const src  = join(root, 'src')
   const out  = join(root, 'out')
   mkdirSync(src, { recursive: true })
-  writeFileSync(join(src, `${nom}.civet`), "export function outil() { return 'MARQUE_MODULE' }\n")
-  writeFileSync(join(src, 'hote.mjs'), `@import outil '${nom}.civet'\n<script>\n  go = -> outil()\n</script>\n<p>x</p>\n`)
+  writeFileSync(join(src, `${nom}.civet.mjs`), "export function outil() { return 'MARQUE_MODULE' }\n")
+  writeFileSync(join(src, 'hote.mjs'), `@import outil '${nom}.civet.mjs'\n<script>\n  go = -> outil()\n</script>\n<p>x</p>\n`)
   const b = new Bundler({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js'), js } as any)
   const s = await b.compile()
   await b.close()
@@ -29,16 +29,16 @@ describe('nom de module : refusé quand il casserait l\'adresse ou prendrait un 
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['mjs_core', 'mjs_external', 'outil#2', 'outil?x', 'mon outil']) {
-    it(`module « ${nom}.civet » : erreur qui nomme le fichier`, async () => {
+    it(`module « ${nom}.civet.mjs » : erreur qui nomme le fichier`, async () => {
       const messages = await construire(nom, 'split')
-      assert.ok(messages.some(m => m.includes(`${nom}.civet`) && m.includes('mjs_')), JSON.stringify(messages))
+      assert.ok(messages.some(m => m.includes(`${nom}.civet.mjs`) && m.includes('mjs_')), JSON.stringify(messages))
       assert.ok(!messages.some(m => m.includes('bogue du bundler')), JSON.stringify(messages))
     })
   }
 
   for (const nom of ['outil', 'outil-été', 'outil.module']) {
     for (const js of ['split', 'bundle'] as const) {
-      it(`module « ${nom}.civet », js: ${js} : construit sans erreur`, async () => {
+      it(`module « ${nom}.civet.mjs », js: ${js} : construit sans erreur`, async () => {
         assert.deepEqual(await construire(nom, js), [])
       })
     }

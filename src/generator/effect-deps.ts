@@ -167,11 +167,24 @@ function finPremierAwait(f: any): number {
   return min
 }
 
+// vrai si la fonction `f` peut lire après son passage synchrone : async, génératrice, ou une fonction posée dans son corps
+const apresCoupDans = new WeakMap<any, boolean>()
+function lectureApresCoup(f: any): boolean {
+  let r = apresCoupDans.get(f)
+  if (r !== undefined) return r
+  r = !!(f.async || f.generator)
+  if (!r) walk.simple(f.body, { Function() { r = true } })
+  apresCoupDans.set(f, r)
+  return r
+}
+
 // ce que `collectReads` relève d'un effet, cf. son commentaire
 interface Lectures {
   reads: Set<string>
   syncReads: Set<string>
   syncDeps: Set<string>
+  lateReads: Set<string>
+  lateDeps: Set<string>
   excluded: Set<string>
   cumul: Set<string>
   writes: Set<string>
@@ -226,7 +239,10 @@ function cumule(n: any, k: string, anc: any[], derives?: Record<string, string[]
   }
   const lit = (x: any) => litCle(x, cle, derives) || litObjet(x, obj)
   if (val && lit(val)) return true
-  // forme expression de `$$n++` : `((_v) => (µ._storeSet("n", (+_v) + 1), +_v))(µ.store.n)`, la valeur vient de
+  // `$$n++` en instruction seule : `(_mjs_n = µ.store.n, µ._storeSet("n", ++_mjs_n))` — la valeur part de la clé, relue juste avant ;
+  // `_mjs_n` seule : `$$n = ++i` écrit une valeur venue d'ailleurs, la clé lue reste une dépendance
+  if (val?.type === 'UpdateExpression' && val.argument?.type === 'Identifier' && val.argument.name === '_mjs_n') return true
+  // forme expression de `$$n++` : `((_mjs_n, _mjs_v = _mjs_n++) => (µ._storeSet("n", _mjs_n), _mjs_v))(µ.store.n)`, la valeur vient de
   // l'argument de la fonction appelée sur place
   for (let i = anc.length - 2; i > 0; i--) {
     const p = anc[i - 1]
@@ -246,13 +262,92 @@ function extractComputedStaticKey(node: any): string | null {
  * APRÈS transformReactiveWrites (idem pour les écritures top-level $.x = y).
  * `methodReads` (optionnel) : cf. commentaire en tête de fichier.
  */
-export function annotateEffectDeps(js: string, methodReads?: Record<string, string[]>, computedDeps?: Record<string, string[]>): string {
-  return annotateEffectDepsMapped(js, methodReads, computedDeps).code
+export function annotateEffectDeps(js: string, methodReads?: Record<string, string[]>, computedDeps?: Record<string, string[]>, noter = false): string {
+  return annotateEffectDepsMapped(js, methodReads, computedDeps, noter).code
+}
+
+// appel de `µ._mjs_setComputed(…)` : le calcul d'une valeur dérivée, dont les lectures suivent leur propre règle (transform-reactive.ts)
+function estCalculDerive(n: any): boolean {
+  const c = n.callee
+  return c?.type === 'MemberExpression' && !c.computed && c.object?.type === 'Identifier' && c.object.name === 'µ' && c.property?.name === '_mjs_setComputed'
+}
+
+// appel de `µ.effect.root(…)` (`µeffect.root`) : une racine de reffets
+function estRacine(n: any): boolean {
+  const c = n.callee
+  return c?.type === 'MemberExpression' && !c.computed && c.property?.name === 'root' && c.object?.type === 'MemberExpression' && !c.object.computed && c.object.object?.type === 'Identifier' && c.object.object.name === 'µ' && c.object.property?.name === 'effect'
+}
+
+// `$.x` (`n`, de parent `p`, sous `gp`) en place d'écriture : affectation, `++`, `delete`, boucle `for … in/of`, motif de destructuration
+function estCible(n: any, p: any, gp: any): boolean {
+  switch (p?.type) {
+    case 'AssignmentExpression': return p.left === n
+    case 'UpdateExpression': return true
+    case 'UnaryExpression': return p.operator === 'delete'
+    case 'ForInStatement': case 'ForOfStatement': return p.left === n
+    case 'ArrayPattern': case 'RestElement': return true
+    case 'AssignmentPattern': return p.left === n
+    case 'Property': return p.value === n && gp?.type === 'ObjectPattern'
+    default: return false
+  }
+}
+
+// lectures notées pour le graphe des signaux (runtime/mjs_signals.ts) dans le `<script>` d'un composant qui a un reffet, ou dont un
+// gestionnaire du gabarit ouvre une racine (`racinesDuGabarit`) : chaque `$.x`
+// lu dans une fonction — corps d'un reffet, fonctions et méthodes qu'il appelle, rangées dans un objet ou passées comme valeur,
+// rappels — prévient la boîte de `x` quand un calcul est en cours : `$[(µ._mjs_sigCur && µ._mjs_sigRead(_mjsThis, 'x'), 'x')]` (un cœur sans
+// le graphe n'a pas `µ._mjs_sigCur` : rien n'est noté).
+// La forme garde le receveur d'un appel (`$.f()`) et ne commence jamais par une parenthèse : une ligne du CoffeeScript compilé, sans
+// point-virgule, ne s'accroche pas à la précédente. Un reffet suit ainsi ce qu'il lit vraiment, à chaque passage, même par une fonction
+// que le relevé ne voit pas. Pas notés : le code de premier niveau (passé une fois, à la création), le calcul d'une valeur dérivée
+// (`µ._mjs_setComputed`, sa propre règle), une cible d'écriture, une clé calculée (`$[k]`) — le relevé la garde : un reffet qui n'a rien
+// noté suit son relevé. Posées avant la liste du relevé, ajoutée ensuite à la fin du rappel.
+// Dans les gestionnaires du gabarit (`racines`), seules les lectures écrites dans une racine `µeffect.root`, ou dans une fonction écrite
+// dans un gestionnaire qui en ouvre une (`lire = (-> $y); µeffect.root -> …`, la fonction d'un `{const}` du gabarit, refaite dans le
+// gestionnaire) : ses reffets sont ceux du composant, comme ceux d'une racine du `<script>` (une clé du magasin qu'ils lisent est notée :
+// `$x` doit l'être aussi, sinon son écriture ne les relance plus), et ils appellent ces fonctions ; le reste d'un gestionnaire ne lit
+// pour aucun reffet
+function noterLecturesDuComposant(ms: MagicString, ast: any, racines = false): boolean {
+  let fait = false
+  // gestionnaires qui ouvrent une racine : la fonction la plus haute au-dessus d'un appel de `µ.effect.root`
+  const ouvrent = new Set<any>()
+  if (racines) walk.ancestor(ast, {
+    CallExpression(n: any, _s: any, anc: any[]) {
+      if (estRacine(n)) ouvrent.add(anc.find((a) => /Function/.test(a.type)))
+    },
+  })
+  walk.ancestor(ast, {
+    MemberExpression(n: any, _s: any, anc: any[]) {
+      if (n.object?.type !== 'Identifier' || n.object.name !== '$') return
+      const x = !n.computed ? (n.property?.type === 'Identifier' ? n.property.name : null) : (n.property?.type === 'Literal' && typeof n.property.value === 'string' ? n.property.value : null)
+      if (x === null) return
+      // `premiere` : la fonction la plus haute (dans les gestionnaires du gabarit, le gestionnaire lui-même) ; une fonction écrite dessous,
+      // dans un gestionnaire qui ouvre une racine, lit pour ses reffets
+      let premiere: any = null
+      let dansRacine    = !racines
+      for (const a of anc) {
+        if (/Function/.test(a.type)) {
+          if (premiere && ouvrent.has(premiere)) dansRacine = true
+          premiere ??= a
+        }
+        else if (a.type === 'CallExpression' && estCalculDerive(a)) return
+        else if (racines && a.type === 'CallExpression' && estRacine(a)) dansRacine = true
+      }
+      const p = anc[anc.length - 2]
+      if (!premiere || !dansRacine || estCible(n, p, anc[anc.length - 3])) return
+      const lit = `'${x.replace(/[\\']/g, '\\$&')}'`
+      ms.overwrite(n.object.end, n.end, `[(µ._mjs_sigCur && µ._mjs_sigRead(_mjsThis, ${lit}), ${lit})]`)
+      fait = true
+    },
+  })
+  return fait
 }
 
 // Variante qui rend AUSSI la carte de source de cette passe — cf. pass-map.ts.
-export function annotateEffectDepsMapped(js: string, methodReads?: Record<string, string[]>, computedDeps?: Record<string, string[]>): PassResult {
-  if (!js || !js.includes('µ.effect(')) return { code: js }
+// `racinesDuGabarit` : un gestionnaire du gabarit de ce composant ouvre une racine (transpiler/index.ts) ; ses reffets appellent aussi les
+// fonctions du `<script>` (`lireY = -> $y`) : avec `noter`, ses lectures sont notées même quand le script n'a aucun reffet à lui
+export function annotateEffectDepsMapped(js: string, methodReads?: Record<string, string[]>, computedDeps?: Record<string, string[]>, noter = false, gestionnaires = false, racinesDuGabarit = false): PassResult {
+  if (!js || !((noter && racinesDuGabarit) || /µ\.effect(?:\.before|\.root)?\(/.test(js))) return { code: js }
 
   let ast: acorn.Node
   try {
@@ -262,7 +357,9 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
   }
 
   const ms = new MagicString(js)
-  let changed = false
+  // `<script>` d'un composant (`noter`, transpiler/index.ts) : ses lectures notées pour le graphe, avant la liste du relevé ; gestionnaires
+  // de son gabarit (`gestionnaires`) : celles de leurs racines et des fonctions écrites dans un gestionnaire qui en ouvre une
+  let changed = (noter || gestionnaires) && noterLecturesDuComposant(ms, ast, !noter)
 
   // Fonctions plates TOP-LEVEL du module (cf. en-tête) — 3 formes :
   // déclaration, affectation de variable, affectation nue après un `let` séparé
@@ -334,6 +431,7 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
         if (n.object?.type !== 'Identifier' || n.object.name !== '$') {
           collectStoreMemberDep(n, anc, store.reads)
           if (!late && !apresCoup(anc)) collectStoreMemberDep(n, anc, store.syncReads)
+          else collectStoreMemberDep(n, anc, store.lateReads)
           return
         }
         if (storeOnly) return
@@ -341,6 +439,7 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
         if (!key) return
         deps.add(key)
         if (!late && !apresCoup(anc)) store.syncDeps.add(key)
+        else store.lateDeps.add(key)
       },
       AssignmentExpression(n: any, _s: any, anc: any[]) {
         const k = storeWriteKey(n)
@@ -363,14 +462,18 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
         const cc = n.callee
         if (cc?.type !== 'MemberExpression' || cc.computed || cc.property?.type !== 'Identifier') return
         if (cc.object?.type !== 'ThisExpression' && !(cc.object?.type === 'Identifier' && cc.object.name === '_mjsThis')) return
-        const nom = cc.property.name
-        const sub = storeOnly ? null : methodReads?.[nom]
+        const nom   = cc.property.name
+        const sub   = storeOnly ? null : methodReads?.[nom]
+        const corps = methodByName.get(nom)
+        // méthode inconnue, async, génératrice, ou qui pose une fonction (rappel, minuterie, promesse) : ses lectures, relevées sans
+        // leur place (methodReads), peuvent tourner après le passage synchrone
+        const tm    = t || !corps || lectureApresCoup(corps)
         if (sub) for (const r of sub) {
           if (r.startsWith('$$')) continue
           deps.add(r)
-          if (!t) store.syncDeps.add(r)
+          if (!tm) store.syncDeps.add(r)
+          else store.lateDeps.add(r)
         }
-        const corps = methodByName.get(nom)
         const cle   = (t ? '@!' : '@') + nom
         if (!corps || seen.has(cle)) return
         seen.add(cle)
@@ -396,8 +499,19 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
 
   walk.simple(ast, {
     CallExpression(node: any) {
-      const callee = node.callee
+      let callee = node.callee
       if (!callee || callee.type !== 'MemberExpression' || callee.computed) return
+      // `µ.effect.root(…)` (`µeffect.root`) dans le `<script>` d'un composant ou dans un gestionnaire de son gabarit (`_mjsThis` y est en
+      // portée, transpiler/template.ts) : le composant en second argument, les reffets de la racine sont les siens (runtime/mjs_effect.ts)
+      if (estRacine(node)) {
+        if ((noter || gestionnaires) && node.arguments?.length === 1) {
+          ms.appendLeft(node.arguments[0].end, ', _mjsThis')
+          changed = true
+        }
+        return
+      }
+      // `µ.effect.before(…)` (`µeffect.before`, le reffet d'avant l'écran) : mêmes dépendances
+      if (callee.property?.name === 'before' && callee.object?.type === 'MemberExpression' && !callee.object.computed) callee = callee.object
       if (callee.object?.type !== 'Identifier' || callee.object.name !== 'µ') return
       if (callee.property?.name !== 'effect') return
 
@@ -412,9 +526,14 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
       if (!fn || (fn.type !== 'FunctionExpression' && fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionDeclaration')) return
 
       const deps  = new Set<string>()
-      const store: Lectures = { reads: new Set(), syncReads: new Set(), syncDeps: new Set(), excluded: new Set(), cumul: new Set(), writes: new Set() }
+      const store: Lectures = { reads: new Set(), syncReads: new Set(), syncDeps: new Set(), lateReads: new Set(), lateDeps: new Set(), excluded: new Set(), cumul: new Set(), writes: new Set() }
       const seen  = new Set<string>(cb.type === 'Identifier' ? [cb.name] : [])
       collectReads(fn, deps, seen, store)
+      // lue après coup — après un `await`, dans un rappel, une minuterie, une promesse, une fonction passée comme valeur, une méthode
+      // async —, seulement ou en plus d'une lecture du passage : le graphe des signaux ne note que le passage synchrone d'un reffet
+      // (runtime/mjs_effect.ts), dont une branche non prise ne lit rien. Marquée `~x` en plus de `x`, le runtime la garde au relevé :
+      // un reffet qui attend ne repart jamais moins qu'avec le relevé seul
+      const differes = [...deps].filter((d) => !store.syncDeps.has(d) || store.lateDeps.has(d))
       // dérivé fondé sur une clé que l'effet écrit : remplacé par ses racines, la clé passe par la règle des lectures
       // du store juste en dessous (en-tête) ; un dérivé intermédiaire n'apporte rien, ses racines sont déjà là
       for (const d of [...deps]) {
@@ -427,6 +546,7 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
           else {
             store.reads.add(r)
             if (store.syncDeps.has(d)) store.syncReads.add(r)
+            if (store.lateDeps.has(d)) store.lateReads.add(r)
           }
         }
       }
@@ -442,6 +562,10 @@ export function annotateEffectDepsMapped(js: string, methodReads?: Record<string
       // dépendance connue », que le runtime relance à chaque mise à jour du composant — jusqu'au garde-fou au montage, puis
       // sur tout rendu sans rapport. La marque '!', qu'aucune écriture ne signale, le fait passer au montage seulement
       if (deps.size === 0 && store.reads.size > 0) deps.add('!')
+      for (const d of differes) if (deps.has(d)) deps.add(`~${d}`)
+      // clé du magasin lue après coup, seulement ou en plus d'une lecture du passage : le graphe ne note que le passage synchrone, marquée
+      // `~$$x`, le runtime la garde au relevé
+      for (const k of store.reads) if (deps.has(k) && (!store.syncReads.has(k) || store.lateReads.has(k))) deps.add(`~${k}`)
 
       const depsLit = `[${[...deps].map(d => JSON.stringify(d)).join(', ')}]`
       ms.appendLeft(cb.end, `, ${depsLit}`)

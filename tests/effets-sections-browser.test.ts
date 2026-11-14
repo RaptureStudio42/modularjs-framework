@@ -66,6 +66,7 @@ describe('sections d\'un fichier d\'effet — des applis construites en producti
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox']) as Array<'chromium' | 'firefox'>) {
     describe(nom, function () {
       let browser: any
+      let webgl = false
 
       before(async function () {
         if (!(await navigateurPresent(nom))) {
@@ -73,7 +74,12 @@ describe('sections d\'un fichier d\'effet — des applis construites en producti
           return this.skip()
         }
         const playwright = await import('playwright')
-        browser = await playwright[nom].launch()
+        // Chromium sans la variable DISPLAY : son WebGL logiciel ne dépend pas de l'écran de la machine (un écran qu'il ne joint pas le
+        // laisse sans WebGL, SwiftShader compris)
+        browser = await playwright[nom].launch(nom === 'chromium' ? { env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'DISPLAY')) } : {})
+        const page = await browser.newPage()
+        webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl'))
+        await page.close()
       })
 
       after(async () => { await browser?.close() })
@@ -195,6 +201,11 @@ describe('sections d\'un fichier d\'effet — des applis construites en producti
       })
 
       it('*liquid(cells: 12) : la toile WebGL se pose sur l\'image au survol, et se retire quand la force est revenue à zéro', async function () {
+        // un navigateur sans WebGL, ni matériel ni logiciel, garde la déformation lisse (ce repli : effets-liquide-carreaux-browser.test.ts)
+        if (!webgl) {
+          console.log(`  ℹ️  ce ${nom} n'a pas de WebGL (ni matériel, ni logiciel) : essai sauté`)
+          return this.skip()
+        }
         const { page, erreurs } = await ouvrir('ecrits')
         const c = await centre(page, 'mjs-t-carreaux', '.a')
         await page.mouse.move(c.x, c.y)

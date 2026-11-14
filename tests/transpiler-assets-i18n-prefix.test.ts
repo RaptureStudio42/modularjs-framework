@@ -39,7 +39,7 @@ describe('replaceMagicAssets : forme fonction, jamais de motif spécial de Strin
 describe("applyI18nPrefixing : une chaîne/un commentaire qui MENTIONNE µ.t( n'est jamais un vrai appel", function () {
   this.timeout(8000)
 
-  it("chaîne \"utilisez µ.t('clé') ici\" et commentaire // µ.t('c') intacts, vrai appel µt('ok') préfixé en µ.t('sec.ok')", async function () {
+  it("chaîne \"utilisez µ.t('clé') ici\" intacte, commentaire // µ.t('c') retiré sans préfixe, vrai appel µt('ok') préfixé en µ.t('sec.ok')", async function () {
     const src = [
       "@i18n 'sec'",
       '<script lang="civet">',
@@ -52,7 +52,8 @@ describe("applyI18nPrefixing : une chaîne/un commentaire qui MENTIONNE µ.t( n'
     const { output } = await transpile(src, { moduleName: 'a3-7-t5-i18n-mention-chaine' })
     assert.ok(output.includes("µ.t('clé')"), 'la chaîne doit rester intacte, jamais préfixée')
     assert.ok(!output.includes("µ.t('sec.clé')"), "la clé DANS la chaîne ne doit jamais être préfixée par la section")
-    assert.ok(output.includes("µ.t('c')"), 'le commentaire doit rester intact, jamais préfixé')
+    // les commentaires sont retirés dès le début de la compilation : celui-ci part tel quel, sans jamais passer pour un appel
+    assert.ok(!output.includes("µ.t('c')"), 'le commentaire est retiré du code compilé')
     assert.ok(!output.includes("µ.t('sec.c')"), 'la clé DANS le commentaire ne doit jamais être préfixée par la section')
     assert.ok(output.includes("µ.t('sec.ok')"), 'le VRAI appel, lui, doit être préfixé par la section')
   })

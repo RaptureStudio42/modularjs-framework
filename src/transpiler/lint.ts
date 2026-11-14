@@ -7,12 +7,15 @@ import * as walk from 'acorn-walk'
 import { decode } from '@jridgewell/sourcemap-codec'
 
 import { ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { createMaskTable, findBlocks, replaceBlocks } from '../mask.js'
 import { maskNonCode } from './split-rune.js'
 import { analyserConstReassign } from './const-reassign.js'
 import { scanTemplateAt } from '../lexer/index.js'
 import { findScriptMatches, findStyleMatches, extractLang } from './sections.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { t, type MsgKey } from '../messages/index.js'
+import { BROWSER_FUNCTIONS, BROWSER_FUNCTIONS_REFUSING_EVENT, BROWSER_GLOBALS, DECLARABLE_KEYWORDS, LANGUAGE_KEYWORDS, LITERAL_NAMES, OBJECT_PROTOTYPE_NAMES, type HandlerReference } from '../handler-reference.js'
+import { readImportDirectives, importDollarName } from './directives.js'
 
 // ----------------------------------------------------------------------------
 // lintSingletonConsume — un singleton importé (`@import µ$$X`) se consomme
@@ -153,34 +156,31 @@ function maskLiteralsKeepInterpolations(source: string, defaultScriptLang: strin
 // pré-passe 0-bis de `transpile()` juste en dessous (µ$$X → $X), pour ne pas
 // rescanner deux fois les mêmes lignes `@import`.
 export function lintSingletonConsume(source: string, defaultScriptLang = 'civet'): Set<string> {
-  // « @import §§NOM » (ancienne écriture) : un singleton s'importe désormais
-  // en `µ$$NOM` — erreur de migration immédiate, AVANT toute réécriture (la
-  // pré-passe 0-bis n'a pas encore tourné). Masque `<pre>`/`<code>` d'abord :
-  // un tuto qui AFFICHE `@import §§X` comme exemple ne doit pas throw.
-  const docless = source
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, '')
-    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, '')
-  for (const line of docless.match(/^[ \t]*@import\b[^\n]*$/gm) ?? []) {
-    const bad = line.match(/§§([a-zA-Z0-9_]+)/)
+  // directives lues par la lecture partagée (readImportDirectives) : un `<pre>`, un `<code>`, un commentaire, une
+  // chaîne ou le texte d'un élément qui MONTRE `@import §§X` ou `@import µ$$X` en exemple n'en contient aucune.
+  // « @import §§NOM » (ancienne écriture) : un singleton s'importe désormais en `µ$$NOM` — erreur de migration
+  // immédiate, AVANT toute réécriture (la pré-passe 0-bis n'a pas encore tourné)
+  const directives = readImportDirectives(source)
+  for (const d of directives) {
+    const bad = d.noms.match(/§§([a-zA-Z0-9_]+)/)
     if (bad) {
       throw new Error(t('transpiler.import-singleton-ancienne-forme', { nom: bad[1] }))
     }
   }
 
   const singletonImports = new Set<string>()
-  source.replace(/^[ \t]*@import\b[^\n]*$/gm, (line: string) => {
-    for (const mm of line.matchAll(/µ\$\$([a-zA-Z0-9_]+)/g)) singletonImports.add(mm[1])
-    return line
-  })
+  for (const d of directives) {
+    for (const mm of d.noms.matchAll(/µ\$\$([a-zA-Z0-9_]+)/g)) singletonImports.add(mm[1])
+  }
   if (singletonImports.size === 0) return singletonImports
-  // Masque ce qui n'est PAS une consommation réelle : lignes @import (l'import
+  // Masque ce qui n'est PAS une consommation réelle : les directives (l'import
   // lui-même), blocs de doc `<pre>`/`<code>`, commentaires HTML, texte littéral
   // des chaînes (leurs interpolations restent) et commentaires de script (cf. plus haut).
-  const sansDoc = source
-    .replace(/^[ \t]*@import\b[^\n]*$/gm, '')
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, '')
-    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, '')
-    .replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, '')
+  let sansImports = source
+  for (const d of [...directives].reverse()) sansImports = sansImports.slice(0, d.index) + sansImports.slice(d.index + d.texte.length)
+  // `<pre>`, puis `<code>`, puis commentaires, chacun retiré à part ; fins cherchées en avançant (replaceBlocks)
+  let sansDoc = sansImports
+  for (const kind of ['pre', 'code', '<!--']) sansDoc = replaceBlocks(sansDoc, [kind], () => '')
   const scan    = maskLiteralsKeepInterpolations(sansDoc, defaultScriptLang)
   // `$$NOM` ne se cherche que hors des chaînes : dans une interpolation, le lexeur (script) et le générateur (gabarit)
   // le refusent eux-mêmes, avec le message du store global et, dans un script, la position de la faute
@@ -207,16 +207,15 @@ export function lintSingletonConsume(source: string, defaultScriptLang = 'civet'
 // § « Un seul symbole, un seul rôle »), jamais `@import $X`. DOIT tourner ICI, AVANT la pré-passe
 // 0-bis (µ$$X → $X, juste en dessous) : sur le source déjà aplati par 0-bis, un `$counter` issu de
 // `µ$$counter` serait indiscernable d'un `$counter` tapé à la main (la garde
-// avait alors été revertée faute de cette place — remise ici). Blocs de doc (`<pre>`/`<code>`/
-// commentaires HTML) masqués via maskDocBlocks : un tuto qui AFFICHE `@import $x` en exemple ne
+// avait alors été revertée faute de cette place — remise ici). Lecture partagée (readImportDirectives) :
+// un tuto qui AFFICHE `@import $x` en exemple (`<pre>`, `<code>`, commentaire, texte d'un élément) ne
 // doit jamais throw.
 // ----------------------------------------------------------------------------
 export function lintImportDollarName(source: string): void {
-  const { masked } = maskDocBlocks(source)
-  const bad = masked.match(/^[ \t]*@import\s+(?:default\s+)?[^'"]*?(?<![µ$])(\$[a-zA-Z_]\w*)/m)
-  if (!bad) return
-  const nom = bad[1]
-  throw new Error(t('transpiler.import-nom-dollar', { nom, base: nom.slice(1) }))
+  for (const d of readImportDirectives(source)) {
+    const nom = importDollarName(d)
+    if (nom) throw new Error(t('transpiler.import-nom-dollar', { nom, base: nom.slice(1) }))
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -254,6 +253,51 @@ const BLOC_DE_CONTROLE_RE = /^[ \t]*(?:\}[ \t]*)?(?:if|else|unless|for|while|unt
 const FONCTION_RE         = /(?<![\w$])function(?![\w$])/
 const ouvreUneFonction    = (texte: string): boolean => NESTED_BEFORE_RE.test(texte) || FONCTION_RE.test(texte)
 const ouvreBlocDeControle = (texte: string): boolean => BLOC_DE_CONTROLE_RE.test(texte) && !ouvreUneFonction(texte)
+// ligne ou instruction qui ouvre une boucle
+const BOUCLE_RE      = /^[ \t]*(?:\}[ \t]*)?(?:for|while|until|loop)(?![\w$])/
+const ouvreUneBoucle = (texte: string): boolean => BOUCLE_RE.test(texte) && !ouvreUneFonction(texte)
+// `µeffect.root ->` : la racine d'un reffet lancé à la demande, permise partout ; son rappel tient lieu de premier niveau pour un
+// `µeffect` écrit directement dedans (une fonction écrite dans la racine, rappel ou minuterie, garde le refus). Un texte ouvre le rappel
+// d'une racine quand, après sa dernière racine et une fois retirés ses groupes refermés, il ouvre d'abord le rappel de la racine (une
+// parenthèse, une affectation `µeffect.root(cb = -> …)`, `async` ou un type de retour devant) ; il n'ouvre qu'elle quand aucune autre
+// fonction ne reste ouverte : deux reffets écrits sur la ligne de la racine (`µeffect.root -> µeffect(-> a); µeffect(-> b)`) y sont comme
+// sur deux lignes
+const RACINE_RE           = /µ\.?effect\s*\.\s*root(?![\w$])/g
+const OUVRE_FONCTION_RE   = /->|=>|(?<![\w$])(?:do|function)(?![\w$])/g
+const DEVANT_LE_RAPPEL_RE = /^[\s(]*(?:[@\w$.]+\s*(?:\|\||&&|\?\?|\?)?=(?![=>])[\s(]*)*(?:async\s*)?(?::[\w$\s<>|[\]]*)?$/
+// groupe refermé, du plus intérieur au plus large : une fonction refermée avec son corps entre accolades (`() => { … }`, `function f() { … }`),
+// une accolade, une parenthèse, un crochet
+const GROUPE_FERME_RE = /(?:\([^()]*\)|[\w$]+)?[ \t]*(?:=>|->)[ \t]*\{[^{}]*\}|(?<![\w$])function(?![\w$])[ \t*]*[\w$]*[ \t]*(?:\([^()]*\))?[ \t]*\{[^{}]*\}|\{[^{}]*\}|\([^()]*\)|\[[^[\]]*\]/g
+// en CoffeeScript, `-> {a: 1}` rend un objet et sa fonction continue après un `;` (`g = -> {a: 1}; µeffect(-> b)` : le reffet est dans
+// `g`) : seuls l'accolade, la parenthèse et le crochet s'y referment
+const GROUPE_FERME_COFFEE_RE = /\{[^{}]*\}|\([^()]*\)|\[[^[\]]*\]/g
+// celui du script en cours de contrôle (lintEffectTopLevel)
+let groupeFerme = GROUPE_FERME_RE
+
+// `texte` sans ses groupes refermés, blanchis à longueur égale (retours à la ligne gardés) : une position y reste celle du texte
+function sansGroupesFermes(texte: string): string {
+  let t = texte
+  for (let avant = ''; avant !== t;) {
+    avant = t
+    t = t.replace(groupeFerme, (g) => g.replace(/[^\n]/g, ' '))
+  }
+  return t
+}
+
+// le rappel d'une racine ouvert dans `texte`, ou null : `corps`, la position où commence son corps ; `seul`, aucune autre fonction ouverte
+function rappelDeRacine(texte: string): { corps: number, seul: boolean } | null {
+  let fin = -1
+  RACINE_RE.lastIndex = 0
+  for (let m = RACINE_RE.exec(texte); m !== null; m = RACINE_RE.exec(texte)) fin = m.index + m[0].length
+  if (fin === -1) return null
+  const apres = sansGroupesFermes(texte.slice(fin))
+  OUVRE_FONCTION_RE.lastIndex = 0
+  const ouvre = OUVRE_FONCTION_RE.exec(apres)
+  if (ouvre === null || !DEVANT_LE_RAPPEL_RE.test(apres.slice(0, ouvre.index))) return null
+  return { corps: fin + ouvre.index + ouvre[0].length, seul: (apres.match(OUVRE_FONCTION_RE) ?? []).length === 1 }
+}
+
+const ouvreUneRacine = (texte: string): boolean => rappelDeRacine(texte)?.seul === true
 
 // masque de MASK_STRINGS_AND_COMMENTS_RE, sauf un `#` qui suit un point (`this.#n`) : champ privé du JavaScript, jamais un
 // commentaire CoffeeScript — masqué jusqu'à la fin de la ligne, il emportait l'accolade qui le suit (`get n() { return this.#n }`).
@@ -285,7 +329,7 @@ function masqueEffet(src: string): string {
   return out + src.slice(pos)
 }
 
-interface Accolade { ouvre: number, ferme: number, controle: boolean }
+interface Accolade { ouvre: number, ferme: number, controle: boolean, racine: boolean, boucle: boolean }
 interface StructureDuScript { texte: string, accolades: Accolade[], suites: boolean[] }
 
 // script masqué de ses chaînes et commentaires, lu caractère par caractère : ses regex sont masquées à leur tour (même lecture
@@ -314,7 +358,8 @@ function structureDuScript(masque: string): StructureDuScript {
     if (c === '(' || c === '[') parens++
     else if ((c === ')' || c === ']') && parens > 0) parens--
     else if (c === '{') {
-      const accolade = { ouvre: p, ferme: -1, controle: ouvreBlocDeControle(texte.slice(debut, p).trim() || precedente) }
+      const instruction = texte.slice(debut, p).trim() || precedente
+      const accolade    = { ouvre: p, ferme: -1, controle: ouvreBlocDeControle(instruction), racine: ouvreUneRacine(instruction), boucle: ouvreUneBoucle(instruction) }
       accolades.push(accolade)
       pile.push({ accolade, parens, debut, precedente })
       parens     = 0
@@ -356,9 +401,55 @@ function structureDuScript(masque: string): StructureDuScript {
 // imbriqué si une accolade encore ouverte à la `position` de l'occurrence n'ouvre pas un bloc de contrôle, ou, pour une ligne
 // indentée, si une ligne qui l'englobe (moins indentée, en remontant jusqu'au premier niveau) n'en ouvre pas un — retraits de
 // Civet et de CoffeeScript. Une ligne qui continue une parenthèse ouverte plus haut appartient à l'instruction de sa première
-// ligne, jugée à sa place ; une fonction ouverte dans cette suite garde le refus
-function effetImbrique(lines: string[], li: number, position: number, structure: StructureDuScript): boolean {
-  if (structure.accolades.some(a => !a.controle && a.ouvre < position && (a.ferme === -1 || a.ferme > position))) return true
+// ligne, jugée à sa place ; une fonction ouverte dans cette suite garde le refus. Pour un reffet (`racine`), le rappel d'une racine
+// `µeffect.root`, s'il est la première enveloppe qui n'est pas un bloc de contrôle, tient lieu de premier niveau
+// accolade encore ouverte à `position` la plus intérieure qui n'ouvre pas un bloc de contrôle
+function accoladeOuverte(structure: StructureDuScript, position: number): Accolade | null {
+  let dedans: Accolade | null = null
+  for (const a of structure.accolades) if (!a.controle && a.ouvre < position && (a.ferme === -1 || a.ferme > position) && (dedans === null || a.ouvre > dedans.ouvre)) dedans = a
+  return dedans
+}
+
+// fin de ligne qui ne termine pas l'instruction : la ligne finit par une flèche, un opérateur, une virgule ou un mot qui attend la
+// suite, ou la ligne suivante la continue (opérateur, point, fermeture en tête)
+const FIN_QUI_CONTINUE_RE  = /(?:=>|->|[-+*/%=&|^!~?:,.<>]|(?<![\w$])(?:and|or|not|is|isnt|in|of|instanceof|typeof|new|await|yield|return|then|else|do|function))[ \t]*$/
+const TETE_QUI_CONTINUE_RE = /^[ \t]*(?:[-+*/%=&|^?:,.)\]}<>]|(?:and|or|is|isnt|in|of|instanceof|then|else)(?![\w$]))/
+// langue du script en cours de contrôle (lintEffectTopLevel) : en JavaScript, un `;` referme une fonction écrite sur une ligne ; en Civet et
+// en CoffeeScript, elle continue après lui (`f = (x) -> x; µeffect -> …` : le reffet est dans `f`)
+let pointVirguleFerme = false
+// en JavaScript seul, une ligne qui commence par une parenthèse ou un crochet continue aussi la précédente, aucun `;` n'est inséré devant
+// (`const f = (x) => x` puis `(µeffect(…))` appelle `x`) ; Civet et CoffeeScript la lisent comme une instruction neuve. Un `else` en tête,
+// lui, y referme l'expression de la ligne d'avant : la fonction concise écrite après le `if` (`if (a) f = () => 1` puis
+// `else µeffect(…)`) ne garde pas le reffet de la branche
+const TETE_JS_QUI_CONTINUE_RE = /^[ \t]*[([]/
+const TETE_JS_ELSE_RE         = /^[ \t]*else(?![\w$])/
+const continueLaLigne         = (suivante: string): boolean => pointVirguleFerme ? !TETE_JS_ELSE_RE.test(suivante) && (TETE_QUI_CONTINUE_RE.test(suivante) || TETE_JS_QUI_CONTINUE_RE.test(suivante)) : TETE_QUI_CONTINUE_RE.test(suivante)
+
+// l'instruction de l'occurrence, à la fin de `texte` (le rappel d'une racine entre accolades, jusqu'à l'occurrence), groupes refermés
+// blanchis : après la dernière accolade encore ouverte (celle d'un bloc de contrôle), puis après le dernier `;` qui la sépare (en
+// JavaScript) ou la dernière fin de ligne qui termine une instruction. Une parenthèse ou un crochet encore ouverts ne coupent rien : la
+// fonction écrite avant eux sur l'instruction garde l'occurrence (`p.then((r) => arrets.push(µeffect(…)))`). Une ligne vide ne termine
+// rien ; une ligne suivante plus enfoncée continue l'instruction (le corps d'une fonction écrite sur une ligne, en Civet et en CoffeeScript)
+function instructionEnCours(texte: string): string {
+  const t      = sansGroupesFermes(texte)
+  const lignes = t.slice(t.lastIndexOf('{') + 1).split('\n')
+  let suivante = lignes[lignes.length - 1] + 'µ'
+  for (let i = lignes.length - 1; i >= 0; i--) {
+    const ligne = lignes[i]
+    if (i < lignes.length - 1 && ligne.trim() !== '' && !FIN_QUI_CONTINUE_RE.test(ligne) && !continueLaLigne(suivante) && retraitDe(suivante) <= retraitDe(ligne)) return lignes.slice(i + 1).join('\n')
+    if (pointVirguleFerme && ligne.includes(';')) return [ligne.slice(ligne.lastIndexOf(';') + 1), ...lignes.slice(i + 1)].join('\n')
+    if (ligne.trim() !== '') suivante = ligne
+  }
+  return lignes.join('\n')
+}
+
+// une fonction reste ouverte dans l'instruction de l'occurrence (le rappel d'une racine jusqu'à elle) : une fonction refermée avant elle
+// (`const f = (x) => x` sur sa ligne) ne l'enveloppe pas
+const fonctionOuverte = (texte: string): boolean => ouvreUneFonction(instructionEnCours(texte))
+
+function effetImbrique(lines: string[], li: number, position: number, structure: StructureDuScript, racine = false): boolean {
+  const dedans = accoladeOuverte(structure, position)
+  if (dedans !== null) return !(racine && dedans.racine)
   let retrait = /^[ \t]*/.exec(lines[li])![0].length
   for (let k = li - 1; k >= 0 && retrait > 0; k--) {
     const ligne = lines[k]
@@ -369,16 +460,114 @@ function effetImbrique(lines: string[], li: number, position: number, structure:
       if (ouvreUneFonction(ligne)) return true
       continue
     }
+    if (racine && ouvreUneRacine(ligne)) return false
     if (!ouvreBlocDeControle(ligne)) return true
     retrait = r
   }
   return retrait > 0
 }
 
+const retraitDe = (ligne: string): number => /^[ \t]*/.exec(ligne)![0].length
+
+// début du corps de la racine dont le rappel contient directement `position` (sur la ligne, `avant` étant son texte qui précède, dans
+// l'accolade de la racine, ou sous sa ligne, au retrait de Civet et de CoffeeScript), -1 sinon : mêmes règles que le refus, dans le même
+// ordre (ligne, accolade, retrait)
+function corpsDeRacine(lines: string[], li: number, avant: string, position: number, structure: StructureDuScript): number {
+  const debutLigne = position - avant.length
+  const surLaLigne = rappelDeRacine(avant)
+  if (surLaLigne?.seul) return debutLigne + surLaLigne.corps
+  const dedans = accoladeOuverte(structure, position)
+  if (dedans !== null) return dedans.racine && !fonctionOuverte(structure.texte.slice(dedans.ouvre + 1, position)) ? dedans.ouvre + 1 : -1
+  if (NESTED_BEFORE_RE.test(avant)) return -1
+  let retrait = retraitDe(lines[li])
+  let debut   = debutLigne
+  for (let k = li - 1; k >= 0 && retrait > 0; k--) {
+    const ligne = lines[k]
+    debut -= ligne.length + 1
+    if (ligne.trim() === '' || retraitDe(ligne) >= retrait) continue
+    if (structure.suites[k]) {
+      if (ouvreUneFonction(ligne)) return -1
+      continue
+    }
+    const racine = rappelDeRacine(ligne)
+    if (racine?.seul) return debut + racine.corps
+    if (!ouvreBlocDeControle(ligne)) return -1
+    retrait = retraitDe(ligne)
+  }
+  return -1
+}
+
+// une boucle de la racine (corps à `corps`) qui contient le reffet (`position`, ligne `li`) et l'attente (`attente`, ligne `la`) écrite
+// après lui : par ses accolades, ou par le retrait des lignes qui la suivent jusqu'à l'attente
+function memeBoucle(lines: string[], structure: StructureDuScript, corps: number, li: number, position: number, la: number, attente: number): boolean {
+  if (structure.accolades.some((a) => a.boucle && a.ouvre >= corps && a.ouvre < position && (a.ferme === -1 || a.ferme > attente))) return true
+  const ligneRacine = structure.texte.slice(0, corps).split('\n').length - 1
+  let retrait = retraitDe(lines[li])
+  for (let k = li - 1; k > ligneRacine && retrait > 0; k--) {
+    if (lines[k].trim() === '' || retraitDe(lines[k]) >= retrait) continue
+    retrait = retraitDe(lines[k])
+    if (!ouvreUneBoucle(lines[k])) continue
+    let j = k + 1
+    while (j <= la && (lines[j].trim() === '' || retraitDe(lines[j]) > retrait)) j++
+    if (j > la) return true
+  }
+  return false
+}
+
+// une attente (`await`) du rappel même de la racine dont le corps commence à `corps` : écrite avant `position` (`'apres'`), ou après
+// lui dans une boucle qui le contient aussi (`'boucle'` : au tour suivant, le reffet passe après elle). La racine rend la main à sa
+// première attente, un reffet qui passe ensuite ne lui appartient plus. Une attente dans une fonction écrite dans la racine ne compte pas
+const ATTENTE_RE = /(?<![\w$.])await(?![\w$])/g
+function attenteDeLaRacine(lines: string[], structure: StructureDuScript, corps: number, li: number, position: number): 'apres' | 'boucle' | null {
+  const texte = structure.texte
+  ATTENTE_RE.lastIndex = corps
+  for (let m = ATTENTE_RE.exec(texte); m !== null; m = ATTENTE_RE.exec(texte)) {
+    const debutLigne = texte.lastIndexOf('\n', m.index - 1) + 1
+    const la         = texte.slice(0, m.index).split('\n').length - 1
+    if (corpsDeRacine(lines, la, texte.slice(debutLigne, m.index), m.index, structure) !== corps) continue
+    if (m.index < position) return 'apres'
+    if (memeBoucle(lines, structure, corps, li, position, la, m.index)) return 'boucle'
+  }
+  return null
+}
+
+// un reffet refusé écrit dans une racine, dans une fonction écrite dedans (sur la ligne de la racine, dans une accolade ou sous une ligne
+// qui l'englobent) : le refus dit la règle de la racine
+function dansUneRacine(lines: string[], li: number, avant: string, position: number, structure: StructureDuScript): boolean {
+  if (rappelDeRacine(avant) !== null) return true
+  if (structure.accolades.some((a) => a.racine && a.ouvre < position && (a.ferme === -1 || a.ferme > position))) return true
+  let retrait = retraitDe(lines[li])
+  for (let k = li - 1; k >= 0 && retrait > 0; k--) {
+    if (lines[k].trim() === '' || retraitDe(lines[k]) >= retrait) continue
+    if (rappelDeRacine(lines[k]) !== null) return true
+    retrait = retraitDe(lines[k])
+  }
+  return false
+}
+
+// l'ancien nom du reffet d'avant l'écran (`.pre`, devenu `µeffect.before`) : refusé à la construction avec le nouveau nom, au lieu d'un
+// composant tué à l'exécution. Composant et fichier d'un magasin (bundler/index.ts)
+const EFFECT_ANCIEN_NOM_RE = /(?:µ\.?|\bmjs\.)effect\s*\.\s*pre\b/
+export function lintEffectAncienNom(source: string, firstLine = 1, lang = 'civet'): void {
+  if (!source || !source.includes('pre')) return
+  const masked = masqueEffet(maskNonCode(source, lang))
+  const m      = EFFECT_ANCIEN_NOM_RE.exec(masked)
+  if (m) throw new Error(t('transpiler.rune-effect-pre-renommee', { ligne: masked.slice(0, m.index).split('\n').length - 1 + firstLine }))
+}
+
 // `firstLine` : ligne du fichier où commence `scriptSource` (le refus dans <script module> cite la ligne du `.mjs`)
-export function lintEffectTopLevel(scriptSource: string, isModule = false, firstLine = 1): void {
+// `lang` : langue du script (`coffee` : une fonction écrite sur une ligne y continue après un `;`)
+// `gestionnaire` : `scriptSource` est le corps d'un gestionnaire du gabarit, enveloppé dans une fonction (lintEffectGestionnaire) ; le
+// refus cite son événement et sa ligne dans le fichier
+export function lintEffectTopLevel(scriptSource: string, isModule = false, firstLine = 1, lang = 'civet', gestionnaire?: { evenement: string, ligne: number | string }): void {
   if (!scriptSource) return
-  const masked = masqueEffet(scriptSource)
+  lintEffectAncienNom(scriptSource, firstLine)
+  groupeFerme       = /coffee/.test(lang) ? GROUPE_FERME_COFFEE_RE : GROUPE_FERME_RE
+  pointVirguleFerme = !/coffee|civet/.test(lang)
+  const ligneDe     = (li: number): number | string => gestionnaire ? gestionnaire.ligne : li + firstLine
+  // chaînes (sur plusieurs lignes, interpolées), expressions régulières et commentaires blanchis d'abord par le masqueur commun du
+  // compilateur (src/mask.ts), puis par le masque propre à ce relevé
+  const masked = masqueEffet(maskNonCode(scriptSource))
   if (!masked.includes('effect') && !masked.includes('inspect')) return
   const structure = structureDuScript(masked)
   const lines     = structure.texte.split('\n')
@@ -390,14 +579,41 @@ export function lintEffectTopLevel(scriptSource: string, isModule = false, first
     let m: RegExpExecArray | null
     while ((m = EFFECT_RUNE_RE.exec(line)) !== null) {
       const rune = m[1]
-      if (isModule) {
+      // `<script module>` : un reffet de premier niveau appartient au module du composant (transpiler/index.ts) ; `µinspect` y reste refusé,
+      // il lui faut un composant
+      if (isModule && rune.includes('inspect')) {
         throw new Error(t('transpiler.rune-effect-dans-module', { rune, ligne: li + firstLine }))
       }
-      if (effetImbrique(lines, li, debutLigne + m.index, structure) || NESTED_BEFORE_RE.test(line.slice(0, m.index))) {
-        throw new Error(t('transpiler.rune-effect-imbriquee', { rune, ligne: li + firstLine }))
+      // `µeffect.root` lui-même : permis partout ; un reffet écrit directement dans le rappel d'une racine : permis, sauf après une
+      // attente de ce rappel (la racine a rendu la main)
+      const avant    = line.slice(0, m.index)
+      const reffet   = rune.includes('effect')
+      const position = debutLigne + m.index
+      // dans un gestionnaire du gabarit, seuls les reffets sont contrôlés
+      if (gestionnaire && !reffet) continue
+      if (reffet && /^\s*\.\s*root(?![\w$])/.test(line.slice(m.index + rune.length))) continue
+      const corps = reffet ? corpsDeRacine(lines, li, avant, position, structure) : -1
+      if (corps !== -1) {
+        const attente = attenteDeLaRacine(lines, structure, corps, li, position)
+        if (attente !== null) throw new Error(t(attente === 'apres' ? 'transpiler.rune-effect-apres-attente' : 'transpiler.rune-effect-boucle-qui-attend', { rune, ligne: ligneDe(li) }))
+        continue
+      }
+      if ((reffet && accoladeOuverte(structure, position)?.racine) || effetImbrique(lines, li, position, structure, reffet) || NESTED_BEFORE_RE.test(avant)) {
+        if (reffet && dansUneRacine(lines, li, avant, position, structure)) throw new Error(t('transpiler.rune-effect-rappel-de-racine', { rune, ligne: ligneDe(li) }))
+        if (gestionnaire) throw new Error(t('transpiler.rune-effect-gestionnaire', { rune, evenement: gestionnaire.evenement, ligne: gestionnaire.ligne }))
+        throw new Error(t('transpiler.rune-effect-imbriquee', { rune, ligne: ligneDe(li) }))
       }
     }
   }
+}
+
+// gestionnaire du gabarit (`@click={…}`, balises globales comprises) : il tourne à l'événement, hors de l'initialisation du composant — un
+// µeffect écrit dedans n'aurait pas de propriétaire et ne tournerait jamais, sans un mot en production. Même règle que dans une méthode
+// du script : seul un reffet écrit directement dans le rappel d'une racine `µeffect.root` y est permis. `code` : le corps du gestionnaire,
+// enveloppé dans une fonction ; `evenement`, `ligne` : son attribut et sa ligne
+export function lintEffectGestionnaire(code: string, evenement: string, ligne: number | string): void {
+  if (!code.includes('effect')) return
+  lintEffectTopLevel('@_g = ->\n' + code.split('\n').map((l) => '  ' + l).join('\n'), false, 1, 'civet', { evenement, ligne })
 }
 
 // ----------------------------------------------------------------------------
@@ -1079,15 +1295,7 @@ export function lintHandlerSelfRefDeclaration(src: string, moduleName: string | 
 // gestionnaire le masque (faux négatif possible, jamais de fausse alerte). `alreadySaid` : un
 // avertissement par nom et par composant, quel que soit le nombre de gestionnaires qui le citent.
 // ----------------------------------------------------------------------------
-// les fonctions de la fenêtre que le navigateur offre sous leur nom nu : une méthode du composant qui porte
-// ce nom ne les masque pas dans un gestionnaire, qui appelle alors la fonction du navigateur
-const WINDOW_FUNCTIONS = new Set([
-  'alert', 'confirm', 'prompt', 'print', 'open', 'close', 'stop', 'focus', 'blur', 'find', 'scroll', 'scrollTo', 'scrollBy',
-  'moveTo', 'moveBy', 'resizeTo', 'resizeBy', 'fetch', 'postMessage', 'atob', 'btoa', 'getSelection', 'getComputedStyle', 'matchMedia',
-  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame', 'queueMicrotask', 'structuredClone',
-])
-
-export function lintHandlerBareMethod(inlinesJs: string, methodNames: Set<string>, declared: Set<string>, moduleName: string | undefined, alreadySaid: Set<string>, lint?: LintToggles, colorsEnabled = false, lineOf?: (nom: string) => number | ''): void {
+export function lintHandlerBareMethod(inlinesJs: string, methodNames: Set<string>, declared: Set<string>, moduleName: string | undefined, alreadySaid: Set<string>, lint?: LintToggles, colorsEnabled = false, lineOf?: (nom: string) => number | string): void {
   const cite   = (n: string): boolean => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}(?![\\w$])`).test(inlinesJs)
   const cibles = new Set([...methodNames].filter(n => !declared.has(n) && cite(n)))
   if (cibles.size === 0) return
@@ -1124,10 +1332,47 @@ export function lintHandlerBareMethod(inlinesJs: string, methodNames: Set<string
     Identifier(node: any) {
       if (!cibles.has(node.name) || locaux.has(node.name) || alreadySaid.has(node.name)) return
       alreadySaid.add(node.name)
-      const line = typedLine('events', t('transpiler.handler-methode-nue', { moduleName: moduleName ?? '?', nom: node.name, ligne: lineOf?.(node.name) ?? '', fenetre: WINDOW_FUNCTIONS.has(node.name) }), lint)
+      const line = typedLine('events', t('transpiler.handler-methode-nue', { moduleName: moduleName ?? '?', nom: node.name, ligne: lineOf?.(node.name) ?? '', fenetre: BROWSER_FUNCTIONS.has(node.name), objet: BROWSER_GLOBALS.has(node.name), herite: OBJECT_PROTOTYPE_NAMES.has(node.name) }), lint)
       if (line !== null) printDiagnostic(line, colorsEnabled)
     },
   })
+}
+
+// ----------------------------------------------------------------------------
+// checkHandlerReferences — refuse à la construction une référence de gestionnaire faite d'un nom seul, avec ou sans
+// accolades, dont le nom n'existe pas : `@click=nom` et `@click={nom}` appellent la fonction `nom` (sans `@`, aucune
+// méthode n'est cherchée), `@click=@nom` et `@click={@nom}` la méthode `@nom` du composant ; même règle pour tous les
+// événements, dans le gabarit, dans le fallback d'un `<@failed>` et sur les balises globales (`<@window>`, `<@document>`, `<@body>`). Sans ce refus, le bouton était mort et la
+// construction verte (« nom is not defined » en console, au clic). Comptent pour `nom` : un nom déclaré par le <script>,
+// le <script module> ou un `@import`, un nom connu du transpileur, un nom que le gabarit met en portée (`scope` : les
+// paramètres d'un `<@failed>`, et ceux d'un `{for}`, d'un `{await}` ou d'un `{const}` écrits avec `@`, pour le message ; écrits sans `@`, ceux-là ne sont jamais relevés, cf.
+// generator/attributes), une fonction du navigateur ou de JavaScript (BROWSER_FUNCTIONS, aucun nom propre à Node) ; un objet, un constructeur ou une valeur que le navigateur fournit (BROWSER_GLOBALS), comme une propriété que la fenêtre hérite d'`Object.prototype` (OBJECT_PROTOTYPE_NAMES : `toString`, `__proto__`…), est refusé pour ce qu'il est, jamais dit absent.
+// Comptent pour `@nom` : une méthode du composant, une propriété que le <script> pose sur l'instance (`@nom = …`, µmount
+// compris), une méthode de la balise (`@focus`, `@remove`). Refusés pour ce qu'ils sont : un mot du langage (`@click=if`), une valeur écrite comme un nom (`null`, `this`…, qui lève à chaque appel) et une fonction du navigateur qui lève quand elle reçoit l'événement (`@click=queueMicrotask`).
+// Toutes les fautes du fichier partent dans un seul arrêt, une fois chacune, rangées par ligne
+// ----------------------------------------------------------------------------
+// méthodes de la balise d'un composant (HTMLElement, Element, Node) qu'un gestionnaire peut appeler par `@nom`
+const ELEMENT_METHODS = new Set([...ELEMENT_FRAMEWORK_METHODS, 'remove', 'contains', 'replaceWith', 'matches', 'closest', 'focus', 'blur', 'click', 'animate', 'scroll', 'scrollTo', 'scrollBy', 'scrollIntoView', 'toggleAttribute', 'append', 'prepend', 'after', 'before', 'requestFullscreen', 'requestPointerLock', 'showPopover', 'hidePopover', 'togglePopover', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText', 'attachShadow', 'getAttributeNames', 'releasePointerCapture', 'hasPointerCapture', 'checkVisibility', 'normalize', 'hasChildNodes'])
+
+export function checkHandlerReferences(refs: ReadonlyArray<HandlerReference>, declared: Set<string>, origins: { imported: Set<string>; module: Set<string> }, methods: Set<string>, moduleName: string | undefined): void {
+  const faults: Array<{ line: number; text: string }> = []
+  for (const ref of refs) {
+    const written = (method: boolean): string => `${ref.attr}=${ref.braces ? '{' : ''}${method ? '@' : ''}${ref.name}${ref.braces ? '}' : ''}`
+    const vars    = { moduleName: moduleName ?? '?', ecrit: written(ref.method), juste: written(!ref.method), nom: ref.name, ligne: ref.place ?? ref.line ?? '' }
+    const inScope = ref.scope?.includes(ref.name) === true
+    if (ref.method) {
+      if (methods.has(ref.name) || ELEMENT_METHODS.has(ref.name)) continue
+      const origine = inScope ? 'gabarit' : origins.imported.has(ref.name) ? 'importee' : origins.module.has(ref.name) ? 'module' : declared.has(ref.name) ? 'script' : ''
+      faults.push({ line: ref.line ?? 0, text: t('transpiler.gestionnaire-methode-introuvable', { ...vars, origine }) })
+    }
+    else if (!inScope && !declared.has(ref.name)) {
+      // un mot du langage, une valeur écrite comme un nom, une fonction du navigateur qui lève quand elle reçoit l'événement, un nom que
+      // le navigateur fournit sans être une fonction (objet, constructeur, valeur) : refusés pour ce qu'ils sont, jamais dits absents
+      const key: MsgKey | null = LANGUAGE_KEYWORDS.has(ref.name) ? 'transpiler.gestionnaire-mot-du-langage' : LITERAL_NAMES.has(ref.name) ? 'transpiler.gestionnaire-valeur' : BROWSER_FUNCTIONS_REFUSING_EVENT.has(ref.name) ? 'transpiler.gestionnaire-fonction-qui-leve' : BROWSER_FUNCTIONS.has(ref.name) ? null : BROWSER_GLOBALS.has(ref.name) || OBJECT_PROTOTYPE_NAMES.has(ref.name) ? 'transpiler.gestionnaire-objet-du-navigateur' : 'transpiler.gestionnaire-fonction-introuvable'
+      if (key) faults.push({ line: ref.line ?? 0, text: t(key, { ...vars, attr: ref.attr, methode: methods.has(ref.name), herite: OBJECT_PROTOTYPE_NAMES.has(ref.name), declarable: DECLARABLE_KEYWORDS.has(ref.name) }) })
+    }
+  }
+  if (faults.length > 0) throw new Error(faults.sort((a, b) => a.line - b.line).map((f) => f.text).join('\n'))
 }
 
 // ----------------------------------------------------------------------------
@@ -1138,16 +1383,48 @@ export function lintHandlerBareMethod(inlinesJs: string, methodNames: Set<string
 // du code exécuté. Le lexer masque déjà pre/code pour ses propres sigils ; ce
 // helper étend la même garantie à la passe transpiler amont `µ$$` (0-bis), qui
 // opère sur le source complet, template compris.
+const DOC_OPENING_RE = /<(?:pre\b|code\b|!--)/i
+const PRE_OPENING_RE = /<pre\b/i
+// les trois sortes de blocs de documentation d'une même lecture native, chacun jusqu'à sa première fin
+const DOC_BLOCK_RE   = /<(?:!--(?:-?>|[\s\S]*?--!?>)|pre\b[^>]*>[\s\S]*?<\/pre>|code\b[^>]*>[\s\S]*?<\/code>)/gi
+// fins de toutes les sortes, posées après le texte : aucune ouverture ne relit la fin du texte sans y trouver sa fin
+const DOC_SENTINEL   = '>--></pre></code>'
+const DOC_INNER_RE   = /<(?:pre\b|!--)/i
+
 export function maskDocBlocks(src: string): { masked: string; restore: (s: string) => string } {
-  const blocks: string[] = []
-  const stash = (m: string): string => `\x00MJSDOC${blocks.push(m) - 1}\x00`
-  const masked = src
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, stash)
-    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, stash)
-    .replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, stash)
-  const restore = (s: string): string =>
-    s.replace(/\x00MJSDOC(\d+)\x00/g, (_m, i) => blocks[Number(i)])
-  return { masked, restore }
+  // chemin rapide : sans `<pre`, `<code` ni `<!--`, rien à masquer (une lecture native du texte)
+  if (!DOC_OPENING_RE.test(src)) return { masked: src, restore: (s) => s }
+  // une seule lecture native des trois sortes, commentaires compris : elle donne les blocs des passages successifs ci-dessous
+  // tant qu'aucun bloc ne finit dans les fins posées après le texte (construction jamais fermée) et qu'aucun `<code>` ne
+  // contient de `<pre>` ni de commentaire ; jetons posés dans l'ordre du texte
+  const n      = src.length
+  const single = createMaskTable(src, 'MJSDOC')
+  const token  = single.stash
+  let exact    = true
+  const view   = (src + DOC_SENTINEL).replace(DOC_BLOCK_RE, (m: string, at: number) => {
+    if (at + m.length > n) exact = false
+    else if ((m.charCodeAt(1) | 32) === 99 && src.indexOf('<', at + 1) !== at + m.length - 7 && DOC_INNER_RE.test(m)) exact = false
+    return exact ? token(m) : m
+  })
+  if (exact) return { masked: view.slice(0, view.length - DOC_SENTINEL.length), restore: single.restore }
+  const { stash, restore } = createMaskTable(src, 'MJSDOC')
+  // passages successifs : les `<pre>` d'abord, commentaires sautés sans être masqués (un `<pre>` ouvert dans un `<code>`
+  // l'emporte sur lui, un `<pre>` cité dans un commentaire n'ouvre rien ; sans `<pre`, ce passage ne change rien)
+  const pre = PRE_OPENING_RE.test(src) ? replaceBlocks(src, ['<!--', 'pre'], (m, kind) => kind === '<!--' ? m : stash(m)) : src
+  // puis les `<code>` et les commentaires, d'une même lecture : un commentaire hors d'un `<code>` est celui que trouverait un
+  // passage de plus, les `<code>` une fois masqués (aucune fin de commentaire n'y apparaît ni n'y disparaît) ; jetons des
+  // `<code>` d'abord, des commentaires ensuite, comme en deux passages ; fins lues d'ouverture en ouverture (findBlocks) : une
+  // construction jamais fermée se lit une fois
+  const blocks = findBlocks(pre, ['<!--', 'code'])
+  const tokens = blocks.map((b) => b.kind === '<!--' ? '' : stash(pre.slice(b.start, b.end)))
+  blocks.forEach((b, k) => { if (b.kind === '<!--') tokens[k] = stash(pre.slice(b.start, b.end)) })
+  let masked = ''
+  let cursor = 0
+  blocks.forEach((b, k) => {
+    masked += pre.slice(cursor, b.start) + tokens[k]
+    cursor  = b.end
+  })
+  return { masked: masked + pre.slice(cursor), restore }
 }
 
 // ----------------------------------------------------------------------------

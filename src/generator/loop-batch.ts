@@ -77,11 +77,13 @@ const isWrite = (n: any): boolean => {
   }
 }
 
-// appel de liste dont un rappel est écrit en place (`l.forEach((x) -> …)`, jamais `l.forEach(ajouter)`)
+// appel de liste dont un rappel est écrit en place (`l.forEach((x) -> …)`, jamais `l.forEach(ajouter)`) ; une fonction de MJS nommée
+// comme une méthode de liste (`µ.every(1000, f)`, minuterie : son rappel part plus tard) n'en est pas un
 const isListCall = (n: any): boolean => {
   if (n.type !== 'CallExpression') return false
   const c = n.callee
   if (c?.type !== 'MemberExpression' || c.computed || c.property.type !== 'Identifier' || !CALLBACKS.has(c.property.name)) return false
+  if (c.object.type === 'Identifier' && c.object.name === 'µ') return false
   return n.arguments.some((a: any) => a.type === 'ArrowFunctionExpression' || a.type === 'FunctionExpression')
 }
 

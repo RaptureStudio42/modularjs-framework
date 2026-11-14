@@ -15,17 +15,17 @@
 // explicitement (non-régression).
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf-8')
+const initSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
 // µ.snap a depuis été EXTRAIT de mjs_init.ts vers mjs_rare_runes.ts (DÉTACHÉ du cœur, cf.
 // bundler/index.ts scanRuntimeFeatures) — n'est plus un « voisin » du tout, mais la dernière
 // assertion ci-dessous continue de le charger EN PLUS pour vérifier qu'il fonctionne toujours
 // après le retrait des 3 globals morts (le but originel de ce test).
-const rareRunesSrc = readFileSync(join(__dirname, '../src/runtime/mjs_rare_runes.ts'), 'utf-8')
+const rareRunesSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_rare_runes.ts'))
 
 function loadMjsInit(): any {
   // Stubs minimaux (mêmes que runtime.test.ts) : mjs_init.ts référence

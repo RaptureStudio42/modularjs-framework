@@ -16,10 +16,10 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const FICHIERS: Record<string, string> = {
   // chaque évaluation du module compte : une instance unique ⇒ 1
-  'partage.module.civet': 'window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := \'partage\'\n',
+  'partage.module.civet.mjs': 'window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := \'partage\'\n',
   'puce.mjs':             '<i class="puce">puce</i>\n',
-  'carte-a.mjs':          '@import marque \'partage.module.civet\'\n\n<p class="a" *glitch>a {marque}</p>\n<mjs-puce></mjs-puce>\n',
-  'carte-b.mjs':          '@import marque \'partage.module.civet\'\n\n<p class="b">b {marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte-a.mjs':          '@import marque \'partage.module.civet.mjs\'\n\n<p class="a" *glitch>a {marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte-b.mjs':          '@import marque \'partage.module.civet.mjs\'\n\n<p class="b">b {marque}</p>\n<mjs-puce></mjs-puce>\n',
   'onglet.mjs':           '<h2 class="o">onglet</h2>\n<mjs-carte-a></mjs-carte-a>\n<mjs-carte-b></mjs-carte-b>\n',
   'appelant.mjs':         '<script>\n@chauffer = -> µ.Autoloader.preload(\'onglet\')\n</script>\n<button class="s" @mouseover=@chauffer>survol</button>\n',
 }

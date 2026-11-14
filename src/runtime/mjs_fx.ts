@@ -887,6 +887,10 @@ function _mjsFxHoldsFixed(cs) {
 µ._mjs_fxHoldsFixed = _mjsFxHoldsFixed;
 
 µ._mjs_fxSeen = function(entry, part) {
+  // <visible>
+  // le rapport d'un observateur réglé par `visible` porte sa part (cf. µ._mjs_fxSight)
+  part = entry._mjs_part || part;
+  // </visible>
   if (!entry.isIntersecting) return false;
   // sans part connue (entrée incomplète) : vue dès qu'elle croise l'écran
   if (!(entry.intersectionRatio < part)) return true;
@@ -914,6 +918,119 @@ function _mjsFxHoldsFixed(cs) {
   return cw > 0 && ch > 0 && r.width * r.height >= part * cw * ch;
 };
 
+// <visible>
+// LA PART DE `on: view` — `visible: 60%` sur un effet ou une transition : la part de la balise qui doit être à l'écran pour que `on: view`
+// la déclenche (de ce qu'elle peut montrer à la fois, comme µ._mjs_fxSeen la mesure), à la place du seuil de son déclencheur. `_mjsFxPart` :
+// celle de l'effet en cours de pose, en fraction, rognée d'un demi-pour-cent (le navigateur arrondit ses mesures : une balise entière à
+// l'écran peut n'y être qu'à 99,9 %) ; 0 hors d'une pose, ou sans le réglage. Une pose la tient le temps de `setup` (_mjsFxPlant) et de
+// chaque mise à jour à chaud de l'effet (son `set` peut refaire un déclencheur) : l'observateur que crée alors un déclencheur la prend
+var _mjsFxPart = 0;
+
+// `run()` sous la part `visible` d'une pose : un nombre de 1 à 100, absent sans le réglage
+function _mjsFxAt(visible, run) {
+  var was = _mjsFxPart;
+  _mjsFxPart = visible / 100 * 0.995 || 0;
+  try {
+    return run();
+  }
+  finally {
+    _mjsFxPart = was;
+  }
+}
+
+// le palier de plus d'une balise plus grande que ce qu'elle peut montrer (l'écran, ou le conteneur qui la rogne, cf. _mjsFxRoom) : elle n'en
+// montre au plus que `m` d'elle-même, sa part `part` se lit au palier `part × m` — un rien au-dessus, le rapport qui le franchit la dit vue
+// (µ._mjs_fxSeen), et arrondi : une taille qui tremble ne refait pas l'observateur. 0 quand elle tient dans la place (le palier `part` est
+// déjà là), -1 quand le rapport `e` ne la mesure pas (hors de l'écran)
+function _mjsFxStep(e, part) {
+  var b = e.boundingClientRect;
+  var v = e.rootBounds;
+  if (!e.isIntersecting || !b || !(b.width > 0) || !(b.height > 0)) return -1;
+  var w    = v && v.width > 0 ? v.width : window.innerWidth || 0;
+  var h    = v && v.height > 0 ? v.height : window.innerHeight || 0;
+  var room = e.target ? _mjsFxRoom(e.target, w, h) : [w, h];
+  var m    = Math.min(b.width, room[0]) * Math.min(b.height, room[1]) / (b.width * b.height);
+  return m < 1 ? Math.round(part * m * 1.002 * 1e4) / 1e4 : 0;
+}
+
+// l'observateur d'un déclencheur de `on: view` (µ._mjs_fxWhen, µ._mjs_fxLoop, µ._mjs_fxState, µ._mjs_fxRun, une transition) : un
+// IntersectionObserver ordinaire, ou, créé pendant la pose d'un effet qui écrit `visible`, un observateur qui en porte la part — chacun de
+// ses rapports la donne à µ._mjs_fxSeen (`_mjs_part`), qui la préfère au seuil du déclencheur. Ses paliers vont jusqu'à elle, plus celui
+// d'une balise plus grande que la place (_mjsFxStep), mesuré au premier rapport qui la voit à l'écran, puis de nouveau chaque fois que la
+// balise, un ancêtre qui la rogne ou la fenêtre change de taille : sans quoi une balise qui grandit (une image chargée tard), ou une
+// fenêtre qui rétrécit, pendant qu'elle est en partie à l'écran ne franchirait plus aucun palier et resterait cachée. Jamais à un autre
+// rapport : une balise qui tourne change de boîte à chaque image, sans changer de taille. Le palier changé, l'observateur est refait,
+// et son premier rapport suit aussitôt. Il suit une balise à la fois, comme chaque déclencheur
+µ._mjs_fxSight = function(see, opts) {
+  var part = _mjsFxPart;
+  if (!part) return new IntersectionObserver(see, opts);
+  var io   = null;
+  var el   = null;
+  var at   = 0;
+  // `fit` : le prochain rapport qui voit la balise mesure son palier ; `watched` : les tailles suivies, dès la première mesure
+  var fit     = true;
+  var watched = false;
+  var ro      = null;
+  var make = function(step) {
+    if (io) io.disconnect();
+    at = step;
+    var me = io = new IntersectionObserver(function(entries) {
+      if (io !== me) return;
+      for (var i = 0; i < entries.length; i++) {
+        var s = fit ? _mjsFxStep(entries[i], part) : -1;
+        if (s >= 0) {
+          fit = false;
+          watch(entries[i].target);
+          if (s !== at) return make(s);
+        }
+        entries[i]._mjs_part = part;
+      }
+      see(entries);
+    }, { threshold: at > 0 ? µ._mjs_fxSteps(part).concat([at]) : µ._mjs_fxSteps(part) });
+    if (el) io.observe(el);
+  };
+  // une taille a changé : la balise, suivie de nouveau, donne aussitôt le rapport qui remesure son palier
+  var refit = function() {
+    fit = true;
+    if (!el) return;
+    io.unobserve(el);
+    io.observe(el);
+  };
+  // la fenêtre, la balise et chaque ancêtre qui la rogne (leur style vient d'être lu par _mjsFxStep, dans la même image)
+  var watch = function(n) {
+    if (watched) return;
+    watched = true;
+    window.addEventListener('resize', refit);
+    if (typeof ResizeObserver !== 'function') return;
+    ro = new ResizeObserver(refit);
+    ro.observe(n);
+    for (var p = _mjsFxUp(n); p; p = _mjsFxUp(p)) {
+      var b = p.nodeType === 1 && _mjsFxBox(p);
+      if (b && (b.ox || b.oy)) ro.observe(p);
+    }
+  };
+  make(0);
+  return {
+    observe: function(n) {
+      el = n;
+      io.observe(n);
+    },
+    unobserve: function(n) {
+      if (n === el) el = null;
+      io.unobserve(n);
+    },
+    disconnect: function() {
+      el      = null;
+      fit     = true;
+      watched = false;
+      io.disconnect();
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', refit);
+    }
+  };
+};
+// </visible>
+
 // déclencheur d'un effet qui se JOUE : 'view' (à l'entrée à l'écran, une fois — sans
 // IntersectionObserver, tout de suite), 'hover', 'click', 'load', 'success', 'error' ; rend la
 // fonction d'arrêt
@@ -934,7 +1051,12 @@ function _mjsFxHoldsFixed(cs) {
     return function() {};
   }
   µ._mjs_dom.setAttribute(el, 'mjs-fx-wait', '');
-  var io = new IntersectionObserver(function(entries) {
+  // <visible>
+  var io = µ._mjs_fxSight(function(entries) {
+  // </visible>
+  // <sans-visible>
+  // var io = new IntersectionObserver(function(entries) {
+  // </sans-visible>
     for (var i = 0; i < entries.length; i++) {
       if (!µ._mjs_fxSeen(entries[i], 0.2)) continue;
       io.disconnect();
@@ -978,7 +1100,12 @@ function _mjsFxHoldsFixed(cs) {
   else if (on === 'view') {
     if (typeof IntersectionObserver === 'function') {
       stop();
-      var io = new IntersectionObserver(function(entries) {
+      // <visible>
+      var io = µ._mjs_fxSight(function(entries) {
+      // </visible>
+      // <sans-visible>
+      // var io = new IntersectionObserver(function(entries) {
+      // </sans-visible>
         for (var i = 0; i < entries.length; i++) (µ._mjs_fxSeen(entries[i], 0.1) ? run : stop)();
       }, { threshold: µ._mjs_fxSteps(0.1) });
       io.observe(el);
@@ -1030,7 +1157,12 @@ function _mjsFxHoldsFixed(cs) {
   else if (on === 'view') {
     if (typeof IntersectionObserver !== 'function') set(true);
     else {
-      var io = new IntersectionObserver(function(entries) {
+      // <visible>
+      var io = µ._mjs_fxSight(function(entries) {
+      // </visible>
+      // <sans-visible>
+      // var io = new IntersectionObserver(function(entries) {
+      // </sans-visible>
         for (var i = 0; i < entries.length; i++) {
           if (!µ._mjs_fxSeen(entries[i], 0.2)) continue;
           io.disconnect();
@@ -1091,7 +1223,12 @@ function _mjsFxHoldsFixed(cs) {
     else {
       // lancée à l'arrivée, arrêtée au départ, une fois chacun (l'observateur prévient à chaque palier)
       var shown = false;
-      var io = new IntersectionObserver(function(entries) {
+      // <visible>
+      var io = µ._mjs_fxSight(function(entries) {
+      // </visible>
+      // <sans-visible>
+      // var io = new IntersectionObserver(function(entries) {
+      // </sans-visible>
         for (var i = 0; i < entries.length; i++) {
           var yes = µ._mjs_fxSeen(entries[i], 0.1);
           if (yes === shown) continue;
@@ -1404,7 +1541,18 @@ function _mjsFxLayerOf(c, names) {
 
 // la pose d'un effet : par l'outil qui remet son décor quand un script réécrit la balise (mjs_fx_toolkeep.ts), s'il est là
 function _mjsFxPlant(def, el, name, s, comp) {
-  return µ._mjs_fxKeep ? µ._mjs_fxKeep(def, el, name, s, comp) : def.setup(el, s, comp);
+  // <visible>
+  // sous la part `visible` de l'effet ; une mise à jour à chaud qui refait son déclencheur (`on` tenu par une variable, cf. *filter) le
+  // refait avec la même part. `visible` changé (le panneau d'inspection) : rendu false, l'effet repart (µ._mjs_fxSet), son observateur
+  // prend la nouvelle part — une transition, qui suit ses réglages d'animation sans repartir, la garderait sinon
+  var stop = _mjsFxAt(s.visible, function() { return µ._mjs_fxKeep ? µ._mjs_fxKeep(def, el, name, s, comp) : def.setup(el, s, comp); });
+  var set  = stop && stop.set;
+  if (typeof set === 'function') stop.set = function(k, v) { return k !== 'visible' && _mjsFxAt(s.visible, function() { return set(k, v); }); };
+  return stop;
+  // </visible>
+  // <sans-visible>
+  // return µ._mjs_fxKeep ? µ._mjs_fxKeep(def, el, name, s, comp) : def.setup(el, s, comp);
+  // </sans-visible>
 }
 
 µ._mjs_fxGoLite = function() {
@@ -1426,6 +1574,9 @@ function _mjsFxPlant(def, el, name, s, comp) {
   // feuille est adoptée, jamais sérialisée, ses marques et ses calques partiraient sans elle dans le
   // HTML prérendu ; il se pose au premier rendu du navigateur
   if (µ._isServer || µ.server === true) return function() {};
+  // un effet lit souvent la mise en page à sa pose : le composant sort du bouclier par le premier calcul de style sous la coupure
+  // des transitions (µ._mjs_unshield, mjs_init.ts), sinon ce que l'effet change après sa lecture glisserait à l'apparition
+  if (comp) comp._mjs_withFx = true;
   var def = µ._mjs_fxDefs[name];
   if (!def) return _mjsFxLater(comp, el, name, s, d, sp);
   // la balise d'un composant dont le code n'est pas encore arrivé : l'effet attend son enregistrement

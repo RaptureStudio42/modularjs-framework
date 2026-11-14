@@ -54,7 +54,7 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
   })
 
   it('@transition=*fade sur un {if} : "destroy_hooks" présent', async () => {
-    const used = await scanOf('<script lang="coffee">\n@ok = true\n</script>\n<p @transition=*fade @if=!{@ok}>y</p>\n', 'f6')
+    const used = await scanOf('<script lang="coffee">\n@ok = true\n</script>\n<p :transition=*fade @if=!{@ok}>y</p>\n', 'f6')
     assert.ok(used.has('destroy_hooks'))
   })
 
@@ -94,8 +94,8 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('effect'))
   })
 
-  it('<@body @class{@actif}="vif"/> : "body" et "effect" présents', async () => {
-    const used = await scanOf(['<script lang="coffee">', '@actif = true', '</script>', '<@body @class{@actif}="vif"/>', '<p>x</p>'].join('\n'), 'f12')
+  it('<@body :class{@actif}="vif"/> : "body" et "effect" présents', async () => {
+    const used = await scanOf(['<script lang="coffee">', '@actif = true', '</script>', '<@body :class{@actif}="vif"/>', '<p>x</p>'].join('\n'), 'f12')
     assert.ok(used.has('body'))
     assert.ok(used.has('effect'))
   })
@@ -121,8 +121,13 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('on'))
   })
 
+  it('@wake=view sur un composant : "wake" présent ; absent sans la directive', async () => {
+    assert.ok((await scanOf('<@carte :wake=view></@carte>\n', 'f17w')).has('wake'))
+    assert.ok(!(await scanOf('<@carte></@carte>\n', 'f17x')).has('wake'))
+  })
+
   it('@title="x" : "title" présent', async () => {
-    const used = await scanOf('<p @title="x">y</p>\n', 'f17')
+    const used = await scanOf('<p :title="x">y</p>\n', 'f17')
     assert.ok(used.has('title'))
   })
 
@@ -168,7 +173,7 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
       ['<p>y</p>', false]
     ]
     for (const [i, [gabarit, attendu]] of cas.entries()) {
-      for (const templateLang of ['civet', 'js'] as const) {
+      for (const templateLang of ['civet'] as const) {
         const { output, data } = await transpile(entete + gabarit + '\n', { moduleName: 'f18r' + i + templateLang, templateLang } as any)
         assert.equal(scanCompiledFeatures(output, data).has('refuse'), attendu, templateLang + ' : ' + gabarit)
       }
@@ -283,6 +288,13 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.equal(used.size, 0)
   })
 
+  it('µevery ou µafter sans `id`, écrits par le composant : "every" seul, ni la page ni les noms (l\'import du cœur que le compilateur pose en tête n\'est pas du code de l\'appli)', async () => {
+    for (const [call, name] of [['µevery 1000, -> $n += 1', 'f28e'], ['µafter 30, -> $n += 1', 'f28a']]) {
+      const used = await scanOf(`<p>{$n}</p>\n<script>\n  $n = 0\n  ${call}\n</script>\n`, name)
+      assert.deepEqual([...used].filter(k => k.startsWith('every')), ['every'], call)
+    }
+  })
+
   it('var(--mjs-fg) écrit en dur dans un <style> : "theme" présent', async () => {
     const used = await scanOf(['<style>', ':host', '  color: var(--mjs-fg)', '</style>', '<p>x</p>'].join('\n'), 'f30')
     assert.ok(used.has('theme'))
@@ -309,9 +321,16 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('play'))
   })
 
-  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"textpool"/"esc"/"for_nested"/"alias" + "types" + "fx" + "lang" + "state" + "inspect" + "play" + "refuse" + "slot_events" + "element_at" + "boundary" + "adopt_sheet" + "form_reset" + "form_associated" + "clone" + "chart"', () => {
-    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone', 'chart']
+  it('SCAN_KEYS liste exactement les 21 clés historiques + "theme" + "html" + "slots" + "deep"/"esc"/"for_nested"/"alias" + "types" + "types_select" + "types_ajax" + "fx" + "lang" + "state" + "inspect" + "play" + "refuse" + "slot_events" + "element_at" + "boundary" + "adopt_sheet" + "form_reset" + "form_associated" + "clone" + "chart" + "wake" + "load" + "rules" + "form" + "form_tag" + "form_view"', () => {
+    const attendues = ['title', 'store', 'interpolate', 'ticker', 'head', 'body', 'dynamic', 'failed', 'rare_runes', 'on', 'effect', 'every', 'for', 'if', 'key', 'await', 'emit', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'deep', 'esc', 'for_nested', 'alias', 'types', 'types_select', 'types_ajax', 'fx', 'lang', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone', 'chart', 'wake', 'load', 'rules', 'form', 'form_tag', 'form_view']
     assert.deepEqual([...SCAN_KEYS].sort(), [...attendues].sort())
+  })
+
+  it('µload (magasin chargé) : "load" présent, et absent quand seul le mot load est écrit', async () => {
+    const used = await scanOf("<script>\n  $me = µload('/api/me')\n</script>\n<p>{$me.data?.pseudo}</p>\n", 'f-load')
+    assert.ok(used.has('load'))
+    const sans = await scanOf("<script>\n  window.addEventListener('load', -> null)\n  $img = { onload: 1 }\n</script>\n<p>{$img.onload}</p>\n", 'f-load2')
+    assert.equal(sans.has('load'), false)
   })
 
   it('composant porteur d\'un alias court : "alias" présent', async () => {
@@ -353,7 +372,7 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     const pose = await scanOf('<p *fade(on: view)>x</p>', 'transition-posee')
     assert.ok(pose.has('fx') && pose.has('fx_transition'))
     assert.equal(pose.has('fx_fade'), false)
-    const vie = await scanOf('<script>\n$v = true\n</script>\n{if $v}<p @in=*fly @out=*scramble>x</p>{end}', 'transition-vie')
+    const vie = await scanOf('<script>\n$v = true\n</script>\n{if $v}<p :in=*fly :out=*scramble>x</p>{end}', 'transition-vie')
     assert.ok(vie.has('fx') && vie.has('fx_transition') && vie.has('fx_scramble'))
   })
 
@@ -420,7 +439,9 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     assert.ok(used.has('html'))
   })
 
-  it('{{…}} SEULEMENT dans {for} ou {await} (écriture en ligne, nœud construit par la branche) : "html" absent — aucun appel émis', async () => {
+  // sous l'en-tête Trusted Types strict, un {{…}} sans politique de la page laisse son contenu vide et le dit, au lieu de faire
+  // tomber le composant : l'écriture d'une ligne passe donc par µ._mjs_rawHtml, comme ailleurs
+  it('{{…}} SEULEMENT dans {for} ou {await} (nœud construit par la branche) : aucune mise à jour liée, écriture par µ._mjs_rawHtml — "html" présent', async () => {
     const formes = [
       RAW_STATE + '{for it in $items}<p>{{$h}}</p>{end}\n',
       RAW_STATE + '{for it in $items}{if $ok}<p>{{it}}</p>{end}{end}\n',
@@ -429,7 +450,8 @@ describe('scanCompiledFeatures() — un marqueur COMPILÉ par clé, jamais un mo
     for (const src of formes) {
       const { output } = await transpile(src, { moduleName: 'f36' })
       assert.equal(/\._mjs_updHtml\(/.test(output), false, src)
-      assert.equal(scanCompiledFeatures(output).has('html'), false, src)
+      assert.equal(/\._mjs_rawHtml\(/.test(output), true, src)
+      assert.equal(scanCompiledFeatures(output).has('html'), true, src)
     }
   })
 

@@ -112,7 +112,7 @@ describe('une couleur CSS à barre oblique s\'écrit en clair dans les réglages
   it('une transition (@in=*nom(…)) lit la valeur entière, avec un effet sur la même balise', async () => {
     for (const [i, f] of REFUSEES.entries()) {
       const g    = REFUSEES[(i + 3) % REFUSEES.length]
-      const code = await compiler(`<div @in=*crossfade(group: ${f}) class="z" *fluid(background: ${g})>x</div>\n`)
+      const code = await compiler(`<div :in=*crossfade(group: ${f}) class="z" *fluid(background: ${g})>x</div>\n`)
       assert.ok(code.includes(poseTransition('crossfade', { group: f })), `${f} : la transition ne porte pas la valeur entière`)
       assert.ok(code.includes(pose('fluid', { background: g })), `${g} : la pose de l'effet voisin`)
       assert.ok(code.includes('_mjs_cloneTpl("<div class=\'z\'>x</div>")'), `${f} : la balise a changé`)
@@ -150,7 +150,7 @@ describe('un réglage d\'effet n\'est pas du JavaScript', function () {
     const cas: Array<[string, number, string]> = [
       ['<p>un</p>\n<p>deux</p>\n<div *fluid(background: hsl(210 50% 20%></div>\n<p>fin</p>\n', 3, 'background: hsl(210 50% 20%></div> <p>fin</p>'],
       ['<p>un</p>\n<p>deux</p>\n<div *fluid(background: hsl(210 50% 20% / .4></div>\n<p>fin</p>\n', 3, 'background: hsl(210 50% 20% / .4></div> <p>fin</p>'],
-      ['<p>un</p>\n<div @in=*crossfade(group: a / b></div>\n<p>fin</p>\n', 2, 'group: a / b></div> <p>fin</p>']
+      ['<p>un</p>\n<div :in=*crossfade(group: a / b></div>\n<p>fin</p>\n', 2, 'group: a / b></div> <p>fin</p>']
     ]
     for (const [source, ligne, debut] of cas) {
       await assert.rejects(compiler(source), (e: Error) => {
@@ -171,7 +171,7 @@ describe('ce qui se construisait avant se construit encore (la lecture d\'avant 
   })
 
   it('… sur une transition aussi', async () => {
-    const code = await compiler('<div @in=*crossfade(group: /img/*.png) class="z">x</div>\n')
+    const code = await compiler('<div :in=*crossfade(group: /img/*.png) class="z">x</div>\n')
     assert.ok(code.includes(poseTransition('crossfade', { group: '/img/*.png' })))
     assert.ok(code.includes('_mjs_cloneTpl("<div class=\'z\'>x</div>")'))
   })

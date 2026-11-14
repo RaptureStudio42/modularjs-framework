@@ -16,7 +16,7 @@ describe('<@body> — une classe qui porte une apostrophe arrive telle quelle', 
       '<script>',
       '  $sombre = true',
       '</script>',
-      `<@body @class{$sombre}="bg-[url('/a.png')] fond">`,
+      `<@body :class{$sombre}="bg-[url('/a.png')] fond">`,
       '<p>{$sombre}</p>',
     ].join('\n'), 'body-classe-apostrophe-dyn')
     const classes = [...window.document.body.classList]

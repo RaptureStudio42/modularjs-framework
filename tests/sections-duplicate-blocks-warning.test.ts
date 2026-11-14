@@ -171,13 +171,13 @@ describe('extractSections — `</script>`/`</style>` dans un littéral ne tronqu
   it('`</script>` dans un commentaire `#…` : script.raw complet', () => {
     const r = extractSections(`<script>\n# commentaire </script> ici\ny = 2\n</script>\n`)
     assert.match(r.script.raw, /y = 2/)
-    assert.match(r.script.raw, /commentaire <\/script> ici/)
+    assert.ok(/y = 2/.test(r.script.raw) && !r.script.raw.includes('</script>'), r.script.raw)
   })
 
   it('`</script>` dans un bloc `###…###` : script.raw complet', () => {
     const r = extractSections(`<script>\n###\nbloc </script> commenté\n###\ny = 2\n</script>\n`)
     assert.match(r.script.raw, /y = 2/)
-    assert.match(r.script.raw, /bloc <\/script> commenté/)
+    assert.ok(/y = 2/.test(r.script.raw) && !r.script.raw.includes('</script>'), r.script.raw)
   })
 
   it('`</style>` dans une chaîne SASS : style.raw complet', () => {

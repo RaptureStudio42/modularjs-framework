@@ -21,7 +21,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
-const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f-oblig" method="get" action="/envoi" :noUJS>
   <@@number class="nb" name="nb" required></@@number>
   <@@knob class="kn" name="kn" required></@@knob>
   <@@gauge class="ga" name="ga" required></@@gauge>
@@ -29,7 +29,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <button type="reset" class="rz">remise à zéro</button>
 </form>
 
-<form class="f-bornes" method="get" action="/envoi" @noUJS>
+<form class="f-bornes" method="get" action="/envoi" :noUJS>
   <@@number class="haut" name="haut" min="0" max="10" value="15"></@@number>
   <@@number class="bas" name="bas" min="5" max="20" value="2"></@@number>
   <@@number class="pas" name="pas" min="0" step="5" value="10"></@@number>
@@ -37,7 +37,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-etiquette" method="get" action="/envoi" @noUJS>
+<form class="f-etiquette" method="get" action="/envoi" :noUJS>
   <@@number class="nb" id="e-nb" name="nb" value="3"></@@number>
   <@@knob class="kn" id="e-kn" name="kn"></@@knob>
   <@@gauge class="ga" id="e-ga" name="ga"></@@gauge>
@@ -46,7 +46,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <label class="l-ga" for="e-ga">étiquette de la jauge</label>
 </form>
 
-<form class="f-fieldset" method="get" action="/envoi" @noUJS>
+<form class="f-fieldset" method="get" action="/envoi" :noUJS>
   <fieldset class="fs" disabled>
     <@@number class="nb" name="nb" required></@@number>
     <@@knob class="kn" name="kn" value="20"></@@knob>
@@ -54,7 +54,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   </fieldset>
 </form>
 
-<form class="f-libre" method="get" action="/envoi" @noUJS>
+<form class="f-libre" method="get" action="/envoi" :noUJS>
   <@@number class="nb" name="nb" value="3"></@@number>
   <@@knob class="kn" name="kn" value="20"></@@knob>
   <@@gauge class="ga" name="ga" value="4"></@@gauge>

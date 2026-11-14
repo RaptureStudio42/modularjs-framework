@@ -10,6 +10,7 @@
   $errorMsg = ''
 
   seen         = false
+  seenControl  = null
   gone         = false
   nameObserver = null
   $filled      = false
@@ -127,14 +128,25 @@
     delete control.value if valueWatched
 
   # le succès attend une réponse du serveur : elle remplace le sac d'erreurs, c'est donc lui qu'on
-  # compare — un simple repassage (le name déduit du champ au montage) n'en est pas une
+  # compare — un simple repassage (le name déduit du champ au montage) n'en est pas une. Le sac lu est
+  # celui du formulaire qui emporte le champ natif, même enveloppé (son `form`, sinon la balise form
+  # autour), que mjs_form_answers.ts range quand l'application écrit un formulaire, `µres.errors` sinon ;
+  # le premier sac est repris quand le champ se fait connaître (au montage) : le succès attend une
+  # réponse à SON formulaire
   µeffect ->
     errors = µres.errors
-    unless seen
+    own    = if control and µ._mjs_formView then µ._mjs_formView?.(control, errors, cible.parentNode) else errors
+    unless seen and seenControl is control
       seen        = true
-      firstErrors = errors
-    err      = errors?.[$name]
-    answered = true if err or errors isnt firstErrors
+      seenControl = control
+      firstErrors = µ._mjs_toRaw?.(own) ?? own
+    # la réponse de son formulaire n'est pas le sac : lu quand même, le sac fait repasser ce reffet à une écriture en place
+    errors?.[$name] unless own is errors
+    # l'objet formulaire du composant qui a écrit ce champ (µform, absent sans lui), s'il connaît ce nom : l'erreur qu'il montre, celle du
+    # serveur comprise ; sinon le sac lu. Le module se trouve par l'élément qu'il enveloppe (`@`, dans un reffet, serait le reffet),
+    # connu au montage, qui pose `$fieldId` : sa lecture fait repasser ce reffet une fois le champ trouvé
+    err      = µ._mjs_formErr?.($fieldId and cible, $name) ?? own?.[$name]
+    answered = true if err or (µ._mjs_toRaw?.(own) ?? own) isnt firstErrors
     if err
       $status   = 'error'
       $errorMsg = if Array.isArray(err) then String(err[0] ?? '') else String(err)
@@ -161,12 +173,12 @@
   µeffect -> marquer($status)
 </script>
 
-<div class="field" part="field" @class{$status == 'error'}="has-error" @class{$status == 'ok'}="has-ok" @class{µlayout is 'float'}="float" @class{$filled}="filled">
+<div class="field" part="field" :class{$status == 'error'}="has-error" :class{$status == 'ok'}="has-ok" :class{µlayout is 'float'}="float" :class{$filled}="filled">
   {if $label and µlayout isnt 'float'}
     <label class="label" part="label" for="{$fieldId}" @click={focusControl()}>{$label}</label>
   {end}
   <div class="control">
-    <slot @this=!{slotRef}></slot>
+    <slot :this=!{slotRef}></slot>
     {if µlayout is 'float' and $icon}
       <span class="icon" part="icon" aria-hidden="true">{$icon}</span>
     {end}

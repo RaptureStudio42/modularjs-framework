@@ -17,7 +17,8 @@
 | composant | component | un fichier `.mjs`, monté comme custom element |
 | symbole | sigil | `µ`, `$`, `$$`, `§`, `§§` — le caractère qui ouvre une écriture du langage |
 | rune | rune | une écriture `µquelquechose` (`µeffect`, `µt`, `µlang`…) |
-| directive | directive | une écriture `@quelquechose` posée sur une balise ou à la racine |
+| directive | directive | une écriture `:quelquechose` posée sur une balise (un mot de MJS), ou `@quelquechose` en tête de fichier (`@import`, `@i18n`…) |
+| mot de MJS | MJS word | une écriture `:quelquechose` posée sur une balise (`:size`, `:class{…}`, `:attach`…) ; sur une balise, `@` ouvre un événement et `*` un effet |
 | bloc logique | logic block | `{if}`, `{for}`, `{key}`, `{await}` |
 | prop | prop | valeur passée du parent vers l'enfant |
 | attribut | attribute | attribut HTML posé sur la balise |

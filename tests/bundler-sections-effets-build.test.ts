@@ -65,7 +65,7 @@ describe('sections d\'un fichier d\'effet — les fichiers des transitions et de
     ['iris.pointeur', '<div class="a" *iris(origin: pointer)>x</div>', [POINTEUR], {}],
     ['blocks.order',  '<div class="a" *blocks(order: random)>x</div>', [ORDRE], {}],
     ['blocks.seed',   '<div class="a" *blocks(seed: 5)>x</div>', [], { [GRAINE]: 1 }],
-    ['cycle de vie',  '<script>\n$v = true\n</script>\n{if $v}<p class="a" @in=*fly(rotate: 20)>x</p>{end}', [], { [ROTATION]: 1 }]
+    ['cycle de vie',  '<script>\n$v = true\n</script>\n{if $v}<p class="a" :in=*fly(rotate: 20)>x</p>{end}', [], { [ROTATION]: 1 }]
   ]
 
   it('chaque section ne part que si une page écrit ce qui la demande : le code propre, et les lignes partagées en plus', async () => {

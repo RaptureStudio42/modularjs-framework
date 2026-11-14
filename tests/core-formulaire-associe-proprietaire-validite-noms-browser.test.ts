@@ -21,18 +21,18 @@ import { assembler } from './helpers/editeur-riche.js'
 
 const OPTIONS = '<@@option value="a">A</@@option><@@option value="b">B</@@option>'
 
-const PAGE = `<form id="f-radio" class="f-radio" method="get" action="/envoi" @noUJS>
+const PAGE = `<form id="f-radio" class="f-radio" method="get" action="/envoi" :noUJS>
   <@@radio class="r3" name="r" value="3">trois</@@radio>
   <@@radio class="ra" form="f-autre" name="r" value="a" checked>autre formulaire</@@radio>
 </form>
-<form id="f-autre" class="f-autre" method="get" action="/envoi" @noUJS></form>
+<form id="f-autre" class="f-autre" method="get" action="/envoi" :noUJS></form>
 <div class="hors-radio">
   <@@radio class="r1" form="f-radio" name="r" value="1" checked>un</@@radio>
   <@@radio class="r2" form="f-radio" name="r" value="2">deux</@@radio>
   <@@radio class="rx" name="r" value="x" checked>sans formulaire</@@radio>
 </div>
 
-<form id="f-loin" class="f-loin" method="get" action="/envoi" @noUJS>
+<form id="f-loin" class="f-loin" method="get" action="/envoi" :noUJS>
   <button type="submit" class="go">envoyer</button>
 </form>
 <div class="loin">
@@ -42,11 +42,11 @@ const PAGE = `<form id="f-radio" class="f-radio" method="get" action="/envoi" @n
   <@@gauge class="xga" form="f-loin" name="xga" value="4"></@@gauge>
 </div>
 
-<form class="f-appli" method="get" action="/envoi" @noUJS>
+<form class="f-appli" method="get" action="/envoi" :noUJS>
   <@perso class="pa" name="pa"></@perso>
 </form>
 
-<form class="f-requis" method="get" action="/envoi" @noUJS>
+<form class="f-requis" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cf" name="cf" required="false">c</@@checkbox>
   <@@checkbox class="cF" name="cF" required="FALSE">c</@@checkbox>
   <@@switch class="sF" name="sF" required="False">s</@@switch>
@@ -58,7 +58,7 @@ const PAGE = `<form id="f-radio" class="f-radio" method="get" action="/envoi" @n
   <@@checkbox class="co" name="co" required="oui">c</@@checkbox>
 </form>
 
-<form class="f-lecture" method="get" action="/envoi" @noUJS>
+<form class="f-lecture" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cR" name="cR" readonly required>c</@@checkbox>
   <@@switch class="sR" name="sR" readonly="false" required>s</@@switch>
   <@@radio class="rR" name="rR" value="1" readonly="" required>r</@@radio>
@@ -69,7 +69,7 @@ const PAGE = `<form id="f-radio" class="f-radio" method="get" action="/envoi" @n
   <@@number class="nRF" name="nRF" readonly="FALSE" required></@@number>
 </form>
 
-<form class="f-nom" method="get" action="/envoi" @noUJS>
+<form class="f-nom" method="get" action="/envoi" :noUJS>
   <@@switch class="sN" name="sN" aria-label="Mode sombre"></@@switch>
   <@@checkbox class="cN" name="cN" aria-label="Accepter les conditions"></@@checkbox>
   <@@radio class="rN" name="rN" value="1" aria-label="Choix un"></@@radio>

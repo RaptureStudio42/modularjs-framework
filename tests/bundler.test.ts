@@ -318,7 +318,7 @@ describe('Bundler.compile()', () => {
     const { srcDir, outDir, manifest } = makeProject()
     writeFileSync(join(srcDir, 'fancy.mjs'), `
 <script lang="coffee">$show = true</script>
-{if $show}<div @transition=*fade>x</div>{end}
+{if $show}<div :transition=*fade>x</div>{end}
 `)
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     await bundler.compile()

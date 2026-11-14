@@ -399,7 +399,7 @@ describe('compilateur (paths.ts/compile.ts)', function () {
 
     // AVANT ce correctif : nearestLine() remontait au PREMIER DESCENDANT muni de `.line` — ici
     // {success v} (ligne 4 : le run de texte 100% blanc entre {await} et {success} pointe la
-    // ligne de ce qu'il PRÉCÈDE, cf. parseText), jamais le mot-clé {await}
+    // ligne de ce qu'il PRÉCÈDE, cf. textes, dans lireParLArbre), jamais le mot-clé {await}
     // lui-même (ligne 3). Avant correctif : message « (ligne 4) ». Non
     // reproduit ici tel quel (reviendrait à revert le correctif dans ce fichier même).
     it('{await} sur SA PROPRE ligne (3), {success}/{v} sur des lignes ULTÉRIEURES (5) : le message cite le mot-clé, pas le 1er descendant', () => {

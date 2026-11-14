@@ -56,9 +56,9 @@ function remplissage(n: number): Record<string, string> {
 }
 
 const PIEGES: Record<string, string> = {
-  'carte.mjs':                  '@import marque \'outils.module.civet\'\n\n<p class="carte">{marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte.mjs':                  '@import marque \'outils.module.civet.mjs\'\n\n<p class="carte">{marque}</p>\n<mjs-puce></mjs-puce>\n',
   'puce.mjs':                   '<i>puce</i>\n',
-  'outils.module.civet':        'export marque := \'outils\'\n',
+  'outils.module.civet.mjs':        'export marque := \'outils\'\n',
   'v2.mjs':                     '<p>v2</p>\n',
   'deadbeef.mjs':               '<p>ressemble à une empreinte</p>\n',
   'tuto/tuto-ajax.mjs':         '<p>tuto ajax</p>\n',

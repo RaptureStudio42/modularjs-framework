@@ -7,16 +7,18 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as acorn from 'acorn'
-import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { Bundler, terminateSharedWorkerPool, projeterBlocs } from '../src/bundler/index.js'
 import { transpile } from '../src/transpiler/index.js'
-import { scanCompiledFeatures } from '../src/bundler/features.js'
+import { scanCompiledFeatures, VIEW_PART } from '../src/bundler/features.js'
 import { selectFxSections } from '../src/bundler/fx-sections.js'
 import { stripMsgFallbacks } from '../src/bundler/minify.js'
 import { hologramClient, HOLOGRAM_FILE } from '../src/bundler/hologram-styles.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const compte = (texte: string, motif: string) => texte.split(motif).length - 1
-const lire   = (fichier: string) => readFileSync(new URL('../src/runtime/' + fichier, import.meta.url), 'utf-8')
+// le fichier tel que le build le lit (cf. projeterBlocs) : les blocs `<visible>` gardés, leurs marques ôtées, en développement ou pour une page
+// qui écrit `visible` ; sinon retirés, et les lignes `<sans-visible>` reprennent leur texte
+const lire   = (fichier: string, visible = true) => projeterBlocs(readFileSync(new URL('../src/runtime/' + fichier, import.meta.url), 'utf-8'), { visible })
 const client = (fichier: string) => fichier === HOLOGRAM_FILE ? hologramClient : undefined
 
 // les cinq fichiers qui portent des sections : le fichier, et une page qui n'écrit presque rien de l'effet (aucune section demandée)
@@ -31,9 +33,12 @@ const PAGES: Array<[string, string, string]> = [
 // le fichier entier, marques ôtées : ce que « tout demandé » rend (la demande explicite `runtime: ['fx_nom']` en rend autant)
 const entier = (fichier: string) => selectFxSections(fichier, lire(fichier), new Set(), true, client(fichier))
 // le fichier trié pour la page : ce que la production en garde (elle retire aussi le texte français de secours des messages)
-const trie = async (fichier: string, page: string) => stripMsgFallbacks(selectFxSections(fichier, lire(fichier), scanCompiledFeatures((await transpile(page, { moduleName: 'c' })).output), false, client(fichier)))
-// une ligne de marque (`// @@ étiquette`, `// @@`, ou l'étiquette en fin de ligne) : ne sort jamais
-const MARQUES = [/^\s*\/\/ @@(?: [A-Za-z0-9 ._=,*-]+)?\s*$/m, /\S\s+\/\/ @@ [A-Za-z0-9 ._=,*-]+$/m]
+const trie = async (fichier: string, page: string) => {
+  const used = scanCompiledFeatures((await transpile(page, { moduleName: 'c' })).output)
+  return stripMsgFallbacks(selectFxSections(fichier, lire(fichier, used.has(VIEW_PART)), used, false, client(fichier)))
+}
+// une ligne de marque (`// @@ étiquette`, `// @@`, ou l'étiquette en fin de ligne), ou celle d'un bloc `<visible>` : ne sort jamais
+const MARQUES = [/^\s*\/\/ @@(?: [A-Za-z0-9 ._=,*-]+)?\s*$/m, /\S\s+\/\/ @@ [A-Za-z0-9 ._=,*-]+$/m, /^\s*\/\/ <\/?(?:sans-)?visible>\s*$/m]
 
 // ce que chaque section apporte : un morceau qui ne se lit que dans cette section
 const POINTEUR_SOFT = ["_mjs_fxRegister('--mjs-fx-pointer-e'", 'var soften = function', "if (k === 'soft') soften(v)", "'mjs-fx-pointer-soft'", '@supports (-moz-orient']
@@ -129,6 +134,8 @@ describe('fichiers d\'effets — développement : le fichier part en entier ; pr
         assert.ok(texte.includes(await trie(fichier, page)), `${fichier} : le fichier trié n'est pas dans la sortie`)
         assert.equal(texte.includes(stripMsgFallbacks(entier(fichier))), false, `${fichier} : la production envoie le fichier entier`)
         for (const marque of MARQUES) assert.equal(marque.test(texte), false, `${fichier} : une marque de section sort (${marque})`)
+        // aucune page n'écrit `visible` : la part réglable de `on: view` (µ._mjs_fxSight, bloc `<visible>` du moteur) ne part pas
+        assert.equal(texte.includes('_mjs_fxSight'), false, `${fichier} : le bloc <visible> part sans page qui écrive visible`)
       })
     }
 

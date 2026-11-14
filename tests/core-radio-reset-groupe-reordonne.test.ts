@@ -14,7 +14,7 @@ const REORDRE = [
   '  $z = \'b\'',
   '  $opts = [\'a\', \'b\', \'c\']',
   '</script>',
-  '<form id="f" @noUJS>',
+  '<form id="f" :noUJS>',
   '  {for o in $opts by o}<@@radio class="zr" name="z" value={o} group=!{$z}>{o}</@@radio>{end}',
   '</form>',
   '<p id="val">{$z}</p>',

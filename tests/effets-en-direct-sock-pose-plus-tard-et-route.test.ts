@@ -25,7 +25,7 @@ const COMPOSANTS: Record<string, string> = {
   'fx-sp-reagir':   tard('wss://tard.fr/reagir') + '<div class="z" *react(stage: true)></div>',
   'fx-sp-chaleur':  tard('wss://tard.fr/chaleur') + '<div class="z" *heatmap>zone</div>',
   // après un await dans µawake
-  'fx-sp-attente': '<script>\nµawake ->\n  await new Promise (r) -> setTimeout r, 120\n  @sock = µsocket \'wss://tard.fr/attente\'\n</script>\n<div class="z" *follow>' + CORPS + '</div>',
+  'fx-sp-attente': '<script>\nµawake ->\n  await µafter 120\n  @sock = µsocket \'wss://tard.fr/attente\'\n</script>\n<div class="z" *follow>' + CORPS + '</div>',
   // <@document *follow>, @sock posé dans µawake (après l'effet de la page)
   'fx-sp-document': '<script>\nµawake ->\n  @sock = µsocket \'wss://tard.fr/document\'\n</script>\n<@document *follow></@document>\n<p class="z">x</p>',
   // une autre variable du composant

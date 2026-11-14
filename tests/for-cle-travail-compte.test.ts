@@ -1,8 +1,8 @@
 // {for … by id} : le travail d'une réconciliation se compte. Une liste qui ne change qu'à un endroit (ligne supprimée, deux lignes échangées,
 // lignes ajoutées en fin ou insérées au milieu, ligne déplacée, données changées sans toucher l'ordre) se réconcilie sans Set ni Map, sans
 // plus longue sous-suite croissante, et ne déplace que les nœuds qui bougent vraiment. Une ligne qui n'affiche pas son indice ne se rejoue
-// pas quand elle glisse (ses gestionnaires lisent l'élément et l'indice sur l'entrée de la ligne). Un remplacement total ne parcourt l'arbre
-// d'une ancienne ligne (recherche d'un état hors gabarit) que si la réserve de lignes a encore de la place pour elle
+// pas quand elle glisse (ses gestionnaires lisent l'élément et l'indice sur l'entrée de la ligne). Un remplacement total fait une ligne
+// neuve pour chaque clé neuve, sans reprendre aucune ancienne ligne
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -27,7 +27,7 @@ const CORPS = [
   '</script>',
   '<table><tbody>',
   '  {for row in $data by id}',
-  '    <tr @class{$selected === row.id}="danger">',
+  '    <tr :class{$selected === row.id}="danger">',
   '      <td class="id">{row.id}</td>',
   '      <td class="lab"><a class="sel" @click={@select(row.id)}>{row.label}</a></td>',
   '    </tr>',
@@ -40,7 +40,7 @@ const tic = async () => { await new Promise((r) => setTimeout(r, 0)); await new 
 describe('{for … by id} — travail compté d\'une réconciliation', function () {
   this.timeout(60000)
   let win: any, el: any, µ: any
-  const n = { set: 0, map: 0, lis: 0, dfs: 0, ins: 0, ret: 0, rejoue: 0 }
+  const n = { set: 0, map: 0, lis: 0, ins: 0, ret: 0, rejoue: 0 }
   let compte = false
   let jeton = 0
   let donnees: any[] = []
@@ -69,9 +69,9 @@ describe('{for … by id} — travail compté d\'une réconciliation', function 
     win.Map = new Proxy(M, { construct(t: any, a: any[], nt: any) { if (compte) n.map++; return Reflect.construct(t, a, nt) } })
     const lis = µ._mjs_lis
     µ._mjs_lis = function(x: any) { n.lis++; return lis.call(this, x) }
-    const proto = µ.Element.prototype
-    const dfs = proto._mjs_mjsHasOwnState
-    proto._mjs_mjsHasOwnState = function(...x: any[]) { n.dfs++; return dfs.apply(this, x) }
+    // retraits comptés au prototype : le runtime retire un nœud par `Node.prototype.removeChild`, sans la méthode du parent
+    const NR = win.Node.prototype.removeChild
+    win.Node.prototype.removeChild = function(x: any) { if (compte && this.localName === 'tbody') n.ret++; return NR.call(this, x) }
     const rec = el._mjs_reconcileList
     el._mjs_reconcileList = function(...x: any[]) { compte = true; try { return rec.apply(this, x) } finally { compte = false } }
   })
@@ -88,8 +88,7 @@ describe('{for … by id} — travail compté d\'une réconciliation', function 
     const N = win.Node.prototype
     tbody.insertBefore = function(x: any, r: any) { if (compte) n.ins++; return N.insertBefore.call(this, x, r) }
     tbody.appendChild = function(x: any) { if (compte) n.ins++; return N.appendChild.call(this, x) }
-    tbody.removeChild = function(x: any) { if (compte) n.ret++; return N.removeChild.call(this, x) }
-    // seules comptent les lignes affichées au départ (une ligne prise à la réserve se rejoue toujours)
+    // seules comptent les lignes affichées au départ (une ligne neuve se rejoue toujours)
     jeton++
     const cid = Object.keys(el._mjs_list_cache || {})[0]
     if (cid) for (const en of el._mjs_list_cache[cid].values()) {
@@ -122,7 +121,7 @@ describe('{for … by id} — travail compté d\'une réconciliation', function 
   it('supprimer une ligne au milieu : un seul retrait, aucun Set, Map ni sous-suite', async () => {
     const a = donnees.slice(); a.splice(8, 1)
     const c = await operer(a)
-    assert.deepEqual([c.set, c.map, c.lis, c.ins, c.ret, c.dfs], [0, 0, 0, 0, 1, 1], 'set, map, lis, insertions, retraits, parcours : ' + JSON.stringify(c))
+    assert.deepEqual([c.set, c.map, c.lis, c.ins, c.ret], [0, 0, 0, 0, 1], 'set, map, lis, insertions, retraits : ' + JSON.stringify(c))
     assert.equal(c.rejoue, 0, 'les lignes décalées ne se rejouent pas (la ligne n\'affiche pas son indice)')
   })
 
@@ -153,10 +152,11 @@ describe('{for … by id} — travail compté d\'une réconciliation', function 
     assert.equal(c.rejoue, 0, 'la ligne déplacée et celles qui glissent ne se rejouent pas')
   })
 
-  it('remplacer 300 lignes : l\'arbre d\'une ancienne ligne n\'est parcouru que si la réserve peut la garder', async () => {
+  it('remplacer 300 lignes : 300 lignes neuves, aucune ancienne ligne reprise', async () => {
     await operer(ids(1001, 1300))
+    const anciennes = new Set(Array.from(ombre().querySelectorAll('tbody > tr')))
     const c = await operer(ids(2001, 2300))
-    assert.ok(c.dfs <= 256, 'parcours ' + c.dfs + ' pour 300 anciennes lignes et une réserve de 256')
+    assert.equal(Array.from(ombre().querySelectorAll('tbody > tr')).filter((tr) => anciennes.has(tr)).length, 0, 'aucune ancienne ligne reprise par une clé neuve')
     assert.equal(c.lis, 0, 'aucune sous-suite croissante : ' + JSON.stringify(c))
     assert.equal(c.set, 0, 'aucun Set : ' + JSON.stringify(c))
   })

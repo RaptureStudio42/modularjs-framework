@@ -5,13 +5,13 @@
 // `$$ui.a = v` devient `µ._mjs_storeDeepSet('ui', ['a'], v)`). elle s'arrête à la frontière d'un appel, et un
 // module .js n'est jamais compilé, donc jamais réécrit : la lecture `$$ui` y arrive en `µ.store.ui`, l'objet
 // brut, et `ui.coinFx = spec` écrit dedans sans prévenir personne — la valeur change, rien ne se redessine,
-// build et tests restent verts. un module .civet ou .coffee n'y change rien quand le magasin lui est passé en
+// build et tests restent verts. un module .civet.mjs ou .coffee.mjs n'y change rien quand le magasin lui est passé en
 // argument : l'écriture n'y est suivie que si `$$x` est écrit en clair dans le module lui-même
 //
 // comment : la détection lit le JS déjà compilé (acorn), là où chaque `$$x` est devenu `µ.store.x`, jamais le
 // texte du composant. les noms viennent des `@import` (`dir.pendingAutoImports`, forme figée par directives.ts)
-// dont la cible n'est pas compilée par le bundler (resolveOneAsset, bundler/index.ts : seuls .civet, .coffee et
-// .mjs le sont, le reste est copié tel quel). un argument est candidat quand il est un chemin du magasin
+// dont la cible n'est pas compilée par le bundler (resolveOneAsset, bundler/index.ts : seuls les modules
+// .civet.mjs, .coffee.mjs et .js.mjs le sont avec MJS ; une bibliothèque .js, .civet ou .coffee ne suit pas `$$x`). un argument est candidat quand il est un chemin du magasin
 // (`$$x`, `$$x.a.b`, `$$x.items[0]`, étalé ou non)
 //
 // un candidat n'est dit que si la fonction ÉCRIT dans le paramètre qui le reçoit : le fichier .js est relu sur
@@ -43,8 +43,8 @@ import { t } from '../messages/index.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { isStoreRoot } from './ast-helpers.js'
 
-// les cibles que le bundler compile (resolveOneAsset) : l'écriture sur `$$x` y est suivie, rien à dire
-const COMPILED_EXTENSIONS = new Set(['.civet', '.coffee', '.mjs'])
+// les cibles que le bundler compile avec MJS (modules .civet.mjs, .coffee.mjs, .js.mjs) : l'écriture sur `$$x` y est suivie, rien à dire
+const COMPILED_EXTENSIONS = new Set(['.mjs'])
 
 // forme figée par directives.ts : `import { a, b } from "µasset('chemin')"` ou `import a from "µasset('chemin')"`
 // (une adresse https:// garde sa forme `from 'https://…'` et n'entre pas ici)

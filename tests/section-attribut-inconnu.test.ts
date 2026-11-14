@@ -24,32 +24,32 @@ async function typoCheck(src: string, moduleName: string): Promise<{ err?: any; 
 
 describe('balise de section : attribut inconnu = erreur de compilation', () => {
   it('<style @dsplay="…"> : erreur, nomme @dsplay et suggère @display', async () => {
-    const { err } = await typoCheck('<div>x</div>\n<style @dsplay="inline">\n  :host\n    color: red\n</style>', 'sect-style-dsplay')
+    const { err } = await typoCheck('<div>x</div>\n<style :dsplay="inline">\n  :host\n    color: red\n</style>', 'sect-style-dsplay')
     assert.ok(err, 'une erreur de compilation était attendue')
-    assert.match(err.message, /@dsplay/)
-    assert.match(err.message, /@display/)
+    assert.match(err.message, /:dsplay/)
+    assert.match(err.message, /:display/)
   })
 
   it('<style @csss="…"> : erreur, suggère @css', async () => {
-    const { err } = await typoCheck('<div>x</div>\n<style @csss="base">\n  :host\n    color: red\n</style>', 'sect-style-csss')
+    const { err } = await typoCheck('<div>x</div>\n<style :csss="base">\n  :host\n    color: red\n</style>', 'sect-style-csss')
     assert.ok(err, 'une erreur de compilation était attendue')
-    assert.match(err.message, /@css\b/)
+    assert.match(err.message, /:css\b/)
   })
 
   it('<style @viewTransitio.fade> : erreur, suggère @viewTransition', async () => {
-    const { err } = await typoCheck('<div>x</div>\n<style @viewTransitio.fade>\n  :host\n    color: red\n</style>', 'sect-style-vt-typo')
+    const { err } = await typoCheck('<div>x</div>\n<style :viewTransitio.fade>\n  :host\n    color: red\n</style>', 'sect-style-vt-typo')
     assert.ok(err, 'une erreur de compilation était attendue')
-    assert.match(err.message, /@viewTransition/)
+    assert.match(err.message, /:viewTransition/)
   })
 
   it('<style @foo="…"> : erreur, la liste attendue énumère lang, name, @css, @display, @viewTransition', async () => {
-    const { err } = await typoCheck('<div>x</div>\n<style @foo="bar">\n  :host\n    color: red\n</style>', 'sect-style-foo')
+    const { err } = await typoCheck('<div>x</div>\n<style :foo="bar">\n  :host\n    color: red\n</style>', 'sect-style-foo')
     assert.ok(err, 'une erreur de compilation était attendue')
-    assert.match(err.message, /lang, name, @css, @display, @viewTransition/)
+    assert.match(err.message, /lang, name, :css, :display, :viewTransition/)
   })
 
   it('<style name="big" @foo="…"> : erreur même sur un style NOMMÉ (variant)', async () => {
-    const { err } = await typoCheck('<div>x</div>\n<style name="big" @foo="1">\n  :host\n    color: red\n</style>', 'sect-style-name-foo')
+    const { err } = await typoCheck('<div>x</div>\n<style name="big" :foo="1">\n  :host\n    color: red\n</style>', 'sect-style-name-foo')
     assert.ok(err, 'une erreur de compilation était attendue')
   })
 
@@ -127,20 +127,20 @@ describe('balise de section : formes légitimes — compilent sans erreur', () =
     assert.ok(output && output.length > 0)
   })
 
-  it('<style lang="css" @display="…" @css="…"> : tous les attributs permis à la fois', async () => {
-    const { err, output } = await typoCheck('<div>x</div>\n<style lang="css" @display="inline-block" @css="base typo">\n:host { color: red }\n</style>', 'sect-ok-style-combo')
+  it('<style lang="css" :display="…" :css="…"> : tous les attributs permis à la fois', async () => {
+    const { err, output } = await typoCheck('<div>x</div>\n<style lang="css" :display="inline-block" :css="base typo">\n:host { color: red }\n</style>', 'sect-ok-style-combo')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.ok(output && output.length > 0)
   })
 
-  it('<style @viewTransition.zoom> : forme à modificateur', async () => {
-    const { err, output } = await typoCheck('<div>x</div>\n<style @viewTransition.zoom>\n  :host\n    color: red\n</style>', 'sect-ok-vt-zoom')
+  it('<style :viewTransition.zoom> : forme à modificateur', async () => {
+    const { err, output } = await typoCheck('<div>x</div>\n<style :viewTransition.zoom>\n  :host\n    color: red\n</style>', 'sect-ok-vt-zoom')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.ok(output && output.length > 0)
   })
 
-  it('<style @viewTransition.turn={ … }> : forme objet', async () => {
-    const { err, output } = await typoCheck('<div>x</div>\n<style @viewTransition.turn={ direction: left, priority: 2 }>\n  :host\n    color: red\n</style>', 'sect-ok-vt-objet')
+  it('<style :viewTransition.turn={ … }> : forme objet', async () => {
+    const { err, output } = await typoCheck('<div>x</div>\n<style :viewTransition.turn={ direction: left, priority: 2 }>\n  :host\n    color: red\n</style>', 'sect-ok-vt-objet')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.ok(output && output.length > 0)
   })

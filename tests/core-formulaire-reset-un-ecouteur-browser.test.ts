@@ -13,13 +13,13 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
-const OMBRE = `<form id="f1" @noUJS>
+const OMBRE = `<form id="f1" :noUJS>
   <@@checkbox id="c" name="c" checked>Case</@@checkbox>
   <@@gauge id="g" name="g" value={3}></@@gauge>
   <@@select id="p" name="pays" value="fr"><@@option value="fr">France</@@option><@@option value="be">Belgique</@@option></@@select>
   <button type="reset" id="raz1">reset 1</button>
 </form>
-<form id="f2" @noUJS>
+<form id="f2" :noUJS>
   <button type="reset" id="raz2">reset 2</button>
 </form>
 `

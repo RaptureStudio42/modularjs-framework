@@ -26,7 +26,7 @@ function construire(html: string): string {
   const { body } = generateCreateFnBody(html, { forceImperative: true })
   const fenetre = new Window()
   const doc     = fenetre.document
-  const µ = { _mjs_getTextNode: (s: string) => doc.createTextNode(s), _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
+  const µ = { _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
   const { fragment } = new Function('µ', 'document', body)(µ, doc)
   const conteneur = doc.createElement('div')
   conteneur.appendChild(fragment)

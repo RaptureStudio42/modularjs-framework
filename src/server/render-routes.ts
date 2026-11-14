@@ -39,6 +39,8 @@ export interface ResolvedPage {
   /** Racine à monter en mode léger, si posé (`route.light`). Simple TRANSIT ici —
    *  ni défaut ni consommation. */
   light?: boolean
+  /** Page servie en flux, si posé (`route.stream`). Simple TRANSIT ici — le défaut vit dans `pickStream` ci-dessous. */
+  stream?: boolean
 }
 
 /** `ssr` seul ≡ `ssr:replace` (stratégie d'hydratation par défaut). */
@@ -160,6 +162,7 @@ export function resolvePage(
         ...(route.engine !== undefined ? { engine: route.engine } : {}),
         ...(route.startup !== undefined ? { startup: route.startup } : {}),
         ...(route.light !== undefined ? { light: route.light } : {}),
+        ...(route.stream !== undefined ? { stream: route.stream } : {}),
       }
     }
   }
@@ -174,6 +177,14 @@ export function resolvePage(
 export function pickStartup(render: RenderConfig | undefined, url: string): RenderStartupMode {
   if (!render) return FALLBACK_STARTUP
   return render.routes?.[url]?.startup ?? render.startup ?? FALLBACK_STARTUP
+}
+
+/**
+ * Page servie en flux (`mjs serve` / `mjs dev`) : `route.stream` > `render.stream` > non. Reçoit la page DÉJÀ résolue (motif
+ * paramétré compris, cf. `resolvePage`), là où `pickStartup` ne voit que des pages prérendues, concrètes par construction.
+ */
+export function pickStream(render: RenderConfig | undefined, page: ResolvedPage | null): boolean {
+  return page !== null && (page.stream ?? render?.stream ?? false)
 }
 
 /**

@@ -16,10 +16,10 @@ const LIAISONS = ['classe', 'style-vide', 'style-valeur', 'style-ligne']
 // la ligne qui porte la liaison ; `data-k` dit la forme de la liste et la liaison. `lue` : ce que la valeur du style lit de la ligne
 function element(liaison: string, forme: string, item: string, lue: string): string {
   const marque = `data-k="${forme}-${liaison}"`
-  if (liaison === 'classe') return `<p ${marque} @class{${item} is $choix}="on">x</p>`
-  if (liaison === 'style-vide') return `<p ${marque} @style.color={${item} is $choix ? 'red' : ''}>x</p>`
-  if (liaison === 'style-valeur') return `<p ${marque} @style.opacity={${item} is $choix ? '1' : '0.5'}>x</p>`
-  return `<p ${marque} @style.--lu={${item} is $choix ? ${lue} : ''}>x</p>`
+  if (liaison === 'classe') return `<p ${marque} :class{${item} is $choix}="on">x</p>`
+  if (liaison === 'style-vide') return `<p ${marque} :style.color={${item} is $choix ? 'red' : ''}>x</p>`
+  if (liaison === 'style-valeur') return `<p ${marque} :style.opacity={${item} is $choix ? '1' : '0.5'}>x</p>`
+  return `<p ${marque} :style.--lu={${item} is $choix ? ${lue} : ''}>x</p>`
 }
 
 function listes(liaison: string): string {

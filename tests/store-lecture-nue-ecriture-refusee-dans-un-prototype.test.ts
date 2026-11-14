@@ -14,6 +14,10 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
+// avertissement qui nomme le segment refusé : pour `constructor`, le nom réservé écrit dans le chemin, ou la fonction du navigateur
+// qu'il range (`Object`, `Array`), dont l'avertissement explique le piège
+const nomme = (a: string, seg: string) => a.includes(`segment « ${seg} »`) || seg === 'constructor' && / contient la fonction (Object|Array) du navigateur, sans doute amenée par une clé venue de l'extérieur /.test(a)
+
 const CIVET = `<script>
   $$rows = [{ id: 1, v: 5 }]
   $$o = { a: { b: 0 }, p: null }
@@ -149,7 +153,7 @@ describe('magasin $$ : une lecture rend ce que JavaScript rend, une écriture re
       }
     })
 
-    it(`${mode === 'dev' ? 'développement' : 'production'} : l'écriture dans un prototype ou une fonction est refusée, un avertissement nomme le segment qui y mène`, async () => {
+    it(`${mode === 'dev' ? 'développement' : 'production'} : l'écriture dans un prototype ou une fonction est refusée, un avertissement nomme le segment qui y mène (pour une fonction du navigateur, il explique le piège)`, async () => {
       const { window, civet, avis, etat } = await monter(builds[mode].code, mode === 'prod')
       const assign = window.Object.assign
       try {
@@ -166,7 +170,7 @@ describe('magasin $$ : une lecture rend ce que JavaScript rend, une écriture re
           }
           const p = pollution(window, assign)
           if (p.length) ecarts.push(`${nom} : ${p.join(' ; ')} au lieu de rien`)
-          if (mode === 'dev' && !(avis.length === 1 && avis[0].includes(`segment « ${seg} »`))) ecarts.push(`${nom} : avertissement ${avis.join(' | ') || 'absent'}`)
+          if (mode === 'dev' && !(avis.length === 1 && nomme(avis[0], seg))) ecarts.push(`${nom} : avertissement ${avis.join(' | ') || 'absent'}`)
         }
         civet.range('__proto__')
         jouer('chemin d\'un prototype rangé', () => civet.ecritRange('polluK'), '__proto__')

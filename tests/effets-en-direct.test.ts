@@ -15,7 +15,7 @@ import { parseEffect, checkPlacement } from '../src/effects/catalog.js'
 import { parse } from '../src/parser/index.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { mjsTmp } from './helpers/tmp.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const COMPOSANTS: Record<string, string> = {
   'fx-delta':    '<script>\n$v = 100\n</script>\n<span class="d" *delta(100ms)>{$v}</span>\n<span class="s" *delta(fx: none, arrow: false)>{$v}</span>\n<button class="plus" @click={$v = 1250}>+</button>\n<button class="moins" @click={$v = 90}>-</button>',
@@ -57,6 +57,7 @@ describe('effets en direct', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`

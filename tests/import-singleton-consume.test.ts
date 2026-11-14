@@ -102,7 +102,8 @@ describe('@import µ$$X — forme unique d\'import d\'un singleton', () => {
   it('cas 1 — commentaire JS qui MENTIONNE µ$$count (non importé) ne throw PAS', async () => {
     const src = `<script>\n  // note: on utilise µ$$count ici plus tard\n  x = 1\n</script>\n<p>{x}</p>`
     const { output } = await transpile(src, { moduleName: 'importsingle11' })
-    assert.match(output, /µ\$\$count ici plus tard/, 'le commentaire doit survivre littéralement')
+    // les commentaires sont retirés dès le début de la compilation : la mention part avec eux
+    assert.doesNotMatch(output, /ici plus tard/, 'le commentaire est retiré')
     // (?<!\$) exclut le `$count` qui termine littéralement « µ$$count » (le
     // commentaire lui-même) — seul un `$count` BARE (câblage réel, absent ici)
     // ferait échouer cette assertion.

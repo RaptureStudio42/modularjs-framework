@@ -300,8 +300,8 @@ describe('<@module> — défauts relevés à la relecture de la refonte', functi
         })
       }
 
-      it(`${nom} : écriture dans un setTimeout(0) après le montage → l'enfant affiche la nouvelle valeur`, async () => {
-        const m = await monterModule({ hote: hote(balise, 'µmount -> setTimeout((-> $t = \'b\'), 0)'), ce: ENFANT })
+      it(`${nom} : écriture dans un µafter 0 après le montage → l'enfant affiche la nouvelle valeur`, async () => {
+        const m = await monterModule({ hote: hote(balise, 'µmount -> µafter(0, -> $t = \'b\')'), ce: ENFANT })
         await pause(60)
         assert.equal(vu(m), 'b|null|null')
       })
@@ -313,9 +313,9 @@ describe('<@module> — défauts relevés à la relecture de la refonte', functi
       assert.equal(vu(m), 'b|null|null')
     })
 
-    it('<@module> sous {await} : écriture dans µmount, puis dans un setTimeout(0) → l\'enfant affiche la dernière valeur', async () => {
+    it('<@module> sous {await} : écriture dans µmount, puis dans un µafter 0 → l\'enfant affiche la dernière valeur', async () => {
       const corps = '{await $p}<i>...</i>{success r}<@module $comp titre={$t}></@module>{error err}<b>E</b>{end}'
-      const m = await monterModule({ hote: hote(corps, 'µmount ->\n  $t = \'b\'\n  setTimeout((-> $t = \'c\'), 0)'), ce: ENFANT })
+      const m = await monterModule({ hote: hote(corps, 'µmount ->\n  $t = \'b\'\n  µafter 0, -> $t = \'c\''), ce: ENFANT })
       await pause(80)
       assert.equal(vu(m), 'c|null|null')
       assert.deepEqual(m.erreurs(), [])

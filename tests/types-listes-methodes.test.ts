@@ -15,7 +15,7 @@ import { mjsTmp } from './helpers/tmp.js'
 const LISTES = [
   '<vars>',
   '  $notes     int 0..100[]',
-  '  $messages  { id: int, t: string }[]',
+  '  $messages  Message[]',
   '  $tags      string[] 1..3',
   '</vars>',
   '',
@@ -68,6 +68,7 @@ describe('types — méthodes d\'une liste typée : seul ce qui change est contr
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'listes.mjs'), LISTES)
+  writeFileSync(join(srcDir, 'app.types.mjs'), '<types>\nMessage\n  id  int\n  t  string\n</types>\n')
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

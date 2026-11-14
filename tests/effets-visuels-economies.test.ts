@@ -11,7 +11,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 
 const COMPOSANTS: Record<string, string> = {
@@ -69,6 +69,7 @@ describe('effets visuels — le travail épargné quand il ne se voit pas', func
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`

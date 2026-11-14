@@ -19,9 +19,11 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { createServer } from 'node:http'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 
@@ -185,11 +187,12 @@ const EXTRAS: Extra[] = [
 ]
 
 for (const nomNavigateur of ['chromium', 'firefox', 'webkit'] as const) {
-  describe('décision après le dernier écouteur du nœud coupé (' + nomNavigateur + ' réel)', function () {
+  playTogether(describe('décision après le dernier écouteur du nœud coupé (' + nomNavigateur + ' réel)', function () {
     this.timeout(180000)
     let present = false
     let script  = ''
     let navigateur: any
+    let relais: any
 
     before(async function () {
       present = await navigateurPresent(nomNavigateur)
@@ -210,11 +213,15 @@ for (const nomNavigateur of ['chromium', 'firefox', 'webkit'] as const) {
       const ordre = [...files.filter((f) => f.startsWith('mjs_')).sort(), ...files.filter((f) => !f.startsWith('mjs_')).sort()]
       script = ordre.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'))).join('\n') + '\nglobalThis.µ = µ;'
       const playwright = await import('playwright')
-      navigateur = await playwright[nomNavigateur].launch()
+      // sous WebKit, le téléchargement d'un lien `download` ne passe pas par `page.route` : il part sur le réseau de la machine, où `mjs.test` n'existe pas, et rien ne se télécharge sans mandataire ; ce relais local, mandataire du navigateur, répond à ces requêtes-là
+      relais = createServer((_req, res) => res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<!doctype html><html><head><meta charset="utf-8"></head><body><p>page b</p></body></html>'))
+      await new Promise<void>((ok) => relais.listen(0, '127.0.0.1', () => ok()))
+      navigateur = await playwright[nomNavigateur].launch({ proxy: { server: 'http://127.0.0.1:' + relais.address().port } })
     })
 
     after(async () => {
       if (navigateur) await navigateur.close()
+      if (relais) relais.close()
       await terminateSharedWorkerPool()
     })
 
@@ -357,5 +364,5 @@ for (const nomNavigateur of ['chromium', 'firefox', 'webkit'] as const) {
         } finally { await ctx.page.close() }
       })
     }
-  })
+  }))
 }

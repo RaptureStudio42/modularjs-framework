@@ -22,11 +22,11 @@ const SOURCES: Record<string, string> = {
 
   @fermer = -> $show = false
 </script>
-<canvas class="hors" @attach={marquer(el, 'hors')}></canvas>
-<canvas class="hors-node" @attach={marquer(_node, 'hors-node')}></canvas>
+<canvas class="hors" :attach={marquer(el, 'hors')}></canvas>
+<canvas class="hors-node" :attach={marquer(_node, 'hors-node')}></canvas>
 {if $show}
-  <canvas class="dans" @attach={marquer(el, 'dans')}></canvas>
-  <canvas class="dans-une-fois" @attach.once={marquer(el, 'dans-une-fois')}></canvas>
+  <canvas class="dans" :attach={marquer(el, 'dans')}></canvas>
+  <canvas class="dans-une-fois" :attach.once={marquer(el, 'dans-une-fois')}></canvas>
 {end}
 `,
   // les lignes d'un `{for}` : avec `.once` la balise n'est posée qu'une fois, sans `.once` l'attache qui lit sa ligne se rejoue quand la ligne se redessine
@@ -44,10 +44,10 @@ const SOURCES: Record<string, string> = {
   @retirer = -> $plays = [{ key: 'b' }]
 </script>
 {for p in $plays by key}
-  <canvas class="une-fois" @attach.once={dessiner(el, p, 'o')}>{$tick}</canvas>
-  <canvas class="direct" @attach={dessiner(el, p, 'd')}>{$tick}</canvas>
-  <canvas class="une-fois-node" @attach.once={dessiner(_node, p, 'on')}>{$tick}</canvas>
-  <canvas class="direct-node" @attach={dessiner(_node, p, 'dn')}>{$tick}</canvas>
+  <canvas class="une-fois" :attach.once={dessiner(el, p, 'o')}>{$tick}</canvas>
+  <canvas class="direct" :attach={dessiner(el, p, 'd')}>{$tick}</canvas>
+  <canvas class="une-fois-node" :attach.once={dessiner(_node, p, 'on')}>{$tick}</canvas>
+  <canvas class="direct-node" :attach={dessiner(_node, p, 'dn')}>{$tick}</canvas>
 {end}
 `,
   // les trois branches d'un `{await}` ; la forme réactive de `{success}` lit aussi `$theme` : l'attache est reprise quand il change
@@ -66,13 +66,13 @@ const SOURCES: Record<string, string> = {
   @habiller = (x) -> $theme = x
 </script>
 {await $p}
-  <i class="att" @attach.once={marquer(el, 'att')}>attente</i>
+  <i class="att" :attach.once={marquer(el, 'att')}>attente</i>
 {success v}
-  <b class="ok" @attach.once={marquer(el, 'ok' + v.n)}>{v.n}</b>
-  <b class="ok-theme" @attach={marquer(el, $theme + v.n)}>{v.n}</b>
-  <b class="ok-node" @attach.once={marquer(_node, 'oknode' + v.n)}>{v.n}</b>
+  <b class="ok" :attach.once={marquer(el, 'ok' + v.n)}>{v.n}</b>
+  <b class="ok-theme" :attach={marquer(el, $theme + v.n)}>{v.n}</b>
+  <b class="ok-node" :attach.once={marquer(_node, 'oknode' + v.n)}>{v.n}</b>
 {error err}
-  <b class="ko" @attach.once={marquer(el, 'ko:' + err.message)}>{err.message}</b>
+  <b class="ko" :attach.once={marquer(el, 'ko:' + err.message)}>{err.message}</b>
 {end}
 `,
   // la forme fabrique ne change pas : une fabrique appelée avec la balise, un paramètre qui s'appelle `el`, et une fabrique dans une ligne de `{for}`
@@ -84,10 +84,10 @@ const SOURCES: Record<string, string> = {
     journal('pose ' + nom)
     -> journal('retrait ' + nom)
 </script>
-<canvas class="f1" @attach={marque('fab')}></canvas>
-<canvas class="f2" @attach.once={marque('une-fois')}></canvas>
-<canvas class="f3" @attach={(el) -> el.setAttribute('data-vu', 'param:' + el.localName)}></canvas>
-{for p in $plays by key}<canvas class="f4" @attach.once={marque('ligne' + p.key)}></canvas>{end}
+<canvas class="f1" :attach={marque('fab')}></canvas>
+<canvas class="f2" :attach.once={marque('une-fois')}></canvas>
+<canvas class="f3" :attach={(el) -> el.setAttribute('data-vu', 'param:' + el.localName)}></canvas>
+{for p in $plays by key}<canvas class="f4" :attach.once={marque('ligne' + p.key)}></canvas>{end}
 `,
   // le script de l'auteur déclare lui-même \`el\` : c'est le sien, la fabrique le reçoit ; la balise n'est pas \`el\`
   'ae-auteur.mjs': `<script>
@@ -103,13 +103,13 @@ const SOURCES: Record<string, string> = {
 
   @finir = -> fin('ok')
 </script>
-<canvas class="a1" @attach={noter(el)}></canvas>
-<canvas class="a2" @attach.once={noter(el)}></canvas>
-{for p in $plays by key}<canvas class="a3" @attach={noter(el)}></canvas>{end}
+<canvas class="a1" :attach={noter(el)}></canvas>
+<canvas class="a2" :attach.once={noter(el)}></canvas>
+{for p in $plays by key}<canvas class="a3" :attach={noter(el)}></canvas>{end}
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <canvas class="a4" @attach={noter(el)}></canvas>
+  <canvas class="a4" :attach={noter(el)}></canvas>
 {end}
 `
 }

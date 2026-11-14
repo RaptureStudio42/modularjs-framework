@@ -14,7 +14,7 @@ const PAGE = `<script>
   $z    = 'b'
   $more = false
 </script>
-<form id="f" @noUJS>
+<form id="f" :noUJS>
   {if $more}<@@radio id="r4" name="z" value="d" group=!{$z}>D</@@radio>{end}
   <@@radio id="r1" name="z" value="a" group=!{$z}>A</@@radio>
   <@@radio id="r2" name="z" value="b" group=!{$z}>B</@@radio>

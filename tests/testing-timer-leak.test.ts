@@ -25,7 +25,7 @@ function lancerFixture(srcDir: string, outDir: string): Promise<{ code: number |
   })
 }
 
-describe('testing/index (createHarness) — un µeffect->setInterval ne fuit plus après destroy()', function () {
+describe('testing/index (createHarness) — une minuterie posée par un µeffect ne fuit plus après destroy()', function () {
   this.timeout(45000) //couvre la marge de sécurité 30s + battement spawn/assertions
 
   it('le process enfant se termine TOUT SEUL après app.destroy() (pas de timer Node fantôme qui le maintient en vie)', async function () {
@@ -37,7 +37,7 @@ describe('testing/index (createHarness) — un µeffect->setInterval ne fuit plu
       const outDir = join(root, 'out')
       const { code, signal, killedBySecurite } = await lancerFixture(srcDir, outDir)
       assert.equal(killedBySecurite, false,
-        "le process enfant a dû être tué par le délai de sécurité — un setInterval posé par le µeffect a survécu à app.destroy() (window.close() natif est un no-op happy-dom)")
+        "le process enfant a dû être tué par le délai de sécurité — une minuterie posée par le µeffect a survécu à app.destroy() (window.close() natif est un no-op happy-dom)")
       assert.equal(signal, null, `le process ne doit PAS avoir reçu de signal — sortie naturelle attendue (signal reçu : ${signal})`)
       assert.equal(code, 0, `le process enfant doit sortir avec le code 0 (reçu : ${code})`)
       assert.ok(existsSync(join(outDir, 'bundle.js')), 'sorties de la construction écrites hors du dossier temporaire')

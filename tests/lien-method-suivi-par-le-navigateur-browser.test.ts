@@ -25,10 +25,10 @@ async function navigateurPresent(nom: Navigateur): Promise<boolean> {
 
 const ORIGINE = 'http://mjs.test'
 const LIENS = [
-  '<a class="simple" href="/article/3" @method="delete">Supprimer</a>',
-  '<a class="onglet" href="/article/3" target="_blank" @method="delete">Supprimer (onglet)</a>',
-  '<a class="fichier" href="/article/3" download @method="delete">Supprimer (fichier)</a>',
-  '<a class="ailleurs" href="http://autre.test/article/3" @method="delete">Supprimer ailleurs</a>'
+  '<a class="simple" href="/article/3" :method="delete">Supprimer</a>',
+  '<a class="onglet" href="/article/3" target="_blank" :method="delete">Supprimer (onglet)</a>',
+  '<a class="fichier" href="/article/3" download :method="delete">Supprimer (fichier)</a>',
+  '<a class="ailleurs" href="http://autre.test/article/3" :method="delete">Supprimer ailleurs</a>'
 ].join('\n')
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @method suivi par le navigateur : rien ne part (${nom} réel)`, function () {
@@ -85,7 +85,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
       const page = await contexte.newPage()
       page.on('download', () => { sortie.fichiers++ })
-      page.on('console', (m: any) => { if (m.type() === 'warning' && m.text().includes('@method="delete"')) sortie.avertis.push(m.text()) })
+      page.on('console', (m: any) => { if (m.type() === 'warning' && m.text().includes(':method="delete"')) sortie.avertis.push(m.text()) })
       await page.goto(ORIGINE + '/')
       await page.waitForFunction(() => { const o: any = document.querySelector('mjs-ombre'); return !!document.querySelector('mjs-hote a.simple') && !!(o && o._shadow && o._shadow.querySelector('a.simple')) })
       await page.evaluate(() => { (window as any).__meme = true })
@@ -112,14 +112,14 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
     assert.equal(s.url, ORIGINE + '/', 'la page reste où elle est')
     assert.equal(s.meme, true, 'même document')
     assert.equal(s.avertis.length, 1, 'un avertissement de développement')
-    assert.match(s.avertis[0], /@method="delete" : lien non suivi/)
+    assert.match(s.avertis[0], /:method="delete" : lien non suivi/)
     assert.match(s.avertis[0], /clic du milieu/)
   }
 
   for (const ombre of [false, true]) {
     const ou = ombre ? 'composant en ombre fermée' : 'composant léger'
     for (const [libelle, opts] of [['Ctrl+clic', { modifiers: ['Control'] }], ['Maj+clic', { modifiers: ['Shift'] }], ['Alt+clic', { modifiers: ['Alt'] }], ['Cmd+clic', { modifiers: ['Meta'] }], ['clic du milieu', { button: 'middle' }]] as const) {
-      it(`${ou}, ${libelle} sur <a @method="delete"> : rien ne part, la console dit pourquoi`, async function () {
+      it(`${ou}, ${libelle} sur <a :method="delete"> : rien ne part, la console dit pourquoi`, async function () {
         if (!present) { this.skip(); return }
         rien(await geste('simple', opts as any, ombre))
       })
@@ -132,7 +132,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
     }
 
-    it(`${ou}, clic simple sur <a @method="delete"> : la requête DELETE part`, async function () {
+    it(`${ou}, clic simple sur <a :method="delete"> : la requête DELETE part`, async function () {
       if (!present) { this.skip(); return }
       const s = await geste('simple', {}, ombre)
       assert.deepEqual(s.requetes, ['DELETE ' + ORIGINE + '/article/3'])

@@ -223,7 +223,7 @@ describe('µclone mirror: true — le miroir vivant d\'un composant partage l\'�
     await pause(30)
     assert.deepEqual(restants.map((x: any) => texte(x, '.profond')), Array(3).fill('4'))
     // les enveloppes de l'état sont celles de la maison présente, pas de l'original
-    for (const k of ['items', 'profond', 'remplie']) assert.ok(g.h._mjs_proxyCache.get(brut(etat[k])) === etat[k], k)
+    for (const k of ['items', 'profond', 'remplie']) assert.ok(g.h._mjs_rootsByTarget.get(brut(etat[k])).x === etat[k], k)
     // remis dans la page, l'original reprend l'état du moment
     parent.prepend(original)
     await monte([original])
@@ -282,7 +282,7 @@ describe('µclone mirror: true — le miroir vivant d\'un composant partage l\'�
     // une liste écrite par un miroir est enveloppée par la maison (l'original présent), pas par le miroir
     window.µ._set(miroirs[5], 'l', [9])
     await pause(30)
-    assert.ok(p._mjs_proxyCache.get(brut(p._state.l)) === p._state.l)
+    assert.ok(p._mjs_rootsByTarget.get(brut(p._state.l)).x === p._state.l)
     boite.remove()
     await pause(60)
     assert.equal(g.m.length, 1)

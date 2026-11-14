@@ -12,7 +12,7 @@ import { createSSRRenderer } from '../src/server/renderToString.js'
 
 const FRUITS = '<@@option value="abricot">Abricot</@@option><@@option value="banane">Banane</@@option><@@option value="cerise">Cerise</@@option><@@option value="figue">Figue</@@option>'
 
-const HOTE = `<form class="f" method="get" action="/envoi" @noUJS>
+const HOTE = `<form class="f" method="get" action="/envoi" :noUJS>
   <@@select class="s" name="s" required value="banane">${FRUITS}</@@select>
   <@@select class="m" name="m" multiple required value={['cerise', 'figue']}>${FRUITS}</@@select>
   <@@select class="o" name="o" required>${FRUITS}</@@select>

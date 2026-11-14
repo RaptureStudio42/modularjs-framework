@@ -79,7 +79,7 @@ describe('generator/attributes/index.ts', function () {
     })
 
     it('@style.color={$c} : undefined retire la propriété', async () => {
-      const src = ['<script>', '$c = undefined', '</script>', '<div @style.color={$c}>x</div>'].join('\n')
+      const src = ['<script>', '$c = undefined', '</script>', '<div :style.color={$c}>x</div>'].join('\n')
       const { el } = await mount('e1color', src)
       const style = el._shadow.querySelector('div').style
       assert.equal(style.getPropertyValue('color'), '', 'propriété absente attendue (undefined)')
@@ -88,7 +88,7 @@ describe('generator/attributes/index.ts', function () {
 
   describe('@style !important', () => {
     it('@style.color={$v} : \'red !important\' pose la priorité, sans suffixe la priorité reste vide', async () => {
-      const src = ['<script>', "$v = 'red !important'", '</script>', '<div @style.color={$v}>x</div>'].join('\n')
+      const src = ['<script>', "$v = 'red !important'", '</script>', '<div :style.color={$v}>x</div>'].join('\n')
       const { el } = await mount('e2important', src)
       const style = el._shadow.querySelector('div').style
       assert.equal(style.getPropertyValue('color'), 'red', 'valeur sans le suffixe')
@@ -161,7 +161,8 @@ describe('generator/attributes/index.ts', function () {
     }
 
     it('@Confirm="…" : compile sans erreur — un @xxx inconnu sur un élément est un écouteur, quelle que soit sa casse', async () => {
-      const { err, output } = await warningsFor('<button @Confirm="Sur">y</button>', 'e4confirmcasse')
+      // la valeur faite d'un nom seul appelle la fonction « Sur » : déclarée ici, sinon la construction refuse cette écoute morte
+      const { err, output } = await warningsFor('<script>\nSur = -> 1\n</script>\n<button @Confirm="Sur">y</button>', 'e4confirmcasse')
       assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
       assert.ok(output && output.length > 0)
     })
@@ -182,7 +183,7 @@ describe('generator/attributes/index.ts', function () {
 
   describe('@style.prop{cond}="valeur" — même protection que la forme pleine', () => {
     it('@style.color{$active}="red !important" : condition vraie pose la valeur ET la priorité, fausse retire la propriété', async () => {
-      const src = ['<script>', '$active = true', '</script>', '<div @style.color{$active}="red !important">x</div>'].join('\n')
+      const src = ['<script>', '$active = true', '</script>', '<div :style.color{$active}="red !important">x</div>'].join('\n')
       const { el } = await mount('e5condimportant', src)
       const style = el._shadow.querySelector('div').style
       assert.equal(style.getPropertyValue('color'), 'red', 'valeur sans le suffixe')
@@ -194,7 +195,7 @@ describe('generator/attributes/index.ts', function () {
     })
 
     it('@style.font-family{$active}="{$n}" : null n\'écrit pas la chaîne "null", serif se pose normalement', async () => {
-      const src = ['<script>', '$active = true', '$n = null', '</script>', '<div @style.font-family{$active}="{$n}">x</div>'].join('\n')
+      const src = ['<script>', '$active = true', '$n = null', '</script>', '<div :style.font-family{$active}="{$n}">x</div>'].join('\n')
       const { el } = await mount('e5condnull', src)
       const style = el._shadow.querySelector('div').style
       assert.equal(style.getPropertyValue('font-family'), '', 'null : propriété absente, pas la chaîne "null"')
@@ -205,7 +206,7 @@ describe('generator/attributes/index.ts', function () {
     })
 
     it('@style.width{$big}="{$n}px" : mélange texte+expression, valeur composée posée normalement', async () => {
-      const src = ['<script>', '$big = true', '$n = 10', '</script>', '<div @style.width{$big}="{$n}px">x</div>'].join('\n')
+      const src = ['<script>', '$big = true', '$n = 10', '</script>', '<div :style.width{$big}="{$n}px">x</div>'].join('\n')
       const { el } = await mount('e5condmixed', src)
       const style = el._shadow.querySelector('div').style
       assert.equal(style.getPropertyValue('width'), '10px', 'texte + expression composés')

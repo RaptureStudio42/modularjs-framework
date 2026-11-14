@@ -30,15 +30,15 @@ async function construire(nom: string, conf: any, source: string): Promise<{ sor
 
 const SANS_SAISIE = '<script>\n$n = 0\n</script>\n<button @click={$n++}>{$n}</button>\n<@@progress value={3}></@@progress>'
 const AVEC = {
-  'la case':        '<form @noUJS><@@checkbox name="c">Case</@@checkbox></form>',
-  'l\'interrupteur': '<form @noUJS><@@switch name="s">Interrupteur</@@switch></form>',
-  'le radio':       '<form @noUJS><@@radio name="r" value="a">A</@@radio></form>',
-  'le nombre':      '<form @noUJS><@@number name="n" value={3}></@@number></form>',
-  'la jauge':       '<form @noUJS><@@gauge name="g" value={3}></@@gauge></form>',
-  'le bouton':      '<form @noUJS><@@knob name="k" value={30}></@@knob></form>',
-  'la liste':       '<form @noUJS><@@select name="p"><@@option value="a">A</@@option></@@select></form>',
-  'le champ':       '<form @noUJS><@@field name="f"><input name="f"></@@field></form>',
-  'l\'éditeur':     '<form @noUJS><@@editor name="e"></@@editor></form>',
+  'la case':        '<form :noUJS><@@checkbox name="c">Case</@@checkbox></form>',
+  'l\'interrupteur': '<form :noUJS><@@switch name="s">Interrupteur</@@switch></form>',
+  'le radio':       '<form :noUJS><@@radio name="r" value="a">A</@@radio></form>',
+  'le nombre':      '<form :noUJS><@@number name="n" value={3}></@@number></form>',
+  'la jauge':       '<form :noUJS><@@gauge name="g" value={3}></@@gauge></form>',
+  'le bouton':      '<form :noUJS><@@knob name="k" value={30}></@@knob></form>',
+  'la liste':       '<form :noUJS><@@select name="p"><@@option value="a">A</@@option></@@select></form>',
+  'le champ':       '<form :noUJS><@@field name="f"><input name="f"></@@field></form>',
+  'l\'éditeur':     '<form :noUJS><@@editor name="e"></@@editor></form>',
 }
 
 describe('mjs_form_reset.ts — détecté, build RÉEL', function () {

@@ -15,15 +15,15 @@ import { stripEsm } from '../src/server/renderToString.js'
 
 // « dedans » est posé dans le formulaire b mais son champ natif appartient au formulaire a ;
 // « dehors » n'est dans aucun formulaire, son champ natif appartient au formulaire a
-const OMBRE = `<form id="a" @noUJS>
+const OMBRE = `<form id="a" :noUJS>
   <button type="reset" id="raz-a">reset a</button>
 </form>
-<form id="b" @noUJS>
+<form id="b" :noUJS>
   <@@field id="dedans" name="x" label="Dedans"><input name="x" form="a"></@@field>
   <button type="reset" id="raz-b">reset b</button>
 </form>
 <@@field id="dehors" name="y" label="Dehors"><input name="y" form="a"></@@field>
-<form id="c" @noUJS>
+<form id="c" :noUJS>
   <@@field id="partage" name="z" label="Partage"><input name="z"></@@field>
   <@@checkbox id="case" name="k">Case</@@checkbox>
 </form>

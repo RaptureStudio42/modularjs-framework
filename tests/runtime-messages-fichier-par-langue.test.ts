@@ -357,7 +357,8 @@ describe('build de production — messages hors du manifeste', function () {
           // au niveau de console par défaut ('error') le build retire les traces et les avertissements du cœur : leur texte ne part pas non plus
           const attendu = Object.fromEntries(Object.entries(RUNTIME_LABELS[lang].err).filter(([cle]) => !TRACE_ONLY_MESSAGES.includes(cle) && !WARNING_ONLY_MESSAGES.includes(cle)))
           assert.deepEqual(Object.keys(contenu).sort(), Object.keys(attendu).sort())
-          assert.equal(Object.keys(contenu).length, Object.keys(RUNTIME_LABELS.fr.err).length - TRACE_ONLY_MESSAGES.length - WARNING_ONLY_MESSAGES.length)
+          // les messages d'un fichier du runtime joint à la demande (µload) ne sont pas au groupe err : seuls ceux du groupe se décomptent
+          assert.equal(Object.keys(contenu).length, Object.keys(RUNTIME_LABELS.fr.err).length - TRACE_ONLY_MESSAGES.length - WARNING_ONLY_MESSAGES.filter((cle) => cle in RUNTIME_LABELS.fr.err).length)
           assert.deepEqual(contenu, attendu)
         }
       })

@@ -154,11 +154,11 @@ $nbEdits = Object.keys($edits).length
     <div class="controles">
       <input class="recherche" type="text" aria-label="Rechercher une variable de thème" placeholder="Rechercher une variable, un déclarant, un lecteur…" value=!{$query}>
       <div class="filtres">
-        <button @class{$kind == 'all'}="actif" @click={$kind = 'all'}>Tous</button>
-        <button @class{$kind == 'theme'}="actif" @click={$kind = 'theme'}>Thèmes</button>
-        <button @class{$kind == 'module'}="actif" @click={$kind = 'module'}>Modules</button>
-        <button @class{$kind == 'stylesheet'}="actif" @click={$kind = 'stylesheet'}>Feuilles partagées</button>
-        <button @class{$kind == 'framework'}="actif" @click={$kind = 'framework'}>Framework</button>
+        <button :class{$kind == 'all'}="actif" @click={$kind = 'all'}>Tous</button>
+        <button :class{$kind == 'theme'}="actif" @click={$kind = 'theme'}>Thèmes</button>
+        <button :class{$kind == 'module'}="actif" @click={$kind = 'module'}>Modules</button>
+        <button :class{$kind == 'stylesheet'}="actif" @click={$kind = 'stylesheet'}>Feuilles partagées</button>
+        <button :class{$kind == 'framework'}="actif" @click={$kind = 'framework'}>Framework</button>
       </div>
     </div>
 
@@ -185,7 +185,7 @@ $nbEdits = Object.keys($edits).length
                     {if hex}
                       <input class="pastille vive" type="color" aria-label="Couleur de {l.name}" value={hex} @click.stop={} @input.stop={modifier(l, e.target.value)}>
                     {else}
-                      {if looksLikeColor(courante)}<span class="pastille" @style.background={courante}></span>{end}
+                      {if looksLikeColor(courante)}<span class="pastille" :style.background={courante}></span>{end}
                     {end}
                     <span class="nom">{l.name}</span>
                     <span class="valeur">{courante}</span>
@@ -194,7 +194,7 @@ $nbEdits = Object.keys($edits).length
                       <button class="retablir" aria-label="Rétablir {l.name}" @click.stop={retablir(l)}>rétablir</button>
                     {end}
                     {if $etats[l.cle]}
-                      <span class="ecriture" @class{$etats[l.cle].ok == false}="rate">{$etats[l.cle].texte}</span>
+                      <span class="ecriture" :class{$etats[l.cle].ok == false}="rate">{$etats[l.cle].texte}</span>
                     {end}
                     <span class="emplacement">ligne {l.decl.line}</span>
                     {if l.autres.length > 0}

@@ -22,7 +22,7 @@ const SCRIPT   = '<script>\n  $l = [{ id: 1, t: \'a\' }, { id: 2, t: \'b\' }]\n 
 
 const ligne  = (attrs = '') => `<div class="p"${attrs ? ' ' + attrs : ''}>{x.t}</div>`
 const listes = (attrs = '', groupe = ' group="g"') => `<@@sortable value=!{$l}${groupe}>{for x in $l by id}${ligne(attrs)}{end}</@@sortable><@@sortable value=!{$m}${groupe}>{for x in $m by id}${ligne(attrs)}{end}</@@sortable>`
-const FONDU  = '@transition=*crossfade(key: x.id)'
+const FONDU  = ':transition=*crossfade(key: x.id)'
 
 // ce que le fondu des lignes met dans ce que le navigateur reçoit : la sortie de l'ancienne ligne du flux (un point d'ancrage et son défilement)
 const FONDU_MINIFIE = ['offsetParent', 'scrollLeft']
@@ -115,11 +115,11 @@ describe('construction — le fondu des lignes de <@@sortable> suit ce que les p
   describe('production, aucune page n\'écrit de transition : plus rien du fondu, les groupes restent', () => {
     const SANS: [string, Files][] = [
       ['des listes à groupes, rien d\'autre', { 'liste.mjs': SCRIPT + listes() }],
-      ['des lignes qui se déplacent (@flip) : un déplacement, pas une transition', { 'liste.mjs': SCRIPT + listes('@flip') }],
-      ['un @attach sur les lignes', { 'liste.mjs': SCRIPT + listes('@attach={garde}') }],
+      ['des lignes qui se déplacent (@flip) : un déplacement, pas une transition', { 'liste.mjs': SCRIPT + listes(':flip') }],
+      ['un :attach sur les lignes', { 'liste.mjs': SCRIPT + listes(':attach={garde}') }],
       ['un effet qui n\'est pas une transition (*neon)', { 'liste.mjs': SCRIPT + listes('*neon(#f0f)') }],
       ['un style CSS `transition:` sur les lignes', { 'liste.mjs': SCRIPT + listes() + '\n<style>\n  .p\n    transition: opacity .2s\n</style>\n' }],
-      ['le mot @transition dans un commentaire, un texte et une chaîne', { 'liste.mjs': SCRIPT.replace('$d = 400', '$d = \'@in=*fade\'') + listes() + '<!-- @transition=*crossfade(key: x.id) --><code>@out=*fade</code>' }],
+      ['le mot :transition dans un commentaire, un texte et une chaîne', { 'liste.mjs': SCRIPT.replace('$d = 400', '$d = \':in=*fade\'') + listes() + '<!-- :transition=*crossfade(key: x.id) --><code>:out=*fade</code>' }],
       ['deux fichiers, aucun ne l\'écrit', { 'a.mjs': SCRIPT + listes(), 'b.mjs': '<p>un</p>' }],
     ]
     for (const [nom, files] of SANS) {
@@ -150,19 +150,19 @@ describe('construction — le fondu des lignes de <@@sortable> suit ce que les p
   describe('production, une page écrit une transition : tout reste, de quelque façon qu\'elle l\'écrive', () => {
     const effets = '<effects>\n  *fondu = *crossfade(duration: 400ms)\n  *fade.lent = *fade(duration: 3s)\n</effects>'
     const AVEC: [string, Files][] = [
-      ['@transition=*crossfade(key: …) sur les lignes', { 'liste.mjs': SCRIPT + listes(FONDU) }],
-      ['@out=*fade seul', { 'liste.mjs': SCRIPT + listes('@out=*fade') }],
-      ['@in=*fly(up) seul (une entrée ne fait rien voler, mais un octet de trop vaut mieux qu\'un fondu perdu)', { 'liste.mjs': SCRIPT + listes('@in=*fly(up)') }],
-      ['@in et @out ensemble', { 'liste.mjs': SCRIPT + listes('@in=*fade @out=*fade') }],
-      ['avec un modificateur : @out.global=*fade', { 'liste.mjs': SCRIPT + listes('@out.global=*fade') }],
-      ['un réglage tenu par une variable', { 'liste.mjs': SCRIPT + listes('@transition=*crossfade(key: x.id, duration: $d)') }],
-      ['un alias du fichier d\'effets', { 'fondu.effects.mjs': effets, 'liste.mjs': SCRIPT + listes('@transition=*fondu(key: x.id)') }],
-      ['un alias pointé du fichier d\'effets', { 'fondu.effects.mjs': effets, 'liste.mjs': SCRIPT + listes('@out=*fade.lent') }],
+      [':transition=*crossfade(key: …) sur les lignes', { 'liste.mjs': SCRIPT + listes(FONDU) }],
+      [':out=*fade seul', { 'liste.mjs': SCRIPT + listes(':out=*fade') }],
+      [':in=*fly(up) seul (une entrée ne fait rien voler, mais un octet de trop vaut mieux qu\'un fondu perdu)', { 'liste.mjs': SCRIPT + listes(':in=*fly(up)') }],
+      [':in et :out ensemble', { 'liste.mjs': SCRIPT + listes(':in=*fade :out=*fade') }],
+      ['avec un modificateur : :out.global=*fade', { 'liste.mjs': SCRIPT + listes(':out.global=*fade') }],
+      ['un réglage tenu par une variable', { 'liste.mjs': SCRIPT + listes(':transition=*crossfade(key: x.id, duration: $d)') }],
+      ['un alias du fichier d\'effets', { 'fondu.effects.mjs': effets, 'liste.mjs': SCRIPT + listes(':transition=*fondu(key: x.id)') }],
+      ['un alias pointé du fichier d\'effets', { 'fondu.effects.mjs': effets, 'liste.mjs': SCRIPT + listes(':out=*fade.lent') }],
       ['dans un {if}', { 'liste.mjs': SCRIPT + `<@@sortable value=!{$l} group="g">{for x in $l by id}{if $anime}${ligne(FONDU)}{else}${ligne()}{end}{end}</@@sortable><@@sortable value=!{$m} group="g">{for x in $m by id}${ligne()}{end}</@@sortable>` }],
-      ['dans un composant enfant : la ligne est un composant', { 'liste.mjs': SCRIPT + '<@@sortable value=!{$l} group="g">{for x in $l by id}<@ligne/>{end}</@@sortable><@@sortable value=!{$m} group="g">{for x in $m by id}<@ligne/>{end}</@@sortable>', 'ligne.mjs': '<div class="p" @out=*fade>ligne</div>' }],
-      ['dans un autre fichier que celui des listes', { 'liste.mjs': SCRIPT + listes(), 'fenetre.mjs': '<div class="d" @transition=*fade>fenêtre</div>' }],
-      ['dans un partiel <@include>', { '_barre.mjs': '<div class="b" @in=*fade>barre</div>', 'liste.mjs': SCRIPT + listes() + '<@include barre>' }],
-      ['balise littérale mjs-core-sortable', { 'liste.mjs': SCRIPT + `<mjs-core-sortable value=!{$l} group="g">{for x in $l by id}${ligne('@out=*fade')}{end}</mjs-core-sortable>` }],
+      ['dans un composant enfant : la ligne est un composant', { 'liste.mjs': SCRIPT + '<@@sortable value=!{$l} group="g">{for x in $l by id}<@ligne/>{end}</@@sortable><@@sortable value=!{$m} group="g">{for x in $m by id}<@ligne/>{end}</@@sortable>', 'ligne.mjs': '<div class="p" :out=*fade>ligne</div>' }],
+      ['dans un autre fichier que celui des listes', { 'liste.mjs': SCRIPT + listes(), 'fenetre.mjs': '<div class="d" :transition=*fade>fenêtre</div>' }],
+      ['dans un partiel <@include>', { '_barre.mjs': '<div class="b" :in=*fade>barre</div>', 'liste.mjs': SCRIPT + listes() + '<@include barre>' }],
+      ['balise littérale mjs-core-sortable', { 'liste.mjs': SCRIPT + `<mjs-core-sortable value=!{$l} group="g">{for x in $l by id}${ligne(':out=*fade')}{end}</mjs-core-sortable>` }],
     ]
     let reference = ''
     for (const [nom, files] of AVEC) {
@@ -306,7 +306,7 @@ describe('construction — le fondu des lignes de <@@sortable> suit ce que les p
       const core  = join(app.root, 'core-modules')
       mkdirSync(core, { recursive: true })
       writeFileSync(join(core, 'sortable.mjs'), readFileSync(SORTABLE, 'utf-8'))
-      writeFileSync(join(core, 'fenetre.mjs'), '<div class="f" @transition=*fade>fenêtre</div>')
+      writeFileSync(join(core, 'fenetre.mjs'), '<div class="f" :transition=*fade>fenêtre</div>')
       const bundler = new Bundler({ sourceDir: app.srcDir, outputDir: app.outDir, manifestPath: join(app.root, 'bundle.js'), ...MODES.prod, coreModulesDir: core })
       const stats   = await bundler.compile()
       assert.equal(stats.errors.length, 0, stats.errors.map((e: Error) => e.message).join('\n'))

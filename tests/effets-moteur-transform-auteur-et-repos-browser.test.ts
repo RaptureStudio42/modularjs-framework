@@ -50,7 +50,7 @@ describe('Effets (Chromium réel) — transform de l\'auteur gardé, pose qui l�
     const srcDir = join(root, 'src')
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'fx-banc.mjs'), '<div *float>x</div>\n<div *spin>x</div>\n<div *attention>x</div>\n<div *shake>x</div>\n<div *zoom>x</div>\n<div *liquid>x</div>\n<div *velocity>x</div>\n<p *weight>texte</p>\n<div @transition=*crossfade(key: 1)>x</div>\n')
+    writeFileSync(join(srcDir, 'fx-banc.mjs'), '<div *float>x</div>\n<div *spin>x</div>\n<div *attention>x</div>\n<div *shake>x</div>\n<div *zoom>x</div>\n<div *liquid>x</div>\n<div *velocity>x</div>\n<p *weight>texte</p>\n<div :transition=*crossfade(key: 1)>x</div>\n')
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
     const stats   = await bundler.compile()
     await bundler.close()

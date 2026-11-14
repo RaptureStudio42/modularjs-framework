@@ -34,12 +34,12 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
   after(async () => { await terminateSharedWorkerPool() })
 
   const files = (b: string): Record<string, string | Buffer> => ({
-    'util.civet': 'export logo = µasset(\'img/logo.png\')\n',
-    'vieux.coffee': 'export son = µasset(\'snd/ding.mp3\')\n',
-    'outils.civet': 'export lib = µasset(\'lib/main.js\')\n',
+    'util.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n',
+    'vieux.coffee.mjs': 'export son = µasset(\'snd/ding.mp3\')\n',
+    'outils.civet.mjs': 'export lib = µasset(\'lib/main.js\')\n',
     'lib/main.js': 'import { r } from \'./rng.js\'\nexport const d = r\n',
     'lib/rng.js': 'export const r = 1\n',
-    'a.mjs': '@import logo \'util.civet\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n',
+    'a.mjs': '@import logo \'util.civet.mjs\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n',
     'b.mjs': `<p>${b}</p>\n`,
     'img/logo.png': PNG,
     'snd/ding.mp3': Buffer.from('ID3 son de pacotille'),
@@ -48,7 +48,7 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
   for (const mode of ['split', 'bundle'] as const) it(`le précache d'une reconstruction partielle est celui d'un build à froid, modules de script compris (js: '${mode}')`, async () => {
     const partial = project('module-precache-partiel-' + mode, files('b1'))
     const bundler = new Bundler({ sourceDir: partial.srcDir, outputDir: partial.outDir, manifestPath: partial.manifest, js: mode })
-    const modules = ['util.civet', 'vieux.coffee', 'outils.civet'].map(f => join(partial.srcDir, f))
+    const modules = ['util.civet.mjs', 'vieux.coffee.mjs', 'outils.civet.mjs'].map(f => join(partial.srcDir, f))
     let rebuilt: string[] = []
     try {
       assert.deepEqual(messages((await bundler.compile()).errors), [])
@@ -77,7 +77,7 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
   })
 
   it('un module dont le fichier cité change est recompilé : il vise le nouveau nom, l\'ancien est retiré, le précache nomme le nouveau', async () => {
-    const p = project('module-asset-modifie', { 'util.civet': 'export logo = µasset(\'img/logo.png\')\n', 'a.mjs': '@import logo \'util.civet\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n', 'img/logo.png': withByte(1) })
+    const p = project('module-asset-modifie', { 'util.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n', 'a.mjs': '@import logo \'util.civet.mjs\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n', 'img/logo.png': withByte(1) })
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     try {
       assert.deepEqual(messages((await bundler.compile()).errors), [])
@@ -86,7 +86,7 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
       const now = `logo-${digest(withByte(2))}.png`
       assert.deepEqual(published(p.outDir, 'logo', 'png'), [now], 'un seul logo publié : le nouveau')
       const code = readFileSync(join(p.outDir, published(p.outDir, 'util', 'js')[0]), 'utf8')
-      assert.ok(code.includes(now), `util.civet vise ${now} : ${code.slice(0, 200)}`)
+      assert.ok(code.includes(now), `util.civet.mjs vise ${now} : ${code.slice(0, 200)}`)
       assert.ok(precache(p.outDir).some(a => a.endsWith('/' + now)), 'le précache nomme le nouveau logo')
     }
     finally {
@@ -95,7 +95,7 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
   })
 
   it('le fichier que cite un module resté en cache survit au ménage d\'un homonyme republié', async () => {
-    const p = project('module-asset-homonyme', { 'util.civet': 'export logo = µasset(\'x/logo.png\')\n', 'hote.mjs': '<img src="µasset(\'y/logo.png\')">\n<p>h</p>\n', 'x/logo.png': withByte(1), 'y/logo.png': withByte(2) })
+    const p = project('module-asset-homonyme', { 'util.civet.mjs': 'export logo = µasset(\'x/logo.png\')\n', 'hote.mjs': '<img src="µasset(\'y/logo.png\')">\n<p>h</p>\n', 'x/logo.png': withByte(1), 'y/logo.png': withByte(2) })
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     try {
       assert.deepEqual(messages((await bundler.compile()).errors), [])
@@ -115,7 +115,7 @@ describe('bundler — les fichiers cités par un module de script, sur la même 
     }
   })
 
-  for (const host of ['util.civet', 'vieux.coffee']) it(`un voisin .js absent d'un .js cité par ${host} est dit une fois, avec le module et le chemin : au premier tour, resté en cache, recompilé après un changement du cœur`, async () => {
+  for (const host of ['util.civet.mjs', 'vieux.coffee.mjs']) it(`un voisin .js absent d'un .js cité par ${host} est dit une fois, avec le module et le chemin : au premier tour, resté en cache, recompilé après un changement du cœur`, async () => {
     const p = project('module-voisin-absent-' + extname(host).slice(1), {
       [host]: 'export lib = µasset(\'lib/main.js\')\n',
       'autre.mjs': '<p>a</p>\n',

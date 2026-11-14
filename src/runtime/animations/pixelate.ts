@@ -179,12 +179,13 @@
         var p = build(s, box.w, box.h, box.ink);
         if (p === last) return;
         last = p;
-        holder.filter.innerHTML = p;
+        holder.filter.innerHTML = µ._mjs_th(p);
       };
       // la balise est à nous : la pose d'une autre transition pixelate (entrée coupée par la sortie, ou
       // l'inverse) est rendue d'abord, sans quoi les deux filtres s'empileraient et le <svg> du premier resterait ;
       // le crochet de libération est celui du moteur pour les remplissages d'une sortie : le bloc l'appelle
-      // quand le groupe de sortie a fini, que la balise soit retirée ou ressuscitée
+      // quand le groupe de sortie a fini et que la balise est retirée ; remise pendant sa sortie, elle garde
+      // son palier jusqu'au `tick` suivant, et le moteur n'appelle le crochet que si une autre transition la reprend
       var begin = function() {
         var other = owner.get(node);
         if (other === release) return;

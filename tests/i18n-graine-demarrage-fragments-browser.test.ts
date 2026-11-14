@@ -99,7 +99,7 @@ describe('graine : la bascule du démarrage attend tous ses fragments, échec co
   // deux modules que l'hôte crée pendant l'attente des textes anglais (à 500 ms, avant l'arrivée de l'accueil à 800 ms) : le serveur ne les a pas rendus, leurs
   // sections ne sont pas dans la graine. L'une échoue aussitôt, l'autre arrive tard (900 ms après qu'elle est demandée) : la bascule les attend toutes deux
   const COMPOSANTS_TARDIFS = {
-    home:          '@i18n \'accueil\'\n<script>\n  $late = false\n  setTimeout((-> $late = true), 500) unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')} / {µt(\'/titre\')}</h1>\n{if $late}<mjs-kid-section></mjs-kid-section><mjs-extra></mjs-extra>{end}\n',
+    home:          '@i18n \'accueil\'\n<script>\n  $late = false\n  µafter(500, -> $late = true) unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')} / {µt(\'/titre\')}</h1>\n{if $late}<mjs-kid-section></mjs-kid-section><mjs-extra></mjs-extra>{end}\n',
     'kid-section': COMPOSANTS_ECHEC['kid-section'],
     extra:         COMPOSANTS_ECHEC.extra
   }

@@ -27,7 +27,7 @@ after(() => { for (const d of tmpDirs) rmSync(d, { recursive: true, force: true 
 // une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
 // sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
 const capturesEnCours: Array<() => void> = []
-afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+function restoreCaptures(): void { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() }
 
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
@@ -48,6 +48,8 @@ const tick = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 describe("cli/ws — arrêter le serveur PENDANT un rechargement à chaud EN VOL", function () {
   this.timeout(20000)
+
+  afterEach(restoreCaptures)
 
   it("handle.stop() pendant l'import (lent) d'une v2 : la v2 ne prend JAMAIS le contrôle du transport après coup", async () => {
     const root = freshDir('ws-stop-during-reload')
@@ -79,6 +81,8 @@ describe("cli/ws — arrêter le serveur PENDANT un rechargement à chaud EN VOL
 
 describe("cli/server — arrêter le serveur PENDANT un rechargement à chaud EN VOL (même correctif)", function () {
   this.timeout(20000)
+
+  afterEach(restoreCaptures)
 
   it("handle.stop() pendant l'import (lent) d'une v2 : la v2 ne prend JAMAIS le contrôle du transport après coup", async () => {
     const root = freshDir('serveur-stop-during-reload')

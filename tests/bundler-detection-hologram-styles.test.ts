@@ -88,7 +88,7 @@ describe('signal des styles de carte de *hologram', function () {
 
   it('un effet donné en réglage (`*delta(fx: *hologram(…))`) et un effet sur le cycle de vie (`@in=*hologram(…)`) : leur style', async () => {
     assert.deepEqual(nommes(await signaux('<div *delta(fx: *hologram(rays-fade))>x</div>')), ['rays-fade'])
-    assert.deepEqual(nommes(await signaux('<script>\n$v = true\n</script>\n{if $v}<p @in=*hologram(glint)>x</p>{end}')), ['glint'])
+    assert.deepEqual(nommes(await signaux('<script>\n$v = true\n</script>\n{if $v}<p :in=*hologram(glint)>x</p>{end}')), ['glint'])
   })
 
   it('une mention de "hologram" qui n\'est pas une pose reconnue : tous (jamais de style manquant)', async () => {
@@ -142,7 +142,7 @@ describe('*hologram — les styles de carte embarqués par le build', function (
   it('un effet donné en réglage, un effet sur le cycle de vie, un effet de l\'appli : leur style', async () => {
     const imbrique = await construire('imbrique', { 'carte.mjs': '<div class="a" *delta(fx: *hologram(rays-fade))>x</div>' })
     assert.deepEqual(imbrique.styles, ['rays-fade'])
-    const vie = await construire('vie', { 'carte.mjs': '<script>\n$v = true\n</script>\n{if $v}<p class="a" @in=*hologram(glint)>x</p>{end}' })
+    const vie = await construire('vie', { 'carte.mjs': '<script>\n$v = true\n</script>\n{if $v}<p class="a" :in=*hologram(glint)>x</p>{end}' })
     assert.deepEqual(vie.styles, ['glint'])
     const appli = await construire('appli', { 'marque.effects.mjs': '<effects>\n  *brillante = *hologram(night-sky, zone: inset(9.85% 8% 52.85% 8%))\n</effects>', 'carte.mjs': '<div class="a" *brillante>x</div>' })
     assert.deepEqual(appli.styles, ['night-sky'])

@@ -6,13 +6,15 @@
 // l'effet ne lit que l'adresse (`plain`), l'appel `µasset('photo.jpg')` : le fichier seul, sans variante. Aucun accès
 // disque ici. Quels réglages sont des images, c'est la règle du catalogue qui le dit (effects/catalog.ts, localImages) :
 // aucun effet n'est nommé dans ce fichier, un effet à venir est couvert dès qu'il déclare un réglage `image`.
-// Un effet ne se trouve que dans une balise (`*nom(réglages)` entre deux attributs, ou la valeur d'une directive
-// `@in=*nom(réglages)`) : un exemple dans <pre> ou <code>, un commentaire, un <script>, un <style>, un texte ou la
-// valeur d'un attribut n'est jamais lu. Un alias d'effet (`*behind.fond('photo.jpg')`, ou à plat `*fond('photo.jpg')`)
+// Un effet ne se trouve que dans une balise, lue par le lecteur unique (template-tree.ts) : `*nom(réglages)` entre deux
+// attributs, ou la valeur d'une transition `:in=*nom(réglages)` ; un exemple dans <pre> ou <code>, un commentaire, un
+// <script>, un <style>, un texte, une expression `{…}` ou la valeur d'un attribut n'est jamais lu. Un alias d'effet (`*behind.fond('photo.jpg')`, ou à plat `*fond('photo.jpg')`)
 // se lit comme l'effet qu'il règle : le chemin donné à la pose est résolu de la même façon.
 
-import { findMacroTagEnd } from './macro-tag.js'
 import { localImages } from '../effects/catalog.js'
+import { SIGN_RE } from '../parser/mjs-words.js'
+import type { AttributDeBalise, Etendue } from '../reader/index.js'
+import { balisesDe, composantLu } from './template-tree.js'
 
 export interface EffectImage {
   /** l'effet, tel qu'écrit */
@@ -38,78 +40,40 @@ export function assetCall(chemin: string): string {
   return `µasset('${chemin}')`
 }
 
-// le texte sans ce qui n'est jamais une balise à lui — exemples (<pre>, <code>), scripts, styles, commentaires —,
-// blanchi à longueur égale : les places restent celles du texte donné (même masque que le bundler pour <@@img>,
-// qu'il ne peut pas importer sans cycle)
-function mask(html: string): string {
-  const blank = (m: string) => m.replace(/[^\n]/g, ' ')
-  return html
-    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, blank)
-    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, blank)
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, blank)
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, blank)
-    .replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, blank)
-}
-
 // le nom comme l'écrit une balise (parser/index.ts) : un effet, ou un alias d'effet pointé (`*behind.fond(`)
-const EFFECT_OPEN = /\*([A-Za-z][\w-]*(?:\.[\w-]+)?)\(/y
-const DIRECTIVE   = /@(?:in|out|transition)(?:\.\w+)*\s*=\s*$/
+const NOM_EFFET       = /^[A-Za-z][\w-]*(?:\.[\w-]+)?$/
+// une transition dont la valeur est un effet (`:in=*nom(réglages)`, `:out`, `:transition`, modificateurs compris)
+const TRANSITION      = new RegExp('^' + SIGN_RE + String.raw`(?:in|out|transition)(?:\.\w+)*$`)
+const EFFET_EN_VALEUR = /=\s*\*([A-Za-z][\w-]*(?:\.[\w-]+)?)\(/
 
-// les effets écrits entre `from` et `end`, les attributs d'une balise : `*nom(` après un blanc, ou après le signe égal
-// d'une transition ; une valeur entre guillemets ou entre accolades n'est pas lue
-function scanAttributes(text: string, from: number, end: number, out: EffectImage[]): void {
-  let quote = ''
-  let depth = 0
-  for (let i = from; i < end; i++) {
-    const c = text[i]
-    if (quote) {
-      if (c === quote) quote = ''
-    }
-    else if (depth > 0) {
-      if (c === '{') depth++
-      else if (c === '}') depth--
-    }
-    else if (c === '"' || c === '\'') quote = c
-    else if (c === '{') depth++
-    else if (c === '*' && (i === from || /\s/.test(text[i - 1]) || DIRECTIVE.test(text.slice(from, i)))) {
-      EFFECT_OPEN.lastIndex = i
-      const m = EFFECT_OPEN.exec(text)
-      if (!m) continue
-      // les réglages, jusqu'à la parenthèse qui ferme : une parenthèse dans un texte ne compte pas
-      const start = i + m[0].length
-      let open    = 1
-      let inText  = ''
-      let j       = start
-      for (; j < end; j++) {
-        const d = text[j]
-        if (inText) {
-          if (d === '\\') j++
-          else if (d === inText) inText = ''
-        }
-        else if (d === '"' || d === '\'') inText = d
-        else if (d === '(') open++
-        else if (d === ')' && --open === 0) break
-      }
-      if (open > 0) return
-      for (const img of localImages(m[1], text.slice(start, j))) out.push({ effet: m[1], reglage: img.key, chemin: img.path, debut: start + img.start, fin: start + img.end, ...(img.plain ? { plain: true } : {}) })
-      i = j
-    }
-  }
+// ni le contenu d'un exemple (<pre>, <code>), ni un script ou un style écrits dans le gabarit
+const HORS_BALISAGE = new Set(['pre', 'code', 'script', 'style'])
+
+// l'effet que porte un attribut et la place de ses réglages : `*nom(réglages)` entre deux attributs, ou la valeur d'une
+// transition ; null pour tout autre attribut
+function effetDe(src: string, a: AttributDeBalise): { nom: string, reglages: Etendue } | null {
+  if (a.sorte === 'effet') return a.nom !== null && a.reglages !== null && NOM_EFFET.test(a.nom) ? { nom: a.nom, reglages: a.reglages } : null
+  if (a.valeur !== 'effet' || a.nom === null || !TRANSITION.test(a.nom)) return null
+  const brut = src.slice(a.debut, a.fin)
+  const m    = EFFET_EN_VALEUR.exec(brut)
+  if (m === null || !brut.endsWith(')')) return null
+  return { nom: m[1], reglages: { debut: a.debut + m.index + m[0].length, fin: a.fin - 1 } }
 }
 
-/** les chemins locaux que les effets de `html` écrivent en clair dans leurs réglages d'image, dans l'ordre du texte */
-export function scanEffectImages(html: string): EffectImage[] {
-  const text = mask(html)
+/** les chemins locaux que les effets de `html` (un gabarit ou un composant entier) écrivent en clair dans leurs réglages
+ *  d'image, dans l'ordre du texte ; `langue` : celle d'un <script> sans `lang`, que reçoit le compilateur (ses commentaires
+ *  décident où la section se referme) */
+export function scanEffectImages(html: string, langue?: string): EffectImage[] {
+  const arbre = composantLu(html, langue)
+  const src   = arbre.source
   const out: EffectImage[] = []
-  const tag  = /<@{0,2}[A-Za-z][\w:.-]*/g
-  let m: RegExpExecArray | null
-  while ((m = tag.exec(text))) {
-    const from = m.index + m[0].length
-    const end  = findMacroTagEnd(text, from)
-    if (end === -1) continue
-    scanAttributes(text, from, end, out)
-    // une balise de plus dans la valeur d'un attribut n'en est pas une
-    tag.lastIndex = end + 1
+  for (const b of balisesDe(arbre.enfants, HORS_BALISAGE)) {
+    for (const a of b.attributs) {
+      const effet = effetDe(src, a)
+      if (effet === null) continue
+      const { debut, fin } = effet.reglages
+      for (const img of localImages(effet.nom, src.slice(debut, fin))) out.push({ effet: effet.nom, reglage: img.key, chemin: img.path, debut: debut + img.start, fin: debut + img.end, ...(img.plain ? { plain: true } : {}) })
+    }
   }
   return out
 }

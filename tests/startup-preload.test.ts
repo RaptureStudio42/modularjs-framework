@@ -3,9 +3,9 @@
 // le manifeste (téléchargé puis exécuté) découvre les balises de la page.
 //
 // L'ensemble de démarrage = les clés de `µ.paths` dont la balise `mjs-<clé>` est dans le HTML
-// prérendu, FERMÉ par la table des dépendances directes (`µDeps`) : un enfant qu'un `{if}` faux n'a
-// pas rendu est quand même préchargé (il s'affichera au premier clic), et le module `@import`-é par
-// un composant de la page l'est aussi.
+// prérendu, FERMÉ par la table du démarrage (celle de `blocks.preload`) : un enfant qu'un `{if}` faux n'a
+// pas rendu n'y entre pas sous `"idle"` (défaut, il part au repos) ni sous `"off"` (il part à l'ouverture
+// de sa branche), il y reste sous `"on"` ; le module `@import`-é par un composant de la page y entre.
 //
 // Mini-projet 2 routes, moteur happy-dom (aucun navigateur à lancer), construction de
 // développement sauf mention contraire. La transmission de la clé depuis mjs.config.json jusqu'au
@@ -29,19 +29,19 @@ interface Projet { root: string; srcDir: string; outDir: string }
 // accueil : 2 enfants rendus (`mjs-card`, `mjs-badge`), 1 enfant dans un `{if}` faux (`mjs-later`,
 // jamais rendu mais dépendance directe), 1 module `@import`-é ; à-propos : un seul enfant à elle
 // (`mjs-aside`) ; `mjs-orphan` n'est cité par personne.
-function fixture(prefix: string, render: RenderConfig): Projet {
+function fixture(prefix: string, render: RenderConfig, blocks?: unknown): Projet {
   const root   = mjsTmp(prefix)
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, 'shared.module.civet'), 'export bump := (x) -> x + 1\n')
+  writeFileSync(join(srcDir, 'shared.module.civet.mjs'), 'export bump := (x) -> x + 1\n')
   writeFileSync(join(srcDir, 'card.mjs'), '<p class="card">carte</p>\n')
   writeFileSync(join(srcDir, 'badge.mjs'), '<b class="badge">neuf</b>\n')
   writeFileSync(join(srcDir, 'later.mjs'), '<p class="later">plus tard</p>\n')
   writeFileSync(join(srcDir, 'aside.mjs'), '<aside class="aside">côté</aside>\n')
   writeFileSync(join(srcDir, 'orphan.mjs'), '<p class="orphan">personne</p>\n')
   writeFileSync(join(srcDir, 'home.mjs'), [
-    '@import bump \'shared.module.civet\'',
+    '@import bump \'shared.module.civet.mjs\'',
     '',
     '<script>',
     '$open ?= false',
@@ -53,7 +53,7 @@ function fixture(prefix: string, render: RenderConfig): Projet {
     '{if $open}<mjs-later></mjs-later>{end}'
   ].join('\n') + '\n')
   writeFileSync(join(srcDir, 'about.mjs'), '<h2 class="a">à propos</h2>\n<mjs-aside></mjs-aside>\n')
-  writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', render }, null, 2))
+  writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', render, ...(blocks === undefined ? {} : { blocks }) }, null, 2))
   return { root, srcDir, outDir }
 }
 
@@ -133,7 +133,7 @@ describe('démarrage des pages prérendues — préchargement', function () {
 
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('le fragment porte un lien par unité de son ensemble de démarrage, fermeture µDeps comprise', async () => {
+  it('le fragment porte un lien par unité de son ensemble de démarrage, fermé par la table du démarrage', async () => {
     const p = fixture('startup-preload', renderBase())
     const { report, startup } = await construire(p)
     const home = fragment(report, '/')
@@ -143,13 +143,14 @@ describe('démarrage des pages prérendues — préchargement', function () {
     const tags = report.generated.find(g => g.url === '/')!.tags
     assert.deepEqual(tags, ['mjs-badge', 'mjs-card', 'mjs-home'], `balises relevées : ${tags.join(', ')}`)
 
-    // l'ensemble : les 3 composants rendus + l'enfant du `{if}` faux + le module `@import`-é
+    // l'ensemble : les 3 composants rendus + le module `@import`-é ; l'enfant du `{if}` faux part au repos
     const noms = startup.pages.find(pg => pg.url === '/')!.names
-    assert.deepEqual(noms, ['badge', 'card', 'home', 'later', 'shared.module'], `ensemble : ${noms.join(', ')}`)
+    assert.deepEqual(noms, ['badge', 'card', 'home', 'shared.module'], `ensemble : ${noms.join(', ')}`)
 
     // un lien par unité, dans l'ordre des noms, et rien pour le composant que personne ne cite
     const hrefs = liens(home)
-    assert.equal(hrefs.length, 5, `5 liens attendus, vus : ${hrefs.join(' ')}`)
+    assert.equal(hrefs.length, 4, `4 liens attendus, vus : ${hrefs.join(' ')}`)
+    assert.equal(hrefs.some(h => /later/.test(h)), false, 'aucun lien vers l\'enfant du {if} faux')
     assert.equal(hrefs.some(h => /orphan/.test(h)), false, 'aucun lien vers un composant absent de la page')
     assert.equal(hrefs.some(h => /\baside/.test(h)), false, 'aucun lien vers un composant de l\'AUTRE page')
     for (const h of hrefs) assert.ok(existsSync(join(p.outDir, basename(h))), `${h} doit exister sur disque`)
@@ -167,6 +168,16 @@ describe('démarrage des pages prérendues — préchargement', function () {
     assert.equal(texte.includes('__mjs_page'), false, 'aucune fiche __mjs_page hors du mode bundle')
     assert.deepEqual(startup.pageFiles, [], 'aucun fichier de page assemblé')
   })
+
+  for (const [blocks, avecLater] of [[{ preload: 'off' }, false], [{ preload: 'on' }, true]] as const) {
+    it(`blocks.preload "${blocks.preload}" : l'enfant du {if} faux ${avecLater ? 'reste dans' : 'sort de'} l'ensemble de démarrage`, async () => {
+      const p = fixture(`startup-preload-${blocks.preload}`, renderBase(), blocks)
+      const { report, startup } = await construire(p)
+      const noms = startup.pages.find(pg => pg.url === '/')!.names
+      assert.deepEqual(noms, avecLater ? ['badge', 'card', 'home', 'later', 'shared.module'] : ['badge', 'card', 'home', 'shared.module'], `ensemble : ${noms.join(', ')}`)
+      assert.equal(liens(fragment(report, '/')).some(h => /later/.test(h)), avecLater)
+    })
+  }
 
   it('chaque page a SON ensemble : la seconde route ne précharge que ses propres unités', async () => {
     const p = fixture('startup-preload-2', renderBase())
@@ -195,7 +206,7 @@ describe('démarrage des pages prérendues — préchargement', function () {
     const p = fixture('startup-preload-prod', renderBase())
     const { report } = await construire(p, 'prod')
     const hrefs = liens(fragment(report, '/'))
-    assert.equal(hrefs.length, 5, `5 liens attendus, vus : ${hrefs.join(' ')}`)
+    assert.equal(hrefs.length, 4, `4 liens attendus, vus : ${hrefs.join(' ')}`)
     for (const h of hrefs) assert.ok(existsSync(join(p.outDir, basename(h))), `${h} doit exister sur disque`)
   })
 
@@ -259,6 +270,6 @@ describe('démarrage des pages prérendues — préchargement', function () {
     const result = spawnSync('npx', ['tsx', 'src/cli.ts', 'build', '--root', p.root], { cwd: repoRoot, encoding: 'utf-8' })
     assert.equal(result.status, 0, `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`)
     const hrefs = liens(join(p.root, 'mjs_pages', 'index.html'))
-    assert.equal(hrefs.length, 5, `5 liens attendus, vus : ${hrefs.join(' ')}`)
+    assert.equal(hrefs.length, 4, `4 liens attendus, vus : ${hrefs.join(' ')}`)
   })
 })

@@ -41,18 +41,23 @@
   // TCO fiable) et sautait le nettoyage des composants imbriqués au-delà —
   // une pile n'a pas cette limite, et rien ici ne peut boucler (chaque nœud
   // n'est empilé qu'une fois, via children/shadow, jamais un cycle DOM).
-  var stack = [root], node, kids, i;
+  var stack = [root], node, kids, i, views;
   while (stack.length > 0) {
     node = stack.pop();
     if (!node) continue;
     if (!node.isConnected && typeof node._mjs_runDestroyCallbacks === 'function') {
       node._mjs_runDestroyCallbacks();
     }
+    // un layout abandonné : les pages hibernées dans son propre cache de vues, hors de son DOM, partent avec lui — chaque
+    // entrée purgée passe par la destruction de son arbre (`onEvict` du cache, mjs_router.ts) ; un layout encore dans la
+    // page, évincé pendant qu'il est affiché, garde les siennes
+    if (!node.isConnected && µ.Router && (views = µ.Router.cache.get(node))) { views.clear(); }
     kids = node.children;
     if (kids) {
       for (i = 0; i < kids.length; i++) stack.push(kids[i]);
     }
-    if (node._shadow && node._shadow.children) {
+    // un léger est sa propre ombre : ses enfants viennent d'être empilés, les reprendre doublait chaque passage à chaque étage léger
+    if (node._shadow && node._shadow !== node && node._shadow.children) {
       for (i = 0; i < node._shadow.children.length; i++) stack.push(node._shadow.children[i]);
     }
   }

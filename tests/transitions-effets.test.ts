@@ -17,13 +17,13 @@ import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 
 const COMPOSANTS: Record<string, string> = {
-  'tx-vole': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" @in=*fly(up, distance: 200, duration: 2s) @out=*fade(300ms)>vole</p>{end}',
-  'tx-sym': '<script>\n$vu = false\n</script>\n{if $vu}<p class="s" @transition.global=*slide(x, duration: 250ms)>glisse</p>{end}',
-  'tx-jeu': '<script>\n$vu = false\n</script>\n{if $vu}<p class="j" @in=*scramble(speed: 10) @out=*scramble(speed: 40)>ABC</p>{end}',
+  'tx-vole': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" :in=*fly(up, distance: 200, duration: 2s) :out=*fade(300ms)>vole</p>{end}',
+  'tx-sym': '<script>\n$vu = false\n</script>\n{if $vu}<p class="s" :transition.global=*slide(x, duration: 250ms)>glisse</p>{end}',
+  'tx-jeu': '<script>\n$vu = false\n</script>\n{if $vu}<p class="j" :in=*scramble(speed: 10) :out=*scramble(speed: 40)>ABC</p>{end}',
   'tx-vue': '<p class="w" *fade(600ms, on: view)>vue</p>\n<p class="l" *scale(.5, on: load, origin: top-left)>charge</p>',
   'tx-defile': '<p class="d" *iris(on: scroll, range: 0 1000px)>défile</p>',
-  'tx-liste': "<script>\n$items = [{ id: 1, nom: 'a' }, { id: 2, nom: 'b' }]\n</script>\n<ul>{for item in $items by id}<li @transition=*crossfade(key: item.id)>{item.nom}</li>{end}</ul>",
-  'tx-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n</script>\n{if $vu}<p class=\"m\" @in=*tourne(duration: 8s)>maison</p>{end}",
+  'tx-liste': "<script>\n$items = [{ id: 1, nom: 'a' }, { id: 2, nom: 'b' }]\n</script>\n<ul>{for item in $items by id}<li :transition=*crossfade(key: item.id)>{item.nom}</li>{end}</ul>",
+  'tx-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n</script>\n{if $vu}<p class=\"m\" :in=*tourne(duration: 8s)>maison</p>{end}",
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {
@@ -212,12 +212,12 @@ describe('transitions = effets : @in=*…, @out=*…, @transition=*…', functio
 
   it('refusé à la compilation, avec la bonne écriture : l\'ancienne forme, un effet continu, un déclencheur dans @in, une faute de nom', async () => {
     const cas: Array<[string, RegExp]> = [
-      ['{if $x}<p @in.fly={ y: 200 }>x</p>{end}', /@in\.fly[\s\S]*@in=\*fly/],
-      ['{if $x}<p @transition.fade>x</p>{end}', /@transition\.fade[\s\S]*@transition=\*fade/],
-      ['{if $x}<p @in=*neon>x</p>{end}', /@in=\*neon[\s\S]*continu/],
-      ['{if $x}<p @in=*fade(on: view)>x</p>{end}', /on[\s\S]*@in/],
-      ['{if $x}<p @in=*fdae>x</p>{end}', /\*fade/],
-      ['<p *crossfade(key: 1)>x</p>', /\*crossfade[\s\S]*@transition/],
+      ['{if $x}<p :in.fly={ y: 200 }>x</p>{end}', /:in\.fly[\s\S]*:in=\*fly/],
+      ['{if $x}<p :transition.fade>x</p>{end}', /:transition\.fade[\s\S]*:transition=\*fade/],
+      ['{if $x}<p :in=*neon>x</p>{end}', /:in=\*neon[\s\S]*continu/],
+      ['{if $x}<p :in=*fade(on: view)>x</p>{end}', /on[\s\S]*:in/],
+      ['{if $x}<p :in=*fdae>x</p>{end}', /\*fade/],
+      ['<p *crossfade(key: 1)>x</p>', /\*crossfade[\s\S]*:transition/],
     ]
     for (const [src, attendu] of cas) {
       const { stats } = await construire('transitions-refus', { 'tx-refus': '<script>\n$x = true\n</script>\n' + src })

@@ -18,8 +18,8 @@ const SOURCES: Record<string, string> = {
   cardEl = null
   µmount -> $lu = "node=#{node?.localName or 'null'} cardEl=#{cardEl?.localName or 'null'}"
 </script>
-<div class="cible" @this=!{node}>a</div>
-<span class="autre" @this=!{cardEl}>b</span>
+<div class="cible" :this=!{node}>a</div>
+<span class="autre" :this=!{cardEl}>b</span>
 <p class="vu">{$lu}</p>
 `,
   // la variable n'est pas déclarée dans le script : le compilateur la déclare, et le script s'en sert pour agir sur l'élément
@@ -28,7 +28,7 @@ const SOURCES: Record<string, string> = {
     node.dataset.vu = 'oui'
     $lu = "node=#{node.localName}"
 </script>
-<div class="cible" @this=!{node}>a</div>
+<div class="cible" :this=!{node}>a</div>
 <p class="vu">{$lu}</p>
 `,
   'ref-boucle.mjs': `<script>
@@ -37,7 +37,7 @@ const SOURCES: Record<string, string> = {
   lire    = -> $lu = "node=#{node?.localName or 'null'} texte=#{node?.textContent}"
 </script>
 {for l in $lignes}
-  <li @this=!{node}>{l}</li>
+  <li :this=!{node}>{l}</li>
 {end}
 <button class="lire" @click={lire()}>lire</button>
 <p class="vu">{$lu}</p>
@@ -50,7 +50,7 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i>attente</i>
 {success valeur}
-  <b @this=!{node}>{valeur}</b>
+  <b :this=!{node}>{valeur}</b>
 {end}
 <button class="lire" @click={lire()}>lire</button>
 <p class="vu">{$lu}</p>
@@ -61,14 +61,14 @@ const SOURCES: Record<string, string> = {
   autre   = 'U'
   $lignes = [1]
 </script>
-<div class="n1" @class{node is 'U'}="on">1</div>
-<div class="n2" @class{autre is 'U'}="on">2</div>
+<div class="n1" :class{node is 'U'}="on">1</div>
+<div class="n2" :class{autre is 'U'}="on">2</div>
 <div class="n3" title={node}>3</div>
 <div class="n4" data-v={node + '!'}>4</div>
 <div class="n5" title="a-{node}">5</div>
 {for l in $lignes}
-  <div class="n6" @class{node is 'U'}="on">6</div>
-  <div class="n7" @class{autre is 'U'}="on">7</div>
+  <div class="n6" :class{node is 'U'}="on">6</div>
+  <div class="n7" :class{autre is 'U'}="on">7</div>
 {end}
 `
 }

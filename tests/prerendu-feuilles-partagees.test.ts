@@ -52,7 +52,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
 
   it('composant avec @css : chaque feuille déclarée est dans la racine d\'ombre, dans l\'ordre déclaré', async function () {
     const p = fixture('prerendu-partagees-ordre')
-    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<main class="zone-b">B</main>\n<style @css="feuille-b feuille-a">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<main class="zone-b">B</main>\n<style :css="feuille-b feuille-a">\n  .propre\n    color: red\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-panneau' })
     const ia = res.html.indexOf('.zone-a')
     const ib = res.html.indexOf('.zone-b')
@@ -66,15 +66,15 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
 
   it('le texte de la feuille voyage tel que compilé (règles intactes)', async function () {
     const p = fixture('prerendu-partagees-texte')
-    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style @css="feuille-a"></style>\n')
+    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style :css="feuille-a"></style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-panneau' })
     assert.match(res.html, /<style>[^<]*\.zone-a\s*\{[^}]*position:\s*fixed[^}]*width:\s*280px[^}]*\}[^<]*<\/style>/, `la règle du panneau fixe doit être portée — HTML : ${res.html}`)
   })
 
   it('sous-composant à ombre propre : sa racine porte SES feuilles déclarées, pas celles du parent', async function () {
     const p = fixture('prerendu-partagees-imbrique')
-    ecrire(p, 'enfant.mjs', '<p class="zone-c">E</p>\n<style @css="feuille-c"></style>\n')
-    ecrire(p, 'parent.mjs', '<aside class="zone-a">P</aside>\n<@enfant>\n<style @css="feuille-a"></style>\n')
+    ecrire(p, 'enfant.mjs', '<p class="zone-c">E</p>\n<style :css="feuille-c"></style>\n')
+    ecrire(p, 'parent.mjs', '<aside class="zone-a">P</aside>\n<@enfant>\n<style :css="feuille-a"></style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-parent' })
     const [parent, enfant] = res.html.split('<mjs-enfant')
     assert.match(parent, /\.zone-a/, 'la racine du parent porte feuille-a')
@@ -85,7 +85,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
 
   it('composant léger (sans ombre) : aucune feuille partagée ajoutée, il n\'en adopte pas au navigateur non plus', async function () {
     const p = fixture('prerendu-partagees-leger')
-    ecrire(p, 'leger.mjs', '<p class="zone-a">L</p>\n<style @css="feuille-a">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'leger.mjs', '<p class="zone-a">L</p>\n<style :css="feuille-a">\n  .propre\n    color: red\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-leger', light: true })
     assert.doesNotMatch(res.html, /position:\s*fixed/, `un léger n'adopte pas de feuille partagée — HTML : ${res.html}`)
     assert.match(res.html, /\.propre/, 'sa feuille propre reste portée')
@@ -94,7 +94,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
   it('feuille partagée vide (absente du registre) : rendu sans erreur, aucune balise parasite', async function () {
     const p = fixture('prerendu-partagees-vide')
     writeFileSync(join(p.stylesDir, 'feuille-vide.css'), '\n')
-    ecrire(p, 'panneau.mjs', '<p>X</p>\n<style @css="feuille-vide">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'panneau.mjs', '<p>X</p>\n<style :css="feuille-vide">\n  .propre\n    color: red\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-panneau', bundlerOpts: SANS_THEME })
     assert.equal((res.html.match(/<style>/g) ?? []).length, 1, `seule la feuille propre est portée — HTML : ${res.html}`)
   })
@@ -108,7 +108,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
 
   it('mode strict (csp) : chaque feuille partagée sort en <link> vers un fichier, jamais en <style> en ligne', async function () {
     const p = fixture('prerendu-partagees-csp')
-    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style @css="feuille-a feuille-b">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style :css="feuille-a feuille-b">\n  .propre\n    color: red\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-panneau', csp: true, css: 'split', bundlerOpts: SANS_THEME })
     assert.doesNotMatch(res.html, /<style/, `aucun <style> en ligne sous csp — HTML : ${res.html}`)
     assert.equal((res.html.match(/<link rel="stylesheet" href="[^"]+\.css">/g) ?? []).length, 3, `deux feuilles partagées + la feuille propre — HTML : ${res.html}`)
@@ -124,7 +124,7 @@ describe('prérendu — feuilles partagées (@css) dans le HTML rendu', function
     catch { return this.skip() }
     const p    = fixture('prerendu-partagees-navigateur')
     const root = join(p.srcDir, '..')
-    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style @css="feuille-b feuille-a">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'panneau.mjs', '<aside class="zone-a">A</aside>\n<style :css="feuille-b feuille-a">\n  .propre\n    color: red\n</style>\n')
     const renderer = await createBrowserRenderer({ sourceDir: 'src', outputDir: 'out', stylesheetsDir: 'styles' } as any, { configDir: root })
     try {
       const res = await renderer.renderPage('mjs-panneau')
@@ -177,7 +177,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
   it('300 composants identiques, une feuille partagée de 30 Ko : HTML sous 80 Ko (au lieu de 9 Mo), UNE feuille liée, écrite une seule fois', async function () {
     const p = fixture('prerendu-poids-300')
     writeFileSync(join(p.stylesDir, 'feuille-grosse.css'), grosseFeuille(30000))
-    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-grosse">\n  .propre\n    color: red\n</style>\n')
+    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style :css="feuille-grosse">\n  .propre\n    color: red\n</style>\n')
     ecrire(p, 'liste.mjs', '<section>\n' + '<@carte></@carte>\n'.repeat(300) + '</section>\n')
     const { html, sortie } = await rendre(p, 'mjs-liste')
     assert.ok(html.length < 90000, `HTML de ${html.length} octets (57 Ko de feuilles propres, la règle de \`hidden\` comprise, + un lien d'environ 80 octets par racine) : la feuille de 30 Ko ne doit pas être répétée par racine`)
@@ -190,7 +190,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
 
   it('une racine (ou peu de racines) : la feuille reste en ligne, aucune requête de plus', async function () {
     const p = fixture('prerendu-poids-petit')
-    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-a"></style>\n')
+    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style :css="feuille-a"></style>\n')
     ecrire(p, 'liste.mjs', '<section>\n' + '<@carte></@carte>\n'.repeat(3) + '</section>\n')
     const { html, sortie } = await rendre(p, 'mjs-liste')
     assert.deepEqual(liens(html), [], `trois racines d'une feuille de 40 octets : surcoût négligeable, tout en ligne — HTML : ${html.slice(0, 400)}`)
@@ -201,7 +201,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
   it('une seule racine avec une feuille de 30 Ko : en ligne (le lien ne ferait que coûter une requête)', async function () {
     const p = fixture('prerendu-poids-une')
     writeFileSync(join(p.stylesDir, 'feuille-grosse.css'), grosseFeuille(30000))
-    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-grosse"></style>\n')
+    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style :css="feuille-grosse"></style>\n')
     const { html } = await rendre(p, 'mjs-carte')
     assert.deepEqual(liens(html), [])
     assert.ok(html.includes('.regle-0 '), 'la feuille est dans le HTML')
@@ -211,8 +211,8 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
     const p = fixture('prerendu-poids-trois')
     writeFileSync(join(p.stylesDir, 'feuille-grosse.css'), grosseFeuille(30000))
     writeFileSync(join(p.stylesDir, 'feuille-moyenne.css'), grosseFeuille(3000))
-    ecrire(p, 'grosse.mjs', '<p>G</p>\n<style @css="feuille-grosse"></style>\n')
-    ecrire(p, 'moyenne.mjs', '<p>M</p>\n<style @css="feuille-moyenne"></style>\n')
+    ecrire(p, 'grosse.mjs', '<p>G</p>\n<style :css="feuille-grosse"></style>\n')
+    ecrire(p, 'moyenne.mjs', '<p>M</p>\n<style :css="feuille-moyenne"></style>\n')
     ecrire(p, 'page-g.mjs', '<@grosse></@grosse><@grosse></@grosse><@grosse></@grosse>\n')
     ecrire(p, 'page-m.mjs', '<@moyenne></@moyenne><@moyenne></@moyenne><@moyenne></@moyenne>\n')
     const g = await rendre(p, 'mjs-page-g')
@@ -225,7 +225,7 @@ describe('prérendu — poids des feuilles partagées sur une page à nombreuses
   it('rendu ponctuel sans dossier de sortie : aucun fichier à servir, tout reste en ligne', async function () {
     const p = fixture('prerendu-poids-ponctuel')
     writeFileSync(join(p.stylesDir, 'feuille-grosse.css'), grosseFeuille(30000))
-    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-grosse"></style>\n')
+    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style :css="feuille-grosse"></style>\n')
     ecrire(p, 'liste.mjs', '<section>\n' + '<@carte></@carte>\n'.repeat(3) + '</section>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-liste', bundlerOpts: SANS_THEME })
     assert.deepEqual(liens(res.html), [])
@@ -247,7 +247,7 @@ describe('prérendu — thème, modèle et @import des feuilles partagées', fun
     const p = fixture('prerendu-theme')
     writeFileSync(join(p.stylesDir, 'mjs_reset.css'), '.reset-marque { margin: 0 }\n')
     ecrire(p, 'sombre.theme.mjs', '<theme>\n  $$gapv: 77px\n</theme>\n')
-    ecrire(p, 'fiche.mjs', '<div class="zone-a propre" theme="sombre">F</div>\n<style @css="feuille-a">\n  .propre\n    width: $$gapv\n</style>\n')
+    ecrire(p, 'fiche.mjs', '<div class="zone-a propre" theme="sombre">F</div>\n<style :css="feuille-a">\n  .propre\n    width: $$gapv\n</style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-fiche' })
     const ir = res.html.indexOf('.reset-marque')
     const it = res.html.indexOf('--mjs-surface')
@@ -259,7 +259,7 @@ describe('prérendu — thème, modèle et @import des feuilles partagées', fun
 
   it('composant sans thème dans le projet : aucune feuille de thème ajoutée', async function () {
     const p = fixture('prerendu-sans-theme')
-    ecrire(p, 'fiche.mjs', '<div class="zone-a">F</div>\n<style @css="feuille-a"></style>\n')
+    ecrire(p, 'fiche.mjs', '<div class="zone-a">F</div>\n<style :css="feuille-a"></style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-fiche', bundlerOpts: SANS_THEME })
     assert.doesNotMatch(res.html, /--mjs-surface/)
   })
@@ -268,7 +268,7 @@ describe('prérendu — thème, modèle et @import des feuilles partagées', fun
   // feuilles partagées et la feuille propre, comme le montage l'adopte, et sa balise porte l'adresse de son fichier (`mjs-layout`)
   it('modèle (layout="alt") : sa feuille est portée après les feuilles partagées et la feuille propre', async function () {
     const p = fixture('prerendu-modele')
-    ecrire(p, 'carte.mjs', '<div class="zone-a">C</div>\n<style @css="feuille-a">\n  .propre\n    color: red\n</style>\n<style name="alt">\n  .variante-alt\n    width: 555px\n</style>\n')
+    ecrire(p, 'carte.mjs', '<div class="zone-a">C</div>\n<style :css="feuille-a">\n  .propre\n    color: red\n</style>\n<style name="alt">\n  .variante-alt\n    width: 555px\n</style>\n')
     ecrire(p, 'page.mjs', '<@carte layout="alt"></@carte>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-page' })
     const im = res.html.indexOf('variante-alt')
@@ -281,7 +281,7 @@ describe('prérendu — thème, modèle et @import des feuilles partagées', fun
   it('@import dans une feuille partagée : retiré du texte prérendu, le reste de la feuille est porté', async function () {
     const p = fixture('prerendu-import')
     writeFileSync(join(p.stylesDir, 'feuille-imp.css'), '@import url("feuille-a.css");\n@import "feuille-b.css" screen;\n.zone-i { width: 777px }\n')
-    ecrire(p, 'fiche.mjs', '<div class="zone-i">F</div>\n<style @css="feuille-imp"></style>\n')
+    ecrire(p, 'fiche.mjs', '<div class="zone-i">F</div>\n<style :css="feuille-imp"></style>\n')
     const res = await renderToString({ sourceDir: p.srcDir, stylesheetsDir: p.stylesDir, tag: 'mjs-fiche' })
     assert.doesNotMatch(res.html, /@import/, `le navigateur ignore @import dans une feuille construite — HTML : ${res.html}`)
     assert.match(res.html, /\.zone-i\s*\{\s*width:\s*777px/, 'la règle de la feuille est portée')
@@ -353,7 +353,7 @@ describe('prérendu — moteur navigateur : feuilles liées, thème et @import a
   it('300 composants et une feuille de 30 Ko : un seul fichier lié, HTML sous 110 Ko', async function () {
     const p = fixture('prerendu-navigateur-300')
     writeFileSync(join(p.stylesDir, 'feuille-grosse.css'), grosseFeuille(30000))
-    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style @css="feuille-grosse"></style>\n')
+    ecrire(p, 'carte.mjs', '<p class="zone-a">C</p>\n<style :css="feuille-grosse"></style>\n')
     ecrire(p, 'liste.mjs', '<section>\n' + '<@carte></@carte>\n'.repeat(300) + '</section>\n')
     const r = await avecNavigateur.call(this, p, 'mjs-liste')
     if(!r) return this.skip()
@@ -368,7 +368,7 @@ describe('prérendu — moteur navigateur : feuilles liées, thème et @import a
     const p = fixture('prerendu-navigateur-petit')
     writeFileSync(join(p.stylesDir, 'feuille-imp.css'), '@import url("feuille-a.css");\n.zone-i { width: 777px }\n')
     ecrire(p, 'sombre.theme.mjs', '<theme>\n  $$gapv: 77px\n</theme>\n')
-    ecrire(p, 'fiche.mjs', '<div class="zone-i" theme="sombre">F</div>\n<style @css="feuille-imp"></style>\n')
+    ecrire(p, 'fiche.mjs', '<div class="zone-i" theme="sombre">F</div>\n<style :css="feuille-imp"></style>\n')
     const r = await avecNavigateur.call(this, p, 'mjs-fiche')
     if(!r) return this.skip()
     assert.deepEqual(liens(r.html), [], `tout en ligne — HTML : ${r.html.slice(0, 300)}`)

@@ -58,7 +58,7 @@ describe('mjs_title.ts / mjs_vt_presets.ts — détachés du cœur, build RÉEL'
   after(async () => { await terminateSharedWorkerPool() })
 
   it('composant avec @title="aide", runtime par défaut : _mjs_titleAttach présent', async function () {
-    const { outDir } = await buildProject({}, { 'hop.mjs': '<p @title="aide">x</p>\n' })
+    const { outDir } = await buildProject({}, { 'hop.mjs': '<p :title="aide">x</p>\n' })
     const core = coreContent(outDir)
     assert.ok(core.includes('_mjs_titleAttach = function'), '_mjs_titleAttach doit être bundlé dès qu\'une source pose @title')
   })
@@ -130,7 +130,7 @@ describe('mjs_title.ts / mjs_vt_presets.ts — détachés du cœur, build RÉEL'
   it("détection via un module .civet autonome (el.setAttribute('mjs-title', …)), aucun .mjs avec @title : _mjs_titleAttach présent", async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs':     '<p>x</p>\n',
-      'outil.civet': "export poserTitre = (el) ->\n  el.setAttribute('mjs-title', 'x')\n",
+      'outil.civet.mjs': "export poserTitre = (el) ->\n  el.setAttribute('mjs-title', 'x')\n",
     })
     const core = coreContent(outDir)
     assert.ok(core.includes('_mjs_titleAttach = function'), "un attribut mjs-title posé en JS depuis un .civet doit être détecté")
@@ -138,7 +138,7 @@ describe('mjs_title.ts / mjs_vt_presets.ts — détachés du cœur, build RÉEL'
 
   it('détection via @title={{ $html }} (forme HTML réactive) : _mjs_titleAttach présent', async function () {
     const { outDir } = await buildProject({}, {
-      'hop.mjs': '<script>\n$html = \'<b>x</b>\'\n</script>\n<p @title={{ $html }}>x</p>\n',
+      'hop.mjs': '<script>\n$html = \'<b>x</b>\'\n</script>\n<p :title={{ $html }}>x</p>\n',
     })
     const core = coreContent(outDir)
     assert.ok(core.includes('_mjs_titleAttach = function'))
@@ -171,7 +171,7 @@ describe('mjs_title.ts — garde anti-angle-mort : les modules cœur ne posent p
 
   it('aucun fichier de src/core-modules/ (récursif, .mjs) ne matche la regex de détection @title/mjs-title', () => {
     const b = new Bundler({})
-    const REGEX_TITLE = /(^|[\s"'`(])@title\s*=|mjs-title/
+    const REGEX_TITLE = /(^|[\s"'`(]):title\s*=|mjs-title/
     const offenders = listMjsRecursive(b.coreModulesDir).filter((f) => REGEX_TITLE.test(readFileSync(f, 'utf-8')))
     assert.deepEqual(offenders, [], 'un module cœur qui adopte @title serait détecté dès sa compilation réelle (cf. collectUsedFeatures) — cette garde documente juste qu\'aucun ne le fait aujourd\'hui')
   })

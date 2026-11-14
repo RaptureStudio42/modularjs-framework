@@ -24,7 +24,9 @@ const REGLAGES = [
   '<vars>',
   '  $volume    Percent',
   "  $color     'red' | 'green' | 'blue'",
-  '  $settings  { volume: Percent, bass?: int -10..10 }',
+  '  $settings',
+  '    volume  Percent',
+  '    bass?   int -10..10',
   '  $tags      string[] 0..3',
   "  $nick      string 3..10 ! 'admin' | 'root'",
   '</vars>',
@@ -58,11 +60,12 @@ const PARENT = ['<@enfant class="a" level={9}></@enfant>', '<@enfant class="b" l
 
 // l'enfant modifie l'objet reçu ; le parent, lié en deux sens, le corrige des deux côtés
 const REGLAGE  = ['<button class="b" @click={$data.volume = 50}>b</button>', '<p class="e">{$data.volume}</p>'].join('\n')
-const DEUXSENS = ['<vars>', '  $x  { volume: int 0..10 }', '</vars>', '', '<script>', '  $x = { volume: 5 }', '</script>', '', '<@reglage data=!{$x}></@reglage>', '<p class="p">{$x.volume}</p>'].join('\n')
+const DEUXSENS = ['<vars>', '  $x', '    volume  int 0..10', '</vars>', '', '<script>', '  $x = { volume: 5 }', '</script>', '', '<@reglage data=!{$x}></@reglage>', '<p class="p">{$x.volume}</p>'].join('\n')
 
 const PANIER = [
   '<vars>',
-  '  $$cart  { quantity: int 1..99 }',
+  '  $$cart',
+  '    quantity  int 1..99',
   '</vars>',
   '',
   '<script>',

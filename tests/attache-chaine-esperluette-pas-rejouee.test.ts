@@ -50,13 +50,13 @@ const CHAINES = `<script>
     -> log('nettoyage ' + label)
 </script>
 
-<div class="t" @attach={mark('temoin')}>x</div>
-<div class="a" @attach={mark('Q&A')}>x</div>
-<div class="u" @attach={mark('url?x=1&page=2')}>x</div>
-<div class="m" @attach={mark('prix en µ')}>x</div>
-<div class="e" @attach={mark('et && ou')}>x</div>
-<div class="d" @attach={mark("Q&A")}>x</div>
-<div class="g" @attach={mark(\`µ&x\`)}>x</div>
+<div class="t" :attach={mark('temoin')}>x</div>
+<div class="a" :attach={mark('Q&A')}>x</div>
+<div class="u" :attach={mark('url?x=1&page=2')}>x</div>
+<div class="m" :attach={mark('prix en µ')}>x</div>
+<div class="e" :attach={mark('et && ou')}>x</div>
+<div class="d" :attach={mark("Q&A")}>x</div>
+<div class="g" :attach={mark(\`µ&x\`)}>x</div>
 <ul>{for it in $items by id}<li>{it.id}</li>{end}</ul>
 `
 
@@ -68,10 +68,10 @@ const LECTURES = `<script>
     -> log('nettoyage ' + label)
 </script>
 
-<div class="p" @attach={mark('param ' + &room)}>x</div>
-<div class="r" @attach={mark('url ' + typeof µurl)}>x</div>
-<div class="i" @attach={mark(\`interp \${&room}\`)}>x</div>
-<div class="s" @attach={mark('Q&A' + &room)}>x</div>
+<div class="p" :attach={mark('param ' + &room)}>x</div>
+<div class="r" :attach={mark('url ' + typeof µurl)}>x</div>
+<div class="i" :attach={mark(\`interp \${&room}\`)}>x</div>
+<div class="s" :attach={mark('Q&A' + &room)}>x</div>
 <ul>{for it in $items by id}<li>{it.id}</li>{end}</ul>
 `
 
@@ -84,7 +84,7 @@ const LIGNES = `<script>
     -> log('nettoyage ' + label)
 </script>
 
-<ul>{for it in $items by id}<li class="row"><b class="q" @attach={mark('Q&A ' + it.id)}>{$n}</b><i class="u" @attach={mark('url?x=1&page=2')}>{$n}</i><u class="m" @attach={mark('prix en µ')}>{$n}</u></li>{end}</ul>
+<ul>{for it in $items by id}<li class="row"><b class="q" :attach={mark('Q&A ' + it.id)}>{$n}</b><i class="u" :attach={mark('url?x=1&page=2')}>{$n}</i><u class="m" :attach={mark('prix en µ')}>{$n}</u></li>{end}</ul>
 `
 
 describe('@attach : un « & » ou un « µ » dans une chaîne n\'est pas une lecture', function () {

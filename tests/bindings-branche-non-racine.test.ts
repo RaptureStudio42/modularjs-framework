@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -276,8 +277,8 @@ describe('non-régression rapide root/{for} (two-way, hors branche)', function (
 // (sémantique .options/.selected réelle), passés à la fonction du sandbox.
 // ============================================================================
 
-const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf8')
-const elemSrc = readFileSync(join(__dirname, '../src/runtime/mjs_element.ts'), 'utf8')
+const initSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
+const elemSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_element.ts'))
 
 function makeElementSandbox(): { µ: any } {
   const sandbox = `

@@ -28,7 +28,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
   for (const mode of MODES) {
     it(mode + ' : un élément retiré en place, puis la liste remplacée : `$todos[1?].id` avant et après le ramasse-miettes', async () => {
       const µ  = makeMu(mode)
-      const el = composant({ todos: '{ id: int }[]' })
+      const el = composant({ todos: 'Id[]' })
       const pris: any = {}
       ;(() => {
         const l = [{ id: 0 }, { id: 1 }, { id: 2 }]
@@ -47,7 +47,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
 
     it(mode + ' : un élément écarté par `$todos = $todos.filter(…)` : même texte avant et après le ramasse-miettes', async () => {
       const µ  = makeMu(mode)
-      const el = composant({ todos: '{ id: int }[]' })
+      const el = composant({ todos: 'Id[]' })
       const pris: any = {}
       ;(() => {
         const l  = [{ id: 0 }, { id: 1 }, { id: 2 }]
@@ -66,7 +66,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
 
   it('un élément gardé alors que sa liste est ramassée sans avoir été remplacée : le chemin d’inscription, marqué', async () => {
     const µ  = makeMu('warn')
-    const el = composant({ rows: '{ id: int, t: string }[]' })
+    const el = composant({ rows: 'Message[]' })
     const pris: any = {}
     ;(() => {
       const l = Array.from({ length: 10 }, (_, i) => ({ id: i, t: 'm' }))
@@ -81,7 +81,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
 
   it('une liste imbriquée ramassée : chaque position du chemin d’inscription est marquée', async () => {
     const µ  = makeMu('warn')
-    const el = composant({ board: '{ rows: { cells: { v: int }[] }[] }' })
+    const el = composant({ board: 'Plateau' })
     const pris: any = {}
     ;(() => {
       const board: any = { rows: [0, 1].map((r) => ({ cells: [{ v: r }, { v: r + 10 }] })) }
@@ -96,7 +96,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
 
   it('un champ d’objet dont le parent est ramassé : aucune position à marquer, le chemin d’inscription tel quel', async () => {
     const µ  = makeMu('warn')
-    const el = composant({ fiche: '{ nom: string, auteur: { prenom: string } }' })
+    const el = composant({ fiche: 'nom  string\nauteur\n  prenom  string' })
     const pris: any = {}
     ;(() => {
       const fiche: any = { nom: 'a', auteur: { prenom: 'p' } }
@@ -111,7 +111,7 @@ describe('types — le texte d’un message ne change pas quand la liste d’ava
 
   it('la liste est encore tenue par l’appli : la position se retrouve, sans marque, ramasse-miettes ou non', async () => {
     const µ  = makeMu('warn')
-    const el = composant({ rows: '{ id: int }[]' })
+    const el = composant({ rows: 'Id[]' })
     const l  = Array.from({ length: 6 }, (_, i) => ({ id: i }))
     µ._mjs_tset(el, 'rows', l)
     appeler(µ, el, el._mjs_treg, l, 'unshift', { id: 90 })

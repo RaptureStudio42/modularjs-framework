@@ -101,13 +101,15 @@ describe('a11y — étiquette [lint.a11y] au point d\'impression (transpiler/ind
   this.timeout(30000)
 
   it('<div @click={x}> non interactif : la ligne émise finit par [lint.a11y]', async () => {
-    const w = await warningsFor('<div @click={x}>y</div>', 'carte-click')
+    // `x` déclaré : un gestionnaire fait d'un nom que rien ne fournit est refusé à la construction ; le sujet reste l'avertissement a11y
+    const w = await warningsFor('<script>\nx = -> 1\n</script>\n<div @click={x}>y</div>', 'carte-click')
     assert.ok(w.some(m => m.endsWith('[lint.a11y]')), `attendu [lint.a11y] en fin de ligne : ${JSON.stringify(w)}`)
     assert.ok(w.every(m => !m.includes('pour couper ce contrôle')), `le rappel répété par composant a disparu : ${JSON.stringify(w)}`)
   })
 
   it('lint.a11y: false coupe tout — capture de console.warn pendant la compilation : rien', async () => {
-    const w = await warningsFor('<div @click={x}>y</div>', 'carte-click-off', { a11y: false })
+    // `x` déclaré : un gestionnaire fait d'un nom que rien ne fournit est refusé à la construction ; le sujet reste l'avertissement a11y
+    const w = await warningsFor('<script>\nx = -> 1\n</script>\n<div @click={x}>y</div>', 'carte-click-off', { a11y: false })
     assert.equal(w.length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
   })
 })
@@ -178,16 +180,15 @@ describe('diagnostics — couleurs terminal (src/diagnostics.ts)', () => {
   })
 })
 
-// types émis au cœur du compilateur (analyse, parseur, générateur, adaptateur Coffee) : le réglage
+// types émis au cœur du compilateur (analyse, parseur, générateur) : le réglage
 // doit y parvenir — `transpile()` est le même dans le thread principal et dans un thread de travail
 describe('types émis au cœur du compilateur — étiquette et coupure', function () {
   this.timeout(30000)
 
   const CAS: Array<{ type: string, nom: string, source: string, motif: RegExp }> = [
-    { type: 'legacy',     nom: 'coffee',       source: '<script lang="coffee">\nx = 1\n</script>\n<p>y</p>',                  motif: /CoffeeScript dépréciée/ },
     { type: 'legacy',     nom: 'url-change',   source: '<script>\n@onUrlChange = -> 1\n</script>\n<p>y</p>',                  motif: /onUrlChange/ },
     { type: 'reactivity', nom: 'effet-boucle', source: '<script>\n$n = 1\nµeffect ->\n  $n = $n + 1\n</script>\n<p>{$n}</p>', motif: /LIT et ÉCRIT/ },
-    { type: 'reactivity', nom: 'this-ref',     source: '<div @this=!{$ref}>x</div>',                                          motif: /@this=/ },
+    { type: 'reactivity', nom: 'this-ref',     source: '<div :this=!{$ref}>x</div>',                                          motif: /:this=/ },
     { type: 'naming',     nom: 'prefixe',      source: '<script>\n$._mjs_x = 1\n</script>\n<p>y</p>',                         motif: /préfixe '_mjs_'/ },
     { type: 'syntax',     nom: 'fermeture',    source: '<div><span>x</div>',                                                  motif: /n'est pas refermée/ },
     { type: 'syntax',     nom: 'jeton',        source: '<p>x</p>\n{end}',                                                     motif: /aucun bloc ouvrant/ },
@@ -232,7 +233,8 @@ describe('CLI — ligne d’aide, mjs check, i18n.default', function () {
   this.timeout(180000)
 
   it('mjs build : un seul avertissement a11y suffit à faire sortir la ligne d’aide, une fois', () => {
-    const r = cli('build', projet('lt-aide', { 'a.mjs': '<div @click={x}>y</div>\n' }))
+    // `x` déclaré : un gestionnaire fait d'un nom que rien ne fournit est refusé à la construction ; le sujet reste l'avertissement a11y
+    const r = cli('build', projet('lt-aide', { 'a.mjs': '<script>\nx = -> 1\n</script>\n<div @click={x}>y</div>\n' }))
     assert.equal(r.code, 0, r.sortie)
     assert.match(r.sortie, /\[lint\.a11y\]/)
     assert.equal((r.sortie.match(AIDE) ?? []).length, 1, r.sortie)

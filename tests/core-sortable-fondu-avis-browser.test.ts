@@ -46,18 +46,18 @@ const PAR_SCRIPT = `<script>
   $b = [{ id: 4, titre: 'B1' }, { id: 5, titre: 'B2' }]
   ids = (l)-> l.map((x)-> x.id).join(',')
   poser = (el)->
-    el._mjs_outro = -> new Promise((r)-> setTimeout(r, 300))
+    el._mjs_outro = -> µafter 300
     return
 </script>
 <div class="cols">
   <@@sortable class="la" value=!{$a} group="g">
     {for et in $a by id}
-      <div class="ligne" data-id={et.id} @attach.once={poser(_node)}>{et.titre}</div>
+      <div class="ligne" data-id={et.id} :attach.once={poser(_node)}>{et.titre}</div>
     {end}
   </@@sortable>
   <@@sortable class="lb" value=!{$b} group="g">
     {for et in $b by id}
-      <div class="ligne" data-id={et.id} @attach.once={poser(_node)}>{et.titre}</div>
+      <div class="ligne" data-id={et.id} :attach.once={poser(_node)}>{et.titre}</div>
     {end}
   </@@sortable>
 </div>
@@ -74,12 +74,12 @@ const PAR_PAGE = `<script>
 <div class="cols">
   <@@sortable class="la" value=!{$a} group="g">
     {for et in $a by id}
-      <div class="ligne" data-id={et.id} @transition=*crossfade(key: et.id)>{et.titre}</div>
+      <div class="ligne" data-id={et.id} :transition=*crossfade(key: et.id)>{et.titre}</div>
     {end}
   </@@sortable>
   <@@sortable class="lb" value=!{$b} group="g">
     {for et in $b by id}
-      <div class="ligne" data-id={et.id} @transition=*crossfade(key: et.id)>{et.titre}</div>
+      <div class="ligne" data-id={et.id} :transition=*crossfade(key: et.id)>{et.titre}</div>
     {end}
   </@@sortable>
 </div>

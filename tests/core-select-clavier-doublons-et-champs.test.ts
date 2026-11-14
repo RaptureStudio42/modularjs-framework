@@ -21,7 +21,7 @@ const HOTE = `<script>
     window.__ouvert = -> $ouvert
     window.__ouvrir = -> $ouvert = true
 </script>
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <div id="z-rech"><@@select name="r" search><@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option><@@option value="it">Italie</@@option></@@select></div>
   <div id="z-doubles"><@@select name="d"><@@option value="1">Un</@@option><@@option value="1">Uno</@@option><@@option value="2">Deux</@@option></@@select></div>
   <div id="z-sections"><@@select name="c"><@@option value="1">X</@@option><@@optgroup label="G"><@@option value="2">Y</@@option></@@optgroup><@@option value="1">Z</@@option><@@option value="3">W</@@option></@@select></div>

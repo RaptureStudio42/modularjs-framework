@@ -20,17 +20,17 @@ const PAGE = `<script>
   $lecture = true
 </script>
 
-<form class="f2" method="get" action="/envoi" @noUJS>
+<form class="f2" method="get" action="/envoi" :noUJS>
   <@@number class="nN" name="nN" value="5" readonly={$verrou ? true : null}></@@number>
   <@@number class="nD" name="nD" value="5" disabled={$verrou ? true : null}></@@number>
 </form>
 
-<form class="f3" method="get" action="/envoi" @noUJS>
+<form class="f3" method="get" action="/envoi" :noUJS>
   <@@number class="nV" name="nV" required readonly={$lecture}></@@number>
   <button type="submit" class="go3">envoyer</button>
 </form>
 
-<form class="f4" method="get" action="/envoi" @noUJS>
+<form class="f4" method="get" action="/envoi" :noUJS>
   <@@checkbox class="c" name="c" required readonly>c</@@checkbox>
   <@@switch class="w" name="w" required readonly>w</@@switch>
   <@@radio class="r" name="r" value="1" required readonly>r</@@radio>
@@ -50,7 +50,7 @@ const PAGE = `<script>
   <select class="xs" required readonly aria-label="xs"><option value="">-</option><option value="a">A</option></select>
 </form>
 
-<form class="f8" method="get" action="/envoi" @noUJS>
+<form class="f8" method="get" action="/envoi" :noUJS>
   <@@number class="nA" name="nA" value="5"></@@number>
   <@@checkbox class="cA" name="cA" value="oui" checked>a</@@checkbox>
 </form>

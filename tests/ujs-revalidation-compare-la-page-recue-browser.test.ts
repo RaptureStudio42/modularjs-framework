@@ -17,7 +17,7 @@ import { chromium, type Browser } from 'playwright'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const RUNTIME = join(__dirname, '..', 'src', 'runtime')
 const LIB = ['mjs_page_cache.ts', 'mjs_ajax.ts', 'mjs_ujs.ts'].map(f => '(function(µ){\n' + readFileSync(join(RUNTIME, f), 'utf-8') + '\n})(window.µ);').join('\n')
-const STUB = 'window.µ={log(){},warn(){},error(){},_mjs_txt:(k,p,f)=>f,_mjs_msg:(k,p,f)=>f,_mjs_logger:()=>null,config:{},state:(o)=>o||{}}'
+const STUB = 'window.µ={log(){},warn(){},error(){},_mjs_txt:(k,p,f)=>f,_mjs_msg:(k,p,f)=>f,_mjs_logger:()=>null,_mjs_th:(h)=>h,config:{},state:(o)=>o||{}}'
 const ELEMENT = 'customElements.define("x-reflet", class extends HTMLElement { connectedCallback() { this.setAttribute("theme", "or") } })'
 
 describe('mjs_ujs navigateur réel — revalidation : comparée à la page reçue, pas au DOM vivant', () => {

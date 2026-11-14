@@ -19,7 +19,7 @@ const PAGE = `<script>
   $modele = '<ul data-checklist><li>Un</li><li>Deux</li></ul>'
 </script>
 
-<form id="f-loin" class="f-loin" method="get" action="/envoi" @noUJS>
+<form id="f-loin" class="f-loin" method="get" action="/envoi" :noUJS>
   <button type="submit" class="go">envoyer</button>
 </form>
 <div class="loin">
@@ -28,7 +28,7 @@ const PAGE = `<script>
   <textarea class="nat" form="f-loin" name="nat">natif</textarea>
 </div>
 
-<form class="f-nom" method="get" action="/envoi" @noUJS>
+<form class="f-nom" method="get" action="/envoi" :noUJS>
   <label class="l-ned" for="n-ed">Corps du message</label>
   <@@editor id="n-ed" class="ned" name="ned" toolbar="none"></@@editor>
   <@@editor id="n-ap" class="nap" name="nap" toolbar="none"></@@editor>

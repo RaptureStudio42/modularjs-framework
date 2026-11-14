@@ -1,7 +1,7 @@
 // {for … by id} : chaque opération du banc des cadres (créer, remplacer, ajouter, mettre à jour une ligne sur trois, échanger, supprimer, vider)
-// et leurs voisines (bloc retiré ou inséré au milieu, ligne déplacée, inversion, mélange, remplacement au-delà de la réserve de lignes, clés en
-// double) laissent la liste juste : lignes dans l'ordre des données, textes à jour, une ligne gardée garde son nœud, et un clic sur une ligne
-// décalée agit sur son propre élément. Vérifié sur une liste µraw (lignes sautées quand rien n'a changé) et sur une liste suivie
+// et leurs voisines (bloc retiré ou inséré au milieu, ligne déplacée, inversion, mélange, remplacement total de 300 lignes, clés en double)
+// laissent la liste juste : lignes dans l'ordre des données, textes à jour, une ligne gardée garde son nœud, le nœud d'une ligne ne sert
+// jamais à une autre (une clé neuve a sa ligne neuve), et un clic sur une ligne décalée agit sur son propre élément. Vérifié sur une liste µraw (lignes sautées quand rien n'a changé) et sur une liste suivie
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -37,7 +37,7 @@ const corps = (brut: boolean) => [
   '</script>',
   '<table><tbody>',
   '  {for row in $data by id}',
-  '    <tr @class{$selected === row.id}="danger">',
+  '    <tr :class{$selected === row.id}="danger">',
   '      <td class="id">{row.id}</td>',
   '      <td class="lab"><a class="sel" @click={@select(row.id)}>{row.label}</a></td>',
   '      <td><a class="del" @click={@remove(row.id)}>x</a></td>',
@@ -89,6 +89,8 @@ describe('{for … by id} — opérations du banc : liste juste, nœuds gardés,
       const ligne = (id: number, label?: string) => ({ id, label: label ?? 'L' + id })
       const lignes = () => Array.from(ombre.querySelectorAll('tbody > tr')) as any[]
       let noeuds = new Map<number, any>()
+      // la clé de chaque nœud de ligne vu : un nœud vu pour une clé ne sert jamais à une autre
+      const proprio = new Map<any, number>()
       const verifier = (quoi: string) => {
         const trs = lignes()
         assert.deepEqual(trs.map((tr) => +tr.querySelector('.id').textContent), donnees.map((d) => d.id), quoi + ' : ordre des lignes')
@@ -97,6 +99,8 @@ describe('{for … by id} — opérations du banc : liste juste, nœuds gardés,
         trs.forEach((tr, i) => {
           const id = donnees[i].id
           if (noeuds.has(id)) assert.ok(noeuds.get(id) === tr, quoi + ' : la ligne ' + id + ' garde son nœud')
+          if (proprio.has(tr) && proprio.get(tr) !== id) assert.fail(quoi + ' : le nœud de la ligne ' + proprio.get(tr) + ' sert à la ligne ' + id)
+          proprio.set(tr, id)
           neufs.set(id, tr)
         })
         noeuds = neufs
@@ -130,7 +134,7 @@ describe('{for … by id} — opérations du banc : liste juste, nœuds gardés,
       a = donnees.slice(); a.splice(3, 2); a.splice(1, 0, ligne(301), ligne(302)); [a[5], a[7]] = [a[7], a[5]]; await poser(a); verifier('mélange (retraits, ajouts, échange)')
       await cliquer(lignes()[3], 'sel')
       assert.equal(lignes().filter((tr) => tr.className.includes('danger')).map((tr) => +tr.querySelector('.id').textContent).join(), String(donnees[3].id), 'sélection après le mélange')
-      await poser(ids(1001, 1300)); verifier('remplacer tout (300 lignes, au-delà de la réserve)')
+      await poser(ids(1001, 1300)); verifier('remplacer tout (300 lignes)')
       await poser(ids(2001, 2300)); verifier('remplacer tout encore')
       await poser(donnees.slice(0, 150).concat(ids(3001, 3010), donnees.slice(150))); verifier('insérer un bloc dans une longue liste')
       await poser([]); verifier('vider')

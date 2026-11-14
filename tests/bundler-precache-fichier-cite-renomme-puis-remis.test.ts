@@ -25,8 +25,8 @@ const logos   = (outDir: string) => readdirSync(outDir).filter(f => /^logo-[a-f0
 
 const cases: Array<{ name: string, files: (other: string) => Record<string, string | Buffer> }> = [
   { name: 'un composant cite une image', files: other => ({ 'hote.mjs': '<img src="µasset(\'img/logo.png\')" alt="x">\n<p>h</p>\n', 'autre.mjs': `<p>${other}</p>\n`, 'img/logo.png': PNG }) },
-  { name: 'un module de script cite une image', files: other => ({ 'util.civet': 'export logo = µasset(\'img/logo.png\')\n', 'autre.mjs': `<p>${other}</p>\n`, 'img/logo.png': PNG }) },
-  { name: 'un composant importe un module de script qui cite une image', files: other => ({ 'util.civet': 'export logo = µasset(\'img/logo.png\')\n', 'hote.mjs': '@import logo \'util.civet\'\n<script>\n  go = -> logo\n</script>\n<p>h</p>\n', 'autre.mjs': `<p>${other}</p>\n`, 'img/logo.png': PNG }) },
+  { name: 'un module de script cite une image', files: other => ({ 'util.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n', 'autre.mjs': `<p>${other}</p>\n`, 'img/logo.png': PNG }) },
+  { name: 'un composant importe un module de script qui cite une image', files: other => ({ 'util.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n', 'hote.mjs': '@import logo \'util.civet.mjs\'\n<script>\n  go = -> logo\n</script>\n<p>h</p>\n', 'autre.mjs': `<p>${other}</p>\n`, 'img/logo.png': PNG }) },
 ]
 
 describe('bundler — le précache après qu\'un fichier cité a été renommé puis remis', function () {

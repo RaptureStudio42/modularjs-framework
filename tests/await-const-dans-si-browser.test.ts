@@ -23,10 +23,10 @@ const SOURCES: Record<string, string> = {
 {success v}
   {if $on}
     {const d = $obj}
-    <b class="ok" data-x={d.x} @class{d.x === 'b'}="change">{d.x}</b>
+    <b class="ok" data-x={d.x} :class{d.x === 'b'}="change">{d.x}</b>
   {end}
 {end}
-<b class="temoin" data-x={$obj.x} @class{$obj.x === 'b'}="change">{$obj.x}</b>
+<b class="temoin" data-x={$obj.x} :class{$obj.x === 'b'}="change">{$obj.x}</b>
 `,
   // texte d'une balise éditable, en liaison deux sens : il montre la propriété du `{const}`, que la variable remplace
   'cs-texte.mjs': `<script>
@@ -40,10 +40,10 @@ const SOURCES: Record<string, string> = {
 {success v}
   {if $on}
     {const d = $obj}
-    <div class="ok" contenteditable="true" @text=!{d.x}></div>
+    <div class="ok" contenteditable="true" :text=!{d.x}></div>
   {end}
 {end}
-<div class="temoin" contenteditable="true" @text=!{$obj.x}></div>
+<div class="temoin" contenteditable="true" :text=!{$obj.x}></div>
 `,
   // le même `{if}` dans une ligne de `{for}` : le chemin des blocs est le même que sous `{await}`
   'cs-pour.mjs': `<script>

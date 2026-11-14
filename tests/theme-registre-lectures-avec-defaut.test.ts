@@ -207,7 +207,7 @@ describe('registre des variables de thème — lectures avec défaut', function 
 
   it('un composant du projet : les liaisons et l\'attribut style du gabarit posent aussi, chacune est au registre, marquée posée', async () => {
     const carte = [
-      '<div class="a" --mjs-carte-w={\'10px\'} @style.--mjs-carte-z={\'1\'} style="color: red; --mjs-carte-h: 3px">x</div>',
+      '<div class="a" --mjs-carte-w={\'10px\'} :style.--mjs-carte-z={\'1\'} style="color: red; --mjs-carte-h: 3px">x</div>',
       '<style>',
       '  :host',
       '    width: var(--mjs-carte-w, 1px)',

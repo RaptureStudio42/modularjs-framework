@@ -57,12 +57,9 @@ var _failedEnCours = function(e) {
     }
     fresh.setAttribute(a.name, a.value);
   }
-  // les événements que le parent écoute sur la balise (`@ping={…}`, liaison à double sens) : son routage lit ces
-  // marques sur le nœud (cf. `_mjs_registerRefs`, mjs_element.ts)
-  if (comp._mjs_ids) {
-    fresh._mjs_ids = comp._mjs_ids;
-    fresh._mjs_eo = comp._mjs_eo;
-  }
+  // les événements que le parent écoute sur la balise (`@ping={…}`, liaison à double sens) : son routage suit la balise neuve
+  // (cf. `µ._mjs_evCopy`, mjs_element.ts)
+  µ._mjs_evCopy(comp, fresh);
   // le composant dont le gabarit a écrit la balise la désigne dans ses nœuds : il désigne désormais la neuve, et lui
   // repose ses props (objets, tableaux, que les attributs ne portent pas) en rejouant ses liaisons, AVANT son premier
   // rendu. Sans quoi la neuve gardait son état par défaut, et le parent écrivait dans l'ancienne, détachée, qu'il
@@ -130,13 +127,13 @@ if (µ.Element) {
     if (typeof this._mjs_fallback !== 'function') {
       var anc = this._mjs_findBoundary();
       if (anc) {
-        this._shadow.innerHTML = "";
+        this._shadow.textContent = "";
         anc._mjs_catchError(err);
         return true;
       }
       return false;
     }
-    this._shadow.innerHTML = "";
+    this._shadow.textContent = "";
     var self = this;
     // limite de réessai
     // (`<@failed retry="N">`, défaut 1, posée par le compilateur dans
@@ -199,7 +196,7 @@ if (µ.Element) {
       // de rendu, shadow déjà vidé) → aucun message fatal affiché. On log et
       // on RETOMBE sur l'overlay `.mjs-fatal-error` de `_mjs_catchError`.
       µ.error(µ._mjs_msg('failedFallback', null, 'fallback @failed en erreur :'), __fbErr);
-      this._shadow.innerHTML = "";
+      this._shadow.textContent = "";
       return false;
     }
   };

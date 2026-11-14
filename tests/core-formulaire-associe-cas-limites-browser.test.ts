@@ -25,33 +25,33 @@ const TROIS   = (attrs: string) => [
   `<@@radio class="ra" name="ra" value="x" ${attrs}>x</@@radio>`
 ].join('\n  ')
 
-const PAGE = `<form class="f-vide" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f-vide" method="get" action="/envoi" :noUJS>
   ${TROIS('checked disabled=""')}
 </form>
 
-<form class="f-pose" method="get" action="/envoi" @noUJS>
+<form class="f-pose" method="get" action="/envoi" :noUJS>
   ${TROIS('checked')}
 </form>
 
-<form class="f-requis" method="get" action="/envoi" @noUJS>
+<form class="f-requis" method="get" action="/envoi" :noUJS>
   ${TROIS('required=""')}
 </form>
 
-<form class="f-requis-pose" method="get" action="/envoi" @noUJS>
+<form class="f-requis-pose" method="get" action="/envoi" :noUJS>
   ${TROIS('')}
 </form>
 
-<form class="f-lecture" method="get" action="/envoi" @noUJS>
+<form class="f-lecture" method="get" action="/envoi" :noUJS>
   <@@editor class="ed" name="ed" readonly="false" required toolbar="none"></@@editor>
   <@@editor class="ed2" name="ed2" readonly="" toolbar="none"></@@editor>
 </form>
 
-<form class="f-groupe" method="get" action="/envoi" @noUJS>
+<form class="f-groupe" method="get" action="/envoi" :noUJS>
   <@@radio class="g1" name="g" value="1" required>un</@@radio>
   <@@radio class="g2" name="g" value="2">deux</@@radio>
 </form>
 
-<form id="f-loin" class="f-loin" method="get" action="/envoi" @noUJS>
+<form id="f-loin" class="f-loin" method="get" action="/envoi" :noUJS>
   <button type="submit" class="go">envoyer</button>
 </form>
 <div class="loin">
@@ -60,12 +60,12 @@ const PAGE = `<form class="f-vide" method="get" action="/envoi" @noUJS>
   <@@select class="xse" form="f-loin" name="xse" value="a">${OPTIONS}</@@select>
 </div>
 
-<form class="f-perso" method="get" action="/envoi" @noUJS>
+<form class="f-perso" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb">case</@@checkbox>
   <@@number class="nb" name="nb" required></@@number>
 </form>
 
-<form class="f-nom" method="get" action="/envoi" @noUJS>
+<form class="f-nom" method="get" action="/envoi" :noUJS>
   <label for="n-cb">Accepter les conditions</label>
   <@@checkbox id="n-cb" class="cb" name="cb"></@@checkbox>
   <label for="n-nb">Quantité</label>

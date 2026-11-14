@@ -46,9 +46,9 @@
 </script>
 
 {if boolAttr($editable) and $hex}
-  <input type="color" class="picker" part="picker" @class{boolAttr($before)}="before" aria-label={$labelText} value={$hex} @change={@onChange(e)}>
+  <input type="color" class="picker" part="picker" :class{boolAttr($before)}="before" aria-label={$labelText} value={$hex} @change={@onChange(e)}>
 {else}
-  <span class="swatch" part="swatch" @class{boolAttr($before)}="before" --mjs-color-value={$value} title={$swatchLabel} role={$swatchRole} aria-label={$swatchLabel} aria-hidden={$swatchHidden}></span>
+  <span class="swatch" part="swatch" :class{boolAttr($before)}="before" --mjs-color-value={$value} title={$swatchLabel} role={$swatchRole} aria-label={$swatchLabel} aria-hidden={$swatchHidden}></span>
 {end}
 {if not boolAttr($compact)}
   <span class="code" part="code">{$value}</span>

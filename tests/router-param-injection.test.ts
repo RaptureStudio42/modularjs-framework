@@ -45,7 +45,8 @@ describe('routeur — params via µ.url.params (plus d\'injection d\'attribut)',
     // (comme `:param`) avant le join. DÉCISION — le joker pose
     // DEUX clés : `all` = tableau des segments décodés, `rest` = ce même
     // tableau rejoint par `/` (un seul point de vérité, `rest` en découle).
-    assert.match(src, /all\.all = mp\.slice\(mi\)\.map\(function\(s\)[\s\S]*?decodeURIComponent\(s\)[\s\S]*?\)\s*;/, 'capture nommée all, tableau de segments décodés')
+    assert.match(src, /all\.all = mp\.slice\(mi\)\.map\(this\._mjs_dec\);/, 'capture nommée all, tableau de segments décodés')
+    assert.match(src, /_mjs_dec: function\(s\) \{\s*try \{ return decodeURIComponent\(s\); \} catch \{ return s; \}/, 'décodage tolérant : un `%` mal formé ressort brut')
     assert.match(src, /all\.rest = all\.all\.join\('\/'\)/, 'rest dérive du tableau all par join')
   })
 })

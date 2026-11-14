@@ -12,7 +12,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const COMPOSANTS: Record<string, string> = {
-  'sortie-jeu': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<p class="p" @out=*scramble(speed: 10)>ABC</p>{end}</div>',
+  'sortie-jeu': '<script>\n$vu = true\n</script>\n<div class="box">{if $vu}<p class="p" :out=*scramble(speed: 10)>ABC</p>{end}</div>',
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {

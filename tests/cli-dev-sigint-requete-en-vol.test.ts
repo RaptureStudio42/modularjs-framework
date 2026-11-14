@@ -40,8 +40,9 @@ function fixtureProjectLent(): string {
   const srcDir = join(root, 'src')
   mkdirSync(srcDir, { recursive: true })
   writeFileSync(join(srcDir, 'lente.mjs'),
+    '<script module lang="coffee">\nplusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))\n</script>\n' +
     '<script lang="coffee">\n' +
-    '$p = new Promise (resolve) -> setTimeout((-> resolve(\'OK\')), 1000)\n' +
+    '$p = plusTard \'OK\', 1000\n' +
     '</script>\n' +
     '<div class="wrap">\n{await $p}\n  <p class="pending">chargement…</p>\n{success val}\n  <p class="done">{val}</p>\n{end}\n</div>\n')
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({

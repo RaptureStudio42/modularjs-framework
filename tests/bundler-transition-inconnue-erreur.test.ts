@@ -38,13 +38,13 @@ async function construire(nom: string, fichiers: Record<string, string>, reglage
 
 // la même directive posée de sept façons, une par fichier, sur la ligne 2
 const ECRITS: Record<string, string> = {
-  'in.mjs':            '<p>un</p>\n<div class="a" @in=*titre>x</div>',
-  'out.mjs':           '<p>un</p>\n<div class="a" @out=*titre>x</div>',
-  'transition.mjs':    '<p>un</p>\n<div class="a" @transition=*titre>x</div>',
-  'reglages.mjs':      '<p>un</p>\n<div class="a" @in=*titre(duration: 1s)>x</div>',
-  'global.mjs':        '<p>un</p>\n<div class="a" @in.global=*titre>x</div>',
-  'shared.mjs':        '<p>un</p>\n<div class="a" @transition.shared=*titre>x</div>',
-  'global-shared.mjs': '<p>un</p>\n<div class="a" @transition.global.shared=*titre>x</div>'
+  'in.mjs':            '<p>un</p>\n<div class="a" :in=*titre>x</div>',
+  'out.mjs':           '<p>un</p>\n<div class="a" :out=*titre>x</div>',
+  'transition.mjs':    '<p>un</p>\n<div class="a" :transition=*titre>x</div>',
+  'reglages.mjs':      '<p>un</p>\n<div class="a" :in=*titre(duration: 1s)>x</div>',
+  'global.mjs':        '<p>un</p>\n<div class="a" :in.global=*titre>x</div>',
+  'shared.mjs':        '<p>un</p>\n<div class="a" :transition.shared=*titre>x</div>',
+  'global-shared.mjs': '<p>un</p>\n<div class="a" :transition.global.shared=*titre>x</div>'
 }
 const FICHIERS = Object.keys(ECRITS).map((f) => f.replace(/\.mjs$/, ''))
 
@@ -107,8 +107,8 @@ describe('une transition au nom inconnu arrête la construction', function () {
 
   it('un nom par erreur, dans l\'ordre des noms', async () => {
     const r = await construire('transition-inconnue-deux', {
-      'a.mjs': '<p>un</p>\n<div class="a" @in=*zebre>x</div>',
-      'b.mjs': '<p>un</p>\n<div class="a" @out=*titre>x</div>'
+      'a.mjs': '<p>un</p>\n<div class="a" :in=*zebre>x</div>',
+      'b.mjs': '<p>un</p>\n<div class="a" :out=*titre>x</div>'
     })
     assert.equal(r.stats.errors.length, 2, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*titre : transition inconnue/)
@@ -120,7 +120,7 @@ describe('une transition au nom inconnu arrête la construction', function () {
   it('une directive écrite dans un fichier inclus (`<@include>`) est citée avec ce fichier', async () => {
     const r = await construire('transition-inconnue-inclus', {
       'page.mjs':    '<p>un</p>\n<@include ligne>\n',
-      '_ligne.mjs':  '<div class="a" @in=*titre>x</div>\n'
+      '_ligne.mjs':  '<div class="a" :in=*titre>x</div>\n'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*titre : transition inconnue/)
@@ -129,7 +129,7 @@ describe('une transition au nom inconnu arrête la construction', function () {
 
   it('une directive citée dans un commentaire HTML ou dans un exemple de code n\'est pas une directive', async () => {
     const r = await construire('transition-inconnue-commentaire', {
-      'doc.mjs': '<!-- @in=*titre -->\n<pre><code>@out=*titre</code></pre>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
+      'doc.mjs': '<!-- :in=*titre -->\n<pre><code>:out=*titre</code></pre>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -143,7 +143,7 @@ describe('le nom le plus proche est proposé', function () {
   after(async () => { await terminateSharedWorkerPool() })
 
   it('un effet de la bibliothèque à deux lettres', async () => {
-    const r = await construire('transition-inconnue-proche', { 'v.mjs': '<p>un</p>\n<div class="a" @out=*fadeee>x</div>' })
+    const r = await construire('transition-inconnue-proche', { 'v.mjs': '<p>un</p>\n<div class="a" :out=*fadeee>x</div>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*fadeee : transition inconnue/)
     assert.match(r.messages[0], /\/v\.mjs \(ligne 2\)\. Vouliez-vous dire \*fade \? Pour la créer/)
@@ -152,19 +152,19 @@ describe('le nom le plus proche est proposé', function () {
   it('un effet de l\'appli', async () => {
     const r = await construire('transition-inconnue-proche-appli', {
       'a.effects.mjs': '<effects>\n  *entree = *fly(up, distance: 30px)\n</effects>',
-      'v.mjs':         '<p>un</p>\n<div class="a" @in=*entreee>x</div>'
+      'v.mjs':         '<p>un</p>\n<div class="a" :in=*entreee>x</div>'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/v\.mjs \(ligne 2\)\. Vouliez-vous dire \*entree \? Pour la créer/)
   })
 
   it('en anglais', async () => {
-    const r = await construire('transition-inconnue-proche-en', { 'v.mjs': '<p>un</p>\n<div class="a" @out=*fadeee>x</div>' }, {}, 'en')
+    const r = await construire('transition-inconnue-proche-en', { 'v.mjs': '<p>un</p>\n<div class="a" :out=*fadeee>x</div>' }, {}, 'en')
     assert.match(r.messages[0], /\/v\.mjs \(line 2\)\. Did you mean \*fade\? To create it/)
   })
 
   it('à un seul caractère d\'un effet de la bibliothèque, l\'erreur est celle de la balise, inchangée', async () => {
-    const r = await construire('transition-inconnue-fadee', { 'v.mjs': '<p>un</p>\n<div class="a" @in=*fadee>x</div>' })
+    const r = await construire('transition-inconnue-fadee', { 'v.mjs': '<p>un</p>\n<div class="a" :in=*fadee>x</div>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\[ModularJS\] \*fadee \(ligne 2\) : effet inconnu — effets disponibles : .*Vouliez-vous dire \*fade \?/)
     assert.doesNotMatch(r.messages[0], /transition inconnue/)
@@ -177,12 +177,12 @@ describe('ce que la construction connaît ne change pas', function () {
 
   const connus = {
     'a.effects.mjs':  '<effects>\n  *titre = *fade(duration: 1s)\n  *monte(y: 20px) =\n    opacity: 0\n    transform: translateY($y)\n</effects>',
-    'alias.mjs':      '<p>un</p>\n<div class="a" @in=*titre @out=*monte(y: 40px)>x</div>',
-    'lib.mjs':        '<p>un</p>\n<div class="a" @in=*fade @out=*fly(up) @transition.global=*slide>x</div>',
-    'toupie.mjs':     "<script>\n  µanim.create('toupie', { duration: 1000 })\n</script>\n<div @in=*toupie>x</div>",
-    'todo.mjs':       "<script>\n  µanim.crossfade('todo', { duration: 600 })\n</script>\n<div @in=*todoReceive(key: 1) @out=*todoSend(key: 1)>x</div>",
-    'reglages.civet': "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800 }\n",
-    'tourne.mjs':     "@import reglage 'reglages.civet'\n\n<script>\n  reglage()\n</script>\n<div @in=*tourbillon>x</div>"
+    'alias.mjs':      '<p>un</p>\n<div class="a" :in=*titre :out=*monte(y: 40px)>x</div>',
+    'lib.mjs':        '<p>un</p>\n<div class="a" :in=*fade :out=*fly(up) :transition.global=*slide>x</div>',
+    'toupie.mjs':     "<script>\n  µanim.create('toupie', { duration: 1000 })\n</script>\n<div :in=*toupie>x</div>",
+    'todo.mjs':       "<script>\n  µanim.crossfade('todo', { duration: 600 })\n</script>\n<div :in=*todoReceive(key: 1) :out=*todoSend(key: 1)>x</div>",
+    'reglages.civet.mjs': "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800 }\n",
+    'tourne.mjs':     "@import reglage 'reglages.civet.mjs'\n\n<script>\n  reglage()\n</script>\n<div :in=*tourbillon>x</div>"
   }
 
   it('un alias ou un effet CSS du fichier d\'effets, un effet de la bibliothèque, µanim.create, µanim.crossfade et un module du projet : ni erreur ni avertissement', async () => {
@@ -202,7 +202,7 @@ describe('ce que la construction connaît ne change pas', function () {
 
   it('un nom calculé (µanim.create(nom, …)) n\'est pas lu : la transition est une erreur, qui dit la forme que la construction lit', async () => {
     const r = await construire('transition-inconnue-calcule', {
-      'dyn.mjs': "<script>\n  nom = 'dynamique'\n  µanim.create(nom, { duration: 500 })\n</script>\n<div @in=*dynamique>x</div>"
+      'dyn.mjs': "<script>\n  nom = 'dynamique'\n  µanim.create(nom, { duration: 500 })\n</script>\n<div :in=*dynamique>x</div>"
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*dynamique : transition inconnue/)
@@ -219,7 +219,7 @@ describe('une transition de la bibliothèque dont le fichier manque n\'est pas u
   it('@in=*fade avec un dossier d\'exécution sans animations : un avertissement qui nomme le dossier, aucune erreur', async () => {
     const runtimeDir = join(mjsTmp('transition-inconnue-runtime'), 'runtime')
     cpSync(fileURLToPath(new URL('../src/runtime', import.meta.url)), runtimeDir, { recursive: true, filter: (source) => !/[\\/]animations([\\/]|$)/.test(source) })
-    const r = await construire('transition-inconnue-sans-animations', { 'c.mjs': '<p>un</p>\n<div class="a" @in=*fade>x</div>' }, { runtimeDir })
+    const r = await construire('transition-inconnue-sans-animations', { 'c.mjs': '<p>un</p>\n<div class="a" :in=*fade>x</div>' }, { runtimeDir })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'fade'/.test(w)) ?? ''
     assert.ok(avertissement, r.avertissements.join('\n'))
@@ -266,7 +266,7 @@ describe('en développement, l\'erreur suit les sauvegardes', function () {
       const apres = await attendre(passages, (p) => p.changed.endsWith('a.effects.mjs'))
       assert.deepEqual(apres.erreurs, [], apres.erreurs.join('\n'))
 
-      writeFileSync(join(srcDir, 'c.mjs'), '<p>un</p>\n<div class="a" @in=*titrr>x</div>')
+      writeFileSync(join(srcDir, 'c.mjs'), '<p>un</p>\n<div class="a" :in=*titrr>x</div>')
       const faute = await attendre(passages, (p) => p.changed.endsWith('c.mjs'))
       assert.equal(faute.erreurs.length, 1, faute.erreurs.join('\n'))
       assert.match(faute.erreurs[0], /^\[ModularJS\] \*titrr : transition inconnue/)
@@ -282,9 +282,9 @@ describe('en développement, l\'erreur suit les sauvegardes', function () {
     const root   = mjsTmp('transition-inconnue-dev-cache')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'reglages.civet'), "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800 }\n")
+    writeFileSync(join(srcDir, 'reglages.civet.mjs'), "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800 }\n")
     writeFileSync(join(srcDir, 'toupie.mjs'), "<script>\n  µanim.create('toupie', { duration: 500 })\n</script>\n<p>toupie</p>")
-    writeFileSync(join(srcDir, 'c.mjs'), '<p>un</p>\n<div class="a" @in=*tourbillon @out=*toupie>x</div>')
+    writeFileSync(join(srcDir, 'c.mjs'), '<p>un</p>\n<div class="a" :in=*tourbillon :out=*toupie>x</div>')
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const passages: Passage[] = []
     try {
@@ -292,7 +292,7 @@ describe('en développement, l\'erreur suit les sauvegardes', function () {
       const premier = await attendre(passages, (p) => p.changed === '<initial>')
       assert.deepEqual(premier.erreurs, [], premier.erreurs.join('\n'))
 
-      writeFileSync(join(srcDir, 'c.mjs'), '<p>deux</p>\n<div class="a" @in=*tourbillon @out=*toupie>x</div>')
+      writeFileSync(join(srcDir, 'c.mjs'), '<p>deux</p>\n<div class="a" :in=*tourbillon :out=*toupie>x</div>')
       const apres = await attendre(passages, (p) => p.changed.endsWith('c.mjs'))
       assert.deepEqual(apres.erreurs, [], apres.erreurs.join('\n'))
     }
@@ -321,7 +321,7 @@ describe('en développement, un composant en cache ne se recompile que si un nom
   function composants(): Record<string, string> {
     const fichiers: Record<string, string> = { 'autre.mjs': '<p>autre</p>' }
     for (let i = 0; i < COMPOSANTS; i++) {
-      const pose = i < ALIAS_TABLE_MIN_USES - 1 ? `\n<div class="a" @in=*entree>${i}</div>` : ''
+      const pose = i < ALIAS_TABLE_MIN_USES - 1 ? `\n<div class="a" :in=*entree>${i}</div>` : ''
       fichiers[`c${i}.mjs`] = `<script>\n  a = µ.anim.entree\n</script>\n<p>{a}</p>${pose}`
     }
     return fichiers
@@ -418,7 +418,7 @@ describe('un nom que l\'appli définit n\'est pas inconnu, d\'où qu\'il soit ci
   it('un alias du fichier d\'effets posé par une directive et cité aussi par un script : ni erreur ni avertissement', async () => {
     const r = await construire('transition-inconnue-alias-cite', {
       'a.effects.mjs': '<effects>\n  *entree = *fly(up, distance: 30px)\n</effects>',
-      'v.mjs':         '<script lang="coffee">\n  a = µ.anim.entree\n</script>\n<p>{a}</p>\n<div class="a" @in=*entree>x</div>'
+      'v.mjs':         '<script lang="coffee">\n  a = µ.anim.entree\n</script>\n<p>{a}</p>\n<div class="a" :in=*entree>x</div>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
@@ -427,7 +427,7 @@ describe('un nom que l\'appli définit n\'est pas inconnu, d\'où qu\'il soit ci
   it('un effet CSS du fichier d\'effets, de même', async () => {
     const r = await construire('transition-inconnue-effet-cite', {
       'a.effects.mjs': '<effects>\n  *monte(y: 20px) =\n    opacity: 0\n    transform: translateY($y)\n</effects>',
-      'v.mjs':         '<script lang="coffee">\n  a = µ.anim.monte\n</script>\n<p>{a}</p>\n<div class="a" @out=*monte(y: 40px)>x</div>'
+      'v.mjs':         '<script lang="coffee">\n  a = µ.anim.monte\n</script>\n<p>{a}</p>\n<div class="a" :out=*monte(y: 40px)>x</div>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
@@ -441,7 +441,7 @@ describe('les créations de transition que la construction lit', function () {
 
   it('un gabarit sans substitution est un nom fixe : µanim.create `titre` et µanim.crossfade `todo`, dans un composant', async () => {
     const r = await construire('transition-inconnue-gabarit', {
-      'c.mjs': "<script>\n  µanim.create `titre`, { duration: 500 }\n  µanim.crossfade `todo`, { duration: 600 }\n</script>\n<div @in=*titre @out=*todoSend(key: 1)>x</div>\n<div @in=*todoReceive(key: 1)>y</div>"
+      'c.mjs': "<script>\n  µanim.create `titre`, { duration: 500 }\n  µanim.crossfade `todo`, { duration: 600 }\n</script>\n<div :in=*titre :out=*todoSend(key: 1)>x</div>\n<div :in=*todoReceive(key: 1)>y</div>"
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
@@ -449,8 +449,8 @@ describe('les créations de transition que la construction lit', function () {
 
   it('… et dans un module .civet du projet', async () => {
     const r = await construire('transition-inconnue-gabarit-module', {
-      'reglages.civet': "export reglage = ->\n  µanim.create `tourbillon`, { duration: 800 }\n  µanim.crossfade `todo`, { duration: 600 }\n",
-      'tourne.mjs':     "@import reglage 'reglages.civet'\n\n<script>\n  reglage()\n</script>\n<div @in=*tourbillon @out=*todoSend(key: 1)>x</div>\n<div @in=*todoReceive(key: 1)>y</div>"
+      'reglages.civet.mjs': "export reglage = ->\n  µanim.create `tourbillon`, { duration: 800 }\n  µanim.crossfade `todo`, { duration: 600 }\n",
+      'tourne.mjs':     "@import reglage 'reglages.civet.mjs'\n\n<script>\n  reglage()\n</script>\n<div :in=*tourbillon :out=*todoSend(key: 1)>x</div>\n<div :in=*todoReceive(key: 1)>y</div>"
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
@@ -458,7 +458,7 @@ describe('les créations de transition que la construction lit', function () {
 
   it('un gabarit à substitution est un nom calculé : l\'erreur', async () => {
     const r = await construire('transition-inconnue-gabarit-calcule', {
-      'dyn.mjs': "<script>\n  nom = 'dyn'\n  µanim.create `${nom}amique`, { duration: 500 }\n</script>\n<div @in=*dynamique>x</div>"
+      'dyn.mjs': "<script>\n  nom = 'dyn'\n  µanim.create `${nom}amique`, { duration: 500 }\n</script>\n<div :in=*dynamique>x</div>"
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*dynamique : transition inconnue/)
@@ -469,8 +469,8 @@ describe('les créations de transition que la construction lit', function () {
   for (const ext of ['civet', 'coffee']) {
     it(`µanim.crossfade 'todo' écrit dans un module .${ext} du projet : ni erreur ni avertissement`, async () => {
       const r = await construire(`transition-inconnue-crossfade-${ext}`, {
-        [`todo.${ext}`]: "export reglage = ->\n  µanim.crossfade 'todo', { duration: 600 }\n",
-        'c.mjs':         `@import reglage 'todo.${ext}'\n\n<script>\n  reglage()\n</script>\n<div @in=*todoReceive(key: 1) @out=*todoSend(key: 1)>x</div>`
+        [`todo.${ext}.mjs`]: "export reglage = ->\n  µanim.crossfade 'todo', { duration: 600 }\n",
+        'c.mjs':         `@import reglage 'todo.${ext}.mjs'\n\n<script>\n  reglage()\n</script>\n<div :in=*todoReceive(key: 1) :out=*todoSend(key: 1)>x</div>`
       })
       assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
       assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
@@ -479,10 +479,10 @@ describe('les créations de transition que la construction lit', function () {
 
   // les appels que la construction ne reconnaît pas : elle n'en lit pas le nom, et l'erreur dit la forme qu'elle lit
   const NON_LUES: Record<string, string> = {
-    'une variable qui contient µ.anim':   "<script>\n  a = µ.anim\n  a.create 'titre', { duration: 500 }\n</script>\n<div @in=*titre>x</div>",
-    'une déstructuration de µ.anim':      "<script>\n  { create } = µ.anim\n  create 'titre', { duration: 500 }\n</script>\n<div @in=*titre>x</div>",
-    'globalThis.µ.anim':                  "<script>\n  globalThis.µ.anim.create 'titre', { duration: 500 }\n</script>\n<div @in=*titre>x</div>",
-    'µ[\'anim\'] écrit entre crochets':    "<script>\n  µ['anim'].create 'titre', { duration: 500 }\n</script>\n<div @in=*titre>x</div>"
+    'une variable qui contient µ.anim':   "<script>\n  a = µ.anim\n  a.create 'titre', { duration: 500 }\n</script>\n<div :in=*titre>x</div>",
+    'une déstructuration de µ.anim':      "<script>\n  { create } = µ.anim\n  create 'titre', { duration: 500 }\n</script>\n<div :in=*titre>x</div>",
+    'globalThis.µ.anim':                  "<script>\n  globalThis.µ.anim.create 'titre', { duration: 500 }\n</script>\n<div :in=*titre>x</div>",
+    'µ[\'anim\'] écrit entre crochets':    "<script>\n  µ['anim'].create 'titre', { duration: 500 }\n</script>\n<div :in=*titre>x</div>"
   }
   for (const [forme, source] of Object.entries(NON_LUES)) {
     it(`${forme} : pas lu, l'erreur dit la forme que la construction lit`, async () => {
@@ -498,15 +498,15 @@ describe('un fichier en erreur de compilation ne fait pas accuser le composant q
   this.timeout(180000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  const POSE = '<p>un</p>\n<div class="a" @in=*tourbillon>x</div>'
+  const POSE = '<p>un</p>\n<div class="a" :in=*tourbillon>x</div>'
 
   it('le module .civet qui crée la transition ne se compile pas : une seule erreur, la sienne', async () => {
     const r = await construire('transition-inconnue-cascade-civet', {
-      'reglages.civet': "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800\n",
+      'reglages.civet.mjs': "export reglage = ->\n  µanim.create 'tourbillon', { duration: 800\n",
       'c.mjs':          POSE
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
-    assert.match(r.messages[0], /reglages\.civet/)
+    assert.match(r.messages[0], /reglages\.civet\.mjs/)
     assert.ok(!r.messages.some((m) => /transition inconnue/.test(m)), r.messages.join('\n'))
     assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
   })
@@ -538,7 +538,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
   after(async () => { await terminateSharedWorkerPool() })
 
   it('une vraie balise dans un <pre> est compilée : l\'erreur la cite', async () => {
-    const r = await construire('transition-inconnue-pre-balise', { 'pre.mjs': '<p>un</p>\n<pre><div class="a" @in=*titre>x</div></pre>' })
+    const r = await construire('transition-inconnue-pre-balise', { 'pre.mjs': '<p>un</p>\n<pre><div class="a" :in=*titre>x</div></pre>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n') + '\n' + r.avertissements.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*titre : transition inconnue/)
     assert.match(r.messages[0], /\/pre\.mjs \(ligne 2\)/)
@@ -546,7 +546,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('un texte @in=*titre dans une chaîne du script n\'est pas un lieu : un avertissement sans lieu, aucune erreur', async () => {
     const r = await construire('transition-inconnue-lieu-chaine', {
-      'c.mjs': "<script lang=\"coffee\">\n  exemple = '<div @in=*titre>x</div>'\n  a = µ.anim.titre\n</script>\n<p>{exemple}{a}</p>"
+      'c.mjs': "<script lang=\"coffee\">\n  exemple = '<div :in=*titre>x</div>'\n  a = µ.anim.titre\n</script>\n<p>{exemple}{a}</p>"
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -556,7 +556,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('un texte @in=*titre dans un <@@code> n\'est pas un lieu : un avertissement sans lieu, aucune erreur', async () => {
     const r = await construire('transition-inconnue-lieu-code', {
-      'c.mjs': '<@@code>\n  @in=*titre\n</@@code>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
+      'c.mjs': '<@@code>\n  :in=*titre\n</@@code>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -566,7 +566,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('un texte @in=*titre dans la valeur d\'un attribut n\'est pas un lieu : un avertissement sans lieu, aucune erreur', async () => {
     const r = await construire('transition-inconnue-lieu-attribut', {
-      'c.mjs': '<p title="exemple : <div @in=*titre>">x</p>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
+      'c.mjs': '<p title="exemple : <div :in=*titre>">x</p>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -575,14 +575,14 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
   })
 
   it('une vraie balise dans un <@@code> est compilée : l\'erreur la cite', async () => {
-    const r = await construire('transition-inconnue-code-balise', { 'c.mjs': '<@@code>\n<div class="a" @in=*titre>x</div>\n</@@code>' })
+    const r = await construire('transition-inconnue-code-balise', { 'c.mjs': '<@@code>\n<div class="a" :in=*titre>x</div>\n</@@code>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(ligne 2\)/)
   })
 
   it('la ligne citée est celle de la balise, jamais celle d\'un texte pareil écrit ailleurs dans le fichier', async () => {
     const r = await construire('transition-inconnue-lieu-ligne', {
-      'c.mjs': "<p>un</p>\n<div class=\"a\" @in=*titre>x</div>\n<script lang=\"coffee\">\n  exemple = '<div @in=*titre>x</div>'\n</script>\n<p>{exemple}</p>"
+      'c.mjs': "<p>un</p>\n<div class=\"a\" :in=*titre>x</div>\n<script lang=\"coffee\">\n  exemple = '<div :in=*titre>x</div>'\n</script>\n<p>{exemple}</p>"
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(ligne 2\)\./)
@@ -590,7 +590,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('une balise écrite dans un commentaire HTML n\'est pas un lieu : un avertissement sans lieu, aucune erreur', async () => {
     const r = await construire('transition-inconnue-lieu-commentaire', {
-      'c.mjs': '<!-- <div class="a" @in=*titre>x</div> -->\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
+      'c.mjs': '<!-- <div class="a" :in=*titre>x</div> -->\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -600,27 +600,27 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('un commentaire sur plusieurs lignes qui contient la balise ne compte pas, ni comme lieu ni dans la ligne de la vraie directive', async () => {
     const r = await construire('transition-inconnue-lieu-commentaire-lignes', {
-      'c.mjs': '<!--\n  <div class="a" @in=*titre>x</div>\n-->\n<div class="a" @in=*titre>y</div>'
+      'c.mjs': '<!--\n  <div class="a" :in=*titre>x</div>\n-->\n<div class="a" :in=*titre>y</div>'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(ligne 4\)\./)
   })
 
   it('une balise sur plusieurs lignes : la ligne citée est celle où la directive est écrite', async () => {
-    const r = await construire('transition-inconnue-lieu-multiligne', { 'c.mjs': '<p>un</p>\n<div\n  class="a"\n  @in=*titre>x</div>' })
+    const r = await construire('transition-inconnue-lieu-multiligne', { 'c.mjs': '<p>un</p>\n<div\n  class="a"\n  :in=*titre>x</div>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(ligne 4\)\./)
   })
 
   it('deux directives d\'une même balise sur deux lignes : les deux lignes sont citées', async () => {
-    const r = await construire('transition-inconnue-lieu-deux-lignes', { 'c.mjs': '<p>un</p>\n<div\n  class="a"\n  @in=*titre\n  @out=*titre>x</div>' })
+    const r = await construire('transition-inconnue-lieu-deux-lignes', { 'c.mjs': '<p>un</p>\n<div\n  class="a"\n  :in=*titre\n  :out=*titre>x</div>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(lignes 4, 5\)\./)
   })
 
   it('un < dans une expression {…} du texte n\'ouvre pas de balise : un texte @in=*titre qui la suit n\'est pas un lieu', async () => {
     const r = await construire('transition-inconnue-lieu-expression', {
-      'c.mjs': '<script>\n  x = 1\n  y = 2\n  a = µ.anim.titre\n</script>\n<p>{x<y} @in=*titre</p>'
+      'c.mjs': '<script>\n  x = 1\n  y = 2\n  a = µ.anim.titre\n</script>\n<p>{x<y} :in=*titre</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -630,7 +630,7 @@ describe('les lieux cités sont les balises compilées avec la directive', funct
 
   it('… et une vraie directive qui la suit est citée à sa ligne, pas à celle de l\'expression', async () => {
     const r = await construire('transition-inconnue-lieu-expression-ligne', {
-      'c.mjs': '<script>\n  x = 1\n  y = 2\n</script>\n{if x<y}\n  <div class="a" @in=*titre>x</div>\n{end}'
+      'c.mjs': '<script>\n  x = 1\n  y = 2\n</script>\n{if x<y}\n  <div class="a" :in=*titre>x</div>\n{end}'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /\/c\.mjs \(ligne 6\)\./)
@@ -658,30 +658,30 @@ describe('la lecture des lieux supporte toutes les formes d\'ouverture de balise
 
   for (const [forme, { source, voisins }] of Object.entries(FORMES)) {
     it(`${forme} : une transition de la bibliothèque n'est pas accusée`, async () => {
-      const r = await construire('transition-inconnue-forme-connue', { 'c.mjs': source('@in=*fade'), ...voisins })
+      const r = await construire('transition-inconnue-forme-connue', { 'c.mjs': source(':in=*fade'), ...voisins })
       assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
       assert.ok(!r.avertissements.some((w) => /nimation inconnue/.test(w)), r.avertissements.join('\n'))
     })
 
     it(`${forme} : un nom inconnu est cité à la ligne de sa directive`, async () => {
-      const texte = source('@in=*titre')
+      const texte = source(':in=*titre')
       const r     = await construire('transition-inconnue-forme-inconnue', { 'c.mjs': texte, ...voisins })
       assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
       assert.match(r.messages[0], /^\[ModularJS\] \*titre : transition inconnue/)
-      assert.ok(r.messages[0].includes(`/c.mjs (ligne ${ligneDe(texte, '@in=*titre')}).`), r.messages[0])
+      assert.ok(r.messages[0].includes(`/c.mjs (ligne ${ligneDe(texte, ':in=*titre')}).`), r.messages[0])
     })
   }
 
   // dans un <textarea>, le navigateur ne lit que du texte : une balise écrite dedans n'y porte aucune directive
   it('une balise écrite dans un <textarea> est un texte : sa directive n\'est pas lue', async () => {
-    const r = await construire('transition-inconnue-forme-textarea', { 'c.mjs': '<p>un</p>\n<textarea aria-label="a"><div @in=*titre>x</div></textarea>' })
+    const r = await construire('transition-inconnue-forme-textarea', { 'c.mjs': '<p>un</p>\n<textarea aria-label="a"><div :in=*titre>x</div></textarea>' })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
   })
 
   // le compilateur refuse ces écritures lui-même : sa faute est dite, et aucune transition n'est accusée à tort
   const REFUSEES: Record<string, string> = {
-    'un commentaire HTML entre deux attributs': '<p>un</p>\n<div class="a" <!-- note --> @in=*titre>x</div>',
-    'un texte courant a<b @in=*titre':          '<p>un</p>\n<p>a<b @in=*titre</p>'
+    'un commentaire HTML entre deux attributs': '<p>un</p>\n<div class="a" <!-- note --> :in=*titre>x</div>',
+    'un texte courant a<b :in=*titre':          '<p>un</p>\n<p>a<b :in=*titre</p>'
   }
   for (const [forme, texte] of Object.entries(REFUSEES)) {
     it(`${forme} : la faute est celle du compilateur, aucune transition n'est accusée`, async () => {
@@ -693,7 +693,7 @@ describe('la lecture des lieux supporte toutes les formes d\'ouverture de balise
 
   it('un <textarea> qui contient le texte @in=*titre : un avertissement sans lieu, aucune erreur', async () => {
     const r = await construire('transition-inconnue-forme-textarea', {
-      'c.mjs': '<p>un</p>\n<textarea aria-label="a">@in=*titre</textarea>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
+      'c.mjs': '<p>un</p>\n<textarea aria-label="a">:in=*titre</textarea>\n<script lang="coffee">\n  a = µ.anim.titre\n</script>\n<p>{a}</p>'
     })
     assert.equal(r.stats.errors.length, 0, r.messages.join('\n'))
     const avertissement = r.avertissements.find((w) => /Animation inconnue : 'titre'/.test(w)) ?? ''
@@ -703,7 +703,7 @@ describe('la lecture des lieux supporte toutes les formes d\'ouverture de balise
 
   it('un gabarit à substitution (µanim.create `mon-${x}`) n\'est pas lu et ne plante pas : le nom posé est une erreur', async () => {
     const r = await construire('transition-inconnue-forme-gabarit', {
-      'c.mjs': "<script>\n  x = 'un'\n  µanim.create `mon-${x}`, { duration: 500 }\n</script>\n<div @in=*mon-un>y</div>"
+      'c.mjs': "<script>\n  x = 'un'\n  µanim.create `mon-${x}`, { duration: 500 }\n</script>\n<div :in=*mon-un>y</div>"
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*mon-un : transition inconnue/)
@@ -717,10 +717,10 @@ describe('le nom proposé est utilisable comme transition', function () {
   after(async () => { await terminateSharedWorkerPool() })
 
   it('un effet que @in refuse (*tilt) n\'est jamais proposé', async () => {
-    const refus = await construire('transition-inconnue-tilt', { 'v.mjs': '<p>un</p>\n<div class="a" @in=*tilt>x</div>' })
+    const refus = await construire('transition-inconnue-tilt', { 'v.mjs': '<p>un</p>\n<div class="a" :in=*tilt>x</div>' })
     assert.equal(refus.stats.errors.length, 1, refus.messages.join('\n'))
     assert.doesNotMatch(refus.messages[0], /transition inconnue/)
-    const r = await construire('transition-inconnue-tiltzz', { 'v.mjs': '<p>un</p>\n<div class="a" @in=*tiltzz>x</div>' })
+    const r = await construire('transition-inconnue-tiltzz', { 'v.mjs': '<p>un</p>\n<div class="a" :in=*tiltzz>x</div>' })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*tiltzz : transition inconnue/)
     assert.doesNotMatch(r.messages[0], /Vouliez-vous dire/)
@@ -729,7 +729,7 @@ describe('le nom proposé est utilisable comme transition', function () {
   it('un alias de l\'appli qui règle un effet que @in refuse n\'est pas proposé non plus', async () => {
     const r = await construire('transition-inconnue-alias-refuse', {
       'a.effects.mjs': '<effects>\n  *soft = *tilt(max: 6)\n</effects>',
-      'v.mjs':         '<p>un</p>\n<div class="a" @in=*sofft>x</div>'
+      'v.mjs':         '<p>un</p>\n<div class="a" :in=*sofft>x</div>'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /^\[ModularJS\] \*sofft : transition inconnue/)
@@ -739,7 +739,7 @@ describe('le nom proposé est utilisable comme transition', function () {
   it('une seule mesure pour la bibliothèque et pour l\'appli : deux lettres interverties comptent pour une faute, dans les deux', async () => {
     const r = await construire('transition-inconnue-mesure', {
       'a.effects.mjs': '<effects>\n  *entree = *fly(up, distance: 30px)\n</effects>',
-      'v.mjs':         '<p>un</p>\n<div class="a" @in=*etnere>x</div>'
+      'v.mjs':         '<p>un</p>\n<div class="a" :in=*etnere>x</div>'
     })
     assert.equal(r.stats.errors.length, 1, r.messages.join('\n'))
     assert.match(r.messages[0], /Vouliez-vous dire \*entree \?/)
@@ -759,7 +759,7 @@ describe('la doc dit la règle', function () {
   it('docs/32-cli-et-configuration.md : le type `animation` ne parle que d\'un script, la directive est une erreur', () => {
     const ligne = readFileSync(new URL('../docs/32-cli-et-configuration.md', import.meta.url), 'utf8').split('\n').find((l) => l.startsWith('| `animation` |')) ?? ''
     assert.match(ligne, /`µ\.anim\.nom`/)
-    assert.match(ligne, /`@in`, `@out` ou `@transition`.*erreur de construction/)
-    assert.doesNotMatch(ligne, /@viewTransition/)
+    assert.match(ligne, /`:in`, `:out` ou `:transition`.*erreur de construction/)
+    assert.doesNotMatch(ligne, /[@:]viewTransition/)
   })
 })

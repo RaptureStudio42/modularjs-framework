@@ -27,7 +27,7 @@ const stripEsm = (s: string) => s
 // closest('form'), non-régression) ; `#grp-noform` n'a AUCUN <form>, ni dans ce shadow
 // ni ailleurs — exactement le scénario qui retombait sur `document` avant correctif.
 const HOST = [
-  '<form id="grp-form" @noUJS>',
+  '<form id="grp-form" :noUJS>',
   '  <@@radio name="taille" value="s">S</@@radio>',
   '  <@@radio name="taille" value="m">M</@@radio>',
   '  <@@radio name="taille" value="l">L</@@radio>',
@@ -131,7 +131,7 @@ describe('mjs-core-radio — l\'événement change', function () {
     $echo = [...$echo, qui + ':' + e.data + ':' + lie]
 </script>
 
-<form id="f" @noUJS>
+<form id="f" :noUJS>
   <@@radio id="ra" name="size" value="s" group=!{$size} @change={@note('ra', e, $size)}>S</@@radio>
   <@@radio id="rb" name="size" value="m" group=!{$size} @change={@note('rb', e, $size)}>M</@@radio>
   <@@radio id="rc" name="size" value="l" group=!{$size} @change={@note('rc', e, $size)}>L</@@radio>

@@ -2,7 +2,7 @@
 // « réessayer ») est un rétablissement voulu, qui fait repartir le compte de réessais de zéro. L'activation du navigateur
 // (`navigator.userActivation.isActive`) n'en dit rien : elle reste vraie quelques secondes après N'IMPORTE QUEL clic dans
 // la page. Lue au moment de `reset`, elle faisait passer pour un geste la relance automatique d'un repli
-// (`setTimeout(reset, 10)`) dès que l'utilisateur cliquait ailleurs : le composant qui replante 2,3 s après chaque montage
+// (`µafter 10, { always: true }, reset`) dès que l'utilisateur cliquait ailleurs : le composant qui replante 2,3 s après chaque montage
 // était reconstruit sans fin. Le clic de confiance sur « réessayer », lui, rétablit toujours, même sans cette API.
 
 import assert from 'node:assert/strict'
@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHarness } from '../src/testing/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -32,9 +33,9 @@ const SOURCES: Record<string, string> = {
     'window.__fra = (window.__fra or 0) + 1',
     '$boom = false',
     '$x = null',
-    'setTimeout((=> $boom = true), 2300)',
+    'µafter 2300, => $boom = true',
     'µfailed (err, reset)->',
-    '  setTimeout(reset, 10)',
+    '  µafter 10, { always: true }, reset',
     '  \'<p class="fb">oups</p>\'',
     '</script>',
     '{if $boom}<i>{$x.crash}</i>{end}',
@@ -42,7 +43,7 @@ const SOURCES: Record<string, string> = {
   ].join('\n'),
   'tst-fra-appel.mjs': enfant('@click={reset()}'),
   'tst-fra-ecouteur.mjs': enfant('@click=reset'),
-  'tst-fra-differe.mjs': enfant('@click={setTimeout(reset, 0)}'),
+  'tst-fra-differe.mjs': enfant('@click={µafter(0, { always: true }, reset)}'),
   'tst-fra-parent.mjs': '<mjs-tst-fra-appel></mjs-tst-fra-appel>\n<mjs-tst-fra-ecouteur></mjs-tst-fra-ecouteur>\n<mjs-tst-fra-differe></mjs-tst-fra-differe>\n',
 }
 
@@ -85,6 +86,7 @@ describe('<@failed> — un reset n\'est voulu que pendant un clic de l\'utilisat
     const c = await app.mount('tst-fra-lente')
     const minuterie = setInterval(() => cliquer(neutre), 1000)
     try {
+      // scénario minuté : les clics tombent chaque seconde pendant 7,6 s
       await pause(7600)
     }
     finally {
@@ -106,16 +108,16 @@ describe('<@failed> — un reset n\'est voulu que pendant un clic de l\'utilisat
       e1._shadow.querySelector('.boom').click()
       await pause(30)
       cliquer(e1._shadow.querySelector('.reset'))
-      await pause(30)
+      await attendreEtat(() => { const e = p.find(`mjs-${tag}`); return e !== e1 && e.getAttribute('mjs-retry-used') === '1' }, 'premier reset : une instance neuve, son compte gardé', 30)
       const e2 = p.find(`mjs-${tag}`)
       assert.equal(e2 !== e1, true, 'premier reset : une instance neuve')
       assert.equal(e2.getAttribute('mjs-retry-used'), '1', 'tout juste rétablie : le compte est gardé')
-      await pause(2100)
+      await attendreEtat(() => e2.getAttribute('mjs-retry-used') === null, 'deux secondes sans replanter : le compte est effacé', 2100)
       assert.equal(e2.getAttribute('mjs-retry-used'), null, 'deux secondes sans replanter : le compte est effacé')
       e2._shadow.querySelector('.boom').click()
       await pause(30)
       cliquer(e2._shadow.querySelector('.reset'))
-      await pause(30)
+      await attendreEtat(() => { const e = p.find(`mjs-${tag}`); return e !== e2 && e._shadow?.querySelector('.ok')?.textContent === 'ok' }, 'nouveau plantage : reset remonte encore le composant', 30)
       const e3 = p.find(`mjs-${tag}`)
       assert.equal(e3 !== e2, true, 'plus tard, nouveau plantage : reset remonte encore le composant')
       assert.equal(e3._shadow.querySelector('.ok')?.textContent, 'ok')
@@ -133,14 +135,16 @@ describe('<@failed> — un reset n\'est voulu que pendant un clic de l\'utilisat
     e1._shadow.querySelector('.boom').click()
     await pause(30)
     cliquer(e1._shadow.querySelector('.reset'))
-    await pause(30)
+    await attendreEtat(() => p.find('mjs-tst-fra-differe') !== e1, 'reset : une instance neuve', 30)
     const e2 = p.find('mjs-tst-fra-differe')
     assert.equal(e2 !== e1, true, 'reset : une instance neuve')
+    // vérification négative : le compte ne doit pas s'effacer pendant ce temps
     await pause(2100)
     assert.equal(e2.getAttribute('mjs-retry-used'), '1', 'relancé hors du clic : le compte est gardé')
     e2._shadow.querySelector('.boom').click()
     await pause(30)
     cliquer(e2._shadow.querySelector('.reset'))
+    // vérification négative : aucune construction de plus ne doit venir
     await pause(30)
     assert.equal(p.find('mjs-tst-fra-differe') === e2, true, 'limite atteinte : plus aucune construction')
     assert.equal(journal.some((l) => l.includes('limite de réessai')), true, 'l\'abandon est annoncé')

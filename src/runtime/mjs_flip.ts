@@ -10,13 +10,15 @@ var originalReconcileList;
 if (µ.Element) {
   originalReconcileList = µ.Element.prototype._mjs_reconcileList;
   // clés `by` que plusieurs éléments de la collection portent : la réconciliation (mjs_for.ts) ne rend que le premier de chacune, la ligne qui porte
-  // la clé change d'élément d'une passe à l'autre et son identité n'est pas sûre ; les clés se comparent en chaîne, une clé absente est ignorée
+  // la clé change d'élément d'une passe à l'autre et son identité n'est pas sûre ; une clé se lit comme la réconciliation la range (un nombre
+  // ou un texte tel quel, toute autre par `_mjs_keyOf`, mjs_for.ts), une clé absente est ignorée
   const duplicateKeys = function(items, keyAttr) {
     const seen = new Set(), dups = new Set();
     items.forEach(function(item) {
       var key = item?.[keyAttr];
       if (key != null) {
-        (seen.has(key = String(key)) ? dups : seen).add(key);
+        if (typeof key !== 'string' && typeof key !== 'number') key = µ._mjs_keyOf(key);
+        (seen.has(key) ? dups : seen).add(key);
       }
     });
     return dups;

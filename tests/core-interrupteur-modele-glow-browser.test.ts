@@ -33,7 +33,7 @@ const HOTE = `<script>
     $journal = [...$journal, e.data + ':' + $lumiere]
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@switch class="g" name="lumiere" layout="glow" checked=!{$lumiere} @change={@noter(e)}>Lumière</@@switch>
 </form>
 <p class="journal">{$journal.join(' ')}</p>

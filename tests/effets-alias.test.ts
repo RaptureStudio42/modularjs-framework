@@ -231,7 +231,7 @@ describe('alias d\'effets', function () {
   describe('la forme pointée sur une transition (@in, @out, @transition)', () => {
     const effets = '<effects>\n  *fade.lent = *fade(duration: 3s)\n  *lent = *fade(duration: 3s)\n</effects>'
 
-    for (const directive of ['@in', '@out', '@transition']) {
+    for (const directive of [':in', ':out', ':transition']) {
       it(`${directive}=*fade.lent(duration: 3s) pose le même fade que *lent déclaré à plat, sans attribut en trop dans la balise`, async () => {
         const r = await construire('alias-transition-' + directive.slice(1), {
           'a.effects.mjs': effets,
@@ -246,7 +246,7 @@ describe('alias d\'effets', function () {
     }
 
     it('sans réglages à l\'usage, l\'alias pointé porte ceux de sa déclaration', async () => {
-      const r = await construire('alias-transition-nu', { 'a.effects.mjs': effets, 'c.mjs': '<div @in=*fade.lent>x</div>' })
+      const r = await construire('alias-transition-nu', { 'a.effects.mjs': effets, 'c.mjs': '<div :in=*fade.lent>x</div>' })
       assert.equal(r.erreurs, '')
       assert.match(r.unite('c-'), /_mjs_cloneTpl\("<div>x<\/div>"\)/)
       assert.match(r.unite('c-'), /_mjs_fxAnim\(_mjsThis, _mjs_node, "fade", \{"duration":"3s"\}/)
@@ -255,8 +255,8 @@ describe('alias d\'effets', function () {
     it('utilisée six fois, la forme pointée passe à la table, comme l\'alias déclaré à plat', async () => {
       const r = await construire('alias-transition-table', {
         'a.effects.mjs': effets,
-        'c1.mjs': fois(3, '<div @in=*fade.lent>a</div>\n<div @out=*fade.lent>b</div>'),
-        'c2.mjs': fois(3, '<div @in=*lent>a</div>\n<div @out=*lent>b</div>')
+        'c1.mjs': fois(3, '<div :in=*fade.lent>a</div>\n<div :out=*fade.lent>b</div>'),
+        'c2.mjs': fois(3, '<div :in=*lent>a</div>\n<div :out=*lent>b</div>')
       })
       assert.equal(r.erreurs, '')
       assert.equal(compte(r.unite('c1-'), /_mjs_fxAnim\(_mjsThis, _mjs_node, "fade", µ\._mjs_alias\(\d+\)/g), 6)
@@ -265,8 +265,8 @@ describe('alias d\'effets', function () {
     })
 
     it('dans le DOM : la balise ne reçoit aucun attribut parasite, comme avec l\'alias à plat', async () => {
-      const pointe = await monter('alias-transition-dom-p', { 'a.effects.mjs': effets, 'c1.mjs': '<div class="a" @in=*fade.lent(duration: 3s)>x</div>' }, 'mjs-c1', '.a')
-      const plat   = await monter('alias-transition-dom-f', { 'a.effects.mjs': effets, 'c1.mjs': '<div class="a" @in=*lent(duration: 3s)>x</div>' }, 'mjs-c1', '.a')
+      const pointe = await monter('alias-transition-dom-p', { 'a.effects.mjs': effets, 'c1.mjs': '<div class="a" :in=*fade.lent(duration: 3s)>x</div>' }, 'mjs-c1', '.a')
+      const plat   = await monter('alias-transition-dom-f', { 'a.effects.mjs': effets, 'c1.mjs': '<div class="a" :in=*lent(duration: 3s)>x</div>' }, 'mjs-c1', '.a')
       try {
         const attributs = (m: any) => m.comp._shadow.querySelector('.a').getAttributeNames()
         assert.deepEqual(attributs(pointe), ['class'])
@@ -394,7 +394,7 @@ describe('alias d\'effets', function () {
         'multiligne.mjs': `<p>un</p>\n${img}*filter>\n<img src="x"\n  alt=""\n  *filter.net(blur: abc)\n>`,
         'seul.mjs':       `<p>un</p>\n${img}*filter.net(blur: abc)>`,
         'plat.mjs':       `<p>un</p>\n${img}*filter(none)>\n${img}*netplat(blur: abc)>`,
-        'directive.mjs':  '<p>un</p>\n<div class="a" @in=*fade.lent(duration: abc)>x</div>',
+        'directive.mjs':  '<p>un</p>\n<div class="a" :in=*fade.lent(duration: abc)>x</div>',
         'page.mjs':       '<@document *ripple.rouge(size: abc)></@document>\n<p>x</p>',
         'texte.mjs':      `<p>un</p>\n<p *scramble(300)>a</p>\n${img}*scramble.vite>`,
         'contenu.mjs':    `<p>un</p>\n<div *behind(depth: 3)>a</div>\n${img}*behind.fond>`,
@@ -463,7 +463,7 @@ describe('alias d\'effets', function () {
   describe('un alias inconnu sur une transition est une erreur du build, comme sur une balise', () => {
     const effets = '<effects>\n  *fade.lent = *fade(duration: 3s)\n</effects>'
 
-    for (const directive of ['@in', '@out', '@transition']) {
+    for (const directive of [':in', ':out', ':transition']) {
       it(`${directive}=*fade.inconnu : *fade.inconnu (ligne 2), les alias connus de *fade, aucun avertissement de lint à la place`, async () => {
         const r = await construire('alias-transition-inconnu-' + directive.slice(1), { 'a.effects.mjs': effets, 'c.mjs': `<p>un</p>\n<div class="a" ${directive}=*fade.inconnu(duration: 1s)>x</div>` })
         assert.equal(r.stats.errors.length, 1, r.erreurs)
@@ -476,7 +476,7 @@ describe('alias d\'effets', function () {
       const r = await construire('alias-inconnu-partout', {
         'a.effects.mjs': '<effects>\n  *filter.net = *filter(none, blur: 5)\n  *ripple.rouge = *ripple(#f00)\n  *fade.lent = *fade(duration: 3s)\n</effects>',
         'balise.mjs':    '<p>un</p>\n<img src="a.png" alt="" *filter.zzz>',
-        'dir.mjs':       '<p>un</p>\n<div class="a" @in=*filter.zzz>x</div>',
+        'dir.mjs':       '<p>un</p>\n<div class="a" :in=*filter.zzz>x</div>',
         'page.mjs':      '<@document *ripple.zzz></@document>\n<p>x</p>'
       })
       assert.equal(r.stats.errors.length, 3, r.erreurs)
@@ -492,21 +492,21 @@ describe('alias d\'effets', function () {
     it('@in=*filter.frosted_glass (livré par ModularJS) et @in=*filter.net (de l\'appli)', async () => {
       const r = await construire('alias-transition-continu', {
         'a.effects.mjs': effets,
-        'livre.mjs':     '<p>un</p>\n<div class="a" @in=*filter.frosted_glass>x</div>',
-        'appli.mjs':     '<p>un</p>\n<div class="a" @out=*filter.net>x</div>',
-        'plat.mjs':      '<p>un</p>\n<div class="a" @in=*netplat>x</div>',
-        'nu.mjs':        '<p>un</p>\n<div class="a" @in=*filter>x</div>'
+        'livre.mjs':     '<p>un</p>\n<div class="a" :in=*filter.frosted_glass>x</div>',
+        'appli.mjs':     '<p>un</p>\n<div class="a" :out=*filter.net>x</div>',
+        'plat.mjs':      '<p>un</p>\n<div class="a" :in=*netplat>x</div>',
+        'nu.mjs':        '<p>un</p>\n<div class="a" :in=*filter>x</div>'
       })
-      assert.match(r.erreurDe('livre'), /\[ModularJS\] @in=\*filter\.frosted_glass : \*filter\.frosted_glass est un effet continu/)
+      assert.match(r.erreurDe('livre'), /\[ModularJS\] :in=\*filter\.frosted_glass : \*filter\.frosted_glass est un effet continu/)
       assert.match(r.erreurDe('livre'), /Posez-le directement sur elle : \*filter\.frosted_glass\./)
-      assert.match(r.erreurDe('appli'), /\[ModularJS\] @out=\*filter\.net : \*filter\.net est un effet continu/)
-      assert.match(r.erreurDe('plat'), /\[ModularJS\] @in=\*netplat : \*netplat est un effet continu/)
-      assert.match(r.erreurDe('nu'), /\[ModularJS\] @in=\*filter : \*filter est un effet continu/, 'l\'effet sans alias : inchangé')
+      assert.match(r.erreurDe('appli'), /\[ModularJS\] :out=\*filter\.net : \*filter\.net est un effet continu/)
+      assert.match(r.erreurDe('plat'), /\[ModularJS\] :in=\*netplat : \*netplat est un effet continu/)
+      assert.match(r.erreurDe('nu'), /\[ModularJS\] :in=\*filter : \*filter est un effet continu/, 'l\'effet sans alias : inchangé')
     })
 
     it('un réglage de déclencheur à la pose : le nom écrit', async () => {
-      const r = await construire('alias-transition-declencheur', { 'a.effects.mjs': '<effects>\n  *fade.lent = *fade(duration: 3s)\n</effects>', 'c.mjs': '<p>un</p>\n<div class="a" @in=*fade.lent(on: view)>x</div>' })
-      assert.match(r.erreurs, /@in=\*fade\.lent : « on » n'a pas de sens ici/)
+      const r = await construire('alias-transition-declencheur', { 'a.effects.mjs': '<effects>\n  *fade.lent = *fade(duration: 3s)\n</effects>', 'c.mjs': '<p>un</p>\n<div class="a" :in=*fade.lent(on: view)>x</div>' })
+      assert.match(r.erreurs, /:in=\*fade\.lent : « on » n'a pas de sens ici/)
       assert.match(r.erreurs, /posez l'effet directement : \*fade\.lent\(on: …\)/)
     })
   })
@@ -525,7 +525,7 @@ describe('alias d\'effets', function () {
         'tiret.mjs':     `<p>un</p>\n${img}*filter.net-2>`,
         'souligne.mjs':  `<p>un</p>\n${img}*filter._net>`,
         'chiffre.mjs':   `<p>un</p>\n${img}*filter.2net>`,
-        'dir.mjs':       '<p>un</p>\n<div class="a" @in=*fade.Lent>x</div>',
+        'dir.mjs':       '<p>un</p>\n<div class="a" :in=*fade.Lent>x</div>',
         'page.mjs':      '<@document *ripple.Rouge></@document>\n<p>x</p>'
       })
     })
@@ -769,9 +769,9 @@ describe('un chemin d\'image écrit à la pose d\'un alias', function () {
   const voies: Array<[string, string, string]> = [
     ['une pose sur une balise',            '<div class="a" *behind.fond(\'photo.png\')></div>',                                    '<div class="a" *fondplat(\'photo.png\')></div>'],
     ['un réglage nommé image:',            '<div class="a" *behind.fond(image: \'img/photo.png\')></div>',                         '<div class="a" *fondplat(image: \'img/photo.png\')></div>'],
-    ['une transition (@in=)',              '<div class="a" @in=*ink.brosse(image: \'photo.png\')>x</div>',                         '<div class="a" @in=*brosseplat(image: \'photo.png\')>x</div>'],
-    ['une transition (@out=)',             '<div class="a" @out=*ink.brosse(image: \'photo.png\')>x</div>',                        '<div class="a" @out=*brosseplat(image: \'photo.png\')>x</div>'],
-    ['une transition (@transition=)',      '<div class="a" @transition=*ink.brosse(image: \'photo.png\')>x</div>',                 '<div class="a" @transition=*brosseplat(image: \'photo.png\')>x</div>'],
+    ['une transition (:in=)',              '<div class="a" :in=*ink.brosse(image: \'photo.png\')>x</div>',                         '<div class="a" :in=*brosseplat(image: \'photo.png\')>x</div>'],
+    ['une transition (:out=)',             '<div class="a" :out=*ink.brosse(image: \'photo.png\')>x</div>',                        '<div class="a" :out=*brosseplat(image: \'photo.png\')>x</div>'],
+    ['une transition (:transition=)',      '<div class="a" :transition=*ink.brosse(image: \'photo.png\')>x</div>',                 '<div class="a" :transition=*brosseplat(image: \'photo.png\')>x</div>'],
     ['une liste d\'images',                '<canvas class="a" *scrub.cadres(images: [\'photo.png\', img/photo.png])></canvas>',    '<canvas class="a" *cadresplat(images: [\'photo.png\', img/photo.png])></canvas>'],
     ['<@document>',                        '<@document *offline.hors(logo: \'photo.png\')></@document>\n<p>x</p>',                 '<@document *offline(logo: \'photo.png\', delay: 75ms)></@document>\n<p>x</p>'],
     ['une image écrite dans l\'alias',     '<div class="a" *behind.photo></div>',                                                  '<div class="a" *photoplat></div>']
@@ -870,10 +870,10 @@ describe('une forme à point mal formée arrête la construction et nomme ce qui
     ['deux-points',      `<p>un</p>\n${img}*filter..x>`,                                '*filter..x'],
     ['alias-puis-point', `<p>un</p>\n${img}*filter.net.x>`,                             '*filter.net.x'],
     ['point-reglages',   `<p>un</p>\n${img}*filter.(blur: 3)>`,                         '*filter.'],
-    ['in-point',         '<p>un</p>\n<div class="a" @in=*fade.>x</div>',                '*fade.'],
-    ['in-alias-point',   '<p>un</p>\n<div class="a" @in=*fade.lent.x>x</div>',          '*fade.lent.x'],
-    ['transition-point', '<p>un</p>\n<div class="a" @transition=*fade.>x</div>',        '*fade.'],
-    ['out-alias-point',  '<p>un</p>\n<div class="a" @out=*fade.lent.x>x</div>',         '*fade.lent.x'],
+    ['in-point',         '<p>un</p>\n<div class="a" :in=*fade.>x</div>',                '*fade.'],
+    ['in-alias-point',   '<p>un</p>\n<div class="a" :in=*fade.lent.x>x</div>',          '*fade.lent.x'],
+    ['transition-point', '<p>un</p>\n<div class="a" :transition=*fade.>x</div>',        '*fade.'],
+    ['out-alias-point',  '<p>un</p>\n<div class="a" :out=*fade.lent.x>x</div>',         '*fade.lent.x'],
     ['page-point',       '<p>un</p>\n<@document *ripple.></@document>',                 '*ripple.'],
     ['page-deux-noms',   '<p>un</p>\n<@document *ripple.a.b></@document>',              '*ripple.a.b']
   ]
@@ -884,7 +884,7 @@ describe('une forme à point mal formée arrête la construction et nomme ce qui
     for (const [f, source] of cas) fichiers[`${f}.mjs`] = source
     // les formes bien écrites, à côté : elles se construisent
     fichiers['temoin-balise.mjs'] = `<p>un</p>\n${img}*filter.net>`
-    fichiers['temoin-in.mjs']     = '<p>un</p>\n<div class="a" @in=*fade.lent>x</div>'
+    fichiers['temoin-in.mjs']     = '<p>un</p>\n<div class="a" :in=*fade.lent>x</div>'
     fichiers['temoin-page.mjs']   = '<p>un</p>\n<@document *ripple.rouge></@document>'
     r = await construire('alias-point-mal-forme', fichiers)
   })
@@ -919,10 +919,10 @@ describe('la ligne d\'une faute d\'alias sur <@document> et sur une transition, 
     'page-nom.mjs':       '<p>un</p>\n<@document *ripple.Rouge></@document>',
     'page-reglage.mjs':   '<p>un</p>\n<@document *ripple.rouge(size: abc)></@document>',
     'page-effet.mjs':     '<p>un</p>\n<@document *tilt.vif></@document>',
-    'in-inconnu.mjs':     '<p>un</p>\n<div class="a" @in=*fade.zzz>x</div>',
-    'out-inconnu.mjs':    '<p>un</p>\n<div class="a" @out=*fade.zzz>x</div>',
-    'trans-inconnu.mjs':  '<p>un</p>\n<div class="a" @transition=*fade.zzz>x</div>',
-    'in-reglage.mjs':     '<p>un</p>\n<div class="a" @in=*fade.lent(duration: abc)>x</div>'
+    'in-inconnu.mjs':     '<p>un</p>\n<div class="a" :in=*fade.zzz>x</div>',
+    'out-inconnu.mjs':    '<p>un</p>\n<div class="a" :out=*fade.zzz>x</div>',
+    'trans-inconnu.mjs':  '<p>un</p>\n<div class="a" :transition=*fade.zzz>x</div>',
+    'in-reglage.mjs':     '<p>un</p>\n<div class="a" :in=*fade.lent(duration: abc)>x</div>'
   }
 
   async function lire(langue: 'fr' | 'en') {
@@ -1051,15 +1051,15 @@ describe('un alias livré qui porte un déclencheur, posé après @in=, @out= ou
   after(async () => { await terminateSharedWorkerPool() })
 
   const sources: Record<string, string> = {
-    'in.mjs':    '<p>un</p>\n<div class="a" @in=*fly.spin_in>x</div>',
-    'out.mjs':   '<p>un</p>\n<div class="a" @out=*fly.spin_in(duration: 2s)>x</div>',
-    'trans.mjs': '<p>un</p>\n<div class="a" @transition=*fly.spin_in>x</div>',
-    'ecrit.mjs': '<p>un</p>\n<div class="a" @in=*fly.spin_in(on: hover)>x</div>'
+    'in.mjs':    '<p>un</p>\n<div class="a" :in=*fly.spin_in>x</div>',
+    'out.mjs':   '<p>un</p>\n<div class="a" :out=*fly.spin_in(duration: 2s)>x</div>',
+    'trans.mjs': '<p>un</p>\n<div class="a" :transition=*fly.spin_in>x</div>',
+    'ecrit.mjs': '<p>un</p>\n<div class="a" :in=*fly.spin_in(on: hover)>x</div>'
   }
 
   it('en français : l\'alias porte un déclencheur (on: view), il ne s\'emploie donc pas après la directive', async () => {
     const r = await construire('alias-declencheur-fr', sources)
-    for (const [f, directive] of [['in', '@in'], ['out', '@out'], ['trans', '@transition']]) {
+    for (const [f, directive] of [['in', ':in'], ['out', ':out'], ['trans', ':transition']]) {
       const m = r.erreurDe(f)
       assert.match(m, new RegExp(`\\[ModularJS\\] ${directive}=\\*fly\\.spin_in : l'alias \\*fly\\.spin_in porte un déclencheur \\(on: view\\)`), f)
       assert.match(m, new RegExp(`il ne s'emploie donc pas après ${directive}=`), f)
@@ -1071,7 +1071,7 @@ describe('un alias livré qui porte un déclencheur, posé après @in=, @out= ou
     setMessagesLang('en')
     try {
       const r = await construire('alias-declencheur-en', sources)
-      for (const [f, directive] of [['in', '@in'], ['out', '@out'], ['trans', '@transition']]) {
+      for (const [f, directive] of [['in', ':in'], ['out', ':out'], ['trans', ':transition']]) {
         const m = r.erreurDe(f)
         assert.match(m, new RegExp(`\\[ModularJS\\] ${directive}=\\*fly\\.spin_in: the alias \\*fly\\.spin_in carries a trigger \\(on: view\\)`), f)
         assert.match(m, new RegExp(`so it cannot be used after ${directive}=`), f)
@@ -1085,7 +1085,7 @@ describe('un alias livré qui porte un déclencheur, posé après @in=, @out= ou
 
   it('un `on` écrit par l\'auteur à la pose garde son message : « Retirez-le »', async () => {
     const r = await construire('alias-declencheur-ecrit', sources)
-    assert.match(r.erreurDe('ecrit'), /@in=\*fly\.spin_in : « on » n'a pas de sens ici/)
+    assert.match(r.erreurDe('ecrit'), /:in=\*fly\.spin_in : « on » n'a pas de sens ici/)
     assert.match(r.erreurDe('ecrit'), /Retirez-le/)
   })
 })
@@ -1141,10 +1141,10 @@ describe('un point qui suit un effet sans être le nom d\'un alias arrête la co
     ['espace-alias-appli',      `<p>un</p>\n<div class="a" *fade .lent>x</div>`,                                      '*fade .lent',           espace('.lent', '\\*fade\\.lent')],
     ['page-reglages-espace',    '<p>un</p>\n<@document *ripple.rouge(size: 30) .x></@document>',                       '*ripple.rouge(…) .x',   apres('.x', '\\*ripple\\.rouge')],
     ['effet-sans-alias-livre',  `<p>un</p>\n<div class="a" *ripple(size: 30).x>x</div>`,                               '*ripple(…).x',          apres('.x', '\\*ripple\\.rouge')],
-    ['in-reglages',             '<p>un</p>\n<div class="a" @in=*fade.lent(duration: 2s).x>x</div>',                    '*fade.lent(…).x',       apres('.x', '\\*fade\\.[a-z_]+')],
-    ['in-espace',               '<p>un</p>\n<div class="a" @in=*fade .lent>x</div>',                                   '*fade .lent',           espace('.lent', '\\*fade\\.[a-z_]+')],
-    ['out-espace',              '<p>un</p>\n<div class="a" @out=*fade .lent>x</div>',                                  '*fade .lent',           espace('.lent', '\\*fade\\.[a-z_]+')],
-    ['transition-reglages',     '<p>un</p>\n<div class="a" @transition=*fade.lent(duration: 2s).x>x</div>',           '*fade.lent(…).x',       apres('.x', '\\*fade\\.[a-z_]+')],
+    ['in-reglages',             '<p>un</p>\n<div class="a" :in=*fade.lent(duration: 2s).x>x</div>',                    '*fade.lent(…).x',       apres('.x', '\\*fade\\.[a-z_]+')],
+    ['in-espace',               '<p>un</p>\n<div class="a" :in=*fade .lent>x</div>',                                   '*fade .lent',           espace('.lent', '\\*fade\\.[a-z_]+')],
+    ['out-espace',              '<p>un</p>\n<div class="a" :out=*fade .lent>x</div>',                                  '*fade .lent',           espace('.lent', '\\*fade\\.[a-z_]+')],
+    ['transition-reglages',     '<p>un</p>\n<div class="a" :transition=*fade.lent(duration: 2s).x>x</div>',           '*fade.lent(…).x',       apres('.x', '\\*fade\\.[a-z_]+')],
     ['page-sans-effet',         '<p>un</p>\n<@document *.rouge></@document>',                                          '*.rouge',               sans],
     ['page-reglages',           '<p>un</p>\n<@document *ripple.rouge(size: 30).x></@document>',                        '*ripple.rouge(…).x',    apres('.x', '\\*ripple\\.rouge')],
     ['page-espace',             '<p>un</p>\n<@document *ripple .rouge></@document>',                                   '*ripple .rouge',        espace('.rouge', '\\*ripple\\.rouge')],
@@ -1156,7 +1156,7 @@ describe('un point qui suit un effet sans être le nom d\'un alias arrête la co
     const fichiers: Record<string, string> = { 'a.effects.mjs': effets }
     for (const [f, source] of cas) fichiers[`${f}.mjs`] = source
     // ce qui est bien écrit, à côté : les formes à point, les valeurs à point (une durée, une cible, une couleur), la fin de la balise
-    fichiers['temoin-alias.mjs']    = `<p>un</p>\n${img}*filter.net>\n${img}*filter.net(blur: 3) />\n<div class="a" @in=*fade.lent(duration: .5s)>x</div>`
+    fichiers['temoin-alias.mjs']    = `<p>un</p>\n${img}*filter.net>\n${img}*filter.net(blur: 3) />\n<div class="a" :in=*fade.lent(duration: .5s)>x</div>`
     fichiers['temoin-page.mjs']     = '<p>un</p>\n<@document *ripple.rouge(size: 40)></@document>'
     fichiers['temoin-valeurs.mjs']  = '<p>un</p>\n<div class="a" *fade(duration: .3s)>x</div>\n<div class="b" *travel(.cible)>x</div>\n<div class="c" *neon(#f0f)>x</div>\n<div class="d" *travel(to: .a.b)>x</div>'
     // un attribut dont le nom commence par un point, loin de tout effet (un autre attribut les sépare) : ce n'est pas lu ici
@@ -1221,7 +1221,7 @@ describe('un fichier d\'effets fautif ne fait pas oublier ses alias valides', fu
     for (const [f, lignes] of fichiers) sources[`${f}.effects.mjs`] = `<effects>\n  ${lignes}\n</effects>`
     // un composant qui pose chaque alias valide : balise, transition et page
     const balises = valides.filter((n) => !['fade.lent', 'ripple.rouge'].includes(n)).map((n) => n.startsWith('filter.') ? `<img src="a.png" alt="" *${n}>` : `<div class="a" *${n}>x</div>`)
-    sources['pose.mjs']    = `<p>un</p>\n${balises.join('\n')}\n<div class="b" @in=*fade.lent>y</div>`
+    sources['pose.mjs']    = `<p>un</p>\n${balises.join('\n')}\n<div class="b" :in=*fade.lent>y</div>`
     sources['page.mjs']    = '<p>un</p>\n<@document *ripple.rouge></@document>'
     sources['inconnu.mjs'] = '<p>un</p>\n<img src="a.png" alt="" *filter.zzz>'
     r = await construire('alias-fichier-fautif', sources)
@@ -1363,14 +1363,14 @@ describe('un effet inconnu écrit sur une transition est une erreur qui dit où,
   after(async () => { await terminateSharedWorkerPool() })
 
   const sources: Record<string, string> = {
-    'in.mjs':         '<p>un</p>\n<div class="a" @in=*titre>x</div>',
-    'out.mjs':        '<p>un</p>\n<div class="a" @out=*titre>x</div>',
-    'transition.mjs': '<p>un</p>\n<div class="a" @transition=*titre>x</div>',
-    'reglages.mjs':   '<p>un</p>\n<div class="a" @in=*titre(duration: 1s)>x</div>',
-    'global.mjs':     '<p>un</p>\n<div class="a" @in.global=*titre>x</div>',
-    'voisin.mjs':     '<p>un</p>\n<div class="a" @out=*fadeee>x</div>',
-    'toupie.mjs':     "<script>\n  µanim.create('toupie', { duration: 1000 })\n</script>\n<div @in=*toupie>x</div>",
-    'temoin.mjs':     '<p>un</p>\n<div class="a" @in=*fade @out=*fly(up)>x</div>'
+    'in.mjs':         '<p>un</p>\n<div class="a" :in=*titre>x</div>',
+    'out.mjs':        '<p>un</p>\n<div class="a" :out=*titre>x</div>',
+    'transition.mjs': '<p>un</p>\n<div class="a" :transition=*titre>x</div>',
+    'reglages.mjs':   '<p>un</p>\n<div class="a" :in=*titre(duration: 1s)>x</div>',
+    'global.mjs':     '<p>un</p>\n<div class="a" :in.global=*titre>x</div>',
+    'voisin.mjs':     '<p>un</p>\n<div class="a" :out=*fadeee>x</div>',
+    'toupie.mjs':     "<script>\n  µanim.create('toupie', { duration: 1000 })\n</script>\n<div :in=*toupie>x</div>",
+    'temoin.mjs':     '<p>un</p>\n<div class="a" :in=*fade :out=*fly(up)>x</div>'
   }
   const ECRITS = ['in', 'out', 'transition', 'reglages', 'global']
 
@@ -1433,8 +1433,8 @@ describe('un effet inconnu passe avant un point mal placé', function () {
     ['espace',        '<p>un</p>\n<div class="a" *fadee .x>x</div>'],
     ['reglages',      '<p>un</p>\n<div class="a" *fadee(duration: 1s).x>x</div>'],
     ['alias',         '<p>un</p>\n<div class="a" *fadee.lent .x>x</div>'],
-    ['directive',     '<p>un</p>\n<div class="a" @in=*fadee .x>x</div>'],
-    ['directive-reg', '<p>un</p>\n<div class="a" @out=*fadee(duration: 1s).x>x</div>']
+    ['directive',     '<p>un</p>\n<div class="a" :in=*fadee .x>x</div>'],
+    ['directive-reg', '<p>un</p>\n<div class="a" :out=*fadee(duration: 1s).x>x</div>']
   ]
   let r: Awaited<ReturnType<typeof construire>>
 
@@ -1443,7 +1443,7 @@ describe('un effet inconnu passe avant un point mal placé', function () {
     for (const [f, source] of cas) fichiers[`${f}.mjs`] = source
     fichiers['page.mjs']    = '<p>un</p>\n<@document *rippel .rouge></@document>'
     fichiers['connu.mjs']   = '<p>un</p>\n<div class="a" *fade .x>x</div>'
-    fichiers['maison.mjs']  = '<p>un</p>\n<div class="a" @in=*titre .x>x</div>'
+    fichiers['maison.mjs']  = '<p>un</p>\n<div class="a" :in=*titre .x>x</div>'
     r = await construire('point-effet-inconnu', fichiers)
   })
 

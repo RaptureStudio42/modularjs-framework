@@ -69,7 +69,7 @@ describe('{for} sous {await} — chaque valeur de ligne calculée une seule fois
 
   it('promesse résolue APRÈS le montage : une lecture par ligne, valeurs justes, et la liste suit ensuite $x', async () => {
     const { window, c } = await monter('fsa-tard', 'fsatard', `<script>
-  $p = new Promise((ok) -> setTimeout((-> ok([10, 20, 30])), 80))
+  $p = µafter(80).then(-> [10, 20, 30])
   $x = 1
   compte = (nom, v) ->
     c = (globalThis.__cnt ?= {})
@@ -143,7 +143,7 @@ describe('{for} sous {await} — chaque valeur de ligne calculée une seule fois
       const { window, c } = await monter(`fsa-micro${sauts}`, `fsamicro${sauts}`, `<script>
   $liste = [{ id: 1, nom: 'a' }]
   $x = 0
-  $p = new Promise((ok) -> setTimeout((-> ok(5)), 40))
+  $p = µafter(40).then(-> 5)
   ecrire = ->
     q = $p
 ${Array.from({ length: sauts }, () => '    q = q.then -> null').join('\n')}

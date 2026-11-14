@@ -1,14 +1,14 @@
 # 10 · Transitions & animations
 
-> 📚 Tuto interactif correspondant : **Transitions** (directive, réglages, entrée et sortie, CSS & JS, événements, global), **Animation** (interpolations, ressorts) et **Transitions avancées** (transitions différées, cross-fade, `@flip`). Les encarts 🎓 *Pour débutants* dépliables donnent l'explication pas-à-pas ; le corps de la page reste la référence dense.
+> 📚 Tuto interactif correspondant : **Transitions** (directive, réglages, entrée et sortie, CSS & JS, événements, global), **Animation** (interpolations, ressorts) et **Transitions avancées** (transitions différées, cross-fade, `:flip`). Les encarts 🎓 *Pour débutants* dépliables donnent l'explication pas-à-pas ; le corps de la page reste la référence dense.
 
-MJS anime un élément quand il **entre** ou **sort** du DOM (au gré d'un `{if}`, d'un `{for}`, d'un `{key}`). Une transition est un **effet** ([38 · Effets](38-effets.md)) — `*fade`, `*fly`, `*slide`… — que l'on accroche au **cycle de vie** de la balise : `@in=*…` à son entrée, `@out=*…` à sa sortie, `@transition=*…` aux deux. MJS joue l'animation aux bons moments et la nettoie tout seul.
+MJS anime un élément quand il **entre** ou **sort** du DOM (au gré d'un `{if}`, d'un `{for}`, d'un `{key}`). Une transition est un **effet** ([38 · Effets](38-effets.md)) — `*fade`, `*fly`, `*slide`… — que l'on accroche au **cycle de vie** de la balise : `:in=*…` à son entrée, `:out=*…` à sa sortie, `:transition=*…` aux deux. MJS joue l'animation aux bons moments et la nettoie tout seul.
 
-> 💡 Ici, on anime des **éléments**. Pour animer un changement de **page** (la permutation des vues du routeur), c'est `@viewTransition` → [17 · Router](17-router.md).
+> 💡 Ici, on anime des **éléments**. Pour animer un changement de **page** (la permutation des vues du routeur), c'est `:viewTransition` → [17 · Router](17-router.md).
 
-## Entrer et sortir : `@transition`, `@in`, `@out`
+## Entrer et sortir : `:transition`, `:in`, `:out`
 
-`@transition=*nom` joue l'effet **à l'entrée et à la sortie** : à l'entrée, la balise part de l'état caché de l'effet et arrive à son état normal ; à la sortie, le même chemin à l'envers.
+`:transition=*nom` joue l'effet **à l'entrée et à la sortie** : à l'entrée, la balise part de l'état caché de l'effet et arrive à son état normal ; à la sortie, le même chemin à l'envers.
 
 ```html
 <script>
@@ -20,30 +20,38 @@ MJS anime un élément quand il **entre** ou **sort** du DOM (au gré d'un `{if}
 </label>
 
 {if $visible}
-  <p @transition=*fade>
+  <p :transition=*fade>
     Apparaît et disparaît en fondu
   </p>
 {end}
 ```
 
-Pour dissocier les deux sens, `@in=*nom` (entrée seule) et `@out=*nom` (sortie seule), chacun avec ses réglages :
+Pour dissocier les deux sens, `:in=*nom` (entrée seule) et `:out=*nom` (sortie seule), chacun avec ses réglages :
 
 ```html
 {if $visible}
-  <p @in=*fly(up, distance: 200, duration: 2s) @out=*fade>
+  <p :in=*fly(up, distance: 200, duration: 2s) :out=*fade>
     Vole en entrant, s'estompe en sortant
   </p>
 {end}
 ```
 
-`@in` ou `@out` à côté de `@transition` reprend son sens : `@transition=*fade @in=*fly` entre en volant et sort en fondu.
+`:in` ou `:out` à côté de `:transition` reprend son sens : `:transition=*fade :in=*fly` entre en volant et sort en fondu.
+
+**Une balise remise pendant sa sortie.** Une ligne de `{for}` retirée de sa liste, ou la balise d'un `{if}` qui se ferme, joue sa sortie ; si elle revient avant la fin (son élément remis dans la liste, même après d'autres changements entre-temps ; le `{if}` rouvert), c'est la même balise qui revient à sa place, avec ses nœuds, sa saisie et ses composants. Chaque sortie qu'elle jouait revient sur ses pas, depuis là où elle en est, jamais de son début ni de sa fin, pour toute transition que mène le moteur des transitions : du catalogue, un alias ou un effet de votre fichier d'effets (à `@keyframes` ou en simples déclarations), une transition de `µanim.create` (objet, fonction, `css` ou `tick`) :
+
+- la balise elle-même : avec `:in` ou `:transition`, son entrée repart de là où en était la sortie, même quand l'une est un effet `@keyframes` de votre fichier d'effets et l'autre une transition du catalogue, et `@introstart` puis `@introend` s'appellent une fois chacun ; avec `:out` seul, la sortie revient sur ses pas jusqu'à l'état normal de la balise, sans `@introstart` ni `@introend` ; une sortie déjà finie (une sortie intérieure plus longue retenait la balise) repart de sa dernière image, la balise invisible : à rebours avec `:out` seul, par son entrée jouée en entier avec `:in` ou `:transition`, sans saut ;
+- ses balises intérieures dont la sortie jouait avec la sienne (`.global`, ou toutes celles qui portent une transition sous `:childtransition`) : chacune de même, depuis là où elle en est ; une sortie intérieure déjà finie repart de sa dernière image. Une balise qui sort pour son propre bloc (un `{if}` de la ligne qui se ferme) poursuit sa sortie ;
+- une sortie `.shared` revient elle aussi depuis là où elle en est, ses images clés toujours partagées (cf. [`.shared`](#shared--animation-mutualisée)).
+
+La sortie interrompue n'appelle jamais `@outroend`. Retirée de nouveau, même une microtâche après son retour, la balise reprend sa sortie depuis là où elle en est : `@outrostart` s'appelle à nouveau, puis `@outroend` à la fin de cette sortie-là. Une sortie déjà finie reste alors à sa dernière image, la balise invisible, jusqu'à son retrait ; une entrée arrêtée avant sa première image rend la balise à l'état d'où elle partait. Quels que soient l'ordre et l'écart des retraits et des retours, la balise ne passe jamais par son état normal entre deux transitions, et seul le dernier retrait la retire, à la fin de la plus longue sortie. Une sortie qui se joue hors du moteur des transitions ne revient pas sur ses pas : une transition `µanim.create` à fonctions `intro` et `outro`, qui mène ses propres animations, `*crossfade`, un effet qui se joue une fois. Dans une liste, la ligne qui en joue une, elle-même ou par une balise intérieure, ne revient pas : ce qui reste d'elle part aussitôt et une ligne neuve prend sa place. La balise d'un `{if}` revient, mais cette sortie va à son terme, et la balise garde ensuite ce que ses animations laissent. Dans une liste, une clé n'a jamais deux lignes ; revenu après la fin de la sortie, l'élément a une ligne neuve. Le détail : [5 · Blocs](05-blocs.md), « Suivi keyé ».
 
 > ⚠️ Une transition ne se joue que sur un élément qui **entre ou sort** réellement du DOM. Un élément déjà présent au montage n'anime rien : il faut le révéler/masquer via `{if}`, `{for}`, ou `{key}`. Pour animer une balise qui est là dès le départ — quand elle arrive à l'écran, au défilement —, posez l'effet directement sur elle (cf. [Apparaître au défilement](#apparaître-au-défilement--leffet-posé-sur-la-balise)).
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi un <code>{if}</code> autour&nbsp;?</summary>
 
-Une transition d'entrée/sortie a besoin d'un *avant* et d'un *après* : l'élément doit naître ou mourir pour qu'il y ait quelque chose à animer. Le `{if $visible}` est ce qui le fait apparaître/disparaître ; `@transition=*fade` ne fait qu'habiller ce passage. Sans bloc conditionnel autour, l'élément reste là en permanence et il n'y a rien à animer.
+Une transition d'entrée/sortie a besoin d'un *avant* et d'un *après* : l'élément doit naître ou mourir pour qu'il y ait quelque chose à animer. Le `{if $visible}` est ce qui le fait apparaître/disparaître ; `:transition=*fade` ne fait qu'habiller ce passage. Sans bloc conditionnel autour, l'élément reste là en permanence et il n'y a rien à animer.
 
 </details>
 
@@ -52,9 +60,9 @@ Une transition d'entrée/sortie a besoin d'un *avant* et d'un *après* : l'élé
 Ils s'écrivent comme ceux de tout effet ([38 · Effets](38-effets.md)) : entre parenthèses, le **réglage principal** sans son nom, les autres nommés, dans l'ordre qu'on veut ; une durée en `ms` ou en `s` (`300ms`, `2s`) ; une direction en mot (`up`, `down-left`…) ou en angle (`45` : vers le haut à droite).
 
 ```html
-<p @in=*fly(up, distance: 200, duration: 2s)>…</p>
-<p @in=*fly(135, distance: 60px, easing: back-out)>…</p>
-<p @out=*scale(.5, origin: top-left, duration: 250ms)>…</p>
+<p :in=*fly(up, distance: 200, duration: 2s)>…</p>
+<p :in=*fly(135, distance: 60px, easing: back-out)>…</p>
+<p :out=*scale(.5, origin: top-left, duration: 250ms)>…</p>
 ```
 
 Trois réglages communs à toutes les transitions :
@@ -69,7 +77,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 
 ```html
 {for todo in $todos by id}
-  <li @in=*fly(left, distance: $decalage)>{todo.text}</li>
+  <li :in=*fly(left, distance: $decalage)>{todo.text}</li>
 {end}
 ```
 
@@ -109,7 +117,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 
 ```html
 {key $k}
-  <div @transition=*cube>
+  <div :transition=*cube>
     Une face, puis l'autre
   </div>
 {end}
@@ -118,7 +126,7 @@ Une valeur est fixe, vérifiée à la compilation, ou une **variable** écrite t
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi la sortie <em>rejoue</em>-t-elle l'entrée à l'envers&nbsp;?</summary>
 
-La plupart des transitions sont symétriques : `*iris` qui s'ouvrait au centre pour l'entrée se referme au centre pour la sortie, `*volet` qui descendait remonte. C'est la même animation que MJS joue simplement à l'envers — pas la peine d'écrire une version « sortie » séparée, `@transition=*nom` suffit ; `@in`/`@out` restent là pour choisir une paire différente de chaque côté. Seules `*reveal`, `*flip`, `*cube` et `*turn` ont deux animations distinctes : seules, elles ne jouent que leur moitié ; c'est dans un `{key}`, où l'ancien et le nouveau coexistent un instant, que les deux moitiés se superposent et donnent l'illusion d'un seul mouvement continu.
+La plupart des transitions sont symétriques : `*iris` qui s'ouvrait au centre pour l'entrée se referme au centre pour la sortie, `*volet` qui descendait remonte. C'est la même animation que MJS joue simplement à l'envers — pas la peine d'écrire une version « sortie » séparée, `:transition=*nom` suffit ; `:in`/`:out` restent là pour choisir une paire différente de chaque côté. Seules `*reveal`, `*flip`, `*cube` et `*turn` ont deux animations distinctes : seules, elles ne jouent que leur moitié ; c'est dans un `{key}`, où l'ancien et le nouveau coexistent un instant, que les deux moitiés se superposent et donnent l'illusion d'un seul mouvement continu.
 
 </details>
 
@@ -126,19 +134,19 @@ La plupart des transitions sont symétriques : `*iris` qui s'ouvrait au centre p
 
 ## Un autre effet sur le cycle de vie
 
-`@in`, `@out` et `@transition` accrochent aussi un effet qui **se joue une fois** — ceux dont le réglage `on` connaît `load` ([38 · Effets](38-effets.md)) : `*scramble`, `*stagger`, `*count`, `*dissolve`, `*confetti`, `*shake`, un tour de `*glitch` ou de `*bounce`… À l'entrée, l'effet se joue quand la balise arrive ; à la sortie, la balise attend la fin de son jeu avant de partir.
+`:in`, `:out` et `:transition` accrochent aussi un effet qui **se joue une fois** — ceux dont le réglage `on` connaît `load` ([38 · Effets](38-effets.md)) : `*scramble`, `*stagger`, `*count`, `*dissolve`, `*confetti`, `*shake`, un tour de `*glitch` ou de `*bounce`… À l'entrée, l'effet se joue quand la balise arrive ; à la sortie, la balise attend la fin de son jeu avant de partir.
 
 ```html
 {if $message}
-  <p @in=*scramble(speed: 30) @out=*dissolve(duration: 1.5s, delay: 0s)>{$message}</p>
+  <p :in=*scramble(speed: 30) :out=*dissolve(duration: 1.5s, delay: 0s)>{$message}</p>
 {end}
 ```
 
-Un effet continu ou à état (`*neon`, `*tilt`, `*lift`…) ne se joue pas « une fois » : le build le refuse dans `@in`/`@out` et dit de le poser directement sur la balise. Le déclencheur, c'est la directive : `on`, `once`, `range` et `zone` n'y ont pas de sens (le build le dit aussi).
+Un effet continu ou à état (`*neon`, `*tilt`, `*lift`…) ne se joue pas « une fois » : le build le refuse dans `:in`/`:out` et dit de le poser directement sur la balise. Le déclencheur, c'est la directive : `on`, `once`, `range` et `zone` n'y ont pas de sens (le build le dit aussi).
 
 ## Apparaître au défilement : l'effet posé sur la balise
 
-Posée **directement** sur une balise, sans `@in`, une transition se joue selon son réglage `on` :
+Posée **directement** sur une balise, sans `:in`, une transition se joue selon son réglage `on` :
 
 | `on` | La balise… |
 |---|---|
@@ -149,10 +157,13 @@ Posée **directement** sur une balise, sans `@in`, une transition se joue selon 
 
 ```html
 <section *fly(up, distance: 60, on: view)>…</section>
+<figure *ink(on: view, visible: 100%)>…</figure>
 <img src="photo.jpg" *shatter(on: scroll) alt="…">
 <section *iris(on: scroll, range: 0 1000px)>…</section>
 <h2 *fly(up, on: scroll, zone: 70% 40%)>…</h2>
 ```
+
+`visible` règle la part de la balise qui doit être à l'écran pour que `on: view` la fasse entrer : de `1%` à `100%`, en valeur fixe ; sans lui, 15 % (`*slide` et `*typewriter`, qui attendent repliées, entrent dès leur premier pixel, avec ou sans `visible`). `*ink(on: view, visible: 100%)` attend la balise entière ; une balise plus haute que l'écran, ou que la zone qui défile autour d'elle, entre quand elle en couvre cette part — avec `100%`, quand elle la remplit, même si elle a grandi (une image chargée tard) ou si la fenêtre ou la zone a rétréci pendant qu'elle était en partie à l'écran. Avec `once: false`, elle ressort quand elle quitte l'écran, comme sans `visible`. Le même réglage vaut pour tous les effets qui connaissent `on: view` (cf. [Effets](38-effets.md)).
 
 `on: scroll` sans `range` suit le passage de la balise dans la zone visible : l'animation commence quand son haut atteint le bas de la zone et finit quand son milieu en atteint le milieu. `zone: début fin` choisit la bande de la zone où elle se joue — deux hauteurs, en % (`0%` en haut, `100%` en bas) ou en mots (`top`, `center`, `bottom`) : elle commence quand le haut de la balise passe la première et finit à la seconde ; `zone: 70% 40%` la joue autour du milieu. `range: début fin` la lie à une plage de défilement (en px, ou en `vh`) : `range: 0 1000px` l'étale sur les mille premiers pixels. La zone, c'est la fenêtre, ou le conteneur qui défile autour de la balise s'il y en a un (`overflow: auto`).
 
@@ -167,7 +178,7 @@ Avec « réduire les animations » (réglage du système), la balise reste à sa
 
 ## Ses propres transitions
 
-**Dans le fichier d'effets de l'appli** (`*.effects.mjs`, cf. [38 · Effets](38-effets.md)) : une transition réglée une fois pour toutes, ou une transition CSS à soi — ses déclarations sont l'**état caché** : la balise entre en partant d'elles, sort en y allant.
+**Dans le fichier d'effets de l'appli** (`*.effects.mjs`, cf. [38 · Effets](38-effets.md)) : une transition réglée une fois pour toutes, ou une transition CSS à soi — ses déclarations sont l'**état caché** : la balise entre en partant d'elles, sort en y allant ; avec `delay`, elle garde cet état pendant son retard. Un effet à `@keyframes` se joue tel qu'il est écrit, une fois, à l'envers pour la sortie : avec `from` seul, la balise entre en partant de cette image ; avec `to` seul ou un pourcentage seul, elle part de son état normal, passe par l'image, et retrouve son état normal à la fin de l'animation — pour une entrée, écrivez `from`.
 
 ```html
 <effects>
@@ -180,12 +191,12 @@ Avec « réduire les animations » (réglage du système), la balise reste à sa
 ```
 
 ```html
-{if $ouvert}<div @in=*entree @out=*monte(y: 40px)>…</div>{end}
+{if $ouvert}<div :in=*entree :out=*monte(y: 40px)>…</div>{end}
 ```
 
-**En JavaScript**, pour ce que le CSS ne sait pas faire : `µanim.create nom, config` enregistre une transition, qui se pose ensuite comme les autres — `@in=*nom(…)`. Son nom ne doit pas être celui d'un effet de la bibliothèque.
+**En JavaScript**, pour ce que le CSS ne sait pas faire : `µanim.create nom, config` enregistre une transition, qui se pose ensuite comme les autres — `:in=*nom(…)`. Son nom ne doit pas être celui d'un effet de la bibliothèque.
 
-**Un nom que rien ne définit arrête la construction.** `@in=*titre`, `@out=*titre` et `@transition=*titre` (avec `.global` ou `.shared`) n'acceptent qu'un effet de la bibliothèque, un effet de votre fichier `*.effects.mjs` (un script qui le cite par `µ.anim.titre` ne le rend pas inconnu), ou une transition que votre code crée par `µanim.create 'titre', …` (ou `µanim.crossfade 'base', …`, qui crée la paire `baseSend` et `baseReceive`), dans un composant ou dans un module `.civet` ou `.coffee` du dossier source. La construction lit l'appel **écrit tel quel** — `µanim.create` ou `µ.anim.create`, le nom en toutes lettres entre guillemets (un gabarit sans substitution, `` `titre` ``, en tient lieu) — et rien d'autre : un nom calculé (`µanim.create(nom, …)`), un appel fait par une variable qui contient `µ.anim` (`a = µ.anim`, puis `a.create 'titre'`), une déstructuration (`{ create } = µ.anim`), `globalThis.µ.anim` ou `µ['anim']` ne sont pas lus, et la transition est alors une erreur. Sinon l'erreur dit où le nom est écrit (le fichier et la ligne), propose le nom le plus proche parmi ceux que la directive accepte et rappelle comment créer la transition : `*titre = *fade(…)` dans un `*.effects.mjs`, ou `µanim.create 'titre', …`. Tant qu'un autre fichier du projet est en erreur de compilation, aucun nom introuvable n'est accusé : ce fichier peut être celui qui crée la transition, sa faute est dite d'abord.
+**Un nom que rien ne définit arrête la construction.** `:in=*titre`, `:out=*titre` et `:transition=*titre` (avec `.global` ou `.shared`) n'acceptent qu'un effet de la bibliothèque, un effet de votre fichier `*.effects.mjs` (un script qui le cite par `µ.anim.titre` ne le rend pas inconnu), ou une transition que votre code crée par `µanim.create 'titre', …` (ou `µanim.crossfade 'base', …`, qui crée la paire `baseSend` et `baseReceive`), dans un composant ou dans un module `.civet.mjs` ou `.coffee.mjs` du dossier source. La construction lit l'appel **écrit tel quel** — `µanim.create` ou `µ.anim.create`, le nom en toutes lettres entre guillemets (un gabarit sans substitution, `` `titre` ``, en tient lieu) — et rien d'autre : un nom calculé (`µanim.create(nom, …)`), un appel fait par une variable qui contient `µ.anim` (`a = µ.anim`, puis `a.create 'titre'`), une déstructuration (`{ create } = µ.anim`), `globalThis.µ.anim` ou `µ['anim']` ne sont pas lus, et la transition est alors une erreur. Sinon l'erreur dit où le nom est écrit (le fichier et la ligne), propose le nom le plus proche parmi ceux que la directive accepte et rappelle comment créer la transition : `*titre = *fade(…)` dans un `*.effects.mjs`, ou `µanim.create 'titre', …`. Tant qu'un autre fichier du projet est en erreur de compilation, aucun nom introuvable n'est accusé : ce fichier peut être celui qui crée la transition, sa faute est dite d'abord.
 
 ### La forme `css`
 
@@ -204,7 +215,7 @@ La config fournit `duration`, `easing`, et une fonction `css(t, u)` qui renvoie 
 </script>
 
 {if $visible}
-  <div @in=*tourbillon(duration: 8s) @out=*fade>
+  <div :in=*tourbillon(duration: 8s) :out=*fade>
     <span>transitions !</span>
   </div>
 {end}
@@ -216,7 +227,7 @@ Les réglages écrits à la pose (`duration`, `delay`, `easing`) l'emportent sur
 
 ### La forme `tick`
 
-Quand l'animation a besoin de muter le DOM image par image (texte, canvas…), on passe à `µanim.create` une **fonction de setup** `(node, params)-> config`. Le setup s'exécute par nœud (capture en closure), et la config expose un `tick(t)` appelé à chaque frame :
+Quand l'animation a besoin de muter le DOM image par image (texte, canvas…), on passe à `µanim.create` une **fonction de setup** `(node, params)-> config`. Le setup s'exécute par nœud (capture en closure), et la config expose un `tick(t)` appelé à chaque frame. Hors de ses frames, `tick` n'est appelé que si la balise ne porte pas déjà l'image voulue : une première fois, `tick(0)`, dès le départ d'une entrée neuve par `:in` ou `:transition`, pour que la balise ne montre jamais son état normal avant la première frame ; une fois à la position de départ quand la transition prend la suite d'une autre sur la même balise (un `:in` en `*fade` interrompu par un `:out` à `tick` ; `:in=*frappe` interrompu par `:out=*frappe` aussi : écrites à part, l'entrée et la sortie sont deux transitions) ; une fois à sa position de fin quand elle est reprise à moins d'un dix-millième de celle-ci sans que la balise en porte déjà l'image. Une sortie qui part de l'état normal et une transition interrompue qui se reprend elle-même dans l'autre sens ne reçoivent aucun appel de plus :
 
 ```html
 <script>
@@ -236,7 +247,7 @@ Quand l'animation a besoin de muter le DOM image par image (texte, canvas…), o
 </script>
 
 {if $visible}
-  <p @transition=*frappe(speed: 2)>
+  <p :transition=*frappe(speed: 2)>
     Le vif zéphyr jubile sur les kumquats du clown gracieux
   </p>
 {end}
@@ -255,6 +266,10 @@ Quand l'animation a besoin de muter le DOM image par image (texte, canvas…), o
 
 Quatre événements DOM sont émis sur l'élément pendant ses transitions : `@introstart`, `@introend`, `@outrostart`, `@outroend`.
 
+Leur code s'écrit dans la langue des gestionnaires du gabarit (Civet), quelle que soit la langue du `<script>`, et se compile comme un gestionnaire, sur une ligne ou sur plusieurs : `@introend={t := $total + 1; $fin = t if $visible}`. Un nom qu'il lie lui-même (`t := …`, `t = …`) reste à lui ; il lit les variables du script et celles que le gabarit met autour de lui (variable d'un `{for}`, `{const}`).
+
+Son corps s'écrit comme celui d'un gestionnaire, sur une ligne ou sur plusieurs (l'accolade seule en fin de ligne, ou la première instruction collée à elle). Comme un gestionnaire, il peut sortir tôt (`return unless $visible`, en tête d'un corps de plusieurs lignes, ou suivi d'un `;` sur sa ligne : `return unless $visible; $x = 1`) et attendre (`await µafter 300`, le rappel devient `async`) : une écriture qui suit le `return` ou l'attente redessine la page. Les refus des gestionnaires valent aussi pour lui : une constante du script (`n := …`) ou la variable d'un `{for}` réaffectée, `setTimeout` et `setInterval` (écrivez `µafter` ou `µevery`), un code que la compilation rendrait illisible ; une faute de Civet y est citée à sa ligne et à sa colonne du fichier.
+
 ```html
 <script>
   $visible = true
@@ -263,7 +278,7 @@ Quatre événements DOM sont émis sur l'élément pendant ses transitions : `@i
 <p>statut : {$status}</p>
 
 {if $visible}
-  <p @transition=*fly(up, distance: 200, duration: 2s) @introstart={$status = 'intro démarrée'} @outrostart={$status = 'outro démarrée'} @introend={$status = 'intro terminée'} @outroend={$status = 'outro terminée'}>
+  <p :transition=*fly(up, distance: 200, duration: 2s) @introstart={$status = 'intro démarrée'} @outrostart={$status = 'outro démarrée'} @introend={$status = 'intro terminée'} @outroend={$status = 'outro terminée'}>
     Vole en entrant et en sortant
   </p>
 {end}
@@ -276,7 +291,7 @@ Par défaut une transition ne se joue que si **son propre bloc** est ajouté/ret
 ```html
 {if $showItems}
   {for item in items.slice(0, $i)}
-    <div @transition.global=*slide>
+    <div :transition.global=*slide>
       {item}
     </div>
   {end}
@@ -289,7 +304,7 @@ Par défaut une transition ne se joue que si **son propre bloc** est ajouté/ret
 
 Aucune transition d'entrée ne joue sur le **premier** rendu d'un composant : sans cette règle, la page entière clignoterait au chargement. La frontière est le **rendu**, pas le chargement : tout ce qui vient après ce premier rendu anime normalement, y compris ce qui part du montage lui-même.
 
-Concrètement, un état écrit depuis [`µmount`](16-cycle-de-vie.md#µmount--initialisation-unique) ou depuis le premier tir de [`µevery`](16-cycle-de-vie.md#µevery--répéter-en-partant-tout-de-suite) — tous deux exécutés *après* le premier rendu — déclenche un rendu suivant, et les nœuds que ce rendu crée jouent bien leur `@in`. C'est ce qui permet d'animer l'apparition d'un contenu dès l'arrivée sur la page **sans** marquer la transition `.global` :
+Concrètement, un état écrit depuis [`µmount`](16-cycle-de-vie.md#µmount--initialisation-unique) ou depuis le premier tir de [`µevery`](16-cycle-de-vie.md#µevery--répéter-en-partant-tout-de-suite) — tous deux exécutés *après* le premier rendu — déclenche un rendu suivant, et les nœuds que ce rendu crée jouent bien leur `:in`. C'est ce qui permet d'animer l'apparition d'un contenu dès l'arrivée sur la page **sans** marquer la transition `.global` :
 
 ```html
 <script>
@@ -300,7 +315,7 @@ Concrètement, un état écrit depuis [`µmount`](16-cycle-de-vie.md#µmount--in
 </script>
 
 {key $i}
-  <p @in=*typewriter(speed: 100)>{$messages[$i] or ''}</p>
+  <p :in=*typewriter(speed: 100)>{$messages[$i] or ''}</p>
 {end}
 ```
 
@@ -308,27 +323,29 @@ Le premier message se tape, comme les suivants.
 
 ## `.shared` — animation mutualisée
 
-`.shared` se cumule avec `.global`, dans n'importe quel ordre — `@transition.global.shared=*fly(down, distance: 10)` est valide. Il bascule l'animation sur un `@keyframes` CSS injecté **une seule fois** et partagé par tous les nœuds qui l'utilisent, au lieu d'une animation par nœud : pensé pour la grosse volumétrie, des dizaines d'éléments qui apparaissent ensemble.
+`.shared` se cumule avec `.global`, dans n'importe quel ordre — `:transition.global.shared=*fly(down, distance: 10)` est valide. Il bascule l'animation sur un `@keyframes` CSS injecté **une seule fois** et partagé par tous les nœuds qui l'utilisent, au lieu d'une animation par nœud : pensé pour la grosse volumétrie, des dizaines d'éléments qui apparaissent ensemble.
 
 ```html
 {for item in items}
-  <li @transition.shared=*fade>{item}</li>
+  <li :transition.shared=*fade>{item}</li>
 {end}
 ```
 
-> ⚠️ En mode `.shared`, une transition ne sait pas reprendre une interruption à mi-course : une nouvelle valeur affectée pendant l'animation ne prolonge pas le mouvement depuis sa position actuelle, elle redémarre à 0. Pour un élément qui bascule souvent, le mode standard (sans `.shared`) reste le bon choix.
+> ⚠️ En mode `.shared` aussi, une transition interrompue à mi-course reprend depuis sa position : une nouvelle valeur affectée pendant l'animation (un `{if}` qui se rouvre pendant la sortie, une ligne remise dans sa liste) prolonge le mouvement depuis là où il en est, sur des images clés toujours partagées, sans repartir de 0.
 
-> ⚠️ `.shared` posé sur `@in` vaut aussi pour le `@out` du même nœud : le mode se décide **pour le nœud**, pas directive par directive.
+> ⚠️ `.shared` posé sur `:in` vaut aussi pour le `:out` du même nœud : le mode se décide **pour le nœud**, pas directive par directive.
 
-## `@childtransition` — cascade de sortie
+> ⚠️ Une entrée `.shared` à `delay` garde sa première image pendant son retard, comme sans `.shared` : en `*fade`, la balise reste invisible jusqu'au départ de l'animation.
 
-Posé sur l'élément qui **enveloppe** un `{if}`/`{for}`/`{key}`, `@childtransition="all"` fait que le retrait de son contenu **attend** la sortie des descendants porteurs d'une transition, avant de les retirer du DOM. C'est une cascade de **sortie**, et rien d'autre : ça ne déclenche aucune entrée au premier rendu — ce rôle-là reste celui de `.global`, par élément. Les deux mécanismes sont distincts et se complètent.
+## `:childtransition` — cascade de sortie
+
+Posé sur l'élément qui **enveloppe** un `{if}`/`{for}`/`{key}`, `:childtransition="all"` fait que le retrait de son contenu **attend** la sortie des descendants porteurs d'une transition, avant de les retirer du DOM. C'est une cascade de **sortie**, et rien d'autre : ça ne déclenche aucune entrée au premier rendu — ce rôle-là reste celui de `.global`, par élément. Les deux mécanismes sont distincts et se complètent.
 
 ```html
-<div @childtransition="all">
+<div :childtransition="all">
   {if $visible}
     {for item in items.slice(0, $i)}
-      <div @transition=*fade>
+      <div :transition=*fade>
         {item}
       </div>
     {end}
@@ -336,9 +353,9 @@ Posé sur l'élément qui **enveloppe** un `{if}`/`{for}`/`{key}`, `@childtransi
 </div>
 ```
 
-> ⚠️ Sans `@childtransition`, la fermeture de `{if $visible}` retirerait les `<div>` intérieurs **sans laisser jouer** leur transition (seul un descendant `.global` y échapperait, comme au paragraphe précédent). `@childtransition="all"` étend cette attente à **tous** les descendants porteurs d'une transition, sans avoir à marquer chacun `.global` individuellement.
+> ⚠️ Sans `:childtransition`, la fermeture de `{if $visible}` retirerait les `<div>` intérieurs **sans laisser jouer** leur transition (seul un descendant `.global` y échapperait, comme au paragraphe précédent). `:childtransition="all"` étend cette attente à **tous** les descendants porteurs d'une transition, sans avoir à marquer chacun `.global` individuellement.
 
-`@childtransition` accepte `"all"`, `"out"` et `"transition"` — les trois valeurs se comportent à l'identique, `"all"` est la forme à écrire. Toute autre valeur ne fait **rien**, en silence.
+`:childtransition` accepte `"all"`, `"out"` et `"transition"` — les trois valeurs se comportent à l'identique, `"all"` est la forme à écrire. Toute autre valeur ne fait **rien**, en silence.
 
 ## Transitions et `{key}`
 
@@ -346,19 +363,19 @@ Un bloc `{key expr}` re-monte son contenu à chaque changement de `expr` : l'anc
 
 ```html
 {key $i}
-  <p @in=*typewriter(speed: 100)>
+  <p :in=*typewriter(speed: 100)>
     {messages[$i] or ''}
   </p>
 {end}
 ```
 
-## `@flip` — réordonnancement de liste
+## `:flip` — réordonnancement de liste
 
-`@flip` anime le **déplacement** d'un élément quand sa position change dans un `{for}` (technique FLIP : First-Last-Invert-Play). Forme courte `@flip=durée`, ou objet `@flip={duration: …}` :
+`:flip` anime le **déplacement** d'un élément quand sa position change dans un `{for}` (technique FLIP : First-Last-Invert-Play). Forme courte `:flip=durée`, ou objet `:flip={duration: …}` :
 
 ```html
 {for todo in $todos.filter((t)-> not t.done) by id}
-  <li @flip=200>
+  <li :flip=200>
     <span>{todo.description}</span>
   </li>
 {end}
@@ -367,7 +384,7 @@ Un bloc `{key expr}` re-monte son contenu à chaque changement de `expr` : l'anc
 `mjs-flip-delay="600"` (attribut) ajoute un délai avant le glissement — utile pour laisser un cross-fade se terminer avant de réarranger :
 
 ```html
-<li @transition=*crossfade(key: todo.id) @flip=200 mjs-flip-delay="600">…</li>
+<li :transition=*crossfade(key: todo.id) :flip=200 mjs-flip-delay="600">…</li>
 ```
 
 Côté liste qui **reçoit** l'élément, ce délai est ignoré et ramené à `0` — le trou d'accueil s'ouvre immédiatement, pour laisser le cross-fade atterrir sans attendre ; seule la liste qui **perd** l'élément respecte réellement `mjs-flip-delay`.
@@ -375,7 +392,7 @@ Côté liste qui **reçoit** l'élément, ce délai est ignoré et ramené à `0
 L'easing est une courbe CSS (`ease-out`, `cubic-bezier(…)`…) : une valeur que le navigateur refuse (le nom d'une courbe de `µeasing`, comme `elasticOut`) est remplacée par la courbe par défaut, une durée négative par la durée par défaut (200 ms), et les autres lignes glissent quand même. La durée, le délai et l'easing acceptent une **expression** — relue à chaque animation, donc pilotable en direct :
 
 ```html
-<li @flip={duration: 200 * $ralenti}>…</li>
+<li :flip={duration: 200 * $ralenti}>…</li>
 ```
 
 Une ligne placée sous un `{if}` à la racine de la boucle s'anime comme les autres, qu'elle soit là dès le départ ou qu'elle apparaisse plus tard :
@@ -383,20 +400,20 @@ Une ligne placée sous un `{if}` à la racine de la boucle s'anime comme les aut
 ```html
 {for todo in $todos by id}
   {if todo.visible}
-    <li @flip=200>{todo.description}</li>
+    <li :flip=200>{todo.description}</li>
   {end}
 {end}
 ```
 
-> ⚠️ `@flip` ne fonctionne que dans un `{for … by clé}` **keyé** : la clé du `by` reconnaît chaque ligne d'un rendu à l'autre. C'est elle qui dit à MJS qu'une ligne s'est *déplacée* (et non détruite puis recréée), et chaque ligne glisse depuis sa propre place. Sans `by`, la ligne est reconnue par l'`id` de son élément, à défaut par son rang à sa création : une ligne ajoutée plus tard peut alors partir de la place d'une autre.
+> ⚠️ `:flip` ne fonctionne que dans un `{for … by clé}` **keyé** : la clé du `by` reconnaît chaque ligne d'un rendu à l'autre. C'est elle qui dit à MJS qu'une ligne s'est *déplacée* (et non détruite puis recréée), et chaque ligne glisse depuis sa propre place. Sans `by`, la ligne est reconnue par l'`id` de son élément, à défaut par son rang à sa création : une ligne ajoutée plus tard peut alors partir de la place d'une autre.
 
-Une ligne peut porter plusieurs balises `@flip`, à n'importe quelle profondeur de son gabarit : côte à côte, l'une dans l'autre, sous une même balise, sous un même `{if}` ou chacune sous le sien. Chacune est reconnue par la clé de la ligne et par sa place dans le gabarit de la ligne, et glisse depuis sa propre place, que les autres balises de la ligne soient là ou non :
+Une ligne peut porter plusieurs balises `:flip`, à n'importe quelle profondeur de son gabarit : côte à côte, l'une dans l'autre, sous une même balise, sous un même `{if}` ou chacune sous le sien. Chacune est reconnue par la clé de la ligne et par sa place dans le gabarit de la ligne, et glisse depuis sa propre place, que les autres balises de la ligne soient là ou non :
 
 ```html
 {for todo in $todos by id}
-  <tr @flip=200>…</tr>
+  <tr :flip=200>…</tr>
   {if todo.open}
-    <tr @flip=200 class="detail">…</tr>
+    <tr :flip=200 class="detail">…</tr>
   {end}
 {end}
 ```
@@ -404,8 +421,8 @@ Une ligne peut porter plusieurs balises `@flip`, à n'importe quelle profondeur 
 ```html
 {for todo in $todos by id}
   <section>
-    <h4 @flip=200>{todo.title}</h4>
-    <p @flip=200>{todo.description}</p>
+    <h4 :flip=200>{todo.title}</h4>
+    <p :flip=200>{todo.description}</p>
   </section>
 {end}
 ```
@@ -418,7 +435,7 @@ Dans un `{for}` placé dans un `{for}`, la ligne intérieure est reconnue par sa
 {for groupe in $groupes by id}
   <div>
     {for ligne in groupe.lignes by id}
-      <p @flip=200>{ligne.texte}</p>
+      <p :flip=200>{ligne.texte}</p>
     {end}
   </div>
 {end}
@@ -432,11 +449,11 @@ Un cross-fade fait *voler* un élément d'un endroit vers un autre : il sort d'u
 
 ```html
 {for todo in $todos.filter((t)-> not t.done) by id}
-  <li @transition=*crossfade(key: todo.id) @flip=200 mjs-flip-delay="600">…</li>
+  <li :transition=*crossfade(key: todo.id) :flip=200 mjs-flip-delay="600">…</li>
 {end}
 
 {for todo in $todos.filter((t)-> t.done) by id}
-  <li @transition=*crossfade(key: todo.id) @flip=200 mjs-flip-delay="600">…</li>
+  <li :transition=*crossfade(key: todo.id) :flip=200 mjs-flip-delay="600">…</li>
 {end}
 ```
 
@@ -456,10 +473,10 @@ Le cross-fade a besoin de savoir *quel* élément sortant correspond à *quel* �
 
 </details>
 
-Pour une animation de secours faite main, `µanim.crossfade nom, config` crée la paire à la main : deux transitions `nomSend` (à poser sur `@out`) et `nomReceive` (sur `@in`), avec un `fallback` qui est une fonction `(node, params, isIntro)-> config` (forme `css`) :
+Pour une animation de secours faite main, `µanim.crossfade nom, config` crée la paire à la main : deux transitions `nomSend` (à poser sur `:out`) et `nomReceive` (sur `:in`), avec un `fallback` qui est une fonction `(node, params, isIntro)-> config` (forme `css`) :
 
 ```html
-<li @in=*todoReceive(key: todo.id) @out=*todoSend(key: todo.id)>…</li>
+<li :in=*todoReceive(key: todo.id) :out=*todoSend(key: todo.id)>…</li>
 ```
 
 ## Animations fluides : `µinterpolate` et `µspring`
@@ -477,7 +494,7 @@ Au-delà des transitions d'entrée/sortie, deux **runes** animent en continu une
 </script>
 
 <div class="track">
-  <div class="bar" @style.width="{$progress.current}%"/>
+  <div class="bar" :style.width="{$progress.current}%"/>
 </div>
 
 <button @click={$progress = 0}>0%</button>
@@ -507,7 +524,7 @@ Au-delà des transitions d'entrée/sortie, deux **runes** animent en continu une
 </script>
 
 <div class="field" @mousemove={track}>
-  <div class="ball" @style.left="{$ball.current.x}px" @style.top="{$ball.current.y}px"/>
+  <div class="ball" :style.left="{$ball.current.x}px" :style.top="{$ball.current.y}px"/>
 </div>
 ```
 
@@ -530,4 +547,4 @@ L'objet `µeasing` (alias `µ.easing`) fournit les courbes standard : `linear`, 
 
 ---
 
-📚 **Apprendre en pratiquant** : ces notions se répartissent sur trois sections du tuto interactif — **Transitions** (directive, réglages, entrée et sortie, CSS & JS, événements, transitions globales), **Animation** (valeurs interpolées, ressorts) et **Transitions avancées** (transitions différées, cross-fade, `@flip`).
+📚 **Apprendre en pratiquant** : ces notions se répartissent sur trois sections du tuto interactif — **Transitions** (directive, réglages, entrée et sortie, CSS & JS, événements, transitions globales), **Animation** (valeurs interpolées, ressorts) et **Transitions avancées** (transitions différées, cross-fade, `:flip`).

@@ -86,6 +86,10 @@ if (µ.Element) {
       // reveal/flip/cube/turn) survivait à la résurrection : un node ressuscité restait
       // « apparié » à un fragment neuf qui n'existe plus
       node._mjs_pairedWith = void 0;
+      // <retour-sortie>
+      // sans entrée écrite, ni `@introstart` ni `@introend`, comme Svelte : sa sortie revient sur ses pas (plus bas)
+      if (node._mjs_intro)
+      // </retour-sortie>
       try {
         if (typeof node._mjs_cb_introstart === "function") {
           node._mjs_cb_introstart();
@@ -116,6 +120,11 @@ if (µ.Element) {
           µ.error(µ._mjs_msg('ifReintro', null, 'Échec re-intro:'), err);
         }
       }
+      // <retour-sortie>
+      // sans entrée écrite, sa sortie revient sur ses pas, depuis là où elle en est, et celles de ses balises intérieures avec elle
+      // (cf. `µ._mjs_txBack`)
+      µ._mjs_txBack(node, !node._mjs_intro);
+      // </retour-sortie>
     }
     return true;
   };
@@ -134,7 +143,8 @@ if (µ.Element) {
 
   // _mjs_updIf prend une createFn qui retourne {fragment, refs}.
   // Plus de parse HTML, plus de cache template, plus de walk paths.
-  µ.Element.prototype._mjs_updIf = function(id, createFn) {
+  // `kb` : les props que la branche livre à ses composants (generator/compile.ts), posées avant son entrée dans la page
+  µ.Element.prototype._mjs_updIf = function(id, createFn, kb) {
     var built, childMode, destroyCount, dyingCount, e, firstNew, n, outroNodes, range, ref, s, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
@@ -146,6 +156,10 @@ if (µ.Element) {
     }
     // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
+      // <props-enfants>
+      // branche reprise en pleine sortie : ses composants reçoivent les props d'aujourd'hui, comme une branche neuve
+      if (kb) kb();
+      // </props-enfants>
       return;
     }
     // </transitions>
@@ -207,6 +221,19 @@ if (µ.Element) {
         outroNodes[__oi]._mjs_pairedWith = firstNew;
       }
     }
+    // <props-enfants>
+    // props des composants de la branche, posées avant son entrée dans la page : un composant déjà chargé, mis à niveau à
+    // l'insertion, les trouve dans le registre `µ._mjs_pend` dès son `µawake`, comme une ligne de `{for}` peuplée avant la sienne. Une
+    // liaison qui lève n'empêche pas cette entrée : l'erreur repart ensuite vers le rendu du parent, comme quand elle jouait après
+    if (kb) {
+      try {
+        kb();
+      } catch (err) {
+        s.parentNode.insertBefore(built.fragment, e);
+        throw err;
+      }
+    }
+    // </props-enfants>
     return s.parentNode.insertBefore(built.fragment, e);
   };
 

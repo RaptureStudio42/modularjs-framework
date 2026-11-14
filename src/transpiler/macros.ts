@@ -14,18 +14,24 @@
 //                              hook sleep via l'API interne _mjs_hook)
 
 import { readFileSync, existsSync, realpathSync } from 'node:fs'
-import { join, dirname, resolve, basename, isAbsolute, sep } from 'node:path'
+import { join, dirname, resolve, basename, isAbsolute, sep, relative } from 'node:path'
 import { extractSections, masqueValeursAttributs, type SectionsResult } from './sections.js'
-import { maskHtmlComments } from '../mask.js'
+import { maskHtmlComments, maskNonCode, createMaskTable, replaceBlocks } from '../mask.js'
 import { dedent } from '../generator/state.js'
+import { aligneSurLaPremiereLigne, unlessSuivisDUnPointVirgule } from '../generator/utils.js'
 import { t } from '../messages/index.js'
+import { SIGN, SIGN_RE, written } from '../parser/mjs-words.js'
 import { typedLine, type LintToggles } from '../diagnostics.js'
-import { findMacroTagEnd, asciiLower } from './macro-tag.js'
+import { asciiLower } from './macro-tag.js'
 import { lintSplitRune } from './split-rune.js'
 import { parseEffect, effectSpec, removedEffectError } from '../effects/catalog.js'
 import { aliasExample } from '../effects/aliases-mjs.js'
 import { settingsComment } from '../effects/settings-comment.js'
-import { expandLayoutBlocks } from '../parser/index.js'
+import { AT_RESERVED_NAMES, expandLayoutBlocks, extractBalanced, lireAccoladesALEnvers, resolveTagName, Scanner, LINE_CARRIER_OPEN, LINE_CARRIER_RE, type TagRef, type TagRefAttrs } from '../parser/index.js'
+import { BROWSER_FUNCTIONS, DECLARABLE_KEYWORDS, HANDLER_REFERENCE_RE, LANGUAGE_KEYWORDS, type HandlerReference } from '../handler-reference.js'
+import { lireFichier, parcourir, type AttributDeBalise, type Balise, type Etendue, type Fichier } from '../reader/index.js'
+import { HORS_BALISAGE, imgTagsInBlock } from './img-tag.js'
+import { balisesDe, composantLu, nomDe, valeurDe } from './template-tree.js'
 
 export interface IncludeAccumulator {
   /** CSS partials inlinés (concaténé au <style> du parent). */
@@ -36,6 +42,8 @@ export interface IncludeAccumulator {
   module: string[]
   /** Cache : nom de partial → résolu (évite double-include). */
   resolved: Set<string>
+  /** partiels locaux absents qu'un partiel de shared/ remplace : dépendances de l'unité */
+  absents?: Set<string>
   /** Clés en cours d'expansion (garde anti-<@include> circulaire). */
   expanding?: Set<string>
   /** partial introuvable / <@include>
@@ -57,28 +65,53 @@ export interface IncludeAccumulator {
    * vie = un transpile) : un même partial inclus N fois n'est lu/parsé qu'UNE
    * fois (avant : N lectures disque + N re-parses + N warnings dupliqués). */
   htmlCache: Map<string, SectionsResult>
+  /** la table des lignes du HTML rendu par processIncludes (index k : sa ligne k) : une erreur trouvée dans ce HTML cite
+   * la ligne du composant, ou sa ligne dans le partiel qui l'écrit, avec son fichier */
+  places?: LinePlace[]
+  /** le fichier de chaque partiel dont le script (`script`, `module`, même rang) est versé, et la ligne où ce script commence :
+   *  une faute de Civet y est citée à sa ligne dans le partiel */
+  scriptPlaces?: Array<{ file: string; line: number }>
+  modulePlaces?: Array<{ file: string; line: number }>
+  /** le dossier du composant (cf. processIncludes) : un message cite un partiel par son chemin depuis lui */
+  root?: string
 }
+
+// la place d'une ligne du HTML où les partiels sont versés : le fichier qui l'écrit (null : le composant ; sinon le chemin
+// du partiel), sa ligne dans ce fichier, et la ligne du composant qui la porte ou qui verse son partiel ; `suite` : les
+// morceaux posés plus loin sur la même ligne (le texte du composant qui reprend après un `<@include>`, un partiel versé au
+// milieu d'une ligne), chacun à son indice `at` dans la ligne, avec sa place et sa colonne dans la ligne écrite
+export interface LinePlace { file: string | null; line: number; host: number; suite?: LineRun[] }
+export interface LineRun { at: number; file: string | null; line: number; host: number; column: number }
+
+// un HTML et sa table des lignes
+interface Placed { html: string; places: LinePlace[] }
 
 export function newIncludeAccumulator(): IncludeAccumulator {
   return { css: [], script: [], module: [], resolved: new Set(), errors: [], warnings: [], htmlCache: new Map() }
+}
+
+// la ligne k (0 : la première) d'un HTML où des partiels sont versés, citée : sa ligne du composant, ou sa ligne dans le
+// partiel qui l'écrit, avec son fichier ; hors de la table (aucun partiel lu), la ligne comptée depuis `firstLine`
+export function citeLine(places: LinePlace[] | undefined, firstLine: number, k: number): number | string {
+  const place = places?.[k]
+  if (!place) return firstLine + k
+  return place.file === null ? place.line : t('transpiler.ligne-du-partiel', { ligne: place.line, fichier: place.file })
 }
 
 // ----------------------------------------------------------------------------
 // processIncludes : remplace <@include name> dans le HTML par le template
 // du partial, et accumule css/script/module dans `acc`.
 // ----------------------------------------------------------------------------
-// Le pattern accepte soit un nom simple (`header`, `nav-bar`), soit un chemin
+// Les balises `<@include …>` sont lues dans l'arbre du gabarit (readIncludes, plus bas) : jamais dans une valeur
+// d'attribut ni une chaîne d'expression. La forme accepte soit un nom simple (`header`, `nav-bar`), soit un chemin
 // relatif (`../shared/header`, `./sub/foo`). Les deux formes restent
 // distinguables : présence de `/` ou `.` au début → chemin relatif strict.
 // La forme documentée est SANS slash final (`<@include header>`) : groupe 1
 // (nom/chemin) capturé en PARESSEUX, groupe 2 capture À PART un éventuel `/`
-// final — ce slash traînant est désormais rejeté par
+// final — ce slash traînant est rejeté par
 // processIncludes (erreur de compilation) au lieu d'être avalé dans le nom.
-// Exportée (avec resolvePartial ci-dessous) : réutilisée telle quelle par
-// bundler/index.ts (preResolveAssets) pour descendre dans les <@include>
-// AVANT l'envoi au worker — même résolution que l'inlining réel, aucune
-// divergence possible entre les deux passages.
-export const INCLUDE_RE = /<@include\s+([\.\/\w\-]+?)\s*(\/?)>/gi
+// bundler/index.ts (preResolveAssets) descend dans les <@include> AVANT l'envoi au worker, avec la même lecture
+// (includeTargets) et la même résolution (resolvePartial ci-dessous) que l'inlining réel.
 
 // assertPartialUnder — confinement <@include> : un `../` répété dans un
 // chemin relatif STRICT résolvait n'importe où sur le disque, sans garde — `<@include
@@ -122,10 +155,11 @@ export function resolvePartial(
   }
   // Nom simple : local d'abord, puis fallback `<sourceDir>/shared/`.
   const local = join(baseDir, `_${rawTarget}.mjs`)
-  if (existsSync(local)) return { path: local, key: local }
+  // même confinement que le chemin relatif : un lien posé dans les sources ne fait pas inclure un fichier du dehors
+  if (existsSync(local)) { if (sourceDir) assertPartialUnder(local, sourceDir, rawTarget); return { path: local, key: local } }
   if (sourceDir) {
     const shared = join(sourceDir, 'shared', `_${rawTarget}.mjs`)
-    if (existsSync(shared)) return { path: shared, key: shared }
+    if (existsSync(shared)) { assertPartialUnder(shared, sourceDir, rawTarget); return { path: shared, key: shared } }
   }
   return null
 }
@@ -135,21 +169,38 @@ export function processIncludes(
   baseDir: string | undefined,
   acc: IncludeAccumulator,
   sourceDir?: string,
-  lint: { sigil?: string, scriptLang?: string, moduleLang?: string } = {},
+  // `firstLine` : la ligne du fichier où commence `html` (1 par défaut), première ligne de la table des lignes (acc.places)
+  lint: { sigil?: string, scriptLang?: string, moduleLang?: string, firstLine?: number } = {},
   // coupe individuellement l'avertissement `[lint.include]` ci-dessous (mjs.config.json
   // `lint.include`) — SANS RAPPORT avec `lint` ci-dessus (sigil/langue des sections incluses)
   lintTypes?: LintToggles
 ): string {
+  acc.root     = baseDir
+  const placed = includeInto(html, baseDir, acc, sourceDir, lint, lintTypes, null, lint.firstLine ?? 1)
+  acc.places   = placed.places
+  return placed.html
+}
+
+// processIncludes sur un HTML écrit dans `file` (null : le composant) à partir de sa ligne `firstLine` : le HTML rendu et
+// sa table des lignes, les partiels versés à toute profondeur
+function includeInto(
+  html: string,
+  baseDir: string | undefined,
+  acc: IncludeAccumulator,
+  sourceDir: string | undefined,
+  lint: { sigil?: string, scriptLang?: string, moduleLang?: string },
+  lintTypes: LintToggles | undefined,
+  file: string | null,
+  firstLine: number
+): Placed {
   if (!baseDir) {
     // Sans baseDir on ne peut pas trouver les fichiers partials → retiré, mais SIGNALÉ
     // (avant : strip totalement silencieux, cf. plus haut).
-    const out = html.replace(INCLUDE_RE, (_match, target: string) => {
+    return replaceIncludes(html, true, acc.errors, file, firstLine, (target) => {
       const w = typedLine('include', t('transpiler.include-sans-basedir', { target }), lintTypes)
       if (w !== null) acc.warnings.push(w)
       return ''
     })
-    reportMalformedIncludes(out, acc.errors)
-    return out
   }
   // PERF — lit+parse un partial UNE seule fois par transpile (cache par
   // path résolu). Un partial inclus N fois ne refait pas N readFileSync +
@@ -166,11 +217,14 @@ export function processIncludes(
     let s = cache.get(partialPath)
     if (!s) {
       try {
-        s = extractSections(readFileSync(partialPath, 'utf-8'))
+        // fins de ligne `\r\n` ramenées à `\n`, comme celles du composant (transpile) : le script et le gabarit du partiel se lisent,
+        // et ses fautes se situent, sur les lignes du fichier
+        s = extractSections(readFileSync(partialPath, 'utf-8').replace(/\r\n?/g, '\n'))
         if (s.vars || s.types.length > 0 || s.effects.length > 0) throw new Error(t('transpiler.include-vars'))
-        // les blocs `{? nom}` du partiel, vérifiés ici : une faute y est citée à sa ligne du partiel, le
-        // HTML recollé dans le composant n'a plus les lignes du fichier (le résultat n'est pas gardé)
-        expandLayoutBlocks(s.html, s.htmlStartLine)
+        // les blocs `{? nom}` du partiel, vérifiés ici : une faute y est citée à sa ligne du partiel, avec son chemin depuis le
+        // dossier du composant ; le HTML recollé dans le composant n'a plus les lignes du fichier (le résultat n'est pas gardé)
+        const fichier = relative(acc.root ?? baseDir, partialPath)
+        expandLayoutBlocks(s.html, s.htmlStartLine, (ligne) => t('transpiler.ligne-du-partiel', { ligne, fichier }))
       } catch (e: any) {
         throw new Error(`<@include ${target}> : ${e?.message ?? e}`)
       }
@@ -178,7 +232,7 @@ export function processIncludes(
     }
     return s
   }
-  const out = html.replace(INCLUDE_RE, (_match, target: string, selfClose: string) => {
+  return replaceIncludes(html, true, acc.errors, file, firstLine, (target, selfClose) => {
     // slash final interdit, même canal d'erreur que partial introuvable
     if (selfClose === '/' || target.endsWith('/')) {
       const clean = target.replace(/\/+$/, '')
@@ -197,6 +251,8 @@ export function processIncludes(
       return ''
     }
     const { path: partialPath, key } = resolved
+    // partiel pris dans shared/ : un partiel local du même nom, absent aujourd'hui, le remplacerait — il compte dans les dépendances
+    if (!target.includes('/') && !target.startsWith('.') && dirname(partialPath) !== resolve(baseDir)) (acc.absents ??= new Set<string>()).add(join(baseDir, `_${target}.mjs`))
     const label = basename(target)
 
     if (acc.resolved.has(key)) {
@@ -217,7 +273,7 @@ export function processIncludes(
       acc.expanding = acc.expanding ?? new Set()
       acc.expanding.add(key)
       try {
-        return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes)
+        return includeInto(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes, partialPath, sections.htmlStartLine)
       } finally {
         acc.expanding.delete(key)
       }
@@ -226,6 +282,12 @@ export function processIncludes(
 
     const sections = getSections(partialPath, target)
     for (const w of sections.warnings) acc.warnings.push(`<@include ${target}> : ${w}`)
+    // une chaîne du script du partiel écrite sur plusieurs lignes où le retrait des commentaires a pris un commentaire : avertie à sa
+    // ligne du partiel, nommé par son chemin depuis le dossier du composant (`sous/_bloc.mjs`, `../shared/_pied.mjs`)
+    for (const p of sections.lostInStrings) {
+      const w = typedLine('multilineString', t('transpiler.chaine-longue-entamee', { position: `${relative(acc.root ?? baseDir, partialPath).split(sep).join('/')}:${p.line}:${p.column}`, signe: p.sign, ouverte: p.openLine, guillemet: p.quote }), lintTypes)
+      if (w !== null && !acc.warnings.includes(w)) acc.warnings.push(w)
+    }
     // rune séparée de son symbole dans le script du partiel : même refus que dans le composant hôte (cf.
     // split-rune.ts), situé sur la ligne du fichier partiel ; lu dans la langue du script hôte, qui le reçoit et
     // le compile, pas dans celle que le partiel déclare ou hérite par défaut
@@ -253,33 +315,141 @@ export function processIncludes(
       const cleanStyle = sections.style.raw.includes('\x00') ? sections.style.raw.replace(/\x00/g, '') : sections.style.raw
       acc.css.push(`\x00MJSSTYLE:${sections.style.lang}\x00/* --- Partial: ${label} --- */\n${cleanStyle}\x00MJSENDSTYLE\x00`)
     }
+    // la ligne qui nomme le partiel en tête de son script, versé à celui de l'hôte après le retrait des commentaires
+    // (retirerCommentaires) : écrite dans le commentaire du langage de l'hôte, `#` en CoffeeScript et `//` ailleurs (ce que
+    // le balayeur des commentaires fait d'un `#`) ; un `#` y serait du code (`.length`) pour la lecture du script par
+    // l'arbre, qui n'attend aucun commentaire dans le script d'un composant
+    const enTete = (lang: string | undefined, nom: string): string => `${lang === 'coffee' ? '#' : '//'} --- ${nom}: ${label} ---`
     if (sections.module.raw.trim() !== '') {
-      acc.module.push(`# --- Partial Module: ${label} ---\n${dedent(sections.module.raw)}`)
+      acc.module.push(`${enTete(lint.moduleLang, 'Partial Module')}\n${dedentCode(sections.module.raw, lint.moduleLang ?? sections.module.lang)}`)
+      acc.modulePlaces ??= []
+      acc.modulePlaces.push({ file: partialPath, line: sections.module.startLine })
     }
     if (sections.script.raw.trim() !== '') {
-      acc.script.push(`# --- Partial: ${label} ---\n${dedent(sections.script.raw)}`)
+      acc.script.push(`${enTete(lint.scriptLang, 'Partial')}\n${dedentCode(sections.script.raw, lint.scriptLang ?? sections.script.lang)}`)
+      acc.scriptPlaces ??= []
+      acc.scriptPlaces.push({ file: partialPath, line: sections.script.startLine })
     }
 
     // Récursion : un partial peut lui-même <@include …>
-    return processIncludes(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes)
+    return includeInto(sections.html, dirname(partialPath), acc, sourceDir, lint, lintTypes, partialPath, sections.htmlStartLine)
   })
-  reportMalformedIncludes(out, acc.errors)
-  return out
 }
 
-// reportMalformedInclude/reportMalformedIncludes — un <@include qui ne correspond pas à la forme stricte
+// le script d'un partiel sans son retrait commun, mesuré sur ses lignes de code seulement : une ligne qui commence dans une
+// chaîne (gabarit `…`, chaîne sur deux lignes, bloc """) ou un commentaire n'en est pas une, et ne perd que le retrait commun
+// de toutes les lignes, comme avant (le texte d'une chaîne ne change pas). Versé après le script du composant, un script
+// resté en retrait continuerait sa dernière instruction (`$n = 1` devenait l'appel `1(…)`)
+function dedentCode(src: string, lang: string | undefined): string {
+  const code    = maskNonCode(src, lang)
+  const lines   = src.split('\n')
+  const ducode  = lines.map(() => false)
+  let margin    = Infinity
+  let at        = 0
+  lines.forEach((l, i) => {
+    const k = l.search(/\S/)
+    if (k >= 0 && code[at + k] !== ' ') {
+      ducode[i] = true
+      margin    = Math.min(margin, k)
+    }
+    at += l.length + 1
+  })
+  if (margin === Infinity || margin === 0) return dedent(src)
+  const commun = Math.min(...lines.filter((l) => l.trim() !== '').map((l) => l.search(/\S/)))
+  return lines.map((l, i) => l.slice(Math.min(ducode[i] ? margin : commun, l.search(/\S|$/)))).join('\n')
+}
+
+// la forme stricte d'une balise `<@include …>` lue dans l'arbre : le chemin (paresseux), puis un éventuel slash final,
+// refusé par processIncludes
+const INCLUDE_FORM = /^<@include\s+([./\w-]+?)\s*(\/?)>$/i
+
+// les `<@include …>` d'un HTML de composant ou de partiel, lus dans son arbre (partiels pas encore versés) : chaque
+// balise `<@include…>` (`<@include-x>` aussi, mal formée ; `<@includex>` non), et le texte d'une telle balise dans un
+// <textarea> ou un <title>, où le partiel versé devient du texte ; jamais une valeur d'attribut ni une chaîne
+// d'expression (les commentaires HTML sont déjà retirés par extractSections) ; `dialecte` : gabarit en Civet ou en
+// CoffeeScript, où une regex se passe sans parenthèses (comme pour le parseur)
+function readIncludes(html: string, dialecte: boolean): Array<{ start: number, end: number }> {
+  const found: Array<{ start: number, end: number }> = []
+  parcourir(lireFichier(html, { gabarit: true, partiels: true, dialecte }), (n) => {
+    if (n.sorte === 'balise' && /^@include\b/i.test(n.nom)) found.push({ start: n.debut, end: n.finOuvrante })
+    else if (n.sorte === 'texte' && /^<@include\b/i.test(html.slice(n.debut, n.fin))) found.push({ start: n.debut, end: n.fin })
+  })
+  return found
+}
+
+// les chemins des `<@include chemin>` d'un gabarit, lus dans son arbre comme processIncludes les lit (slash final compris)
+export function includeTargets(html: string, dialecte: boolean): string[] {
+  const targets: string[] = []
+  for (const { start, end } of readIncludes(html, dialecte)) {
+    const m = INCLUDE_FORM.exec(html.slice(start, end))
+    if (m) targets.push(m[1])
+  }
+  return targets
+}
+
+// remplace chaque `<@include chemin>` de l'arbre par `build(chemin, slash final)` ; une balise mal formée reste telle
+// quelle, signalée une fois le texte rendu, son extrait lu à sa place dans ce texte. Rend aussi la table des lignes du
+// texte rendu : une ligne a la place du texte qui l'ouvre (celui de `html`, écrit dans `file` à partir de sa ligne
+// `firstLine`, ou celui d'un partiel versé, dont la ligne du composant devient celle de son `<@include>`)
+function replaceIncludes(html: string, dialecte: boolean, errors: string[], file: string | null, firstLine: number, build: (target: string, selfClose: string) => string | Placed): Placed {
+  const malformed: number[]     = []
+  const places: LinePlace[]     = []
+  const own = (k: number): LinePlace => ({ file, line: firstLine + k, host: firstLine + k })
+  let out  = ''
+  let pos  = 0
+  let line = 0
+  // pose un morceau de texte, la place de sa ligne j donnée par `of` : sa première ligne continue celle qui est ouverte, où
+  // elle note où elle commence (indice dans la ligne, colonne `column` dans la ligne écrite), une ligne vide en fin de
+  // morceau reste ouverte au suivant
+  const put = (text: string, of: (j: number) => LinePlace, column = 1): void => {
+    if (text === '') return
+    const lines = text.split('\n')
+    if (out === '' || out.endsWith('\n')) places.push(of(0))
+    else {
+      const open  = places[places.length - 1]
+      const at    = out.length - out.lastIndexOf('\n') - 1
+      const first = of(0)
+      places[places.length - 1] = { ...open, suite: [...(open.suite ?? []), { at, file: first.file, line: first.line, host: first.host, column }, ...(first.suite ?? []).map((r) => ({ ...r, at: r.at + at }))] }
+    }
+    const last = text.endsWith('\n') ? lines.length - 1 : lines.length
+    for (let j = 1; j < last; j++) places.push(of(j))
+    out += text
+  }
+  // un morceau de `html` (de `from` à `to`), ses lignes comptées depuis la ligne `line` de `html`
+  const putOwn = (from: number, to: number): void => {
+    const first = line
+    put(html.slice(from, to), (j) => own(first + j), from - html.lastIndexOf('\n', from - 1))
+    line += countNewlines(html.slice(from, to))
+  }
+  for (const { start, end } of readIncludes(html, dialecte)) {
+    const m = INCLUDE_FORM.exec(html.slice(start, end))
+    putOwn(pos, start)
+    if (m) {
+      const built = build(m[1], m[2])
+      const host  = own(line).host
+      if (typeof built === 'string') put(built, () => own(line))
+      else put(built.html, (j) => ({ ...built.places[j], host }))
+      line += countNewlines(html.slice(start, end))
+    }
+    else {
+      malformed.push(out.length)
+      putOwn(start, end)
+    }
+    pos = end
+  }
+  putOwn(pos, html.length)
+  if (out === '' || out.endsWith('\n')) places.push(own(line))
+  for (const at of malformed) reportMalformedInclude(errors, out, at)
+  return { html: out, places }
+}
+
+// reportMalformedInclude — une balise <@include qui ne correspond pas à la forme stricte
 // <@include chemin> (attributs, chemin absent, chevrons manquants) restait
-// jusqu'ici du texte INERTE dans la page, sans un mot (AVANT : `<@include foo
+// du texte INERTE dans la page, sans un mot (`<@include foo
 // titre="a">` traversait tel quel jusqu'au HTML rendu, silence total).
-// Appelées APRÈS la passe INCLUDE_RE de processIncludes (les deux branches
-// ci-dessus) : tout `<@include` restant à ce stade est par construction une
-// forme non reconnue (INCLUDE_RE, elle, a déjà consommé toutes les formes
-// valides — y compris le slash final interdit, traité par son propre canal
+// Appelée par replaceIncludes, une fois le texte rendu (le slash final interdit a son propre canal
 // d'erreur). Même dédoublonnage par texte EXACT que reportUnclosedMacroTag
-// (macros.ts) : processIncludes se rappelle récursivement sur le html
-// de chaque partial inclus, la MÊME occurrence non consommée remonte donc
-// IDENTIQUE à travers plusieurs niveaux d'appel — sans ce garde-fou, elle
-// serait signalée une fois par niveau traversé.
+// (macros.ts) : un même message n'est donné qu'une fois.
 function reportMalformedInclude(errors: string[], html: string, idx: number): void {
   const extrait = Array.from(html.slice(idx, idx + 120)).slice(0, 60).join('').replace(/\n/g, ' ')
   const msg = t('transpiler.include-malforme', { extrait })
@@ -287,12 +457,6 @@ function reportMalformedInclude(errors: string[], html: string, idx: number): vo
   // eslint-disable-next-line no-console
   console.error(`[ModularJS] ❌ ${msg}`)
   errors.push(msg)
-}
-
-function reportMalformedIncludes(html: string, errors: string[]): void {
-  const re = /<@include\b/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html)) !== null) reportMalformedInclude(errors, html, m.index)
 }
 
 // ----------------------------------------------------------------------------
@@ -320,7 +484,24 @@ export interface GlobalMacrosResult {
   docSock: string[]
   /** un alias d'effet de l'appli (`*ripple.rouge`) posé sur <@document> : le composant dépend du fichier qui le déclare */
   usesProjectEffects: boolean
+  /** les gestionnaires faits d'un nom seul dans le fallback d'un <@failed> et sur les balises globales (`@click=nom`), vérifiés par le transpileur une fois
+   * les noms du <script> connus (cf. checkHandlerReferences) */
+  handlerRefs: HandlerReference[]
+  /** les balises du fallback d'un <@failed>, nommées comme partout ailleurs (cf. fallbackTags) : des références aux modules cœur et
+   *  aux composants, que le gabarit compilé ne relève pas (ce fallback ne passe pas par lui), versées à celles du composant pour que la
+   *  construction livre les modules et vérifie les composants */
+  tagRefs: TagRef[]
+  /** d'où vient chaque ligne de `setup` (même rang que ses lignes, la première après le saut de ligne de tête) écrite par
+   *  l'auteur, celle du corps d'un gestionnaire (`<@window @resize={…}>`) : une faute de Civet y est citée à sa place */
+  setupOrigins: Array<SetupOrigin | undefined>
+  /** chaque gestionnaire écrit entre accolades : le nom de sa fonction dans le script (`_gl_0`) et la place de son corps — resté
+   *  ouvert (`@resize={$x = 1 +}`), il avale la ligne qui le referme dans le script, refusé par le transpileur */
+  setupHandlers: Array<{ fn: string; origin: SetupOrigin }>
 }
+
+// une ligne du corps d'un gestionnaire versé au script : le HTML lu (`html`, ses lignes celles du HTML reçu), l'indice où le
+// corps écrit (`body`) y commence, et le rang de la ligne dans ce corps
+export interface SetupOrigin { html: string; at: number; body: string; row: number }
 
 // les effets qui se posent sur <@document> : ceux de toute la page (la souris, la langue, les autres visiteurs)
 const DOC_EFFECTS = ['ripple', 'lang', 'cursors', 'offline', 'react', 'follow', 'heatmap', 'pointer', 'spotlight']
@@ -383,6 +564,75 @@ function isHtmlSpace(c: string): boolean {
   return c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r'
 }
 
+// la lecture sans accolade intérieure, gardée pour une interpolation qui ne se referme pas (cf. headInterpolationAt)
+const HEAD_EXPR_FLAT = /\{\{([^{}]+)\}\}|\{([^{}]+)\}/y
+
+// une interpolation lue : de son accolade ouvrante (`at`) à juste après sa dernière fermante (`end`) ; `raw` pour `{{…}}`
+interface HeadInterp {
+  at: number
+  end: number
+  raw: boolean
+  body: string
+}
+
+// la lecture d'une accolade : son contenu et la position qui suit sa fermante, `null` si elle ne se referme pas
+type LectureAccolade = (at: number) => { corps: string; fin: number } | null
+
+// les accolades de `str`, lues à la demande comme dans le reste du gabarit (extractBalanced). À la première qui ne se referme pas, le texte
+// est relu une fois de la dernière accolade à la première (lireAccoladesALEnvers, la lecture du reste du gabarit quand une accolade reste
+// ouverte), et chaque accolade y est connue : chaque accolade seule relisait tout le reste du texte (temps quadratique, des secondes pour
+// quelques milliers)
+function lecteurAccolades(str: string): LectureAccolade {
+  const scanner = new Scanner(str)
+  let toutes: Map<number, { corps: string; fin: number } | null> | null = null
+  return (at) => {
+    if (toutes) return toutes.get(at) ?? null
+    scanner.pos = at + 1
+    try {
+      const corps = extractBalanced(scanner, '}')
+      return { corps, fin: scanner.pos }
+    }
+    catch {
+      toutes = lireAccoladesALEnvers(str)
+      return null
+    }
+  }
+}
+
+// l'interpolation `{…}` ou `{{…}}` qui s'ouvre en `at` de `str`, lue par `lue` comme dans le reste du gabarit (extractBalanced : accolades
+// imbriquées, chaînes, commentaires, regex) : `<title>{µt('k', { n: 1 })}</title>` est UNE expression ; lue jusqu'à la première accolade
+// fermante, elle laissait `{µt('k', ` en texte et rendait l'objet seul (`[object Object]`), et une chaîne qui contient `}` cassait la
+// construction. `{{…}}` est essayé d'abord et demande ses deux accolades fermantes, comme dans le gabarit (sinon le `{…}` intérieur était
+// pris seul et les deux accolades extérieures restaient en texte). Une lecture qui ne se referme pas (accolade ou chaîne jamais fermée)
+// garde la lecture sans accolade intérieure : une faute de frappe y fait toujours échouer la construction, une accolade seule reste du
+// texte. `null` : aucune interpolation en `at`
+function headInterpolationAt(lue: LectureAccolade, str: string, at: number): HeadInterp | null {
+  if (str.startsWith('{{', at)) {
+    const dedans = lue(at + 1)
+    if (dedans && str[dedans.fin] === '}') return { at, end: dedans.fin + 1, raw: true, body: dedans.corps }
+  }
+  const lu = lue(at)
+  if (lu) return { at, end: lu.fin, raw: false, body: lu.corps }
+  HEAD_EXPR_FLAT.lastIndex = at
+  const m = HEAD_EXPR_FLAT.exec(str)
+  if (!m) return null
+  return { at, end: at + m[0].length, raw: m[1] !== undefined, body: m[1] ?? m[2] }
+}
+
+// les interpolations d'un commentaire HTML, dont le texte va de `debut` à `fin` dans `str` : lues dans ce texte seul. Une accolade du
+// commentaire ne lit jamais au-delà de lui (`<!-- a { --><title>{$n}</title><!-- } -->`, lue jusqu'au commentaire suivant, avalait le
+// titre et cassait la construction) ; une interpolation qu'il contient en entier se lit comme ailleurs
+function commentInterps(str: string, debut: number, fin: number, interps: HeadInterp[]): void {
+  const texte = str.slice(debut, fin)
+  const lue   = lecteurAccolades(texte)
+  let at = texte.indexOf('{')
+  while (at !== -1) {
+    const m = headInterpolationAt(lue, texte, at)
+    if (m) interps.push({ at: debut + m.at, end: debut + m.end, raw: m.raw, body: m.body })
+    at = texte.indexOf('{', m ? m.end : at + 1)
+  }
+}
+
 // tagPositions : suit les états du tokeniseur HTML5 dans une balise — nom (de balise ou
 // d'attribut) → après `=` (espaces admis) → valeur QUOTÉE (seulement si le premier caractère non
 // blanc après le `=` est un guillemet) ou valeur NUE. Dans une valeur nue, TOUT caractère reste
@@ -394,7 +644,7 @@ function isHtmlSpace(c: string): boolean {
 // s'ouvre sur `<!--` et se ferme sur `-->` ou `--!>`, ou AUSSITÔT sur `<!-->`/`<!--->` (HTML5) : ne
 // connaître que `-->` classait tout le reste du bloc en commentaire, balises fautives comprises.
 //
-// Les expressions `{…}`/`{{…}}` sont sautées d'un bloc et prennent l'état courant, sauf celle qui est
+// Les expressions `{…}`/`{{…}}` (lues par headInterpolationAt) sont sautées d'un bloc et prennent l'état courant, sauf celle qui est
 // le PREMIER caractère non blanc après le `=` d'un attribut : elle EST la valeur, le compilateur
 // l'enveloppe de guillemets à l'émission (ST_AUTOQUOTE) — ce qui la suit dans la même valeur nue,
 // lui, reste ST_BARE. Dans une valeur DÉJÀ quotée, une expression reste ST_QUOTED : `µ._esc` y
@@ -404,14 +654,14 @@ function isHtmlSpace(c: string): boolean {
 //
 // `attr` : pour chaque caractère d'une valeur d'attribut, l'index où commence le token de
 // l'attribut (son nom) — de quoi citer `attr=valeur` en entier dans un message, sans le redeviner.
-function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
+//
+// `interps` : les interpolations lues, de gauche à droite, celles des commentaires comprises (cf. commentInterps) — l'émission
+// (buildHeadInjection) les reprend telles quelles, sans relire le texte.
+function tagPositions(str: string): { state: Uint8Array; attr: Int32Array; interps: HeadInterp[] } {
   const state = new Uint8Array(str.length)
   const attr  = new Int32Array(str.length).fill(-1)
-  const expr  = /\{\{[^{}]+\}\}|\{[^{}]+\}/y
-  const exprAt = (at: number): RegExpExecArray | null => {
-    expr.lastIndex = at
-    return expr.exec(str)
-  }
+  const lue   = lecteurAccolades(str)
+  const interps: HeadInterp[] = []
   let tag   = false
   // 'elname' (nom de l'élément) | 'tagname' (nom de l'élément CALCULÉ) | 'name' (avant/dans/après un
   // nom d'attribut) | 'value' (après le `=`) | 'bare' | 'quoted'
@@ -423,9 +673,9 @@ function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
   while (i < str.length) {
     const c = str[i]
     if (c === '{') {
-      const m = exprAt(i)
+      const m = headInterpolationAt(lue, str, i)
       if (m) {
-        const stop = i + m[0].length
+        const stop = m.end
         if (tag) {
           if (mode === 'quoted') state.fill(ST_QUOTED, i, stop)
           else if (mode === 'tagname' || mode === 'elname') {
@@ -442,6 +692,7 @@ function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
           }
           else state.fill(ST_TAG, i, stop)
         }
+        interps.push(m)
         i = stop
         continue
       }
@@ -457,13 +708,14 @@ function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
           fin.lastIndex = i + 4
           const m = fin.exec(str)
           stop = m ? m.index + m[0].length : str.length
+          commentInterps(str, i + 4, m ? m.index : str.length, interps)
         }
         state.fill(ST_COMMENT, i, stop)
         i = stop
         continue
       }
       // `<{expr}` : la donnée fabriquerait le nom de la balise et tout ce qui le suit
-      if (c === '<' && str[i + 1] === '{' && exprAt(i + 1)) {
+      if (c === '<' && str[i + 1] === '{' && headInterpolationAt(lue, str, i + 1)) {
         tag      = true
         mode     = 'tagname'
         state[i] = ST_TAG
@@ -580,7 +832,7 @@ function tagPositions(str: string): { state: Uint8Array; attr: Int32Array } {
     }
     i++
   }
-  return { state, attr }
+  return { state, attr, interps }
 }
 
 // countNewlines — nombre de `\n` dans une chaîne, pour situer une faute à la ligne du .mjs
@@ -629,12 +881,12 @@ function unaliasSigil(txt: string, sigil?: string): string {
 // texte D'ORIGINE (avant la réécriture `={…}` → `="{…}"`), avec le symbole de l'auteur : un message
 // ne montre jamais un état intermédiaire du compilateur.
 //
-// La ligne citée est celle du .mjs : `firstLine` plus les `\n` qui précèdent la faute dans le
+// La ligne citée est celle du .mjs : `lineOf` des `\n` qui précèdent la faute dans le
 // contenu RESTAURÉ (un <style>/<script> masqué tient sur une ligne, ses sauts de ligne
 // manqueraient). Dans un `<@include>`, le partial est déjà inliné quand ce contrôle tourne : la
-// ligne est alors celle du composant qui inclut, pas celle du partial.
-function reportBareInterpolation(s: string, state: Uint8Array, attr: Int32Array, start: number, end: number, restore: (str: string) => string, macro: 'head' | 'failed', errors: string[], firstLine: number, sigil?: string): void {
-  const ligne = firstLine + countNewlines(restore(s.slice(0, start)))
+// table des lignes (cf. processIncludes) cite alors sa ligne dans le partiel, avec son fichier.
+function reportBareInterpolation(s: string, state: Uint8Array, attr: Int32Array, start: number, end: number, restore: (str: string) => string, macro: 'head' | 'failed', errors: string[], lineOf: (k: number) => number | string, sigil?: string): void {
+  const ligne = lineOf(countNewlines(restore(s.slice(0, start))))
   const texte = (brut: string): string => unaliasSigil(restore(brut), sigil)
   if (state[start] === ST_TAG_NAME) {
     errors.push(t('transpiler.head-interpolation-position-balise', { macro, ligne, forme: texte(faultyTag(s, state, start, end)) }))
@@ -663,8 +915,9 @@ function reportBareInterpolation(s: string, state: Uint8Array, attr: Int32Array,
 //   → '<link rel="stylesheet" href="' + (themeCss[$selected]) + '">'
 // Les `{expr}` (texte) et `attr={expr}` (binding) deviennent des `(expr)`
 // concaténés ; lus dans un µeffect, leurs `$x` rendent l'injection réactive.
-// Limite assumée : pas d'accolades imbriquées dans une expr (utiliser `+` plutôt
-// que l'interpolation `#{…}` côté binding).
+// Chaque expression se lit comme dans le reste du gabarit (cf. headInterpolationAt) : accolades
+// imbriquées (`{µt('k', { n: 1 })}`), chaînes et commentaires compris ; une accolade écrite dans un
+// commentaire HTML ne lit jamais au-delà de lui (cf. commentInterps) ; une interpolation vide ne rend rien.
 //
 // Une interpolation écrite dans une balise, ailleurs que dans une valeur entre guillemets, est une
 // FAUTE relevée dans `errors` : `µ._esc` échappe `<`, `>`, `"`, `'` et `&`, jamais l'espace ni le
@@ -686,63 +939,64 @@ function reportBareInterpolation(s: string, state: Uint8Array, attr: Int32Array,
 // une valeur déjà quotée (`href="…?p={$x}"`) déclenchait l'ajout, le guillemet injecté FERMAIT la
 // valeur au navigateur, et la donnée reprenait la main sur la balise ; en texte (`<title>a={$x}`),
 // elle inventait des guillemets et faisait perdre le HTML brut de `{{…}}`.
-// `firstLine` = ligne du .mjs où commence `content` ; `sigil` = symbole du projet (message seul).
-function buildHeadInjection(content: string, macro: 'head' | 'failed', errors: string[], firstLine: number, sigil?: string): string {
+// `lineOf(k)` = ligne citée de la ligne k de `content` (0 : sa première) ; `sigil` = symbole du projet (message seul).
+// Rend l'expression du HTML et `brut` : vrai quand un `{{…}}` d'auteur en texte y mêle du HTML brut, qui ne passe jamais par la
+// politique Trusted Types `mjs` du cœur (seul le HTML fait du gabarit et de valeurs échappées y a droit)
+function buildHeadInjection(written: string, macro: 'head' | 'failed', errors: string[], lineOf: (k: number) => number | string, sigil?: string): { html: string, brut: boolean } {
+  // les commentaires qui gardent les lignes d'un bloc retiré (cf. keepLines) n'entrent pas dans le HTML injecté : il reste celui du bloc sans eux
+  // (un commentaire écrit par l'auteur y reste)
+  const content = written.replace(LINE_CARRIER_RE, '')
   // `<style>`/`<script>` ont leur PROPRE syntaxe à accolades (règles CSS, JS) :
   // les masquer AVANT le scan d'interpolation ci-dessous, sinon un `@font-face
   // { … }` est pris pour UNE SEULE expression réactive géante (`{([^{}]+)}`
   // avale tout le corps de la règle) → Civet invalide (`µ._esc(font-family: …)`,
-  // syntaxe cassée, ParseError). Restauré tel quel dans les morceaux littéraux :
+  // syntaxe cassée, ParseError). Restauré tel quel dans les morceaux littéraux et le corps des interpolations :
   // figé, cohérent avec µasset('…') (résolu au BUILD, jamais réactif) —
   // <style>/<script> n'ont jamais supporté l'interpolation `{$x}` dans <@head>,
   // aucune régression de feature.
-  const blocks: string[] = []
+  // jetons à sceau, remise au point fixe (createMaskTable) : un NUL écrit par l'auteur reste tel quel
+  const { stash, restore } = createMaskTable(content, 'MJSHEADLIT')
   // le CONTENU seul : la balise ouvrante se lit comme les autres (`<script src={$cdn}>` reçoit son adresse, au lieu
   // de partir avec le texte `{$cdn}`)
-  const premasked = content.replace(/(<(style|script)\b[^>]*>)([\s\S]*?)(<\/\2>)/gi, (_m, open: string, _nom: string, inner: string, close: string) => {
-    blocks.push(inner)
-    return `${open}\x00MJSHEADLIT${blocks.length - 1}\x00${close}`
-  })
-  const restore = (str: string): string =>
-    blocks.length ? str.replace(/\x00MJSHEADLIT(\d+)\x00/g, (_m, i) => blocks[Number(i)]) : str
+  const premasked = content.replace(/(<(style|script)\b[^>]*>)([\s\S]*?)(<\/\2>)/gi, (_m, open: string, _nom: string, inner: string, close: string) => `${open}${stash(inner)}${close}`)
 
-  const { state, attr } = tagPositions(premasked)
+  const { state, attr, interps } = tagPositions(premasked)
   const parts: string[] = []
+  let brut    = false
   let last    = 0
   let prefixe = ''   // guillemet fermant d'une valeur auto-quotée, à coller en tête du prochain littéral
-  // `{{expr}}` essayé AVANT `{expr}` à chaque position : sinon le `{expr}` intérieur était pris
-  // seul, échappé, et les deux accolades extérieures restaient en texte
-  const re = /\{\{([^{}]+)\}\}|\{([^{}]+)\}/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(premasked)) !== null) {
-    const etat = state[m.index]
+  // les interpolations que tagPositions a lues, de gauche à droite : une accolade qu'il n'a pas prise reste du texte
+  for (const m of interps) {
+    const etat = state[m.at]
     if (etat === ST_TAG || etat === ST_BARE || etat === ST_TAG_NAME) {
-      reportBareInterpolation(premasked, state, attr, m.index, m.index + m[0].length, restore, macro, errors, firstLine, sigil)
+      reportBareInterpolation(premasked, state, attr, m.at, m.end, restore, macro, errors, lineOf, sigil)
     }
-    const litteral = prefixe + premasked.slice(last, m.index)
+    const litteral = prefixe + premasked.slice(last, m.at)
     prefixe = ''
     // µ._esc : ces valeurs partent en innerHTML (head vivant / fallback de
     // boundary). Sans échappement, `<@head><title>{$titre}</title></@head>`
     // avec un titre venu du serveur contenant `</title><img onerror=…>`
     // exécutait du code (XSS). Svelte échappe <svelte:head> ; nous aussi.
     // `{{expr}}` HORS balise est la demande EXPLICITE de HTML brut : jamais échappé, comme
-    // partout ailleurs ; DANS une balise (valeur d'attribut) il reste échappé comme `{expr}`
+    // partout ailleurs ; DANS une balise (valeur d'attribut) il reste échappé comme `{expr}`.
+    // Une interpolation vide (`{}`, `{ }`, `{{}}`) ne rend rien, comme dans le reste du gabarit : `µ._esc()` affichait « undefined »
+    const valeur = restore(m.body).trim()
     if (etat === ST_AUTOQUOTE) {
       // l'expression EST la valeur : on l'entoure de guillemets ICI, à l'émission
       parts.push(quoteHeadLiteral(restore(litteral + '"')))
-      parts.push(`µ._esc(${(m[1] ?? m[2]).trim()})`)
+      if (valeur) parts.push(`µ._esc(${valeur})`)
       prefixe = '"'
     }
     else {
       if (litteral) parts.push(quoteHeadLiteral(restore(litteral)))
-      if (m[1] !== undefined && etat === ST_TEXT) parts.push(`String(${m[1].trim()})`)
-      else parts.push(`µ._esc(${(m[1] ?? m[2]).trim()})`)
+      if (valeur && m.raw && etat === ST_TEXT) { parts.push(`String(${valeur})`); brut = true }
+      else if (valeur) parts.push(`µ._esc(${valeur})`)
     }
-    last = m.index + m[0].length
+    last = m.end
   }
   const queue = prefixe + premasked.slice(last)
   if (queue) parts.push(quoteHeadLiteral(restore(queue)))
-  return parts.length ? parts.join(' + ') : "''"
+  return { html: parts.length ? parts.join(' + ') : "''", brut }
 }
 
 // `<script>` que le navigateur exécuterait, d'après les attributs de sa balise ouvrante : type absent ou vide, JavaScript,
@@ -754,6 +1008,157 @@ function headScriptRuns(attrs: string): boolean {
   const type = (m[1] ?? m[2] ?? m[3]).trim().toLowerCase()
   if (type.includes('{')) return false
   return /^(|module|importmap|speculationrules|(text|application)\/(x-)?(java|ec)script|text\/(jscript|livescript|javascript1\.[0-5]))$/.test(type)
+}
+
+// les balises du langage que le repli d'un <@failed> ne peut pas porter : il part tel quel par innerHTML, une seule fois, après
+// l'erreur, hors du gabarit compilé qui les fait agir (écouteurs globaux, en-tête, frontière, vue du routeur, emplacement, remplissage) ;
+// `<@include>` y est déjà versé par sa passe, `<@element>` et `<@module>` y sont refusés par les leurs, qui tournent avant celle du
+// repli (cf. fallbackDynamicTags)
+const FALLBACK_LANGUAGE_TAGS = new Set(AT_RESERVED_NAMES.filter(n => n !== 'include' && n !== 'element' && n !== 'module'))
+
+// une fermante de balise raccourcie (`</@carte>`, `</@@progress>`), lue comme le lecteur lit une fermante ; un jeton de bloc qui
+// n'ouvre rien, que le lecteur signale quand aucun bloc ne l'attend (`{end}`, `{else}`, `{elsif …}`) — pas `{success …}` ni
+// `{error …}`, qu'il signale hors d'un `{await}` : un repli n'en porte jamais, c'est l'expression d'un paramètre ainsi nommé
+const SHORTCUT_CLOSE_RE = /<\/(@[a-zA-Z0-9\-@]+)\s*>/y
+const BLOCK_TOKEN_RE    = /\{(end|else|elsif)(?=[\s}])/y
+
+// le repli tel que le lecteur le lit, même longueur : une tête d'accolade faite d'un mot de branche qu'un repli ne porte jamais
+// (`{error …}`, `{success …}` : il n'a pas d'`{await}`) ou d'un nom de ses paramètres (`<@failed end>` puis `{end}`, `{key …}`) y
+// est l'expression qu'elle est, sa première lettre en capitale : lue comme un jeton de bloc, elle rendait vide la balise raccourcie
+// ouverte autour d'elle (`<@carte>{error || 'x'}</@carte>` : contenu hors de la balise, fermante orpheline)
+const PARAM_TOKEN_RE = /\{(error|success|end|elsif|key)(?=[\s}])/g
+function fallbackReading(block: string, params: string[]): string {
+  return block.replace(PARAM_TOKEN_RE, (m: string, word: string) => (word === 'error' || word === 'success' || params.includes(word) ? `{${word[0].toUpperCase()}${word.slice(1)}` : m))
+}
+
+// les exemples d'un repli lu (cf. fallbackTags) : <pre>, <code>, le texte d'un <textarea> ou d'un <title>, un script, un style ;
+// une balise ou une fermante y est citée, jamais refusée ni rendue
+const FALLBACK_EXAMPLE_TAGS = new Set(['pre', 'code', 'textarea', 'title'])
+function fallbackExamples(tree: Fichier): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  parcourir(tree, (n) => {
+    if (n.sorte === 'script' || n.sorte === 'style' || (n.sorte === 'balise' && FALLBACK_EXAMPLE_TAGS.has(nomDe(n)))) out.push([n.debut, n.fin])
+  })
+  return out
+}
+
+// les replis des <@failed> de `text` (ceux que lit replacePairedTag), chacun lu comme fallbackTags le lit : la place de chaque balise
+// <@element> ou <@module> qui y agirait (`live`), et leurs exemples. Les passes de ces deux balises tournent avant celle du repli
+// (cf. processGlobalMacros)
+function fallbackDynamicTags(text: string, dialecte: boolean): { live: Set<number>, examples: Array<[number, number]> } {
+  const live = new Set<number>()
+  const examples: Array<[number, number]> = []
+  for (const n of macroTags(text, 'failed', dialecte).tags) {
+    const close = n.fin - '</@failed>'.length
+    if (n.autoFermante || n.fermeeParAncetre !== null || asciiLower(text.slice(close, n.fin)) !== '</@failed>') continue
+    const shift = n.finOuvrante - '<@failed>'.length
+    const tree  = composantLu(`<@failed>${text.slice(n.finOuvrante, close)}</@failed>`)
+    for (const b of balisesDe(tree.enfants, HORS_BALISAGE)) if (/^@(element|module)$/i.test(b.nom)) live.add(b.debut + shift)
+    for (const [start, end] of fallbackExamples(tree)) examples.push([start + shift, end + shift])
+  }
+  return { live, examples }
+}
+
+// la fermante d'une balise dynamique (`close` : `</@element>`, `</@module>`) devient `</div>`, comme son ouvrante, sauf citée dans
+// l'exemple d'un repli, où son ouvrante reste telle qu'écrite (cf. fallbackDynamicTags) ; un texte sans <@failed> n'est pas relu
+function closeDynamicTags(text: string, close: RegExp, dialecte: boolean): string {
+  if (!asciiLower(text).includes('<@failed')) return text.replace(close, '</div>')
+  const { examples } = fallbackDynamicTags(text, dialecte)
+  return text.replace(close, (m: string, at: number) => (examples.some(([start, end]) => start < at && at < end) ? m : '</div>'))
+}
+
+// les attributs écrits sur la balise d'un module cœur, relevés comme ceux du gabarit (cf. TagRefAttrs) : leurs noms, un étalement,
+// le texte en clair de chacun (vide quand il est écrit sans valeur, null quand il est calculé) ; `source` : le texte où `b` a été lue
+function coreTagAttrs(source: string, b: Balise): TagRefAttrs {
+  const ecrits = b.attributs.filter(a => a.nom !== null)
+  const texts  = ecrits.map(a => {
+    const v = valeurDe(source, a)
+    return [a.nom!.toLowerCase(), a.valeur === null ? '' : v === undefined || /[{}&]/.test(v) ? null : v]
+  })
+  return { names: ecrits.map(a => a.nom!), spread: b.attributs.some(a => a.sorte === 'etalement'), texts: Object.fromEntries(texts) }
+}
+
+// fallbackTags — le contenu d'un bloc <@failed>, tel qu'écrit entre ses balises, que le compilateur du gabarit ne lit pas (son repli
+// part tel quel par innerHTML) : chaque balise y est nommée comme dans le gabarit (resolveTagName). Une balise raccourcie devient
+// celle de son module cœur (`<@@nom>` → `<mjs-core-nom`) ou de son composant (`<@nom>` → `<mjs-nom`), en minuscules comme le navigateur
+// la lit, ses attributs tels qu'écrits ; sa fermante écrite ne change que de nom (ce qui suit jusqu'au `>` reste : un saut de ligne écrit
+// là garde les lignes du repli, où ses fautes sont citées) ; auto-fermée ou jamais refermée, elle est refermée aussitôt après elle
+// (sans fermante, le navigateur rangerait dans la balise tout ce qui la suit), refermée par la fermante d'un ancêtre, là. Chaque
+// référence, raccourcie ou littérale (`<mjs-core-nom>`), rejoint `tagRefs` : la construction livre le module cœur et vérifie le
+// composant, comme pour le gabarit. Une balise du langage que le repli ne peut pas porter est refusée à sa ligne (`lineOf`, cf.
+// compileFailedBlock) ; un exemple dans <pre> ou <code>, un script ou un style restent tels qu'écrits. Un bloc ({if}, {for}…), ou un
+// jeton de bloc que rien n'ouvre (`{end}`), y est refusé de même, où qu'il soit hors d'un script ou d'un style : seules les expressions
+// `{…}` du repli sont calculées (cf. buildHeadInjection), jamais un bloc. Restent des expressions, que le repli calculait juste : une
+// expression en ligne (`{if err then 'a' else 'b'}`, `{for x in l then x}`), un `{key …}` ou un `{await …}` que rien ne referme
+// (l'appel d'un nom, `{key k}`), un jeton fait d'un nom de ses paramètres (`params` : `<@failed end>` puis `{end}`). Une fermante
+// `</@…>` qui ne ferme aucune ouvrante, autre casse que la sienne comprise (`<@Carte>…</@carte>`), est refusée comme le gabarit la
+// refuse, hors d'un exemple (cf. fallbackExamples) : le lecteur la signale à sa place (pas celle du bloc lui-même, qu'un jeton de bloc
+// laisse sans ouvrante : le lecteur y rend vide le <@failed>, balise en `@`). Les refus sont rendus dans l'ordre du texte
+function fallbackTags(content: string, errors: string[], lineOf: (k: number) => number | string, tagRefs: TagRef[], params: string[]): string {
+  // le bloc lu : ses positions, sa balise ouvrante et sa fermante, que rien ne touche ; `rogne` : là où commence le contenu rogné
+  const block  = `<@failed>${content}</@failed>`
+  const rogne  = '<@failed>'.length + content.length - content.trimStart().length
+  const tree   = composantLu(fallbackReading(block, params))
+  const lineAt = (at: number): string => String(lineOf(countNewlines(block.slice(rogne, at))))
+  const edits: Array<[number, number, string]> = []
+  const faults: Array<[number, string]>        = []
+  for (const b of balisesDe(tree.enfants, HORS_BALISAGE)) {
+    if (b.debut === 0) continue   // <@failed> lui-même
+    if (/^@[^@]/.test(b.nom) && FALLBACK_LANGUAGE_TAGS.has(nomDe(b).slice(1))) {
+      faults.push([b.debut, t('transpiler.failed-balise-du-langage', { nom: b.nom, ligne: lineAt(b.debut) })])
+      continue
+    }
+    const avant = tagRefs.length
+    const nom   = resolveTagName(b.nom, tagRefs).toLowerCase()
+    const ref   = tagRefs[avant]
+    if (ref && (ref.kind === 'raccourci-coeur' || ref.kind === 'litteral-coeur')) ref.attrs = coreTagAttrs(block, b)
+    if (b.nom[0] !== '@' || nom[0] === '@') continue
+    const closeAt = b.vide ? b.finOuvrante : b.fermeeParAncetre
+    edits.push([b.debut, b.debut + 1 + b.nom.length, `<${nom}`])
+    if (b.autoFermante) edits.push([b.finOuvrante - 2, b.finOuvrante, `></${nom}>`])
+    else if (closeAt !== null) edits.push([closeAt, closeAt, `</${nom}>`])
+    else {
+      const at = block.lastIndexOf('</', b.fin - 1)
+      edits.push([at, at + /^<\/[^\s/>]*/.exec(block.slice(at))![0].length, `</${nom}`])
+    }
+  }
+  // un jeton de bloc sans bloc, en `at`, sauf le nom d'un paramètre ; une expression lue comme un bloc garde ses `{else}`, `{elsif …}` et
+  // son `{end}` sans bloc
+  const token = (word: string, at: number): void => {
+    if (!params.includes(word)) faults.push([at, t('transpiler.failed-bloc', { bloc: word, ligne: lineAt(at) })])
+  }
+  parcourir(tree, (n) => {
+    if (n.sorte !== 'bloc') return
+    const closed     = n.fin - '{end}'.length > n.tete.fin && block.startsWith('{end}', n.fin - '{end}'.length)
+    const expression = n.nom === 'if' || n.nom === 'for' ? /\bthen\b/.test(maskNonCode(block.slice(n.tete.debut, n.tete.fin))) : (n.nom === 'key' || n.nom === 'await') && !closed
+    if (!expression) faults.push([n.debut, t('transpiler.failed-bloc', { bloc: n.nom, ligne: lineAt(n.debut) })])
+    else {
+      for (const br of n.branches) if (br.sorte === 'else' || br.sorte === 'elsif') token(br.sorte, br.debut)
+      if (closed) token('end', n.fin - '{end}'.length)
+    }
+  })
+  const examples = fallbackExamples(tree)
+  const own      = block.length - '</@failed>'.length
+  for (const d of tree.diagnostics) {
+    BLOCK_TOKEN_RE.lastIndex    = d.debut
+    SHORTCUT_CLOSE_RE.lastIndex = d.debut
+    const word  = BLOCK_TOKEN_RE.exec(block)
+    const close = SHORTCUT_CLOSE_RE.exec(block)
+    if (word) token(word[1], d.debut)
+    else if (close && d.debut < own && !examples.some(([start, end]) => start < d.debut && d.debut < end)) faults.push([d.debut, t('parser.balise-fermante-orpheline', { nom: close[1], ligne: lineAt(d.debut) })])
+  }
+  for (const [, msg] of faults.sort((a, b) => a[0] - b[0])) errors.push(msg)
+  // à la même place, une fermante ajoutée passe avant ce qui y commence : la balise qui suit, ou la fermante renommée de l'ancêtre
+  // qui l'a refermée (`<@carte><@@progress></@carte>`, où le renommage l'aurait sautée)
+  edits.sort((a, b) => a[0] - b[0] || (a[1] - a[0]) - (b[1] - b[0]))
+  let out = ''
+  let pos = 0
+  for (const [start, end, text] of edits) {
+    out += block.slice(pos, start) + text
+    pos  = end
+  }
+  out += block.slice(pos)
+  return out.slice('<@failed>'.length, -'</@failed>'.length)
 }
 
 // compileFailedBlock : compile le contenu d'un <@failed args>…</@failed> en une
@@ -774,9 +1179,9 @@ function headScriptRuns(attrs: string): boolean {
 // AVANT de construire la liste d'arguments, sinon `paramsRaw.split(/\s+/)`
 // l'aurait pris pour un 3ᵉ paramètre positionnel de la fonction fallback.
 //
-// `errors`/`firstLine`/`sigil` : transmis à buildHeadInjection pour le refus de l'interpolation
-// hors guillemets (cf. son bandeau). `firstLine` = ligne du .mjs où commence le contenu TRIMMÉ.
-function compileFailedBlock(paramsRaw: string, content: string, errors: string[], firstLine: number, sigil?: string): { setup: string[]; head: string; body: string[] } {
+// `errors`/`lineOf`/`sigil` : transmis à buildHeadInjection pour le refus de l'interpolation
+// hors guillemets (cf. son bandeau). `lineOf(k)` = ligne citée de la ligne k du contenu TRIMMÉ.
+function compileFailedBlock(paramsRaw: string, content: string, errors: string[], lineOf: (k: number) => number | string, sigil?: string, refs: HandlerReference[] = [], tagRefs: TagRef[] = []): { setup: string[]; head: string; body: string[] } {
   const tokens = paramsRaw.trim().split(/\s+/).filter(Boolean)
   const args: string[] = []
   let retryLimit = 1
@@ -790,6 +1195,7 @@ function compileFailedBlock(paramsRaw: string, content: string, errors: string[]
     args.push(tok)
   }
   const argStr = args.length ? args.join(', ') : 'err, reset'
+  const params = args.length ? args : ['err', 'reset']
   const wires: string[] = []
   let evN = 0
   // Extrait `@event={body}` (accolades ÉQUILIBRÉES) ou `@event=ref` → marqueur
@@ -800,10 +1206,13 @@ function compileFailedBlock(paramsRaw: string, content: string, errors: string[]
   // sans erreur de compilation). On scanne à profondeur équilibrée (jumeau exact
   // du comptage à accolades équilibrées de parseListeners). Markup malformé (`{` non fermé, ou `@x=` sans
   // valeur) → laissé tel quel, comme l'ancien regex.
-  const src = content.trim()
+  // une balise raccourcie y est celle de son module cœur ou de son composant, comme partout ailleurs, et chaque balise une référence
+  // du composant (innerHTML posait la balise telle qu'écrite : le navigateur affichait son texte) ; `before` : les erreurs d'avant ce repli
+  const before = errors.length
+  const src    = fallbackTags(content, errors, lineOf, tagRefs, params).trim()
   let marked = ''
   let last = 0
-  const startRe = /@([\w-]+)=/g
+  const startRe = /@([\w-]+)((?:\.[\w:-]*)*)=/g
   let fm: RegExpExecArray | null
   while ((fm = startRe.exec(src)) !== null) {
     const ev = fm[1]
@@ -829,6 +1238,32 @@ function compileFailedBlock(paramsRaw: string, content: string, errors: string[]
       handler = src.slice(valPos, k)
       consumedEnd = k
     }
+    // gestionnaire fait d'un nom seul (`@click=nom`, `@click={nom}`, `@click=@nom`) : vérifié par le transpileur avec les
+    // noms du <script> (cf. checkHandlerReferences). Une méthode du composant est appelée avec lui pour `this`, comme partout
+    // (passée telle quelle à addEventListener, elle recevait la balise) ; une fonction du navigateur que les paramètres ne
+    // masquent pas, sans la balise pour `this` (elle lèverait « Illegal invocation ») ; un mot du langage que Civet
+    // ne prend pas pour un nom (`if`), refusé par le transpileur, n'est pas émis (Civet s'arrêterait avant lui, sur une erreur
+    // illisible) ; `on`, `yes`… (cf. DECLARABLE_KEYWORDS) vont tels quels : déclarés, ils sont appelés, sinon refusés
+    const braces    = src[valPos] === '{'
+    const reference = HANDLER_REFERENCE_RE.exec(braces ? src.slice(valPos + 1, consumedEnd - 1).trim() : handler)
+    if (reference) {
+      const cited = lineOf(src.slice(0, fm.index).match(/\n/g)?.length ?? 0)
+      refs.push({ name: reference[2], method: reference[1] === '@', attr: `@${ev}${fm[2]}`, braces, line: typeof cited === 'number' ? cited : undefined, place: typeof cited === 'string' ? cited : undefined, scope: params })
+      // entre accolades comme sans, le nom va tel quel à addEventListener, qui l'appelle (`(event) => (reset)` le rendait sans l'appeler)
+      const name = reference[2]
+      const own  = reference[1] === '' && !params.includes(name)
+      handler = reference[1] === '@' ? `(event) => @${name}(event)` : own && LANGUAGE_KEYWORDS.has(name) && !DECLARABLE_KEYWORDS.has(name) ? 'null' : own && BROWSER_FUNCTIONS.has(name) ? `(event) => ${name}(event)` : name
+    }
+    // un modificateur (`@click.once=…`) n'est pas posé ici, où l'écouteur va en direct sur la balise, hors du routeur délégué :
+    // refusé avec sa ligne (l'attribut restait sans effet, le bouton muet) ; un nom seul pour valeur est relevé plus haut, comme sans lui
+    if (fm[2]) {
+      const msg = t('transpiler.failed-modificateur-non-gere', { evt: ev, suffixe: fm[2].slice(1), ligne: String(lineOf(src.slice(0, fm.index).match(/\n/g)?.length ?? 0)) })
+      // eslint-disable-next-line no-console
+      console.error(`[ModularJS] ❌ ${msg}`)
+      errors.push(msg)
+      startRe.lastIndex = consumedEnd
+      continue
+    }
     const marker = `data-mjsfe-${evN}`
     wires.push(`_mjs_e${evN} = _mjs_d.querySelector('[${marker}]')`)
     wires.push(`_mjs_e${evN}?.removeAttribute('${marker}')`)
@@ -839,7 +1274,10 @@ function compileFailedBlock(paramsRaw: string, content: string, errors: string[]
     startRe.lastIndex = consumedEnd
   }
   marked += src.slice(last)
-  const htmlExpr = buildHeadInjection(marked, 'failed', errors, firstLine, sigil)
+  const { html: htmlExpr, brut } = buildHeadInjection(marked, 'failed', errors, lineOf, sigil)
+  // un repli refusé (la construction échoue sur ses fautes) n'émet que son <div> vide : un bloc y donnait un code que Civet ne lit
+  // pas (`µ._esc(if err)`), et l'erreur de Civet, levée avant les refus, les cachait
+  const refused = errors.length > before
   // `_mjs_failedRetry`/`_mjs_failedRetryMsg` : posés en SETUP (constructeur, une
   // fois par instance) — PAS dans `body` (le corps du fallback, qui ne tourne
   // qu'AU CRASH) : `_mjs_catchError` doit lire la limite AVANT même d'appeler
@@ -850,40 +1288,41 @@ function compileFailedBlock(paramsRaw: string, content: string, errors: string[]
       `@_mjs_failedRetryMsg = ${JSON.stringify(t('transpiler.failed-boundary-retry-epuise', { limit: retryLimit }))}`,
     ],
     head: `@_mjs_fallback = (${argStr}) =>`,
-    body: [`_mjs_d = document.createElement('div')`, `_mjs_d.innerHTML = ${htmlExpr}`, ...wires, `_mjs_d`],
+    body: refused ? [`_mjs_d = document.createElement('div')`, `_mjs_d`] : [`_mjs_d = document.createElement('div')`, `_mjs_d.innerHTML = ${brut ? htmlExpr : `µ._mjs_th(${htmlExpr})`}`, ...wires, `_mjs_d`],
   }
 }
 
-// findMacroTagEnd — déplacée dans
-// macro-tag.ts (bandeau complet là-bas) — sections.ts en a besoin pour son
-// propre masquage <@head>/<@failed>, sans créer de cycle d'import (macros.ts
-// importe déjà sections.ts pour `extractSections`). Ré-exportée ici pour
-// compatibilité : imports existants (`from '../src/transpiler/macros.js'`
-// dans les tests) et usage interne (replaceOpenTag/replacePairedTag,
-// plus bas) inchangés.
-export { findMacroTagEnd } from './macro-tag.js'
+// reportUnclosedMacroTag — une balise du langage reconnue que l'arbre du gabarit ne referme jamais (une accolade, une
+// parenthèse de réglages ou un guillemet jamais refermés dans ses attributs) : erreur de construction, le HTML reste tel
+// quel. `extrait` = 60 premiers points de code de la balise (depuis `<@`, découpe par `Array.from` : une paire de
+// substituts à cheval sur la coupe n'y laisse pas un substitut isolé), sauts de ligne aplatis en espace. Dédoublonnée par
+// son texte : <@head> passe par `replacePairedTag` (forme contenu) puis par la boucle TARGETS (forme écouteur), la même
+// balise y serait signalée deux fois, et `bundler/index.ts` joint `macroErrors` dans un seul throw
+// reglagesNonFermes — une balise du langage que l'arbre ne referme jamais parce que les réglages d'un de ses effets ne le sont pas
+// (`<@document *ripple(color: red>`, une apostrophe dans `*ripple(color: 'red)`) : le conseil propre aux réglages, avec la ligne
+// de l'effet, plutôt que la balise ou l'expression non fermée ; null quand les réglages se referment (la faute est ailleurs)
+function reglagesNonFermes(html: string, at: number, macro: string, cite: (k: number) => number | string): string | null {
+  const fin   = html.indexOf('>', at)
+  const effet = /\s\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)\(/g
+  effet.lastIndex = at
+  const m = effet.exec(html)
+  if (!m || (fin >= 0 && m.index > fin)) return null
+  let open   = 1
+  let inText = ''
+  for (let i = m.index + m[0].length; i < html.length; i++) {
+    const c = html[i]
+    if (inText) {
+      if (c === '\\') i++
+      else if (c === inText) inText = ''
+    }
+    else if (c === '"' || c === "'") inText = c
+    else if (c === '(') open++
+    else if (c === ')' && --open === 0) return null
+  }
+  const ligne = cite(html.slice(0, m.index + 1).split('\n').length - 1)
+  return t(inText === '"' ? 'effets.guillemet-ouvert' : inText ? 'effets.texte-ouvert' : 'effets.parenthese', { nom: m[1], balise: macro, ligne })
+}
 
-// reportUnclosedMacroTag — SEUL point où `findMacroTagEnd`
-// rend -1 sur une balise macro RECONNUE (boundaryOk vrai) → accolade jamais
-// refermée (un guillemet seul jamais refermé ne déclenche PAS -1, tolérance
-// documentée plus haut). AVANT : la balise fautive restait telle quelle dans
-// le HTML, build VERT, silence total. `extrait` = 60 premiers caractères de
-// la balise (depuis `<@`), sauts de ligne aplatis en espace — une erreur par
-// balise fautive (appelé une seule fois par `idx`, jamais rejoué).
-//
-// deux défauts trouvés dans
-// CE correctif : (1) <@head> passe par `replacePairedTag` (forme contenu)
-// PUIS par la boucle TARGETS (§ 1 plus bas, forme écouteur) — quand
-// `findMacroTagEnd` rend -1 dans les DEUX passes sur la MÊME occurrence
-// (html inchangé entre les deux), le message était poussé deux fois,
-// identique ; `bundler/index.ts` joint `macroErrors` dans un seul throw →
-// phrase dupliquée pour l'utilisateur. Fix : dédoublonnage par texte EXACT
-// (`errors.includes(msg)`), robuste aux deux passes sans dépendre du nom de
-// macro ni de l'appelant. (2) `html.slice(idx, idx + 60)` compte en unités
-// UTF-16 : une paire de substituts (émoji) à cheval sur la coupe produisait
-// un substitut isolé dans le message. Fix : découpe par POINTS DE CODE
-// (`Array.from`) — tranche de 120 unités avant le `slice(0, 60)`, pour
-// garantir au moins 60 points de code (sauf fin de texte).
 function reportUnclosedMacroTag(errors: string[], macro: string, html: string, idx: number): void {
   const extrait = Array.from(html.slice(idx, idx + 120)).slice(0, 60).join('').replace(/\n/g, ' ')
   const msg = t('transpiler.macro-balise-non-fermee', { macro, extrait })
@@ -893,214 +1332,295 @@ function reportUnclosedMacroTag(errors: string[], macro: string, html: string, i
   errors.push(msg)
 }
 
-// effets `*nom(…)` écrits sur une balise du langage (`<@window>`, `<@element>`…) : retirés des
-// attributs et signalés — un effet se pose sur une balise HTML ou un composant. `keep(nom,
-// réglages)`, si fourni, reçoit l'effet à la place du refus (les effets de souris de
-// `<@document>`). Même lecture que findMacroTagEnd : guillemets reconnus hors accolade seulement,
-// dans une accolade la profondeur seule compte ; une étoile collée à ce qui précède n'est pas un
-// effet. Une parenthèse séparée du nom par un blanc (`*ripple (color: red)`) est refusée comme sur
-// une balise HTML, ses réglages seraient perdus : `lineAt(position)` donne la ligne du .mjs d'une
-// position des attributs, null quand elle n'est pas celle du fichier du composant. Sur une balise qui ne
-// garde aucun effet (`<@window>`), l'espace et l'effet qui ne s'y pose pas sont dits tous les deux. Un
-// texte resté ouvert dans les réglages (une apostrophe dans un mot, un guillemet double) est dit comme
-// tel, pas comme une parenthèse oubliée
-function stripEffects(attrs: string, macro: string, errors: string[], keep: ((name: string, raw: string) => void) | undefined, lineAt: (offset: number) => number | null): string {
-  let out   = ''
-  let depth = 0
-  let quote = ''
-  for (let i = 0; i < attrs.length; i++) {
-    const ch = attrs[i]
-    if (quote) {
-      if (ch === quote) quote = ''
-    }
-    else if (depth > 0) {
-      if (ch === '{') depth++
-      else if (ch === '}') depth--
-    }
-    else if (ch === '"' || ch === "'") quote = ch
-    else if (ch === '{') depth++
-    else if (ch === '*' && (i === 0 || /\s/.test(attrs[i - 1]))) {
-      const m = /^\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)/.exec(attrs.slice(i))
-      if (m) {
-        let end = i + m[0].length
-        // la parenthèse détachée est lue comme les autres : ses réglages ne restent pas parmi les attributs
-        const blank = /^\s+(?=\()/.exec(attrs.slice(end))
-        if (blank) end += blank[0].length
-        let raw        = ''
-        let note       = ''
-        const settings = attrs[end] === '('
-        if (settings) {
-          // réglages lus comme sur une balise : une parenthèse dans un texte (`color: ')'`) ne compte
-          // pas ; jamais refermée, elle est signalée (sa dernière lettre n'est plus mangée)
-          const from = end + 1
-          let open   = 0
-          let inText = ''
-          let closed = false
-          for (; end < attrs.length; end++) {
-            const c = attrs[end]
-            if (inText) {
-              if (c === '\\') end++
-              else if (c === inText) inText = ''
-            }
-            else if (c === '"' || c === "'") inText = c
-            else if (c === '(') open++
-            else if (c === ')' && --open === 0) { end++; closed = true; break }
-          }
-          if (!closed) {
-            errors.push(t(inText === '"' ? 'effets.guillemet-ouvert' : inText ? 'effets.texte-ouvert' : 'effets.parenthese', { nom: m[1], balise: macro }))
-            end = attrs.length
-          }
-          raw = closed ? attrs.slice(from, end - 1) : attrs.slice(from)
-          // un commentaire dans les réglages se lirait comme une valeur : refusé, avec sa ligne
-          const found = settingsComment(raw)
-          if (found) note = t('effets.commentaire', { nom: m[1], ligne: lineAt(from + found.at) ?? '', commentaire: found.text })
-        }
-        // un point derrière l'effet n'est le nom d'aucun alias (`*ripple .rouge`, `*ripple.rouge(size: 30).x`) : dit comme sur une balise
-        const stray = (settings ? /^(\s*)(\.[\w.-]*)/ : /^(\s+)(\.[\w.-]*)/).exec(attrs.slice(end))
-        // un effet inconnu est refusé d'abord, par son nom (`*rippel .rouge`) : son point ne dit rien
-        const dot   = stray && (effectSpec(m[1]) || effectSpec(m[1].split('.')[0])) ? stray : null
-        const gone  = removedEffectError(m[1], raw)
-        if (gone) errors.push(gone)
-        else {
-          if (blank) errors.push(t('effets.espace', { nom: m[1], ligne: lineAt(i) ?? '' }))
-          if (dot) errors.push(t(settings ? 'effets.point-reglages' : 'effets.point-espace', { nom: m[1], blanc: dot[1] ? ' ' : '', point: dot[2], exemple: aliasExample(m[1].split('.')[0]), ligne: lineAt(i) ?? '' }))
-          if (!keep) errors.push(t('effets.balise-speciale', { nom: m[1], balise: macro }))
-          else if (!blank && !dot) {
-            if (note) errors.push(note)
-            else keep(m[1], raw)
-          }
-        }
-        if (stray) end += stray[0].length
-        i = end - 1
-        continue
-      }
-      // une étoile et un point, sans nom d'effet entre eux (`*.rouge`) : l'effet manque, il ne reste pas parmi les attributs
-      const bare = /^\*(\.[\w.-]*)/.exec(attrs.slice(i))
-      if (bare) {
-        errors.push(t('effets.point-sans-effet', { point: bare[1], ligne: lineAt(i) ?? '' }))
-        i += bare[0].length - 1
-        continue
-      }
-    }
-    out += ch
-  }
-  return out
+// un attribut d'une balise du langage tel que l'arbre du gabarit le lit, sa place prise dans le texte de ses attributs
+interface MacroAttr extends Etendue {
+  sorte: AttributDeBalise['sorte']
+  nom: string | null
+  valeur: AttributDeBalise['valeur']
+  reglages: Etendue | null
 }
 
-// replaceOpenTag — remplace chaque balise ouvrante `<@name …>` (insensible à
-// la casse) par `cb(attrs, wholeTag)`. `attrs` = tout ce qui suit le nom
-// jusqu'au `>` réel (via findMacroTagEnd) — BYTE-IDENTIQUE à ce que
-// capturaient les anciennes regex `([^>]*)`/`([^>]+?)` pour tout cas SANS `>`
-// niché dans une accolade/chaîne. `wholeTag` = balise entière (pour un
-// éventuel retour « inchangé », ex. attrs vide sur <@element>/<@module>).
-// `requireLeadingSpace` reproduit le `\s+` obligatoire de <@element>/
-// <@module> (contenu requis) ; sinon la frontière de nom est celle des
-// anciennes regex `\b`/bare, RENFORCÉE ici (demande explicite) : le caractère
-// qui suit le nom doit être un blanc, `/`, `>` ou la fin de chaîne — sinon ce
-// n'est pas la macro visée (`<@windowx>` reste intact). `errors` reçoit
-// `macro-balise-non-fermee` si `findMacroTagEnd` ne trouve jamais son
-// `>` sur une balise reconnue — le HTML est laissé tel quel, comme avant.
-// Exception AJOUTÉE à `requireLeadingSpace` : un `>` IMMÉDIAT
-// (`<@element>` bare, zéro caractère entre le nom et la fermeture) compte aussi comme
-// frontière valide, pour que le corps de la macro reçoive `attrs` VIDE et rapporte
-// `element-variable-attendue` au lieu de laisser la balise littérale intacte face à sa
-// fermante convertie en `</div>` (dépareillée, aucune erreur). Fin de chaîne reste HORS de
-// cette exception (inchangée).
-// `/` COLLÉ (`<@element/>`, zéro espace avant le
-// slash) rejoint aussi les frontières valides : SANS cette entrée, `boundaryOk` valait faux
-// pour cette forme précise (seul `<@element $tag/>`, espacé, passait), la balise entière
-// traversait en silence, jamais vue par `cb` ni par la garde « auto-fermeture interdite »
-// (`reportSelfCloseForbidden`, plus bas) — celle-ci s'applique désormais aux deux formes.
+// le texte des attributs d'une balise du langage, de la fin de son nom à son `>` (le `/` d'une auto-fermeture compris), et
+// ses attributs
+interface MacroAttrs {
+  text: string
+  attrs: MacroAttr[]
+}
+
+function macroAttrs(html: string, tag: Balise, from: number): MacroAttrs {
+  const place = (e: Etendue): Etendue => ({ debut: e.debut - from, fin: e.fin - from })
+  return {
+    text:  html.slice(from, tag.finOuvrante - 1),
+    attrs: tag.attributs.map((a) => ({ sorte: a.sorte, nom: a.nom, valeur: a.valeur, ...place(a), reglages: a.reglages && place(a.reglages) }))
+  }
+}
+
+// retire du texte des attributs les morceaux donnés (rangés, disjoints) : un attribut qui y tombe part, les autres suivent
+// leur place dans le texte qui reste
+function cutAttrs(view: MacroAttrs, cuts: Array<[number, number]>): MacroAttrs {
+  if (cuts.length === 0) return view
+  let text = ''
+  let last = 0
+  for (const [from, to] of cuts) {
+    text += view.text.slice(last, from)
+    last  = to
+  }
+  text += view.text.slice(last)
+  const shift = (at: number): number => cuts.reduce((k, [from, to]) => (to <= at ? k - (to - from) : k), at)
+  const attrs = view.attrs
+    .filter((a) => cuts.every(([from, to]) => a.fin <= from || a.debut >= to))
+    .map((a) => ({ ...a, debut: shift(a.debut), fin: shift(a.fin), reglages: a.reglages && { debut: shift(a.reglages.debut), fin: shift(a.reglages.fin) } }))
+  return { text, attrs }
+}
+
+// effets `*nom(…)` écrits sur une balise du langage (`<@window>`, `<@element>`…) : retirés des attributs et signalés — un
+// effet se pose sur une balise HTML ou un composant. `keep(nom, réglages)`, si fourni, reçoit l'effet à la place du refus
+// (les effets de souris de `<@document>`). Ce sont les effets que l'arbre du gabarit lit parmi les attributs, jamais dans
+// une valeur ni dans une accolade ; une étoile collée à ce qui précède n'est pas un effet. Une parenthèse séparée du nom par
+// un blanc (`*ripple (color: red)`) est refusée comme sur une balise HTML, ses réglages seraient perdus : l'arbre ne les lui
+// donne pas, ils sont lus ici jusqu'à leur parenthèse fermante (un texte resté ouvert, une apostrophe dans un mot ou un
+// guillemet double, est dit comme tel, pas comme une parenthèse oubliée). `lineAt(position)` donne la ligne du .mjs d'une
+// position des attributs, null quand elle n'est pas celle du fichier du composant. Sur une balise qui ne garde aucun effet
+// (`<@window>`), l'espace et l'effet qui ne s'y pose pas sont dits tous les deux
+function stripEffects(source: MacroAttrs, macro: string, errors: string[], keep: ((name: string, raw: string) => void) | undefined, lineAt: (offset: number) => number | string | null): MacroAttrs {
+  const view  = withoutSize(source, macro, errors)
+  const attrs = view.text
+  const cuts: Array<[number, number]> = []
+  for (const a of view.attrs) {
+    // l'étoile d'un effet, ou celle d'un point sans nom d'effet (`*.rouge`, que l'arbre lit comme un attribut `.rouge`)
+    const i = a.sorte === 'effet' ? a.debut : a.nom?.startsWith('.') && attrs[a.debut - 1] === '*' ? a.debut - 1 : -1
+    if (i < 0 || i < (cuts.length > 0 ? cuts[cuts.length - 1][1] : 0) || (i > 0 && !/\s/.test(attrs[i - 1]))) continue
+    const name = a.sorte === 'effet' ? a.nom ?? '' : ''
+    if (!name) {
+      // une étoile et un point, sans nom d'effet entre eux (`*.rouge`) : l'effet manque, il ne reste pas parmi les attributs
+      const bare = /^\*(\.[\w.-]*)/.exec(attrs.slice(i))
+      if (!bare) continue
+      errors.push(t('effets.point-sans-effet', { point: bare[1], ligne: lineAt(i) ?? '' }))
+      cuts.push([i, i + bare[0].length])
+      continue
+    }
+    let end = i + 1 + name.length
+    // la parenthèse détachée est lue comme les autres : ses réglages ne restent pas parmi les attributs
+    const blank = a.reglages ? null : /^\s+(?=\()/.exec(attrs.slice(end))
+    let raw        = ''
+    let note       = ''
+    const settings = a.reglages !== null || blank !== null
+    if (a.reglages) {
+      // réglages lus par l'arbre, comme sur une balise : une parenthèse dans un texte (`color: ')'`) ne compte pas
+      raw = attrs.slice(a.reglages.debut, a.reglages.fin)
+      end = a.reglages.fin + 1
+      // un commentaire dans les réglages se lirait comme une valeur : refusé, avec sa ligne
+      const found = settingsComment(raw)
+      if (found) note = t('effets.commentaire', { nom: name, ligne: lineAt(a.reglages.debut + found.at) ?? '', commentaire: found.text })
+    }
+    else if (blank) {
+      end += blank[0].length
+      const from = end + 1
+      let open   = 0
+      let inText = ''
+      let closed = false
+      for (; end < attrs.length; end++) {
+        const c = attrs[end]
+        if (inText) {
+          if (c === '\\') end++
+          else if (c === inText) inText = ''
+        }
+        else if (c === '"' || c === "'") inText = c
+        else if (c === '(') open++
+        else if (c === ')' && --open === 0) { end++; closed = true; break }
+      }
+      if (!closed) {
+        errors.push(t(inText === '"' ? 'effets.guillemet-ouvert' : inText ? 'effets.texte-ouvert' : 'effets.parenthese', { nom: name, balise: macro, ligne: lineAt(from) ?? '' }))
+        end = attrs.length
+      }
+      raw = closed ? attrs.slice(from, end - 1) : attrs.slice(from)
+    }
+    // un point derrière l'effet n'est le nom d'aucun alias (`*ripple .rouge`, `*ripple.rouge(size: 30).x`) : dit comme sur une balise
+    const stray = (settings ? /^(\s*)(\.[\w.-]*)/ : /^(\s+)(\.[\w.-]*)/).exec(attrs.slice(end))
+    // un effet inconnu est refusé d'abord, par son nom (`*rippel .rouge`) : son point ne dit rien
+    const dot   = stray && (effectSpec(name) || effectSpec(name.split('.')[0])) ? stray : null
+    const gone  = removedEffectError(name, raw)
+    if (gone) errors.push(gone)
+    else {
+      if (blank) errors.push(t('effets.espace', { nom: name, ligne: lineAt(i) ?? '' }))
+      if (dot) errors.push(t(settings ? 'effets.point-reglages' : 'effets.point-espace', { nom: name, blanc: dot[1] ? ' ' : '', point: dot[2], exemple: aliasExample(name.split('.')[0]), ligne: lineAt(i) ?? '' }))
+      if (!keep) errors.push(t('effets.balise-speciale', { nom: name, balise: macro }))
+      else if (!blank && !dot) {
+        if (note) errors.push(note)
+        else keep(name, raw)
+      }
+    }
+    if (stray) end += stray[0].length
+    cuts.push([i, end])
+  }
+  return cutAttrs(view, cuts)
+}
+
+// un bloc du langage retiré du gabarit (`<@head>…</@head>`, `<@failed>…</@failed>`, une balise `<@window …>` écrite sur
+// plusieurs lignes), ou remplacé par une balise plus courte (`<@element $tag` sur plusieurs lignes), y laisse ses sauts de ligne
+// dans un commentaire HTML marqué comme le sien (cf. LINE_CARRIER_OPEN), après ce qui le remplace, que le parseur compte et que la sortie ignore : ce qui suit garde la ligne
+// du fichier dans les messages (une faute écrite après un `<@head>` de 3 lignes se disait 3 lignes plus haut). Là où un
+// commentaire se verrait, il est ôté sans changer les lignes : par le parseur (texte d'un `<textarea>` ou d'un `<title>`, valeur
+// d'attribut, cf. LINE_CARRIER_RE) et par buildHeadInjection (`<@head>`, fallback d'un `<@failed>`)
+function keepLines(replacement: string, removed: string): string {
+  const lost = countNewlines(removed) - countNewlines(replacement)
+  return lost > 0 ? `${replacement}${LINE_CARRIER_OPEN}${'\n'.repeat(lost)}-->` : replacement
+}
+
+// une ligne qui commence par une balise (`<p>`, `</div>`, `<@head>`, `<!--`), comme la lisait la garde d'avant l'arbre
+// (macro-tag.ts, looksLikeOpenTag) : jamais un `<` de comparaison au milieu d'une ligne de code
+const LINE_STARTS_TAG = /\n[ \t]*<[a-zA-Z/@!]/
+
+// une accolade ou une parenthèse d'attribut que l'auteur n'a pas refermée sur la balise du langage avale le HTML qui suit,
+// jusqu'à la première `}` ou `)` qui lui répond plus loin : l'arbre referme alors la balise, et son gestionnaire, sa
+// condition ou ses réglages sont faits de balises (un gestionnaire ainsi compilé tombait sur une erreur de Civet sans ligne
+// du .mjs, une condition de classe effaçait le HTML avalé sans un mot). Un attribut où une ligne commence par une balise,
+// hors chaînes, regex et commentaires du langage du gabarit (`dialecte` : Civet ou CoffeeScript, sinon JavaScript ; une chaîne
+// sur plusieurs lignes, un heredoc qui écrit du HTML restent permis), dit cette balise jamais refermée
+function swallowsHtml(html: string, tag: Balise, dialecte: boolean): boolean {
+  return tag.attributs.some((a) => LINE_STARTS_TAG.test(maskNonCode(html.slice(a.debut, a.fin), dialecte ? 'civet' : 'js')))
+}
+
+// les balises `<@name …>` du gabarit, lues dans son arbre (une lecture, seulement si le nom y paraît), dans l'ordre : écrite
+// dans une valeur d'attribut, une chaîne d'expression ou le texte d'un <textarea> ou d'un <title>, ce n'est qu'un texte.
+// L'arbre est lu même quand il signale une faute ailleurs (le parseur refuse ensuite le gabarit, avec son message) ;
+// `unclosed` : le début de chaque telle balise jamais refermée, dans l'ordre — celle où la lecture de l'arbre s'arrête, et
+// chacune dont un attribut avale le HTML qui suit (cf. swallowsHtml) ; laissées telles quelles, le parseur les refuse
+// ensuite avec leur ligne
+function macroTags(html: string, name: string, dialecte: boolean): { tags: Balise[], unclosed: number[] } {
+  const needle = `<@${name}`
+  const lower  = asciiLower(html)
+  if(!lower.includes(needle)) return { tags: [], unclosed: [] }
+  const tree               = lireFichier(html, { gabarit: true, dialecte })
+  const tags: Balise[]     = []
+  const unclosed: number[] = []
+  parcourir(tree, (n) => {
+    if(n.sorte !== 'balise' || asciiLower(n.nom) !== needle.slice(1)) return
+    if(swallowsHtml(html, n, dialecte)) unclosed.push(n.debut)
+    else tags.push(n)
+  })
+  tags.sort((a, b) => a.debut - b.debut)
+  const fault = tree.diagnostics.find((d) => lower.startsWith(needle, d.debut) && !tags.some((n) => n.debut === d.debut) && !unclosed.includes(d.debut))
+  if(fault) unclosed.push(fault.debut)
+  return { tags, unclosed: unclosed.sort((a, b) => a - b) }
+}
+
+// `:size` garde la place d'un composant de l'appli (generator/attributes, cf. bindingSize) : sur une balise du langage, refusé comme sur une
+// balise HTML et retiré de ses attributs — jamais lu comme l'écoute d'un événement « size », ni laissé dans le code émis (`<@element>` y
+// passe ses attributs) ; le signe des mots de MJS n'ouvre aucun mot collé à ce qui précède
+function withoutSize(view: MacroAttrs, macro: string, errors: string[]): MacroAttrs {
+  const size = view.attrs.find((a) => a.nom === written('size') && (a.debut === 0 || /\s/.test(view.text[a.debut - 1])))
+  if (!size) return view
+  errors.push(t('generator.size-composant', { nom: written('size'), balise: `@${macro}` }))
+  return cutAttrs(view, [[size.debut, size.fin]])
+}
+
+// replaceOpenTag — remplace chaque balise ouvrante `<@name …>` du gabarit (insensible à la casse, cf. macroTags) par
+// `cb(attrs, wholeTag, lineAt, names, at)` : `attrs`, ses attributs, effets et `:size` retirés (cf. stripEffects) ; `wholeTag`,
+// la balise entière (pour un éventuel retour « inchangé ») ; `names()`, les noms de ses attributs en `@` tels qu'écrits,
+// avec leur place depuis `<@` (la ligne d'un écouteur) ; `at`, sa place dans `html`. Le caractère qui suit le nom est un blanc, `/` ou `>` (`/` et `>`
+// collés compris : `<@element>` reçoit des attributs vides et rapporte `element-variable-attendue`, `<@element/>` tombe sous
+// la garde « auto-fermeture interdite »), ou la fin du texte hors `requireLeadingSpace` (<@element>/<@module>, contenu
+// requis) ; sinon ce n'est pas la macro visée (`<@windowx>` reste intact). Une telle balise que l'arbre ne referme jamais
+// est signalée (`macro-balise-non-fermee`) et laissée telle quelle
 function replaceOpenTag(
   html: string,
   name: string,
   requireLeadingSpace: boolean,
   errors: string[],
-  cb: (attrs: string, wholeTag: string) => string,
-  keep: ((name: string, raw: string, line: () => number | null) => void) | undefined,
-  tagLine: (tag: string) => number | null
+  cb: (attrs: MacroAttrs, wholeTag: string, lineAt: (offset: number) => number | string | null, names: () => Array<{ name: string; at: number; start: number }>, at: number) => string,
+  keep: ((name: string, raw: string, line: () => number | string | null) => void) | undefined,
+  cite: (k: number) => number | string,
+  dialecte: boolean
 ): string {
-  const needle = `<@${name}`.toLowerCase()
-  const lower = asciiLower(html)
+  const { tags, unclosed } = macroTags(html, name, dialecte)
+  const nameLength = name.length + 2
+  const boundaryOk = (at: number): boolean => {
+    const boundary = html[at + nameLength]
+    return boundary === undefined ? !requireLeadingSpace : /[\s/>]/.test(boundary)
+  }
   let out = ''
   let pos = 0
-  for (;;) {
-    const idx = lower.indexOf(needle, pos)
-    if (idx === -1) { out += html.slice(pos); return out }
-    const nameEnd = idx + needle.length
-    const boundary = html[nameEnd]
-    const boundaryOk = requireLeadingSpace ? (boundary !== undefined && (/\s/.test(boundary) || boundary === '>' || boundary === '/')) : (boundary === undefined || /[\s/>]/.test(boundary))
-    const tagEnd = boundaryOk ? findMacroTagEnd(html, nameEnd) : -1
-    if (tagEnd === -1) { if (boundaryOk) reportUnclosedMacroTag(errors, name, html, idx); out += html.slice(pos, idx + 1); pos = idx + 1; continue }
-    const tag = html.slice(idx, tagEnd + 1)
-    const lineAt = effectLineAt(tag, nameEnd - idx, tagLine)
-    out += html.slice(pos, idx) + cb(stripEffects(html.slice(nameEnd, tagEnd), name, errors, keep && ((n, r) => keep(n, r, () => lineAt(0))), lineAt), tag)
-    pos = tagEnd + 1
+  for (const n of tags) {
+    if (!boundaryOk(n.debut)) continue
+    const nameEnd = n.debut + nameLength
+    const tag     = html.slice(n.debut, n.finOuvrante)
+    const lineAt  = effectLineAt(html, nameEnd, cite)
+    const names   = (): Array<{ name: string; at: number; start: number }> => n.attributs.flatMap((a) => (a.nom?.startsWith('@') ? [{ name: a.nom, at: a.debut - n.debut, start: a.debut }] : []))
+    out += html.slice(pos, n.debut) + keepLines(cb(stripEffects(macroAttrs(html, n, nameEnd), name, errors, keep && ((nm, r) => keep(nm, r, () => lineAt(0))), lineAt), tag, lineAt, names, n.debut), tag)
+    pos = n.finOuvrante
+  }
+  for(const at of unclosed) {
+    if(!boundaryOk(at)) continue
+    const conseil = reglagesNonFermes(html, at, name, cite)
+    if(conseil) throw new Error(conseil)
+    reportUnclosedMacroTag(errors, name, html, at)
+  }
+  return out + html.slice(pos)
+}
+
+// la ligne citée d'une position des attributs d'une balise du langage (`offset` : depuis `from`, la fin de son nom dans le
+// HTML lu) : ce HTML garde ses lignes d'un remplacement à l'autre (cf. keepLines), sa ligne k se cite par `cite`
+function effectLineAt(html: string, from: number, cite: (k: number) => number | string): (offset: number) => number | string {
+  let base: number | undefined
+  return (offset: number): number | string => {
+    base ??= countNewlines(html.slice(0, from))
+    return cite(base + countNewlines(html.slice(from, from + offset)))
   }
 }
 
-// la ligne du .mjs d'une position des attributs d'une balise du langage, cherchée seulement quand une
-// erreur la demande (`tagLine` avance un curseur, une balise sans faute ne le touche pas) ; `shiftBy` :
-// où commencent les attributs dans la balise ; null quand la balise ne se situe pas dans le fichier
-function effectLineAt(tag: string, shiftBy: number, tagLine: (tag: string) => number | null): (offset: number) => number | null {
-  let base: number | null | undefined
-  return (offset: number): number | null => {
-    if (base === undefined) base = tagLine(tag)
-    return base === null ? null : base + countNewlines(tag.slice(0, shiftBy + offset))
-  }
-}
-
-// replacePairedTag — remplace chaque `<@name attrs>…contenu…</@name>` par
-// `cb(attrs, content)`. `onSelfClose(attrs)`, si fourni, capte une forme
-// `<@name …/>` (attrs se terminant par `/`, adjacent au `>` réel — même
-// exigence que l'ancienne regex `\/>`) SANS chercher de contenu ni de
-// fermeture. Aucune fermeture `</@name>` trouvée → balise + reste laissés
-// intacts (comme une regex qui ne matche pas). `errors` : cf. replaceOpenTag
-// ci-dessus (même garde `macro-balise-non-fermee`) — seulement sur le
-// `>` de la balise OUVRANTE, pas sur une fermeture `</@name>` absente
-// (comportement inchangé, hors périmètre de cette garde).
+// replacePairedTag — remplace chaque bloc `<@name attrs>…contenu…</@name>` du gabarit (cf. macroTags) par `cb(attrs,
+// content, at)`, `at` : la place du contenu. `onSelfClose(attrs)`, si fourni, capte une forme `<@name …/>` sans chercher de
+// contenu. Un bloc que l'arbre ne referme pas par sa propre fermante `</@name>` (jamais refermé, refermé par un ancêtre) est
+// laissé intact, comme le reste ; une balise ouvrante jamais refermée est signalée comme dans replaceOpenTag
 function replacePairedTag(
   html: string,
   name: string,
   errors: string[],
-  cb: (attrs: string, content: string) => string,
+  cb: (attrs: MacroAttrs, content: string, at: number) => string,
   onSelfClose: ((attrs: string) => string) | undefined,
-  tagLine: (tag: string) => number | null
+  cite: (k: number) => number | string,
+  dialecte: boolean
 ): string {
-  const openNeedle = `<@${name}`.toLowerCase()
-  const closeNeedle = `</@${name}>`.toLowerCase()
-  const lower = asciiLower(html)
+  const { tags, unclosed } = macroTags(html, name, dialecte)
+  const nameLength  = name.length + 2
+  const closeNeedle = `</@${name}>`
+  const boundaryOk  = (at: number): boolean => html[at + nameLength] === undefined || /[\s/>]/.test(html[at + nameLength])
   let out = ''
   let pos = 0
-  for (;;) {
-    const idx = lower.indexOf(openNeedle, pos)
-    if (idx === -1) { out += html.slice(pos); return out }
-    const nameEnd = idx + openNeedle.length
-    const boundary = html[nameEnd]
-    const boundaryOk = boundary === undefined || /[\s/>]/.test(boundary)
-    const tagEnd = boundaryOk ? findMacroTagEnd(html, nameEnd) : -1
-    if (tagEnd === -1) { if (boundaryOk) reportUnclosedMacroTag(errors, name, html, idx); out += html.slice(pos, idx + 1); pos = idx + 1; continue }
-    const attrs = stripEffects(html.slice(nameEnd, tagEnd), name, errors, undefined, effectLineAt(html.slice(idx, tagEnd + 1), nameEnd - idx, tagLine))
-    if (onSelfClose && attrs.endsWith('/')) {
-      out += html.slice(pos, idx) + onSelfClose(attrs.slice(0, -1))
-      pos = tagEnd + 1
+  for (const n of tags) {
+    if (n.debut < pos || !boundaryOk(n.debut)) continue
+    const nameEnd = n.debut + nameLength
+    const attrs   = stripEffects(macroAttrs(html, n, nameEnd), name, errors, undefined, effectLineAt(html, nameEnd, cite))
+    if (onSelfClose && attrs.text.endsWith('/')) {
+      out += html.slice(pos, n.debut) + keepLines(onSelfClose(attrs.text.slice(0, -1)), html.slice(n.debut, n.finOuvrante))
+      pos = n.finOuvrante
       continue
     }
-    const closeIdx = lower.indexOf(closeNeedle, tagEnd + 1)
-    if (closeIdx === -1) { out += html.slice(pos, idx + 1); pos = idx + 1; continue }
-    out += html.slice(pos, idx) + cb(attrs, html.slice(tagEnd + 1, closeIdx))
-    pos = closeIdx + closeNeedle.length
+    const close = n.fin - closeNeedle.length
+    if (n.autoFermante || n.fermeeParAncetre !== null || asciiLower(html.slice(close, n.fin)) !== closeNeedle) continue
+    out += html.slice(pos, n.debut) + keepLines(cb(attrs, html.slice(n.finOuvrante, close), n.finOuvrante), html.slice(n.debut, n.fin))
+    pos = n.fin
   }
+  for(const at of unclosed) {
+    if(!boundaryOk(at)) continue
+    const conseil = reglagesNonFermes(html, at, name, cite)
+    if(conseil) throw new Error(conseil)
+    reportUnclosedMacroTag(errors, name, html, at)
+  }
+  return out + html.slice(pos)
 }
 
-export function processGlobalMacros(html: string, opts: { firstLine?: number; sigil?: 'µ' | 'mjs'; sourceHtml?: string } = {}): GlobalMacrosResult {
+export function processGlobalMacros(html: string, opts: { firstLine?: number; sigil?: 'µ' | 'mjs'; places?: LinePlace[]; dialecte?: boolean; civet?: boolean } = {}): GlobalMacrosResult {
   // ligne du .mjs où commence CE html (section HTML, cf. extractSections().htmlStartLine) : sert à
   // citer un numéro de ligne juste dans les erreurs de <@head>/<@failed>. 1 par défaut. `sigil` =
   // symbole du projet, pour rendre dans ces mêmes messages le `mjs.`/`mjs$` tapé par l'auteur (le
-  // HTML arrive ici normalisé en `µ`).
+  // HTML arrive ici normalisé en `µ`). `civet` : le code des gestionnaires de ces balises est compilé par Civet (sinon CoffeeScript)
   const firstLine = opts.firstLine ?? 1
   const sigil     = opts.sigil
   const setupLines: string[] = []
+  const setupOrigins: Array<SetupOrigin | undefined> = []
+  const setupHandlers: Array<{ fn: string; origin: SetupOrigin }> = []
   // Lignes d'ATTACHE (addEventListener) — rejouées à CHAQUE @awake, et
   // détachées à CHAQUE sleep (teardownLines) : cycle symétrique qui survit
   // aux hibernations (pageCache, déplacement DOM) sans fuir. Les DÉFINITIONS
@@ -1110,35 +1630,22 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   // Erreurs de compile des liaisons class/style (cf. parseStyling plus bas).
   const errors: string[] = []
   const warnings: string[] = []
+  // les gestionnaires faits d'un nom seul dans le fallback d'un <@failed> et sur les balises globales, vérifiés par le transpileur
+  const handlerRefs: HandlerReference[] = []
+  // les balises du fallback d'un <@failed> (cf. GlobalMacrosResult.tagRefs)
+  const tagRefs: TagRef[] = []
 
-  // Ligne du .mjs où commence le contenu (TRIMMÉ) d'un bloc <@head>/<@failed>. `cleaned` a pu être
-  // réécrit avant que le bloc soit atteint (commentaire à pseudo-directive retiré, <@failed> déjà
-  // compilé) : ses sauts de ligne ne sont plus ceux du source, on recompte donc sur le `html`
-  // d'ORIGINE, un curseur par macro pour suivre les occurrences dans l'ordre. Contenu introuvable
-  // (réécrit en amont) → première ligne de la section, jamais un numéro inventé.
-  const lineCursor: Record<string, number> = {}
-  const contentFirstLine = (macro: string, content: string): number => {
-    const trimmed = content.trim()
-    if (!trimmed) return firstLine
-    const at = html.indexOf(trimmed, lineCursor[macro] ?? 0)
-    if (at === -1) return firstLine
-    lineCursor[macro] = at + trimmed.length
-    return firstLine + countNewlines(html.slice(0, at))
-  }
+  // la ligne k du HTML reçu, citée (cf. citeLine) : la table des lignes des partiels versés (`places`, cf. processIncludes),
+  // une ligne du composant comptée depuis `firstLine` sans elle. Chaque bloc retiré ou remplacé y laisse ses lignes (cf.
+  // keepLines) : une position du texte que lit un passage a la ligne qu'elle avait dans le HTML reçu
+  const cite = (k: number): number | string => citeLine(opts.places, firstLine, k)
 
-  // la ligne du .mjs d'une balise du langage, cherchée dans le HTML d'origine : `cleaned` a perdu les
-  // lignes des blocs retirés avant elle. Un curseur par texte de balise : la même balise écrite deux fois
-  // se retrouve dans l'ordre. Seul le HTML du composant (`sourceHtml`, avant les partiels) a les lignes du
-  // fichier : une balise absente de ce texte vient d'un partiel, et un texte de balise que le composant
-  // et un partiel écrivent à l'identique ne se départage pas — null dans les deux cas, jamais une ligne inventée
-  const tagCursor: Record<string, number> = {}
-  const tagLine = (tag: string): number | null => {
-    const source = opts.sourceHtml ?? html
-    if (source.split(tag).length !== html.split(tag).length) return null
-    const at = source.indexOf(tag, tagCursor[tag] ?? 0)
-    if (at === -1) return null
-    tagCursor[tag] = at + tag.length
-    return firstLine + countNewlines(source.slice(0, at))
+  // les lignes citées du contenu (TRIMMÉ) d'un bloc <@head>/<@failed>, sa première comptée à sa place (`at`) dans le texte
+  // que lit le passage ; contenu vide → première ligne de la section
+  const contentLines = (at: number, content: string): ((k: number) => number | string) => {
+    const lead  = content.length - content.trimStart().length
+    const first = content.trim() ? countNewlines(cleaned.slice(0, at + lead)) : 0
+    return (k: number) => cite(first + k)
   }
 
   // Généralisation de la règle <@include nom/> (slash
@@ -1169,39 +1676,15 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   // `<@…>` (ex. un commentaire explicatif citant `<@failed>`), sinon les regex
   // de macros ci-dessous matcheraient À L'INTÉRIEUR du commentaire. Les
   // commentaires normaux (sans `<@`) sont préservés.
-  cleaned = cleaned.replace(/<!--(?:-?>|[\s\S]*?--!?>)/g, c => (/<@\w/.test(c) ? '' : c))
+  cleaned = replaceBlocks(cleaned, ['<!--'], c => (/<@\w/.test(c) ? keepLines('', c) : c))
 
-  // Parse les @event={handler} d'un tag macro → addEventListener/removeEventListener.
-  const parseListeners = (attrs: string, targetJs: string) => {
-    // `/@([\w-]+)(?!\.)/`
-    // (1er essai) visait à rejeter un éventuel `@scroll.passive` (modificateurs
-    // non supportés sur les macros — la forme abrégée générerait un appel vers
-    // une méthode inexistante), mais un lookahead négatif APRÈS un quantifieur
-    // GLOUTON ne bloque pas tout le match : si `scroll` (7 lettres) échoue le
-    // `(?!\.)` (suivi d'un point), le moteur regex BACKTRACK et essaie des
-    // préfixes plus courts — `scrol` (6 lettres) est suivi de `l`, PAS d'un
-    // point, donc `(?!\.)` réussit sur CE préfixe tronqué. Résultat observé :
-    // un handler fantôme `scrol(e)` posé via `addEventListener('scrol', …)` —
-    // un event qui n'existe pas, silencieusement mort, ET la vraie forme
-    // `@scroll.passive={…}` toujours ignorée. Fix : émule un groupe ATOMIQUE
-    // (non natif en JS) via lookahead + rétro-référence — `(?=([\w-]+))\1` capture
-    // le préfixe MAXIMAL puis le consomme tel quel (rien à raccourcir, `\1`
-    // n'est pas quantifié) ; si `(?!\.)` échoue ENSUITE, tout le match à cette
-    // position échoue pour de bon (pas de repli sur un préfixe plus court).
-    //
-    // Le `:` ENTRE dans la classe de caractères
-    // (`[\w-]` → `[\w:-]`, `-` en fin de classe = littéral) : les événements du
-    // framework sont NAMESPACÉS (`mjs:load`, `mjs:visit`, `mjs:before-visit`,
-    // `mjs:before-cache` — cf. µ._mjs_navEmit, mjs_ujs.ts), et sans le deux-points
-    // le lecteur s'arrêtait à `@mjs`, ne trouvait pas le `=` attendu juste
-    // après (il y a un `:`), concluait « forme abrégée » → écouteur fantôme
-    // `mjs` — PUIS repartait scanner la suite, où le `@relancer` DU HANDLER de
-    // l'utilisateur devenait un SECOND écouteur fantôme, sur un événement
-    // `relancer` qui n'existe nulle part. Deux écouteurs posés, aucun bon, zéro
-    // avertissement : la seule forme documentée pour écouter un événement de
-    // cycle sur `<@document>` était injoignable. Le chemin des ÉLÉMENTS
-    // (generator/attributes/index.ts) n'avait, lui, jamais eu ce défaut.
-    const evRe = /@(?=([\w:-]+))\1(?!\.)/g
+  // Parse les @event={handler} d'un tag macro → addEventListener/removeEventListener : les attributs en `@` que l'arbre du
+  // gabarit lit sur la balise (`view.attrs`), jamais un `@x` écrit dans une valeur (`title="@foo"`, `scrollY=!{@y}`,
+  // `@scroll=@resize`) ni dans le corps d'un gestionnaire (`@sizes.push …`). Le nom d'un événement prend le deux-points :
+  // les événements du framework sont namespacés (`mjs:load`, `mjs:before-visit`, cf. µ._mjs_navEmit, mjs_ujs.ts). Un nom
+  // suivi d'un point porte un modificateur (`@scroll.passive`), jamais lu comme l'événement d'un de ses préfixes
+  const parseListeners = (view: MacroAttrs, targetJs: string, lineOf?: (ev: string, wanted: boolean) => { line: number | undefined; start: number } | undefined, ligneDe?: (nom: string) => number | string | null | undefined) => {
+    const attrs = view.text
     // Forme ABRÉGÉE (`@nom` seul, sans `={…}`) sur un nom à deux-points :
     // REFUSÉE. Elle synthétise un appel à la méthode HOMONYME de l'événement
     // (`mjs:load(e)`), que Civet compile sans broncher en bare-hash
@@ -1217,132 +1700,59 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       errors.push(msg)
       return true
     }
-    // GARDE MODIFICATEUR SUR MACRO — `evRe` refuse par construction
-    // tout `@evt.suffixe` (le `(?!\.)` atomique ci-dessus) : l'attribut était
-    // donc IGNORÉ, en silence. Tolérable tant que les modificateurs n'existaient
-    // que sur les éléments ; devenu un piège depuis que `@click.emit.NOM` est
-    // une écriture enseignée — `<@window @resize.emit.sized={…}>` compilait vert
-    // et n'émettait jamais rien. Même diagnostic « soft » que le reste du
-    // fichier (console.error + `errors`, le build échoue plus haut). Appelé
-    // APRÈS `parseStyling`, qui a déjà retiré `@class{…}`/`@style.x`/`--var`.
-    {
-      // FAUX POSITIF (même jour, trouvé en re-testant la garde) — scanner la chaîne
-      // d'attributs ENTIÈRE prenait les `@prop.x` Civet du CORPS d'un handler pour des
-      // modificateurs : `<@window @resize={@sizes.push window.innerWidth}>` (parfaitement
-      // légitime, `@sizes` = `this.sizes`) était REFUSÉ à la compilation. On masque donc
-      // les valeurs d'attributs avant de chercher : seuls les NOMS sont scannés.
-      let masked = ''
-      for (let i = 0; i < attrs.length; ) {
-        // `={…}` (handler/expression) et `=!{…}` (liaison two-way) : accolades équilibrées.
-        const bind = attrs[i] === '=' && (attrs[i + 1] === '{' || (attrs[i + 1] === '!' && attrs[i + 2] === '{'))
-        if (bind) {
-          const start = attrs[i + 1] === '{' ? i + 2 : i + 3
-          masked += attrs.slice(i, start)
-          let k = start, depth = 1
-          while (k < attrs.length && depth > 0) {
-            if (attrs[k] === '{') depth++
-            else if (attrs[k] === '}') { depth--; if (depth === 0) break }
-            masked += ' '
-            k++
-          }
-          masked += attrs.slice(k, k + 1)
-          i = k + 1
-          continue
-        }
-        // `="…"` / `='…'` : valeur littérale, un `@x.y` dedans n'est pas un modificateur.
-        if (attrs[i] === '=' && (attrs[i + 1] === '"' || attrs[i + 1] === "'")) {
-          const quote = attrs[i + 1]
-          let k = i + 2
-          while (k < attrs.length && attrs[k] !== quote) k++
-          // GUILLEMET NON FERMÉ — on ne masque RIEN : sinon un `@evt.suffixe` réel situé plus loin
-          // sur la même balise disparaissait du scan, et la garde redevenait muette (exactement le
-          // silence qu'elle existe pour supprimer). On avance d'un caractère et on continue.
-          if (k >= attrs.length) { masked += attrs[i]; i++; continue }
-          masked += attrs.slice(i, i + 2) + ' '.repeat(k - (i + 2)) + attrs.slice(k, k + 1)
-          i = k + 1
-          continue
-        }
-        masked += attrs[i]
-        i++
-      }
-      const modRe = /@([\w:-]+)\.([\w:.-]*)/g
-      let mm: RegExpExecArray | null
-      while ((mm = modRe.exec(masked)) !== null) {
-        const msg = t('generator.macro-modificateur-non-gere', { evt: mm[1], suffixe: mm[2] || '' })
-        // eslint-disable-next-line no-console
-        console.error(`[ModularJS] ❌ ${msg}`)
-        errors.push(msg)
+    // GARDE MODIFICATEUR SUR MACRO — un `@evt.suffixe` était IGNORÉ, en silence : `<@window @resize.emit.sized={…}>` compilait
+    // vert et n'émettait jamais rien. Même diagnostic « soft » que le reste du fichier (console.error + `errors`, le build
+    // échoue plus haut). Appelé APRÈS `parseStyling`, qui a déjà retiré `:class{…}`/`:style.x`/`--var`
+    for (const a of view.attrs) {
+      const mm = a.nom === null ? null : /^@([\w:-]+)\.([\w:.-]*)/.exec(a.nom)
+      if (!mm) continue
+      const msg = t('generator.macro-modificateur-non-gere', { evt: mm[1], suffixe: mm[2] || '', ligne: ligneDe?.(a.nom ?? '') ?? '' })
+      // eslint-disable-next-line no-console
+      console.error(`[ModularJS] ❌ ${msg}`)
+      errors.push(msg)
+      // un nom seul pour valeur (`@resize.once=nom`, `={nom}`, `=@nom`) suit la règle de tout gestionnaire, avec la ligne de
+      // l'attribut (cf. checkHandlerReferences) : le modificateur est refusé, le nom absent l'est aussi
+      const fin = a.debut + mm[0].length
+      if (attrs[fin] === '=') {
+        const braces = attrs[fin + 1] === '{'
+        const debut  = braces ? fin + 2 : fin + 1
+        let k        = braces ? a.fin - 1 : debut
+        while (!braces && k < attrs.length && !/[\s>/]/.test(attrs[k])) k++
+        const reference = k > debut ? HANDLER_REFERENCE_RE.exec(attrs.slice(debut, k).trim()) : null
+        if (reference) handlerRefs.push({ name: reference[2], method: reference[1] === '@', attr: `@${mm[1]}.${mm[2]}`, braces, line: lineOf?.(`${mm[1]}.${mm[2]}`, true)?.line })
       }
     }
 
-    // valeurs `={…}`/`=!{…}` blanchies (accolades équilibrées, même longueur) : seuls les NOMS d'attributs sont lus
-    // comme des événements — le `@y` de `scrollY=!{@y}` posait sinon un écouteur fantôme `addEventListener('y', …)`.
-    // Les corps des écouteurs se relisent sur `attrs`, aux mêmes positions
-    let noms = ''
-    for (let i = 0; i < attrs.length; ) {
-      if (attrs[i] === '=' && (attrs[i + 1] === '{' || (attrs[i + 1] === '!' && attrs[i + 2] === '{'))) {
-        const start = attrs[i + 1] === '{' ? i + 2 : i + 3
-        let k = start, depth = 1
-        while (k < attrs.length) {
-          if (attrs[k] === '{') depth++
-          else if (attrs[k] === '}' && --depth === 0) break
-          k++
-        }
-        noms += attrs.slice(i, start) + ' '.repeat(k - start) + attrs.slice(k, k + 1)
-        i = k + 1
-        continue
-      }
-      // `="…"` / `='…'` refermée : une valeur littérale, jamais un nom d'événement (le `@foo` de `title="@foo"`)
-      if (attrs[i] === '=' && (attrs[i + 1] === '"' || attrs[i + 1] === "'")) {
-        const k = attrs.indexOf(attrs[i + 1], i + 2)
-        if (k > -1) {
-          noms += attrs.slice(i, i + 2) + ' '.repeat(k - (i + 2)) + attrs[k]
-          i = k + 1
-          continue
-        }
-      }
-      noms += attrs[i]
-      i++
-    }
-
-    let m: RegExpExecArray | null
-    while ((m = evRe.exec(noms)) !== null) {
-      const ev = m[1]
-      const after = m.index + m[0].length
+    for (const a of view.attrs) {
+      const m = a.nom === null ? null : /^@[\w:-]+/.exec(a.nom)
+      if (!m || a.nom?.[m[0].length] === '.') continue
+      const ev    = m[0].slice(1)
+      const after = a.debut + m[0].length
       // Forme abrégée : pas de `={...}` → handler = fonction du nom de l'event.
       let handler: string
       // Corps BRUT (avant tout trim) — conservé pour l'émission multi-lignes
       // ci-dessous ; `null` pour la forme abrégée (pas de corps littéral).
       let rawBody: string | null = null
       if (attrs[after] === '=' && attrs[after + 1] === '{') {
-        // Extraire le corps par comptage d'accolades équilibré : un handler
-        // valide peut contenir des `}` (`@keydown={handle({key:1})}`), que
-        // l'ancien `[^}]+` tronquait au premier `}` (Civet "Failed to parse").
-        let k = after + 2, depth = 1, body = ''
-        while (k < attrs.length && depth > 0) {
-          const c = attrs[k]
-          if (c === '{') depth++
-          else if (c === '}') { depth--; if (depth === 0) break }
-          body += c
-          k++
-        }
-        rawBody = body
-        handler = body.trim()
-        evRe.lastIndex = k + 1
-      } else if (attrs[after] === '=' && attrs[after + 1] !== '!') {
-        // `@event=ref` SANS accolades (`@resize=onResize`) : référence de
-        // fonction. Avant, cette forme tombait dans le `else` « abrégée » →
-        // `resize(e)` (appel d'une fonction du NOM DE L'EVENT, ≠ onResize →
-        // ReferenceError au premier resize, et `onResize` jamais câblé). On lit
-        // la ref jusqu'au prochain espace/`>`/`/` (auto-fermeture `/>`) ;
-        // l'auto-appel des identifiants nus (test plus bas) la rend `onResize(e)`.
-        // Exclut `=!{…}` (liaison two-way `prop=!{$var}`, gérée par parseBindings).
+        // le corps tel que l'arbre le lit, accolades équilibrées : un `}` dans le gestionnaire (`@keydown={handle({key:1})}`) ou
+        // dans une de ses chaînes (`@keydown={f('}')}`) ne le coupe pas
+        rawBody = attrs.slice(after + 2, a.fin - 1)
+        handler = rawBody.trim()
+      }
+      else if (attrs[after] === '=' && attrs[after + 1] !== '!') {
+        // `@event=ref` SANS accolades (`@resize=onResize`) : référence de fonction, lue jusqu'au prochain espace/`>`/`/`
+        // (auto-fermeture `/>`) ; l'auto-appel des identifiants nus (plus bas) la rend `onResize(e)`. Exclut `=!{…}`
+        // (liaison two-way `prop=!{$var}`, gérée par parseBindings)
         let k = after + 1
         while (k < attrs.length && !/[\s>/]/.test(attrs[k])) k++
         const ref = attrs.slice(after + 1, k)
-        if (ref) { handler = ref; evRe.lastIndex = k }
-        else { if (refuseShorthandColon(ev)) continue; handler = `${ev}(e)` }
-      } else {
+        if (ref) handler = ref
+        else {
+          if (refuseShorthandColon(ev)) continue
+          handler = `${ev}(e)`
+        }
+      }
+      else {
         if (refuseShorthandColon(ev)) continue
         handler = `${ev}(e)`
       }
@@ -1358,6 +1768,17 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       // source d'émission : `rawBody` (non modifié) serait sinon émis SANS
       // le `(e)` ajouté ici → référence nue jamais appelée (régression vécue
       // en écrivant le fix ci-dessous, verrouillée par le test dédié).
+      // un nom seul (`@keydown=nom`, `@keydown={nom}`, `@keydown=@nom`) : même contrôle que sur un élément, avec la ligne de
+      // l'attribut (cf. checkHandlerReferences, transpiler/lint)
+      const reference = HANDLER_REFERENCE_RE.exec(handler)
+      // la place de chaque écouteur est relevée (un même événement écrit deux fois se suit, même quand le premier est entre
+      // accolades), sa ligne n'est calculée que pour un nom seul
+      const listener = lineOf?.(ev, reference !== null)
+      const line     = listener?.line
+      if (reference) handlerRefs.push({ name: reference[2], method: reference[1] === '@', attr: `@${ev}`, braces: rawBody !== null, line })
+      // un mot du langage que Civet ne prend pas pour un nom (`if`), refusé par le transpileur, n'est pas émis : Civet s'arrêterait
+      // avant lui, sur une erreur illisible ; `on`, `yes`… (cf. DECLARABLE_KEYWORDS) vont tels quels, déclarés ou refusés
+      if (reference?.[1] === '' && LANGUAGE_KEYWORDS.has(reference[2]) && !DECLARABLE_KEYWORDS.has(reference[2])) handler = 'undefined'
       if (/^@{0,2}[a-zA-Z_][\w$.]*$/.test(handler)) {
         handler = `${handler}(e)`
         emitSource = handler
@@ -1385,11 +1806,26 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       // (0 puis 2) — nouvelle corruption, cette fois sur des instructions qui
       // n'ont pas de lien de nesting. Dédenter le corps brut évite ce piège
       // dans les deux sens.
-      const dedentedBody = dedent(emitSource).split('\n')
-      while (dedentedBody.length > 0 && dedentedBody[0].trim() === '') dedentedBody.shift()
+      // compilé par Civet : ses `x unless c; y`, que Civet compile en JavaScript invalide, réécrits sans changer de ligne
+      const aligne       = dedent(aligneSurLaPremiereLigne(emitSource))
+      const dedentedBody = (opts.civet ? unlessSuivisDUnPointVirgule(aligne) : aligne).split('\n')
+      let head           = 0
+      while (dedentedBody.length > 0 && dedentedBody[0].trim() === '') {
+        dedentedBody.shift()
+        head++
+      }
       while (dedentedBody.length > 0 && dedentedBody[dedentedBody.length - 1].trim() === '') dedentedBody.pop()
       const bodyLines = dedentedBody.length > 0 ? dedentedBody : [handler]
-      for (const line of bodyLines) setupLines.push(`  ${line}`)
+      // le corps tel qu'écrit, lu après le `={` de son attribut : chaque ligne versée note sa place (cf. setupOrigins)
+      const bodyAt = listener && rawBody !== null && emitSource === rawBody && dedentedBody.length > 0 ? listener.start + m[0].length + 2 : -1
+      for (const [j, line] of bodyLines.entries()) {
+        if (bodyAt >= 0) setupOrigins[setupLines.length] = { html: cleaned, at: bodyAt, body: rawBody!, row: head + j }
+        setupLines.push(`  ${line}`)
+      }
+      if (bodyAt >= 0) setupHandlers.push({ fn: `_${fnId}`, origin: { html: cleaned, at: bodyAt, body: rawBody!, row: head } })
+      // le gestionnaire tourne hors du calcul en cours (runtime/mjs_signals.ts) : déclenché pendant le passage d'un reffet, de ce composant ou
+      // d'un autre, ses lectures sont les siennes ; un cœur sans graphe des signaux le laisse tel quel (runtime/mjs_element.ts)
+      setupLines.push(`@_${fnId} = µ._mjs_sigFree(@_${fnId})`)
       attachLines.push(`${targetJs}.addEventListener('${ev}', @_${fnId})`)
       teardownLines.push(`${targetJs}.removeEventListener('${ev}', @_${fnId})`)
     }
@@ -1463,144 +1899,94 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     return { body, end: k + 1 }
   }
 
-  // Parse + retire les liaisons class/style d'une macro globale :
-  //   @class{cond}="a b" | @style.prop={expr} | --var={expr} | class="a b" | style="…"
-  // RÉSERVÉES à <@body>/<@html> (macro === 'body' || 'html') : sur les autres
-  // cibles (window/document/head), toute forme détectée devient une ERREUR de
-  // compile — jamais un codegen silencieux, et SURTOUT jamais laissée filer
-  // vers `parseListeners` : `@class{…}` y serait pris pour un écouteur fantôme
-  // de l'événement « class » (@class contient littéralement la
-  // sous-chaîne `class`, et `(?!\.)` dans evRe ne le bloque pas puisqu'un `{`
-  // suit, pas un `.`). D'où l'appel à cette fonction AVANT `parseListeners`,
-  // quelle que soit la cible, et le retour des attrs NETTOYÉS (les formes
-  // reconnues sont toujours retirées de la chaîne, même quand c'est une erreur).
-  //
-  // Ordre de parsing CRITIQUE (d'abord les formes à sigil, puis les statiques) :
-  // en retirant `@class{…}`/`@style.`/`--var` de la chaîne AVANT de chercher
-  // `class="…"`/`style="…"`, on élimine par construction tout risque qu'une
-  // regex statique volontairement simple morde dans une forme dynamique (ou
-  // dans une expression `{…}` qui contiendrait elle-même un bout de texte
-  // ressemblant à `class="…"`).
-  const parseStyling = (attrs: string, macro: string, targetJs: string): string => {
+  // Parse + retire les liaisons class/style d'une macro globale, lues parmi les attributs que l'arbre du gabarit lit sur la
+  // balise (jamais dans une valeur ni dans le corps d'un gestionnaire) :
+  //   :class{cond}="a b" | :style.prop={expr} | --var={expr} | class="a b" | style="…"
+  // RÉSERVÉES à <@body>/<@html> (macro === 'body' || 'html') : sur les autres cibles (window/document/head), toute forme
+  // détectée devient une ERREUR de compile — jamais un codegen silencieux, ni laissée filer vers `parseListeners`. D'où
+  // l'appel à cette fonction AVANT `parseListeners`, quelle que soit la cible, et le retour des attributs RESTANTS (les
+  // formes reconnues sont toujours retirées, même quand c'est une erreur). Chaque forme est lue à son tour, dans cet ordre
+  // (celui du code émis) ; une forme mal écrite (`:class{c}` sans valeur entre guillemets doubles collée) reste telle quelle
+  const parseStyling = (view: MacroAttrs, macro: string, targetJs: string): MacroAttrs => {
     const allowed = macro === 'body' || macro === 'html'
-    let s = attrs
-    let found = false
-
-    // 1. @class{cond}="a b" — condition à accolades équilibrées (même principe).
-    {
-      let out = '', last = 0, m: RegExpExecArray | null
-      const re = /@class\{/g
-      while ((m = re.exec(s)) !== null) {
-        const { body: cond, end } = scanBraces(s, m.index + m[0].length)
-        if (s[end] !== '=' || s[end + 1] !== '"') { re.lastIndex = end; continue }   // forme malformée : laissée telle quelle
-        const qEnd = s.indexOf('"', end + 2)
-        if (qEnd === -1) { re.lastIndex = end; continue }
-        found = true
-        out += s.slice(last, m.index)
-        last = qEnd + 1
-        re.lastIndex = qEnd + 1
-        if (allowed) {
-          const classes = s.slice(end + 2, qEnd).split(/\s+/).filter(Boolean)
-          setupLines.push('µeffect =>')
-          // classe en chaîne échappée : une apostrophe (`bg-[url('/a.png')]`) refermait sinon la chaîne produite
-          for (const cls of classes) setupLines.push(`  µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, !!(${cond.trim()}))`)
-          for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
-        }
-      }
-      out += s.slice(last)
-      s = out
+    const s       = view.text
+    const used    = new Set<MacroAttr>()
+    // la valeur entre guillemets doubles collée à `at` (un `=` y est : le nom de l'attribut ou sa condition finit là), jusqu'à
+    // la fin de l'attribut : son texte, null sinon
+    const quoted = (a: MacroAttr, at: number): string | null => (a.valeur === 'texte' && s[at] === '=' && s[at + 1] === '"' && a.fin > at + 2 && s[a.fin - 1] === '"' ? s.slice(at + 2, a.fin - 1) : null)
+    // la valeur entre accolades collée au nom : son dedans, null sinon
+    const braced = (a: MacroAttr, nom: string): string | null => {
+      const at = a.debut + nom.length
+      return (a.valeur === 'code' || a.valeur === 'brut') && s[at] === '=' && s[at + 1] === '{' ? s.slice(at + 2, a.fin - 1) : null
     }
-
-    // 2. @style.<prop>={expr} — prop kebab-case, expr à accolades équilibrées.
-    {
-      let out = '', last = 0, m: RegExpExecArray | null
-      const re = /@style\.([\w-]+)=\{/g
-      while ((m = re.exec(s)) !== null) {
-        const prop = m[1]
-        const { body: expr, end } = scanBraces(s, m.index + m[0].length)
-        found = true
-        out += s.slice(last, m.index)
-        last = end
-        re.lastIndex = end
-        if (allowed) {
-          setupLines.push('µeffect =>')
-          setupLines.push(`  µ._glSt(@, ${targetJs}, '${prop}', (${expr.trim()}))`)
-          teardownLines.push(`µ._glSt(@, ${targetJs}, '${prop}', null)`)
-        }
+    // les attributs d'une forme, dans l'ordre où ils sont écrits : `read` rend sa valeur, null pour une autre forme
+    const each = <T>(read: (a: MacroAttr, nom: string) => T | null, visit: (value: T) => void): void => {
+      for (const a of view.attrs) {
+        const value = used.has(a) || a.nom === null ? null : read(a, a.nom)
+        if (value === null) continue
+        used.add(a)
+        if (allowed) visit(value)
       }
-      out += s.slice(last)
-      s = out
     }
+    const styleProp = new RegExp('^' + SIGN_RE + String.raw`style\.([\w-]+)$`)
 
-    // 3. --<var>={expr} — même mécanique que 2, prop émise = '--<var>'.
-    {
-      let out = '', last = 0, m: RegExpExecArray | null
-      const re = /--([a-zA-Z_][\w-]*)=\{/g
-      while ((m = re.exec(s)) !== null) {
-        const varName = m[1]
-        const { body: expr, end } = scanBraces(s, m.index + m[0].length)
-        found = true
-        out += s.slice(last, m.index)
-        last = end
-        re.lastIndex = end
-        if (allowed) {
-          setupLines.push('µeffect =>')
-          setupLines.push(`  µ._glSt(@, ${targetJs}, '--${varName}', (${expr.trim()}))`)
-          teardownLines.push(`µ._glSt(@, ${targetJs}, '--${varName}', null)`)
-        }
+    // 1. :class{cond}="a b" — la condition entre accolades, les classes entre guillemets doubles collés à elle
+    each((a, nom) => {
+      if (a.sorte !== 'classe' || nom !== `${SIGN}class`) return null
+      const open    = s.lastIndexOf('"', a.fin - 2)
+      const classes = open > a.debut && s[open - 2] === '}' ? quoted(a, open - 1) : null
+      return classes === null ? null : { cond: s.slice(a.debut + nom.length + 1, open - 2), classes: classes.split(/\s+/).filter(Boolean) }
+    }, ({ cond, classes }) => {
+      setupLines.push('µeffect =>')
+      // classe en chaîne échappée : une apostrophe (`bg-[url('/a.png')]`) refermait sinon la chaîne produite
+      for (const cls of classes) setupLines.push(`  µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, !!(${cond.trim()}))`)
+      for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
+    })
+
+    // 2. :style.<prop>={expr} — prop kebab-case, expr entre accolades
+    each((a, nom) => {
+      const prop = styleProp.exec(nom)?.[1]
+      const expr = prop ? braced(a, nom) : null
+      return expr === null ? null : { prop, expr }
+    }, ({ prop, expr }) => {
+      setupLines.push('µeffect =>')
+      setupLines.push(`  µ._glSt(@, ${targetJs}, '${prop}', (${expr.trim()}))`)
+      teardownLines.push(`µ._glSt(@, ${targetJs}, '${prop}', null)`)
+    })
+
+    // 3. --<var>={expr} — même mécanique que 2, prop émise = '--<var>'
+    each((a, nom) => {
+      const name = /^--([a-zA-Z_][\w-]*)$/.exec(nom)?.[1]
+      const expr = name ? braced(a, nom) : null
+      return expr === null ? null : { name, expr }
+    }, ({ name, expr }) => {
+      setupLines.push('µeffect =>')
+      setupLines.push(`  µ._glSt(@, ${targetJs}, '--${name}', (${expr.trim()}))`)
+      teardownLines.push(`µ._glSt(@, ${targetJs}, '--${name}', null)`)
+    })
+
+    // 4. class="a b" statique : un nom qui finit par `class` derrière un signe (`:class="a"`) ou seul
+    each((a, nom) => (/(?:^|\W)class$/.test(nom) ? quoted(a, a.debut + nom.length) : null), (raw) => {
+      if (raw.includes('{')) {
+        errors.push(t('transpiler.macro-class-interpolation-non-supportee', { macro }))
+        return
       }
-      out += s.slice(last)
-      s = out
-    }
+      const classes = raw.split(/\s+/).filter(Boolean)
+      for (const cls of classes) attachLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, true)`)
+      for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
+    })
 
-    // 4. class="a b" statique (formes à sigil déjà retirées ci-dessus : plus
-    //    aucun risque qu'elles interfèrent avec cette regex volontairement simple).
-    {
-      let out = '', last = 0, m: RegExpExecArray | null
-      const re = /\bclass="([^"]*)"/g
-      while ((m = re.exec(s)) !== null) {
-        found = true
-        out += s.slice(last, m.index)
-        last = m.index + m[0].length
-        re.lastIndex = last
-        if (allowed) {
-          const raw = m[1]
-          if (raw.includes('{')) {
-            errors.push(t('transpiler.macro-class-interpolation-non-supportee', { macro }))
-          } else {
-            const classes = raw.split(/\s+/).filter(Boolean)
-            for (const cls of classes) attachLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, true)`)
-            for (const cls of classes) teardownLines.push(`µ._glCl(@, ${targetJs}, ${quoteHeadLiteral(cls)}, false)`)
-          }
-        }
-      }
-      out += s.slice(last)
-      s = out
-    }
+    // 5. style="…" statique → TOUJOURS une erreur (règle MJS zéro-CSS-inline), y compris sur <@body>/<@html> où les 4 formes
+    //    précédentes sont valides
+    each((a, nom) => (/(?:^|\W)style$/.test(nom) ? quoted(a, a.debut + nom.length) : null), () => {
+      errors.push(t('transpiler.macro-style-inline-interdit', { macro }))
+    })
 
-    // 5. style="…" statique → TOUJOURS une erreur (règle MJS zéro-CSS-inline),
-    //    y compris sur <@body>/<@html> où les 4 formes précédentes sont valides.
-    {
-      let out = '', last = 0, m: RegExpExecArray | null
-      const re = /\bstyle="([^"]*)"/g
-      while ((m = re.exec(s)) !== null) {
-        found = true
-        out += s.slice(last, m.index)
-        last = m.index + m[0].length
-        re.lastIndex = last
-        if (allowed) {
-          errors.push(t('transpiler.macro-style-inline-interdit', { macro }))
-        }
-      }
-      out += s.slice(last)
-      s = out
-    }
-
-    if (!allowed && found) {
+    if (!allowed && used.size > 0) {
       errors.push(t('transpiler.macro-class-non-supportee-cible', { macro }))
     }
 
-    return s
+    return { text: s, attrs: view.attrs.filter((a) => !used.has(a)) }
   }
 
   // Attribut `accept="a b"` de <@element>/<@module> :
@@ -1697,6 +2083,22 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     return ''
   }
 
+  // une balise <@element> ou <@module> (`at` : sa place dans `text`, le HTML que lit sa passe) écrite dans le repli d'un <@failed>,
+  // que sa passe lit avant celle du repli (elle la recevait faite en un <div> muet, balise jamais créée, ou vide, composant jamais
+  // monté, sans un mot) : refusée à sa ligne comme les autres balises du langage (cf. FALLBACK_LANGUAGE_TAGS), une ouvrante `<div>`
+  // face à sa fermante ; citée dans un exemple, gardée telle qu'écrite ; null hors d'un repli (cf. fallbackDynamicTags). Les replis
+  // de `text` ne sont lus qu'à la première de ces balises
+  const dynamicTagInFallback = (text: string): ((at: number, wholeTag: string, line: number | string | null) => string | null) => {
+    let read: { live: Set<number>, examples: Array<[number, number]> } | undefined
+    return (at, wholeTag, line) => {
+      read ??= fallbackDynamicTags(text, opts.dialecte === true)
+      if (read.examples.some(([start, end]) => start < at && at < end)) return wholeTag
+      if (!read.live.has(at)) return null
+      errors.push(t('transpiler.failed-balise-du-langage', { nom: /^<(@[\w-]+)/.exec(wholeTag)![1], ligne: String(line) }))
+      return '<div>'
+    }
+  }
+
   // 0. <@element $var …attrs…>enfants</@element> → BALISE DYNAMIQUE
   //    (équivalent de <svelte:element>). Le tag est la VARIABLE/expression (1ʳᵉ
   //    valeur après `@element`) : `<@element $tag>`. Pas d'attribut `tag=` à
@@ -1705,21 +2107,28 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   //    (rendus normalement, réactifs) ; un µeffect appelle µ._updDynEl(@, 'N',
   //    (EXPR)) qui swappe le vrai tag au mount + à chaque changement (déplace
   //    les enfants, copie les attrs). `</@element>` → `</div>`. Attributs HTML
-  //    statiques optionnels après le tag ; attrs et événements réactifs suivis à travers le remplacement de nœud (resync `_mjs_nodes`/`_mjs_ids`, cf. mjs_runes.ts).
+  //    statiques optionnels après le tag ; attrs et événements réactifs suivis à travers le remplacement de nœud (resync `_mjs_nodes`/`_mjs_ev`, cf. mjs_runes.ts).
   let elCounter = 0
-  cleaned = replaceOpenTag(cleaned, 'element', true, errors, (attrs, wholeTag) => {
-    // `attrs` vient de findMacroTagEnd : équivaut au `\s+([^>]+?)\s*`
-    // de l'ancienne regex UNE FOIS trimé (le `\s+` obligatoire et le `\s*` final
-    // n'apportaient jamais de caractère hors espace, cf. header de replaceOpenTag).
-    const rawBody = attrs.trim()
+  const elementInFallback = dynamicTagInFallback(cleaned)
+  cleaned = replaceOpenTag(cleaned, 'element', true, errors, (attrs, wholeTag, lineAt, _names, at) => {
+    // dans le repli d'un <@failed> : refusée, une ouvrante `<div>` face à la fermante `</div>` (cf. le cas `raw` vide plus bas), ou
+    // citée dans un exemple, telle qu'écrite
+    const inFallback = elementInFallback(at, wholeTag, lineAt(0))
+    if (inFallback !== null) return inFallback
+    // le texte des attributs (cf. replaceOpenTag), trimé
+    const rawBody = attrs.text.trim()
     // Auto-fermeture interdite (rejet explicite, à la
     // place du STRIP SILENCIEUX d'origine `.replace(/\/+$/, '')`, cf. header
     // de fonction).
     if (/\/+$/.test(rawBody)) return reportSelfCloseForbidden('element')
     const raw = rawBody
-    // `raw` VIDE (`<@element>` seul) laissait l'ouvrante littérale face à la
-    // fermante `</div>` (dépareillées, cf. remplacement global juste après cette fonction).
-    if (!raw) return reportVariableAttendue('element', wholeTag)
+    // `raw` VIDE (`<@element>` seul, ou `<@element :size="…">` dont `:size` est retiré, cf. withoutSize) : refusé, et une ouvrante
+    // `<div>` face à la fermante `</div>` (remplacement global juste après cette fonction) — sans elle, la fermante orpheline faisait
+    // échouer la lecture du gabarit par-dessus le refus
+    if (!raw) {
+      reportVariableAttendue('element', wholeTag)
+      return '<div>'
+    }
     // 1ʳᵉ valeur À ACCOLADES (`<@element {a || 'div'}>`) : erreur explicite, extrait
     // = le token `{…}` complet (scanBraces), AVANT le découpage au 1er espace ci-dessous (qui
     // tronquait sinon l'expression et laissait son reste fuir en HTML).
@@ -1738,8 +2147,8 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     // sinon appel à 3 arguments, inchangé (byte-identique aux composants sans `accept`).
     setupLines.push(`  µ._updDynEl(@, '${key}', (${tagExpr})${accept ? `, [${accept.map(a => `'${a}'`).join(', ')}]` : ''})`)
     return `<div mjs-el="${key}"${rest ? ' ' + rest : ''}>`
-  }, undefined, tagLine)
-  cleaned = cleaned.replace(/<\/@element>/gi, '</div>')
+  }, undefined, cite, opts.dialecte === true)
+  cleaned = closeDynamicTags(cleaned, /<\/@element>/gi, opts.dialecte === true)
 
   // 0a. <@module $comp …attrs…>enfants</@module> → COMPOSANT DYNAMIQUE
   //     (équivalent de <svelte:component this={X}>). `$comp` (1ʳᵉ valeur) désigne
@@ -1750,9 +2159,13 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   //     déplace les enfants (light DOM → slots), pose les props dynamiques en valeurs
   //     typées, et re-monte si $comp change. `</@module>` → `</div>`.
   let modCounter = 0
-  cleaned = replaceOpenTag(cleaned, 'module', true, errors, (attrs, wholeTag) => {
+  const moduleInFallback = dynamicTagInFallback(cleaned)
+  cleaned = replaceOpenTag(cleaned, 'module', true, errors, (attrs, wholeTag, lineAt, _names, at) => {
+    // dans le repli d'un <@failed> : cf. commentaire jumeau sur <@element> ci-dessus
+    const inFallback = moduleInFallback(at, wholeTag, lineAt(0))
+    if (inFallback !== null) return inFallback
     // cf. commentaire jumeau sur <@element> ci-dessus.
-    const rawBody = attrs.trim()
+    const rawBody = attrs.text.trim()
     // Même rejet explicite que <@element> ci-dessus.
     if (/\/+$/.test(rawBody)) return reportSelfCloseForbidden('module')
     const raw = rawBody
@@ -1771,8 +2184,8 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     // générateur dans la portée du nœud (ligne de `{for}`, branche `{if}`), cf. bindingModule
     // (generator/attributes/index.ts). `accept` voyage en attribut fixe `mjs-accept`, retiré du rendu.
     return `<div mjs-mod="${key}" mjs-comp={${compExpr}}${accept ? ` mjs-accept="${accept.join(' ')}"` : ''}${rest ? ' ' + rest : ''}>`
-  }, undefined, tagLine)
-  cleaned = cleaned.replace(/<\/@module>/gi, '</div>')
+  }, undefined, cite, opts.dialecte === true)
+  cleaned = closeDynamicTags(cleaned, /<\/@module>/gi, opts.dialecte === true)
 
   // 0b. <@failed args>…</@failed> → FALLBACK d'error boundary (équivalent du
   //     snippet `failed` de svelte:boundary). Compilé en builder DOM statique
@@ -1788,15 +2201,16 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
     cleaned,
     'failed',
     errors,
-    (params, content) => {
-      const { setup, head, body } = compileFailedBlock(params, content, errors, contentFirstLine('failed', content), sigil)
+    (params, content, at) => {
+      const { setup, head, body } = compileFailedBlock(params.text, content, errors, contentLines(at, content), sigil, handlerRefs, tagRefs)
       for (const l of setup) setupLines.push(l)
       setupLines.push(head)
       for (const l of body) setupLines.push(`  ${l}`)
       return ''
     },
     () => reportSelfCloseForbidden('failed'),
-    tagLine
+    cite,
+    opts.dialecte === true
   )
 
   // 1. <@head>…contenu…</@head> → INJECTION de contenu dans document.head,
@@ -1817,29 +2231,33 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   // l'usage « injection de contenu », qu'aucun texte ne permet de distinguer
   // syntaxiquement d'un « listener vide ») a été jugé trop fragile pour la
   // valeur qu'il apporte.
-  cleaned = replacePairedTag(cleaned, 'head', errors, (attrs, content) => {
+  cleaned = replacePairedTag(cleaned, 'head', errors, (attrs, content, at) => {
     // parseStyling AVANT parseListeners (même raison que la boucle TARGETS
     // ci-dessous) : <@head> ne supporte pas les liaisons class/style → erreur.
-    parseBindings(attrs, 'head')
+    parseBindings(attrs.text, 'head')
     const styled = parseStyling(attrs, 'head', 'document.head')
     parseListeners(styled, 'document.head')
     const inner = content.trim()
     if (inner) {      // `=>` pour que `@` = le composant (réconciliation + teardown corrects).
-      const ligne = contentFirstLine('head', content)
+      const lignes = contentLines(at, content)
       // un `<script>` exécutable posé ici part dans le <head> par innerHTML : le navigateur ne l'exécute jamais. Averti,
       // jamais refusé (un script de données, JSON-LD, y a sa place). Seule une vraie balise compte : la recherche se fait
       // hors commentaires et hors valeurs d'attribut (même longueur), ses attributs se relisent dans le texte écrit
       const vue = masqueValeursAttributs(maskHtmlComments(inner))
       for (const m of vue.matchAll(/<script\b[^>]*>/gi)) {
         const attrs = inner.slice(m.index + '<script'.length, m.index + m[0].length - 1)
-        if (headScriptRuns(attrs)) warnings.push(t('transpiler.head-script-inerte', { ligne: ligne + countNewlines(inner.slice(0, m.index)) }))
+        if (headScriptRuns(attrs)) warnings.push(t('transpiler.head-script-inerte', { ligne: lignes(countNewlines(inner.slice(0, m.index))) }))
       }
+      // une <@@img> n'a pas sa place dans l'en-tête du document, qui ne s'affiche jamais : refusée à sa ligne (elle y partait en
+      // texte, l'image copiée pour rien)
+      for (const tag of imgTagsInBlock(content, 'head')) errors.push(t('transpiler.head-image', { ligne: lignes(countNewlines(content.slice(content.length - content.trimStart().length, tag.start))) }))
       setupLines.push('µeffect =>')
-      setupLines.push(`  µ._setHead(@, ${buildHeadInjection(inner, 'head', errors, ligne, sigil)})`)
+      const tete = buildHeadInjection(inner, 'head', errors, lignes, sigil)
+      setupLines.push(`  µ._setHead(@, ${tete.html}${tete.brut ? ', true' : ''})`)
       teardownLines.push('µ._clearHead(@)')
     }
     return ''
-  }, undefined, tagLine)
+  }, undefined, cite, opts.dialecte === true)
 
   // Effets de toute la page sur <@document> (la souris : `*ripple` ; la langue : `*lang` ;
   // les autres visiteurs : `*cursors`) : posés sur la racine du document à chaque réveil, retirés à
@@ -1912,15 +2330,33 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
   for (const macro of Object.keys(TARGETS)) {
     const targetJs = TARGETS[macro]
     // Open tag avec attributs : <@window @click={...}>
-    cleaned = replaceOpenTag(cleaned, macro, false, errors, (attrs) => {
-      parseBindings(attrs, macro)
+    cleaned = replaceOpenTag(cleaned, macro, false, errors, (attrs, _tag, lineAt, names) => {
+      parseBindings(attrs.text, macro)
       // parseStyling AVANT parseListeners : le strip des formes @class{…}/
       // @style.prop/--var DOIT arriver avant, sinon @class{…} reste matché par
       // parseListeners comme un écouteur fantôme de l'événement « class ».
       const styled = parseStyling(attrs, macro, targetJs)
-      parseListeners(styled, targetJs)
+      // la ligne d'un écouteur dans le fichier, cherchée parmi les attributs de la balise telle qu'écrite, par leur nom entier
+      // (`@scroll` n'est ni le début de `@scrollend`, ni le texte « @scroll » d'un gestionnaire, ni la valeur `@scroll` d'un autre
+      // attribut) ; chaque écouteur avance le curseur de son événement (un même événement écrit deux fois se suit), la ligne n'est
+      // calculée que pour un gestionnaire fait d'un nom seul (`wanted`)
+      let written: Array<{ name: string; at: number; start: number }> | undefined
+      const next: Record<string, number> = {}
+      parseListeners(styled, targetJs, (ev, wanted) => {
+        written ??= names()
+        const i = written.findIndex((a, k) => a.name === `@${ev}` && k >= (next[ev] ?? 0))
+        if (i === -1) return undefined
+        next[ev] = i + 1
+        // un gestionnaire écrit dans un partiel ne garde pas de ligne : sa vérification cite celles du composant
+        const line = wanted ? lineAt(written[i].at - macro.length - 2) : null
+        return { line: typeof line === 'number' ? line : undefined, start: written[i].start }
+      }, (nom) => {
+        // la ligne d'un attribut refusé (modificateur), dans le partiel qui l'écrit compris
+        const ecrit = (written ??= names()).find((a) => a.name === nom)
+        return ecrit ? lineAt(ecrit.at - macro.length - 2) : undefined
+      })
       return ''
-    }, macro === 'document' ? keepDocLine : undefined, tagLine)
+    }, macro === 'document' ? keepDocLine : undefined, cite, opts.dialecte === true)
     // Close tag : </@window>
     const closeRe = new RegExp(`</@${macro}>`, 'gi')
     cleaned = cleaned.replace(closeRe, '')
@@ -1962,5 +2398,5 @@ export function processGlobalMacros(html: string, opts: { firstLine?: number; si
       ')()\n'
   }
 
-  return { html: cleaned, setup, teardown, errors, warnings, docSock, usesProjectEffects: docProject }
+  return { html: cleaned, setup, teardown, errors, warnings, docSock, usesProjectEffects: docProject, handlerRefs, tagRefs, setupOrigins, setupHandlers }
 }

@@ -20,7 +20,7 @@ const HOTE = `<script>
   $coches = [0, 2]
 </script>
 
-<form @noUJS>
+<form :noUJS>
   <@@editor class="e" name="contrat" value={$texte}></@@editor>
   <@@editor class="r" name="reps[]" answer value={$modele} checked={$coches}></@@editor>
   <@@editor class="l" name="lecture[]" answer readonly value={$modele} checked={$coches}></@@editor>

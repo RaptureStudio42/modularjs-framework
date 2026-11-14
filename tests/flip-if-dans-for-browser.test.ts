@@ -47,26 +47,26 @@ const FORMES = `<script>
 <ul class="if-in-for">
   {for it in $items by id}
     {if it.on}
-      <li @flip=5000>{it.t}</li>
+      <li :flip=5000>{it.t}</li>
     {end}
   {end}
 </ul>
 
 <ul class="plain">
   {for it in $items by id}
-    <li @flip=5000>{it.t}</li>
+    <li :flip=5000>{it.t}</li>
   {end}
 </ul>
 
 <ul class="filtered">
   {for it in $items.filter((x)-> x.on) by id}
-    <li @flip=5000>{it.t}</li>
+    <li :flip=5000>{it.t}</li>
   {end}
 </ul>
 
 <ul class="inside-row">
   {for it in $items by id}
-    <li @flip=5000>{if it.on}<b>{it.t}</b>{end}</li>
+    <li :flip=5000>{if it.on}<b>{it.t}</b>{end}</li>
   {end}
 </ul>
 
@@ -74,7 +74,7 @@ const FORMES = `<script>
   {for it in $items by id}
     <div>
       {if it.on}
-        <li @flip=5000>{it.t}</li>
+        <li :flip=5000>{it.t}</li>
       {end}
     </div>
   {end}
@@ -90,14 +90,14 @@ const NAISSANCE = `<script>
 <ul class="if-in-for">
   {for it in $items by id}
     {if it.on}
-      <li @flip=5000>{it.t}</li>
+      <li :flip=5000>{it.t}</li>
     {end}
   {end}
 </ul>
 
 <ul class="filtered">
   {for it in $items.filter((x)-> x.on) by id}
-    <li @flip=5000>{it.t}</li>
+    <li :flip=5000>{it.t}</li>
   {end}
 </ul>
 ${STYLE}`
@@ -111,16 +111,16 @@ const RACINES = `<script>
 
 <ul class="text-around">
   {for it in $items by id}
-    avant {if it.on}<li @flip=5000 data-k="{it.t}">{it.t}</li>{end} apres
+    avant {if it.on}<li :flip=5000 data-k="{it.t}">{it.t}</li>{end} apres
   {end}
 </ul>
 
 <ul class="if-else">
   {for it in $items by id}
     {if it.b}
-      <li @flip=5000 data-k="{it.t}">{it.t}</li>
+      <li :flip=5000 data-k="{it.t}">{it.t}</li>
     {else}
-      <li @flip=5000 data-k="{it.t}">{it.t} off</li>
+      <li :flip=5000 data-k="{it.t}">{it.t} off</li>
     {end}
   {end}
 </ul>
@@ -128,7 +128,7 @@ const RACINES = `<script>
 <ul class="key-root">
   {for it in $items by id}
     {key it.v}
-      <li @flip=5000 data-k="{it.t}">{it.t}</li>
+      <li :flip=5000 data-k="{it.t}">{it.t}</li>
     {end}
   {end}
 </ul>
@@ -344,7 +344,7 @@ describe('@flip — ligne sous un bloc ({if}, {else}, {key}) à la racine d\'un 
           })
         })
 
-        it('{for} > {if} > <li @flip> : après un réordre, les lignes qui bougent s\'animent, celle qui reste en place non', async () => {
+        it('{for} > {if} > <li :flip> : après un réordre, les lignes qui bougent s\'animent, celle qui reste en place non', async () => {
           assert.equal((await lire(FORMES_TAG, CLASSES))['if-in-for'], 'a:0 b:0 c:0 d:0', 'au repos avant le réordre')
           await poser(FORMES_TAG, ORDRE('d', 'b', 'a', 'c'))
           assert.equal((await lire(FORMES_TAG, CLASSES))['if-in-for'], 'd:1 b:0 a:1 c:1', 'aucune animation : les lignes sous le {if} ne sont pas relevées')

@@ -28,7 +28,7 @@ $status = 'waiting...'
 
 {if $visible}
   <p class="anim"
-    @transition=*fade
+    :transition=*fade
     @introstart={$status = 'intro started'}
     @introend={$status = 'intro ended'}
     @outrostart={$status = 'outro started'}

@@ -76,7 +76,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           '$sel = []',
           'onChange = -> null',
           '</script>',
-          '<input type="checkbox" value="a" @group=!{$sel} @change={onChange()}>',
+          '<input type="checkbox" value="a" :group=!{$sel} @change={onChange()}>',
         ].join('\n')
         const { data } = await transpile(src, { moduleName: 'g1a1' })
         const ids = Object.keys(data.events.change ?? {})
@@ -92,7 +92,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           '$sel = []',
           'onChange = -> null',
           '</script>',
-          '<input type="checkbox" value="a" @change={onChange()} @group=!{$sel}>',
+          '<input type="checkbox" value="a" @change={onChange()} :group=!{$sel}>',
         ].join('\n')
         const { data } = await transpile(src, { moduleName: 'g1a2' })
         const ids = Object.keys(data.events.change ?? {})
@@ -108,7 +108,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           "$txt = ''",
           'onInput = -> null',
           '</script>',
-          '<div contenteditable @text=!{$txt} @input={onInput()}>x</div>',
+          '<div contenteditable :text=!{$txt} @input={onInput()}>x</div>',
         ].join('\n')
         const { data } = await transpile(src, { moduleName: 'g1c1' })
         const ids = Object.keys(data.events.input ?? {})
@@ -124,7 +124,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           "$txt = ''",
           'onInput = -> null',
           '</script>',
-          '<div contenteditable @input={onInput()} @text=!{$txt}>x</div>',
+          '<div contenteditable @input={onInput()} :text=!{$txt}>x</div>',
         ].join('\n')
         const { data } = await transpile(src, { moduleName: 'g1c2' })
         const ids = Object.keys(data.events.input ?? {})
@@ -146,7 +146,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           '  $calls += 1',
           "  $snapshot = $sel.join(',')",
           '</script>',
-          '<input class="chk" type="checkbox" value="a" @change={onChange()} @group=!{$sel}>',
+          '<input class="chk" type="checkbox" value="a" @change={onChange()} :group=!{$sel}>',
           '<span class="calls">{$calls}</span>',
           '<span class="snap">{$snapshot}</span>',
         ].join('\n')
@@ -167,7 +167,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
           '$calls = 0',
           'onInput = -> $calls += 1',
           '</script>',
-          '<div class="ed" contenteditable @input={onInput()} @text=!{$txt}>x</div>',
+          '<div class="ed" contenteditable @input={onInput()} :text=!{$txt}>x</div>',
           '<span class="calls">{$calls}</span>',
           '<span class="txt">{$txt}</span>',
         ].join('\n')
@@ -247,7 +247,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
       ].join('\n')
       const parent = [
         '<script lang="coffee">',
-        '$p = new Promise((resolve) -> setTimeout((-> resolve({ id: 42 })), 30))',
+        '$p = µafter(30).then(-> { id: 42 })',
         '</script>',
         '{await $p}{success d}<mjs-card item={d}></mjs-card>{end}',
       ].join('\n')
@@ -377,7 +377,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
         'elRef = null',
         '$p = Promise.resolve(1)',
         '</script>',
-        '{await $p}{success d}<div class="cible" @this=!{elRef}>x</div>{end}',
+        '{await $p}{success d}<div class="cible" :this=!{elRef}>x</div>{end}',
       ].join('\n')
       const { el } = await mountFiles({ 'th-parent.mjs': src }, 'mjs-th-parent')
       await new Promise((r) => setTimeout(r, 150))
@@ -395,7 +395,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
         'toucher = -> $touche = true',
         '$p = Promise.resolve(1)',
         '</script>',
-        '{await $p}{success d}<div class="cible" @attach={toucher}>x</div>{end}',
+        '{await $p}{success d}<div class="cible" :attach={toucher}>x</div>{end}',
         '<p class="sonde">{$touche ? "oui" : "non"}</p>',
       ].join('\n')
       const { el } = await mountFiles({ 'at-parent.mjs': src }, 'mjs-at-parent')
@@ -411,7 +411,7 @@ describe('routes empilées, filtre XSS et prop composant en branche {await}', fu
         '$p = Promise.resolve(1)',
         '$count = 5',
         '</script>',
-        '{await $p}{success d}<span class="tgt" @emit.saved={$count}>x</span>{end}',
+        '{await $p}{success d}<span class="tgt" :emit.saved={$count}>x</span>{end}',
         '<button class="mut" @click={$count = 9}>mut</button>',
       ].join('\n')
       const { el } = await mountFiles({ 'em-parent.mjs': src }, 'mjs-em-parent')

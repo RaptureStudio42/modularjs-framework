@@ -56,16 +56,16 @@
 
   # un minuteur relancé repart du chiffre où il s'était arrêté, l'attente ne compte pas
   start = ->
-    clearInterval(timer)
+    timer?.()
     if µlayout is 'timer'
       if boolAttr($running)
         origin = performance.now()
         seen   = 0
         base   = last
-        timer  = setInterval(step, 1000)
+        timer  = µevery 1000, { immediate: false }, step
     else
       tick()
-      timer = setInterval(tick, 1000)
+      timer = µevery 1000, { immediate: false }, tick
 
   µeffect ->
     µlayout
@@ -73,7 +73,7 @@
     start()
 
   µdestroy ->
-    clearInterval(timer)
+    timer?.()
 
   # noms des cadrans par défaut : la langue de la page choisit (lire µlang rend le dérivé réactif à la bascule)
   tr = (key, lang)-> µ._mjs_label('core', key)
@@ -100,7 +100,7 @@
 </script>
 
 {if µlayout is 'timer'}
-  <div class="timer" part="timer" @class{boolAttr($running)}="running" --mjs-clock-color={$color} --mjs-clock-total={num($seconds, 60) + 's'} --mjs-clock-p={progress($t, $seconds)}>
+  <div class="timer" part="timer" :class{boolAttr($running)}="running" --mjs-clock-color={$color} --mjs-clock-total={num($seconds, 60) + 's'} --mjs-clock-p={progress($t, $seconds)}>
     <div class="dial">
       <svg viewBox="0 0 150 150" aria-hidden="true">
         <circle cx="75" cy="75" r="70"></circle>
@@ -122,14 +122,14 @@
         {end}
         <h2>{zero(valeur(dial[0], $h, $m, $s))}<span>{$names[i]}</span></h2>
         {for n in TICKS}
-          <i class="tick" @class{actif(dial[0], n, $h, $m, $s)}="active" @class{dial[0] is 'h'}="hour" @class{n % 5 is 0}="five" --mjs-clock-a={n * 6 + 'deg'}></i>
+          <i class="tick" :class{actif(dial[0], n, $h, $m, $s)}="active" :class{dial[0] is 'h'}="hour" :class{n % 5 is 0}="five" --mjs-clock-a={n * 6 + 'deg'}></i>
         {end}
       </div>
     {end}
   </div>
 {end}
 
-<style @display="inline-block">
+<style :display="inline-block">
   .clock
     display: flex
     flex-wrap: wrap

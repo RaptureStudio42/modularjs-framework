@@ -15,7 +15,7 @@ const SOURCE = `<script>
     window.__poser = (v)-> $n = v
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@field class="zero" layout="float" label="Quantité"><@@number name="q0" value="0"></@@number></@@field>
   <@@field class="lie" layout="float" label="Lié"><@@number name="q1" value=!{$n}></@@number></@@field>
   <@@field class="vide" layout="float" label="Libre"><@@number name="q2" placeholder="aucun"></@@number></@@field>

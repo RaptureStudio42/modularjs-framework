@@ -1,8 +1,6 @@
 // Handlers inline — harmonisation Civet : `@click={…}`
 // (et `value=!{…}`/`@group=!{…}`/etc., tous compilés via le même batch
-// `_mjs_inline`) passent de CoffeeScript à Civet quand `templateLang ===
-// 'civet'` (le défaut, cf. transpiler/index.ts). L'ancien chemin Coffee reste
-// le repli via `templateLang: 'js'` (mode « template historique »).
+// `_mjs_inline`) sont compilés en Civet (cf. transpiler/index.ts).
 //
 // Seul point de divergence d'ÉMISSION entre les deux grammaires : l'existentiel
 // binaire Coffee `a ? b` (reconstruction d'item dans un `{for}`, ex. `__idx_0 =
@@ -63,32 +61,6 @@ describe('handlers inline — Civet par défaut', () => {
     )
   })
 
-  it('templateLang: "js" : le ternaire collé retrouve le comportement HISTORIQUE Coffee (aucun throw)', async () => {
-    // Comportement Coffee RÉEL (vérifié empiriquement, sonde directe sur le
-    // compilateur avant d'écrire cette assertion) : `a?b:c` collé n'est PAS un
-    // ternaire pour Coffee — `?` = existentiel, `b:c` = hash implicite → appel
-    // conditionnel de `$ok` avec un objet `{x:'y'}` en argument. Silencieusement
-    // FAUX (jamais 'x'/'y' littéraux) mais c'est le comportement ACTUEL, celui
-    // que le repli 'js' doit reproduire au caractère près.
-    const { output } = await transpile(
-      `<button @click={$n = $ok?'x':'y'}>x</button>`,
-      { moduleName: 'hc-ternaire-colle-js', templateLang: 'js' }
-    )
-    assert.match(output, /typeof \$\.ok === "function"/)
-    assert.match(output, /'x': 'y'/)
-    assert.match(output, /: void 0/)
-  })
-
-  it('templateLang: "js" : handler existant `if $a then @go() else @stop()` compile à l\'identique de l\'actuel', async () => {
-    const { output } = await transpile(
-      `<button @click={if $a then @go() else @stop()}>x</button>`,
-      { moduleName: 'hc-if-then-else-js', templateLang: 'js' }
-    )
-    assert.match(output, /if\s*\(\$\.a\)/)
-    assert.match(output, /this\.go\(\)/)
-    assert.match(output, /this\.stop\(\)/)
-  })
-
   it('corps multi-lignes (2 instructions sœurs) compile correctement par défaut', async () => {
     const { output } = await transpile(
       `<button @click={$n = $n + 1\n$count = $count + 1}>x</button>`,
@@ -96,15 +68,6 @@ describe('handlers inline — Civet par défaut', () => {
     )
     assert.match(output, /µ\._set\(_mjsThis, 'n', \$\.n \+ 1\)/, 'première instruction sœur présente')
     assert.match(output, /µ\._set\(_mjsThis, 'count', \$\.count \+ 1\)/, 'deuxième instruction sœur présente (aucune avalée)')
-  })
-
-  it('corps multi-lignes : templateLang "js" compile aussi les deux instructions sœurs', async () => {
-    const { output } = await transpile(
-      `<button @click={$n = $n + 1\n$count = $count + 1}>x</button>`,
-      { moduleName: 'hc-multiline-js', templateLang: 'js' }
-    )
-    assert.match(output, /µ\._set\(_mjsThis, 'n', \$\.n \+ 1\)/)
-    assert.match(output, /µ\._set\(_mjsThis, 'count', \$\.count \+ 1\)/)
   })
 
   it('modificateur .prevent inchangé', async () => {
@@ -128,15 +91,4 @@ describe('handlers inline — Civet par défaut', () => {
     assert.match(output, /_mjs_idx_0 \?\? el\.getAttribute\('data-mjs-idx-0'\)/, 'civet : existentiel `??`')
   })
 
-  it('reconstruction de boucle {for} + @click : templateLang "js" garde l\'existentiel `?` historique', async () => {
-    const src = [
-      '<script>',
-      '$items = [1,2,3]',
-      '</script>',
-      // la ligne lit une variable du composant (`{$n}`) : pas une ligne pure, le gestionnaire relit l'élément par l'indice posé sur la balise
-      '<div>{for item, i in $items}<button @click={$n = item}>{$n}</button>{end}</div>',
-    ].join('\n')
-    const { output } = await transpile(src, { moduleName: 'hc-loop-js', templateLang: 'js' })
-    assert.match(output, /\(ref = el\._mjs_idx_0\) != null \? ref : el\.getAttribute\('data-mjs-idx-0'\)/, 'coffee : existentiel `a ? b` compilé en ternaire null-check')
-  })
 })

@@ -32,11 +32,12 @@ describe('runes µ$ / store µ$$ compilables en Civet', () => {
     assert.match(output, /export var \$x = µ_state\.x/)
   })
 
-  it('e2e : <script> composant Civet utilisant `µ$count` compile sans throw', async function () {
+  it('e2e : <script> composant Civet utilisant `µ$count` compile sans throw ; `{µ$count}` dans le gabarit est refusé', async function () {
     this.timeout(8000)
-    const src = ['<script>', 'µ$count = 0', 'inc = -> µ$count++', '</script>', '<button @click={inc()}>{µ$count}</button>'].join('\n')
+    const src = ['<script>', 'µ$count = 0', 'inc = -> µ$count++', '</script>', '<button @click={inc()}>+</button>'].join('\n')
     const { output } = await transpile(src, { moduleName: 'mjs-rune-c6b', defaultScriptLang: 'civet' })
     assert.match(output, /µ_state/)
+    await assert.rejects(transpile(src.replace('>+<', '>{µ$count}<'), { moduleName: 'mjs-rune-c6b', defaultScriptLang: 'civet' }), /« µ\$count » — \S+:\d+:\d+ — ne se lit pas dans le gabarit/)
   })
 })
 
@@ -141,7 +142,7 @@ describe('@this=!{ref} + var groupé Coffee (ref non-première)', () => {
   it('e2e : `zcanvas` (2ᵉ du `var a, zcanvas;` Coffee) n\'est PAS re-déclaré `let`', async function () {
     this.timeout(8000)
     const src = ['<script lang="coffee">', 'a = 1', 'zcanvas = null', '</script>',
-                 '<canvas @this=!{zcanvas}></canvas>', '<p>{a}</p>'].join('\n')
+                 '<canvas :this=!{zcanvas}></canvas>', '<p>{a}</p>'].join('\n')
     const { output } = await transpile(src, { moduleName: 'mjs-rune-z' })
     const jsInit = output.slice(output.indexOf('init($)'))
     assert.doesNotMatch(jsInit, /^\s*let zcanvas;/m, 'pas de `let zcanvas;` hoisté au-dessus du var groupé')

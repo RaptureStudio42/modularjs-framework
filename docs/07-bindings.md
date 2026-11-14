@@ -99,9 +99,9 @@ Le suffixe `.number` dit à MJS : « quand vous remontez la valeur du champ vers
 
 </details>
 
-## Boutons radio & cases groupées — `@group=!`
+## Boutons radio & cases groupées — `:group=!`
 
-Quand plusieurs entrées partagent **une même variable**, on les lie avec **`@group=!{$x}`**. MJS adapte le comportement selon le type :
+Quand plusieurs entrées partagent **une même variable**, on les lie avec **`:group=!{$x}`**. MJS adapte le comportement selon le type :
 
 - **radios** → `$x` reçoit la `value` de l'entrée sélectionnée (valeur unique) ;
 - **checkboxes** → `$x` est un **tableau** des `value` cochées.
@@ -115,22 +115,22 @@ Quand plusieurs entrées partagent **une même variable**, on les lie avec **`@g
 
 {for number in [1, 2, 3]}
   <label>
-    <input type="radio" name="scoops" value={number} @group=!{$scoops} />
+    <input type="radio" name="scoops" value={number} :group=!{$scoops} />
     {number} {number === 1 ? 'scoop' : 'scoops'}
   </label>
 {end}
 
 {for flavour in menu}
   <label>
-    <input type="checkbox" name="flavours" value={flavour} @group=!{$flavours} />
+    <input type="checkbox" name="flavours" value={flavour} :group=!{$flavours} />
     {flavour}
   </label>
 {end}
 ```
 
-Les casts s'appliquent aussi : `@group.number=!{$scoops}` remonterait des nombres au lieu de chaînes.
+Les casts s'appliquent aussi : `:group.number=!{$scoops}` remonterait des nombres au lieu de chaînes.
 
-> ⚠️ La `value` de chaque entrée est posée en **one-way** (`value={number}`), c'est `@group` qui porte le `=!`. Ne mettez pas `value=!` sur des radios groupées.
+> ⚠️ La `value` de chaque entrée est posée en **one-way** (`value={number}`), c'est `:group` qui porte le `=!`. Ne mettez pas `value=!` sur des radios groupées.
 
 ## Listes déroulantes — `<select>`
 
@@ -158,6 +158,8 @@ Sur un `<select>`, `value=!{$x}` lie l'option choisie. Avec l'attribut `multiple
 
 > ⚠️ La valeur d'une `<option>` est une **chaîne** (`"1"`, pas `1`). Pour comparer à un identifiant numérique, forcez la conversion à la lecture (`questions.find (x)-> x.id == +$selectedId`) ou posez un cast `value.number=!{$selectedId}`.
 
+Dans l'autre sens, la variable choisit l'option de son texte exact : `$selectedId = 1` choisit `<option value="1">`, jamais `<option value="01">`, et `$flavours = [1]` de même. Une liste, simple ou à choix multiples, liée dans les deux sens à une variable typée (`value=!{$mois}` avec `$mois  int 1..12`, ou `int 1..12[]` pour une liste à choix multiples, cf. [37 · Types et valeurs permises](37-types.md)) choisit, pour un nombre qu'aucune option n'écrit exactement, celle qui l'écrit autrement (`<option value="01">` pour `1`), même quand elle arrive après la liste (`{for}`) : la choisir redonne `1` à la variable. Liée dans un seul sens (`value={$mois}`), elle choisit l'option de son texte exact, comme une variable libre.
+
 ## Zone de texte & contenu riche
 
 `<textarea>` se lie comme un `<input>`, avec `value=!{$x}` (et non via le contenu entre les balises) :
@@ -166,39 +168,39 @@ Sur un `<select>`, `value=!{$x}` lie l'option choisie. Avec l'attribut `multiple
 <textarea rows="8" value=!{$value}></textarea>
 ```
 
-`@text=!{$x}` lie le `textContent` d'un nœud dans les deux sens : la variable écrit dans le nœud, et taper dans un `contenteditable` remonte la saisie vers la variable.
+`:text=!{$x}` lie le `textContent` d'un nœud dans les deux sens : la variable écrit dans le nœud, et taper dans un `contenteditable` remonte la saisie vers la variable.
 
 ```html
 <script>
   $note = 'Prends des notes ici'
 </script>
 
-<div @text=!{$note} contenteditable></div>
+<div :text=!{$note} contenteditable></div>
 <p>{$note}</p>
 ```
 
-Il n'existe pas de forme unidirectionnelle `@text={expr}` : pour simplement **afficher** une valeur sans la rendre éditable, l'interpolation `{expr}` suffit. `@text=!` est le choix sûr pour un contenu éditable — rien n'y est jamais interprété comme du HTML, à la différence de son jumeau ci-dessous.
+Il n'existe pas de forme unidirectionnelle `:text={expr}` : pour simplement **afficher** une valeur sans la rendre éditable, l'interpolation `{expr}` suffit. `:text=!` est le choix sûr pour un contenu éditable — rien n'y est jamais interprété comme du HTML, à la différence de son jumeau ci-dessous.
 
-Pour du HTML éditable, **`@html=!{$html}`** lie l'`innerHTML` du nœud dans les deux sens — frapper dans un `contenteditable` met à jour la variable :
+Pour du HTML éditable, **`:html=!{$html}`** lie l'`innerHTML` du nœud dans les deux sens — frapper dans un `contenteditable` met à jour la variable :
 
 ```html
 <script>
   $html = '<p>Écrivez du <strong>texte</strong> !</p>'
 </script>
 
-<div @html=!{$html} contenteditable></div>
+<div :html=!{$html} contenteditable></div>
 <pre>{$html}</pre>
 ```
 
-`@html=!` n'écrit le nœud que si la valeur a changé depuis la dernière fois : un HTML que le navigateur relit autrement (balise non fermée, attributs sans guillemets, `<img src=x onerror=…>`) est posé une fois par valeur, pas à chaque mise à jour de la page, et le curseur d'un `contenteditable` ne bouge pas. Ce que vous tapez remonte vers la variable tel que le navigateur le relit (`<p>un</p>` pour `<p>un`).
+`:html=!` n'écrit le nœud que si la valeur a changé depuis la dernière fois : un HTML que le navigateur relit autrement (balise non fermée, attributs sans guillemets, `<img src=x onerror=…>`) est posé une fois par valeur, pas à chaque mise à jour de la page, et le curseur d'un `contenteditable` ne bouge pas. Ce que vous tapez remonte vers la variable tel que le navigateur le relit (`<p>un</p>` pour `<p>un`).
 
-> ⚠️ Le HTML brut expose au **XSS** : `@html=!` pose l'`innerHTML` sans la moindre sanitisation, exactement comme `{{ }}` ci-dessous — un contenu utilisateur (commentaire relu depuis la base, par exemple) n'y va jamais sans nettoyage côté serveur.
+> ⚠️ Le HTML brut expose au **XSS** : `:html=!` pose l'`innerHTML` sans la moindre sanitisation, exactement comme `{{ }}` ci-dessous — un contenu utilisateur (commentaire relu depuis la base, par exemple) n'y va jamais sans nettoyage côté serveur.
 
-`@html=!` convient à une zone `contenteditable` brute. Pour un vrai éditeur de texte riche — barre d'outils, listes à cocher, collage nettoyé, HTML propre et identique d'un navigateur à l'autre, champ de formulaire —, utilisez `<@@editor>` : voir [30 · Modules cœur](30-modules-coeur.md#editor-et-toolbar--éditeur-de-texte-riche).
+`:html=!` convient à une zone `contenteditable` brute. Pour un vrai éditeur de texte riche — barre d'outils, listes à cocher, collage nettoyé, HTML propre et identique d'un navigateur à l'autre, champ de formulaire —, utilisez `<@@editor>` : voir [30 · Modules cœur](30-modules-coeur.md#editor-et-toolbar--éditeur-de-texte-riche).
 
 ### HTML brut en affichage — `{{ expr }}`
 
-`@html=!` **édite** du HTML (deux sens). Pour seulement **afficher** du HTML sans l'échapper, utilisez l'interpolation à **double accolade** `{{ expr }}` — le simple `{ expr }` échappe toujours le texte :
+`:html=!` **édite** du HTML (deux sens). Pour seulement **afficher** du HTML sans l'échapper, utilisez l'interpolation à **double accolade** `{{ expr }}` — le simple `{ expr }` échappe toujours le texte :
 
 ```html
 <div>{{ $articleHtml }}</div>
@@ -216,7 +218,7 @@ La cible d'un `=!` n'est pas forcément une variable nue : ce peut être un **ch
 </script>
 
 {for todo in $todos}
-  <li @class{todo.done}="done">
+  <li :class{todo.done}="done">
     <input type="checkbox" checked=!{todo.done} />
     <input type="text" value=!{todo.text} />
   </li>
@@ -265,6 +267,14 @@ Sur un élément média, plusieurs propriétés sont bindables. La plupart sont 
 
 `=!{…}` fonctionne aussi sur une **prop** de composant : la valeur circule dans les deux sens entre parent et enfant. Côté enfant, la prop est une variable `$` **ordinaire** — rien à déclarer.
 
+Sans `!`, la prop ne fait que descendre, mais un objet, une liste ou une date passe tel quel, jamais copié : l'enfant qui le modifie (`$value.push(x)`, `$value.nom = 'Léa'`), ou modifie un objet qu'il en atteint, change un objet du parent sans le prévenir, et MJS le signale en développement, une fois par composant et par prop, quoi que fasse le parent ensuite (voir [Props](04-props.md)). Liée à deux sens, la prop partage l'objet, et rien n'est dit. Ce qu'elle redessine chez le parent, et ce qu'elle ne redessine pas :
+
+- liée à une variable de l'état du parent (`value=!{$liste}`) : ce que l'enfant écrit directement par elle dans son script (`$value.push(x)`, `$value[0].nom = 'Léa'`, à toute profondeur), et ce qu'une fonction ou une autre variable change à l'objet passé lui-même (`pousser($value)`), redessinent le parent ; un changement fait plus bas par une autre variable ou par une fonction (`t = $value[0]` puis `t.nom = 'Léa'`, `regler($value[0])`) le redessine de même — avec `"proxy": false`, MJS ne le voit pas : écrivez-le par la prop (`$value[0].nom = 'Léa'`), ou envoyez un événement au parent ;
+- liée à un chemin (`value=!{$liste[i]}`, `value=!{$cfg.sous}`) : une modification faite dans l'objet au bout du chemin (`$value.nom = 'Léa'`, par la prop comme par une fonction ou une autre variable) ne redessine pas le parent, l'objet restant le même ; remplacez-le (`$value = {...$value, nom: 'Léa'}`), ou envoyez un événement au parent ;
+- une propriété définie par `Object.defineProperty` compte comme une écriture faite au même endroit : elle redessine ce que cette écriture redessinerait.
+
+Un enfant qui a lui-même reçu l'objet par une prop simple et le lie plus loin (`<@ligne items=!{$items}>` dans `<@liste items={$l}>`) : ce que `<@ligne>` modifie, il le modifie pour `<@liste>`, qui est nommé dans l'avertissement.
+
 ```html
 <!-- parent -->
 <script>
@@ -281,7 +291,7 @@ Sur un élément média, plusieurs propriétés sont bindables. La plupart sont 
 </script>
 ```
 
-Le parent gagne toujours : c'est lui qui initialise sa variable (`$pin = ''`), et une valeur par défaut écrite dans le `<script>` de l'enfant ne remonte **jamais** dans `$pin`, même quand `$pin` est vide. Chaque écriture que l'enfant fait ensuite (un clic, son `µmount`, une minuterie, même quand le parent est détaché du document) remonte vers `$pin` côté parent, avec son type : un nombre reste un nombre. La référence à **l'instance** du composant (pour appeler ses méthodes) passe par `@this`, traité au chapitre [Directives DOM](09-directives-dom.md).
+Le parent gagne toujours : c'est lui qui initialise sa variable (`$pin = ''`), et une valeur par défaut écrite dans le `<script>` de l'enfant ne remonte **jamais** dans `$pin`, même quand `$pin` est vide. Chaque écriture que l'enfant fait ensuite (un clic, son `µmount`, une minuterie, même quand le parent est détaché du document) remonte vers `$pin` côté parent, avec son type : un nombre reste un nombre. La référence à **l'instance** du composant (pour appeler ses méthodes) passe par `:this`, traité au chapitre [Directives DOM](09-directives-dom.md).
 
 Dans un `{for}`, chaque ligne lie son composant à **son** élément :
 
@@ -291,10 +301,16 @@ Dans un `{for}`, chaque ligne lie son composant à **son** élément :
 {end}
 ```
 
-Inverser, déplacer, ajouter ou retirer des groupes ne mêle jamais leurs lignes : chaque enfant écrit dans l'élément de sa ligne. Cela vaut aussi pour ce qu'un enfant écrit à son réveil (son `µawake`, rejoué à chaque arrivée dans le DOM, donc quand sa ligne change de place) : l'écriture attend que la liste soit remise en ordre, puis remonte vers la ligne où l'enfant se trouve alors, jamais vers la place qu'il vient de quitter. Si le parent change la valeur de cette ligne au même moment, c'est la valeur du parent qui reste.
+Inverser, déplacer, ajouter ou retirer des groupes ne mêle jamais leurs lignes : chaque enfant écrit dans l'élément de sa ligne. Cela vaut aussi pour ce qu'un enfant écrit à son réveil (son `µawake`, rejoué à chaque arrivée dans le DOM, donc quand sa ligne change de place) : l'écriture attend que la liste soit remise en ordre, puis remonte vers la ligne où l'enfant se trouve alors, jamais vers la place qu'il vient de quitter, et la ligne l'affiche aussitôt : un texte de la ligne qui lit cette valeur la montre dès la fin de la mise à jour, que la ligne arrive dans la liste ou y change de place. Si le parent change la valeur de cette ligne au même moment, c'est la valeur du parent qui reste.
 
-> 🔗 Voir aussi : [Directives DOM](09-directives-dom.md) → `@this=!{ref}` (référence au nœud / à l'instance, **sans `$`**) et `@attach` (actions DOM).
+Il en va de même dans une liste placée dans la ligne d'une autre (un `{for}` dans un `{for}`, à toute profondeur) : l'enfant d'une ligne intérieure reçoit ses props avant de se réveiller — son `µawake` les lit déjà — et ce qu'il écrit alors remonte vers sa ligne, qui l'affiche aussitôt.
+
+Une ligne qui porte une directive qui lit sa balise dans le document — `:transition`, `:in`, `:out`, `:attach`, `:this`, un effet ou `:flip`, sur la ligne elle-même ou plus bas dans son gabarit — n'est remplie qu'une fois placée dans la page, pour que la directive y trouve sa balise. Ses composants attendent alors leurs props pour se réveiller : leur `µawake` les lit déjà, et ce qu'ils écrivent remonte vers leur ligne, qui l'affiche aussitôt. Posée ailleurs dans le composant, hors de la ligne, la directive ne change rien aux lignes de la liste.
+
+Un composant placé dans un `{if}` de la ligne (ou dans son `{elsif}`, son `{else}`), dans une liste plate comme dans une liste dans une liste, se réveille lui aussi avec ses props : à l'arrivée de sa ligne, et chaque fois que la condition retombe puis se relève. Une branche refaite dans une ligne déjà dans la page y entre d'un bloc, et ses composants attendent la fin de la mise à jour de la liste pour se réveiller : leur `µawake` lit déjà les valeurs de la ligne, et ce qu'ils écrivent alors remonte vers leur ligne, qui l'affiche aussitôt : un texte de la ligne qui lit cette valeur la montre dès la fin de la mise à jour.
+
+> 🔗 Voir aussi : [Directives DOM](09-directives-dom.md) → `:this=!{ref}` (référence au nœud / à l'instance, **sans `$`**) et `:attach` (actions DOM).
 
 ---
 
-📚 **Apprendre en pratiquant** : ce chapitre correspond aux **Tutos interactifs n°6 (Liaisons d'entrées)** — texte, numériques, cases, `<select>`, groupes, `<select multiple>`, `<textarea>` — et **n°13 (Bindings avancés)** — `contenteditable`/`@html`, bindings dans un `{for}`, médias, dimensions, `@this`, bindings de composant.
+📚 **Apprendre en pratiquant** : ce chapitre correspond aux **Tutos interactifs n°6 (Liaisons d'entrées)** — texte, numériques, cases, `<select>`, groupes, `<select multiple>`, `<textarea>` — et **n°13 (Bindings avancés)** — `contenteditable`/`:html`, bindings dans un `{for}`, médias, dimensions, `:this`, bindings de composant.

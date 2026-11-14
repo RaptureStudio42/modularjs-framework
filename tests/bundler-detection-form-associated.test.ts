@@ -31,15 +31,15 @@ async function construire(nom: string, conf: any, fichiers: Record<string, strin
   return { sortie }
 }
 
-const SANS = '<script>\n$n = 0\n</script>\n<button @click={$n++}>{$n}</button>\n<form @noUJS></form>'
+const SANS = '<script>\n$n = 0\n</script>\n<button @click={$n++}>{$n}</button>\n<form :noUJS></form>'
 const AVEC = {
-  'la case':           '<form @noUJS><@@checkbox name="c">Case</@@checkbox></form>',
-  'l\'interrupteur':   '<form @noUJS><@@switch name="s">Interrupteur</@@switch></form>',
-  'le radio':          '<form @noUJS><@@radio name="r" value="a">A</@@radio></form>',
-  'le nombre':         '<form @noUJS><@@number name="n" value={3}></@@number></form>',
-  'le bouton rotatif': '<form @noUJS><@@knob name="k"></@@knob></form>',
-  'la jauge':          '<form @noUJS><@@gauge name="g"></@@gauge></form>',
-  'la liste':          '<form @noUJS><@@select name="p"><@@option value="a">A</@@option></@@select></form>',
+  'la case':           '<form :noUJS><@@checkbox name="c">Case</@@checkbox></form>',
+  'l\'interrupteur':   '<form :noUJS><@@switch name="s">Interrupteur</@@switch></form>',
+  'le radio':          '<form :noUJS><@@radio name="r" value="a">A</@@radio></form>',
+  'le nombre':         '<form :noUJS><@@number name="n" value={3}></@@number></form>',
+  'le bouton rotatif': '<form :noUJS><@@knob name="k"></@@knob></form>',
+  'la jauge':          '<form :noUJS><@@gauge name="g"></@@gauge></form>',
+  'la liste':          '<form :noUJS><@@select name="p"><@@option value="a">A</@@option></@@select></form>',
 }
 const APPLI = '@formAssociated\n\n<script>\n  $oui = false\n</script>\n\n<button type="button">{$oui}</button>'
 

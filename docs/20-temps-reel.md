@@ -27,7 +27,7 @@ Un `µsocket(url)` est un **singleton par URL**, référence-compté : deux comp
 | `latency` | `number \| null` | Aller-retour du dernier `µ:ping`/`µ:pong`, en ms. |
 | `lastError` | `object \| null` | Dernière erreur (`µ:error`, `µ:denied`, coupure réseau…). |
 
-Toutes sont réactives : `<span class="dot" @class{@sock.connected}="on">` bascule tout seul.
+Toutes sont réactives : `<span class="dot" :class{@sock.connected}="on">` bascule tout seul.
 
 ---
 
@@ -412,5 +412,5 @@ catch e
 - **Sans `owner` ni `off()`, fuite.** Le socket est un singleton référence-compté PARTAGÉ entre plusieurs composants : `on(type, handler)` renvoie une fonction de dé-abonnement, mais rien ne la relie au cycle de vie de l'appelant sauf à passer `{ owner: @ }` (même mécanisme que `owner` de `µsmooth`). Un composant qui ne rappelle jamais cette fonction (ni `sock.off(type, handler)`, ni `owner`) laisse le handler — et les closures qu'il capture — enregistré à vie sur le socket. Forme recommandée : `@sock.on 'chat', ((p)-> …), { owner: @ }` — sinon, à la main : `@off = @sock.on 'chat', (p)-> …` dans le `<script>`, puis `µdestroy -> @off()`.
 - **Discussion et hall : rattachés au composant qui s'exécute au moment de l'appel.** `sock.chat()` et `sock.lobby()` appelés pendant qu'un composant s'exécute (son code d'initialisation, son `µmount`, un de ses effets) sont rattachés à ce composant, y compris par une fonction d'un magasin ou d'un module appelée depuis là ; hors de tout composant (chargement d'un module, initialisation de l'appli, gestionnaire d'événement), à rien. À la destruction du composant, la discussion et le hall se ferment (cf. [26](26-chat.md), [28](28-lobby.md)).
 - **Une partie ouverte dans un composant n'est pas quittée quand il disparaît.** `sock.game()` n'est rattaché à aucun composant : la partie vit jusqu'à `leave()` ou sa fin, et le composant qui revient dans la page retrouve la même. Appelez `leave()` pour la quitter, par exemple dans `µdestroy` (cf. [24](24-mjs-server.md)).
-- **SVG dans `{for}`** (ex. `<circle>`) : rendu correctement (namespace SVG géré par `µ._mjs_cloneTpl`). Voir [18 · Pièges](18-pieges.md).
+- **SVG dans `{for}`** (ex. `<circle>`) : rendu correctement (namespace SVG géré par la copie des gabarits du runtime, `µ._mjs_cloneTpl` ou, ligne à racine unique, `µ._mjs_cloneEl`). Voir [18 · Pièges](18-pieges.md).
 - **`µ.optimistic` redevient la seule source de vérité tant qu'un appel est en vol** sur un store donné : une mutation extérieure posée sur **ce même** store pendant la fenêtre (autre code, un autre flux réseau) est écrasée au rejeu suivant. Dédiez un petit store à ce que `µ.optimistic` pilote. Entre deux appels (rien en vol), c'est le store qui fait foi : l'appel suivant repart de sa valeur du moment, écritures extérieures comprises.

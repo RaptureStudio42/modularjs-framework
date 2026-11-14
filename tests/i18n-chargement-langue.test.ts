@@ -130,7 +130,7 @@ describe('i18n runtime — chargement du fichier de langue au démarrage', funct
     assert.equal(µ.t('bonjour'), 'Bonjour')
   })
 
-  it('squelette (prod) : avant l\'arrivée du fichier de langue, tout texte est en route — la barre, pas le vide ; arrivé, le texte, et une clé absente pour de bon, rien', async function () {
+  it('squelette (prod) : avant l\'arrivée du fichier de langue, tout texte est en route — la barre, pas le vide ; arrivé, le texte, et une clé absente pour de bon, son nom', async function () {
     const BARRE = '\u2007'.repeat(12)
     const { µ } = makeMu(baseData({ placeholder: '*skeleton' }))
     const comp: any = fakeComp('panier')
@@ -139,7 +139,7 @@ describe('i18n runtime — chargement du fichier de langue au démarrage', funct
     assert.equal(µ.t('bonjour'), BARRE, 'un texte de la racine, avant le démarrage')
     await tick()
     assert.equal(µ.t('bonjour'), 'Bonjour')
-    assert.equal(µ.t('inconnue'), '', 'absente pour de bon : rien')
+    assert.equal(µ.t('inconnue'), '⟦inconnue⟧', 'absente pour de bon : son nom')
     const µ2 = makeMu(baseData({ placeholder: '*skeleton' })).µ
     µ2._fxConf = { skeleton: ['await'] }
     assert.equal(µ2.t('bonjour'), BARRE, '`"effects": { "skeleton": [] }` ne coupe plus les barres : elles ne dépendent que de `i18n.placeholder`')

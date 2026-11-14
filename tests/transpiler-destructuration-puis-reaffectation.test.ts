@@ -48,7 +48,7 @@ describe('déstructuration `:=` puis réaffectation — module .civet autonome (
       const outDir = join(root, 'out')
       mkdirSync(srcDir, { recursive: true })
       outDirEsm(outDir)
-      writeFileSync(join(srcDir, 'm.module.civet'), `export essai = ->\n  ${corps}\n`)
+      writeFileSync(join(srcDir, 'm.module.civet.mjs'), `export essai = ->\n  ${corps}\n`)
 
       const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
       const stats = await bundler.compile()
@@ -71,7 +71,7 @@ describe('déstructuration `.=` (mutable) puis réaffectation — bout en bout, 
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'export essai = ->\n  {w, h} .= {w: 3, h: 4}\n  w = 10\n  w + h\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'export essai = ->\n  {w, h} .= {w: 3, h: 4}\n  w = 10\n  w + h\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -120,7 +120,7 @@ describe('déstructuration `:=` MULTI-LIGNES puis réaffectation — module .civ
       const outDir = join(root, 'out')
       mkdirSync(srcDir, { recursive: true })
       outDirEsm(outDir)
-      writeFileSync(join(srcDir, 'm.module.civet'), `export essai = ->\n  ${corps}\n`)
+      writeFileSync(join(srcDir, 'm.module.civet.mjs'), `export essai = ->\n  ${corps}\n`)
 
       const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
       const stats = await bundler.compile()
@@ -143,7 +143,7 @@ describe('déstructuration `.=` MULTI-LIGNES (mutable) puis réaffectation — b
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'export essai = ->\n  {\n    w,\n    h\n  } .= {w: 3, h: 4}\n  w = 10\n  w + h\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'export essai = ->\n  {\n    w,\n    h\n  } .= {w: 3, h: 4}\n  w = 10\n  w + h\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()

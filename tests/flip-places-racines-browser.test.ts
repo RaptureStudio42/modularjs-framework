@@ -33,7 +33,7 @@ const L     = (...ts: string[]) => ts.map((t) => ligne(t))
 const BASE  = L('a', 'b', 'c', 'd')
 
 // une balise `@flip` : fixe (F), sous son `{if}` (R) ; `k` est le suffixe de son data-k
-const F = (k: string) => `<li @flip=5000 data-k="{it.t}${k}">{it.t}${k}</li>`
+const F = (k: string) => `<li :flip=5000 data-k="{it.t}${k}">{it.t}${k}</li>`
 const R = (drapeau: string, k: string) => `{if it.${drapeau}}${F(k)}{end}`
 
 type Forme = { corps: string, v?: boolean }
@@ -42,10 +42,10 @@ const FORMES: Record<string, Forme> = {
   troisIf:          { corps: `${R('a', '')}\n    ${R('b', '-2')}\n    ${R('c', '-3')}` },
   troisMilieuIf:    { corps: `${F('')}\n    ${R('b', '-2')}\n    ${F('-3')}` },
   troisPremierFixe: { corps: `${F('')}\n    ${R('b', '-2')}\n    ${R('c', '-3')}` },
-  deuxIfElse:       { corps: `{if it.a}<li @flip=5000 data-k="{it.t}">{it.t}</li>{else}<li @flip=5000 data-k="{it.t}">{it.t} off</li>{end}\n    {if it.b}<li @flip=5000 data-k="{it.t}-2">{it.t}-2</li>{else}<li @flip=5000 data-k="{it.t}-2">{it.t}-2 off</li>{end}` },
+  deuxIfElse:       { corps: `{if it.a}<li :flip=5000 data-k="{it.t}">{it.t}</li>{else}<li :flip=5000 data-k="{it.t}">{it.t} off</li>{end}\n    {if it.b}<li :flip=5000 data-k="{it.t}-2">{it.t}-2</li>{else}<li :flip=5000 data-k="{it.t}-2">{it.t}-2 off</li>{end}` },
   ifDansIf:         { corps: `{if it.a}\n      ${F('')}\n      {if it.b}${F('-2')}{end}\n      ${F('-3')}\n    {end}` },
-  elsif:            { corps: `{if it.a}<li @flip=5000 data-k="{it.t}">{it.t}</li>{elsif it.b}<li @flip=5000 data-k="{it.t}">{it.t} b</li>{else}<li @flip=5000 data-k="{it.t}">{it.t} off</li>{end}\n    ${F('-2')}` },
-  ifDeuxElseUne:    { corps: `{if it.a}\n      ${F('')}\n      ${F('-2')}\n    {else}\n      <li @flip=5000 data-k="{it.t}">{it.t} off</li>\n    {end}` },
+  elsif:            { corps: `{if it.a}<li :flip=5000 data-k="{it.t}">{it.t}</li>{elsif it.b}<li :flip=5000 data-k="{it.t}">{it.t} b</li>{else}<li :flip=5000 data-k="{it.t}">{it.t} off</li>{end}\n    ${F('-2')}` },
+  ifDeuxElseUne:    { corps: `{if it.a}\n      ${F('')}\n      ${F('-2')}\n    {else}\n      <li :flip=5000 data-k="{it.t}">{it.t} off</li>\n    {end}` },
   keyEntreFixes:    { corps: `${F('')}\n    {key it.v}${F('-2')}{end}\n    ${F('-3')}`, v: true },
 }
 

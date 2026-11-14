@@ -27,7 +27,7 @@ const PAGE: Page = {
     window.__etat = -> { texte: $texte, choix: $choix, liste: $liste }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="e" name="contrat" value=!{$texte}></@@editor>
   <@@select class="s" name="choix" value=!{$choix}><@@option value="1">Un</@@option><@@option value="2">Deux</@@option></@@select>
   <@@sortable class="l" value=!{$liste}>{for x in $liste}<div class="x">{x}</div>{end}</@@sortable>

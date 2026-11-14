@@ -69,7 +69,7 @@ $n = 3
 remove = -> $n--
 </script>
 <p id="cnt">{$n}</p>
-<button @confirm="Vraiment ?" @click={remove()}>x</button>
+<button :confirm="Vraiment ?" @click={remove()}>x</button>
 `)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })

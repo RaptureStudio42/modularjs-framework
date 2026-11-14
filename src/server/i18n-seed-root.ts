@@ -3,7 +3,8 @@
 // Les deux moteurs de rendu l'exécutent dans la page (happy-dom par `eval`, navigateur par `evaluate`) : elle est donc écrite
 // seule, sans rien qui vienne d'ailleurs, et injectée par son texte (`buildSeedRoot.toString()`).
 
-/** `used` : `{langue: {clé: true}}` ; `langs` : `µ._i18nLangs` (`{langue: {root}}`). Rend `null` si rien n'est à semer. */
+/** `used` : `{langue: {clé: true}}` (`false` : clé lue, absente des deux langues, semée à `null`) ; `langs` : `µ._i18nLangs` (`{langue: {root}}`).
+ *  Rend `null` si rien n'est à semer. */
 export function buildSeedRoot(used: any, langs: any): any {
   let out: any = null
   for (const lang in used) {
@@ -16,13 +17,13 @@ export function buildSeedRoot(used: any, langs: any): any {
       for (let i = 0; i < parts.length && src != null; i++) {
         src = typeof src === 'object' && Object.prototype.hasOwnProperty.call(src, parts[i]) ? src[parts[i]] : undefined
       }
-      if (src == null) { continue }
+      if (used[lang][cle] === false ? src != null : src == null) { continue }
       out = out || {}
       let dst = out[lang] = out[lang] || {}
       for (let j = 0; j < parts.length - 1; j++) {
         dst = dst[parts[j]] = (dst[parts[j]] && typeof dst[parts[j]] === 'object') ? dst[parts[j]] : {}
       }
-      dst[parts[parts.length - 1]] = src
+      dst[parts[parts.length - 1]] = src == null ? null : src
     }
   }
   return out

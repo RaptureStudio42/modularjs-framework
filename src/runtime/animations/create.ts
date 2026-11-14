@@ -43,7 +43,7 @@
     name = null;
   }
   factory = function(opts = {}) {
-    var setup, modes;
+    var setup, modes, pair;
     // setup(node) : retourne la cfg pour ce node. Marqué `_isCfgFactory` →
     // `_mjs_playTransition` route via `_mjs_runTransition` qui s'occupe du cache,
     // de l'abort, et de la continuité.
@@ -74,7 +74,7 @@
     // sur `setup._mode` le mode du 1er nœud "managed" rencontré, et le `cfg.intro`/`cfg.outro` du
     // 2e nœud (asym) n'était alors plus jamais appelé.
     modes = new WeakMap();
-    return {
+    pair  = {
       intro: function(node) {
         var cfg, mergedOpts;
         // PERF — mémoïse le MODE (asym vs managed) PAR NŒUD pour éviter un
@@ -119,6 +119,10 @@
         return µ._mjs_runTransition(node, setup, 'out');
       }
     };
+    // la sortie arrêtée par le retour de sa balise revient sur ses pas : le moteur la rejoue depuis la configuration elle-même, dans le
+    // sens de l'entrée (cf. µ._mjs_txBack) — `outro` la jouerait toujours dans le sien
+    pair.outro._cfgFactory = setup;
+    return pair;
   };
   if (name) {
     // `µ.anim[name] =

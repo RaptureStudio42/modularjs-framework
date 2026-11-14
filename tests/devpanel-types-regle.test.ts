@@ -1,6 +1,6 @@
 // mjs_devpanel — la règle d'une variable typée s'affiche à côté de sa valeur :
 //   onglet État d'un composant : `volume  number  50  · int 0..100` ;
-//   vue des stores : `panier  object  {…}  · { quantite: int 1..99 }` ;
+//   vue des stores : `panier  object  {…}  · quantite  int 1..99` (le texte d'une règle d'objet, en retrait sous son nom, comme elle s'écrit) ;
 //   une variable sans règle n'affiche rien de plus ; écrire dans le panneau passe par la règle.
 //
 // Pipeline RÉEL (Bundler → cœur + composants compilés, montés dans happy-dom), comme devpanel.test.ts.
@@ -30,7 +30,8 @@ const COMPOSANTS: Record<string, string> = {
   ].join('\n'),
   'dpt-store': [
     '<vars>',
-    '$$panier { quantite: int 1..99 }',
+    '$$panier',
+    '  quantite  int 1..99',
     '</vars>',
     '<script>',
     '$$panier = { quantite: 2 }',
@@ -125,7 +126,7 @@ describe('mjs_devpanel — la règle de chaque variable typée', function () {
   it('vue des stores : le store typé montre sa règle, les autres rien', async () => {
     await ouvrirSur('mjs-dpt-store', (el) => el._shadow?.querySelector('.q')?.textContent === '2 1')
     clic(ligne(/stores/))
-    assert.equal(regle('panier'), '· { quantite: int 1..99 }')
+    assert.equal(regle('panier'), '· \n  quantite  int 1..99')
     assert.equal(regle('compte'), null)
   })
 })

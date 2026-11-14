@@ -57,11 +57,14 @@ describe('render-browser — pageErrors plafonnées en nombre ET en taille', () 
     // N exceptions
     // asynchrones (setTimeout 0) pendant @mount, chacune avec un message hostile de taille excessive.
     writeFileSync(join(root, 'src', 'errcap.mjs'), `
+<script module lang="coffee">
+lever = -> setTimeout((-> throw new Error('boom-' + 'x'.repeat(2000))), 0)
+</script>
 <script lang="coffee">
 µmount ->
   i = 0
   while i < 500
-    setTimeout((-> throw new Error('boom-' + 'x'.repeat(2000))), 0)
+    lever()
     i += 1
 </script>
 <p>errcap</p>

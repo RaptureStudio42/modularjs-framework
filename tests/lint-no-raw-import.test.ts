@@ -103,7 +103,7 @@ describe('lintNoRawImport — bout-en-bout (transpile réel)', function () {
 
   it("la directive `@import` légitime (racine du fichier) n'est JAMAIS vue par ce lint (non-régression critique)", async () => {
     const src = [
-      "@import helper 'shared/utils.module.civet'",
+      "@import helper 'shared/utils.module.civet.mjs'",
       '<script lang="civet">$x = helper()</script>',
       '<div>{$x}</div>',
     ].join('\n')
@@ -118,7 +118,7 @@ describe('lintNoRawImport — bout-en-bout (transpile réel)', function () {
 
   it("`@import` légitime PLUS un import ES classique en trop dans <script module> : ce DERNIER reste rejeté (l'exemption ne couvre QUE les imports injectés par la directive)", async () => {
     const src = [
-      "@import helper 'shared/utils.module.civet'",
+      "@import helper 'shared/utils.module.civet.mjs'",
       '<script module lang="js">',
       "import { sournois } from './sournois.js'",
       '</script>',

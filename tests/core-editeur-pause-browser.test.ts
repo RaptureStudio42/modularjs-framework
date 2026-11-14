@@ -32,7 +32,7 @@ const DESTRUCTION: Page = {
     window.__etat   = -> { gros: $gros, show: $show }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   {if $show}
     <@@editor class="g" name="g" toolbar="bold" value=!{$gros}></@@editor>
   {end}
@@ -57,7 +57,7 @@ const FORMULAIRE: Page = {
     window.__etat  = -> { gros: $gros, deux: $deux }
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   <input type="hidden" name="avant" value="1">
   <@@editor class="g" name="notes[]" toolbar="bold" value=!{$gros}></@@editor>
   <input type="text" name="milieu" value="m" aria-label="milieu">
@@ -84,7 +84,7 @@ const COLLAGE: Page = {
     window.__etat  = -> { gros: $gros }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="g" name="g" toolbar="bold" value=!{$gros} @input={@noter(e)} @change={@noter(e)}></@@editor>
 </form>
 `,

@@ -19,9 +19,9 @@ const HOTE = `<script>
   $d  = 'url(data:image/png;base64,AAAA)'
 </script>
 <span class="var" --x={$v}></span>
-<span class="prop" @style.color={$v}></span>
+<span class="prop" :style.color={$v}></span>
 <span class="accolade" --y={$w}></span>
-<span class="juste" --x={$ok} @style.color={$ok}></span>
+<span class="juste" --x={$ok} :style.color={$ok}></span>
 <span class="chaine" --c={$s}></span>
 <span class="donnee" --i={$d}></span>
 <@@color class="pastille" value={$v}></@@color>

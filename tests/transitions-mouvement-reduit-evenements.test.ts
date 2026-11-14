@@ -16,9 +16,9 @@ const SUIVI = '@introstart={$debut = $debut + 1} @introend={$fin = $fin + 1} @ou
 const ETAT  = '<script>\n$vu = false\n$debut = 0\n$fin = 0\n$sortie = 0\n$sorti = 0\n</script>\n<i class="n">{$debut}/{$fin}/{$sortie}/{$sorti}</i>\n'
 
 const COMPOSANTS: Record<string, string> = {
-  'calme-ev-vole':   ETAT + `{if $vu}<p class="v" @in=*fly(up, distance: 200, duration: 2s) @out=*fade(300ms) ${SUIVI}>vole</p>{end}`,
-  'calme-ev-glisse': ETAT + `{if $vu}<p class="s" @transition=*slide(x, duration: 250ms) ${SUIVI}>glisse</p>{end}`,
-  'calme-ev-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n$debut = 0\n$fin = 0\n$sortie = 0\n$sorti = 0\n</script>\n<i class=\"n\">{$debut}/{$fin}/{$sortie}/{$sorti}</i>\n" + `{if $vu}<p class="m" @in=*tourne(duration: 8s) @out=*tourne(duration: 8s) ${SUIVI}>maison</p>{end}`,
+  'calme-ev-vole':   ETAT + `{if $vu}<p class="v" :in=*fly(up, distance: 200, duration: 2s) :out=*fade(300ms) ${SUIVI}>vole</p>{end}`,
+  'calme-ev-glisse': ETAT + `{if $vu}<p class="s" :transition=*slide(x, duration: 250ms) ${SUIVI}>glisse</p>{end}`,
+  'calme-ev-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n$debut = 0\n$fin = 0\n$sortie = 0\n$sorti = 0\n</script>\n<i class=\"n\">{$debut}/{$fin}/{$sortie}/{$sorti}</i>\n" + `{if $vu}<p class="m" :in=*tourne(duration: 8s) :out=*tourne(duration: 8s) ${SUIVI}>maison</p>{end}`,
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {

@@ -7,9 +7,11 @@
 // externalVars : noms `$foo` à préserver tels quels (imports cross-module)
 // moduleMode   : si true, tous les `$foo` restent littéraux (modules .coffee externes)
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_OUT, MU_LAYOUT_WRITE_BODY, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, ouvreUneRegex, scanRegexLiteral, PORTEE_OUVRE_UNE_REGEX } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, MU_REFRESH_PAREN_BODY, MU_REFRESH_BODY, MU_REFRESH_RESTE_BODY, MU_REFRESH_NUE_BODY, MU_REFRESH_OUT, MU_REFRESH_STORE_OUT, refreshFormeError, refreshNueError, refreshHorsComposantError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_OUT, MU_LAYOUT_WRITE_BODY, MU_HOOKS, MU_HOOKS_BODY, MU_DERIVED_BODY, rewriteMuToggle, vaultRemovedError, importedSingletonError, storeComputedKeyError, ouvreUneRegex, regexEnArgument, scanRegexLiteral, PORTEE_OUVRE_UNE_REGEX } from '../sigils.js'
 import { t } from '../messages/index.js'
+import { selfWriteError, SELF_WRITE_STORE, SELF_WRITE_MODULE_STATE, SELF_WRITE_VAR } from '../sigils.js'
 import { skipQuotedSpan } from '../quoted-span.js'
+import type { SupportedLang } from '../languages/index.js'
 
 // regex ancrées du scanner — bâties UNE fois sur les corps partagés (sigils.ts,
 // source unique lexer↔cleanJs) ; l'ancre `^` reste locale à ce moteur
@@ -23,6 +25,10 @@ const RE_RAW_WRITE_OLD_FORME_PAREN = new RegExp(`^${RAW_WRITE_OLD_FORME_PAREN_BO
 const RE_BARE_SECTION = new RegExp(`^${BARE_SECTION_BODY}`)
 const RE_MU_PASCAL  = new RegExp(`^${MU_PASCAL_BODY}`)
 const RE_MU_SHORT   = new RegExp(`^${MU_SHORT_BODY}`)
+const RE_MU_REFRESH_PAREN = new RegExp(`^${MU_REFRESH_PAREN_BODY}`)
+const RE_MU_REFRESH       = new RegExp(`^${MU_REFRESH_BODY}`)
+const RE_MU_REFRESH_NUE   = new RegExp(`^${MU_REFRESH_NUE_BODY}`)
+const RE_MU_REFRESH_RESTE = new RegExp(`^${MU_REFRESH_RESTE_BODY}`)
 const RE_MU_LANG    = new RegExp(`^${MU_LANG_BODY}`)
 const RE_MU_THEME   = new RegExp(`^${MU_THEME_BODY}`)
 const RE_MU_LAYOUT  = new RegExp(`^${MU_LAYOUT_BODY}`)
@@ -54,6 +60,14 @@ export interface TokenizeOpts {
   firstLine?: number
   // colonne du fichier où commence ce texte (contenu d'une interpolation) ; 1 sans précision
   firstColumn?: number
+  // langage du texte : en CoffeeScript et en Civet, une regex se passe aussi sans parenthèses (`s.replace /"/g, "#{x}"`,
+  // regexEnArgument) ; en JavaScript, en TypeScript ou sans langage, `a /2 + b /4` divise
+  lang?: SupportedLang
+  // les raccourcis `$x`, `&x` et `$x =: valeur` laissés tels quels : une passe sur l'arbre de Civet les pose ensuite
+  // (lecture du script par l'arbre, reader/script.ts)
+  raccourcisParLArbre?: boolean
+  // module autonome (fichier importé, celui d'un magasin compris), et non le `<script module>` d'un composant : ses refus le nomment
+  moduleFile?: boolean
 }
 
 // situe — préfixe `<fichier>:<ligne>:<colonne>` d'une erreur du lexeur, même forme que celles de Civet ; `pos` est
@@ -71,6 +85,64 @@ function situeDans(opts: TokenizeOpts, texte: string, pos: number): TokenizeOpts
   const avant = texte.slice(0, pos)
   const sauts = avant.match(/\n/g)?.length ?? 0
   return { ...opts, firstLine: (opts.firstLine ?? 1) + sauts, firstColumn: sauts > 0 ? pos - avant.lastIndexOf('\n') : (opts.firstColumn ?? 1) + pos }
+}
+
+// selfWriteAt — `$x = $x`, `$$x = $$x` ou `µ$$x = µ$$x` (lu `$x` : nom importé, singleton du module) qui commence à l'indice `i`
+// de `code` : la variable, la clé du magasin ou l'état de module écrit avec sa propre valeur, exactement (sigils.ts, selfWriteError),
+// espaces, `;` et parenthèses autour d'un côté compris, suivi de la fin de l'expression. Une ligne d'après qui la continue (un point,
+// un opérateur, une ouvrante, un retrait plus grand) laisse passer l'écriture, comme toute forme que ce lecteur ne lit pas sûrement :
+// les passes d'écriture la refusent alors sans sa place. Rend l'indice où commence l'écriture (sa première parenthèse) et l'erreur
+const RE_SELF_WRITE      = /^(µ\$\$|\$\$?)([a-zA-Z_][a-zA-Z0-9_]*)((?:[ \t]*\))*)[ \t]*=(?![=>~:])[ \t]*((?:\([ \t]*)*)\1\2(?![\w$])((?:[ \t]*\))*)/
+const RE_SELF_WRITE_END  = /^[ \t]*(?:[;,)\]}]|\/\*|$)|^[ \t]+(?:if|unless|else|for|while|until|then|when)(?![\w$])/
+const RE_LINE_END        = /^(?:[ \t]+#[^\n]*|[ \t]*\/\/[^\n]*|[ \t]*)\r?(?=\n|$)/
+const RE_LINE_GOES_ON    = /^[ \t]*(?:[.?[(+\-*/%&|^<>=!:,`]|(?:and|or|not|is|isnt|in|of|instanceof)(?![\w$]))/
+const RE_LINE_BLANK      = /^[ \t]*(?:(?:#|\/\/)[^\n]*)?\r?$/
+
+function selfWriteAt(code: string, i: number, externalVars: string[], singletons: string[], moduleMode: boolean): { at: number, error: Error } | null {
+  if (/[\w$]/.test(code[i - 1] ?? '') || (code[i - 1] === '.' && code[i - 2] !== '.')) return null
+  const m = RE_SELF_WRITE.exec(code.slice(i, i + 300))
+  // `$$X = $$X` d'un singleton importé : refusé par la règle 3.2, qui dit d'écrire `µ$$X`
+  if (!m || (m[1] === '$$' && externalVars.includes(`$${m[2]}`))) return null
+  const parens = (s: string): number => s.split(/[()]/).length - 1
+  // autant d'ouvrantes juste avant la gauche que de fermantes juste après elle
+  let at = i
+  for (let k = parens(m[3]); k > 0; k--) {
+    let j = at - 1
+    while (code[j] === ' ' || code[j] === '\t') j--
+    if (code[j] !== '(') return null
+    at = j
+  }
+  // à droite, une fermante de plus que d'ouvrantes ferme l'expression qui la contient
+  const ouvertes = parens(m[4])
+  const fermees  = parens(m[5])
+  if (fermees < ouvertes || (fermees === ouvertes && !expressionEnds(code, i + m[0].length, at))) return null
+  const kind = m[1] === '$$' ? SELF_WRITE_STORE : m[1] === 'µ$$' || externalVars.includes(`$${m[2]}`) || singletons.includes(m[2]) ? SELF_WRITE_MODULE_STATE : SELF_WRITE_VAR
+  return { at, error: selfWriteError(kind, m[2], moduleMode && kind === SELF_WRITE_VAR, !moduleMode && kind === SELF_WRITE_VAR && deriveeEcrite(code, m[2])) }
+}
+
+// `$d = …` écrit au premier niveau du script, qui lit une autre variable `$`, une clé du magasin ou un contexte `§§` : une valeur
+// dérivée, dont le refus de `$d = $d` dit d'écrire `µrefresh` sur la variable qu'elle lit (cf. selfWriteError) — lue au texte, le
+// lecteur passe avant l'analyse du script ; un gestionnaire refusé par les passes d'écriture la tient de l'analyse (transpiler/index.ts)
+function deriveeEcrite(code: string, nom: string): boolean {
+  return new RegExp(`^\\$${nom}[ \\t]*=(?![=>~:])[^\\n]*?(?<![\\w$.])(?:\\$\\$?(?!${nom}(?![\\w$]))[a-zA-Z_]|§§[a-zA-Z_])`, 'm').test(code)
+}
+
+// la fin d'une expression à l'indice `k` de `code` (cf. selfWriteAt) : `;`, `,`, une fermante, `if`, `unless`, `else`, `for`,
+// `while`, `until`, `then`, `when`, la fin du texte, ou la fin de sa ligne (commentaire compris) quand la ligne écrite suivante ne
+// la continue pas et n'est pas plus en retrait que la ligne où commence l'écriture (`at`)
+function expressionEnds(code: string, k: number, at: number): boolean {
+  const suite = code.slice(k, k + 300)
+  if (RE_SELF_WRITE_END.test(suite)) return true
+  if (!RE_LINE_END.test(suite)) return false
+  const debut   = code.lastIndexOf('\n', at - 1) + 1
+  const retrait = /^[ \t]*/.exec(code.slice(debut, at))![0].length
+  for (let p = code.indexOf('\n', k); p >= 0; ) {
+    const q     = code.indexOf('\n', p + 1)
+    const ligne = code.slice(p + 1, q < 0 ? code.length : q)
+    p           = q
+    if (!RE_LINE_BLANK.test(ligne)) return /^[ \t]*/.exec(ligne)![0].length <= retrait && !RE_LINE_GOES_ON.test(ligne)
+  }
+  return true
 }
 
 // crochet mal écrit (`µmounted ->`, `µonDestroy ->`, `µdestory ->`) : le crochet de cycle de vie dont le nom est
@@ -120,9 +192,15 @@ const RE_CROCHET_SILHOUETTE = /^µ\.?([a-zA-Z_][a-zA-Z0-9_]*)(?=[ \t]*(?:->|=>|\
 // sections.ts détecter la chaîne non fermée au lieu de la masquer en silence.
 const IDENT_START_RE = /[a-zA-Z_]/
 
+// COMMENTAIRE_MJS_GARDE — le commentaire MJS `//!` (jusqu'à la fin de la ligne) sort dans le code produit, en
+// développement comme en production (vrai), ou part comme tous les autres commentaires (faux) : SEUL réglage, lu par
+// le retrait des commentaires (transpiler/sections.ts, retirerCommentaires) et par la minification (bundler/minify.ts)
+export const COMMENTAIRE_MJS_GARDE = true
+
 // scanInertAt — un littéral/commentaire commence-t-il en `i` ? rend l'offset de FIN
-// (exclu), ou -1 (rien ici, ou littéral non terminé)
-function scanInertAt(src: string, i: number): number {
+// (exclu), ou -1 (rien ici, ou littéral non terminé) ; `dialecte` : code Coffee ou Civet, où une regex se passe aussi
+// sans parenthèses (`s.split /@/`, regexEnArgument)
+export function scanInertAt(src: string, i: number, dialecte = false): number {
   const c = src[i]
   if (c === '#') {
     if (src.startsWith('###', i)) { const e = src.indexOf('###', i + 3); return e < 0 ? -1 : e + 3 }
@@ -138,7 +216,7 @@ function scanInertAt(src: string, i: number): number {
     // faisait manger par les pré-passes §/§§ juste en dessous (AVANT même que la règle 3.1a du
     // scanner, plus bas dans ce fichier, ne voie le littéral en entier). Même heuristique
     // PARTAGÉE (sigils.ts) que la règle 3.1a et le parser.
-    if (ouvreUneRegex(src.slice(0, i))) return scanRegexLiteral(src, i)
+    if (ouvreUneRegex(src.slice(0, i)) || (dialecte && regexEnArgument(src, i))) return scanRegexLiteral(src, i)
     return -1
   }
   if (c === '"' || c === "'") {
@@ -235,6 +313,162 @@ export function scanDoubleQuoteAt(src: string, i: number): number {
   return -1
 }
 
+// chaîne `"…"` ou `'…'` de Civet ou de CoffeeScript écrite sur plusieurs lignes : les deux balayeurs des commentaires
+// (retirerCommentaires, transpiler/sections.ts ; applyCivetDialectSugar, transpiler/sugar.ts) lisent les chaînes ligne par ligne —
+// un guillemet que sa ligne ne referme pas est passé, la ligne suivante se lit comme du code, et un `#` y ouvre un commentaire : la
+// chaîne perd le reste de cette ligne, sans erreur ; cette lecture ne change pas : le témoin ci-dessous (longStringWatch) la suit et
+// relève chaque chaîne ainsi entamée, pour l'avertissement `lint.multilineString` ; `LostInString` : le signe du commentaire pris
+// dans la chaîne (`at`, le premier) et son guillemet ouvrant (`open`) ; `LostPlace` : les mêmes, en lignes et colonnes du texte lu,
+// avec le guillemet de la chaîne (`quote`)
+export interface LostInString {
+  at:   number
+  open: number
+}
+
+export interface LostPlace {
+  line:     number
+  column:   number
+  openLine: number
+  sign:     string
+  quote:    string
+}
+
+interface LongString {
+  at:   number
+  end:  number
+  cuts: number[]
+}
+
+export interface LongStringWatch {
+  lost:    LostInString[]
+  lone:    (i: number, slash: number, next?: number) => void
+  skipped: (a: number, b: number) => void
+  cut:     (a: number, b: number) => void
+}
+
+const WORD_CHAR_RE    = /[\p{L}\p{N}_$]/u
+const DIVISION_END_RE = /[\w$)\]]/
+
+// guillemet qui suit celui de `i` — le même signe, échappements sautés : le seul qui puisse refermer la chaîne si `i` en ouvre une ;
+// la longueur de `src` s'il n'y en a plus
+function nextQuoteAt(src: string, i: number): number {
+  for (let j = i + 1; j < src.length; j++) {
+    if (src[j] === '\\') j++
+    else if (src[j] === src[i]) return j
+  }
+  return src.length
+}
+
+// le guillemet de `i`, que sa ligne ne referme pas, peut-il ouvrir une chaîne écrite sur plusieurs lignes ? non s'il est collé à un
+// mot (l'apostrophe d'un texte, `l'un`), doublé (`"""` jamais refermé), ou si une barre `/` de sa ligne, avant lui, a été lue comme
+// du code (`slash` : position de la dernière) sans être sûrement une division (suivie d'un blanc, ou collée à la valeur qu'elle
+// divise) — une regex que la lecture n'a pas reconnue, en tête de ligne après une valeur (`/["']/.test s`), porte des guillemets
+// qui n'ouvrent rien
+function opensLongString(src: string, i: number, slash: number): boolean {
+  if (src[i + 1] === src[i] || WORD_CHAR_RE.test(src[i - 1] ?? '')) return false
+  return slash < src.lastIndexOf('\n', i - 1) + 1 || /\s/.test(src[slash + 1] ?? '') || DIVISION_END_RE.test(src[slash - 1] ?? '')
+}
+
+// témoin d'un balayeur des commentaires sur le texte `src` — il n'en change pas la lecture, il en reçoit les trois gestes :
+// - `lone(i, slash, next)` : le guillemet de `i`, que sa ligne ne referme pas ; s'il peut ouvrir une chaîne (opensLongString), elle
+//   court jusqu'au guillemet suivant du même signe (nextQuoteAt) ; `next` : d'où le balayeur reprend (le caractère suivant, par défaut)
+// - `cut(a, b)` : le commentaire [a, b), retiré ou réécrit — pris dans la chaîne s'il commence avant son guillemet fermant
+// - `skipped(a, b)` : la zone [a, b) passée d'un bloc (chaîne d'une ligne, heredoc, gabarit, regex, commentaire gardé)
+// la chaîne est tenue pour écrite quand le balayeur arrive à son guillemet fermant : resté seul sur sa ligne, pris dans une zone
+// passée d'un bloc (pour lui, une autre chaîne commence là) ou parti avec un commentaire ; elle est relevée (`lost`) si un
+// commentaire y a été pris ; passé ce guillemet, le balayeur lit la fin de la ligne à contretemps : elle est relue ici comme du code
+// (settle), ses gestes n'y comptent plus (`mute`), sauf un commentaire retiré, qui l'est quoi qu'il arrive ; `resume` : d'où le
+// balayeur reprend sa lecture après son dernier geste
+export function longStringWatch(src: string): LongStringWatch {
+  const pending: Record<string, LongString | undefined> = {}
+  const lost: LostInString[] = []
+  let mute   = 0
+  let redo   = -1
+  let resume = 0
+  // la chaîne du signe `c` est écrite : relevée si un commentaire y a été pris — un signe n'est relevé qu'une fois, pour la chaîne
+  // ouverte la première (celle de l'autre signe, ouverte dans son texte et refermée avant elle, l'a déjà relevé) ; celle de l'autre
+  // signe ouverte dans son texte part avec elle ; `redo` : d'où relire la fin de la ligne
+  const close = (c: string): void => {
+    const s = pending[c]!
+    const o = c === '"' ? '\'' : '"'
+    const said = s.cuts.length > 0 ? lost.find(p => p.at === s.cuts[0]) : undefined
+    if (said !== undefined) said.open = Math.min(said.open, s.at)
+    else if (s.cuts.length > 0) lost.push({ at: s.cuts[0], open: s.at })
+    pending[c] = undefined
+    if ((pending[o]?.at ?? -1) > s.at) pending[o] = undefined
+    redo = Math.max(redo, s.end + 1)
+  }
+  const lone = (i: number, slash: number): void => {
+    const c = src[i]
+    const s = pending[c]
+    if (s !== undefined && s.end === i) close(c)
+    else if (s === undefined || s.end < i) pending[c] = opensLongString(src, i, slash) ? { at: i, end: nextQuoteAt(src, i), cuts: [] } : undefined
+  }
+  // les deux signes, celui de la chaîne ouverte la première d'abord : refermée, elle emporte l'autre, ouverte dans son texte
+  const oldestFirst = (): string[] => (pending['\'']?.at ?? Infinity) < (pending['"']?.at ?? Infinity) ? ['\'', '"'] : ['"', '\'']
+  const skipped = (a: number, b: number): void => {
+    for (const c of oldestFirst()) {
+      const s = pending[c]
+      if (s !== undefined && s.at < a && a <= s.end && s.end < b) close(c)
+    }
+  }
+  const cut = (a: number, b: number): void => {
+    for (const c of oldestFirst()) {
+      const s = pending[c]
+      if (s === undefined || a < s.at || s.end < a) continue
+      s.cuts.push(a)
+      if (s.end < b) close(c)
+    }
+  }
+  // fin de la ligne d'un guillemet fermant, relue comme du code depuis `redo` : chaînes d'une ligne, regex et commentaires passés
+  // d'un bloc ; un guillemet que la ligne ne referme pas ouvre la chaîne suivante, le reste de la ligne est son texte ; de même une
+  // chaîne `'…'` que des barres de suite mènent sur les lignes suivantes quand le balayeur a déjà passé son guillemet ouvrant
+  // (`resume`) : il ne la passera pas d'un bloc, ses lignes se liront comme du code
+  const settle = (): void => {
+    while (redo !== -1) {
+      const saut = src.indexOf('\n', redo - 1)
+      const fin  = saut === -1 ? src.length : saut
+      let slash  = -1
+      let j      = redo
+      redo = -1
+      mute = Math.max(mute, fin)
+      while (j < fin && redo === -1) {
+        const d = src[j]
+        const e = d === '"' && !src.startsWith('"""', j) ? scanDoubleQuoteAt(src, j) : d === '"' || d === '\'' || d === '`' || d === '#' || d === '/' ? scanInertAt(src, j, true) : -1
+        if (e > j) {
+          if (d === '\'' && j < resume && e - 1 > fin && pending[d] === undefined && !src.startsWith('\'\'\'', j)) {
+            pending[d] = { at: j, end: e - 1, cuts: [] }
+            break
+          }
+          skipped(j, e)
+          mute = Math.max(mute, e)
+          j    = e
+          continue
+        }
+        if (d === '/') slash = j
+        else if (d === '"' || d === '\'') {
+          lone(j, slash)
+          if (pending[d]?.at === j) break
+        }
+        j++
+      }
+    }
+  }
+  return {
+    lost,
+    lone:    (i, slash, next = i + 1) => { resume = next; if (i >= mute) { lone(i, slash); settle() } },
+    skipped: (a, b) => { resume = b; if (a >= mute) { skipped(a, b); settle() } },
+    cut:     (a, b) => { resume = b; cut(a, b); settle() }
+  }
+}
+
+// la place de chaque chaîne relevée par le témoin, dans le texte `src` qu'il a suivi : ligne et colonne du signe du commentaire
+// (`firstLine` : la ligne du fichier où tombe la première ligne de `src`), ligne du guillemet ouvrant, signe écrit, guillemet de la chaîne
+export function lostPlaces(src: string, lost: LostInString[], firstLine = 1): LostPlace[] {
+  const lineOf = (i: number): number => firstLine + src.slice(0, i).split('\n').length - 1
+  return lost.map(({ at, open }) => ({ line: lineOf(at), column: at - src.lastIndexOf('\n', at - 1), openLine: lineOf(open), sign: src.startsWith('###', at) ? '###' : src[at] === '#' ? '#' : src.slice(at, at + 2), quote: src[open] }))
+}
+
 // gabarit `` `…${X}…` `` d'une chaîne Coffee `"…#{X}…"` (corps sans ses guillemets) : `` ` `` et `${` du texte
 // échappés, un échappement recopié d'un bloc ; le code de chaque interpolation (lue au niveau, scanInterpAt) repasse
 // par la conversion — une chaîne interpolée écrite DANS une interpolation devient gabarit elle aussi, comme au premier
@@ -258,8 +492,11 @@ function toTemplateLiteral(body: string): string {
 
 // conversion Coffee `"…#{X}…"` → gabarit `` `…${X}…` `` (Civet ne lit pas `#{}`), SOURCE UNIQUE : Pass 3 du <script>
 // (transpiler/index.ts) et expressions du gabarit (generator/utils.ts). Double-quote seulement (Coffee n'interpole pas
-// les single-quotes) ; scan contexte-aware : commentaires, chaînes simples, gabarits natifs et heredocs `'''` intacts
-export function convertCoffeeInterpolations(src: string): string {
+// les single-quotes) ; scan contexte-aware : commentaires, chaînes simples, gabarits natifs et heredocs `'''` intacts.
+// `chaine` : ce que devient une chaîne double interpolée, de son corps (sans ses guillemets) et de ses guillemets. Une regex est
+// lue d'un bloc, ses guillemets n'ouvrent aucune chaîne ; `dialecte` : code Civet ou CoffeeScript, où elle se passe aussi sans
+// parenthèses (`s.replace /"/g, 'R'`, regexEnArgument)
+export function convertCoffeeInterpolations(src: string, chaine: (corps: string, guillemets: string) => string = toTemplateLiteral, dialecte = false): string {
   let res = ''
   let i = 0
   const n = src.length
@@ -274,6 +511,10 @@ export function convertCoffeeInterpolations(src: string): string {
       const e = src.indexOf('*/', i + 2)
       const end = e === -1 ? n : e + 2
       res += src.slice(i, end); i = end; continue
+    }
+    if (ch === '/' && (ouvreUneRegex(src.slice(0, i)) || (dialecte && regexEnArgument(src, i)))) {
+      const end = scanRegexLiteral(src, i)
+      if (end !== -1) { res += src.slice(i, end); i = end; continue }
     }
     if (src.startsWith("'''", i)) {
       const e = src.indexOf("'''", i + 3)
@@ -294,7 +535,7 @@ export function convertCoffeeInterpolations(src: string): string {
       const e = src.indexOf('"""', i + 3)
       if (e === -1) { res += src.slice(i); break }
       const body = src.slice(i + 3, e)
-      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, e + 3)
+      res += body.includes('#{') ? chaine(body, '"""') : src.slice(i, e + 3)
       i = e + 3; continue
     }
     if (ch === '"') {
@@ -306,7 +547,7 @@ export function convertCoffeeInterpolations(src: string): string {
         if (j >= n || src[j] === '\n') { res += src.slice(i, j); i = j; continue }
       }
       const body = src.slice(i + 1, j)
-      res += body.includes('#{') ? toTemplateLiteral(body) : src.slice(i, j + 1)
+      res += body.includes('#{') ? chaine(body, '"') : src.slice(i, j + 1)
       i = j + 1; continue
     }
     res += ch; i++
@@ -314,8 +555,28 @@ export function convertCoffeeInterpolations(src: string): string {
   return res
 }
 
+// le code de chaque interpolation `#{…}` des chaînes doubles de `src` passé par `fn`, les chaînes gardées telles quelles : mêmes chaînes
+// et mêmes bornes que la conversion en gabarit ci-dessus, pour un code que Coffee lit lui-même (les gestionnaires du gabarit)
+export function codeDesInterpolations(src: string, fn: (code: string) => string): string {
+  return convertCoffeeInterpolations(src, (corps, guillemets) => {
+    let out = ''
+    let j   = 0
+    while (j < corps.length) {
+      const c = corps[j]
+      if (c === '\\') { out += corps.slice(j, j + 2); j += 2; continue }
+      if (c === '#' && corps[j + 1] === '{') {
+        const e = scanInterpAt(corps, j + 2)
+        if (e > j + 3) { out += '#{' + fn(corps.slice(j + 2, e - 1)) + '}'; j = e; continue }
+      }
+      out += c
+      j++
+    }
+    return guillemets + out + guillemets
+  })
+}
+
 // inertRanges — toutes les plages inertes de `src`, dans l'ordre, sans recouvrement
-function inertRanges(src: string): Array<[number, number]> {
+export function inertRanges(src: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
   let i = 0
   while (i < src.length) {
@@ -441,6 +702,48 @@ export function maskInertSameLength(src: string): string {
   return replaceInert(src, (tok) => tok.replace(/[^\n]/g, ' '))
 }
 
+// maskInertKeepingTemplateCode — comme maskInertSameLength, sauf les parties calculées `${…}` d'un gabarit : elles restent du code (leurs
+// propres littéraux masqués à leur tour), même longueur, `\n` préservés ; un appel posé dans un gabarit (`son : ${f(x)}`) reste visible,
+// le texte du gabarit est blanchi
+export function maskInertKeepingTemplateCode(src: string): string {
+  return replaceInert(src, (tok) => tok[0] === '`' ? maskTemplateText(tok) : tok.replace(/[^\n]/g, ' '))
+}
+
+function maskTemplateText(tok: string): string {
+  let out = ''
+  let j   = 0
+  while (j < tok.length) {
+    if (tok[j] === '\\') {
+      out += tok.slice(j, j + 2).replace(/[^\n]/g, ' ')
+      j   += 2
+      continue
+    }
+    if (tok[j] === '$' && tok[j + 1] === '{') {
+      let depth = 1
+      let k     = j + 2
+      while (k < tok.length && depth > 0) {
+        const ch = tok[k]
+        if (ch === '/' || ch === '"' || ch === "'" || ch === '`') {
+          const e = scanInertAt(tok, k)
+          if (e > k) {
+            k = e
+            continue
+          }
+        }
+        if (ch === '{') depth++
+        if (ch === '}') depth--
+        if (depth > 0) k++
+      }
+      out += '  ' + maskInertKeepingTemplateCode(tok.slice(j + 2, k)) + (k < tok.length ? ' ' : '')
+      j    = k + 1
+      continue
+    }
+    out += tok[j] === '\n' ? '\n' : ' '
+    j++
+  }
+  return out
+}
+
 // interpolateSigils — dans une chaîne, tokenise le contenu des interpolations
 // `<marker>{ ... }` (`#{...}` pour Coffee/Civet, `${...}` pour les template
 // literals). Les parties littérales restent intactes ; seul le code des
@@ -544,6 +847,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
   const externalVars = opts.externalVars ?? []
   const moduleMode   = opts.moduleMode ?? false
   const singletons   = opts.singletons ?? []
+  const dialecte     = opts.lang === 'coffee' || opts.lang === 'civet'
   // receveur des contextes § / §§ : le composant dont le script les porte (`_mjsThis`, capturé à l'init), quel que
   // soit l'appelant — `this` valait l'état dans une fonction rangée dans l'état (`$go = -> §x = 1`, appelée `$go()`).
   // Un module n'a pas de composant : `this` y reste
@@ -716,12 +1020,15 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // regex, en position de VALEUR il divise — `scanRegexLiteral` rend -1 si aucun `/` fermant
     // n'apparaît avant la fin de ligne (une division ne se referme jamais), et ce `/` retombe
     // alors sur les règles suivantes (code normal, division comprise).
+    // En CoffeeScript et en Civet (`dialecte`), une regex passée sans parenthèses en est une aussi (`$v.replace /"/g, "#{$n}"`,
+    // regexEnArgument) : lue comme une division, son guillemet ouvrait une fausse chaîne refermée par celui de l'interpolation,
+    // et `#{$n}"` passait pour un commentaire — `$n` sortait tel quel (ReferenceError à l'exécution)
     if (code[i] === '/') {
       let k = result.length
       while (k > 0 && /\s/.test(result[k - 1])) k--
       k = Math.max(0, k - PORTEE_OUVRE_UNE_REGEX)
       if (k > 0) { morceaux.push(result.slice(0, k)); result = result.slice(k) }
-      if (ouvreUneRegex(result)) {
+      if (ouvreUneRegex(result) || (dialecte && regexEnArgument(code, i))) {
         const fin = scanRegexLiteral(code, i)
         if (fin !== -1) { result += code.slice(i, fin); i = fin; continue }
       }
@@ -745,7 +1052,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     //          ou espace juste APRÈS le `&` (`& b`) → non-match, `&` laissé tel quel.
     //        • entité HTML `&amp;` (suivie de `;`) / `&#123;` (`#`, pas un ident)
     //          → non-match.
-    m = rest.match(/^&([a-zA-Z_][a-zA-Z0-9_]*)/)
+    m = opts.raccourcisParLArbre ? null : rest.match(/^&([a-zA-Z_][a-zA-Z0-9_]*)/)
     if (m) {
       const before = i > 0 ? code[i - 1] : ''       // char juste AVANT le '&'
       const after = rest.charAt(m[0].length)         // char juste APRÈS l'identifiant
@@ -770,11 +1077,22 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     //     Même verdict que la pré-passe : un nom importé, ou le singleton qu'un module autonome déclare (`singletons`), se
     //     lit `$xxx` ; tout autre nom est refusé, dans un module comme ailleurs — laissé passer, `$Inconnu` levait au
     //     chargement du module
+    // `$x = $x`, `$$x = $$x`, `µ$$x = µ$$x` : refusés à leur place, avant toute réécriture (cf. selfWriteAt)
+    if (code[i] === '$' || code[i] === 'µ') {
+      const ecriture = selfWriteAt(code, i, externalVars, singletons, moduleMode)
+      if (ecriture) throw situe(ecriture.error, code, ecriture.at, opts)
+    }
+
     m = rest.match(/^µ\$\$([a-zA-Z0-9_]+)/)
     if (m) {
       if (!externalVars.includes(`$${m[1]}`) && !singletons.includes(m[1])) throw situe(new Error(t('transpiler.singleton-sans-import', { nom: m[1] })), code, i, opts)
       result += `$${m[1]}`; i += m[0].length; continue
     }
+
+    // 3.2-bis `$$[…]` : une clé du magasin calculée n'est pas une syntaxe (`$$` se suit d'un nom écrit dans le code) — laissé tel
+    //     quel, `$$` seul levait à l'exécution. Refusé à sa ligne, avec ce qu'il faut écrire ; précédé d'un point, c'est la propriété
+    //     `$$` d'un objet (`o.$$[0]`), laissée telle quelle comme `obj.$$x` ; précédé d'une lettre, la fin d'un nom (`a$$[0]`)
+    if (rest.startsWith('$$[') && !/[\w$]/.test(code[i - 1] ?? '') && (code[i - 1] !== '.' || code[i - 2] === '.')) throw situe(storeComputedKeyError(code, i + 3), code, i, opts)
 
     // 3.2 $$xxx → µ.store.xxx : STORE GLOBAL réactif, zéro import (µ.store =
     //     µ.state({}) au runtime, cf. mjs_store_globals.ts). Aligné avec le generator
@@ -881,6 +1199,24 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
       // …et ce qui reste est une faute de forme : refus BRUYANT plutôt qu'un
       // identifiant littéral qui casse au navigateur avec un build vert.
       if (RE_RAW_ACCESS_MALFORME.test(rest)) throw situe(rawAccessFormeError(), code, i, opts)
+
+      // µrefresh($x) / µrefresh $x → µ._mjs_refresh(_mjsThis, 'x'), µrefresh($$x) → µ._mjs_storeRefresh("x") (sigils.ts) ; toute
+      // autre forme refusée, et un singleton importé écrit `$$X`, comme dans `$$X = $$X` (règle 3.2)
+      m = rest.match(RE_MU_REFRESH_PAREN) || rest.match(RE_MU_REFRESH)
+      // hors d'un composant (`<script module>`, module importé — fichier d'un magasin compris) : ni `_mjsThis` ni variable de composant,
+      // seule une clé du magasin s'y signale ; `µrefresh($x)`, `µrefresh(µ$$x)` (lu `$x`) et toute autre forme, refusés par le message
+      // de ce lieu — la forme nue d'une clé suivie d'une expression garde le sien (les parenthèses)
+      if (moduleMode && RE_MU_REFRESH_RESTE.test(rest) && !m?.[1] && !rest.match(RE_MU_REFRESH_NUE)?.[1]) throw situe(refreshHorsComposantError(opts.moduleFile === true), code, i, opts)
+      if (m) {
+        if (m[1] && externalVars.includes(`$${m[2]}`)) throw situe(importedSingletonError(m[2]), code, i, opts)
+        result += m[1] ? MU_REFRESH_STORE_OUT(m[2]) : MU_REFRESH_OUT(m[2])
+        i += m[0].length
+        continue
+      }
+      // la forme nue suivie d'un opérateur ou d'une autre expression : les parenthèses
+      m = rest.match(RE_MU_REFRESH_NUE)
+      if (m) throw situe(refreshNueError(m[1] + m[2]), code, i, opts)
+      if (RE_MU_REFRESH_RESTE.test(rest)) throw situe(refreshFormeError(), code, i, opts)
     }
 
     // 3.6-pré Garde-fou hooks : l'ancienne forme `@mount ->` (appel de la
@@ -901,7 +1237,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // Note : on n'utilise PAS `:=` (qui est réservé `const` côté Civet) pour
     // éviter toute collision avec le langage source. La syntaxe MJS est `=:`.
     // Pas de chiffre en tête (aligné sur les autres sigils).
-    m = rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)[ \t]*=:[ \t]*/)
+    m = opts.raccourcisParLArbre ? null : rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)[ \t]*=:[ \t]*/)
     if (m) {
       const varName = `$${m[1]}`
       const prefix = (moduleMode || externalVars.includes(varName)) ? varName : `$.${m[1]}`
@@ -928,7 +1264,9 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     if (m) {
       const varName = `$${m[1]}`
       if (!(moduleMode || externalVars.includes(varName))) {
-        const preview = rest.slice(m[0].length).match(/^[ \t]*([^\n;]*)/)?.[1]?.trim() || '...'
+        let preview = rest.slice(m[0].length).match(/^[ \t]*([^\n;]*)/)?.[1]?.trim() || '...'
+        // une fermante que l'expression n'ouvre pas (`[$x := 2]`, la liste qui l'entoure) n'est pas de la valeur
+        while (/[\])}]$/.test(preview) && (preview.match(/[[({]/g)?.length ?? 0) < (preview.match(/[\])}]/g)?.length ?? 0)) preview = preview.slice(0, -1).trimEnd()
         throw situe(new Error(t('lexer.symbole-declare-civet', { varName, preview })), code, i, opts)
       }
     }
@@ -941,7 +1279,7 @@ export function tokenize(codeRaw: string, opts: TokenizeOpts = {}): string {
     // 1er caractère `[a-zA-Z_]` (pas de chiffre) — `$9` reste littéral.
     // Précédé d'un point, c'est une propriété (`obj.$x`, `evt.$el`) : laissée telle quelle, comme dans le
     // gabarit (cleanJs) ; de deux, une plage ou une décomposition (`[1..$n]`, `[...$items]`) : la variable
-    m = code[i - 1] === '.' && code[i - 2] !== '.' ? null : rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)/)
+    m = opts.raccourcisParLArbre || (code[i - 1] === '.' && code[i - 2] !== '.') ? null : rest.match(/^\$([a-zA-Z_][a-zA-Z0-9_]*)/)
     if (m) {
       const varName = `$${m[1]}`
       result += (moduleMode || externalVars.includes(varName)) ? varName : `$.${m[1]}`

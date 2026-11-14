@@ -6,7 +6,8 @@
 // `runtime: ['element_at']`.
 
 // l'élément le plus profond sous un point de la fenêtre (`clientX`, `clientY`), jusque dans les composants :
-// `elementFromPoint` s'arrête à la balise d'un composant, on redemande à son ombre (fermée : `_shadow`),
+// `elementFromPoint` s'arrête à la balise d'un composant, on redemande à son ombre (fermée : `_shadow` ; un
+// léger, qui est sa propre ombre : sa racine d'ombre native s'il en porte une — `µ._mjs_shadowOf`, mjs_init.ts),
 // d'ombre en ombre ; `null` hors de la fenêtre. `root` : d'où partir (les effets en direct, la racine de
 // leur zone) ; µ.elementAt, la page. Une coordonnée qui n'est pas un nombre fini (NaN, Infinity, undefined,
 // null, une chaîne : une mesure ratée, jamais convertie) ne désigne aucun point, pas plus qu'un nombre que le
@@ -18,7 +19,7 @@
   try { e = root && root.elementFromPoint ? root.elementFromPoint(x, y) : null; }
   catch (err) { if (err && err.name === 'TypeError') return null; throw err; }
   for (var i = 0; e && i < 32; i++) {
-    var sh = e._shadow || e.shadowRoot;
+    var sh = µ._mjs_shadowOf(e);
     var f  = sh && sh.elementFromPoint ? sh.elementFromPoint(x, y) : null;
     if (!f || f === e) break;
     e = f;

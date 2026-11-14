@@ -69,7 +69,7 @@ describe('noms que le code émis déclare — tous réservés, sauf ceux que le 
 </script>
 <input aria-label="a" value=!{zz.t}>
 <input type="checkbox" aria-label="b" checked=!{zz.b}>
-<div contenteditable @text=!{zz.t}></div>
+<div contenteditable :text=!{zz.t}></div>
 <button @click={$ev = zz.c}>x</button>
 `
     const sortie = (await transpile(source, { moduleName: 'noms-internes-liaisons' })).output

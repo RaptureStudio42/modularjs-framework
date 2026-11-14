@@ -16,8 +16,11 @@ const HORLOGE = [
   '<script>',
   '  $m = 0',
   '  µmount ->',
-  '    id = setInterval((-> $m++), 10)',
-  '    -> clearInterval(id)',
+  '    moi = @',
+  '    arreter = µevery 10, immediate: false, -> $m++',
+  '    ->',
+  '      arreter()',
+  '      moi._nettoye = (moi._nettoye ?? 0) + 1',
   '  µdestroy ->',
   '    @_detruit = (@_detruit ?? 0) + 1',
   '</script>',
@@ -90,6 +93,7 @@ describe('cycle de vie — composant remis après sa destruction, µsleep / µaw
     await pause(40)
     assert.equal(c.state.m, fige, 'détruit : la minuterie de µmount est coupée par son nettoyage')
     assert.equal(el._detruit, 1, 'µdestroy a joué une fois')
+    assert.equal(el._nettoye, 1, 'le nettoyage rendu par µmount a joué une fois')
     hote.appendChild(el)
     await attendre(() => c.state.m > fige)
     assert.ok(c.state.m > fige, `remis : µmount a relancé sa minuterie (${fige} → ${c.state.m})`)
@@ -99,6 +103,7 @@ describe('cycle de vie — composant remis après sa destruction, µsleep / µaw
     await pause(40)
     assert.equal(c.state.m, fige2, 'retiré une seconde fois : le nettoyage du second µmount tourne aussi')
     assert.equal(el._detruit, 2, 'µdestroy rejoue à la seconde destruction')
+    assert.equal(el._nettoye, 2, 'le nettoyage rendu par le second µmount a joué')
   })
 
   it('µsleep qui jette : `remove()` ne lève pas, l\'erreur est signalée, µevery s\'arrête', async () => {

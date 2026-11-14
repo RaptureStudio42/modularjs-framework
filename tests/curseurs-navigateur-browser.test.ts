@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendrePage } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -107,6 +108,7 @@ const STUB = `(() => {
     recoit(type, p) { (ec[type] = ec[type] || []).forEach((f) => f(p)) }
   }
   window.__s = s
+  window.__ecoute = ec
   µ.socket = () => s
   µ._mjs_sockets = { 'wss://x.fr/ws': s }
   // le chemin d'une balise depuis une zone : les rangs des enfants, -1 pour entrer dans un composant
@@ -163,6 +165,10 @@ describe('*follow, *cursors — navigateurs réels', function () {
 
       after(async () => { await browser?.close() })
 
+      // l'effet écoute la connexion simulée (attentes bornées par les pauses d'origine : 300 et 150 ms) : un message envoyé avant serait perdu (*follow : « follow:at » ; à l'ouverture, *follow ou *cursors)
+      const ecoute = (page: any) => attendrePage(page, () => !!(window as any).__ecoute['follow:at']?.length, null, 'l\'effet écoute « follow:at » sur la connexion', 300)
+      const branche = (page: any) => attendrePage(page, () => Object.values((window as any).__ecoute).some((l: any) => l.length > 0), null, 'un effet écoute la connexion simulée', 150)
+
       // la page : le corps (hors composant), la connexion simulée, puis le composant
       async function ouvre(tag: string, corps = '', sel = '.z') {
         const page              = await browser.newPage({ viewport: { width: 900, height: 600 } })
@@ -173,7 +179,7 @@ describe('*follow, *cursors — navigateurs réels', function () {
         await page.evaluate(STUB)
         await page.evaluate((t: string) => { document.body.appendChild(document.createElement(t)) }, tag)
         if (sel) await page.waitForFunction(([t, s]: string[]) => !!(document.querySelector(t) as any)?._shadow?.querySelector(s), [tag, sel])
-        await page.waitForTimeout(150)
+        await branche(page)
         return { page, erreurs }
       }
 
@@ -209,11 +215,12 @@ describe('*follow, *cursors — navigateurs réels', function () {
       it('*follow, la douceur par défaut : le public arrive sur la cible (pas à quelques pixels) et requestAnimationFrame s\'arrête au repos', async function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', '<div style="height:100px"></div><div style="height:100px">cible</div><div style="height:3000px"></div>', '')
-        await page.waitForTimeout(300)
+        await ecoute(page)
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [1], y: 0, from: { id: '7', name: 'Prof' } })")
         await page.waitForFunction(() => Math.abs(window.scrollY - 100) < 0.5, null, { timeout: 15000 }).catch(() => {})
         const arrive = await page.evaluate(() => window.scrollY)
         assert.ok(Math.abs(arrive - 100) < 0.5, `scrollY final ${arrive}, la cible est à 100`)
+        // pauses gardées : vérification négative, plus aucun appel de requestAnimationFrame une fois arrivé (aucun évènement ne le dit)
         await page.waitForTimeout(300)
         await page.evaluate(() => { (window as any).__raf = 0 })
         await page.waitForTimeout(700)
@@ -231,7 +238,7 @@ describe('*follow, *cursors — navigateurs réels', function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', '<div style="height:100px"></div><div style="height:5000px"></div><div style="height:100px">cible</div><div style="height:3000px"></div>', '')
         await page.evaluate(() => { document.documentElement.style.scrollBehavior = 'smooth' })
-        await page.waitForTimeout(300)
+        await ecoute(page)
         const depart = Date.now()
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [2], y: 0, from: { id: '7', name: 'Prof' } })")
         const quatre = await page.evaluate(() => new Promise((ok) => { let n = 0; const f = () => (++n >= 4 ? ok(window.scrollY) : requestAnimationFrame(f)); requestAnimationFrame(f) }))
@@ -248,7 +255,7 @@ describe('*follow, *cursors — navigateurs réels', function () {
         const tag               = 'mjs-fx-cb-zone-longue'
         const { page, erreurs } = await ouvre(tag)
         await page.evaluate((t: string) => { ((document.querySelector(t) as any)._shadow.querySelector('.z') as HTMLElement).style.scrollBehavior = 'smooth' }, tag)
-        await page.waitForTimeout(300)
+        await ecoute(page)
         const depart = Date.now()
         await page.evaluate((t: string) => {
           const z: any = (document.querySelector(t) as any)._shadow.querySelector('.z')
@@ -268,8 +275,9 @@ describe('*follow, *cursors — navigateurs réels', function () {
       it('*follow, une cible hors d\'atteinte puis une cible atteignable : le public suit la seconde (la position vue à l\'image d\'avant est oubliée à chaque cible)', async function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', PAGE_COURTE, '')
-        await page.waitForTimeout(300)
+        await ecoute(page)
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [3], y: 0, from: { id: '7', name: 'Prof' } })")
+        // pause gardée : la première animation s'arrête d'elle-même (une demi-seconde sans bouger) avant la seconde cible, le cas même du test
         await page.waitForTimeout(2500)
         const bout = await page.evaluate(() => window.scrollY)
         assert.ok(Math.abs(bout - 500) < 1, `la première cible est hors d'atteinte : la page va à son bout (500), elle est à ${bout}`)
@@ -284,8 +292,9 @@ describe('*follow, *cursors — navigateurs réels', function () {
       it('*follow, une cible hors d\'atteinte : la position ne bouge plus depuis une demi-seconde, l\'animation s\'arrête — plus aucun appel de requestAnimationFrame au repos', async function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', PAGE_COURTE, '')
-        await page.waitForTimeout(300)
+        await ecoute(page)
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [3], y: 0, from: { id: '7', name: 'Prof' } })")
+        // pauses gardées : vérification négative, l'animation s'arrête d'elle-même, puis plus aucun appel de requestAnimationFrame
         await page.waitForTimeout(3000)
         await page.evaluate(() => { (window as any).__raf = 0 })
         await page.waitForTimeout(1000)
@@ -298,10 +307,11 @@ describe('*follow, *cursors — navigateurs réels', function () {
       it('*follow, l\'arrêt se mesure sur une horloge qui ne recule jamais : l\'heure murale remise en arrière ne fait pas tourner l\'animation sans fin', async function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', PAGE_COURTE, '')
-        await page.waitForTimeout(300)
+        await ecoute(page)
         // l'horloge murale recule d'une seconde à chaque lecture (une correction d'horloge) ; performance.now() n'y est pas soumise
         await page.evaluate(() => { let t = Date.now(); Date.now = () => (t -= 1000) })
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [3], y: 0, from: { id: '7', name: 'Prof' } })")
+        // pauses gardées : vérification négative, l'animation s'arrête d'elle-même, puis plus aucun appel de requestAnimationFrame
         await page.waitForTimeout(3000)
         await page.evaluate(() => { (window as any).__raf = 0 })
         await page.waitForTimeout(1000)
@@ -314,12 +324,13 @@ describe('*follow, *cursors — navigateurs réels', function () {
       it('*follow, la route change en plein suivi (le salon de la page change) : la cible en cours est abandonnée — le public ne continue pas vers une position du salon d\'avant', async function () {
         if (!present) { this.skip(); return }
         const { page, erreurs } = await ouvre('mjs-fx-cb-page', '<div style="height:100px"></div><div style="height:5000px"></div><div style="height:100px">cible</div><div style="height:3000px"></div>', '')
-        await page.waitForTimeout(300)
+        await ecoute(page)
         await page.evaluate("__s.recoit('follow:at', { room: µ._mjs_fxRoomName({}), a: [2], y: 0, from: { id: '7', name: 'Prof' } })")
         await page.evaluate(() => new Promise((ok) => { let n = 0; const f = () => (++n >= 3 ? ok(null) : requestAnimationFrame(f)); requestAnimationFrame(f) }))
         const avant = await page.evaluate(() => window.scrollY)
         assert.ok(avant > 100 && avant < 4000, `le public glisse vers la cible (5100) : ${avant}`)
         await page.evaluate(() => { location.hash = '#/ailleurs' })
+        // pauses gardées : vérification négative, la page ne bouge plus après le changement de salon
         await page.waitForTimeout(150)
         const quitte = await page.evaluate(() => window.scrollY)
         await page.waitForTimeout(800)
@@ -499,7 +510,7 @@ describe('*follow, *cursors — navigateurs réels', function () {
         assert.ok(avant.anneau, 'l\'anneau existe avant le défilement : ' + JSON.stringify(avant))
         assert.ok(avant.anneau.haut >= avant.zone.haut - 4 && avant.anneau.bas <= avant.zone.bas + 4, 'il est dans la zone : ' + JSON.stringify(avant))
         await page.evaluate(() => { ((document.querySelector('mjs-fx-cb-zone') as any)._shadow.querySelector('.z') as HTMLElement).scrollTop = 800 })
-        await page.waitForTimeout(300)
+        await attendrePage(page, () => { const z = ((document.querySelector('mjs-fx-cb-zone') as any)._shadow.querySelector('.z') as HTMLElement).getBoundingClientRect(); const q = document.querySelector('[mjs-fx-cursor-focus]')?.getBoundingClientRect(); const d = (window as any).__decoupe(); return !!q && (q.bottom <= z.top || q.top >= z.bottom) && !!d && !d.sans && Math.abs(d.haut - z.top) <= 1 && Math.abs(d.bas - z.bottom) <= 1 }, null, 'l\'anneau est sorti de la zone, le calque découpé à la zone', 300)
         const apres = await page.evaluate(() => {
           const z      = ((document.querySelector('mjs-fx-cb-zone') as any)._shadow.querySelector('.z') as HTMLElement).getBoundingClientRect()
           const f: any = document.querySelector('[mjs-fx-cursor-focus]')

@@ -22,7 +22,7 @@ describe('@text=!{item.x} (bindingContent) dans un {for} — reconstruction OK',
       '</script>',
       '<div>',
       '{for note in $notes}',
-      '<div class="note" contenteditable @text=!{note.txt}>{note.txt}</div>',
+      '<div class="note" contenteditable :text=!{note.txt}>{note.txt}</div>',
       '{end}',
       '</div>',
     ].join('\n')

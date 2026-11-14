@@ -21,8 +21,8 @@ describe('SSR — portée des modules partagés (anti-collision)', () => {
     // `data` privé de même nom dans deux modules : compilé en `const data`, il
     // planterait l'éval (« Identifier 'data' has already been declared ») sans la
     // portée par fichier — que la page les importe ou non (tout est concaténé).
-    writeFileSync(join(src, 'a.module.civet'), `data := [1, 2, 3]\nexport totalA := data.length\n`)
-    writeFileSync(join(src, 'b.module.civet'), `data := [10, 20]\nexport totalB := data.length\n`)
+    writeFileSync(join(src, 'a.module.civet.mjs'), `data := [1, 2, 3]\nexport totalA := data.length\n`)
+    writeFileSync(join(src, 'b.module.civet.mjs'), `data := [10, 20]\nexport totalB := data.length\n`)
     writeFileSync(join(src, 'page.mjs'), `<p class="r">rendu OK malgré deux modules « data »</p>\n`)
 
     const res = await renderToString({ sourceDir: src, tag: 'mjs-page' })
@@ -35,8 +35,8 @@ describe('SSR — portée des modules partagés (anti-collision)', () => {
     mkdirSync(src, { recursive: true })
     // Cas réel (rapture : `trapFocus` ×3, `setupCrossfade` ×2) : deux modules
     // exportent le même nom. Chacun dans sa portée → aucune redéclaration fatale.
-    writeFileSync(join(src, 'c.module.civet'), `export helper = -> 'C'\n`)
-    writeFileSync(join(src, 'd.module.civet'), `export helper = -> 'D'\n`)
+    writeFileSync(join(src, 'c.module.civet.mjs'), `export helper = -> 'C'\n`)
+    writeFileSync(join(src, 'd.module.civet.mjs'), `export helper = -> 'D'\n`)
     writeFileSync(join(src, 'page.mjs'), `<p class="r">deux exports « helper » cohabitent</p>\n`)
 
     const res = await renderToString({ sourceDir: src, tag: 'mjs-page' })
@@ -51,10 +51,10 @@ describe('SSR — portée des modules partagés (anti-collision)', () => {
     // distincts. Avec la portée par fichier (Option A), chaque composant appelle
     // le `tint` de SON module. Sans (scope plat « dernier gagne »), les deux
     // afficheraient la même valeur (celle du module chargé en dernier).
-    writeFileSync(join(src, 'red.module.civet'), `export tint := -> 'ROUGE'\n`)
-    writeFileSync(join(src, 'blue.module.civet'), `export tint := -> 'BLEU'\n`)
-    writeFileSync(join(src, 'card-red.mjs'), `@import tint 'red.module.civet'\n\n<p class="r">{tint()}</p>\n`)
-    writeFileSync(join(src, 'card-blue.mjs'), `@import tint 'blue.module.civet'\n\n<p class="b">{tint()}</p>\n`)
+    writeFileSync(join(src, 'red.module.civet.mjs'), `export tint := -> 'ROUGE'\n`)
+    writeFileSync(join(src, 'blue.module.civet.mjs'), `export tint := -> 'BLEU'\n`)
+    writeFileSync(join(src, 'card-red.mjs'), `@import tint 'red.module.civet.mjs'\n\n<p class="r">{tint()}</p>\n`)
+    writeFileSync(join(src, 'card-blue.mjs'), `@import tint 'blue.module.civet.mjs'\n\n<p class="b">{tint()}</p>\n`)
 
     const renderer = await createSSRRenderer({ sourceDir: src })
     try {

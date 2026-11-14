@@ -152,7 +152,8 @@ for (const nom of NAVIGATEURS) for (const prod of [false, true]) describe(`<@@ch
     assert.deepEqual(await textes(page, 'f3', 'tbody td'), ['72 kg', '73,25 kg', '71,5 kg'])
     assert.equal(await lire(page, `return g('n1').querySelectorAll('path.slice').length`), 1, 'la série sans total positif n\'a pas de part')
     // la barre choisit l'anneau : rien de plus en console
-    await lire(page, `g('o1').querySelector('button.pick').click()`)
+    // le menu des formes, ancré à son bouton, se ferme tant que ce bouton n'est pas à l'écran : le graphique, en bas de la page, y est amené d'abord
+    await lire(page, `const b = g('o1').querySelector('button.pick'); b.scrollIntoView({ block: 'center' }); b.click()`)
     await page.waitForTimeout(150)
     await lire(page, `[...g('o1').querySelectorAll('[role="menuitemradio"]')].find((n) => n.textContent.trim() === 'Anneau').click()`)
     await page.waitForTimeout(200)

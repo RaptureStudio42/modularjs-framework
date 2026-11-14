@@ -20,7 +20,7 @@ Un snippet comme `monkey(emoji, description)` isole la structure d'une ligne et 
 <div class="cell code">\u{$emoji.charCodeAt(0).toString(16)}</div>
 <div class="cell code">&amp;#{$emoji.codePointAt(0)}</div>
 
-<style @display="contents">
+<style :display="contents">
 </style>
 ```
 
@@ -44,18 +44,18 @@ Avantage : c'est du **HTML standard**, sans syntaxe spéciale à apprendre. Les 
 
 </details>
 
-## `@display="contents"` — rendre le composant transparent
+## `:display="contents"` — rendre le composant transparent
 
-Par défaut, un composant `<mjs-tuto-monkey>` est **un seul élément** dans le flux de son parent : dans un CSS `grid`, il occuperait une seule cellule (donc une ligne entière bloquée). L'attribut **`@display="contents"`** du `<style>` de base rend le custom element **transparent au flow** : ses enfants deviennent enfants directs du parent.
+Par défaut, un composant `<mjs-tuto-monkey>` est **un seul élément** dans le flux de son parent : dans un CSS `grid`, il occuperait une seule cellule (donc une ligne entière bloquée). L'attribut **`:display="contents"`** du `<style>` de base rend le custom element **transparent au flow** : ses enfants deviennent enfants directs du parent.
 
 ```html
-<style @display="contents">
+<style :display="contents">
 </style>
 ```
 
-Dans l'exemple, le `.grid` a 4 colonnes ; grâce à `@display="contents"`, les 4 `<div class="cell">` de chaque monkey deviennent enfants directs du grid et s'alignent sur ses colonnes. Sans cet attribut, chaque composant occuperait une cellule unique.
+Dans l'exemple, le `.grid` a 4 colonnes ; grâce à `:display="contents"`, les 4 `<div class="cell">` de chaque monkey deviennent enfants directs du grid et s'alignent sur ses colonnes. Sans cet attribut, chaque composant occuperait une cellule unique.
 
-> ⚠️ `@display` est un attribut du `<style>` de base (un seul par composant) qui fixe le `display` du `:host`. `@display="contents"` ⇒ `:host { display: contents }`. C'est le moyen idiomatique de poser `display: contents` sans dépendre de la cascade.
+> ⚠️ `:display` est un attribut du `<style>` de base (un seul par composant) qui fixe le `display` du `:host`. `:display="contents"` ⇒ `:host { display: contents }`. C'est le moyen idiomatique de poser `display: contents` sans dépendre de la cascade.
 
 ## Emplacement à remplir → slot
 
@@ -145,10 +145,16 @@ Souvent on mélange les deux, comme dans l'exemple de la liste de couleurs : un 
 - **Nom simple** (`<@include entete>`) : cherche d'abord `_entete.mjs` **à côté** du fichier appelant, puis, si absent, dans `shared/_entete.mjs` (à la racine de `sourceDir`) — convention zero-config qui évite les chemins relatifs à rallonge, et permet à un dossier de redéfinir localement son propre partial.
 - **Chemin relatif** (`<@include ../shared/entete>`, `<@include sous-dossier/entete>`) : résolution **stricte**, sans fallback — le déclencheur est la présence d'un `/` ou d'un `.` dans le nom. Absent → erreur de compilation explicite. Un chemin **absolu** (`<@include /var/x/entete>`) suit la même règle mais reste **confiné à `sourceDir`** : un fichier hors du dossier des sources (chemin absolu ou `../` qui en sort) est refusé à la compilation, comme pour un `@import`.
 
+Un partial est un fichier : un lien vers un dossier arrête la construction.
+
 Le script et le style du partial sont **concaténés** à ceux du composant parent (même portée — les variables du partial et du parent se voient mutuellement) ; un partial peut lui-même contenir des `<@include>` (récursion), avec une **garde anti-cycle** : une inclusion circulaire (`A` inclut `B` qui inclut `A`) échoue à la compilation plutôt que de boucler à l'infini.
+
+Seule une balise inclut son partial : un `<@include>` écrit dans une valeur d'attribut ou dans une chaîne d'une expression `{…}` reste du texte, et un commentaire HTML est retiré avant toute lecture. Dans un `<textarea>` ou un `<title>`, le partial versé devient leur texte. Une faute dans une balise du langage écrite dans un partial (un `<@document *ripple (…)>` mal écrit, par exemple) cite sa ligne dans le partial, avec son fichier, en chemin depuis le dossier du composant : `(ligne 3 de _entete.mjs)`.
+
+Les lignes citées par la construction suivent les partials : une faute écrite dans un partial (une balise du langage, le contenu d'un `<@head>` ou d'un `<@failed>`, un contrôle d'accessibilité, un `<form>` sans action, un attribut booléen écrit `="false"`, un `#{…}` dans la valeur d'un attribut, un gestionnaire qui cite une méthode par son nom seul, tout refus du gabarit — balise ou bloc jamais refermé, fermeture mal appariée, nom réservé, mot de MJS inconnu, tête de `{for}`, de `{const}` ou de `{await}` mal écrite, `<@fill>` mal formé, bloc de modèle `{? …}`, `{await}` imbriqué dans un `{for}` ou dans un autre `{await}`) cite sa ligne dans ce partial, avec son fichier (« ligne 2 de _haut.mjs », chemin pris depuis le dossier du composant, que `mjs check --json` rend dans `file` et `line`) ; sur une ligne qui mêle le partial et le composant (un partial versé en milieu de ligne, du texte écrit après le `<@include>`, sur sa ligne), chaque faute cite le fichier du morceau où elle est écrite, sauf quand le compilateur réécrit cette ligne avant de la lire (une balise du langage écrite sur la même ligne, par exemple) : elle est alors citée à la ligne du composant ; une faute du code cite `fichier.mjs:ligne:colonne`, dans le partial comme dans le composant, et le code écrit sur la ligne d'un `<@include>`, après lui, est celui du composant ; une faute écrite après un partial de plusieurs lignes cite sa ligne dans le composant, jamais une ligne décalée par le contenu versé.
 
 > 🔗 Pour du contenu **paramétré par valeurs** avec une vraie frontière d'instance (attributs réactifs, cycle de vie propre), préférez un sous-composant — voir plus haut. `<@include>` reste l'outil pour du HTML/script/style **littéralement dupliqué**, sans vouloir l'isoler en composant à part entière.
 
 ---
 
-📚 **Apprendre en pratiquant** : ce chapitre correspond au **Tuto interactif n°11 (Snippets & composants paramétrés)** — le tableau « monkey » (sous-composant + `@display="contents"`), la liste de couleurs filtrable (slots nommés + lignes paramétrées) et l'alerte à contenu par défaut (slot anonyme avec fallback).
+📚 **Apprendre en pratiquant** : ce chapitre correspond au **Tuto interactif n°11 (Snippets & composants paramétrés)** — le tableau « monkey » (sous-composant + `:display="contents"`), la liste de couleurs filtrable (slots nommés + lignes paramétrées) et l'alerte à contenu par défaut (slot anonyme avec fallback).

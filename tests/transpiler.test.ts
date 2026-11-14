@@ -88,13 +88,13 @@ describe('buildPersistCode', () => {
 
 describe('transpiler/sections — attributs @css/@display/@viewTransition de <style>', () => {
   it('extrait @css names (attribut de <style>) et les retire du contenu', () => {
-    const r = extractSections(`<style @css="base typo"></style>\n<p>hello</p>`)
+    const r = extractSections(`<style :css="base typo"></style>\n<p>hello</p>`)
     assert.deepEqual(r.style.sharedCssNames, ['base', 'typo'])
     assert.match(r.html, /<p>hello<\/p>/)
   })
 
   it('extrait @display (attribut de <style>)', () => {
-    const r = extractSections(`<style @display="flex"></style>\n<p>x</p>`)
+    const r = extractSections(`<style :display="flex"></style>\n<p>x</p>`)
     assert.equal(r.style.moduleDisplay, 'flex')
   })
 
@@ -104,50 +104,50 @@ describe('transpiler/sections — attributs @css/@display/@viewTransition de <st
   })
 
   it('<style> ne portant QUE des attributs, corps vide : légal, aucun CSS', () => {
-    const r = extractSections(`<style @css="base" @display="inline-block"></style>\n<p>x</p>`)
+    const r = extractSections(`<style :css="base" :display="inline-block"></style>\n<p>x</p>`)
     assert.deepEqual(r.style.sharedCssNames, ['base'])
     assert.equal(r.style.moduleDisplay, 'inline-block')
     assert.equal(r.style.raw.trim(), '')
   })
 
   it('@viewTransition nu (attribut sans valeur) → sentinel "on"', () => {
-    const r = extractSections(`<style @viewTransition></style>\n<p>x</p>`)
+    const r = extractSections(`<style :viewTransition></style>\n<p>x</p>`)
     assert.equal(r.style.moduleViewTransition, 'on')
   })
 
   it('@viewTransition.cube={ dir: left } (attribut pointé) → verbatim + priorité par défaut', () => {
-    const r = extractSections(`<style @viewTransition.cube={ dir: left }></style>\n<p>x</p>`)
+    const r = extractSections(`<style :viewTransition.cube={ dir: left }></style>\n<p>x</p>`)
     assert.equal(r.style.moduleViewTransition, 'cube={ dir: left }')
     assert.equal(r.style.moduleViewTransitionPriority, 1)
   })
 
   it('@viewTransition.cube={ priority: 5 } (attribut pointé) → priorité extraite', () => {
-    const r = extractSections(`<style @viewTransition.cube={ priority: 5 }></style>\n<p>x</p>`)
+    const r = extractSections(`<style :viewTransition.cube={ priority: 5 }></style>\n<p>x</p>`)
     assert.equal(r.style.moduleViewTransition, 'cube={ priority: 5 }')
     assert.equal(r.style.moduleViewTransitionPriority, 5)
   })
 
   it('@viewTransition="cube" (guillemets, ancienne forme relogée) → refusé', () => {
-    assert.throws(() => extractSections(`<style @viewTransition="cube"></style>\n<p>x</p>`), /@viewTransition="…" avec guillemets n'existe plus/)
+    assert.throws(() => extractSections(`<style :viewTransition="cube"></style>\n<p>x</p>`), /:viewTransition="…" avec guillemets n'existe plus/)
   })
 
   it('@vt.cube={…} (alias, attribut de <style>) → refusé, oriente vers @viewTransition', () => {
-    assert.throws(() => extractSections(`<style @vt.cube={ dir: left }></style>\n<p>x</p>`), /@vt n'est pas un alias sur <style>.*@viewTransition/)
+    assert.throws(() => extractSections(`<style :vt.cube={ dir: left }></style>\n<p>x</p>`), /:vt n'est pas un alias sur <style>.*:viewTransition/)
   })
 
   it('@css/@display/@viewTransition à la racine du fichier → erreur de compilation orientant vers <style>', () => {
-    assert.throws(() => extractDirectives(`@css base\n<p/>`), /@css ne s'écrit plus à la racine.*<style @css="base">/s)
-    assert.throws(() => extractDirectives(`@display flex\n<p/>`), /@display ne s'écrit plus à la racine.*<style @display="flex">/s)
-    assert.throws(() => extractDirectives(`@viewTransition.cube\n<p/>`), /@viewTransition ne s'écrit plus à la racine.*<style @viewTransition.cube>/s)
-    assert.throws(() => extractDirectives(`@viewTransition\n<p/>`), /@viewTransition ne s'écrit plus à la racine.*<style @viewTransition>/s)
+    assert.throws(() => extractDirectives(`@css base\n<p/>`), /:css ne s'écrit plus à la racine.*<style :css="base">/s)
+    assert.throws(() => extractDirectives(`@display flex\n<p/>`), /:display ne s'écrit plus à la racine.*<style :display="flex">/s)
+    assert.throws(() => extractDirectives(`@viewTransition.cube\n<p/>`), /:viewTransition ne s'écrit plus à la racine.*<style :viewTransition.cube>/s)
+    assert.throws(() => extractDirectives(`@viewTransition\n<p/>`), /:viewTransition ne s'écrit plus à la racine.*<style :viewTransition>/s)
     // l'alias `@vt` n'existe plus sur `<style>` : le remplacement propose le nom LONG
-    assert.throws(() => extractDirectives(`@vt.cube\n<p/>`), /@vt ne s'écrit plus à la racine.*<style @viewTransition.cube>/s)
+    assert.throws(() => extractDirectives(`@vt.cube\n<p/>`), /@vt ne s'écrit plus à la racine.*<style :viewTransition.cube>/s)
   })
 
   it('@css/@display/@viewTransition sur un <style name="…"> → erreur dédiée', () => {
-    assert.throws(() => extractSections(`<style name="bandeau" @css="base"></style>\n<p/>`), /@css n'est valide que sur le <style> de base.*<style name="bandeau">/s)
-    assert.throws(() => extractSections(`<style name="bandeau" @display="flex"></style>\n<p/>`), /@display n'est valide que sur le <style> de base/)
-    assert.throws(() => extractSections(`<style name="bandeau" @viewTransition="cube"></style>\n<p/>`), /@viewTransition n'est valide que sur le <style> de base/)
+    assert.throws(() => extractSections(`<style name="bandeau" :css="base"></style>\n<p/>`), /:css n'est valide que sur le <style> de base.*<style name="bandeau">/s)
+    assert.throws(() => extractSections(`<style name="bandeau" :display="flex"></style>\n<p/>`), /:display n'est valide que sur le <style> de base/)
+    assert.throws(() => extractSections(`<style name="bandeau" :viewTransition="cube"></style>\n<p/>`), /:viewTransition n'est valide que sur le <style> de base/)
   })
 })
 
@@ -268,7 +268,7 @@ describe('transpile() — pipeline complet', () => {
   })
 
   it('@display modifie le :host display', async () => {
-    const src = `<style @display="flex"></style>\n<script lang="coffee">$x = 0</script>\n<p>{$x}</p>`
+    const src = `<style :display="flex"></style>\n<script lang="coffee">$x = 0</script>\n<p>{$x}</p>`
     const { output } = await transpile(src, { moduleName: 'foo' })
     assert.match(output, /:host\{display:flex\}/)
   })
@@ -444,7 +444,7 @@ describe('Filtered Dispatch — @class{item.X === $extern}', () => {
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows by id}<div @class{row.id === $selected}="danger"></div>{end}`
+{for row in $rows by id}<div :class{row.id === $selected}="danger"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd' })
     // boucle à clé filtrée sur sa clé (`by id`, `row.id`) : une ligne par valeur, index de nœuds
     // L'index inverse doit être créé lazy par row, dans l'entrée
@@ -452,12 +452,14 @@ $rows = []
     // d'une même row partageant le même (var, classe) ; voir
     // tests/filtered-dispatch-node-collision.test.ts pour la régression).
     assert.match(output, /\['selected__danger__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
-    assert.match(output, /__fe\.idx\s*\?\?=\s*new Map\(\)/)
+    // l'index naît avec la première ligne qui s'y range, et son nom rejoint alors, une fois, la liste des index du composant
+    assert.match(output, /__fe\.idx \?\? \(\(_mjsThis\._mjs_filtIdxKeys \?\?= new Set\(\)\)\.add\('[^']+'\), __fe\.idx = new Map\(\)\)/)
     // l'index stocke le NŒUD (pas une closure) → zéro alloc par ligne.
-    // La propriété de clé reste gardée via _mjs_filterFns.
+    // La propriété de clé reste gardée par le champ direct de la ligne (`_mjs_ff`), sans objet par ligne.
     assert.doesNotMatch(output, /const __f = \(\)\s*=>/)
     assert.match(output, /__idx\.set\(__k,\s*_mjs_n[a-zA-Z0-9_$]+\)/)
-    assert.match(output, /_mjs_filterFns/)
+    assert.match(output, /__nodes\._mjs_ff = _mjs_n/)
+    assert.doesNotMatch(output, /_mjs_filterFns|_mjs_filterKeys/)
     // Un effect filtered est enregistré pour la var externe `selected`.
     assert.match(output, /\(this\._mjs_filt \?\?= \{\}\)\['selected__danger__\w+'\]/)
     assert.match(output, /__fe\.prev = _mjs_curr/)
@@ -475,7 +477,7 @@ $rows = []
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @class{row.id === $selected}="danger"></div>{end}`
+{for row in $rows}<div :class{row.id === $selected}="danger"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_sans_by' })
     assert.match(output, /\['selected__danger__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
     // une fonction par ligne, rangée sous sa valeur (un Set quand la valeur en porte plusieurs), et non plus le nœud
@@ -492,7 +494,7 @@ $rows = []
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @class{$selected === row.id}="danger"></div>{end}`
+{for row in $rows}<div :class{$selected === row.id}="danger"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd2' })
     // Pareil — l'index est sur `selected` (extern) avec key = `row.id` (item).
     assert.match(output, /\['selected__danger__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
@@ -503,7 +505,7 @@ $rows = []
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @class{row.id !== $selected}="ghost"></div>{end}`
+{for row in $rows}<div :class{row.id !== $selected}="ghost"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd3' })
     // L'op !== couvre 999 rows → pas éligible filtered. Fallback : pas d'index.
     assert.doesNotMatch(output, /selected__ghost/)
@@ -513,7 +515,7 @@ $rows = []
     const src = `<script lang="coffee">$threshold = 0
 $rows = []
 </script>
-{for row in $rows}<div @class{row.id < $threshold}="below"></div>{end}`
+{for row in $rows}<div :class{row.id < $threshold}="below"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd4' })
     assert.doesNotMatch(output, /threshold__below/)
   })
@@ -523,7 +525,7 @@ $rows = []
 $flag = true
 $rows = []
 </script>
-{for row in $rows}<div @class{row.id === $sel && $flag}="x"></div>{end}`
+{for row in $rows}<div :class{row.id === $sel && $flag}="x"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd5' })
     assert.doesNotMatch(output, /sel__x/)
   })
@@ -532,7 +534,7 @@ $rows = []
     const src = `<script lang="coffee">$sel = -1
 $rows = []
 </script>
-{for row in $rows}<div @class{not (row.id === $sel)}="x"></div>{end}`
+{for row in $rows}<div :class{not (row.id === $sel)}="x"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd6' })
     assert.doesNotMatch(output, /sel__x/)
   })
@@ -541,7 +543,7 @@ $rows = []
     const src = `<script lang="coffee">$x = 0
 $y = 0
 </script>
-<div @class{$x === $y}="active"></div>`
+<div :class{$x === $y}="active"></div>`
     const { output } = await transpile(src, { moduleName: 'fd7' })
     // Au root, pas de pattern filtered (pas de loopItem).
     assert.doesNotMatch(output, /_mjs_filt/)
@@ -553,7 +555,7 @@ $y = 0
     const src = `<script lang="coffee">$activeTab = ""
 $tabs = ["a", "b"]
 </script>
-{for tab in $tabs}<div @class{$activeTab === tab}="is-active"></div>{end}`
+{for tab in $tabs}<div :class{$activeTab === tab}="is-active"></div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd8' })
     // Index inverse créé. Le className `is-active` est normalisé en `is_active` :
     // la clé du mémo reste lisible et comparable.
@@ -579,7 +581,7 @@ describe('Filtered Dispatch étendu — @style.X / data-X', () => {
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows by id}<div @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
+{for row in $rows by id}<div :style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_style1' })
     // boucle à clé filtrée sur sa clé (`by id`, `row.id`) : une ligne par valeur, appel direct de sa fonction
     // L'index inverse doit être créé pour la prop `color`. Le filterKey est
@@ -598,7 +600,7 @@ $rows = []
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @style.color={row.id === $selected ? 'red' : ''}>{row.label}</div>{end}`
+{for row in $rows}<div :style.color={row.id === $selected ? 'red' : ''}>{row.label}</div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_style2' })
     // Si la valeur fallback est '' → removeProperty (sinon setProperty('color', '')
     // est techniquement valide mais sémantiquement "vide", autant retirer).
@@ -625,7 +627,7 @@ $rows = []
     const src = `<script lang="coffee">$x = 0
 $y = 0
 </script>
-<div @style.color={$x === $y ? 'red' : 'black'}></div>`
+<div :style.color={$x === $y ? 'red' : 'black'}></div>`
     const { output } = await transpile(src, { moduleName: 'fd_style_root' })
     // Au root, pas de loopItem → pas de filtered.
     assert.doesNotMatch(output, /_mjs_filt/)
@@ -636,7 +638,7 @@ $y = 0
 $flag = true
 $rows = []
 </script>
-{for row in $rows}<div @style.color={row.id === $sel && $flag ? 'red' : 'black'}>x</div>{end}`
+{for row in $rows}<div :style.color={row.id === $sel && $flag ? 'red' : 'black'}>x</div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_style_compose' })
     assert.doesNotMatch(output, /sel__style_color/)
   })

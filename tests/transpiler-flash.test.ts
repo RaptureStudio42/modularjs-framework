@@ -10,36 +10,36 @@ import { transpile } from '../src/transpiler/index.js'
 
 describe('transpiler — @flash', () => {
   it('@flash="popup" (guillemets doubles) → mjs-flash="popup" dans le composant compilé', async () => {
-    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a @flash="popup">Suppr</a>`
+    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a :flash="popup">Suppr</a>`
     const { output } = await transpile(src, { moduleName: 'fl1' })
     assert.match(output, /mjs-flash=['"]popup['"]/)
   })
 
   it("@flash='console' (guillemets simples) → mjs-flash=\"console\"", async () => {
-    const src = `<script lang="coffee">\n$x = 0\n</script>\n<form @flash='console'>x</form>`
+    const src = `<script lang="coffee">\n$x = 0\n</script>\n<form :flash='console'>x</form>`
     const { output } = await transpile(src, { moduleName: 'fl2' })
     assert.match(output, /mjs-flash=['"]console['"]/)
   })
 
   it('@flash="silent" → mjs-flash="silent"', async () => {
-    const src = `<script lang="coffee">\n$x = 0\n</script>\n<button @flash="silent">x</button>`
+    const src = `<script lang="coffee">\n$x = 0\n</script>\n<button :flash="silent">x</button>`
     const { output } = await transpile(src, { moduleName: 'fl3' })
     assert.match(output, /mjs-flash=['"]silent['"]/)
   })
 
   it('valeur HORS popup/console/silent (ex. "loud") → ERREUR de compile explicite', async () => {
-    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a @flash="loud">x</a>`
+    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a :flash="loud">x</a>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'fl4' }),
-      /@flash.*"popup".*"console".*"silent".*entre guillemets/s,
+      /:flash.*"popup".*"console".*"silent".*entre guillemets/s,
     )
   })
 
   it('forme ACCOLADES @flash={expr} → ERREUR de compile explicite (piège écouteur DOM fantôme)', async () => {
-    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a @flash={someExpr}>x</a>`
+    const src = `<script lang="coffee">\n$x = 0\n</script>\n<a :flash={someExpr}>x</a>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'fl5' }),
-      /@flash.*"popup".*"console".*"silent".*entre guillemets/s,
+      /:flash.*"popup".*"console".*"silent".*entre guillemets/s,
     )
   })
 

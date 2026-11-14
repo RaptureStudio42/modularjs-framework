@@ -38,7 +38,8 @@ describe('effet en attente — le retrait du nœud par un bloc l\'annule tout de
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     for (const [nom, source] of Object.entries(COMPOSANTS)) writeFileSync(join(srcDir, nom + '.mjs'), source)
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // les sorties posées à la main (`_mjs_outro`) se jouent par le moteur des transitions, rangé dans le module `easing` : aucun composant d'ici n'écrit de transition, le cœur le laisserait de côté et aucune sortie ne se jouerait
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['easing'] })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
     await bundler.close()

@@ -27,7 +27,7 @@ const SOURCES: Record<string, string> = {
   @autre = -> $a = { corps: '<i>autre', n: 0 }
   @retour = -> $a = { corps: '${HTML}', n: 0 }
 </script>
-<div class="ed" contenteditable="true" @html=!{$a.corps}></div>
+<div class="ed" contenteditable="true" :html=!{$a.corps}></div>
 <p class="modele">{$a.corps}</p>
 <p class="n">{$a.n}</p>
 `,
@@ -41,7 +41,7 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <div class="ed" contenteditable="true" @html=!{v.corps}></div>
+  <div class="ed" contenteditable="true" :html=!{v.corps}></div>
 {end}
 {await $q}
   <i class="att2">attente</i>
@@ -56,7 +56,7 @@ const SOURCES: Record<string, string> = {
   @retour  = -> $liste = [{ k: 1, corps: '${HTML}' }]
 </script>
 {for it in $liste by k}
-  <div class="ed" contenteditable="true" @html=!{it.corps}></div>
+  <div class="ed" contenteditable="true" :html=!{it.corps}></div>
 {end}
 `,
   // `@text` : la chaîne `i` de la liste, posée deux fois de suite dans un objet neuf
@@ -65,7 +65,7 @@ const SOURCES: Record<string, string> = {
   $a = { t: 'init' }
   @poser = (i) -> $a = { t: valeurs[i] }
 </script>
-<div class="ed" contenteditable="true" @text=!{$a.t}></div>
+<div class="ed" contenteditable="true" :text=!{$a.t}></div>
 `
 }
 const BALISES = Object.keys(SOURCES).map((f) => 'mjs-' + f.replace('.mjs', ''))

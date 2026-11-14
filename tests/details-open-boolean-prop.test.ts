@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-describe('generator/attributes — @booleanProp (<details @open>)', function () {
+describe('generator/attributes — @booleanProp (<details :open>)', function () {
   this.timeout(20000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -39,22 +39,22 @@ describe('generator/attributes — @booleanProp (<details @open>)', function () 
     return { errors: stats.errors.map(e => e.message), code }
   }
 
-  it("<details @open> nu (bare) compile SANS ERREUR — statique, équivalent à <details open>", async () => {
+  it("<details :open> nu (bare) compile SANS ERREUR — statique, équivalent à <details open>", async () => {
     const { errors, code } = await compileComp(`
 <script lang="coffee">
 </script>
-<details @open><summary>s</summary>contenu</details>
+<details :open><summary>s</summary>contenu</details>
 `)
     assert.deepEqual(errors, [], "AVANT le fix : [binding_standard] expected !{...} pattern, got \"true\"")
     assert.match(code!, /_mjs_cloneTpl\("<details open>/)
   })
 
-  it('<details @open={expr}> (dynamique unidirectionnel) compile SANS ERREUR et produit une liaison réactive correcte', async () => {
+  it('<details :open={expr}> (dynamique unidirectionnel) compile SANS ERREUR et produit une liaison réactive correcte', async () => {
     const { errors, code } = await compileComp(`
 <script lang="coffee">
 isExpanded = true
 </script>
-<details @open={isExpanded}><summary>s</summary>contenu</details>
+<details :open={isExpanded}><summary>s</summary>contenu</details>
 `)
     assert.deepEqual(errors, [], "AVANT le fix : [binding_standard] expected !{...} pattern, got \"true\"")
     assert.match(code!, /_mjs_updAttr\('a1',\s*'open',\s*isExpanded\)/,
@@ -62,15 +62,15 @@ isExpanded = true
       "(qui gère déjà correctement le retrait du booléen sur false/null/undefined)")
   })
 
-  it('<details @open=!{$x}> (two-way) : cible le VRAI attribut "open" (pas "@open"), via la propriété DOM booléenne, et écoute "toggle" (pas "input")', async () => {
+  it('<details :open=!{$x}> (two-way) : cible le VRAI attribut "open" (pas "@open"), via la propriété DOM booléenne, et écoute "toggle" (pas "input")', async () => {
     const { errors, code } = await compileComp(`
 <script lang="coffee">
 $isExpanded = true
 </script>
-<details @open=!{$isExpanded}><summary>s</summary>contenu</details>
+<details :open=!{$isExpanded}><summary>s</summary>contenu</details>
 `)
     assert.deepEqual(errors, [])
-    assert.doesNotMatch(code!, /['"]@open['"]/,
+    assert.doesNotMatch(code!, /['"]:open['"]/,
       'AVANT le fix : node.setAttribute(\'@open\', …) — le "@" jamais retiré, un attribut BIDON, "open" natif jamais affecté')
     assert.match(code!, /_mjs_node\.open\s*!==\s*!!\$\.isExpanded/,
       "AVANT le fix : node.setAttribute('open', …) — écrit la CHAÎNE 'false' quand isExpanded=false, ne RETIRE jamais l'attribut (toujours ouvert)")

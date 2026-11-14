@@ -309,7 +309,7 @@ describe('MJS-Server — sauvegarde : une écriture abandonnée qui aboutit bien
     await laisse()
     let rendu = false
     void engine.stop().then(() => { rendu = true })
-    await laisse()
+    await avance(DELAI)                      // l'arrêt attend la sauvegarde abandonnée le délai d'une écriture après son abandon, puis la lâche
     assert.equal(rendu, true, 'sanity : rien n\'attend plus, stop() rend la main')
     const avant = warns.length
 
@@ -355,7 +355,7 @@ describe('MJS-Server — sauvegarde : une écriture abandonnée qui aboutit bien
     await laisse()
     let rendu = false
     void engine.stop().then(() => { rendu = true })
-    await laisse()
+    await avance(DELAI)                      // l'arrêt attend la 1re le délai d'une écriture après son abandon, puis la lâche
     assert.equal(rendu, true, 'sanity : rien n\'attend plus, stop() rend la main')
     const avant = warns.length
 

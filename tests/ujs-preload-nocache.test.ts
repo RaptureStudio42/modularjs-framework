@@ -64,7 +64,7 @@ function makeWindow() {
   return { location: { origin: 'http://x', pathname: '/page1', search: '' } }
 }
 function setupPreload() {
-  const µ: any = { log() {}, warn() {}, error() {} }
+  const µ: any = { log() {}, warn() {}, error() {}, _mjs_th: (html: string) => html }
   const win = makeWindow()
   installHelpers(µ, {}, win) // fournit µ._mjs_navRequest/µ._mjs_navCachePolicyOf (et µ._mjs_navNoUjs)
   installPreload(µ, win)

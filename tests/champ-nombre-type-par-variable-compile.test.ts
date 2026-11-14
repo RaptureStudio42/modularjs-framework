@@ -30,7 +30,7 @@ const NON: Array<[string, string]> = [
   ['un <textarea> qui porte type={$t}', '<textarea type={$t} value=!{$n}></textarea>']
 ]
 
-for (const templateLang of ['civet', 'js'] as const) {
+for (const templateLang of ['civet'] as const) {
   describe(`champ nombre reconnu par son type, écrit ou donné par une variable (gabarit ${templateLang})`, function () {
     this.timeout(60000)
 

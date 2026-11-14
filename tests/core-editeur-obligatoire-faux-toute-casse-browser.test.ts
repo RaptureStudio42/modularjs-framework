@@ -24,7 +24,7 @@ const PAGE = `<script>
   $vrai = true
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
 ${EDITEURS.map(([c, a]) => `  <@@editor class="${c}" name="${c}" toolbar="none" ${a}></@@editor>`).join('\n')}
 </form>
 `

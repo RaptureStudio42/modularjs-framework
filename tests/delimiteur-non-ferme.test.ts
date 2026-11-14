@@ -37,10 +37,10 @@ describe('délimiteur non fermé — la compilation ne peut plus être verte sur
 
   // les 4 formes mesurées : 0 erreur, template `""`, nœud disparu
   const FORMES: Array<[string, string]> = [
-    ['@flip',        "<li @flip={duration: 300, easing: 'ab\\}>x</li>"],
-    ['@style.prop',  "<div @style.color={'ab\\}>x</div>"],
+    [':flip',        "<li :flip={duration: 300, easing: 'ab\\}>x</li>"],
+    [':style.prop',  "<div :style.color={'ab\\}>x</div>"],
     ['attribut nu',  "<div title={'ab\\}>x</div>"],
-    ['@class{}',     "<div @class{'ab\\}>x</div>"],
+    [':class{}',     "<div :class{'ab\\}>x</div>"],
   ]
 
   for (const [nom, html] of FORMES) {
@@ -126,7 +126,7 @@ describe('délimiteur non fermé — la compilation ne peut plus être verte sur
     // les autres points d'appel : bloc, spread, slot, @class{}
     assert.equal((parse('{if $a // vrai ?}<b>x</b>{end}').children[0] as any).branches[0].expr, '$a // vrai ?')
     assert.equal(parse('<div {...($a // reste)}>x</div>').children[0].attrs[0].expr, '($a // reste)')
-    assert.equal(parse("<div @class{$on ? 'a' : 'b' // bascule}>x</div>").children[0].name, 'div')
+    assert.equal(parse("<div :class{$on ? 'a' : 'b' // bascule}>x</div>").children[0].name, 'div')
     // et la forme MULTI-ligne reste intacte : là, c'est bien le saut de ligne qui ferme le commentaire
     assert.equal(parse("<p>{ $a // c'est fini\n }</p>").children[0].children[0].expr, "$a // c'est fini")
     assert.equal(parse('<div title={\n  $x // note\n}>bonjour</div>').children[0].children[0].content, 'bonjour')
@@ -164,8 +164,9 @@ describe('délimiteur non fermé — la compilation ne peut plus être verte sur
     assert.equal(parse("{$path.replace('c:\\\\', '')}<p>fin</p>").children.length, 2)
     assert.equal(parse('<p>{ f({a: 1}) }</p>').children[0].children[0].expr, 'f({a: 1})')
     assert.equal(parse('<p>{{ $brut }}</p>').children[0].children[0].expr, '$brut')
-    assert.equal(parse("<div @class{$on ? 'a' : 'b'}>x</div>").children[0].attrs[0].name, "@class{$on ? 'a' : 'b'}")
-    assert.equal(parse('<div @style.width={`${$w}px`}>x</div>').children[0].attrs[0].expr, '`${$w}px`')
+    // le lecteur range un mot de MJS sous sa forme interne en `@` : `:class{…}` écrit devient le nom `@class{…}`
+    assert.equal(parse("<div :class{$on ? 'a' : 'b'}>x</div>").children[0].attrs[0].name, "@class{$on ? 'a' : 'b'}")
+    assert.equal(parse('<div :style.width={`${$w}px`}>x</div>').children[0].attrs[0].expr, '`${$w}px`')
   })
 
   // `extractBalanced` connaissait déjà les regex/commentaires mais

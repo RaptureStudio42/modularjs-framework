@@ -126,9 +126,9 @@
         el.style.removeProperty(p)
 </script>
 
-<div class="carousel" part="carousel" role="region" aria-roledescription="carrousel" tabindex="0" @class{µlayout is 'flat'}="flat" @class{boolAttr($reflect) and µlayout isnt 'flat'}="reflect" --mjs-carousel-w={num($width, 200) + 'px'} --mjs-carousel-h={num($height, 300) + 'px'} @keydown={onKey(e)}>
+<div class="carousel" part="carousel" role="region" aria-roledescription="carrousel" tabindex="0" :class{µlayout is 'flat'}="flat" :class{boolAttr($reflect) and µlayout isnt 'flat'}="reflect" --mjs-carousel-w={num($width, 200) + 'px'} --mjs-carousel-h={num($height, 300) + 'px'} @keydown={onKey(e)}>
   <div class="stage" part="stage">
-    <slot @this=!{slotRef}></slot>
+    <slot :this=!{slotRef}></slot>
   </div>
   {if boolAttr($buttons)}
     <div class="buttons" part="buttons">
@@ -138,7 +138,7 @@
   {end}
 </div>
 
-<style @display="block">
+<style :display="block">
   .carousel
     position: relative
     display: flex

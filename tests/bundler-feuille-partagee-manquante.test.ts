@@ -39,7 +39,7 @@ describe('bundler — @css feuille partagée absente fait ÉCHOUER le build (cra
   it("`@css tema-manquant` sans fichier correspondant → stats.errors non vide, nommant la feuille partagée", async function () {
     const p = makeProject('css-theme-missing')
     writeFileSync(join(p.srcDir, 'comp.mjs'), [
-      '<style @css="tema-manquant"></style>',
+      '<style :css="tema-manquant"></style>',
       '<script lang="coffee">$x = 0</script>',
       '<p>{$x}</p>',
     ].join('\n'))
@@ -60,7 +60,7 @@ describe('bundler — @css feuille partagée absente fait ÉCHOUER le build (cra
     const p = makeProject('css-theme-partial')
     writeFileSync(join(p.stylesDir, 'theme1.sass'), '.t\n  color: red\n')
     writeFileSync(join(p.srcDir, 'comp.mjs'), [
-      '<style @css="theme1 theme2-absent"></style>',
+      '<style :css="theme1 theme2-absent"></style>',
       '<script lang="coffee">$x = 0</script>',
       '<p>{$x}</p>',
     ].join('\n'))
@@ -82,7 +82,7 @@ describe('bundler — @css feuille partagée absente fait ÉCHOUER le build (cra
     writeFileSync(join(p.stylesDir, 'base.sass'), '.b\n  color: red\n')
     writeFileSync(join(p.stylesDir, 'typo.scss'), '.ty { color: blue; }')
     writeFileSync(join(p.srcDir, 'comp.mjs'), [
-      '<style @css="base typo"></style>',
+      '<style :css="base typo"></style>',
       '<script lang="coffee">$x = 0</script>',
       '<p>{$x}</p>',
     ].join('\n'))
@@ -112,7 +112,7 @@ describe('bundler — @css feuille partagée absente fait ÉCHOUER le build (cra
     const p = makeProject('css-theme-cache')
     writeFileSync(join(p.stylesDir, 'base.sass'), '.b\n  color: red\n')
     writeFileSync(join(p.srcDir, 'comp.mjs'), [
-      '<style @css="base"></style>',
+      '<style :css="base"></style>',
       '<script lang="coffee">$x = 0</script>',
       '<p>{$x}</p>',
     ].join('\n'))

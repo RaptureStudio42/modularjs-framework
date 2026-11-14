@@ -60,7 +60,29 @@
       var opts = { duration: µ._mjs_fxMs(s.duration, anim ? 1000 : 400), delay: µ._mjs_fxMs(s.delay, 0), easing: typeof s.easing === 'string' ? s.easing : 'ease' };
       var jouer = function(node, sens) {
         if (typeof node.animate !== 'function' || µ._mjs_fxCalm()) return Promise.resolve();
+        var st   = node._mjs_transition_state;
+        var rate = 1;
         var a;
+        var fin;
+        var t;
+        // l'animation posée en cours de route (reprise d'une autre transition, retour sur ses pas) reçoit ici son heure de départ, calée
+        // sur l'heure de l'image en cours : celle que le navigateur lui donnerait après coup est parfois plus tardive sur une page
+        // occupée, et la balise passait alors une ou deux images en arrière de sa position (`rate` : le sens où elle joue). À une borne
+        // (entrée pas encore partie, sortie finie), rien à caler : l'animation y reste jusqu'à son départ
+        var pin = function() {
+          var now = document.timeline ? document.timeline.currentTime : null;
+          var c   = a.currentTime;
+          if (now != null && c > opts.delay && c < opts.delay + opts.duration) a.startTime = now - c / rate;
+        };
+        // la balise remise pendant sa sortie, ou retirée pendant son entrée : l'animation en cours revient sur ses pas, depuis là où elle
+        // en est ; une autre, jouée par-dessus, laisserait la balise figée à sa fin
+        if (st && st.back && st.direction !== sens) return st.back();
+        // une transition du moteur dans l'autre sens (une sortie `*fade` interrompue par le retour de la balise) : arrêtée là où elle en
+        // est, celle-ci part de cette position, pas de son début
+        if (st && st.direction !== sens) {
+          t = st.tValue();
+          st.abort();
+        }
         if (anim) {
           var frames = [];
           d.keyframes.forEach(function(k) {
@@ -71,16 +93,56 @@
             });
           });
           frames.sort(function(x, y) { return x.offset - y.offset; });
-          a = µ._mjs_animate(node, frames, Object.assign(Object.create(null), opts, { direction: sens === 'in' ? 'normal' : 'reverse', fill: sens === 'in' ? 'backwards' : 'forwards' }));
+          a = µ._mjs_animate(node, frames, Object.assign(Object.create(null), opts, { direction: sens === 'in' ? 'normal' : 'reverse', fill: sens === 'in' ? 'both' : 'forwards' }));
         }
         else {
-          // l'état caché : départ implicite de l'entrée, arrivée implicite de la sortie
+          // l'état caché : départ de l'entrée, arrivée de la sortie, l'autre bout étant l'état de la balise ; l'image est placée à son
+          // bout — seule et sans place, le navigateur la met à la fin, et l'entrée se jouait à l'envers, puis sautait
           var e = etat(d.decls);
           a = sens === 'in'
-            ? µ._mjs_animate(node, [e], Object.assign(Object.create(null), opts, { fill: 'backwards' }))
+            ? µ._mjs_animate(node, [Object.assign(e, { offset: 0 })], Object.assign(Object.create(null), opts, { fill: 'both' }))
             : µ._mjs_animate(node, [Object.assign(e, { offset: 1 })], Object.assign(Object.create(null), opts, { fill: 'forwards' }));
         }
-        return a.finished.then(function() {}, function() {});
+        if (t !== void 0) {
+          a.currentTime = opts.delay + (sens === 'in' ? t : 1 - t) * opts.duration;
+          pin();
+        }
+        // l'état de la transition, lu par le moteur (`tValue`, `abort`) et par le retour d'une sortie (`back`, cf. µ._mjs_txBack) ; une
+        // sortie finie le garde, pour revenir de son image de fin
+        st = node._mjs_transition_state = {
+          direction: sens,
+          tValue: function() {
+            var p = Math.min(Math.max(((a.currentTime ?? 0) - opts.delay) / Math.max(opts.duration, 1), 0), 1);
+            return sens === 'in' ? p : 1 - p;
+          },
+          abort: function() {
+            a.cancel();
+            if (node._mjs_transition_state === st) node._mjs_transition_state = null;
+          },
+          // retournée à une borne (entrée pas encore partie, sortie finie), l'animation serait remise à l'autre bout par le navigateur :
+          // sa position d'avant lui est rendue, elle finit là où elle est ; déjà revenue à l'état naturel de la balise, elle est rendue
+          back: function() {
+            var c = a.currentTime;
+            var p;
+            st.direction = st.direction === 'in' ? 'out' : 'in';
+            a.reverse();
+            rate = -rate;
+            if (c != null) a.currentTime = c;
+            pin();
+            p = a.finished.then(fin, fin);
+            if (st.direction === 'in' && a.playState === 'finished') a.cancel();
+            return p;
+          }
+        };
+        // l'entrée, remplie des deux côtés, est rendue ici, à sa fin constatée : remplie vers l'arrière seulement, WebKit relisait la balise à
+        // une position de mi-course (son dernier style calculé) entre la fin de l'animation et l'image qui la traite
+        fin = function() {
+          if (st.direction === 'in' && node._mjs_transition_state === st) {
+            node._mjs_transition_state = null;
+            a.cancel();
+          }
+        };
+        return a.finished.then(fin, fin);
       };
       return {
         intro: function(node) { return jouer(node, 'in'); },

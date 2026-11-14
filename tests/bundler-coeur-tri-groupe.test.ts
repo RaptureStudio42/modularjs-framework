@@ -57,6 +57,9 @@ function coreOf(outDir: string, prefix: string): string {
 /** une ligne de repère qui sort : jamais */
 const leaks = (code: string): string[] => code.split('\n').filter((l) => /(?:^|\s)(?:#|\/\/|<!--) @@(?:\s|$)/.test(l) && !/^\s*(?:#|\/\/) /.test(l))
 
+/** le code, noms réduits ramenés à une lettre : le nom court d'une propriété interne (`_mjs_*`) se prend dans un cache commun aux fichiers de l'appli, une ou deux lettres selon ce que les autres fichiers ont déjà pris */
+const uneLettre = (code: string): string => code.replace(/(?<![\w$])[A-Za-z_$][\w$]?(?![\w$])/g, 'x')
+
 const manque  = (code: string, noms: string[]) => noms.filter((n) => !code.includes(n))
 const present = (code: string, noms: string[]) => noms.filter((n) => code.includes(n))
 const nomme   = (code: string, noms: string[]) => noms.filter((n) => new RegExp(`\\b${n}\\b`).test(code))
@@ -119,8 +122,7 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
       ['une liste simple', { 'liste.mjs': SCRIPT + liste('value=!{$l}') }],
       ['une liste calculée (seul `sort`)', { 'liste.mjs': SCRIPT + liste('@sort={keep(e)}') }],
       ['avec une poignée', { 'liste.mjs': SCRIPT + liste('value=!{$l} handle=".p"') }],
-      ['seulement l\'évènement : @group={…} écoute, il n\'allume rien', { 'liste.mjs': SCRIPT + liste('value=!{$l} @group={keep(e)}') }],
-      ['l\'évènement nu : @group', { 'liste.mjs': SCRIPT + liste('@group') }],
+      ['l\'évènement nu : :group', { 'liste.mjs': SCRIPT + liste(':group') }],
       ['deux listes, aucune', { 'a.mjs': SCRIPT + liste('value=!{$l}'), 'b.mjs': SCRIPT + liste('value=!{$m}', '$m') }],
       ['deux listes dans un même fichier', { 'liste.mjs': SCRIPT + liste('value=!{$l}') + liste('value=!{$m}', '$m') }],
       ['une liste dans une ligne d\'une autre, sans `group`', { 'liste.mjs': '<@@sortable><section><@@sortable><div class="p">x</div></@@sortable></section></@@sortable>' }],
@@ -169,7 +171,6 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
       ['balise littérale mjs-core-sortable', { 'liste.mjs': SCRIPT + '<mjs-core-sortable value=!{$l} group="g"><div class="p">x</div></mjs-core-sortable>' }],
       ['étalement `{...$p}` (on ne sait pas : tout reste)', { 'liste.mjs': SCRIPT + '<@@sortable {...$p}><div class="p">x</div></@@sortable>' }],
       ['deux niveaux : une liste dans une ligne d\'une autre', { 'liste.mjs': '<@@sortable group="g"><section><@@sortable group="g"><div class="p">x</div></@@sortable></section></@@sortable>' }],
-      ['l\'attribut et l\'évènement sur la même liste', { 'liste.mjs': SCRIPT + liste('value=!{$l} group="g" @group={keep(e)}') }],
     ]
     let reference = ''
     for (const [nom, files] of AVEC) {
@@ -178,8 +179,8 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
         assert.deepEqual(manque(code, GROUPE_MINIFIE), [])
         assert.deepEqual(leaks(code), [])
         reference ||= code
-        // les noms réduits (une lettre) changent d'un build à l'autre : la taille, elle, ne bouge pas
-        assert.ok(Math.abs(code.length - reference.length) <= 40, `${code.length} octets, ${reference.length} pour un \`group\` écrit sur une liste`)
+        // les noms réduits changent d'un build à l'autre, et prennent une ou deux lettres selon les autres fichiers de l'appli : mesurée noms ramenés à une lettre, la taille, elle, ne bouge pas
+        assert.ok(Math.abs(uneLettre(code).length - uneLettre(reference).length) <= 40, `${code.length} octets (${uneLettre(code).length} noms ramenés à une lettre), ${reference.length} (${uneLettre(reference).length}) pour un \`group\` écrit sur une liste`)
       })
     }
 
@@ -300,7 +301,7 @@ describe('construction — les groupes de <@@sortable> suivent ce que les pages 
       const avec = appOf('tri-groupe-apres-avec', { 'liste.mjs': SCRIPT + liste('value=!{$l} group="g"') })
       await avec.bundler.compile()
       assert.equal(avec.bundler.coreAttrWritten('sortable', 'group'), 'yes')
-      for (const attrs of ['@group={keep(e)}', '@group', '@group.once={keep(e)}']) {
+      for (const attrs of [':group']) {
         const app = appOf('tri-groupe-evenement', { 'liste.mjs': SCRIPT + liste(attrs) })
         await app.bundler.compile()
         assert.equal(app.bundler.coreAttrWritten('sortable', 'group'), 'no', attrs)

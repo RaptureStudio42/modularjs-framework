@@ -53,9 +53,10 @@ describe('checkUjsForm — gardes', () => {
     assert.equal(nb('<form title="<form>"></form>'), 1)
   })
 
-  it('une accolade jamais refermée est lue comme du texte : la balise finit au « > » suivant, les formulaires d\'après comptent', () => {
-    assert.equal(nb('<form data-x={ a\n<form>\n</form>'), 1)
-    assert.equal(nb('<form>\n</form>\n<form data-x={ a\n<form>\n</form>'), 2)
+  // la construction refuse un tel gabarit (le gabarit ne se lit pas) : le contrôle ne devine rien après l'accolade
+  it('une accolade jamais refermée : les formulaires d\'avant sont contrôlés, rien n\'est deviné après', () => {
+    assert.equal(nb('<form data-x={ a\n<form>\n</form>'), 0)
+    assert.equal(nb('<form>\n</form>\n<form data-x={ a\n<form>\n</form>'), 1)
   })
 
   it('la ligne citée part de la première ligne donnée', () => {

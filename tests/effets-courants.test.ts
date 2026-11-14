@@ -16,7 +16,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { parseEffect, checkPlacement } from '../src/effects/catalog.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const COMPOSANTS: Record<string, string> = {
   'fx-attention': '<button class="a" *attention(jello, on: click)>A</button>\n<button class="b" *attention(on: load)>B</button>',
@@ -33,7 +33,7 @@ const COMPOSANTS: Record<string, string> = {
   'fx-mots':      '<p class="m" *stagger(fade, unit: word, on: scroll)>un deux trois</p>',
   'fx-mots-gris': '<p class="m" *stagger(fade, unit: word, on: scroll, opacity: .2)>un deux trois</p>\n<p class="n" *stagger(fade, unit: word, on: scroll, step: 100ms, easing: ease-in)>quatre cinq</p>\n<p class="v" *stagger(move, opacity: .5)>six</p>',
   'fx-meteores':  '<div class="p" *particles(meteors, count: 12)></div>',
-  'fx-trans':     '<script>\n$v = true\n</script>\n{if $v}<p class="r" @in=*rotate(-90, start: 0.5) @out=*wheel(3)>R</p><p class="i" @transition=*iris(shape: box)>I</p><p class="s" @transition=*scale(axis: x)>S</p><p class="f" @transition=*fly(blur: 8, skew: 20)>F</p>{end}',
+  'fx-trans':     '<script>\n$v = true\n</script>\n{if $v}<p class="r" :in=*rotate(-90, start: 0.5) :out=*wheel(3)>R</p><p class="i" :transition=*iris(shape: box)>I</p><p class="s" :transition=*scale(axis: x)>S</p><p class="f" :transition=*fly(blur: 8, skew: 20)>F</p>{end}',
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {
@@ -68,6 +68,7 @@ describe('effets courants', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`

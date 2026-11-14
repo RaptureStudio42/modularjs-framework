@@ -59,6 +59,7 @@ describe('UJS cross-page sans #app-root — le contenant est toujours <body> cô
     this.timeout(120000)
     browser = await chromium.launch()
     // composant minimal : sert uniquement à produire le bundle core (runtime UJS inclus)
+    // les liens sont dans des pages écrites à la main, hors construction : le code compilé n'en montre aucun, la navigation se demande (`runtime: 'all'`)
     const root = mjsTmp('ujs-nav')
     const srcDir = join(root, 'src')
     const outDir = join(root, 'out')
@@ -69,7 +70,7 @@ $n = 0
 </script>
 <div>ok {$n}</div>
 `)
-    const renderer = await createSSRRenderer({ sourceDir: srcDir, outputDir: outDir })
+    const renderer = await createSSRRenderer({ sourceDir: srcDir, outputDir: outDir, bundlerOpts: { runtime: 'all' } })
     await renderer.renderToString('mjs-dummy')
     await renderer.close()
     const bundleScript = readBundleScript(outDir)

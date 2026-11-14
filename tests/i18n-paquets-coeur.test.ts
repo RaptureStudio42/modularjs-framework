@@ -111,7 +111,8 @@ describe('plusieurs sections par module — le cœur du runtime, build RÉEL', f
     for (const [nom, conf] of [['dev', {}], ['prod', { forceMinify: true }], ['bundle', { js: 'bundle' }], ['prod-bundle', { forceMinify: true, js: 'bundle' }]] as Array<[string, Record<string, unknown>]>) {
       const avec = await construire('octet-avec-' + nom, conf, PAGE("@i18n 'panier'"))
       const sans = await construire('octet-sans-' + nom, { ...conf, runtimeDir: dir }, PAGE("@i18n 'panier'"))
-      assert.ok([...avec.fichiers.values()].join('').length > 100000, 'le cœur fait partie de ce qui est comparé : ' + nom)
+      // mesuré : la plus légère des quatre constructions (production en fichier unique) émet 62 775 o, cœur compris ; sans le cœur, la production n'émet que 3 732 o : le seuil passe entre les deux, au plus près de la première
+      assert.ok([...avec.fichiers.values()].join('').length > 60000, 'le cœur fait partie de ce qui est comparé : ' + nom)
       assert.deepEqual([...avec.fichiers.keys()].sort(), [...sans.fichiers.keys()].sort(), 'mêmes fichiers (noms hachés compris) : ' + nom)
       for (const [fichier, texte] of avec.fichiers) assert.equal(texte, sans.fichiers.get(fichier), fichier + ' : ' + nom)
     }

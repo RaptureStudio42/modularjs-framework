@@ -49,7 +49,7 @@ const RESTREINTE: Page = {
     window.__etat = -> { liste: $liste, coches: $coches, gros: $gros, petit: $petit }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="r1" name="liste" toolbar="bold italic" value=!{$liste}></@@editor>
   <@@editor class="r2" name="reps[]" answer toolbar="bold" value={$modele} checked=!{$coches}></@@editor>
   <@@editor class="r3" name="gros" toolbar="none" value=!{$gros} @input={@noter3(e)} @change={@noter3(e)}></@@editor>
@@ -76,7 +76,7 @@ const NOMMEE: Page = {
     window.__etat = -> { a: $a, b: $b }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="n1" name="a" toolbar="bold link" value=!{$a}></@@editor>
   <@@editor class="n2" name="b" toolbar="check" value=!{$b}></@@editor>
   <@@toolbar class="t1" for="x1" tools="bold link"></@@toolbar>

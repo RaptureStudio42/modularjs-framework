@@ -27,26 +27,26 @@ import { transpile } from '../src/transpiler/index.js'
 
 describe('extractImportMatches — masquage <pre>/<code> + regex non-enjambante', function () {
   it("un @import réel (hors <pre>/<code>) est bien extrait", () => {
-    const matches = extractImportMatches(`@import foo 'bar.civet'\n`)
+    const matches = extractImportMatches(`@import foo 'bar.civet.mjs'\n`)
     assert.equal(matches.length, 1)
-    assert.equal(matches[0][1], 'bar.civet')
+    assert.equal(matches[0][1], 'bar.civet.mjs')
   })
 
   it("un @import affiché comme EXEMPLE dans un <pre> n'est PAS extrait", () => {
     // `@import` doit être en DÉBUT DE LIGNE pour que la regex (`^[ \t]*@import`)
     // le considère même comme candidat — le bloc <pre>/<code> place donc la
     // directive de démo sur SA PROPRE ligne, comme un vrai tuto le ferait.
-    const content = `<pre><code>\n@import foo 'bar.civet'\n</code></pre>\n<p>Du texte.</p>\n`
+    const content = `<pre><code>\n@import foo 'bar.civet.mjs'\n</code></pre>\n<p>Du texte.</p>\n`
     const matches = extractImportMatches(content)
     assert.equal(matches.length, 0,
       "AVANT le fix : un @import affiché comme démo de code dans <pre>/<code> était extrait comme une VRAIE directive")
   })
 
   it("un @import réel APRÈS un bloc <pre> de démo est quand même extrait (le masquage ne mange pas le reste)", () => {
-    const content = `<pre><code>\n@import demo 'exemple.civet'\n</code></pre>\n@import reel 'vrai.civet'\n`
+    const content = `<pre><code>\n@import demo 'exemple.civet.mjs'\n</code></pre>\n@import reel 'vrai.civet.mjs'\n`
     const matches = extractImportMatches(content)
     assert.equal(matches.length, 1)
-    assert.equal(matches[0][1], 'vrai.civet')
+    assert.equal(matches[0][1], 'vrai.civet.mjs')
   })
 
   it("un @import mal formé (pas de guillemet fermant sur sa ligne) n'enjambe plus vers une ligne ultérieure sans rapport", () => {
@@ -54,7 +54,7 @@ describe('extractImportMatches — masquage <pre>/<code> + regex non-enjambante'
     // nom d'identifiant « manger » le saut de ligne et trouver le guillemet
     // fermant de la ligne SUIVANTE, extrayant 'un/chemin/sans/rapport.civet'
     // comme si c'était le path du @import (alors que ce n'en est pas un).
-    const content = `@import foo bar\nconst x = 'un/chemin/sans/rapport.civet'\n`
+    const content = `@import foo bar\nconst x = 'un/chemin/sans/rapport.civet.mjs'\n`
     const matches = extractImportMatches(content)
     assert.equal(matches.length, 0,
       "AVANT le fix : le @import mal formé enjambait la ligne suivante et extrayait un chemin qui n'a rien à voir")
@@ -68,7 +68,7 @@ describe('bundler — @import dans une démo <pre>/<code> ne casse pas le build'
     await terminateSharedWorkerPool()
   })
 
-  it("un tuto qui AFFICHE '@import x \\'y.civet\\'' comme exemple n'enregistre PAS de fausse dépendance fantôme", async function () {
+  it("un tuto qui AFFICHE '@import x \\'y.civet.mjs\\'' comme exemple n'enregistre PAS de fausse dépendance fantôme", async function () {
     const root = mjsTmp('import-doc')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
@@ -83,7 +83,7 @@ describe('bundler — @import dans une démo <pre>/<code> ne casse pas le build'
     writeFileSync(join(srcDir, 'tuto.mjs'), [
       '<p>Comment importer un module :</p>',
       '<pre><code>',
-      '@import util \'exemple-inexistant.civet\'',
+      '@import util \'exemple-inexistant.civet.mjs\'',
       '</code></pre>',
     ].join('\n'))
 
@@ -93,7 +93,7 @@ describe('bundler — @import dans une démo <pre>/<code> ne casse pas le build'
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
 
-    const phantomPath = join(srcDir, 'exemple-inexistant.civet')
+    const phantomPath = join(srcDir, 'exemple-inexistant.civet.mjs')
     assert.ok(!bundler.partialDependents.has(phantomPath),
       "AVANT le fix : le @import affiché comme démo était quand même tracké comme une VRAIE dépendance du tuto (watcher invaliderait tuto.mjs pour un fichier qui n'existe même pas)")
     await bundler.close()
@@ -106,25 +106,25 @@ describe('bundler — @import dans une démo <pre>/<code> ne casse pas le build'
 // émis dans `output` (même convention que regressions.test.ts/view-transition.test.ts).
 describe('preprocessHtml — directive @noUJS → mjs-no-ujs', function () {
   it('@noUJS nu (casse canonique) est réécrit en mjs-no-ujs', async () => {
-    const { output } = await transpile('<div @noUJS>x</div>', { moduleName: 'noujs1' })
+    const { output } = await transpile('<div :noUJS>x</div>', { moduleName: 'noujs1' })
     assert.match(output, /_mjs_cloneTpl\("<div mjs-no-ujs>x<\/div>"\)/)
   })
 
   it('casse insensible : @noUjs et @noujs sont aussi réécrits', async () => {
-    const r1 = await transpile('<div @noUjs>x</div>', { moduleName: 'noujs2' })
-    const r2 = await transpile('<div @noujs>x</div>', { moduleName: 'noujs3' })
+    const r1 = await transpile('<div :noUjs>x</div>', { moduleName: 'noujs2' })
+    const r2 = await transpile('<div :noujs>x</div>', { moduleName: 'noujs3' })
     assert.match(r1.output, /mjs-no-ujs/)
     assert.match(r2.output, /mjs-no-ujs/)
   })
 
   it('tiret optionnel : @no-ujs est réécrit lui aussi', async () => {
-    const { output } = await transpile('<div @no-ujs>x</div>', { moduleName: 'noujs4' })
+    const { output } = await transpile('<div :no-ujs>x</div>', { moduleName: 'noujs4' })
     assert.match(output, /mjs-no-ujs/)
   })
 
   it("un @noUJS affiché comme EXEMPLE dans un <pre>/<code> n'est PAS réécrit (masquage)", async () => {
-    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;a @noUJS&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'noujs5' })
+    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;a :noUJS&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'noujs5' })
     assert.doesNotMatch(output, /mjs-no-ujs/, 'AVANT le fix : un @noUJS affiché comme démo de code dans <pre>/<code> aurait été réécrit comme une VRAIE directive')
-    assert.match(output, /@noUJS/, 'le texte de démo reste affiché tel quel')
+    assert.match(output, /:noUJS/, 'le texte de démo reste affiché tel quel')
   })
 })

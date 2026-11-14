@@ -42,7 +42,7 @@ function fixture(): { root: string; srcDir: string; stylesDir: string; outDir: s
     '<header class="entete">ENTETE</header>',
     '<aside class="menu">MENU</aside>',
     '<main class="contenu"><p>CONTENU</p></main>',
-    '<style @css="shared-entete shared-menu">',
+    '<style :css="shared-entete shared-menu">',
     '  :host',
     '    display: block',
     '  .contenu',
@@ -248,7 +248,7 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
     if(!browser) this.skip()
     const p = fixture()
     writeFileSync(join(p.stylesDir, 'grosse.css'), grosse())
-    writeFileSync(join(p.srcDir, 'carte.mjs'), '<span class="boite">B</span>\n<style @css="grosse">\n  :host\n    display: block\n</style>\n')
+    writeFileSync(join(p.srcDir, 'carte.mjs'), '<span class="boite">B</span>\n<style :css="grosse">\n  :host\n    display: block\n</style>\n')
     writeFileSync(join(p.srcDir, 'liste.mjs'), '<section>\n' + '<@carte></@carte>\n'.repeat(300) + '</section>\n')
     const releve = () => {
       const cartes = Array.from((document.querySelector('mjs-liste') as any).shadowRoot.querySelectorAll('mjs-carte')) as any[]
@@ -263,8 +263,9 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
     // sans clé runtime, le thème ne part qu'avec un composant qui lit ses variables, la modale ou @title, et la carte n'en a aucun : 'all' le garde,
     // sa feuille se compte avec celle de 30 Ko
     const r = await comparer(p, 'mjs-liste', monte as any, releve, 'all')
-    // cœur complet : la feuille du thème (liée aussi) s'ajoute à celle de 30 Ko, soit deux liens d'environ 85 octets par racine
-    assert.ok(r.html.length < 110000, `HTML de ${r.html.length} octets`)
+    // cœur complet : la feuille du thème (liée aussi) s'ajoute à celle de 30 Ko, soit deux liens d'environ 85 octets par racine, plus la
+    // règle `hidden` du style de base de chaque composant (57 octets par racine) ; mesuré : 111 862 octets
+    assert.ok(r.html.length < 112000, `HTML de ${r.html.length} octets`)
     assert.equal(r.avant.n, 300)
     assert.equal(r.avant.boites[0].split(',')[2], '123', `la feuille liée s'applique à la page prérendue — relevé : ${r.avant.boites[0]}`)
     assert.deepEqual(r.avant, r.apres, 'mêmes positions, tailles et hauteur de page, scripts bloqués puis lancés')
@@ -292,7 +293,7 @@ describe('prérendu — feuilles liées, thème et @import : même géométrie a
     if(!browser) this.skip()
     const p = fixture()
     writeFileSync(join(p.stylesDir, 'avec-import.css'), '@import url("shared-menu.css");\n.cible { width: 321px; height: 20px; display: block }\n')
-    writeFileSync(join(p.srcDir, 'fiche.mjs'), '<div class="cible">C</div>\n<style @css="avec-import">\n  :host\n    display: block\n</style>\n')
+    writeFileSync(join(p.srcDir, 'fiche.mjs'), '<div class="cible">C</div>\n<style :css="avec-import">\n  :host\n    display: block\n</style>\n')
     const releve = () => {
       const r = (document.querySelector('mjs-fiche') as any).shadowRoot.querySelector('.cible').getBoundingClientRect()
       return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]

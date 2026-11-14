@@ -1,5 +1,5 @@
 // Les mêmes montages que generateur-etalements-boucles-classes-entites.test.ts et effets-deux-exemplaires-et-ecran-apres-garde-fou.test.ts,
-// dans Chromium réel (build de développement) : deux étalements qui posent la même clé, valeur fixe rendue par un étalement,
+// dans Chromium réel (build de développement) : deux étalements qui posent la même clé, valeur fixe écrite qui gagne sur un étalement,
 // `{for}` sur une Map et un Set lu par un gestionnaire, bascules de classe qui partagent une classe, entités d'un attribut mêlé,
 // deux exemplaires d'un reffet qui alignent une clé du store sur leur propre valeur.
 
@@ -40,7 +40,7 @@ const SOURCES: Record<string, string> = {
     '$a = true',
     '$b = false',
     '</script>',
-    '<p class="q" @class{$a}="on" @class{$b}="on big">q</p>',
+    '<p class="q" :class{$a}="on" :class{$b}="on big">q</p>',
     '<button class="bvrai" @click={$b = true}>1</button>',
     '<button class="bfaux" @click={$b = false}>2</button>',
   ].join('\n'),
@@ -109,10 +109,10 @@ describe('générateur et reffets du store — montage dans Chromium réel', fun
     ])
   })
 
-  it('une clé retirée par un étalement remet la valeur fixe écrite par l\'auteur', async function () {
+  it('une valeur fixe écrite par l\'auteur gagne sur la même clé d\'un étalement ; la classe étalée s\'ajoute à la classe écrite', async function () {
     if (!present) { this.skip(); return }
     const { valeur } = await jouer('mjs-etalement-statique', `${ATTRS} const d = r.querySelector('div'); const v = [at(d)]; r.querySelector('.vide').click(); await pause(); v.push(at(d)); return v`)
-    assert.deepEqual(valeur, [{ title: 'dyn', class: 'k' }, { title: 'café', class: 'st' }])
+    assert.deepEqual(valeur, [{ title: 'café', class: 'st k' }, { title: 'café', class: 'st' }])
   })
 
   it('{for} sur une Map et un Set : le gestionnaire de la ligne reçoit sa valeur', async function () {

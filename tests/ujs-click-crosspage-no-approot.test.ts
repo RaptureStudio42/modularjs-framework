@@ -91,6 +91,7 @@ describe("mjs_ujs — clic cross-page : le contenant est TOUJOURS <body> côté 
     }
     const doc: any = {}
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: () => { ajaxCalled = true },
@@ -119,6 +120,7 @@ describe("mjs_ujs — clic cross-page : le contenant est TOUJOURS <body> côté 
     }
     const doc: any = { body: liveRoot }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: () => { ajaxCalled = true },
@@ -144,6 +146,7 @@ describe("mjs_ujs — clic cross-page : le contenant est TOUJOURS <body> côté 
     }
     const doc: any = { body: liveRoot }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: (_u: string, cb: any) => { capturedCb = cb },
@@ -172,6 +175,7 @@ describe("mjs_ujs — clic cross-page : le contenant est TOUJOURS <body> côté 
     }
     const doc: any = { body: liveRoot }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: (_u: string, _cb: any, errCb: any) => { capturedErr = errCb },

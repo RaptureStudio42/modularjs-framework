@@ -33,9 +33,8 @@ describe('avertissements du transpileur : la ligne du fichier', () => {
   })
 
   it('un gestionnaire qui cite nu une méthode du composant : la ligne du gestionnaire', async () => {
-    const vus = await avertissements('<script>\n@valider = -> 1\n</script>\n<p>a</p>\n<button @click=valider>go</button>\n', 'events')
-    assert.equal(vus.length, 1, vus.join(' | '))
-    assert.match(vus[0], /\(ligne 5\)/)
+    // écrit seul (`@click=valider`), le nom est refusé à la construction : l'erreur cite la ligne de l'attribut, comme l'avertissement d'un appel
+    await assert.rejects(transpile('<script>\n@valider = -> 1\n</script>\n<p>a</p>\n<button @click=valider>go</button>\n', { moduleName: 'carte' }), /\(ligne 5\)[^\n]*« @click=valider »/)
     const accolades = await avertissements('<script>\n@valider = -> 1\n</script>\n<p>a</p>\n<p>b</p>\n<button @click={valider()}>go</button>\n', 'events')
     assert.equal(accolades.length, 1, accolades.join(' | '))
     assert.match(accolades[0], /\(ligne 6\)/)

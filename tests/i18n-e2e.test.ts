@@ -266,7 +266,7 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
   })
 
   describe('(e) modes placeholder', () => {
-    it("*skeleton : dev → '⟦clé⟧' sur clé manquante, prod → chaîne vide", async () => {
+    it("*skeleton : '⟦clé⟧' sur clé manquante, en dev comme en prod", async () => {
       const { insert: insertDev } = await setupProject({
         automissing: ["@i18n 'panier'", '@i18nPlaceholder *skeleton', '<p class="v">{µt(\'inconnue\')}</p>'].join('\n'),
       })
@@ -279,7 +279,7 @@ describe('i18n — bout-en-bout RÉEL (compilateur + build + runtime, happy-dom)
       }, { forceMinify: true })
       const elProd = insertProd('automissing')
       await new Promise(r => setTimeout(r, 80))
-      assert.equal(elProd._shadow.querySelector('p.v').textContent.trim(), '', 'prod : silencieux')
+      assert.equal(elProd._shadow.querySelector('p.v').textContent.trim(), '⟦panier.inconnue⟧', 'prod : le nom, comme en dev')
     })
 
     it("key : '⟦clé⟧' TOUJOURS (même en prod)", async () => {

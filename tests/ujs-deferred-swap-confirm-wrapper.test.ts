@@ -151,6 +151,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     const navigateCalls: any[] = []
     const win: any = { location: { pathname: '/dest', search: '', hash: '', origin: 'http://x' }, history: {} }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       warn() {}, error() {}, log() {},
       _mjs_navSeq: 0, _mjs_lastUjsPath: '/leaving',
@@ -183,6 +184,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     const navigateCalls: any[] = []
     const win: any = { location: { pathname: '/dest', search: '', hash: '', origin: 'http://x' }, history: {} }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       warn() {}, error() {}, log() {},
       _mjs_navSeq: 0, _mjs_lastUjsPath: '/leaving',
@@ -222,6 +224,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     const navigateCalls: any[] = []
     const win: any = { location: { pathname: '/', search: '', hash: '', origin: 'http://x' }, history: { pushState() {} } }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       warn() {}, error() {}, log() {},
       _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
@@ -254,6 +257,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     const navigateCalls: any[] = []
     const win: any = { location: { pathname: '/', search: '', hash: '', origin: 'http://x' }, history: { pushState() {} }, scrollTo() {} }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       warn() {}, error() {}, log() {},
       _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
@@ -290,6 +294,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     doc.addEventListener('mjs:load', (e: any) => events.push(e))
     const pushStateCalls: any[] = []
     const µ: any = {
+      _mjs_th: (html: string) => html,
       warn() {}, error() {}, log() {},
       realTarget: (e: any) => e.target,
       _mjs_navSeq: 0,
@@ -324,6 +329,7 @@ describe('swap PÉRIMÉ sous transition différée (6 sites)', function () {
     const navigateCalls: any[] = []
     const win: any = { history: { pushState() {} } }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       warn() {}, error() {}, log() {},
       paths: { x: 'xxx.js' },
       _mjs_resSet() {},
@@ -360,6 +366,7 @@ describe('reproduction d\'un cas de concurrence : 2 navigations concurrentes, tr
     const navigateCalls: any[] = []
     const win: any = { location: { pathname: '/', search: '', hash: '', origin: 'http://x' }, history: { pushState() {} } }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       warn() {}, error() {}, log() {},
       _mjs_navSeq: 0, _mjs_lastUjsPath: '/',

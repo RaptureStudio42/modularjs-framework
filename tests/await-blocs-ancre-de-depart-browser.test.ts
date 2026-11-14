@@ -1,5 +1,5 @@
-// l'ancre de départ d'un `{if}` ou d'un `{key}` d'une branche {await} naît sans repère de choix : le pool de nœuds texte remet à neuf les nœuds qu'il sert (`_mjs_old_branch`, `_mjs_old_key`, `_mjs_key_set`),
-// le code émis du `{if}` n'a donc plus à reconnaître une ancre vide pour construire son premier choix. Le `{key}` lit son repère de clé posée, non sa valeur : un `{key}` de valeur `undefined`
+// l'ancre de départ d'un `{if}` ou d'un `{key}` d'une branche {await} naît sans repère de choix : c'est un nœud texte neuf, sans `_mjs_old_branch`, `_mjs_old_key` ni `_mjs_key_set`,
+// le code émis du `{if}` n'a donc pas à reconnaître une ancre vide pour construire son premier choix. Le `{key}` lit son repère de clé posée, non sa valeur : un `{key}` de valeur `undefined`
 // construit son contenu dans l'attente comme dans `{success}` (en tout lieu, cf. key-valeur-indefinie-browser.test.ts), puis suit la clé quand elle change.
 // Le code émis du `{if}` (lecture), puis les trois modes (développement, production en fichiers séparés, production en un seul fichier) en navigateur réel, Chromium puis Firefox quand il est installé.
 

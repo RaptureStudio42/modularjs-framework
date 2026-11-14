@@ -69,7 +69,8 @@ function findDelimAfterCrlf(buffer: Buffer, delimAfterCrlf: Buffer, from: number
   return -1
 }
 
-function parseMultipart(buffer: Buffer, boundary: string, pathname: string): Record<string, string> | null {
+// `form` reçoit chaque champ texte, dans l'ordre, répétés compris (`req.form` de l'action)
+function parseMultipart(buffer: Buffer, boundary: string, pathname: string, form: URLSearchParams): Record<string, string> | null {
   const delim = Buffer.from('--' + boundary)
   const delimAfterCrlf = Buffer.from('\r\n--' + boundary)
   let pos = buffer.indexOf(delim)
@@ -107,6 +108,7 @@ function parseMultipart(buffer: Buffer, boundary: string, pathname: string): Rec
             // CRLF séparateur juste avant le prochain délimiteur : exclu de la valeur (toléré absent)
             const crlf = buffer.toString('latin1', fin - 2, fin) === '\r\n'
             body[champ] = buffer.toString('utf-8', headerEnd + 4, crlf ? fin - 2 : fin)
+            form.append(champ, body[champ])
           }
         }
       }
@@ -240,14 +242,18 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
   // fragment — symétrique au plafond ci-dessus (413 = trop, 400 = pas assez)
   if (interrompu) { res.statusCode = 400; res.end('Bad Request'); return true }
 
-  // d. parse — multipart (champs texte seulement) ou urlencoded ; dernière valeur gagne
+  // d. parse — multipart (champs texte seulement) ou urlencoded ; dernière valeur gagne dans `body`
   // (URLSearchParams itère dans l'ordre d'insertion, parseMultipart dans l'ordre d'apparition).
+  // `form` (`req.form` de l'action, propriété non énumérable : l'action garde ses trois arguments et
+  // `req` ses clés) garde le formulaire entier : chaque champ, répétés compris (cases d'un même nom,
+  // `<select multiple>`), mêmes noms réservés écartés — `validate` d'une règle le lit.
   const body: Record<string, string> = {}
+  const form = new URLSearchParams()
   if (contentType && contentType.startsWith('multipart/form-data')) {
     const boundaryMatch = contentType.match(/boundary=(?:"([^"]*)"|([^;]+))/i)
     const boundary = (boundaryMatch ? (boundaryMatch[1] ?? boundaryMatch[2]) : '').trim()
     if (!boundary) { res.statusCode = 400; res.end('Bad Request'); return true }
-    const champs = parseMultipart(Buffer.concat(chunks), boundary, pathname)
+    const champs = parseMultipart(Buffer.concat(chunks), boundary, pathname, form)
     if (!champs) { res.statusCode = 400; res.end('Bad Request'); return true }
     Object.assign(body, champs)
   } else {
@@ -255,6 +261,7 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
       // même garde que parseMultipart (cf. isUnsafeFieldName) : nom réservé refusé + tracé.
       if (isUnsafeFieldName(k)) { console.error(t('server.form-champ-reserve-ignore', { pathname, champ: k })); continue }
       body[k] = v
+      form.append(k, v)
     }
   }
 
@@ -263,6 +270,7 @@ export async function handleMutatingRequest(req: IncomingMessage, res: ServerRes
 
   // f. exécution — le SENS du retour est interprété ICI (l'action elle-même ne fait que
   // router vers la bonne fonction, cf. serve-entry.ts).
+  Object.defineProperty(req, 'form', { value: form, configurable: true, writable: true })
   let resultat: unknown
   try {
     resultat = await actionMatch.fn(actionMatch.params, body, req)

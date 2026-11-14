@@ -30,7 +30,7 @@ const PAGE = `<script>
       $nombres = liste if sorte is 'nombres'
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   {for i in $cases}<@@checkbox name={'c' + i}>{i}</@@checkbox>{end}
   {for i in $inters}<@@switch name={'s' + i}>{i}</@@switch>{end}
   {for i in $radios}<@@radio name="g" value={i} required={i is 0}>{i}</@@radio>{end}

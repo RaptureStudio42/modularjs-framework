@@ -19,7 +19,7 @@ const PAYS = '<@@option value="fr">France</@@option><@@option value="de">Allemag
 const LAIT = '<@@option value="lait">Lait</@@option><@@option value="oeuf">Oeuf</@@option><@@option value="noix">Noix</@@option>'
 const AB   = '<@@option value="a">A</@@option><@@option value="b">B</@@option>'
 
-const PAGE = `<form id="f" @noUJS>
+const PAGE = `<form id="f" :noUJS>
   <@@select class="s1" name="groupe" other value="fr">${PAYS}</@@select>
   <@@select class="s2" name="profil[groupe]" search other>${PAYS}</@@select>
   <@@select class="s3" name="g3" other>${PAYS}</@@select>

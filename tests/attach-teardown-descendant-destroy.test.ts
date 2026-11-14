@@ -32,7 +32,7 @@ setupLoop = (_node) ->
 
 <button class="toggle" @click={$show = not $show}>toggle</button>
 {if $show}
-  <div class="wrapper"><canvas class="target" @attach={setupLoop}></canvas></div>
+  <div class="wrapper"><canvas class="target" :attach={setupLoop}></canvas></div>
 {end}
 `
 

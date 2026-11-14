@@ -35,7 +35,7 @@ function world(vendor: string = VENDOR.chromium) {
     this.disconnect = () => { o.done = true }
   }
   window.eval(`
-    var µ = { warn: function(m) { (globalThis.__warnings = globalThis.__warnings || []).push(String(m)); }, _mjs_msg: function(k, v, fr) { return fr; }, easing: { resolve: function(e) { return typeof e === 'function' ? e : function(t) { return t; }; } } };
+    var µ = { _mjs_th: function(h) { return h; }, warn: function(m) { (globalThis.__warnings = globalThis.__warnings || []).push(String(m)); }, _mjs_msg: function(k, v, fr) { return fr; }, easing: { resolve: function(e) { return typeof e === 'function' ? e : function(t) { return t; }; } } };
     µ._mjs_dom = new Proxy({}, { get: function(_, n) { return function(el) { return el[n].apply(el, Array.prototype.slice.call(arguments, 1)); }; } });
     µ._mjs_animate = function(el, frames, opts) { return el.animate(frames, opts); };
     ${ENGINE}

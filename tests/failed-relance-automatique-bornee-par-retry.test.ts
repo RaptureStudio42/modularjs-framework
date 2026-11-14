@@ -1,4 +1,4 @@
-// Un repli qui relance seul le composant (`µfailed (err, reset) -> setTimeout(reset, 10)`) sur un composant qui
+// Un repli qui relance seul le composant (`µfailed (err, reset) -> µafter 10, { always: true }, reset`) sur un composant qui
 // replante après son premier rendu (donnée arrivée en différé, minuterie) : les relances restent bornées par `retry`,
 // quelle que soit la période du plantage. Défauts garantis absents : le compte de réessais repartait de zéro dès la
 // fin du premier rendu de l'instance neuve, avant qu'elle replante — le composant était reconstruit sans fin (des
@@ -20,9 +20,9 @@ const BOUCLE = [
   'window.__n = (window.__n or 0) + 1',
   '$boom = false',
   '$x = null',
-  'setTimeout((=> $boom = true), 5)',
+  'µafter 5, => $boom = true',
   'µfailed (err, reset)->',
-  '  setTimeout(reset, 10)',
+  '  µafter 10, { always: true }, reset',
   '  \'<p class="fb">oups</p>\'',
   '</script>',
   '{if $boom}<i>{$x.crash}</i>{end}',

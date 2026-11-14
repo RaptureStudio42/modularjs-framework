@@ -35,7 +35,7 @@ const HOTE = `<script>
   $k = 30
 </script>
 
-<form class="f-fixe" method="get" action="/envoi" @noUJS>
+<form class="f-fixe" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked>case</@@checkbox>
   <@@switch class="sw" name="sw" checked>interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x" checked>x</@@radio>
@@ -47,7 +47,7 @@ const HOTE = `<script>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-expr" method="get" action="/envoi" @noUJS>
+<form class="f-expr" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked={true}>case</@@checkbox>
   <@@switch class="sw" name="sw" checked={true}>interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x" checked={true}>x</@@radio>
@@ -59,7 +59,7 @@ const HOTE = `<script>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-lie" method="get" action="/envoi" @noUJS>
+<form class="f-lie" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked=!{$a}>case</@@checkbox>
   <@@switch class="sw" name="sw" checked=!{$b}>interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x" group=!{$r}>x</@@radio>
@@ -71,7 +71,7 @@ const HOTE = `<script>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-nu" method="get" action="/envoi" @noUJS>
+<form class="f-nu" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked></@@checkbox>
   <@@switch class="sw" name="sw" checked></@@switch>
   <@@radio class="r1" name="g" value="x" checked></@@radio>
@@ -83,7 +83,7 @@ const HOTE = `<script>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-liste" method="get" action="/envoi" @noUJS>
+<form class="f-liste" method="get" action="/envoi" :noUJS>
   <@@select class="s" name="s" value="b">
     <@@option value="a">A</@@option>
     <@@option value="b">B</@@option>

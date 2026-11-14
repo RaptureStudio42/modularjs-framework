@@ -45,7 +45,7 @@ function makeClient(transport: MemoryTransport): any {
 // une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
 // sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
 const capturesEnCours: Array<() => void> = []
-afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+function restoreCaptures(): void { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() }
 
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
@@ -326,6 +326,8 @@ describe('cli/server — buildServeurRunPlan (priorités port/host/heartbeat/lim
 describe("cli/server — runServeurCommand : chargement d'entry (VRAI client µ.socket, MemoryTransport injecté)", function () {
   this.timeout(10000)
 
+  afterEach(restoreCaptures)
+
   // app.game('morpion', …) déclaré dans setup(app) — capacité SPÉCIFIQUE à MJS-Server : une app
   // construite par mjsWs() n'a jamais `.game` ni `stats().game`. Le test ci-dessous s'assure que
   // c'est bien mjsServer() (pas mjsWs()) qui construit l'app derrière `mjs serveur`.
@@ -465,8 +467,8 @@ describe("cli/server — grammaire @import d'une entry serveur (cli/server-entry
 
   it("@import d'un fichier .civet relatif (dialecte appliqué) → utilisable dans app.game (setup)", async () => {
     const root = freshDir('server-import-civet')
-    writeFileSync(join(root, 'rules.civet'), `export ligne := (grille, id) -> grille.every (c) -> c is id\n`)
-    writeFileSync(join(root, 'serveur.server.mjs'), `@import ligne './rules.civet'\n\nexport default\n  setup: (app) ->\n    app.game 'morpion',\n      seats: 2\n      state: (partie) -> { grille: Array(9).fill(null), gagne: ligne([null, null, null], 'x') }\n      moves:\n        jouer: (partie, joueur, p) ->\n          partie.state.grille[p.i] = joueur.id\n          partie.next()\n`)
+    writeFileSync(join(root, 'rules.civet.mjs'), `export ligne := (grille, id) -> grille.every (c) -> c is id\n`)
+    writeFileSync(join(root, 'serveur.server.mjs'), `@import ligne './rules.civet.mjs'\n\nexport default\n  setup: (app) ->\n    app.game 'morpion',\n      seats: 2\n      state: (partie) -> { grille: Array(9).fill(null), gagne: ligne([null, null, null], 'x') }\n      moves:\n        jouer: (partie, joueur, p) ->\n          partie.state.grille[p.i] = joueur.id\n          partie.next()\n`)
     const transport = new MemoryTransport()
     const handle = await runServeurCommand({ root }, undefined, { transport, watch: false })
     try {
@@ -489,6 +491,8 @@ describe("cli/server — grammaire @import d'une entry serveur (cli/server-entry
 
 describe('cli/server — rechargement à chaud (fs.watch réel, fixture réécrite sur disque)', function () {
   this.timeout(10000)
+
+  afterEach(restoreCaptures)
 
   it('nouvelle version de la fixture → nouveau comportement actif (nouvelle connexion)', async () => {
     const root = freshDir('server-reload-ok')

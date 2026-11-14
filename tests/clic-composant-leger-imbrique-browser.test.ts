@@ -26,12 +26,12 @@ async function chromiumPresent(): Promise<boolean> {
 
 const SOURCES: Record<string, string> = {
   'compteur.mjs': '<script>\n$n = 0\n</script>\n<button class="plus" @click={$n++}>+1</button>\n<p class="n">{$n}</p>\n',
-  'panier.mjs': '<script>\n$v = 0\n</script>\n<button class="vider" @click={$v++}>vider</button>\n<@compteur @lightDom/>\n<p class="v">{$v}</p>\n',
+  'panier.mjs': '<script>\n$v = 0\n</script>\n<button class="vider" @click={$v++}>vider</button>\n<@compteur :lightDom/>\n<p class="v">{$v}</p>\n',
   'boite.mjs': '<script>\n$b = 0\n</script>\n<button class="interne" @click={$b++}>interne</button>\n<p class="b">{$b}</p>\n',
-  'atelier.mjs': '<script>\n$a = 0\n</script>\n<@boite @lightDom><button class="auteur" @click={$a++}>confié</button></@boite>\n<p class="a">{$a}</p>\n',
-  'hote.mjs': '<script>\n$h = 0\n</script>\n<@compteur @lightDom @click={$h++}/>\n<p class="h">{$h}</p>\n',
+  'atelier.mjs': '<script>\n$a = 0\n</script>\n<@boite :lightDom><button class="auteur" @click={$a++}>confié</button></@boite>\n<p class="a">{$a}</p>\n',
+  'hote.mjs': '<script>\n$h = 0\n</script>\n<@compteur :lightDom @click={$h++}/>\n<p class="h">{$h}</p>\n',
   'liste.mjs': '<script>\n$c = 0\n$items = [1, 2]\n</script>\n{for i in $items}<button class="ligne" @click={$c++}>{i}</button>{end}\n<p class="c">{$c}</p>\n',
-  'rayon.mjs': '<script>\n$r = 0\n$xs = [1]\n</script>\n{for x in $xs}<button class="rayon" @click={$r++}>{x}</button>{end}\n<@liste @lightDom/>\n<p class="r">{$r}</p>\n'
+  'rayon.mjs': '<script>\n$r = 0\n$xs = [1]\n</script>\n{for x in $xs}<button class="rayon" @click={$r++}>{x}</button>{end}\n<@liste :lightDom/>\n<p class="r">{$r}</p>\n'
 }
 
 const CORPS = '<mjs-panier class="ombre"></mjs-panier><mjs-panier class="leger" mjs-light></mjs-panier><mjs-atelier></mjs-atelier><mjs-hote></mjs-hote><mjs-rayon></mjs-rayon>'
@@ -78,7 +78,8 @@ describe('clic dans un composant léger imbriqué (Chromium réel) — seul le c
     }
     window.__texte = (hote, sel) => window.__trouve(document.querySelector(hote), sel).textContent
     window.__clic = (hote, sel) => window.__trouve(document.querySelector(hote), sel).click()
-    window.__ids = (hote, sel) => JSON.stringify(window.__trouve(document.querySelector(hote), sel)._mjs_ids)
+    // les identifiants de routage d'une balise : ceux de la table de son bloc (_mjs_ev) qui la désignent
+    window.__ids = (hote, sel) => { const n = window.__trouve(document.querySelector(hote), sel), t = n._mjs_ev; return JSON.stringify(t ? t._mjs_reg.ids.filter((id) => t[id] === n) : undefined) }
   `
 
   async function ouvrir(browser: any) {

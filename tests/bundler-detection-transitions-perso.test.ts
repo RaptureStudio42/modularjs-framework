@@ -23,9 +23,9 @@ const CREE = [
 
 // les écritures d'une transition perso, avec l'unique composant qui la porte
 const TRANSITIONS: Record<string, string> = {
-  '@in':         `<script>\n  $a = false\n${CREE}\n  @ta = -> $a = true\n</script>\n{if $a}<div class="ca" @in=*tourbillon(duration: 3s)>css-perso</div>{end}`,
-  '@out':        `<script>\n  $a = true\n${CREE}\n</script>\n{if $a}<div class="ca" @out=*tourbillon(duration: 3s)>css-perso</div>{end}`,
-  '@transition': `<script>\n  $a = true\n${CREE}\n</script>\n{if $a}<div class="ca" @transition=*tourbillon>css-perso</div>{end}`,
+  '@in':         `<script>\n  $a = false\n${CREE}\n  @ta = -> $a = true\n</script>\n{if $a}<div class="ca" :in=*tourbillon(duration: 3s)>css-perso</div>{end}`,
+  '@out':        `<script>\n  $a = true\n${CREE}\n</script>\n{if $a}<div class="ca" :out=*tourbillon(duration: 3s)>css-perso</div>{end}`,
+  '@transition': `<script>\n  $a = true\n${CREE}\n</script>\n{if $a}<div class="ca" :transition=*tourbillon>css-perso</div>{end}`,
 }
 
 async function usedOf(source: string): Promise<Set<string>> {

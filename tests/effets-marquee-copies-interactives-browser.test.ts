@@ -24,6 +24,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -63,7 +64,7 @@ const SOURCES: Record<string, string> = {
     '  <form class="f" action="/envoi" method="post" @submit.prevent={@envoyer(e)}><input class="q" name="q" aria-label="q" value="7"><button class="ok">Envoyer</button></form>',
     '</div>',
     '<div class="b5" *marquee(unit: child, speed: 900s)>',
-    '  <a class="suppr" href="/articles/1" @method="delete" @confirm="Vraiment ?">Suppr</a>',
+    '  <a class="suppr" href="/articles/1" :method="delete" :confirm="Vraiment ?">Suppr</a>',
     '</div>',
     '<div class="b6" *marquee(unit: child, speed: 900s)>',
     '  <form class="envoi" method="post" action="/envoyer"><input type="hidden" name="id" value="7"><input class="note" name="note" value="5" aria-label="note"></form>',
@@ -202,7 +203,7 @@ describe('*marquee — les copies sont de vraies copies : miroirs vivants des co
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Array<'chromium' | 'firefox' | 'webkit'>) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -484,6 +485,6 @@ describe('*marquee — les copies sont de vraies copies : miroirs vivants des co
           }
         })
       }
-    })
+    }))
   }
 })

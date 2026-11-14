@@ -33,49 +33,50 @@ function attributEmis(output: string, nom: string): string {
 
 describe('@confirm / @title forme objet — compile', () => {
   it('(1) @confirm={ text: µt(…), ok: µt(…) } compile en attribut dynamique qui fabrique le JSON', async () => {
-    const out = await compiler(`<button @confirm={ text: µt('q'), ok: µt('ok') }>a</button>`)
+    const out = await compiler(`<button :confirm={ text: µt('q'), ok: µt('ok') }>a</button>`)
     assert.match(out, /_mjs_updAttr\('a1', 'mjs-confirm', JSON\.stringify\(\{ text: µ\.t\('q'\), ok: µ\.t\('ok'\) \}\)(?:, 1)?\)/)
   })
 
   it('(2) @title={ text: µt(…), side: \'top\' } : texte dynamique, réglages littéraux dans mjs-title-conf', async () => {
-    const out = await compiler(`<span @title={ text: µt('aide'), side: 'top', delay: 200 }>a</span>`)
+    const out = await compiler(`<span :title={ text: µt('aide'), side: 'top', delay: 200 }>a</span>`)
     assert.match(out, /_mjs_updAttr\('a1', 'mjs-title', µ\.t\('aide'\)(?:, 1)?\)/)
     assert.deepEqual(JSON.parse(attributEmis(out, 'mjs-title-conf')), { side: 'top', delay: 200 })
   })
 
   it('(3) objet mêlé : littéral et µt dans le même objet, µt avec variables', async () => {
-    const c = await compiler(`<button @confirm={ text: µt('q', { n: 2 }), ok: 'OK' }>a</button>`)
+    const c = await compiler(`<button :confirm={ text: µt('q', { n: 2 }), ok: 'OK' }>a</button>`)
     assert.match(c, /JSON\.stringify\(\{ text: µ\.t\('q', \{ n: 2 \}\), ok: "OK" \}\)/)
-    const t = await compiler(`<span @title={ side: 'bottom', text: µt('aide') }>a</span>`)
+    const t = await compiler(`<span :title={ side: 'bottom', text: µt('aide') }>a</span>`)
     assert.match(t, /'mjs-title', µ\.t\('aide'\)/)
     assert.deepEqual(JSON.parse(attributEmis(t, 'mjs-title-conf')), { side: 'bottom' })
   })
 
   it('(4) objet tout littéral : sortie compilée identique, octet pour octet, à celle d\'avant', async () => {
-    const c = await compiler(`<button @confirm={ text: 'Archiver ?', ok: 'Archiver', cancel: 'Non' }>a</button>`)
+    const c = await compiler(`<button :confirm={ text: 'Archiver ?', ok: 'Archiver', cancel: 'Non' }>a</button>`)
     assert.ok(c.includes(`_mjs_cloneTpl("<button mjs-confirm='&#123;&quot;text&quot;:&quot;Archiver ?&quot;,&quot;ok&quot;:&quot;Archiver&quot;,&quot;cancel&quot;:&quot;Non&quot;&#125;'>a</button>")`))
     // empreintes de la sortie entière, où le fragment du gabarit se nomme _mjs_fr, feuille de base mise à part : celle-ci
-    // change pour tout composant (règle qui cache un composant `hidden`), sans rapport avec @confirm et @title
+    // change pour tout composant (règle qui cache un composant `hidden`), sans rapport avec @confirm et @title ;
+    // vue sans nœud repéré : `_mjs_evt_ids = 0` (et non plus `null`), la reprise `ssr:markers` la garde telle que rendue
     const empreinte = (out: string): string => createHash('sha256').update(out.replace(/this\._mjs_baseCss = `[^`]*`;/, '')).digest('hex')
-    assert.equal(empreinte(c), '6bb6d8ee308773fe0f7277a988d14d76a7d3242f89bbe19d8a50cb0776b73ece')
-    const t = await compiler(`<span @title={ text: 'Aide', side: 'top', delay: 200 }>a</span>`)
+    assert.equal(empreinte(c), 'd9e7cd9672e8cc5dd5aa490f8e33cf2635657a1e2733ee99d1de711035a6519a')
+    const t = await compiler(`<span :title={ text: 'Aide', side: 'top', delay: 200 }>a</span>`)
     assert.ok(t.includes(`_mjs_cloneTpl("<span mjs-title='Aide' mjs-title-conf='&#123;&quot;side&quot;:&quot;top&quot;,&quot;delay&quot;:200&#125;'>a</span>")`))
-    assert.equal(empreinte(t), '436eff599351af8849af1b18128afce17d3dcbcbadd832e74922de87fb48ad72')
+    assert.equal(empreinte(t), 'f78fdf5463c40f47eb8df167aaa038ccb90b79fac0896d7960304f7ca6b0ea56')
   })
 
   it('(5) variable, concaténation, autre appel : erreur du build, message qui cite µt(…) (confirm et title)', async () => {
     const cas = [
-      `<button @confirm={ text: maVar }>a</button>`,
-      `<button @confirm={ text: µt('a') + 'b' }>a</button>`,
-      `<button @confirm={ text: 'a' + µt('b') }>a</button>`,
-      `<button @confirm={ text: autre('a') }>a</button>`,
-      `<button @confirm={ text: µt('a') ok: 'x' y }>a</button>`,
-      `<button @confirm={ text: µt('a'), ok: µt('b' }>a</button>`,
-      `<span @title={ text: maVar }>a</span>`,
-      `<span @title={ text: µt('a') + 'b' }>a</span>`,
-      `<span @title={ text: µt('a'), side: µt('b') }>a</span>`,
-      `<span @title={ text: 'a', delay: µt('b') }>a</span>`,
-      `<span @title={ text: autre('a') }>a</span>`
+      `<button :confirm={ text: maVar }>a</button>`,
+      `<button :confirm={ text: µt('a') + 'b' }>a</button>`,
+      `<button :confirm={ text: 'a' + µt('b') }>a</button>`,
+      `<button :confirm={ text: autre('a') }>a</button>`,
+      `<button :confirm={ text: µt('a') ok: 'x' y }>a</button>`,
+      `<button :confirm={ text: µt('a'), ok: µt('b' }>a</button>`,
+      `<span :title={ text: maVar }>a</span>`,
+      `<span :title={ text: µt('a') + 'b' }>a</span>`,
+      `<span :title={ text: µt('a'), side: µt('b') }>a</span>`,
+      `<span :title={ text: 'a', delay: µt('b') }>a</span>`,
+      `<span :title={ text: autre('a') }>a</span>`
     ]
     for (const corps of cas) {
       await assert.rejects(() => compiler(corps), (e: any) => {
@@ -172,7 +173,7 @@ describe('@confirm / @title forme objet avec µt(…) — navigateur (happy-dom)
 
   it('(1) @confirm : la boîte montre le texte fr, puis le texte en après la bascule', async () => {
     const { window, insert } = await monter({
-      conf: `<button class="b" @confirm={ text: µt('q'), ok: µt('ok') }>a</button>`
+      conf: `<button class="b" :confirm={ text: µt('q'), ok: µt('ok') }>a</button>`
     })
     const el = insert('conf')
     await sleep(150)
@@ -196,7 +197,7 @@ describe('@confirm / @title forme objet avec µt(…) — navigateur (happy-dom)
 
   it('(2) @title : la bulle montre le texte fr, puis le texte en après la bascule (side littéral gardé)', async () => {
     const { window, document, insert } = await monter({
-      tit: `<span class="s" @title={ text: µt('aide'), side: 'top' }>a</span>`
+      tit: `<span class="s" :title={ text: µt('aide'), side: 'top' }>a</span>`
     })
     const el = insert('tit')
     await sleep(150)
@@ -219,7 +220,7 @@ describe('@confirm / @title forme objet avec µt(…) — navigateur (happy-dom)
 
   it('(3) objet mêlé : µt pour text, littéral pour ok, les deux restent justes après la bascule', async () => {
     const { window, insert } = await monter({
-      mix: `<button class="b" @confirm={ text: µt('mixte'), ok: 'OK' }>a</button>`
+      mix: `<button class="b" :confirm={ text: µt('mixte'), ok: 'OK' }>a</button>`
     })
     const el = insert('mix')
     await sleep(150)
@@ -232,7 +233,7 @@ describe('@confirm / @title forme objet avec µt(…) — navigateur (happy-dom)
 
   it('(6) caractères spéciaux (apostrophe, guillemet, <, &, accolades) : texte tel quel, aucun HTML injecté', async () => {
     const { window, document, insert } = await monter({
-      spec: `<button class="b" @confirm={ text: µt('spec') } @title={ text: µt('spec') }>a</button>`
+      spec: `<button class="b" :confirm={ text: µt('spec') } :title={ text: µt('spec') }>a</button>`
     })
     const el = insert('spec')
     await sleep(150)
@@ -256,7 +257,7 @@ describe('@confirm / @title forme objet avec µt(…) — navigateur (happy-dom)
     const srcDir = join(root, 'app')
     mkdirSync(srcDir, { recursive: true })
     dictionnaires(srcDir)
-    writeFileSync(join(srcDir, 'pre.mjs'), `<button class="b" @confirm={ text: µt('q'), ok: 'OK' } @title={ text: µt('aide'), side: 'top' }>a</button>`)
+    writeFileSync(join(srcDir, 'pre.mjs'), `<button class="b" :confirm={ text: µt('q'), ok: 'OK' } :title={ text: µt('aide'), side: 'top' }>a</button>`)
     const decoder = (h: string) => h.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
     const fr = await renderToString({ sourceDir: srcDir, tag: 'mjs-pre', i18n: { default: 'fr' } })
     assert.match(decoder(fr.html), /mjs-confirm="\{"text":"Archiver cette conversation \?","ok":"OK"\}"/)

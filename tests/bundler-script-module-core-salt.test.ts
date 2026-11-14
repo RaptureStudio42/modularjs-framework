@@ -35,7 +35,7 @@ describe('bundler — cache des modules .civet/.coffee résiste à un rebuild du
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
 
-    const coffeePath = join(srcDir, 'helper.coffee')
+    const coffeePath = join(srcDir, 'helper.coffee.mjs')
     // Référence µ pour déclencher autoImportMu() (sinon rien n'embarque le cœur et ce test
     // ne prouverait rien).
     writeFileSync(coffeePath, "export greet = -> µ.log 'hi'\n")
@@ -49,7 +49,7 @@ describe('bundler — cache des modules .civet/.coffee résiste à un rebuild du
     const core1 = readdirSync(outDir).find((f) => /^mjs_core-/.test(f))!
     const helper1 = readdirSync(outDir).find((f) => /^helper-/.test(f))!
     const helper1Content = readFileSync(join(outDir, helper1), 'utf-8')
-    assert.ok(helper1Content.includes(core1.replace(/\.js$/, '')), 'helper.coffee doit référencer le cœur du 1er tour')
+    assert.ok(helper1Content.includes(core1.replace(/\.js$/, '')), 'helper.coffee.mjs doit référencer le cœur du 1er tour')
 
     // SEUL 'trigger.mjs' change (gagne un {for}) → le cœur change (mjs_for.ts entre dans le
     // bundle) — helper.coffee, lui, ne change PAS de source.
@@ -64,7 +64,7 @@ describe('bundler — cache des modules .civet/.coffee résiste à un rebuild du
     const helper2 = readdirSync(outDir).find((f) => /^helper-/.test(f))!
     const helper2Content = readFileSync(join(outDir, helper2), 'utf-8')
     assert.ok(helper2Content.includes(core2.replace(/\.js$/, '')),
-      "avec l'ancien mécanisme (sel) comme avec le nouveau (embeds) : helper.coffee (source inchangé) doit réémettre avec le NOUVEAU chemin du cœur, jamais garder l'ancien (404)")
+      "avec l'ancien mécanisme (sel) comme avec le nouveau (embeds) : helper.coffee.mjs (source inchangé) doit réémettre avec le NOUVEAU chemin du cœur, jamais garder l'ancien (404)")
     assert.equal(helper2Content.includes(core1.replace(/\.js$/, '')), false, "la sortie ne doit plus référencer l'ancien core après le rebuild")
   })
 
@@ -73,7 +73,7 @@ describe('bundler — cache des modules .civet/.coffee résiste à un rebuild du
     const srcDir = join(root, 'src')
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
-    const coffeePath = join(srcDir, 'helper.coffee')
+    const coffeePath = join(srcDir, 'helper.coffee.mjs')
     writeFileSync(coffeePath, "export greet = -> 'v1'\n")
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })

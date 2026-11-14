@@ -56,8 +56,8 @@ const PAGE = (modificateur: string) => `<script>
     -> log('retrait ' + key)
 </script>
 
-{if $show}<div class="bloc" @attach${modificateur}={suivre('bloc', $tick)}>{$tick}</div>{end}
-<ul>{for p in $items by key}<li class="ligne" @attach${modificateur}={suivre(p.key, $tick)}>{p.key} {$tick}</li>{end}</ul>
+{if $show}<div class="bloc" :attach${modificateur}={suivre('bloc', $tick)}>{$tick}</div>{end}
+<ul>{for p in $items by key}<li class="ligne" :attach${modificateur}={suivre(p.key, $tick)}>{p.key} {$tick}</li>{end}</ul>
 `
 
 describe('@attach.once : posée une fois par balise', function () {
@@ -138,12 +138,12 @@ const AUTRES = `<script>
   suivre = (nom, tick) -> (node) ->
     log('pose ' + nom)
     -> log('retrait ' + nom)
-  $promesse = new Promise((resolve) -> setTimeout((-> resolve('ok')), 20))
+  $promesse = µafter(20).then(-> 'ok')
 </script>
 
-<p class="racine" @attach.once={suivre('racine', $tick)}>{$tick}</p>
-{key $cle}<p class="cle" @attach.once={suivre('cle', $tick)}>{$tick}</p>{end}
-{if $show}{await $promesse}<i>attente</i>{success valeur}<p class="attente" @attach.once={suivre('await', $tick)}>{valeur} {$tick}</p>{end}{end}
+<p class="racine" :attach.once={suivre('racine', $tick)}>{$tick}</p>
+{key $cle}<p class="cle" :attach.once={suivre('cle', $tick)}>{$tick}</p>{end}
+{if $show}{await $promesse}<i>attente</i>{success valeur}<p class="attente" :attach.once={suivre('await', $tick)}>{valeur} {$tick}</p>{end}{end}
 `
 
 describe('@attach.once : racine, {key}, {await}', function () {
@@ -194,7 +194,7 @@ describe('@attach.onec : modificateur inconnu', function () {
   })
 
   it('refusé au build, avec la suggestion .once', async () => {
-    const { stats } = await compiler('attache-une-fois-faute', { 'demo-faute.mjs': '<div @attach.onec={(n) -> null}>x</div>\n' })
+    const { stats } = await compiler('attache-une-fois-faute', { 'demo-faute.mjs': '<div :attach.onec={(n) -> null}>x</div>\n' })
     const texte = stats.errors.map((e: any) => e.message).join('\n')
     assert.ok(stats.errors.length > 0, 'une erreur de build')
     assert.ok(texte.includes('.onec') && texte.includes('.once'), `l'erreur nomme la faute et propose .once : ${texte}`)
@@ -203,9 +203,9 @@ describe('@attach.onec : modificateur inconnu', function () {
 
   it('le message existe en français (vouvoiement) et en anglais', () => {
     setMessagesLang('fr')
-    const fr = t('generator.attach-modificateur-inconnu', { attrName: '@attach.onec', mod: 'onec', hint: ' Vouliez-vous dire « .once » ?' })
+    const fr = t('generator.attach-modificateur-inconnu', { attrName: ':attach.onec', mod: 'onec', hint: ' Vouliez-vous dire « .once » ?' })
     setMessagesLang('en')
-    const en = t('generator.attach-modificateur-inconnu', { attrName: '@attach.onec', mod: 'onec', hint: ' Did you mean ".once"?' })
+    const en = t('generator.attach-modificateur-inconnu', { attrName: ':attach.onec', mod: 'onec', hint: ' Did you mean ".once"?' })
     setMessagesLang('fr')
     assert.ok(fr.includes('.once') && /utilisez|écrivez/i.test(fr), fr)
     assert.ok(en.includes('.once') && /use|write/i.test(en), en)

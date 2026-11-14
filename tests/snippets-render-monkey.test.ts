@@ -33,7 +33,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 
 const MONKEY = `
-<style @display="contents">
+<style :display="contents">
   .cell
     padding: 0.5em 0.8em
 </style>

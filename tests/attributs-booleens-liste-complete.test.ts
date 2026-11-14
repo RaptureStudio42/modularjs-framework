@@ -3,7 +3,7 @@
 // noms ; les douze autres (`allowfullscreen`, `async`, `default`, `defer`, `formnovalidate`, `inert`, `ismap`, `itemscope`, `nomodule`, `novalidate`,
 // `playsinline`, `reversed`) recevaient le TEXTE « true » ou « false » dans une ligne de {for} comparée à une variable : « false » est un attribut présent,
 // donc actif — toutes les lignes s'allumaient. Sept écritures : comparaison à une variable dans une ligne de {for}, valeur calculée dans une ligne,
-// valeur d'une variable à la racine, la même avec le préfixe `@`, attribut nu, attribut nu dans une ligne, valeur d'une variable dans une branche {await}. Les trois listes de noms du compilateur
+// valeur d'une variable à la racine, la même avec le préfixe `:`, attribut nu, attribut nu dans une ligne, valeur d'une variable dans une branche {await}. Les trois listes de noms du compilateur
 // (la liste du générateur, celle de l'exécution, celle de l'analyseur pour l'attribut nu) disent les mêmes. La page est lue dans un navigateur réel :
 // rendue par le client seul (au départ, puis quand la valeur change), par le serveur happy-dom et par le serveur navigateur.
 
@@ -19,7 +19,7 @@ const BALISES: Record<string, string> = {
 }
 const NOMS   = Object.keys(BALISES)
 const VIDES  = new Set(['track', 'img'])
-const FORMES = ['filtre', 'ligne', 'racine', 'arobase', 'nu', 'nu-ligne', 'attente']
+const FORMES = ['filtre', 'ligne', 'racine', 'deux-points', 'nu', 'nu-ligne', 'attente']
 
 // la propriété DOM qui reflète l'attribut, quand son nom diffère ou qu'elle existe (les attributs de <script> et `itemscope` n'en ont pas de fiable)
 const PROPRIETE: Record<string, string | null> = {
@@ -28,7 +28,7 @@ const PROPRIETE: Record<string, string | null> = {
 }
 
 // ce que chaque balise demande pour ne pas être signalée (titre d'un cadre, texte d'un bouton, formulaire retenu) : le test ne regarde que l'attribut
-const COMPLEMENT: Record<string, string> = { iframe: ' title="cadre"', img: ' alt="image"', form: ' @noUJS' }
+const COMPLEMENT: Record<string, string> = { iframe: ' title="cadre"', img: ' alt="image"', form: ' :noUJS' }
 
 function element(nom: string, forme: string, ecrit: string): string {
   const balise = BALISES[nom]
@@ -41,7 +41,7 @@ function ecritures(nom: string): string {
   return `{for x in $valeurs}\n${element(nom, 'filtre', `${nom}={x is $choix}`)}\n{end}\n` +
     `{for l in $lignes}\n${element(nom, 'ligne', `${nom}={l.actif}`)}\n{end}\n` +
     `${element(nom, 'racine', `${nom}={$actif}`)}\n` +
-    `${element(nom, 'arobase', `@${nom}={$actif}`)}\n` +
+    `${element(nom, 'deux-points', `:${nom}={$actif}`)}\n` +
     `${element(nom, 'nu', nom)}\n` +
     `{for x in $valeurs}\n${element(nom, 'nu-ligne', nom)}\n{end}\n` +
     `{await $promesse}\n{success d}\n${element(nom, 'attente', `${nom}={$actif}`)}\n{end}`
@@ -80,8 +80,8 @@ const LIRE = `(() => {
 
 // les lignes allumées de chaque écriture : au départ, puis après le clic
 const ALLUMEES: Record<string, Record<string, boolean[]>> = {
-  depart: { filtre: [false, true, false], ligne: [false, true, false], racine: [false], arobase: [false], nu: [true], 'nu-ligne': [true, true, true], attente: [false] },
-  apres:  { filtre: [false, false, true], ligne: [true, false, true], racine: [true], arobase: [true], nu: [true], 'nu-ligne': [true, true, true], attente: [true] }
+  depart: { filtre: [false, true, false], ligne: [false, true, false], racine: [false], 'deux-points': [false], nu: [true], 'nu-ligne': [true, true, true], attente: [false] },
+  apres:  { filtre: [false, false, true], ligne: [true, false, true], racine: [true], 'deux-points': [true], nu: [true], 'nu-ligne': [true, true, true], attente: [true] }
 }
 
 // ce qui s'écarte de l'attendu, une ligne par écriture : vide quand tout est juste. `proprietes` : la propriété DOM aussi (une propriété posée avant

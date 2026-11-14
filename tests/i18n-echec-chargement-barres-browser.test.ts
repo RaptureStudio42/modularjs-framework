@@ -91,7 +91,7 @@ describe('chargement en échec : des barres en production, le repère en dévelo
 
   // l'hôte (accueil) crée un module de plus 1,5 s après son montage, une fois la page passée en anglais : le serveur ne l'a pas rendu, sa section `extra` n'est pas dans la graine
   const COMPOSANTS_GRAINE = {
-    home:  '@i18n \'accueil\'\n<script>\n  $late = false\n  setTimeout((-> $late = true), 1500) unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')} / {µt(\'/titre\')}</h1>\n{if $late}<mjs-extra></mjs-extra>{end}\n',
+    home:  '@i18n \'accueil\'\n<script>\n  $late = false\n  µafter(1500, -> $late = true) unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')} / {µt(\'/titre\')}</h1>\n{if $late}<mjs-extra></mjs-extra>{end}\n',
     extra: '@i18n \'extra\'\n<i class="kx">{µt(\'nom\')}</i>\n'
   }
   const SONDES_GRAINE: Sonde[] = [{ chemin: ['mjs-home'], sel: 'h1.t' }, { chemin: ['mjs-home', 'mjs-extra'], sel: 'i.kx' }]

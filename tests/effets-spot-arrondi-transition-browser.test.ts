@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 
@@ -246,7 +247,7 @@ describe('*spotlight : la lumière du halo suit l\'arrondi de la balise quand il
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Navigateur[]) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -631,6 +632,6 @@ describe('*spotlight : la lumière du halo suit l\'arrondi de la balise quand il
           await contexte.close()
         }
       })
-    })
+    }))
   }
 })

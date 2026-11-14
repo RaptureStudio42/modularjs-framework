@@ -14,7 +14,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
 const PAGE = `<div id="hors"><@@checkbox id="h" name="h" checked>Né hors formulaire</@@checkbox></div>
-<form id="f1" @noUJS>
+<form id="f1" :noUJS>
   <@@checkbox id="c" name="c" checked>Case</@@checkbox>
   <@@switch id="s" name="s" checked>Interrupteur</@@switch>
   <@@number id="n" name="n" value={3}></@@number>
@@ -24,7 +24,7 @@ const PAGE = `<div id="hors"><@@checkbox id="h" name="h" checked>Né hors formul
   <@@radio id="rb" name="couleur" value="vert">Vert</@@radio>
   <button type="reset" id="raz1">reset 1</button>
 </form>
-<form id="f2" @noUJS>
+<form id="f2" :noUJS>
   <button type="reset" id="raz2">reset 2</button>
 </form>
 `

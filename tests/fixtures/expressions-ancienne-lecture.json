@@ -1,0 +1,741 @@
+{
+ "lecture-des-expressions": [
+  {
+   "expr": "$x + @y",
+   "externes": [],
+   "js": "$.x + this.y"
+  },
+  {
+   "expr": "$x == 1 and not $y",
+   "externes": [],
+   "js": "$.x === 1 && !$.y"
+  },
+  {
+   "expr": "$items.map (t) -> t.done",
+   "externes": [],
+   "js": "$.items.map(function(t) { return t.done })"
+  },
+  {
+   "expr": "$$panier.total",
+   "externes": [],
+   "js": "µ.store.panier.total"
+  },
+  {
+   "expr": "[...$liste, $o[$k]]",
+   "externes": [],
+   "js": "[...$.liste, $.o[$.k]]"
+  },
+  {
+   "expr": "if $a then $b else 2",
+   "externes": [],
+   "js": "($.a? $.b : 2)"
+  },
+  {
+   "expr": "obj.$x + a?.$y",
+   "externes": [],
+   "js": "obj.$x + a?.$y"
+  },
+  {
+   "expr": "{$a, b: $$s, $$t}",
+   "externes": [],
+   "js": "{a: $.a, b: µ.store.s, t: µ.store.t}"
+  },
+  {
+   "expr": "{µUrl}",
+   "externes": [],
+   "js": "{Url: µ.Url}"
+  },
+  {
+   "expr": "µurl.path + µFoo",
+   "externes": [],
+   "js": "µ.url.path + µ.Foo"
+  },
+  {
+   "expr": "µfoo $x",
+   "externes": [],
+   "js": "µ.foo($.x)"
+  },
+  {
+   "expr": "µlang",
+   "externes": [],
+   "js": "µ.store.__mjsLang"
+  },
+  {
+   "expr": "µtheme is 'sombre'",
+   "externes": [],
+   "js": "µ.store.__mjsTheme === 'sombre'"
+  },
+  {
+   "expr": "µlayout",
+   "externes": [],
+   "js": "($.layout || 'default')"
+  },
+  {
+   "expr": "'$x et µfoo' + $x",
+   "externes": [],
+   "js": "'$x et µfoo' + $.x"
+  },
+  {
+   "expr": "\"total #{$n} €\"",
+   "externes": [],
+   "js": "`total ${$.n} €`"
+  },
+  {
+   "expr": "`a ${$x} $y`",
+   "externes": [],
+   "js": "`a ${$.x} $y`"
+  },
+  {
+   "expr": "$Panier.total + $x",
+   "externes": [
+    "$Panier"
+   ],
+   "js": "$Panier.total + $.x"
+  },
+  {
+   "expr": "$$Panier",
+   "externes": [
+    "$Panier"
+   ],
+   "erreur": "[ModularJS] « $$Panier » : « Panier » est un singleton importé (@import µ$$Panier) — consommez-le avec « µ$$Panier », pas « $$Panier » (qui désigne le store GLOBAL, un autre espace)."
+  },
+  {
+   "expr": "µpending",
+   "externes": [],
+   "js": "_mjs_pnd"
+  },
+  {
+   "expr": "µpending",
+   "externes": [],
+   "js": "µ.pending"
+  },
+  {
+   "expr": "µt(§boutique) + §§lang",
+   "externes": [],
+   "js": "µ.t(this._mjs_getContext('boutique')) + this._mjs_getRCtx('lang')"
+  },
+  {
+   "expr": "@@total + [...§liste]",
+   "externes": [],
+   "js": "_mjsThis.total + [...this._mjs_getContext('liste')]"
+  },
+  {
+   "expr": "&id",
+   "externes": [],
+   "js": "µ.url.params.id"
+  },
+  {
+   "expr": "if &id then &id else 'aucun'",
+   "externes": [],
+   "js": "(µ.url.params.id? µ.url.params.id : 'aucun')"
+  },
+  {
+   "expr": "$a isnt 2 and $b",
+   "externes": [],
+   "js": "$.a !== 2 && $.b"
+  },
+  {
+   "expr": "a < $x < b",
+   "externes": [],
+   "js": "(() => { let ref; return (a < (ref = $.x) && ref < b); })()"
+  },
+  {
+   "expr": "µread $x",
+   "externes": [],
+   "js": "_mjsThis._state.x"
+  },
+  {
+   "expr": "{$x: 1}",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « {$x: 1} » — essai.expr:1:8 Failed to parse\nExpected:\n\tNonNewlineWhitespace /[ \\t]+/\n\tNonNewlineWhitespace \"\\\\\\\\\"\n\tInlineComment /\\/\\*(?:(?!\\*\\/)[^\\r\\n])*\\*\\//\n\tImportAssertion \"with\"\n\tImportAssertion \"assert\"\n\tWhitespace /[\\s]+/\n\tComment /(?=\\/|#)/\n\tImport \"import\"\n\tExport \"export\"\nFound: \"1})\"\n"
+  },
+  {
+   "expr": "($x) -> $x",
+   "externes": [],
+   "js": "function(pin) { $.x = pin; return $.x }"
+  },
+  {
+   "expr": "obj.§x",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « obj.§x » — essai.expr:1:9 Failed to parse\nExpected:\n\t_ /(?=[ \\t\\/\\\\])/\n\tImportAssertion \"with\"\n\tImportAssertion \"assert\"\n\t__ /(?=\\s|\\/|#)/\n\tImport \"import\"\n\tExport \"export\"\nFound: EOF\n"
+  },
+  {
+   "expr": "@$x",
+   "externes": [],
+   "js": "this.$.x"
+  },
+  {
+   "expr": "$a /* note */ + 1",
+   "externes": [],
+   "js": "$.a /* note */ + 1"
+  },
+  {
+   "expr": "§theme = 'sombre'",
+   "externes": [],
+   "js": "this._mjs_setContext('theme', 'sombre')"
+  },
+  {
+   "expr": "'§ 2' + $x",
+   "externes": [],
+   "js": "'§ 2' + $.x"
+  },
+  {
+   "expr": "&$panier",
+   "externes": [],
+   "erreur": "[ModularJS] « &$panier » : le sigil « &$ » (vault) a été retiré — utilisez « $$panier » (store global réactif, zéro import)."
+  },
+  {
+   "expr": "$v =: 2",
+   "externes": [],
+   "js": "$.v = µ.snap(2)"
+  },
+  {
+   "expr": "$liste.filter(&.prix > $min)",
+   "externes": [],
+   "js": "$.liste.filter($1 => $1.prix > $.min)"
+  },
+  {
+   "expr": "$liste.map &.n * $k",
+   "externes": [],
+   "js": "$.liste.map($1 => $1.n * $.k)"
+  },
+  {
+   "expr": "$liste.filter .fait",
+   "externes": [],
+   "js": "$.liste.filter($1 => $1.fait)"
+  },
+  {
+   "expr": "$liste.some(&.id is @@courant)",
+   "externes": [],
+   "js": "$.liste.some($1 => $1.id === _mjsThis.courant)"
+  },
+  {
+   "expr": "$$$x + 1",
+   "externes": [],
+   "js": "$µ.store.x + 1"
+  },
+  {
+   "expr": "(isnt)",
+   "externes": [],
+   "js": "(isnt)"
+  },
+  {
+   "expr": "($a isnt)",
+   "externes": [],
+   "js": "($.a(isnt))"
+  },
+  {
+   "expr": "[1, 2].filter (isnt)",
+   "externes": [],
+   "js": "[1, 2].filter((isnt))"
+  },
+  {
+   "expr": "[$a isnt]",
+   "externes": [],
+   "js": "[$.a(isnt)]"
+  },
+  {
+   "expr": "{k: $a isnt}",
+   "externes": [],
+   "js": "{k: $.a(isnt)}"
+  },
+  {
+   "expr": "$l.some (x) -> x isnt $a",
+   "externes": [],
+   "js": "$.l.some(function(x) { return x !== $.a })"
+  },
+  {
+   "expr": "$a.isnt + $isnt",
+   "externes": [],
+   "js": "$.a.isnt + $.isnt"
+  },
+  {
+   "expr": "$v := 2",
+   "externes": [],
+   "erreur": "[ModularJS] « $v := 2 » : « := » est l'opérateur de déclaration Civet, invalide sur un symbole $ — écrivez « $v = 2 » (les symboles $ sont auto-déclarés, « := » y est toujours superflu)."
+  },
+  {
+   "expr": "µtoggle $x",
+   "externes": [],
+   "erreur": "[ModularJS] µtoggle s'écrit toujours en appel parenthésé dans interpolation {…}/handler : « µtoggle($x, 'a', 'b') » — jamais nu ni sans parenthèses."
+  },
+  {
+   "expr": "µimport('a.js')",
+   "externes": [],
+   "js": "µ._mjs_import(µasset('a.js'))"
+  },
+  {
+   "expr": "mjsimport('a.js')",
+   "externes": [],
+   "js": "µ._mjs_import(µasset('a.js'))"
+  },
+  {
+   "expr": "$x + Ꞩy",
+   "externes": [],
+   "js": "$.x + Ꞩy"
+  },
+  {
+   "expr": "isnt + 1",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « isnt + 1 » — essai.expr:1:10 Failed to parse\nExpected:\n\tNumericLiteral /(?=[0-9.])/\nFound: \" \"\n"
+  },
+  {
+   "expr": "((µ) -> µ.a)(1)",
+   "externes": [],
+   "js": "(function(µ) { return µ.a })(1)"
+  },
+  {
+   "expr": "$prénom + 1",
+   "externes": [],
+   "js": "$.prénom + 1"
+  },
+  {
+   "expr": "{a: 1, $b: 2}",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « {a: 1, $b: 2} » — essai.expr:1:12 Failed to parse\nExpected:\n\tInlineComment /\\/\\*(?:(?!\\*\\/)[^\\r\\n])*\\*\\//\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenBracket \"[\"\n\tQuestionMark \"?\"\n\tExclamationPoint \"!\"\n\tDot \".\"\n\tDot /['’]s/\n\tHash \"#\"\n\tOpenBrace \"{\"\n\tAt \"@\"\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tComma \",\"\n\t__ /(?=\\s|\\/|#)/\n\tObjectPropertyDelimiter \"}\"\nFound: \":\"\n"
+  },
+  {
+   "expr": "[1..µmax]",
+   "externes": [],
+   "js": "(() => { var range = (start, end) => {\n  const length = end - start;\n  if (length <= 0) return [];\n  const arr = Array(length);\n  for (let i = 0; i < length; ++i) {\n    arr[i] = i + start;\n  }\n  return arr;\n}; return (range(1,µmax + 1)); })()"
+  },
+  {
+   "expr": "µlayout = 'x'",
+   "externes": [],
+   "erreur": "[ModularJS] « µlayout » se lit, il ne s'écrit pas : le modèle se choisit sur la balise du composant (`<@carte layout=\"compacte\">`, ou `layout={$x}`)."
+  },
+  {
+   "expr": "§§x = 1",
+   "externes": [],
+   "js": "this._mjs_setRCtx('x', 1)"
+  },
+  {
+   "expr": "{µlayout}",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « {µlayout} » — essai.expr:1:26 Failed to parse\nExpected:\n\tMemberExpressionRest /(?=[\\/\\[{?.!@#'’:])/\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tQuestionMark \"?\"\nFound: \"})\"\n"
+  },
+  {
+   "expr": "$x |>= f",
+   "externes": [],
+   "js": "$.x = f($.x)"
+  },
+  {
+   "expr": "'$x $$y §z §§w @@v &id µr'",
+   "externes": [],
+   "js": "'$x $$y §z §§w @@v &id µr'"
+  },
+  {
+   "expr": "\"#{$x} §y\"",
+   "externes": [],
+   "js": "`${$.x} §y`"
+  },
+  {
+   "expr": "`${§x} @@y`",
+   "externes": [],
+   "js": "`${this._mjs_getContext('x')} @@y`"
+  },
+  {
+   "expr": "$s.replace(/§|@@|&id/g, '')",
+   "externes": [],
+   "js": "$.s.replace(/§|@@|&id/g, '')"
+  },
+  {
+   "expr": "§x + §§y + @@z + &id + $$s + µt('a')",
+   "externes": [],
+   "js": "this._mjs_getContext('x') + this._mjs_getRCtx('y') + _mjsThis.z + µ.url.params.id + µ.store.s + µ.t('a')"
+  },
+  {
+   "expr": "'$x $$y µr' + $x",
+   "externes": [],
+   "js": "'$x $$y µr' + $.x"
+  },
+  {
+   "expr": "\"a#{$x}b#{$$y}\"",
+   "externes": [],
+   "js": "`a${$.x}b${µ.store.y}`"
+  },
+  {
+   "expr": "/\\$x/.test($s)",
+   "externes": [],
+   "js": "/\\$x/.test($.s)"
+  },
+  {
+   "expr": "$a == $b and $c != $d",
+   "externes": [],
+   "js": "$.a === $.b && $.c !== $.d"
+  },
+  {
+   "expr": "$x not in $l",
+   "externes": [],
+   "js": "!($.x in $.l)"
+  },
+  {
+   "expr": "`${ $s.replace(/}/g, $t) }`",
+   "externes": [],
+   "js": "`${ $.s.replace(/}/g, $t) }`"
+  },
+  {
+   "expr": "`${ $s.replace(/{/g, '') } ${$t}`",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « `${ $s.replace(/{/g, '') } ${$t}` » — essai.expr:1:37 Failed to parse\nExpected:\n\tColon \":\"\n\tMemberExpressionRest /(?=[\\/\\[{?.!@#'’:])/\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tUpdateExpressionSymbol \"++\"\n\tUpdateExpressionSymbol \"--\"\n\tUpdateExpressionSymbol \"⧺\"\n\tUpdateExpressionSymbol \"—\"\n\t__ /(?=\\s|\\/|#)/\n\tAssignmentOpSymbol \"**=\"\n\tAssignmentOpSymbol \"*=\"\n\tAssignmentOpSymbol \"%/\"\n\tAssignmentOpSymbol \"÷\"\n\tAssignmentOpSymbol \"%%\"\n\tAssignmentOpSymbol \"/=\"\n\tAssignmentOpSymbol \"%=\"\n\tAssignmentOpSymbol \"++\"\n\tAssignmentOpSymbol \"⧺\"\n\tAssignmentOpSymbol \"+=\"\n\tAssignmentOpSymbol \"-=\"\n\tAssignmentOpSymbol \"<<=\"\n\tAssignmentOpSymbol \"≪=\"\n\tAssignmentOpSymbol \">>>=\"\n\tAssignmentOpSymbol \"⋙=\"\n\tAssignmentOpSymbol \">>=\"\n\tAssignmentOpSymbol \"≫=\"\n\tAssignmentOpSymbol \"&&=\"\n\tAssignmentOpSymbol \"&=\"\n\tAssignmentOpSymbol \"^=\"\n\tAssignmentOpSymbol \"||=\"\n\tAssignmentOpSymbol \"‖=\"\n\tAssignmentOpSymbol \"|=\"\n\tAssignmentOpSymbol \"??=\"\n\tAssignmentOpSymbol \"⁇=\"\n\tAssignmentOpSymbol \"?=\"\n\tAssignmentOpSymbol \"=\"\n\tCoffeeWordAssignmentOp \"and=\"\n\tCoffeeWordAssignmentOp \"or=\"\n\tXor \"^^\"\n\tXor \"xor\"\n\tXnor /!\\^\\^?/\n\tXnor \"xnor\"\n\tIdentifier /(?=\\p{ID_Start}|[_$])/\n\tQuestionMark \"?\"\n\tIs \"is\"\n\tBinaryOp /(?=\\p{ID_Start}|[_$^≪≫⋙≤≥∈∋∉∌≣≡≢≠=⩶⩵‖⁇&|*\\/!?%÷<>⧺+-])/\n\tTernaryRest /[ \\t]/\n\tPipe \"||>\"\n\tPipe \"|▷\"\n\tPipe \"|>=\"\n\tPipe \"▷=\"\n\tPipe \"|>\"\n\tPipe \"▷\"\n\tPostfixStatement /(?=for|if|loop|unless|until|while)/\n\tComma \",\"\n\tCloseParen \")\"\nFound: \"}})\"\n"
+  },
+  {
+   "expr": "`${ $s.replace(/'/g, '') }` + $t",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « `${ $s.replace(/'/g, '') }` + $t » — essai.expr:1:35 Failed to parse\nExpected:\n\tCaret \"^\"\n\tPropertyName \"-\"\n\tColon \":\"\n\tMemberExpressionRest /(?=[\\/\\[{?.!@#'’:])/\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tUpdateExpressionSymbol \"++\"\n\tUpdateExpressionSymbol \"--\"\n\tUpdateExpressionSymbol \"⧺\"\n\tUpdateExpressionSymbol \"—\"\n\t__ /(?=\\s|\\/|#)/\n\tAssignmentOpSymbol \"**=\"\n\tAssignmentOpSymbol \"*=\"\n\tAssignmentOpSymbol \"%/\"\n\tAssignmentOpSymbol \"÷\"\n\tAssignmentOpSymbol \"%%\"\n\tAssignmentOpSymbol \"/=\"\n\tAssignmentOpSymbol \"%=\"\n\tAssignmentOpSymbol \"++\"\n\tAssignmentOpSymbol \"⧺\"\n\tAssignmentOpSymbol \"+=\"\n\tAssignmentOpSymbol \"-=\"\n\tAssignmentOpSymbol \"<<=\"\n\tAssignmentOpSymbol \"≪=\"\n\tAssignmentOpSymbol \">>>=\"\n\tAssignmentOpSymbol \"⋙=\"\n\tAssignmentOpSymbol \">>=\"\n\tAssignmentOpSymbol \"≫=\"\n\tAssignmentOpSymbol \"&&=\"\n\tAssignmentOpSymbol \"&=\"\n\tAssignmentOpSymbol \"^=\"\n\tAssignmentOpSymbol \"||=\"\n\tAssignmentOpSymbol \"‖=\"\n\tAssignmentOpSymbol \"|=\"\n\tAssignmentOpSymbol \"??=\"\n\tAssignmentOpSymbol \"⁇=\"\n\tAssignmentOpSymbol \"?=\"\n\tAssignmentOpSymbol \"=\"\n\tCoffeeWordAssignmentOp \"and=\"\n\tCoffeeWordAssignmentOp \"or=\"\n\tXor \"^^\"\n\tXor \"xor\"\n\tXnor /!\\^\\^?/\n\tXnor \"xnor\"\n\tIdentifier /(?=\\p{ID_Start}|[_$])/\n\tQuestionMark \"?\"\n\tIs \"is\"\n\tBinaryOp /(?=\\p{ID_Start}|[_$^≪≫⋙≤≥∈∋∉∌≣≡≢≠=⩶⩵‖⁇&|*\\/!?%÷<>⧺+-])/\n\tTernaryRest /[ \\t]/\n\tPipe \"||>\"\n\tPipe \"|▷\"\n\tPipe \"|>=\"\n\tPipe \"▷=\"\n\tPipe \"|>\"\n\tPipe \"▷\"\n\tPostfixStatement /(?=for|if|loop|unless|until|while)/\n\tComma \",\"\n\tCloseParen \")\"\nFound: \"}})\"\n"
+  },
+  {
+   "expr": "`${ $s.replace(/\"/g, $t) }`",
+   "externes": [],
+   "erreur": "[ModularJS] interpolation : échec de compilation Civet dans « essai » — « `${ $s.replace(/\"/g, $t) }` » — essai.expr:1:31 Failed to parse\nExpected:\n\tColon \":\"\n\tMemberExpressionRest /(?=[\\/\\[{?.!@#'’:])/\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tUpdateExpressionSymbol \"++\"\n\tUpdateExpressionSymbol \"--\"\n\tUpdateExpressionSymbol \"⧺\"\n\tUpdateExpressionSymbol \"—\"\n\t__ /(?=\\s|\\/|#)/\n\tAssignmentOpSymbol \"**=\"\n\tAssignmentOpSymbol \"*=\"\n\tAssignmentOpSymbol \"%/\"\n\tAssignmentOpSymbol \"÷\"\n\tAssignmentOpSymbol \"%%\"\n\tAssignmentOpSymbol \"/=\"\n\tAssignmentOpSymbol \"%=\"\n\tAssignmentOpSymbol \"++\"\n\tAssignmentOpSymbol \"⧺\"\n\tAssignmentOpSymbol \"+=\"\n\tAssignmentOpSymbol \"-=\"\n\tAssignmentOpSymbol \"<<=\"\n\tAssignmentOpSymbol \"≪=\"\n\tAssignmentOpSymbol \">>>=\"\n\tAssignmentOpSymbol \"⋙=\"\n\tAssignmentOpSymbol \">>=\"\n\tAssignmentOpSymbol \"≫=\"\n\tAssignmentOpSymbol \"&&=\"\n\tAssignmentOpSymbol \"&=\"\n\tAssignmentOpSymbol \"^=\"\n\tAssignmentOpSymbol \"||=\"\n\tAssignmentOpSymbol \"‖=\"\n\tAssignmentOpSymbol \"|=\"\n\tAssignmentOpSymbol \"??=\"\n\tAssignmentOpSymbol \"⁇=\"\n\tAssignmentOpSymbol \"?=\"\n\tAssignmentOpSymbol \"=\"\n\tCoffeeWordAssignmentOp \"and=\"\n\tCoffeeWordAssignmentOp \"or=\"\n\tXor \"^^\"\n\tXor \"xor\"\n\tXnor /!\\^\\^?/\n\tXnor \"xnor\"\n\tIdentifier /(?=\\p{ID_Start}|[_$])/\n\tQuestionMark \"?\"\n\tIs \"is\"\n\tBinaryOp /(?=\\p{ID_Start}|[_$^≪≫⋙≤≥∈∋∉∌≣≡≢≠=⩶⩵‖⁇&|*\\/!?%÷<>⧺+-])/\n\tTernaryRest /[ \\t]/\n\tPipe \"||>\"\n\tPipe \"|▷\"\n\tPipe \"|>=\"\n\tPipe \"▷=\"\n\tPipe \"|>\"\n\tPipe \"▷\"\n\tPostfixStatement /(?=for|if|loop|unless|until|while)/\n\tComma \",\"\n\tCloseParen \")\"\nFound: \"}})\"\n"
+  },
+  {
+   "expr": "'''it's''' + $a",
+   "externes": [],
+   "js": "`it's` + $a"
+  }
+ ],
+ "expressions-ecritures-rares-lues-par-l-arbre": [
+  {
+   "expr": "$a /* note */ + 1",
+   "externes": [],
+   "texte": "$.a /* note */ + 1"
+  },
+  {
+   "expr": "$a # note",
+   "externes": [],
+   "texte": "$.a(this.length(note))"
+  },
+  {
+   "expr": "$liste.filter(&.prix > $min)",
+   "externes": [],
+   "texte": "$.liste.filter($1 => $1.prix > $.min)"
+  },
+  {
+   "expr": "$liste.map &.n * $k",
+   "externes": [],
+   "texte": "$.liste.map($1 => $1.n * $.k)"
+  },
+  {
+   "expr": "$liste.filter .fait",
+   "externes": [],
+   "texte": "$.liste.filter($1 => $1.fait)"
+  },
+  {
+   "expr": "$liste.some(&.id is @@courant)",
+   "externes": [],
+   "texte": "$.liste.some($1 => $1.id === _mjsThis.courant)"
+  },
+  {
+   "expr": "@@liste.filter(&.ok)",
+   "externes": [],
+   "texte": "_mjsThis.liste.filter($ => $.ok)"
+  },
+  {
+   "expr": "((µ) -> µ.a)(1)",
+   "externes": [],
+   "texte": "(function(µ) { return µ.a })(1)"
+  },
+  {
+   "expr": "@$x",
+   "externes": [],
+   "texte": "this.$.x"
+  },
+  {
+   "expr": "$$$x + 1",
+   "externes": [],
+   "texte": "$µ.store.x + 1"
+  },
+  {
+   "expr": "$prénom + 1",
+   "externes": [],
+   "texte": "$.prénom + 1"
+  },
+  {
+   "expr": "[1..µmax]",
+   "externes": [],
+   "texte": "(() => { var range = (start, end) => {\n  const length = end - start;\n  if (length <= 0) return [];\n  const arr = Array(length);\n  for (let i = 0; i < length; ++i) {\n    arr[i] = i + start;\n  }\n  return arr;\n}; return (range(1,µmax + 1)); })()"
+  },
+  {
+   "expr": "'§ 2' + $x",
+   "externes": [],
+   "texte": "'§ 2' + $.x"
+  },
+  {
+   "expr": "'$x $$y §z §§w @@v &id µr'",
+   "externes": [],
+   "texte": "'$x $$y §z §§w @@v &id µr'"
+  },
+  {
+   "expr": "\"#{$x} §y\"",
+   "externes": [],
+   "texte": "`${$.x} §y`"
+  },
+  {
+   "expr": "`${§x} @@y`",
+   "externes": [],
+   "texte": "`${this._mjs_getContext('x')} @@y`"
+  },
+  {
+   "expr": "$s.replace(/§|@@|&id/g, '')",
+   "externes": [],
+   "texte": "$.s.replace(/§|@@|&id/g, '')"
+  },
+  {
+   "expr": "$v =: 2",
+   "externes": [],
+   "texte": "$.v = µ.snap(2)"
+  },
+  {
+   "expr": "$v =: $w + 1",
+   "externes": [
+    "$v"
+   ],
+   "texte": "$v = µ.snap($.w + 1)"
+  },
+  {
+   "expr": "$v := 2",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « $v := 2 » : « := » est l'opérateur de déclaration Civet, invalide sur un symbole $ — écrivez « $v = 2 » (les symboles $ sont auto-déclarés, « := » y est toujours superflu)."
+  },
+  {
+   "expr": "&$panier",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « &$panier » : le sigil « &$ » (vault) a été retiré — utilisez « $$panier » (store global réactif, zéro import)."
+  },
+  {
+   "expr": "(isnt)",
+   "externes": [],
+   "texte": "(isnt)"
+  },
+  {
+   "expr": "($a isnt)",
+   "externes": [],
+   "texte": "($.a(isnt))"
+  },
+  {
+   "expr": "[1, 2].filter (isnt)",
+   "externes": [],
+   "texte": "[1, 2].filter((isnt))"
+  },
+  {
+   "expr": "[$a isnt]",
+   "externes": [],
+   "texte": "[$.a(isnt)]"
+  },
+  {
+   "expr": "{k: $a isnt}",
+   "externes": [],
+   "texte": "{k: $.a(isnt)}"
+  },
+  {
+   "expr": "§theme = 'sombre'",
+   "externes": [],
+   "texte": "this._mjs_setContext('theme', 'sombre')"
+  },
+  {
+   "expr": "§§x = $n + 1",
+   "externes": [],
+   "texte": "this._mjs_setRCtx('x', $.n + 1)"
+  },
+  {
+   "expr": "µlayout = 'x'",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « µlayout » se lit, il ne s'écrit pas : le modèle se choisit sur la balise du composant (`<@carte layout=\"compacte\">`, ou `layout={$x}`)."
+  },
+  {
+   "expr": "$$Panier",
+   "externes": [
+    "$Panier"
+   ],
+   "texte": "ERREUR [ModularJS] « $$Panier » : « Panier » est un singleton importé (@import µ$$Panier) — consommez-le avec « µ$$Panier », pas « $$Panier » (qui désigne le store GLOBAL, un autre espace)."
+  },
+  {
+   "expr": "$x |>= f",
+   "externes": [],
+   "texte": "$.x = f($.x)"
+  },
+  {
+   "expr": "$x ?= 1",
+   "externes": [],
+   "texte": "$.x ??= 1"
+  }
+ ],
+ "expressions-runes-et-fautes-lues-par-l-arbre": [
+  {
+   "expr": "µread $x",
+   "externes": [],
+   "texte": "_mjsThis._state.x"
+  },
+  {
+   "expr": "µread($$x) + 1",
+   "externes": [],
+   "texte": "µ._mjs_storeRaw.x + 1"
+  },
+  {
+   "expr": "µread $x + 1",
+   "externes": [],
+   "texte": "_mjsThis._state.x + 1"
+  },
+  {
+   "expr": "µwrite $x, 2",
+   "externes": [],
+   "texte": "µ._mjs_rawWrite(_mjsThis).x = 2"
+  },
+  {
+   "expr": "µwrite($x, $y + 1)",
+   "externes": [],
+   "texte": "(µ._mjs_rawWrite(_mjsThis).x = $.y + 1)"
+  },
+  {
+   "expr": "µwrite $$x, 'a'",
+   "externes": [],
+   "texte": "µ._mjs_storeRawWrite.x = 'a'"
+  },
+  {
+   "expr": "µwrite $x = 1",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] µwrite écrit un symbole d'état avec une virgule : « µwrite $x, v » ou « µwrite($x, v) », jamais un signe égal."
+  },
+  {
+   "expr": "µread",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] µread/µwrite vise un symbole d'état : « µread $x » ou « µread($x) », rien d'autre entre les parenthèses. Pour écrire : « µwrite $x, v » ou « µwrite($x, v) »."
+  },
+  {
+   "expr": "µrefresh $x",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « µrefresh » ne s'écrit dans le gabarit que dans un gestionnaire d'événement (« @click={µrefresh($x)} ») : ailleurs (interpolation, valeur d'attribut, « :attach », expression d'un bloc « {if} », « {key} », « {for} » ou « {await} »), c'est le rendu qui l'évalue, et le redessin qu'il demande relancerait ce rendu, sans fin. Écrivez-le dans un gestionnaire ou dans le script, juste après le changement fait hors de MJS."
+  },
+  {
+   "expr": "µinspect($x)",
+   "externes": [],
+   "texte": "µ.inspect('x')"
+  },
+  {
+   "expr": "µinspect $x.a",
+   "externes": [],
+   "texte": "µ.inspect('x', 'a')"
+  },
+  {
+   "expr": "µinspect($$x)",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] µinspect s'applique à l'état d'un composant ($x), pas à un store : « $$x » n'est pas accepté. Pour suivre un store : µconsole $$x (panneau) ; pour le contraindre : sa règle dans un <vars>."
+  },
+  {
+   "expr": "µtoggle $x",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] µtoggle s'écrit toujours en appel parenthésé dans interpolation {…}/handler : « µtoggle($x, 'a', 'b') » — jamais nu ni sans parenthèses."
+  },
+  {
+   "expr": "µtoggle($x, 'a', 'b')",
+   "externes": [],
+   "texte": "$.x = ($.x === 'a' ? 'b' : 'a')"
+  },
+  {
+   "expr": "µimport('a.js')",
+   "externes": [],
+   "texte": "µ._mjs_import(µasset('a.js'))"
+  },
+  {
+   "expr": "mjsimport('a.js')",
+   "externes": [],
+   "texte": "µ._mjs_import(µasset('a.js'))"
+  },
+  {
+   "expr": "µimport('a.js').then (m) -> $x = m",
+   "externes": [],
+   "texte": "µ._mjs_import(µasset('a.js')).then(function(m) { return $.x = m })"
+  },
+  {
+   "expr": "µevery(1000, f)",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « µevery » / « µafter » : pas dans une interpolation {…} — recalculée à chaque rendu, elle poserait une minuterie à chaque fois. Écrivez la rune dans le <script> du composant ou dans un gestionnaire (« @click={µafter 2000, -> …} »)."
+  },
+  {
+   "expr": "µmount",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « µmount » : les hooks de cycle de vie se déclarent dans le <script> du composant, pas dans une interpolation {…} ni un handler."
+  },
+  {
+   "expr": "µderived $x",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] « µderived » : se déclare dans le <script> du composant (niveau racine), pas dans une interpolation {…} ni un handler."
+  },
+  {
+   "expr": "µminmax($x)",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] µminmax n'existe plus en 3.0 : la plage d'une variable se déclare dans le bloc <vars> du composant, placé avant le <script> — ex. $volume  int 0..10 (pour un champ : $settings  { volume: int 0..10 })."
+  },
+  {
+   "expr": "'µread $x' + $y",
+   "externes": [],
+   "texte": "'µread $x' + $.y"
+  },
+  {
+   "expr": "a < $x < b",
+   "externes": [],
+   "texte": "(() => { let ref; return (a < (ref = $.x) && ref < b); })()"
+  },
+  {
+   "expr": "a < $x.y < b",
+   "externes": [],
+   "texte": "(() => { let ref; return (a < (ref = $.x.y) && ref < b); })()"
+  },
+  {
+   "expr": "$x.y |>= f",
+   "externes": [],
+   "texte": "(() => { let ref; return (ref = $.x,ref.y = f(ref.y)); })()"
+  },
+  {
+   "expr": "($x) -> $x",
+   "externes": [],
+   "texte": "function(pin) { $.x = pin; return $.x }"
+  },
+  {
+   "expr": "{$x: 1}",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « {$x: 1} » — essai.expr:1:8 Failed to parse\nExpected:\n\tNonNewlineWhitespace /[ \\t]+/\n\tNonNewlineWhitespace \"\\\\\\\\\"\n\tInlineComment /\\/\\*(?:(?!\\*\\/)[^\\r\\n])*\\*\\//\n\tImportAssertion \"with\"\n\tImportAssertion \"assert\"\n\tWhitespace /[\\s]+/\n\tComment /(?=\\/|#)/\n\tImport \"import\"\n\tExport \"export\"\nFound: \"1})\"\n"
+  },
+  {
+   "expr": "{a: 1, $b: 2}",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « {a: 1, $b: 2} » — essai.expr:1:12 Failed to parse\nExpected:\n\tInlineComment /\\/\\*(?:(?!\\*\\/)[^\\r\\n])*\\*\\//\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenBracket \"[\"\n\tQuestionMark \"?\"\n\tExclamationPoint \"!\"\n\tDot \".\"\n\tDot /['’]s/\n\tHash \"#\"\n\tOpenBrace \"{\"\n\tAt \"@\"\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tComma \",\"\n\t__ /(?=\\s|\\/|#)/\n\tObjectPropertyDelimiter \"}\"\nFound: \":\"\n"
+  },
+  {
+   "expr": "{µlayout}",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « {µlayout} » — essai.expr:1:26 Failed to parse\nExpected:\n\tMemberExpressionRest /(?=[\\/\\[{?.!@#'’:])/\n\tOpenAngleBracket \"<\"\n\tCallExpressionRest /(?=['\"`])/\n\tOptionalShorthand /(?=[\\/?])/\n\tOpenParen \"(\"\n\tEOS /(?=[ \\t\\r\\n\\/#]|$)/\n\t_ /(?=[ \\t\\/\\\\])/\n\tExplicitCallExpressionRest /(?=['\"`])/\n\tQuestionMark \"?\"\nFound: \"})\"\n"
+  },
+  {
+   "expr": "$x + Ꞩy",
+   "externes": [],
+   "texte": "$.x + Ꞩy"
+  },
+  {
+   "expr": "obj.§x",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « obj.§x » — essai.expr:1:9 Failed to parse\nExpected:\n\t_ /(?=[ \\t\\/\\\\])/\n\tImportAssertion \"with\"\n\tImportAssertion \"assert\"\n\t__ /(?=\\s|\\/|#)/\n\tImport \"import\"\n\tExport \"export\"\nFound: EOF\n"
+  },
+  {
+   "expr": "isnt + 1",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « isnt + 1 » — essai.expr:1:10 Failed to parse\nExpected:\n\tNumericLiteral /(?=[0-9.])/\nFound: \" \"\n"
+  },
+  {
+   "expr": "{…}",
+   "externes": [],
+   "texte": "ERREUR [ModularJS] interpolation : échec de compilation Civet dans « essai » — « {…} » — essai.expr:1:6 Failed to parse\nExpected:\n\t_ /(?=[ \\t\\/\\\\])/\n\tImportAssertion \"with\"\n\tImportAssertion \"assert\"\n\t__ /(?=\\s|\\/|#)/\n\tImport \"import\"\n\tExport \"export\"\nFound: EOF\n"
+  },
+  {
+   "expr": "$[$k] > 3",
+   "externes": [],
+   "texte": "$[$.k] > 3"
+  },
+  {
+   "expr": "$l.map(&.n + $[$i])",
+   "externes": [],
+   "texte": "$.l.map($1 => $1.n + $[$.i])"
+  }
+ ]
+}

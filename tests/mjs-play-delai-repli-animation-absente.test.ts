@@ -14,11 +14,12 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function loadRareRunes(win: any) {
-  const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf-8')
+  const initSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
     .replace(/export\s*\{[^}]*\}/, '')
   const rareRunesSrc = readFileSync(join(__dirname, '../src/runtime/mjs_play.ts'), 'utf-8')
   const sandbox = `

@@ -75,7 +75,7 @@ describe('µ._mjs_runTransition (mode css) : comportement figé', function () {
     const bidon = node.calls[0]
     assert.deepEqual(bidon.keyframes, [{ opacity: 0, reste: 1 }, { opacity: 0, reste: 1 }])
     assert.strictEqual(bidon.keyframes[0], bidon.keyframes[1], 'la même image deux fois')
-    assert.deepEqual(bidon.opts, { duration: 0, fill: 'forwards' })
+    assert.deepEqual(bidon.opts, { duration: 0, fill: 'both' })
     const etat = node._mjs_transition_state
     assert.equal(etat.direction, 'in')
     assert.equal(etat.t1, 0)
@@ -97,7 +97,7 @@ describe('µ._mjs_runTransition (mode css) : comportement figé', function () {
     })
     assert.deepEqual(Object.keys(reelle.opts).sort(), ['duration', 'fill'])
     assert.equal(reelle.opts.duration, 300)
-    assert.equal(reelle.opts.fill, 'forwards')
+    assert.equal(reelle.opts.fill, 'both')
     assert.equal(etat.inDelay, false)
     assert.strictEqual(etat.anim, reelle)
     assert.strictEqual(node._mjs_transition_state, etat)
@@ -146,7 +146,7 @@ describe('µ._mjs_runTransition (mode css) : comportement figé', function () {
   it('délai : porté par la bidon (jamais par la vraie) ; négatif ramené à 0', async function () {
     const a = faireNode()
     const pa = µ._mjs_runTransition(a, { css, delay: 120, duration: 200, easing: 'linear' }, 'in')
-    assert.deepEqual(a.calls[0].opts, { duration: 120, fill: 'forwards' })
+    assert.deepEqual(a.calls[0].opts, { duration: 120, fill: 'both' })
     a.calls[0].finir()
     await vider()
     assert.equal('delay' in a.calls[1].opts, false)

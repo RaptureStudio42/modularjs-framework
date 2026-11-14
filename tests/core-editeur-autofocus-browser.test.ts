@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { ouvrir } from './helpers/editeur-riche.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const TEXTE = '<p>Premier paragraphe</p><p>Deux trois</p>'
 
@@ -59,7 +60,7 @@ window.__debut = (c) => { const sf = __sf(c); sf.focus(); const t = sf.querySele
 `
 
 for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`mjs-core-editor — autofocus et curseur à la fin (${moteur} réel)`, function () {
+  playTogether(describe(`mjs-core-editor — autofocus et curseur à la fin (${moteur} réel)`, function () {
     this.timeout(180000)
     let s: any = null
     after(async () => { await s?.fermer(); await terminateSharedWorkerPool() })
@@ -149,5 +150,5 @@ for (const moteur of ['chromium', 'firefox', 'webkit'] as const) {
     it('aucune erreur dans la console', () => {
       assert.deepEqual(s.logs.filter((l: string) => !/favicon/.test(l)), [])
     })
-  })
+  }))
 }

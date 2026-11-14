@@ -71,8 +71,9 @@ describe('Ctrl+C sur `mjs serve` et `mjs ws` lancés par tsx : arrêt ordonné',
     const root = mjsTmp('serve-sigint-en-vol')
     mkdirSync(join(root, 'src'), { recursive: true })
     writeFileSync(join(root, 'src', 'lente.mjs'),
+      '<script module lang="coffee">\nplusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))\n</script>\n' +
       '<script lang="coffee">\n' +
-      '$p = new Promise (resolve) -> setTimeout((-> resolve(\'OK\')), 1000)\n' +
+      '$p = plusTard \'OK\', 1000\n' +
       '</script>\n' +
       '<div class="wrap">\n{await $p}\n  <p class="pending">chargement…</p>\n{success val}\n  <p class="done">{val}</p>\n{end}\n</div>\n')
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
@@ -99,8 +100,9 @@ describe('Ctrl+C sur `mjs serve` et `mjs ws` lancés par tsx : arrêt ordonné',
     const root = mjsTmp('serve-sigint-force')
     mkdirSync(join(root, 'src'), { recursive: true })
     writeFileSync(join(root, 'src', 'tres-lente.mjs'),
+      '<script module lang="coffee">\nplusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))\n</script>\n' +
       '<script lang="coffee">\n' +
-      '$p = new Promise (resolve) -> setTimeout((-> resolve(\'OK\')), 12000)\n' +
+      '$p = plusTard \'OK\', 12000\n' +
       '</script>\n' +
       '<div class="wrap">\n{await $p}\n  <p class="pending">chargement…</p>\n{success val}\n  <p class="done">{val}</p>\n{end}\n</div>\n')
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({

@@ -17,17 +17,19 @@ const debut  = SOURCE.indexOf('function sigilAliasHtml(')
 const corps  = transformSync(SOURCE.slice(debut, SOURCE.indexOf('\n}\n', debut) + 3), { loader: 'ts' }).code
 const alias  = new Function('finExpression', 'sigilAliasCode', 'SIGIL_ALIASES', 'ALIAS_APPEL_EN_CLAIR_RE', corps + '\nreturn sigilAliasHtml')(
   finExpression, sigilAliasCode, { mjs: /(?<![\w$])mjs(?=[.$])/g }, /(?<![\w$])mjs(?=\.(?:asset|image)\s*\()/g
-) as (html: string, sigil: string) => string
+) as (html: string, sigil: string, directives: Set<number>, decalage: number) => string
+// ses deux derniers arguments (positions des directives @import du fichier, place du gabarit dans le fichier) : aucune directive
+// dans ces gabarits, ensemble vide et décalage nul
 
 describe('alias de symbole — un gabarit aux accolades non refermées se lit en temps linéaire', () => {
   it('l\'alias se pose dans les expressions, jamais dans le texte', () => {
-    assert.equal(alias('<p>mjs.x {mjs.y} {a</p>', 'mjs'), '<p>mjs.x {µ.y} {a</p>')
+    assert.equal(alias('<p>mjs.x {mjs.y} {a</p>', 'mjs', new Set(), 0), '<p>mjs.x {µ.y} {a</p>')
   })
 
   it('8 000 lignes aux accolades ouvertes : bien moins de 300 ms, la même sortie', () => {
     const html = '<p>mjs.x</p>\n' + '<p>{a b</p>\n'.repeat(8000)
     const t0   = performance.now()
-    const r    = alias(html, 'mjs')
+    const r    = alias(html, 'mjs', new Set(), 0)
     const ms   = performance.now() - t0
     assert.equal(r, html)
     assert.ok(ms < 300, `${Math.round(ms)} ms`)

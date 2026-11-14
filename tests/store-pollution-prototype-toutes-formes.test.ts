@@ -9,7 +9,7 @@
 // (`+=`, `++`, `||=`), qui suit JavaScript. Les autres formes, dont l'objet écrit est calculé par le code compilé
 // (élément trouvé, `?.`, alias, variable de travail de CoffeeScript, clé faite d'une expression), le lisent comme
 // JavaScript : `__proto__` y mène à un prototype, `constructor` à une fonction, que l'aide d'écriture refuse (aucune
-// trace, un avertissement nomme le segment) ; `prototype` y mène à `undefined` et laisse la trace de JavaScript. En
+// trace, un avertissement nomme le segment, ou explique le piège de la clé qui mène à une fonction du navigateur) ; `prototype` y mène à `undefined` et laisse la trace de JavaScript. En
 // développement comme en production (docs/14-stores.md, « Sécurité »)
 
 import assert from 'node:assert/strict'
@@ -166,6 +166,9 @@ const CLES: [string, () => any, string][] = [
   ['\'prototype\'', () => 'prototype', 'prototype'],
 ]
 
+// avertissement d'une fonction du navigateur atteinte par la clé `constructor` (`Object`, ou `Array` sous un tableau) : il explique le piège de la clé au lieu de nommer le segment
+const PIEGE = / contient la fonction (Object|Array) du navigateur, sans doute amenée par une clé venue de l'extérieur /
+
 // formes dont le chemin part de la racine du magasin : chaque clé passe le refus d'un nom réservé
 const REFUSEES: Record<string, Set<string>> = {
   Civet: new Set(['cEgal', 'cPlus', 'cIncr', 'cOu', 'cEfface', 'cPousse']),
@@ -271,7 +274,9 @@ describe('magasin $$ : une forme par le chemin refuse les noms réservés, les a
               const attendu = refusee || atteint || (forme === MIXTE && seg === 'prototype') ? intact : js
               // un avertissement par refus : le `||=` du MIXTE refuse aussi par le chemin
               const averti  = (refusee || atteint ? 1 : 0) + (forme === MIXTE && (langue === 'Civet' || seg === 'prototype') ? 1 : 0)
-              if (!m.prod && !(m.avis.length === averti && m.avis.every((a: string) => a.includes(`segment « ${seg} »`)))) ecarts.push(`${forme}(${nom}) : avertissements ${JSON.stringify(m.avis)}`)
+              // la fonction atteinte (`constructor`) a l'avertissement du piège de la clé ; les autres nomment le segment
+              const pieges  = atteint && seg === 'constructor' ? 1 : 0
+              if (!m.prod && !(m.avis.length === averti && m.avis.filter((a: string) => PIEGE.test(a)).length === pieges && m.avis.every((a: string) => PIEGE.test(a) || a.includes(`segment « ${seg} »`)))) ecarts.push(`${forme}(${nom}) : avertissements ${JSON.stringify(m.avis)}`)
               if (magasin !== attendu) ecarts.push(`${forme}(${nom}) : magasin ${magasin} ≠ ${attendu === js ? 'JavaScript' : 'refus'} ${attendu}`)
               traces[`${forme}(${nom})`] = JSON.parse(js)
             }

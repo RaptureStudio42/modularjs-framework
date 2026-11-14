@@ -8,6 +8,8 @@ import { parseRule, parseVarsBlock, parseTypesBlock, resolveRule, ruleText, emit
 
 const OU = { bloc: '<vars>', ligne: 1 }
 const regle = (texte: string) => parseRule(texte, OU)
+// un objet en retrait, un champ par ligne, comme sous une variable du <vars>
+const objet = (...champs: string[]) => parseVarsBlock(['$o', ...champs.map(c => '  ' + c)].join('\n'), 1)[0].rule
 const evaluer = (js: string) => new Function(`return ${js}`)()
 
 describe('types — une règle', () => {
@@ -43,13 +45,13 @@ describe('types — une règle', () => {
     assert.deepEqual(regle('string[] 0..10'), { k: 'array', of: { k: 'string' }, min: 0, max: 10 })
     assert.deepEqual(regle('int 1..5[]'), { k: 'array', of: { k: 'int', min: 1, max: 5 } })
     assert.deepEqual(regle('Percent[][]'), { k: 'array', of: { k: 'array', of: { k: 'ref', name: 'Percent' } } })
-    assert.deepEqual(regle('{ volume: Percent, bass?: int -10..10, "a b": string }'), { k: 'object', fields: [
-      { key: 'volume', optional: false, rule: { k: 'ref', name: 'Percent' } },
+    assert.deepEqual(objet('volume  Percent', 'bass?  int -10..10', '"a b"  string'), { k: 'object', fields: [
+      { key: 'volume', optional: false, rule: { k: 'ref', name: 'Percent', lineOffset: 1 } },
       { key: 'bass', optional: true, rule: { k: 'int', min: -10, max: 10 } },
       { key: 'a b', optional: false, rule: { k: 'string' } },
     ] })
     assert.deepEqual(regle("int 0..10 | 'auto'"), { k: 'union', alts: [{ k: 'int', min: 0, max: 10 }, { k: 'lit', values: ['auto'] }] })
-    assert.deepEqual(regle("{ role: ! 'root', n: int }"), { k: 'object', fields: [
+    assert.deepEqual(objet("role  ! 'root'", 'n  int'), { k: 'object', fields: [
       { key: 'role', optional: false, rule: { k: 'any', not: [{ lit: 'root' }] } },
       { key: 'n', optional: false, rule: { k: 'int' } },
     ] })
@@ -72,8 +74,8 @@ describe('types — une règle', () => {
     assert.throws(() => regle('int !'), /!/, 'rien après le !')
     assert.throws(() => regle("string[] ! 'x'"), /liste|objet/, 'interdits sur une liste')
     assert.throws(() => regle("'abc"), /fermée|ferme/, 'chaîne non fermée')
-    assert.throws(() => regle('{ a: int'), /\}/, 'accolade non fermée')
-    assert.throws(() => regle('{ a: int, a: float }'), /a/, 'clé en double')
+    assert.throws(() => regle('{ a: int'), /entre accolades/, 'accolade non fermée : refusée aussi')
+    assert.throws(() => objet('a  int', 'a  float'), /a/, 'clé en double')
     assert.throws(() => regle('int ; 3'), /;/, 'caractère inconnu')
   })
 })
@@ -82,7 +84,7 @@ describe('types — le texte canonique et la forme compilée', () => {
   it('ruleText réécrit la règle sous une forme unique', () => {
     assert.equal(ruleText(regle('int   0..100')), 'int 0..100')
     assert.equal(ruleText(regle("string 3..20 /^a/i ! 'admin'|'root'")), "string 3..20 /^a/i ! 'admin' | 'root'")
-    assert.equal(ruleText(regle('{ a: int, b?: string[] 0..3 }')), '{ a: int, b?: string[] 0..3 }')
+    assert.equal(ruleText(objet('a  int', 'b?  string[] 0..3')), '\n  a  int\n  b?  string[] 0..3')
     assert.equal(ruleText(regle("! 'x'")), "! 'x'")
   })
 
@@ -96,7 +98,7 @@ describe('types — le texte canonique et la forme compilée', () => {
     assert.deepEqual(s.n, ['admin'])
     assert.deepEqual(evaluer(emitRuntimeRule(regle('int 0..10 ! 7..8'), false)).n, [{ a: 7, b: 8 }])
     assert.deepEqual(evaluer(emitRuntimeRule(regle("'a' | 1"), false)), { t: 'l', v: ['a', 1] })
-    assert.deepEqual(evaluer(emitRuntimeRule(regle('{ a: int, "b c"?: bool }'), false)), { t: 'o', f: { a: { t: 'i' }, 'b c': { t: 'b' } }, o: ['b c'] })
+    assert.deepEqual(evaluer(emitRuntimeRule(objet('a  int', '"b c"?  bool'), false)), { t: 'o', f: { a: { t: 'i' }, 'b c': { t: 'b' } }, o: ['b c'] })
     assert.deepEqual(evaluer(emitRuntimeRule(regle('float[] ..2'), false)), { t: 'a', e: { t: 'f' }, b: 2 })
     assert.deepEqual(evaluer(emitRuntimeRule(regle("int | 'auto'"), false)), { t: 'u', u: [{ t: 'i' }, { t: 'l', v: ['auto'] }] })
     assert.deepEqual(evaluer(emitRuntimeRule(regle("! 'x'"), false)), { t: '*', n: ['x'] })
@@ -110,15 +112,15 @@ describe('types — lignes d’un bloc', () => {
       '$volume    Percent            # entier de 0 à 100',
       '',
       "$color     'red' | 'green'    # une couleur # avec un dièse",
-      '$settings  {',
-      '  volume: Percent,',
-      '  bass?: int -10..10',
-      '}',
-      '$$cart     { quantity: int 1..99 }',
+      '$settings',
+      '  volume  Percent',
+      '  bass?  int -10..10',
+      '$$cart',
+      '  quantity  int 1..99',
       "$tag       string ! '#admin'",
     ].join('\n')
     const lignes = parseVarsBlock(raw, 10)
-    assert.deepEqual(lignes.map(l => [l.name, l.store, l.line]), [['volume', false, 11], ['color', false, 13], ['settings', false, 14], ['cart', true, 18], ['tag', false, 19]])
+    assert.deepEqual(lignes.map(l => [l.name, l.store, l.line]), [['volume', false, 11], ['color', false, 13], ['settings', false, 14], ['cart', true, 17], ['tag', false, 19]])
     assert.deepEqual(lignes[0].rule, { k: 'ref', name: 'Percent' })
     assert.deepEqual(lignes[2].rule, { k: 'object', fields: [
       { key: 'volume', optional: false, rule: { k: 'ref', name: 'Percent', lineOffset: 1 } },
@@ -152,7 +154,7 @@ describe('types — lignes d’un bloc', () => {
 describe('types — règles nommées', () => {
   const defs = {
     Percent: regle('int 0..100'),
-    Mix:     regle('{ volume: Percent, bass: int }'),
+    Mix:     objet('volume  Percent', 'bass  int'),
   }
 
   it('une règle nommée est remplacée par sa définition, partout où elle sert', () => {
@@ -172,7 +174,7 @@ describe('types — règles nommées', () => {
 
   it('nom inconnu : refusé avec une suggestion ; boucle : refusée', () => {
     assert.throws(() => resolveRule(regle('Percnt'), defs, OU), /Percent/)
-    const boucle = { A: regle('B[]'), B: regle('{ a: A }') }
+    const boucle = { A: regle('B[]'), B: objet('a  A') }
     assert.throws(() => resolveRule(regle('A'), boucle, OU), /A[\s\S]*B|B[\s\S]*A/)
   })
 })

@@ -4,7 +4,7 @@
 // du serveur restent, avec la saisie du visiteur, même quand le navigateur a déjà fabriqué d'autres identifiants (une liste du
 // navigateur seul, rendue avant celle de la forme, en prend au compteur de la page). Une clé écrite (objet qui s'écrit lui-même,
 // comme un tableau ; clé texte d'une `Map`, même de la forme d'un identifiant du framework) se compare toujours telle quelle : à un
-// autre rang, la ligne est refaite. La page vient du rendu happy-dom (Chromium, Firefox, WebKit) et du moteur navigateur du
+// autre rang, la ligne est refaite ; une clé numérique, gardée en nombre par le client, se compare à son texte écrit par le serveur. La page vient du rendu happy-dom (Chromium, Firefox, WebKit) et du moteur navigateur du
 // prérendu (Chromium)
 
 import assert from 'node:assert/strict'
@@ -98,6 +98,25 @@ ${LEURRE}
     repris: 'li',
     neufs: '',
     lignes: ['#', '#']
+  },
+  {
+    // clé numérique écrite par l'auteur : le client la garde en nombre, le serveur l'écrit en texte ; la ligne de même rang se reprend
+    tag: 'cle-nombre',
+    source: `<script>
+  $items = (if globalThis.__ecart then [{ id: 1, t: 'a' }, { id: 3, t: 'c' }, { id: 2, t: 'b' }] else [{ id: 1, t: 'a' }, { id: 2, t: 'b' }, { id: 3, t: 'c' }])
+</script>
+
+<ul>
+  {for it in $items by id}
+    <li>{it.t}<input class="saisie" aria-label="saisie {it.t}"></li>
+  {end}
+</ul>
+`,
+    vue: SAISIES,
+    depart: 'li=a,c,b saisies=tape-0,,',
+    repris: 'li:nth-child(1)',
+    neufs: 'li:nth-child(n+2)',
+    lignes: ['1', '2', '3']
   },
   {
     tag: 'map-textes',

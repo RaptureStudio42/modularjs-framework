@@ -1,11 +1,11 @@
-// types — des liens qui bouclent : un champ typé qui pointe vers son parent (`parent: { nom: string }`) ne
+// types — des liens qui bouclent : un champ typé qui pointe vers son parent (`parent`, en retrait : `nom  string`) ne
 // gêne aucune écriture valide en développement (le chemin d'un message ne se calcule que quand un message
 // part), et le message d'un conteneur pris dans la boucle nomme le chemin où il a été inscrit
 
 import assert from 'node:assert/strict'
 import { makeMu, composant, appeler, refuser } from './helpers/types-runtime.js'
 
-const ARBRE = '{ nom: string, enf: { nom: string, parent: { nom: string } }[] }'
+const ARBRE = 'nom  string\nenf  Fils[]'
 
 // un arbre dont l'enfant pointe vers sa racine : racine → enf → enfant → racine, les liens bouclent
 function arbre(mode?: 'warn' | 'error', regle = ARBRE) {
@@ -58,7 +58,7 @@ describe('types — des liens qui bouclent : un refus se nomme, sans exception',
   })
 
   it('une liste de la boucle qui dépasse son maximum : le message nomme la liste, qui revient à son état d’avant', () => {
-    const a = arbre('warn', '{ nom: string, enf: { nom: string, parent: { nom: string } }[] 0..2 }')
+    const a = arbre('warn', 'nom  string\nenf  Fils[] 0..2')
     assert.equal(appeler(a.µ, a.el, a.reg, a.racine.enf, 'push', { nom: 'd', parent: a.racine }), true)
     a.µ.warnings.length = 0
     assert.equal(appeler(a.µ, a.el, a.reg, a.racine.enf, 'push', { nom: 'e', parent: a.racine }), false)

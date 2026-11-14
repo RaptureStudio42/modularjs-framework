@@ -26,7 +26,7 @@ describe('effets : les réglages collés au nom', () => {
   })
 
   it('@in=*fly (up) : refusé', async () => {
-    await refuse('<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*fly (up)>x</p>{end}\n', 'fly', 4)
+    await refuse('<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*fly (up)>x</p>{end}\n', 'fly', 4)
   })
 
   it('*neon(#0ff) collé : les réglages arrivent à l\'effet, aucun attribut parasite', async () => {

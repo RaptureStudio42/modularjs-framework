@@ -535,12 +535,12 @@ describe('lint reactivity — un module .js qui écrit dans le magasin reçu en 
 
   describe("n'avertit pas : ce qui n'est pas un module .js copié tel quel", () => {
     it("une fonction importée d'un module .civet : l'écriture sur $$x y est suivie", async () => {
-      const src = composant(["@import raiseFx 'shared/fx.civet'"], ['$$ui ?= {}', '@go = ->', '  raiseFx($$ui, 1)'], [BOUTON, '<p>{raiseFx($$ui)}</p>'])
+      const src = composant(["@import raiseFx 'shared/fx.civet.mjs'"], ['$$ui ?= {}', '@go = ->', '  raiseFx($$ui, 1)'], [BOUTON, '<p>{raiseFx($$ui)}</p>'])
       assert.deepEqual(await lignesDe(src, 'essai', { sourceDir: SRC }), [])
     })
 
     it("une fonction importée d'un module .coffee", async () => {
-      const src = composant(["@import raiseFx 'shared/fx.coffee'"], ['$$ui ?= {}', '@go = ->', '  raiseFx($$ui, 1)'], [BOUTON])
+      const src = composant(["@import raiseFx 'shared/fx.coffee.mjs'"], ['$$ui ?= {}', '@go = ->', '  raiseFx($$ui, 1)'], [BOUTON])
       assert.deepEqual(await lignesDe(src, 'essai', { sourceDir: SRC }), [])
     })
 
@@ -663,10 +663,10 @@ function projet(prefixe: string, config: Record<string, unknown> = {}): string {
   mkdirSync(join(root, 'src', 'shared'), { recursive: true })
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', ...config }))
   writeFileSync(join(root, 'src', 'shared', 'fx.js'), 'export function raiseFx(ui, spec) {\n  ui.coinFx = spec;\n}\n')
-  writeFileSync(join(root, 'src', 'shared', 'fx.civet'), 'export function raiseFx(ui, spec) {\n  ui.coinFx = spec\n}\n')
+  writeFileSync(join(root, 'src', 'shared', 'fx.civet.mjs'), 'export function raiseFx(ui, spec) {\n  ui.coinFx = spec\n}\n')
   writeFileSync(join(root, 'src', 'shared', 'lit.js'), 'export function lire(ui) {\n  return ui.coinFx;\n}\n')
   writeFileSync(join(root, 'src', 'carte-js.mjs'), composant([FX], ['$$ui ?= { coinFx: null }', '@go = ->', "  raiseFx($$ui, 'depuis-js')"], [BOUTON, '<p class="out">[{$$ui.coinFx}]</p>']))
-  writeFileSync(join(root, 'src', 'carte-civet.mjs'), composant(["@import raiseFx 'shared/fx.civet'"], ['$$ui ?= { coinFx: null }', '@go = ->', "  raiseFx($$ui, 'depuis-civet')"], [BOUTON]))
+  writeFileSync(join(root, 'src', 'carte-civet.mjs'), composant(["@import raiseFx 'shared/fx.civet.mjs'"], ['$$ui ?= { coinFx: null }', '@go = ->', "  raiseFx($$ui, 'depuis-civet')"], [BOUTON]))
   writeFileSync(join(root, 'src', 'carte-lit.mjs'), composant(["@import lire 'shared/lit.js'"], ['$$ui ?= { coinFx: null }', '@go = ->', '  lire($$ui)'], [BOUTON]))
   return root
 }

@@ -23,19 +23,19 @@ const script = (lignes: string[], gabarit = '<div>{$a}</div>') => `<script>\n${l
 
 describe('erreurs du lexeur situées — aussi dans une interpolation', () => {
   it('témoin hors interpolation : ligne 5', async () => {
-    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = &$v' ])), /sonde\.script:5:6 /)
+    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = &$v' ])), /sonde\.mjs:5:5 /)
   })
 
-  it('dans `"x #{…} y"` : ligne 5, même colonne que hors interpolation (celle du `$`)', async () => {
-    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = "x #{&$v} y"' ])), /sonde\.script:5:11 /)
+  it('dans `"x #{…} y"` : ligne 5, même colonne que hors interpolation (celle du `&` qui ouvre le sigil)', async () => {
+    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = "x #{&$v} y"' ])), /sonde\.mjs:5:10 /)
   })
 
   it('crochet mal écrit dans une interpolation : ligne 5', async () => {
-    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = "x #{µmounted -> 1} y"' ])), /sonde\.script:5:\d+ /)
+    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = "x #{µmounted -> 1} y"' ])), /sonde\.mjs:5:\d+ /)
   })
 
   it('gabarit à backtick, interpolation sur sa 2e ligne : ligne 6', async () => {
-    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = `x', '${&$v} y`' ])), /sonde\.script:6:3 /)
+    assert.match(await erreurDe(script([ '$a = 1', 'b = 2', 'c = 3', 'd = `x', '${&$v} y`' ])), /sonde\.mjs:6:3 /)
   })
 })
 
@@ -46,7 +46,7 @@ describe('µeffect imbriqué — la ligne du fichier', () => {
   })
 
   it('témoin : <script module>, la ligne du `.mjs`', async () => {
-    const source = '<script module>\nx = 1\nµeffect -> 1\n</script>\n<script>\n$a = 1\n</script>\n<p>{$a}</p>\n'
-    assert.match(await erreurDe(source), /µeffect[^\n]*\(ligne 3\)/)
+    const source = '<script module>\nx = 1\nµinspect x\n</script>\n<script>\n$a = 1\n</script>\n<p>{$a}</p>\n'
+    assert.match(await erreurDe(source), /µinspect[^\n]*\(ligne 3\)/)
   })
 })

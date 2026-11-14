@@ -142,7 +142,9 @@ describe('code inaccessible — avertissement de construction [lint.unreachable]
       writeFileSync(join(src, nom), contenu)
       const b = new Bundler({ sourceDir: src, outputDir: join(root, 'out'), manifestPath: join(root, 'out', 'bundle.js'), lint })
       try {
-        return await captured(() => b.compileScriptModule(join(src, nom), nom.endsWith('.civet') ? '.civet' : '.coffee'))
+        // l'extension du fichier : `.civet.mjs` / `.coffee.mjs` est un module MJS, averti ; `.civet` / `.coffee` serait une bibliothèque,
+        // compilée par son seul langage, sans les avertissements de MJS
+        return await captured(() => b.compileScriptModule(join(src, nom), nom.endsWith('.civet.mjs') ? '.civet.mjs' : '.coffee.mjs'))
       }
       finally {
         await b.close()
@@ -150,23 +152,23 @@ describe('code inaccessible — avertissement de construction [lint.unreachable]
     }
 
     it('module .civet : le fichier et sa ligne', async () => {
-      const lignes = await moduleWarnings('regles.civet', ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'))
+      const lignes = await moduleWarnings('regles.civet.mjs', ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'))
       assert.equal(lignes.length, 1, JSON.stringify(lignes))
-      assert.match(lignes[0], /'regles\.civet' \(ligne 3\)/)
+      assert.match(lignes[0], /'regles\.civet\.mjs' \(ligne 3\)/)
     })
 
     it('module .coffee : le fichier et sa ligne', async () => {
-      const lignes = await moduleWarnings('regles.coffee', ['total = (x) ->', '  throw new Error "non"', '  x * 3', 'export { total }', ''].join('\n'))
+      const lignes = await moduleWarnings('regles.coffee.mjs', ['total = (x) ->', '  throw new Error "non"', '  x * 3', 'export { total }', ''].join('\n'))
       assert.equal(lignes.length, 1, JSON.stringify(lignes))
-      assert.match(lignes[0], /'regles\.coffee' \(ligne 3\).*« throw »/)
+      assert.match(lignes[0], /'regles\.coffee\.mjs' \(ligne 3\).*« throw »/)
     })
 
     it('module : lint.unreachable: false coupe aussi', async () => {
-      assert.deepEqual(await moduleWarnings('coupe.civet', ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'), { unreachable: false }), [])
+      assert.deepEqual(await moduleWarnings('coupe.civet.mjs', ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'), { unreachable: false }), [])
     })
 
     it('module sans code mort : silencieux', async () => {
-      assert.deepEqual(await moduleWarnings('propre.civet', ['export total := (x) ->', '  return 0 unless x', '  x * 2', ''].join('\n')), [])
+      assert.deepEqual(await moduleWarnings('propre.civet.mjs', ['export total := (x) ->', '  return 0 unless x', '  x * 2', ''].join('\n')), [])
     })
   })
 })
@@ -178,20 +180,23 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 describe('code inaccessible — mjs build --prod', function () {
   this.timeout(180000)
 
-  it('le terminal cite le composant et le module importé, chacun à sa ligne', () => {
-    const root = mjsTmp('code-inaccessible-cli')
-    mkdirSync(join(root, 'src'), { recursive: true })
-    writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js' }))
-    writeFileSync(join(root, 'src', 'regles.civet'), ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'))
-    writeFileSync(join(root, 'src', 'panier.mjs'), ["@import { total } 'regles.civet'", REEL_CIVET, ''].join('\n'))
-    const r = spawnSync('npx', ['tsx', 'src/cli.ts', 'build', '--prod', '--root', root], {
-      cwd: repoRoot, encoding: 'utf-8', timeout: 150000, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: undefined },
+  // les deux formes de la directive : le module importé n'est compilé, donc cité, qu'une fois
+  for (const directive of ["@import { total } 'regles.civet.mjs'", "@import total 'regles.civet.mjs'"]) {
+    it(`le terminal cite le composant et le module importé, chacun à sa ligne et une fois (${directive})`, () => {
+      const root = mjsTmp('code-inaccessible-cli')
+      mkdirSync(join(root, 'src'), { recursive: true })
+      writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js' }))
+      writeFileSync(join(root, 'src', 'regles.civet.mjs'), ['export total := (x) ->', '  return x * 2', '  x * 3', ''].join('\n'))
+      writeFileSync(join(root, 'src', 'panier.mjs'), [directive, REEL_CIVET, ''].join('\n'))
+      const r = spawnSync('npx', ['tsx', 'src/cli.ts', 'build', '--prod', '--root', root], {
+        cwd: repoRoot, encoding: 'utf-8', timeout: 150000, env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: undefined },
+      })
+      const sortie = (r.stdout ?? '') + (r.stderr ?? '')
+      assert.equal(r.status, 0, sortie)
+      const lignes = sortie.split('\n').filter(l => l.includes('[lint.unreachable]'))
+      assert.equal(lignes.length, 2, sortie)
+      assert.ok(lignes.some(l => /'panier\.mjs' \(ligne 7\)/.test(l)), sortie)
+      assert.ok(lignes.some(l => /'regles\.civet\.mjs' \(ligne 3\)/.test(l)), sortie)
     })
-    const sortie = (r.stdout ?? '') + (r.stderr ?? '')
-    assert.equal(r.status, 0, sortie)
-    const lignes = sortie.split('\n').filter(l => l.includes('[lint.unreachable]'))
-    assert.equal(lignes.length, 2, sortie)
-    assert.ok(lignes.some(l => /'panier\.mjs' \(ligne 7\)/.test(l)), sortie)
-    assert.ok(lignes.some(l => /'regles\.civet' \(ligne 3\)/.test(l)), sortie)
-  })
+  }
 })

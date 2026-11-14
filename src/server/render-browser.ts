@@ -83,7 +83,7 @@ import { createRequire } from 'node:module'
 import type { MjsConfig, RenderEngine, RenderBrowserPoolConfig } from '../bundler/config.js'
 import { resolveBundlerOpts } from '../bundler/config.js'
 import { Bundler } from '../bundler/index.js'
-import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, type RenderOptions, type RenderResult } from './renderToString.js'
+import { ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, noteLightPage, lightPageFirst, type RenderOptions, type RenderResult } from './renderToString.js'
 import { isServableFile, MIME } from './render-server.js'
 import { ecrireFeuilleRendu, feuillesALier, sansImport } from './sorties-rendu.js'
 import { propsRacine } from './props-racine.js'
@@ -389,6 +389,9 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
   const shadowRoots: any[] = []
   const vus: any = {}
   let cssIndex = 0
+  // composant léger bâti à plat (`@lightDom`, `mjs-light`, ou léger par sa seule classe) : `mjs-light` sur sa balise, et, en `markers`,
+  // sa page devant le contenu glissé, après le repère `<!--mjs-l-->` (cf. `lightPageFirst`, renderToString.ts) ; racine légère exclue
+  if (hydrateMode && root._shadow !== root) lightPageFirst(root, hydrateMode === 'a', true)
   function walk(el: any): void {
     if (!el) return
     const isShadow = !!(el._shadow && el._shadow !== el)
@@ -494,7 +497,7 @@ function mjsSsrPrepareAndSerialize(root: any, hydrateMode: string | undefined, c
 const NAME_HELPER_SHIM = 'var __name = function(fn){ return fn };\n'
 
 function pageHelperScript(): string {
-  const fns = [ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, sansImport, mjsSsrSafeCss, mjsSsrInfo, mjsSsrSharedCss, mjsSsrOrphanLightCss, mjsSsrMarkTree, mjsSsrMarkNode, mjsSsrCollectCss, mjsSsrPrepareAndSerialize]
+  const fns = [ssrCoreOf, collectAwaitStates, hasPendingAwait, settleRender, reflectFieldState, sansImport, mjsSsrSafeCss, mjsSsrInfo, mjsSsrSharedCss, mjsSsrOrphanLightCss, mjsSsrMarkTree, mjsSsrMarkNode, mjsSsrCollectCss, lightPageFirst, mjsSsrPrepareAndSerialize]
   const decls = fns.map(f => f.toString()).join('\n')
   const names = fns.map(f => f.name).join(', ')
   return NAME_HELPER_SHIM + decls + '\nwindow.__mjsSsr = { ' + names + ' };\n'
@@ -789,6 +792,8 @@ export const FERMETURE_PLANCHER_MS = 10000
 // 6. RENDERER — pool de pages Chromium
 // ============================================================================
 export interface BrowserRendererOptions {
+  /** `mjs build --cache` (prérendu) : la compilation de ce renderer est servie par le cache sur disque de la construction */
+  cache?: boolean
   /** Racine du projet — résout les chemins relatifs de `config` (même rôle que
    *  `configDir` partout ailleurs dans server/*.ts). */
   configDir: string
@@ -885,7 +890,8 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
   // par un manifeste éclaté. `urlPrefix` reste celui du VRAI build dans les deux cas : les URLs
   // d'assets du HTML rendu désignent ce que sert le back, jamais un dossier éphémère.
   const atelier = openRenderCompileDir({ js: bundlerOpts.js, outputDir, manifestPath, urlPrefix: bundlerOpts.urlPrefix })
-  const bundler = new Bundler({ ...bundlerOpts, sourceDir, outputDir: atelier.outputDir, manifestPath: atelier.manifestPath, urlPrefix: atelier.urlPrefix, js: 'split', ...(opts.env ? { env: opts.env } : {}) })
+  // construction d'un moteur de rendu (`serverRender`) : les morceaux du runtime qui ne servent qu'au rendu serveur restent (cf. Bundler.rendersOnServer)
+  const bundler = new Bundler({ ...bundlerOpts, sourceDir, outputDir: atelier.outputDir, manifestPath: atelier.manifestPath, urlPrefix: atelier.urlPrefix, js: 'split', serverRender: true, cache: opts.cache === true, ...(opts.env ? { env: opts.env } : {}) })
   let stats
   try {
     stats = await bundler.compile()
@@ -1020,6 +1026,7 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       const activeTag: { current: string | null } = { current: null }
       await context.addInitScript(mjsSsrForceOpenShadow)
       await context.addInitScript(mjsSsrNoteSheetText)
+      await context.addInitScript(noteLightPage)
       // `window.name` appartient à l'onglet et survit à la navigation vers la page d'amorçage (même
       // origine) : sans ce script, le nom posé pendant le rendu d'un visiteur se lisait au suivant
       await context.addInitScript(() => { if (window.top === window) window.name = '' })
@@ -1389,7 +1396,9 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
         return (window as any).__mjsSsr.settleRender(document.body.firstElementChild, maxMs)
       }, { maxMs: settleMs })
       if (!settled) {
-        warnings.push(t('server.browser-non-stabilise', { tag, settleMs }))
+        // une requête de µload encore en vol (runtime/mjs_load.ts, `µ._ssrLoad(1)` : ses adresses) : l'avertissement la nomme
+        const enVol: string[] = await slot.page.evaluate(() => { const c = (window as any).__mjsCore; return c && typeof c._ssrLoad === 'function' ? c._ssrLoad(1) : [] })
+        warnings.push(enVol.length ? t('server.browser-load-non-stabilise', { tag, settleMs, adresses: enVol.join(', ') }) : t('server.browser-non-stabilise', { tag, settleMs }))
       }
 
       const modeMap: Record<string, string> = { markers: 'a', positional: 'b', diff: 'c' }
@@ -1432,9 +1441,12 @@ export async function createBrowserRenderer(config: MjsConfig, opts: BrowserRend
       // les clés énumérables de `store` (computed déjà déballés par le getter).
       const storeJson: string | null = await slot.page.evaluate(() => {
         try {
-          const store = (window as any).__mjsCore.store || {}
-          const out = (store.__mjsLang !== undefined) ? Object.assign({}, store, { __mjsLang: store.__mjsLang }) : store
-          return JSON.stringify(out)
+          const core  = (window as any).__mjsCore
+          const store = core.store || {}
+          const out   = (store.__mjsLang !== undefined) ? Object.assign({}, store, { __mjsLang: store.__mjsLang }) : store
+          // les données lues par µload pendant le rendu (runtime/mjs_load.ts), même balise, clé `__mjsLoad`
+          const lues  = typeof core._ssrLoad === 'function' ? core._ssrLoad() : null
+          return JSON.stringify(lues ? Object.assign({}, out, { __mjsLoad: lues }) : out)
         } catch { return null }
       })
 

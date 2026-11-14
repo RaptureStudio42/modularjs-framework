@@ -14,7 +14,7 @@ import { transpile } from '../src/transpiler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
 
@@ -67,6 +67,7 @@ describe('effets — *filter(…, spot)', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel = '.a') {
     window.document.body.innerHTML = `<${tag}></${tag}>`

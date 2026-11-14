@@ -56,7 +56,7 @@
     };
     var nodeAt = function(path) {
       var n = zone;
-      for (var i = 0; n && i < path.length; i++) n = path[i] === -1 ? n._shadow || n.shadowRoot : n.childNodes[path[i]];
+      for (var i = 0; n && i < path.length; i++) n = path[i] === -1 ? µ._mjs_shadowOf(n) : n.childNodes[path[i]];
       return n && n.nodeType === 1 ? n : null;
     };
     // posée par-dessus le contenu (un en-tête fixe, une barre collante) : elle ne défile pas avec lui ;
@@ -71,19 +71,39 @@
       return false;
     };
     // la balise qui passe sous la ligne y, cherchée dans le contenu par la place de chacun (jusque dans
-    // les composants), sans ce qui flotte : on descend tant qu'un enfant coupe la ligne ; un enfant qui
+    // les composants et ce qu'un `<slot>` y montre), sans ce qui flotte : on descend tant qu'un enfant coupe la ligne ; un enfant qui
     // commence plus bas (sa marge coupe la ligne) laisse son parent, sauf au premier rang — la balise
     // qui suit l'espace, un peu au-dessus d'elle
     var under = function(y) {
-      var n = zone;
+      var n    = zone;
+      var seen = new Map();
       for (var d = 0; d < 32; d++) {
         var hit   = null;
         var start = 0;
-        for (var k = (n._shadow || n.shadowRoot || n).firstElementChild; k && !hit; k = k.nextElementSibling) {
-          var b = µ._mjs_dom.getBoundingClientRect(k);
-          if (b.bottom > y && (b.width > 0 || b.height > 0) && !floats(k, true)) {
-            hit   = k;
-            start = b.top;
+        seen.set(n, true);
+        for (var k = (µ._mjs_shadowOf(n) || n).firstElementChild; k && !hit; k = k.nextElementSibling) {
+          // un `<slot>` cède sa place aux balises qu'il montre (celles qu'il reçoit, sinon son contenu de repli) qu'un chemin depuis la
+          // zone atteint, et la garde s'il n'en montre aucune. Une balise a le sort de son parent : chaque balise traversée (ce qu'un slot
+          // de son ombre reçoit) et le slot (son repli) sont atteints ; un autre parent est demandé une fois pour tout le parcours : des
+          // milliers de slots ou de balises glissées restent un seul parcours
+          var g    = [];
+          var kids = [];
+          if (k.localName === 'slot' && k.assignedElements) {
+            g = k.assignedElements({ flatten: true });
+            seen.set(k, true);
+          }
+          for (var j = 0; j < g.length; j++) {
+            var p = g[j].parentNode;
+            if (!seen.has(p)) seen.set(p, !!pathOf(g[j]));
+            if (seen.get(p)) kids.push(g[j]);
+          }
+          if (!kids.length) kids.push(k);
+          for (var m = 0; m < kids.length && !hit; m++) {
+            var b = µ._mjs_dom.getBoundingClientRect(kids[m]);
+            if (b.bottom > y && (b.width > 0 || b.height > 0) && !floats(kids[m], true)) {
+              hit   = kids[m];
+              start = b.top;
+            }
           }
         }
         if (!hit) break;

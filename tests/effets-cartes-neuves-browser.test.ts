@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { animationsFinies, attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -234,6 +235,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         // trois images à quelque 300 ms d'écart : une machine chargée peut retomber sur la même phase d'un tour
         const a = await page.screenshot({ clip })
         await capture(page, 'hologramme-derive', clip)
+        // pauses gardées : l'écart de temps entre deux images est la mesure même (le reflet dérive avec le temps)
         await page.waitForTimeout(300)
         const b = await page.screenshot({ clip })
         await page.waitForTimeout(300)
@@ -267,7 +269,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         assert.ok(rouge(await pixel(page, cx, r.y + r.h - 6)), 'recto rouge')
         await capture(page, 'carte-recto', { x: r.x, y: r.y, width: r.w, height: r.h })
         await page.mouse.move(cx, cy)
-        await page.waitForTimeout(600)
+        await animationsFinies(page, 'mjs-cb-flip-survol', '.fc', 600)
         assert.equal(await face(page, 'mjs-cb-flip-survol', cx, cy), 'v', 'le verso est ce qu\'on touche')
         assert.ok(bleu(await pixel(page, cx, r.y + r.h - 6)), 'verso bleu')
         await capture(page, 'carte-verso', { x: r.x, y: r.y, width: r.w, height: r.h })
@@ -277,7 +279,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         })
         assert.deepEqual(inertes, [true, false], 'le recto caché est inerte')
         await page.mouse.move(2, 2)
-        await page.waitForTimeout(600)
+        await animationsFinies(page, 'mjs-cb-flip-survol', '.fc', 600)
         assert.equal(await face(page, 'mjs-cb-flip-survol', cx, cy), 'r')
       } finally {
         await browser.close()
@@ -296,6 +298,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
           e.style.setProperty('--mjs-flipcard-duration', '4s')
         })
         await page.mouse.click(r.x + 10, r.y + 10)
+        // pause gardée : la lecture à 1,2 s d'un retournement de 4 s, au milieu de sa course, est le cas même du test
         await page.waitForTimeout(1200)
         await capture(page, 'carte-en-route', { x: r.x - 20, y: r.y - 20, width: r.w + 40, height: r.h + 40 })
         const largeur = await page.evaluate(() => {
@@ -324,11 +327,11 @@ for (const nom of ['chromium', 'firefox'] as const) {
           await page.mouse.move(2, 2)
           assert.equal(await face(page, tag, cx, cy), 'r', tag + ' : recto au départ')
           await page.mouse.click(cx, cy)
-          await page.waitForTimeout(500)
+          await animationsFinies(page, tag, '.fc', 500)
           assert.equal(await face(page, tag, cx, cy), 'v', tag + ' : verso après un clic')
           assert.ok(bleu(await pixel(page, cx, r.y + r.h - 6)), tag + ' : verso bleu')
           await page.mouse.click(cx, cy)
-          await page.waitForTimeout(500)
+          await animationsFinies(page, tag, '.fc', 500)
           assert.equal(await face(page, tag, cx, cy), 'r', tag + ' : recto après deux clics')
           assert.ok(rouge(await pixel(page, cx, r.y + r.h - 6)), tag + ' : recto rouge')
           await page.close()
@@ -340,6 +343,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         assert.equal(await face(page, 'mjs-cb-flip-fixe', cx, cy), 'v', 'flipped: true : verso d\'emblée')
         await page.mouse.move(cx, cy)
         await page.mouse.click(cx, cy)
+        // pause gardée : vérification négative, ni survol ni clic ne retournent la carte
         await page.waitForTimeout(500)
         assert.equal(await face(page, 'mjs-cb-flip-fixe', cx, cy), 'v', 'ni survol ni clic n\'y changent rien')
       } finally {
@@ -371,6 +375,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         await page.keyboard.press('Tab')
         e = await clavier(page, tag)
         assert.deepEqual([e.actif, e.t], ['lv', '1'], 'Tab : le lien du verso est atteint, la carte reste retournée')
+        // pause gardée : vérification négative, la carte ne revient pas tant que le focus est dans le verso
         await page.waitForTimeout(250)
         e = await clavier(page, tag)
         assert.equal(e.t, '1', 'le focus est dans le verso : la carte ne revient pas')
@@ -396,14 +401,14 @@ for (const nom of ['chromium', 'firefox'] as const) {
         e = await clavier(page, tag)
         assert.deepEqual([e.actif, e.t], ['lv', '1'], 'dans le verso')
         await page.keyboard.press('Escape')
-        await page.waitForTimeout(150)
+        await attendreEtat(async () => { const v = await clavier(page, tag); return v.actif === 'commande' && v.t === '0' }, 'Échap depuis le verso : recto, focus sur la commande', 150)
         e = await clavier(page, tag)
         assert.deepEqual([e.actif, e.t], ['commande', '0'], 'Échap depuis le verso : recto, focus sur la commande de la carte')
         // le recto reste utilisable à la souris : cliquer son lien ne retourne pas la carte
         const r  = await boite(page, tag, 'fc')
         await page.mouse.click(r.x + r.w / 2, r.y + r.h / 2)
         await page.mouse.move(2, 2)
-        await page.waitForTimeout(300)
+        await attendreEtat(async () => (await clavier(page, tag)).t === '0', 'la carte revenue au recto après la sortie du pointeur', 300)
         e = await clavier(page, tag)
         assert.equal(e.t, '0', 'un clic de souris puis la sortie du pointeur : la carte est revenue')
         await page.close()
@@ -449,7 +454,10 @@ for (const nom of ['chromium', 'firefox'] as const) {
         })
         assert.equal(await montre(), '0', 'hors de l\'écran : le recto')
         await page.evaluate((y: number) => scrollTo(0, y - 100), r.y)
-        await page.waitForTimeout(800)
+        // la bascule, puis la fin du retournement, dans les 800 ms de la pause d'origine
+        const debutVue = performance.now()
+        await attendreEtat(async () => (await montre()) === '1', 'la carte arrivée à l\'écran est retournée', 800)
+        await animationsFinies(page, 'mjs-cb-flip-vue', '.fc', Math.max(0, 800 - (performance.now() - debutVue)), { sansAnimation: 'acceptee' })
         assert.equal(await montre(), '1', 'à l\'écran : retournée')
         // la page ne défile pas plus loin que sa fin : la carte est relue là où elle est
         const vue = await page.evaluate(() => {
@@ -472,17 +480,18 @@ for (const nom of ['chromium', 'firefox'] as const) {
         const droite = r.x + r.w
         const clip   = { x: r.x - 10, y: r.y - 10, width: r.w + 20, height: r.h + 20 }
         await page.mouse.move(2, 2)
-        await page.waitForTimeout(300)
+        const debutRepos = performance.now()
         await capture(page, 'coin-repos', clip)
         const sombre = (p: Pixel) => p.r < 50 && p.g < 60 && p.b < 80
         const clair  = (p: Pixel) => p.r > 190 && p.g > 190 && p.b > 190
         const vert   = (p: Pixel) => p.g > 120 && p.r < 40 && p.b < 40
-        // au repos (30 px) : le dessous dans le coin, le dos de la page à côté, le fond vert plus loin
+        // au repos (30 px) : le dessous dans le coin, le dos de la page à côté, le fond vert plus loin ; attente bornée par la pause d'origine (300 ms)
+        await attendreEtat(async () => sombre(await pixel(page, droite - 5, r.y + 5)) && clair(await pixel(page, droite - 20, r.y + 20)) && vert(await pixel(page, droite - 50, r.y + 10)), 'le coin au repos', Math.max(0, 300 - (performance.now() - debutRepos)))
         assert.ok(sombre(await pixel(page, droite - 5, r.y + 5)), 'repos : le dessous au sommet du coin')
         assert.ok(clair(await pixel(page, droite - 20, r.y + 20)), 'repos : le dos de la page')
         assert.ok(vert(await pixel(page, droite - 50, r.y + 10)), 'repos : le fond, là où le coin n\'est pas encore')
         await page.mouse.move(r.x + r.w / 2, r.y + r.h / 2)
-        await page.waitForTimeout(600)
+        await attendreEtat(async () => sombre(await pixel(page, droite - 50, r.y + 10)) && clair(await pixel(page, droite - 60, r.y + 60)), 'le coin soulevé (90 px)', 600)
         await capture(page, 'coin-souleve', clip)
         assert.ok(sombre(await pixel(page, droite - 50, r.y + 10)), 'actif (90 px) : le dessous gagne du terrain')
         assert.ok(clair(await pixel(page, droite - 60, r.y + 60)), 'actif : le dos de la page grandit')
@@ -505,7 +514,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         await page.mouse.click(bt.x, bt.y)
         assert.equal(await page.evaluate(() => (document.querySelector('mjs-cb-peel') as any)._shadow.querySelector('.bt').dataset.clic), 'oui')
         await page.mouse.move(2, 2)
-        await page.waitForTimeout(600)
+        await attendreEtat(async () => vert(await pixel(page, droite - 50, r.y + 10)), 'la sortie repose le coin', 600)
         assert.ok(vert(await pixel(page, droite - 50, r.y + 10)), 'la sortie repose le coin')
       } finally {
         await browser.close()
@@ -520,7 +529,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         const { page } = await ouvre(browser, 'mjs-cb-peel-bas', 'peel')
         const r = await boite(page, 'mjs-cb-peel-bas', 'peel')
         await page.mouse.move(2, 2)
-        await page.waitForTimeout(300)
+        await attendreEtat(async () => { const q = await pixel(page, r.x + 5, r.y + r.h - 5); return q.r > 200 && q.b > 200 && q.g < 60 }, 'le dessous magenta dans le coin bas gauche', 300)
         const p = await pixel(page, r.x + 5, r.y + r.h - 5)
         assert.ok(p.r > 200 && p.b > 200 && p.g < 60, `le dessous magenta : ${JSON.stringify(p)}`)
         await capture(page, 'coin-bas', { x: r.x - 10, y: r.y - 10, width: r.w + 20, height: r.h + 20 })

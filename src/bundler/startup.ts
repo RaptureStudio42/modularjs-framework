@@ -26,6 +26,7 @@
 // le rechargement à chaud et le cache des noms courts ne sont pas mêlés à un second assemblage.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { isComponentFile } from './class-files.js'
 import { basename, join, resolve } from 'node:path'
 import { build as esbuildBuild } from 'esbuild'
 import type { Bundler } from './index.js'
@@ -33,6 +34,7 @@ import type { RenderConfig, RenderStartupMode, BundleGroupConfig } from './confi
 import type { PrerenderReport } from '../server/prerender.js'
 import { pickStartup, startupSlug } from '../server/render-routes.js'
 import { t } from '../messages/index.js'
+import { startDepsTable } from './manifest.js'
 
 /** Nombre de composants en dessous duquel un fichier de page n'a rien à factoriser. */
 const MIN_UNITS_PER_PAGE = 2
@@ -83,7 +85,9 @@ function manifestKeysByLower(bundler: Bundler): Map<string, string> {
  *  (`.civet`/`.coffee`/`.ts`), qui reste externe au fichier de page. Le registre
  *  `manifestSources` est rempli à CHAQUE compile, cache-hit compris. */
 function isComponent(bundler: Bundler, name: string): boolean {
-  return bundler.manifestSources.get(name)?.endsWith('.mjs') ?? false
+  // un module MJS (`outil.civet.mjs`…) finit par .mjs sans être un composant (cf. isComponentFile)
+  const source = bundler.manifestSources.get(name)
+  return source === undefined ? false : isComponentFile(source)
 }
 
 /** Les clés d'un même FICHIER sont un seul composant (alias de dossier, cf. shortModuleName) : `names` complété de
@@ -97,15 +101,18 @@ function withSiblingKeys(bundler: Bundler, names: string[]): string[] {
   return [...tous].sort(byCodePoint)
 }
 
-/** Ensemble de démarrage : les balises du HTML résolues en clés de manifeste, fermées par
- *  `manifestDeps`. Une dépendance que le manifeste ne publie pas (alias empoisonné, cible en
- *  échec) n'est jamais suivie — même prudence que µWalkDeps côté navigateur. */
+/** Ensemble de démarrage : les balises du HTML résolues en clés de manifeste, fermées par la
+ *  table du démarrage de `blocks.preload` (cf. startDepsTable) : sous "idle" et "off", un composant
+ *  écrit seulement sous un `{if}` fermé n'en est pas (au repos, la file du manifeste le prend ; sous
+ *  "off", sa branche le demande), sous "on" il en est. Une dépendance que le manifeste ne publie pas
+ *  (alias empoisonné, cible en échec) n'est jamais suivie — même prudence que µWalkDeps côté navigateur. */
 function startupSet(bundler: Bundler, tags: string[], keys: Map<string, string>): string[] {
-  const vus = new Set<string>()
+  const deps = startDepsTable(bundler.manifestDeps, bundler.manifestBranchDeps, bundler.blocksPreload) ?? bundler.manifestDeps
+  const vus  = new Set<string>()
   const walk = (name: string): void => {
     if (vus.has(name)) return
     vus.add(name)
-    for (const dep of bundler.manifestDeps[name] ?? []) {
+    for (const dep of deps[name] ?? []) {
       if (bundler.unitPath(dep)) walk(dep)
     }
   }

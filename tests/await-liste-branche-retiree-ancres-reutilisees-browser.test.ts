@@ -1,5 +1,5 @@
 // une liste `{for}` posée dans une branche `{await}` (directement, ou sous un `{if}` de la branche) n'écrit plus rien quand sa branche n'est plus affichée : ses deux repères sont des
-// nœuds texte que le pool de nœuds texte réattribue, à la destruction de la branche, aux balises de la branche suivante ; la liste, rappelée par sa variable, y insérait ses lignes
+// nœuds texte retirés avec la branche, que l'effet de la liste garde encore ; la liste, rappelée par sa variable, insérait ses lignes à côté d'eux
 // (une ligne `<li>` de la liste retirée restait dans l'attente) ou plantait le composant (« insertBefore … is not a child of this node »).
 // Chaque cas joue l'histoire minimale (la promesse arrive, puis elle est relancée et une variable change), dans le même tour et en tours séparés, puis laisse la promesse arriver de
 // nouveau : la liste porte alors exactement les lignes de la nouvelle valeur, et elle suit encore la variable.

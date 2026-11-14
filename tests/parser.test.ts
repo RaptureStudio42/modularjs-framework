@@ -76,7 +76,7 @@ describe('parser.parse', () => {
     })
 
     it('@class{cond}=val', () => {
-      const root = parse(`<p @class{$active}="on">x</p>`)
+      const root = parse(`<p :class{$active}="on">x</p>`)
       const attr = root.children[0].attrs[0]
       assert.equal(attr.type, 'static')
       assert.equal(attr.name, '@class{$active}')
@@ -324,7 +324,7 @@ describe('parser.parse', () => {
   // ==========================================================================
   describe('parser — cas limites', () => {
     it('fermante orpheline dans {if}/{for}/{await}/{key} : throw, PAS de boucle infinie', () => {
-      // Avant : `parseChildren` remontait `close_tag` sans consommer → 100 % CPU.
+      // Avant : la lecture des enfants remontait `close_tag` sans le consommer → 100 % CPU.
       assert.throws(() => parse('{if $x}</div>{end}'), /BLOC NON FERMÉ/)
       assert.throws(() => parse('{for x in y}</div>{end}'), /BLOC NON FERMÉ/)
       assert.throws(() => parse('{await $p}</div>{end}'), /BLOC NON FERMÉ/)

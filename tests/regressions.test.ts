@@ -9,6 +9,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { transpile } from '../src/transpiler/index.js'
 import { resolveBundlerOpts } from '../src/bundler/config.js'
 import { ASSET_RE } from '../src/bundler/index.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 describe('régressions — fix nuit V2.0', function () {
   // Timeout étendu : transpile() recharge des compilateurs lourds (Civet) au
@@ -99,7 +100,7 @@ describe('régressions — fix nuit V2.0', function () {
       // Test direct du transpiler : on lui passe un resolveAsset qui simule
       // un asset existant (résout vers une URL hashée).
       const src = [
-        "@import helper 'shared/utils.module.civet'",
+        "@import helper 'shared/utils.module.civet.mjs'",
         '<script>$x = helper()</script>',
         '<div>{$x}</div>',
       ].join('\n')
@@ -119,13 +120,13 @@ describe('régressions — fix nuit V2.0', function () {
 
       // Le path doit avoir été demandé à resolveAsset
       assert.ok(
-        resolved.includes('shared/utils.module.civet'),
-        `resolveAsset doit avoir été appelé avec 'shared/utils.module.civet' (appelés: ${JSON.stringify(resolved)})`
+        resolved.includes('shared/utils.module.civet.mjs'),
+        `resolveAsset doit avoir été appelé avec 'shared/utils.module.civet.mjs' (appelés: ${JSON.stringify(resolved)})`
       )
       // L'output ne doit PAS contenir MISSING_MJS_ASSET pour ce path
       assert.doesNotMatch(
         output,
-        /MISSING_MJS_ASSET:shared\/utils\.module\.civet/,
+        /MISSING_MJS_ASSET:shared\/utils\.module\.civet\.mjs/,
         "L'output ne doit pas contenir MISSING_MJS_ASSET (path résolu)"
       )
       // L'output doit contenir l'URL résolue
@@ -288,7 +289,7 @@ nom = => console.log('hi')
         '</script>',
         '<div>',
         '  {for x in $items}',
-        '    <span @class{x === $selected}="active">{x}</span>',
+        '    <span :class{x === $selected}="active">{x}</span>',
         '  {end}',
         '</div>',
       ].join('\n')
@@ -399,13 +400,13 @@ nom = => console.log('hi')
       // Charge le runtime en sandbox (même pattern que runtime.test.ts). µ.inspect vit
       // désormais dans mjs_rare_runes.ts (DÉTACHÉ de mjs_runes.ts, cf. bundler/index.ts
       // scanRuntimeFeatures) — concaténé juste après, même esprit que bundleRuntime().
-      const initJs = readFileSync(resolvePath('src/runtime/mjs_init.ts'), 'utf-8')
+      const initJs = lireRuntime(resolvePath('src/runtime/mjs_init.ts'))
       // mjs_deep.ts : µ._mjs_deepSet/_mjs_deepCall/_mjs_deepDelete/_mjs_makeDeepProxy, détachées de
       // mjs_init.ts (module détaché du cœur, joint à l'usage) — les mutations deep testées ci-dessous les appellent.
-      const deepJs = readFileSync(resolvePath('src/runtime/mjs_deep.ts'), 'utf-8')
-      const elemJs = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
+      const deepJs = lireRuntime(resolvePath('src/runtime/mjs_deep.ts'))
+      const elemJs = lireRuntime(resolvePath('src/runtime/mjs_element.ts'))
       const runesJs = readFileSync(resolvePath('src/runtime/mjs_runes.ts'), 'utf-8')
-      const rareRunesJs = readFileSync(resolvePath('src/runtime/mjs_rare_runes.ts'), 'utf-8') + '\n' + readFileSync(resolvePath('src/runtime/mjs_inspect.ts'), 'utf-8')
+      const rareRunesJs = lireRuntime(resolvePath('src/runtime/mjs_rare_runes.ts')) + '\n' + readFileSync(resolvePath('src/runtime/mjs_inspect.ts'), 'utf-8')
       const setup = `
         class HTMLElement {
           constructor() {}
@@ -654,7 +655,7 @@ nom = => console.log('hi')
     // (la clé spéciale `_awaits_` n'était pas reconnue) → {await} bloqué sur
     // la branche pending. Guard : le fix doit rester dans le source runtime.
     it("_mjs_invalidate reconnaît la clé '_awaits_' pour relancer _mjs_renderStruct", () => {
-      const elemSrc = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
+      const elemSrc = lireRuntime(resolvePath('src/runtime/mjs_element.ts'))
       assert.match(
         elemSrc,
         /__needsStruct\s*=\s*k === ['"]_awaits_['"]\s*\|\|/,
@@ -666,7 +667,7 @@ nom = => console.log('hi')
     // avec un attribut HTML natif (`title`, `src`, `name`…). Guard : le skip
     // des attrs natifs doit être conditionné par `!_isDeclaredProp`.
     it('syncProps ne skippe pas une prop déclarée homonyme d\'un attr HTML natif', () => {
-      const elemSrc = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
+      const elemSrc = lireRuntime(resolvePath('src/runtime/mjs_element.ts'))
       assert.match(
         elemSrc,
         /MJS_NATIVE_ATTRS\.has\([^)]+\)\s*&&\s*!_isDeclaredProp/,
@@ -1044,8 +1045,8 @@ describe('runtime µ._glCl / µ._glSt (liaisons globales <@body>/<@html>)', () =
     // Charge le runtime en sandbox (même pattern que le describe µ.inspect). µ._glCl/µ._glSt
     // vivent désormais dans mjs_body.ts (DÉTACHÉ de mjs_runes.ts, cf. bundler/index.ts
     // scanRuntimeFeatures) — concaténé juste après, même esprit que bundleRuntime().
-    const initJs  = readFileSync(resolvePath('src/runtime/mjs_init.ts'), 'utf-8')
-    const elemJs  = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
+    const initJs  = lireRuntime(resolvePath('src/runtime/mjs_init.ts'))
+    const elemJs  = lireRuntime(resolvePath('src/runtime/mjs_element.ts'))
     const runesJs = readFileSync(resolvePath('src/runtime/mjs_runes.ts'), 'utf-8')
     const bodyJs  = readFileSync(resolvePath('src/runtime/mjs_body.ts'), 'utf-8')
     const setup = `
@@ -1177,6 +1178,8 @@ describe('µasset dans <@head> (verrou fonts)', () => {
     const matches = [...output.matchAll(ASSET_RE)]
     const hit = matches.find(m => m[4] === 'fonts/test.woff2')
     assert.ok(hit, `µasset() doit rester matchable même avec une interpolation réactive AVANT le <style>. output:\n${output}`)
-    assert.match(output, /\$\.titre\b/, "l'interpolation réactive {$titre} doit survivre, réécrite en $.titre (tokenize)")
+    // lecture de l'état : `$.titre`, ou notée pour le graphe des signaux (`$[(note, 'titre')]`) quand une fonction de
+    // reffet la porte, comme la mise à jour du <@head>
+    assert.match(output, /\$\.titre\b|\$\[\([^\]]*'titre'\)\]/, "l'interpolation réactive {$titre} doit survivre, réécrite en lecture de l'état (tokenize)")
   })
 })

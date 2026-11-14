@@ -50,7 +50,7 @@ describe('mjs_ujs — lien @method suivi par le navigateur : averti', function (
       assert.equal(e.defaultPrevented, true, 'clic retenu : le navigateur le suivrait en GET, sans le verbe')
       assert.deepEqual(envois, [])
       assert.equal(avert.length, 1, 'AVANT : GET muet, aucun avertissement')
-      assert.match(avert[0], /@method="delete"/)
+      assert.match(avert[0], /:method="delete"/)
       const e2 = clic(lien, mods)
       µ._mjs_ujsOnClick(e2)
       assert.equal(e2.defaultPrevented, true, 'retenu à chaque clic')

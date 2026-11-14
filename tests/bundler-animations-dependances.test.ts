@@ -29,7 +29,7 @@ describe('le fichier des animations : une animation qui en appelle une autre par
 
   for (const nom of ['fade', 'fly', 'scale', 'blur', 'rotate', 'slide']) {
     it(`*${nom} seul : l'enveloppe commune est là, une fois, et la longueur seulement pour fly et blur`, async () => {
-      const js = await construire(nom, `{if $on}<p @in=*${nom}>x</p>{end}`)
+      const js = await construire(nom, `{if $on}<p :in=*${nom}>x</p>{end}`)
       assert.equal((js.match(COEUR) ?? []).length, 1, `µ._mjs_animFrom doit être défini une fois pour *${nom}`)
       assert.equal((js.match(LONGUEUR) ?? []).length, nom === 'fly' || nom === 'blur' ? 1 : 0, `µ._mjs_animLen pour *${nom}`)
       assert.match(js, new RegExp(`µ\\.anim\\.${nom}\\s*=`), `µ.anim.${nom} manque`)
@@ -37,14 +37,14 @@ describe('le fichier des animations : une animation qui en appelle une autre par
   }
 
   it('plusieurs transitions qui partent d\'un état : une seule enveloppe, une seule longueur, chacune sa part', async () => {
-    const js = await construire('plusieurs', '{if $on}<p @in=*fade @out=*fly(up)>x</p><p @in=*scale @out=*blur>y</p><p @transition=*slide>z</p>{end}')
+    const js = await construire('plusieurs', '{if $on}<p :in=*fade :out=*fly(up)>x</p><p :in=*scale :out=*blur>y</p><p :transition=*slide>z</p>{end}')
     assert.equal((js.match(COEUR) ?? []).length, 1)
     assert.equal((js.match(LONGUEUR) ?? []).length, 1)
     for (const nom of ['fade', 'fly', 'scale', 'blur', 'slide']) assert.match(js, new RegExp(`µ\\.anim\\.${nom}\\s*=`), nom)
   })
 
   it('une transition qui n\'en appelle aucune autre n\'apporte pas l\'enveloppe', async () => {
-    const js = await construire('iris', '{if $on}<p @in=*iris>x</p>{end}')
+    const js = await construire('iris', '{if $on}<p :in=*iris>x</p>{end}')
     assert.match(js, /µ\.anim\.iris\s*=/)
     assert.equal((js.match(COEUR) ?? []).length, 0)
   })

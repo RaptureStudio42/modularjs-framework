@@ -201,22 +201,22 @@
     optionsObserver?.disconnect()
 </script>
 
-<div class="select" @this=!{wrapperRef} @keydown={onKeydown(e)}>
+<div class="select" :this=!{wrapperRef} @keydown={onKeydown(e)}>
   <span class="select-sizer" aria-hidden="true"><span>{$placeholder}</span>{for opt in $optionsData}<span>{if $multi}<i class="select-check"></i>{end}{if opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}</span>
-  <button type="button" part="button" class="select-btn" @this=!{buttonRef} role="combobox" aria-haspopup="listbox" aria-expanded={$open} aria-controls={panelId} aria-activedescendant={$activeDescendant} @click={onButtonClick()}>
+  <button type="button" part="button" class="select-btn" :this=!{buttonRef} role="combobox" aria-haspopup="listbox" aria-expanded={$open} aria-controls={panelId} aria-activedescendant={$activeDescendant} @click={onButtonClick()}>
     {if $currentIcon}<span class="select-icon">{$currentIcon}</span>{end}
     <span class="select-label">{$currentLabel}</span>
   </button>
   {if $open}
-    <div class="select-panel" part="panel" id={panelId} role="listbox" aria-multiselectable={$multi} @class{$panelUp}="up" --mjs-select-panel-max={$panelMax}>
+    <div class="select-panel" part="panel" id={panelId} role="listbox" aria-multiselectable={$multi} :class{$panelUp}="up" --mjs-select-panel-max={$panelMax}>
       {if $searchOn}
-        <input type="text" part="search" class="select-search" aria-label={$searchPlaceholder} placeholder={$searchPlaceholder} value=!{$query} @this=!{searchInputRef} @input={onSearchInput()}>
+        <input type="text" part="search" class="select-search" aria-label={$searchPlaceholder} placeholder={$searchPlaceholder} value=!{$query} :this=!{searchInputRef} @input={onSearchInput()}>
       {end}
       {if $filtered.length == 0}
         <div class="select-empty">{$emptyLabel}</div>
       {else}
         {for i, opt in $filtered by value}
-          <div class="select-option" part="option" role="option" id={optionId(i)} @class{i == $activeIndex}="active" @class{isSelected(opt.value, $value, $multiple)}="selected" aria-selected={isSelected(opt.value, $value, $multiple)} @click={toggleValue(opt.value)} @mouseenter={$activeIndex = i}>
+          <div class="select-option" part="option" role="option" id={optionId(i)} :class{i == $activeIndex}="active" :class{isSelected(opt.value, $value, $multiple)}="selected" aria-selected={isSelected(opt.value, $value, $multiple)} @click={toggleValue(opt.value)} @mouseenter={$activeIndex = i}>
             {if $multi}<span class="select-check">{if isSelected(opt.value, $value, $multiple)}{$iconChecked}{else}{$iconUnchecked}{end}</span>{end}
             {if opt.icon}<span class="select-icon">{opt.icon}</span>{end}
             <span class="select-option-label">{opt.label}</span>
@@ -230,9 +230,9 @@
 <@document @click={onDocumentClick(e)}>
 <@window @resize={updatePlacement() if $open}>
 
-<slot @this=!{slotRef}></slot>
+<slot :this=!{slotRef}></slot>
 
-<style @display="inline-block">
+<style :display="inline-block">
   :host
     position: relative
     min-width: 0

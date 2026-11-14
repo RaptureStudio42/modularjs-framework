@@ -15,7 +15,7 @@ const HOTE = [
   '  $t = 0',
   '  $chg = 0',
   '</script>',
-  '<form class="f" @noUJS>',
+  '<form class="f" :noUJS>',
   '  <@@number class="borne" name="borne" value=!{$q} min="0" max="10" @change={$chg++}></@@number>',
   '  <@@number class="entier" name="entier" value=!{$e}></@@number>',
   '  <@@number class="fin" value=!{$t} step="0.0000001"></@@number>',
@@ -82,7 +82,7 @@ describe('mjs-core-number — saisie décimale, pas fin et bornes pendant la fra
     const input = champ(hote, '.fin')
     await touche(window, input, 'ArrowUp')
     assert.equal(Number(lire(hote, '.t')), 1e-7)
-    assert.equal(input.value, '0.0000001')
+    assert.equal(input.value, '0,0000001', 'au séparateur de la langue de la page')
     await touche(window, input, 'ArrowUp')
     assert.equal(Number(lire(hote, '.t')), 2e-7)
     window.close()

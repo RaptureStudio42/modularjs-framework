@@ -44,11 +44,11 @@
     seen = true
 </script>
 
-<div class="field" part="field" @class{$status == 'error'}="has-error" @class{$status == 'ok'}="has-ok">
+<div class="field" part="field" :class{$status == 'error'}="has-error" :class{$status == 'ok'}="has-ok">
   {if $label}
     <label class="label" part="label" for="{$fieldId}">{$label}</label>
   {end}
-  <slot @this=!{slotRef}></slot>
+  <slot :this=!{slotRef}></slot>
   <p class="help" part="help">{$help}</p>
   {if $status == 'error'}
     <p class="error" part="error">{$errorMsg}</p>

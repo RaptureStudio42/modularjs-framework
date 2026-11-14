@@ -16,18 +16,24 @@
 // l'auteur ; dans un `@attach`, `el` n'est posé que pour l'expression qui le lit sans que l'auteur le déclare.
 // tests/generateur-noms-locaux-reserves.test.ts relève les noms déclarés et refuse tout autre.
 
+import { MJS_BOOLEAN_PROPS, written, shownName, oldWordOf, wordForm } from '../../parser/mjs-words.js'
 import * as acorn from 'acorn'
 import { state, getEffectVars, registerEffect } from '../state.js'
 import { typedLine, printDiagnostic } from '../../diagnostics.js'
-import { cleanJs, cleanJsExpr, decodeHtmlEntities, freeIdentifiers, parseMixedString, corpsDeFlecheEnBloc, attrSur as attrSurNom } from '../utils.js'
+import { MU_T_OR_LANG_RE } from '../../sigils.js'
+import { cleanJs, cleanJsExpr, cleanJsGestionnaire, jsDeLaCondition, refuserMinuterieDuGabarit, pendingDesChaines, decodeHtmlEntities, freeIdentifiers, parseMixedString, corpsDeFlecheEnBloc, litMuPending, attrSur as attrSurNom, getCivetCompile, minuterieDuRappel, aligneSurLaPremiereLigne, attendAuPremierNiveau } from '../utils.js'
+import { applyMjsSugarToScript } from '../../transpiler/sugar.js'
+import { analyserConstReassign } from '../../transpiler/const-reassign.js'
+import { tokenize, maskInertSameLength } from '../../lexer/index.js'
 import { transformReactiveWrites } from '../transform-reactive.js'
-import { applyPathTracking } from '../path-tracker.js'
+import { applyPathTrackingMapped } from '../path-tracker.js'
 import type { Node, Attr } from '../../parser/index.js'
 import { transitionDirective } from '../../parser/index.js'
-import type { PorteeEntree } from '../compile.js'
+import type { PorteeEntree, LoopInfo } from '../compile.js'
 import { t } from '../../messages/index.js'
 import { suggestKey } from '../../bundler/config.js'
 import { maskNonCode } from '../../mask.js'
+import { BROWSER_FUNCTIONS, BROWSER_FUNCTIONS_REFUSING_EVENT, HANDLER_REFERENCE_RE } from '../../handler-reference.js'
 import { adjustAttr, SVG_NS, MATH_NS } from '../paths.js'
 
 export interface AttrCtx {
@@ -36,7 +42,7 @@ export interface AttrCtx {
   attr: Attr
   attrName: string | null | undefined
   rawVal: string
-  ctx: { type: string; updates: string[]; loops: any[]; locals?: Set<string>; portee?: PorteeEntree[]; svgNs?: string | null; foreign?: boolean; enBloc?: boolean; branche?: { id: string; etat: string } }
+  ctx: { type: string; updates: string[]; loops: any[]; locals?: Set<string>; portee?: PorteeEntree[]; svgNs?: string | null; foreign?: boolean; enBloc?: boolean; branche?: { id: string; etat: string }; naissance?: string[] }
   id: string | null
   lid: string | null
   attrStr: string  // mutable via retour de la fonction
@@ -52,10 +58,12 @@ export interface AttrResult {
  * `{const}` du bloc courant). Ces noms doivent rester locaux au handler — mais pour CE
  * handler seulement : le transpileur ne les retire de la liste prédéclarée que là, un
  * gestionnaire situé ailleurs garde la variable du `<script>` qu'il écrit vraiment. */
-function pushInline(env: AttrCtx, code: string): void {
+function pushInline(env: AttrCtx, code: string, faute: Error | null = null): void {
   state.inlines.push(code)
+  state.inlineFautes.push(faute)
   state.inlineLocals.push(env.ctx.locals ? Array.from(env.ctx.locals).sort() : [])
   state.inlineLines.push(env.node.line)
+  state.inlineSources.push(String(env.attr.expr ?? env.attr.val ?? ''))
 }
 
 /** Ce que les aides de portée lisent d'un site de liaison : la portée du gabarit (`ctx`) et, pour la grammaire Civet, les noms du script (`compiler`) ; un texte de
@@ -64,20 +72,26 @@ type EnvPortee = Pick<AttrCtx, 'ctx' | 'compiler'>
 
 /** Les entrées de la portée qu'un code doit recréer, une case par entrée : chaque `{for}` toujours (son
  * itérable est lu aussi) ; un `{const}` ou la valeur de la branche `{await}` seulement si `code` lit son nom,
- * ou si l'une des entrées recréées après lui le lit (itérable d'une boucle, expression d'un autre `{const}`). */
+ * ou si l'une des entrées recréées après lui le lit (itérable d'une boucle, expression d'un autre `{const}`).
+ * `µpending` (`_mjs_pnd`) se lit sous ses deux noms : compilé dans `code`, écrit tel quel dans le code d'un `{const}` du gabarit (jamais
+ * dans une chaîne, cf. litMuPending). */
 function porteeLue(portee: PorteeEntree[], code: string): boolean[] {
   const lu      = (texte: string, nom: string): boolean => new RegExp(`(?<![\\w$.])${nom}(?![\\w$])`).test(texte)
   const retenue = portee.map(() => false)
   let aLire     = code
+  let bruts     = ''
   for (let i = portee.length - 1; i >= 0; i--) {
     const e = portee[i]
     if (e.kind === 'for') {
       retenue[i] = true
       aLire     += '\n' + e.loop.iterable
     }
-    else if (lu(aLire, e.name)) {
+    else if (lu(aLire, e.name) || (e.kind === 'await' && e.champ === 'pending' && litMuPending(bruts))) {
       retenue[i] = true
-      if (e.kind === 'const') aLire += '\n' + e.raw
+      if (e.kind === 'const') {
+        aLire += '\n' + e.raw
+        bruts += '\n' + e.raw
+      }
     }
   }
   return retenue
@@ -95,6 +109,29 @@ function texteLuApres(portee: PorteeEntree[], retenue: boolean[], i: number, cod
     else if (e.kind === 'const') texte += '\n' + e.raw
   }
   return texte
+}
+
+// ligne ordinaire de la boucle la plus intérieure : l'élément que la ligne affiche (`_mjs_it` de son entrée, tenu à jour par la
+// réconciliation) quand la collection n'a plus le même à la position de la ligne — la ligne part ou bouge pendant ce rendu, et le
+// navigateur envoie `blur`/`focusout` au champ qui avait le focus pendant son retrait : sans cela, le gestionnaire recevait l'élément
+// de même rang dans la nouvelle collection. L'entrée tenue par une ligne reprise avant sa passe (`_mjs_it` vaut l'entrée) ne compte pas.
+// Une seule affectation de l'élément : le contrôle des noms du gabarit refuse qu'un gestionnaire le réaffecte (cf. lint.ts)
+function enLigne(d: number, item: string): string {
+  const lu = `_mjs_ra_${d}[_mjs_ri_${d}]`
+  const en = `_mjs_en_${d}`
+  return `  ${en} = el._mjs_ev?._mjs_en\n` +
+    `  ${item} = if ${en} and ${en}._mjs_it isnt ${en} and µ._mjs_toRaw(${lu}) isnt µ._mjs_toRaw(${en}._mjs_it) then ${en}._mjs_it else ${lu}\n`
+}
+
+// ligne ordinaire d'une boucle EXTÉRIEURE, ou de la plus intérieure quand la balise est dans un bloc de la ligne (`{if}`…, dont la table
+// ne mène pas à l'entrée de la ligne) : l'élément de cette ligne, posé sur la balise avec son indice à chaque mise à jour
+// (`_mjs_it_N`, cf. compile.ts), quand la collection n'a plus le même à sa position — la ligne part
+// ou bouge pendant ce rendu ; sans lui, le gestionnaire recevait l'élément de même rang, ou rien quand la nouvelle collection est plus
+// courte, et la boucle intérieure se relisait dans cet élément
+function enLigneExterieure(d: number, item: string): string {
+  const lu = `_mjs_ra_${d}[_mjs_ri_${d}]`
+  const it = `el._mjs_it_${d}`
+  return `  ${item} = if ${it} isnt undefined and µ._mjs_toRaw(${lu}) isnt µ._mjs_toRaw(${it}) then ${it} else ${lu}\n`
 }
 
 /** Squelette qui recrée, en tête d'un gestionnaire ou d'une liaison, les noms que le gabarit met
@@ -120,8 +157,9 @@ function squelettePortee(env: EnvPortee, code: string, ligneBoucle: (l: any, luA
       continue
     }
     const temp   = e.kind === 'const' ? `_mjs_cst_${i}` : `_mjs_aw_${i}`
+    // un `{const}` recalculé dans un gestionnaire lit `µpending` comme dans la branche, interpolation d'une chaîne double comprise
     const valeur = e.kind === 'const'
-      ? (grammaire === 'js' ? e.js : cleanJs(e.raw, env.compiler.externalVars))
+      ? (grammaire === 'js' ? e.js : cleanJs(pendingDesChaines(e.raw), env.compiler.externalVars, false, env.compiler.moduleName))
       : `_mjsThis._mjs_awaitStates?.get('${e.id}')?.${e.champ}`
     sortie += grammaire === 'js' ? `const ${temp} = ${valeur}; let ${e.name} = ${temp}; ` : `  ${temp} = ${valeur}\n  ${e.name} = ${temp}\n`
   }
@@ -138,7 +176,7 @@ function squelettePortee(env: EnvPortee, code: string, ligneBoucle: (l: any, luA
  * même repli via `??`, que CoffeeScript ne connaît PAS (« unexpected ? »). */
 function ligneBoucleLiaison(l: any): string {
   const d = l.depth
-  return `  _mjs_ri_${d} = _mjs_el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} _mjs_el.getAttribute('data-mjs-idx-${d}')\n` +
+  return `  _mjs_ri_${d} = _mjs_el._mjs_idx_${d} ?? _mjs_el.getAttribute('data-mjs-idx-${d}')\n` +
     `  _mjs_ra_${d} = ${l.iterable}\n` +
     `  _mjs_ra_${d} = Array.from(_mjs_ra_${d}) if _mjs_ra_${d} instanceof Map or _mjs_ra_${d} instanceof Set\n` +
     `  ${l.item} = _mjs_ra_${d}[_mjs_ri_${d}]\n` +
@@ -152,8 +190,26 @@ function varsDesConst(env: EnvPortee, code: string): string[] {
   const portee  = env.ctx.portee ?? []
   const retenue = porteeLue(portee, code)
   const vars    = new Set<string>()
-  portee.forEach((e, i) => { if (retenue[i] && e.kind === 'const') for (const v of getEffectVars(e.raw)) vars.add(v) })
+  // la valeur d'un `{await … keep}` et son `µpending` changent sous la branche affichée : leur nom (`cle`) se suit comme une variable
+  portee.forEach((e, i) => {
+    if (!retenue[i]) return
+    if (e.kind === 'const') for (const v of getEffectVars(e.raw)) vars.add(v)
+    else if (e.kind === 'await' && e.cle) vars.add(e.cle)
+  })
   return [...vars]
+}
+
+// réglage `proxy: false` : tête de l'itérable d'une boucle `{for}` dont un gestionnaire écrit l'élément (`$.l.filter(f)` → `$`, `l` ;
+// `rangee.cells` → `rangee`), y compris sous une copie qui garde les objets (`Object.values($.m)`, `Object.entries`, `Array.from`,
+// `[...$.l]`) — la variable de l'état que nomme l'avertissement
+const TETE_BOUCLE = /^(?:(?:Object\.(?:values|entries)|Array\.from)\(\s*|\[\s*\.\.\.\s*)?([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?/
+
+/** Les valeurs d'un `{await … keep}` que lit `code` (cf. PorteeEntree.cle) : une liste `{for}` de la branche les relit dans l'état du bloc
+ * avant de se refaire — sa fonction garde sinon celles de la construction de la branche. */
+export function valeursGardees(env: EnvPortee, code: string): Array<PorteeEntree & { kind: 'await' }> {
+  const portee  = env.ctx.portee ?? []
+  const retenue = porteeLue(portee, code)
+  return portee.filter((e, i): e is PorteeEntree & { kind: 'await' } => retenue[i] && e.kind === 'await' && !!e.cle)
 }
 
 /** Effet posé à la RACINE pour une liaison située dans une branche `{await}` (hors de la fonction
@@ -184,8 +240,8 @@ function notePropVars(vars: string[]): void {
 /** Ce qui dit que la branche qui porte la liaison est bien celle que le bloc `{await}` affiche (`_mjs_awaitLastRender`, que le runtime passe à la branche affichée avant de la
  * créer et retire quand la promesse disparaît) : l'attente, `{success}` et `{error}`, nommées ou non (`ctx.branche`, posé par compileAwait). Une branche qui n'est plus affichée
  * (promesse remplacée, rejetée ou retirée) laisse ses nœuds connus du composant : l'effet qui y écrirait changerait une balise retirée de la page, relirait la valeur de la
- * branche qui n'existe plus (`null`) et ferait tomber le composant entier, rappellerait la fabrique d'une attache sans que personne la défasse, écrirait dans un nœud texte que
- * le pool de nœuds texte (mjs_textpool) a réattribué à une autre branche, ou insérerait les lignes d'une liste `{for}` entre deux repères que ce pool a réattribués. */
+ * branche qui n'existe plus (`null`) et ferait tomber le composant entier, rappellerait la fabrique d'une attache sans que personne la défasse, écrirait dans un nœud texte
+ * retiré de la page, ou insérerait les lignes d'une liste `{for}` entre deux repères retirés. */
 export function brancheCourante(env: EnvPortee): string {
   const b = env.ctx.branche
   return b ? `_mjsThis._mjs_awaitLastRender?.get('${b.id}') === '${b.etat}'` : ''
@@ -196,13 +252,20 @@ export function brancheCourante(env: EnvPortee): string {
  * la fonction de la branche, où la valeur de la branche et les `{const}` sont déjà là) puis tenu à jour par un effet de la racine (`effet`), qui recrée cette valeur et ces
  * `{const}` (cf. squelettePortee) et ne tourne que si la branche est celle qui est affichée (cf. brancheCourante). Rend null quand rien ne peut changer le texte : il
  * reste alors calculé une fois, dans le gabarit de la branche. */
+// écriture d'un HTML brut sur la balise `n` : celui d'un module du cœur (nom `core-…`, préfixe interdit aux fichiers du projet) est fait par
+// le framework (icônes de `<@@toolbar>`, surface normalisée de `<@@editor>`) et passe par la politique Trusted Types `mjs` ; partout
+// ailleurs c'est du HTML d'auteur, écrit tel quel par `µ._mjs_rawHtml` (politique de la page, ou refus qui dit quoi faire)
+export function ecrireHtmlBrut(n: string, v: string, moduleName: string | undefined): string {
+  return moduleName?.startsWith('core-') ? `${n}.innerHTML = µ._mjs_th(${v})` : `µ._mjs_rawHtml(${n}, ${v})`
+}
+
 export function texteDeBranche(env: EnvPortee, lid: string, jsVar: string, vars: string[], brut: boolean): { pose: string; effet: string; vars: string[] } | null {
   const suivies = [...new Set([...vars, ...varsDesConst(env, jsVar)])]
-  if (suivies.length === 0 && !/µ\.t\(|__mjsLang/.test(jsVar)) return null
+  if (suivies.length === 0 && !MU_T_OR_LANG_RE.test(jsVar)) return null
   // le HTML brut ne se réécrit que s'il a changé (`_mjs_h`, comme les lignes d'un `{for}`), le texte de même ; `null` et `undefined` n'écrivent rien dans un texte, comme
   // `_mjs_updText` à la racine (le HTML brut écrit « null », là aussi comme à la racine)
   const ecrire = brut
-    ? `const _mjs_ts = String(${jsVar}); if (_mjs_node._mjs_h !== _mjs_ts) { _mjs_node.innerHTML = _mjs_ts; _mjs_node._mjs_h = _mjs_ts; }`
+    ? `const _mjs_ts = String(${jsVar}); if (_mjs_node._mjs_h !== _mjs_ts) { ${ecrireHtmlBrut('_mjs_node', '_mjs_ts', env.compiler.moduleName)}; _mjs_node._mjs_h = _mjs_ts; }`
     : `const _mjs_ts = \`\${(${jsVar}) ?? ''}\`; if (_mjs_node.data !== _mjs_ts) _mjs_node.data = _mjs_ts;`
   const garde = brancheCourante(env)
   return {
@@ -228,6 +291,8 @@ export function suiviDeBloc(env: EnvPortee, choix: string, tout: string, vars: s
 function pushUpdate(env: AttrCtx, code: string, vars: string[]): void {
   if (env.ctx.type === 'root') {
     registerEffect(code, vars)
+    // prop d'un composant de la racine, hors bloc : rejouée avant que l'enfant n'entre dans la page (cf. state.kidBinds)
+    if (!env.ctx.enBloc && code.includes('._mjs_pend(')) state.kidBinds.push(code)
   }
   env.ctx.updates.push(code)
 }
@@ -270,9 +335,12 @@ function pushIdxPropUpdates(env: AttrCtx): boolean {
  * pose l'attribut dans un espace de noms (à déclarer dans le gabarit, sans quoi `setAttribute` le crée sans espace de noms).
  * L'élément est SVG (ou MathML) quand c'est `<svg>` (ou `<math>`) lui-même, ou quand le contexte le dit (`svgNs` : posé en entrant dans
  * l'une de ces balises, relayé dans les blocs, retiré sous un `<foreignObject>`) ; un élément HTML garde le nom écrit. */
-function adjustedAttr(env: AttrCtx, attrName: string): { name: string, ns: string | null } {
+function adjustedAttr(env: AttrCtx, attrName: string): { name: string, ns: string | null, bascules?: string } {
   const tag = (env.node.name ?? '').toLowerCase()
-  return adjustAttr(tag === 'svg' ? SVG_NS : tag === 'math' ? MATH_NS : env.ctx.svgNs ?? null, attrName)
+  const adj = adjustAttr(tag === 'svg' ? SVG_NS : tag === 'math' ? MATH_NS : env.ctx.svgNs ?? null, attrName)
+  // la classe calculée d'une balise qui a des bascules `@class{…}` porte leurs jetons jusqu'à son écriture (cf. finEcriture)
+  const bascules = adj.name === 'class' ? jetonsDesBascules(env.node) : ''
+  return bascules ? { ...adj, bascules } : adj
 }
 
 /** `, 1` pour un nom sans risque (cf. attrSur, generator/utils.ts) ; rien pour une prop booléenne, que le runtime écrit par sa propriété, jamais par le filtre */
@@ -292,16 +360,23 @@ function noeudEtranger(noeud: string, ns: string): string {
   return `${noeud} && { tagName: ${noeud}.tagName, getAttribute: (${k}) => ${noeud}.getAttribute(${k}), setAttribute: (${k}, ${v}) => ${noeud}.hasAttribute(${k}) ? ${noeud}.setAttribute(${k}, ${v}) : ${noeud}.setAttributeNS('${ns}', ${k}, ${v}), removeAttribute: (${k}) => ${noeud}.removeAttribute(${k}) }`
 }
 
+// jetons des bascules `@class{…}` d'une balise, chacun une fois (vide sans bascule)
+const jetonsDesBascules = (node: AttrCtx['node']): string => [...new Set((node.attrs ?? []).filter((a) => /^@class\{.+\}$/.test(a.name ?? '')).flatMap((a) => (a.val ?? '').toString().trim().split(/\s+/).filter(Boolean)))].join(' ')
+
+// dernier argument de l'écriture d'un attribut calculé : `, 1` pour un nom sans risque (cf. attrSur) ; pour la classe calculée d'une balise à
+// bascules, leurs jetons — la première écriture de la classe garde ceux que les bascules ont déjà posés (cf. µ._mjs_updAttrNode)
+const finEcriture = (adj: { name: string, bascules?: string }): string => adj.bascules ? `, ${JSON.stringify(adj.bascules)}` : attrSur(adj.name)
+
 /** L'appel qui écrit la valeur d'un attribut calculé sur le nœud `noeud` (cf. adjustedAttr pour `adj`) : `µ._mjs_updAttrNode` tel quel, sauf pour un attribut étranger, dont le
  * jumeau (cf. noeudEtranger) est lié à un nom avant l'appel : le nom de l'attribut reste le deuxième argument de la mise à jour. Sans point-virgule final. */
-function ecrireAttr(noeud: string, adj: { name: string, ns: string | null }, valeur: string): string {
-  if (!adj.ns) return `µ._mjs_updAttrNode(${noeud}, '${adj.name}', ${valeur}${attrSur(adj.name)})`
+function ecrireAttr(noeud: string, adj: { name: string, ns: string | null, bascules?: string }, valeur: string): string {
+  if (!adj.ns) return `µ._mjs_updAttrNode(${noeud}, '${adj.name}', ${valeur}${finEcriture(adj)})`
   return `{ const _mjs_j = ${noeudEtranger(noeud, adj.ns)}; µ._mjs_updAttrNode(_mjs_j, '${adj.name}', ${valeur}${attrSur(adj.name)}) }`
 }
 
 /** La même écriture à la racine du composant, où le nœud se lit par son identifiant : `this._mjs_updAttr('a1', …)` ; un attribut étranger prend le nœud de `${ptr}._mjs_nodes`. */
-function ecrireAttrRacine(ptr: string, id: string, adj: { name: string, ns: string | null }, valeur: string): string {
-  if (!adj.ns) return `${ptr}._mjs_updAttr('${id}', '${adj.name}', ${valeur}${attrSur(adj.name)});`
+function ecrireAttrRacine(ptr: string, id: string, adj: { name: string, ns: string | null, bascules?: string }, valeur: string): string {
+  if (!adj.ns) return `${ptr}._mjs_updAttr('${id}', '${adj.name}', ${valeur}${finEcriture(adj)});`
   return `{ const _mjs_node = ${ptr}._mjs_nodes.${id}; ${ecrireAttr('_mjs_node', adj, valeur)}; }`
 }
 
@@ -339,7 +414,8 @@ const NOT_A_PROP = /^(?:data|aria|mjs)-/i
 
 // les attributs globaux que le navigateur lit sur la balise d'un composant (son `id`, que visent `<@@toolbar for>`, `<label for>` et `aria-labelledby` ;
 // sa classe, sa bulle, son rôle, sa langue, son sens d'écriture, son emplacement, son ordre de tabulation, `hidden`) : écrits en valeur calculée,
-// ils s'y posent comme leur forme fixe (cf. logiqueComposant)
+// ils s'y posent comme leur forme fixe (cf. logiqueComposant ; la même liste, au runtime, pour le composant que monte `<@module>` :
+// µ._mjs_modGlob, mjs_dynamic.ts)
 const ATTR_GLOBAL_COMPOSANT = /^(?:id|class|title|role|hidden|tabindex|lang|dir|slot)$/i
 
 /** Le code qui livre la valeur calculée `jsVar` d'un attribut à la balise d'un composant `mjs-…` (`_mjs_node`) : toujours sa prop (`_set`, ou le
@@ -348,15 +424,20 @@ const ATTR_GLOBAL_COMPOSANT = /^(?:id|class|title|role|hidden|tabindex|lang|dir|
  * attribut (`<@@chart hidden={['a']}>` ne cache pas le graphique). Le nom se compare sans la casse, comme un attribut HTML : `tabIndex={…}`
  * va à une prop `$tabindex`, `tabindex={…}` à une prop `$tabIndex`, qui reçoit alors la valeur sous son nom. Une balise pas encore mise à
  * niveau (ligne de {for}, branche, module chargé plus tard) ne dit pas ses props : l'attribut attend que la balise soit définie, et c'est la
- * dernière valeur écrite (`_mjs_ha`) qui se pose */
-function logiqueComposant(attrName: string, prop: string, pendProp: string, jsVar: string, recue: string): string {
+ * dernière valeur écrite qui se pose — l'aide commune du cœur µ._mjs_attrGlob (mjs_element.ts), qui range cette valeur dans une table du
+ * cœur, jamais sur la balise, et ne lit les props déclarées que sur un composant du projet. `recue` : en développement, les drapeaux de la livraison notée (cf. drapeauxLivraison), la
+ * valeur calculée une fois et notée avant de partir ; `null` en production, où rien n'est noté. `bascules` : les jetons des bascules `@class{…}`
+ * de la balise, que la première écriture de sa classe garde (cf. finEcriture) */
+function logiqueComposant(attrName: string, prop: string, pendProp: string, jsVar: string, recue: string | null, bascules = ''): string {
   if (DOM_ATTR_COMPOSANT.test(attrName)) return `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${attrName}', __mjsV); } else { µ._mjs_pend(_mjs_node, '${attrName}', __mjsV); } µ._mjs_updAttrNode(_mjs_node, '${attrName}', __mjsV${attrSur(attrName)});`
-  if (!ATTR_GLOBAL_COMPOSANT.test(attrName)) return `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }${recue}`
+  const note = recue === null ? '' : `µ._mjs_oneWay?.(_mjs_node, '${prop}', this, __mjsV${recue}); `
+  if (!ATTR_GLOBAL_COMPOSANT.test(attrName)) {
+    if (recue === null) return `if (_mjs_node._set) { _mjs_node._set('${prop}', ${jsVar}); } else { µ._mjs_pend(_mjs_node, ${pendProp}, ${jsVar}); }`
+    return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }`
+  }
   const nom = attrName.toLowerCase()
-  return `const __mjsV = ${jsVar}; if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); }${recue} ` +
-    `{ const _mjs_h = _mjs_node, _mjs_w = () => { const _mjs_d = _mjs_h._mjs_var_bits && Object.keys(_mjs_h._mjs_var_bits).find((_mjs_k) => _mjs_k.toLowerCase() === '${nom}'); ` +
-    `if (!_mjs_d) µ._mjs_updAttrNode(_mjs_h, '${nom}', _mjs_h._mjs_ha['${nom}']${attrSur(nom)}); else if (_mjs_d !== '${prop}') _mjs_h._set(_mjs_d, _mjs_h._mjs_ha['${nom}']); }; ` +
-    `(_mjs_h._mjs_ha ??= {})['${nom}'] = __mjsV; if (_mjs_h._mjs_var_bits) _mjs_w(); else customElements.whenDefined(_mjs_h.localName).then(_mjs_w); }`
+  const fin = finEcriture({ name: nom, bascules: nom === 'class' ? bascules : '' })
+  return `const __mjsV = ${jsVar}; ${note}if (_mjs_node._set) { _mjs_node._set('${prop}', __mjsV); } else { µ._mjs_pend(_mjs_node, ${pendProp}, __mjsV); } µ._mjs_attrGlob(_mjs_node, '${nom}', __mjsV, '${prop}'${fin});`
 }
 
 function propName(name: string): string {
@@ -365,6 +446,25 @@ function propName(name: string): string {
 }
 
 const isComponent = (node: Node): boolean => (node.name ?? '').startsWith('mjs-')
+
+/** `value` d'une balise de composant écrit en valeur mêlée (`<@@option value="0{x.n}">` dans un {for}, `value="0{$a}"`, `VALUE="…"` en majuscules,
+ * le même attribut en HTML) : `µ._mjs_updAttrNode` en fait la propriété `.value` d'un champ natif. Un composant qui déclare `$value` (les modules du
+ * cœur `<@@option>`, `<@@radio>`, `<@@checkbox>`, `<@@select>`, un composant du projet), sans accesseur `value` propre sur sa classe, ne lit pas
+ * cette propriété une fois mis à niveau et dans la page (l'option gardait sa première valeur, ou n'en avait aucune) : il la reçoit aussi en prop, comme
+ * `value={…}`, après la propriété écrite comme toujours (un `µeffect` qui lit `$value` et `this.value` les voit d'accord). Hors de la page (ligne de {for} pas encore insérée : sa connexion relirait le témoin `value=''` du gabarit par-dessus la prop) et
+ * avant la mise à niveau (module chargé plus tard), la propriété reste, reprise par le composant à sa connexion ; un composant à accesseur propre,
+ * un composant sans `$value` et une balise tierce gardent l'écriture de toujours. Tout autre attribut garde la sienne (attribut posé, lu par
+ * `[nom]`, `:host([nom])` et `getAttribute`) */
+function ecrireValeur(env: AttrCtx, noeud: string, adj: ReturnType<typeof adjustedAttr>, valeur: string): string {
+  if (adj.name.toLowerCase() !== 'value' || adj.ns || !isComponent(env.node)) return ecrireAttr(noeud, adj, valeur)
+  return `{ const __mjsV = ${valeur}; ${ecrireAttr(noeud, adj, '__mjsV')}; if (${noeud}?.isConnected && 'value' in (${noeud}._mjs_var_bits || {}) && !('value' in Object.getPrototypeOf(${noeud}))) ${noeud}._set('value', __mjsV) }`
+}
+
+/** La même écriture à la racine du composant (cf. ecrireAttrRacine) */
+function ecrireValeurRacine(env: AttrCtx, ptr: string, id: string, adj: ReturnType<typeof adjustedAttr>, valeur: string): string {
+  if (adj.name.toLowerCase() !== 'value' || adj.ns || !isComponent(env.node)) return ecrireAttrRacine(ptr, id, adj, valeur)
+  return `{ const _mjs_node = ${ptr}._mjs_nodes.${id}; ${ecrireValeur(env, '_mjs_node', adj, valeur)}; }`
+}
 
 // ancienne écriture d'une transition (`@in.fly={…}`) : le nom d'une animation après la directive
 const ANCIENNE_TRANSITION = /^@(transition|in|out)\.([A-Za-z_]\w*)/
@@ -382,6 +482,9 @@ const DIRECTIVES: Record<string, (nom: string, val: string) => boolean> = {
   attache:    (nom) => nom === '@attach' || nom.startsWith('@attach.'),
   enfants:    (nom) => nom === '@childtransition',
   lumiere:    (nom) => nom === '@lightDom',
+  horsEcran:  (nom) => nom === '@offscreen',
+  reveil:     (nom) => nom === '@wake',
+  place:      (nom) => nom === SIZE_DIRECTIVE,
   ancienne:   (nom) => { const v = ANCIENNE_TRANSITION.exec(nom); return !!v && v[2] !== 'global' && v[2] !== 'shared' },
   transition: (nom) => /^@(?:transition|in|out)(?:\.(?:global|shared))*$/.test(nom),
   emission:   (nom) => nom.startsWith('@emit.'),
@@ -389,15 +492,31 @@ const DIRECTIVES: Record<string, (nom: string, val: string) => boolean> = {
 }
 
 // une balise qui porte un gestionnaire d'événement qui exécute du code (`@change={…}`, `@ferme={…}`, `@introstart={…}`) donne au parent un canal
-// pour suivre ce que l'enfant écrit : en développement, sa prop à sens unique écrite par l'enfant n'est pas dite (mjs_debug.ts). Une directive (cf.
-// DIRECTIVES) n'en est pas un, ni une valeur à deux sens (`!{…}`), ni un `@…` écrit sans valeur, qui n'exécute rien (`@persist` : le
-// répartiteur reçoit `->`, compile.ts). `val` : la valeur brute qu'il reçoit, `code` celle que le gestionnaire exécuterait
+// pour suivre ce que l'enfant écrit : en développement, sa prop à sens unique écrite par l'enfant n'est pas dite (mjs_debug.ts), l'objet venu
+// de la prop qu'il modifie l'est toujours. Une directive (cf. DIRECTIVES) n'en est pas un, ni une valeur à deux sens (`!{…}`), ni un `@…` écrit
+// sans valeur, qui n'exécute rien (`@persist` : le répartiteur reçoit `->`, compile.ts). `val` : la valeur brute qu'il reçoit, `code` celle que
+// le gestionnaire exécuterait
 const porteUnEcouteur = (node: Node): boolean => (node.attrs ?? []).some((a) => {
   const nom  = a.name ?? ''
   const val  = (a.val ?? '').toString()
   const code = a.type === 'dynamic' ? a.expr : val === 'true' ? '' : val
   return nom.startsWith('@') && !!code && !val.startsWith('!') && !Object.values(DIRECTIVES).some((d) => d(nom, val))
 })
+
+// développement : les drapeaux de la livraison d'une prop à un composant, que le code émis note avec le composant qui la livre (`this`) et sa
+// valeur, avant qu'elle ne parte (µ._mjs_oneWay, mjs_debug.ts) — 1 : la balise porte un gestionnaire d'événement, le parent suit par
+// l'événement ce que l'enfant écrit dans sa prop, seule la modification de l'objet venu d'elle reste dite
+function drapeauxLivraison(env: AttrCtx): string {
+  return porteUnEcouteur(env.node) ? ', 1' : ''
+}
+
+// un `@…` que le répartiteur donne à eventListener : son code passe par le lot des gestionnaires (transpiler/index.ts), Coffee en grammaire
+// js, Civet sinon — ni une directive, ni une valeur à deux sens (`!{…}`), ni l'événement d'une transition (`@introstart`…, rappel écrit en JS)
+export function codeDeGestionnaire(a: Attr): boolean {
+  const nom = a.name ?? ''
+  const val = (a.val ?? '').toString()
+  return nom.startsWith('@') && !val.startsWith('!') && !/^@(?:introstart|introend|outrostart|outroend)$/.test(nom) && !Object.values(DIRECTIVES).some((d) => d(nom, val))
+}
 
 // la même règle pour une clé connue à l'exécution seulement (donnée étalée `{...p}`)
 const SPREAD_KEY = "_mjs_k.indexOf('-') < 0 || /^(?:data|aria|mjs)-/i.test(_mjs_k) ? _mjs_k : _mjs_k.toLowerCase().replace(/-([a-z])/g, (_mjs_m) => _mjs_m[1].toUpperCase())"
@@ -423,7 +542,7 @@ function spread(env: AttrCtx): AttrResult {
   const expr = env.attr.expr ?? ''
   const vars = getEffectVars(expr)
   // Site EXPR (spread {...$expr}).
-  const jsVar = cleanJsExpr(expr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+  const jsVar = cleanJsExpr(expr, env.compiler.externalVars, env.compiler.moduleName)
   const id = env.id ?? `s${++state.counter}`
 
   const isWc = (env.node.name ?? '').includes('-')
@@ -436,33 +555,58 @@ function spread(env: AttrCtx): AttrResult {
   const keyDecl     = isComponent(env.node) ? `const _mjs_p = ${SPREAD_KEY}; ` : ''
   const setKey      = isComponent(env.node) ? '_mjs_p' : '_mjs_k'
   const pendKey     = isComponent(env.node) ? `${FOREIGN_TAG} ? _mjs_k : _mjs_p` : '_mjs_k'
-  // développement : chaque clé livrée à un composant est une prop à sens unique, que l'enfant ne devrait pas écrire lui-même (mjs_debug.ts le dit),
-  // sauf quand la balise porte un gestionnaire d'événement : le parent suit alors par l'événement
-  const recue       = state.devWarnings && isComponent(env.node) && !porteUnEcouteur(env.node) ? ' µ._mjs_oneWay?.(_mjs_node, _mjs_p);' : ''
-  const updateLogic = `${keyDecl}if (_mjs_node._set) { _mjs_node._set(${setKey}, _mjs_v); } else { µ._mjs_pend(_mjs_node, ${pendKey}, _mjs_v); }${recue}`
+  // développement : chaque clé livrée à un composant est une prop à sens unique, que l'enfant ne devrait ni écrire lui-même ni modifier
+  // (mjs_debug.ts le dit) ; notée avec le composant qui la livre et sa valeur, avant qu'elle ne parte (cf. drapeauxLivraison)
+  const recue       = state.devWarnings && isComponent(env.node) ? `µ._mjs_oneWay?.(_mjs_node, _mjs_p, this, _mjs_v${drapeauxLivraison(env)}); ` : ''
+  // un attribut écrit sur la balise (fixe, nu, calculé ou mêlé) gagne sur la même clé d'un étalement, dans les deux ordres d'écriture : l'étalement
+  // ne le touche jamais (nom comparé sans la casse, comme un attribut HTML ; sur un composant, aussi sous le nom de prop que la forme en dur obtient,
+  // cf. propName). La classe fait l'union : la classe étalée s'ajoute à la classe écrite et n'en retire jamais un jeton (µ._mjs_spCls, µ._mjs_spWc, mjs_element.ts)
+  // un `value` écrit en dur sur <textarea> ou <select> n'est pas lu par le navigateur (le champ ne l'affiche pas) : il ne garde pas la clé
+  const sansEffet = (a: Attr) => (a.name ?? '').toLowerCase() === 'value' && a.type === 'static' && /^(?:textarea|select)$/i.test(env.node.name ?? '')
+  const ecrits    = (env.node.attrs ?? []).filter((a) => a.type !== 'spread' && !sansEffet(a) && /^[a-zA-Z_][\w:.-]*$/.test(a.name ?? ''))
+  const enDur     = ecrits.find((a) => (a.name ?? '').toLowerCase() === 'class' && a.type === 'static' && !/\{|(?<![\w]|(?<!\.)\.)\$[a-zA-Z_]/.test(a.val ?? ''))
+  const classe    = JSON.stringify(enDur ? decodeHtmlEntities(enDur.val ?? '') : '')
+  // repère d'un `<@module $comp>` (le `div` qui porte `mjs-comp`, cf. propModule) : la donnée étalée y suit les règles de `<@module>`, chaque
+  // clé est un attribut de la balise, sauf `class`, qui passe par l'aide de la classe (µ._mjs_spCls) : elle s'ajoute à la classe écrite, comme
+  // sur une balise ordinaire qui en a une. La classe et les autres clés vont au composant vivant (`_mjs_c`) : la ligne d'un `{for}` garde en
+  // main le repère (cf. µ._updModule)
+  const surModule = !isWc && (env.node.attrs ?? []).some((a) => a.name === 'mjs-comp')
+  const noms      = new Set<string>(surModule ? ['class'] : [])
+  for (const a of ecrits) {
+    const nom = (a.name ?? '').toLowerCase()
+    if (isWc && nom === 'class') continue
+    noms.add(nom)
+    if (isComponent(env.node)) noms.add(propName(a.name ?? '').toLowerCase())
+  }
+  const garde       = noms.size ? `const _mjs_e = /^(?:${[...noms].map((n) => n.replace(/\./g, '\\.')).join('|')})$/i; ` : ''
+  const updateLogic = `${keyDecl}${garde ? `if (_mjs_e.test(${setKey})) continue; ` : ''}${recue}if (_mjs_node._set) { _mjs_node._set(${setKey}, _mjs_v); } else { µ._mjs_pend(_mjs_node, ${pendKey}, _mjs_v); }`
   // balise native : chaque clé s'écrit comme un attribut calculé (`µ._mjs_updAttrNode` : retrait sur false, null et undefined, filtre des
   // adresses). Chaque étalement de la balise garde les clés et les valeurs qu'il pose (`_mjs_spk`, par son rang parmi les attributs) : une clé
   // posée par plusieurs étalements prend la valeur du dernier qui la pose, comme à la première pose, même quand un étalement plus haut change ;
-  // une clé qu'aucun étalement ne pose plus (objet qui la perd, devenu vide ou nul) reprend la valeur fixe écrite par l'auteur sur la balise,
-  // telle que le navigateur la lit (un attribut booléen HTML nu, `hidden`, est rangé par l'analyseur en `{true}`), ou quitte la balise. `noeud` : l'expression qui donne le nœud, ou null quand `_mjs_node` est déjà lié (effet
-  // de la racine d'une branche `{await}`)
-  const rang     = Math.max(0, (env.node.attrs ?? []).indexOf(env.attr))
-  const fixes    = (env.node.attrs ?? []).filter((a) => /^[a-zA-Z_][\w:.-]*$/.test(a.name ?? '') &&
-    (a.type === 'boolean' || (a.type === 'dynamic' && a.expr === 'true') || (a.type === 'static' && !/\{|(?<![\w]|(?<!\.)\.)\$[a-zA-Z_]/.test(a.val ?? ''))))
-  const remettre = fixes.length === 0
-    ? '_mjs_node.removeAttribute(_mjs_a);'
-    : `{ const _mjs_f = {__proto__: null, ${fixes.map((a) => `${JSON.stringify(a.name)}: ${JSON.stringify(a.type === 'static' ? decodeHtmlEntities(a.val ?? '') : '')}`).join(', ')}}; ` +
-      'if (_mjs_a in _mjs_f) _mjs_node.setAttribute(_mjs_a, _mjs_f[_mjs_a]); else _mjs_node.removeAttribute(_mjs_a); }'
+  // une clé qu'aucun étalement ne pose plus (objet qui la perd, devenu vide ou nul) quitte la balise. `noeud` : l'expression qui donne le nœud,
+  // ou null quand `_mjs_node` est déjà lié (effet de la racine d'une branche `{await}`)
+  const rang      = Math.max(0, (env.node.attrs ?? []).indexOf(env.attr))
+  const bascules  = jetonsDesBascules(env.node)
+  const surClasse = bascules ? `, _mjs_a === 'class' && ${JSON.stringify(bascules)}` : ''
+  // balise d'un composant (toute balise à tiret) : chaque clé est une prop ; la classe et les attributs que le navigateur lit sur la balise se
+  // posent en plus sur la balise, comme écrits en clair, par une aide du cœur commune à tous les étalements (µ._mjs_spWc, mjs_element.ts),
+  // qui reçoit le rang de l'étalement, la classe écrite en dur s'il y en a une, et les noms écrits sur la balise, qu'elle ne touche pas
+  const surWc      = garde ? `, ${classe}, _mjs_e` : enDur ? `, ${classe}` : ''
+  const cible      = surModule ? '_mjs_c' : '_mjs_node'
+  const vivant     = surModule ? '_mjs_c = _mjs_node._mjs_modLive || _mjs_node, ' : ''
+  const versClasse = !isWc && noms.has('class') ? ` µ._mjs_spCls(${cible}, ${rang}, _mjs_spd, ${classe});` : ''
+  const poserCles  = garde
+    ? "if(_mjs_spd) for (const _mjs_k in _mjs_spd) { const _mjs_a = _mjs_k.replace(/_/g, '-'); if (!_mjs_e.test(_mjs_a)) _mjs_vu[_mjs_a] = _mjs_spd[_mjs_k]; } "
+    : "if(_mjs_spd) for (const _mjs_k in _mjs_spd) _mjs_vu[_mjs_k.replace(/_/g, '-')] = _mjs_spd[_mjs_k]; "
   const etaler = (noeud: string | null, valeur: string): string => {
     const lier = noeud ? `const _mjs_node = ${noeud}; ` : ''
     return isWc
-      ? `{ const _mjs_spd = ${valeur}; if(_mjs_spd) { ${lier}if(_mjs_node) for (const _mjs_k in _mjs_spd) { const _mjs_v = _mjs_spd[_mjs_k]; ${updateLogic} } } }`
-      : `{ const _mjs_spd = ${valeur}; ${lier}if(_mjs_node) { ` +
-        `const _mjs_pk = (_mjs_node._mjs_spk ??= {}), _mjs_av = _mjs_pk[${rang}], _mjs_vu = _mjs_pk[${rang}] = {__proto__: null}; ` +
-        `if(_mjs_spd) for (const _mjs_k in _mjs_spd) _mjs_vu[_mjs_k.replace(/_/g, '-')] = _mjs_spd[_mjs_k]; ` +
+      ? `{ const _mjs_spd = ${valeur}; ${lier}if(_mjs_node) { ${garde}if(_mjs_spd) for (const _mjs_k in _mjs_spd) { const _mjs_v = _mjs_spd[_mjs_k]; ${updateLogic} } µ._mjs_spWc(_mjs_node, ${rang}, _mjs_spd${surWc}); } }`
+      : `{ const _mjs_spd = ${valeur}; ${lier}if(_mjs_node) { ${garde}` +
+        `const ${vivant}_mjs_pk = (${cible}._mjs_spk ??= {}), _mjs_av = _mjs_pk[${rang}], _mjs_vu = _mjs_pk[${rang}] = {__proto__: null}; ${poserCles}` +
         `for (let _mjs_i = 0; _mjs_i < 2; _mjs_i++) for (const _mjs_a in (_mjs_i ? _mjs_av : _mjs_vu)) if (!_mjs_i || !(_mjs_a in _mjs_vu)) { ` +
         `let _mjs_t; for (const _mjs_r in _mjs_pk) if (_mjs_a in _mjs_pk[_mjs_r]) _mjs_t = _mjs_pk[_mjs_r]; ` +
-        `if (_mjs_t) µ._mjs_updAttrNode(_mjs_node, _mjs_a, _mjs_t[_mjs_a]); else ${remettre} } } }`
+        `if (_mjs_t) µ._mjs_updAttrNode(${cible}, _mjs_a, _mjs_t[_mjs_a]${surClasse}); else ${cible}.removeAttribute(_mjs_a); }${versClasse} } }`
   }
 
   // `for..in` (zéro alloc) au lieu de `Object.entries().forEach()`
@@ -510,7 +654,7 @@ function spread(env: AttrCtx): AttrResult {
 function dynamic(env: AttrCtx): AttrResult {
   const vars = getEffectVars(env.attr.expr ?? '')
   // Site EXPR (valeur d'attribut attr={$expr}).
-  const jsVar = cleanJsExpr(env.attr.expr ?? '', env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+  const jsVar = cleanJsExpr(env.attr.expr ?? '', env.compiler.externalVars, env.compiler.moduleName)
   const id = env.id ?? `a${++state.counter}`
   const attrName = env.attrName ?? ''
   const isWc = (env.node.name ?? '').includes('-')
@@ -518,9 +662,10 @@ function dynamic(env: AttrCtx): AttrResult {
   const prop = isComponent(env.node) ? propName(attrName) : attrName
   // en attente : une balise que le manifeste dit tierce reçoit le nom écrit, que son auteur lit tel quel
   const pendProp = prop === attrName ? `'${attrName}'` : `${FOREIGN_TAG} ? '${attrName}' : '${prop}'`
-  // développement : la prop est livrée à sens unique, l'écriture que l'enfant en ferait lui-même sera dite (mjs_debug.ts), sauf quand la balise
-  // porte un gestionnaire d'événement : le parent suit alors par l'événement
-  const recue = state.devWarnings && isComponent(env.node) && !porteUnEcouteur(env.node) ? ` µ._mjs_oneWay?.(_mjs_node, '${prop}');` : ''
+  // développement : la prop est livrée à sens unique, l'écriture que l'enfant en ferait lui-même et la modification de l'objet venu d'elle
+  // seront dites (mjs_debug.ts) ; notée avec le composant qui la livre et sa valeur, avant qu'elle ne parte (cf. drapeauxLivraison,
+  // logiqueComposant) ; rien en production
+  const recue = state.devWarnings && isComponent(env.node) ? drapeauxLivraison(env) : null
   // nom (et espace de noms) que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr) ; un composant garde le nom écrit, qui est celui d'une prop
   const adj = isWc ? { name: attrName, ns: null } : adjustedAttr(env, attrName)
   const nom = adj.name
@@ -537,7 +682,7 @@ function dynamic(env: AttrCtx): AttrResult {
     let code: string
     if (isWc) {
       // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
-      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue, jetonsDesBascules(env.node))
       code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     } else {
       code = ecrireAttrRacine('this', id, adj, jsVar)
@@ -548,7 +693,7 @@ function dynamic(env: AttrCtx): AttrResult {
   } else if (env.ctx.type === 'for') {
     if (isWc) {
       // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
-      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue, jetonsDesBascules(env.node))
       env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${updateLogic} } }`)
     } else {
       // Filtered dispatch pour les attributs dynamiques génériques
@@ -586,11 +731,13 @@ function dynamic(env: AttrCtx): AttrResult {
           : filt.isBoolean
             ? `_mjs_node.setAttribute('${nom}', 'true');`
             : `${ecrireAttr('_mjs_node', adj, filt.matchValue)};`
+        // vide sur les autres lignes : l'attribut est retiré, sauf `value` et les attributs booléens (`checked`, `selected`…), que le champ garde en
+        // propriété une fois écrits (retirer l'attribut laissait son texte ou sa coche à l'ancienne ligne choisie) : écrits vides, comme hors du filtre
         const setUnmatchAttr = booleen
           ? `${ecrireAttr('_mjs_node', adj, 'false')};`
           : filt.isBoolean
             ? `_mjs_node.setAttribute('${nom}', 'false');`
-            : (filt.unmatchValue.trim() === "''" || filt.unmatchValue.trim() === '""'
+            : (attrName !== 'value' && !MJS_BOOLEAN_PROPS.includes(attrName) && (filt.unmatchValue.trim() === "''" || filt.unmatchValue.trim() === '""')
                 ? `_mjs_node.removeAttribute('${nom}');`
                 : `${ecrireAttr('_mjs_node', adj, filt.unmatchValue)};`)
         const condExpr = `${filt.itemAccess ? `${lastLoop!.item}.${filt.itemAccess}` : lastLoop!.item} === _mjsThis._state.${filt.externVar}`
@@ -611,7 +758,8 @@ function dynamic(env: AttrCtx): AttrResult {
         const lacher  = !filtreSurLaCle(lastLoop, filt.itemAccess)
         const multi   = plusieursLignes(lacher, env.ctx.loops)
         const creer   = `const __f = (_mjs_match) => { let _mjs_node = _mjs_n${env.lid}; if (_mjs_match) { ${setMatchAttr} } else { ${setUnmatchAttr} } }; `
-        liaisonFiltree(env, filt.externVar, idxName, keyExpr, filteredLogic, poseFonctionFiltree(creer, idxName, refaire, lacher, multi), multi, appelFiltre)
+        const champs  = champsFiltres(lastLoop!, idxName)
+        liaisonFiltree(env, filt.externVar, idxName, champs, keyExpr, filteredLogic, poseFonctionFiltree(creer, champs, refaire, lacher, multi), multi, appelFiltre, filt.suivies)
         if (!sansTemoin) attrStr += ` ${nom}=''`
         return { id, attrStr }
       }
@@ -651,7 +799,7 @@ function dynamic(env: AttrCtx): AttrResult {
       // sans ça, une prop dynamique de composant (`<mjs-card item={d}>`) en
       // branche `{await}` ne posait RIEN — `item` disparaissait en silence.
       // la valeur reste aussi une prop de l'état du composant ; data-*, aria-* et les attributs globaux se posent en plus sur sa balise (cf. logiqueComposant)
-      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue)
+      const updateLogic = logiqueComposant(attrName, prop, pendProp, jsVar, recue, jetonsDesBascules(env.node))
       env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) { ${updateLogic} } }`)
       // la prop suit ses variables : effet de la racine, comme à la racine (la pose ci-dessus la vaut à la construction de la branche)
       suivreEnBranche(env, id, jsVar, updateLogic, vars, true)
@@ -716,14 +864,13 @@ function splitBraceSegments(val: string): { text: string; expr: string | null }[
 function buildTemplateFromSegments(
   segments: { text: string; expr: string | null }[],
   externalVars: string[],
-  templateLang: 'civet' | 'js',
   moduleName: string | undefined
 ): string {
   let tpl = ''
   for (const s of segments) {
     // texte fixe : entités décodées comme le ferait le navigateur (cf. parseMixedString), un `${` du décodage reste du texte
     tpl += decodeHtmlEntities(s.text).replace(/[\\`]|\$(?=\{)/g, (c) => '\\' + c)
-    if (s.expr !== null) tpl += `\${${cleanJsExpr(s.expr, externalVars, templateLang, moduleName)}}`
+    if (s.expr !== null) tpl += `\${${cleanJsExpr(s.expr, externalVars, moduleName)}}`
   }
   return `\`${tpl}\``
 }
@@ -749,8 +896,8 @@ function interpolation(env: AttrCtx): AttrResult {
   // pour `_mjs_updAttrNode`/`_mjs_updAttr`, pas la chaîne "true"/"false".
   const isPureExpr = expressions.length === 1 && segments.every(s => s.text === '')
   const jsTemplateStr = isPureExpr
-    ? cleanJsExpr(expressions[0], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
-    : buildTemplateFromSegments(segments, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    ? cleanJsExpr(expressions[0], env.compiler.externalVars, env.compiler.moduleName)
+    : buildTemplateFromSegments(segments, env.compiler.externalVars, env.compiler.moduleName)
 
   const id = env.id ?? `a${++state.counter}`
   const attrName = env.attrName ?? ''
@@ -760,7 +907,7 @@ function interpolation(env: AttrCtx): AttrResult {
   let attrStr = env.attrStr
 
   if (env.ctx.type === 'root') {
-    const code = ecrireAttrRacine('this', id, adj, jsTemplateStr)
+    const code = ecrireValeurRacine(env, 'this', id, adj, jsTemplateStr)
     pushUpdate(env, code, vars)
     attrStr += ` ${nom}=''`
   } else if (env.ctx.type === 'for') {
@@ -771,7 +918,7 @@ function interpolation(env: AttrCtx): AttrResult {
     // `µ._mjs_updAttrNode` (comme root via `_mjs_updAttr`) → filtre javascript:/data:html.
     // La valeur vient d'un template literal (toujours string) → jamais false/null,
     // donc pas de removeAttribute intempestif ; `_mjs_safeAttr` re-diffe en interne.
-    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireAttr(`_mjs_n${env.lid}`, adj, jsTemplateStr)}; } }`)
+    env.ctx.updates.push(`{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireValeur(env, `_mjs_n${env.lid}`, adj, jsTemplateStr)}; } }`)
     // var externe interpolée dans la row (`title="v : {$prefix}"`) :
     // sans `structVars`, `_mjs_renderStruct` sauté → attribut figé à vie sur mutation.
     for (const v of vars) state.structVars.add(v)
@@ -787,11 +934,11 @@ function interpolation(env: AttrCtx): AttrResult {
     // littéral DANS la chaîne de l'expression.
     for (const s of segments) {
       jsValClone += s.text.replace(/'/g, '&#39;')
-      if (s.expr !== null) jsValClone += `\${${cleanJsExpr(s.expr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)}}`
+      if (s.expr !== null) jsValClone += `\${${cleanJsExpr(s.expr, env.compiler.externalVars, env.compiler.moduleName)}}`
     }
     attrStr += ` ${attrName}='${jsValClone}'`
     // la chaîne suit les variables qu'elle lit (cf. dynamic, branche {await}) ; le nœud est celui de `mjs-id`, posé par l'appelant
-    suivreEnBranche(env, id, jsTemplateStr, `${ecrireAttr('_mjs_node', adj, jsTemplateStr)};`, vars)
+    suivreEnBranche(env, id, jsTemplateStr, `${ecrireValeur(env, '_mjs_node', adj, jsTemplateStr)};`, vars)
   }
 
   return { id, attrStr }
@@ -922,6 +1069,8 @@ function eventListener(env: AttrCtx): AttrResult {
   // corps BRUT calcule le retrait commun sur TOUTES les lignes avant qu'aucun trim ne les
   // déséquilibre ; le `.trim()` final ne retire plus que les lignes vides de tête/fin.
   let rawContent: string
+  // le gestionnaire tel qu'écrit dans le fichier, retrait compris : la place d'une vraie faute de syntaxe y est retrouvée (cleanJs)
+  let ecrit: string | undefined
   if (emitName !== null) {
     // La valeur d'attribut est la CHARGE UTILE — une expression, comme partout
     // ailleurs dans le framework ; le nom, lui, est porté par l'attribut.
@@ -932,9 +1081,11 @@ function eventListener(env: AttrCtx): AttrResult {
         : ''
     rawContent = payload ? `µemit '${emitName}', ${payload}` : `µemit '${emitName}'`
   } else if (env.attr.expr != null) {
-    rawContent = dedent(env.attr.expr.toString()).trim()
+    ecrit      = env.attr.expr.toString()
+    rawContent = dedent(aligneSurLaPremiereLigne(ecrit)).trim()
   } else if (env.attr.val != null && env.attr.val !== '') {
-    rawContent = dedent(env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '')).trim()
+    ecrit      = env.attr.val.toString().replace(/^\{/, '').replace(/\}$/, '')
+    rawContent = dedent(aligneSurLaPremiereLigne(ecrit)).trim()
   } else {
     // forme ABRÉGÉE refusée sur un nom d'événement
     // À DEUX-POINTS (`<div @mjs:done>`) : elle synthétise ici un appel à la
@@ -949,11 +1100,48 @@ function eventListener(env: AttrCtx): AttrResult {
     rawContent = `${evt}(e, el)`
   }
 
+  // référence faite d'un nom seul, avec ou sans accolades (`@click=nom`, `@click={nom}`, `@click=@nom`) : le transpileur refuse un nom qui
+  // n'existe pas (cf. checkHandlerReferences, transpiler/lint.ts) ; un nom que le gabarit met ici en portée (variable et indice d'un `{for}`,
+  // valeur d'un `{await}`, `{const}`) ou que le transpileur connaît déjà n'est pas relevé. Une fonction du navigateur que ni le <script> ni
+  // un import ne fournit (`@click=alert`) est appelée ici, sans la balise pour `this` : rendue au runtime, elle serait appelée avec la balise
+  // pour `this` et lèverait « Illegal invocation ». Celles qui lèvent quand elles reçoivent l'événement sont relevées, pour être refusées
+  const valued    = emitName === null && (env.attr.expr != null || (env.attr.val != null && env.attr.val !== ''))
+  const reference = valued ? HANDLER_REFERENCE_RE.exec(rawContent) : null
+  const template  = reference !== null && env.ctx.locals?.has(reference[2]) === true
+  const local     = reference !== null && reference[1] === '' && (template || env.compiler.externalVars?.includes(reference[2]))
+  if (reference && reference[1] === '' && !local && state.handlerScope && !state.handlerScope.has(reference[2]) && BROWSER_FUNCTIONS.has(reference[2]) && !BROWSER_FUNCTIONS_REFUSING_EVENT.has(reference[2])) {
+    rawContent = `${reference[2]}(e, el)`
+  }
+  // relevée une fois (la pré-passe du générateur parcourt le gabarit avant la vraie passe, cf. compile) ; un nom du gabarit écrit
+  // avec `@` (`{for f in $fs}…@click=@f`) garde sa portée, pour que le message propose `@click=f`
+  else if (reference && !local && !state.isPrePass) {
+    state.handlerRefs.push({ name: reference[2], method: reference[1] === '@', attr: attrName.startsWith('@') ? attrName : `@${attrName}`, braces: env.attr.expr != null || String(env.attr.val ?? '').trimStart().startsWith('{'), line: env.attr.line ?? env.node.line, ...(template ? { scope: [reference[2]] } : {}) })
+  }
+
   // en Civet, les accolades derrière une flèche sont un bloc, jamais un objet (cf. corpsDeFlecheEnBloc)
-  const cleanedJs = env.compiler.templateLang === 'js' ? cleanJs(rawContent, env.compiler.externalVars) : corpsDeFlecheEnBloc(cleanJs(rawContent, env.compiler.externalVars))
+  // le texte écrit, seulement s'il est celui que l'on compile : un code que la construction fabrique (un nom seul devenu appel) garde
+  // les refus qui le suivent
+  // une vraie faute de syntaxe du texte écrit : gardée avec le gestionnaire (pushInline), le transpileur la dit après les refus qui la
+  // précèdent (nom seul)
+  let fauteEcrite: Error | null = null
+  let codeJs: string
+  try {
+    codeJs = cleanJsGestionnaire(rawContent, env.compiler.externalVars, env.compiler.moduleName, ecrit !== undefined && dedent(aligneSurLaPremiereLigne(ecrit)).trim() === rawContent ? ecrit : undefined)
+  }
+  catch (err: any) {
+    if (typeof err?.texteRendu !== 'string') throw err
+    codeJs      = err.texteRendu
+    fauteEcrite = err
+  }
+  const cleanedJs = corpsDeFlecheEnBloc(codeJs)
   const idx = state.inlines.length
 
-  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
+  // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre ; `racines` : variable de l'état dont
+  // chaque élément de boucle est une partie (`$.l`, ou celle de la boucle qui l'entoure, `row.cells`)
+  const racines = new Map<string, string>()
+  // boucle la plus intérieure en portée : celle dont la ligne porte la balise du gestionnaire, et dont l'entrée y est notée (`_mjs_ev`)
+  const boucles   = (env.ctx.portee ?? env.ctx.loops.map((loop: any) => ({ kind: 'for' as const, loop }))).filter((e: any) => e.kind === 'for')
+  const interieur = boucles.length ? (boucles[boucles.length - 1] as any).loop : null
   const reconstructCoffee = squelettePortee(env, cleanedJs, (l, luApres) => {
     const d = l.depth
     const item = l.item
@@ -970,24 +1158,49 @@ function eventListener(env: AttrCtx): AttrResult {
     // ligneBoucleLiaison) — cette conversion seulement quand l'élément est lu : par le gestionnaire, par l'itérable d'une boucle
     // intérieure ou par un `{const}` recréé après la boucle (texteLuApres)
     // ligne pure d'un `{for}` de racine (cf. LoopInfo.parEntree) : l'élément et l'indice se lisent sur l'entrée de la ligne, que la
-    // réconciliation tient à jour même quand elle saute la ligne (`_mjs_it`, `_mjs_ix`) ; la balise y mène par `_mjs_row` (posé par le
+    // réconciliation tient à jour même quand elle saute la ligne (`_mjs_it`, `_mjs_ix`) ; la balise y mène par `_mjs_ev` (posé par le
     // gabarit de la ligne). Le temporaire garde le nom du squelette, que le contrôle des constantes reconnaît (cf. const-reassign.ts)
-    if (l.parEntree) {
-      return `  _mjs_ra_${d} = el._mjs_row._mjs_en\n` +
-        `  ${item} = _mjs_ra_${d}._mjs_it\n` +
-        `  ${idxVar} = _mjs_ra_${d}._mjs_ix\n`
-    }
     const lu = new RegExp(`(?<![\\w$.])${item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`).test(luApres)
-    return `  _mjs_ri_${d} = el._mjs_idx_${d} ${state.templateLang === 'js' ? '?' : '??'} el.getAttribute('data-mjs-idx-${d}')\n` +
+    // élément ÉCRIT par le gestionnaire (cf. elementEcrit) d'une liste nommée par un chemin (`$.l`, `$.o.items`, `row.cells`) : la liste
+    // relue sous `_mjs_rl_N` donne à l'écriture son chemin compilé, l'indice compris, vérifié par identité (cf. path-tracker.ts)
+    const relue = lu && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(iterable.trim()) && elementEcrit(item, luApres) ? `  _mjs_rl_${d} = ${iterable}\n` : ''
+    // réglage `proxy: false` : élément ÉCRIT d'une liste calculée (`$.l.filter(f)`), sans chemin ni indice dans la liste de l'état —
+    // l'écriture n'est pas vue, le transpileur avertit (cf. GeneratorState.avisBoucles)
+    const tete   = TETE_BOUCLE.exec(iterable.trim())
+    const racine = tete ? (tete[1] === '$' ? tete[2] : racines.get(tete[1])) : undefined
+    if (racine) racines.set(item, racine)
+    // réglage `proxy: false` : liste calculée qui garde les objets d'une liste nommée par un chemin (cf. cheminDeVue) — la liste relue sous
+    // `_mjs_rl_N`, l'élément retrouvé dans elle par son identité sous `_mjs_rj_N` : l'écriture a son chemin compilé, vérifié par la même
+    // garde (cf. path-tracker.ts) ; une autre liste calculée avertit, comme un gestionnaire qui attend (`await`) : l'indice retrouvé avant
+    // l'attente ne suit pas la liste changée pendant elle
+    const vue  = state.sansProxy && !relue && lu && elementEcrit(item, luApres) && !/(?<![\w$.])(?:await|yield)(?![\w$])/.test(luApres) ? cheminDeVue(iterable.trim()) : null
+    const relu = vue ? `  _mjs_rl_${d} = ${vue}\n  _mjs_rj_${d} = Array.prototype.indexOf.call(_mjs_rl_${d}, ${item})\n` : relue
+    if (state.sansProxy && racine && !relu && lu && elementEcrit(item, luApres)) state.avisBoucles.push({ inline: idx, nom: item, racine: '$' + racine })
+    if (l.parEntree) {
+      // itérable lu dans le magasin et élément lu : l'élément se relit dans l'itérable, à l'indice de l'entrée, comme hors d'une ligne
+      // pure — une écriture par lui (`t.fait = v`, `t.n++`, `t.tags.push(x)`) passe ainsi par l'aide du magasin, sous la règle du
+      // champ, et prévient la clé (cf. path-tracker.ts)
+      if (lu && /µ\.store\b/.test(iterable)) {
+        return `  _mjs_ri_${d} = el._mjs_ev._mjs_en._mjs_ix\n` +
+          `  _mjs_ra_${d} = ${iterable}\n` +
+          `  _mjs_ra_${d} = Array.from(_mjs_ra_${d}) if _mjs_ra_${d} instanceof Map or _mjs_ra_${d} instanceof Set\n` +
+          `  ${item} = _mjs_ra_${d}[_mjs_ri_${d}]\n` +
+          `  ${idxVar} = _mjs_ri_${d}\n`
+      }
+      return `  _mjs_ra_${d} = el._mjs_ev._mjs_en\n` +
+        `  ${item} = _mjs_ra_${d}._mjs_it\n` +
+        `  ${idxVar} = _mjs_ra_${d}._mjs_ix\n` + relu
+    }
+    return `  _mjs_ri_${d} = el._mjs_idx_${d} ?? el.getAttribute('data-mjs-idx-${d}')\n` +
       `  _mjs_ra_${d} = ${iterable}\n` +
       (lu ? `  _mjs_ra_${d} = Array.from(_mjs_ra_${d}) if _mjs_ra_${d} instanceof Map or _mjs_ra_${d} instanceof Set\n` : '') +
       `  _mjs_ri_${d} = +_mjs_ri_${d} if Array.isArray(_mjs_ra_${d})\n` +
-      `  ${item} = _mjs_ra_${d}[_mjs_ri_${d}]\n` +
-      `  ${idxVar} = _mjs_ri_${d}\n`
+      (lu && l === interieur && !env.ctx.enBloc ? enLigne(d, item) : lu && /^[A-Za-z_$][\w$]*$/.test(item) ? enLigneExterieure(d, item) : `  ${item} = _mjs_ra_${d}[_mjs_ri_${d}]\n`) +
+      `  ${idxVar} = _mjs_ri_${d}\n` + relu
   })
 
   const userCode = dedent(cleanedJs).split('\n').map(l => `  ${l}`).join('\n')
-  pushInline(env, `(e, el) =>\n${modCoffee}${reconstructCoffee}${userCode}`)
+  pushInline(env, `(e, el) =>\n${modCoffee}${reconstructCoffee}${userCode}`, fauteEcrite)
 
   // Auto-passive : pour touchstart/touchmove/wheel, le listener délégué est
   // enregistré `passive` par défaut (scroll fluide). On note ici si un handler
@@ -1063,7 +1276,7 @@ function bindingStandard(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) throw new Error(`[binding_standard] expected !{...} pattern, got "${env.rawVal}"`)
   const varExpr = m[1]
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
 
   const vars = getEffectVars(varExpr)
 
@@ -1086,11 +1299,16 @@ function bindingStandard(env: AttrCtx): AttrResult {
   const emptiableNumber = baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'input' && (cast === 'number' || (!cast && numberFieldPossible(env.node)))
   const emptyInProgress = emptiableNumber ? ` && !(_mjs_node.value === '' && _mjs_bv === 0 && _mjs_node.getRootNode().activeElement === _mjs_node)` : ''
 
+  // <select> lié à une variable typée, celle du garde d'office (le parseur marque sa liaison) : sans types, le code d'une liste reste
+  // le même
+  const typed = baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'select' && ((env.node as { attrs?: Array<{ name?: string, typed?: boolean }> }).attrs ?? []).some(a => a.name === 'value' && a.typed === true)
+
   let updateLogic: string
   if (baseAttr === 'value' && (env.node.name ?? '').toLowerCase() === 'select') {
     // <select> : l'aide du runtime choisit les options (un tableau pour `multiple`) et réapplique la valeur quand elles
-    // changent (options chargées ensuite) ; variable vide (`null`) : rien de choisi
-    updateLogic = `µ._mjs_selVal(_mjs_node, ${jsVar} == null ? '' : ${jsVar});`
+    // changent (options chargées ensuite) ; variable vide (`null`) : rien de choisi. Variable typée : µ._mjs_tsel (mjs_types.ts),
+    // où un nombre sans option de son texte exact choisit celle qui l'écrit autrement (`01`), dans une liste simple ou à choix multiples
+    updateLogic = `${typed ? 'µ._mjs_tsel' : 'µ._mjs_selVal'}(_mjs_node, ${jsVar} == null ? '' : ${jsVar});`
   } else if (baseAttr === 'value') {
     updateLogic = `if (_mjs_node.type === 'select-multiple') { ` +
       `const _mjs_arr = Array.isArray(${jsVar}) ? ${jsVar}.map(String) : []; ` +
@@ -1188,7 +1406,16 @@ function bindingStandard(env: AttrCtx): AttrResult {
   let valExtractor: string
   if (baseAttr === 'value') {
     const autoNum = cast ? 'false' : "['number', 'range'].includes(_mjs_el.type)"
-    valExtractor = `if _mjs_el.type == 'select-multiple' then Array.from(_mjs_el.selectedOptions).map((_mjs_opt) => _mjs_opt.value) else (if ${autoNum} then Number(_mjs_el.value) else ${castExpr('_mjs_el.value')})`
+    // liste à choix multiples liée à une variable (`$x`, `$$x`) de règle de liste qui accepte null (`string[] | null`) : aucun choix
+    // vaut null, comme le champ de liste vide d'un formulaire jugé par µrules (µ._mjs_tlist, mjs_types.ts) ; liste simple : son option
+    // vide vaut null quand la règle refuse le texte vide mais accepte null (`int 1..12 | null`, µ._mjs_tnul) ; variable typée seulement,
+    // celle du garde d'office (le parseur marque sa liaison) : sans types, le code d'une liste reste le même
+    const bare    = typed ? varExpr.trim().match(/^(\$\$?)([A-Za-z_]\w*)$/) : null
+    const rule    = bare ? (bare[1] === '$$' ? `µ._mjs_storeRules?.${bare[2]}` : `_mjsThis._mjs_types?.${bare[2]}`) : ''
+    const choices = 'Array.from(_mjs_el.selectedOptions).map((_mjs_opt) => _mjs_opt.value)'
+    const multi   = rule ? `(if _mjs_el.selectedOptions.length == 0 and µ._mjs_tlist and µ._mjs_tlist(${rule}) > 1 then null else ${choices})` : choices
+    const one     = rule ? `(if _mjs_el.value == '' and µ._mjs_tnul and µ._mjs_tnul(${rule}) then null else ${castExpr('_mjs_el.value')})` : castExpr('_mjs_el.value')
+    valExtractor = `if _mjs_el.type == 'select-multiple' then ${multi} else (if ${autoNum} then Number(_mjs_el.value) else ${one})`
   } else if (baseAttr === 'checked') {
     valExtractor = '_mjs_el.checked'
   } else if (MJS_BOOLEAN_PROPS.includes(baseAttr)) {
@@ -1253,7 +1480,7 @@ function bindingDimensions(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) return { id: env.id }
   const varExpr = m[1]
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
   const id = env.id ?? `d${++state.counter}`
 
   let attrStr = env.attrStr
@@ -1348,7 +1575,7 @@ function bindingMedia(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) return { id: env.id }
   const varExpr = m[1]
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
 
   const vars = getEffectVars(varExpr)
 
@@ -1433,7 +1660,7 @@ function bindingContent(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) return { id }
   const varName = m[1]
-  const jsVar = cleanJs(varName, env.compiler.externalVars)
+  const jsVar = cleanJs(varName, env.compiler.externalVars, false, env.compiler.moduleName)
   const prop = env.attrName === '@html' ? 'innerHTML' : 'textContent'
 
   // SEUL binding two-way sans `reconstructCoffee` :
@@ -1479,7 +1706,7 @@ function bindingContent(env: AttrCtx): AttrResult {
   // comparaison réécrivait le contenu à chaque passage de l'effet (code `onerror` rejoué, image rechargée, nœuds refaits, curseur renvoyé
   // au début) : on n'écrit que si la VALEUR a changé depuis la dernière vue, gardée sur la balise (`_mjs_html`)
   const corps  = (n: string): string => prop === 'innerHTML'
-    ? `const _mjs_h = String(${jsVar}); if (${n}._mjs_html !== _mjs_h) { ${n}._mjs_html = _mjs_h; if (${n}.innerHTML !== _mjs_h) ${n}.innerHTML = _mjs_h; }`
+    ? `const _mjs_h = String(${jsVar}); if (${n}._mjs_html !== _mjs_h) { ${n}._mjs_html = _mjs_h; if (${n}.innerHTML !== _mjs_h) ${ecrireHtmlBrut(n, '_mjs_h', env.compiler.moduleName)}; }`
     : `if (${n}.textContent !== String(${jsVar})) ${n}.textContent = String(${jsVar});`
   const ecrire = (n: string): string => prop === 'innerHTML'
     ? `if (${n}) { ${corps(n)} }`
@@ -1542,7 +1769,7 @@ function bindingGroup(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) return { id: env.id }
   const varExpr = m[1]
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
 
   const vars = getEffectVars(varExpr)
 
@@ -1685,7 +1912,7 @@ function bindingThis(env: AttrCtx): AttrResult {
     const line = typedLine('reactivity', t('generator.this-ref-reactive', { varExpr: varExpr.trim(), plain: _plain }), state.lint)
     if (line !== null) printDiagnostic(line, state.colorsEnabled)
   }
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
   const id = env.id ?? `t${++state.counter}`
 
   // Auto-déclaration : `@this=!{canvas}` avec une variable NUE (sans `$`, donc
@@ -1743,7 +1970,7 @@ function bindingComponent(env: AttrCtx): AttrResult {
   const m = env.rawVal.match(/^!\{(.+)\}$/)
   if (!m) return { id: env.id }
   const varExpr = m[1]
-  const jsVar = cleanJs(varExpr, env.compiler.externalVars)
+  const jsVar = cleanJs(varExpr, env.compiler.externalVars, false, env.compiler.moduleName)
   // la prop de l'enfant porte le nom que la forme en dur obtient (cf. propName) : son état, `_mjs_binds` et l'événement `mjs-bind:` le portent aussi ; l'attribut
   // du rendu serveur garde le nom écrit, que l'enfant relit camélisé à l'hydratation. Enfant pas encore mis à niveau : la clé dépend de la balise
   const prop    = propName(attrName)
@@ -1767,9 +1994,25 @@ function bindingComponent(env: AttrCtx): AttrResult {
   // noms du gabarit en portée (boucles, `{const}`, valeur `{await}`), recréés dans l'ordre
   const reconstructCoffee = squelettePortee(env, jsVar, ligneBoucleLiaison)
 
-  const updateLogic = `(_mjs_node._mjs_binds ??= new Set()).add('${prop}'); ` +
+  // <@@select> liée à une variable de règle (le parseur pose `typed` sur la balise) : sa règle, lue comme celle d'une liste native ;
+  // la liaison lui montre la valeur de la variable comme une liste native la montre (µ._mjs_tshow, mjs_types_select.ts : null sur son
+  // option vide, à choix multiples chaque option une fois, dans leur ordre) ; liée à une variable libre, ou sans types, la liste garde
+  // le même code
+  const typedSel = attrName === 'value' && (env.node.name ?? '').toLowerCase() === 'mjs-core-select' && ((env.node as { attrs?: Array<{ name?: string }> }).attrs ?? []).some(a => a.name === 'typed')
+  const bare     = typedSel ? varExpr.trim().match(/^(\$\$?)([A-Za-z_]\w*)$/) : null
+  const rule     = bare ? (bare[1] === '$$' ? `µ._mjs_storeRules?.${bare[2]}` : `_mjsThis._mjs_types?.${bare[2]}`) : ''
+  // réglage `proxy: false` : un objet se repose même tel quel — un frère lié au même objet (`items=!{$rows}` deux fois) l'a peut-être
+  // écrit en profondeur, `_set` en juge par l'époque de l'objet (mjs_element.ts), muet si rien n'a changé ; avec l'enveloppe, la
+  // variable tient la sienne, un objet changé n'est jamais le même
+  const differe  = rule ? `µ._mjs_tshow(_mjs_node, ${jsVar})` : state.sansProxy ? `(_mjs_node._state['${prop}'] !== ${jsVar} || typeof ${jsVar} === 'object')` : `_mjs_node._state['${prop}'] !== ${jsVar}`
+
+  // développement : la liaison notée avec le composant qui la pose et sa variable liée (`items=!{$items[i]}` : `items` ; rien pour le
+  // magasin), avant que la valeur ne parte : ce que l'enfant modifie par elle, il le modifie pour ce composant (mjs_debug.ts)
+  const racine      = /^\s*\$(?!\$)([A-Za-z_]\w*)/.exec(varExpr)?.[1] ?? ''
+  const liaison     = state.devWarnings && isComponent(env.node) ? `µ._mjs_twoWay?.(_mjs_node, '${prop}', this, '${racine}'); ` : ''
+  const updateLogic = `(_mjs_node._mjs_binds ??= new Set()).add('${prop}'); ${liaison}` +
     `if (_mjs_node._set) { ` +
-    `  if (_mjs_node._state && _mjs_node._state['${prop}'] !== ${jsVar}) _mjs_node._set('${prop}', ${jsVar}); ` +
+    `  if (_mjs_node._state && ${differe}) _mjs_node._set('${prop}', ${jsVar}); ` +
     // `_set` pose la valeur en JS PUR (aucune trace HTML) : côté client
     // sans effet (le composant vit déjà en mémoire), mais côté SERVEUR
     // (`µ._isServer`) la valeur ne serait alors JAMAIS sérialisée dans le HTML
@@ -1781,7 +2024,8 @@ function bindingComponent(env: AttrCtx): AttrResult {
     // dans le registre `µ._mjs_pend`, TYPÉE — 7 reste un nombre, une date une date. Par un attribut, l'enfant la relirait en chaîne à sa
     // mise à niveau et la chaîne remonterait dans la variable du parent. Une balise `mjs-` qui n'est pas un composant du projet (hors du
     // manifeste) reçoit, elle, l'attribut (`1`) : texte, ou JSON pour un objet
-    `  µ._mjs_pend(_mjs_node, ${pendKey}, ${jsVar}, 1); ` +
+    // <@@select> liée à une variable de règle : null y part en texte vide, son option vide, comme la liaison la montre (µ._mjs_tshow)
+    `  µ._mjs_pend(_mjs_node, ${pendKey}, ${rule ? `(${jsVar} ?? '')` : jsVar}, 1); ` +
     `}`
 
   if (env.ctx.type === 'root') {
@@ -1823,11 +2067,25 @@ function bindingComponent(env: AttrCtx): AttrResult {
   // Convention MJS : l'event `mjs-bind:X` porte la valeur dans `_mjs_e.data`
   // (cf. `_mjs_notifyMutation` runtime, `_bindEv.data = ...`). PAS `e.detail`.
   // comparaison sans conversion : de vide à 0 (ou de 0 à vide), la valeur remonte
-  if (cast) {
+  if (rule) {
+    // <@@select> liée à une variable de règle : son choix se juge comme celui d'une liste native, par les fonctions de son garde
+    // (µ._mjs_tpick, mjs_types_select.ts) — accepté, ramené à la borne, ou refusé, la liste revenant alors sur le dernier texte accepté ;
+    // l'aide rend ce que la variable reçoit (µ._mjs_TNO : rien). Pas pour tout composant : un champ texte serait ramené en pleine frappe
+    inlineBody += `  _mjs_lu = µ._mjs_tpick(_mjs_e.target, ${rule}, ${cast ? castExprFor(cast, '_mjs_e.data') : '_mjs_e.data'}, ${jsVar})\n`
+    inlineBody += `  ${jsVar} = _mjs_lu unless _mjs_lu is µ._mjs_TNO or Object.is(${jsVar}, _mjs_lu)\n`
+  } else if (cast) {
     inlineBody += `  _mjs_cast = ${castExprFor(cast, '_mjs_e.data')}\n`
     inlineBody += `  ${jsVar} = _mjs_cast unless Object.is(${jsVar}, _mjs_cast)\n`
   } else {
-    inlineBody += `  ${jsVar} = _mjs_e.data unless Object.is(${jsVar}, _mjs_e.data)\n`
+    // variable du composant, avec l'option `derived: "precise"` (sans elle, l'affectation ordinaire) : l'écho n'est pas écrit par son code, `µ._set` ne porte pas le drapeau du code du composant (0, mjs_init.ts) — le
+    // même objet revenu sans changement vu par MJS reste muet (mjs_element.ts) ; la garde des props du développement le voit (mjs_debug.ts)
+    // le nom : un identifiant JavaScript, accents compris (`$année`), la règle d'acorn que suit la transformation des écritures (transform-reactive.ts)
+    const nomEcho = state.derivedPrecise ? /^\$\.([\p{ID_Start}_$][\p{ID_Continue}$‌‍]*)$/u.exec(jsVar) : null
+    // réglage `proxy: false` : la variable tient l'objet même que l'enfant a écrit en profondeur (`$items[0].nom = v`), qui revient tel
+    // quel — `µ._set` juge par l'époque de l'objet si c'est un écho ou un champ changé (mjs_element.ts) ; avec l'enveloppe, la variable
+    // tient la sienne, l'objet revenu n'est jamais le même
+    const garde = state.sansProxy ? '' : ` unless Object.is(${jsVar}, _mjs_e.data)`
+    inlineBody += nomEcho ? `  µ._set(_mjsThis, '${nomEcho[1]}', _mjs_e.data, 0)${garde}\n` : `  ${jsVar} = _mjs_e.data${garde}\n`
   }
   pushInline(env, `(_mjs_e, _mjs_el) =>\n${inlineBody}`)
 
@@ -1854,8 +2112,7 @@ function propModule(node: Node, attr: Attr): boolean {
 }
 
 function bindingModule(env: AttrCtx): AttrResult {
-  const lang    = env.compiler.templateLang
-  const expr    = (e: string) => cleanJsExpr(e, env.compiler.externalVars, lang, env.compiler.moduleName)
+  const expr    = (e: string) => cleanJsExpr(e, env.compiler.externalVars, env.compiler.moduleName)
   const dyn     = env.node.attrs.filter((a) => propModule(env.node, a))
   const natifs  = dyn.filter((a) => /^(?:class|style|id|data-.*|aria-.*)$/i.test(a.name ?? ''))
   const props   = dyn.filter((a) => !natifs.includes(a))
@@ -2057,23 +2314,11 @@ function bindingTransition(env: AttrCtx): AttrResult {
     outroend:   attrs.find((a: any) => a.name === '@outroend'),
   }
 
-  const getVal = (a: any): string => {
-    let val = a.expr ?? a.val ?? ''
-    val = val.toString().trim()
-    if (val.startsWith('{') && val.endsWith('}')) val = val.slice(1, -1)
-    if (val.includes('Generated by CoffeeScript')) {
-      val = val.split('\n').filter((l: string) => !l.includes('Generated by CoffeeScript')).join(' ')
-    }
-    val = val.trim()
-    if (val.endsWith(';')) val = val.slice(0, -1)
-    return val.trim()
-  }
-
   // Les callbacks contiennent du code utilisateur (`$.x = ...`) — il faut le
   // faire passer par le même pipeline que le script init pour que les
   // assignations déclenchent `µ._set(_mjsThis, …)` et l'invalidation qui va
   // avec. Sans ça, `$.status = 'intro started'` écrit sur `_state` mais
-  // n'invalide rien → le binding `{$status}` ne re-render pas.
+  // n'invalide rien → le binding `{$status}` ne re-render pas. Écrit dans la langue des gestionnaires, compilé comme eux (cf. corpsDeRappel)
   const cbAssignments = Object.entries(cbs)
     .filter(([_, a]) => a)
     .map(([key, a]) => {
@@ -2081,13 +2326,29 @@ function bindingTransition(env: AttrCtx): AttrResult {
       // template, donc `effectsByVar` est encore partiel → on ne peut pas prouver
       // qu'une ref n'est pas bindée. On laisse `µ._mjs_deepSet` (réactif, correct) ;
       // le hot-path (refresh dans le script principal) est optimisé en ligne 966.
-      const body = applyPathTracking(transformReactiveWrites(cleanJs(getVal(a), env.compiler.externalVars)))
-      // `\n` explicite avant `; };` (pas juste un espace) : `getVal`/`cleanJs` ont déjà
-      // consommé le saut de ligne d'origine (`.trim()`) — sans un VRAI `\n` ici, un `body`
+      // la fonction entière, pas son corps nu : un `return` de premier niveau s'y lit, les écritures qui le suivent préviennent l'état
+      const suivi = applyPathTrackingMapped(transformReactiveWrites(fonctionDeRappel(a, env)), { sansProxy: state.sansProxy })
+      const body  = suivi.code
+      // réglage `proxy: false` : ce que le rappel écrit sans que le compilateur le voie, à la ligne de la balise — une partie de l'état
+      // (cf. AvisInvisible), ou l'élément d'une boucle `{for}` qui l'entoure (la variable du rendu, sans indice relu)
+      if (state.sansProxy && !state.isPrePass) {
+        const ligne = a.line ?? env.node.line
+        for (const v of suivi.avis ?? []) state.avisRappels.push({ ligne, forme: v.forme, nom: v.nom, racine: v.racine })
+        const racines = new Map<string, string>()
+        for (const l of env.ctx.loops ?? []) {
+          const tete   = TETE_BOUCLE.exec(String(l.iterable ?? '').trim())
+          const racine = tete ? (tete[1] === '$' ? tete[2] : racines.get(tete[1])) : undefined
+          if (!racine) continue
+          racines.set(l.item, racine)
+          if (ecritElementLibre(l.item, body)) state.avisRappels.push({ ligne, forme: 1, nom: l.item, racine: '$' + racine })
+        }
+      }
+      // `\n` explicite avant l'accolade fermante de la fonction (cf. fonctionDeRappel) : `corpsDeRappel` a déjà
+      // consommé le saut de ligne d'origine (`.trim()`) — sans un VRAI `\n`, un corps
       // se terminant par un commentaire `//` (Civet/Coffee) avalerait la fermeture du
       // callback. `flattenPreservingLiterals` (plus bas) préserve ensuite ce saut de ligne
       // PRÉCISÉMENT parce qu'il termine potentiellement un tel commentaire.
-      return `_mjs_node._mjs_cb_${key} = () => { ${body}\n; };`
+      return `_mjs_node._mjs_cb_${key} = ${body};`
     })
     .join(' ')
 
@@ -2100,12 +2361,12 @@ function bindingTransition(env: AttrCtx): AttrResult {
     const m = /^\*([A-Za-z][\w-]*(?:\.[\w.-]*)?)\(([\s\S]*)\)$/.exec(String(a.val ?? ''))
     // `@in="*fly"` : l'effet est là, entre guillemets (sans eux, le parseur lui aurait posé ses parenthèses) ;
     // `@in.global="*fly"` propose `@in.global=*fly`, le modificateur reste
-    if (!m && /^\*[A-Za-z][\w-]*(?:\.[a-z][a-z0-9_]*)?$/.test(String(a.val ?? ''))) throw new Error(t('transitions.guillemets', { directive: transitionDirective(a.name ?? '@' + dir), effet: String(a.val) }))
-    if (!m) throw new Error(t('transitions.attend-effet', { directive: '@' + dir }))
+    if (!m && /^\*[A-Za-z][\w-]*(?:\.[a-z][a-z0-9_]*)?$/.test(String(a.val ?? ''))) throw new Error(t('transitions.guillemets', { directive: shownName(transitionDirective(a.name ?? '@' + dir)), effet: String(a.val) }))
+    if (!m) throw new Error(t('transitions.attend-effet', { directive: written(dir) }))
     const name  = m[1]
     const raw   = m[2]
     const scope = env.ctx.locals ? Array.from(env.ctx.locals) : []
-    const expr  = (v: string) => cleanJsExpr(v, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    const expr  = (v: string) => cleanJsExpr(v, env.compiler.externalVars, env.compiler.moduleName)
     if (!effectSpec(name)) {
       const proche = nearestEffect(name)
       // une faute de frappe sur un effet connu (`fdae`), ou un alias que cet effet n'a pas (`fade.inconnu`) : l'erreur donne le
@@ -2232,11 +2493,13 @@ export function detectFilteredPattern(
 ): { externVar: string; itemAccess: string; op: string; rev: boolean } | null {
   if (!loopItem) return null
   // Normalise les idiomes Coffee/Civet (`is` → `===`, `isnt` → `!==`,
-  // `$x` → `$.x`, `and`/`or`/`not` → `&&`/`||`/`!`) avant de chercher l'op.
+  // `$x` → `$.x`, `and`/`or`/`not` → `&&`/`||`/`!`) avant de chercher l'op :
+  // le motif est cherché dans le code que la condition émet (jsDeLaCondition).
   // Sans ça, `@class{$selected is item}` n'est jamais reconnu comme filtered
   // → fallback non-filtered → l'effect global n'est pas registered →
   // le binding ne re-tire jamais sur mutation de `$selected`.
-  const trimmed = cleanJs(conditionExpr, externalVars).trim()
+  const trimmed = jsDeLaCondition(conditionExpr, externalVars, state.moduleName)
+  if (trimmed === null) return null
   // IMPORTANT : seulement les ops d'ÉGALITÉ (`===` / `==`) sont éligibles au
   // filtered dispatch — l'index inverse `Map<value, fn>` lookup une clé exacte.
   //   - `!==` / `!=` : la condition est vraie pour 999/1000 rows → 999 doivent
@@ -2331,11 +2594,13 @@ export function detectFilteredValueExpr(
   matchValue: string
   unmatchValue: string
   isBoolean: boolean
+  suivies: string[]
 } | null {
   if (!expr) return null
   // Idem `detectFilteredPattern` : normalise les idiomes Coffee/Civet pour
   // que `is`/`isnt`/`and`/`or`/`not` ne bloquent pas la détection filtered.
-  const trimmed = cleanJs(expr, externalVars).trim()
+  const trimmed = jsDeLaCondition(expr, externalVars, state.moduleName)
+  if (trimmed === null) return null
 
   // Cas ternaire : on splitte sur le `?` top-level. Attention aux `?` imbriqués
   // (ex : `a ? b : c ? d : e`). On rejette tout ternaire chained pour rester
@@ -2370,6 +2635,10 @@ export function detectFilteredValueExpr(
     const trueVal = after.slice(0, colonIdx).trim()
     const falseVal = after.slice(colonIdx + 1).trim()
     if (!trueVal || !falseVal) return null
+    // la valeur suit AUSSI ce que lit sa branche. Branche de la ligne choisie qui lit l'état (`$t`) : la liaison reste filtrée, son effet suit
+    // aussi ces variables et récrit la seule ligne choisie (`suivies`) ; branche des autres lignes qui lit quoi que ce soit, ou lecture d'un
+    // magasin, d'un contexte, du composant : toutes les lignes en dépendent, la liaison ordinaire les suit
+    if (/[$µ§]|\bthis\b|_mjsThis/.test(falseVal) || /[µ§]|\bthis\b|_mjsThis/.test(trueVal)) return null
     // La cond doit matcher un filtered pattern.
     const filt = detectFilteredPattern(before, loopItem, externalVars)
     if (!filt) return null
@@ -2379,6 +2648,7 @@ export function detectFilteredValueExpr(
       matchValue: trueVal,
       unmatchValue: falseVal,
       isBoolean: false,
+      suivies: trueVal.includes('$') ? getEffectVars(expr) : [],
     }
   }
 
@@ -2391,6 +2661,7 @@ export function detectFilteredValueExpr(
       matchValue: 'true',
       unmatchValue: 'false',
       isBoolean: true,
+      suivies: [],
     }
   }
   return null
@@ -2437,21 +2708,32 @@ function valeurLitLaLigne(valeurs: string[], item: string, itemAccess: string, c
   return false
 }
 
-// pose, dans l'index d'une liaison filtrée par valeur (attribut, style), la fonction de la ligne. `refaire` : la fonction est refaite à CHAQUE passe de la ligne (sinon seulement si la clé
-// est inédite ou détenue par une autre ligne) ; `lacher` : la ligne lâche l'entrée de son ancienne clé, tant qu'elle est la sienne. Sans l'un ni l'autre, le code est celui d'avant, à l'octet
-function poseFonctionFiltree(creer: string, idxName: string, refaire: boolean, lacher: boolean, multi = false): string {
-  const lecture = `const __f0 = __fns['${idxName}']; `
+// où la ligne range, pour une liaison filtrée par valeur, sa clé dans l'index (`key`) et sa fonction ou son nœud (`fn`) : la première liaison
+// filtrée du gabarit de la ligne, en champs directs sur la ligne (`_mjs_fk`, `_mjs_ff` : aucun objet par ligne) ; une suivante, rare, dans
+// les deux objets de la ligne, sous le nom de son index (`_mjs_filterKeys`, `_mjs_filterFns`, que `fns` déclare). La purge du runtime lit
+// les deux (mjs_for.ts, `_mjs_filtPurgeEntry`)
+type ChampsFiltres = { fn: string, key: string, fns: string }
+function champsFiltres(boucle: LoopInfo, idxName: string): ChampsFiltres {
+  boucle.champsFiltres ??= idxName
+  if (boucle.champsFiltres === idxName) return { fn: '__nodes._mjs_ff', key: '__nodes._mjs_fk', fns: '' }
+  return { fn: `__fns['${idxName}']`, key: `(__nodes._mjs_filterKeys ??= {})['${idxName}']`, fns: 'const __fns = (__nodes._mjs_filterFns ??= {}); ' }
+}
+
+// pose, dans l'index d'une liaison filtrée par valeur (attribut, style), la fonction de la ligne, rangée selon `champs`. `refaire` : la fonction est refaite à CHAQUE passe de la ligne (sinon
+// seulement si la clé est inédite ou détenue par une autre ligne) ; `lacher` : la ligne lâche l'entrée de son ancienne clé, tant qu'elle est la sienne
+function poseFonctionFiltree(creer: string, champs: ChampsFiltres, refaire: boolean, lacher: boolean, multi = false): string {
+  const lecture = `const __f0 = ${champs.fn}; `
   // `multi` : plusieurs lignes peuvent porter la même valeur (cf. dynamic) ; l'index garde alors la fonction de chacune, un Set quand une clé en porte plusieurs
   // (µ._mjs_filtPut). La ligne retire la sienne, sous la clé où elle est posée, avant d'en poser une neuve : le garde reste celui d'avant, une clé à Set la fait refaire à chaque passe
   if (multi) {
-    const cle     = lacher ? `const _mjs_pk = (__nodes._mjs_filterKeys ??= {})['${idxName}']; ` : ''
+    const cle     = lacher ? `const _mjs_pk = ${champs.key}; ` : ''
     const retire  = `if (__f0 !== void 0) µ._mjs_filtDrop(__idx, ${lacher ? '_mjs_pk' : '__k'}, __f0); `
-    const poseSet = `µ._mjs_filtPut(__fe, __k, __f); __fns['${idxName}'] = __f; `
+    const poseSet = `µ._mjs_filtPut(__fe, __k, __f); ${champs.fn} = __f; `
     if (refaire) return `${lecture}${cle}${retire}${creer}${poseSet}`
     return `${lecture}if (__f0 === void 0 || __idx.get(__k) !== __f0) { ${cle}${retire}${creer}${poseSet}} `
   }
-  const lache   = lacher ? `const _mjs_pk = (__nodes._mjs_filterKeys ??= {})['${idxName}']; if (__f0 !== void 0 && _mjs_pk !== __k && __idx.get(_mjs_pk) === __f0) __idx.delete(_mjs_pk); ` : ''
-  const pose    = `__idx.set(__k, __f); __fns['${idxName}'] = __f; `
+  const lache   = lacher ? `const _mjs_pk = ${champs.key}; if (__f0 !== void 0 && _mjs_pk !== __k && __idx.get(_mjs_pk) === __f0) __idx.delete(_mjs_pk); ` : ''
+  const pose    = `__idx.set(__k, __f); ${champs.fn} = __f; `
   if (refaire) return `${lacher ? lecture : ''}${lache}${creer}${pose}`
   return `${lecture}if (__f0 === void 0 || __idx.get(__k) !== __f0) { ${lache}${creer}${pose}} `
 }
@@ -2461,17 +2743,20 @@ function poseFonctionFiltree(creer: string, idxName: string, refaire: boolean, l
 // ne touche que les deux lignes qui changent quand la variable bouge, l'ancienne valeur s'éteint, la nouvelle s'allume.
 // `bascule(valeur, allume)` : l'effet sur l'entrée d'une valeur quand une seule ligne la porte ; avec `multi`, plusieurs
 // lignes peuvent la porter et µ._mjs_filtCall les appelle toutes. Le texte émis est le même pour les trois liaisons
-function liaisonFiltree(env: AttrCtx, externVar: string, idxName: string, keyExpr: string, logique: string, pose: string, multi: boolean, bascule: (valeur: string, allume: string) => string): void {
+// l'index naît avec la première ligne qui s'y range : son nom rejoint alors, une fois, la liste des index du composant (`_mjs_filtIdxKeys`, lue
+// par les purges de la réconciliation), jamais à chaque ligne. `champs` : où la ligne range sa clé et sa fonction (cf. champsFiltres)
+// `suivies` : les variables d'état que lit la valeur de la ligne choisie ; l'effet les suit aussi, et quand l'une change sans que la variable
+// comparée change, il récrit la seule ligne choisie
+function liaisonFiltree(env: AttrCtx, externVar: string, idxName: string, champs: ChampsFiltres, keyExpr: string, logique: string, pose: string, multi: boolean, bascule: (valeur: string, allume: string) => string, suivies: string[] = []): void {
   env.ctx.updates.push(
     `{ const _mjs_n${env.lid} = __nodes['${env.lid}']; ` +
     `if(_mjs_n${env.lid}) { let _mjs_node = _mjs_n${env.lid}; ${logique} ` +
     `const __k = ${keyExpr}; ` +
     `const __fe = ((_mjsThis._mjs_filt ??= {})['${idxName}'] ??= { idx: null, prev: void 0 }); ` +
-    `const __idx = (__fe.idx ??= new Map()); ` +
-    `const __fns = (__nodes._mjs_filterFns ??= {}); ` +
+    `const __idx = __fe.idx ?? ((_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'), __fe.idx = new Map()); ` +
+    champs.fns +
     pose +
-    `(_mjsThis._mjs_filtIdxKeys ??= new Set()).add('${idxName}'); ` +
-    `(__nodes._mjs_filterKeys ??= {})['${idxName}'] = __k; ` +
+    `${champs.key} = __k; ` +
     `} }`
   )
   const filtEffectCode =
@@ -2488,14 +2773,16 @@ function liaisonFiltree(env: AttrCtx, externVar: string, idxName: string, keyExp
       : `if (_mjs_prev !== void 0) { ${bascule('_mjs_prev', 'false')} } ` +
         `if (_mjs_curr !== void 0) { ${bascule('_mjs_curr', 'true')} } `) +
     `} ` +
-    `__fe.prev = _mjs_curr; ` +
-    `} }`
+    `__fe.prev = _mjs_curr; } ` +
+    (suivies.length > 0 ? `else if (_mjs_curr !== void 0 && __fe.idx) { const _mjs_idx = __fe.idx; ${multi ? 'µ._mjs_filtCall(_mjs_idx.get(_mjs_curr), true);' : bascule('_mjs_curr', 'true')} } ` : '') +
+    `}`
   // Expansion transitive : si la variable est un dérivé, l'effet s'abonne aussi à ses dépendances statiques (sinon une
   // dépendance qui mute laisse le dérivé périmé et l'effet endormi) — getEffectVars passe par analyzer.resolveSnippetDeps.
   // Hors garde de branche : le souvenir `prev` suit la variable même quand un {if} cache la liste, sinon la ligne
   // éteinte au retour n'est pas la bonne (cf. CompilerState.registerEffect)
   const filtVars = getEffectVars(`$${externVar}`)
-  registerEffect(filtEffectCode, filtVars.length > 0 ? filtVars : [externVar], { unguarded: true })
+  const deps     = filtVars.length > 0 ? filtVars : [externVar]
+  registerEffect(filtEffectCode, suivies.length > 0 ? [...new Set([...deps, ...suivies])] : deps, { unguarded: true })
 }
 
 // effet sur la ligne seule d'une valeur, pour l'attribut et le style : sa fonction, appelée allumée ou éteinte
@@ -2529,10 +2816,21 @@ function bindingClass(env: AttrCtx): AttrResult {
   return { id }
 }
 
+// aucune des classes `jetons` sur la balise à sa fabrication : ni étalement, ni `class` calculé ou interpolé, ni l'une d'elles dans son `class`
+// écrit (une bascule `@class{…}` voisine a sa propre garde)
+function classesAbsentes(attrs: { type: string, name?: string, val?: string }[], jetons: string[]): boolean {
+  return attrs.every((a) => {
+    const an = (a.name ?? '').toLowerCase()
+    if (a.type === 'spread') return false
+    if (/^[@:]class\{/.test(an) || !an.includes('class')) return true
+    return an === 'class' && a.type === 'static' && !/[{}]/.test(a.val ?? '') && !(a.val ?? '').trim().split(/\s+/).some((c) => jetons.includes(c))
+  })
+}
+
 // une bascule de `className` (une ou plusieurs classes) sur la condition `conditionExpr` ; rend l'id du nœud, créé au besoin
 function basculeDeClasses(env: AttrCtx, idNoeud: string | undefined, className: string, conditionExpr: string): string {
   // Site EXPR (condition @class{cond}, même nature qu'un {if}).
-  const jsVar = cleanJsExpr(conditionExpr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+  const jsVar = cleanJsExpr(conditionExpr, env.compiler.externalVars, env.compiler.moduleName)
 
   const vars = getEffectVars(conditionExpr)
   const id = idNoeud ?? `c${++state.counter}`
@@ -2558,6 +2856,10 @@ function basculeDeClasses(env: AttrCtx, idNoeud: string | undefined, className: 
     const code = `{ const _mjs_node = this._mjs_nodes.${id}; if(_mjs_node) { ${updateLogic} } }`
     pushUpdate(env, code, vars)
   } else if (env.ctx.type === 'for') {
+    // classes absentes de la balise du gabarit de la ligne (hors bloc) : leur garde naît à faux avec la ligne que fabrique le gabarit (tplFn de
+    // compile.ts, `naissance`), une condition fausse ne bascule alors rien. Une ligne écrite par le serveur garde une garde indéfinie (sa
+    // première passe écrit la classe, qui part si le serveur l'avait posée)
+    if (!env.ctx.enBloc && classesAbsentes(env.node.attrs ?? [], clsTokens)) env.ctx.naissance?.push(`__nodes['${env.lid}']._mjs_cl_${safeCls} = false;`)
     // Tentative de détection du pattern filtered (gain massif sur select1k).
     // On regarde le scope LOCAL : loopItem = dernier item de la chaîne ctx.loops.
     const lastLoop = env.ctx.loops && env.ctx.loops.length > 0
@@ -2599,8 +2901,8 @@ function basculeDeClasses(env: AttrCtx, idNoeud: string | undefined, className: 
         ? `${lastLoop!.item}.${filt.itemAccess}`
         : `${lastLoop!.item}`
       // Anti-leak : on tracke (a) le nom de l'index dans
-      // `_mjs_filtIdxKeys` (Set côté instance) pour énumérer les Maps actives au
-      // destroy, et (b) la filterKey dans `__nodes._mjs_filterKeys` (par row) pour
+      // `_mjs_filtIdxKeys` (Set côté instance, rempli à la naissance de l'index) pour énumérer les Maps actives au
+      // destroy, et (b) la clé de la ligne (champs directs `_mjs_fk`/`_mjs_ff`, cf. champsFiltres) pour
       // savoir quelle entrée purger. Le runtime _mjs_reconcileList lit ces deux
       // infos au moment du `cache.delete(oldKey)`.
       // le mémo d'un filtrage par clé vit dans `_mjs_filt` (propriété POINTÉE, donc
@@ -2630,12 +2932,13 @@ function basculeDeClasses(env: AttrCtx, idNoeud: string | undefined, className: 
       const lacher = !filtreSurLaCle(lastLoop, filt.itemAccess)
       const multi  = plusieursLignes(lacher, env.ctx.loops)
       const creer  = `const __f = (_mjs_match) => { ${clsToggle(`_mjs_n${env.lid}`, '_mjs_match')} _mjs_n${env.lid}._mjs_cl_${safeCls} = _mjs_match; }; `
+      const champs = champsFiltres(lastLoop!, idxName)
       const pose   = multi
-        ? poseFonctionFiltree(creer, idxName, false, lacher, true)
-        : `if (__fns['${idxName}'] === void 0 || __idx.get(__k) !== _mjs_n${env.lid}) { __idx.set(__k, _mjs_n${env.lid}); __fns['${idxName}'] = _mjs_n${env.lid}; } `
+        ? poseFonctionFiltree(creer, champs, false, lacher, true)
+        : `if (${champs.fn} === void 0 || __idx.get(__k) !== _mjs_n${env.lid}) { __idx.set(__k, _mjs_n${env.lid}); ${champs.fn} = _mjs_n${env.lid}; } `
       // l'index stocke le NŒUD de la ligne (sans `multi`) : l'effet de la racine bascule la classe directement, sans
       // appel de fonction, et tient à jour la garde `_mjs_cl_${safeCls}` que relit la passe de la ligne
-      liaisonFiltree(env, filt.externVar, idxName, keyExpr, updateLogic, pose, multi, (valeur, allume) => `const _mjs_nd = _mjs_idx.get(${valeur}); if (_mjs_nd) { ${clsToggle('_mjs_nd', allume)} _mjs_nd._mjs_cl_${safeCls} = ${allume}; }`)
+      liaisonFiltree(env, filt.externVar, idxName, champs, keyExpr, updateLogic, pose, multi, (valeur, allume) => `const _mjs_nd = _mjs_idx.get(${valeur}); if (_mjs_nd) { ${clsToggle('_mjs_nd', allume)} _mjs_nd._mjs_cl_${safeCls} = ${allume}; }`)
       return id
     }
 
@@ -2678,7 +2981,7 @@ function bindingStyle(env: AttrCtx): AttrResult {
     conditionExpr = m[2]
     rawVal = env.rawVal.toString()
     // Site EXPR (condition @style.X{cond}, même nature qu'un {if}).
-    jsCond = cleanJsExpr(conditionExpr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    jsCond = cleanJsExpr(conditionExpr, env.compiler.externalVars, env.compiler.moduleName)
   } else {
     cssProp = (env.attrName ?? '').replace(/^@style\./, '')
     conditionExpr = env.attr.type === 'dynamic' ? (env.attr.expr ?? '') : env.rawVal
@@ -2707,13 +3010,13 @@ function bindingStyle(env: AttrCtx): AttrResult {
     // à tort une apostrophe de prose ordinaire (« l'exemple ») jusqu'à la fin de la valeur.
     for (const v of getEffectVars(rawVal, true)) varSet.add(v)
     const fullMatch = rawVal.match(/^\{([\s\S]+)\}$/)
-    if (fullMatch) fullExprRaw = cleanJsExpr(fullMatch[1], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    if (fullMatch) fullExprRaw = cleanJsExpr(fullMatch[1], env.compiler.externalVars, env.compiler.moduleName)
     // Site EXPR (interpolation @style.X="pre-{$e}-post") — scan ÉQUILIBRÉ
     // (`buildTemplateFromSegments`/`splitBraceSegments`, cf. `interpolation()` ci-dessus),
     // PAS la regex naïve `/\{([^}]+)\}/` qui refermait sur le PREMIER `}` : un objet littéral
     // imbriqué (`{f({k: $w})}`) tronquait l'expression avant sa vraie fin → échec de
     // compilation sur du CSS pourtant valide.
-    jsVal = buildTemplateFromSegments(splitBraceSegments(rawVal), env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    jsVal = buildTemplateFromSegments(splitBraceSegments(rawVal), env.compiler.externalVars, env.compiler.moduleName)
   } else {
     // `JSON.stringify` (gère quotes ET backslashes),
     // PAS `'${rawVal}'` : `@style.grid-template-areas="'hd' 'main'"` produisait
@@ -2824,7 +3127,8 @@ function bindingStyle(env: AttrCtx): AttrResult {
         const lacher  = !filtreSurLaCle(lastLoop, filt.itemAccess)
         const multi   = plusieursLignes(lacher, env.ctx.loops)
         const creer   = `const __f = (_mjs_match) => { let _mjs_node = _mjs_n${env.lid}; if (_mjs_match) { ${setMatch} } else { ${setUnmatch} } }; `
-        liaisonFiltree(env, filt.externVar, idxName, keyExpr, filteredLogic, poseFonctionFiltree(creer, idxName, refaire, lacher, multi), multi, appelFiltre)
+        const champs  = champsFiltres(lastLoop!, idxName)
+        liaisonFiltree(env, filt.externVar, idxName, champs, keyExpr, filteredLogic, poseFonctionFiltree(creer, champs, refaire, lacher, multi), multi, appelFiltre, filt.suivies)
         return { id }
       }
     }
@@ -3035,7 +3339,7 @@ function bindingEffect(env: AttrCtx): AttrResult {
     env.ctx.updates.push(`{ const _mjs_fxn = ${nodeRef}; if(_mjs_fxn) { ${avant}µ._mjs_fx(this, _mjs_fxn, ${JSON.stringify(name)}, ${fixed}); } }`)
     return { id }
   }
-  const dyn  = '{' + dynKeys.map(k => `${JSON.stringify(k)}: (${cleanJsExpr(settings.dynamic[k], env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)})`).join(', ') + '}'
+  const dyn  = '{' + dynKeys.map(k => `${JSON.stringify(k)}: (${cleanJsExpr(settings.dynamic[k], env.compiler.externalVars, env.compiler.moduleName)})`).join(', ') + '}'
   const spec = JSON.stringify(settings.spec)
   const vars = [...new Set(dynKeys.flatMap(k => getEffectVars(settings.dynamic[k])))]
   env.ctx.updates.push(`{ const _mjs_fxn = ${nodeRef}; if(_mjs_fxn) { ${avant}µ._mjs_fx(this, _mjs_fxn, ${JSON.stringify(name)}, ${fixed}, ${dyn}, ${spec}); } }`)
@@ -3085,6 +3389,88 @@ function scriptDeclareEl(): boolean {
   return declaree
 }
 
+// `@offscreen` : hors de l'écran, la balise n'est ni mise en page ni peinte (`content-visibility: auto`) ; sa place réservée, `auto` devant
+// (le navigateur retient la taille vue), compte pour une ligne pas encore vue. Un attribut fixe sur la balise, et une règle par taille au style
+// de base du composant (transpiler/index.ts) : rien à l'exécution, rien pour un composant qui ne l'écrit pas. Valeur : un nombre de pixels ou une
+// longueur fixe, 24px sans valeur. Une balise de tableau est refusée : le navigateur ne saute jamais sa mise en page. Un `<li>` aussi : son
+// numéro ou sa puce, peint hors de la balise, serait rogné, et une balise intérieure ne le sauve pas sous WebKit, qui y range le numéro
+const OFFSCREEN_TABLEAU  = ['table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'col', 'colgroup']
+const OFFSCREEN_LONGUEUR = /^(\d+(?:\.\d+)?)(px|r?em|ex|ch|r?lh|[sld]?v[hw]|vmin|vmax|cm|mm|in|pt|pc)?$/
+
+function bindingOffscreen(env: AttrCtx, ecrit: string, nu: boolean): AttrResult {
+  const balise = (env.node.name ?? '').toLowerCase()
+  if (OFFSCREEN_TABLEAU.includes(balise)) throw new Error(t('generator.offscreen-tableau', { balise }))
+  if (balise === 'li') throw new Error(t('generator.offscreen-li', {}))
+  const dynamique = env.attr.type === 'dynamic'
+  const m         = nu ? null : OFFSCREEN_LONGUEUR.exec(dynamique ? '' : ecrit.trim())
+  if (!nu && (!m || parseFloat(m[1]) === 0)) throw new Error(t('generator.offscreen-valeur', { ecrit: dynamique ? `{${String(env.attr.expr ?? '').trim()}}` : ecrit }))
+  const taille = m ? m[1] + (m[2] ?? 'px') : '24px'
+  state.offscreen.add(taille)
+  return { attrStr: env.attrStr + ` mjs-offscreen='${taille}'`, id: env.id }
+}
+
+// `@wake=view|interaction` sur la balise d'un composant : rendu par le serveur, il ne se réveille qu'à la vue ou au premier signe d'intention
+// sur lui, la page du serveur restant affichée jusque-là (runtime/mjs_wake.ts, au cœur seulement si une page l'écrit). Un attribut fixe sur
+// la balise, rendu aussi par le serveur, le même code pour les deux valeurs. Avec `interaction`, ce que l'utilisateur a fait dans la page du
+// serveur (le focus, une saisie, une case…) passe au réveil à la vue, par la place de chaque élément dans le gabarit, en `ssr` comme en
+// `ssr:markers` ; le runtime réveille `interaction` comme `view` en `ssr:positional` et `ssr:diff`. `idle` est refusée (le réveil au repos
+// du navigateur fait plus de travail qu'une page sans `@wake`, sans gain sur `view`) ; une balise qui n'est pas un composant aussi. Construit
+// pour le développement, le composant pose aussi les textes que la console affiche quand `@wake` est sans tout son effet (cf. mjs_wake.ts) :
+// la balise n'a plus de page du serveur à garder, ou, sans boîte, elle n'affiche que du texte ; avec `interaction`, la vue n'a pas à sa place
+// un élément où l'utilisateur a fait quelque chose dans la page du serveur. Une fois par composant
+const WAKE_VALEURS = ['view', 'interaction']
+
+function bindingWake(env: AttrCtx, ecrit: string, nu: boolean): AttrResult {
+  const balise = (env.node.name ?? '').toLowerCase()
+  if (!balise.startsWith('mjs-')) throw new Error(t('generator.wake-composant', { balise }))
+  const dynamique = env.attr.type === 'dynamic'
+  const valeur    = dynamique || nu ? '' : ecrit.trim()
+  if (valeur === 'idle') throw new Error(t('generator.wake-idle', {}))
+  if (!WAKE_VALEURS.includes(valeur)) throw new Error(t('generator.wake-valeur', { ecrit: dynamique ? `${written('wake')}={${String(env.attr.expr ?? '').trim()}}` : nu ? written('wake') : `${written('wake')}=${ecrit}` }))
+  if (state.devWarnings && !state.initialPropBinds.some((b) => b.includes('_mjs_wakeLost'))) state.initialPropBinds.push(`{ µ._mjs_wakeLost ??= ${JSON.stringify(t('generator.wake-sans-effet', {}))}; µ._mjs_wakeText ??= ${JSON.stringify(t('generator.wake-sans-boite', {}))}; }`)
+  if (state.devWarnings && valeur === 'interaction' && !state.initialPropBinds.some((b) => b.includes('_mjs_wakeMiss'))) state.initialPropBinds.push(`{ µ._mjs_wakeMiss ??= ${JSON.stringify(t('generator.wake-ecart', {}))}; }`)
+  return { attrStr: env.attrStr + ` mjs-wake='${valeur}'`, id: env.id }
+}
+
+// `@size="largeurxhauteur"` sur la balise d'un composant de l'appli : en fichiers séparés, la place que garde sa balise tant que son code
+// n'est pas arrivé, vide (le bouclier du cœur la cache sans toucher à sa taille) ou avec la silhouette de `*skeleton` dans cette place ; ce
+// qui la suit ne bouge pas à son arrivée s'il a la taille annoncée. Un attribut fixe sur la balise et une règle par valeur au style de base
+// du composant qui l'écrit (transpiler/index.ts, cf. sizeCss), qui ne vaut que tant que la balise n'est ni définie ni rendue par le
+// serveur : rien à l'exécution, rien pour un composant qui ne l'écrit pas. Valeur : la largeur puis la hauteur séparées par `x`, chacune un
+// nombre (pixels) ou une longueur en px, %, em, rem, vw ou vh ; `x48`, la hauteur seule, la largeur suit la mise en page. Construit pour le
+// développement, le composant compare, à l'arrivée de l'enfant, sa hauteur à celle de la place, et sa largeur quand la valeur en donne une
+// (`x48` : la hauteur seule), pour les balises de son premier rendu, et dit l'écart en console : une hauteur qui change pousse ce qui suit,
+// une largeur seule ce qui est à côté. SIZE_DIRECTIVE : le nom que le lecteur donne au générateur ; l'écriture du mot (`:size`), que les
+// messages et les macros citent, vient de la table des mots de MJS (parser/mjs-words.ts)
+export const SIZE_DIRECTIVE = '@size'
+const SIZE_ATTR      = 'mjs-size'
+const SIZE_VALEUR    = /^(?:(\d+(?:\.\d+)?)(px|%|r?em|v[wh])?)?x(\d+(?:\.\d+)?)(px|%|r?em|v[wh])?$/
+
+function bindingSize(env: AttrCtx, ecrit: string, nu: boolean): AttrResult {
+  const balise = (env.node.name ?? '').toLowerCase()
+  if (!balise.startsWith('mjs-') || balise.startsWith('mjs-core-')) throw new Error(t('generator.size-composant', { nom: written('size'), balise }))
+  const dynamique = env.attr.type === 'dynamic'
+  const valeur    = dynamique || nu ? '' : ecrit.trim()
+  const m         = SIZE_VALEUR.exec(valeur)
+  if (!m || parseFloat(m[1] ?? '1') === 0 || parseFloat(m[3]) === 0) throw new Error(t('generator.size-valeur', { nom: written('size'), ecrit: dynamique ? `${written('size')}={${String(env.attr.expr ?? '').trim()}}` : nu ? written('size') : `${written('size')}="${ecrit}"` }))
+  state.sizes.add(valeur)
+  if (state.devWarnings && !state.initialPropBinds.some((b) => b.includes(`'[${SIZE_ATTR}]:not(:defined)'`))) {
+    const vars = { nom: written('size'), balise: '%b', ecrit: '%e', annoncee: '%a', reelle: '%r' }
+    const dit  = JSON.stringify(t('generator.size-ecart', vars))
+    const ditL = JSON.stringify(t('generator.size-ecart-largeur', vars))
+    state.initialPropBinds.push(`{ const _mjs_sr = this._shadow || this.shadowRoot || this; requestAnimationFrame(() => _mjs_sr.querySelectorAll('[${SIZE_ATTR}]:not(:defined)').forEach((el) => { const a = el.getBoundingClientRect(), v = el.getAttribute('${SIZE_ATTR}'), f = (r) => Math.round(r.width) + ' × ' + Math.round(r.height); customElements.whenDefined(el.localName).then(() => requestAnimationFrame(() => requestAnimationFrame(() => { const b = el.getBoundingClientRect(), h = Math.abs(a.height - b.height) > 1; if (el.isConnected && (h || (v.charAt(0) !== 'x' && Math.abs(a.width - b.width) > 1))) µ.warn((h ? ${dit} : ${ditL}).replace('%b', el.localName).replace('%e', v).replace('%a', f(a)).replace('%r', f(b))); }))); })); }`)
+  }
+  return { attrStr: env.attrStr + ` ${SIZE_ATTR}='${valeur}'`, id: env.id }
+}
+
+// les règles des places gardées du composant (cf. bindingSize), au style de base : vide sans `@size`
+export function sizeCss(sizes: Set<string>): string {
+  return [...sizes].map((valeur) => {
+    const [, w, wu, h, hu] = SIZE_VALEUR.exec(valeur) ?? []
+    return `[${SIZE_ATTR}="${valeur}"]:not(:defined):not([mjs-ssr]){display:block;box-sizing:border-box;${w ? `width:${w}${wu ?? 'px'};` : ''}height:${h}${hu ?? 'px'};overflow:hidden}`
+  }).join('')
+}
+
 // ============================================================================
 // BindingAttach — @attach={tooltip($msg)} ou @attach={(node) -> setup}
 // Mode détecté via AST : DIRECT vs FACTORY (cf. ast_daemon analyze_attach_mode)
@@ -3096,13 +3482,15 @@ function bindingAttach(env: AttrCtx): AttrResult {
     if (mod === 'once') continue
     const suggestion = suggestKey(mod, ['once'])
     const hint = suggestion && suggestion !== mod ? t('generator.hint-modificateur-suggestion', { suggestion }) : ''
-    throw new Error(t('generator.attach-modificateur-inconnu', { attrName: env.attrName ?? '', mod, hint }))
+    throw new Error(t('generator.attach-modificateur-inconnu', { attrName: shownName(env.attrName ?? ''), mod, hint }))
   }
   const once = modificateurs.includes('once')
   const rawExpr = env.attr.expr ?? env.attr.val
   if (!rawExpr) return { id: env.id }
 
-  const jsFunc = cleanJs(rawExpr, env.compiler.externalVars)
+  const jsFunc = cleanJs(rawExpr, env.compiler.externalVars, false, env.compiler.moduleName)
+  // setTimeout / setInterval : refusés comme dans les autres accolades du gabarit — l'attache se rejoue à chaque pose de la balise
+  refuserMinuterieDuGabarit(jsFunc)
 
   // `.once` : aucune variable suivie, la balise déjà attachée n'est jamais reposée
   const vars = once ? [] : getEffectVars(rawExpr)
@@ -3116,20 +3504,27 @@ function bindingAttach(env: AttrCtx): AttrResult {
   const isDirect = litEl || /\b_node\b/.test(jsFunc)
   const mode     = isDirect ? 'direct' : 'factory'
 
-  const evalBlock = mode === 'factory'
-    ? `const _mjs_setup = ${jsFunc}; const _mjs_clean = (typeof _mjs_setup === 'function') ? _mjs_setup(_node) : null;`
-    : `${litEl ? 'const el = _node; ' : ''}const _mjs_clean = ${jsFunc};`
+  const evalCorps = mode === 'factory'
+    ? `const _mjs_setup = ${jsFunc}; _mjs_clean = (typeof _mjs_setup === 'function') ? _mjs_setup(_node) : null;`
+    : `${litEl ? 'const el = _node; ' : ''}_mjs_clean = ${jsFunc};`
+  // passage de l'attache (`µ._mjs_attPass` : la balise) : une minuterie posée pendant sa partie synchrone lui appartient
+  // (runtime/mjs_every.ts) et s'arrête au détachement, avec le nettoyage de l'attache — la prochaine attache en pose une neuve.
+  // Appel optionnel (`?.(`) : le module des minuteries n'est au cœur que si l'appli en pose une, et lui seul pose `_node._mjs_mt` ;
+  // le contrat du cœur ne réclame pas un tel appel — une appli qui a une attache et aucune minuterie se construit
+  const evalBlock = `let _mjs_clean; const _mjs_ap = µ._mjs_attPass; µ._mjs_attPass = _node; try { ${evalCorps} } finally { µ._mjs_attPass = _mjs_ap; } if (_node._mjs_mt) _mjs_clean = µ._mjs_attStop?.(_node, _mjs_clean);`
 
   // `_mjs_att` : connexion du composant (`_mjs_ae`, avancé à chaque déconnexion) où la balise a reçu
   // son attache ; remis à zéro quand son nettoyage tourne (mjs_destroy_hooks.ts)
   // développement : une valeur rendue qui n'est ni une fonction ni rien (le nombre de `requestAnimationFrame`, un objet) est ignorée, mjs_debug.ts le dit
   const nonFonction = state.devWarnings ? ` else if (_mjs_clean != null) µ._mjs_attachNotFn?.(this, _node, _mjs_clean, ${env.node.line ?? 0});` : ''
-  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); }${nonFonction}`
+  // la main d'arrêt d'un `µafter … always: true` (marque 2, runtime/mjs_every.ts) n'est pas un nettoyage : son tir part
+  // même après la disparition de la balise
+  const attachLogic = `/* Purge précédente si params mutent */ if (_node._mjs_td) { _node._mjs_td(); if (this._mjs_attachments) this._mjs_attachments.delete(_node._mjs_td); _node._mjs_td = null; } /* Execution (mode ${mode}) */ ${evalBlock} _node._mjs_att = this._mjs_ae; if (typeof _mjs_clean === 'function') { if (_mjs_clean._mjs_timer !== 2) { _node._mjs_td = _mjs_clean; this._mjs_attachments = this._mjs_attachments || new Set(); this._mjs_attachments.add(_mjs_clean); } }${nonFonction}`
   // rendu qui repasse sans rien changer pour l'attache : la balise déjà attachée ne se rejoue pas.
   // Exception, une lecture qu'aucun effet ne suit (paramètre de route `&x`, `µurl`…) : seul le
   // rendu complet de la navigation la rattrape, l'attache garde alors le rejeu à chaque rendu ; le code seul
   // compte, pas les chaînes (`mark('Q&A')` ou `mark('prix en µ')` ne lisent rien)
-  const suivie = once || !/µ|&[\w$]/.test(maskNonCode(rawExpr, env.compiler.templateLang))
+  const suivie = once || !/µ|&[\w$]/.test(maskNonCode(rawExpr, 'civet'))
   const garde  = `_node._mjs_att !== this._mjs_ae`
 
   if (env.ctx.type === 'root') {
@@ -3174,7 +3569,8 @@ function bindingAttach(env: AttrCtx): AttrResult {
     // à la création : une promesse remplacée recrée l'attente sans rendu complet derrière. Dans un `{if}` ou un `{key}` de la branche, la
     // balise née d'un changement de choix n'a aucun rendu complet derrière elle non plus : l'effet de ce bloc (cf. suiviDeBloc) pose
     // l'attache de ce contenu neuf (`_mjs_basc`), à l'affichage de la branche c'est le rendu complet qui s'en charge
-    const nommee = (env.ctx.portee ?? []).some((e) => e.kind === 'await')
+    // `µpending` lu par la branche n'en fait pas une branche nommée : son entrée de portée n'est pas la valeur de la branche
+    const nommee = (env.ctx.portee ?? []).some((e) => e.kind === 'await' && e.champ !== 'pending')
     if (!(varsEffet.length > 0 && nommee)) env.ctx.updates.push(initCode)
     else if (env.ctx.enBloc) env.ctx.updates.push(`if (this._mjs_basc) ${initCode}`)
     if (varsEffet.length > 0) {
@@ -3209,15 +3605,15 @@ function bindingEmit(env: AttrCtx): AttrResult {
     isOnce = true
     eventName = segs[1]
   } else {
-    throw new Error(t('generator.emit-forme-non-reconnue', { attrName }))
+    throw new Error(t('generator.emit-forme-non-reconnue', { attrName: shownName(attrName) }))
   }
-  if (!eventName) throw new Error(t('generator.emit-forme-non-reconnue', { attrName }))
+  if (!eventName) throw new Error(t('generator.emit-forme-non-reconnue', { attrName: shownName(attrName) }))
 
   const rawExpr = env.attr.expr ?? env.attr.val
   if (!rawExpr) return { id: env.id }
 
   // Site EXPR (valeur d'attribut @emit.x={expr}) — même helper que dynamic().
-  const jsVal = cleanJsExpr(rawExpr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+  const jsVal = cleanJsExpr(rawExpr, env.compiler.externalVars, env.compiler.moduleName)
 
   // `.once` : `vars: []` route le code dans le bucket mount-only (jamais
   // indexé dans effectsByVar) — même patron que le Setup-only de
@@ -3295,12 +3691,8 @@ function bindingEmit(env: AttrCtx): AttrResult {
 // noms posés par la PROPRIÉTÉ du nœud, jamais par le texte de l'attribut : `value` et les attributs booléens du HTML (leur seule présence vaut vrai, « false » les
 // laisserait actifs). La liste du générateur, la seule : compile.ts l'importe. L'exécution en tient une copie (mjs_element.ts, `MJS_BOOLEAN_PROPS`) et l'analyseur
 // la sienne pour l'attribut nu (parser/index.ts) : tests/attributs-booleens-liste-complete.test.ts les veut d'accord
-export const MJS_BOOLEAN_PROPS = ['value', 'checked', 'disabled', 'open', 'readonly',
-                                  'required', 'selected', 'hidden', 'multiple',
-                                  'autofocus', 'muted', 'autoplay', 'loop', 'controls',
-                                  'allowfullscreen', 'async', 'default', 'defer', 'formnovalidate',
-                                  'inert', 'ismap', 'itemscope', 'nomodule', 'novalidate',
-                                  'playsinline', 'reversed']
+// les propriétés écrites par un mot (`:disabled={…}`) : la table des mots de MJS (parser/mjs-words.ts)
+export { MJS_BOOLEAN_PROPS }
 
 const MEDIA_ATTRS = ['currentTime', 'duration', 'paused', 'volume', 'muted', 'playbackRate']
 const DIM_ATTRS = ['clientWidth', 'clientHeight', 'offsetWidth', 'offsetHeight']
@@ -3369,7 +3761,7 @@ function splitFlipEntries(body: string): Array<[string, string]> {
  * relit ces trois attributs au `parseInt` : une chaîne convient exactement comme un nombre. */
 function flipBinding(env: AttrCtx, attrName: string, expr: string, id: string, secours?: string): void {
   const vars  = getEffectVars(expr)
-  const jsVar = cleanJsExpr(expr, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+  const jsVar = cleanJsExpr(expr, env.compiler.externalVars, env.compiler.moduleName)
   const tmp   = `_mjsFlipVal_${id}`
   const val   = secours != null ? `(${tmp} == null || ${tmp} === false) ? ${secours} : ${tmp}` : tmp
   if (env.ctx.type === 'for') {
@@ -3485,7 +3877,7 @@ function rewriteOldTransition(attr: Attr, ligne?: number): OldTransition {
   const nom         = ANCIENNE_TRANSITION.exec(attr.name ?? '')![2]
   const directive   = transitionDirective(attr.name ?? '')
   const ecrit       = attr.type === 'boolean' ? '' : String(attr.expr ?? attr.val ?? '')
-  const ecrite      = (attr.name ?? '') + (attr.type === 'dynamic' ? `={${ecrit.replace(/\s+/g, ' ')}}` : ecrit ? `="${ecrit}"` : '')
+  const ecrite      = shownName(attr.name ?? '') + (attr.type === 'dynamic' ? `={${ecrit.replace(/\s+/g, ' ')}}` : ecrit ? `="${ecrit}"` : '')
   const remplacante = REMOVED_ANIMATIONS.get(nom)
   // l'effet qui la remplace et ses réglages : `*scale(start: 0.55)` → scale, [start, 0.55] ; une valeur sans nom va au principal
   const [, effect, args] = /^\*(\w+)(?:\((.*)\))?$/.exec(remplacante ?? '*' + nom)!
@@ -3597,7 +3989,7 @@ function rewriteOldTransition(attr: Attr, ligne?: number): OldTransition {
   return {
     ligne,
     ecrite,
-    directive,
+    directive:     shownName(directive),
     nom,
     effet:         '*' + effect + (ordre.length > 0 ? `(${ordre.join(', ')})` : ''),
     notes:         notes.join(''),
@@ -3655,9 +4047,9 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   if (rawVal.startsWith('!') && !/^!\{(.+)\}$/.test(rawVal)) {
     const castMatch = rawVal.match(/^!\.(number|int|float|string|bool|boolean)\b/)
     const hint = castMatch
-      ? t('generator.hint-cast-suffixe-nom', { attrName, cast: castMatch[1] })
-      : t('generator.hint-syntaxe-two-way', { attrName })
-    throw new Error(t('generator.liaison-two-way-malformee', { attrName, rawVal, hint }))
+      ? t('generator.hint-cast-suffixe-nom', { attrName: shownName(attrName), cast: castMatch[1] })
+      : t('generator.hint-syntaxe-two-way', { attrName: shownName(attrName) })
+    throw new Error(t('generator.liaison-two-way-malformee', { attrName: shownName(attrName), rawVal, hint }))
   }
 
   // @group avec !{…}
@@ -3691,8 +4083,14 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   // sans défaut) : refusés de même, ils tombaient aussi dans le repli des événements (écoute d'un événement « this » ou « preload »)
   const ecrit = (env.attr.val ?? '').toString()
   const nu    = env.attr.type !== 'dynamic' && (ecrit === '' || ecrit === 'true')
-  if (attrName === '@this') throw new Error(t('generator.this-sans-reference', { ecrit: nu ? '@this' : `@this="${ecrit}"`, ref: !nu && /^[A-Za-z_$][\w$]*$/.test(ecrit) ? ecrit : 'ref' }))
+  if (attrName === '@this') throw new Error(t('generator.this-sans-reference', { ecrit: nu ? written('this') : `${written('this')}="${ecrit}"`, ref: !nu && /^[A-Za-z_$][\w$]*$/.test(ecrit) ? ecrit : 'ref' }))
   if (attrName === '@preload' && nu) throw new Error(t('generator.preload-sans-valeur', {}))
+  // `@offscreen` : toutes ses formes passent ici, avant les liaisons — une valeur calculée ne peut pas entrer dans la règle fixe
+  if (DIRECTIVES.horsEcran(attrName, rawVal)) return bindingOffscreen(env, ecrit, nu)
+  // `@wake` : toutes ses formes passent ici, une valeur calculée comprise (refusée)
+  if (DIRECTIVES.reveil(attrName, rawVal)) return bindingWake(env, ecrit, nu)
+  // `@size` : toutes ses formes passent ici, une valeur calculée comprise (refusée)
+  if (DIRECTIVES.place(attrName, rawVal)) return bindingSize(env, ecrit, nu)
 
   // `data-*` / `aria-*` en `!{…}` sur un composant : attribut de la balise qui suit la variable (sens unique)
   if ((env.node.name ?? '').includes('-') && DOM_ATTR_COMPOSANT.test(attrName) && /^!\{(.+)\}$/.test(rawVal)) {
@@ -3817,13 +4215,13 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   const vieille = ANCIENNE_TRANSITION.exec(attrName)
   if (vieille && DIRECTIVES.ancienne(attrName, rawVal)) {
     // `@in.local=*fly` : l'écriture d'aujourd'hui, avec un modificateur inconnu (habitude Svelte)
-    if (/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.modificateur', { directive: '@' + vieille[1], mod: vieille[2] }))
+    if (/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.modificateur', { directive: written(vieille[1]), mod: vieille[2] }))
     // le nom d'une ancienne animation tombe, les modificateurs écrits (`@in.fly.shared`) restent sur la directive proposée, les
     // réglages écrits passent dans l'effet ; le gabarit entier est relu avant (refuseOldTransitions), ceci vaut pour une balise hors de lui
     throw new Error(oldTransitionsMessage([rewriteOldTransition(env.attr, env.node.line)]))
   }
   if (DIRECTIVES.transition(attrName, rawVal)) {
-    if (!/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.attend-effet', { directive: attrName.split('.')[0] }))
+    if (!/^\*/.test(String(env.attr.val ?? ''))) throw new Error(t('transitions.attend-effet', { directive: shownName(attrName.split('.')[0]) }))
     return bindingTransition(env)
   }
   if (/^@(?:introstart|introend|outrostart|outroend)$/.test(attrName)) {
@@ -3863,6 +4261,10 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
       if (env.attr.type === 'dynamic') return dynamic(env)
       return booleanAttr(env)
     }
+    // un mot de MJS qui reçoit un gestionnaire (`:preload={…}`, `:method={…}`, `:html={…}`), ou `:preload` une valeur qu'il ne prend pas
+    // (`:preload="bientot"`) : refusé, jamais lu comme l'écoute d'un événement de ce nom ; le message donne la forme du mot et renvoie à µmount
+    const mot = oldWordOf(attrName)
+    if (mot && (env.attr.type === 'dynamic' || (mot.word === 'preload' && !/^(?:on|hover|off)$/.test(rawVal)))) throw new Error(t('generator.mot-valeur-refusee', { ecrit: shownName(attrName) + (env.attr.type === 'dynamic' ? `={${String(env.attr.expr ?? '').trim()}}` : env.attr.type === 'boolean' ? '' : `="${rawVal}"`), mot: mot.word, forme: wordForm(mot.word) }))
     // repli — tout `@xxx` inconnu est un écouteur d'événement, un nom d'événement est libre,
     // le compilateur ne le compare à RIEN (casse comprise) ; les
     // directives des balises de section sont contrôlées dans transpiler/sections.ts et directives.ts
@@ -3881,7 +4283,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     const needsAlias = rawVal.includes('@@') || rawVal.includes('$store') ||
                        rawVal.includes('$$') || rawVal.includes('$__')
     const ptr = needsAlias ? '_mjsThis' : 'this'
-    const jsEval = parseMixedString(rawVal, env.compiler.externalVars, env.compiler.templateLang, env.compiler.moduleName)
+    const jsEval = parseMixedString(rawVal, env.compiler.externalVars, env.compiler.moduleName)
     // nom que le gabarit déclare et que la mise à jour retrouve (cf. adjustedAttr) ; à la racine et dans une branche le gabarit ne déclare pas l'attribut, la mise
     // à jour le crée par `setAttribute`, sans espace de noms : un attribut que l'analyseur HTML pose dans un espace de noms (`xlink:href`) y est donc déclaré vide,
     // comme le fait une valeur entre accolades seules, et la mise à jour le retrouve par son nom qualifié
@@ -3905,7 +4307,7 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
     // le défaut jumeau « booléens/null cassés en {for} »).
     if (env.ctx.type === 'for') {
       env.ctx.updates.push(
-        `{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireAttr(`_mjs_n${env.lid}`, adj, jsEval)}; } }`
+        `{ const _mjs_n${env.lid} = __nodes['${env.lid}']; if(_mjs_n${env.lid}) { ${ecrireValeur(env, `_mjs_n${env.lid}`, adj, jsEval)}; } }`
       )
       // le fix CRITIQUE rend l'attribut `$var` interpolé
       // VISIBLE au mount, mais sans `structVars` il reste NON réactif (var externe
@@ -3920,13 +4322,13 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
       // à cet instant précis. Même remède : viser les refs LOCALES
       // `__nodes` de la branche, déjà peuplées à ce point du corps généré.
       const id = env.id ?? `e${++state.counter}`
-      env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) ${ecrireAttr('_mjs_node', adj, jsEval)}; }`)
+      env.ctx.updates.push(`{ const _mjs_node = __nodes['${id}']; if(_mjs_node) ${ecrireValeur(env, '_mjs_node', adj, jsEval)}; }`)
       // la chaîne suit ses variables : effet de la racine, la pose ci-dessus la vaut à la construction de la branche
-      suivreEnBranche(env, id, jsEval, `${ecrireAttr('_mjs_node', adj, jsEval)};`, vars)
+      suivreEnBranche(env, id, jsEval, `${ecrireValeur(env, '_mjs_node', adj, jsEval)};`, vars)
       return { id, attrStr: env.attrStr + declare }
     }
     const id = env.id ?? `e${++state.counter}`
-    const code = ecrireAttrRacine(ptr, id, adj, jsEval)
+    const code = ecrireValeurRacine(env, ptr, id, adj, jsEval)
     pushUpdate(env, code, vars)
     return { id, attrStr: env.attrStr + declare }
   }
@@ -3941,4 +4343,168 @@ export function dispatchAttribute(env: AttrCtx): AttrResult {
   }
 
   return staticAttr(env)
+}
+
+// liste calculée qui garde les objets d'une liste de l'état nommée par un chemin (`$.l`, `$.o.items`), sans en ajouter : `filter`,
+// `slice`, `toSorted`, `toReversed`, enchaînés (`$.l.filter(f).slice(0, 5)`) — rend ce chemin ; sinon null (`map`, `concat`, fonction à
+// soi, parenthèse dans une chaîne, liste d'un élément de boucle `row.cells.filter(f)` dont le suivi ne retrouve pas le chemin : dans le
+// doute, null)
+function cheminDeVue(iterable: string): string | null {
+  const m = /^\$(?:\.[A-Za-z_$][\w$]*)+?(?=\.(?:filter|slice|toSorted|toReversed)\()/.exec(iterable)
+  if (!m) return null
+  let i = m[0].length
+  while (i < iterable.length) {
+    const appel = /^\.(?:filter|slice|toSorted|toReversed)\(/.exec(iterable.slice(i))
+    if (!appel) return null
+    let n = 1
+    i += appel[0].length
+    for (; i < iterable.length && n > 0; i++) {
+      const c = iterable[i]
+      if (c === '\'' || c === '"' || c === '`') return null
+      if (c === '(') n++
+      else if (c === ')') n--
+    }
+    if (n > 0) return null
+  }
+  return m[0]
+}
+
+// élément d'une boucle écrit par un gestionnaire : `x.n = v`, `x.n += v`, `x.n++`, `++x.n`, `delete x.k`, `x.tags.push(v)`,
+// `x.d.setHours(h)` (cf. le préambule des gestionnaires) — une lecture seule (`$sel = x.id`, `ouvrir(x)`) ne relit pas la liste
+function elementEcrit(item: string, code: string): boolean {
+  const n      = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const suite  = '(?:\\??\\.[\\w$]+|\\[[^\\]\\n]*\\])'
+  const chaine = `(?<![\\w$.])${n}${suite}+`
+  return new RegExp(`${chaine}\\s*(?:(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)|\\+\\+|--)|(?:\\+\\+|--|\\bdelete\\s+)${n}${suite}+|(?<![\\w$.])${n}${suite}*\\.(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|clear|delete|set[A-Z][\\w$]*)(?![\\w$])`).test(code)
+}
+
+// le corps d'un rappel de transition (`@introend={…}`), écrit dans la langue des gestionnaires et compilé comme eux (transpiler/index.ts) :
+// raccourcis de MJS, nom lié sans déclaration (`t = $o`) déclaré chez lui, Civet. Il reste dans la fermeture
+// de la balise, qui voit les noms du script et ceux que le gabarit met en portée (variable d'un `{for}`, `{const}`) : ceux-là ne sont pas
+// redéclarés. Compilé au premier niveau, pas en fonction : sa dernière valeur n'est pas rendue (le rappel `introend` est attendu)
+function corpsDeRappel(a: Attr, env: AttrCtx): string {
+  const brut = texteDuRappel(a)
+  const code = cleanJsGestionnaire(dedent(aligneSurLaPremiereLigne(brut)).trim(), env.compiler.externalVars, env.compiler.moduleName)
+  if (!code.trim()) return ''
+  const connus = [...(env.compiler.handlerScope ?? []), ...(env.ctx.locals ?? [])]
+  const texte  = tokenize(applyMjsSugarToScript(code, 'civet', connus, '<script> (handlers)'), { externalVars: env.compiler.externalVars })
+  const lot    = `${env.compiler.moduleName}.inlines`
+  let js: string
+  try {
+    js = getCivetCompile()(texte, { js: true, sync: true, filename: lot })
+  }
+  catch (err: any) {
+    throw fauteDeRappel(t('transpiler.handler-inline-echec-civet', { moduleName: env.compiler.moduleName, lineHint: '', civetMsg: `${a.name}={${brut.trim()}} : ${err?.message ?? err}`, gluedTernaryHint: '' }), brut, texte, a.line ?? env.node.line)
+  }
+  return finsDInstruction(js)
+}
+
+// une faute de Civet dans un rappel, à sa position dans le texte compilé (`<module>.inlines:L:C`), ou le refus d'une
+// garde, à la place du nom fautif dans le texte écrit (`lot` = `ecrit`) : le transpileur la cite à sa place dans le fichier, comme celle
+// d'un gestionnaire (situerRappel, transpiler/index.ts) ; à défaut, ou sans position (`<module>.inlines`), à la ligne de l'attribut
+function fauteDeRappel(message: string, ecrit: string, lot: string, ligne: number | undefined): Error {
+  return Object.assign(new Error(message), { rappelDeTransition: { ecrit, lot, ligne } })
+}
+
+// le texte écrit d'un rappel de transition, sans ses accolades
+function texteDuRappel(a: Attr): string {
+  return a.expr != null ? String(a.expr) : String(a.val ?? '').replace(/^\s*\{/, '').replace(/\}\s*$/, '')
+}
+
+// la place d'un nom fautif dans le texte écrit d'un rappel (`<module>.inlines:L:C`, cf. fauteDeRappel) : sa première occurrence qui
+// vérifie `re`, chaînes et commentaires masqués ; aucune, `<module>.inlines` seul, cité à la ligne de l'attribut
+function placeDuNom(ecrit: string, re: RegExp, moduleName: string): string {
+  const k = maskInertSameLength(ecrit).search(re)
+  if (k < 0) return `${moduleName}.inlines`
+  const avant = ecrit.slice(0, k).split('\n')
+  return `${moduleName}.inlines:${avant.length}:${avant[avant.length - 1].length + 1}`
+}
+
+// l'écriture d'un nom (`n = …`, `n += …`, `n++`, `--n`), pas sa lecture ni une déclaration (`n := …`, `n .= …`)
+function ecritureDe(nom: string): RegExp {
+  const n = nom.replace(/\$/g, '\\$')
+  return new RegExp(`(?<![\\w$.])${n}\\s*(?:(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?![=>])|\\+\\+|--)|(?:\\+\\+|--)\\s*${n}(?![\\w$])`)
+}
+
+// le rappel en fonction, comme un gestionnaire : `async` quand son premier niveau attend, ses écritures lues dans la fonction entière (un
+// `return` de premier niveau compris) ; les gardes des gestionnaires y passent — JavaScript produit illisible, constante du script ou nom
+// du gabarit réaffecté (analyserConstReassign), setTimeout ou setInterval (minuterieDuRappel) — refusées par des messages de rappel de
+// transition, cités au nom fautif dans le fichier, sinon à la ligne de l'attribut (cf. fauteDeRappel)
+function fonctionDeRappel(a: Attr, env: AttrCtx): string {
+  const js = corpsDeRappel(a, env)
+  if (!js.trim()) return '() => {}'
+  const fonction = `${attendAuPremierNiveau(js) ? 'async ' : ''}() => {\n${js}\n}`
+  const locaux   = env.ctx.locals ?? new Set<string>()
+  // les noms du gabarit posés devant la fonction comme les copies du squelette d'un gestionnaire (cf. estInitSquelette,
+  // transpiler/const-reassign.ts) : le rappel lit ceux de la ligne rendue, une réaffectation serait perdue sans un mot
+  const copies                            = [...locaux].map((nom) => `let ${nom} = _mjs_ri_0;`).join(' ')
+  const { violation, analysable, erreur } = analyserConstReassign(copies ? `{ ${copies}\n${fonction}\n}` : fonction, (env.compiler.handlerConsts ?? []).filter((nom) => !locaux.has(nom)), locaux)
+  const minuterie                         = violation || !analysable ? null : minuterieDuRappel(fonction, locaux)
+  if (!violation && analysable && !minuterie) return fonction
+  const ecrit      = texteDuRappel(a)
+  const moduleName = env.compiler.moduleName ?? '?'
+  const vars       = { moduleName, rappel: a.name }
+  let message: string
+  if (violation) message = t(violation.gabarit ? 'transpiler.rappel-local-gabarit-reaffecte' : 'transpiler.rappel-const-reaffectee', { ...vars, nom: violation.name, position: placeDuNom(ecrit, ecritureDe(violation.name), moduleName) })
+  else if (!analysable) message = t('transpiler.rappel-js-invalide', { ...vars, position: `${moduleName}.inlines`, extrait: erreur?.extrait ?? '' })
+  else message = t('transpiler.minuterie-brute', { ...vars, nom: minuterie, gestionnaire: 'oui', position: placeDuNom(ecrit, new RegExp(`(?<![\\w$])${minuterie}(?![\\w$])`), moduleName) })
+  throw fauteDeRappel(message, ecrit, ecrit, a.line ?? env.node.line)
+}
+
+// Civet sépare ses instructions par des sauts de ligne, que la mise à plat du code de la transition retire (cf.
+// flattenPreservingLiterals) : un `;` à la fin de chaque instruction qui s'en passait, lue sur l'arbre
+const SANS_ACCOLADE_FINALE = new Set(['ExpressionStatement', 'VariableDeclaration', 'ReturnStatement', 'ThrowStatement', 'BreakStatement', 'ContinueStatement', 'DoWhileStatement', 'DebuggerStatement'])
+function finsDInstruction(js: string): string {
+  let arbre: any
+  try {
+    arbre = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true })
+  }
+  catch {
+    return js
+  }
+  const fins: number[] = []
+  const visite = (n: any): void => {
+    if (SANS_ACCOLADE_FINALE.has(n.type) && js[n.end - 1] !== ';' && !(n.type === 'VariableDeclaration' && /^For(?:In|Of)?Statement$/.test(n.parent ?? ''))) fins.push(n.end)
+    for (const [k, v] of Object.entries(n)) for (const c of Array.isArray(v) ? v : [v]) if (c && typeof (c as any).type === 'string') visite(Object.assign(c, { parent: k === 'init' || k === 'left' ? n.type : undefined }))
+  }
+  visite(arbre)
+  let out = js
+  for (const fin of fins.sort((x, y) => y - x)) out = out.slice(0, fin) + ';' + out.slice(fin)
+  return out
+}
+
+// l'élément d'une boucle écrit par un rappel de transition (cf. elementEcrit), lu sur son JavaScript : par le nom de la variable du
+// `{for}` seulement là où ni une déclaration ni un paramètre du rappel ne le masque (`x := { n: 0 }`, `(x) => x.n++` écrivent un autre
+// objet) ; illisible, le rappel garde la lecture du texte
+const METHODE_QUI_ECRIT_RE = /^(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|clear|delete|set[A-Z][\w$]*)$/
+function ecritElementLibre(item: string, js: string): boolean {
+  if (!elementEcrit(item, js)) return false
+  let arbre: any
+  try {
+    arbre = acorn.parse(`(() => {\n${js}\n})`, { ecmaVersion: 'latest', sourceType: 'module', allowAwaitOutsideFunction: true })
+  }
+  catch {
+    return true
+  }
+  // le nom lié par un motif (`x`, `{ x }`, `[a, ...x]`, `x = 1`)
+  const lie = (p: any): boolean => !!p && (p.type === 'Identifier' ? p.name === item : p.type === 'ObjectPattern' ? p.properties.some((q: any) => lie(q.type === 'RestElement' ? q.argument : q.value)) : p.type === 'ArrayPattern' ? p.elements.some(lie) : p.type === 'RestElement' ? lie(p.argument) : p.type === 'AssignmentPattern' && lie(p.left))
+  const declare = (s: any): boolean => (s?.type === 'VariableDeclaration' && s.declarations.some((d: any) => lie(d.id))) || ((s?.type === 'FunctionDeclaration' || s?.type === 'ClassDeclaration') && s.id?.name === item)
+  // les `var` d'une fonction, blocs compris, fonctions imbriquées non
+  const varDans = (n: any): boolean => !!n && typeof n.type === 'string' && !/Function/.test(n.type) && ((n.type === 'VariableDeclaration' && n.kind === 'var' && declare(n)) || Object.values(n).some((v: any) => (Array.isArray(v) ? v : [v]).some((c: any) => c && typeof c.type === 'string' && varDans(c))))
+  const racine = (m: any): boolean => {
+    while (m?.type === 'MemberExpression' || m?.type === 'ChainExpression') m = m.type === 'ChainExpression' ? m.expression : m.object
+    return m?.type === 'Identifier' && m.name === item
+  }
+  const membre = (m: any): boolean => (m?.type === 'MemberExpression' || m?.type === 'ChainExpression') && racine(m)
+  const ecrit  = (n: any): boolean => (n.type === 'AssignmentExpression' && membre(n.left)) || (n.type === 'UpdateExpression' && membre(n.argument)) || (n.type === 'UnaryExpression' && n.operator === 'delete' && membre(n.argument)) || (n.type === 'CallExpression' && n.callee?.type === 'MemberExpression' && !n.callee.computed && METHODE_QUI_ECRIT_RE.test(n.callee.property?.name ?? '') && racine(n.callee.object))
+  const visite = (n: any, masque: boolean): boolean => {
+    if (/Function/.test(n.type)) masque ||= n.params.some(lie) || (n.type === 'FunctionExpression' && n.id?.name === item) || varDans(n.body)
+    if (n.type === 'BlockStatement' || n.type === 'StaticBlock') masque ||= n.body.some(declare)
+    if (n.type === 'SwitchStatement') masque ||= n.cases.some((c: any) => c.consequent.some(declare))
+    if (n.type === 'ForStatement' || n.type === 'ForInStatement' || n.type === 'ForOfStatement') masque ||= declare(n.init ?? n.left)
+    if (n.type === 'CatchClause') masque ||= lie(n.param)
+    if (!masque && ecrit(n)) return true
+    return Object.values(n).some((v: any) => (Array.isArray(v) ? v : [v]).some((c: any) => c && typeof c.type === 'string' && visite(c, masque)))
+  }
+  return visite(arbre, false)
 }

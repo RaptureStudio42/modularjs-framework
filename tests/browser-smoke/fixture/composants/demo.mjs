@@ -34,8 +34,8 @@
 
   <@@switch name="alerts" checked=!{$alerts}>Notifications</@@switch>
 
-  <button type="button" id="btn-delete" @title="Supprime définitivement cette ligne">🗑</button>
-  <button type="button" id="btn-submit" @title="Valide le formulaire">✔</button>
+  <button type="button" id="btn-delete" :title="Supprime définitivement cette ligne">🗑</button>
+  <button type="button" id="btn-submit" :title="Valide le formulaire">✔</button>
 </form>
 
 <div class="code-box">

@@ -10,7 +10,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { createSSRRenderer } from '../src/server/renderToString.js'
 
-const HOTE = `<form class="f" method="get" action="/envoi" @noUJS>
+const HOTE = `<form class="f" method="get" action="/envoi" :noUJS>
   <@@number class="nb" name="nb" required></@@number>
   <@@number class="haut" name="haut" min="0" max="10" value="15"></@@number>
   <@@knob class="kn" name="kn" required></@@knob>

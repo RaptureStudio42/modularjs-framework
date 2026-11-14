@@ -23,7 +23,7 @@ const PAGE = `<script>
       if sorte is 'radios' then $radios = liste else $cases = liste
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   {for i in $radios}<@@radio name="g" value={i} required={i is 0}>{i}</@@radio>{end}
   {for i in $cases}<@@checkbox name={'c' + i}>{i}</@@checkbox>{end}
 </form>

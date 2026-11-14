@@ -3,7 +3,8 @@
 // un identifiant). Seuls les réglages d'un effet (`*nom(…)`, effets-couleurs-barre.test.ts) ne cherchent aucune regex : ce fichier garde le reste.
 // Chaque regex porte une apostrophe (gabarit) ou un `$a` (script) : mal lue, l'apostrophe ouvrirait un texte que rien ne referme et le `$a` serait
 // réécrit en état. Chaque expression de gabarit est suivie d'une seconde sur la même ligne : une division lue comme une regex l'avalerait.
-// Le code attendu est celui que le compilateur émettait avant que les réglages d'effet ne cessent de chercher une regex.
+// Le code attendu est celui que le compilateur émettait avant que les réglages d'effet ne cessent de chercher une regex, sauf la regex en tête
+// d'expression, émise sans parenthèses autour : Civet lit `(/abc/.test(x))` comme une section d'opérateur (une fonction, pas une regex).
 
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
@@ -14,7 +15,7 @@ const ENTETE = "<script>\n$a = 7\n$b = 3\n$s = 'x'\n$y = 5\n$z = 1\n</script>\n"
 const GABARIT = [
   ['modulo', '$a % 2', 'const _mjs_eff = [() => { this._mjs_updText(\'t1\', $.a % 2); }, () => { this._mjs_updText(\'t2\', $.z); }];'],
   ['divisions', '$a / $b / 2', 'const _mjs_eff = [() => { this._mjs_updText(\'t1\', $.a / $.b / 2); }, () => { this._mjs_updText(\'t2\', $.z); }];'],
-  ['regex-debut', '/\'/.test($s)', 'const _mjs_eff = [() => { this._mjs_updText(\'t1\', (/\'/.test($.s))); }, () => { this._mjs_updText(\'t2\', $.z); }];'],
+  ['regex-debut', '/\'/.test($s)', 'const _mjs_eff = [() => { this._mjs_updText(\'t1\', /\'/.test($.s)); }, () => { this._mjs_updText(\'t2\', $.z); }];'],
   ['regex-apres-pc', '$y % /\'/.source.length', 'const _mjs_eff = [() => { this._mjs_updText(\'t1\', ($.y % /\'/.source.length)); }, () => { this._mjs_updText(\'t2\', $.z); }];'],
   ['regex-apres-paren', 'String(/\'/.source)', 'const _mjs_eff = [() => { this._mjs_updText(\'t2\', $.z); }, () => { this._mjs_updText(\'t1\', (String(/\'/.source))); }];'],
   ['regex-apres-virg', 'Math.max(1, /\'/.source.length)', 'const _mjs_eff = [() => { this._mjs_updText(\'t2\', $.z); }, () => { this._mjs_updText(\'t1\', (Math.max(1, /\'/.source.length))); }];'],
@@ -72,6 +73,6 @@ describe('une balise à effet qui porte une couleur à barre oblique ne change p
     assert.ok(output.includes('"fluid", {"background":"hsl(210 50% 20% / .4)"}'), 'la pose de la balise est absente')
     assert.ok(output.includes('($.y % /\'/.source.length)'), 'la regex après % n\'est plus vue')
     assert.ok(output.includes('$.a / $.b / 2'), 'la division a changé')
-    assert.ok(output.includes('(/\'/.test($.s))'), 'la regex du début d\'expression a changé')
+    assert.ok(output.includes(', /\'/.test($.s))'), 'la regex du début d\'expression a changé')
   })
 })

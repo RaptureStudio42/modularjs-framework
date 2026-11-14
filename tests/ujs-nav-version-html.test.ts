@@ -58,6 +58,7 @@ describe('mjs_ujs — version de build lue sur les réponses HTML (popstate et c
     const doc: any = { body: zone }
     let capturedSuccess: any
     const µ: any = {
+      _mjs_th: (h: string) => h,
       _mjs_lastUjsPath: '/a', _mjs_navSeq: 0, version: 'v2', _mjs_navContainer: null,
       pageCache: { has: () => false, get: () => null, set() {} },
       _mjs_saveScroll() {}, _mjs_restoreScroll() {}, warn() {}, error() {}, log() {},
@@ -86,6 +87,7 @@ describe('mjs_ujs — version de build lue sur les réponses HTML (popstate et c
     const doc: any = { body: zone }
     let capturedSuccess: any
     const µ: any = {
+      _mjs_th: (h: string) => h,
       _mjs_lastUjsPath: '/a', _mjs_navSeq: 0, version: 'v2', _mjs_navContainer: null,
       pageCache: { has: () => false, get: () => null, set() {} },
       _mjs_saveScroll() {}, _mjs_restoreScroll() {}, warn() {}, error() {}, log() {},
@@ -115,6 +117,7 @@ describe('mjs_ujs — version de build lue sur les réponses HTML (popstate et c
     const doc: any = { body: zone }
     let capturedSuccess: any
     const µ: any = {
+      _mjs_th: (h: string) => h,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/a', version: 'v2', _mjs_navContainer: null,
       pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
       _mjs_saveScroll() {}, _mjs_restoreScroll() {}, warn() {}, error() {}, log() {},

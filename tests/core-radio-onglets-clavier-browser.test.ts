@@ -41,7 +41,7 @@ const SOURCES: Record<string, string> = {
     '<button id="avant-t">avant</button>',
     '<@@tabs id="tabs" value=!{$t}><span id="ta" value="a">A</span><span id="tb" value="b">B</span><span id="tc" value="c">C</span></@@tabs>',
     '<button id="apres-t">après</button>',
-    '<form id="f" @noUJS>',
+    '<form id="f" :noUJS>',
     '  <@@radio id="d1" name="gd" value="s" group=!{$d}>S</@@radio>',
     '  <@@radio id="d2" name="gd" value="m" group=!{$d}>M</@@radio>',
     '  <@@radio id="d3" name="gd" value="l" group=!{$d}>L</@@radio>',

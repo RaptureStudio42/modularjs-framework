@@ -143,13 +143,31 @@
       // des carreaux nés pendant l'état actif naîtraient pleins, sans leur arrivée un à un. Les premiers
       // (la balise vient d'être posée, ou montrée après avoir été cachée) sont donc posés au repos, le
       // navigateur en note le départ, puis l'état actif les joue. « Réduire les animations » : pleins d'emblée
+      // une balise encore cachée par le bouclier (`mjs-loading` sur elle, un ancêtre ou l'hôte de son ombre :
+      // transitions coupées jusqu'à son apparition) les verrait pleins à sa première image : ils restent au
+      // repos jusqu'à ce qu'il parte
+      var mo = null;
+      var release = function() {
+        var r = el.getRootNode();
+        var w = el.closest('[mjs-loading]') || (r instanceof ShadowRoot && r.host.hasAttribute('mjs-loading') ? r.host : null);
+        if (w) {
+          mo = new MutationObserver(function() {
+            if (w.hasAttribute('mjs-loading')) return;
+            mo.disconnect();
+            mo = null;
+            release();
+          });
+          mo.observe(w, { attributes: true, attributeFilter: ['mjs-loading'] });
+          return;
+        }
+        if (layer.firstChild) void layer.offsetWidth;
+        layer.removeAttribute('mjs-fx-pixels-wait');
+      };
       var build = function() {
         var fresh = !layer.firstChild && !µ._mjs_fxCalm();
         if (fresh) layer.setAttribute('mjs-fx-pixels-wait', '');
         make();
-        if (!fresh) return;
-        if (layer.firstChild) void layer.offsetWidth;
-        layer.removeAttribute('mjs-fx-pixels-wait');
+        if (fresh) release();
       };
       build();
       // une notification sans changement de taille (la première arrive toujours, juste après
@@ -164,6 +182,7 @@
       var gate = µ._mjs_fxState(el, 'pixels', s.on);
       return function() {
         gate();
+        if (mo) mo.disconnect();
         if (ro) ro.disconnect();
         clearTimeout(timer);
         layer.remove();

@@ -44,8 +44,9 @@ describe('lintEffectTopLevel — unitaire (scan source, chaînes/commentaires ma
     assert.doesNotThrow(() => lintEffectTopLevel('@go = ->\n  µeffects = 1\n  refl.inspect x'))
   })
 
-  it('<script module> : µeffect même top-level → throw (import, sans composant actif)', () => {
-    assert.throws(() => lintEffectTopLevel('µeffect ->\n  µ.log 1', true), /<script module> \(ligne 1\)[\s\S]*import/)
+  it('<script module> : µeffect de premier niveau accepté (il appartient au module du composant), µinspect refusé (import, sans composant actif)', () => {
+    assert.doesNotThrow(() => lintEffectTopLevel('µeffect ->\n  µ.log 1', true))
+    assert.throws(() => lintEffectTopLevel('µinspect a', true), /<script module> \(ligne 1\)[\s\S]*import/)
   })
 })
 
@@ -59,7 +60,7 @@ describe('transpile — µeffect/µinspect hors top-level = erreur de compilatio
 
   it('µeffect dans le corps d\'une méthode `@go = ->` → throw orientant', async () => {
     const src = '<script>\n$n = 0\n@go = ->\n  µeffect ->\n    $n++\n</script>\n<button @go>{$n}</button>'
-    await assert.rejects(transpile(src, { moduleName: 'fx-methode' }), /imbriqué[\s\S]*TOP-LEVEL/)
+    await assert.rejects(transpile(src, { moduleName: 'fx-methode' }), /imbriqué[\s\S]*premier niveau du <script>/)
   })
 
   it('µeffect dans un hook `µmount ->` → throw', async () => {
@@ -79,9 +80,11 @@ describe('transpile — µeffect/µinspect hors top-level = erreur de compilatio
     await assert.doesNotReject(transpile(src, { moduleName: 'fx-doc' }))
   })
 
-  it('<script module> : µeffect top-level → throw (module = import, sans composant actif)', async () => {
+  it('<script module> : µeffect de premier niveau → compile (module du composant) ; dans une fonction du module → throw', async () => {
     const src = '<script module>\nµeffect ->\n  µ.log 1\n</script>\n<script>\n$n = 0\n</script>\n<p>{$n}</p>'
-    await assert.rejects(transpile(src, { moduleName: 'fx-module' }), /<script module>/)
+    await assert.doesNotReject(transpile(src, { moduleName: 'fx-module' }))
+    const imbrique = '<script module>\nf = ->\n  µeffect ->\n    µ.log 1\n</script>\n<script>\n$n = 0\n</script>\n<p>{$n}</p>'
+    await assert.rejects(transpile(imbrique, { moduleName: 'fx-module-f' }), /imbriqué/)
   })
 
   it('sigil mjs : `mjs.effect` imbriqué → throw aussi (alias normalisé pour le scan)', async () => {

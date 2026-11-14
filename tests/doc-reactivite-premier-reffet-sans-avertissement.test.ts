@@ -1,4 +1,4 @@
-// Le premier exemple de `µeffect` de `docs/03-reactivite.md` (un reffet qui pose un intervalle et rend son nettoyage)
+// Le premier exemple de `µeffect` de `docs/03-reactivite.md` (un reffet qui pose un `µevery` et rend son nettoyage)
 // compile sans avertissement, et ne repose pas son intervalle à chaque tour : il ne lit pas la variable que l'intervalle
 // écrit. Avant : `$i++` dans l'intervalle — le compilateur avertissait « µeffect qui LIT et ÉCRIT $i », et chaque tour
 // relançait le reffet, donc un nouvel intervalle. Le nettoyage rendu coupe l'intervalle à la destruction.
@@ -21,7 +21,7 @@ describe('docs/03 : le premier exemple de µeffect', function () {
   this.timeout(60000)
 
   it('compile sans avertissement', async () => {
-    assert.ok(EXEMPLE.includes('µeffect') && EXEMPLE.includes('setInterval'), 'exemple trouvé dans docs/03-reactivite.md')
+    assert.ok(EXEMPLE.includes('µeffect') && EXEMPLE.includes('µevery'), 'exemple trouvé dans docs/03-reactivite.md')
     const vus: string[] = []
     const avant = console.warn
     console.warn = (...a: any[]) => { vus.push(a.join(' ')) }
@@ -47,7 +47,8 @@ describe('docs/03 : le premier exemple de µeffect', function () {
       w.setInterval   = (f: any, _d: number, ...r: any[]) => { poses++; return poser.call(w, (...a: any[]) => { tours++; return f(...a) }, 20, ...r) }
       w.clearInterval = (id: any) => { coupes++; return couper.call(w, id) }
       try {
-        const c     = await app.mount('doc-premier-reffet')
+        const c = await app.mount('doc-premier-reffet')
+        await c.set({ heure: '' })   // le premier tir de µevery, au montage, a déjà écrit l'heure : effacée, elle doit revenir
         const avant = JSON.stringify(c.state)
         await pause(120)
         assert.ok(tours >= 2, `l'intervalle tourne (${tours} tours)`)

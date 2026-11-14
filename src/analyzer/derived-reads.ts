@@ -49,7 +49,7 @@
 // analyzer/index.ts), absent du runtime
 export const LECTURES_CONNUES = false
 
-type Portee = Map<string, 'param' | 'fn' | 'var'>
+export type Portee = Map<string, 'param' | 'fn' | 'var'>
 
 interface Contexte {
   // 'derive' : expression d'une valeur dérivée, ses lectures `$.x` sont ses dépendances, même dans une fonction
@@ -82,13 +82,15 @@ export interface DeriveCandidat {
   locaux?: string[]
   // `µderived $v = expression, $a…` : dépendances nommées, l'expression ne s'analyse pas
   force?: boolean
+  // `µderived` : les noms des dépendances (`$a` → `a`), absents quand l'une n'est pas une variable `$` du composant
+  nommees?: string[]
 }
 
-const GLOBAUX = new Set(['undefined', 'NaN', 'Infinity', 'Math', 'JSON', 'Number', 'String', 'Boolean', 'Array', 'Object', 'Date', 'Intl', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol', 'BigInt', 'Error', 'TypeError', 'RangeError', 'Promise', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI', 'structuredClone', 'console'])
+export const GLOBAUX = new Set(['undefined', 'NaN', 'Infinity', 'Math', 'JSON', 'Number', 'String', 'Boolean', 'Array', 'Object', 'Date', 'Intl', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol', 'BigInt', 'Error', 'TypeError', 'RangeError', 'Promise', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI', 'structuredClone', 'console'])
 // espaces de noms globaux : toute fonction qu'ils portent est sûre (`Math.max`, `Object.assign`, `JSON.stringify`…)
-const ESPACES = new Set(['Math', 'JSON', 'Number', 'String', 'Array', 'Object', 'Date', 'Intl', 'Symbol', 'BigInt', 'Promise', 'console'])
+export const ESPACES = new Set(['Math', 'JSON', 'Number', 'String', 'Array', 'Object', 'Date', 'Intl', 'Symbol', 'BigInt', 'Promise', 'console'])
 // méthodes des valeurs ordinaires (tableaux, chaînes, nombres, dates, Map/Set, Intl, RegExp) : appelées sur n'importe quelle valeur
-const METHODES = new Set([
+export const METHODES = new Set([
   'at', 'concat', 'entries', 'every', 'fill', 'filter', 'find', 'findIndex', 'findLast', 'findLastIndex', 'flat', 'flatMap', 'forEach', 'includes', 'indexOf', 'join', 'keys', 'lastIndexOf', 'map', 'pop', 'push', 'reduce', 'reduceRight', 'reverse', 'shift', 'slice', 'some', 'sort', 'splice', 'toReversed', 'toSorted', 'toSpliced', 'unshift', 'values', 'with',
   'charAt', 'charCodeAt', 'codePointAt', 'endsWith', 'localeCompare', 'match', 'matchAll', 'normalize', 'padEnd', 'padStart', 'repeat', 'replace', 'replaceAll', 'search', 'split', 'startsWith', 'substring', 'substr', 'toLowerCase', 'toUpperCase', 'toLocaleLowerCase', 'toLocaleUpperCase', 'trim', 'trimEnd', 'trimStart',
   'toFixed', 'toPrecision', 'toExponential', 'toString', 'toLocaleString', 'valueOf',
@@ -96,7 +98,7 @@ const METHODES = new Set([
   'get', 'has', 'hasOwnProperty', 'format', 'formatToParts', 'test', 'exec',
 ])
 // méthodes qui changent leur receveur (tableau, Map, Set)
-const MUTATEURS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear'])
+export const MUTATEURS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear'])
 // méthodes du langage qui rangent leurs arguments dans une collection (les autres de METHODES ne font que les lire ou les appeler)
 const RANGENT = new Set(['push', 'unshift', 'splice', 'fill', 'concat', 'with'])
 // fonctions des espaces globaux qui écrivent dans leur premier argument
@@ -108,7 +110,7 @@ const PARCOURENT_NEW = new Set(['Set', 'Map', 'WeakSet', 'WeakMap'])
 // clés qui ne portent jamais un nœud (les autres se parcourent toutes)
 const CLES_IGNOREES = new Set(['type', 'start', 'end', 'loc', 'range'])
 
-function nomsMotif(p: any, out: string[]): void {
+export function nomsMotif(p: any, out: string[]): void {
   if (!p) return
   switch (p.type) {
     case 'Identifier':        out.push(p.name); break
@@ -137,7 +139,7 @@ function hisser(n: any, m: Portee): void {
   }
 }
 
-function porteeFonction(fn: any): Portee {
+export function porteeFonction(fn: any): Portee {
   const m: Portee = new Map()
   for (const p of fn.params) { const t: string[] = []; nomsMotif(p, t); for (const x of t) m.set(x, 'param') }
   if (fn.type === 'FunctionExpression' && fn.id) m.set(fn.id.name, 'fn')
@@ -145,7 +147,7 @@ function porteeFonction(fn: any): Portee {
   return m
 }
 
-function porteeBloc(stmts: any[]): Portee {
+export function porteeBloc(stmts: any[]): Portee {
   const m: Portee = new Map()
   for (const s of stmts ?? []) {
     if (s.type === 'VariableDeclaration' && s.kind !== 'var') for (const d of s.declarations) { const t: string[] = []; nomsMotif(d.id, t); for (const x of t) m.set(x, 'var') }
@@ -155,13 +157,13 @@ function porteeBloc(stmts: any[]): Portee {
   return m
 }
 
-function porteeDeclaration(d: any): Portee {
+export function porteeDeclaration(d: any): Portee {
   const m: Portee = new Map()
   for (const x of d.declarations) { const t: string[] = []; nomsMotif(x.id, t); for (const n of t) m.set(n, 'var') }
   return m
 }
 
-function chercher(nom: string, portees: Portee[]): { i: number; nature: string } | null {
+export function chercher(nom: string, portees: Portee[]): { i: number; nature: string } | null {
   for (let i = portees.length - 1; i >= 0; i--) {
     const n = portees[i].get(nom)
     if (n) return { i, nature: n }
@@ -226,7 +228,7 @@ function parcours(x: any, portees: Portee[], c: Contexte, parent: any): boolean 
 }
 
 // `µ.store` lu comme objet d'un accès nommé (`µ.store.nom`) : la clé du magasin, suivie par le chemin des magasins
-function estMagasin(n: any): boolean {
+export function estMagasin(n: any): boolean {
   return n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === 'µ' && n.property.type === 'Identifier' && n.property.name === 'store'
 }
 
@@ -366,10 +368,10 @@ function sur(n: any, portees: Portee[], c: Contexte, parent: any): boolean {
   return true
 }
 
-interface Affectation { valeur: any; portees: Portee[] }
+export interface Affectation { valeur: any; portees: Portee[] }
 
 // racine nommée d'un accès (`C.a.b` → `C`), null sinon
-function racine(n: any): string | null {
+export function racine(n: any): string | null {
   while (n && n.type === 'MemberExpression') n = n.object
   return n && n.type === 'Identifier' ? n.name : null
 }
@@ -418,7 +420,7 @@ interface Instruction { liste: any[]; i: number }
 
 // un changement d'une variable : variables `$` écrites juste après (cf. ecritesApres) ; `haut` : au premier niveau ; `passe` :
 // passée à un appel ou rangée ailleurs (sans effet sur une fonction)
-interface Changement { suivis: Set<string>; haut: boolean; passe: boolean }
+export interface Changement { suivis: Set<string>; haut: boolean; passe: boolean }
 
 // affectations des variables du `<script>` (premier niveau) : chaque valeur avec les portées qui l'entourent. Une
 // affectation dans une fonction à une variable locale de cette fonction ne compte pas ; une valeur illisible (motif,
@@ -430,7 +432,7 @@ interface Changement { suivis: Set<string>; haut: boolean; passe: boolean }
 // dérivée (`derives`), recalculée à toute heure, sinon au premier niveau (`haut`, qui tourne une fois, avant toute
 // lecture). `confies` : arguments nommés ou fonctions passés à un appel dont le nom est `appele` (une fonction du
 // `<script module>` qui garderait une fermeture de l'instance), ou rangés dans la variable `appele`
-function collecter(ast: any, appeles: Set<string>, derives: Set<any>): { table: Map<string, Affectation[]>; membres: Map<string, Affectation[]>; inconnues: Set<string>; changes: Map<string, Changement[]>; confies: { appele: string; arg: any; portees: Portee[] }[] } {
+export function collecter(ast: any, appeles: Set<string>, derives: Set<any>): { table: Map<string, Affectation[]>; membres: Map<string, Affectation[]>; inconnues: Set<string>; changes: Map<string, Changement[]>; confies: { appele: string; arg: any; portees: Portee[] }[] } {
   const table = new Map<string, Affectation[]>()
   const membres = new Map<string, Affectation[]>()
   const inconnues = new Set<string>()

@@ -186,9 +186,9 @@
     var visible = typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('selector(:focus-visible)');
     var within = function() {
       if (!dom.matches(el, ':focus-within')) return false;
-      // la balise qui a le focus, jusque dans les composants
+      // la balise qui a le focus, jusque dans les composants (un léger : dans sa racine d'ombre native)
       var a = document.activeElement;
-      for (var sh = a && (a._shadow || a.shadowRoot); sh && sh.activeElement; sh = a._shadow || a.shadowRoot) a = sh.activeElement;
+      for (var sh = a && µ._mjs_shadowOf(a); sh && sh.activeElement; sh = µ._mjs_shadowOf(a)) a = sh.activeElement;
       if (!a) return false;
       return !visible || dom.matches(a, ':focus-visible') || a.isContentEditable === true || /^(textarea|select)$/.test(a.localName) || (a.localName === 'input' && !/^(button|submit|reset|image|checkbox|radio|range|color|file)$/.test(a.type));
     };
@@ -286,15 +286,26 @@
         if (m > pos) pos = m;
         if (m < neg) neg = m;
       };
+      // l'enfant du bord qui suit le flux, dans l'arbre aplati : parmi ceux de l'ombre de la balise si elle en porte une ; un
+      // `display: contents` (un `<slot>`, entre autres) laisse sa place à ce qu'il montre — les balises que le slot reçoit, sinon son
+      // contenu de repli ; une feuille `<style>`, cachée, est sautée comme tout ce qui ne suit pas le flux
+      var rim = function(n, d) {
+        var l = n.localName === 'slot' && n.assignedElements ? n.assignedElements({ flatten: true }) : (µ._mjs_shadowOf(n) || n).children;
+        for (var i = 0; i < l.length; i++) {
+          var k = l[top ? i : l.length - 1 - i];
+          var c = getComputedStyle(k);
+          if (c.display === 'contents' && d < 32) {
+            var f = rim(k, d + 1);
+            if (f) return f;
+          }
+          else if (flows(c)) return k;
+        }
+        return null;
+      };
       take(cs);
       while (/^(block|list-item)$/.test(cs.display) && flows(cs)) {
-        var root = box._shadow || box.shadowRoot || box;
-        var kid  = top ? root.firstElementChild : root.lastElementChild;
-        var kc   = kid && getComputedStyle(kid);
-        while (kid && !flows(kc)) {
-          kid = top ? kid.nextElementSibling : kid.previousElementSibling;
-          kc  = kid && getComputedStyle(kid);
-        }
+        var kid = rim(box, 0);
+        var kc  = kid && getComputedStyle(kid);
         if (!kid || !/^(block|list-item|flow-root|flex|grid|table)$/.test(kc.display)) break;
         var kr = dom.getBoundingClientRect(kid);
         if (Math.abs(kr[edge] - r[edge]) > 0.01) break;

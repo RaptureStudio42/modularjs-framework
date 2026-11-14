@@ -26,11 +26,11 @@ const FICHIERS: Record<string, string[]> = {
     '<p class="r" title="n=$n fin">y</p>',
   ],
   'am-singleton.mjs': [
-    "@import µ$$amCompte 'am-partage.module.civet'",
+    "@import µ$$amCompte 'am-partage.module.civet.mjs'",
     '',
     '<p class="t" title="clics : {µ$$amCompte.value}">{µ$$amCompte.value}</p>',
   ],
-  'am-partage.module.civet': ['export µ$$amCompte = { value: 3 }'],
+  'am-partage.module.civet.mjs': ['export µ$$amCompte = { value: 3 }'],
   'am-await.mjs': [
     '<script>',
     '$n = 1',

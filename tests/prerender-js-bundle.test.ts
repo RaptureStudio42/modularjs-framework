@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
@@ -21,7 +21,9 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 // 1×1 PNG transparent — asset local RÉEL pour `µasset` (le build refuse un chemin absent)
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 
-function fixtureProject(prefix: string, render: boolean): string {
+// le bloc `render` est toujours là, avec ou sans page à prérendre : une construction qui rend côté serveur garde ce que ce rendu relit d'un
+// composant, une construction sans `render` ne l'emporte pas — le témoin prend donc la même décision que le projet, seul le prérendu les sépare
+function fixtureProject(prefix: string, pages: boolean): string {
   const root = mjsTmp(prefix)
   mkdirSync(join(root, 'src'), { recursive: true })
   writeFileSync(join(root, 'src', 'logo.png'), PNG_1PX)
@@ -39,8 +41,7 @@ function fixtureProject(prefix: string, render: boolean): string {
     '<h1 class="t">{$titre}</h1>',
     '<img class="logo" src={$logo} alt="logo">',
   ].join('\n') + '\n')
-  const config: Record<string, unknown> = { sourceDir: 'src', outputDir: 'dist', manifestPath: 'dist/bundle.js', urlPrefix: '/dist', js: 'bundle', runtime: 'core' }
-  if (render) config.render = { default: 'prerender', engine: { prerender: 'happy-dom' }, routes: { '/': { component: 'mjs-app-home' } } }
+  const config: Record<string, unknown> = { sourceDir: 'src', outputDir: 'dist', manifestPath: 'dist/bundle.js', urlPrefix: '/dist', js: 'bundle', runtime: 'core', render: { default: 'prerender', engine: { prerender: 'happy-dom' }, routes: pages ? { '/': { component: 'mjs-app-home' } } : {} } }
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify(config, null, 2))
   return root
 }
@@ -53,19 +54,24 @@ function build(root: string): void {
 describe('`js: \'bundle\'` × prérendu — le rendu serveur ne touche pas au build', function () {
   this.timeout(120000)
 
-  it('le fichier unique et le dossier de sortie survivent au prérendu (mêmes octets qu\'un build sans `render`)', () => {
+  it('le fichier unique et le dossier de sortie survivent au prérendu (mêmes octets qu\'un build du même projet sans page à prérendre)', () => {
     const temoin = fixtureProject('bundle-prerender-temoin', false)
     const projet = fixtureProject('bundle-prerender', true)
     build(temoin)
     build(projet)
+    assert.ok(!existsSync(join(temoin, 'mjs_pages')), 'le témoin ne prérend aucune page')
 
     const attendu = readFileSync(join(temoin, 'dist', 'bundle.js'))
     const obtenu  = readFileSync(join(projet, 'dist', 'bundle.js'))
     assert.equal(obtenu.length, attendu.length, `bundle.js doit rester le fichier unique du build (témoin ${attendu.length} o, obtenu ${obtenu.length} o)`)
-    assert.ok(obtenu.equals(attendu), 'bundle.js doit être BYTE-identique à celui d\'un build sans bloc `render`')
+    assert.ok(obtenu.equals(attendu), 'bundle.js doit être BYTE-identique à celui d\'un build sans page à prérendre')
 
-    const jsFiles = readdirSync(join(projet, 'dist')).filter(f => f.endsWith('.js')).sort()
-    assert.deepEqual(jsFiles, ['bundle.js'], `un seul .js attendu dans dist, trouvé : ${jsFiles.join(', ')}`)
+    // le prérendu n'ajoute aucun .js : ceux du témoin, soit le fichier unique et, en production, le chargeur des messages de la console
+    // (`mjs_msg-<empreinte>.js`, téléchargé au premier message seulement)
+    const jsDe    = (racine: string): string[] => readdirSync(join(racine, 'dist')).filter(f => f.endsWith('.js')).sort()
+    const jsFiles = jsDe(projet)
+    assert.deepEqual(jsFiles, jsDe(temoin), `le prérendu n'ajoute aucun .js au build, trouvé : ${jsFiles.join(', ')}`)
+    assert.deepEqual(jsFiles.map(f => f.replace(/^mjs_msg-[0-9a-z]{5}\.js$/, 'mjs_msg-<empreinte>.js')), ['bundle.js', 'mjs_msg-<empreinte>.js'], `le fichier unique et le chargeur des messages, rien d'autre dans dist, trouvé : ${jsFiles.join(', ')}`)
   })
 
   it('le fragment prérendu ne cite aucun module virtuel `mjs:unit/` (rien à précharger : tout est dans le fichier unique)', () => {

@@ -30,6 +30,6 @@ describe('balise à accolade non refermée : pré-passe linéaire', function () 
   })
 
   it('témoin : après une accolade sans fin, la même balise est toujours lue jusqu\'à son `>`', async () => {
-    await assert.rejects(transpile('<a @confirm="a" x={y @confirm="b">ok</a>', { moduleName: 'pre-passe-suite' }), /@confirm/)
+    await assert.rejects(transpile('<a :confirm="a" x={y :confirm="b">ok</a>', { moduleName: 'pre-passe-suite' }), /:confirm/)
   })
 })

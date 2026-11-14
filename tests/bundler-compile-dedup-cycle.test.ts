@@ -80,7 +80,7 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
 
   it('compileScriptModule — deux appels concurrents pour le MÊME fichier .civet ne déclenchent qu\'UN SEUL compile réel (dédup)', async function () {
     const { srcDir, outDir, manifest } = makeProject('dedup-civet')
-    const filePath = join(srcDir, 'solo.civet')
+    const filePath = join(srcDir, 'solo.civet.mjs')
     writeFileSync(filePath, 'value = 42\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
@@ -92,8 +92,8 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     ;(bundler as any)._compileScriptModuleInner = async (fp: string, ext: string) => { callCount++; return original(fp, ext) }
 
     const [hash1, hash2] = await Promise.all([
-      bundler.compileScriptModule(filePath, '.civet'),
-      bundler.compileScriptModule(filePath, '.civet'),
+      bundler.compileScriptModule(filePath, '.civet.mjs'),
+      bundler.compileScriptModule(filePath, '.civet.mjs'),
     ])
     assert.equal(callCount, 1, 'les deux appels concurrents ne doivent déclencher qu\'un seul compile réel (dédup préexistante, non régressée par le refactor partagé)')
     assert.equal(hash1, hash2)
@@ -142,8 +142,8 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     // pour CHACUN séparément, CHACUN avec sa PROPRE chaîne racine — la
     // détection par chaîne seule ne voit donc PAS ce cycle. La détection par
     // attentes croisées (qui attend qui) le voit à l'instant où il se ferme.
-    writeFileSync(join(srcDir, 'a.civet'), "path = µasset('b.civet')\n")
-    writeFileSync(join(srcDir, 'b.civet'), "path = µasset('a.civet')\n")
+    writeFileSync(join(srcDir, 'a.civet.mjs'), "path = µasset('b.civet.mjs')\n")
+    writeFileSync(join(srcDir, 'b.civet.mjs'), "path = µasset('a.civet.mjs')\n")
 
     // Délai du filet court : s'il parlait ici, ce serait lui et non la détection.
     const bundler = new Bundler({
@@ -155,7 +155,7 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     assert.ok(stats.errors.length > 0,
       'AVANT le fix (filet de sécurité) : interblocage SILENCIEUX et ÉTERNEL — jamais une erreur, jamais une fin de build')
     const messages = stats.errors.map(e => e.message).join('\n')
-    assert.match(messages, /Cycle @import\/µasset détecté : a\.civet → b\.civet → a\.civet/,
+    assert.match(messages, /Cycle @import\/µasset détecté : a\.civet\.mjs → b\.civet\.mjs → a\.civet\.mjs/,
       `la boucle est nommée. errors:\n${messages}`)
     assert.doesNotMatch(messages, /bloquée depuis/, 'ce n\'est pas le filet de sécurité qui parle')
     await bundler.close()
@@ -165,15 +165,15 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     const { srcDir, outDir, manifest } = makeProject('filet-lent')
     // `b.civet` attend `a.civet`, déjà en vol et plus lent que le délai : aucune boucle (a n'importe rien),
     // donc rien à nommer — seul le délai borne l'attente. `a` finit de lui-même ensuite : la construction se termine.
-    writeFileSync(join(srcDir, 'a.civet'), 'value = 1\n')
-    writeFileSync(join(srcDir, 'b.civet'), "path = µasset('a.civet')\n")
+    writeFileSync(join(srcDir, 'a.civet.mjs'), 'value = 1\n')
+    writeFileSync(join(srcDir, 'b.civet.mjs'), "path = µasset('a.civet.mjs')\n")
 
     const bundler = new Bundler({
       sourceDir: srcDir, outputDir: outDir, manifestPath: manifest,
       dedupWaitTimeoutMs: 300,
     })
     const original = (bundler as any)._compileScriptModuleInner.bind(bundler)
-    ;(bundler as any)._compileScriptModuleInner = (fp: string, ext: string) => fp.endsWith('a.civet')
+    ;(bundler as any)._compileScriptModuleInner = (fp: string, ext: string) => fp.endsWith('a.civet.mjs')
       ? new Promise(resolve => setTimeout(() => resolve(original(fp, ext)), 1500))
       : original(fp, ext)
     const stats = await bundler.compile()
@@ -187,9 +187,9 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
 
   it('deux fichiers top-level référencent tous deux un TROISIÈME fichier (non cyclique) → aucune erreur, dédup transparente', async function () {
     const { srcDir, outDir, manifest } = makeProject('dedup-shared')
-    writeFileSync(join(srcDir, 'shared.civet'), 'value = 42\n')
-    writeFileSync(join(srcDir, 'user1.civet'), "x = µasset('shared.civet')\n")
-    writeFileSync(join(srcDir, 'user2.civet'), "y = µasset('shared.civet')\n")
+    writeFileSync(join(srcDir, 'shared.civet.mjs'), 'value = 42\n')
+    writeFileSync(join(srcDir, 'user1.civet.mjs'), "x = µasset('shared.civet.mjs')\n")
+    writeFileSync(join(srcDir, 'user2.civet.mjs'), "y = µasset('shared.civet.mjs')\n")
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifest })
     const stats = await bundler.compile()
@@ -197,7 +197,7 @@ describe('bundler — dédup + cycle des compiles concurrents (compileWithDedup)
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
     const sharedFiles = readdirSync(outDir).filter(f => /^shared-/.test(f))
     assert.equal(sharedFiles.length, 1,
-      `un seul fichier compilé attendu pour 'shared.civet' — pas une copie par référence. trouvé: ${sharedFiles.join(', ')}`)
+      `un seul fichier compilé attendu pour 'shared.civet.mjs' — pas une copie par référence. trouvé: ${sharedFiles.join(', ')}`)
     await bundler.close()
   })
 })

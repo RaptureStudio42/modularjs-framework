@@ -74,10 +74,10 @@ describe('preload — compilation des 3 niveaux', () => {
     // converti (masquage).
     writeFileSync(
       join(src, 'link-demo.mjs'),
-      `@preload hover\n\n<nav><a href="#/a">A</a><a href="#/b" @preload="on">B</a></nav>\n` +
-      `<p><code>&lt;a @preload="off"&gt;</code></p>\n` +
-      `<a href="/session" @method="delete" @confirm="Vraiment supprimer ?">Suppr</a>\n` +
-      `<pre>&lt;a @confirm="Continuer ?"&gt;</pre>\n`,
+      `@preload hover\n\n<nav><a href="#/a">A</a><a href="#/b" :preload="on">B</a></nav>\n` +
+      `<p><code>&lt;a :preload="off"&gt;</code></p>\n` +
+      `<a href="/session" :method="delete" :confirm="Vraiment supprimer ?">Suppr</a>\n` +
+      `<pre>&lt;a :confirm="Continuer ?"&gt;</pre>\n`,
     )
     const bundler = new Bundler({
       sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js'),
@@ -91,10 +91,10 @@ describe('preload — compilation des 3 niveaux', () => {
     const manifest = readFileSync(join(out, 'bundle.js'), 'utf-8')
     assert.match(comp, /_mjs_preload = "hover"/, 'directive module → _mjs_preload')
     assert.match(comp, /data-mjs-preload=['"]on['"]/, 'attribut lien → data-mjs-preload')
-    assert.match(comp, /&lt;a @preload/, 'le <code> d\'exemple garde @preload (pas de conversion)')
+    assert.match(comp, /&lt;a :preload/, 'le <code> d\'exemple garde @preload (pas de conversion)')
     assert.match(comp, /mjs-method=['"]delete['"]/, 'attribut @method → mjs-method')
     assert.match(comp, /mjs-confirm=['"]Vraiment supprimer \?['"]/, 'attribut @confirm → mjs-confirm')
-    assert.match(comp, /&lt;a @confirm/, 'le <pre> d\'exemple garde @confirm (pas de conversion)')
+    assert.match(comp, /&lt;a :confirm/, 'le <pre> d\'exemple garde @confirm (pas de conversion)')
     assert.match(manifest, /µ\.preload = \{"view":"on"/, 'config → µ.preload au manifeste')
   })
 })

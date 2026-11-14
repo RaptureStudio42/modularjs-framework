@@ -5,8 +5,8 @@
 // on l'évalue dans un contexte minimal pour tester la sémantique réactive.
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { lireRuntime } from './helpers/runtime-projete.js'
 describe('runtime µ._set / _mjs_setComputed', () => {
   let MjsTest: any
   let µ: any
@@ -16,8 +16,8 @@ describe('runtime µ._set / _mjs_setComputed', () => {
     // on lit directement le contenu pour l'évaluer dans le sandbox.
     const initPath = resolve('src/runtime/mjs_init.ts')
     const elemPath = resolve('src/runtime/mjs_element.ts')
-    const initJs = readFileSync(initPath, 'utf-8')
-    const elemJs = readFileSync(elemPath, 'utf-8')
+    const initJs = lireRuntime(initPath)
+    const elemJs = lireRuntime(elemPath)
 
     // Stub minimal du DOM HTMLElement / customElements pour exécuter en Node.
     // On fait un eval contrôlé qui évite les API DOM réelles.
@@ -124,7 +124,7 @@ describe('µ._mjs_lis (Longest Increasing Subsequence pour reorder)', () => {
     // Extrait la fonction `µ._mjs_lis = function(arr) { ... };` du source via regex
     // pour test isolé (évite le sandbox complet du runtime avec HTMLElement etc.).
     const initPath = resolve('src/runtime/mjs_init.ts')
-    const src = readFileSync(initPath, 'utf-8')
+    const src = lireRuntime(initPath)
     const m = src.match(/µ\._mjs_lis\s*=\s*function\s*\([^)]*\)\s*\{[\s\S]*?\n\};/)
     if (!m) throw new Error('Impossible d\'extraire µ._mjs_lis du source')
     const _lisFn = new Function(`${m[0]} return µ._mjs_lis;`.replace(/µ\._mjs_lis\s*=\s*/, 'const _mjs_lis = '))

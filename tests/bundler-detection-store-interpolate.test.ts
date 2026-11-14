@@ -113,7 +113,7 @@ describe('mjs_store.ts / mjs_interpolate.ts — détachés du cœur, build RÉEL
   it("détection via un module .civet autonome (`new µStore(...)`), aucun .mjs qui l'utilise : présent", async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs':     '<p>x</p>\n',
-      'outil.civet': "export creerStore = ->\n  new µStore({a: 1})\n",
+      'outil.civet.mjs': "export creerStore = ->\n  new µStore({a: 1})\n",
     })
     const core = coreContent(outDir)
     assert.ok(core.includes(MARK_STORE), 'un usage posé depuis un .civet doit être détecté')
@@ -154,7 +154,7 @@ describe('mjs_store.ts / mjs_interpolate.ts — détachés du cœur, build RÉEL
   it("détection interpolate via un module .civet autonome, aucun .mjs qui l'utilise : présent", async function () {
     const { outDir } = await buildProject({}, {
       'hop.mjs':     '<p>x</p>\n',
-      'outil.civet': "export creerTween = ->\n  µinterpolate(0, 400)\n",
+      'outil.civet.mjs': "export creerTween = ->\n  µinterpolate(0, 400)\n",
     })
     const core = coreContent(outDir)
     assert.ok(core.includes(MARK_INTERPOLATE), 'un usage posé depuis un .civet doit être détecté')

@@ -29,7 +29,7 @@ describe('effets — *ink : la compilation', function () {
     await compiler('<div *ink>x</div>')
     await compiler('<div *ink(brush, duration: 2s, direction: 45)>x</div>')
     await compiler('<div *ink(tear, direction: up-left, origin: top-left, soft: .2, count: 8, seed: 12, invert: true)>x</div>')
-    await compiler('<script>\n$x = false\n</script>\n{if $x}<p @in=*ink(smoke) @out=*ink(tear)>texte</p>{end}')
+    await compiler('<script>\n$x = false\n</script>\n{if $x}<p :in=*ink(smoke) :out=*ink(tear)>texte</p>{end}')
     await compiler("<img src=\"a.png\" alt=\"a\" *ink(image: '/m.png', invert: true)>")
   })
 

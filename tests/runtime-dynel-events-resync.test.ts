@@ -1,8 +1,8 @@
 // Routage d'événements ORPHELIN après remplacement de nœud par <@element>/<@module>. Un
 // `@click={…}` posé DIRECTEMENT sur <@element $tag @click={…}> compile un id de routage porté
-// par une PROP `_mjs_ids` sur le nœud lui-même (mjs_element.ts::_mjs_registerRefs/_mjs_bindEvents). Or
+// par une PROP `_mjs_ev` sur le nœud lui-même, la table de son bloc (mjs_element.ts::_mjs_registerRefs/_mjs_bindEvents). Or
 // µ._updDynEl/µ._updModule créent un nouveau nœud, copient attributs + style.cssText
-// mais pas `_mjs_ids` : la délégation d'événements (root.addEventListener sur le shadow) ne
+// mais pas `_mjs_ev` : la délégation d'événements (root.addEventListener sur le shadow) ne
 // retrouve plus l'id sur le nœud REMPLACÉ — un clic direct sur <@element>/<@module> cesse de
 // répondre dès le 1er remplacement de nœud (cas quasi général, le placeholder étant un <div>
 // codé en dur ; tout $tag différent déclenche un remplacement au 1er rendu).

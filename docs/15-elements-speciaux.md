@@ -44,7 +44,7 @@ Pour contrôler entièrement un module cœur, copiez son fichier source dans le 
 
 ### Les douze balises réservées gardent leur sens
 
-`<@include>`, `<@slot>`, `<@fill>`, `<@head>`, `<@body>`, `<@html>`, `<@document>`, `<@window>`, `<@element>`, `<@module>`, `<@failed>` et `<@view>` (le sujet du reste de ce chapitre, plus [Blocs](05-blocs.md) → `<@include>`, [12 · Snippets](12-snippets.md) → `<@fill>` et [Router](17-router.md) → `<@view>`) ne sont **jamais** résolues comme un raccourci de composant, quel que soit le contenu du projet. Un composant du projet ne peut d'ailleurs pas **porter un nom réservé** (erreur de compilation, fichier à renommer), ni commencer par `core-` (réservé aux modules cœur, dont la balise est `mjs-core-nom`). Écrite avec deux `@` (`<@@slot>`), une balise du langage est refusée : elle n'en prend qu'un.
+`<@include>`, `<@slot>`, `<@fill>`, `<@head>`, `<@body>`, `<@html>`, `<@document>`, `<@window>`, `<@element>`, `<@module>`, `<@failed>` et `<@view>` (le sujet du reste de ce chapitre, plus [Blocs](05-blocs.md) → `<@include>`, [12 · Snippets](12-snippets.md) → `<@fill>` et [Router](17-router.md) → `<@view>`) ne sont **jamais** résolues comme un raccourci de composant, quel que soit le contenu du projet. Elles n'agissent que là où une balise se lit : écrites dans une valeur d'attribut, dans une chaîne d'une expression `{…}` ou dans le texte d'un `<textarea>` ou d'un `<title>`, `<@window>`, `<@document>`, `<@head>` et les autres restent du texte (pour `<@include>`, voir [12 · Snippets](12-snippets.md)). Leurs attributs se lisent comme ceux de toute balise : une accolade dans une chaîne d'un gestionnaire ne le coupe pas (`@keydown={f('}')}`), un `class="…"` ou un `--x={…}` écrit dans le corps d'un gestionnaire n'est ni une classe ni une variable CSS, et une fermante `</@head>` écrite dans une valeur d'attribut ou dans une interpolation ne ferme pas le bloc. Une balise du langage jamais refermée (accolade, parenthèse de réglages ou guillemet resté ouvert) arrête la compilation sur le message du gabarit, qui nomme ce qui reste ouvert et sa ligne ; la lecture s'arrête à la première. Un composant du projet ne peut d'ailleurs pas **porter un nom réservé** (erreur de compilation, fichier à renommer), ni commencer par `core-` (réservé aux modules cœur, dont la balise est `mjs-core-nom`). Écrite avec deux `@` (`<@@slot>`), une balise du langage est refusée : elle n'en prend qu'un.
 
 ### Une faute de frappe se voit tout de suite
 
@@ -94,6 +94,8 @@ Le suivi du scroll global est un cas typique — on stocke `window.scrollY` dans
 ```
 
 > ⚠️ Placez `<@window>` au niveau racine du template, comme un élément normal — il ne s'imbrique pas dans un autre nœud (il ne *rend* rien à sa position). Les écouteurs sont posés au montage et **retirés au démontage** : pas de fuite, contrairement à un `window.addEventListener` posé à la main sans nettoyage.
+
+Le code de `<@window>`, `<@document>`, `<@body>` et `<@html>` s'écrit dans la langue des gestionnaires du gabarit (Civet), même dans un composant dont le `<script>` est en JavaScript ou en TypeScript : il se compile comme un gestionnaire et lit les variables du script.
 
 > ⚠️ **Aucun modificateur sur ces macros** — ni `.prevent`/`.stop`/`.self`/`.once`/`.propagate`, ni le sucre `.emit.<nom>`. Ces écouteurs sont posés **en direct** sur la cible, hors du routeur délégué qui les implémente. Un suffixe y fait **échouer le build** avec un message explicite : écrivez `@event={…}` et faites le travail dans le corps (`e.preventDefault()`, `µemit '…'`).
 
@@ -152,7 +154,7 @@ Idem, ciblant `document.body` — utile pour les événements de pointeur à l'�
 
 <@body @mouseenter={$hereKitty = true} @mouseleave={$hereKitty = false}>
 
-<div class="kitten" @class{$hereKitty}="curious">🐱</div>
+<div class="kitten" :class{$hereKitty}="curious">🐱</div>
 ```
 
 ### Liaisons class/style sur `<@body>`
@@ -164,14 +166,14 @@ Idem, ciblant `document.body` — utile pour les événements de pointeur à l'�
   $modaleOuverte = false
 </script>
 
-<@body @class{$modaleOuverte}="no-scroll">
+<@body :class{$modaleOuverte}="no-scroll">
 ```
 
-- `@class{cond}="classe"` — la classe suit la condition, réactivement.
-- `@style.<prop>={expr}` et `--var={expr}` — propriété de style / custom property réactive sur `body` : `<@body @style.overflow={$open ? 'hidden' : ''}>`, `<@body --accent={$couleur}>`.
+- `:class{cond}="classe"` — la classe suit la condition, réactivement.
+- `:style.<prop>={expr}` et `--var={expr}` — propriété de style / custom property réactive sur `body` : `<@body :style.overflow={$open ? 'hidden' : ''}>`, `<@body --accent={$couleur}>`.
 - `class="a b"` statique — classes ajoutées au **réveil** du composant, retirées à sa **mise en sommeil** (mêmes moments que l'attache/détache des écouteurs).
 
-> ⚠️ `style="…"` statique sur `<@body>`/`<@html>` est une **erreur de compilation** (règle MJS zéro-CSS-inline) : utilisez `@style.prop={expr}`, `--var={expr}`, ou la feuille de style globale. Côté partage : `body` et `html` sont des éléments **communs à tous les composants** — les classes y sont **refcomptées et additives** (deux composants posant la même classe : elle reste tant que l'un des deux est éveillé ; des classes différentes s'additionnent — rien n'est jamais écrasé), tandis que `@style`/`--var` est **dernier-écrivain-gagnant** par propriété.
+> ⚠️ `style="…"` statique sur `<@body>`/`<@html>` est une **erreur de compilation** (règle MJS zéro-CSS-inline) : utilisez `:style.prop={expr}`, `--var={expr}`, ou la feuille de style globale. Côté partage : `body` et `html` sont des éléments **communs à tous les composants** — les classes y sont **refcomptées et additives** (deux composants posant la même classe : elle reste tant que l'un des deux est éveillé ; des classes différentes s'additionnent — rien n'est jamais écrasé), tandis que `:style`/`--var` est **dernier-écrivain-gagnant** par propriété.
 
 ## `<@html>` — événements et liaisons sur `<html>`
 
@@ -182,7 +184,7 @@ Même contrat que `<@body>`, ciblant `document.documentElement` — la balise `<
   $sombre = false
 </script>
 
-<@html @class{$sombre}="dark" --accent={$sombre ? '#8be9fd' : '#0055aa'}>
+<@html :class{$sombre}="dark" --accent={$sombre ? '#8be9fd' : '#0055aa'}>
 
 <button @click={$sombre = !$sombre}>Basculer le thème</button>
 ```
@@ -215,6 +217,8 @@ Les événements y fonctionnent comme sur les autres cibles globales : `<@html @
 
 Le CSS injecté dans le `<head>` peut poser des **custom properties** (`--mjs-theme-*`) que le composant lit ensuite dans son propre `<style>` : les variables CSS **traversent le Shadow DOM**, ce qui permet à un thème global de styliser une scène encapsulée.
 
+Une interpolation s'y lit comme partout ailleurs dans le gabarit, jusqu'à **son** accolade fermante : un appel qui reçoit un objet (`<title>{µt('page.titre', { n: $n })}</title>`), des accolades imbriquées ou une chaîne qui contient une accolade y ont leur place. Une interpolation vide (`{}`) ne rend rien, comme dans le corps de la page ; une accolade écrite dans un commentaire HTML ne lit jamais au-delà de ce commentaire, et une accolade jamais refermée reste du texte.
+
 Dans une balise, une interpolation va **entre guillemets** (`href="/themes/{$selected}.css"`, ou la forme `href={expr}` que MJS quote pour vous) : une valeur nue (`href=/themes/{$selected}.css`), une expression posée à la place d'un attribut (`<meta {$attrs}>`) et un nom de balise calculé (`<{$tag}>`) sont des **erreurs de compilation**, qui citent la ligne du `.mjs` et la forme correcte. Sans guillemets, la valeur s'arrête au premier espace et ce qui suit devient un attribut de plus — un `"` dans une valeur nue est un caractère comme un autre, il ne protège rien ; avec un nom de balise calculé, c'est l'élément entier que la donnée fabrique. Dans un partial (`<@include>`), la ligne citée est celle du composant qui l'inclut.
 
 Une valeur **déjà entre guillemets** accueille l'interpolation où l'on veut, paramètres d'URL et `k=v` compris (`href="/p?slug={$slug}&vue={$vue}"`, `data-cfg="k={$x}"`) : la donnée y est échappée et reste dans la valeur. L'attribut, lui, se **nomme** : un `=` sans nom devant lui (`<meta ={$x}>`, `<meta={$x}>`) n'ouvre aucune valeur — pour le navigateur, ce `=` est le premier caractère d'un nom d'attribut (ou du nom de balise) — et l'interpolation qui le suit est refusée. Les blancs admis entre le `=` et la valeur sont ceux du HTML — espace, tabulation, saut de ligne, saut de page, retour chariot : un espace insécable ou un BOM y est un caractère ordinaire, donc le début d'une valeur nue. Et pour des accolades **littérales** dans une valeur (`href="data:text/css,body&#123;color:red&#125;"`), écrivez `&#123;` et `&#125;` : des accolades nues y seraient lues comme une interpolation.
@@ -222,6 +226,8 @@ Une valeur **déjà entre guillemets** accueille l'interpolation où l'on veut, 
 Le **contenu** d'un `<style>` ou d'un `<script>` part tel quel, jamais interpolé : ses accolades sont du CSS ou du JavaScript. Leur balise ouvrante, elle, se lit comme les autres : `<style media={$media}>` reçoit la valeur de `$media`, échappée et entre guillemets.
 
 > ⚠️ Un `<script>` écrit dans `<@head>` est bien ajouté au `<head>`, mais le navigateur ne l'exécute **jamais** : un script inséré comme contenu HTML reste inerte. La construction le signale par un avertissement, qui cite la ligne. Pour un script tiers (SDK, mesure d'audience), écrivez-le dans la page qui accueille l'application (`index.html`), importez-le dans le `<script>` du composant, ou créez-le au montage avec `document.createElement('script')`. Seul un script de **données** (`type="application/ld+json"`) a sa place dans `<@head>`.
+
+> ⚠️ Une image `<@@img>` n'a pas sa place dans `<@head>` : l'en-tête du document ne s'affiche jamais. La construction la refuse en citant sa ligne ; écrivez-la dans le gabarit, hors de `<@head>`. Citée dans le code d'un `<script>` ou d'une autre section du bloc, elle reste du texte.
 
 ### Le titre de la page
 
@@ -241,6 +247,32 @@ Deux conséquences utiles :
 - **Un titre écrit à la main n'est jamais écrasé.** La restauration n'a lieu que si le titre affiché est encore celui que le composant avait posé. Un `document.title = …` venu d'ailleurs entre-temps est laissé tranquille.
 
 > ⚠️ Ce titre est posé **côté navigateur**, comme tout le contenu d'un `<@head>` : le rendu serveur (SSR) n'en tient pas compte, le HTML initial porte le titre de votre page hôte jusqu'à l'hydratation. Pour un titre vu par un robot d'indexation qui n'exécute pas de JavaScript, écrivez-le dans le HTML servi.
+
+### Un fichier au nom calculé (`µasset "sounds/pick-#{n}.mp3"`)
+
+`µasset('…')` attend un chemin écrit en dur. Quand le fichier se choisit à l'exécution (un son parmi neuf, l'habillage choisi par le joueur, une icône tirée des données), écrivez le chemin en **motif** : le début et l'extension en clair, seule la partie qui change calculée.
+
+```html
+<script>
+$n    = 1
+$skin = 'bois'
+$son  = µasset "sounds/chess/pick-#{$n}.mp3"
+</script>
+
+<audio src={$son}></audio>
+<img src={µasset "images/habillage/#{$skin}/corner.svg"} alt="">
+```
+
+- **Le build lit le motif** (`sounds/chess/pick-*.mp3`) et n'emporte que la **table des fichiers qui y répondent**, chacun publié sous empreinte comme un chemin écrit. La table part **dans le code du seul composant qui l'écrit** : une page qui ne l'affiche pas ne la reçoit jamais, et une appli sans nom calculé ne reçoit rien de plus.
+- **L'adresse se choisit à l'exécution** : `$son` suit `$n`, et l'écran avec, sans aller-retour au serveur ni table à fournir au démarrage.
+- **Les écritures lues** : la chaîne interpolée de Civet ou de CoffeeScript (`µasset "a/#{x}.png"`, avec ou sans parenthèses), le gabarit de JavaScript (`` µasset(`a/${x}.png`) ``) et le nom collé par `+` (`µasset('a/' + x + '.png')`), dans le script comme dans un attribut du gabarit, posés aussi dans une chaîne ou un gabarit (`"son : #{µasset "a/#{x}.mp3"}"`), appelés par `µasset?(…)` ou `µasset?.(…)`, et sous les alias `mjsasset` et `mjs.asset`. Un chemin écrit posé dans une chaîne ou un gabarit est résolu de même.
+- **Les écritures refusées à la construction**, le message citant la ligne de l'appel et donnant la bonne écriture : un nom passé tel quel (`µasset nom`), rien d'écrit avant la première partie calculée (`µasset "#{nom}.png"`), aucune extension écrite après la dernière (`µasset "icons/#{nom}"`, `µasset('icons/' + nom)`), et la rune prise comme une valeur (`.map(µasset)`, `f = µasset`, `µasset.call(…)`, `µ['asset']`, `window.mjs.asset(…)`) : une rune s'appelle directement. Dans un composant et dans un module `.civet.mjs` ou `.coffee.mjs`, un `µasset` est toujours résolu ou refusé par le build, jamais laissé tel quel au navigateur ; une bibliothèque `.js` importée est copiée telle quelle, ses `µasset` ne sont pas lus.
+- **Une partie calculée vaut un morceau, d'au moins un caractère, d'un seul nom** de dossier ou de fichier, jamais un `/` : `images/habillage/#{skin}/corner.svg` répond à `images/habillage/bois/corner.svg`, pas à `images/habillage/a/b/corner.svg`.
+- **Un motif auquel aucun fichier ne répond arrête le build**, comme un chemin écrit absent. Un motif qui ne vise que du code aussi : un fichier de code n'est pas un asset.
+- **Un nom absent de la table** (aucun fichier de ce nom au build) rend une **adresse vide**, sans requête vers un fichier qui n'existe pas ; en développement, la console l'**avertit** en nommant le fichier attendu et le motif.
+- **Sous `mjs dev`**, un fichier ajouté, retiré ou modifié dans le dossier du motif refait aussitôt la table du composant qui l'écrit, et un fichier modifié cité par un chemin écrit change d'adresse de même. La copie déjà publiée d'un fichier retiré reste dans le dossier de sortie : aucune page ne la cite plus.
+- Les fichiers sont cherchés comme un chemin écrit : sous `sourceDir`, puis dans les dossiers de `assetDirs` (cf. [35 · Images](35-images.md)). Le code (`.mjs`, `.civet`, `.coffee`, `.js`) n'entre dans aucune table : un module se charge par `µimport('chemin.js')`.
+- `µimage` et `<@@img>` gardent un chemin écrit en dur : leurs variantes de largeur se calculent fichier par fichier au build.
 
 ### Polices (`@font-face`)
 
@@ -295,13 +327,13 @@ Le `<style>` d'un composant vit dans son **Shadow DOM** : le navigateur l'encaps
 </@element>
 ```
 
-Changer `$tag` re-rend l'élément avec la nouvelle balise, en conservant son contenu.
+Changer `$tag` re-rend l'élément avec la nouvelle balise, en conservant son contenu. Un `<@element>` dans un `{if}`, un `{key}` ou un `{await}` prend sa balise chaque fois que le bloc recrée son contenu (ouverture, clé changée, promesse relancée), même si `$tag` n'a pas changé entre-temps. Dans un `{for}`, chaque ligne a sa balise : toutes prennent `$tag` au premier rendu et à chaque changement, une ligne ajoutée la prend tout de suite, une ligne retirée emporte la sienne, et les liaisons et gestionnaires posés sur la balise (`title={r.v}`, `@click={…}`) suivent la balise neuve de leur ligne. Chaque composant garde ses propres balises dynamiques, même à côté d'un composant léger (`:lightDom`) qui a les siennes.
 
 > ⚠️ La syntaxe est `<@element $tag>` — le tag **est** la variable, et elle vient toujours **en premier**, avant les attributs éventuels. N'écrivez pas `<@element tag={$tag}>` ni `<@element "h1">` : il n'y a pas d'attribut `tag`, et une balise en dur n'aurait aucun intérêt (autant écrire la balise directement). `<@element accept="iframe" $tag>` (un attribut — avec ou sans valeur, `hidden $tag` y compris — avant la variable) est une erreur de compilation. Une expression entre accolades comme tag (`<@element {a || 'div'}>`) est une erreur de compilation elle aussi : seules une variable seule (`$tag`), un accès de membre (`$tag.x`) ou un identifiant nu sont acceptés ; calculez la valeur dans une dérivée (`$tag = a || 'div'`).
 
-> ⚠️ Une liaison réactive (`@style.prop={…}`, attribut) posée sur `<@element>`/`<@module>` suit le nœud courant à chaque changement de balise. Ne pilotez pas `display` via `@style.display={…}` sur ces balises : une valeur falsy (`$tag`/`$comp`) masque déjà l'élément, et une liaison `@style.display` qui s'exécute après ce masquage peut l'écraser (dernier écrivain gagnant, comme deux effets qui écriraient la même propriété) — laissez la valeur falsy porter seule la visibilité. Les propriétés reflétées en attribut (`style`, `title`, `class`…) survivent à un changement de balise ; une propriété IDL non reflétée (`value`, `checked`) posée par un effet AVANT le changement ne l'est pas et doit être réappliquée par sa propre liaison réactive après coup — elle suit à la prochaine mutation, y compris au premier rendu, quand le placeholder initial est déjà remplacé (`$tag`/`$comp` différent du tag codé en dur, le cas quasi général) : ce n'est pas réservé à une bascule ultérieure.
+> ⚠️ Une liaison réactive (`:style.prop={…}`, attribut) posée sur `<@element>`/`<@module>` suit le nœud courant à chaque changement de balise. Ne pilotez pas `display` via `:style.display={…}` sur ces balises : une valeur falsy (`$tag`/`$comp`) masque déjà l'élément, et une liaison `:style.display` qui s'exécute après ce masquage peut l'écraser (dernier écrivain gagnant, comme deux effets qui écriraient la même propriété) — laissez la valeur falsy porter seule la visibilité. Les propriétés reflétées en attribut (`style`, `title`, `class`…) survivent à un changement de balise ; une propriété IDL non reflétée (`value`, `checked`) posée par un effet AVANT le changement ne l'est pas et doit être réappliquée par sa propre liaison réactive après coup — elle suit à la prochaine mutation, y compris au premier rendu, quand le placeholder initial est déjà remplacé (`$tag`/`$comp` différent du tag codé en dur, le cas quasi général) : ce n'est pas réservé à une bascule ultérieure.
 
-> ⚠️ `@this=!{ref}` sur `<@element>`/`<@module>` capture le nœud initial, pas le nœud courant : lire la référence après une bascule n'est pas fiable ; posez `@this` sur un enfant stable ou passez par un identifiant.
+> ⚠️ `:this=!{ref}` sur `<@element>`/`<@module>` capture le nœud initial, pas le nœud courant : lire la référence après une bascule n'est pas fiable ; posez `:this` sur un enfant stable ou passez par un identifiant.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — à quoi sert une balise dynamique&nbsp;?</summary>
@@ -333,11 +365,11 @@ Parfois la *nature* de l'élément dépend des données : un composant « titre 
 
 `$comp` accepte soit un **nom de composant** en chaîne, soit une **classe/constructeur**. Le nom s'écrit comme ailleurs dans le framework, **sans le préfixe** : `'tuto-card-a'` monte `<mjs-tuto-card-a>`. Le nom complet (`'mjs-tuto-card-a'`) est accepté tel quel. Règle de reconnaissance : un nom reçoit le préfixe `mjs-` quand le projet connaît ce composant (déjà défini, ou présent au manifeste, donc chargé à la demande au premier affichage) ; sinon il reste tel quel — balise HTML native (`'section'`), élément personnalisé tiers (`'mon-widget'`). Une **balise HTML connue reste native**, même quand le projet a un composant du même nom : `'section'` crée `<section>`, jamais `<mjs-section>` ; ce composant-là s'écrit par son nom complet, `'mjs-section'`.
 
-Les attributs posés sur `<@module>` sont transmis comme les attributs d'un composant écrit en dur : une valeur fixe (`titre="Démo"`) arrive en chaîne, une valeur entre accolades (`ids={$trouvees}`, `badge={true}`, `rappel={$fn}`) arrive **avec son type** — tableau, objet, nombre, `false`, `null`, fonction —, les événements (`@copier={…}`) remontent, et `class`, `style`, `id`, `data-*`, `aria-*` restent des attributs de la balise du composant. Les enfants sont déplacés vers les slots du composant monté (light DOM → slots). Changer `$comp` **re-monte** un nouveau composant (démontage de l'ancien, montage du nouveau — pas de mise à jour en place), qui reçoit les valeurs courantes. Ensuite, chaque prop suit ses propres variables, comme sur un composant écrit en dur : changer `$t` repose `titre={$t}` seule — `ids` et `opts={ { u: $u } }` ne sont pas reposées, leurs effets dans le composant monté ne repartent pas. Les attributs globaux dynamiques (`title`, `hidden`, `slot`, `is`, `lang`, `layout`) arrivent eux aussi en props, pas en attributs de la balise — exactement comme sur un composant écrit en dur.
+Les attributs posés sur `<@module>` sont transmis comme les attributs d'un composant écrit en dur : une valeur fixe (`titre="Démo"`) arrive en chaîne, une valeur entre accolades (`ids={$trouvees}`, `badge={true}`, `rappel={$fn}`) arrive **avec son type** — tableau, objet, nombre, `false`, `null`, fonction —, les événements (`@copier={…}`) remontent, et `class`, `style`, `id`, `data-*`, `aria-*` restent des attributs de la balise du composant. Les enfants sont déplacés vers les slots du composant monté (light DOM → slots). Changer `$comp` **re-monte** un nouveau composant (démontage de l'ancien, montage du nouveau — pas de mise à jour en place), qui reçoit les valeurs courantes. Ensuite, chaque prop suit ses propres variables, comme sur un composant écrit en dur : changer `$t` repose `titre={$t}` seule — `ids` et `opts={ { u: $u } }` ne sont pas reposées, leurs effets dans le composant monté ne repartent pas. Les attributs globaux calculés `title`, `role`, `hidden`, `tabindex`, `lang`, `dir` et `slot` arrivent en prop et se posent aussi sur la balise du composant, exactement comme sur un composant écrit en dur ([04 · Props](04-props.md#les-attributs-globaux--sur-la-balise-aussi)) : `hidden={$replie}` cache le composant, `title={$t}` lui donne sa bulle, `null`, `undefined` et `false` retirent l'attribut. Un composant qui déclare lui-même une prop de ce nom (`$title`) la garde pour lui, sans attribut sur sa balise ; un composant chargé à la demande reçoit l'attribut dès qu'il est défini, et un nouveau composant monté par `$comp` suit sa propre règle. `is={…}` et `layout={…}` arrivent en props seulement.
 
 ### Dans une boucle ou une condition
 
-La première valeur est évaluée là où la balise est écrite : dans un `{for}`, elle peut lire la variable de la ligne, son index ou un champ — une variable, un accès de membre ou une expression sans espace (`f.comp`, `noms[i]`, `'tuto-card-'+f.k`) ; calculez une expression plus longue dans une dérivée. Les attributs voient eux aussi la ligne.
+La première valeur est évaluée là où la balise est écrite : dans un `{for}`, elle peut lire la variable de la ligne, son index ou un champ — une variable, un accès de membre ou une expression sans espace (`f.comp`, `noms[i]`, `'tuto-card-'+f.k`) ; calculez une expression plus longue dans une dérivée. Les attributs voient eux aussi la ligne, et un gestionnaire posé sur la balise (`@click={…}`) agit sur sa propre ligne, à toute profondeur d'imbrication, après un changement de composant comme après un déplacement de la ligne.
 
 ```html
 <script>
@@ -350,7 +382,7 @@ La première valeur est évaluée là où la balise est écrite : dans un `{for}
 {end}
 ```
 
-Chaque ligne monte son composant ; un `<@module>` dans un `{if}` s'affiche à l'ouverture du bloc, même si sa variable ne change jamais. Une liaison `@class{…}` ou `@style.…` posée sur un `<@module>` ne suit pas le remplacement du nœud — ni dans une ligne, ni ailleurs : écrivez `class={…}` ou `style={…}`. Une ligne dont le composant change reste une ligne de la liste : ajout, retrait, déplacement et tri la suivent, avec ou sans clé (`by`).
+Chaque ligne monte son composant ; un `<@module>` dans un `{if}` s'affiche à l'ouverture du bloc, même si sa variable ne change jamais. Une liaison `:class{…}` ou `:style.…` posée sur un `<@module>` ne suit pas le remplacement du nœud — ni dans une ligne, ni ailleurs : écrivez `class={…}` ou `style={…}`. Une ligne dont le composant change reste une ligne de la liste : ajout, retrait, déplacement et tri la suivent, avec ou sans clé (`by`).
 
 > ⚠️ Une valeur **falsy** (`$comp = null`, `''`, `undefined`) ne monte **rien** : `<@module>` reste un espace vide, sans erreur — pratique pour un composant optionnel piloté par une condition (`$comp = $afficher ? 'tuto-card-a' : null`).
 
@@ -399,6 +431,14 @@ Sur `<@module>`, la liste nomme des **tags de composants** plutôt que des balis
 
 Comme dans `<@head>`, une interpolation écrite dans une balise du repli va **entre guillemets** (`title="{err.message}"`, `href="/x?p={$id}"`) : une valeur nue, une expression posée à la place d'un attribut ou un nom de balise calculé sont des **erreurs de compilation**, qui citent la ligne du `.mjs` et la forme correcte.
 
+Une balise raccourcie s'écrit dans le repli comme partout ailleurs dans le gabarit : `<@@nom>` y devient la balise de son module cœur (`<mjs-core-nom>`), livré par la construction, et `<@nom>` celle de son composant (`<mjs-nom>`), mêmes attributs ; fermante, balise sur plusieurs lignes, auto-fermée ou jamais refermée comprises. Un nom inconnu y est refusé comme ailleurs. Une image `<@@img src="…">` y est préparée au build (empreinte, copie) et affichée avec le repli. Le repli est posé une seule fois, quand l'erreur arrive : un attribut `{…}` d'une de ses balises y est lu à ce moment-là.
+
+Une balise du langage qui n'agit que dans le gabarit compilé — `<@slot>`, `<@fill>`, `<@view>`, `<@head>`, `<@window>`, `<@document>`, `<@body>`, `<@html>`, `<@element>`, `<@module>`, ou un `<@failed>` dans le repli d'un autre — arrête la compilation, qui cite sa ligne : écrivez-la hors du `<@failed>`, dans le gabarit du composant. Citée dans un exemple du repli (`<pre>`, `<code>`, un `<textarea>`, un script, un style), elle reste telle qu'écrite.
+
+Le repli est du HTML posé une seule fois, où seules les expressions `{…}` sont calculées : un bloc — `{if}`, `{for}`, `{key}`, `{await}`, `{const}`, comme un `{end}` ou un `{else}` que rien n'ouvre — y arrête aussi la compilation, qui cite sa ligne. Restent des expressions : une expression en ligne (`{if err then 'a' else 'b'}`, `{for x in l then x}`), et un paramètre du repli nommé comme un mot de bloc (`<@failed error reset>` puis `{error || 'inconnue'}`). Pour un texte qui dépend de l'erreur, écrivez une expression (`{err.message ? 'Erreur réseau' : 'Erreur'}`) ; pour un contenu fait de conditions ou de listes, écrivez un composant et posez-le dans le repli, l'erreur en attribut (`<@detail message="{err.message}"></@detail>`) : son propre gabarit porte les blocs.
+
+Une fermante y reprend la casse de son ouvrante, comme dans le gabarit : `<@Carte>…</@carte>` arrête la compilation (« balise fermante orpheline », ligne citée), comme toute fermante `</@…>` qui ne ferme aucune balise ; un exemple montré dans `<pre>` ou `<code>` reste tel qu'écrit.
+
 Les erreurs remontent vers la frontière **ancêtre** la plus proche : un composant sans frontière propre voit son erreur attrapée par la première `<@failed>` au-dessus de lui.
 
 En SSR, une erreur sans `<@failed>` pour l'absorber fait échouer le rendu de la page entière, pas seulement l'affichage du composant fautif&nbsp;: voir [SSR](19-ssr.md).
@@ -418,7 +458,7 @@ En SSR, une erreur sans `<@failed>` pour l'absorber fait échouer le rendu de la
 - `retry="N"` autorise `N` réessais (`retry="0"` interdit tout réessai, y compris le premier).
 - Une fois la limite atteinte, le fallback reste affiché avec l'erreur ; `reset` ne fait plus rien (aucune construction supplémentaire), et un message est écrit dans la console pour signaler l'abandon.
 - Le compte de réessais déjà consommés est propre à **chaque instance** : deux `<mjs-x>` distincts sur la page suivent chacun leur propre limite.
-- Le compte repart de zéro après un **rétablissement voulu** : `reset` appelé pendant un geste de l'utilisateur — pendant que le navigateur distribue son clic, sa touche ou son toucher, comme `@click=reset` ou `@click={reset()}` sur « Réinitialiser » —, puis **deux secondes** vécues par l'instance neuve sans replanter. Un plantage survenu plus tard (une autre action, des heures après) retrouve alors tous ses réessais. Un `reset` appelé hors de ce geste — le repli qui relance seul le composant (`setTimeout(reset, 10)`), même quand l'utilisateur vient de cliquer ailleurs dans la page, un `reset` différé après le clic (une minuterie, une attente), ou un clic simulé par le code (`.click()`, `dispatchEvent`) — compte toujours pour la limite et ne remet jamais le compte à zéro : une erreur qui revient, quelle que soit sa période (à la construction, juste après le premier rendu, ou plusieurs secondes après chaque montage), arrête la relance à la limite au lieu de reconstruire le composant sans fin. Pour qu'un bouton « Réinitialiser » marche encore des heures après, appelez donc `reset` dans son gestionnaire de clic, pas après une attente.
+- Le compte repart de zéro après un **rétablissement voulu** : `reset` appelé pendant un geste de l'utilisateur — pendant que le navigateur distribue son clic, sa touche ou son toucher, comme `@click=reset` ou `@click={reset()}` sur « Réinitialiser » —, puis **deux secondes** vécues par l'instance neuve sans replanter. Un plantage survenu plus tard (une autre action, des heures après) retrouve alors tous ses réessais. Un `reset` appelé hors de ce geste — le repli qui relance seul le composant (`µafter 10, reset`), même quand l'utilisateur vient de cliquer ailleurs dans la page, un `reset` différé après le clic (une minuterie, une attente), ou un clic simulé par le code (`.click()`, `dispatchEvent`) — compte toujours pour la limite et ne remet jamais le compte à zéro : une erreur qui revient, quelle que soit sa période (à la construction, juste après le premier rendu, ou plusieurs secondes après chaque montage), arrête la relance à la limite au lieu de reconstruire le composant sans fin. Pour qu'un bouton « Réinitialiser » marche encore des heures après, appelez donc `reset` dans son gestionnaire de clic, pas après une attente.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — pourquoi attraper les erreurs&nbsp;?</summary>
@@ -427,13 +467,15 @@ Sans frontière, une erreur dans un composant peut casser tout l'affichage (écr
 
 </details>
 
+> **`<@head>` ou `<@failed>` cité dans un texte.** Cité dans une chaîne du `<script>` ou du `<script module>`, dans le texte d'un `<style>` ou dans une interpolation du gabarit (`{"</@head>"}` écrit dans un vrai `<@head>`), `<@head>` ou `<@failed>` reste du texte : seule une vraie balise ouvre ou ferme le bloc.
+
 ## Récapitulatif
 
 | Balise | Rôle |
 |---|---|
 | `<@window @event>` | Écouteurs/liaisons sur `window` (scroll, clavier global…), nettoyés au démontage |
 | `<@document @event>` | Écouteurs sur `document` (ex. `selectionchange`) |
-| `<@body @event>` | Écouteurs sur `document.body` + liaisons `@class{…}` / `@style.prop` / `--var` / `class=` statique |
+| `<@body @event>` | Écouteurs sur `document.body` + liaisons `:class{…}` / `:style.prop` / `--var` / `class=` statique |
 | `<@html @event>` | Idem sur `document.documentElement` (`:root`) — theming global, dark-mode |
 | `<@head>…</@head>` | Injection réactive dans `document.head` (titre, meta, styles, polices) |
 | `<@element $tag>…</@element>` | Élément dont la balise = la variable (choisie au runtime) |

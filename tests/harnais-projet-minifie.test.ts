@@ -42,7 +42,7 @@ describe('harnais de test : un projet minifié', function () {
   it('minifie, deux composants : chacun se monte et fonctionne, un formulaire @submit.prevent et une entrée @in=*fade', async () => {
     const root = projet('deux', { minify: true })
     writeFileSync(join(root, 'src', 'envoi.mjs'), '<script>\n$envoye = false\n</script>\n<form class="f" @submit.prevent={$envoye = true}><button class="ok">Envoyer</button></form>\n<p class="e">{$envoye}</p>\n')
-    writeFileSync(join(root, 'src', 'entree.mjs'), '<p class="t" @in=*fade>Bonjour</p>\n')
+    writeFileSync(join(root, 'src', 'entree.mjs'), '<p class="t" :in=*fade>Bonjour</p>\n')
     const app = await createHarness({ root })
     try {
       const envoi  = await app.mount('envoi')

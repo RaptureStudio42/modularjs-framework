@@ -16,7 +16,7 @@ const PAGE = `<script>
   $c = '<p>Lecture <a href="https://exemple.fr/l">lien</a> fin</p>'
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <label>Titre <input class="titre" name="titre"></label>
   <@@editor class="e1" name="a" value="<p>Alpha</p>"></@@editor>
   <@@editor class="e3" name="c" readonly value={$c}></@@editor>

@@ -39,10 +39,10 @@ const SOURCES: Record<string, string> = {
     '<form class="stop" action="/stop" method="post" @submit.stop={$n++}><button>ok</button></form>',
     '<p class="n">{$n}</p>',
     '{if $ouvert}<form class="ferme" action="/ferme" method="post" @submit={$ouvert = false}><button>ok</button></form>{end}',
-    '<@interne @lightDom/>'
+    '<@interne :lightDom/>'
   ].join('\n') + '\n',
   'interne.mjs': '<script>\n$m = 0\n</script>\n<form class="leger" action="/leger" method="post" @submit.prevent={$m++}><button>ok</button></form>\n<p class="m">{$m}</p>\n',
-  'question.mjs': '<script>\n$k = 0\n</script>\n<form class="question" action="/question" method="post" @confirm="Sûr ?" @submit={$k++}><button>ok</button></form>\n<p class="k">{$k}</p>\n'
+  'question.mjs': '<script>\n$k = 0\n</script>\n<form class="question" action="/question" method="post" :confirm="Sûr ?" @submit={$k++}><button>ok</button></form>\n<p class="k">{$k}</p>\n'
 }
 
 describe('formulaire d\'un composant : la question, le gestionnaire, puis l\'envoi (Chromium réel)', function () {

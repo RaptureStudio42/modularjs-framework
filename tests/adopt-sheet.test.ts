@@ -65,7 +65,7 @@ const CADRE = `<script>
     -> removeFrame()
 </script>
 
-<@avatar @this=!{avatar}/>
+<@avatar :this=!{avatar}/>
 <button @click={$verified = not $verified}>Vérifier</button>
 `
 

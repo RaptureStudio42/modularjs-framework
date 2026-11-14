@@ -26,7 +26,7 @@ describe('accolades et guillemets dans les chaînes et les regex d\'une expressi
   })
 
   it('un guillemet dans une regex d\'une expression de texte : les directives qui suivent sont traduites', async () => {
-    const { output, data } = await transpile("<script>\n$txt = 'a'\n</script>\n<p>{ $txt.replace(/\"/g, '') }</p>\n<button @title=\"Supprimer\">x</button>", { moduleName: 'guillemet-regex' })
+    const { output, data } = await transpile("<script>\n$txt = 'a'\n</script>\n<p>{ $txt.replace(/\"/g, '') }</p>\n<button :title=\"Supprimer\">x</button>", { moduleName: 'guillemet-regex' })
     assert.ok(output.includes('mjs-title'), 'infobulle de @title émise')
     assert.deepEqual(Object.keys(data.events), [], 'aucun écouteur d\'un événement « title »')
   })
@@ -38,7 +38,7 @@ describe('accolades et guillemets dans les chaînes et les regex d\'une expressi
   })
 
   it('les expressions ordinaires gardent leur lecture (division, bloc refermé, accolades imbriquées)', async () => {
-    const src = "<script>\n$a = 4\n$o = {k: 1}\n</script>\n{if $a / 2 > 1}<p>{ $a / 2 }</p>{end}\n<p>{ {x: $o.k}.x }</p>\n<button @title=\"Ok\">x</button>"
+    const src = "<script>\n$a = 4\n$o = {k: 1}\n</script>\n{if $a / 2 > 1}<p>{ $a / 2 }</p>{end}\n<p>{ {x: $o.k}.x }</p>\n<button :title=\"Ok\">x</button>"
     const { output, data } = await transpile(src, { moduleName: 'expressions-ordinaires' })
     assert.ok(output.includes('mjs-title'))
     assert.deepEqual(Object.keys(data.events), [])

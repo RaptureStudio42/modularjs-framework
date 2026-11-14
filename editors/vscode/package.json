@@ -2,7 +2,7 @@
   "name": "modularjs",
   "displayName": "ModularJS",
   "description": "Coloration syntaxique des composants ModularJS (.mjs), complétion et aide au survol des 117 effets, des 200 alias que ModularJS livre et des effets de l'appli (fichiers *.effects.mjs), en français ou en anglais selon la langue de VS Code — script Civet, gabarit, table de routes (bloc <routes> et forme calculée @routes), types et valeurs permises (blocs <vars> et <types>), blocs theme et style en SASS (ou le langage de lang=\"…\", côté script comme côté style), symboles $ $$ § µ @.",
-  "version": "1.16.0",
+  "version": "1.18.0",
   "publisher": "rapturestudio",
   "license": "MIT",
   "categories": ["Programming Languages"],
@@ -18,7 +18,26 @@
         "id": "modularjs",
         "aliases": ["ModularJS", "modularjs", "MJS"],
         "extensions": [".mjs", ".html.mjs"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": { "light": "./icons/mjs-light.svg", "dark": "./icons/mjs-dark.svg" }
+      },
+      {
+        "id": "modularjs-class",
+        "aliases": ["ModularJS (classe)", "modularjs-class"],
+        "filenamePatterns": ["*.class.mjs"],
+        "icon": { "light": "./icons/mjs-light.svg", "dark": "./icons/mjs-dark.svg" }
+      },
+      {
+        "id": "modularjs-module",
+        "aliases": ["ModularJS (module Civet / CoffeeScript)", "modularjs-module"],
+        "filenamePatterns": ["*.civet.mjs", "*.coffee.mjs"],
+        "icon": { "light": "./icons/mjs-light.svg", "dark": "./icons/mjs-dark.svg" }
+      },
+      {
+        "id": "modularjs-module-js",
+        "aliases": ["ModularJS (module JavaScript)", "modularjs-module-js"],
+        "filenamePatterns": ["*.js.mjs"],
+        "icon": { "light": "./icons/mjs-light.svg", "dark": "./icons/mjs-dark.svg" }
       }
     ],
     "grammars": [
@@ -35,6 +54,21 @@
           "meta.embedded.block.less":   "less",
           "meta.embedded.block.css":    "css"
         }
+      },
+      {
+        "language": "modularjs-class",
+        "scopeName": "source.modularjs.class",
+        "path": "./syntaxes/modularjs-class.tmLanguage.json"
+      },
+      {
+        "language": "modularjs-module",
+        "scopeName": "source.modularjs.module",
+        "path": "./syntaxes/modularjs-module.tmLanguage.json"
+      },
+      {
+        "language": "modularjs-module-js",
+        "scopeName": "source.modularjs.module.js",
+        "path": "./syntaxes/modularjs-module-js.tmLanguage.json"
       }
     ]
   }

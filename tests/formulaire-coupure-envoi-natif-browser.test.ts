@@ -40,8 +40,8 @@ const SOURCES: Record<string, string> = {
   'envoi-coupe.mjs': [
     '<form class="f" action="/envoi" method="post" ' + GESTIONNAIRE + '><input class="champ" name="q" value="a"><button class="bouton" type="submit">envoyer</button></form>',
     '<div class="boite"><form class="f2" action="/envoi" method="post"><input class="champ2" name="q" value="b"><button class="bouton2" type="submit">envoyer</button></form></div>',
-    '<form class="conf" action="/envoi" method="post" ' + GESTIONNAIRE + '><input class="champc" name="q" value="c"><button class="boutonc" type="submit" @confirm="Envoyer ?">envoyer</button></form>',
-    '<form class="confform" action="/envoi" method="post" @confirm="Envoyer ?" ' + GESTIONNAIRE + '><input class="champf" name="q" value="d"></form>',
+    '<form class="conf" action="/envoi" method="post" ' + GESTIONNAIRE + '><input class="champc" name="q" value="c"><button class="boutonc" type="submit" :confirm="Envoyer ?">envoyer</button></form>',
+    '<form class="confform" action="/envoi" method="post" :confirm="Envoyer ?" ' + GESTIONNAIRE + '><input class="champf" name="q" value="d"></form>',
     '<form class="prev" action="/envoi" method="post" @submit.prevent={window.__ordre.push(\'gestionnaire\')}><input class="champp" name="q" value="e"><button class="boutonp" type="submit">envoyer</button></form>',
     '<form class="stop" action="/envoi" method="post" @submit.stop={window.__ordre.push(\'gestionnaire\')}><input class="champs" name="q" value="g"><button class="boutons" type="submit">envoyer</button></form>'
   ].join('\n') + '\n'

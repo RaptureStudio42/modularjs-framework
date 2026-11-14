@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const PAGE   = '<script>\n$l = [{ id: 1 }, { id: 2 }]\n$m = [{ id: 3 }]\n</script>\n<ul>{for x in $l by id}<li @transition=*crossfade(key: x.id, group: g)>{x.id}</li>{end}</ul>\n<ul>{for x in $m by id}<li @transition=*crossfade(key: x.id, group: g, duration: 900ms)>{x.id}</li>{end}</ul>\n'
+const PAGE   = '<script>\n$l = [{ id: 1 }, { id: 2 }]\n$m = [{ id: 3 }]\n</script>\n<ul>{for x in $l by id}<li :transition=*crossfade(key: x.id, group: g)>{x.id}</li>{end}</ul>\n<ul>{for x in $m by id}<li :transition=*crossfade(key: x.id, group: g, duration: 900ms)>{x.id}</li>{end}</ul>\n'
 const AVIS   = 'crossfadeGroup'
 const TEXTES = ['garde les réglages de sa première pose', 'keeps the settings of its first placement']
 

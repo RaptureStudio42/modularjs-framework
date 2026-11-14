@@ -39,6 +39,8 @@ export interface PathInfo {
   cleanHtml: string
   paths: Record<string, number[]>
   kinds: Record<string, NodeKind>
+  // nœuds à la racine du gabarit (éléments, textes, marqueurs), comptés comme le navigateur les lira
+  rootCount: number
 }
 
 const VOID_TAGS = new Set([
@@ -577,9 +579,10 @@ function isInsideQuotedSpan(pos: number, spans: [number, number][]): boolean {
 }
 
 // ============================================================================
-// extractPaths — LEGACY. Conservé pour rétrocompat des tests
-// qui vérifient `data.surgicalHtml` et `data.pathsStr`. Toujours utilisé par le
-// transpiler/index.ts pour produire le surgicalHtml affiché par debug.
+// extractPaths — la lecture du mode clone (generateCloneFnBody : template + cloneNode,
+// choisi par generateCreateFnBody pour un HTML sans interpolation `${…}`, hors
+// forceImperative) : le HTML propre, marqueurs remplacés par `<!--$-->`, et le chemin
+// de chaque nœud repéré.
 //
 // Avec `stripWhitespace=true`, retire les text nodes purement whitespace
 // dans les BLOCK_CONTAINERS (même principe qu'en mode impératif). Réduit la taille
@@ -681,11 +684,11 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
         const c = html[j]
         if (inQuote) {
           // même défaut, même parade que le scanner jumeau de
-          // `generateCreateFnBodyImperative` (voir son commentaire) : `extractPaths`
-          // n'est plus atteint AVEC interpolations par le pipeline compile.ts
-          // (routé vers le mode impératif dès qu'une `${...}` existe), mais reste
-          // exporté (legacy, rétrocompat tests) — un appelant direct avec une
-          // fenêtre `${...}` à apostrophe reproduisait la même désynchronisation.
+          // `generateCreateFnBodyImperative` (voir son commentaire) : le mode clone
+          // n'atteint `extractPaths` que sans interpolation (generateCreateFnBody
+          // prend le mode impératif dès qu'une `${...}` existe), mais un appelant
+          // direct (les tests) avec une fenêtre `${...}` à apostrophe reproduisait
+          // la même désynchronisation.
           if (c === '$' && html[j + 1] === '{') {
             const close = scanInterpWindow(html, j)
             if (close !== -1) { j = close + 1; continue }
@@ -891,6 +894,7 @@ export function extractPaths(html: string, opts: { stripWhitespace?: boolean, li
     cleanHtml: out.join(''),
     paths,
     kinds,
+    rootCount: stack[0].nextChild,
   }
 }
 
@@ -908,22 +912,6 @@ function findCloseRawText(html: string, start: number, closeTag: string): number
   const re = new RegExp(closeTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/]|$)', 'gi')
   re.lastIndex = start
   return re.exec(html)?.index ?? -1
-}
-
-/**
- * Sérialise le `paths` map en littéral JS minimal pour injection dans le
- * template : `{"t1":["t",0,1,0],"e2":["e",0,2]}`.
- * LEGACY — utilisé seulement par d'anciens tests.
- */
-export function serializePaths(info: PathInfo): string {
-  const entries: string[] = []
-  for (const id of Object.keys(info.paths)) {
-    const path = info.paths[id]
-    const kind = info.kinds[id]
-    const k = (kind === 'text' || kind === 'textslot') ? 't' : kind === 'html' ? 'h' : 'e'
-    entries.push(`"${id}":["${k}",${path.join(',')}]`)
-  }
-  return `{${entries.join(',')}}`
 }
 
 // ============================================================================
@@ -1072,7 +1060,7 @@ function foreignWrapTag(cleanHtml: string, foreignNs: string | null): string | n
   return null
 }
 
-function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false, foreignNs: string | null = null, lignesFichier: LignesDuGabarit | null = null): CreateFnInfo {
+function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths = false, foreignNs: string | null = null, lignesFichier: LignesDuGabarit | null = null, singleRoot = false): CreateFnInfo {
   // Utilise extractPaths pour obtenir le HTML propre + paths.
   // Strip whitespace-only text nodes dans les block containers, cohérent
   // avec le mode impératif. Réduit le DOM cloné et accélère le parse.
@@ -1096,13 +1084,20 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   // contenu d'un bloc dans un <svg>/<math> : lu dans sa balise d'origine, puis ses nœuds en sont
   // sortis (cf. foreignWrapTag) — les chemins restent comptés depuis `_f`
   const wrapTag = foreignWrapTag(info.cleanHtml, foreignNs)
+  // gabarit de ligne à racine unique, un élément : cet élément cloné seul (`µ._mjs_cloneEl`), sans fragment autour — un nœud de
+  // moins par ligne, et la ligne n'a plus à quitter son fragment à l'insertion. Ses chemins partent de lui : leur premier rang
+  // (toujours 0, la racine) tombe, et `_mjs_fr` désigne l'élément. Un repère que le runtime remplace par une autre balise pendant la
+  // pose de la ligne (`mjs-mod` d'un `<@module>`, `mjs-el` d'un `<@element>`) garde son fragment : sans parent, il ne serait pas
+  // remplacé, et la ligne afficherait le repère au lieu du composant
+  const alone = singleRoot && !wrapTag && info.rootCount === 1 && /^<[a-zA-Z]/.test(info.cleanHtml) && !/^<[^>]*\smjs-(?:mod|el)=/.test(info.cleanHtml)
+  const paths = alone ? Object.fromEntries(Object.entries(info.paths).map(([id, p]) => [id, p.slice(1)])) : info.paths
   if (wrapTag) {
     const wrappedLiteral = chaineJs(`<${wrapTag}>${info.cleanHtml}</${wrapTag}>`)
     lines.push(`const _mjs_fr = document.createDocumentFragment(); { const _mjs_w = µ._mjs_cloneTpl(${wrappedLiteral}).firstChild; while (_mjs_w.firstChild) _mjs_fr.appendChild(_mjs_w.firstChild); }`)
   }
   else {
     const tplHtmlLiteral = chaineJs(info.cleanHtml)
-    lines.push(`const _mjs_fr = µ._mjs_cloneTpl(${tplHtmlLiteral});`)
+    lines.push(`const _mjs_fr = µ._mjs_${alone ? 'cloneEl' : 'cloneTpl'}(${tplHtmlLiteral});`)
   }
 
   if (refIds.length === 0) {
@@ -1124,9 +1119,10 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   // Stratégie : on construit un map prefix → variable, indexé par la signature
   // string du préfixe. On émet une nouvelle var pour chaque prefix de longueur
   // strictement > 0 qui apparaît au moins 2 fois (sinon inline direct).
+  // forme compacte seulement : un gabarit construit à chaque ligne lit ses nœuds de frère en frère (plus bas)
   const prefixCount = new Map<string, number>()
   for (const id of refIds) {
-    const path = info.paths[id]
+    const path = paths[id]
     // On compte chaque prefix Y COMPRIS le path complet :
     // un nœud à la fois ref directe (ex. `h.firstChild`) ET préfixe d'une autre
     // (ex. `h.firstChild.firstChild`) n'était compté qu'une fois → jamais
@@ -1142,7 +1138,7 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   let pCounter = 0
   // Émettre les vars dans l'ordre des préfixes croissants (parent avant enfant).
   const sortedPrefixes = [...prefixCount.entries()]
-    .filter(([, c]) => c >= 2)
+    .filter(([, c]) => compactPaths && c >= 2)
     .sort((a, b) => a[0].split(',').length - b[0].split(',').length)
   for (const [pkey] of sortedPrefixes) {
     const idxs = pkey.split(',').map(Number)
@@ -1170,8 +1166,59 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
     prefixVar.set(pkey, v)
   }
 
+  // gabarit construit à chaque ligne (jamais la forme compacte) : chaque nœud visité se lit depuis le plus proche déjà lu — le frère visité
+  // qui le précède (`nextSibling`, trois pas au plus), sinon son parent —, aucun chemin n'est descendu deux fois ; un nœud d'où partent deux
+  // lectures ou plus est gardé dans une variable. Un repère de texte, remplacé plus bas par son nœud texte, ne sert jamais de départ
+  type Visit = { kids: Map<number, Visit>, refs: number, text: boolean }
+  const accessOf = new Map<string, string>()
+  if (!compactPaths) {
+    const root: Visit = { kids: new Map(), refs: 0, text: false }
+    for (const id of refIds) {
+      let nd = root
+      for (const j of paths[id]) {
+        let kid = nd.kids.get(j)
+        if (!kid) nd.kids.set(j, kid = { kids: new Map(), refs: 0, text: false })
+        nd = kid
+      }
+      nd.refs++
+      if (info.kinds[id] === 'text') nd.text = true
+    }
+    // rang du frère d'où part la lecture de chaque enfant visité (-1 : du parent)
+    const starts = (nd: Visit): Map<number, number> => {
+      const from = new Map<number, number>()
+      let prev   = -1
+      for (const j of [...nd.kids.keys()].sort((a, b) => a - b)) {
+        from.set(j, prev !== -1 && j - prev <= 3 && !nd.kids.get(prev)!.text ? prev : -1)
+        prev = j
+      }
+      return from
+    }
+    const visit = (nd: Visit, expr: string, key: string): void => {
+      const from  = starts(nd)
+      const exprs = new Map<number, string>()
+      for (const [j, f] of from) {
+        const kid  = nd.kids.get(j)!
+        const kkey = key === '' ? String(j) : `${key},${j}`
+        let access = f === -1 ? childAccessExpr(expr, j) : exprs.get(f)! + '.nextSibling'.repeat(j - f)
+        // lectures qui partent de ce nœud : ses références, ses enfants lus depuis lui, le frère suivant
+        const uses = kid.refs + [...starts(kid).values()].filter((x) => x === -1).length + [...from.values()].filter((x) => x === j).length
+        if (uses >= 2) {
+          const v = `_mjs_p${pCounter++}`
+          lines.push(`const ${v} = ${access};`)
+          access = v
+        }
+        exprs.set(j, access)
+        accessOf.set(kkey, access)
+        visit(kid, access, kkey)
+      }
+    }
+    visit(root, '_mjs_fr', '')
+  }
+
   // Helper : construire l'expression d'accès pour un path en utilisant les vars cachées.
   const buildAccess = (path: number[]): string => {
+    const read = accessOf.get(path.join(','))
+    if (read) return read
     // Trouver le préfixe le plus long qui a une variable.
     for (let len = path.length; len >= 1; len--) {
       const key = path.slice(0, len).join(',')
@@ -1192,7 +1239,7 @@ function generateCloneFnBody(html: string, keepRefs?: Set<string>, compactPaths 
   }
 
   for (const id of refIds) {
-    const path = info.paths[id]
+    const path = paths[id]
     const kind = info.kinds[id]
     const access = path.length === 0 ? '_mjs_fr' : buildAccess(path)
     const idKey = JSON.stringify(id)
@@ -1259,6 +1306,9 @@ export interface GenerateCreateFnBodyOpts {
    * `{for}`, exécuté une fois PAR LIGNE, garde ses chaînes directes, sans appel de fonction.
    * Défaut false = sortie STRICTEMENT identique à l'historique. */
   compactPaths?: boolean
+  /** gabarit de ligne `{for}` (mode clone) : quand il n'a qu'une racine, un élément, c'est cet élément qui est cloné et rendu
+   * comme `fragment`, sans fragment autour (cf. generateCloneFnBody) ; l'entrée de la ligne le prend tel quel (mjs_for.ts). */
+  singleRoot?: boolean
 }
 
 /**
@@ -1274,7 +1324,7 @@ export function generateCreateFnBody(htmlMarque: string, opts: GenerateCreateFnB
   // Mode hybride : si pas d'interpolations runtime → cloneNode.
   // Sinon on émet le mode impératif createElement classique.
   if (!opts.forceImperative && (opts.forceClone || !hasInterpolations(html))) {
-    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false, opts.foreignNsRoot ?? null, lignes)
+    return generateCloneFnBody(html, opts.keepRefs, opts.compactPaths ?? false, opts.foreignNsRoot ?? null, lignes, opts.singleRoot ?? false)
   }
   return generateCreateFnBodyImperative(html, opts.splitSelectPostUpdates ?? false, opts.foreignNsRoot ?? null, lignes)
 }
@@ -1481,9 +1531,8 @@ function generateCreateFnBodyImperative(html: string, splitSelectPostUpdates: bo
             }
             const parent = stack[stack.length - 1].varName
             const safeId = jsIdentifier(id)
-            // Pool text nodes : µ._mjs_getTextNode('') au lieu de createTextNode.
-            // Réutilise les nodes libérés par _mjs_destroyNodeAndChildren.
-            lines.push(`const ${safeId} = µ._mjs_getTextNode('');`)
+            // repère texte neuf, propre à ce rendu : jamais un nœud d'un autre usage
+            lines.push(`const ${safeId} = document.createTextNode('');`)
             lines.push(`${parent}.appendChild(${safeId});`)
             refIds.push(id)
             i = endOfScript

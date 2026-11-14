@@ -22,6 +22,7 @@ const CODE    = ['mjs_fx.ts', 'mjs_fx_toolup.ts', 'mjs_fx_toolroots.ts', 'mjs_fx
 
 // une scène : un cadre qui défile, un parent mis à l'échelle (1.5 en largeur, 1.25 en hauteur), la balise bordée de 12 px, et un repère
 // posé à (40, 30) dans son cadre intérieur ; la même balise dans l'ombre d'un composant ; une balise loin sous la page
+// (`µ._mjs_th`, la politique Trusted Types que le cœur pose toujours dans mjs_init.ts : l'identité ici, le cœur n'est pas chargé)
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0}
 .cadre{width:500px;height:300px;overflow:auto;position:relative}
@@ -33,7 +34,7 @@ html,body{margin:0}
 </style></head><body>
 <div class="cadre" id="cadre"><div class="long"><div class="echelle"><div class="balise" id="b"><i class="repere" id="r"></i></div></div></div></div>
 <div id="hote"></div><div class="loin" id="loin"></div>
-<script>var µ = {};\n${CODE.replace(/<\/script>/g, '<\\/script>')}\n</script></body></html>`
+<script>var µ = { _mjs_th: (h) => h };\n${CODE.replace(/<\/script>/g, '<\\/script>')}\n</script></body></html>`
 
 describe('les outils du cœur des effets (navigateurs réels)', function () {
   this.timeout(120000)

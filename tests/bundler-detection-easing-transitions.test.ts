@@ -21,22 +21,22 @@ const COURBES = 'µ.easing = {}'
 
 // les formes d'une transition écrite, avec l'unique composant qui la porte
 const TRANSITIONS: Record<string, string> = {
-  '@in=*fade hors de tout bloc':                   '<div class="a" @in=*fade>bonjour</div>',
-  '@out=*fade hors de tout bloc':                  '<div class="a" @out=*fade>bonjour</div>',
-  '@transition=*slide hors de tout bloc':          '<div class="a" @transition=*slide>bonjour</div>',
-  '@in=*fly(up) hors de tout bloc':                '<div class="a" @in=*fly(up)>bonjour</div>',
-  '@in.global=*fade hors de tout bloc':            '<div class="a" @in.global=*fade>bonjour</div>',
-  '@in=*scramble (un effet qui se joue une fois)': '<p @in=*scramble>bonjour</p>',
-  '@in=*fade dans un {if}':                        '<script>$show = true</script>\n{if $show}<p @in=*fade>x</p>{end}',
-  '@in=*fade dans un {for}':                       '<script>$items = [1]</script>\n{for x in $items}<li @in=*fade>{x}</li>{end}',
-  '@in=*fade sur un composant':                    '<@enfant @in=*fade></@enfant>',
+  '@in=*fade hors de tout bloc':                   '<div class="a" :in=*fade>bonjour</div>',
+  '@out=*fade hors de tout bloc':                  '<div class="a" :out=*fade>bonjour</div>',
+  '@transition=*slide hors de tout bloc':          '<div class="a" :transition=*slide>bonjour</div>',
+  '@in=*fly(up) hors de tout bloc':                '<div class="a" :in=*fly(up)>bonjour</div>',
+  '@in.global=*fade hors de tout bloc':            '<div class="a" :in.global=*fade>bonjour</div>',
+  '@in=*scramble (un effet qui se joue une fois)': '<p :in=*scramble>bonjour</p>',
+  '@in=*fade dans un {if}':                        '<script>$show = true</script>\n{if $show}<p :in=*fade>x</p>{end}',
+  '@in=*fade dans un {for}':                       '<script>$items = [1]</script>\n{for x in $items}<li :in=*fade>{x}</li>{end}',
+  '@in=*fade sur un composant':                    '<@enfant :in=*fade></@enfant>',
 }
 
 // des applis où rien ne joue de transition
 const SANS_TRANSITION: Record<string, string> = {
   'une balise nue':                                           '<p>x</p>',
   'un {if} et un {for}':                                      '<script>$show = true\n$items = [1]</script>\n{if $show}<p>x</p>{end}\n{for x in $items}<li>{x}</li>{end}',
-  '@attach (le chemin lent de destruction, sans transition)': '<p @attach={(node) => { }}>x</p>',
+  '@attach (le chemin lent de destruction, sans transition)': '<p :attach={(node) => { }}>x</p>',
   '*neon (un effet qui n\'est pas une transition)':           '<p *neon>x</p>',
 }
 

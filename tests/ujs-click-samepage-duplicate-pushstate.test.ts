@@ -79,6 +79,7 @@ describe("mjs_ujs — clic sur un lien vers la page+hash déjà affichés : pas 
       scrollTo: (o: any) => scrollCalls.push(o),
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       Router: { navigate: (...args: any[]) => navigateCalls.push(args) },
       // µ._mjs_navNoUjs (opt-out @noUJS) : hors du bloc helpers extrait par ce
@@ -150,6 +151,7 @@ describe("mjs_ujs — clic same-page : slash final canonicalisé AVANT dédoublo
       history: { pushState: (...a: any[]) => pushStateCalls.push(a) },
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target,
       Router: { navigate: (...a: any[]) => navigateCalls.push(a), _mjs_canonHash: canonHash },
       // cf. commentaire de l'autre makeCtx plus haut (même fichier, mock fidèle hors bloc helpers).
@@ -198,6 +200,7 @@ describe("mjs_ujs — clic cross-page : redirection serveur réconciliée", func
       scrollTo() {},
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/dash',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: (_url: string, cb: any) => { capturedCb = cb },
@@ -233,6 +236,7 @@ describe("mjs_ujs — clic cross-page : redirection serveur réconciliée", func
       scrollTo() {},
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/dash',
       pageCache: { has: () => false, get: () => null, set() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: (_url: string, cb: any) => { capturedCb = cb },

@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 type Forme = 'modale' | 'synchrone' | null
@@ -38,10 +39,10 @@ const FAMILLES: Record<string, [string, string]> = {
   fichier:  ['/article/3', ' download'],
   ailleurs: ['http://autre.test/article/3', '']
 }
-const VERBES: Record<string, string> = { aucun: '', get: ' @method="get"', get_maj: ' @method="GET"', delete: ' @method="delete"', post: ' @method="post"', inconnu: ' @method="purge"' }
+const VERBES: Record<string, string> = { aucun: '', get: ' :method="get"', get_maj: ' :method="GET"', delete: ' :method="delete"', post: ' :method="post"', inconnu: ' :method="purge"' }
 const LIENS = Object.entries(FAMILLES).map(([famille, [href, attrs]]) => {
   const liens     = Object.entries(VERBES).map(([verbe, method]) => `<a class="${famille}_${verbe}" href="${href}"${attrs}${method}>${verbe}</a>`)
-  const questions = ['aucun', 'get'].map((verbe) => `<a class="${famille}_${verbe}_question" href="${href}"${attrs}${VERBES[verbe]} @confirm="Ouvrir ?">${verbe} ?</a>`)
+  const questions = ['aucun', 'get'].map((verbe) => `<a class="${famille}_${verbe}_question" href="${href}"${attrs}${VERBES[verbe]} :confirm="Ouvrir ?">${verbe} ?</a>`)
   return '<p>' + [...liens, ...questions].join(' ') + '</p>'
 }).join('\n')
 
@@ -58,7 +59,7 @@ const GESTES: Array<[string, string, Geste]> = [
 // gestes que le navigateur suit à coup sûr sur un lien ordinaire (onglet ou page quittée) : la référence n'y est jamais vide
 const SUIVIS = ['Ctrl+clic', 'clic du milieu', 'target="_blank", clic simple', 'autre origine, clic simple']
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @method="get" sous un geste du navigateur : suivi comme un lien ordinaire (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(`lien @method="get" sous un geste du navigateur : suivi comme un lien ordinaire (${nom} réel)`, function () {
   this.timeout(180000)
   let present = false
   let navigateur: any
@@ -118,7 +119,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       page.on('console', (m: any) => {
         const texte = m.text()
         if (texte.startsWith(QUESTION)) sortie.questions.push(texte.slice(QUESTION.length))
-        else if (m.type() === 'warning' && texte.includes('@method="')) sortie.avertis.push(texte)
+        else if (m.type() === 'warning' && texte.includes(':method="')) sortie.avertis.push(texte)
       })
       await page.goto(ORIGINE + '/')
       await page.waitForFunction(() => { const o: any = document.querySelector('mjs-ombre'); return !!document.querySelector('mjs-hote a.simple_aucun') && !!(o && o._shadow && o._shadow.querySelector('a.simple_aucun')) })
@@ -180,14 +181,14 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
   const rien = (s: any, ecrit: string) => {
     assert.deepEqual(suite(s), { questions: [], ouvertes: 0, fichiers: 0, requetes: [], url: ORIGINE + '/', meme: true }, 'ni onglet ou fenêtre, ni téléchargement, ni requête ; la page reste où elle est')
     assert.equal(s.avertis.length, 1, 'un avertissement de développement')
-    assert.ok(s.avertis[0].includes(`@method="${ecrit}" : lien non suivi`), s.avertis[0])
+    assert.ok(s.avertis[0].includes(`:method="${ecrit}" : lien non suivi`), s.avertis[0])
   }
 
   for (const ombre of [false, true]) {
     const ou = ombre ? 'composant en ombre fermée' : 'composant léger'
     for (const [libelle, famille, opts] of GESTES) {
       for (const [verbe, ecrit] of [['get', 'get'], ['get_maj', 'GET']]) {
-        it(`${ou}, ${libelle} sur <a @method="${ecrit}"> : suivi comme un lien ordinaire, sans avertissement`, async function () {
+        it(`${ou}, ${libelle} sur <a :method="${ecrit}"> : suivi comme un lien ordinaire, sans avertissement`, async function () {
           if (!present) { this.skip(); return }
           const o = await ordinaire(libelle, famille, opts, ombre, null)
           commeOrdinaire(await geste(`${famille}_${verbe}`, opts, ombre, null), o, libelle)
@@ -195,7 +196,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       }
 
       for (const [verbe, ecrit] of [['delete', 'delete'], ['post', 'post'], ['inconnu', 'purge']]) {
-        it(`${ou}, ${libelle} sur <a @method="${ecrit}"> : retenu, rien ne part, la console dit pourquoi`, async function () {
+        it(`${ou}, ${libelle} sur <a :method="${ecrit}"> : retenu, rien ne part, la console dit pourquoi`, async function () {
           if (!present) { this.skip(); return }
           rien(await geste(`${famille}_${verbe}`, opts, ombre, null), ecrit)
         })
@@ -208,7 +209,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
     for (const ombre of [false, true]) {
       const ou = ombre ? 'composant en ombre fermée' : 'composant léger'
       for (const [libelle, famille, opts] of GESTES) {
-        it(`${sous}, ${ou}, ${libelle} sur <a @method="get" @confirm> : la question et la suite du lien ordinaire`, async function () {
+        it(`${sous}, ${ou}, ${libelle} sur <a :method="get" :confirm> : la question et la suite du lien ordinaire`, async function () {
           if (!present) { this.skip(); return }
           const o = await ordinaire(libelle, famille, opts, ombre, forme)
           const s = await geste(`${famille}_get_question`, opts, ombre, forme)
@@ -218,4 +219,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       }
     }
   }
-})
+}))

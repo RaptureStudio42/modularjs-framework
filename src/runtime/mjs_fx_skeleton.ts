@@ -100,7 +100,7 @@ function _mjsSkelRetry() {
   zone.setAttribute('aria-hidden', 'true');
   var t = document.createElement('template');
   // rangée en HTML entier (le manifeste d'avant la forme compacte, qui ne commence jamais par `<`) : lue telle quelle
-  t.innerHTML = forme.charAt(0) === '<' ? forme : _mjsSkelHtml(forme);
+  t.innerHTML = µ._mjs_th(forme.charAt(0) === '<' ? forme : _mjsSkelHtml(forme));
   zone.appendChild(t.content);
   µ._mjs_dom.setAttribute(el, 'mjs-skel-host', '');
   µ._mjs_dom.appendChild(el, zone);

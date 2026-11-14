@@ -171,9 +171,9 @@ describe('parser — bloc de slot <@fill>', function () {
     })
   })
 
-  // `parseText` prenait la ligne AVANT de scanner le run de texte ; le run avale le
-  // `\n` + l'indentation qui précèdent le texte visible → la ligne rapportée était celle D'AVANT
-  // le retour à la ligne. La ligne d'un nœud texte = celle de son PREMIER caractère non blanc.
+  // La ligne d'un nœud texte = celle de son PREMIER caractère non blanc (textes, dans lireParLArbre) : le run
+  // de texte avale le `\n` + l'indentation qui précèdent le texte visible, et la ligne prise à son début
+  // serait celle D'AVANT le retour à la ligne.
   describe('texte nu — la ligne rapportée est celle du premier caractère visible', () => {
     it('code indenté réel, <button> puis texte nu : ligne 5, pas ligne 4', () => {
       const html = [

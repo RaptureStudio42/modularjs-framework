@@ -27,12 +27,12 @@ const SOURCES: Record<string, string> = {
   @compter  = (k) -> $n = k
   @dire     = (m) -> $mot = m
 </script>
-<p class="litteral" @style.color{$on}={$on ? 'red' : 'blue'}>a</p>
-<p class="vif" @style.color{$on}={$vif ? '${R}' : "${V}"}>b</p>
-<p class="quote" @style.color{$on}="{$vif ? '${R}' : '${V}'}">c</p>
-<p class="largeur" @style.width{$on}={$n + 1}px>d</p>
-<p class="cl-a" @class{$mot === 'oui' and $on}="actif">e</p>
-<p class="cl-b" @class{$mot === "oui" ? $on : false}="actif">f</p>
+<p class="litteral" :style.color{$on}={$on ? 'red' : 'blue'}>a</p>
+<p class="vif" :style.color{$on}={$vif ? '${R}' : "${V}"}>b</p>
+<p class="quote" :style.color{$on}="{$vif ? '${R}' : '${V}'}">c</p>
+<p class="largeur" :style.width{$on}={$n + 1}px>d</p>
+<p class="cl-a" :class{$mot === 'oui' and $on}="actif">e</p>
+<p class="cl-b" :class{$mot === "oui" ? $on : false}="actif">f</p>
 <u class="temoin">témoin</u>
 `,
   // dans un {if} : la balise naît avec l'état du moment
@@ -46,7 +46,7 @@ const SOURCES: Record<string, string> = {
   @changer  = -> $vif = not $vif
 </script>
 {if $si}
-  <p class="dans-si" @style.color{$on}={$vif ? '${R}' : "${V}"} @class{$mot === 'oui' and $on}="actif">si</p>
+  <p class="dans-si" :style.color{$on}={$vif ? '${R}' : "${V}"} :class{$mot === 'oui' and $on}="actif">si</p>
 {end}
 <u class="temoin">témoin</u>
 `,
@@ -58,7 +58,7 @@ const SOURCES: Record<string, string> = {
   @basculer = -> $on = not $on
 </script>
 {for r in $rows by id}
-  <li class="ligne" @style.color{r.on}={r.on ? r.couleur : 'inherit'} @class{r.nom === 'a' and $on}="actif">{r.nom}</li>
+  <li class="ligne" :style.color{r.on}={r.on ? r.couleur : 'inherit'} :class{r.nom === 'a' and $on}="actif">{r.nom}</li>
 {end}
 <u class="temoin">témoin</u>
 `,
@@ -76,8 +76,8 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <p class="dans-succes" @style.color{v.on}={v.on ? v.couleur : 'inherit'} @class{v.nom === 'a' and $on}="actif">ok</p>
-  <p class="mixte" @style.color{$on}={$vif ? v.couleur : "${V}"}>mixte</p>
+  <p class="dans-succes" :style.color{v.on}={v.on ? v.couleur : 'inherit'} :class{v.nom === 'a' and $on}="actif">ok</p>
+  <p class="mixte" :style.color{$on}={$vif ? v.couleur : "${V}"}>mixte</p>
 {end}
 <u class="temoin">témoin</u>
 `

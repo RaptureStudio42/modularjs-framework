@@ -15,8 +15,9 @@ if (µ.Element) {
     return µ.error(µ._mjs_msg('keyDestroy', null, 'destruction de l\'ancienne clé {key} en erreur :'), err);
   };
 
-  // _mjs_updKey prend une createFn qui retourne {fragment, refs}.
-  µ.Element.prototype._mjs_updKey = function(id, val, createFn) {
+  // _mjs_updKey prend une createFn qui retourne {fragment, refs}. `kb` : les props que le bloc livre à ses composants
+  // (generator/compile.ts), posées avant son entrée dans la page
+  µ.Element.prototype._mjs_updKey = function(id, val, createFn, kb) {
     var built, childMode, e, firstNew, n, outroNodes, range, ref, s, t;
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
@@ -32,6 +33,10 @@ if (µ.Element) {
     this._mjs_key_cache[id] = val;
     // <transitions>
     if (this._mjs_tryReviveDying(s, e, createFn)) {
+      // <props-enfants>
+      // bloc repris en pleine sortie : ses composants reçoivent les props d'aujourd'hui, comme un bloc neuf
+      if (kb) kb();
+      // </props-enfants>
       return true;
     }
     // </transitions>
@@ -77,6 +82,18 @@ if (µ.Element) {
         outroNodes[__oi]._mjs_pairedWith = firstNew;
       }
     }
+    // <props-enfants>
+    // props des composants du bloc, posées avant son entrée dans la page (registre `µ._mjs_pend`, cf. `_mjs_updIf`) ; une liaison qui
+    // lève n'empêche pas cette entrée, l'erreur repart ensuite vers le rendu du parent
+    if (kb) {
+      try {
+        kb();
+      } catch (err) {
+        s.parentNode.insertBefore(built.fragment, e);
+        throw err;
+      }
+    }
+    // </props-enfants>
     s.parentNode.insertBefore(built.fragment, e);
     // #10 — la clé a changé : on vient de recréer une structure NEUVE et VIDE
     // (nouveaux anchors des {if}/{key} imbriqués). Mais leurs mémos de branche

@@ -135,12 +135,12 @@ describe('branche {await} : chaque forme d’attribut lit sa valeur, directement
     ['texte', '<p>{v.n}</p>'],
     ['value=!{…}', '<input aria-label="n" value=!{v.nom}>'],
     ['média currentTime=!{…}', '<video currentTime=!{v.t}></video>'],
-    ['contenu @html=!{…}', '<div contenteditable="true" @html=!{v.html}></div>'],
-    ['groupe @group=!{…}', '<input aria-label="g" type="checkbox" value="a" @group=!{v.liste}>'],
+    ['contenu @html=!{…}', '<div contenteditable="true" :html=!{v.html}></div>'],
+    ['groupe @group=!{…}', '<input aria-label="g" type="checkbox" value="a" :group=!{v.liste}>'],
     ['composant val=!{…}', '<@enfant-lg val=!{v.n}></@enfant-lg>'],
     ['spread {...v}', '<@enfant-lg {...v}></@enfant-lg>'],
-    ['@attach réactif', '<div @attach={f(v, $tick)}>x</div>'],
-    ['@emit réactif', '<div @emit.sel={[v.n, $tick]}>x</div>'],
+    ['@attach réactif', '<div :attach={f(v, $tick)}>x</div>'],
+    ['@emit réactif', '<div :emit.sel={[v.n, $tick]}>x</div>'],
   ]
 
   async function survit(tag: string, branche: string) {
@@ -219,7 +219,7 @@ describe('gestionnaires : réaffecter un nom du gabarit est refusé à la compil
   })
 
   it('réaffectation depuis une fonction imbriquée du gestionnaire : refusée aussi', async () => {
-    await assert.rejects(transpile("<script>\n  $list = [1]\n</script>\n{for x in $list}<button @click={setTimeout((-> x = 9), 0)}>b</button>{end}\n", { moduleName: 'card' }), (e: any) => refus.test(e.message))
+    await assert.rejects(transpile("<script>\n  $list = [1]\n</script>\n{for x in $list}<button @click={µafter(0, -> x = 9)}>b</button>{end}\n", { moduleName: 'card' }), (e: any) => refus.test(e.message))
   })
 
   it('jamais de faux refus : paramètre homonyme, propriété, comparaison, boucles imbriquées au même index', async () => {

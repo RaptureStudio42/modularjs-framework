@@ -1,9 +1,10 @@
 // une faute venue d'un partiel inclus (`<@include bas>`) ne cite jamais une ligne du composant : le HTML
-// recollé n'a pas les lignes du fichier, et celles d'un partiel ne sont pas celles du composant ; la ligne
-// n'est citée que si elle est celle du fichier du composant lui-même
+// recollé n'a pas les lignes du fichier ; une balise du langage écrite dans un partiel cite sa ligne dans le
+// partiel et nomme son fichier (chemin depuis le dossier du composant), même quand le composant écrit la même
+// balise à l'identique
 
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { transpile } from '../src/transpiler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
@@ -11,6 +12,9 @@ import { mjsTmp } from './helpers/tmp.js'
 const dir = mjsTmp('ligne-partiel')
 writeFileSync(join(dir, '_bas.mjs'), '<p>a</p>\n<p>b</p>\n<@document *lang (color: red)>\n<p>c</p>\n')
 writeFileSync(join(dir, '_ps.mjs'), '<script>\n@id = \'depuis le partiel\'\n</script>\n<p>partiel</p>\n')
+writeFileSync(join(dir, '_relais.mjs'), '<p>0</p>\n<@include bas>\n')
+mkdirSync(join(dir, 'sous'))
+writeFileSync(join(dir, 'sous', '_pied.mjs'), '<p>pied</p>\n\n<@document *ripple (color: red)>\n')
 
 const compile = (src: string) => transpile(src, { moduleName: 'hote', baseDir: dir })
 
@@ -24,27 +28,42 @@ async function avertissements(src: string): Promise<string[]> {
 }
 
 describe('une balise du langage écrite dans un partiel inclus', () => {
-  it('le message dit la faute, sans citer de ligne : le composant a 8 lignes, la balise n\'y est pas', async () => {
+  it('le message dit la faute et cite sa ligne dans le partiel, avec le fichier du partiel', async () => {
     const { data } = await compile('<script>\n$n = 1\n</script>\n\n<p>un</p>\n<p>deux</p>\n<@include bas>\n<p>trois</p>\n')
     assert.equal(data.macroErrors.length, 1, JSON.stringify(data.macroErrors))
     assert.match(data.macroErrors[0], /\*lang \(…\)/)
     assert.match(data.macroErrors[0], /sans espace avant la parenthèse/)
-    assert.doesNotMatch(data.macroErrors[0], /ligne/)
+    assert.match(data.macroErrors[0], /\(ligne 3 de _bas\.mjs\)/)
   })
 
-  it('la même faute dans le composant et dans un partiel : la ligne n\'est citée que pour le composant', async () => {
+  it('la même faute dans le composant et dans un partiel : chacune cite sa ligne dans son fichier', async () => {
     const { data } = await compile('<p>un</p>\n<@include bas>\n<@document *ripple (color: red)>\n')
     assert.equal(data.macroErrors.length, 2, JSON.stringify(data.macroErrors))
     const ripple = data.macroErrors.find(m => /\*ripple/.test(m))!
     const lang   = data.macroErrors.find(m => /\*lang/.test(m))!
-    assert.match(ripple, /ligne 3\b/)
-    assert.doesNotMatch(lang, /ligne/)
+    assert.match(ripple, /\(ligne 3\)/)
+    assert.match(lang, /\(ligne 3 de _bas\.mjs\)/)
   })
 
-  it('le même texte de balise dans le composant et dans un partiel : on ne sait pas laquelle est fautive, aucune ligne', async () => {
+  it('un partiel inclus par un partiel, ou deux fois : la ligne du partiel qui porte la balise', async () => {
+    for (const src of ['<div>\n<@include relais>\n</div>\n', '<@include bas>\n<p>x</p>\n<@include bas>\n']) {
+      const { data } = await compile(src)
+      assert.ok(data.macroErrors.length > 0, src)
+      for (const message of data.macroErrors) assert.match(message, /\(ligne 3 de _bas\.mjs\)/, src)
+    }
+  })
+
+  it('un partiel d\'un sous-dossier : son chemin depuis le dossier du composant', async () => {
+    const { data } = await compile('<p>un</p>\n<@include ./sous/pied>\n')
+    assert.equal(data.macroErrors.length, 1, JSON.stringify(data.macroErrors))
+    assert.match(data.macroErrors[0], /\(ligne 3 de sous\/_pied\.mjs\)/)
+  })
+
+  it('le même texte de balise dans le composant et dans un partiel : chacune cite sa ligne dans son fichier', async () => {
     const { data } = await compile('<p>un</p>\n<@include bas>\n<@document *lang (color: red)>\n')
     assert.equal(data.macroErrors.length, 2, JSON.stringify(data.macroErrors))
-    for (const message of data.macroErrors) assert.doesNotMatch(message, /ligne/)
+    assert.ok(data.macroErrors.some(m => /\(ligne 3\)/.test(m)), JSON.stringify(data.macroErrors))
+    assert.ok(data.macroErrors.some(m => /\(ligne 3 de _bas\.mjs\)/.test(m)), JSON.stringify(data.macroErrors))
   })
 })
 

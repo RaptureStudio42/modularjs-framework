@@ -21,6 +21,7 @@ import { join, extname, normalize } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const SOURCES: Record<string, string> = {
   'boite.mjs': '<p>boîte</p>\n\n<style>\n  :host\n    display: block\n</style>\n',
@@ -96,7 +97,7 @@ describe('mjs_ujs navigateur réel, vrai projet — retour sur une entrée de la
   })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(`${nom}`, function () {
+    playTogether(describe(`${nom}`, function () {
       let browser: Browser | null = null
       let server: Server | null  = null
       let origin  = ''
@@ -277,6 +278,6 @@ describe('mjs_ujs navigateur réel, vrai projet — retour sur une entrée de la
           await page.close()
         })
       }
-    })
+    }))
   }
 })

@@ -23,7 +23,7 @@ const HOTE = `<script>
     window.__monter = (n)-> $liste = Array.from({ length: n }, (_, i)-> i)
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   {for i in $liste}<@@checkbox name={'c' + i}>{i}</@@checkbox><@lecteur></@lecteur><@lecteur-reactif></@lecteur-reactif>{end}
 </form>
 `

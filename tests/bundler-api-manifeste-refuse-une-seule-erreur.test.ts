@@ -11,7 +11,7 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const CAS = [
   { nom: 'manifeste dans les sources, sorties ailleurs', fichier: 'main.js', contenu: 'console.log("à moi")\n' },
-  { nom: 'manifeste en .civet dans les sources', fichier: 'outil.civet', contenu: 'export x = 1\n' },
+  { nom: 'manifeste en .civet dans les sources', fichier: 'outil.civet.mjs', contenu: 'export x = 1\n' },
   { nom: 'manifeste = manifestExternal', fichier: 'manifest.civet', contenu: '# require x\n' },
 ]
 

@@ -1,4 +1,4 @@
-// Les refus de `µeffect`/`µinspect` et de `µemit` dans `<script module>` citaient une ligne comptée depuis le
+// Les refus de `µinspect` et de `µemit` dans `<script module>` citaient une ligne comptée depuis le
 // début du bloc, pas celle du fichier. Ils citent désormais la ligne du `.mjs`.
 
 import assert from 'node:assert/strict'
@@ -19,8 +19,8 @@ const MODULE = (ligne: string): string => ['<p>x</p>', '<script module>', 'a = 1
 describe('gardes de <script module> : ligne du fichier', function () {
   this.timeout(30000)
 
-  it('µeffect dans le module : ligne 5', async () => {
-    assert.match(await message(MODULE('µeffect -> console.log a')), /« µeffect » dans <script module> \(ligne 5\)/)
+  it('µinspect dans le module : ligne 5', async () => {
+    assert.match(await message(MODULE('µinspect a')), /« µinspect » dans <script module> \(ligne 5\)/)
   })
 
   it('µemit dans le module : ligne 5', async () => {

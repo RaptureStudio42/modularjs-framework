@@ -39,8 +39,10 @@
 //                     TOUJOURS : un échec (404, réseau coupé) lève l'attente comme une arrivée, et ses textes
 //                     manquants paraissent en barres (en développement, '⟦clé⟧')
 //   'key'           — '⟦clé⟧' TOUJOURS
-//   '*skeleton'     — le module est déjà là : '' en prod, '⟦clé⟧' en dev (µ._i18nData.dev), et un
-//                     texte en route, ou que l'échec de son chargement laisse sans valeur, prend en prod la place d'une barre grise
+//   '*skeleton'     — le module est déjà là : '⟦clé⟧' en dev (µ._i18nData.dev), et un texte en route, ou que l'échec de son
+//                     chargement laisse sans valeur, prend en prod la place d'une barre grise
+// Une clé absente pour de bon (ni la langue de la page ni la langue par défaut ne la portent) montre son nom, '⟦clé⟧', dans tous les modes,
+// en prod comme en dev (cf. `__i18nPlaceholder`).
 //   '*loader'       — comme 'wait', et l'effet *loader est affiché à la place du module le temps de
 //                     l'attente (bloc <i18n-loader>, retiré de même)
 // Une page prérendue (hôtes `mjs-ssr`) n'est jamais cachée ni habillée d'un indicateur : ses textes sont déjà dans le HTML.
@@ -271,19 +273,26 @@ function __i18nWaits(mode) {
 
 // Placeholder selon le mode EFFECTIF : 'key' → toujours visible, les autres → visible en dev SEULEMENT
 // (µ._i18nData.dev) ; en prod, une barre grise prend la place d'un texte EN ROUTE sous '*skeleton' (sa langue ou sa section en cours de
-// chargement), et d'un texte que l'ÉCHEC de son chargement laisse sans valeur sous 'wait', '*skeleton' et '*loader' ; une clé absente pour de bon, rien.
+// chargement, ou le fragment de la langue par défaut qui porte son repli), et d'un texte que l'ÉCHEC de son chargement laisse sans valeur sous
+// 'wait', '*skeleton' et '*loader' ; un texte encore en route sous 'wait' ou '*loader', rien — une barre quand le premier rendu a attendu ses fragments
+// de repli au-delà du délai de secours (cf. `__i18nAttentePremier`) ; une clé absente pour de bon (ni la langue de la page ni la langue par défaut),
+// son nom, comme en dev
 function __i18nPlaceholder(cle, modeOverride, lang) {
   var mode = __i18nMode(modeOverride);
-  if (mode === 'key') return '⟦' + cle + '⟧';
-  if (µ._i18nData.dev) return '⟦' + cle + '⟧';
-  // un module sauvé après 3 s d'attente (cf. `__i18nSecours`) : des barres à la place de tout ce qui manque encore ; de même pour un texte que l'échec
-  // de son chargement a laissé sans valeur
-  var secours = mode === 'wait' && µ.activeComponent && µ.activeComponent._mjs_i18nRescue;
-  if (secours || (mode === '*skeleton' && __i18nEnRoute(lang, cle)) || __i18nEnEchec(lang, cle)) {
-    __i18nSkelLater();
-    return __i18nSkel;
+  if (mode !== 'key' && !µ._i18nData.dev) {
+    // un module sauvé après 3 s d'attente (cf. `__i18nSecours`) : des barres à la place de tout ce qui manque encore ; de même pour un texte que
+    // l'échec de son chargement a laissé sans valeur, et pour un texte en route d'un module paru au délai sans ses fragments de repli (`_mjs_i18nTard`)
+    var c       = µ.activeComponent;
+    var secours = mode === 'wait' && c && c._mjs_i18nRescue;
+    var enRoute = __i18nEnRoute(lang, cle);
+    if (secours || ((mode === '*skeleton' || c && c._mjs_i18nTard) && enRoute) || __i18nEnEchec(lang, cle)) {
+      __i18nSkelLater();
+      return __i18nSkel;
+    }
+    // données pas encore reçues (objet inerte) : rien encore, comme un texte en route
+    if (enRoute || µ._i18nData === __i18nInertFallback) return '';
   }
-  return '';
+  return '⟦' + cle + '⟧';
 }
 
 // SQUELETTE DES TEXTES EN ROUTE (`*skeleton`) — douze espaces de chiffre (U+2007) à la place du texte, qu'un
@@ -300,14 +309,30 @@ function __i18nSkelColor(comp) {
 }
 // un texte en route : avant le démarrage (le fichier de la langue pas encore arrivé, tout texte
 // l'est), la langue elle-même en chargement, ou la section de la clé (son premier segment) dont le
-// fragment n'est pas encore arrivé
+// fragment n'est pas encore là, dans la langue affichée ou dans la langue par défaut qui porte son repli (cf. `__i18nRepli`)
 function __i18nEnRoute(lang, cle) {
+  var section = String(cle).split('.')[0], def = µ._i18nData.default, c = µ.activeComponent;
   if (µ._i18nData === __i18nInertFallback) return false;
-  if (!µ._mjs_i18nBooted) return true;
+  // avant le démarrage, un module rendu par le serveur (ou créé par le rendu d'un hôte qu'il a rendu) se rend avec la graine de la page : le fragment
+  // d'une section que le serveur a lue y est entier, une clé racine qu'il a lue sans la trouver y est à `null` (cf. `__i18nNoteRoot`) : un tel texte
+  // manquait déjà au serveur, qui a écrit son nom — la reprise écrit le même. Une section se juge sur le fragment de la langue par défaut, qui porte le
+  // repli (le serveur l'a semé s'il a lu une clé que la langue de la page n'a pas), ou sur celui de la page quand c'est elle. Un texte que le serveur
+  // n'a pas lu (rendu par le navigateur seul) reste en route jusqu'au démarrage
+  if (!µ._mjs_i18nBooted) return !(__i18nProvLang && c && (c.hasAttribute('mjs-ssr') || __i18nSousHote(c)) && (__i18nDansGraine(def, section) || lang === def && __i18nDansGraine(lang, section) || __i18nNul(lang, cle)));
   if (!lang) return false;
   if (__i18nLangPromises[lang] && !__i18nLangReady(lang)) return true;
-  var entry = µ._i18nCache.get(lang + '/' + String(cle).split('.')[0]);
-  return !!(entry && entry.data == null);
+  return __i18nPasLa(lang, section) || __i18nPasLa(def, section);
+}
+// une clé racine que le serveur a lue sans la trouver : `null` sous un nœud de la graine ; `a.x` sous un `a: null` n'en est pas une
+function __i18nNul(lang, cle) {
+  var p = String(cle).split('.'), k = p.pop(), n = p.length ? __i18nResolve(lang, p.join('.')) : µ._mjs_i18nDictOf(lang);
+  return !!n && typeof n === 'object' && n[k] === null;
+}
+// le fragment d'une section pas encore là : en route, ou pas encore demandé alors que la table de la langue le porte (`µt` dans un <script>, le
+// repli de la langue par défaut avant sa demande)
+function __i18nPasLa(lang, section) {
+  var e = µ._i18nCache.get(lang + '/' + section);
+  return e ? e.data == null : !!__i18nSectionName(__i18nSectionsOf(lang), section);
 }
 // quelque chose est-il encore en route (langue, fragment) ? Sinon, une barre qui reste est un texte
 // figé trop tôt (µt dans un <script>, gardé dans une variable) : plus rien ne la remplacera
@@ -357,13 +382,28 @@ function __i18nSkelPaint() {
   var h = new window.Highlight();
   var racines = [document];
   var couleurs = [__i18nSkelColor(null)];
-  var vus = [];
-  var ajoute = function(c) { if (c && vus.indexOf(c) < 0) { vus.push(c); var r = c._shadow || c.shadowRoot; if (r) { racines.push(r); couleurs.push(__i18nSkelColor(c)); } } };
+  // composants déjà vus ; l'état des balises pendant la peinture : vrai pour une racine de la liste et ce qui est sous elle (son
+  // parcours en lit le texte), faux sous aucune ; chaque question en temps constant, la peinture reste proportionnelle au nombre de
+  // légers inscrits, même par milliers
+  var vus  = new Set();
+  var etat = new Map([[document, true]]);
+  var ajoute = function(c) { if (c && !vus.has(c)) { vus.add(c); var r = c._shadow || c.shadowRoot; if (r) { racines.push(r); etat.set(r, true); couleurs.push(__i18nSkelColor(c)); } } };
+  // un léger est sa propre ombre (`_shadow`, l'élément lui-même) : son texte est dans l'arbre qui le porte, lu une fois ; sauté quand
+  // cet arbre, ou un léger qui le contient, est déjà dans la liste ; les parents traversés gardent la réponse, le léger suivant
+  // s'arrête au premier déjà connu
+  var couvert = function(n) {
+    var p = n.parentNode;
+    while (p && !etat.has(p)) p = p.parentNode;
+    var c = p ? etat.get(p) : false;
+    for (var q = n.parentNode; q !== p; q = q.parentNode) etat.set(q, c);
+    return c;
+  };
   if (µ._mjs_i18nComps) µ._mjs_i18nComps.forEach(ajoute);
   µ._mjs_i18nSectionComps.forEach(function(set) { set.forEach(ajoute); });
   if (µ._mjs_i18nPendingMounts) µ._mjs_i18nPendingMounts.forEach(ajoute);
   for (var i = 0; i < racines.length; i++) {
     var r = racines[i];
+    if (r.nodeType === 1 && couvert(r)) continue;
     var w = document.createTreeWalker(r, 4);
     var peint = false;
     for (var t = w.nextNode(); t; t = w.nextNode()) {
@@ -405,8 +445,49 @@ function __i18nSecours(comp) {
   comp._mjs_i18n_hold = false;
   if (µ._i18nData.dev) { µ.warn(µ._mjs_msg('i18nSecours', { ms: __i18nDelai() }, 'i18n : textes toujours absents après {ms} ms — le module paraît avec ⟦clé⟧ à la place de chaque texte absent, les textes les remplaceront à leur arrivée')); }
   comp._mjs_invalidate('_awaits_');
-  // la retenue de `mjs-loading` ne tombe plus avec l'attente : après le rendu qui vient d'être planifié, comme `_dropLoading`
-  queueMicrotask(function() { comp.removeAttribute('mjs-loading'); });
+  // la retenue de `mjs-loading` ne tombe plus avec l'attente : après le rendu qui vient d'être planifié, par le chemin de
+  // `_dropLoading` (sans transition, et les composants qui attendent ce retrait sortent avec lui)
+  queueMicrotask(function sortir() { if (comp._mjs_is_mounted) µ._mjs_unshield(comp, sortir); });
+}
+// le premier rendu attend les fragments de repli qu'il a demandés (`_mjs_i18nPremier`, cf. `__i18nRepli`), jusqu'à leur arrivée ou leur échec, au
+// plus le délai de secours : passé ce délai, le module paraît, chaque texte encore en route en barre (`_mjs_i18nTard`, cf. `__i18nPlaceholder`),
+// remplacée par le texte à l'arrivée du fragment. Rend la promesse de cette attente, rien quand le premier rendu n'a rien demandé
+function __i18nAttentePremier(comp) {
+  var p = comp._mjs_i18nPremier, fait;
+  comp._mjs_i18nPremier = null;
+  return p && p.length && new Promise(function(r) {
+    var fin = function() { fait = 1; comp._mjs_i18nTard = false; r(); };
+    Promise.all(p).then(fin, fin);
+    setTimeout(function() {
+      if (!fait && comp._mjs_is_mounted && !comp._mjs_dead) { comp._mjs_i18nTard = true; comp._mjs_invalidate('_awaits_'); }
+      r();
+    }, __i18nDelai());
+  });
+}
+// fragment déjà là, à la première connexion d'un module créé après le démarrage (changement de route, affichage conditionnel, liste qui grandit) :
+// son premier rendu, déjà planifié, peut demander le fragment de repli d'une clé qui manque (cf. `__i18nRepli`). Sous `wait` et `*loader`, le module
+// reste alors caché, l'indicateur de *loader à sa place, jusqu'à l'arrivée ou l'échec de ce fragment, au plus le délai de secours, comme un module
+// qui attend son propre fragment. Rien dans la langue par défaut (rien ne s'y replie) ni sur le serveur. La feuille d'attente (`µ._mjs_waits`) ne
+// se pose que si le premier rendu attend vraiment : sans repli demandé, le module sort comme un module sans attente, dans la même suite de microtâches.
+// La retenue lue par la connexion (`_mjs_cssPending`) retombe ensuite, comme celle d'une feuille paresseuse adoptée : une reconnexion n'attend rien
+function __i18nPremierEnCache(comp) {
+  var def = µ._i18nData.default, seul, vu;
+  if (comp._mjs_mjsInitialized || µ.server || µ._isServer || !µ._mjs_i18nBooted || !def || __i18nEffectiveLang() === def || !__i18nWaits(__i18nMode(comp._mjs_i18n[1]))) return;
+  seul = !comp._mjs_cssPending;
+  comp._mjs_i18nPremier = [];
+  if (seul) { comp._mjs_waited = true; }
+  vu = new Promise(function(r) { queueMicrotask(r); }).then(function() {
+    var p = __i18nAttentePremier(comp);
+    if (seul) { comp._mjs_waited = false; comp._mjs_cssPending = null; }
+    if (!p) return;
+    if (seul) { µ._mjs_waits(comp); }
+    // <i18n-loader-appel>
+    __i18nLoaderOn(comp);
+    p.then(function() { __i18nLoaderOff(comp); });
+    // </i18n-loader-appel>
+    return p;
+  });
+  comp._mjs_cssPending = seul ? vu : Promise.all([comp._mjs_cssPending, vu]);
 }
 
 // <i18n-loader>
@@ -540,11 +621,15 @@ function __i18nPluralRulesFor(lang) {
 }
 
 // rendu serveur (`µ._i18nTrackRoot`, posé par les deux moteurs) : note les clés RACINE lues, celles dont le premier mot n'est pas une
-// section, `{langue: {clé: true}}` ; la graine les transmet au navigateur, qui n'attend plus le fichier de langue pour elles
-function __i18nNoteRoot(lang, cle) {
-  if (__i18nSectionName(__i18nSectionsOf(lang), cle.split('.')[0]) !== undefined) { return; }
+// section, `{langue: {clé: true}}` ; la graine les transmet au navigateur, qui n'attend plus le fichier de langue pour elles. Une clé lue que ni la
+// langue de la page ni la langue par défaut ne portent se note `false` : la graine la porte à `null`, et la reprise sait qu'elle manquait déjà au
+// serveur (cf. `__i18nEnRoute`)
+function __i18nNoteRoot(lang, cle, absente) {
+  var s = String(cle).split('.')[0];
+  if (__i18nSectionName(__i18nSectionsOf(lang), s) !== undefined || (absente && __i18nSectionName(__i18nSectionsOf(µ._i18nData.default), s) !== undefined)) { return; }
   var u = µ._i18nUsedRoot || (µ._i18nUsedRoot = {});
-  (u[lang] || (u[lang] = {}))[cle] = true;
+  var l = u[lang] || (u[lang] = {});
+  if (!l[cle]) { l[cle] = !absente; }
 }
 // les sections d'un module : la sienne (avec `@i18n 'a' 'b'`, les autres aussi : le bloc des plusieurs sections par module remplace cette fonction,
 // d'où une variable et non une déclaration de fonction)
@@ -594,6 +679,7 @@ function __i18nSousHote(comp) {
   if (node == null && __i18nAskSection(lang, cle)) { node = __i18nResolve(lang, cle); }
   if (node == null && µ._i18nData.default && lang !== µ._i18nData.default) {
     node = __i18nResolve(µ._i18nData.default, cle);
+    if (node == null && __i18nRepli(lang, cle)) { node = __i18nResolve(µ._i18nData.default, cle); }
     fellBack = node != null;
     if (fellBack) { resolvedLang = µ._i18nData.default; }
   }
@@ -614,6 +700,7 @@ function __i18nSousHote(comp) {
       if (__c) { __c._mjs_i18nRedo = true; }
       else { __i18nRedoAll = true; }
     }
+    if (µ._i18nTrackRoot && node == null) { __i18nNoteRoot(lang, cle, true); }
     return __i18nPlaceholder(cle, modeOverride, lang);
   }
   if (µ._i18nTrackRoot) { __i18nNoteRoot(resolvedLang, cle); }
@@ -772,7 +859,8 @@ var __i18nFallbackWarned = new Set();
     var wait = µ.i18n._mjs_i18nMount(comp);
     // un hôte de page prérendue (`mjs-ssr`) ne gèle jamais : le constructeur a déjà remplacé son HTML par le gabarit
     // vide, le geler le laisserait vide (ou en barres) jusqu'à l'arrivée du fichier de langue
-    if (!wait || comp.hasAttribute('mjs-ssr')) return;
+    if (comp.hasAttribute('mjs-ssr')) return;
+    if (!wait) { __i18nPremierEnCache(comp); return; }
     comp._mjs_pending_full = false;
     if (comp._mjs_pending) { comp._mjs_pending.clear(); }
     // GEL, et pas seulement annulation du rendu programmé : n'importe quelle
@@ -784,19 +872,21 @@ var __i18nFallbackWarned = new Set();
     // le module reste CACHÉ (`[mjs-loading]`) tant que le gel tient : l'attente rejoint la retenue que
     // connectedCallback lit juste après (`_mjs_cssPending`, celle des feuilles paresseuses), sinon le navigateur
     // peint le gabarit brut (liaisons vides) le temps de l'attente. Exception : le rendu serveur (la capture ne doit rien porter de masqué)
-    if (!µ.server && !µ._isServer) { comp._mjs_cssPending = comp._mjs_cssPending ? Promise.all([comp._mjs_cssPending, wait]) : wait; }
+    // Le premier rendu, une microtâche après le réveil (plus bas), peut attendre le fragment de repli d'une clé qui manque (cf. `__i18nRepli`) : le
+    // module reste caché, l'indicateur de *loader en place, jusqu'à son arrivée ou son échec — au plus le délai de secours (cf. `__i18nAttentePremier`)
+    var vu = wait.then(function() { return new Promise(function(r) { queueMicrotask(r); }); }).then(function() { return __i18nAttentePremier(comp); });
+    if (!µ.server && !µ._isServer) { comp._mjs_cssPending = comp._mjs_cssPending ? Promise.all([comp._mjs_cssPending, vu]) : vu; }
     // <i18n-loader-appel>
     __i18nLoaderOn(comp);
+    vu.then(function() { __i18nLoaderOff(comp); });
     // </i18n-loader-appel>
     if (!µ.server && !µ._isServer && __i18nMode(comp._mjs_i18n[1]) === 'wait') { comp._mjs_i18nTimer = setTimeout(function() { __i18nSecours(comp); }, __i18nDelai()); }
     wait.then(function() {
       comp._mjs_i18n_hold = false;                          // levé AVANT toute sortie : un composant démonté entre-temps ne doit pas rester gelé à vie
       if (comp._mjs_i18nTimer) { clearTimeout(comp._mjs_i18nTimer); comp._mjs_i18nTimer = 0; }
       comp._mjs_i18nRescue = false;
-      // <i18n-loader-appel>
-      __i18nLoaderOff(comp);
-      // </i18n-loader-appel>
       if (!comp._mjs_is_mounted || comp._mjs_dead) return;
+      comp._mjs_i18nPremier = [];
       comp._mjs_invalidate('_awaits_');
     });
   },
@@ -887,11 +977,7 @@ var __i18nFallbackWarned = new Set();
           return µ._i18nCache.get(key).promise;
         }
         var fallbackPromise = µ.i18n._ensure(defLang, section).then(function(json) {
-          if (!µ._mjs_i18nSwapPending && lang === __i18nEffectiveLang()) {
-            var set = µ._mjs_i18nSectionComps.get(section);
-            if (set) { set.forEach(function(c) { c._mjs_invalidate('_awaits_'); }); }
-            if (__i18nAskedSections.has(section)) { __i18nWakeReaders(section); }
-          }
+          __i18nReveil(lang, section);
           return json;
         });
         µ._i18nCache.set(key, { promise: fallbackPromise, data: null });
@@ -953,13 +1039,7 @@ var __i18nFallbackWarned = new Set();
       // dans cette closure). `!µ._mjs_i18nSwapPending` seul ne suffit plus : au
       // moment de CE `.then`, un swap peut avoir COMPLÈTEMENT abouti (donc
       // retombé à `false`) vers une AUTRE langue que `lang`.
-      if (!µ._mjs_i18nSwapPending && lang === __i18nEffectiveLang()) {
-        var set = µ._mjs_i18nSectionComps.get(section);
-        if (set) { set.forEach(function(c) { c._mjs_invalidate('_awaits_'); }); }
-        // les lecteurs de la section qui ne la déclarent pas (cf. __i18nAskSection), quelle que soit la voie par
-        // laquelle elle arrive : leur propre demande, un module qui la déclare, une reprise après une panne
-        if (__i18nAskedSections.has(section)) { __i18nWakeReaders(section); }
-      }
+      __i18nReveil(lang, section);
       return json;
     }).catch(function(err) {
       __i18nFailed(err, function() {
@@ -1020,14 +1100,19 @@ var __i18nFallbackWarned = new Set();
     var lang = __i18nEffectiveLang();
     var def = µ._i18nData.default;
     var cles = [cle].concat(more);
-    var i;
+    var i, n, demande;
     if (!lang) { return cle; }
-    for (i = 0; i < cles.length; i++) {
-      if (__i18nResolve(lang, cles[i]) != null || (def && def !== lang && __i18nResolve(def, cles[i]) != null)) { return cles[i]; }
+    for (n = 0; ; n++) {
+      for (i = 0; i < cles.length; i++) {
+        if (__i18nResolve(lang, cles[i]) != null || __i18nResolve(def, cles[i]) != null) { return cles[i]; }
+      }
+      if (n) { break; }
+      // aucune ne la porte : les fragments de repli qui manquent sont demandés, une fois par section (relus aussitôt au rendu serveur)
+      for (demande = false, i = 0; i < cles.length; i++) { demande = __i18nRepli(lang, cles[i]) || demande; }
+      if (!demande) { break; }
     }
     for (i = 0; i < cles.length; i++) {
-      var e = µ._i18nCache.get(lang + '/' + cles[i].split('.')[0]);
-      if ((e && e.data == null) || __i18nEnEchec(lang, cles[i])) { return cles[i]; }
+      if (__i18nEnRoute(lang, cles[i]) || __i18nEnEchec(lang, cles[i])) { return cles[i]; }
     }
     return cle;
   }
@@ -1078,6 +1163,30 @@ function __i18nWakeReaders(section) {
   µ._mjs_i18nComps.forEach(function(c) {
     if (!declared || !declared.has(c)) { c._mjs_invalidate('_awaits_'); }
   });
+}
+// l'arrivée d'un fragment de la langue affichée, ou d'un fragment de repli (`repli`, cf. `__i18nRepli` : il sert toute langue affichée, celle d'une
+// bascule faite pendant qu'il était en route comprise) : ses modules et ses lecteurs se rendent à nouveau — rien pendant une bascule, ni pour une
+// langue qui n'est plus affichée (un fragment tardif d'une langue quittée)
+function __i18nReveil(lang, section, repli) {
+  if (µ._mjs_i18nSwapPending || !repli && lang !== __i18nEffectiveLang()) return;
+  var set = µ._mjs_i18nSectionComps.get(section);
+  if (set) { set.forEach(function(c) { c._mjs_invalidate('_awaits_'); }); }
+  if (__i18nAskedSections.has(section)) { __i18nWakeReaders(section); }
+}
+// le fragment de la langue par défaut, qui porte le repli d'une clé que le fragment ARRIVÉ de la langue affichée n'a pas : demandé à la première
+// clé qui manque, une fois par section (le cache le garde ; un échec, déjà dit, ne se redemande pas), jamais quand rien ne manque ; son arrivée
+// (`_ensure`) ou son échec rend à nouveau les modules de la section. Le premier rendu d'un module qui attend ses textes (`wait`, `*loader`) l'attend
+// aussi, en vol ou demandé ici (cf. `_mjs_connect`, `__i18nPremierEnCache`). Rend `true` s'il vient d'être demandé : arrivé aussitôt (lecture disque du rendu serveur), il se
+// relit dans le même appel
+function __i18nRepli(lang, cle) {
+  var def = µ._i18nData.default, section = String(cle).split('.')[0], key = def + '/' + section, e = µ._i18nCache.get(key), c = µ.activeComponent, p;
+  if (!µ._mjs_i18nBooted || !__i18nDansGraine(lang, section) || (e ? e.data != null : __i18nEchecs[key] || !__i18nSectionName(__i18nSectionsOf(def), section))) return false;
+  p = e ? e.promise : µ.i18n._ensure(def, section);
+  if (c && c._mjs_i18nPremier) { c._mjs_i18nPremier.push(p); }
+  if (e || µ._isServer) return !e;
+  e = function() { __i18nReveil(def, section, 1); };
+  p.then(e, e);
+  return true;
 }
 function __i18nAskSection(lang, cle) {
   var section, own, def, defs, key, entry, comp, promise;

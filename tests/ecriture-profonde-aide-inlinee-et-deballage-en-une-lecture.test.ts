@@ -15,8 +15,9 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
-const DEEP   = readFileSync(new URL('../src/runtime/mjs_deep.ts', import.meta.url), 'utf8')
+const DEEP   = lireRuntime(new URL('../src/runtime/mjs_deep.ts', import.meta.url))
 const MOTEUR = `Node ${process.version}, V8 ${process.versions.v8}`
 
 // un composant qui écrit en profondeur : de quoi construire le runtime de développement entier
@@ -49,7 +50,7 @@ async function runtimeDeDeveloppement(): Promise<any> {
 // boucle chaude dans un Node à part (drapeaux de V8) : optimisée à la demande, sa trace dit si l'aide y est fondue
 function traceInlining(code: string): string {
   const banc = `
-    const µ = globalThis.µ = { _mjs_rawSet: new WeakSet(), warn() {}, _mjs_msg: (k, p, f) => f };
+    const µ = globalThis.µ = { _mjs_rawSet: new WeakSet(), _mjs_tenus: new WeakMap(), warn() {}, _mjs_msg: (k, p, f) => f };
     µ._mjs_toRaw = function(o) { return o; };
     µ._mjs_rawIn = function(v) { return v; };
     µ._mjs_bumpEpoch = function() { return 1; };

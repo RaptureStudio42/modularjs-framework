@@ -1,8 +1,6 @@
 // suites d'opérations tirées au sort (variables, promesse tenue, rejetée, relancée, retirée) sur un composant dont les branches {await} portent texte, attributs, `{if}`, `{key}`, `{const}`
 // et une liste `{for}` sous un `{if}` : après chaque comparaison, le DOM est celui qu'un modèle calculé à la main prévoit, et le composant n'a jamais planté.
-// Les graines sont fixes : ce sont celles dont l'histoire plantait le composant (une liste de branche retirée rappelée par sa variable, ses repères réattribués par le pool de nœuds
-// texte), chacune coupée peu après le pas fautif. En développement, l'histoire finie, le pool est vidé nœud par nœud : chaque nœud servi est propre, il ne porte plus rien d'un ancien
-// usage (ni le choix d'un `{if}`, ni la clé d'un `{key}`, ni aucune autre propriété `_mjs…` à valeur).
+// Les graines sont fixes : ce sont celles dont l'histoire plantait le composant (une liste de branche retirée rappelée par sa variable), chacune coupée peu après le pas fautif.
 // Les trois modes (développement, production en fichiers séparés, production en un seul fichier) en navigateur réel, Chromium puis Firefox quand il est installé.
 
 import assert from 'node:assert/strict'
@@ -111,17 +109,6 @@ const signature = (page: any): Promise<string[]> => page.evaluate(`(() => {
   return [...sh.querySelectorAll('i,b,u,s,em,div,ul,li')].filter((n) => n.className !== 'hors').map((n) => n.localName + '.' + n.className + ':' + n.textContent + '|' + (n.getAttribute('title') ?? ''))
 })()`)
 
-// la vidange du pool (développement seulement, où les noms internes sont lisibles) : chaque nœud servi est relevé s'il porte une propriété `_mjs…` à valeur autre que son drapeau
-const VIDER_POOL = `(() => {
-  const sales = []
-  while (µ._mjs_textPool.length > 0) {
-    const n = µ._mjs_getTextNode('')
-    const propres = Object.getOwnPropertyNames(n).filter((k) => k.startsWith('_mjs') && k !== '_mjs_pooled' && n[k] !== undefined)
-    if (propres.length > 0 || n._mjs_pooled !== false) sales.push(propres.join(',') + (n._mjs_pooled !== false ? ' pooled=' + n._mjs_pooled : ''))
-  }
-  return sales
-})()`
-
 // générateur pseudo-aléatoire à graine
 function prng(graine: number) {
   let x = graine * 2654435761 % 4294967296
@@ -199,10 +186,6 @@ for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-
         }
       }
       if (ecarts.length > 0) ecarts.push('histoire : ' + histoire.join(' | '))
-      if (mode === 'dev-parents-avant') {
-        const sales: string[] = await o.page.evaluate(VIDER_POOL)
-        if (sales.length > 0) ecarts.push(`nœuds texte servis par le pool avec l'état d'un ancien usage : ${[...new Set(sales)].join(' ; ')}`)
-      }
       assert.deepEqual([...ecarts, ...graves(o).map((g) => `erreur de la page : ${g}`)], [])
     } finally {
       await o.fermer()

@@ -13,7 +13,7 @@ const HOTE = `<script>
   $v = 'red; background-image: url(http://pisteur.invalid/p.png)'
 </script>
 <span class="var" --x={$v}>variable</span>
-<span class="prop" @style.color={$v}>propriété</span>
+<span class="prop" :style.color={$v}>propriété</span>
 <@@color class="pastille" value={$v}></@@color>
 `
 

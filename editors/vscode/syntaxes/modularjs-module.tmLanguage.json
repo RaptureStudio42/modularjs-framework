@@ -1,0 +1,12 @@
+{
+  "name": "ModularJS (module Civet / CoffeeScript)",
+  "scopeName": "source.modularjs.module",
+  "patterns": [
+    {
+      "include": "text.html.modularjs#modular-vars"
+    },
+    {
+      "include": "source.coffee"
+    }
+  ]
+}

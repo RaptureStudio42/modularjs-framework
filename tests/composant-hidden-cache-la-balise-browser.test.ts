@@ -16,7 +16,7 @@ const SOURCES: Record<string, string> = {
 </script>
 <@hid-carte class="a" hidden={$h}></@hid-carte>
 <@hid-bloc class="b" hidden></@hid-bloc>
-<@hid-leger class="l" @lightDom hidden={$h}></@hid-leger>
+<@hid-leger class="l" :lightDom hidden={$h}></@hid-leger>
 <@@select class="s" hidden={$h}>
   <@@option value="a">A</@@option>
 </@@select>
@@ -38,7 +38,7 @@ const SOURCES: Record<string, string> = {
   'hid-cherche.mjs': '<script>\n  $mot = \'\'\n</script>\n<p class="c">{$mot}</p>\n',
   'hid-trouve-page.mjs': `<@hid-cherche class="u" mot="motombre" hidden="until-found"></@hid-cherche>
 <@hid-cherche class="U" mot="motcasse" hidden="UNTIL-FOUND"></@hid-cherche>
-<@hid-cherche class="v" mot="motleger" @lightDom hidden="until-found"></@hid-cherche>
+<@hid-cherche class="v" mot="motleger" :lightDom hidden="until-found"></@hid-cherche>
 <@hid-cherche class="h" mot="motcache" hidden></@hid-cherche>
 <div class="n" hidden="until-found"><p class="c">motnatif</p></div>
 `,

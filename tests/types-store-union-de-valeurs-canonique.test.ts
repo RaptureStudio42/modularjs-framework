@@ -55,7 +55,7 @@ describe('texte canonique d\'une règle de store : l\'ordre des alternatives', (
   })
 
   it('les champs d\'un objet restent rangés, comme avant', () => {
-    assert.equal(canon('{ b: int, a: int }'), canon('{ a: int, b: int }'))
+    assert.equal(canon('\n  b  int\n  a  int'), canon('\n  a  int\n  b  int'))
   })
 
   it('le texte affiché, lui, garde l\'ordre écrit', () => {

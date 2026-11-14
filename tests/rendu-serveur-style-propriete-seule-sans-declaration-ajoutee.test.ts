@@ -36,11 +36,11 @@ LEGITIMES.forEach(([, v], i) => { script += `  $ok${i} = ${JSON.stringify(v)}\n`
 script += '</script>\n'
 let gabarit = ''
 for (const cle of Object.keys(ATTAQUES)) {
-  for (const prop of PROPRIETES) gabarit += `<span class="a-${cle}-${prop}" @style.${prop}={$${cle}}></span>\n`
+  for (const prop of PROPRIETES) gabarit += `<span class="a-${cle}-${prop}" :style.${prop}={$${cle}}></span>\n`
   gabarit += `<span class="a-${cle}-var" --x={$${cle}}></span>\n`
 }
 LEGITIMES.forEach(([prop], i) => {
-  gabarit += prop.startsWith('--') ? `<span class="ok-${i}" ${prop}={$ok${i}}></span>\n` : `<span class="ok-${i}" @style.${prop}={$ok${i}}></span>\n`
+  gabarit += prop.startsWith('--') ? `<span class="ok-${i}" ${prop}={$ok${i}}></span>\n` : `<span class="ok-${i}" :style.${prop}={$ok${i}}></span>\n`
 })
 const HOTE = script + gabarit
 

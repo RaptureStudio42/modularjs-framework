@@ -58,55 +58,55 @@ const COMPOSANT = `<script>
 
 <ul class="sans-id">
   {for s in $sansid by cid}
-    <li @flip=5000 data-k="{s.t}">{s.t}</li>
+    <li :flip=5000 data-k="{s.t}">{s.t}</li>
   {end}
 </ul>
 
 <ul class="id-double">
   {for s in $double by cid}
-    <li @flip=5000 data-k="{s.t}">{s.t}</li>
+    <li :flip=5000 data-k="{s.t}">{s.t}</li>
   {end}
 </ul>
 
 <ul class="calculee">
   {for u in cles($gens) by cle}
-    <li @flip=5000 data-k="{u.t}">{u.t}</li>
+    <li :flip=5000 data-k="{u.t}">{u.t}</li>
   {end}
 </ul>
 
 <ul class="deux-racines">
   {for s in $deux by cid}
-    <li @flip=5000 data-k="{s.t}">{s.t}</li>
-    <li @flip=5000 data-k="{s.t}2">{s.t}2</li>
+    <li :flip=5000 data-k="{s.t}">{s.t}</li>
+    <li :flip=5000 data-k="{s.t}2">{s.t}2</li>
   {end}
 </ul>
 
 <ul class="deux-sous-if">
   {for s in $sousif by cid}
     {if s.on}
-      <li @flip=5000 data-k="{s.t}">{s.t}</li>
-      <li @flip=5000 data-k="{s.t}2">{s.t}2</li>
+      <li :flip=5000 data-k="{s.t}">{s.t}</li>
+      <li :flip=5000 data-k="{s.t}2">{s.t}2</li>
     {end}
   {end}
 </ul>
 
 <ul class="un-if-chacune">
   {for s in $chacun by cid}
-    {if s.on}<li @flip=5000 data-k="{s.t}">{s.t}</li>{end}
-    {if s.on}<li @flip=5000 data-k="{s.t}2">{s.t}2</li>{end}
+    {if s.on}<li :flip=5000 data-k="{s.t}">{s.t}</li>{end}
+    {if s.on}<li :flip=5000 data-k="{s.t}2">{s.t}2</li>{end}
   {end}
 </ul>
 
 <ul class="facultative">
   {for s in $facult by cid}
-    {if s.on}<li @flip=5000 data-k="{s.t}">{s.t}</li>{end}
-    <li @flip=5000 data-k="{s.t}2">{s.t}2</li>
+    {if s.on}<li :flip=5000 data-k="{s.t}">{s.t}</li>{end}
+    <li :flip=5000 data-k="{s.t}2">{s.t}2</li>
   {end}
 </ul>
 
 <ul class="temoin">
   {for s in $temoin by id}
-    <li @flip=5000 data-k="{s.t}">{s.t}</li>
+    <li :flip=5000 data-k="{s.t}">{s.t}</li>
   {end}
 </ul>
 

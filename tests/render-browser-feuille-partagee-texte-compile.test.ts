@@ -31,7 +31,7 @@ describe('render-browser — feuille partagée prérendue : le texte compilé, p
     mkdirSync(join(root, 'src'), { recursive: true })
     mkdirSync(join(root, 'styles'), { recursive: true })
     writeFileSync(join(root, 'styles', 'volet.css'), '.volet { transition: opacity 0s linear 1s }\n')
-    writeFileSync(join(root, 'src', 'panneau.mjs'), '<aside class="volet">A</aside>\n<style @css="volet"></style>\n')
+    writeFileSync(join(root, 'src', 'panneau.mjs'), '<aside class="volet">A</aside>\n<style :css="volet"></style>\n')
     const renderer = await createBrowserRenderer({ sourceDir: 'src', outputDir: 'out', stylesheetsDir: 'styles', render: { browserPool: { size: 1 } } } as any, { configDir: root })
     try {
       const res = await renderer.renderPage('mjs-panneau')

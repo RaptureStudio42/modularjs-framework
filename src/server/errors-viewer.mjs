@@ -37,7 +37,7 @@ doPurge = (source) ->
   qs = source ? ('?source=' + source) : ''
   fetch('/__mjs/errors' + qs, { method: 'DELETE' }).then((-> refresh())).catch((err) -> µ.error(err))
 
-$filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
+filtered = (entries, filter) -> entries.filter (e) -> filter == 'all' or e.source == filter
 
 µmount ->
   oterJeton()
@@ -48,9 +48,9 @@ $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
   <div class="barre">
     <h1>⟪journal.titre⟫</h1>
     <div class="filtres">
-      <button @class{$filter == 'all'}="actif" @click={$filter = 'all'}>⟪journal.tous⟫</button>
-      <button @class{$filter == 'server'}="actif" @click={$filter = 'server'}>⟪journal.serveur⟫</button>
-      <button @class{$filter == 'client'}="actif" @click={$filter = 'client'}>⟪journal.client⟫</button>
+      <button :class{$filter == 'all'}="actif" @click={$filter = 'all'}>⟪journal.tous⟫</button>
+      <button :class{$filter == 'server'}="actif" @click={$filter = 'server'}>⟪journal.serveur⟫</button>
+      <button :class{$filter == 'client'}="actif" @click={$filter = 'client'}>⟪journal.client⟫</button>
     </div>
     <div class="actions">
       <button @click={refresh()}>⟪journal.rafraichir⟫</button>
@@ -62,11 +62,11 @@ $filtered = $entries.filter (e) -> $filter == 'all' or e.source == $filter
 
   {if $echec}
     <p class="vide echec">⟪journal.echec⟫</p>
-  {elsif $filtered.length == 0}
+  {elsif filtered($entries, $filter).length == 0}
     <p class="vide">⟪journal.vide⟫</p>
   {else}
     <div class="liste">
-      {for ent in $filtered by signature}
+      {for ent in filtered($entries, $filter) by signature}
         <div class="entree" role="button" tabindex="0" @click={toggle(ent.signature)} @keydown={toggleKey(e, ent.signature)}>
           <div class="ligne">
             <span class="badge badge-{ent.source}">{ent.source}</span>

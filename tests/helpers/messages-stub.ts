@@ -1,5 +1,6 @@
 // pose sur un µ de harnais (cœur remplacé par des doublures) les assistants de message du vrai
-// mjs_init.ts : sans table des libellés, ils rendent le texte français de secours du code
+// mjs_init.ts : sans table des libellés, ils rendent le texte français de secours du code ; et la politique Trusted Types du cœur,
+// qui rend la chaîne telle quelle (un harnais ne connaît pas Trusted Types)
 
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -14,4 +15,5 @@ export function poserMessages(µ: any): void {
   new Function('µ', src.slice(debut, fin))(µ)
   // les traces du routeur passent par µ._mjs_logger()?.(…) : le harnais les laisse sortir par son propre µ.log
   if (typeof µ._mjs_logger !== 'function') µ._mjs_logger = () => µ.log
+  if (typeof µ._mjs_th !== 'function') µ._mjs_th = (html: string) => html
 }

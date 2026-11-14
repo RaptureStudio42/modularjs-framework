@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 // la méthode d'origine des éléments, relevée au chargement du fichier, avant qu'aucun test n'ait posé de boîte
 const ORIGINALE = new Window({ url: 'http://localhost/' }).Element.prototype.getBoundingClientRect
@@ -17,6 +17,7 @@ describe('mesurer — la boîte posée sur une balise ne survit pas au test', fu
   let window: any
   before(() => { window = new Window({ url: 'http://localhost/' }) })
   after(() => { window.close?.() })
+  afterEach(rendreMesures)
   const balise = () => window.document.body.appendChild(window.document.createElement('div'))
 
   it('une balise mesurée rend sa boîte ; une autre garde la mesure de happy-dom', () => {

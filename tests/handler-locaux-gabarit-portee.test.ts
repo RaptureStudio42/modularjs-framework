@@ -14,7 +14,8 @@
 //     c'est une constante `:=` — réaffecter une constante depuis un gestionnaire est une faute,
 //     elle se dit à la compilation) ;
 //   · un gestionnaire DANS le bloc garde le nom LOCAL au handler — c'est ce que fait le
-//     squelette de reconstruction (`item = _mjs_ra_0[_mjs_ri_0]`, posé en tête de handler), et un
+//     squelette de reconstruction (`item = _mjs_ra_0._mjs_it` lu sur l'entrée d'une ligne pure,
+//     `item = _mjs_ra_0[_mjs_ri_0]` ailleurs, posé en tête de handler), et un
 //     `{const}`/argument de branche homonyme d'une var du `<script>` ne doit pas l'écraser.
 
 import assert from 'node:assert/strict'
@@ -99,11 +100,12 @@ describe('gestionnaires — portée des noms que le gabarit introduit', function
     it('le squelette de reconstruction reste posé pour la boucle, et pour elle SEULE', async function () {
       // le gestionnaire DANS la boucle lit sa variable (la réaffecter est refusé au build : ce n'est
       // qu'une copie, cf. handler-locaux-gabarit-lecture.test.ts) ; celui de DEHORS écrit la var du <script>
+      // ligne pure d'un {for} de racine : le squelette lit l'élément sur l'entrée de la ligne (`el._mjs_ev._mjs_en`)
       const batch = await gestionnaires(
         "<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}<button @click={console.log(item)}>{item}</button>{end}\n<button @click={item = 'hors'}>go</button>\n",
       )
       assert.equal(
-        (batch.match(/let item = _mjs_ra_0\[_mjs_ri_0\]/g) ?? []).length, 1,
+        (batch.match(/let item = _mjs_ra_0\._mjs_it\b/g) ?? []).length, 1,
         'le gestionnaire DANS la boucle garde SA reconstruction, celui de dehors n\'en a pas',
       )
     })
@@ -116,18 +118,6 @@ describe('gestionnaires — portée des noms que le gabarit introduit', function
       assert.doesNotMatch(batch, /let item\b/, "AVANT : `let item = ref` — la valeur montante partait dans une copie jetable")
     })
 
-    it('chemin Coffee (templateLang "js") : même découpage par gestionnaire', async function () {
-      const batch = await gestionnaires(
-        "<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}<button @click={console.log(item)}>x</button>{end}\n<button @click={item = 'clic'}>go</button>\n",
-        { templateLang: 'js' },
-      )
-      assert.match(batch, /item = _mjs_ra_0\[_mjs_ri_0\]/, 'la reconstruction de la boucle reste locale')
-      assert.match(batch, /return item = 'clic'/, 'le gestionnaire de dehors écrit la var du <script>')
-      assert.equal(
-        (batch.match(/^\s*var .*\bitem\b/gm) ?? []).length, 1,
-        "AVANT : `var item;` en tête du gestionnaire de dehors — la sienne, écrite puis jetée",
-      )
-    })
   })
 })
 

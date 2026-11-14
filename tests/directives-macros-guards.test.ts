@@ -31,8 +31,8 @@ describe('injection JS par la cible de @import (guillemet mixte)', function () {
     )
   })
 
-  it('cibles normales inchangées : ./a.civet, "lib/x.js", modularjs-framework/ws, https://…', async () => {
-    for (const cible of [`'./a.civet'`, `"lib/x.js"`, `'modularjs-framework/ws'`, `'https://cdn.example.test/lib.js'`]) {
+  it('cibles normales inchangées : ./a.civet.mjs, "lib/x.js", modularjs-framework/ws, https://…', async () => {
+    for (const cible of [`'./a.civet.mjs'`, `"lib/x.js"`, `'modularjs-framework/ws'`, `'https://cdn.example.test/lib.js'`]) {
       const src = `@import Foo ${cible}\n<div>x</div>`
       const { output } = await transpile(src, { moduleName: 'probeb21c' })
       assert.match(output, /import \{ Foo \} from/)
@@ -173,8 +173,8 @@ describe('@import : #{…}/${…}/backtick (interpolation) et cible vide contour
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('cible normale inchangée : ./a.civet, "lib/x.js" compilent toujours', async () => {
-    for (const cible of [`'./a.civet'`, `"lib/x.js"`]) {
+  it('cible normale inchangée : ./a.civet.mjs, "lib/x.js" compilent toujours', async () => {
+    for (const cible of [`'./a.civet.mjs'`, `"lib/x.js"`]) {
       const src = `@import Foo ${cible}\n<div>x</div>\n`
       const { output } = await transpile(src, { moduleName: 'b41normal' })
       assert.match(output, /import \{ Foo \} from/)

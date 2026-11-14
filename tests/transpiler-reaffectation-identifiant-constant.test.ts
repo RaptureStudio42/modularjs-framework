@@ -71,7 +71,7 @@ describe('x := 0 puis réaffectation — module .civet autonome (build réel)', 
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x := 0\nx = 10\nexport final = x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x := 0\nx = 10\nexport final = x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -97,7 +97,7 @@ describe('x .= 0 (mutable) puis réaffectation — bout en bout, valeur EXÉCUT�
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x .= 0\nx = 10\nexport final = x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x .= 0\nx = 10\nexport final = x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -116,7 +116,7 @@ describe('x .= 0 (mutable) puis réaffectation — bout en bout, valeur EXÉCUT�
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x .= 0\nx += 10\nexport final = x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x .= 0\nx += 10\nexport final = x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -146,7 +146,7 @@ describe('portée — un homonyme déclaré par une fonction IMBRIQUÉE n\'est j
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), [
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), [
       'x := 1',
       'inner = ->',
       '  x .= 5',
@@ -183,7 +183,7 @@ describe('affectation de PROPRIÉTÉ sur un identifiant lié par `:=` — jamais
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x := {a: 1}\nx.a = 5\nexport final = x.a\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x := {a: 1}\nx.a = 5\nexport final = x.a\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -218,7 +218,7 @@ describe('fonction imbriquée SANS homonyme local — réaffectation externe ref
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x := 1\ninner = ->\n  x = 6\n  return x\nexport final = inner() + x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x := 1\ninner = ->\n  x = 6\n  return x\nexport final = inner() + x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -250,7 +250,7 @@ describe('bloc indenté (for...of) — accumulateur sur une constante refusé à
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'total := 0\nfor n of [1, 2, 3]\n  total += n\nexport final = total\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'total := 0\nfor n of [1, 2, 3]\n  total += n\nexport final = total\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -283,7 +283,7 @@ describe('paramètre de fonction homonyme d\'un `:=` externe — jamais une réa
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x := 1\nf = (x) ->\n  x = 99\n  return x\nexport final = f(5) + x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x := 1\nf = (x) ->\n  x = 99\n  return x\nexport final = f(5) + x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -317,7 +317,7 @@ describe('for (const x of …) homonyme d\'un `:=` externe, lecture seule — ja
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'x := 1\nresult = []\nfor x of [10, 20, 30]\n  result.push x\nexport final = result\nexport outer = x\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'x := 1\nresult = []\nfor x of [10, 20, 30]\n  result.push x\nexport final = result\nexport outer = x\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -368,7 +368,7 @@ describe('`catch e` homonyme d\'un `:=` externe — la variable du catch reste r
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'e := 1\nresult .= 0\ntry\n  JSON.parse("{")\ncatch e\n  e = 5\n  result = e\nexport final = result\nexport outer = e\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'e := 1\nresult .= 0\ntry\n  JSON.parse("{")\ncatch e\n  e = 5\n  result = e\nexport final = result\nexport outer = e\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()
@@ -409,7 +409,7 @@ describe('méthode ou fonction sans flèche, paramètre homonyme d\'un `:=` exte
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
-    writeFileSync(join(srcDir, 'm.module.civet'), 'width := 300\nclass Box\n  constructor(width)\n    width = width * 2\n    @width = width\nexport final = new Box(10).width\nexport outer = width\n')
+    writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'width := 300\nclass Box\n  constructor(width)\n    width = width * 2\n    @width = width\nexport final = new Box(10).width\nexport outer = width\n')
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
     const stats = await bundler.compile()

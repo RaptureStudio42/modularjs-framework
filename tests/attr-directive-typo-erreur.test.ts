@@ -28,31 +28,38 @@ describe('@xxx inconnu sur un élément = écouteur d\'événement, jamais véri
   this.timeout(30000)
 
   it('@confirn="…" : compile sans erreur, la sortie écoute "confirn"', async () => {
-    const { err, output } = await typoCheck('<button @confirn="oups">go</button>', 'typoconfirn')
+    // la valeur faite d'un nom seul appelle la fonction « oups » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\noups = -> 1\n</script>\n<button @confirn="oups">go</button>', 'typoconfirn')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"confirn"/)
+    const sans = await typoCheck('<button @confirn="oups">go</button>', 'typoconfirn2')
+    assert.match(sans.err?.message ?? '', /« @confirn=oups » appelle la fonction « oups »/)
   })
 
   it('@stlye="…" : compile sans erreur, la sortie écoute "stlye"', async () => {
-    const { err, output } = await typoCheck('<div @stlye="x">x</div>', 'typostlye')
+    // la valeur faite d'un nom seul appelle la fonction « x » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nx = -> 1\n</script>\n<div @stlye="x">x</div>', 'typostlye')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"stlye"/)
   })
 
   it('@titel="…" : compile sans erreur, la sortie écoute "titel"', async () => {
-    const { err, output } = await typoCheck('<button @titel="hi">go</button>', 'typotitel')
+    // la valeur faite d'un nom seul appelle la fonction « hi » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nhi = -> 1\n</script>\n<button @titel="hi">go</button>', 'typotitel')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"titel"/)
   })
 
   it('@next="…" : compile sans erreur, la sortie écoute "next"', async () => {
-    const { err, output } = await typoCheck('<div @next="x">x</div>', 'typonext')
+    // la valeur faite d'un nom seul appelle la fonction « x » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nx = -> 1\n</script>\n<div @next="x">x</div>', 'typonext')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"next"/)
   })
 
   it('@Confirm="…" : compile sans erreur, quelle que soit la casse — la sortie écoute "Confirm"', async () => {
-    const { err, output } = await typoCheck('<button @Confirm="x">go</button>', 'typoConfirmCasse')
+    // la valeur faite d'un nom seul appelle la fonction « x » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nx = -> 1\n</script>\n<button @Confirm="x">go</button>', 'typoConfirmCasse')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"Confirm"/)
   })
@@ -64,13 +71,15 @@ describe('@xxx inconnu sur un élément = écouteur d\'événement, jamais véri
   })
 
   it('@edit="…" : compile sans erreur, la sortie écoute "edit"', async () => {
-    const { err, output } = await typoCheck('<div @edit="x">x</div>', 'typoedit')
+    // la valeur faite d'un nom seul appelle la fonction « x » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nx = -> 1\n</script>\n<div @edit="x">x</div>', 'typoedit')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"edit"/)
   })
 
   it('@reload="…" : compile sans erreur, la sortie écoute "reload"', async () => {
-    const { err, output } = await typoCheck('<div @reload="x">x</div>', 'typoreload')
+    // la valeur faite d'un nom seul appelle la fonction « x » : déclarée ici, sinon la construction refuse cette écoute morte
+    const { err, output } = await typoCheck('<script>\nx = -> 1\n</script>\n<div @reload="x">x</div>', 'typoreload')
     assert.equal(err, undefined, `aucune erreur attendue : ${err?.message}`)
     assert.match(output ?? '', /"reload"/)
   })

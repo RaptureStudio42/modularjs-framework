@@ -11,6 +11,9 @@ export const tsAdapter: LanguageAdapter = {
       loader: 'ts',
       format: 'esm',
       target: 'es2022',
+      // `µ` et les accents écrits tels quels, comme dans un script Civet ou JavaScript : sans `charset`, esbuild les échappe
+      // (`µ.t("x")`) et les passes qui suivent, qui cherchent `µ` en clair (préfixe de la section sous `@i18n`), ne le voient plus
+      charset: 'utf8',
       sourcefile: opts.fileName ?? 'inline.ts',
       sourcemap: true,  // carte v3 remontée jusqu'à `transpile()`
     })

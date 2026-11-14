@@ -122,8 +122,8 @@
     return unless Math.abs(e.deltaY) > Math.abs(e.deltaX)
     e.preventDefault()
     set(num($value, 0) + (if e.deltaY < 0 then 1 else -1) * stepOf())
-    clearTimeout(wheelTimer) if wheelTimer
-    wheelTimer = setTimeout(commit, WHEEL_REST)
+    wheelTimer?.()
+    wheelTimer = µafter WHEEL_REST, commit
 
   hiddenInput = null
 
@@ -174,17 +174,17 @@
     µ._mjs_formReset @, ->
       start = num($value, 0)
       ->
-        clearTimeout(wheelTimer)
+        wheelTimer?.()
         before = undefined
         $value = start
         return
     µ._mjs_formLabel @, dialRef, true
 
   µdestroy ->
-    clearTimeout(wheelTimer) if wheelTimer
+    wheelTimer?.()
 </script>
 
-<div class="knob" part="knob" role="slider" tabindex="0" aria-label={$labelText} aria-valuemin={num($min, 0)} aria-valuemax={num($max, 100)} aria-valuenow={num($value, 0)} aria-disabled={$off} @this=!{dialRef} --mjs-knob-size={num($size, 200) + 'px'} --mjs-knob-color={$color} --mjs-knob-track={$track} @pointerdown={onDown(e)} @pointermove={onMove(e)} @pointerup={onUp()} @pointercancel={onUp()} @keydown={onKey(e)} @keyup={onKeyEnd(e)} @blur={commit()}>
+<div class="knob" part="knob" role="slider" tabindex="0" aria-label={$labelText} aria-valuemin={num($min, 0)} aria-valuemax={num($max, 100)} aria-valuenow={num($value, 0)} aria-disabled={$off} :this=!{dialRef} --mjs-knob-size={num($size, 200) + 'px'} --mjs-knob-color={$color} --mjs-knob-track={$track} @pointerdown={onDown(e)} @pointermove={onMove(e)} @pointerup={onUp()} @pointercancel={onUp()} @keydown={onKey(e)} @keyup={onKeyEnd(e)} @blur={commit()}>
   <svg viewBox="0 0 100 100" aria-hidden="true">
     <circle class="track" cx="50" cy="50" r="40" stroke-width={$stroke} stroke-dasharray={$arcLen + ' ' + C} transform={'rotate(' + $turn + ' 50 50)'}></circle>
     <circle class="bar" cx="50" cy="50" r="40" stroke-width={$stroke} stroke-dasharray={$valueLen + ' ' + C} transform={'rotate(' + $turn + ' 50 50)'}></circle>
@@ -192,7 +192,7 @@
   <output part="value">{num($value, 0)}</output>
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .knob
     position: relative
     width: var(--mjs-knob-size)

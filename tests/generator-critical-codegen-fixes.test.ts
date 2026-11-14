@@ -77,7 +77,7 @@ describe('générateur — correctifs codegen critiques', function () {
       '$n = 0',
       'inc = -> $n++',
       '</script>',
-      '<div @style.grid-template-areas="\'hd\' \'main\'" style="display:grid">',
+      '<div :style.grid-template-areas="\'hd\' \'main\'" style="display:grid">',
       '<button @click={inc()}>+</button>',
       '<span class="cnt">{$n}</span>',
       '</div>',
@@ -116,7 +116,7 @@ describe('générateur — correctifs codegen critiques', function () {
       "setBlue = -> $theme = 'blue'",
       '</script>',
       '<button @click={setBlue()}>go</button>',
-      '<ul>{for row in $rows}<li class="cell" @style.color={$theme}>{row.id}</li>{end}</ul>',
+      '<ul>{for row in $rows}<li class="cell" :style.color={$theme}>{row.id}</li>{end}</ul>',
     ].join('\n')
     const { window, el } = await mount('ccstylefor', src)
     let cells = [...el._shadow.querySelectorAll('.cell')]

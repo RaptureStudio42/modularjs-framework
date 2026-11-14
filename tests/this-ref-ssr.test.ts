@@ -27,7 +27,7 @@ $label = 'PV'
   bar.className = 'on'
 </script>
 <span class="l">{$label}</span>
-<div class="bar" @this=!{bar}></div>
+<div class="bar" :this=!{bar}></div>
 `)
     const renderer = await createSSRRenderer({ sourceDir: srcDir, outputDir: outDir })
     const { html } = await renderer.renderToString('mjs-hudssr')

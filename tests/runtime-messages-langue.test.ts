@@ -10,7 +10,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { RUNTIME_LABELS } from '../src/runtime-labels.js'
+import { RUNTIME_LABELS, RUNTIME_FILE_MESSAGES, OPTIONAL_LABEL_GROUPS } from '../src/runtime-labels.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { libellesDuManifeste } from './helpers/libelles-manifeste.js'
 
@@ -21,18 +21,24 @@ const CORE_MODULES_DIR = join(__dirname, '../src/core-modules')
 
 // [clé, variables, texte français d'origine (relevé avant le déplacement), préfixe [ModularJS] ou non]
 const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
-  ['vtMalformed', { name: 'a:b', namePart: 'a' }, '[ModularJS] @viewTransition : valeur malformée \'a:b\' — repli sur \'a\'.', true],
-  ['vtDirName', { namePart: 'a', base: 'a' }, '[ModularJS] @viewTransition : la direction ne s\'écrit plus dans le nom (\'a\') — repli sur \'a\', posez \'dir\'/\'direction\' en option.', true],
-  ['vtOptMalformed', { pair: 'x', name: 'a:b' }, '[ModularJS] @viewTransition : option malformée \'x\' dans \'a:b\' — ignorée.', true],
-  ['vtUnknownKey', { rawKey: 'k', name: 'a:b', keys: 'dir/d, dur/u' }, '[ModularJS] @viewTransition : clé inconnue \'k\' dans \'a:b\' — ignorée (clés valides : dir/d, dur/u).', true],
-  ['vtDupKey', { key: 'dir', name: 'a:b', short: 'd' }, '[ModularJS] @viewTransition : clé \'dir\' en double dans \'a:b\' (\'dir\'/\'d\' désignent la même option) — 2e occurrence ignorée.', true],
-  ['vtBadDir', { val: 'v', name: 'a:b' }, '[ModularJS] @viewTransition : direction invalide \'v\' dans \'a:b\' — ignorée.', true],
-  ['vtBadDur', { val: 'v', name: 'a:b' }, '[ModularJS] @viewTransition : duration invalide \'v\' dans \'a:b\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.', true],
-  ['vtBadPrio', { val: 'v', name: 'a:b' }, '[ModularJS] @viewTransition : priority invalide \'v\' dans \'a:b\' — ignorée.', true],
-  ['vtUnknownPreset', { name: 'a:b', presets: 'p1, p2', curtains: 'c1' }, '[ModularJS] @viewTransition : préréglage inconnu \'a:b\' — valeurs valides : p1, p2, c1 (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).', true],
+  ['derAccesseur', { k: '$total', c: 'my-card', a: '`$rows[0].p`', w: '`µrefresh($rows)`' }, '[ModularJS] La valeur dérivée « $total » du composant <my-card> a servi son dernier calcul alors que son recalcul donne autre chose : elle lit un accesseur posé sur un objet (`$rows[0].p`), et MJS ne voit pas changer ce que lit cet accesseur, même quand votre code l\'écrit par une autre variable `$`. Juste après chacun de ces changements, écrivez `µrefresh($rows)`, ou rangez cette valeur dans un champ plutôt que dans un accesseur. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.', true],
+  ['derPrecise', { k: '$total', c: 'my-card', w: '`$rows = $rows`' }, '[ModularJS] La valeur dérivée « $total » du composant <my-card> a servi son dernier calcul alors que son recalcul donne autre chose : une donnée qu\'elle lit a sans doute été changée hors de MJS (bibliothèque, script extérieur, objet gardé dans une variable sans `$`). Juste après ce changement, écrivez `$rows = $rows`. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.', true],
+  ['collNotNamed', { c: 'WeakMap' }, '[ModularJS] Une collection `WeakMap` est arrivée dans l\'état, alors qu\'aucun fichier de ce projet ne nomme `WeakMap` : le cœur a été bâti sans la part qui suit les clés objets des collections. Elle y garde un comportement plus simple, sans erreur : la clé objet d\'une `Map` sort brute et `get` ne la retrouve que sous la forme rangée, une `WeakMap` ou un `WeakSet` reste sans enveloppe dans un composant. Si une bibliothèque chargée à part vous donne cette collection, demandez cette part par "collections": true dans mjs.config.json : elle s\'ajoute sans toucher au repérage des autres modules ; si vous écrivez déjà une liste "runtime", vous pouvez aussi y ajouter "collections". Cet avertissement n\'existe qu\'en développement, une fois par page.', true],
+  ['mapKeyBothForms', {}, '[ModularJS] Une `Map` ou un `Set` de l\'état tient le même objet sous ses deux formes, brut et sous son enveloppe : `get`, `set`, `add` et `delete` prennent l\'entrée de l\'enveloppe, et un parcours rend cet objet deux fois. Gardez une seule forme par objet : quand la collection ne le tient pas encore, MJS range la forme brute. Cet avertissement n\'existe qu\'en développement.', true],
+  ['refreshCalcul', { k: '$rows', d: '$total', c: 'my-card' }, '[ModularJS] µrefresh($rows) est appelé par le calcul de la valeur dérivée $total du composant <my-card>, plus de 1 000 fois dans la même rafale : deux valeurs dérivées dont chacune rafraîchit une source de l\'autre se refont l\'une l\'autre en boucle. Une valeur dérivée ne doit pas appeler µrefresh : écrivez µrefresh($rows) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS. Cet avertissement n\'existe qu\'en développement.', true],
+  ['refreshRendu', { k: '$rows', c: 'my-card' }, '[ModularJS] µrefresh($rows) est appelé pendant chaque rendu du composant <my-card> (une fonction que lit le gabarit, ou un écouteur que ce rendu déclenche à chaque fois), et chaque appel redessine ce que ce rendu affiche : une boucle, que MJS a coupée. Écrivez µrefresh($rows) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS ; une fonction que lit le gabarit ou une valeur dérivée ne doit pas l\'appeler. Cet avertissement n\'existe qu\'en développement : la production coupe la boucle de même.', true],
+  ['vtMalformed', { name: 'a:b', namePart: 'a' }, '[ModularJS] :viewTransition : valeur malformée \'a:b\' — repli sur \'a\'.', true],
+  ['vtDirName', { namePart: 'a', base: 'a' }, '[ModularJS] :viewTransition : la direction ne s\'écrit plus dans le nom (\'a\') — repli sur \'a\', posez \'dir\'/\'direction\' en option.', true],
+  ['vtOptMalformed', { pair: 'x', name: 'a:b' }, '[ModularJS] :viewTransition : option malformée \'x\' dans \'a:b\' — ignorée.', true],
+  ['vtUnknownKey', { rawKey: 'k', name: 'a:b', keys: 'dir/d, dur/u' }, '[ModularJS] :viewTransition : clé inconnue \'k\' dans \'a:b\' — ignorée (clés valides : dir/d, dur/u).', true],
+  ['vtDupKey', { key: 'dir', name: 'a:b', short: 'd' }, '[ModularJS] :viewTransition : clé \'dir\' en double dans \'a:b\' (\'dir\'/\'d\' désignent la même option) — 2e occurrence ignorée.', true],
+  ['vtBadDir', { val: 'v', name: 'a:b' }, '[ModularJS] :viewTransition : direction invalide \'v\' dans \'a:b\' — ignorée.', true],
+  ['vtBadDur', { val: 'v', name: 'a:b' }, '[ModularJS] :viewTransition : duration invalide \'v\' dans \'a:b\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.', true],
+  ['vtBadPrio', { val: 'v', name: 'a:b' }, '[ModularJS] :viewTransition : priority invalide \'v\' dans \'a:b\' — ignorée.', true],
+  ['vtUnknownPreset', { name: 'a:b', presets: 'p1, p2', curtains: 'c1' }, '[ModularJS] :viewTransition : préréglage inconnu \'a:b\' — valeurs valides : p1, p2, c1 (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).', true],
   ['vtLevitation', { msg: 'boom' }, '[ModularJS] couche de lévitation VT abandonnée : boom', true],
   ['vtLevitationIn', { msg: 'boom' }, '[ModularJS] couche de lévitation VT (arrivée) abandonnée : boom', true],
-  ['vtSwapThrew', {}, '[ModularJS] @viewTransition : la permutation sous rideau a levé —', true],
+  ['vtSwapThrew', {}, '[ModularJS] :viewTransition : la permutation sous rideau a levé —', true],
   ['modalRead', { where: 'w', reason: 'raison' }, 'la lecture de `w` a échoué : raison.', false],
   ['modalWantsText', { key: 'k', type: 'string' }, '`k` attend du texte, reçu string.', false],
   ['modalNotText', { key: 'k', reason: 'raison' }, '`k` n\'a pas pu être converti en texte : raison.', false],
@@ -58,7 +64,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['modalValidator', {}, '[ModularJS] µ.modal : inputValidator en échec —', true],
   ['elProto', {}, '[ModularJS] état : changement de prototype refusé', true],
   ['elCycle', { k: 'x' }, '[ModularJS] Cycle réactif détecté sur \'x\' — retourne undefined', true],
-  ['elTeardown', {}, '[ModularJS] @attach/@this teardown en erreur :', true],
+  ['elTeardown', {}, '[ModularJS] :attach/:this teardown en erreur :', true],
   ['elOrphanInherited', { sheetName: 'feuille' }, '[ModularJS] Orphelin CSS hérité : La feuille \'feuille\' est absente du registre.', true],
   ['elOrphanLocal', { sheetName: 'feuille' }, '[ModularJS] Orphelin CSS local : La feuille \'feuille\' est introuvable.', true],
   ['elHydrate', {}, '[ModularJS] hydratation demandée par la page mais absente du cœur : mode ssr:markers/positional/diff dans render, ou runtime: [\'hydrate\'].', true],
@@ -74,14 +80,19 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['storeGResTag', {}, '[ModularJS] µres : balise __mjs_res illisible au boot, ignorée.', true],
   ['runesKey', { key: 'k' }, '[ModularJS] µ.state : clé refusée (« k ») — mutation ignorée.', true],
   ['runesCycle', { key: 'k' }, '[ModularJS] µ.state : cycle de computed détecté sur « k » — undefined retourné.', true],
-  ['everyInit', {}, '[ModularJS] µevery doit être appelé à l\'initialisation.', true],
-  ['everySyntax', {}, '[ModularJS] µevery s\'écrit « µevery 2500, -> » : un délai en millisecondes, puis la fonction à répéter.', true],
-  ['everyHash', {}, '[ModularJS] µevery : le 2e argument est un hash d\'options (« µevery 3000, pause: true, -> ») — reçu :', true],
-  ['everyOptType', { opt: 'c', type: 'boolean' }, '[ModularJS] µevery : option « c » attendue de type boolean, reçu : ', true],
+  ['everyInit', { rune: 'µevery' }, '[ModularJS] µevery suit un composant : appelé hors de tout composant (module, magasin), il ne fait rien — écrivez setTimeout ou setInterval dans ce code.', true],
+  ['everySyntax', { rune: 'µevery' }, '[ModularJS] µevery s\'écrit « µevery 2500, -> » : un délai en millisecondes, puis la fonction.', true],
+  ['everyHash', { rune: 'µevery' }, '[ModularJS] µevery : le 2e argument est un hash d\'options (« µevery 3000, pause: true, -> ») — reçu :', true],
+  ['everyId', { rune: 'µevery' }, '[ModularJS] µevery : l\'option « id » attend un nom, une chaîne non vide (« µevery 2000, id: \'sauver\', -> ») — option ignorée, reçu :', true],
+  ['everyUnseen', { rune: 'µafter' }, '[ModularJS] µafter hors de tout composant : en production, cet appel ne ferait rien — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).', true],
+  ['everyUnseenId', { rune: 'µevery' }, '[ModularJS] µevery : en production, l\'option « id » de cet appel serait ignorée — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).', true],
+  ['ajaxOldName', { cle: 'onError' }, '[ModularJS] µajax : l\'option « onError » n\'existe pas, son gestionnaire ne sera jamais appelé — écrivez error: pour une erreur du serveur, typeError: pour un refus de type.', true],
+  ['ajaxUnseen', {}, '[ModularJS] µajax est appelé comme une fonction, mais la construction n\'a lu aucun appel de ce genre (accès calculé µ[k], µ passé à une fonction…) : en production, cet appel échouera — écrivez µajax(…) ou µajax \'/url\', options dans le code de l\'appli.', true],
+  ['everyOptType', { rune: 'µevery', opt: 'c', type: 'boolean' }, '[ModularJS] µevery : option « c » attendue de type boolean, reçu : ', true],
   ['everyIgnored', {}, '— option ignorée.', false],
-  ['everyUnknownOpt', { opt: 'c', list: 'a, b' }, '[ModularJS] µevery : option inconnue « c ». Options reconnues : a, b.', true],
+  ['everyUnknownOpt', { rune: 'µevery', opt: 'c', list: 'a, b' }, '[ModularJS] µevery : option inconnue « c ». Options reconnues : a, b.', true],
   ['everyTimes', {}, '[ModularJS] µevery : option « times » attendue ≥ 0, reçu :', true],
-  ['everyError', {}, '[ModularJS] µevery :', true],
+  ['everyError', { rune: 'µevery' }, '[ModularJS] µevery :', true],
   ['everyWhileAsync', {}, '[ModularJS] µevery : l\'option « while » doit rendre un booléen SYNCHRONE — une fonction async rend une promesse, toujours vraie, et la répétition ne s\'arrêterait jamais. Arrêt.', true],
   ['dynAccept', {}, '[ModularJS] <@element>/<@module> : accept attend une liste de noms (tableau ou chaîne séparée par des espaces)', true],
   ['dynRefused', { norm: 'table' }, '[ModularJS] <@element>/<@module> : balise « table » refusée — un élément dynamique ne peut pas devenir table ; pour l\'autoriser explicitement : accept="table".', true],
@@ -105,6 +116,10 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['dev.hotcssTag', { tag: 'my-tag' }, '[ModularJS] _hotCss : replaceSync a échoué pour <my-tag> :', true],
   ['dev.hotcssShared', { name: 'shared' }, '[ModularJS] _hotCss : replaceSync a échoué pour la feuille partagée « shared » :', true],
   ['dev.hotcssRoot', {}, '[ModularJS] _hotCss : replaceSync a échoué pour mjs_root :', true],
+  ['dev.hotswapFailed', { tag: 'my-tag' }, '[ModularJS] <my-tag> : le rechargement à chaud a échoué, la page se recharge :', true],
+  ['dev.hotswapImport', {}, '[ModularJS] rechargement à chaud : le nouveau fichier ne s\'importe pas, la page se recharge :', true],
+  ['dev.hotswapField', { tag: 'my-tag', champ: 'fmt' }, '[ModularJS] <my-tag> : le champ « fmt » de l\'instance a changé depuis sa construction (écrit, retiré ou ajouté), la page se recharge pour ne pas garder un état faux', true],
+  ['dev.hotswapCrash', { tag: 'my-tag' }, '[ModularJS] <my-tag> : le composant a planté pendant le rechargement à chaud, la page se recharge', true],
   ['blendCsp', {}, '[ModularJS] *blend : la politique de sécurité de la page refuse les images data: — le calque garde des coins carrés et un dégradé prend sa première couleur. Ajoutez data: à img-src pour les retrouver.', true],
   ['blendImage', { src: 'a.png' }, '[ModularJS] *blend : l\'image a.png n\'a pas pu être chargée, le calque reste vide.', true],
   ['blendNoSrc', {}, '[ModularJS] *blend : l\'image donnée n\'a pas d\'adresse, l\'effet n\'est pas posé.', true],
@@ -113,7 +128,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['fluidColor', { color: 'var(--x)' }, '[ModularJS] *fluid : la couleur « var(--x) » ne se résout pas (variable absente ou valeur qui n\'est pas une couleur), elle est ignorée.', true],
   ['fluidNoContext', {}, '[ModularJS] *fluid : le navigateur ne donne plus de contexte WebGL à cette balise (il en limite le nombre par page, une quinzaine) — elle reste sans effet et réessaiera à son prochain survol ou quand elle reviendra à l\'écran.', true],
   ['blendFilter', {}, '[ModularJS] *blend : cette balise a déjà un `filter` en CSS, que l\'effet remplace — posez *blend sur une balise qui l\'englobe pour garder les deux.', true],
-  ['destroyAttach', {}, '[ModularJS] nettoyage (@attach/@this=!) en erreur :', true],
+  ['destroyAttach', {}, '[ModularJS] nettoyage (:attach/:this=!) en erreur :', true],
   ['destroyRef', {}, '[ModularJS] nettoyage (ref) en erreur :', true],
   ['destroyOut', {}, '[ModularJS] transition de sortie en erreur :', true],
   ['ujsConfirmNoModal', {}, '[ModularJS] µ.config.confirm = true mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli sur window.confirm.', true],
@@ -127,6 +142,9 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['interpInvalidator', {}, '[ModularJS] µ.interpolate : invalidator en erreur, détaché.', true],
   ['interpNonFinite', { value: 'NaN' }, '[ModularJS] µ.interpolate : valeur non-finie ignorée (NaN)', true],
   ['initReadOnly', { tag: 'my-el', prop: 'p' }, '[ModularJS] <my-el> : propriété « p » en lecture seule, valeur ignorée.', true],
+  ['ttPolicy', {}, '[ModularJS] la page refuse de créer la politique Trusted Types « mjs » du framework : son en-tête Content-Security-Policy liste ses politiques (trusted-types …) sans « mjs », ou une politique « mjs » existe déjà. Le framework écrit alors son HTML en simple chaîne : la page s\'affiche tant qu\'elle n\'exige pas Trusted Types ; sous require-trusted-types-for \'script\', ce HTML passe par la politique « default » de la page, qui peut le modifier ; sans elle, le navigateur le refuse et aucun composant ne se monte. Ajoutez « mjs » à la liste trusted-types de l\'en-tête (avec \'allow-duplicates\' si deux scripts de la page créent cette politique).', true],
+  ['initFn', { path: '$serie.values', fn: '$serie', name: 'Object' }, '[ModularJS] $serie.values : $serie contient la fonction Object du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.', true],
+  ['initFnCtor', { path: '$$taches.….x', fn: '$$taches.…', name: 'Object' }, '[ModularJS] $$taches.….x : `constructor`, écrit dans le code, mène à la fonction Object du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.', true],
   ['initPath', { seg: '__proto__' }, '[ModularJS] chemin d\'état refusé (segment « __proto__ ») — mutation ignorée.', true],
   ['forDupKeys', { id: 'c1' }, '[ModularJS] {for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues. Vérifiez l\'unicité de la clé `by`. (cacheId: c1)', true],
   ['failedLimit', { limit: '3' }, '[ModularJS] <@failed> : limite de réessai atteinte (3) — abandon.', true],
@@ -148,6 +166,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['lazyCss', { name: 's', url: '/s.css' }, '[ModularJS] Feuille partagée \'s\' introuvable (/s.css) — le composant s\'affichera sans elle.', true],
   ['keyDestroy', {}, '[ModularJS] destruction de l\'ancienne clé {key} en erreur :', true],
   ['htmlDestroy', {}, '[ModularJS] destruction de contenu {@html} en erreur :', true],
+  ['htmlTrusted', {}, '[ModularJS] HTML brut ({{…}}, :html) refusé par la politique de sécurité de la page (Trusted Types) : le framework ne le fait jamais passer par sa politique « mjs ». Posez une politique qui l\'assainit, trustedTypes.createPolicy(\'default\', { createHTML: … }), avant le script de l\'appli, ou affichez la valeur en texte avec {…}.', true],
   ['hoverIgnored', { name: 'fade', list: 'once, zone' }, '[ModularJS] *fade : au survol (on: hover), les réglages suivants ne servent à rien : once, zone. Retirez-les.', true],
   ['hoverOfAlone', { name: 'fade' }, '[ModularJS] *fade : le réglage of ne sert qu\'avec on: hover — il est ignoré ici. Retirez-le, ou ajoutez on: hover.', true],
   ['transitionNone', { name: 'fade2' }, '[ModularJS] *fade2 : aucune transition de ce nom — µanim.create \'fade2\' n\'a pas été appelé.', true],
@@ -178,7 +197,9 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['physicsHeight', {}, '[ModularJS] *physics : la balise n\'a pas de hauteur — rien ne peut tomber. Donnez-lui une hauteur (height ou min-height).', true],
   ['focusHost', { tag: 'mjs-coque' }, '[ModularJS] *focus : le composant <mjs-coque> n\'a aucun enfant glissé — ses enfants vivent dans son gabarit, où *focus ne les atteint pas. Posez *focus dans le gabarit du composant, sur le parent de ses enfants.', true],
   ['spotlightWhere', { word: 'veil' }, '[ModularJS] *spotlight : « veil » est lu comme une couleur, non comme un mode — écrivez *spotlight(where: veil).', true],
-  ['effectInit', {}, '[ModularJS] µ.effect doit être appelé à l\'initialisation.', true],
+  ['effectInit', {}, '[ModularJS] µeffect s\'écrit au premier niveau du <script> d\'un composant, ou au premier niveau d\'un module (fichier .civet ou .coffee, fichier d\'un magasin compris) : dans une fonction appelée plus tard, il n\'a pas de propriétaire et ne tourne pas. Écrivez-le au premier niveau, et faites-lui lire ce qui doit le relancer ; pour un reffet lancé à la demande (à l\'ouverture d\'un panneau, par exemple), écrivez-le dans µeffect.root -> …, qui rend la fonction qui l\'arrête.', true],
+  ['storeDestroyed', { key: 'key1' }, '[ModularJS] Ce magasin est jeté (destroy()) : l\'écriture de « key1 » y est rangée, mais elle ne prévient plus personne, aucun composant ni reffet ne repart. Créez un nouveau magasin si la donnée doit encore vivre.', true],
+  ['storeDestroyedRead', { tag: 'tag1' }, '[ModularJS] Un magasin est jeté (destroy()) alors que <tag1> le lit encore : ce composant garde ce qu\'il affiche et n\'est plus prévenu de ses changements. Jetez le magasin quand plus aucun composant affiché ne le lit (dans le µdestroy du dernier, par exemple).', true],
   ['domDefined', { tag: 'x-y' }, '[ModularJS] x-y déjà défini par un autre bundle : cette définition est ignorée', true],
   ['reflectBlur', { tag: 'my-card' }, '[ModularJS] *reflect : sur un composant (<my-card>), blur et water ne sont pas possibles dans votre navigateur — le reflet reste simple', true],
   ['reflectNone', { tag: 'my-card' }, '[ModularJS] *reflect : votre navigateur n\'a ni reflet natif ni -moz-element, et un composant (<my-card>) ne se copie pas — aucun reflet', true],
@@ -198,29 +219,35 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['scrubCount', {}, '[ModularJS] *scrub : frames demande count, le nombre d\'images de la suite — l\'effet n\'est pas posé. Écrivez par exemple *scrub(frames: \'img/seq-###.webp\', count: 120).', true],
   ['scrubHash', {}, '[ModularJS] *scrub : frames doit contenir ### à la place du numéro de l\'image (img/seq-###.webp) — l\'effet n\'est pas posé.', true],
   ['scrubContext', {}, '[ModularJS] *scrub : ce <canvas> porte déjà un autre contexte que 2d — l\'effet n\'est pas posé.', true],
+  ['dev.formIdTwice', { id: 'f' }, 'deux formulaires de ce composant portent l\'id « f » : le framework les tient pour un seul formulaire, qui partage ses réponses. Donnez-leur des id distincts, ou aucun id.'],
   ['dev.propOneWay', { tag: 'mjs-fenetre', prop: 'dialog' }, '[ModularJS] <mjs-fenetre> écrit sa prop « dialog » : cette valeur vient du parent ; liez-la par !{…} ou envoyez un événement. Le parent garde sa propre valeur, il ne voit pas ce changement.', true],
-  ['dev.attachNotFn', { tag: 'mjs-menu', node: 'div', line: 12, type: 'number' }, '[ModularJS] <mjs-menu> : l\'@attach de <div> (ligne 12) a rendu une valeur de type number, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.', true],
+  ['dev.propMutated', { tag: 'mjs-liste', prop: 'items', parent: 'mjs-page' }, '[ModularJS] <mjs-liste> modifie un objet que <mjs-page> lui a passé par sa prop « items » : <mjs-page> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).', true],
+  ['dev.propMutatedBound', { tag: 'mjs-liste', by: 'mjs-ligne', prop: 'items', parent: 'mjs-page' }, '[ModularJS] <mjs-ligne>, lié à <mjs-liste>, modifie un objet que <mjs-page> a passé à <mjs-liste> par sa prop « items » : <mjs-page> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).', true],
+  ['dev.attachNotFn', { tag: 'mjs-menu', node: 'div', line: 12, type: 'number' }, '[ModularJS] <mjs-menu> : le :attach de <div> (ligne 12) a rendu une valeur de type number, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.', true],
+  ['dev.forKeyTypes', { tag: '@liste', a: '1', b: '\'1\'', id: 'for1' }, '[ModularJS] {for} : une liste de <@liste> reçoit la même clé sous deux types, 1 et \'1\' : ce sont deux clés différentes, sa ligne est refaite au lieu d\'être déplacée. Donnez à toutes les clés de la liste le même type : des nombres partout, ou des textes partout. (cacheId: for1)', true],
+  ['dev.forRowChanged', { tag: '@liste', key: '7000', list: '$data' }, '[ModularJS] <@liste> : la ligne de clé 7000 de $data a changé sans passer par MJS : écrivez µrefresh($data) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.', true],
+  ['dev.forRowChangedAt', { tag: '@liste', at: '3', list: '$data' }, '[ModularJS] <@liste> : la ligne $data[3] a changé sans passer par MJS : écrivez µrefresh($data) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.', true],
   ['dev.inspectArmed', {}, '[ModularJS] inspecteur d\'objets armé — µconsole(valeur), ou depuis le panneau (Ctrl+Shift+Espace)', true],
   ['dev.panelArmed', {}, '[ModularJS] panneau d\'inspection armé — Ctrl+Shift+Espace, ou µconsole', true],
   ['ujsSubmitFailed', { status: 'status1' }, 'Submit en échec (statut status1) — aucune page de repli HTML complète dans la réponse.', false],
-  ['ujsSubmitNotHtml', {}, 'Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, posez @noUJS sur le <form>.', false],
+  ['ujsSubmitNotHtml', {}, 'Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, posez :noUJS sur le <form>.', false],
   ['ujsSubmitNoBody', {}, 'Réponse HTML du submit reçue, mais aucun <body> exploitable (page courante ou réponse serveur) — aucun contenu mis à jour.', false],
   ['ujsMethodDialog', {}, '_method=dialog n\'a pas de sens : dialog est un attribut method/formmethod, pas un verbe HTTP', false],
   ['ujsVerbUnknown', { verb: 'verb1' }, 'mjs-method="verb1" : verbe HTTP non reconnu (get/delete/post/put/patch attendus) — navigation normale.', false],
-  ['ujsConfirmRetryFailed', { e: 'e1' }, '@confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — e1', false],
-  ['ujsConfirmRetry', { tag: 'tag1', reqErr: 'reqErr1' }, '@confirm : requestSubmit(tag1) a échoué après acceptation, repli sur requestSubmit() nu — reqErr1', false],
-  ['ujsNoAjax', {}, 'navigation ujs : module runtime \'ajax\' absent (µ._mjs_ajaxRequest introuvable).', false],
+  ['ujsConfirmRetryFailed', { e: 'e1' }, ':confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — e1', false],
+  ['ujsConfirmRetry', { tag: 'tag1', reqErr: 'reqErr1' }, ':confirm : requestSubmit(tag1) a échoué après acceptation, repli sur requestSubmit() nu — reqErr1', false],
+  ['ujsNoAjaxNav', {}, 'navigation vers le serveur sans le module ajax : le navigateur charge la page. Pour la navigation de MJS, ajoutez "ujs", "ajax" et "modal" à la liste "runtime" de mjs.config.json.', false],
   ['ujsHardNavOutside', { dest: 'dest1' }, 'navigation abandonnée, url hors origine et protocole non http/https : dest1', false],
-  ['ujsCallbackMissing', { nom: 'nom1', tag: 'tag1' }, '@callback="nom1" : aucune méthode « nom1 » trouvée sur tag1 ni ses ancêtres — rappel ignoré.', false],
+  ['ujsCallbackMissing', { nom: 'nom1', tag: 'tag1' }, ':callback="nom1" : aucune méthode « nom1 » trouvée sur tag1 ni ses ancêtres — rappel ignoré.', false],
   ['ujsFlashNoModal', {}, 'flash/error à afficher mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli console/alert.', false],
   ['ujsFlashUnknown', { attr: 'attr1' }, 'mjs-flash="attr1" : valeur non reconnue (popup/console/silent attendus) — politique globale utilisée.', false],
   ['ujsTargetMissingReceived', { target: 'target1' }, 'cible de navigation \'target1\' introuvable dans la page reçue — contenu de <body> remplacé (des deux côtés).', false],
   ['ujsReplaceNoTarget', {}, 'method \'replace\' sans target : <body> n\'est jamais remplacé — contenu remplacé à la place.', false],
   ['ujsPermanentDupId', { id: 'id1' }, '[mjs-permanent] id \'id1\' porté par PLUSIEURS éléments — un seul peut traverser la navigation, les autres partent avec la page quittée. Un id doit être unique dans le document.', false],
   ['ujsPermanentNoId', {}, '[mjs-permanent] sans id ignoré — un appariement entre deux navigations exige un id stable sur cet élément.', false],
-  ['ujsScriptSwapped', { sig: 'sig1' }, '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez @noUJS sur les liens qui mènent à cette page. Script : sig1', false],
-  ['ujsMethodNoUjs', { method: 'method1' }, '@method="method1" ignoré — @noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retirez l\'un des deux.', false],
-  ['ujsMethodNative', { method: 'method1' }, '@method="method1" : lien non suivi — vers une autre origine, avec une touche Ctrl, Maj, Alt ou Cmd, au clic du milieu, avec `target` ou `download`, le navigateur le suivrait lui-même, en GET, sans le verbe. Seul un clic simple sur un lien de la même origine, sans `target` ni `download`, envoie la requête.', false],
+  ['ujsScriptSwapped', { sig: 'sig1' }, '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez :noUJS sur les liens qui mènent à cette page. Script : sig1', false],
+  ['ujsMethodNoUjs', { method: 'method1' }, ':method="method1" ignoré — :noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retirez l\'un des deux.', false],
+  ['ujsMethodNative', { method: 'method1' }, ':method="method1" : lien non suivi — vers une autre origine, avec une touche Ctrl, Maj, Alt ou Cmd, au clic du milieu, avec `target` ou `download`, le navigateur le suivrait lui-même, en GET, sans le verbe. Seul un clic simple sur un lien de la même origine, sans `target` ni `download`, envoie la requête.', false],
   ['ujsUnknownCache', { raw: 'raw1' }, 'cache \'raw1\' inconnu dans la fiche de navigation — \'cache-first\' appliqué.', false],
   ['ujsUnknownMethod', { raw: 'raw1' }, 'method \'raw1\' inconnu dans la fiche de navigation — \'update\' appliqué.', false],
   ['ujsTargetMissing', { target: 'target1' }, 'cible de navigation \'target1\' introuvable dans la page — contenu de <body> remplacé.', false],
@@ -294,7 +321,6 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['ujsNoPage', { matchPath: '/x' }, 'Aucune page ne correspond à \'/x\'.', false],
   ['routerNoRouteLog', { matchPath: '/x' }, 'Aucune route pour \'/x\'.', false],
   ['routerNoRoute', { matchPath: '/x', routes: '/a, /b' }, 'Aucune route ne correspond à \'/x\'. Routes déclarées : /a, /b — déclarez une route de repli (\'/*\') pour servir votre propre page 404.', false],
-  ['routerViewCrash', { targetId: 'main' }, 'CRASH : <@view main> introuvable dans le DOM !', false],
   ['routerNoneDeclared', {}, '(aucune)', false],
   ['routerLogRegister', { tag: 'tag1' }, 'Enregistrement de : <tag1>', false],
   ['routerLogInit', { tag: 'tag1', matchPath: '/x' }, 'Init <tag1> avec le Hash Path : \'/x\'', false],
@@ -331,7 +357,9 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['coreChartSideShape', { shape: 'stack', keys: 'pluie', list: 'line area dots bar' }, '[ModularJS] <@@chart> : la forme stack n\'a qu\'une échelle, axis « right » est ignoré pour pluie — formes à deux échelles : line area dots bar.', true],
   ['coreChartDay', { x: '2026-02-30' }, '[ModularJS] <@@chart> : « 2026-02-30 » n\'est pas une date qui existe, sa ligne ne se range dans aucune période et quitte le graphique — écrivez un jour possible (AAAA-MM-JJ) ou un instant qui se lit.', true],
   ['coreGaugeStep', { n: '-1' }, '[ModularJS] <@@gauge> : le pas « -1 » n\'est pas un nombre positif, la jauge avance de 1. Écrivez un pas plus grand que 0.', true],
-  ['coreNumberDecimals', { value: '2,5' }, '[ModularJS] <@@number> : decimals « 2,5 » est ignoré — écrivez un nombre entier de 0 à 100 ; sans decimals, la valeur s\'écrit telle quelle.', true],
+  ['coreNumberDecimals', { value: '2,5' }, '[ModularJS] <@@number> : decimals « 2,5 » est ignoré — écrivez un nombre entier de 0 à 100 ; la valeur s\'écrit comme sans decimals.', true],
+  ['coreNumberPrecision', { value: 'abc' }, '[ModularJS] <@@number> : precision « abc » est ignoré — écrivez un nombre entier de 0 à 100, ou precision seul pour deux décimales.', true],
+  ['coreNumberSeparator', { value: ';' }, '[ModularJS] <@@number> : separator « ; » est ignoré — écrivez « , » ou « . » ; sans separator, le séparateur est celui de la langue de la page.', true],
   ['coreRangeInverted', { tag: 'knob', min: '80', max: '20' }, '[ModularJS] <@@knob> : min « 80 » est plus grand que max « 20 », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.', true],
   ['dev.majEffect', {}, 'effet', false],
   ['dev.majColor', {}, 'couleur', false],
@@ -409,6 +437,7 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['typesRefuses', { p: 'p1', v: 'v1', d: 'd1', at: 'at1' }, '[ModularJS] p1 refuse v1d1at1', true],
   ['typesBrought', { p: 'p1', v: 'v1', to: 'to1', d: 'd1', at: 'at1' }, '[ModularJS] p1 : v1 ramené à to1d1at1', true],
   ['typesAnimated', { p: 'p1', at: 'at1' }, '[ModularJS] p1 reçoit une valeur animée : ses bornes se règlent en la créant (µspring(valeur, raideur, amortissement, min, max), µinterpolate(valeur, durée, min, max)) — retirez p1 du <vars>at1', true],
+  ['formMasked', { p: 'p1', k: 'k1', at: 'at1' }, '[ModularJS] p1 : « k1 » est un nom de l\'objet formulaire (µform), qui le garde pour lui — lisez le champ de cette variable par fields : $form.fields.k1at1', true],
   ['fxBrought', { name: 'name1', k: 'k1', vu: 'vu1', to: 'to1', reg: 'reg1', at: 'at1' }, '[ModularJS] *name1 : k1 = vu1 ramené à to1 — permis : reg1at1', true],
   ['fxRefused', { name: 'name1', k: 'k1', vu: 'vu1', reg: 'reg1', at: 'at1' }, '[ModularJS] *name1 : k1 = vu1 refusé, valeur par défaut — permis : reg1at1', true],
   ['fxEveryRefused', { vu: 'vu1', at: 'at1' }, '[ModularJS] la variable de thème $$mjs-fx-every vaut vu1, une valeur refusée : chaque effet garde sa cadence par défaut — permis : une durée (300ms, 1.5s, 0)at1', true],
@@ -419,6 +448,8 @@ const REFERENCE: Array<[string, Record<string, string>, string, boolean]> = [
   ['adoptSheetNoShadow', { tag: 'mjs-x' }, '[ModularJS] µ.adoptSheet : la feuille n\'est pas collée dans <mjs-x>, car cette balise n\'a pas d\'ombre (composant réglé en mjs-light, ou balise qui n\'est pas un composant ModularJS). Écrivez ce style dans le <style> du composant, ou dans une feuille de la page : sans ombre, les feuilles de la page s\'appliquent déjà à la balise.', true],
   ['cloneNotComponent', { tag: '<div>' }, '[ModularJS] µclone : <div> n\'est pas un composant MJS, ou sa définition n\'est pas encore chargée — aucun état à copier. Pour copier une balise ordinaire, écrivez el.cloneNode(true).', true],
   ['cloneOption', { opt: 'miroir' }, '[ModularJS] µclone : option « miroir » inconnue — la seule option est mirror : µclone el, mirror: true rend un miroir vivant, qui partage l\'état de l\'original.', true],
+  ['sigCycle', { k: '$total' }, '[ModularJS] Cycle réactif : la dérivée « $total » se lit elle-même, directement ou par d\'autres dérivées ; cette lecture rend undefined. Retirez de son calcul la lecture qui revient à elle.', true],
+  ['sigLoop', { owner: '<mjs-x>' }, '[ModularJS] Boucle réactive détectée sur <mjs-x> : ses reffets ont repris plus de 10 000 fois dans la même rafale de microtâches. Un reffet écrit sans doute une valeur qu\'il lit ($x = $x + 1 dans un µeffect ?). Ses reffets sont suspendus jusqu\'à la fin de la rafale pour garder la page vivante : vérifiez ce que chacun écrit.', true],
 ]
 
 const table = (lang: 'fr' | 'en') => {
@@ -593,7 +624,11 @@ describe('messages du navigateur — texte rendu', () => {
 })
 
 describe('messages du navigateur — texte de secours du code = table fr', () => {
-  const fr = table('fr')
+  // la table, et les messages d'un fichier du runtime joint à la demande (µload), rangés à part du groupe err ; un texte de la page lu
+  // par la clé pointée d'un groupe de libellés (`load.notJson`) a pour secours le libellé français de ce groupe
+  const aPart = (lang: 'fr' | 'en'): Record<string, string> => Object.assign({}, ...Object.values(RUNTIME_FILE_MESSAGES).map((t) => t[lang]))
+  const libelles = (lang: 'fr' | 'en'): Record<string, string> => Object.fromEntries(OPTIONAL_LABEL_GROUPS.flatMap((g) => Object.entries((RUNTIME_LABELS[lang] as any)[g] ?? {}).map(([k, v]) => [g + '.' + k, v as string])))
+  const fr = { ...table('fr'), ...aPart('fr') }
   const vus = new Map<string, string>()
 
   before(() => {
@@ -617,9 +652,18 @@ describe('messages du navigateur — texte de secours du code = table fr', () =>
     }
   })
 
+  it('les messages rangés à part : mêmes clés et mêmes variables en fr et en, aucun accent en anglais, aucune clé du groupe err', () => {
+    assert.deepEqual(Object.keys(aPart('en')).sort(), Object.keys(aPart('fr')).sort())
+    for (const [cle, texte] of Object.entries(aPart('en'))) {
+      assert.deepEqual(variables(texte), variables(aPart('fr')[cle]), cle)
+      assert.doesNotMatch(texte, /[àâäçéèêëîïôöùûüœ«»]/i, cle)
+      assert.equal(cle in table('fr'), false, cle)
+    }
+  })
+
   it('chaque appel porte, comme texte de secours, le texte français de la table', () => {
     assert.ok(vus.size > 100, `trop peu d'appels trouvés : ${vus.size}`)
-    for (const [cle, secours] of vus) assert.equal(secours, fr[cle], `secours différent de la table pour ${cle}`)
+    for (const [cle, secours] of vus) assert.equal(secours, fr[cle] ?? libelles('fr')[cle], `secours différent de la table pour ${cle}`)
   })
 
   it('chaque clé de la table est utilisée par le code', () => {

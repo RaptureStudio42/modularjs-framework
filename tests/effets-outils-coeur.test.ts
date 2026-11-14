@@ -19,7 +19,7 @@ const ORIGINALE = new Window({ url: 'http://localhost/' }).Element.prototype.get
 function monde(avant = '') {
   const window: any = new Window({ url: 'http://localhost/' })
   if (avant) window.eval(avant)
-  const µ: any = { _fxConf: { lite: 'off' }, warn: () => {}, _mjs_msg: (_c: string, _v: unknown, texte: string) => texte }
+  const µ: any = { _fxConf: { lite: 'off' }, warn: () => {}, _mjs_msg: (_c: string, _v: unknown, texte: string) => texte, _mjs_th: (h: string) => h }
   window.eval(`globalThis.__charge = function(µ) {\n${CODE}\n}`)
   window.__charge(µ)
   return { window, µ, doc: window.document }

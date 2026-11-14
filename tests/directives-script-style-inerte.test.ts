@@ -15,7 +15,7 @@ import { extractDirectives } from '../src/transpiler/directives.js'
 
 describe('directives racines : une directive écrite en CODE dans <script> est activée normalement', () => {
   it('@import', () => {
-    const src = "<script>\n@import Foo 'foo.civet'\n</script>\n<p>x</p>\n"
+    const src = "<script>\n@import Foo 'foo.civet.mjs'\n</script>\n<p>x</p>\n"
     const { pendingAutoImports } = extractDirectives(src)
     assert.equal(pendingAutoImports.length, 1, `pendingAutoImports: ${JSON.stringify(pendingAutoImports)}`)
   })
@@ -75,7 +75,7 @@ describe('directives racines : le contenu INERTE (chaîne/commentaire) de <scrip
   })
 
   it('@import dans un commentaire de ligne `//` DANS <script> : ni activé, ni retiré', () => {
-    const src = "<script>\n// @import Foo 'foo.civet'\n$x = 1\n</script>\n<p>{$x}</p>\n"
+    const src = "<script>\n// @import Foo 'foo.civet.mjs'\n$x = 1\n</script>\n<p>{$x}</p>\n"
     const { cleaned, pendingAutoImports } = extractDirectives(src)
     assert.equal(pendingAutoImports.length, 0)
     assert.equal(cleaned, src)
@@ -97,7 +97,7 @@ describe('directives racines : contre-cas', () => {
   })
 
   it('un @import RACINE entre deux <script> légitimes reste actif', () => {
-    const src = "<script module>\nx = 1\n</script>\n@import Foo 'x.civet'\n<script>\ny = 2\n</script>\n<p>x</p>\n"
+    const src = "<script module>\nx = 1\n</script>\n@import Foo 'x.civet.mjs'\n<script>\ny = 2\n</script>\n<p>x</p>\n"
     const { pendingAutoImports } = extractDirectives(src)
     assert.equal(pendingAutoImports.length, 1)
   })
@@ -108,7 +108,7 @@ describe('directives racines : contre-cas', () => {
   })
 
   it('deux <script> : une directive de code dans le PREMIER et une autre dans le SECOND sont toutes les deux vues', () => {
-    const src = "<script module>\n@import Foo 'foo.civet'\n</script>\n<script>\n@persist $x\n</script>\n<p>x</p>\n"
+    const src = "<script module>\n@import Foo 'foo.civet.mjs'\n</script>\n<script>\n@persist $x\n</script>\n<p>x</p>\n"
     const { pendingAutoImports, persistLocalVars } = extractDirectives(src)
     assert.equal(pendingAutoImports.length, 1)
     assert.deepEqual(persistLocalVars.map(v => v.var), ['$x'])

@@ -2,8 +2,8 @@
 //   - deux étalements sur une balise qui posent la même clé (`{...$a} {...$b}`) : quand l'un la perd, l'attribut restait retiré
 //     alors que l'autre la posait encore. La clé n'est retirée que si aucun étalement de la balise ne la pose plus, et le dernier
 //     étalement qui la pose gagne toujours, comme à la première pose
-//   - une clé retirée par un étalement emportait la valeur fixe écrite par l'auteur (`<div class="st" title="…" {...$o}>`) : elle
-//     revient désormais, entités décodées comme le ferait le navigateur
+//   - une valeur fixe écrite par l'auteur (`<div class="st" title="…" data-fixe hidden {...$o}>`) gagne sur la même clé d'un étalement,
+//     entités décodées comme le ferait le navigateur, attribut nu compris ; la classe étalée s'ajoute à la classe écrite, qui reste
 //   - `{for}` sur une `Map` ou un `Set` : dans un gestionnaire ou une liaison deux sens de la ligne, la variable de ligne valait
 //     `undefined` (la ligne était relue par sa position dans la collection, qu'une Map ou un Set n'ont pas)
 //   - deux bascules qui ne partagent qu'une partie de leurs classes (`@class{$a}="on" @class{$b}="on big"`) : `on` dépendait de
@@ -54,8 +54,8 @@ export const SOURCES: Record<string, string> = {
     '$a = true',
     '$b = false',
     '</script>',
-    '<p class="q" @class{$a}="on" @class{$b}="on big">q</p>',
-    '{for r in [1]}<i class="w" @class{$a}="on" @class{$b}="on big">w</i>{end}',
+    '<p class="q" :class{$a}="on" :class{$b}="on big">q</p>',
+    '{for r in [1]}<i class="w" :class{$a}="on" :class{$b}="on big">w</i>{end}',
     '<button class="bvrai" @click={$b = true}>1</button>',
     '<button class="bfaux" @click={$b = false}>2</button>',
     '<button class="afaux" @click={$a = false}>3</button>',
@@ -104,17 +104,17 @@ describe('générateur — étalements, boucles sur Map et Set, bascules de clas
     assert.equal(m.find('.d').getAttribute('title'), 'A3', 'le second lâche title : la valeur du premier revient')
   })
 
-  it('une clé retirée par un étalement remet la valeur fixe écrite par l\'auteur', async () => {
+  it('une valeur fixe écrite par l\'auteur gagne sur la même clé d\'un étalement ; la classe étalée s\'ajoute à la classe écrite', async () => {
     const m = await app.mount('etalement-statique')
-    assert.deepEqual(attributs(m.find('div')), { title: 'dyn', class: 'k', 'data-fixe': '', hidden: '' })
+    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st k', 'data-fixe': '', hidden: '' })
     await m.click('.vide')
-    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '', hidden: '' })
+    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '', hidden: '' }, 'la classe étalée part, la classe écrite reste')
     await m.click('.fixe')
-    assert.equal(m.find('div').getAttribute('data-fixe'), 'x')
+    assert.equal(m.find('div').getAttribute('data-fixe'), '', 'data-fixe écrit nu sur la balise gagne')
     await m.click('.montre')
-    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '' }, 'hidden: false le retire, data-fixe reprend sa valeur fixe')
+    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '', hidden: '' }, 'hidden écrit nu sur la balise gagne sur hidden: false')
     await m.click('.rien')
-    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '', hidden: '' }, 'objet nul : toutes les valeurs fixes reviennent, attribut booléen nu compris')
+    assert.deepEqual(attributs(m.find('div')), { title: 'café', class: 'st', 'data-fixe': '', hidden: '' }, 'objet nul : les valeurs écrites, attribut booléen nu compris')
   })
 
   it('{for} sur une Map et un Set : un gestionnaire et une liaison deux sens de la ligne reçoivent sa valeur', async () => {

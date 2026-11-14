@@ -117,7 +117,7 @@ describe('µread / µwrite — parenthèses optionnelles', function () {
     assert.doesNotThrow(() => cleanJs('// à ne pas écrire : µread(compteur) sans le $\na = 1')))
   it('idem dans un commentaire de bloc (ancienne forme citée)', () =>
     assert.doesNotThrow(() => cleanJs('/* µwrite($x) = v est refusé */ a = 1')))
-  it('idem dans un commentaire Coffee (handler en templateLang js)', () =>
+  it('idem dans un commentaire `#` (gestionnaire du dialecte)', () =>
     assert.doesNotThrow(() => cleanJs('# µread(compteur) est refusé\na = 1')))
 
   // …mais la neutralisation des commentaires ne doit JAMAIS aveugler le garde sur du VRAI
@@ -187,11 +187,8 @@ describe('µread / µwrite — parenthèses optionnelles', function () {
       assert.match(tokenize(source), /µwrite: 2/)
     })
 
-    it('cleanJs : `{ µread: 1, µwrite: 2 }` ne lève pas, littéral intact', () => {
-      const source = 'opts = { µread: 1, µwrite: 2 }'
-      assert.doesNotThrow(() => cleanJs(source))
-      assert.match(cleanJs(source), /µread: 1/)
-      assert.match(cleanJs(source), /µwrite: 2/)
+    it('cleanJs (gabarit) : `{ µread: 1, µwrite: 2 }` refusé, comme dans une expression ou un gestionnaire du gabarit', () => {
+      assert.throws(() => cleanJs('opts = { µread: 1, µwrite: 2 }'), /rune écrite en clé d'objet/)
     })
 
     it('bout en bout : `opts = { µread: 1 }` dans un composant résout sans erreur', async () => {

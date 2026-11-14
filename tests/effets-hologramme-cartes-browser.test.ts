@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -114,7 +115,7 @@ const REGISTRE = (etire: number) => {
 }
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`*hologram, les styles de carte (${nom} réel)`, function () {
+  playTogether(describe(`*hologram, les styles de carte (${nom} réel)`, function () {
     this.timeout(180000)
     let present = false
     let script  = ''
@@ -815,5 +816,5 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         await browser.close()
       }
     })
-  })
+  }))
 }

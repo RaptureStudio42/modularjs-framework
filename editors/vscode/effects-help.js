@@ -44,7 +44,7 @@ const TEXTS = {
   }
 };
 
-// un effet commence après une espace, un `=` (`@in=*fly`), un guillemet, une parenthèse, une virgule
+// un effet commence après une espace, un `=` (`:in=*fly`), un guillemet, une parenthèse, une virgule
 // ou deux-points (`fx: *scramble`) — jamais au milieu d'un calcul (`{$a*$b}`, `{$a * 2}`)
 const BEFORE_STAR = /(?:^|[\s="'(,:])$/;
 
@@ -206,7 +206,7 @@ function effectHelp(name, ctx) {
   if (v.help) lines.push(v.help, '');
   if (v.written) lines.push('`*' + name + '` = `' + v.written + '`', '');
   if (v.main === null) return lines.join('\n').trim();
-  lines.push(v.lifecycle ? T.lifeOnly + '`@in=*' + name + '`, `@out=*' + name + '`, `@transition=*' + name + '`.' : '`*' + name + '(' + v.main + ')` — ' + T.mainLine, '');
+  lines.push(v.lifecycle ? T.lifeOnly + '`:in=*' + name + '`, `:out=*' + name + '`, `:transition=*' + name + '`.' : '`*' + name + '(' + v.main + ')` — ' + T.mainLine, '');
   lines.push('| ' + T.setting + ' | ' + T.rule + ' | ' + T.dflt + ' |', '|---|---|---|');
   const rows = Object.keys(v.settings).map(function(k) {
     const st = v.settings[k];

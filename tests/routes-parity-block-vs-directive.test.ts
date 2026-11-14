@@ -50,9 +50,9 @@ function extractMutations(output: string): Array<[string, string, string]> {
   return out
 }
 
-// noms de composants préchargés au compile-time (`µ.Autoloader?.load?.('mjs-<composant>')`)
+// noms des pages confiées au routeur pour le chargement au repos (`µ._mjs_routesIdle?.([…])`)
 function extractPreloads(output: string): string[] {
-  return [...output.matchAll(/µ\.Autoloader\?\.load\?\.\('mjs-([a-z0-9-]+)'\)/g)].map(m => m[1])
+  return [...output.matchAll(/µ\._mjs_routesIdle\?\.\((\[[^\]]*\])\)/g)].flatMap(m => JSON.parse(m[1]))
 }
 
 // résout une URL contre une table de routes d'UNE cible, exactement comme le fait
@@ -209,8 +209,8 @@ describe('parité <routes target="…"> vs @routes — mêmes tables, même comp
     assert.equal(resolve(tblA.main, url)!.component, 'a-page')
   })
 
-  // 10. préchargement compile-time — mêmes appels Autoloader?.load?. émis
-  it('préchargement compile-time identique', async () => {
+  // 10. chargement des pages — même liste confiée au routeur
+  it('chargement des pages identique', async () => {
     const a = await transpile(['<script>', "@routes = { 'main': { '/': 'home-page', '/guide': 'guide-page' } }", '</script>', '<p/>'].join('\n'), { moduleName: 'parity-10-a' })
     const b = await transpile(['<routes target="main">', '  /        home-page', '  /guide   guide-page', '</routes>', '<p/>'].join('\n'), { moduleName: 'parity-10-b' })
     const preA = extractPreloads(a.output).sort()

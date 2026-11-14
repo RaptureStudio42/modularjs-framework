@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const IMPORT = `@import µ$$Boite 'stores/boite.module.civet'\n`
+const IMPORT = `@import µ$$Boite 'stores/boite.module.civet.mjs'\n`
 const REFUS  = 'Le singleton importé « Boite » se consomme avec « µ$$Boite »'
 
 // un projet : le module qui déclare le singleton et un composant par gabarit (`cas-<n>.mjs`) ; les messages d'erreur de la construction
@@ -23,7 +23,7 @@ async function construire(prefixe: string, gabarits: string[]): Promise<string[]
   const racine  = mjsTmp(prefixe)
   const sources = join(racine, 'src')
   mkdirSync(join(sources, 'stores'), { recursive: true })
-  writeFileSync(join(sources, 'stores', 'boite.module.civet'), 'export µ$$Boite = { a: 1 }\n')
+  writeFileSync(join(sources, 'stores', 'boite.module.civet.mjs'), 'export µ$$Boite = { a: 1 }\n')
   gabarits.forEach((g, n) => writeFileSync(join(sources, `cas-${n}.mjs`), IMPORT + g + '\n'))
   const bundler = new Bundler({ sourceDir: sources, outputDir: join(racine, 'out'), manifestPath: join(racine, 'bundle.js') })
   try {

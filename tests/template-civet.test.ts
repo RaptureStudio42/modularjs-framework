@@ -1,14 +1,11 @@
 // Interpolations `{…}` du template : les sites EXPRESSION (interpolation texte, valeur d'attribut,
 // condition {if}/{elsif}/@class{}/@style{}/@flip{}, itérable {for}, expression
 // {key}/{const}/{await}) passent par une VRAIE compilation Civet SYNCHRONE
-// quand `templateLang === 'civet'` (le défaut) — cf. generator/utils.ts
-// (cleanJsExpr, compileGrammarViaCivet). Le repli `templateLang: 'js'` garde
-// le chemin regex historique (cleanJs), INCHANGÉ — aucune régression attendue.
+// — cf. generator/utils.ts (cleanJsExpr, compileGrammarViaCivet).
 //
 // Les sites FRAGMENT (têtes de {for}, corps de handlers déjà batchés en
 // Civet/Coffee — cf. handlers-civet.test.ts —, callbacks @transition,
-// heuristiques de détection filtered) restent sur le chemin regex QUEL QUE
-// SOIT templateLang : hors périmètre ici, non testés.
+// heuristiques de détection filtered) : hors périmètre ici, non testés.
 
 import assert from 'node:assert/strict'
 import * as acorn from 'acorn'
@@ -55,21 +52,6 @@ describe('template {…} — Civet par défaut', () => {
     )
   })
 
-  it("(d) le MÊME composant en templateLang:'js' : le ternaire collé passe (JS valide, aucun throw) et `==` reste `==` (repli inchangé)", async () => {
-    const { output } = await transpile(
-      `<p>{$ok?'a':'b'}</p>`,
-      { moduleName: 'tc-ternaire-colle-js', templateLang: 'js' }
-    )
-    assert.match(output, /\$\.ok\?'a':'b'/, 'un ternaire collé est du JS valide tel quel — aucune réécriture en mode js (contrairement au batch handlers, recompilé en Coffee)')
-
-    const { output: output2 } = await transpile(
-      `<p>{$n == 1 ? 'clic' : 'clics'}</p>`,
-      { moduleName: 'tc-loose-eq-js', templateLang: 'js' }
-    )
-    assert.match(output2, /\$\.n == 1 \? 'clic' : 'clics'/, 'le repli `js` ne touche jamais `==` (pas de drift hors mode civet)')
-    assert.doesNotMatch(output2, /\$\.n === 1/, '`==` ne doit PAS devenir `===` en mode js')
-  })
-
   it('(e) {if $a > 3}/{elsif}/{for i, t in $liste by id}/{key}/{await} compilent dans les DEUX modes (aucun changement structurel)', async () => {
     const tpl = `<script>
 $a = 5
@@ -96,7 +78,7 @@ $promise = Promise.resolve(1)
 {end}
 </div>`
 
-    for (const templateLang of ['civet', 'js'] as const) {
+    for (const templateLang of ['civet'] as const) {
       const { output } = await transpile(tpl, { moduleName: `tc-blocks-${templateLang}`, templateLang })
       // Sortie = module JS complet valide (mêmes garanties que snapshot-stats.mjs,
       // même neutralisation du placeholder `µ.asset(...)` résolu par le bundler).

@@ -37,7 +37,7 @@ const SOURCES: Record<string, string> = {
     '<a class="stop" href="#/stop" @click.stop={$n++}>stop</a>',
     '<p class="n">{$n}</p>',
     '{if $menu}<a class="menu" href="#/menu" @click={$menu = false}>menu</a>{end}',
-    '<@interne @lightDom/>'
+    '<@interne :lightDom/>'
   ].join('\n') + '\n',
   'interne.mjs': '<script>\n$m = 0\n</script>\n<a class="leger" href="#/leger" @click.prevent={$m++}>léger</a>\n<p class="m">{$m}</p>\n'
 }

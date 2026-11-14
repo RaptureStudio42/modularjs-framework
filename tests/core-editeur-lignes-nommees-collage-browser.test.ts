@@ -27,7 +27,7 @@ const PAGE: Page = {
     window.__poser = (v)-> $texte = v
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="a1" name="modele" value=!{$texte}></@@editor>
 </form>
 `,

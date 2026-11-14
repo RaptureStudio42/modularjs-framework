@@ -48,7 +48,7 @@ const EDITEUR: Record<string, string> = {
   $texte = '<p>Un <b>mot</b></p>'
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="e" name="contrat" toolbar="bold italic" value=!{$texte}></@@editor>
 </form>
 <pre class="o">{$texte}</pre>

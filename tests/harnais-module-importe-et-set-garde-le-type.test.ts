@@ -13,8 +13,8 @@ import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const FICHIERS: Record<string, string> = {
-  'hm-singleton.mjs': "@import µ$$hmCompte 'hm-partage.module.civet'\n\n<p class=\"t\">{µ$$hmCompte.value}</p>\n",
-  'hm-partage.module.civet': 'export µ$$hmCompte = { value: 3 }\n',
+  'hm-singleton.mjs': "@import µ$$hmCompte 'hm-partage.module.civet.mjs'\n\n<p class=\"t\">{µ$$hmCompte.value}</p>\n",
+  'hm-partage.module.civet.mjs': 'export µ$$hmCompte = { value: 3 }\n',
   'hm-compteur.mjs': '<script>\n$count ?= 0\n$label ?= \'\'\n</script>\n<p class="v">{$count}</p><p class="l">{$label}</p>\n',
   'hm-parent.mjs': '<script>\n$n = 7\n</script>\n<@hm-compteur count={$n} />\n',
 }

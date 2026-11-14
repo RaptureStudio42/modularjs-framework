@@ -15,7 +15,7 @@ const SOURCES: Record<string, string> = {
   'dec-page.mjs': `<script>
   $p = 64.3
 </script>
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@number class="prix" name="prix" value=!{$p} decimals="2" min="0"></@@number>
 </form>
 <p class="vp">{$p}</p>

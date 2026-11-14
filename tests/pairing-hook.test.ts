@@ -36,10 +36,10 @@ $visible = true
 
 <div>
   {key $k}
-    <div class="a" @transition=*fade>a {$k}</div>
+    <div class="a" :transition=*fade>a {$k}</div>
   {end}
   {if $visible}
-    <div class="b" @transition=*fade>b</div>
+    <div class="b" :transition=*fade>b</div>
   {end}
 </div>
 `;

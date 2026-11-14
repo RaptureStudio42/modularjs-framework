@@ -33,7 +33,7 @@ const HOTE = `<script>
     $texte = nom
 </script>
 
-<form id="formulaire" @noUJS>
+<form id="formulaire" :noUJS>
   <div id="serveur">
     <@@select name="serveur" search match="async" value={$vs} @search={@liste(e)}>
       {for t in $serveur by id}

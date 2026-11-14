@@ -49,12 +49,12 @@ describe('mjs.config.json — clé `languages` (résolution + rétrocompat defau
     assert.equal(opts.defaultScriptLang, undefined)
   })
 
-  it("(b) languages.template: 'js' est transmis tel quel (resolveBundlerOpts n'applique aucun défaut)", () => {
-    const root = writeConfig({ languages: { template: 'js' } })
+  it("(b) languages.template: 'civet' est transmis tel quel (resolveBundlerOpts n'applique aucun défaut)", () => {
+    const root = writeConfig({ languages: { template: 'civet' } })
     const found = findConfig(root)
     assert.ok(found)
     const opts = resolveBundlerOpts(found!.config, root)
-    assert.equal(opts.templateLang, 'js')
+    assert.equal(opts.templateLang, 'civet')
   })
 
   it("(c) languages.script: 'ts' prime et remplit le champ script (defaultScriptLang) des opts résolues", () => {
@@ -91,9 +91,9 @@ describe('mjs.config.json — clé `languages` (résolution + rétrocompat defau
     assert.throws(() => findConfig(root), /languages\.scriptz : clé inconnue[\s\S]*Clés valides : script, template/)
   })
 
-  it("(h) languages.template: 'coffee' (valeur interdite pour template) → throw listant civet|js", () => {
+  it("(h) languages.template: 'coffee' (valeur interdite pour template) → throw listant civet", () => {
     const root = writeConfig({ languages: { template: 'coffee' } })
-    assert.throws(() => findConfig(root), /languages\.template invalide[\s\S]*Valeurs valides : civet, js/)
+    assert.throws(() => findConfig(root), /languages\.template invalide[\s\S]*Valeurs valides : civet/)
   })
 
   it('(i) languages non-objet → throw', () => {

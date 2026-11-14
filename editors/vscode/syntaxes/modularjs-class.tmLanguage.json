@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ModularJS (classe)",
+  "scopeName": "source.modularjs.class",
+  "patterns": [
+    { "include": "text.html.modularjs#modular-vars" },
+    { "include": "source.coffee" }
+  ]
+}

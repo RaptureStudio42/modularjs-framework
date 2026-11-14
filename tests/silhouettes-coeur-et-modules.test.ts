@@ -45,8 +45,8 @@ describe('silhouettes : modules cœur, modules de script, suivi entre deux tours
   it('effects.skeleton: [\'components\'] : chaque composant qui attend un contenu, jamais un module .civet', async () => {
     const p = projet('components', {
       'carte.mjs':  '<div class="c">{await $c}{success v}<h2>{v.titre}</h2><p>texte</p>{end}</div>\n',
-      'util.civet': 'export f := (x) -> x + 1\n',
-      'page.mjs':   "@import util 'util.civet'\n<@carte></@carte>\n",
+      'util.civet.mjs': 'export f := (x) -> x + 1\n',
+      'page.mjs':   "@import util 'util.civet.mjs'\n<@carte></@carte>\n",
     }, { skeleton: ['components'] })
     const stats = await p.bundler.compile()
     assert.equal(stats.errors.length, 0, erreurs(stats))

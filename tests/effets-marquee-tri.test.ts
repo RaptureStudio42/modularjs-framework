@@ -42,9 +42,9 @@ const CAS: Array<[string, string, boolean]> = [
   ['un {key} qui écrit un élément', '<div *marquee>{key $x}<img src="a.png" alt="a">{end}</div>', true],
   ['un {await} dont une branche écrit un élément', '<div *marquee>{await $l}<img src="a.png" alt="a">{end}</div>', true],
   ['du texte autour d\'un composant enfant (dans le doute)', '<p *marquee>Avant <@carte></@carte></p>', true],
-  ['du HTML posé dans la balise par @html=!{…}', '<div *marquee @html=!{$h}></div>', true],
-  ['du HTML posé dans la balise par @html=!{…}, et un texte', '<p *marquee @html=!{$h}>Texte</p>', true],
-  ['du texte posé dans la balise par @text=!{…} (du texte seulement)', '<div *marquee @text=!{$msg}></div>', false]
+  ['du HTML posé dans la balise par @html=!{…}', '<div *marquee :html=!{$h}></div>', true],
+  ['du HTML posé dans la balise par @html=!{…}, et un texte', '<p *marquee :html=!{$h}>Texte</p>', true],
+  ['du texte posé dans la balise par @text=!{…} (du texte seulement)', '<div *marquee :text=!{$msg}></div>', false]
 ]
 
 describe('*marquee — le compilateur écrit `unit: child` aux poses qui peuvent recevoir des balises', function () {
@@ -149,11 +149,11 @@ describe('*marquee — un blanc écrit en entité est un blanc, comme pour le mo
 
   it('dans une pose de cycle de vie, la même règle : @in=*marquee et @in.global=*marquee', async () => {
     const vie = async (html: string) => [...(await compiler(VARS + html)).matchAll(/µ\._mjs_fxLife\(_mjsThis, _mjs_fxn, "marquee", (\{[^}]*\})/g)].map((m) => JSON.parse(m[1]).unit)
-    assert.deepEqual(await vie(`<div @in=*marquee>&nbsp;${IMG}${IMG}</div>`), ['child'])
-    assert.deepEqual(await vie(`<div @in.global=*marquee(speed: 4s)>${IMG}&ensp;${IMG}</div>`), ['child'])
-    assert.deepEqual(await vie(`<div @in=*marquee>${IMG}${IMG}</div>`), ['child'])
-    assert.deepEqual(await vie('<p @in=*marquee>Texte</p>'), [undefined])
-    assert.deepEqual(await vie('<p @in.global=*marquee>Texte</p>'), [undefined])
+    assert.deepEqual(await vie(`<div :in=*marquee>&nbsp;${IMG}${IMG}</div>`), ['child'])
+    assert.deepEqual(await vie(`<div :in.global=*marquee(speed: 4s)>${IMG}&ensp;${IMG}</div>`), ['child'])
+    assert.deepEqual(await vie(`<div :in=*marquee>${IMG}${IMG}</div>`), ['child'])
+    assert.deepEqual(await vie('<p :in=*marquee>Texte</p>'), [undefined])
+    assert.deepEqual(await vie('<p :in.global=*marquee>Texte</p>'), [undefined])
   })
 })
 
@@ -231,9 +231,9 @@ describe('*marquee — ce que le navigateur ne garde pas comme du texte n\'est p
 
   it('dans une pose de cycle de vie, la même règle : @in=*marquee', async () => {
     const jouer = async (html: string) => [...(await compiler(VARS + html)).matchAll(/µ\._mjs_fxLife\(_mjsThis, _mjs_fxn, "marquee", (\{[^}]*\})/g)].map((m) => JSON.parse(m[1]).unit)
-    assert.deepEqual(await jouer(`<div @in=*marquee><![CDATA[x]]>${IMG}${IMG}</div>`), ['child'])
-    assert.deepEqual(await jouer(`<div @in=*marquee>${IMG}<?${IMG}</div>`), ['child'])
-    assert.deepEqual(await jouer(`<p @in=*marquee>texte <![CDATA[x]]></p>`), [undefined])
+    assert.deepEqual(await jouer(`<div :in=*marquee><![CDATA[x]]>${IMG}${IMG}</div>`), ['child'])
+    assert.deepEqual(await jouer(`<div :in=*marquee>${IMG}<?${IMG}</div>`), ['child'])
+    assert.deepEqual(await jouer(`<p :in=*marquee>texte <![CDATA[x]]></p>`), [undefined])
   })
 })
 
@@ -262,8 +262,8 @@ describe('*marquee — unit: auto écrit en clair est le défaut : la pose ne le
   })
 
   it('dans une pose de cycle de vie aussi : @in=*marquee(unit: auto)', async () => {
-    assert.deepEqual(await vie('<p @in=*marquee(unit: auto)>Texte</p>'), [{}])
-    assert.deepEqual(await vie(`<div @in=*marquee(unit: auto)>${IMG}${IMG}</div>`), [{ unit: 'child' }])
+    assert.deepEqual(await vie('<p :in=*marquee(unit: auto)>Texte</p>'), [{}])
+    assert.deepEqual(await vie(`<div :in=*marquee(unit: auto)>${IMG}${IMG}</div>`), [{ unit: 'child' }])
   })
 
   it('une valeur tenue par une variable n\'est pas touchée', async () => {
@@ -292,23 +292,20 @@ describe('*marquee — le HTML brut : `{{ … }}` et `{ {…} }` demandent le mo
 
 // ---- @html avec un modificateur, et la forme que le parseur refuse ----
 
-describe('*marquee — @html pose du HTML dans la balise, avec ou sans modificateur', function () {
+describe('*marquee — :html pose du HTML dans la balise ; un modificateur sur le mot est refusé', function () {
   this.timeout(120000)
-  it('@html.x=!{…} : la balise est remplie de HTML, le mode part', async () => {
-    assert.deepEqual(await unite(VARS + '<div *marquee @html.x=!{$h}></div>'), ['child'])
+  it(':html=!{…} : la balise est remplie de HTML, le mode part', async () => {
+    assert.deepEqual(await unite(VARS + '<div *marquee :html=!{$h}></div>'), ['child'])
   })
 
-  it('@html.once=!{…} : un vrai modificateur, même règle', async () => {
-    assert.deepEqual(await unite(VARS + '<div *marquee @html.once=!{$h}></div>'), ['child'])
+  for (const ecrit of [':html.x=!{$h}', ':html.once=!{$h}', ':text.x=!{$msg}']) it(`${ecrit} : un mot de MJS ne prend pas ce modificateur, refusé`, async () => {
+    await assert.rejects(compiler(VARS + `<div *marquee ${ecrit}></div>`), /modificateur d'événement/)
   })
 
   it('@html{…} : le parseur le refuse (un `{…}` nu n\'est pas un attribut d\'une <div>), il n\'arrive jamais à la pose', async () => {
-    await assert.rejects(compiler(VARS + '<div *marquee @html{$h}></div>'), /`\{\$h\}` nu/)
+    await assert.rejects(compiler(VARS + '<div *marquee :html{$h}></div>'), /`\{\$h\}` nu/)
   })
 
-  it('@text.x=!{…} reste du texte : rien à demander', async () => {
-    assert.deepEqual(await unite(VARS + '<div *marquee @text.x=!{$msg}></div>'), [undefined])
-  })
 })
 
 // ---- des builds réels de production ----

@@ -45,7 +45,7 @@ describe('bundler — autoDeclareTopLevelBareAssignments (préserve le texte des
     this.timeout(10000)
     const civetSrc = ['export helpText = `', 'Exemple :', 'total = 0', '`'].join('\n')
     const adapter = getAdapter('civet')
-    const { code } = await adapter.compileToJs(civetSrc, { fileName: 'aide.civet', bare: true })
+    const { code } = await adapter.compileToJs(civetSrc, { fileName: 'aide.civet.mjs', bare: true })
     const after = autoDeclareTopLevelBareAssignments(code)
     assert.equal(after.includes('var total = 0'), false, `le texte exporté ne doit pas recevoir de var : ${after}`)
     assert.match(after, /total = 0/, 'le texte original doit survivre tel quel')

@@ -11,7 +11,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 import { assertAbsent } from './helpers/dom-assert.js'
 
 const COMPOSANTS: Record<string, string> = {
@@ -54,6 +54,7 @@ describe('effets visuels — un réglage suivi par une variable, jusque dans les
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`

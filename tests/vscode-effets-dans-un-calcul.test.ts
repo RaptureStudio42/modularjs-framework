@@ -17,7 +17,7 @@ describe('extension VS Code — les effets, jamais dans un calcul', () => {
   })
 
   it('hors d\'un calcul, les effets restent proposés après l\'étoile : balise, attribut d\'effet, accolade refermée', () => {
-    for (const ligne of ['<h1 *', '<h1 *ne', '<p>{$n}</p> <b *', '<b class={$a ? \'x\' : \'y\'} *', '<b @click={$n++} *', '{if $a}<b *', '<div @in=*']) {
+    for (const ligne of ['<h1 *', '<h1 *ne', '<p>{$n}</p> <b *', '<b class={$a ? \'x\' : \'y\'} *', '<b @click={$n++} *', '{if $a}<b *', '<div :in=*']) {
       assert.ok(labels(help.suggest(ligne)).includes('neon'), ligne)
     }
   })

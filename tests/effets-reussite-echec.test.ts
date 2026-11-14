@@ -128,12 +128,13 @@ describe('réussite et échec — l\'envoi d\'un formulaire (UJS)', () => {
       _mjs_navEmitPaths: (u: string) => ({ path: u, url: u }), _mjs_navEmit: () => true,
       _mjs_navRequest: (_m: string, _u: string, _p: any, ok: any, ko: any) => { reponse = ok; refus = ko },
       _mjs_navReloadAsked: () => false, _mjs_navMethodOf: (m: any) => m || 'replace', _mjs_navDropHibernation() {},
+      _mjs_navSwapPage: (_html: any, _nav: any, _seq: any, _link: any, o: any) => new o.parser().parseFromString(),
       _mjs_fxTell: (el: any, ok: boolean) => el.dispatchEvent({ type: ok ? 'mjs:success' : 'mjs:error' }),
       pageCache: new Map(), _mjs_preloadCache: new Map(), _mjs_preloaded: new Set(),
       nav: { active: false, href: null },
     }
     class FD { append() {} get() { return null } }
-    // une page réaffichée n'est pas analysée ici : l'envoi s'arrête là, l'échec déjà dit
+    // une page réaffichée n'est pas analysée ici : l'échange de l'envoi (µ._mjs_navSwapPage) s'arrête à son analyseur, l'échec déjà dit
     class DPArret { parseFromString(): any { throw new Error('arrêt du harnais') } }
     poserMessages(µ)
     new Function('µ', 'window', 'document', 'FormData', 'URL', 'DOMParser', 'URLSearchParams', extractMarked(UJS_SRC, '_mjs_navDispatch'))(µ, win, doc, FD, URL, DPArret, URLSearchParams)

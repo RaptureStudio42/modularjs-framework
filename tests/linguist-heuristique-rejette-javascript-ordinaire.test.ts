@@ -101,7 +101,7 @@ describe('heuristique Linguist .mjs — ModularJS contre JavaScript ordinaire', 
     const positifs: Record<string, string> = {
       '@i18n':    '@i18n \'code\'\n\n<script>\n</script>\n',
       '@persist': '<script>\n  @persist $savedLocation\n</script>\n',
-      '@import':  '@import trapFocus \'tuto/attachments.module.civet\'\n\n<script>\n</script>\n',
+      '@import':  '@import trapFocus \'tuto/attachments.module.civet.mjs\'\n\n<script>\n</script>\n',
       '@routes':  '<script>\n  @routes =\n    \'app-view\':\n      \'/posts/(:id)\': \'post-page\'\n</script>\n',
       '@preload': '<script>\n  @preload on\n</script>\n',
       '@formAssociated': '@formAssociated\n\n<script>\n</script>\n',

@@ -126,12 +126,12 @@ describe('composant traduit — nombre de rendus au montage à froid', function 
       assert.equal(el._shadow.querySelector('p.t').getAttribute('title'), 'Résumé du panier')
     })
 
-    it('développement : clé absente = ⟦panier.inconnue⟧ ; production : vide', async () => {
+    it('clé absente = ⟦panier.inconnue⟧, en développement comme en production', async () => {
       for (const prod of [false, true]) {
         const p = await projet({ prod, sources: { vue: riche } })
         const el = p.monte('vue')
         await attendre()
-        assert.equal(el._shadow.querySelector('p.abs').textContent.trim(), prod ? '' : '⟦panier.inconnue⟧')
+        assert.equal(el._shadow.querySelector('p.abs').textContent.trim(), '⟦panier.inconnue⟧')
       }
     })
 

@@ -12,6 +12,7 @@ import { deflateSync } from 'node:zlib'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -176,6 +177,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
         try {
           const { page } = await ouvre(browser, 'mjs-dm-degrade')
           const a = await foto(page, 'decoupe-degrade-a')
+          // scénario minuté : l'écart entre deux captures se mesure sur cette durée
           await page.waitForTimeout(700)
           const b = await foto(page, 'decoupe-degrade-b')
           const p = await lit(page, a, b)
@@ -208,6 +210,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
         try {
           const { page } = await ouvre(browser, 'mjs-dm-maille')
           const a = await foto(page, 'mesh-a')
+          // scénario minuté : l'écart entre deux captures se mesure sur cette durée
           await page.waitForTimeout(2200)
           const b = await foto(page, 'mesh-b')
           const p = await lit(page, a, b)
@@ -219,6 +222,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
           })
           assert.equal(n.anims, 5)
           assert.ok(n.vivantes >= 10, `animations vivantes : ${n.vivantes}`)
+          // vérification négative : aucune image ne doit être demandée pendant ce temps
           await page.waitForTimeout(600)
           assert.equal(await page.evaluate(() => (window as any).__raf), n.raf, 'aucune boucle JavaScript : plus aucune image demandée')
         } finally {
@@ -253,6 +257,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
           const { page } = await ouvre(browser, 'mjs-dm-pluie')
           await page.waitForTimeout(600)
           const a = await foto(page, 'matrix-a')
+          // scénario minuté : l'écart entre deux captures se mesure sur cette durée
           await page.waitForTimeout(500)
           const b = await foto(page, 'matrix-b')
           const p = await lit(page, a, b)
@@ -279,16 +284,18 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
           const raf = () => page.evaluate(() => (window as any).__raf)
           await page.waitForTimeout(700)
           const n1 = await raf()
+          // vérification négative : aucune image ne doit être demandée pendant ce temps
           await page.waitForTimeout(700)
           const n2 = await raf()
           assert.ok(n2 - n1 <= 1, `hors écran, aucune image demandée : ${n1} puis ${n2}`)
           await page.evaluate(() => (Array.from(document.body.children).map((c: any) => c._shadow?.querySelector('.r')).find(Boolean) as any).scrollIntoView())
-          await page.waitForTimeout(600)
+          await attendreEtat(async () => (await raf()) - n2 > 10, 'à l\'écran, la boucle tourne (plus de 10 images)', 600)
           const n3 = await raf()
           assert.ok(n3 - n2 > 10, `à l'écran, la boucle tourne : ${n3 - n2} images`)
           await page.evaluate(() => window.scrollTo(0, 0))
           await page.waitForTimeout(400)
           const n4 = await raf()
+          // vérification négative : aucune image ne doit être demandée pendant ce temps
           await page.waitForTimeout(600)
           const n5 = await raf()
           assert.ok(n5 - n4 <= 1, `elle s'arrête hors écran : ${n4} puis ${n5}`)
@@ -307,6 +314,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
           const avant = await page.evaluate(() => (window as any).__raf)
           const p = await lit(page, await foto(page, 'matrix-calme'))
           assert.ok(p.vif > 150, `une pluie peinte : ${p.vif}`)
+          // vérification négative : aucune image ne doit être demandée pendant ce temps
           await page.waitForTimeout(500)
           assert.equal(await page.evaluate(() => (window as any).__raf), avant, 'aucune image demandée de plus')
         } finally {
@@ -320,7 +328,7 @@ describe('*gradient.knockout, *mesh, *matrix (navigateurs réels)', function () 
         const browser = await pw[nom].launch()
         try {
           const { page } = await ouvre(browser, 'mjs-dm-pluie-lente')
-          await page.waitForTimeout(1500)
+          await attendreEtat(async () => (await lit(page, await foto(page, 'matrix-longue'))).vif > 200, 'de la pluie (plus de 200 pixels vifs)', 1500)
           const p = await lit(page, await foto(page, 'matrix-longue'))
           assert.ok(p.vif > 200, `de la pluie : ${p.vif}`)
         } finally {

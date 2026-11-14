@@ -47,7 +47,7 @@ const HOTE = `<script>
 <div id="lie"><@@select name="l" value=!{$lie}>${PAYS}</@@select></div>
 <button id="vider" @click={$lie = null}>vider</button>
 <button id="poser" @click={$lie = 'de'}>poser</button>
-<form id="f" @noUJS><div id="dans-form"><@@select name="m">${PAYS}</@@select></div></form>
+<form id="f" :noUJS><div id="dans-form"><@@select name="m">${PAYS}</@@select></div></form>
 <div id="langue"><@@select name="o">${PAYS}</@@select></div>
 <div id="meme-nom"><@@select name="r" value="tous">${TOUS}</@@select></div>
 <div id="meme-nom-perso"><@@select name="s" placeholder="Tous" value="all"><@@option value="all">Tous</@@option><@@option value="fr">France</@@option></@@select></div>

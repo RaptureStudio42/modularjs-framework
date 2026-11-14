@@ -92,9 +92,10 @@ describe('<@@chart> : la page servie porte le graphique déjà dessiné', functi
     assert.match(g1, /<circle class="ghost tone-1"/, 'le point estimé est posé')
     assert.equal((g1.match(/<circle class="dot tone-1"/g) ?? []).length, 4)
     assert.ok((g1.match(/<text class="ylabel"/g) ?? []).length >= 2, 'les graduations')
-    assert.match(g1, /<text class="xlabel"[^>]*>1 sept\.<\/text>/, 'la première étiquette')
+    // en `markers`, le serveur pose un repère (`<!--mjs-r:…-->`) devant chaque texte repris, et les ancres d'un bloc imbriqué entre deux cellules
+    assert.match(g1, /<text class="xlabel"[^>]*>(<!--[^>]*-->)?1 sept\.<\/text>/, 'la première étiquette')
     assert.equal((g1.match(/<tr><th scope="row">/g) ?? []).length, 4, 'le tableau des valeurs, une ligne par relevé')
-    assert.match(g1, /<td>73,5 kg<\/td>/)
+    assert.match(g1, /<td>(<!--[^>]*-->)?73,5 kg<\/td>/)
     assert.equal((graphique(rendu.html, 'g2').match(/<rect class="bar tone-1"/g) ?? []).length, 4, 'les barres')
     assert.match(graphique(rendu.html, 'g3'), /<p class="empty" part="empty">/, 'le vide est dit dès la page servie')
     // barres empilées : un segment par série et par ligne ; histogramme : trois classes (71, 72, 73 à 74) et la moyenne en trait vertical
@@ -107,7 +108,7 @@ describe('<@@chart> : la page servie porte le graphique déjà dessiné', functi
     assert.equal((g6.match(/<path class="slice tone-[12]/g) ?? []).length, 2, 'les parts de l\'anneau')
     assert.match(g6, /<b>(<!--[^>]*-->)?22 h<\/b>/, 'le total au centre')
     assert.equal((g6.match(/<li class="part tone-[12]/g) ?? []).length, 2, 'la légende')
-    assert.match(g6, /<th scope="row">Sport<\/th><td>12 h<\/td>/, 'le tableau des parts')
+    assert.match(g6, /<th scope="row">(<!--[^>]*-->)?Sport<\/th>(<!--[^>]*-->)*<td>(<!--[^>]*-->)?12 h<\/td>/, 'le tableau des parts')
     // calendrier : 26 semaines jusqu'au mardi 20 octobre (les cinq jours suivants ne se dessinent pas), les mois, les jours, la légende ;
     // radar : trois axes, un polygone ; carte : deux séries sur deux libellés
     const g7 = graphique(rendu.html, 'g7')

@@ -58,14 +58,14 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   }
 
   it('durée LITTÉRALE : figée dans le template, aucune liaison (comportement inchangé)', async () => {
-    const r = await compileComp(liste('@flip={duration: 2500}'))
+    const r = await compileComp(liste(':flip={duration: 2500}'))
     assert.deepEqual(r.errors, [])
     assert.match(r.code!, /setAttribute\("mjs-flip", "2500"\)/, 'le littéral reste écrit dans le template cloné')
     assert.doesNotMatch(r.code!, /_mjs_updAttrNode\([^)]*'mjs-flip'/, 'aucune liaison ne doit être émise pour un littéral')
   })
 
   it("durée CALCULÉE : liaison émise, et le repli statique `mjs-flip='200'` reste posé", async () => {
-    const r = await compileComp(liste('@flip={duration: 2500 * $ralenti}'))
+    const r = await compileComp(liste(':flip={duration: 2500 * $ralenti}'))
     assert.deepEqual(r.errors, [])
     assert.doesNotMatch(r.code!, /setAttribute\("mjs-flip", "2500"\)/, "AVANT le fix : la regex retenait `2500` et jetait `* $ralenti` en silence")
     assert.match(r.code!, /setAttribute\("mjs-flip", "200"\)/, 'repli statique — le nœud reste détectable par le runtime avant le 1er update')
@@ -74,8 +74,8 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   })
 
   it('durée calculée : même expression JS que le contournement manuel `mjs-flip={…}`, au secours près', async () => {
-    const directive   = await compileComp(liste('@flip={duration: 2500 * $ralenti}'))
-    const contournage = await compileComp(liste("@flip={duration: 200} mjs-flip={2500 * $ralenti}"))
+    const directive   = await compileComp(liste(':flip={duration: 2500 * $ralenti}'))
+    const contournage = await compileComp(liste(":flip={duration: 200} mjs-flip={2500 * $ralenti}"))
     assert.deepEqual(directive.errors, [])
     assert.deepEqual(contournage.errors, [])
     const exprDirective   = directive.code!.match(/const _mjsFlipVal_\w+ = ([^;]+);/)![1]
@@ -84,7 +84,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   })
 
   it("easing littéral à virgules (`cubic-bezier(0.25, 1, 0.5, 1)`) : figé, jamais découpé", async () => {
-    const r = await compileComp(liste("@flip={duration: 300, easing: 'cubic-bezier(0.25, 1, 0.5, 1)', delay: 600}"))
+    const r = await compileComp(liste(":flip={duration: 300, easing: 'cubic-bezier(0.25, 1, 0.5, 1)', delay: 600}"))
     assert.deepEqual(r.errors, [])
     assert.match(r.code!, /setAttribute\("mjs-flip", "300"\)/)
     assert.match(r.code!, /setAttribute\("mjs-flip-delay", "600"\)/)
@@ -92,7 +92,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   })
 
   it('champs mixtes : le calculé part en liaison, les littéraux restent figés', async () => {
-    const r = await compileComp(liste("@flip={duration: 400, delay: 100 * $ralenti, easing: 'ease-in'}"))
+    const r = await compileComp(liste(":flip={duration: 400, delay: 100 * $ralenti, easing: 'ease-in'}"))
     assert.deepEqual(r.errors, [])
     assert.match(r.code!, /setAttribute\("mjs-flip", "400"\)/)
     assert.match(r.code!, /setAttribute\("mjs-flip-easing", "ease-in"\)/)
@@ -102,7 +102,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   })
 
   it('easing calculé : secours = la courbe par défaut du runtime, littéral JS bien formé', async () => {
-    const r = await compileComp(liste("@flip={duration: 300, easing: $courbe}"))
+    const r = await compileComp(liste(":flip={duration: 300, easing: $courbe}"))
     assert.deepEqual(r.errors, [])
     assert.match(r.code!, /'mjs-flip-easing', \(_mjsFlipVal_\w+ == null \|\| _mjsFlipVal_\w+ === false\) \? "cubic-bezier\(0\.25, 1, 0\.5, 1\)" :/)
   })
@@ -115,8 +115,8 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   for (const champ of ['duration', 'delay'] as const) {
     it(`clé \`${champ}\` dupliquée (littéral à zéro en tête + calculé) : compile, secours encodé`, async () => {
       const attr = champ === 'duration'
-        ? '@flip={duration: 007, duration: 50 * $ralenti}'
-        : '@flip={duration: 300, delay: 007, delay: 50 * $ralenti}'
+        ? ':flip={duration: 007, duration: 50 * $ralenti}'
+        : ':flip={duration: 300, delay: 007, delay: 50 * $ralenti}'
       const r = await compileComp(liste(attr))
       assert.deepEqual(r.errors, [], 'un littéral octal-like ne doit pas faire échouer le build')
       assert.match(r.code!, /\? "007" :/, 'le secours est une CHAÎNE, jamais un token JS nu')
@@ -151,7 +151,7 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   }
 
   it("durée calculée qui vaut `undefined` en `{for}` : `mjs-flip` reste POSÉ (secours), le FLIP n'est pas désactivé", async () => {
-    const { el } = await monter('flipnulfor', ['<script lang="coffee">', '  $todos = [{ id: 1 }, { id: 2 }]', '  $cfg   = {}', '</script>', '<ul>', '  {for todo in $todos by id}', '    <li @flip={duration: $cfg.d}>{todo.id}</li>', '  {end}', '</ul>'].join('\n'))
+    const { el } = await monter('flipnulfor', ['<script lang="coffee">', '  $todos = [{ id: 1 }, { id: 2 }]', '  $cfg   = {}', '</script>', '<ul>', '  {for todo in $todos by id}', '    <li :flip={duration: $cfg.d}>{todo.id}</li>', '  {end}', '</ul>'].join('\n'))
     const lis = [...el._shadow.querySelectorAll('li')]
     assert.equal(lis.length, 2)
     for (const li of lis) {
@@ -161,27 +161,27 @@ describe('@flip — durée/delay/easing CALCULÉS (liaison au lieu du gel au bui
   })
 
   it('durée calculée qui vaut `undefined` au root : même secours', async () => {
-    const { el } = await monter('flipnulroot', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div @flip={duration: $cfg.d}>x</div>'].join('\n'))
+    const { el } = await monter('flipnulroot', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div :flip={duration: $cfg.d}>x</div>'].join('\n'))
     const div = el._shadow.querySelector('div')
     assert.equal(div.hasAttribute('mjs-flip'), true)
     assert.equal(div.getAttribute('mjs-flip'), '200')
   })
 
   it("delay calculé qui vaut `undefined` : `mjs-flip-delay='0'` posé, pas d'attribut retiré", async () => {
-    const { el } = await monter('flipnuldelay', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div @flip={duration: 300, delay: $cfg.d}>x</div>'].join('\n'))
+    const { el } = await monter('flipnuldelay', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div :flip={duration: 300, delay: $cfg.d}>x</div>'].join('\n'))
     const div = el._shadow.querySelector('div')
     assert.equal(div.getAttribute('mjs-flip'), '300')
     assert.equal(div.getAttribute('mjs-flip-delay'), '0', 'le défaut du runtime, mais ÉCRIT — lisible dans l\'inspecteur')
   })
 
   it('easing calculé qui vaut `undefined` : la courbe par défaut est posée en clair', async () => {
-    const { el } = await monter('flipnuleasing', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div @flip={duration: 300, easing: $cfg.e}>x</div>'].join('\n'))
+    const { el } = await monter('flipnuleasing', ['<script lang="coffee">', '  $cfg = {}', '</script>', '<div :flip={duration: 300, easing: $cfg.e}>x</div>'].join('\n'))
     const div = el._shadow.querySelector('div')
     assert.equal(div.getAttribute('mjs-flip-easing'), 'cubic-bezier(0.25, 1, 0.5, 1)')
   })
 
   it("durée qui DEVIENT nulle en cours de vie : l'attribut ne disparaît pas", async () => {
-    const { el, window } = await monter('flipnulvie', ['<script lang="coffee">', '  $d = 500', '</script>', '<div @flip={duration: $d}>x</div>'].join('\n'))
+    const { el, window } = await monter('flipnulvie', ['<script lang="coffee">', '  $d = 500', '</script>', '<div :flip={duration: $d}>x</div>'].join('\n'))
     const div = el._shadow.querySelector('div')
     assert.equal(div.getAttribute('mjs-flip'), '500')
     window.eval('µ._set(document.body.firstElementChild, "d", undefined)')

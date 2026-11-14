@@ -36,7 +36,7 @@ Dans un composant **descendant**, lire `§clé` remonte l'arborescence jusqu'au 
   $couleur = if §theme is 'dark' then '#ccc' else '#222'
 </script>
 
-<label @style.color={$couleur}>
+<label :style.color={$couleur}>
   {$label} : <input type="text"/>
 </label>
 ```
@@ -79,7 +79,7 @@ La valeur de contexte n'est pas limitée à une chaîne : on y met souvent un ob
   µmount -> redraw()
 </script>
 
-<canvas @this=!{canvas} width={$width} height={$height}></canvas>
+<canvas :this=!{canvas} width={$width} height={$height}></canvas>
 <@slot>
 ```
 

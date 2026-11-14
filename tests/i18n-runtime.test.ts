@@ -363,9 +363,9 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
   })
 
   describe('modes de rendu (*skeleton/key) pendant clé/fragment manquant', function () {
-    it("mode '*skeleton' + dev=false → chaîne vide sur clé manquante", function () {
+    it("mode '*skeleton' + dev=false → '⟦clé⟧' sur clé manquante, comme en développement", function () {
       const µ = makeMu(baseData({ dev: false }))
-      assert.equal(µ.t('inconnue.cle'), '')
+      assert.equal(µ.t('inconnue.cle'), '⟦inconnue.cle⟧')
     })
 
     it("mode '*skeleton' + dev=true → '⟦clé⟧' sur clé manquante", function () {
@@ -384,22 +384,29 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
     })
   })
 
-  describe('squelette : un texte en route, en production — une barre ; une clé absente pour de bon, rien', function () {
+  describe('squelette : un texte en route, en production — une barre ; une clé absente pour de bon, son nom', function () {
     // douze espaces de chiffre (U+2007) : la place d'un texte, qu'un surlignage peint en gris
     const BARRE = '\u2007'.repeat(12)
 
-    it('un fragment de section en cours de chargement : µ.t rend la barre ; arrivé, le texte ; une clé absente de la section arrivée, rien', async function () {
+    it('un fragment de section en cours de chargement : µ.t rend la barre ; arrivé, le texte ; une clé absente de la section arrivée, son nom', async function () {
       const µ = makeMu(baseData())
       let rendre: any = null
       ;(globalThis as any).fetch = () => new Promise((ok) => { rendre = () => ok({ ok: true, json: async () => ({ titre: 'Panier' }) }) })
       const p = µ.i18n._ensure('fr', 'panier')
       assert.equal(µ.t('panier.titre'), BARRE)
       assert.equal(µ.t('bonjour'), 'Bonjour', 'une clé racine, déjà là')
-      assert.equal(µ.t('inconnue.cle'), '', 'une section qui n\'est pas en route : rien')
+      assert.equal(µ.t('inconnue.cle'), '⟦inconnue.cle⟧', 'une clé d\'aucune section, absente de la racine : son nom')
       rendre()
       await p
       assert.equal(µ.t('panier.titre'), 'Panier')
-      assert.equal(µ.t('panier.absente'), '', 'absente pour de bon : rien, pas une barre à vie')
+      assert.equal(µ.t('panier.absente'), '⟦panier.absente⟧', 'absente pour de bon : son nom, pas une barre à vie')
+    })
+
+    it('une section que son module n\'a pas encore demandée (µt dans son <script>) : rien encore, ni barre ni nom', function () {
+      ;(globalThis as any).fetch = () => new Promise(() => {})
+      const µ = makeMu(baseData({ placeholder: 'wait' }))
+      µ.activeComponent = { _mjs_i18n: ['panier', null] }
+      assert.equal(µ.t('panier.titre'), '')
     })
 
     it('en développement, la clé ; en production, `"effects": { "skeleton": [] }` ne coupe pas les barres', async function () {
@@ -417,14 +424,14 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
   describe('chargement en échec : des barres en production, jamais le vide ; en développement, la clé', function () {
     const BARRE = ' '.repeat(12)
 
-    it('un fragment qui répond 404 : la barre à la place de ses textes sous wait, *skeleton et *loader ; une section qui n\'a pas échoué, rien', async function () {
+    it('un fragment qui répond 404 : la barre à la place de ses textes sous wait, *skeleton et *loader ; une clé absente sans échec, son nom', async function () {
       for (const placeholder of ['wait', '*skeleton', '*loader']) {
         const µ = makeMu(baseData({ placeholder }))
         ;(globalThis as any).fetch = async () => ({ ok: false, status: 404 })
         await assert.rejects(() => µ.i18n._ensure('fr', 'panier'))
         assert.equal(µ.t('panier.titre'), BARRE, placeholder + ' : le texte que l\'échec laisse sans valeur')
         assert.equal(µ.t('bonjour'), 'Bonjour', placeholder + ' : une clé racine, déjà là')
-        assert.equal(µ.t('inconnue.cle'), '', placeholder + ' : une section qui n\'a pas échoué')
+        assert.equal(µ.t('inconnue.cle'), '⟦inconnue.cle⟧', placeholder + ' : une clé absente sans échec')
       }
     })
 
@@ -449,7 +456,7 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       assert.equal(µ2.t('panier.titre'), '⟦panier.titre⟧')
     })
 
-    it('une reprise qui aboutit (un montage qui redemande le fragment) rend le texte : plus de barre ; absente pour de bon, rien', async function () {
+    it('une reprise qui aboutit (un montage qui redemande le fragment) rend le texte : plus de barre ; absente pour de bon, son nom', async function () {
       const µ = makeMu(baseData({ placeholder: 'wait' }))
       let repond = false
       ;(globalThis as any).fetch = async () => (repond ? { ok: true, status: 200, json: async () => ({ titre: 'Panier' }) } : { ok: false, status: 404 })
@@ -459,7 +466,7 @@ describe('i18n runtime (mjs_i18n.ts)', function () {
       repond = true
       await µ.i18n._ensure('fr', 'panier')
       assert.equal(µ.t('panier.titre'), 'Panier')
-      assert.equal(µ.t('panier.absente'), '', 'absente pour de bon : rien, pas une barre à vie')
+      assert.equal(µ.t('panier.absente'), '⟦panier.absente⟧', 'absente pour de bon : son nom, pas une barre à vie')
     })
 
     it('une requête qui pend n\'est pas un échec : le chemin d\'avant, la barre d\'un texte en route (*skeleton), rien sous wait', function () {

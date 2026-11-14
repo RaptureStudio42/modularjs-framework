@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { makeMu, regle, composant, appeler, refuser } from './helpers/types-runtime.js'
 
-const MESSAGES = '{ id: int, t: string }[]'
+const MESSAGES = 'Message[]'
 
 // une liste de n messages (id = position de départ), inscrite sous `$messages`
 function messages(n: number, mode?: 'warn' | 'error') {
@@ -114,7 +114,7 @@ describe('types — listes en développement : les chemins des messages suivent 
 })
 
 describe('types — listes en développement : sous un élément déplacé, tout suit', () => {
-  const REGLE = '{ rows: { cells: { v: int }[] 0..3 }[] }'
+  const REGLE = 'Plateau3'
 
   function tableau() {
     const µ  = makeMu('warn')
@@ -211,7 +211,7 @@ describe('types — listes en développement : sous un élément déplacé, tout
 
 // des notes plus riches que les messages (un objet, un objet dedans, une liste dedans) : une liste de
 // 4 000 notes porte 12 000 conteneurs au registre
-const NOTE = '{ id: int, t: string, par: { nom: string, rang: int }, tags: string[] }'
+const NOTE = 'Note'
 const note = (id: number) => ({ id, t: 'm', par: { nom: 'n', rang: 1 }, tags: ['a', 'b'] })
 
 function notes(n: number, mode?: 'warn' | 'error') {

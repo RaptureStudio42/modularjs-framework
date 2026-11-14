@@ -16,6 +16,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { poserMessages } from './helpers/messages-stub.js'
+import { poserPage } from './helpers/page-globale.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'animations', 'typewriter.ts'), 'utf-8')
@@ -31,18 +32,18 @@ describe('animations/typewriter.ts — contrat "unique nœud texte"', function (
   // simplement supprimé — même patron que csp-runtime.test.ts (mjs_easing.ts/mjs_router.ts), pour
   // qu'un `globalThis.µ` posé par un fichier de test précédent ne disparaisse pas à tort.
   let __µAvant: { present: boolean; valeur: any }
+  let rendrePage: () => void
   beforeEach(() => {
     const g: any = globalThis
-    __µAvant = { present: 'µ' in g, valeur: g.µ }
-    win = new Window({ url: 'http://localhost/' })
-    ;(globalThis as any).document = win.document
-    ;(globalThis as any).window = win
-    ;(globalThis as any).Node = win.Node
+    __µAvant   = { present: 'µ' in g, valeur: g.µ }
+    win        = new Window({ url: 'http://localhost/' })
+    rendrePage = poserPage({ document: win.document, window: win, Node: win.Node })
   })
   afterEach(() => {
     const g: any = globalThis
     if(__µAvant.present) g.µ = __µAvant.valeur
     else delete g.µ
+    rendrePage()
   })
 
   it('markup imbriqué (<b>) : setup() lève une Error explicite, le message exact de la doc', function () {
@@ -229,7 +230,7 @@ describe('animations/typewriter.ts — usages documentés de @in=*typewriter, su
       "$messages = ['Bonjour', 'Salut']",
       '</script>',
       '{key $i}',
-      "  <p @in=*typewriter(speed: 10)>{$messages[$i] or ''}</p>",
+      "  <p :in=*typewriter(speed: 10)>{$messages[$i] or ''}</p>",
       '{end}',
       '<button id="bump" @click={$i = 1}>bump</button>',
     ].join('\n')
@@ -245,7 +246,7 @@ describe('animations/typewriter.ts — usages documentés de @in=*typewriter, su
       "messages = ['Bonjour', 'Salut']",
       '</script>',
       '{key $i}',
-      '  <p @in=*typewriter(speed: 10)>',
+      '  <p :in=*typewriter(speed: 10)>',
       "    {messages[$i] or ''}",
       '  </p>',
       '{end}',

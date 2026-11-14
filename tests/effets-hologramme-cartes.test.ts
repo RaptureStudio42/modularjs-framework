@@ -13,7 +13,7 @@ import { transpile } from '../src/transpiler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const STYLES = ['sheen', 'frame', 'curtain', 'night-sky', 'frost', 'lattice', 'opal', 'streaks', 'rays', 'rays-window', 'rays-cloud', 'rays-fade', 'rays-wide', 'haze', 'haze-deep', 'dust-dark', 'dust', 'glint', 'glint-dark', 'bloom']
 
@@ -122,6 +122,7 @@ describe('effets — *hologram, les styles de carte', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel = '.a') {
     window.document.body.innerHTML = `<${tag}></${tag}>`

@@ -66,6 +66,16 @@ En Civet, on interpole dans une chaîne avec **`#{ … }`** (guillemets doubles)
 
 > ⚠️ **Évitez les backticks `` `${x}` ``** (chaînes à backticks JS) dans un `<script>` Civet : `` `Bonjour ${who}` `` **compile et fonctionne** (Civet les laisse passer tel quel), mais c'est **hors convention** ici — utilisez toujours `"#{who}"` (style Coffee, cohérent avec le reste du code MJS).
 
+> ⚠️ **Dans un `<script>`, une ligne qui commence par `#` est un commentaire, même au milieu d'une chaîne `"…"` ou `'…'` écrite sur plusieurs lignes.** Un `#` écrit plus loin sur une de ses lignes en ouvre un aussi (un `#{…}` compris), comme un `//` en Civet : le commentaire quitte la chaîne — `"un\n# deux\ntrois"` donne `"un\n\ntrois"`. La construction vous en avertit, à la place du signe : avertissement `[lint.multilineString]` ([32 · CLI et configuration](32-cli-et-configuration.md)), dit par `mjs build`, par `mjs check` et, sous `mjs dev`, à chaque recompilation du fichier. Si le commentaire emporte le guillemet fermant, la lecture du script échoue à sa dernière ligne (`Failed to parse`), sans cet avertissement : cherchez d'abord une chaîne écrite sur plusieurs lignes. Tant qu'une autre erreur arrête la compilation du composant, l'avertissement ne s'affiche pas : il apparaît une fois cette erreur corrigée. Trois façons d'écrire ce texte :
+>
+> - une chaîne à trois guillemets, ceux qui l'ouvrent — `"""`, le texte sur ses lignes, puis `"""` ; `'''` pour une chaîne `'…'` (entre `"""`, un `#{…}` deviendrait une interpolation) : un `#` y reste du texte ;
+> - des chaînes d'une ligne ajoutées l'une à l'autre — `"un\n" +`, puis `"# deux\n" +`, puis `"trois"` ; de même pour une interpolation : `"Bonjour #{who}, " +` puis `"bienvenue"` à la ligne suivante ;
+> - le `#` sorti de la chaîne, écrit par son code `\x23` : `"un`, puis `\x23 deux`, puis `trois"` ; pour un `//`, sa première barre écrite par son code `\x2F` (`http:\x2F/…`).
+>
+> En Civet, un `#` collé à une lettre (`#deux`) n'ouvre pas de commentaire, et un `$total` ou un `&id` écrit dans une chaîne sur plusieurs lignes reste du texte. Dans un module `.civet.mjs`, la ligne `# deux` reste dans la chaîne, changée en `// deux` : le même avertissement le dit.
+>
+> Ce que l'avertissement ne dit pas : une chaîne écrite dans un gestionnaire du gabarit (`@click={-> …}`) ou dans un fichier que compile le serveur (`*.server.mjs`) — son `#` y devient `//`, sans un mot ; ni une chaîne `'…'` à barres de suite ouverte après une autre `'…'` sur la ligne qui en referme une ; et, dans un fichier qui porte plusieurs chaînes entamées, celles qui suivent la première ne sont pas toujours citées (après une chaîne entamée, la suite du script peut se lire à contretemps) : corrigez celles que la construction cite, puis relancez-la.
+
 ### Choisir un autre langage : `lang="…"`
 
 Civet est le défaut, mais on peut écrire le `<script>` en `ts`, `coffee` ou `js` via l'attribut `lang` :
@@ -85,11 +95,11 @@ Valeurs reconnues : `civet` (défaut), `coffee`, `ts`, `js`. Le défaut global e
 ```
 
 - **`languages.script`** — même rôle que `defaultScriptLang` (langage par défaut des `<script>` sans `lang=`).
-- **`languages.template`** — grammaire des **interpolations** `{…}` du template et des **handlers inline** (`@click={…}`) : `"civet"` (défaut — ternaire espacé, existentiel `??`, `->`/`not`/`and`/`or` nativement compris) ou `"js"` (repli historique par regex, plus permissif mais moins idiomatique — cf. [Événements](06-evenements.md)).
+- **`languages.template`** — grammaire des **interpolations** `{…}` du template et des **handlers inline** (`@click={…}`) : `"civet"`, la seule valeur, et le défaut (ternaire espacé, existentiel `??`, `->`/`not`/`and`/`or` nativement compris — cf. [Événements](06-evenements.md)). `"js"` est refusé à la lecture de la configuration : retirez le réglage. Le JavaScript courant se lit tel quel en Civet, sauf : un ternaire collé (`a?b:c`) est refusé, écrivez `a ? b : c` ; une fléchée à paramètre nu (`v => v * 2`) est lue comme un appel de `v`, écrivez `(v) => v * 2` ; `==` et `!=` deviennent `===` et `!==` ; une barre précédée d'une espace et collée à ce qui la suit (`$a /2`) ouvre une expression régulière, écrivez `$a / 2` ; un opérateur précédé d'une espace et collé à ce qui le suit ne se lit pas comme en JavaScript : `$n -1`, `$n +1` et `$l [0]` sont lus comme un appel de `$n` ou de `$l`, `$n *2` et `$a <$b` sont refusés, écrivez `$n - 1`, `$l[0]`, `$n * 2` ; `#{…}` dans une chaîne entre guillemets doubles y est remplacé par sa valeur.
 
 > ⚠️ Si `defaultScriptLang` **et** `languages.script` sont posées, `languages.script` prime — poser des valeurs **différentes** est une erreur de config (gardez une seule des deux clés).
 
-> 🪦 **`.coffee` est déprécié.** Le langage `coffee` (`lang="coffee"`) reste accepté (une version figée, non maintenue) mais n'est pas la voie recommandée — Civet en est le successeur direct (même famille syntaxique, types optionnels, pipeline unifié). Le **manifeste externe** (fichier qui liste des scripts à bundler en plus des composants `.mjs`, clé `manifestExternal`) suit la même règle : `manifest.civet` est cherché en premier par défaut, `manifest.coffee` sert de repli.
+> ℹ️ **CoffeeScript reste pris en charge.** Le langage `coffee` (`lang="coffee"`) s'emploie dans un composant, et un fichier `.coffee` s'importe comme un module (voir « Importer un module » plus bas), sans aucun avertissement ; Civet reste le langage par défaut et celui des exemples de cette documentation (même famille syntaxique, types optionnels). Le **manifeste externe** (fichier qui liste des scripts à bundler en plus des composants `.mjs`, clé `manifestExternal`) suit la même règle : `manifest.civet` est cherché en premier par défaut, `manifest.coffee` sert de repli.
 
 > ⌨️ **Clavier non-AZERTY ? Le réglage `sigil`.** L'API du framework s'écrit sous le préfixe `µ` (la lettre grecque « Mu », pour **M**odularJS) : `µeffect`, `µ.state`, `µinspect`, `µ$count`… Sur un clavier **AZERTY** (français), `µ` a une touche dédiée ; ailleurs, il est peu accessible. Deux solutions :
 >
@@ -107,7 +117,7 @@ Valeurs reconnues : `civet` (défaut), `coffee`, `ts`, `js`. Le défaut global e
 >
 > Le **séparateur est obligatoire** : il n'existe pas de forme courte collée (`mjseffect`), afin de ne jamais corrompre un identifiant comme `mjsonp` ou `music`. Deux séparateurs seulement : le **point** (`mjs.effect`) et le **`$`** devant un symbole d'état ou de store (`mjs$count` ≡ `µ$count`, `mjs$$panier` ≡ `µ$$panier`). En interne, `µ` reste le symbole **canonique** (runtime, bundle) ; `mjs.` n'est qu'une commodité de saisie, réécrite en `µ` à la compilation — dans le **code** seulement (`<script>`, expressions `{…}`, lignes `@import`, et un appel `mjs.asset(…)` écrit dans un attribut) : le texte affiché, les liens et autres attributs, `<pre>`, les chaînes et les commentaires du script, la feuille de style gardent `mjs.` tel qu'écrit (`mjs.dev` reste `mjs.dev`, `.mjs.actif` reste un sélecteur). Valeurs : `"µ"` (défaut) ou `"mjs"`.
 
-> ⚠️ **Pas d'`import … from`** JavaScript dans un `<script>`, quel que soit le langage. Les dépendances entre composants/modules passent par la directive **`@import`** au niveau racine du fichier (`@import nom 'chemin'`). Voir [Pièges](18-pieges.md) et la section *Importer un module* ci-dessous.
+> ⚠️ **Pas d'`import … from`** JavaScript dans un `<script>`, quel que soit le langage. Les dépendances entre composants/modules passent par la directive **`@import`**, à la racine du fichier ou dans le `<script>` (`@import nom 'chemin'`). Voir [Pièges](18-pieges.md) et la section *Importer un module* ci-dessous.
 
 <details>
 <summary>🎓 <b>Pour débutants</b> — Civet, c'est quoi par rapport à JavaScript&nbsp;?</summary>
@@ -125,27 +135,62 @@ Si vous connaissez CoffeeScript, vous êtes chez vous. Sinon, retenez les trois 
 
 ### Importer un module — `@import`
 
-Les dépendances entre composants/modules passent par la directive **`@import`**, au niveau **racine** du fichier (hors `<script>`, jamais un `import … from` JavaScript). Trois formes :
+Les dépendances entre composants/modules passent par la directive **`@import`**, à la **racine** du fichier, dans le code d'un `<script>` ou dans un module (jamais un `import … from` JavaScript). Ses formes :
 
 ```html
 @import maFonction 'utils/helpers.civet'          <!-- export nommé -->
 @import a b c 'utils/helpers.civet'                <!-- plusieurs exports nommés, séparés par un espace -->
 @import default MonWidget 'widgets/mon-widget.civet'  <!-- export par défaut -->
+@import { a b } 'utils/helpers.civet'              <!-- les mêmes noms, entre accolades -->
+@import 'utils/Number.coffee'                      <!-- pour son seul effet (prototypes, enregistrements) -->
 ```
 
 Le chemin est résolu comme un **asset local** (mêmes règles que `µasset('…')` : validé et réécrit vers son URL finale au build — chemin absent → erreur de build explicite) sauf s'il s'agit d'une URL complète (`http://…`/`https://…`), laissée telle quelle. Un nom préfixé par `$` (`@import $x 'module.civet'`) marque la variable importée comme **externe réactive** — utile pour un état importé qui doit rester suivi par le compilateur.
 
-Le nom de fichier d'un module devient son adresse publiée : lettres (accents compris), chiffres, `_`, `.` et `-` seulement, et jamais le préfixe `mjs_`, réservé aux fichiers du framework. Un autre nom (`outil#2.civet`, `mon outil.civet`, `mjs_core.civet`) arrête la construction, avec une erreur qui nomme le fichier ; un composant qui l'importe échoue sur la même erreur. Un module qui porte le nom d'un composant (`cart.civet` et `cart.mjs`) est refusé de même (voir plus bas).
+La cible est un **module** MJS (`.civet.mjs`, `.coffee.mjs`, `.js.mjs`) ou une **bibliothèque** `.civet` / `.coffee` (compilée par son seul langage, sans µ ni directive : celle qui s'en sert arrête la construction et le message dit de la nommer `nom.civet.mjs`), compilé au build dans son propre fichier à empreinte, ou un fichier `.js.mjs` (module MJS écrit en JavaScript, compilé de même : µ fourni, `@import`, `type:` et la forme appelable de `µajax`), ou un fichier `.js`, bibliothèque copiée telle quelle, sans µ, seuls ses imports d'autres bibliothèques de l'appli réécrits vers leur nom à empreinte — un `.js` qui lit `µ` ou une rune (`µajax`, `µafter`, `µt`…), écrite en clair ou par un échappement Unicode, sans la lier (aucune portée qui englobe cette lecture ne la déclare ; le nom d'une fonction ou d'une classe nommée est lié dans son propre corps : `const K = class µK { m () { return µK } }` passe) arrête la construction, en développement comme en production, et le message dit de le nommer `nom.js.mjs`. Un composant et un module `.civet.mjs` ou `.coffee.mjs` l'importent de la même façon, et le chemin part toujours de `sourceDir`, quel que soit le dossier du fichier qui importe : `@import toRoman 'utils/Number.coffee'` s'écrit pareil dans `page.mjs` et dans `mods/app.civet`. Entre accolades comme sans, les noms se séparent par un espace (une virgule est refusée au build). Sans aucun nom, le fichier est importé pour son seul effet (un fichier qui ajoute des méthodes aux prototypes, par exemple) et s'exécute **une fois**, même importé par plusieurs composants ou modules ; les imports s'exécutent dans l'ordre de leurs lignes. Une faute dans le fichier importé est citée à sa ligne (`Number.coffee:3:5`) ; en développement, modifier le fichier importé recompile les composants et modules qui l'importent. Un module `.js.mjs`, compilé et chargé comme un module, ne commence jamais par une ligne `#!` : la construction s'arrête, et son message dit de la retirer, ou de nommer le fichier `.js` s'il ne se sert pas de µ (une bibliothèque garde sa ligne `#!`).
+
+Une directive `@import` tient sur **une seule ligne** : écrite sur plusieurs (`@import {` puis les noms aux lignes suivantes), elle arrête la construction, avec la ligne à écrire. Elle est lue à la racine du fichier, dans le code d'un `<script>` et dans le code d'un module ; dans le texte d'un élément du gabarit (entre sa balise ouvrante et sa fermante : `<p>`, `<doc-code>`…), dans un `<style>`, un `<pre>`, un `<code>`, un commentaire HTML, et dans un commentaire ou une chaîne d'un `<script>` ou d'un module, une ligne qui commence par `@import` reste du texte, affiché tel quel, quelle que soit sa forme (`@import $x …` et `@import §§x …` comprises). Une directive lisible écrite dans le texte d'un élément (hors `<pre>`, `<code>` et `<doc-code>`, qui montrent du code) déclenche un avertissement à la construction, avec sa ligne : pour importer, placez-la à la racine du fichier ou dans le `<script>`. Un export par défaut se nomme sans accolades et d'un seul nom : `@import default { MonWidget } '…'` et `@import default MonWidget Autre '…'` sont refusés, avec la forme à écrire ; des accolades vides (`@import {} '…'`) aussi. Le rendu serveur charge un `.js` importé comme un module compilé ; une entrée serveur (`mjs ws`, `mjs serveur`) lit les mêmes formes, avec les mêmes refus (un nom en `$` compris), un `.coffee` importé y étant compilé ([23 · MJS-WS §13.2](23-mjs-ws.md)). Limites : un `import … from` natif reste refusé, dans un composant comme dans un module (seule la directive `@import` importe, le message de refus montre la forme à écrire) ; un chemin relatif au fichier qui importe (`../utils/Number.coffee`) n'est pas résolu.
+
+Le nom de fichier d'un module devient son adresse publiée : lettres (accents compris), chiffres, `_`, `.` et `-` seulement, et jamais le préfixe `mjs_`, réservé aux fichiers du framework. Un autre nom (`outil#2.civet`, `mon outil.civet`, `mjs_core.civet`) arrête la construction, avec une erreur qui nomme le fichier ; un composant qui l'importe échoue sur la même erreur. Un module qui porte le nom d'un composant (`cart.civet.mjs` et `cart.mjs`) est refusé de même (voir plus bas).
 
 ```html
-<!-- module.civet -->
+<!-- module.civet.mjs -->
 export trapFocus = (_node)-> …
 export default class MonWidget
 ```
 
 > 🔗 `@import µ$$X 'chemin'` est la forme spécifique aux **stores légers** (importe le singleton `export`é `µ$$X` par le module, consommé ensuite avec ce **même** `µ$$X` — jamais `$X`, `$$X` ni `§§X` directement en composant) : voir [Stores](14-stores.md).
 
-> 🔗 Un module `.civet`/`.coffee` **autonome** peut lui-même `@import` un autre module (chaînage module→module, ex. `a.civet` importe `b.civet`) — le compilateur suit la chaîne à **n'importe** quelle profondeur (recompilation transitive : `b.civet` change → `a.civet` ET le `.mjs` qui l'importe recompilent) et refuse un cycle (`A → B → A`) avec une erreur de build explicite.
+> 🔗 Un module `.civet.mjs`/`.coffee.mjs` **autonome** peut lui-même `@import` un autre module (chaînage module→module, ex. `a.civet` importe `b.civet`) — le compilateur suit la chaîne à **n'importe** quelle profondeur (recompilation transitive : `b.civet` change → `a.civet` ET le `.mjs` qui l'importe recompilent) et refuse un cycle (`A → B → A`) avec une erreur de build explicite.
+
+### Classes globales — `Nom.class.mjs`
+
+Un fichier `Nom.class.mjs` porte une classe de l'appli : constantes, méthodes et état d'un domaine, lus partout en `µNom` sans import — gabarit, script, module `.civet.mjs` ou `.coffee.mjs`, autre classe. Ce n'est pas un composant : le fichier ne contient que du code Civet (qui lit aussi le JavaScript), sans gabarit ni bloc, et déclare `class Nom` en tête de ligne ; le nom du fichier est celui de la classe, une majuscule d'abord. Les méthodes s'écrivent en camelCase.
+
+```coffee
+# App.class.mjs
+class App
+  NAME   = 'Heartwork'
+  SLOGAN = 'Love, Deeper.'
+  count  = 0
+
+  fullName = -> NAME + ' — ' + SLOGAN
+  inc      = -> count += 1
+```
+
+```html
+<p>{µApp.NAME}</p>
+<p>{µApp.fullName()}</p>
+```
+
+- `µApp` et `µ.App` désignent la même classe. Au premier retrait du corps, `NOM = …` (ou `NOM: Type = …`) déclare un membre de la classe (`static`) : dehors, il se lit et s'écrit en `µApp.NOM` (`µApp.count = 5`, `µApp.fullName()`). Les runes µ s'écrivent dans la classe comme dans un module.
+- La portée de la classe vaut pour tout son corps : un membre s'y lit et s'y écrit par son nom, sans `@` — dans une méthode, une fonction imbriquée, un rappel (`liste.map (x) -> x + count`), la valeur d'un autre membre (`FULL = NAME + ' ' + SLOGAN`). Une méthode garde sa classe même détachée : `liste.map(µApp.fullName)`, `f = µApp.fullName; f()`.
+- Dans une fonction, un paramètre ou une variable déclarée (`count := 1`) qui porte le nom d'un membre le cache ; une affectation sans déclaration (`count = 0`) écrit le membre. Une clé d'objet (`{ NAME: 1 }`), une propriété (`x.NAME`) et le texte d'une chaîne ne désignent pas le membre ; la propriété raccourcie `{ NAME }` et l'interpolation `"#{NAME}"`, si.
+- Chargement à la demande : la construction relève qui cite `µApp` (un composant, gabarit compris ; un module ; une autre classe) et pose en tête de son code un import de la classe. La classe part avec le code de ceux qui la citent et s'exécute avant lui : sa lecture est synchrone, sans attente. Une page qui ne la cite pas ne la charge pas, et aucune classe n'est chargée au démarrage. En production en un seul fichier (`js: 'bundle'`), la classe entre dans ce fichier avec ceux qui la citent.
+- En développement, une modification de la classe la recompile, avec ceux qui la citent. Au rendu du serveur comme au prérendu, la classe se charge avec le composant qui la cite, avant lui.
+- Sous Node : chaque classe a aussi sa sortie `node/Nom.js` dans le dossier de sortie, qu'un `import` de Node charge sans navigateur (des tests `node --test`, par exemple : `import App from '../public/modularjs/node/App.js'`). `µ` y est `globalThis.µ`, créé au besoin : les classes chargées s'y enregistrent et se lisent entre elles. Une rune qui demande le navigateur (`µajax`, `µRouter`, `µlang`…) lève à son appel, sauf si le test pose lui-même sur `globalThis.µ` ce qu'elle lit.
+- Refus à la construction : un nom que le framework pose déjà sur `µ` (`Autoloader`, `CSS`, `Element`, `LRUCache`, `Router`, `Store`, `Ticker`), deux classes de même nom, un nom qui ne commence pas par une majuscule, un fichier sans sa `class Nom` ou qui porte un bloc (`<script>`, `<style>`…), des classes qui se citent en boucle (`µA` lit `µB`, qui lit `µA`), une seconde classe dans le fichier (un fichier de classe ne déclare que sa classe : rangez l'autre dans son propre fichier ou dans un module), un `@` dans la classe (`@NAME = …`, `@NAME`, `@@NAME`, `@` seul) — le message nomme le fichier et la ligne et montre la bonne écriture (`NAME = …`, `NAME`, `App`) ; un `@` dans une chaîne, un commentaire, une expression régulière ou une ligne `@import` ne compte pas. Dans le corps, sont refusés aussi, à leur ligne : une liaison nommée comme la classe (paramètre, variable, boucle, `catch`, fonction : elle y cacherait la classe, par laquelle ses membres se lisent) et `delete NOM` (écrivez `delete µApp.NOM`).
+- Limites : la classe s'écrit en Civet (le CoffeeScript n'y est pas lu) ; une mention de `µNom` dans un commentaire ou une chaîne compte comme une citation (la classe est alors importée) ; une classe se cite par `µ`, pas par l'alias ASCII (`sigil`) ; sous Node, un `@import` ou un `µasset` écrit dans la classe n'est pas résolu ; un fichier de classe ajouté ou retiré pendant `mjs dev` fait reconstruire toutes les sources.
 
 ### Chargement paresseux — `µimport`
 
@@ -161,7 +206,7 @@ Un composant embarque parfois un **gros module** utile seulement à une minorit�
 
 L'alias clavier **`mjsimport`** (sans `µ`) existe, comme pour `µasset`/`mjsasset`.
 
-Le chemin suit exactement la convention de `µasset('…')` : un **littéral chaîne écrit en dur**, relatif à `sourceDir`, résolu au **build** — jamais une variable. La cible est un **module** : un fichier **`.js`** (module ES, copié tel quel) ou un module que MJS compile, **`.civet`** ou **`.coffee`** — ceux que `@import` accepte comme module autonome. Un composant `.mjs` n'est pas un module : il se pose par sa balise `<@nom>`, et `µimport` le refuse au build.
+Le chemin suit exactement la convention de `µasset('…')` : un **littéral chaîne écrit en dur**, relatif à `sourceDir`, résolu au **build** — jamais une variable. La cible est un **module** : un fichier **`.js`** (bibliothèque, copiée telle quelle, sans µ) ou un module que MJS compile, **`.civet`**, **`.coffee`** ou **`.js.mjs`** — ceux que `@import` accepte comme module autonome. Un composant `.mjs` n'est pas un module : il se pose par sa balise `<@nom>`, et `µimport` le refuse au build.
 
 Pour un fichier `.js`, au build, le fichier référencé est **copié avec une empreinte dans son nom** (`lib-a1b2c3d4.js`) — ses propres imports relatifs (`import … from './rng.js'`) sont réécrits vers les voisins publiés à leur tour avec leur empreinte ; un cycle d'imports entre fichiers copiés est une erreur de build. Seuls sont suivis les imports relatifs écrits en littéral (`import … from './x.js'`, `export … from`, `import './x.js'`, `import('./x.js')`) ; un voisin absent, hors de `sourceDir` ou compilé (`.civet`, `.coffee`, `.mjs`) reste tel quel — le build signale un voisin absent —, et rien n'est réécrit dans un `new URL('./x.js', import.meta.url)`, un `new Worker('./w.js')` ni un `import(variable)` : le chemin y garde le nom source, que le dossier publié ne contient pas. L'appel `µimport('…')` devient un **import dynamique** de ce chemin hashé : cache navigateur long (le nom ne change que si le contenu change), et le fichier ne pèse **rien** dans le chargement initial — il n'est téléchargé qu'au moment où la ligne s'exécute réellement.
 
@@ -182,7 +227,7 @@ Utilisable dans un `<script>`, un `<script module>`, et les gestionnaires inline
 <button @click={ THREE = await µimport('vendor/three.js') }>Charger la scène</button>
 ```
 
-#### Un module MJS — `.civet`, `.coffee`
+#### Un module MJS — `.civet.mjs`, `.coffee.mjs`, `.js.mjs`
 
 Un module que MJS compile se charge de la même façon. Il est **compilé au build** comme pour `@import` et **publié dans son propre fichier à empreinte** (`bougie.module-k3x9a.js`) ; l'appel `µimport('…')` devient un import dynamique de ce fichier. Il n'est demandé qu'au moment où la ligne s'exécute : ni dans le chargement initial de la page, ni dans les fichiers qu'un composant fait précharger avec lui. La promesse rend le namespace du module, avec les exports que `@import` y voit — nommés et `default`.
 
@@ -190,7 +235,7 @@ Un moteur de dessin, par exemple, s'écrit en module et se charge quand le visit
 
 ```html
 <!-- shared/flammes/bougie.module.civet -->
-@import palette 'shared/palette.module.civet'
+@import palette 'shared/palette.module.civet.mjs'
 
 export dessiner = (ctx, t)-> …
 export default { nom: 'bougie' }
@@ -198,8 +243,8 @@ export default { nom: 'bougie' }
 
 ```html
 <script>
-  bougie  := -> µimport('shared/flammes/bougie.module.civet')
-  braise  := -> µimport('shared/flammes/braise.module.civet')
+  bougie  := -> µimport('shared/flammes/bougie.module.civet.mjs')
+  braise  := -> µimport('shared/flammes/braise.module.civet.mjs')
   moteurs := { bougie, braise }
 
   choisir = (nom)->
@@ -208,11 +253,12 @@ export default { nom: 'bougie' }
 </script>
 ```
 
-- **Les `@import` du module suivent**, à n'importe quelle profondeur (`bougie` importe `palette`, qui importe un autre module…), et chaque maillon est publié. Un module peut lui-même `µimport` un autre module. Un cycle (`a` importe `b`, `b` importe `a`, par `@import` comme par `µimport`) arrête `mjs build` dès qu'il se ferme : le message nomme la boucle (`lib/a.module.civet → lib/b.module.civet → lib/a.module.civet`, chemins relatifs à `sourceDir`), et la commande sort avec un code non nul, sans rien publier de ces modules.
-- **Deux modules du même nom de fichier** dans deux dossiers (`a/outil.module.civet`, `b/outil.module.civet`) restent deux modules : chacun garde son code et son fichier publié, qu'on l'atteigne par `@import` ou par `µimport`.
-- **Un module et un composant du même nom** (`cart.civet` et `cart.mjs`) arrêtent la construction, avec une erreur qui nomme les deux fichiers : ils publieraient le même fichier, et le composant ne serait jamais écrit. Renommez l'un des deux (`cart-logique.civet`).
+- **Les `@import` du module suivent**, à n'importe quelle profondeur (`bougie` importe `palette`, qui importe un autre module…), et chaque maillon est publié. Un module peut lui-même `µimport` un autre module. Un cycle (`a` importe `b`, `b` importe `a`, par `@import` comme par `µimport`) arrête `mjs build` dès qu'il se ferme : le message nomme la boucle (`lib/a.module.civet → lib/b.module.civet → lib/a.module.civet.mjs`, chemins relatifs à `sourceDir`), et la commande sort avec un code non nul, sans rien publier de ces modules.
+- **Deux modules du même nom de fichier** dans deux dossiers (`a/outil.module.civet.mjs`, `b/outil.module.civet.mjs`) restent deux modules : chacun garde son code et son fichier publié, qu'on l'atteigne par `@import` ou par `µimport`.
+- **Un module et un composant du même nom** (`cart.civet.mjs` et `cart.mjs`) arrêtent la construction, avec une erreur qui nomme les deux fichiers : ils publieraient le même fichier, et le composant ne serait jamais écrit. Renommez l'un des deux (`cart-logique.civet.mjs`).
 - **Une seule instance.** Un module que le composant `@import` et que `µimport` charge aussi (ou que deux modules chargés à la demande importent) n'est évalué qu'une fois : ses exports, un magasin `µ$$X` compris, sont les mêmes objets des deux côtés. En fichiers séparés, les deux visent le même fichier publié.
 - **En fichier unique (`js: 'bundle'`)**, le module sort dans son propre fichier et n'est téléchargé et évalué qu'à l'appel, comme un `.js` ; les modules que seuls des modules chargés à la demande importent partent avec lui, le fichier unique ne les contient pas. Le code que le fichier unique partage avec ces modules — le cœur, un module `@import`é des deux côtés — passe dans un fichier à part que les deux importent, pour que chaque module reste une instance unique. Ces fichiers sont écrits à côté de `manifestPath` et leur nom ne dépend que de leur contenu : une modification sans rapport ne les renomme pas. Un projet qui n'a aucun `µimport` de module garde son fichier unique.
+- **En fichier unique (`js: 'bundle'`)**, un fichier `.js` copié tel quel ne s'importe pas par `@import` : la construction s'arrête (« Could not resolve »), en développement comme en production. Écrivez ce code en module `.js.mjs`, `.civet` ou `.coffee`, ou gardez `js: 'split'`.
 - **Une modification se répercute** : changer un module, ou l'un des modules qu'il importe, change son nom publié, et le composant qui le charge est recompilé pour viser le nouveau nom.
 
 > ⚠️ Deux garde-fous, tous deux des **erreurs de compilation** : un argument qui n'est **pas un littéral chaîne** — le build ne peut pas connaître le fichier à l'avance — oriente vers `import(variable)` (ci-dessous, pour une URL connue seulement à l'exécution) ; une extension qui **n'est ni `.js`, ni `.civet`, ni `.coffee`** est également refusée, et le message d'un composant `.mjs` dit qu'un composant se pose par sa balise.
@@ -260,6 +306,34 @@ Une ligne, seule, en tête du fichier (ou dans le `<script>`), fait de la balise
 
 Dans un navigateur sans `attachInternals`, rien de tout cela : `@@internals` vaut `undefined` (d'où le `?.`), et le composant reste un composant ordinaire. Un composant sans la directive n'en paie rien — le code commun n'entre au build que si un composant la déclare. Une valeur après la directive (`@formAssociated true`) est une erreur de compilation ; la directive écrite deux fois passe, avec un avertissement.
 
+## Les commentaires
+
+Le compilateur retire tous les commentaires dès le début de sa lecture, avant toute autre étape, en développement comme en production : les commentaires HTML du gabarit (`<!-- … -->`), ceux du `<script>` dans sa langue (Civet `#…`, `###…###`, `//…`, `/* … */` ; Coffee `#…`, `###…###` ; JS et TS `//…`, `/* … */`) et ceux du `<style>` (`/* … */`, et `//…` en SASS ou SCSS). Ils ne pèsent rien dans le code produit et rien de ce qu'ils contiennent n'est lu : une balise, une macro ou un `$x` écrits dans un commentaire sont sans effet. Les lignes indiquées par une erreur restent celles de votre fichier.
+
+Ce qui n'est pas un commentaire reste tel quel : une chaîne (`"http://…"`, `"# 1"`), une interpolation `#{…}`, une expression régulière, un champ privé `#x`, la division entière `//` de Coffee, le texte d'un `<textarea>` ou d'un `<title>`, une valeur d'attribut, une interpolation du gabarit (`{"<!-- … -->"}`).
+
+En Civet et en Coffee, une expression régulière passée sans parenthèses en est une aussi, comme ces deux langages la lisent : après un nom suivi d'une espace, une barre suivie d'autre chose qu'une espace ouvre une expression régulière (`s.replace /'/g, 'X' # fin`, `s.split /#/`) ; son apostrophe, son guillemet ou son `#` ne sont ni une chaîne ni un commentaire, et le `# fin` qui la suit est bien un commentaire. `a / b` et `a/b` divisent : écrivez une division avec une espace de chaque côté de la barre, ou sans aucune (Civet lit `x /2` comme le début d'une expression régulière et refuse la ligne). Dans une expression régulière étendue `///…///`, un `#` précédé d'un blanc ouvre un commentaire jusqu'à la fin de la ligne, et `\#` est un dièse. La même règle vaut dans le gabarit, pour un gestionnaire (`@click={ $v = $v.replace /"/g, '' }`) comme pour une interpolation (`{$v.replace /}/g, ''}`), tant que `languages.template` ne vaut pas `"js"` : en JavaScript, la barre qui suit un nom divise toujours.
+
+**Seule exception, le commentaire MJS `//!`** : tout ce qui le suit jusqu'à la fin de la ligne est un commentaire que le compilateur ne lit pas, et qu'il **garde** dans le code produit, en développement comme en production (une mention de licence, par exemple) :
+
+```html
+<script>
+//! Composant sous licence MIT
+# ce commentaire-ci disparaît
+$n = 0
+</script>
+
+<style>
+//! Palette validée le 12 mars
+p
+  color: red
+</style>
+```
+
+Dans un script Civet, JS ou TS, il sort tel quel (`//! …`) ; dans un script Coffee et dans un `<style>`, il sort en `/*! … */`. Dans le gabarit, `//!` est du texte.
+
+Limites : un `<!--` jamais refermé reste du texte ; restent aussi les commentaires des `<script>` et `<style>` placés dans un `<@head>` ou un `<@failed>`, ceux des blocs `<types>`, `<vars>`, `<effects>`, `<theme>`, `<routes>` et ceux écrits dans une interpolation `#{…}` ou `${…}` ; après un commentaire posé en milieu de ligne, la colonne indiquée par une erreur recule de sa longueur.
+
 ## Le markup (le HTML du composant)
 
 Tout ce qui n'est ni `<script>` (module ou non), ni `<style>`, ni `<theme>`, est le **HTML** affiché par le composant. C'est du HTML, avec deux ajouts :
@@ -282,6 +356,44 @@ Tout ce qui n'est ni `<script>` (module ou non), ni `<style>`, ni `<theme>`, est
 
 > ℹ️ Pour insérer du **HTML brut** (non échappé) plutôt que du texte, on utilise la double accolade `{{ expr }}`. À manier avec prudence (XSS) — voir [Bindings → HTML brut](07-bindings.md).
 
+### Les trois signes d'une balise — `@`, `*`, `:`
+
+Sur une balise, trois signes ouvrent une écriture de MJS, et chacun dit ce qu'il pose :
+
+| Signe | Ce qu'il pose | Exemples |
+|---|---|---|
+| `@` | un **événement** à écouter, natif ou émis par un composant | `@click={envoyer}`, `@input={…}`, `@status={…}` |
+| `*` | un **effet** | `*tilt`, `*tilt(max: 10)`, `*skeleton` |
+| `:` | un **mot de MJS**, avec sa valeur quand il en prend une | `:size="320x48"`, `:class{$actif}="vif"`, `:this=!{champ}`, `:in=*fly(up)`, `:disabled={$envoi}` |
+
+```html
+<button @click={envoyer} *tilt(max: 10) :class{$actif}="vif" :disabled={$envoi}>Envoyer</button>
+```
+
+`@click` écoute le clic, `*tilt` pose un effet, `:class{…}` et `:disabled` sont des mots de MJS. Un attribut sans signe reste un attribut HTML, ou la prop d'un composant (`title="…"`, `value={$x}`, `<@carte item={$x}>`).
+
+- Un `@nom` écoute toujours un événement, et le compilateur ne juge jamais son nom : `@confirn` écoute un événement nommé `confirn`. Seul le nom d'un mot de MJS (`@title`, `@open`…) est refusé à la construction, et le message donne l'écriture en `:` ; pour écouter un événement de ce nom émis par un composant, posez l'écouteur dans `µmount`. Le nom se lit jusqu'au premier `.`, `{` ou `=` et doit être exactement celui du mot (`@in.global` est le mot `in`) : un événement dont le nom commence seulement par un mot (`@in:fade`, `@size:x`, `@title-change`, `@open-menu`) s'écoute comme les autres.
+- Un `:nom` qui n'est pas un mot de MJS est refusé à la construction, avec la liste des mots : une faute de frappe ne passe jamais en silence. Le mot se lit de même, jusqu'au premier `.`, `{` ou `=` : `:in:fade` n'est pas un mot, il est refusé (l'événement nommé `in:fade` s'écoute par `@in:fade={…}`).
+- Un mot de MJS ne reçoit pas de gestionnaire : `:preload={…}`, `:method={…}` ou `:html={…}` sont refusés à la construction, comme `:preload` d'une valeur qu'il ne connaît pas (`:preload="bientot"`), et le message donne la forme du mot ; un événement de ce nom émis par un composant s'écoute dans `µmount`.
+- Les attributs du `<style>` de base suivent la même règle (`:css`, `:display`, `:viewTransition`). Les mots de tête de fichier (`@import`, `@persist`, `@i18n`…) et les balises du langage (`<@window>`, `<@slot>`…) gardent leur `@`.
+
+### La place d'un composant dont le code arrive — `:size`
+
+En fichiers séparés (`"js": "split"`, le défaut), le code d'un composant imbriqué se charge quand sa balise paraît : la page qui la contient se dessine sans l'attendre, et le composant paraît à l'arrivée de son fichier. Jusque-là, sa balise est invisible mais garde la place que la page lui donne ; vide, elle n'en a aucune, et ce qui la suit descend quand il paraît. `:size` lui donne sa taille en attendant :
+
+```html
+<@task-row :size="320x48">
+<@task-row :size="x48" *skeleton>
+```
+
+- La valeur : la largeur puis la hauteur, séparées par un `x`. Un nombre seul compte en pixels ; une longueur s'écrit aussi en `px`, `%`, `em`, `rem`, `vw` ou `vh` (`100%x48`, `20remx3em`) ; `x48` donne la hauteur seule, la largeur suit la mise en page. La valeur s'écrit en dur : une variable, une valeur mal écrite ou nulle arrêtent la construction, avec la forme à écrire.
+- Tant que le code du composant n'est pas arrivé, sa balise est un bloc de cette taille, vide ; avec `*skeleton`, la silhouette grise qui scintille s'y dessine, rognée à la place ([Effets](38-effets.md)). À son arrivée, la place s'efface : ce qui suit ne bouge pas si le composant a la taille annoncée.
+- En développement, un composant arrivé à une autre hauteur que sa place est dit en console, avec les deux tailles (celle de la place, celle du composant) : ce qui le suit a bougé quand même. Une largeur annoncée se compare aussi : quand elle seule change, la console dit que ce qui est à côté de lui a pu bouger ; avec `x48`, seule la hauteur compte. Seules les balises du premier rendu du composant qui les écrit sont comparées.
+- Seulement sur la balise d'un composant de votre projet : sur une balise HTML, sur une balise du langage (`<@window>`, `<@document>`, `<@element>`…) ou sur celle d'un module du cœur (`<@@…>`), la construction s'arrête et vous invite à donner la taille par votre feuille de style. Une balise rendue par le serveur montre déjà son contenu : la place ne s'y applique pas. En fichier unique (`"js": "bundle"`), tout arrive ensemble : `:size` ne change rien.
+- Aucun CSS en ligne : la place est une règle de la feuille du composant qui écrit la balise, et une appli sans `:size` n'en paie pas un octet.
+- `:size` est réservé à cette place, jamais l'écoute d'un événement : `:size={…}` et `:size` sans valeur sont refusés. Pour écouter un événement nommé `size` émis par un composant, posez l'écouteur dans `µmount`.
+- La place est un bloc : dans une ligne de balises en ligne, les places s'empilent les unes sous les autres, puis se rangent sur une ligne à l'arrivée des composants.
+
 ## La section `<style>` — scopé par Shadow DOM
 
 Le `<style>` d'un composant est **isolé** : ses règles ne s'appliquent qu'au composant (Shadow DOM), ne fuient pas, et ne sont pas écrasées par le CSS global. Par défaut, on écrit du **SASS indenté** (pas de `{}` ni `;`) :
@@ -300,14 +412,16 @@ Le `<style>` d'un composant est **isolé** : ses règles ne s'appliquent qu'au c
 
 Le `<style>` accepte aussi `lang="scss"` (SCSS avec accolades) ou `lang="css"`.
 
-### Une feuille partagée par plusieurs composants — `@css`
+**La taille du texte s'adapte à l'écran.** Écrivez la taille voulue au PC, en px : la construction la rend fluide sur les petits écrans (active par défaut, clé `responsiveFontSize` de `mjs.config.json`, cf. [CLI et configuration](32-cli-et-configuration.md)). Avec les réglages par défaut, `font-size: 41.5px` vaut 28,4 px sur un téléphone de 390 px de large, 34,5 px à 768 px et 41,5 px à partir de 1 200 px. Une taille de 20 px ou moins ne bouge pas ; une taille qui ne doit jamais bouger s'écrit en `rem`.
 
-Le style isolé est confortable, mais on ne veut pas recopier la même palette ou la même grille dans dix composants. `@css="nom"`, posé en **attribut du `<style>` de base** du composant (celui sans `name=`), rattache au composant une feuille commune :
+### Une feuille partagée par plusieurs composants — `:css`
+
+Le style isolé est confortable, mais on ne veut pas recopier la même palette ou la même grille dans dix composants. `:css="nom"`, posé en **attribut du `<style>` de base** du composant (celui sans `name=`), rattache au composant une feuille commune :
 
 ```html
 <div class="card">…</div>
 
-<style @css="theme">
+<style :css="theme">
   .card
     padding: var(--gap)
 </style>
@@ -318,7 +432,7 @@ Le nom se résout dans le dossier des feuilles partagées — clé `stylesheetsD
 Plusieurs feuilles se déclarent dans le même attribut, séparées par des espaces :
 
 ```html
-<style @css="theme grid">
+<style :css="theme grid">
 ```
 
 La feuille partagée est adoptée **avant** le `<style>` du composant : le style local a donc toujours le dernier mot, sans qu'on ait à se battre en spécificité. Quand deux feuilles sont déclarées, la dernière l'emporte sur la première.
@@ -327,7 +441,7 @@ Tout autre attribut posé sur `<style>` (comme sur `<script>`, `<theme>` ou `<ro
 
 ### Comment ces feuilles arrivent au navigateur — la clé `css`
 
-Une seule clé de `mjs.config.json` décide, pour tout le projet, de la façon dont les feuilles partagées voyagent. Le comportement de `@css` ne change jamais : ce qui change, c'est ce que le navigateur télécharge.
+Une seule clé de `mjs.config.json` décide, pour tout le projet, de la façon dont les feuilles partagées voyagent. Le comportement de `:css` ne change jamais : ce qui change, c'est ce que le navigateur télécharge.
 
 | valeur | ce qui part au navigateur | pour quel projet |
 | --- | --- | --- |
@@ -362,11 +476,11 @@ L'ombre d'un composant est fermée : de l'extérieur, on ne peut pas y poser une
     -> removeFrame()
 </script>
 
-<@avatar @this=!{avatar}/>
+<@avatar :this=!{avatar}/>
 <button @click={$verified = not $verified}>Vérifier</button>
 ```
 
-`avatar` est la balise d'un composant ModularJS (ici posée par [`@this`](09-directives-dom.md)) ; la feuille est un texte CSS ou une `CSSStyleSheet`. La fonction rendue retire la feuille : retournée en dernière ligne du `µeffect`, elle devient son nettoyage, et la feuille part dès que `$verified` retombe.
+`avatar` est la balise d'un composant ModularJS (ici posée par [`:this`](09-directives-dom.md)) ; la feuille est un texte CSS ou une `CSSStyleSheet`. La fonction rendue retire la feuille : retournée en dernière ligne du `µeffect`, elle devient son nettoyage, et la feuille part dès que `$verified` retombe.
 
 - La feuille passe **après** celles du composant : elle les surcharge à spécificité égale, sans qu'on ait à se battre.
 - Elle n'est collée qu'**une fois** par balise, même si vous rappelez avec la même `CSSStyleSheet` ou le même texte. Chaque appel rend sa propre fonction de retrait, et la feuille ne part qu'avec la **dernière** : une fonction rappelée plusieurs fois ne compte qu'une fois.

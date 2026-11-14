@@ -12,7 +12,7 @@ const HOTE = [
   '<script>',
   '  $size = \'m\'',
   '</script>',
-  '<form id="f" @noUJS>',
+  '<form id="f" :noUJS>',
   '  <@@radio id="ra" name="size" value="s" group=!{$size}>S</@@radio>',
   '  <@@radio id="rb" name="size" value="m" group=!{$size}>M</@@radio>',
   '  <@@radio id="rc" name="size" value="l" group=!{$size}>L</@@radio>',

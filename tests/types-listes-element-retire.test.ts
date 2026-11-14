@@ -12,7 +12,7 @@ describe('types — un élément partagé entre deux listes, retiré de celle o�
   for (const mode of MODES) {
     it(mode + ' : le message ne nomme plus la position qu’il avait dans cette liste', () => {
       const µ  = makeMu(mode)
-      const el = composant({ tout: '{ id: int }[]', choisies: '{ id: int }[]' })
+      const el = composant({ tout: 'Id[]', choisies: 'Id[]' })
       const tout: any[]     = [{ id: 0 }, { id: 1 }, { id: 2 }]
       const choisies: any[] = []
       µ._mjs_tset(el, 'tout', tout)
@@ -31,7 +31,7 @@ describe('types — un élément partagé entre deux listes, retiré de celle o�
 })
 
 describe('types — un élément retiré de sa liste, gardé par l’appli', () => {
-  const MESSAGES = '{ id: int, t: string }[]'
+  const MESSAGES = 'Message[]'
 
   function messages(mode: 'warn' | 'error', n = 5) {
     const µ  = makeMu(mode)
@@ -79,7 +79,7 @@ describe('types — un élément retiré de sa liste, gardé par l’appli', () 
 })
 
 describe('types — un élément retiré d’une liste imbriquée : la marque tient la place de la position perdue, le reste du chemin est celui d’à présent', () => {
-  const REGLE = '{ rows: { cells: { v: int }[] }[] }'
+  const REGLE = 'Plateau'
 
   function tableau(mode: 'warn' | 'error') {
     const µ  = makeMu(mode)

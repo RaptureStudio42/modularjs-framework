@@ -60,11 +60,11 @@
   else {
     namePart = name.split('=')[0].trim();
     optsRaw = undefined;
-    µ.warn(µ._mjs_msg('vtMalformed', { name: name, namePart: namePart }, '@viewTransition : valeur malformée \'{name}\' — repli sur \'{namePart}\'.'));
+    µ.warn(µ._mjs_msg('vtMalformed', { name: name, namePart: namePart }, ':viewTransition : valeur malformée \'{name}\' — repli sur \'{namePart}\'.'));
   }
   colonIdx = namePart.indexOf(':');
   if (colonIdx !== -1) {
-    µ.warn(µ._mjs_msg('vtDirName', { namePart: namePart, base: namePart.slice(0, colonIdx) }, '@viewTransition : la direction ne s\'écrit plus dans le nom (\'{namePart}\') — repli sur \'{base}\', posez \'dir\'/\'direction\' en option.'));
+    µ.warn(µ._mjs_msg('vtDirName', { namePart: namePart, base: namePart.slice(0, colonIdx) }, ':viewTransition : la direction ne s\'écrit plus dans le nom (\'{namePart}\') — repli sur \'{base}\', posez \'dir\'/\'direction\' en option.'));
     namePart = namePart.slice(0, colonIdx);
   }
   m = namePart.match(/^([a-z][a-z0-9-]*)$/);
@@ -77,32 +77,32 @@
       pair = pairs[i].trim();
       if (!pair) { continue; } // virgule finale tolérée
       pm = pair.match(/^([a-zA-Z]+)\s*:\s*(.+)$/);
-      if (!pm) { µ.warn(µ._mjs_msg('vtOptMalformed', { pair: pair, name: name }, '@viewTransition : option malformée \'{pair}\' dans \'{name}\' — ignorée.')); continue; }
+      if (!pm) { µ.warn(µ._mjs_msg('vtOptMalformed', { pair: pair, name: name }, ':viewTransition : option malformée \'{pair}\' dans \'{name}\' — ignorée.')); continue; }
       rawKey = pm[1];
       key = µ._mjs_vtOptionKeyAliases[rawKey];
       if (!key) {
-        µ.warn(µ._mjs_msg('vtUnknownKey', { rawKey: rawKey, name: name, keys: µ._mjs_vtOptionKeys.map(function(k) { return k + '/' + µ._mjs_vtOptionShort[k]; }).join(', ') }, '@viewTransition : clé inconnue \'{rawKey}\' dans \'{name}\' — ignorée (clés valides : {keys}).'));
+        µ.warn(µ._mjs_msg('vtUnknownKey', { rawKey: rawKey, name: name, keys: µ._mjs_vtOptionKeys.map(function(k) { return k + '/' + µ._mjs_vtOptionShort[k]; }).join(', ') }, ':viewTransition : clé inconnue \'{rawKey}\' dans \'{name}\' — ignorée (clés valides : {keys}).'));
         continue;
       }
-      if (seen[key]) { µ.warn(µ._mjs_msg('vtDupKey', { key: key, name: name, short: µ._mjs_vtOptionShort[key] }, '@viewTransition : clé \'{key}\' en double dans \'{name}\' (\'{key}\'/\'{short}\' désignent la même option) — 2e occurrence ignorée.')); continue; }
+      if (seen[key]) { µ.warn(µ._mjs_msg('vtDupKey', { key: key, name: name, short: µ._mjs_vtOptionShort[key] }, ':viewTransition : clé \'{key}\' en double dans \'{name}\' (\'{key}\'/\'{short}\' désignent la même option) — 2e occurrence ignorée.')); continue; }
       seen[key] = true;
       val = pm[2].trim();
       if ((val.charAt(0) === '"' && val.charAt(val.length - 1) === '"') || (val.charAt(0) === "'" && val.charAt(val.length - 1) === "'")) { val = val.slice(1, -1).trim(); }
       if (key === 'direction') {
-        if (µ._mjs_vtDirs.indexOf(val) === -1) { µ.warn(µ._mjs_msg('vtBadDir', { val: val, name: name }, '@viewTransition : direction invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
+        if (µ._mjs_vtDirs.indexOf(val) === -1) { µ.warn(µ._mjs_msg('vtBadDir', { val: val, name: name }, ':viewTransition : direction invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
         dir = val;
       }
       else if (key === 'duration') {
         // Nombre NU uniquement, toujours des ms (cohérence setTimeout) :
         // 'ms'/'s' suffixés N'EXISTENT PLUS (RETRAIT).
         dm = val.match(/^(\d+)$/);
-        if (!dm) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, '@viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
+        if (!dm) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, ':viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
         num = parseInt(dm[1], 10);
-        if (!(num > 0)) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, '@viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
+        if (!(num > 0)) { µ.warn(µ._mjs_msg('vtBadDur', { val: val, name: name }, ':viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.')); continue; }
         durationMs = num;
       }
       else if (key === 'priority') {
-        if (!/^\d+$/.test(val)) { µ.warn(µ._mjs_msg('vtBadPrio', { val: val, name: name }, '@viewTransition : priority invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
+        if (!/^\d+$/.test(val)) { µ.warn(µ._mjs_msg('vtBadPrio', { val: val, name: name }, ':viewTransition : priority invalide \'{val}\' dans \'{name}\' — ignorée.')); continue; }
         priority = parseInt(val, 10);
       }
     }
@@ -407,7 +407,7 @@
   layer.id = 'mjs-vt-curtain';
   layer.className = 'mjs-vtc-cover';
   layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647';
-  layer.innerHTML = spec.html();
+  layer.innerHTML = µ._mjs_th(spec.html());
   // rang de chaque bande ou tuile (`--i`, délai de la cascade) posé par le CSSOM, jamais par un attribut style dans le
   // balisage : une CSP stricte (µ._csp) refuse ce dernier, toutes les bandes partaient ensemble
   if (spec.idx) { Array.prototype.forEach.call(layer.children, function(c, p) { c.style.setProperty('--i', spec.idx(p)); }); }
@@ -419,7 +419,7 @@
     // swap() tournait SANS garde sous le rideau noir : une
     // permutation qui lève abandonnait le reste de ce callback (double rAF + révélation + retrait)
     // → #mjs-vt-curtain restait à vie, écran noir permanent. La révélation continue quand même.
-    try { swap(); } catch (e) { µ.error(µ._mjs_msg('vtSwapThrew', null, '@viewTransition : la permutation sous rideau a levé —'), e); }
+    try { swap(); } catch (e) { µ.error(µ._mjs_msg('vtSwapThrew', null, ':viewTransition : la permutation sous rideau a levé —'), e); }
     requestAnimationFrame(function() { requestAnimationFrame(function() {
       if (seq !== µ._mjs_vtCurtainSeq) { return; }
       layer.className = 'mjs-vtc-reveal';
@@ -459,7 +459,7 @@
   entry = µ._vtPresets[p.base];
   if (!entry) {
     if (!µ._mjs_vtCurtains[p.base]) {
-      µ.warn(µ._mjs_msg('vtUnknownPreset', { name: name, presets: Object.keys(µ._vtPresets).join(', '), curtains: Object.keys(µ._mjs_vtCurtains).join(', ') }, '@viewTransition : préréglage inconnu \'{name}\' — valeurs valides : {presets}, {curtains} (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).'));
+      µ.warn(µ._mjs_msg('vtUnknownPreset', { name: name, presets: Object.keys(µ._vtPresets).join(', '), curtains: Object.keys(µ._mjs_vtCurtains).join(', ') }, ':viewTransition : préréglage inconnu \'{name}\' — valeurs valides : {presets}, {curtains} (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).'));
     }
     if (sheet) { setCss(''); }
     return;

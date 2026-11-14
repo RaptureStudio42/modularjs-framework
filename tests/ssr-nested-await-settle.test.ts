@@ -144,8 +144,11 @@ describe('SSR renderToString — collectAwaitStates/hasPendingAwait couvrent les
       // hasPendingAwait(racine) valait `false` en permanence (aveugle à
       // l'enfant), peu importe l'état réel de celui-ci.
       writeFileSync(join(srcDir, 'child.mjs'), `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
-$p = new Promise((resolve) -> setTimeout((-> resolve("ENFANT-CHARGE")), 150))
+$p = plusTard "ENFANT-CHARGE", 150
 </script>
 {await $p}<span class="pending">chargement-enfant</span>{success val}<span class="done">{val}</span>{end}
 `)

@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserPage } from './helpers/page-globale.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'animations', 'draw.ts'), 'utf-8')
@@ -21,16 +22,17 @@ describe('animations/draw.ts — nœud non-SVG', function () {
   let win: any
   let µMock: any
   let warned: any[]
+  let rendrePage: () => void
   beforeEach(() => {
-    win = new Window({ url: 'http://localhost/' })
-    ;(globalThis as any).window = win
-    ;(globalThis as any).document = win.document
-    warned = []
-    µMock = {
+    win        = new Window({ url: 'http://localhost/' })
+    rendrePage = poserPage({ window: win, document: win.document })
+    warned     = []
+    µMock      = {
       warn: (...a: any[]) => warned.push(a),
       easing: { resolve: (e: any) => e || ((x: number) => x), cubicInOut: (x: number) => x },
     }
   })
+  afterEach(() => rendrePage())
 
   it('<div> (non-SVG, pas de getTotalLength) : µ.warn explicite UNE fois, le message exact', function () {
     const node = win.document.createElement('div')

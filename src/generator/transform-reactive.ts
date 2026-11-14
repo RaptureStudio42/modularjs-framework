@@ -24,7 +24,8 @@ import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { passResult, type PassResult } from './pass-map.js'
 import { COMPOUND_OPS, forEachPatternLeaf, parseModule } from './ast-helpers.js'
-import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
+import { asiGuard, closeRhs, emitAssign, emitPattern, emitUpdate, instructionSeule, poserBloc, rhsStart, writeValueUnused, type WriteTarget } from './emit-write.js'
+import { selfWriteError, SELF_WRITE_VAR } from '../sigils.js'
 
 // historique : path-tracker.ts et des appelants les importaient d'ici
 export { asiGuard, closeRhs, isInlineHandlerReturn, rhsStart, writeValueUnused } from './emit-write.js'
@@ -210,14 +211,21 @@ export function transformReactiveWritesMapped(js: string): PassResult {
           (p: any) => p.key && p.key.name === 'f'
         )
         if (fnNode) {
-          // `_mjs_s` (analyseur) : toutes ses lectures sont connues, seule l'écriture d'une variable de sa fermeture la périme
-          const sure = (node.right as any).properties.some((p: any) => p.key && (p.key.name === '_mjs_s' || p.key.value === '_mjs_s'))
+          // `_mjs_s` (analyseur) : la liste des sources d'une valeur précise (option `derived: "precise"`), seule l'écriture de l'une d'elles
+          // la périme ; `1` : toutes ses lectures sont connues (cf. derived-reads.ts), seule l'écriture d'une variable de sa fermeture la périme
+          const sources = (node.right as any).properties.find((p: any) => p.key && (p.key.name === '_mjs_s' || p.key.value === '_mjs_s'))
           ms.overwrite(node.start, fnNode.value.start, `µ._mjs_setComputed(_mjsThis, '${varName}', `)
-          ms.overwrite(fnNode.value.end, node.end, sure ? ', 1)' : ')')
+          ms.overwrite(fnNode.value.end, node.end, !sources ? ')' : sources.value.type === 'ArrayExpression' ? `, ${js.slice(sources.value.start, sources.value.end)})` : ', 1)')
+          // valeur précise : un nœud du graphe des signaux, qui note ses lectures pendant son calcul (cf. noterLectures)
+          if (sources && sources.value.type === 'ArrayExpression') noterLectures(ms, fnNode.value)
           changed = true
           return
         }
       }
+
+      // `$.x = $.x` (`$x = $x`, `$x = ($x)`) : la variable écrite avec sa propre valeur, exactement — refusée (sigils.ts,
+      // selfWriteError) ; le lecteur la refuse d'abord à sa place (lexer/index.ts), cette passe refuse une forme qui lui arrive sans lui
+      if (op === '=' && isSameStateRead(node.right, varName)) throw Object.assign(selfWriteError(SELF_WRITE_VAR, varName), { mjsAt: node.start })
 
       // `$a = $b = v`, `notify($x = 5)`, `return $x = v`, `if $res = chercher(k)`… : valeur LUE, la
       // fermeture rend la valeur écrite. Seule exception à « lue » : le retour implicite d'un
@@ -260,40 +268,46 @@ export function transformReactiveWritesMapped(js: string): PassResult {
       ) return
 
       const isDynamicKey = node.argument.computed
-      const op = node.operator === '++' ? '+' : '-'
+      const op = node.operator
       const unused = writeValueUnused(ancestors)
       const guard = unused ? '' : asiGuard(ancestors)
+      const bloc = instructionSeule(ancestors)
 
       // --- `$[k]++` / `--$[k]` : clé dynamique — la clé reste en place (1er argument
       // de `_set`), une copie de son texte ACTUEL (`ms.slice`) est injectée pour la ou
-      // les lectures `$[k]` (`+` unaire : même conversion numérique que la forme fixe).
-      // Clé à effet de bord (`$[cle()]++`) : passée UNE fois en argument (`_k`), jamais recopiée.
+      // les lectures `$[k]` ; l'opérateur de JavaScript porte sur `_mjs_n`, qui reçoit la valeur lue (même conversion que la
+      // forme fixe, cf. emitUpdate). Clé à effet de bord (`$[cle()]++`) : passée UNE fois en argument (`_k`), jamais recopiée.
       if (isDynamicKey) {
         const keyNode = node.argument.property
         let prefix: string, suffix: string
         if (!isPureKey(keyNode)) {
-          prefix = unused ? `void ((_k) => µ._set(_mjsThis, _k, (+$[_k]) ${op} 1))(`
-            : node.prefix ? `${guard}((_k) => (µ._set(_mjsThis, _k, (+$[_k]) ${op} 1), $[_k]))(`
-            : `${guard}((_k, _v = +$[_k]) => (µ._set(_mjsThis, _k, _v ${op} 1), _v))(`
+          prefix = unused ? `void ((_k, _mjs_n = $[_k]) => µ._set(_mjsThis, _k, ${op}_mjs_n))(`
+            : node.prefix ? `${guard}((_k, _mjs_n = $[_k]) => (µ._set(_mjsThis, _k, ${op}_mjs_n), $[_k]))(`
+            : `${guard}((_k, _mjs_n = $[_k], _mjs_v = _mjs_n${op}) => (µ._set(_mjsThis, _k, _mjs_n), _mjs_v))(`
           suffix = ')'
         }
         else {
           const keyText = ms.slice(keyNode.start, keyNode.end)
-          if (unused) {
+          if (bloc) {
+            prefix = `(_mjs_n = $[${keyText}], µ._set(_mjsThis, `
+            suffix = `, ${op}_mjs_n))`
+          }
+          else if (unused) {
             prefix = 'µ._set(_mjsThis, '
-            suffix = `, (+$[${keyText}]) ${op} 1)`
+            suffix = `, ((_mjs_n) => ${op}_mjs_n)($[${keyText}]))`
           }
           else if (node.prefix) {
             prefix = guard + '(µ._set(_mjsThis, '
-            suffix = `, (+$[${keyText}]) ${op} 1), $[${keyText}])`
+            suffix = `, ((_mjs_n) => ${op}_mjs_n)($[${keyText}])), $[${keyText}])`
           }
           else {
-            prefix = guard + '((_v) => (µ._set(_mjsThis, '
-            suffix = `, (+_v) ${op} 1), +_v))($[${keyText}])`
+            prefix = guard + `((_mjs_n, _mjs_v = _mjs_n${op}) => (µ._set(_mjsThis, `
+            suffix = `, _mjs_n), _mjs_v))($[${keyText}])`
           }
         }
         ms.overwrite(node.start, keyNode.start, prefix)
         ms.overwrite(keyNode.end, node.end, suffix)
+        if (bloc && isPureKey(keyNode)) poserBloc(ms, bloc)
         changed = true
         return
       }
@@ -312,15 +326,14 @@ export function transformReactiveWritesMapped(js: string): PassResult {
       // continuation. Valeur non lue (instruction, élément d'une suite, pas d'un
       // `for`, cf. writeValueUnused) : on émet donc la forme DIRECTE, qui commence par `µ` (plus
       // d'aliment pour l'ASI) et n'alloue plus de fermeture au passage.
-      // `(+$.x)` : sémantique JS de `++`/`--`, qui convertissent TOUJOURS l'opérande en
-      // nombre avant de l'incrémenter (`ToNumeric`) — sans ce `+` unaire, `"2" + 1`
-      // concatène ("21") au lieu d'incrémenter (`"2" - 1`, lui, convertit déjà tout seul :
-      // seul `++` était affecté en pratique, `+` unaire reste sans risque pour `--`).
-      // Valeur LUE (return, argument d'appel, condition…) : forme fidèle.
-      // Pre-fix `++$.x` rend la nouvelle valeur (déjà numérique, écrite par `_set`) ; post-fix `$.x++` rend
-      // l'ANCIENNE valeur, elle aussi convertie en nombre (`+_v`) — jamais la chaîne d'origine.
+      // L'opérateur de JavaScript lui-même, sur `_mjs_n` qui reçoit `$.x` : il convertit comme le langage (`ToNumeric` —
+      // `"2"` donne 3, jamais "21" ; un `BigInt` reste un `BigInt`). Instruction seule : un bloc déclare `_mjs_n`, sans
+      // fermeture (cf. poserBloc). Valeur LUE (return, argument d'appel, condition…) : forme fidèle.
+      // Pre-fix `++$.x` rend la nouvelle valeur (écrite par `_set`) ; post-fix `$.x++` rend
+      // l'ANCIENNE valeur, convertie comme en JavaScript — jamais la chaîne d'origine.
       // En tête d'instruction (`$x++ || f()`), le point-virgule protecteur coupe l'ASI. Cf. emitUpdate
-      emitUpdate(ms, node, ancestors, localTarget(varName))
+      emitUpdate(ms, node, ancestors, localTarget(varName), !!bloc)
+      if (bloc) poserBloc(ms, bloc)
       changed = true
     },
   })
@@ -331,6 +344,35 @@ export function transformReactiveWritesMapped(js: string): PassResult {
 // ----------------------------------------------------------------------------
 // Détecte les ObjectExpression de la forme `{ _mjs_c: true, f: ... }`
 // ----------------------------------------------------------------------------
+// lectures notées d'un calcul du graphe des signaux (runtime/mjs_signals.ts) : chaque `$.x` lu dans la fonction `fn` (valeur
+// dérivée précise ; un reffet s'en servira de même) prévient la boîte de `x` quand un calcul est en cours —
+// `(µ._mjs_sigCur && µ._mjs_sigRead(_mjsThis, 'x'), $.x)`, une lecture de `µ` et un test hors calcul (un nœud est toujours vrai ; un cœur
+// sans le graphe n'a pas `µ._mjs_sigCur`, rien n'est noté). Une lecture faite dans une fonction intérieure (rappel de `filter`,
+// `map`…) est notée une seule fois, en tête du calcul, et non à chaque appel du rappel : la surestimation est sûre, au pire un
+// calcul de trop quand le rappel n'aurait pas été appelé
+export function noterLectures(ms: MagicString, fn: any): void {
+  const tete = new Set<string>()
+  const note = (x: string) => `µ._mjs_sigRead(_mjsThis, '${x}')`
+  walk.ancestor(fn.body, {
+    MemberExpression(n: any, _st: any, anc: any[]) {
+      if (n.computed || n.object.type !== 'Identifier' || n.object.name !== '$' || n.property.type !== 'Identifier') return
+      const x = n.property.name
+      if (anc.some((a: any) => a !== fn && /Function/.test(a.type))) tete.add(x)
+      else {
+        ms.appendLeft(n.start, `(µ._mjs_sigCur && ${note(x)}, `)
+        ms.prependRight(n.end, ')')
+      }
+    },
+  })
+  if (tete.size === 0) return
+  const notes = `µ._mjs_sigCur && (${[...tete].map(note).join(', ')})`
+  if (fn.body.type === 'BlockStatement') ms.appendLeft(fn.body.start + 1, ` ${notes};`)
+  else {
+    ms.appendLeft(fn.body.start, `(${notes}, `)
+    ms.prependRight(fn.body.end, ')')
+  }
+}
+
 function isComputedWrapper(node: any): boolean {
   if (!node || node.type !== 'ObjectExpression') return false
   const props = node.properties ?? []
@@ -360,6 +402,11 @@ function collectStateTargets(pattern: any, out: any[]): void {
       leaf.property.type === 'Identifier'
     ) out.push(leaf)
   })
+}
+
+// `$.nom` lu tel quel, sans clé calculée (cf. `$x = $x`, refusé)
+function isSameStateRead(node: any, nom: string): boolean {
+  return node.type === 'MemberExpression' && !node.computed && node.object.type === 'Identifier' && node.object.name === '$' && node.property.type === 'Identifier' && node.property.name === nom
 }
 
 // cible `$.x` de l'état local (cf. emit-write.ts)

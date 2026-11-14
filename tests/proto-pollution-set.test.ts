@@ -15,16 +15,16 @@
 //     ÉCHAPPÉ `externalMerge($obj, untrusted)`).
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 describe('sécurité — proto-pollution via _set / _mjs_wrapDeep (guards __proto__/constructor/prototype)', () => {
   let MjsTest: any
   let µ: any
 
   before(() => {
-    const initJs = readFileSync(resolve('src/runtime/mjs_init.ts'), 'utf-8')
-    const elemJs = readFileSync(resolve('src/runtime/mjs_element.ts'), 'utf-8')
+    const initJs = lireRuntime(resolve('src/runtime/mjs_init.ts'))
+    const elemJs = lireRuntime(resolve('src/runtime/mjs_element.ts'))
     const sandbox = `
       class HTMLElement {
         constructor() {}

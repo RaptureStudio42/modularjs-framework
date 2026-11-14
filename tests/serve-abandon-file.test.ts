@@ -21,9 +21,12 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // « inFlight » assez longtemps pour que les suivants trouvent la porte fermée (même patron que
 // tests/rendergate-abandon.test.ts).
 const LENT_SRC = `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
 @id = ''
-$p = new Promise (resolve) -> setTimeout((-> resolve('fini')), 400)
+$p = plusTard 'fini', 400
 </script>
 {await $p}{success v}<h1>{@id}</h1>{end}
 `

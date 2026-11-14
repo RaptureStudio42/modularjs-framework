@@ -304,7 +304,7 @@ $selected = -1;
 </script>
 <ul>
 {for row in $data by id}
-  <li @class{$selected === row.id}="danger" @click={@sel(row.id)}>{row.label}</li>
+  <li :class{$selected === row.id}="danger" @click={@sel(row.id)}>{row.label}</li>
 {end}
 </ul>
 `

@@ -51,9 +51,11 @@
   delete component._mjs_headTitleSet;
 };
 
-µ._setHead = function(component, html) {
+// `brut` : le HTML mêle un `{{…}}` d'auteur, écrit tel quel (politique Trusted Types de la page, ou refus du navigateur) ;
+// sans lui, tout vient du gabarit et de valeurs échappées : valeur de confiance de la politique `mjs`
+µ._setHead = function(component, html, brut) {
   var tpl = document.createElement('template');
-  tpl.innerHTML = html;
+  tpl.innerHTML = brut ? html : µ._mjs_th(html);
   var fresh = [], title = null, kids = tpl.content.childNodes, i, k;
   for (i = 0; i < kids.length; i++) {
     k = kids[i];

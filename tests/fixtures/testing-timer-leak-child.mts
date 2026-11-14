@@ -1,8 +1,8 @@
 // Fixture PROCESS ENFANT (src/testing/index.ts) — même motif que
 // ssr-timer-leak-child.mts, pour l'AUTRE point : le harnais de test des
 // applications (`createHarness().destroy()`) fermait sa Window happy-dom via `window.close()`
-// (no-op), exactement comme renderToString.ts. N'appelle JAMAIS `process.exit()` : un timer qui
-// fuit empêche ce process de se terminer tout seul.
+// (no-op), exactement comme renderToString.ts. Le composant pose une minuterie (`µevery`) dans un `µeffect` : `destroy()`
+// doit l'arrêter. N'appelle JAMAIS `process.exit()` : un timer qui fuit empêche ce process de se terminer tout seul.
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,7 +14,7 @@ mkdirSync(srcDir, { recursive: true })
 writeFileSync(join(srcDir, 'ticker.mjs'), `
 <script lang="coffee">
 µeffect ->
-  setInterval((-> null), 5)
+  µevery 5, -> null
 </script>
 <p>ticker</p>
 `)

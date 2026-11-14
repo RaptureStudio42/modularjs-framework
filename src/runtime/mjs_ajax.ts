@@ -161,6 +161,10 @@ _request = function(options) {
     timeoutId = setTimeout(function() { controller.abort(); }, options.timeout);
   }
   failed = false;
+  // <repos>
+  // une demande en vol retient les files du repos jusqu'à sa fin, réponse traitée (µ._idle, mjs_autoloader.ts)
+  µ._mjs_busy = (µ._mjs_busy || 0) + 1;
+  // </repos>
   // Execution
   return fetch(options.url, fetchOptions).then(function(response) {
     var isJson, ref2, nav;
@@ -278,8 +282,16 @@ _request = function(options) {
     // `{ version, target, method, cache, reload, type, csrf }`, chaque champ `null` quand l'en-tête
     // HTTP correspondant est absent/vide (toujours un objet, jamais `null` lui-même) — ignoré sans effet
     // par tout callback existant à 2-3 paramètres, jamais consommé hors mjs_ujs.ts.
+    // <types-ajax>
+    // `type: Reward[]` (mjs_types_ajax.ts) : la réponse passe une fois par sa règle, à son arrivée ; refusée, `typeError` de l'appel ou
+    // le gestionnaire de l'appli décide. Bloc gardé par le build pour la seule appli qui écrit `type:`
+    if (typeof options.type === 'function') { result.body = options.type(result.body, options); }
+    // </types-ajax>
     return options.success(result.body, result.url, result.schemaNom, result.nav);
   }).finally(function() {
+    // <repos>
+    µ._mjs_busy--;
+    // </repos>
     return options.always();
   });
 };
@@ -532,3 +544,50 @@ function _mjajaxRepondreSchema(response, registre, options) {
   }
   return _request(options);
 };
+
+// <ajax-appel>
+// `µajax '/app/rewards', options` : le compilateur écrit µ._mjs_ajax. Un GET — ou la méthode `method:` des options, avec `data:` —
+// dont la promesse rend le corps de la réponse ; les options sont celles de _request (`type:`, `typeError:`, `timeout:`, `headers:`,
+// `signal:`, `success:`, `error:`, `always:`). Une erreur du serveur (pas de réponse, code 4xx / 5xx, délai dépassé) va à `error:`,
+// comme pour les verbes, sinon à µ.ajax.error ; ce qu'elle rend devient le résultat, jamais un rejet. Le nom `error:` de cette forme
+// n'est lu qu'ici, passé tel quel à _request : le renommer, c'est poser `error: options.autreNom` dans l'Object.assign ci-dessous.
+// Bloc gardé par le build pour la seule appli qui écrit cette forme
+µ._mjs_ajax = function(url, options) {
+  var s = options && options.signal;
+  // <ajax-appel-avis>
+  // développement seulement : une option d'un ancien nom (`onError`, `onTypeError`, une autre casse) dans un objet que la
+  // construction n'a pas lu ne serait jamais appelée — avertie, une fois par nom
+  for (var k in options || {}) {
+    if (/^(?:on)?(?:type)?error$/i.test(k) && k !== 'error' && k !== 'typeError' && !_mjsAjaxAnciens[k]) {
+      _mjsAjaxAnciens[k] = 1;
+      µ.warn(µ._mjs_msg('ajaxOldName', { cle: k }, 'µajax : l\'option « {cle} » n\'existe pas, son gestionnaire ne sera jamais appelé — écrivez error: pour une erreur du serveur, typeError: pour un refus de type.'));
+    }
+  }
+  // </ajax-appel-avis>
+  // un abandon voulu par l'appelant (`signal:`) ne rend rien, en silence, comme les verbes : ni `error:` ni µ.ajax.error, et jamais
+  // l'objet d'abandon de _request
+  return _request(Object.assign({ method: 'GET', success: function(b) { return b; } }, options, { url: url })).then(function(r) {
+    return s && s.aborted && r && r.aborted === true ? void 0 : r;
+  });
+};
+// µajax pris comme valeur (`f = µajax`, `µ['ajax'](…)`, `{ ajax } = µ`) : µ.ajax s'appelle comme la forme appelable, et garde ses
+// verbes et ses rappels par défaut
+µ.ajax = Object.assign(function(url, options) {
+  // <ajax-appel-avis>
+  // développement seulement : un appel de µ.ajax que le relevé n'a pas lu (accès calculé µ[k], µ passé à une fonction…) marche
+  // ici, mais en production µ.ajax ne s'appelle pas — averti, une fois
+  if (!_mjsAjaxVu) {
+    _mjsAjaxVu = 1;
+    µ.warn(µ._mjs_msg('ajaxUnseen', {}, 'µajax est appelé comme une fonction, mais la construction n\'a lu aucun appel de ce genre (accès calculé µ[k], µ passé à une fonction…) : en production, cet appel échouera — écrivez µajax(…) ou µajax \'/url\', options dans le code de l\'appli.'));
+  }
+  // </ajax-appel-avis>
+  return µ._mjs_ajax(url, options);
+}, µ.ajax);
+// <ajax-appel-avis>
+// ce que le relevé a vu : 1, un appel de la forme appelable ou µajax pris comme valeur (`<ajax-appel-vu>`, retiré sans lui)
+var _mjsAjaxVu = 0, _mjsAjaxAnciens = {};
+// <ajax-appel-vu>
+_mjsAjaxVu = 1;
+// </ajax-appel-vu>
+// </ajax-appel-avis>
+// </ajax-appel>

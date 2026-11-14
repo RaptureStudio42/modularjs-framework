@@ -24,6 +24,10 @@ const RUNTIME   = join(__dirname, '..', 'src', 'runtime')
 const lire      = (f: string) => readFileSync(join(RUNTIME, f), 'utf-8')
 const NAV_SRC   = lire('mjs_nav_progress.ts')
 
+// le cœur d'une appli sans table de routes au repos : la construction en retire les blocs `<routes-repos>` (la page montée y est
+// demandée par le guetteur de l'ombre, que ce banc ne pose pas)
+const sansRepos = (src: string) => src.replace(/^[ \t]*\/\/ <routes-repos>\n[\s\S]*?^[ \t]*\/\/ <\/routes-repos>\n/gm, '')
+
 function installProgress(µ: any, document: any, setTimeoutFn: any, clearTimeoutFn: any, CSSStyleSheetFn: any = undefined) {
   new Function('µ', 'document', 'setTimeout', 'clearTimeout', 'CSSStyleSheet', NAV_SRC)(µ, document, setTimeoutFn, clearTimeoutFn, CSSStyleSheetFn)
 }
@@ -258,7 +262,7 @@ describe('barre de navigation — le routeur', function () {
   // le routeur réel (et ce qu'il appelle) dans une fenêtre happy-dom
   function charger(win: any, avecAutoloader = false) {
     const init = lire('mjs_init.ts').replace(/export\s*\{[^}]*\}/, '')
-    const src  = `${init}\n${lire('mjs_page_cache.ts')}\n${NAV_SRC}\n${lire('mjs_router.ts')}\n${avecAutoloader ? lire('mjs_autoloader.ts') : ''}\nreturn µ;`
+    const src  = `${init}\n${lire('mjs_page_cache.ts')}\n${NAV_SRC}\n${sansRepos(lire('mjs_router.ts'))}\n${avecAutoloader ? sansRepos(lire('mjs_autoloader.ts')) : ''}\nreturn µ;`
     return new Function('window', 'document', 'customElements', 'HTMLElement', 'CSSStyleSheet', 'CustomEvent', src)(win, win.document, win.customElements, win.HTMLElement, win.CSSStyleSheet, win.CustomEvent)
   }
   // un composant routé : une vue, deux routes

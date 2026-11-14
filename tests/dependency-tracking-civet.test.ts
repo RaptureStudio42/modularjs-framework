@@ -219,7 +219,7 @@ describe('suivi des dépendances (compilateur)', function () {
       let deps: string[]
       try {
         const cs = new CompilerState()
-        cs.reset({ analyzer: null, externalVars: [], templateLang: 'civet', moduleName: 'probe-c1c' })
+        cs.reset({ analyzer: null, externalVars: [], moduleName: 'probe-c1c' })
         cs.isPrePass = false
         deps = cs.getEffectVars('$x (')
       } finally {
@@ -237,7 +237,7 @@ describe('suivi des dépendances (compilateur)', function () {
       console.warn = (...a: unknown[]) => { warnings.push(a.join(' ')) }
       try {
         const cs = new CompilerState()
-        cs.reset({ analyzer: null, externalVars: [], templateLang: 'civet' })
+        cs.reset({ analyzer: null, externalVars: [] })
         cs.isPrePass = false
         cs.getEffectVars('1 +')
       } finally {

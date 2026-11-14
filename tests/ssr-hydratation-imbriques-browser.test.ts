@@ -38,7 +38,7 @@ const PARENT = `<script>
 
 <p class="t">Total {$n}</p>
 <div class="liste"><@im-enfant x={$n}></@im-enfant><@im-enfant x="b"></@im-enfant></div>
-<form class="f" @noUJS><@@checkbox class="cb" name="cb">case</@@checkbox></form>
+<form class="f" :noUJS><@@checkbox class="cb" name="cb">case</@@checkbox></form>
 <p class="fin">fin</p>
 `
 

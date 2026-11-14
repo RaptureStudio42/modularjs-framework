@@ -352,8 +352,8 @@ describe('assetDirs — l\'image est une dépendance du composant', function () 
   it('un module .civet qui cite l\'image d\'un dossier de la liste suit l\'image, lui et le composant qui l\'importe', async () => {
     const p = projet('assetdirs-module')
     writeFileSync(join(p.imgA, 'logo.png'), validPng(64, 64))
-    writeFileSync(join(p.srcDir, 'util.civet'), 'export logo = µasset(\'logo.png\')\n')
-    writeFileSync(join(p.srcDir, 'a.mjs'), '@import logo \'util.civet\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n')
+    writeFileSync(join(p.srcDir, 'util.civet.mjs'), 'export logo = µasset(\'logo.png\')\n')
+    writeFileSync(join(p.srcDir, 'a.mjs'), '@import logo \'util.civet.mjs\'\n<script>\n  go = -> logo\n</script>\n<p>a</p>\n')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, assetDirs: [p.imgA] } as any)
     try {
       const premier = await bundler.compile()

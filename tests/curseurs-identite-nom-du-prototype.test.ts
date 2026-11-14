@@ -21,7 +21,7 @@ const tick      = (ms = 0) => new Promise<void>(r => setTimeout(r, ms))
 // *cursors posé dans une page happy-dom, sa connexion simulée : les trames reçues passent par ses écouteurs
 function page() {
   const window: any = new Window({ url: 'http://localhost/' })
-  window.eval(`var µ = { _mjs_fxDefs: {}, _mjs_fxAdopt() {}, _mjs_fxRate() { return 4 }, elementAt() { return null },
+  window.eval(`var µ = { _mjs_fxDefs: {}, _mjs_fxAdopt() {}, _mjs_fxRate() { return 4 }, elementAt() { return null }, _mjs_th(h) { return h },
     _mjs_dom: { getBoundingClientRect: (n) => n.getBoundingClientRect(), getRootNode: (n) => n.getRootNode(), addEventListener: (t, e, f, o) => t.addEventListener(e, f, o), removeEventListener: (t, e, f, o) => t.removeEventListener(e, f, o) },
     _mjs_fxRoomName: (s) => s.room || '/', _mjs_fxPackage() {}, _mjs_fxVar() { return null },
     _mjs_fxRoom: () => ({ presence: () => JSON.parse('{"__proto__":1,"constructor":1,"prototype":1}'), leave() {} }), error() {}, _mjs_msg: (k, a, t) => t };

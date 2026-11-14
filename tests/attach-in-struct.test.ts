@@ -33,7 +33,7 @@ setupCounter = (_node) ->
 <button @click={$tick = $tick + 1}>tick</button>
 
 {key $tick}
-  <div class="target" @attach={setupCounter}></div>
+  <div class="target" :attach={setupCounter}></div>
 {end}
 `
 
@@ -122,7 +122,7 @@ setTip = (text) -> (_node) ->
 </script>
 
 <button @click={$msg = 'changed'}>mute</button>
-<div class="t" @attach={setTip($msg)}></div>
+<div class="t" :attach={setTip($msg)}></div>
 `)
 
     const bundler = new Bundler({

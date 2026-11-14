@@ -375,7 +375,7 @@ var _MJS_FX_POINTER_TOP = ':where(dialog:modal,:popover-open,:fullscreen:not(htm
       if (home0) origin();
       var n = tg || (typeof document.elementFromPoint === 'function' ? document.elementFromPoint(tx, ty) : null);
       for (var i = 0; n && i < 32; i++) {
-        var r = n._shadow || n.shadowRoot;
+        var r = µ._mjs_shadowOf(n);
         var f = r && typeof r.elementFromPoint === 'function' ? r.elementFromPoint(tx, ty) : null;
         if (!f || f === n) break;
         n = f;

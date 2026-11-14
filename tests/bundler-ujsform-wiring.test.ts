@@ -56,12 +56,12 @@ describe('Bundler — lint.ujsForm câblé jusqu\'au bout (compile réel, pool d
 
   it('sans option : le build réel avertit (comportement par défaut, ujsForm activé)', () => {
     const stderr = runDriver('')
-    assert.match(stderr, /@noUJS/, `avertissement attendu, stderr : ${stderr}`)
+    assert.match(stderr, /:noUJS/, `avertissement attendu, stderr : ${stderr}`)
   })
 
   it('ujsForm: false transmis au Bundler : AUCUN avertissement, même via le pool de threads', () => {
     const stderr = runDriver(', ujsForm: false')
-    assert.equal(stderr.includes('@noUJS'), false, `aucun avertissement attendu, stderr : ${stderr}`)
+    assert.equal(stderr.includes(':noUJS'), false, `aucun avertissement attendu, stderr : ${stderr}`)
   })
 })
 
@@ -79,7 +79,7 @@ describe('cli.ts — lint.ujsForm:false de mjs.config.json coupe l\'avertissemen
     mkdirSync(join(root, 'app', 'modularjs'), { recursive: true })
     writeFileSync(join(root, 'app', 'modularjs', 'page.mjs'), FORM_FAUTIF)
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({ sourceDir: 'app/modularjs', outputDir: 'public/modularjs' }))
-    assert.match(construire(root), /@noUJS/)
+    assert.match(construire(root), /:noUJS/)
   })
 
   it('lint.ujsForm:false : mjs build n\'avertit plus', () => {
@@ -90,7 +90,7 @@ describe('cli.ts — lint.ujsForm:false de mjs.config.json coupe l\'avertissemen
       sourceDir: 'app/modularjs', outputDir: 'public/modularjs', lint: { ujsForm: false },
     }))
     const stderr = construire(root)
-    assert.equal(stderr.includes('@noUJS'), false, `aucun avertissement attendu, stderr : ${stderr}`)
+    assert.equal(stderr.includes(':noUJS'), false, `aucun avertissement attendu, stderr : ${stderr}`)
   })
 })
 
@@ -109,7 +109,7 @@ describe('Bundler — compileSingle() respecte aussi ujsForm (chemin direct, mê
     } finally {
       console.warn = orig
     }
-    assert.equal(caught.some(m => m.includes('@noUJS')), false, `aucun avertissement attendu : ${JSON.stringify(caught)}`)
+    assert.equal(caught.some(m => m.includes(':noUJS')), false, `aucun avertissement attendu : ${JSON.stringify(caught)}`)
   })
 
   it('sans option (défaut ON) : compileSingle() avertit bien — témoin du test ci-dessus', async () => {
@@ -123,6 +123,6 @@ describe('Bundler — compileSingle() respecte aussi ujsForm (chemin direct, mê
     } finally {
       console.warn = orig
     }
-    assert.ok(caught.some(m => m.includes('@noUJS')), `avertissement attendu : ${JSON.stringify(caught)}`)
+    assert.ok(caught.some(m => m.includes(':noUJS')), `avertissement attendu : ${JSON.stringify(caught)}`)
   })
 })

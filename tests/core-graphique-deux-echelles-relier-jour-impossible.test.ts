@@ -169,7 +169,8 @@ describe('<@@chart> — relier par-dessus une case vide, deux échelles, date qu
     let html = ''
     try { html = (await renderer.renderToString('mjs-gd-ssr', { ssrMode: 'markers' } as any)).html }
     finally { await renderer.close() }
-    const droite = [...html.matchAll(/<text class="ylabel right"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1])
+    // en `markers`, chaque ligne d'un `{for}` est repérée (`mjs-r="…"` sur la balise, `<!--mjs-r:…-->` devant son texte) : le motif tolère les repères, le texte se lit sans eux
+    const droite = [...html.matchAll(/<text\b[^>]*\bclass="ylabel right"[^>]*>((?:<!--mjs-[^>]*-->|[^<])*)<\/text>/g)].map((m) => m[1].replace(/<!--mjs-[^>]*-->/g, ''))
     assert.ok(droite.length >= 3, `graduations de droite servies : ${droite.join(' | ')}`)
     assert.equal(droite[droite.length - 1], '3 mm')
     assert.match(html, /class="frame[^"]*\btwin\b/, 'le cadre servi porte l\'axe de droite')

@@ -40,7 +40,7 @@ describe('refs @this sans `$` → écritures brutes', function () {
 orb = null
 paint = => orb.style.width = '7px'
 </script>
-<div @this=!{orb}></div>
+<div :this=!{orb}></div>
 <button @click={paint()}>go</button>
 `, 'plain-style')
       assert.equal(out.includes('_mjs_deepSet'), false, 'aucun _mjs_deepSet pour une ref sans $')
@@ -53,7 +53,7 @@ paint = => orb.style.width = '7px'
 orb = null
 paint = => orb.className = 'on'
 </script>
-<div @this=!{orb}></div>
+<div :this=!{orb}></div>
 `, 'plain-class')
       assert.equal(out.includes('_mjs_deepSet'), false)
     })
@@ -64,7 +64,7 @@ paint = => orb.className = 'on'
 orb = null
 paint = => orb.innerHTML = html
 </script>
-<div @this=!{orb}></div>
+<div :this=!{orb}></div>
 `, 'plain-html')
       assert.equal(out.includes('_mjs_deepSet'), false)
     })
@@ -75,7 +75,7 @@ paint = => orb.innerHTML = html
 orb = null
 paint = => orb.classList.add('active')
 </script>
-<div @this=!{orb}></div>
+<div :this=!{orb}></div>
 `, 'plain-method')
       assert.equal(out.includes('_mjs_deepCall'), false)
     })
@@ -88,7 +88,7 @@ paint = => orb.classList.add('active')
 $orb = null
 paint = => $orb.style.width = '7px'
 </script>
-<div @this=!{$orb}></div>
+<div :this=!{$orb}></div>
 `, 'dollar-style')
       assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["orb", "style", "width"\]/,
         'avec $, la ref est réactive → _mjs_deepSet (coût) : c\'est l\'anti-pattern averti à la compilation')
@@ -105,7 +105,7 @@ bump = =>
   orb.style.top = '1px'
   $cfg.a = 5
 </script>
-<div @this=!{orb}></div>
+<div :this=!{orb}></div>
 <i>{$cfg.a}</i>
 `, 'mixed')
       assert.match(out, /µ\._mjs_deepSet\(_mjsThis, \["cfg", "a"\], 5\)/, '$cfg.a profond → _mjs_deepSet (réactif)')

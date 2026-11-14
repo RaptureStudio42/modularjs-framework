@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 
@@ -28,7 +29,7 @@ const FORMS = [
   '<form class="sans" action="/envoi" method="post"><input name="q" value="a"><button class="b" type="submit">envoyer</button></form>'
 ].join('\n')
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`UJS : passe à blanc et bouton d'envoi nommé _method (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(`UJS : passe à blanc et bouton d'envoi nommé _method (${nom} réel)`, function () {
   this.timeout(180000)
   let present = false
   let navigateur: any
@@ -106,4 +107,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`UJS : pa
     if (!present) { this.skip(); return }
     assert.deepEqual(await lecture('sans'), [null])
   })
-})
+}))

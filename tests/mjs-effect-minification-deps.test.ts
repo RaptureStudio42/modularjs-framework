@@ -60,7 +60,8 @@ describe('generator/effect-deps — annotateEffectDeps (unitaire, AST)', functio
 
   it('scan en profondeur : $. référencé dans une fonction IMBRIQUÉE toujours détecté (même portée que fn.toString())', () => {
     const out = annotateEffectDeps(`µ.effect(function() { var f = function() { return $.deep; }; return f(); });`)
-    assert.match(out, /,\s*\["deep"\]\)/)
+    // lue dans une fonction imbriquée, qui peut tourner après le passage : `~deep` la garde au relevé du runtime, à côté du graphe
+    assert.match(out, /,\s*\["deep", "~deep"\]\)/)
   })
 
   it("appel qui n'est PAS µ.effect (autre objet) : jamais touché", () => {

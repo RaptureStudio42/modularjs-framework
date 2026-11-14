@@ -67,7 +67,7 @@ ${boucle}
 </ul>
 `
 
-const SANS_INDICE = composant('<li @class{$sel === row.id}="on"><a class="p" @click={@pick(row, i)}>{row.label}</a><b class="c" @click={@choisir(row.id)}>c</b></li>')
+const SANS_INDICE = composant('<li :class{$sel === row.id}="on"><a class="p" @click={@pick(row, i)}>{row.label}</a><b class="c" @click={@choisir(row.id)}>c</b></li>')
 const AVEC_INDICE = composant('<li><a class="p" @click={@pick(row, i)}>{i}:{row.label}</a></li>')
 
 describe('{for} — ligne pure : élément et indice lus sur l\'entrée de la ligne', function () {
@@ -210,7 +210,7 @@ describe('{for} — ligne pure : élément et indice lus sur l\'entrée de la li
       '</script>',
       '<div>{for item, i in $items}<button @click={$n = item + i}>x</button>{end}</div>',
     ].join('\n')
-    for (const templateLang of [undefined, 'js'] as const) {
+    for (const templateLang of [undefined] as const) {
       const { output } = await transpile(src, { moduleName: 'lpe-gram-' + (templateLang ?? 'civet'), ...(templateLang ? { templateLang } : {}) })
       assert.match(output, /_mjs_en/, 'entrée de la ligne lue (' + (templateLang ?? 'civet') + ')')
       assert.doesNotMatch(output, /data-mjs-idx-0|_mjs_nIdx/, 'aucun indice posé ni lu sur la balise (' + (templateLang ?? 'civet') + ')')

@@ -12,12 +12,12 @@ const source = (balise: string) => `<script>\n  µmount -> console.log(ref)\n</s
 describe('@this sans point d\'exclamation : erreur de construction', () => {
   afterEach(() => setMessagesLang('fr'))
 
-  for (const [nom, balise] of [['balise HTML', '<canvas @this={ref} width="30"></canvas>'], ['composant', '<@enfant @this={ref}>']] as const) {
+  for (const [nom, balise] of [['balise HTML', '<canvas :this={ref} width="30"></canvas>'], ['composant', '<@enfant :this={ref}>']] as const) {
     it(`${nom} : refus qui donne la bonne écriture, en français`, async () => {
       await assert.rejects(() => transpile(source(balise), { moduleName: 'mjs-this-sans-point' }), (e: any) => {
-        assert.match(e.message, /@this=!\{ref\}/, 'la bonne écriture')
-        assert.match(e.message, /@this=\{ref\}/, 'ce qui est écrit')
-        assert.match(e.message, /événement nommé « this »/, 'la raison')
+        assert.match(e.message, /:this=!\{ref\}/, 'la bonne écriture')
+        assert.match(e.message, /:this=\{ref\}/, 'ce qui est écrit')
+        assert.match(e.message, /Sans lui, ref ne recevrait jamais le nœud/, 'la raison')
         return true
       })
     })
@@ -25,15 +25,15 @@ describe('@this sans point d\'exclamation : erreur de construction', () => {
 
   it('en anglais', async () => {
     setMessagesLang('en')
-    await assert.rejects(() => transpile(source('<canvas @this={ref}></canvas>'), { moduleName: 'mjs-this-sans-point' }), (e: any) => {
-      assert.match(e.message, /@this=!\{ref\}/)
-      assert.match(e.message, /event named "this"/)
+    await assert.rejects(() => transpile(source('<canvas :this={ref}></canvas>'), { moduleName: 'mjs-this-sans-point' }), (e: any) => {
+      assert.match(e.message, /:this=!\{ref\}/)
+      assert.match(e.message, /Without it, ref would never receive the node/)
       return true
     })
   })
 
   it('la forme juste pose la référence, aucun écouteur « this »', async () => {
-    const { output } = await transpile(source('<canvas @this=!{ref} width="30"></canvas>'), { moduleName: 'mjs-this-juste' })
+    const { output } = await transpile(source('<canvas :this=!{ref} width="30"></canvas>'), { moduleName: 'mjs-this-juste' })
     assert.match(output, /ref = _mjs_node/)
     assert.doesNotMatch(output, /"this":\{/)
   })

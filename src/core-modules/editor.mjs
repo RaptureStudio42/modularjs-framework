@@ -131,13 +131,14 @@
     false
 
   # `autofocus` : parmi les éditeurs qui se montrent ensemble, le PREMIER de la page prend le focus, comme un champ natif ; un éditeur qui se montre
-  # ensuite le prend à son tour, même à un autre éditeur (un {if} ouvert par un clic, un minuteur, un message)
+  # ensuite le prend à son tour, même à un autre éditeur (un {if} ouvert par un clic, un minuteur, un message). Le focus se pose sans rien faire
+  # défiler, comme celui des autres modules : ni la page ni le conteneur qui défile ne sautent, un éditeur hors de la vue y reste
   settle = ->
     list   = wanted.filter((h)-> h.isConnected)
     wanted = []
-    list.reduce((a, b)-> if precedes(b, a) then b else a).focus() if list.length
+    list.reduce((a, b)-> if precedes(b, a) then b else a).focus({ preventScroll: true }) if list.length
 
-  # la balise de l'éditeur où est un nœud (sa zone, sa barre, un lien de sa zone), avec ou sans ombre (`@lightDom`) ; aucune hors des éditeurs
+  # la balise de l'éditeur où est un nœud (sa zone, sa barre, un lien de sa zone), avec ou sans ombre (`:lightDom`) ; aucune hors des éditeurs
   editorOf = (n)->
     n = n.parentNode ?? n.host while n and n.localName != 'mjs-core-editor'
     n
@@ -457,7 +458,7 @@
   # le HTML d'entrée est lu dans un <template> : inerte, rien ne s'y exécute ni ne s'y charge
   parse = (html, pal)->
     t = document.createElement('template')
-    t.innerHTML = html
+    t.innerHTML = µ._mjs_th(html)
     tint = pal ?? []
     readBlocks(t.content)
 
@@ -584,7 +585,7 @@
   hueRange   = null # @@ tool-color
   # @@
   dragging   = false
-  waiting    = 0
+  waiting    = null
   running    = false
   tickSet    = [] # @@ answer
   lineIds    = [] # @@ answer
@@ -768,10 +769,12 @@
       lineIds = []
     forget()
     syncHidden()
-    setTimeout(emitState, 0)
-    setTimeout(decorate, 0)
-    setTimeout(syncTicks, 0)
-    setTimeout(toEnd, 0) if $caret == 'end'
+    µafter 0, emitState
+    µafter 0, decorate
+    µafter 0, syncTicks
+    if $caret == 'end'
+      stopEnd = µafter 0, toEnd
+      -> stopEnd()
   # @@
   # @@ !answer
   # µeffect ->
@@ -784,14 +787,18 @@
   #   $empty = not html
   #   forget()
   #   syncHidden()
-  #   setTimeout(emitState, 0)
-  #   setTimeout(decorate, 0)
-  #   setTimeout(toEnd, 0) if $caret == 'end'
+  #   µafter 0, emitState
+  #   µafter 0, decorate
+  #   if $caret == 'end'
+  #     stopEnd = µafter 0, toEnd
+  #     -> stopEnd()
   # @@
 
+  # une rafale de bascules n'émet l'état qu'une fois : le reffet qui repart annule le tir en attente
   µeffect ->
     $edit
-    setTimeout(emitState, 0)
+    stopState = µafter 0, emitState
+    -> stopState()
 
   # @@ dev answer
   # aucune page n'écrit `answer` : la construction a ôté le mode « répondre », un éditeur qui le reçoit d'un script ne l'a pas. Écrit en commentaire, réveillé
@@ -873,7 +880,8 @@
   # la description des cases dit « cochée » dans la langue de la page : une bascule de langue la réécrit
   µeffect ->
     $t
-    setTimeout(decorate, 0)
+    stopDecorate = µafter 0, decorate
+    -> stopDecorate()
 
 
   # ce que la surface devient à chaque modification
@@ -885,7 +893,7 @@
 
   say = (msg)->
     $announce = ''
-    setTimeout((-> setAnnounce(msg)), 30)
+    µafter 30, -> setAnnounce(msg)
 
   # entrée dans une case cochée : la nouvelle ligne naît décochée (le navigateur recopie les attributs de la ligne coupée)
   fixup = (e)->
@@ -957,8 +965,8 @@
   # en prend déjà 15 ms par touche à 278 Ko, la reconstruction 29 de plus. Tout autre geste (mise en forme, collage, annulation, Entrée), `blur`, l'envoi du
   # formulaire (`submit`, et la lecture de ses champs, `formdata`) et la destruction reconstruisent tout de suite
   rebuild = ->
-    clearTimeout(waiting)
-    waiting = 0
+    waiting?.()
+    waiting = null
     decorate()
     nameLines() if barShows('check') # @@ tool-check
     html   = htmlOf(surface, $palette)
@@ -978,8 +986,8 @@
     caretAt = spotKey()
     fixup(e)
     if canon.length > BIG and not running and TYPING.test(e.inputType ?? '')
-      clearTimeout(waiting)
-      waiting = setTimeout(rebuild, PAUSE)
+      waiting?.()
+      waiting = µafter PAUSE, rebuild
       emitState() if fresh
       return
     rebuild()
@@ -1206,7 +1214,8 @@
       return
     relay = { again: true }
     since = if from then nativeAt else 0
-    setTimeout((->
+    # le relais sert la pile d'annulation de tout le document : il part même si l'éditeur vient de disparaître
+    µafter 0, { always: true }, ->
       try
         return unless surface?.isConnected and not focusIn()
         document.dispatchEvent(new CustomEvent(UNSTICK, { detail: since }))
@@ -1220,13 +1229,12 @@
           if from == document.body then focusAt()?.blur() else from.focus({ preventScroll: true })
       finally
         relay = null
-    ), 0)
 
   # la pile du navigateur a tout de même touché la surface : le texte de l'éditeur revient. Un `execCommand('undo')` de la page n'annonce rien avant (Chromium) ;
   # Firefox annonce le geste à la zone de la sélection, un autre champ, puis défait l'étape de l'éditeur en tête de sa pile commune : la sélection d'alors y
   # revient et le geste est rejoué pour ce champ, sauf quand le focus est dans l'éditeur
   keepText = ->
-    surface.innerHTML = canon or '<p><br></p>'
+    surface.innerHTML = µ._mjs_th(canon or '<p><br></p>')
     rebuild()
     g = asked
     r = g?.r
@@ -1286,7 +1294,7 @@
     host  = @@closest('mjs-core-editor')
     claim = ->
       return if $off
-      setTimeout(settle, 0) unless wanted.length
+      µafter(0, { always: true }, settle) unless wanted.length # la file sert tous les éditeurs de la page
       wanted.push(host)
     return claim() unless host.hasAttribute('mjs-loading')
     shown = new MutationObserver ->
@@ -1380,7 +1388,7 @@
     $linkUrl  = a?.getAttribute('href') ?? ''
     $linkHas  = !!a
     $linkOpen = true
-    setTimeout((-> linkRef?.focus(); linkRef?.select()), 0)
+    µafter 0, (-> linkRef?.focus(); linkRef?.select())
 
   closeLink = ->
     $linkOpen = false
@@ -1397,7 +1405,8 @@
       document.getSelection().setBaseAndExtent(a, 0, a, a.childNodes.length)
       exec('createLink', url)
     else if r and r.collapsed
-      exec('insertHTML', '<a href="' + escA(url) + '">' + esc(url) + '</a>')
+      # une adresse filtrée puis échappée : un HTML que l'éditeur fabrique, qui passe sous Trusted Types par la politique du framework
+      exec('insertHTML', µ._mjs_th('<a href="' + escA(url) + '">' + esc(url) + '</a>'))
     else
       exec('createLink', url)
     say(tr('linkDone', µlang))
@@ -1520,7 +1529,7 @@
     hueRange = rangeNow() ?? savedRange
     $hueNow  = stateNow().color
     $hueOpen = true
-    setTimeout((-> (hueRef?.querySelector('[aria-pressed="true"]') ?? hueRef?.querySelector('button'))?.focus()), 0)
+    µafter 0, (-> (hueRef?.querySelector('[aria-pressed="true"]') ?? hueRef?.querySelector('button'))?.focus())
 
   closeHues = ->
     $hueOpen = false
@@ -1678,13 +1687,14 @@
 
 
   # le collage et le dépôt : seul le HTML permis entre ; un seul paragraphe s'insère dans la ligne en cours ; avec `paste="text"` seul le texte
-  # brut entre, en paragraphes
+  # brut entre, en paragraphes. Ce qui s'insère est toujours le HTML que le nettoyeur réécrit (modèle de blocs) ou le texte échappé, jamais
+  # celui du presse-papiers : sous Trusted Types, il passe par la politique du framework
   insertClean = (html, text)->
     out = if html and $paste != 'text' then clean(html, $palette) else textHtml(text ?? '')
     return unless out
     own() if barShows('check') # @@ tool-check
     one = /^<p>((?:(?!<\/?p>).)*)<\/p>$/s.exec(out)
-    exec('insertHTML', if one then one[1] else out)
+    exec('insertHTML', µ._mjs_th(if one then one[1] else out))
 
   onPaste = (e)->
     return unless $edit and e.clipboardData
@@ -1820,14 +1830,14 @@
     rebuild() if waiting and surface
 </script>
 
-<div class="box" part="box" @class{$off}="off" @class{$ro}="readonly" @class{$focused}="focused" --mjs-editor-on={$t.on} --mjs-editor-off={$t.off}>
+<div class="box" part="box" :class{$off}="off" :class{$ro}="readonly" :class{$focused}="focused" --mjs-editor-on={$t.on} --mjs-editor-off={$t.off}>
   {if $barTools != null and $edit}
     <@@toolbar class="bar" part="toolbar" exportparts="bar: toolbar-bar, button: toolbar-button, down" tools={$barTools} disabled={$off}></@@toolbar>
   {end}
   <!-- @@ tool-link -->
   {if $linkOpen}
     <div class="link" part="link" role="group" aria-label={$t.link} @keydown={onLinkKey(e)}>
-      <input class="link-url" part="link-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://" aria-label={$t.link} value=!{$linkUrl} @this=!{linkRef} @input={e.stopPropagation()}>
+      <input class="link-url" part="link-input" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://" aria-label={$t.link} value=!{$linkUrl} :this=!{linkRef} @input={e.stopPropagation()}>
       <button type="button" class="link-ok" part="link-button link-apply" @click={applyLink()}>{$t.apply}</button>
       {if $linkHas}
         <button type="button" class="link-no" part="link-button link-remove" @click={removeLink()}>{$t.remove}</button>
@@ -1839,7 +1849,7 @@
   <!-- @@ colors -->
   <!-- @@ tool-color -->
   {if $hueOpen}
-    <div class="hues" part="colors" role="group" aria-label={$t.colors} @this=!{hueRef} @keydown={onHueKey(e)}>
+    <div class="hues" part="colors" role="group" aria-label={$t.colors} :this=!{hueRef} @keydown={onHueKey(e)}>
       {for name in $palette}
         <button type="button" part="color-button" aria-pressed={$hueNow == name ? 'true' : 'false'} @click={paint(name)}><span class="dot" data-color={name} aria-hidden="true"></span>{$t.names[name]}</button>
       {end}
@@ -1849,18 +1859,18 @@
   <!-- @@ -->
   <!-- @@ -->
   <!-- @@ answer -->
-  <div class="surface" part="surface" role={$ans ? 'group' : 'textbox'} aria-multiline={$ans ? null : 'true'} aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$textRo ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and not $ans and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($textRo and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div>
+  <div class="surface" part="surface" role={$ans ? 'group' : 'textbox'} aria-multiline={$ans ? null : 'true'} aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$textRo ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and not $ans and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($textRo and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} :class{$empty}="empty" :this=!{surface} :html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div>
   <!-- @@ -->
   <!-- @@ !answer -->
-  <!-- <div class="surface" part="surface" role="textbox" aria-multiline="true" aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$ro ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($ro and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} @class{$empty}="empty" @this=!{surface} @html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div> -->
+  <!-- <div class="surface" part="surface" role="textbox" aria-multiline="true" aria-label={$nameText} aria-invalid={$hostInvalid} aria-required={(must($required) and $edit) ? true : null} aria-readonly={$ro ? true : null} aria-disabled={$off ? true : null} aria-placeholder={($empty and $placeholderText) ? $placeholderText : null} contenteditable={$edit ? 'true' : 'false'} tabindex={($ro and not $off) ? 0 : null} spellcheck="true" data-placeholder={$placeholderText} :class{$empty}="empty" :this=!{surface} :html=!{$raw} @input={onInput(e)} @beforeinput={onBeforeInput(e)} @compositionstart={onCompose()} @keydown={onKeydown(e)} @paste={onPaste(e)} @drop={onDrop(e)} @mousedown={onMouseDown(e)} @click={onClick(e)} @focus={onFocus()} @blur={onBlur()} @dragstart={onDragStart()} @dragend={onDragEnd()}></div> -->
   <!-- @@ -->
-  <textarea class="anchor" tabindex="-1" aria-hidden="true" @this=!{textField} @focus={ensureFocus()}></textarea>
+  <textarea class="anchor" tabindex="-1" aria-hidden="true" :this=!{textField} @focus={ensureFocus()}></textarea>
   <div class="live" role="status" aria-live="polite">{$announce}</div>
 </div>
 
 <@document @selectionchange={onSelection()}>
 
-<style @display="block">
+<style :display="block">
   :host
     font: inherit
 

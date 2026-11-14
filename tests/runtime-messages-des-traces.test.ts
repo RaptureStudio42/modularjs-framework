@@ -12,7 +12,7 @@ import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
-import { RUNTIME_LABELS } from '../src/runtime-labels.js'
+import { RUNTIME_LABELS, runtimeMessagesFor } from '../src/runtime-labels.js'
 import { TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, DEV_ONLY_MESSAGES, levelCutsTraces, messagesWithoutTraces, traceMessages, traceKeysIn } from '../src/bundler/minify.js'
 
 const SRC         = join(dirname(fileURLToPath(import.meta.url)), '../src')
@@ -101,7 +101,8 @@ describe('messages lus par les traces du runtime — la liste de la construction
 })
 
 describe('messages des traces — les aides de la construction', () => {
-  const table = RUNTIME_LABELS.fr.err as Record<string, string>
+  // la table des messages : le groupe `err`, avec les messages des fichiers du runtime joints à la demande (µload), rangés à part
+  const table = runtimeMessagesFor('fr')
 
   it('levelCutsTraces : tous les niveaux sauf log retirent les traces', () => {
     assert.equal(levelCutsTraces('log'), false)
@@ -112,7 +113,7 @@ describe('messages des traces — les aides de la construction', () => {
     const avant = Object.keys(table).length
     const reste = messagesWithoutTraces(table)
     assert.equal(Object.keys(reste).length, avant - TRACE_ONLY_MESSAGES.length - DEV_ONLY_MESSAGES.length)
-    for (const k of TRACE_ONLY_MESSAGES) assert.equal(k in reste, false, k)
+    for (const k of [...TRACE_ONLY_MESSAGES, ...DEV_ONLY_MESSAGES]) assert.equal(k in reste, false, k)
     assert.ok(reste['ujsNoPage'], 'le texte que lit aussi un avertissement reste')
     assert.equal(Object.keys(table).length, avant, 'la table d\'origine est intacte')
   })

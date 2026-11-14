@@ -7,9 +7,9 @@
 // « contient on » laisserait passer les deux.
 // Gardes : une classe qu'aucune bascule active n'a posée (celle d'un rendu serveur que l'état de la page
 // ne redit pas : « theme-light » devenu « theme-dark ») tombe au premier rendu, comme avant.
-// Les jetons à caractères spéciaux (« is-active », « md:flex », « w-1/2 », « p-0.5 ») se retrouvent eux aussi : la
-// garde de la bascule porte le nom de la classe réduit à des lettres, chiffres et soulignés, et la classe déjà
-// posée est réduite de la même façon avant la comparaison.
+// Les jetons à caractères spéciaux (« is-active », « md:flex », « w-1/2 », « p-0.5 ») se retrouvent eux aussi : le
+// compilateur passe les jetons des bascules tels quels à l'écriture de la classe calculée, qui garde, à sa première
+// écriture, ceux que les bascules ont déjà posés.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
@@ -22,15 +22,15 @@ import { stripEsm } from '../src/server/renderToString.js'
 const CORPS = '<button class="n" @click={$n++}>n</button><button class="f" @click={$flag = !$flag}>f</button>\n'
 
 const SOURCES: Record<string, string> = {
-  'cl-avant.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="on" class="c{$n}">x</div>\n' + CORPS,
-  'cl-apres.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" class="c{$n}" @class{$flag}="on">x</div>\n' + CORPS,
-  'cl-faux.mjs':   '<script>\n$n = 0\n$flag = false\n</script>\n<div data-t="cible" @class{$flag}="on" class="c{$n}">x</div>\n' + CORPS,
-  'cl-fixe.mjs':   '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="on" class="fixe c{$n}">x</div>\n' + CORPS,
-  'cl-double.mjs': '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="un deux" class="c{$n}">x</div>\n' + CORPS,
-  'cl-tiret.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="is-active" class="c{$n}">x</div>\n' + CORPS,
-  'cl-deuxpts.mjs': '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="md:flex" class="c{$n}">x</div>\n' + CORPS,
-  'cl-multi.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" @class{$flag}="w-1/2 sm:p-0.5" class="c{$n}">x</div>\n' + CORPS,
-  'cl-ligne.mjs':  '<script>\n$n = 0\n$flag = true\n$rows = [1, 2]\n</script>\n<ul>{for r in $rows by r}<li data-t="cible" @class{$flag}="on" class="r{$n}">{r}</li>{end}</ul>\n' + CORPS
+  'cl-avant.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="on" class="c{$n}">x</div>\n' + CORPS,
+  'cl-apres.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" class="c{$n}" :class{$flag}="on">x</div>\n' + CORPS,
+  'cl-faux.mjs':   '<script>\n$n = 0\n$flag = false\n</script>\n<div data-t="cible" :class{$flag}="on" class="c{$n}">x</div>\n' + CORPS,
+  'cl-fixe.mjs':   '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="on" class="fixe c{$n}">x</div>\n' + CORPS,
+  'cl-double.mjs': '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="un deux" class="c{$n}">x</div>\n' + CORPS,
+  'cl-tiret.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="is-active" class="c{$n}">x</div>\n' + CORPS,
+  'cl-deuxpts.mjs': '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="md:flex" class="c{$n}">x</div>\n' + CORPS,
+  'cl-multi.mjs':  '<script>\n$n = 0\n$flag = true\n</script>\n<div data-t="cible" :class{$flag}="w-1/2 sm:p-0.5" class="c{$n}">x</div>\n' + CORPS,
+  'cl-ligne.mjs':  '<script>\n$n = 0\n$flag = true\n$rows = [1, 2]\n</script>\n<ul>{for r in $rows by r}<li data-t="cible" :class{$flag}="on" class="r{$n}">{r}</li>{end}</ul>\n' + CORPS
 }
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -173,17 +173,15 @@ describe('classe basculée et classe calculée sur la même balise : le classNam
     nu.setAttribute('class', 'theme-light')
     µ._mjs_updAttrNode(nu, 'class', 'theme-dark')
     assert.equal(nu.className, 'theme-dark', 'la classe du serveur tombe')
-    // avec une bascule active sur la balise : son jeton reste, celui du serveur tombe
+    // avec les jetons des bascules de la balise (donnés par le compilateur) : le jeton posé par la bascule reste, celui du serveur tombe
     const bascule = win.document.createElement('div')
     bascule.setAttribute('class', 'c5 on')
-    bascule._mjs_cl_on = true
-    µ._mjs_updAttrNode(bascule, 'class', 'c0')
+    µ._mjs_updAttrNode(bascule, 'class', 'c0', 'on')
     assert.equal(bascule.className, 'c0 on', 'la bascule active reste, « c5 » tombe')
-    // une bascule coupée ne garde rien
+    // une bascule coupée a retiré son jeton avant : il ne reste que des jetons du serveur, qui tombent tous
     const coupee = win.document.createElement('div')
-    coupee.setAttribute('class', 'c5 on')
-    coupee._mjs_cl_on = false
-    µ._mjs_updAttrNode(coupee, 'class', 'c0')
-    assert.equal(coupee.className, 'c0', 'une bascule coupée ne garde pas son jeton')
+    coupee.setAttribute('class', 'c5 perime')
+    µ._mjs_updAttrNode(coupee, 'class', 'c0', 'on')
+    assert.equal(coupee.className, 'c0', 'aucun jeton du serveur ne reste')
   })
 })

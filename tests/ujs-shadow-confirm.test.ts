@@ -57,7 +57,7 @@ const COMPONENT = `
 $count = 3
 remove = -> $count = $count - 1
 </script>
-<button @confirm="Vraiment supprimer ?" @click={remove()}>Supprimer</button>
+<button :confirm="Vraiment supprimer ?" @click={remove()}>Supprimer</button>
 <p id="cnt">{$count}</p>
 `
 

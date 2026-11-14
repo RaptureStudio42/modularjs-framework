@@ -129,6 +129,8 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   if (opts.manifestPath)   opt.manifestPath   = resolve(root, opts.manifestPath)
   if (opts.stylesheetsDir) opt.stylesheetsDir = resolve(root, opts.stylesheetsDir)
   if (!opt.sourceDir) throw new Error(t('testing.pas-de-projet', { racine: root }))
+  // le cœur bâti pour happy-dom, qui connecte le contenu d'une ombre avant son hôte (cf. BundlerOpts.happyDom)
+  opt.happyDom = true
 
   const bundler = new Bundler(opt)
   const stats   = await bundler.compile()

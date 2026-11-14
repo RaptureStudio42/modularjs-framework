@@ -29,8 +29,11 @@ import { terminateSharedWorkerPool, MARQUE_SORTIE } from '../src/bundler/index.j
 after(async () => { await terminateSharedWorkerPool() })
 
 const LENT_SRC = `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
-$p = new Promise (resolve) -> setTimeout((-> resolve('fini')), 300)
+$p = plusTard 'fini', 300
 </script>
 <div class="wrap">
 {await $p}

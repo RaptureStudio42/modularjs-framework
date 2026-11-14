@@ -24,6 +24,8 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { LECTURES } from './helpers/lectures-images.js'
 import { RUNTIME_LABELS } from '../src/runtime-labels.js'
+import { playTogether } from './helpers/engines-together.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -220,7 +222,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -473,40 +475,40 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
           await defile(page, 'mjs-pile-base', 1100)
           // le moteur n'écrit les variables CSS des réglages qu'à la pose et dans µ._mjs_fxSet : l'écriture passe par lui
           await regle({ gap: 100 })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return JSON.stringify(v.collage) === JSON.stringify(['0px', '100px', '200px', '300px']) }, 'gap suivi', 250)
           let r = await lire(page, 'mjs-pile-base')
           assert.deepEqual(r.collage, ['0px', '100px', '200px', '300px'], 'gap suivi')
           proche(nombres(r.prof), profondeurs(1100, 100), 0.02, 'profondeurs avec gap: 100')
           await regle({ top: 30 })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return JSON.stringify(v.collage) === JSON.stringify(['30px', '130px', '230px', '330px']) }, 'top suivi', 250)
           r = await lire(page, 'mjs-pile-base')
           assert.deepEqual(r.collage, ['30px', '130px', '230px', '330px'], 'top suivi')
           proche(nombres(r.prof), profondeurs(1100, 100, 30), 0.02, 'profondeurs avec top: 30')
           await regle({ scale: 0.1, gap: 64, top: 0 })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return v.echelle.slice(0, 3).every((e: string, i: number) => Math.abs(parseFloat(e) - [0.7, 0.8, 0.9][i]) <= 0.01) }, 'scale suivi', 250)
           r = await lire(page, 'mjs-pile-base')
           proche(r.echelle.slice(0, 3).map((e: string) => parseFloat(e)), [0.7, 0.8, 0.9], 0.01, 'scale suivi')
           await regle({ dim: 0.25, blur: 2 })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return v.filtre.slice(0, 3).every((f: string, i: number) => Math.abs(parseFloat(/brightness\(([\d.]+)\)/.exec(f)?.[1] ?? 'NaN') - [0.25, 0.5, 0.75][i]) <= 0.01) }, 'dim suivi', 250)
           r = await lire(page, 'mjs-pile-base')
           proche(r.filtre.slice(0, 3).map((f: string) => parseFloat(/brightness\(([\d.]+)\)/.exec(f)![1])), [0.25, 0.5, 0.75], 0.01, 'dim suivi')
           proche(r.filtre.slice(0, 3).map((f: string) => parseFloat(/blur\(([\d.]+)px\)/.exec(f)![1])), [6, 4, 2], 0.01, 'blur suivi')
           await regle({ radius: 30 })
-          await page.waitForTimeout(100)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return JSON.stringify(v.arrondi) === JSON.stringify(['30px', '30px', '30px', '30px']) }, 'radius posé', 100)
           r = await lire(page, 'mjs-pile-base')
           assert.deepEqual(r.arrondi, ['30px', '30px', '30px', '30px'], 'radius posé')
           await regle({ radius: undefined })
-          await page.waitForTimeout(100)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return JSON.stringify(v.arrondi) === JSON.stringify(['10px', '10px', '10px', '10px']) }, 'radius retiré', 100)
           r = await lire(page, 'mjs-pile-base')
           assert.deepEqual(r.arrondi, ['10px', '10px', '10px', '10px'], 'radius retiré : l\'arrondi des panneaux revient')
           await regle({ origin: 'center' })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return v.origine.every((o: string) => /^[\d.]+px 190px$/.test(o)) }, 'origin suivi', 250)
           r = await lire(page, 'mjs-pile-base')
           assert.ok(r.origine.every((o: string) => /^[\d.]+px 190px$/.test(o)), `origin suivi : ${r.origine}`)
           proche(nombres(r.prof), [3, 2, 1, 0], 0.02, 'profondeurs après origin')
           // plus rien à calculer : les panneaux sont rendus, l'écouteur est parti
           await regle({ scale: 0, dim: 0, blur: 0 })
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => { const v = await lire(page, 'mjs-pile-base'); return JSON.stringify(v.dessous) === JSON.stringify([false, false, false, false]) && JSON.stringify(v.echelle) === JSON.stringify(['none', 'none', 'none', 'none']) && JSON.stringify(v.filtre) === JSON.stringify(['none', 'none', 'none', 'none']) }, 'les panneaux rendus', 250)
           r = await lire(page, 'mjs-pile-base')
           assert.deepEqual(r.dessous, [false, false, false, false])
           assert.deepEqual(r.echelle, ['none', 'none', 'none', 'none'])
@@ -584,6 +586,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
         }, { css: 'html,body{overflow-x:hidden}' })
         await avec('mjs-pile-page', async (page, journal) => {
           await page.evaluate(() => window.scrollTo(0, 3000))
+          // vérification négative : rien ne doit être dit pendant ce temps
           await page.waitForTimeout(300)
           assert.deepEqual(journal.filter((m) => /\*pile/.test(m)), [], 'le corps seul : son overflow passe à la fenêtre, rien à dire')
         }, { css: 'body{overflow-x:hidden}' })
@@ -640,7 +643,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
           const vivants = () => page.evaluate(() => (window as any).__vivants.size)
           const base = await vivants()
           await page.evaluate(() => window.scrollTo(0, 3400))
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => (await vivants()) > base, 'près de la pile : ses écouteurs de défilement sont posés', 300)
           assert.ok((await vivants()) > base, 'près de la pile : ses écouteurs de défilement sont posés')
           await page.evaluate(() => { (document.querySelector('mjs-pile-page') as any)._shadow.querySelector('section')._mjs_fxOff.pile() })
           assert.equal(await vivants(), base, 'après off() : aucun écouteur de défilement ne reste')
@@ -655,6 +658,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
           await page.waitForTimeout(300)
           const avant = await page.evaluate(() => (window as any).__appels)
           await page.evaluate(() => window.scrollTo(0, 3500))
+          // vérification négative en partie : un seul appel, pas deux, au bout de la pause
           await page.waitForTimeout(300)
           assert.equal((await page.evaluate(() => (window as any).__appels)) - avant, 1, 'un seul appel pour un défilement de la page')
         })
@@ -701,7 +705,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
             ;(window as any).__parti = sec.lastElementChild
             sec.removeChild(sec.lastElementChild)
           })
-          await page.waitForTimeout(150)
+          await attendreEtat(() => page.evaluate(() => !(window as any).__parti.hasAttribute('style')), 'le panneau retiré n\'a plus d\'attribut style', 150)
           assert.equal(await page.evaluate(() => (window as any).__parti.hasAttribute('style')), false, 'le panneau retiré de la pile n\'a plus d\'attribut style')
           await defile(page, 'mjs-pile-reglages', 800)
           await page.evaluate(() => { (document.querySelector('mjs-pile-reglages') as any)._shadow.querySelector('section')._mjs_fxOff.pile() })
@@ -755,7 +759,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
             requestAnimationFrame(() => requestAnimationFrame(() => ok()))
           }))
           assert.deepEqual(await volonte(), ['scale', 'scale', 'scale', 'scale'], 'pendant le mouvement, will-change: scale')
-          await page.waitForTimeout(700)
+          await attendreEtat(async () => JSON.stringify(await volonte()) === JSON.stringify(['auto', 'auto', 'auto', 'auto']), 'le mouvement fini, will-change est rendu', 700)
           assert.deepEqual(await volonte(), ['auto', 'auto', 'auto', 'auto'], 'le mouvement fini, will-change est rendu')
         })
       })
@@ -785,6 +789,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
             setTimeout(() => ok((window as any).__relues), 0)
           }))
           assert.equal(await salve(), 0, 'trente évènements : aucune relecture')
+          // vérification négative : aucune relecture ne doit venir
           await page.waitForTimeout(300)
           assert.equal(await salve(), 0, 'après un temps de calme, la série suivante ne relit pas non plus : rien n\'a changé')
         })
@@ -942,6 +947,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
             setTimeout(() => ok((window as any).__relues), 0)
           }))
           assert.equal(await salve(), 0, 'quarante évènements : aucune relecture')
+          // vérification négative : aucune relecture ne doit venir
           await page.waitForTimeout(300)
           assert.equal(await salve(), 0, 'après un temps de calme, la série suivante ne relit pas non plus')
         })
@@ -1081,6 +1087,7 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
           const descente = await serie(1)
           assert.ok(parseFloat(descente.prof) > 0, `la pile écrit bien ses profondeurs pendant la série (sinon la scène ne prouve rien) : ${descente.prof}`)
           assert.equal(descente.relues, 0, 'trente pas en descendant : aucune relecture')
+          // vérification négative : aucune relecture ne doit venir
           await page.waitForTimeout(300)
           const remontee = await serie(-1)
           assert.equal(remontee.defile, 0, 'la série est revenue en haut')
@@ -1276,6 +1283,6 @@ describe('*pile (navigateurs réels) — des panneaux collants qui se recouvrent
           })
         }
       }
-    })
+    }))
   }
 })

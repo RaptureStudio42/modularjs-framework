@@ -115,17 +115,85 @@ if (µ.Element) {
     return true;
   };
 
+  // composant d'une ligne que le serveur a écrite et que sa liste n'a pas encore reprise (son repère `mjs-r` est encore posé, cf. rowMarks) :
+  // sa balise définie avant le premier rendu de la liste, le navigateur le met à niveau et le connecte sur place, avant que la reprise de sa
+  // ligne ne lui pose ses props et sa liaison à deux sens. Sa connexion attend donc sa ligne : sinon il se réveillerait sans elles, ce qu'il
+  // écrit alors ne remonterait pas et la reprise poserait la valeur du parent par-dessus. En attendant, ce que le parent lui pose rejoint le
+  // registre des props retenues (`µ._mjs_pending`, relu à la connexion), comme pour un composant pas encore mis à niveau ; la reprise de la
+  // ligne le connecte (`rowReady`). Jamais au serveur, qui pose ces repères une fois son rendu fait. L'attente se lit sur sa marque
+  // (`_mjs_srvWait`), par le `_set` du prototype : rien n'est posé puis effacé sur l'élément (une propriété effacée le ferait passer en
+  // dictionnaire pour V8, et chaque lecture de son état en paierait le prix toute sa vie)
+  var connect    = µ.Element.prototype.connectedCallback;
+  var disconnect = µ.Element.prototype.disconnectedCallback;
+  var srvSet     = µ.Element.prototype._set;
+  var held = function(k, v) {
+    if (!µ._mjs_safeKey(k)) return;
+    var m = µ._mjs_pending.get(this);
+    if (!m) µ._mjs_pending.set(this, m = Object.create(null));
+    m[k] = v;
+  };
+  // <precision>
+  µ.Element.prototype._set = function(k, v, code) {
+    return this._mjs_srvWait === 1 ? held.call(this, k, v) : srvSet.call(this, k, v, code);
+  // </precision>
+  // <horloge>
+  // µ.Element.prototype._set = function(k, v) {
+    // return this._mjs_srvWait === 1 ? held.call(this, k, v) : srvSet.call(this, k, v);
+  // </horloge>
+  };
+  µ.Element.prototype.connectedCallback = function() {
+    if (µ._isServer || !this.hasAttribute('mjs-r')) return connect.apply(this, arguments);
+    this._mjs_srvWait = 1;
+  };
+  // jamais connecté : rien à défaire
+  µ.Element.prototype.disconnectedCallback = function() {
+    if (!this._mjs_srvWait) return disconnect.apply(this, arguments);
+  };
+
+  // une prop liée à deux sens et un nom d'attribut, comparés sans tiret ni casse (`my-val`, `myval` et `myVal` sont la prop `myVal`)
+  var sameName = function(a, b) {
+    return a.replace(/-/g, '').toLowerCase() === b.replace(/-/g, '').toLowerCase();
+  };
+
+  // ligne reprise, son état posé sur ses nœuds (`refs`) : ses composants ont reçu leurs props comme ceux d'une ligne neuve. L'attribut
+  // texte que le serveur écrit pour une prop liée à deux sens (sa valeur, pour un composant refait à froid) part quand le parent pose cette
+  // prop par l'état ou par le registre : un composant de ligne neuve n'en porte pas, et relu à chaque reconnexion (déplacement de la ligne)
+  // il rendrait à l'enfant la valeur du serveur, en texte, et ce que l'enfant écrit à son réveil serait pris pour une ancienne valeur. Puis
+  // les composants qui attendaient leur ligne se connectent
+  var rowReady = function(refs) {
+    for (var r in refs) {
+      var x = refs[r];
+      if (!x || x.nodeType !== 1) continue;
+      var b = x._mjs_binds;
+      if (b && b.size && (x instanceof µ.Element || µ._mjs_pending.has(x))) {
+        var as = [...x.attributes];
+        for (var i = 0; i < as.length; i++) {
+          for (var p of b) {
+            if (sameName(p, as[i].name)) {
+              x.removeAttribute(as[i].name);
+              break;
+            }
+          }
+        }
+      }
+      if (x._mjs_srvWait) {
+        x._mjs_srvWait = 0;
+        if (x.isConnected) x.connectedCallback();
+      }
+    }
+  };
+
   // une clé d'identité se fabrique à chaque page : celle du serveur n'est jamais celle du navigateur, la ligne se reprend alors par son
   // rang. C'est le tatouage de l'élément de la ligne (`_mjs_mjsTag` : liste sans `by`, clé `by` vide ; rang d'occurrence `#<n>` compris),
   // ou l'identifiant d'une clé objet sans texte propre (`_mjs_keyOf`, mjs_for.ts : clé `by` objet, gelé ou non, ou fonction ; clé objet
   // d'une Map sans `by`, premier élément de la paire). Reconnue sur l'objet lui-même (lu sans rien poser), jamais sur sa forme : une clé
   // écrite par l'auteur (texte, nombre, objet qui s'écrit lui-même comme une date ; `by` ou clé d'une Map), même `mjs-1`, se compare
-  // telle quelle. Le serveur l'écrit `#`, qu'aucune clé encodée ne donne. `by` : le nom de la clé `by` de la liste
+  // telle quelle (un nombre, que le client garde en nombre, à son texte écrit par le serveur). Le serveur l'écrit `#`, qu'aucune clé encodée ne donne. `by` : le nom de la clé `by` de la liste
   var identKey = function(el, it, k, by) {
     var v = by && it != null ? it[by] : null;
     if (v != null) return Object(v) === v && el._mjs_keyId(v) === k;
     var t = it !== null && typeof it === 'object' ? el._mjs_mjsTag(it, 1) : void 0;
-    return !!t && (k === t || k.slice(0, t.length + 1) === t + '#') || !by && Array.isArray(it) && Object(it[0]) === it[0] && el._mjs_keyId(it[0]) === k;
+    return !!t && (k === t || typeof k === 'string' && k.slice(0, t.length + 1) === t + '#') || !by && Array.isArray(it) && Object(it[0]) === it[0] && el._mjs_keyId(it[0]) === k;
   };
 
   // Premier rendu d'une liste dont le serveur a écrit les lignes (ancre `_mjs_srv`, posée à la reprise) : chaque ligne est REPRISE — ses
@@ -133,24 +201,34 @@ if (µ.Element) {
   // réfs)`) au lieu d'en fabriquer de neufs — quand sa clé est celle de l'élément de même rang, une fois les doublons écartés comme le fait
   // la réconciliation (la première occurrence d'une clé reste, avec son rang dans la collection). Une ligne qui ne correspond pas (autre
   // clé, repère déplacé par le parseur, gabarit qui échoue) part, la réconciliation qui suit la refait avec les éléments restés sans ligne.
-  // Rend les clés reprises, dans l'ordre : la passe d'avant de la réconciliation ; `by` : le nom de la clé `by` de la liste
-  µ.Element.prototype._mjs_adoptRows = function(start, end, cache, keys, items, isArray, keysArr, tplFn, by) {
+  // Rend les clés reprises, dans l'ordre : la passe d'avant de la réconciliation ; `by` : le nom de la clé `by` de la liste ; `upd` : sa
+  // mise à jour de ligne (celle de la passe des liaisons, pour une ligne sans la sienne)
+  µ.Element.prototype._mjs_adoptRows = function(start, end, cache, keys, items, isArray, keysArr, tplFn, by, upd) {
     start._mjs_srv = 0;
     var parent = start.parentNode;
     var heads  = [];
+    // la clé de chaque tête, prise à la lecture de son repère
+    var hkeys  = [];
     var done   = [];
+    // les entrées des lignes reprises, dans l'ordre de leurs clés : la réconciliation les lit là (`_mjs_rows`, cf. `_mjs_forCourt`, mjs_for.ts)
+    var rows   = done._mjs_rows = [];
     var seen   = new Set();
     var last   = start;
     var j      = 0;
     // têtes de ligne ; un bloc imbriqué posé en tête d'une ligne est sauté d'un tenant (ses propres lignes ne sont pas celles-ci)
+    // chaque commentaire lu une fois
     for (var n = start.nextSibling; n && n !== end; n = n.nextSibling) {
-      if (rowHead(n, end)) heads.push(n);
-      else if (n.nodeType === 8 && n.data.slice(0, 8) === 'mjs-q:s-') n = blockEnd(n, n.data, end) || n;
+      var d = n.nodeType === 8 ? n.data : '';
+      if (d.slice(0, 6) === 'mjs-l:') {
+        heads.push(n);
+        hkeys.push(d.slice(6));
+      }
+      else if (d.slice(0, 8) === 'mjs-q:s-') n = blockEnd(n, d, end) || n;
     }
     for (var i = 0; i < heads.length; i++) {
       var h    = heads[i];
       var stop = heads[i + 1] || end;
-      var key  = h.data.slice(6);
+      var key  = hkeys[i];
       // l'élément de même rang, doublons écartés : `at`, son rang dans la collection
       while (j < keys.length && seen.has(keys[j])) j++;
       var at = j++;
@@ -169,7 +247,7 @@ if (µ.Element) {
             var built = tplFn(it, ix, refs);
             // éléments enregistrés pour le routage des événements, sauf si le tplFn l'a fait (`_mjs_reg`)
             if (!refs._mjs_reg) this._mjs_registerRefs(refs);
-            en = {nodes: nodes, __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: it, _mjs_ix: ix};
+            en = {nodes: nodes, __nodes: refs, _mjs_updFn: built.updateFn || null, _mjs_init: built._mjs_init || 0, _mjs_p: built._mjs_p, _mjs_it: it, _mjs_ix: ix, _mjs_br: void 0};
             refs._mjs_en = en;
           }
           catch {
@@ -180,7 +258,16 @@ if (µ.Element) {
       if (en) {
         cache.set(k, en);
         done.push(k);
+        rows.push(en);
         last = en.nodes[en.nodes.length - 1];
+        // l'état de la ligne, quand son gabarit ne l'a pas posé (ligne d'une liste imbriquée), est posé ici, avant que ses composants ne
+        // se connectent ; la passe des liaisons qui suit la saute, comme une ligne neuve dont le gabarit l'a posé
+        if (!en._mjs_init) {
+          if (en._mjs_updFn) en._mjs_updFn(it, en._mjs_ix);
+          else if (upd) upd(en.__nodes, it, en._mjs_ix);
+          en._mjs_init = 1;
+        }
+        rowReady(en.__nodes);
       }
       else {
         while (last.nextSibling && last.nextSibling !== stop) parent.removeChild(last.nextSibling);
@@ -189,9 +276,15 @@ if (µ.Element) {
     return done;
   };
 
-  // Rendu serveur, mode `markers` : les lignes de chaque liste dont les ancres sont reprises (celles de la racine, puis celles des lignes
-  // repérées, de proche en proche) reçoivent leurs repères. Appelé par le rendu serveur juste après ceux de la racine
+  // Rendu serveur, mode `markers`, appelé juste après les repères de la racine : la balise qu'un `<@element>` a mise à la place du repère
+  // `<div mjs-el>` du gabarit (mjs_dynamic.ts) reprend ce repère, par lequel le client la retrouve ; puis les lignes de chaque liste dont les
+  // ancres sont reprises (celles de la racine, puis celles des lignes repérées, de proche en proche) reçoivent leurs repères
   µ._ssrRows = function(el) {
+    // <element-dynamique>
+    // un nœud par ligne quand le `<@element>` est dans un `{for}`
+    var dyn = el._mjs_dynEls, di;
+    for (var dk in dyn) for (di = 0; di < dyn[dk].length; di++) dyn[dk][di].setAttribute('mjs-el', dk);
+    // </element-dynamique>
     var lists = el._mjs_list_anchor;
     if (!lists || !el._mjs_nodes) return;
     var doc      = el.ownerDocument;
@@ -217,6 +310,10 @@ if (µ.Element) {
           var byRef = new Map();
           for (var k in r) {
             var t = r[k];
+            // <module-dynamique>
+            // la réf d'une ligne garde le repère `<div mjs-mod>` du gabarit (sa tête) : le repère va au composant qui l'a remplacé
+            if (t && t._mjs_modLive) t = t._mjs_modLive;
+            // </module-dynamique>
             if (!t || !(t.nodeType === 1 || t.nodeType === 3 && t.parentNode)) continue;
             var ks = byRef.get(t);
             if (ks) ks.push(k);
@@ -269,8 +366,8 @@ if (µ.Element) {
   // par le serveur (attribut `mjs-h` sur les éléments, commentaire `mjs-h:<key>`
   // avant les text nodes, commentaire `mjs-e:<key>` à la place d'un text node vide),
   // les retire, et rebranche les events via
-  // _mjs_registerRefs. Retourne false si rien à adopter, ou si le parseur du navigateur a déplacé
-  // des ancres de bloc ou du texte repris (→ fallback création).
+  // _mjs_registerRefs. Une vue sans nœud repéré n'a aucun marqueur et garde tels quels ses nœuds du serveur. Retourne false si la vue
+  // attendait des marqueurs et n'en trouve aucun, ou si le parseur du navigateur a déplacé des ancres de bloc ou du texte repris (→ fallback création).
   µ.Element.prototype._mjs_hydrateA = function(factory) {
     var root = this._shadow;
     if (!root || !root.querySelectorAll) return false;
@@ -292,17 +389,21 @@ if (µ.Element) {
     var doc = root.ownerDocument || (typeof document !== 'undefined' ? document : null);
     if (doc && doc.createTreeWalker) {
       var walker = doc.createTreeWalker(root, 128 /* NodeFilter.SHOW_COMMENT */, null);
+      // chaque commentaire lu une fois : son texte est gardé à côté de lui
       var comments = [];
+      var datas    = [];
       var c;
       while ((c = walker.nextNode())) {
-        if (/^mjs-[he]:/.test(c.data || '')) {
+        var cd = c.data || '';
+        if (/^mjs-[he]:/.test(cd)) {
           comments.push(c);
+          datas.push(cd);
         }
       }
       for (var j = 0; j < comments.length; j++) {
-        var cm = comments[j];
-        var key = (cm.data || '').slice(6);
-        if (key && cm.data.charAt(4) === 'e') {
+        var cm  = comments[j];
+        var key = datas[j].slice(6);
+        if (key && datas[j].charAt(4) === 'e') {
           refs[key] = µ._tm(cm);
           found++;
           continue;
@@ -333,13 +434,22 @@ if (µ.Element) {
           from._mjs_srv = 1;
           continue;
         }
+        // <attente-gardee>
+        // le contenu servi d'un `{await}` part à sa première lecture (mjs_await.ts), ou reste jusqu'à son arrivée sous `{await.keep}`
+        if (b.startsWith('s-await')) {
+          from._mjs_srv = 2;
+          continue;
+        }
+        // </attente-gardee>
         while (from.nextSibling !== to) {
           from.parentNode.removeChild(from.nextSibling);
         }
       }
     }
-    if (found === 0) {
-      return false; // aucun marqueur → composant non hydratable, fallback création
+    // aucun marqueur : une vue sans nœud repéré (ni nœud réactif, ni événement, ni bloc : `_mjs_evt_ids` vaut 0) n'en reçoit aucun et se reprend telle que le
+    // serveur l'a écrite, ses composants enfants compris ; une vue qui en attendait (serveur construit sur une autre version du composant) est rebâtie
+    if (found === 0 && this.constructor._mjs_evt_ids !== 0) {
+      return false;
     }
     // 4. Les repères du serveur sont-ils ceux que la vue du navigateur attend ? Sinon (serveur et navigateur construits autrement) la vue est rebâtie, sans erreur
     if (!this._mjs_refsMatch(refs, factory)) {
@@ -420,7 +530,21 @@ if (µ.Element) {
           newRefs[keys[i]] = s;
         }
       }
+      // le repère `<div mjs-el>` d'un `<@element>` : le serveur a mis la vraie balise à sa place, sans le repère ; le client garde cette
+      // balise et la change ensuite (mjs_dynamic.ts) ; un nœud par ligne quand le `<@element>` est dans un `{for}`
+      // <element-dynamique>
+      var de = f.nodeType === 1 && f.getAttribute('mjs-el'), dl;
+      if (de) {
+        dl = this._mjs_dynEls || (this._mjs_dynEls = {});
+        (dl[de] || (dl[de] = [])).push(s);
+      }
+      // </element-dynamique>
       if (f.firstChild) {
+        // un composant léger auquel la page glisse un contenu : la vue est rebâtie, comme en `replace` (sans repère entre sa page et ce
+        // contenu, la reprise par position ne sait pas le garder : des balises de composants seules s'aligneraient sur sa page, et le
+        // contenu glissé partirait avec les nœuds en trop). Le nœud du serveur porte `mjs-light` même quand la classe, légère par
+        // `static mjsLight = true`, n'est pas encore définie au moment de la reprise
+        if (f.hasAttribute('mjs-light') || s.hasAttribute('mjs-light') || (customElements.get(f.localName) || {}).mjsLight) return false;
         if (!this._mjs_walkAdopt(s, f, nodeToKeys, newRefs)) return false;
       }
       f = f.nextSibling;

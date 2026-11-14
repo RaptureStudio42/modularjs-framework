@@ -95,6 +95,45 @@ export const RAW_ACCESS_MALFORME_BODY = `µ(?:read|write)(?![a-zA-Z0-9_:])`
 
 export function rawAccessFormeError(): Error { return new Error(t('transpiler.rune-acces-brut-forme')) }
 
+// µrefresh($x) / µrefresh $x → µ._mjs_refresh(_mjsThis, 'x') : le signal d'un changement fait hors de MJS dans ce que tient la
+// variable `$x` du composant (runtime/mjs_element.ts, bloc `<rafraichir>`), qui attend la CLÉ, jamais la valeur. Clé du magasin
+// (`µrefresh($$x)`, groupe 1 = '$', comme `µread $$x`) → µ._mjs_storeRefresh("x") (MU_REFRESH_STORE_OUT) :
+// le signal d'un changement fait hors de MJS dans l'objet que tient la clé. Point
+// optionnel (`µ.refresh`) : un consommateur passé après son sucre universel la reconnaît encore. Tout autre argument (chemin
+// `$x.a` ou `$$x.a`, variable sans `$`, contexte `§§x`, aucun ou plusieurs arguments) est refusé à la construction (MU_REFRESH_RESTE_BODY ;
+// `µ$$x`, déjà réécrit `$x` par la pré-passe 0-bis, par le contrôle de transpiler/index.ts) ;
+// la forme nue s'arrête avant une virgule : `µrefresh $x, $y` passe deux arguments (appel implicite), refusé comme eux ; elle ne
+// s'admet que seule sur son instruction (fin de ligne, `;` ou commentaire après `$x`) : suivie d'un opérateur ou d'une autre
+// expression (`µrefresh $x or $y`), Civet la lirait `µrefresh($x or $y)` — refusée par un message qui conseille les parenthèses
+export const MU_REFRESH_PAREN_BODY = `µ\\.?refresh\\([ \\t]*\\$(\\$?)([a-zA-Z_][a-zA-Z0-9_]*)[ \\t]*\\)`
+export const MU_REFRESH_NUE_BODY   = `µ\\.?refresh[ \\t]+\\$(\\$?)([a-zA-Z_][a-zA-Z0-9_]*)(?![\\w$.\\[(]|[ \\t]*,)`
+export const MU_REFRESH_BODY       = `${MU_REFRESH_NUE_BODY}(?=[ \\t]*(?:$|[\\r\\n;#]|\\/\\/))`
+export const MU_REFRESH_RESTE_BODY = `µ\\.?refresh(?![a-zA-Z0-9_])`
+export const MU_REFRESH_OUT       = (nom: string): string => `µ._mjs_refresh(_mjsThis, '${nom}')`
+export const MU_REFRESH_STORE_OUT = (nom: string): string => `µ._mjs_storeRefresh(${JSON.stringify(nom)})`
+export function refreshFormeError(): Error { return new Error(t('transpiler.rune-refresh-forme')) }
+export function refreshNueError(nom: string): Error { return new Error(t('transpiler.rune-refresh-nue', { nom })) }
+// hors d'un composant (`<script module>`, module importé) : seule une clé du magasin s'y signale (lexer/index.ts)
+export function refreshHorsComposantError(moduleFile: boolean): Error { return new Error(t(moduleFile ? 'transpiler.rune-refresh-fichier-module' : 'transpiler.rune-refresh-script-module')) }
+
+// `$x = $x`, `$$x = $$x`, `µ$$x = µ$$x` : la variable, la clé du magasin ou l'état de module écrit avec sa propre valeur, exactement —
+// refusé à la construction, à sa place, par le lecteur (lexer/index.ts, selfWriteAt) ; les passes d'écriture le refusent de même
+// (generator/transform-reactive.ts, generator/path-tracker.ts) quand une forme leur arrive sans lui. Le message dit d'écrire
+// `µrefresh($x)` ou `µrefresh($$x)`, une nouvelle valeur pour l'état de module ; sur une valeur dérivée (`derived`), de signaler la
+// variable `$` qu'elle lit, comme le refus de `µrefresh($d)`. Marqué (`mjsSelfWrite`, regex de la forme écrite sans sa fin, que chaque
+// situeur pose ; `mjsSelfWriteKind`, `mjsSelfWriteName`) : là où le lecteur ne connaît pas sa place, le transpileur la situe (transpiler/index.ts)
+export const SELF_WRITE_VAR          = 0
+export const SELF_WRITE_STORE        = 1
+export const SELF_WRITE_MODULE_STATE = 2
+const SELF_WRITE_TOKEN = ['$', '$$', 'µ$$']
+
+export function selfWriteError(kind: number, name: string, outsideComponent = false, derived = false): Error {
+  const token   = SELF_WRITE_TOKEN[kind] + name
+  const written = token.replace(/\$/g, '\\$')
+  const message = derived ? t('transpiler.rune-refresh-derivee', { nom: name, forme: `${token} = ${token}` }) : t('transpiler.auto-affectation', { forme: `${token} = ${token}`, nom: name, sorte: kind, horsComposant: outsideComponent ? 'oui' : '' })
+  return Object.assign(new Error(message), { mjsSelfWrite: `(?<![\\w$.])(?:\\(\\s*)*${written}(?:\\s*\\))*\\s*=(?![=>~:])\\s*(?:\\(\\s*)*${written}(?![\\w$])`, mjsSelfWriteKind: kind, mjsSelfWriteName: name, mjsSelfWriteDerived: derived })
+}
+
 // Garde de forme — `§`/`§§` NU (non suivi d'un nom) : ni les pré-passes §/§§ du lexer ni la
 // chaîne SYMBOLES de cleanJs (setter/getter, plus bas dans les deux moteurs) ne consomment un
 // `§`/`§§` sans identifiant collé derrière — il atteint Civet tel quel, caractère hors alphabet
@@ -148,8 +187,19 @@ export const MU_PASCAL_BODY = 'µ([A-Z][a-zA-Z0-9_]*)'
 // transition de vue lue par mjs_router.ts) — même garde de frontière ; `interp`
 // et `interpolate` cohabitent sans ambiguïté grâce au lookahead (un échec sur
 // le préfixe court fait backtracker vers l'alternative longue).
-export const MU_SHORT_GLOBALS = 'url|online|visible|ready|server|socket|smooth|nav|res|t|modal|sound|confirm|ajax|error|config|debug|log|version|pageCache|interp|predict|interpolate|state|viewTransition'
+// `types` : le gestionnaire des valeurs refusées par une règle, `µtypes.onError (e) -> …` (mjs_types.ts) — même garde de frontière.
+export const MU_SHORT_GLOBALS = 'url|online|visible|ready|server|socket|smooth|nav|res|t|modal|sound|confirm|ajax|error|config|debug|log|version|pageCache|interp|predict|interpolate|state|viewTransition|types'
 export const MU_SHORT_BODY    = `µ(${MU_SHORT_GLOBALS})(?![a-zA-Z0-9_])`
+// appel de la traduction dans le code compilé : `µ.t(` et ses formes optionnelles `µ.t?.(`, `µ?.t(`, `µ?.t?.(` (`µt?.(…)`, `µt?(…)` que
+// Civet compile en `?.(`, `µ.t?.(…)`, `µ?.t(…)`) ; un `µ` précédé d'un caractère de nom (`fooµ.t(`) est l'objet d'une appli, jamais la traduction
+export const MU_T_CALL_RE    = /(?<![\p{ID_Continue}$])µ(?:\?\.|\.)t(?:\?\.)?\(/u
+// le même appel quand il n'est pas optionnel lui-même (`µ.t(`, `µ?.t(`) : sans le module de traduction, il lève une erreur, là où
+// `µ.t?.(` et `µ?.t?.(` rendent `undefined` (cf. le refus d'un `runtime` sans 'i18n', features.ts)
+export const MU_T_CALL_STRICT_RE = /(?<![\p{ID_Continue}$])µ(?:\?\.|\.)t\(/u
+// le même appel sans la garde, pour un code masqué où le caractère d'avant peut être un blanc du masque (cf. applyI18nPrefixing)
+export const MU_T_CALL_BODY  = MU_T_CALL_RE.source.slice(MU_T_CALL_RE.source.indexOf('µ'))
+// un code qui suit la langue : un appel de la traduction, ou la lecture de `µlang` (compilée en `µ.store.__mjsLang`)
+export const MU_T_OR_LANG_RE = new RegExp(`${MU_T_CALL_RE.source}|__mjsLang`, 'u')
 
 // µlang → µ.store.__mjsLang : langue courante, PROPRIÉTÉ FRAMEWORK dédiée —
 // PAS dans MU_SHORT_GLOBALS (qui pointe vers `µ.xxx`) : la langue vit dans
@@ -194,14 +244,19 @@ export const MU_HOOKS_BODY = `µ(${MU_HOOKS})(?![a-zA-Z0-9_$])`
 // lexer/index.ts.
 export const MU_DERIVED_BODY = `µderived(?![a-zA-Z0-9_$])`
 
-// µevery 2500, -> — TIMER de composant (tir immédiat au montage puis période,
-// nettoyage au démontage, cf. µ.every dans runtime/mjs_runes.ts). AUCUNE entrée
-// dans MU_SCRIPT_RUNES ci-dessous : le sucre universel `µfoo → µ.foo` fait déjà
-// tout le travail dans un <script> (`µevery 2500, ->` → `µ.every 2500, ->`, appel
-// nu que Civet accepte). Ce corps ne sert donc QU'au garde-fou de cleanJs : la
-// rune se pose au SETUP du composant, jamais dans une interpolation {…} ni un
-// handler — où elle finirait en ReferenceError muet. Même traitement que µderived.
-export const MU_EVERY_BODY = `µevery(?![a-zA-Z0-9_$])`
+// µevery 2500, -> / µafter 2000, -> — MINUTERIES de composant (cf. runtime/mjs_every.ts). AUCUNE entrée dans
+// MU_SCRIPT_RUNES ci-dessous. Dans le <script> d'un composant et dans ses gestionnaires, minuterieDuComposant passe le
+// composant en tête de l'appel (`µevery 2500, ->` → `µ.every _mjsThis, 2500, ->`, `µafter(300)` → `µ.after(_mjsThis, 300)`) :
+// `_mjsThis`, posé à l'init de chaque instance et vu par fermeture, rattache la minuterie à SON composant quel que soit le
+// moment de l'appel (gestionnaire, méthode, µeffect, après un `await`). Ailleurs (module, magasin), le sucre universel
+// `µfoo → µ.foo` suffit : le composant est celui qui s'exécute à l'appel. Ce corps sert aussi au garde-fou de cleanJs :
+// dans une interpolation {…}, recalculée à chaque rendu, la rune poserait une minuterie par rendu — refusée.
+export const MU_EVERY_BODY = `µ(?:every|after)(?![a-zA-Z0-9_$])`
+const RE_MU_MINUTERIE_PAREN_G = /(?<![\w.µ$])µ(every|after)\s*\(/g
+const RE_MU_MINUTERIE_NUE_G   = /(?<![\w.µ$])µ(every|after)(?=[ \t]+[^\s=,;)\]}])/g
+export function minuterieDuComposant(code: string): string {
+  return code.replace(RE_MU_MINUTERIE_PAREN_G, 'µ.$1(_mjsThis, ').replace(RE_MU_MINUTERIE_NUE_G, 'µ.$1 _mjsThis,')
+}
 
 // runes à COMPILATION LEXER (µread/µwrite → _state brut, hooks → _mjs_hook,
 // µlang → µ.store.__mjsLang) : le « sucre universel » µfoo → µ.foo
@@ -218,7 +273,7 @@ export const MU_EVERY_BODY = `µevery(?![a-zA-Z0-9_$])`
 export const MU_SCRIPT_RUNES = `read|write|lang|theme|layout|derived|import|toggle|${MU_HOOKS}`
 
 // µimport('chemin.js') / mjsimport('chemin.js') → chargement PARESSEUX d'un
-// module (ES copié tel quel, ou module `.civet`/`.coffee` que MJS compile),
+// module (bibliothèque `.js` copiée telle quelle, ou bibliothèque `.civet`/`.coffee` compilée, ou module `.civet.mjs`/`.coffee.mjs`/`.js.mjs` que MJS compile),
 // chemin LITTÉRAL exigé (empreinte résolue AU BUILD par µasset,
 // cf. bundler/index.ts preResolveAssets — un argument calculé est invisible
 // à cette pré-résolution côté master, pas de disque dans les workers ; seule
@@ -228,14 +283,14 @@ export const MU_SCRIPT_RUNES = `read|write|lang|theme|layout|derived|import|togg
 // identifiants utilisateur intacts, jamais cette rune.
 export const MU_IMPORT_BODY = `(?:µ|mjs)import(?![a-zA-Z0-9_])`
 
-// extensions qu'un µimport charge : un module ES copié tel quel (.js), ou un module que MJS
-// compile comme `@import` (.civet, .coffee). Un composant .mjs a sa propre voie (sa balise) : refusé
-const MU_IMPORT_EXTENSIONS = /\.(?:js|civet|coffee)$/
+// extensions qu'un µimport charge : une bibliothèque (.js copiée telle quelle, .civet / .coffee compilée par son seul langage), ou un
+// module que MJS compile comme `@import` (.civet.mjs, .coffee.mjs, .js.mjs). Un composant .mjs a sa propre voie (sa balise) : refusé
+const MU_IMPORT_EXTENSIONS = /\.(?:js|civet|coffee)(?:\.mjs)?$/
 
 // refus d'une cible de µimport qui n'est pas un module chargeable — null si la cible convient
 function muImportCibleRefusee(chemin: string, sectionLabel: string): Error | null {
   if (MU_IMPORT_EXTENSIONS.test(chemin)) return null
-  if (chemin.endsWith('.mjs')) return new Error(t('transpiler.rune-import-composant', { section: sectionLabel, chemin }))
+  if (chemin.endsWith('.mjs') && !chemin.endsWith('.js.mjs')) return new Error(t('transpiler.rune-import-composant', { section: sectionLabel, chemin }))
   return new Error(t('transpiler.rune-import-extension', { section: sectionLabel, chemin }))
 }
 
@@ -259,7 +314,7 @@ const MU_IMPORT_CALL_RE = new RegExp(`(?<![\\w.µ])${MU_IMPORT_BODY}\\s*\\(`, 'y
 // MENTIONNE µimport reste, lui, intact — et reconnaît en plus le cas SPÉCIAL
 // où une chaîne suit IMMÉDIATEMENT l'ancre `µimport(`/`mjsimport(` : celle-là
 // seule est lue comme argument, jamais sautée. Même discipline partout.
-export function rewriteMuImport(src: string, sectionLabel: string): string {
+export function rewriteMuImport(src: string, sectionLabel: string, dialecte = false): string {
   let out = ''
   let i = 0
   const n = src.length
@@ -291,7 +346,7 @@ export function rewriteMuImport(src: string, sectionLabel: string): string {
     }
     // commentaires, chaîne simple '…' et littéral regex /…/ : intacts (jamais
     // vus comme un appel réel) — source UNIQUE skipInertFrom
-    const inert = skipInertFrom(src, i)
+    const inert = skipInertFrom(src, i, true, dialecte)
     if (inert >= 0) { i = inert; continue }
     // ancre µimport(/mjsimport( — hors chaîne/commentaire/regex à ce point du scan
     MU_IMPORT_CALL_RE.lastIndex = i
@@ -439,6 +494,19 @@ export const vaultRemovedError = (name: string) => new Error(t('sigils.vault-ret
 // `$$x` sur un singleton importé : il se consomme en `µ$$x`, pas en `$$x`
 export const importedSingletonError = (name: string) => new Error(t('sigils.singleton-importe', { nom: name }))
 
+// `$$[k]` : une clé du magasin calculée n'est pas une syntaxe — `$$` se suit d'un nom écrit dans le code, et `$$` seul n'existe pas à
+// l'exécution. `debut` : l'indice qui suit le crochet ouvrant dans `code` ; le message cite le texte entre les crochets (crochets
+// imbriqués comptés). Marquée (`mjsCleCalculee`) : refusée dans le gabarit, où le lecteur ne connaît pas sa ligne, le transpileur la situe
+export const storeComputedKeyError = (code: string, debut: number) => {
+  let n = 1, k = debut
+  while (k < code.length && n > 0) {
+    if (code[k] === '[') n++
+    else if (code[k] === ']') n--
+    k++
+  }
+  return Object.assign(new Error(t('transpiler.magasin-cle-calculee', { cle: code.slice(debut, n > 0 ? k : k - 1).trim() })), { mjsCleCalculee: true })
+}
+
 // ============================================================================
 // µtoggle — bascule / cycle d'état (rune de COMPILATION)
 // ============================================================================
@@ -504,7 +572,7 @@ const TOGGLE_LITERAL_RE = /^(?:'(?:\\.|[^\\'])*'|"(?:\\.|[^\\"])*"|-?\d+(?:\.\d+
 // `}` fermant la fenêtre et corrompait la sortie (accolade dupliquée, panne silencieuse).
 // Les fenêtres appellent avec `diese=false` ; rewriteMuImport/rewriteMuToggle/splitToggleArgs
 // gardent `diese=true` (comportement inchangé, valeur par défaut).
-function skipInertFrom(src: string, i: number, diese = true): number {
+function skipInertFrom(src: string, i: number, diese = true, dialecte = false): number {
   const n  = src.length
   const ch = src[i]
   if (ch === '/' && src[i + 1] === '/') { const e = src.indexOf('\n', i); return e < 0 ? n : e }
@@ -513,7 +581,8 @@ function skipInertFrom(src: string, i: number, diese = true): number {
   // avec le lexer (scanInertAt) et le générateur (mapCodeSegments), cf. ouvreUneRegex
   // /scanRegexLiteral plus bas — une regex qui MENTIONNE µtoggle/µimport reste intacte
   if (ch === '/') {
-    if (ouvreUneRegex(src.slice(0, i))) { const e = scanRegexLiteral(src, i); if (e >= 0) return e }
+    // `dialecte` : code Civet ou CoffeeScript, où une regex se passe aussi sans parenthèses (`s.replace /"/g, 'R'`, regexEnArgument)
+    if (ouvreUneRegex(src.slice(0, i)) || (dialecte && regexEnArgument(src, i))) { const e = scanRegexLiteral(src, i); if (e >= 0) return e }
     return -1
   }
   if (diese && ch === '#' && src[i + 1] !== undefined && !/[a-zA-Z_!]/.test(src[i + 1])) { const e = src.indexOf('\n', i); return e < 0 ? n : e }
@@ -877,6 +946,26 @@ export function ouvreUneRegex(gauche: string): boolean {
   if (net.endsWith('<')) return false
   if (net.endsWith(')')) return apresCondition(gauche, j)
   return REGEX_APRES_SIGNE.test(net) || REGEX_APRES_MOT_CLE.test(net)
+}
+
+// noms qui sont des valeurs : la barre qui les suit divise toujours, comme après un nombre
+const NOM_VALEUR = /^(?:true|false|null|undefined|NaN|Infinity|yes|no|on|off)$/
+
+// regexEnArgument — appel implicite de CoffeeScript et de Civet, règle de leurs lecteurs : après un nom suivi d'une
+// espace, une barre suivie d'autre chose qu'une espace (ni d'un `=` puis d'une espace) ouvre une expression régulière
+// passée en argument (`s.split /@/`, `s.replace /'/g, 'X'`) ; `a / b`, `a /= 2`, `a/b` et une barre après une
+// parenthèse, un crochet ou un nombre divisent. `i` pointe sur la barre, que l'appelant n'a pas jugée par
+// ouvreUneRegex ; le littéral doit encore se refermer sur sa ligne (scanRegexLiteral), sinon c'est une division.
+// Jamais pour JavaScript ni TypeScript, où `a /2 + b /4` divise
+export function regexEnArgument(src: string, i: number): boolean {
+  const suite = src[i + 1]
+  if (suite === undefined || /\s/.test(suite) || (suite === '=' && /\s/.test(src[i + 2] ?? ' '))) return false
+  let j = i
+  while (j > 0 && (src[j - 1] === ' ' || src[j - 1] === '\t')) j--
+  let k = j
+  while (k > 0 && /[\w$]/.test(src[k - 1])) k--
+  if (j === i || k === j || /\d/.test(src[k])) return false
+  return !NOM_VALEUR.test(src.slice(k, j))
 }
 
 // scanRegexLiteral — variante STRING de `avaleRegex` (parser/index.ts, Scanner) : MÊME

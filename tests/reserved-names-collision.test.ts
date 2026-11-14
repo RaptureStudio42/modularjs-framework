@@ -235,7 +235,7 @@ describe('cas exploratoire — variable SCRIPT top-level nommée `node`, lue dan
       '<script lang="coffee">',
       'node = "green"',
       '</script>',
-      '<p @style.color={node}>hello</p>',
+      '<p :style.color={node}>hello</p>',
     ].join('\n')
     const { el } = await mountComponent('probenodetop', src)
     const p = el._shadow.querySelector('p')

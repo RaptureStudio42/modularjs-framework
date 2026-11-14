@@ -30,7 +30,7 @@ function compter(liste: any[], fn: () => void) {
   return { lectures, recherches }
 }
 
-const LIGNES = '{ id: int, t: string }[]'
+const LIGNES = 'Message[]'
 
 function lignes(n: number, mode?: 'warn' | 'error') {
   const µ  = makeMu(mode)
@@ -69,7 +69,7 @@ describe('types — une écriture valide ne calcule aucun chemin', () => {
 
   it('une méthode valide sur une liste imbriquée dont la ligne a bougé ne cherche aucune position', () => {
     const µ  = makeMu('warn')
-    const el = composant({ board: '{ rows: { cells: { v: int }[] }[] }' })
+    const el = composant({ board: 'Plateau' })
     const board: any = { rows: Array.from({ length: 500 }, (_, r) => ({ cells: [{ v: r }, { v: r + 1 }] })) }
     µ._mjs_tset(el, 'board', board)
     const reg = el._mjs_treg
@@ -87,7 +87,7 @@ describe('types — une écriture valide ne calcule aucun chemin', () => {
 
   it('une liste revérifiée en entier (méthode hors des sept connues) ne cherche aucune position non plus', () => {
     const µ  = makeMu('warn')
-    const el = composant({ board: '{ rows: { cells: { v: int }[] }[] }' })
+    const el = composant({ board: 'Plateau' })
     const board: any = { rows: Array.from({ length: 300 }, (_, r) => ({ cells: [{ v: r }, { v: r + 1 }] })) }
     µ._mjs_tset(el, 'board', board)
     const reg = el._mjs_treg
@@ -149,7 +149,7 @@ describe('types — un message cherche la position d’un élément seulement s�
 
   it('un refus de méthode (ajout refusé, maximum dépassé) cherche la position de la liste elle-même seulement si elle a bougé', () => {
     const µ  = makeMu('warn')
-    const el = composant({ board: '{ rows: { cells: { v: int }[] 0..3 }[] }' })
+    const el = composant({ board: 'Plateau3' })
     const board: any = { rows: Array.from({ length: 200 }, (_, r) => ({ cells: [{ v: r }, { v: r + 1 }] })) }
     µ._mjs_tset(el, 'board', board)
     const reg = el._mjs_treg

@@ -1034,10 +1034,19 @@
       "name": "meta.tag.custom.modularjs",
       "patterns": [
         {
+          "include": "#old-word-attribute"
+        },
+        {
           "include": "#viewtransition-attribute"
         },
         {
           "include": "#transition-attribute"
+        },
+        {
+          "include": "#directive-attribute"
+        },
+        {
+          "include": "#unknown-word-attribute"
         },
         {
           "include": "#effect-attribute"
@@ -1174,6 +1183,15 @@
       "contentName": "meta.embedded.expression.coffee",
       "patterns": [
         {
+          "include": "#old-word-attribute"
+        },
+        {
+          "include": "#directive-attribute"
+        },
+        {
+          "include": "#unknown-word-attribute"
+        },
+        {
           "include": "#effect-attribute"
         },
         {
@@ -1208,8 +1226,41 @@
           "name": "keyword.operator.modularjs"
         },
         {
-          "match": "\\b(if|elsif|else|end|for|in|by|await|success|error|key|const|snippet)\\b",
-          "name": "keyword.control.modularjs"
+          "begin": "\\G\\s*(for)(?=\\s)",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.modularjs"
+            }
+          },
+          "end": "(?=\\})",
+          "patterns": [
+            {
+              "match": "\\b(in|by)\\b",
+              "name": "keyword.control.modularjs"
+            },
+            {
+              "include": "#modular-vars"
+            },
+            {
+              "include": "source.coffee"
+            }
+          ]
+        },
+        {
+          "match": "\\G\\s*(if|elsif|await(?:\\.keep)?|key|const|snippet|success|error)(?=\\s+[^\\s}])",
+          "captures": {
+            "1": {
+              "name": "keyword.control.modularjs"
+            }
+          }
+        },
+        {
+          "match": "\\G\\s*(else|end|success|error)\\s*(?=\\})",
+          "captures": {
+            "1": {
+              "name": "keyword.control.modularjs"
+            }
+          }
         },
         {
           "include": "#modular-vars"
@@ -1780,27 +1831,27 @@
       "patterns": [
         {
           "comment": "suffixe `:direction` dans le nom — refusé aux 4 positions, y compris sur un nom de MORPH (un `:` n'a pas cours dans un custom-ident CSS)",
-          "match": "(@)(viewTransition)(\\.[a-zA-Z][a-zA-Z0-9_-]*:[a-zA-Z0-9_-]*)",
+          "match": "(:)(viewTransition)(\\.[a-zA-Z][a-zA-Z0-9_-]*:[a-zA-Z0-9_-]*)",
           "name": "invalid.illegal.viewtransition.modularjs"
         },
         {
           "comment": "etiquette conditionnelle `@viewTransition{$f}=\"hero\"` — refusee aux 4 positions",
-          "match": "(@)(viewTransition|vt)(\\{[^}]*\\})(=)(['\"][^'\"]*['\"])",
+          "match": "(:)(viewTransition|vt)(\\{[^}]*\\})(=)(['\"][^'\"]*['\"])",
           "name": "invalid.illegal.viewtransition.modularjs"
         },
         {
           "comment": "etiquette calculee `@viewTransition={expr}` — refusee aux 4 positions (l'alias @vt, lui, ne l'est que sur <style> : hors rouge)",
-          "match": "(@)(viewTransition)(=)(\\{[^}]*\\})",
+          "match": "(:)(viewTransition)(=)(\\{[^}]*\\})",
           "name": "invalid.illegal.viewtransition.modularjs"
         },
         {
           "comment": "ancienne valeur statique `@viewTransition=\"cube\"` — refusee aux 4 positions, alias @vt compris",
-          "match": "(@)(viewTransition|vt)(=)(['\"][^'\"]*['\"])",
+          "match": "(:)(viewTransition|vt)(=)(['\"][^'\"]*['\"])",
           "name": "invalid.illegal.viewtransition.modularjs"
         },
         {
           "comment": "forme canonique avec options : `@viewTransition.cube={ dir: left }` — le corps reste du Civet",
-          "begin": "(@)(viewTransition|vt)(\\.[a-zA-Z][a-zA-Z0-9:_-]*)(=)(\\{)",
+          "begin": "(:)(viewTransition|vt)(\\.[a-zA-Z][a-zA-Z0-9:_-]*)(=)(\\{)",
           "beginCaptures": {
             "1": {
               "name": "punctuation.definition.symbol.modularjs"
@@ -1836,7 +1887,7 @@
         },
         {
           "comment": "forme pointee sans options : `@viewTransition.fade`, `@viewTransition.hero` (morph)",
-          "match": "(@)(viewTransition|vt)(\\.[a-zA-Z][a-zA-Z0-9:_-]*)",
+          "match": "(:)(viewTransition|vt)(\\.[a-zA-Z][a-zA-Z0-9:_-]*)",
           "captures": {
             "1": {
               "name": "punctuation.definition.symbol.modularjs"
@@ -1851,7 +1902,7 @@
         },
         {
           "comment": "forme nue : `<style @viewTransition>` — la garde de fin evite d'attraper @vtx ou @viewTransitionBidule",
-          "match": "(@)(viewTransition|vt)(?![a-zA-Z0-9_.:-])",
+          "match": "(:)(viewTransition|vt)(?![a-zA-Z0-9_.:-])",
           "captures": {
             "1": {
               "name": "punctuation.definition.symbol.modularjs"
@@ -2185,14 +2236,14 @@
       ]
     },
     "transition-attribute": {
-      "comment": "transition, un effet déclenché par le cycle de vie : `@in=*fly(…)`, `@out=*fade`, `@transition.global=*slide(x)` — la directive, puis l'effet peint comme un effet posé ; en rouge, l'écriture que le build refuse (`@in.fly`, le nom de l'effet après un point)",
+      "comment": "transition, un effet déclenché par le cycle de vie : `:in=*fly(…)`, `:out=*fade`, `:transition.global=*slide(x)` — la directive, puis l'effet peint comme un effet posé ; en rouge, l'écriture que le build refuse (`@in.fly`, le nom de l'effet après un point)",
       "patterns": [
         {
-          "match": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(\\.(?!global\\b|shared\\b)[A-Za-z_]\\w*)",
+          "match": "(:)(in|out|transition)((?:\\.(?:global|shared))*)(\\.(?!global\\b|shared\\b)[A-Za-z_]\\w*)",
           "name": "invalid.illegal.transition.modularjs"
         },
         {
-          "begin": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)(\\()",
+          "begin": "(:)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)(\\()",
           "beginCaptures": {
             "1": {
               "name": "punctuation.definition.symbol.modularjs"
@@ -2230,7 +2281,7 @@
           ]
         },
         {
-          "match": "(@)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)",
+          "match": "(:)(in|out|transition)((?:\\.(?:global|shared))*)(=)(\\*)([A-Za-z][\\w-]*(?:\\.[a-z][a-z0-9_]*)?)",
           "captures": {
             "1": {
               "name": "punctuation.definition.symbol.modularjs"
@@ -2358,6 +2409,118 @@
           ]
         }
       ]
+    },
+    "directive-attribute": {
+      "comment": "mot de MJS `:mot` ou `:mot=valeur` (src/parser/mjs-words.ts, la table des mots) : un effet s'écrit `*nom` (#effect-attribute), un événement `@nom` (meta.attribute.event). La liste des mots suit la table, un test la compare",
+      "patterns": [
+        {
+          "begin": "(?<=\\s|^)(:)(childtransition|allowfullscreen|pageTransition|viewTransition|formnovalidate|playsinline|transition|novalidate|offscreen|permanent|autofocus|itemscope|lightDom|callback|disabled|readonly|required|selected|multiple|autoplay|controls|nomodule|reversed|preload|confirm|checked|default|display|attach|method|hidden|group|style|class|noUJS|flash|title|value|muted|async|defer|inert|ismap|html|text|this|flip|wake|size|emit|open|loop|out|css|in|vt)((?:\\.[\\w-]+)*|\\{[^}]*\\})(=)(\\{)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.directive.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            },
+            "5": {
+              "name": "punctuation.section.embedded.begin.modularjs"
+            }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.section.embedded.end.modularjs"
+            }
+          },
+          "name": "meta.attribute.directive.modularjs",
+          "contentName": "source.coffee",
+          "patterns": [
+            {
+              "include": "source.coffee"
+            }
+          ]
+        },
+        {
+          "begin": "(?<=\\s|^)(:)(childtransition|allowfullscreen|pageTransition|viewTransition|formnovalidate|playsinline|transition|novalidate|offscreen|permanent|autofocus|itemscope|lightDom|callback|disabled|readonly|required|selected|multiple|autoplay|controls|nomodule|reversed|preload|confirm|checked|default|display|attach|method|hidden|group|style|class|noUJS|flash|title|value|muted|async|defer|inert|ismap|html|text|this|flip|wake|size|emit|open|loop|out|css|in|vt)((?:\\.[\\w-]+)*|\\{[^}]*\\})(=)(['\"])",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.directive.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            },
+            "5": {
+              "name": "punctuation.definition.string.begin.html"
+            }
+          },
+          "end": "(\\5)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.html"
+            }
+          },
+          "name": "meta.attribute.directive.modularjs",
+          "contentName": "string.quoted.modularjs"
+        },
+        {
+          "match": "(?<=\\s|^)(:)(childtransition|allowfullscreen|pageTransition|viewTransition|formnovalidate|playsinline|transition|novalidate|offscreen|permanent|autofocus|itemscope|lightDom|callback|disabled|readonly|required|selected|multiple|autoplay|controls|nomodule|reversed|preload|confirm|checked|default|display|attach|method|hidden|group|style|class|noUJS|flash|title|value|muted|async|defer|inert|ismap|html|text|this|flip|wake|size|emit|open|loop|out|css|in|vt)((?:\\.[\\w-]+)*|\\{[^}]*\\})(=)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.directive.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            }
+          },
+          "name": "meta.attribute.directive.modularjs"
+        },
+        {
+          "match": "(?<=\\s|^)(:)(childtransition|allowfullscreen|pageTransition|viewTransition|formnovalidate|playsinline|transition|novalidate|offscreen|permanent|autofocus|itemscope|lightDom|callback|disabled|readonly|required|selected|multiple|autoplay|controls|nomodule|reversed|preload|confirm|checked|default|display|attach|method|hidden|group|style|class|noUJS|flash|title|value|muted|async|defer|inert|ismap|html|text|this|flip|wake|size|emit|open|loop|out|css|in|vt)((?:\\.[\\w-]+)*|\\{[^}]*\\})(?![\\w=-])",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.directive.modularjs"
+            },
+            "2": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "3": {
+              "name": "entity.other.attribute-name.directive.modularjs"
+            },
+            "4": {
+              "name": "punctuation.separator.key-value.html"
+            }
+          },
+          "name": "meta.attribute.directive.modularjs"
+        }
+      ]
+    },
+    "old-word-attribute": {
+      "comment": "ancien mot de MJS écrit `@mot` sur une balise ou sur <style> : refusé à la construction (le message donne l'écriture `:mot`)",
+      "match": "(?<=\\s|^)(@)(?:allowfullscreen|childtransition|formnovalidate|pageTransition|viewTransition|playsinline|novalidate|transition|autofocus|itemscope|offscreen|permanent|autoplay|callback|controls|disabled|lightDom|multiple|nomodule|readonly|required|reversed|selected|checked|confirm|default|display|preload|attach|hidden|method|no-ujs|async|class|defer|flash|group|inert|ismap|muted|noUJS|noujs|style|title|value|emit|flip|html|loop|open|size|text|this|wake|css|out|in|vt)(?![\\w-])",
+      "name": "invalid.illegal.attribute.old-word.modularjs"
+    },
+    "unknown-word-attribute": {
+      "comment": "`:nom` qui n'est pas un mot de MJS (habitude de Vue `:titre=\"x\"`) : refusé à la construction, le message propose la liaison `titre={x}` ; un signe au milieu d'un nom (`xlink:href`) n'en est pas un",
+      "match": "(?<=\\s|^)(:)(?!(?:childtransition|allowfullscreen|pageTransition|viewTransition|formnovalidate|playsinline|transition|novalidate|offscreen|permanent|autofocus|itemscope|lightDom|callback|disabled|readonly|required|selected|multiple|autoplay|controls|nomodule|reversed|preload|confirm|checked|default|display|attach|method|hidden|group|style|class|noUJS|flash|title|value|muted|async|defer|inert|ismap|html|text|this|flip|wake|size|emit|open|loop|out|css|in|vt)(?![\\w-]))[A-Za-z][\\w-]*",
+      "name": "invalid.illegal.attribute.unknown-word.modularjs"
     }
   }
 }

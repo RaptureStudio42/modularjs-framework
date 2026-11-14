@@ -310,7 +310,7 @@ var _DI_CSS = `
       var html = rendreEntrees(valeur, kind, [], [valeur], 0, filtrerRacine, triRacine, undefined);
       corps = '<div class="di-arbre">' + (html || '<p class="di-vide">' + µ._esc(videTexte) + '</p>') + '</div>';
     }
-    hote.innerHTML = '<style>' + _DI_CSS + '</style>' + (titre ? '<div class="di-titre">' + µ._esc(titre) + '</div>' : '') + corps;
+    hote.innerHTML = µ._mjs_th('<style>' + _DI_CSS + '</style>' + (titre ? '<div class="di-titre">' + µ._esc(titre) + '</div>' : '') + corps);
     cabler();
   }
 

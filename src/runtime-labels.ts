@@ -35,7 +35,7 @@
 // erreurs levées), lus par `µ._mjs_msg(clé, variables, secours)` (mjs_init.ts) — `{nom}` = variable,
 // préfixe [ModularJS] posé par l'assistant. Rangés par fichier d'origine. Groupe `dev` : même
 // mécanique pour les fichiers qui ne partent que dans un build de développement (mjs_hotcss,
-// mjs_devpanel, mjs_devinspect) ; `runtimeLabelsFor(true)` le retire du manifeste d'un build prod,
+// mjs_hotswap, mjs_devpanel, mjs_devinspect) ; `runtimeLabelsFor(true)` le retire du manifeste d'un build prod,
 // avec `err`, qui part alors dans un fichier par langue (`runtimeMessagesFor`).
 export const RUNTIME_LABELS = {
   fr: {
@@ -45,20 +45,21 @@ export const RUNTIME_LABELS = {
     ujs:    { sendFailed: 'Échec de l\'envoi — le serveur n\'a pas répondu.' },
     core:   { carouselPrev: 'Précédent', carouselNext: 'Suivant', codeCopy: 'Copier le code', codeCopied: 'Copié !', selectPlaceholder: 'Choisir…', selectSearch: 'Rechercher…', selectEmpty: 'Aucun résultat', selectOther: 'Autre…', selectOtherPlaceholder: 'Précisez', selectOtherHint: 'Entrée pour valider · Échap pour revenir', selectOtherOk: 'Valider', selectOtherSep: '\u00a0: ', numberLabel: 'Nombre', numberLess: 'Moins', numberMore: 'Plus', numberBigLess: 'Diminuer de {n}', numberBigMore: 'Augmenter de {n}', gaugeLabel: 'Nombre', knobLabel: 'Valeur', progressLabel: 'Progression', colorLabel: 'Couleur', menuLabel: 'Menu', clockHours: 'Heures', clockMinutes: 'Minutes', clockSeconds: 'Secondes', editorLabel: 'Éditeur de texte', editorPlaceholder: 'Écrivez ici…', toolbarLabel: 'Mise en forme', toolH2: 'Titre', toolH3: 'Sous-titre', toolQuote: 'Citation', toolBold: 'Gras', toolItalic: 'Italique', toolUnderline: 'Souligné', toolStrike: 'Barré', toolUl: 'Liste à puces', toolOl: 'Liste numérotée', toolCheck: 'Liste à cocher', toolLink: 'Lien', toolUndo: 'Annuler', toolRedo: 'Rétablir', toolClear: 'Effacer la mise en forme', toolColor: 'Couleur du texte', toolbarShift: 'Maj', linkLabel: 'Adresse du lien', linkApply: 'Appliquer', linkRemove: 'Retirer le lien', linkCancel: 'Annuler', linkDone: 'Lien enregistré', colorsLabel: 'Couleur du texte', colorNone: 'Aucune couleur', colorGray: 'Gris', colorBrown: 'Marron', colorOrange: 'Orange', colorYellow: 'Jaune', colorGreen: 'Vert', colorBlue: 'Bleu', colorPurple: 'Violet', colorPink: 'Rose', colorRed: 'Rouge', boxChecked: 'Case cochée', boxUnchecked: 'Case non cochée', checked: 'Case cochée', unchecked: 'Case décochée', chartLabel: 'Graphique', chartEmpty: 'Aucune valeur', chartHint: 'Flèches pour parcourir les points, Entrée pour choisir', chartGrouped: 'Moyenne de {n} valeurs', chartWeekOf: 'Semaine du {date}', chartOwnScale: 'Une échelle par série\u00a0: leurs unités diffèrent', chartMean: 'Moyenne', chartMedian: 'Médiane', chartQ1: 'Premier quartile', chartQ3: 'Troisième quartile', chartTrend: 'Tendance', chartNext: 'le cercle\u00a0: le point suivant estimé', chartDate: 'Date', chartTime: 'Date et heure', chartNumber: 'Valeur', chartCategory: 'Libellé', chartPeriod: 'Période', chartTotal: 'Total', chartOthers: 'Autres', chartRange: 'De {from} à {to}', chartCount: 'Valeurs', chartBin: 'Classe', chartSeries: 'Série', chartShare: 'Part', chartPieNone: 'L\'anneau ne convient pas à ces données\u00a0: il compare plusieurs séries de même unité, ou des libellés', chartBrowse: 'Flèches pour parcourir les valeurs', chartChoose: 'Flèches pour parcourir les valeurs, Entrée pour choisir', chartLess: 'Moins', chartMore: 'Plus', chartDayHour: 'Jour et heure', chartTools: 'Outils du graphique', chartLegend: 'Séries affichées', chartShape: 'Forme', chartShapeOf: 'Forme\u00a0: {shape}', chartLine: 'Courbe', chartArea: 'Aire', chartDots: 'Points', chartBar: 'Barres', chartStack: 'Barres empilées', chartHistogram: 'Histogramme', chartPie: 'Anneau', chartHeatmap: 'Carte d\'intensité', chartRadar: 'Radar', chartCalendar: 'Calendrier', chartStats: 'Statistiques', chartStep: 'Pas de temps', chartAuto: 'Automatique', chartDay: 'Jour', chartWeek: 'Semaine', chartMonth: 'Mois', chartYear: 'Année' },
     fx:     { range: 'de {a} à {b}', atLeast: 'au moins {a}', atMost: 'au plus {b}', chars: 'de {a} à {b} caractères', charsMin: 'au moins {a} caractères', charsMax: 'au plus {b} caractères', or: 'ou', except: 'sauf', invalid: 'valeur refusée', offline: 'Hors ligne', loading: 'Chargement', pending1: '1 changement partira au retour du réseau', pendingN: '{n} changements partiront au retour du réseau', spoiler: 'Texte masqué, activer pour l\'afficher', flip: 'Retourner la carte' },
+    load:   { notJson: 'µload : la réponse de {url} n\'est pas du JSON.' },
     err: {
       // mjs_vt_presets.ts
-      vtMalformed: '@viewTransition : valeur malformée \'{name}\' — repli sur \'{namePart}\'.',
-      vtDirName: '@viewTransition : la direction ne s\'écrit plus dans le nom (\'{namePart}\') — repli sur \'{base}\', posez \'dir\'/\'direction\' en option.',
-      vtOptMalformed: '@viewTransition : option malformée \'{pair}\' dans \'{name}\' — ignorée.',
-      vtUnknownKey: '@viewTransition : clé inconnue \'{rawKey}\' dans \'{name}\' — ignorée (clés valides : {keys}).',
-      vtDupKey: '@viewTransition : clé \'{key}\' en double dans \'{name}\' (\'{key}\'/\'{short}\' désignent la même option) — 2e occurrence ignorée.',
-      vtBadDir: '@viewTransition : direction invalide \'{val}\' dans \'{name}\' — ignorée.',
-      vtBadDur: '@viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.',
-      vtBadPrio: '@viewTransition : priority invalide \'{val}\' dans \'{name}\' — ignorée.',
-      vtUnknownPreset: '@viewTransition : préréglage inconnu \'{name}\' — valeurs valides : {presets}, {curtains} (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).',
+      vtMalformed: ':viewTransition : valeur malformée \'{name}\' — repli sur \'{namePart}\'.',
+      vtDirName: ':viewTransition : la direction ne s\'écrit plus dans le nom (\'{namePart}\') — repli sur \'{base}\', posez \'dir\'/\'direction\' en option.',
+      vtOptMalformed: ':viewTransition : option malformée \'{pair}\' dans \'{name}\' — ignorée.',
+      vtUnknownKey: ':viewTransition : clé inconnue \'{rawKey}\' dans \'{name}\' — ignorée (clés valides : {keys}).',
+      vtDupKey: ':viewTransition : clé \'{key}\' en double dans \'{name}\' (\'{key}\'/\'{short}\' désignent la même option) — 2e occurrence ignorée.',
+      vtBadDir: ':viewTransition : direction invalide \'{val}\' dans \'{name}\' — ignorée.',
+      vtBadDur: ':viewTransition : duration invalide \'{val}\' dans \'{name}\' — un nombre nu en millisecondes (comme setTimeout), ex. dur: 600 — ignorée.',
+      vtBadPrio: ':viewTransition : priority invalide \'{val}\' dans \'{name}\' — ignorée.',
+      vtUnknownPreset: ':viewTransition : préréglage inconnu \'{name}\' — valeurs valides : {presets}, {curtains} (pour orienter une base directionnelle : l\'option { dir: left }, le suffixe \':left\' a été retiré en v6).',
       vtLevitation: 'couche de lévitation VT abandonnée : {msg}',
       vtLevitationIn: 'couche de lévitation VT (arrivée) abandonnée : {msg}',
-      vtSwapThrew: '@viewTransition : la permutation sous rideau a levé —',
+      vtSwapThrew: ':viewTransition : la permutation sous rideau a levé —',
       // mjs_modal.ts
       modalRead: 'la lecture de `{where}` a échoué : {reason}.',
       modalWantsText: '`{key}` attend du texte, reçu {type}.',
@@ -86,7 +87,13 @@ export const RUNTIME_LABELS = {
       // mjs_element.ts
       elProto: 'état : changement de prototype refusé',
       elCycle: 'Cycle réactif détecté sur \'{k}\' — retourne undefined',
-      elTeardown: '@attach/@this teardown en erreur :',
+      refreshCalcul: 'µrefresh({k}) est appelé par le calcul de la valeur dérivée {d} du composant <{c}>, plus de 1 000 fois dans la même rafale : deux valeurs dérivées dont chacune rafraîchit une source de l\'autre se refont l\'une l\'autre en boucle. Une valeur dérivée ne doit pas appeler µrefresh : écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS. Cet avertissement n\'existe qu\'en développement.',
+      refreshRendu: 'µrefresh({k}) est appelé pendant chaque rendu du composant <{c}> (une fonction que lit le gabarit, ou un écouteur que ce rendu déclenche à chaque fois), et chaque appel redessine ce que ce rendu affiche : une boucle, que MJS a coupée. Écrivez µrefresh({k}) dans le script ou dans un gestionnaire d\'événement, juste après le changement fait hors de MJS ; une fonction que lit le gabarit ou une valeur dérivée ne doit pas l\'appeler. Cet avertissement n\'existe qu\'en développement : la production coupe la boucle de même.',
+      derAccesseur: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : elle lit un accesseur posé sur un objet ({a}), et MJS ne voit pas changer ce que lit cet accesseur, même quand votre code l\'écrit par une autre variable `$`. Juste après chacun de ces changements, écrivez {w}, ou rangez cette valeur dans un champ plutôt que dans un accesseur. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
+      collNotNamed: 'Une collection `{c}` est arrivée dans l\'état, alors qu\'aucun fichier de ce projet ne nomme `{c}` : le cœur a été bâti sans la part qui suit les clés objets des collections. Elle y garde un comportement plus simple, sans erreur : la clé objet d\'une `Map` sort brute et `get` ne la retrouve que sous la forme rangée, une `WeakMap` ou un `WeakSet` reste sans enveloppe dans un composant. Si une bibliothèque chargée à part vous donne cette collection, demandez cette part par "collections": true dans mjs.config.json : elle s\'ajoute sans toucher au repérage des autres modules ; si vous écrivez déjà une liste "runtime", vous pouvez aussi y ajouter "collections". Cet avertissement n\'existe qu\'en développement, une fois par page.',
+      mapKeyBothForms: 'Une `Map` ou un `Set` de l\'état tient le même objet sous ses deux formes, brut et sous son enveloppe : `get`, `set`, `add` et `delete` prennent l\'entrée de l\'enveloppe, et un parcours rend cet objet deux fois. Gardez une seule forme par objet : quand la collection ne le tient pas encore, MJS range la forme brute. Cet avertissement n\'existe qu\'en développement.',
+      derPrecise: 'La valeur dérivée « {k} » du composant <{c}> a servi son dernier calcul alors que son recalcul donne autre chose : une donnée qu\'elle lit a sans doute été changée hors de MJS (bibliothèque, script extérieur, objet gardé dans une variable sans `$`). Juste après ce changement, écrivez {w}. Cet avertissement n\'existe qu\'en développement : la valeur servie reste celle de la production.',
+      elTeardown: ':attach/:this teardown en erreur :',
       elOrphanInherited: 'Orphelin CSS hérité : La feuille \'{sheetName}\' est absente du registre.',
       elOrphanLocal: 'Orphelin CSS local : La feuille \'{sheetName}\' est introuvable.',
       elHydrate: 'hydratation demandée par la page mais absente du cœur : mode ssr:markers/positional/diff dans render, ou runtime: [\'hydrate\'].',
@@ -105,15 +112,20 @@ export const RUNTIME_LABELS = {
       runesKey: 'µ.state : clé refusée (« {key} ») — mutation ignorée.',
       runesCycle: 'µ.state : cycle de computed détecté sur « {key} » — undefined retourné.',
       // mjs_every.ts
-      everyInit: 'µevery doit être appelé à l\'initialisation.',
-      everySyntax: 'µevery s\'écrit « µevery 2500, -> » : un délai en millisecondes, puis la fonction à répéter.',
-      everyHash: 'µevery : le 2e argument est un hash d\'options (« µevery 3000, pause: true, -> ») — reçu :',
-      everyOptType: 'µevery : option « {opt} » attendue de type {type}, reçu : ',
+      everyInit: '{rune} suit un composant : appelé hors de tout composant (module, magasin), il ne fait rien — écrivez setTimeout ou setInterval dans ce code.',
+      everySyntax: '{rune} s\'écrit « {rune} 2500, -> » : un délai en millisecondes, puis la fonction.',
+      everyHash: '{rune} : le 2e argument est un hash d\'options (« {rune} 3000, pause: true, -> ») — reçu :',
+      everyOptType: '{rune} : option « {opt} » attendue de type {type}, reçu : ',
       everyIgnored: '— option ignorée.',
-      everyUnknownOpt: 'µevery : option inconnue « {opt} ». Options reconnues : {list}.',
+      everyUnknownOpt: '{rune} : option inconnue « {opt} ». Options reconnues : {list}.',
       everyTimes: 'µevery : option « times » attendue ≥ 0, reçu :',
-      everyError: 'µevery :',
+      everyError: '{rune} :',
       everyWhileAsync: 'µevery : l\'option « while » doit rendre un booléen SYNCHRONE — une fonction async rend une promesse, toujours vraie, et la répétition ne s\'arrêterait jamais. Arrêt.',
+      everyId: '{rune} : l\'option « id » attend un nom, une chaîne non vide (« {rune} 2000, id: \'sauver\', -> ») — option ignorée, reçu :',
+      everyUnseen: '{rune} hors de tout composant : en production, cet appel ne ferait rien — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).',
+      everyUnseenId: '{rune} : en production, l\'option « id » de cet appel serait ignorée — la construction ne le voit pas (script de public/, script extérieur, accès entièrement calculé comme window[k], code exécuté depuis un texte…).',
+      ajaxOldName: 'µajax : l\'option « {cle} » n\'existe pas, son gestionnaire ne sera jamais appelé — écrivez error: pour une erreur du serveur, typeError: pour un refus de type.',
+      ajaxUnseen: 'µajax est appelé comme une fonction, mais la construction n\'a lu aucun appel de ce genre (accès calculé µ[k], µ passé à une fonction…) : en production, cet appel échouera — écrivez µajax(…) ou µajax \'/url\', options dans le code de l\'appli.',
       // mjs_dynamic.ts
       dynAccept: '<@element>/<@module> : accept attend une liste de noms (tableau ou chaîne séparée par des espaces)',
       dynRefused: '<@element>/<@module> : balise « {norm} » refusée — un élément dynamique ne peut pas devenir {norm} ; pour l\'autoriser explicitement : accept="{norm}".',
@@ -148,7 +160,7 @@ export const RUNTIME_LABELS = {
       fluidNoContext: '*fluid : le navigateur ne donne plus de contexte WebGL à cette balise (il en limite le nombre par page, une quinzaine) — elle reste sans effet et réessaiera à son prochain survol ou quand elle reviendra à l\'écran.',
       blendFilter: '*blend : cette balise a déjà un `filter` en CSS, que l\'effet remplace — posez *blend sur une balise qui l\'englobe pour garder les deux.',
       // mjs_destroy_hooks.ts
-      destroyAttach: 'nettoyage (@attach/@this=!) en erreur :',
+      destroyAttach: 'nettoyage (:attach/:this=!) en erreur :',
       destroyRef: 'nettoyage (ref) en erreur :',
       destroyOut: 'transition de sortie en erreur :',
       // mjs_ujs.ts
@@ -167,6 +179,9 @@ export const RUNTIME_LABELS = {
       interpNonFinite: 'µ.interpolate : valeur non-finie ignorée ({value})',
       // mjs_init.ts
       initReadOnly: '<{tag}> : propriété « {prop} » en lecture seule, valeur ignorée.',
+      ttPolicy: 'la page refuse de créer la politique Trusted Types « mjs » du framework : son en-tête Content-Security-Policy liste ses politiques (trusted-types …) sans « mjs », ou une politique « mjs » existe déjà. Le framework écrit alors son HTML en simple chaîne : la page s\'affiche tant qu\'elle n\'exige pas Trusted Types ; sous require-trusted-types-for \'script\', ce HTML passe par la politique « default » de la page, qui peut le modifier ; sans elle, le navigateur le refuse et aucun composant ne se monte. Ajoutez « mjs » à la liste trusted-types de l\'en-tête (avec \'allow-duplicates\' si deux scripts de la page créent cette politique).',
+      initFn: '{path} : {fn} contient la fonction {name} du navigateur, sans doute amenée par une clé venue de l\'extérieur (adresse, formulaire, données reçues) ; rien n\'est écrit. Vérifiez cette clé.',
+      initFnCtor: '{path} : `constructor`, écrit dans le code, mène à la fonction {name} du navigateur, que partage toute la page ; rien n\'est écrit. Écrivez dans l\'objet lui-même, sans `constructor`.',
       initPath: 'chemin d\'état refusé (segment « {seg} ») — mutation ignorée.',
       // mjs_for.ts
       forDupKeys: '{for} : clés dupliquées détectées — seules les 1ères occurrences sont rendues. Vérifiez l\'unicité de la clé `by`. (cacheId: {id})',
@@ -206,6 +221,7 @@ export const RUNTIME_LABELS = {
       keyDestroy: 'destruction de l\'ancienne clé {key} en erreur :',
       // mjs_html.ts
       htmlDestroy: 'destruction de contenu {@html} en erreur :',
+      htmlTrusted: 'HTML brut ({{…}}, :html) refusé par la politique de sécurité de la page (Trusted Types) : le framework ne le fait jamais passer par sa politique « mjs ». Posez une politique qui l\'assainit, trustedTypes.createPolicy(\'default\', { createHTML: … }), avant le script de l\'appli, ou affichez la valeur en texte avec {…}.',
       // mjs_fx_transition.ts
       hoverIgnored: '*{name} : au survol (on: hover), les réglages suivants ne servent à rien : {list}. Retirez-les.',
       hoverOfAlone: '*{name} : le réglage of ne sert qu\'avec on: hover — il est ignoré ici. Retirez-le, ou ajoutez on: hover.',
@@ -237,7 +253,9 @@ export const RUNTIME_LABELS = {
       // mjs_fx_focus.ts
       focusHost: '*focus : le composant <{tag}> n\'a aucun enfant glissé — ses enfants vivent dans son gabarit, où *focus ne les atteint pas. Posez *focus dans le gabarit du composant, sur le parent de ses enfants.',
       // mjs_effect.ts
-      effectInit: 'µ.effect doit être appelé à l\'initialisation.',
+      effectInit: 'µeffect s\'écrit au premier niveau du <script> d\'un composant, ou au premier niveau d\'un module (fichier .civet ou .coffee, fichier d\'un magasin compris) : dans une fonction appelée plus tard, il n\'a pas de propriétaire et ne tourne pas. Écrivez-le au premier niveau, et faites-lui lire ce qui doit le relancer ; pour un reffet lancé à la demande (à l\'ouverture d\'un panneau, par exemple), écrivez-le dans µeffect.root -> …, qui rend la fonction qui l\'arrête.',
+      storeDestroyed: 'Ce magasin est jeté (destroy()) : l\'écriture de « {key} » y est rangée, mais elle ne prévient plus personne, aucun composant ni reffet ne repart. Créez un nouveau magasin si la donnée doit encore vivre.',
+      storeDestroyedRead: 'Un magasin est jeté (destroy()) alors que <{tag}> le lit encore : ce composant garde ce qu\'il affiche et n\'est plus prévenu de ses changements. Jetez le magasin quand plus aucun composant affiché ne le lit (dans le µdestroy du dernier, par exemple).',
       // mjs_dom.ts
       domDefined: '{tag} déjà défini par un autre bundle : cette définition est ignorée',
       // mjs_fx_reflect.ts
@@ -265,24 +283,24 @@ export const RUNTIME_LABELS = {
       scrubContext: '*scrub : ce <canvas> porte déjà un autre contexte que 2d — l\'effet n\'est pas posé.',
       // mjs_ujs.ts
       ujsSubmitFailed: 'Submit en échec (statut {status}) — aucune page de repli HTML complète dans la réponse.',
-      ujsSubmitNotHtml: 'Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, posez @noUJS sur le <form>.',
+      ujsSubmitNotHtml: 'Réponse du submit non reconnue comme une page HTML complète (attendu : une chaîne contenant "<html") — aucun contenu mis à jour. Pour gérer vous-même une réponse non-HTML, posez :noUJS sur le <form>.',
       ujsSubmitNoBody: 'Réponse HTML du submit reçue, mais aucun <body> exploitable (page courante ou réponse serveur) — aucun contenu mis à jour.',
       ujsMethodDialog: '_method=dialog n\'a pas de sens : dialog est un attribut method/formmethod, pas un verbe HTTP',
       ujsVerbUnknown: 'mjs-method="{verb}" : verbe HTTP non reconnu (get/delete/post/put/patch attendus) — navigation normale.',
-      ujsConfirmRetryFailed: '@confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — {e}',
-      ujsConfirmRetry: '@confirm : requestSubmit({tag}) a échoué après acceptation, repli sur requestSubmit() nu — {reqErr}',
-      ujsNoAjax: 'navigation ujs : module runtime \'ajax\' absent (µ._mjs_ajaxRequest introuvable).',
+      ujsConfirmRetryFailed: ':confirm : relance de requestSubmit() nu a ÉGALEMENT échoué, formulaire non soumis — {e}',
+      ujsConfirmRetry: ':confirm : requestSubmit({tag}) a échoué après acceptation, repli sur requestSubmit() nu — {reqErr}',
+      ujsNoAjaxNav: 'navigation vers le serveur sans le module ajax : le navigateur charge la page. Pour la navigation de MJS, ajoutez "ujs", "ajax" et "modal" à la liste "runtime" de mjs.config.json.',
       ujsHardNavOutside: 'navigation abandonnée, url hors origine et protocole non http/https : {dest}',
-      ujsCallbackMissing: '@callback="{nom}" : aucune méthode « {nom} » trouvée sur {tag} ni ses ancêtres — rappel ignoré.',
+      ujsCallbackMissing: ':callback="{nom}" : aucune méthode « {nom} » trouvée sur {tag} ni ses ancêtres — rappel ignoré.',
       ujsFlashNoModal: 'flash/error à afficher mais µ.modal est absent (module \'modal\' non inclus dans `runtime`) — repli console/alert.',
       ujsFlashUnknown: 'mjs-flash="{attr}" : valeur non reconnue (popup/console/silent attendus) — politique globale utilisée.',
       ujsTargetMissingReceived: 'cible de navigation \'{target}\' introuvable dans la page reçue — contenu de <body> remplacé (des deux côtés).',
       ujsReplaceNoTarget: 'method \'replace\' sans target : <body> n\'est jamais remplacé — contenu remplacé à la place.',
       ujsPermanentDupId: '[mjs-permanent] id \'{id}\' porté par PLUSIEURS éléments — un seul peut traverser la navigation, les autres partent avec la page quittée. Un id doit être unique dans le document.',
       ujsPermanentNoId: '[mjs-permanent] sans id ignoré — un appariement entre deux navigations exige un id stable sur cet élément.',
-      ujsScriptSwapped: '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez @noUJS sur les liens qui mènent à cette page. Script : {sig}',
-      ujsMethodNoUjs: '@method="{method}" ignoré — @noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retirez l\'un des deux.',
-      ujsMethodNative: '@method="{method}" : lien non suivi — vers une autre origine, avec une touche Ctrl, Maj, Alt ou Cmd, au clic du milieu, avec `target` ou `download`, le navigateur le suivrait lui-même, en GET, sans le verbe. Seul un clic simple sur un lien de la même origine, sans `target` ni `download`, envoie la requête.',
+      ujsScriptSwapped: '<script> détecté dans le contenu échangé : le navigateur ne ré-exécute JAMAIS un <script> injecté (règle du DOM) — ce code ne tournera pas. Déplacez-le dans un composant MJS (µmount), ou posez :noUJS sur les liens qui mènent à cette page. Script : {sig}',
+      ujsMethodNoUjs: ':method="{method}" ignoré — :noUJS rend la navigation native, et le navigateur ne sait faire qu\'un GET sur un lien. Retirez l\'un des deux.',
+      ujsMethodNative: ':method="{method}" : lien non suivi — vers une autre origine, avec une touche Ctrl, Maj, Alt ou Cmd, au clic du milieu, avec `target` ou `download`, le navigateur le suivrait lui-même, en GET, sans le verbe. Seul un clic simple sur un lien de la même origine, sans `target` ni `download`, envoie la requête.',
       ujsUnknownCache: 'cache \'{raw}\' inconnu dans la fiche de navigation — \'cache-first\' appliqué.',
       ujsUnknownMethod: 'method \'{raw}\' inconnu dans la fiche de navigation — \'update\' appliqué.',
       ujsTargetMissing: 'cible de navigation \'{target}\' introuvable dans la page — contenu de <body> remplacé.',
@@ -375,7 +393,6 @@ export const RUNTIME_LABELS = {
       // mjs_router.ts
       routerNoRouteLog: 'Aucune route pour \'{matchPath}\'.',
       routerNoRoute: 'Aucune route ne correspond à \'{matchPath}\'. Routes déclarées : {routes} — déclarez une route de repli (\'/*\') pour servir votre propre page 404.',
-      routerViewCrash: 'CRASH : <@view {targetId}> introuvable dans le DOM !',
       routerNoneDeclared: '(aucune)',
       routerLogRegister: 'Enregistrement de : <{tag}>',
       routerLogInit: 'Init <{tag}> avec le Hash Path : \'{matchPath}\'',
@@ -421,7 +438,9 @@ export const RUNTIME_LABELS = {
       // src/core-modules/gauge.mjs
       coreGaugeStep: '<@@gauge> : le pas « {n} » n\'est pas un nombre positif, la jauge avance de 1. Écrivez un pas plus grand que 0.',
       // src/core-modules/number.mjs
-      coreNumberDecimals: '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; sans decimals, la valeur s\'écrit telle quelle.',
+      coreNumberDecimals: '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; la valeur s\'écrit comme sans decimals.',
+      coreNumberPrecision: '<@@number> : precision « {value} » est ignoré — écrivez un nombre entier de 0 à 100, ou precision seul pour deux décimales.',
+      coreNumberSeparator: '<@@number> : separator « {value} » est ignoré — écrivez « , » ou « . » ; sans separator, le séparateur est celui de la langue de la page.',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
       coreRangeInverted: '<@@{tag}> : min « {min} » est plus grand que max « {max} », la valeur reste bloquée sur une borne. Écrivez un min plus petit que max.',
       // mjs_types.ts
@@ -429,6 +448,8 @@ export const RUNTIME_LABELS = {
       typesRefuses: '{p} refuse {v}{d}{at}',
       typesBrought: '{p} : {v} ramené à {to}{d}{at}',
       typesAnimated: '{p} reçoit une valeur animée : ses bornes se règlent en la créant (µspring(valeur, raideur, amortissement, min, max), µinterpolate(valeur, durée, min, max)) — retirez {p} du <vars>{at}',
+      // mjs_form.ts
+      formMasked: '{p} : « {k} » est un nom de l\'objet formulaire (µform), qui le garde pour lui — lisez le champ de cette variable par fields : $form.fields.{k}{at}',
       // mjs_fx.ts
       fxBrought: '*{name} : {k} = {vu} ramené à {to} — permis : {reg}{at}',
       fxRefused: '*{name} : {k} = {vu} refusé, valeur par défaut — permis : {reg}{at}',
@@ -443,16 +464,31 @@ export const RUNTIME_LABELS = {
       // mjs_clone.ts
       cloneNotComponent: 'µclone : {tag} n\'est pas un composant MJS, ou sa définition n\'est pas encore chargée — aucun état à copier. Pour copier une balise ordinaire, écrivez el.cloneNode(true).',
       cloneOption: 'µclone : option « {opt} » inconnue — la seule option est mirror : µclone el, mirror: true rend un miroir vivant, qui partage l\'état de l\'original.',
+      // mjs_signals.ts
+      sigCycle: 'Cycle réactif : la dérivée « {k} » se lit elle-même, directement ou par d\'autres dérivées ; cette lecture rend undefined. Retirez de son calcul la lecture qui revient à elle.',
+      sigLoop: 'Boucle réactive détectée sur {owner} : ses reffets ont repris plus de 10 000 fois dans la même rafale de microtâches. Un reffet écrit sans doute une valeur qu\'il lit ($x = $x + 1 dans un µeffect ?). Ses reffets sont suspendus jusqu\'à la fin de la rafale pour garder la page vivante : vérifiez ce que chacun écrit.',
     },
     dev: {
+      // mjs_form_answers.ts
+      formIdTwice: 'deux formulaires de ce composant portent l\'id « {id} » : le framework les tient pour un seul formulaire, qui partage ses réponses. Donnez-leur des id distincts, ou aucun id.',
       // mjs_debug.ts
       propOneWay: '<{tag}> écrit sa prop « {prop} » : cette valeur vient du parent ; liez-la par !{…} ou envoyez un événement. Le parent garde sa propre valeur, il ne voit pas ce changement.',
-      attachNotFn: '<{tag}> : l\'@attach de <{node}> (ligne {line}) a rendu une valeur de type {type}, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.',
+      propMutated: '<{tag}> modifie un objet que <{parent}> lui a passé par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      propMutatedBound: '<{by}>, lié à <{tag}>, modifie un objet que <{parent}> a passé à <{tag}> par sa prop « {prop} » : <{parent}> n\'en est pas prévenu. Lisez « Modifier un objet reçu » dans la documentation des props (04-props.md).',
+      attachNotFn: '<{tag}> : le :attach de <{node}> (ligne {line}) a rendu une valeur de type {type}, pas une fonction : elle est ignorée. Rendez une fonction de nettoyage, appelée quand la balise disparaît, ou rien.',
+      forKeyTypes: '{for} : une liste de <{tag}> reçoit la même clé sous deux types, {a} et {b} : ce sont deux clés différentes, sa ligne est refaite au lieu d\'être déplacée. Donnez à toutes les clés de la liste le même type : des nombres partout, ou des textes partout. (cacheId: {id})',
+      forRowChanged: '<{tag}> : la ligne de clé {key} de {list} a changé sans passer par MJS : écrivez µrefresh({list}) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.',
+      forRowChangedAt: '<{tag}> : la ligne {list}[{at}] a changé sans passer par MJS : écrivez µrefresh({list}) après ce changement. La liste ne relit que les lignes qui changent d\'objet ; un objet modifié hors de MJS (variable ordinaire, objet gardé avant son ajout) garde son ancienne valeur à l\'écran.',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss : replaceSync a échoué pour la feuille légère <{tag}> :',
       hotcssTag: '_hotCss : replaceSync a échoué pour <{tag}> :',
       hotcssShared: '_hotCss : replaceSync a échoué pour la feuille partagée « {name} » :',
       hotcssRoot: '_hotCss : replaceSync a échoué pour mjs_root :',
+      // mjs_hotswap.ts
+      hotswapFailed: '<{tag}> : le rechargement à chaud a échoué, la page se recharge :',
+      hotswapImport: 'rechargement à chaud : le nouveau fichier ne s\'importe pas, la page se recharge :',
+      hotswapField: '<{tag}> : le champ « {champ} » de l\'instance a changé depuis sa construction (écrit, retiré ou ajouté), la page se recharge pour ne pas garder un état faux',
+      hotswapCrash: '<{tag}> : le composant a planté pendant le rechargement à chaud, la page se recharge',
       // mjs_devinspect.ts
       inspectArmed: 'inspecteur d\'objets armé — µconsole(valeur), ou depuis le panneau (Ctrl+Shift+Espace)',
       // mjs_devpanel.ts
@@ -557,20 +593,21 @@ export const RUNTIME_LABELS = {
     ujs:    { sendFailed: 'Sending failed — the server did not respond.' },
     core:   { carouselPrev: 'Previous', carouselNext: 'Next', codeCopy: 'Copy code', codeCopied: 'Copied!', selectPlaceholder: 'Choose…', selectSearch: 'Search…', selectEmpty: 'No results', selectOther: 'Other…', selectOtherPlaceholder: 'Please specify', selectOtherHint: 'Enter to confirm · Esc to go back', selectOtherOk: 'Confirm', selectOtherSep: ': ', numberLabel: 'Number', numberLess: 'Less', numberMore: 'More', numberBigLess: 'Decrease by {n}', numberBigMore: 'Increase by {n}', gaugeLabel: 'Number', knobLabel: 'Value', progressLabel: 'Progress', colorLabel: 'Color', menuLabel: 'Menu', clockHours: 'Hours', clockMinutes: 'Minutes', clockSeconds: 'Seconds', editorLabel: 'Text editor', editorPlaceholder: 'Write here…', toolbarLabel: 'Formatting', toolH2: 'Heading', toolH3: 'Subheading', toolQuote: 'Quote', toolBold: 'Bold', toolItalic: 'Italic', toolUnderline: 'Underline', toolStrike: 'Strikethrough', toolUl: 'Bulleted list', toolOl: 'Numbered list', toolCheck: 'Checklist', toolLink: 'Link', toolUndo: 'Undo', toolRedo: 'Redo', toolClear: 'Clear formatting', toolColor: 'Text color', toolbarShift: 'Shift', linkLabel: 'Link address', linkApply: 'Apply', linkRemove: 'Remove link', linkCancel: 'Cancel', linkDone: 'Link saved', colorsLabel: 'Text color', colorNone: 'No color', colorGray: 'Gray', colorBrown: 'Brown', colorOrange: 'Orange', colorYellow: 'Yellow', colorGreen: 'Green', colorBlue: 'Blue', colorPurple: 'Purple', colorPink: 'Pink', colorRed: 'Red', boxChecked: 'Checked box', boxUnchecked: 'Unchecked box', checked: 'Box checked', unchecked: 'Box unchecked', chartLabel: 'Chart', chartEmpty: 'No values', chartHint: 'Arrow keys to browse the points, Enter to choose', chartGrouped: 'Average of {n} values', chartWeekOf: 'Week of {date}', chartOwnScale: 'One scale per series: their units differ', chartMean: 'Mean', chartMedian: 'Median', chartQ1: 'First quartile', chartQ3: 'Third quartile', chartTrend: 'Trend', chartNext: 'the circle: the next estimated point', chartDate: 'Date', chartTime: 'Date and time', chartNumber: 'Value', chartCategory: 'Label', chartPeriod: 'Period', chartTotal: 'Total', chartOthers: 'Others', chartRange: '{from} to {to}', chartCount: 'Values', chartBin: 'Range', chartSeries: 'Series', chartShare: 'Share', chartPieNone: 'A ring does not suit this data: it compares several series with the same unit, or labels', chartBrowse: 'Arrow keys to browse the values', chartChoose: 'Arrow keys to browse the values, Enter to choose', chartLess: 'Less', chartMore: 'More', chartDayHour: 'Day and time', chartTools: 'Chart tools', chartLegend: 'Shown series', chartShape: 'Shape', chartShapeOf: 'Shape: {shape}', chartLine: 'Line', chartArea: 'Area', chartDots: 'Dots', chartBar: 'Bars', chartStack: 'Stacked bars', chartHistogram: 'Histogram', chartPie: 'Ring', chartHeatmap: 'Heat map', chartRadar: 'Radar', chartCalendar: 'Calendar', chartStats: 'Statistics', chartStep: 'Time step', chartAuto: 'Automatic', chartDay: 'Day', chartWeek: 'Week', chartMonth: 'Month', chartYear: 'Year' },
     fx:     { range: 'from {a} to {b}', atLeast: 'at least {a}', atMost: 'at most {b}', chars: '{a} to {b} characters', charsMin: 'at least {a} characters', charsMax: 'at most {b} characters', or: 'or', except: 'except', invalid: 'value refused', offline: 'Offline', loading: 'Loading', pending1: '1 change will be sent when the network is back', pendingN: '{n} changes will be sent when the network is back', spoiler: 'Hidden text, activate to show it', flip: 'Flip the card' },
+    load:   { notJson: 'µload: the response from {url} is not JSON.' },
     err: {
       // mjs_vt_presets.ts
-      vtMalformed: '@viewTransition: malformed value \'{name}\' — falling back to \'{namePart}\'.',
-      vtDirName: '@viewTransition: the direction is no longer written in the name (\'{namePart}\') — falling back to \'{base}\', set \'dir\'/\'direction\' as an option.',
-      vtOptMalformed: '@viewTransition: malformed option \'{pair}\' in \'{name}\' — ignored.',
-      vtUnknownKey: '@viewTransition: unknown key \'{rawKey}\' in \'{name}\' — ignored (valid keys: {keys}).',
-      vtDupKey: '@viewTransition: key \'{key}\' repeated in \'{name}\' (\'{key}\'/\'{short}\' name the same option) — 2nd occurrence ignored.',
-      vtBadDir: '@viewTransition: invalid direction \'{val}\' in \'{name}\' — ignored.',
-      vtBadDur: '@viewTransition: invalid duration \'{val}\' in \'{name}\' — a bare number of milliseconds (like setTimeout), e.g. dur: 600 — ignored.',
-      vtBadPrio: '@viewTransition: invalid priority \'{val}\' in \'{name}\' — ignored.',
-      vtUnknownPreset: '@viewTransition: unknown preset \'{name}\' — valid values: {presets}, {curtains} (to orient a directional base: use the option { dir: left }, the \':left\' suffix was removed in v6).',
+      vtMalformed: ':viewTransition: malformed value \'{name}\' — falling back to \'{namePart}\'.',
+      vtDirName: ':viewTransition: the direction is no longer written in the name (\'{namePart}\') — falling back to \'{base}\', set \'dir\'/\'direction\' as an option.',
+      vtOptMalformed: ':viewTransition: malformed option \'{pair}\' in \'{name}\' — ignored.',
+      vtUnknownKey: ':viewTransition: unknown key \'{rawKey}\' in \'{name}\' — ignored (valid keys: {keys}).',
+      vtDupKey: ':viewTransition: key \'{key}\' repeated in \'{name}\' (\'{key}\'/\'{short}\' name the same option) — 2nd occurrence ignored.',
+      vtBadDir: ':viewTransition: invalid direction \'{val}\' in \'{name}\' — ignored.',
+      vtBadDur: ':viewTransition: invalid duration \'{val}\' in \'{name}\' — a bare number of milliseconds (like setTimeout), e.g. dur: 600 — ignored.',
+      vtBadPrio: ':viewTransition: invalid priority \'{val}\' in \'{name}\' — ignored.',
+      vtUnknownPreset: ':viewTransition: unknown preset \'{name}\' — valid values: {presets}, {curtains} (to orient a directional base: use the option { dir: left }, the \':left\' suffix was removed in v6).',
       vtLevitation: 'VT levitation layer abandoned: {msg}',
       vtLevitationIn: 'VT levitation layer (arrival) abandoned: {msg}',
-      vtSwapThrew: '@viewTransition: the swap under the curtain threw —',
+      vtSwapThrew: ':viewTransition: the swap under the curtain threw —',
       // mjs_modal.ts
       modalRead: 'reading `{where}` failed: {reason}.',
       modalWantsText: '`{key}` expects text, received {type}.',
@@ -598,7 +635,13 @@ export const RUNTIME_LABELS = {
       // mjs_element.ts
       elProto: 'state: prototype change refused',
       elCycle: 'Reactive cycle detected on \'{k}\' — returning undefined',
-      elTeardown: '@attach/@this teardown failed:',
+      refreshCalcul: 'µrefresh({k}) is called by the computation of the derived value {d} of component <{c}>, more than 1,000 times in the same burst: two derived values that each refresh a source of the other keep recomputing each other in a loop. A derived value must not call µrefresh: write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS. This warning only exists in development.',
+      refreshRendu: 'µrefresh({k}) is called during every render of component <{c}> (a function read by the template, or a listener that this render triggers every time), and each call redraws what this render displays: a loop, which MJS has cut. Write µrefresh({k}) in the script or in an event handler, right after the change made outside MJS; a function read by the template or a derived value must not call it. This warning only exists in development: production cuts the loop the same way.',
+      derAccesseur: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: it reads an accessor set on an object ({a}), and MJS does not see what this accessor reads change, even when your code writes it through another `$` variable. Right after each of these changes, write {w}, or store this value in a field rather than in an accessor. This warning exists in development only: the value served stays the production one.',
+      collNotNamed: 'A `{c}` collection reached the state while no file of this project names `{c}`: the core was built without the part that follows the object keys of collections. It keeps a simpler behaviour there, without error: the object key of a `Map` comes out raw and `get` only finds it under the form it was stored in, a `WeakMap` or a `WeakSet` stays without a wrapper in a component. If a separately loaded library gives you this collection, ask for this part with "collections": true in mjs.config.json: it is added without touching the detection of the other modules; if you already write a "runtime" list, you can also add "collections" to it. This warning only exists in development, once per page.',
+      mapKeyBothForms: 'A state `Map` or `Set` holds the same object in both its forms, raw and wrapped: `get`, `set`, `add` and `delete` take the wrapped entry, and iterating it yields this object twice. Keep a single form per object: when the collection does not hold it yet, MJS stores the raw form. This warning only exists in development.',
+      derPrecise: 'The derived value \"{k}\" of component <{c}> served its last computation while recomputing it gives something else: data it reads was probably changed outside MJS (a library, an external script, an object kept in a variable without `$`). Right after that change, write {w}. This warning exists in development only: the value served stays the production one.',
+      elTeardown: ':attach/:this teardown failed:',
       elOrphanInherited: 'Inherited CSS orphan: the sheet \'{sheetName}\' is missing from the registry.',
       elOrphanLocal: 'Local CSS orphan: the sheet \'{sheetName}\' was not found.',
       elHydrate: 'hydration requested by the page but missing from the core: use ssr:markers/positional/diff mode in render, or runtime: [\'hydrate\'].',
@@ -617,15 +660,20 @@ export const RUNTIME_LABELS = {
       runesKey: 'µ.state: key refused ("{key}") — mutation ignored.',
       runesCycle: 'µ.state: computed cycle detected on "{key}" — returning undefined.',
       // mjs_every.ts
-      everyInit: 'µevery must be called at initialization.',
-      everySyntax: 'µevery is written "µevery 2500, ->": a delay in milliseconds, then the function to repeat.',
-      everyHash: 'µevery: the 2nd argument is an options hash ("µevery 3000, pause: true, ->") — received:',
-      everyOptType: 'µevery: option "{opt}" expected of type {type}, received: ',
+      everyInit: '{rune} follows a component: called outside any component (module, store), it does nothing — write setTimeout or setInterval in that code.',
+      everySyntax: '{rune} is written "{rune} 2500, ->": a delay in milliseconds, then the function.',
+      everyHash: '{rune}: the 2nd argument is an options hash ("{rune} 3000, pause: true, ->") — received:',
+      everyOptType: '{rune}: option "{opt}" expected of type {type}, received: ',
       everyIgnored: '— option ignored.',
-      everyUnknownOpt: 'µevery: unknown option "{opt}". Known options: {list}.',
+      everyUnknownOpt: '{rune}: unknown option "{opt}". Known options: {list}.',
       everyTimes: 'µevery: option "times" expected ≥ 0, received:',
-      everyError: 'µevery:',
+      everyError: '{rune}:',
       everyWhileAsync: 'µevery: the "while" option must return a SYNCHRONOUS boolean — an async function returns a promise, always truthy, and the repetition would never stop. Stopped.',
+      everyId: '{rune}: the "id" option expects a name, a non-empty string ("{rune} 2000, id: \'save\', ->") — option ignored, received:',
+      everyUnseen: '{rune} outside any component: in production, this call would do nothing — the build does not see it (script in public/, external script, fully computed access such as window[k], code run from a string…).',
+      everyUnseenId: '{rune}: in production, the "id" option of this call would be ignored — the build does not see it (script in public/, external script, fully computed access such as window[k], code run from a string…).',
+      ajaxOldName: 'µajax: the "{cle}" option does not exist, its handler will never be called — write error: for a server error, typeError: for a type refusal.',
+      ajaxUnseen: 'µajax is called as a function, but the build read no such call (computed access µ[k], µ passed to a function…): in production this call will fail — write µajax(…) or µajax \'/url\', options in the app code.',
       // mjs_dynamic.ts
       dynAccept: '<@element>/<@module>: accept expects a list of names (array or space-separated string)',
       dynRefused: '<@element>/<@module>: tag "{norm}" refused — a dynamic element cannot become {norm}; to allow it explicitly: accept="{norm}".',
@@ -660,7 +708,7 @@ export const RUNTIME_LABELS = {
       fluidNoContext: '*fluid: the browser has no WebGL context left for this tag (it limits them per page, around sixteen) — it stays without effect and will try again on its next hover or when it comes back on screen.',
       blendFilter: '*blend: this tag already has a CSS `filter`, which the effect replaces — put *blend on a tag that wraps it to keep both.',
       // mjs_destroy_hooks.ts
-      destroyAttach: 'cleanup (@attach/@this=!) failed:',
+      destroyAttach: 'cleanup (:attach/:this=!) failed:',
       destroyRef: 'cleanup (ref) failed:',
       destroyOut: 'exit transition failed:',
       // mjs_ujs.ts
@@ -679,6 +727,9 @@ export const RUNTIME_LABELS = {
       interpNonFinite: 'µ.interpolate: non-finite value ignored ({value})',
       // mjs_init.ts
       initReadOnly: '<{tag}>: property "{prop}" is read-only, value ignored.',
+      ttPolicy: 'the page refuses to create the framework\'s Trusted Types policy "mjs": its Content-Security-Policy header lists its policies (trusted-types …) without "mjs", or a policy named "mjs" already exists. The framework then writes its HTML as plain strings: the page works as long as it does not require Trusted Types; under require-trusted-types-for \'script\', this HTML goes through the page\'s "default" policy, which may change it; without it, the browser refuses it and no component mounts. Add "mjs" to the trusted-types list of the header (with \'allow-duplicates\' if two scripts of the page create this policy).',
+      initFn: '{path}: {fn} holds the browser function {name}, probably brought in by a key from outside (address, form, received data); nothing is written. Check this key.',
+      initFnCtor: '{path}: `constructor`, written in the code, leads to the browser function {name}, shared by the whole page; nothing is written. Write to the object itself, without `constructor`.',
       initPath: 'state path refused (segment "{seg}") — mutation ignored.',
       // mjs_for.ts
       forDupKeys: '{for}: duplicate keys detected — only the first occurrences are rendered. Check that the `by` key is unique. (cacheId: {id})',
@@ -718,6 +769,7 @@ export const RUNTIME_LABELS = {
       keyDestroy: 'destruction of the old {key} key failed:',
       // mjs_html.ts
       htmlDestroy: 'destruction of {@html} content failed:',
+      htmlTrusted: 'Raw HTML ({{…}}, :html) refused by the page security policy (Trusted Types): the framework never passes it through its own "mjs" policy. Set a policy that sanitizes it, trustedTypes.createPolicy(\'default\', { createHTML: … }), before the app script, or display the value as text with {…}.',
       // mjs_fx_transition.ts
       hoverIgnored: '*{name}: with on: hover, these settings do nothing: {list}. Remove them.',
       hoverOfAlone: '*{name}: the of setting only works with on: hover — it is ignored here. Remove it, or add on: hover.',
@@ -749,7 +801,9 @@ export const RUNTIME_LABELS = {
       // mjs_fx_focus.ts
       focusHost: '*focus: the component <{tag}> has no slotted children — its children live in its own template, where *focus cannot reach them. Put *focus in the component\'s template, on the parent of its children.',
       // mjs_effect.ts
-      effectInit: 'µ.effect must be called at initialization.',
+      effectInit: 'µeffect goes at the top level of a component\'s <script>, or at the top level of a module (.civet or .coffee file, store files included): inside a function called later it has no owner and does not run. Write it at the top level, and have it read what should rerun it; for an effect started on demand (when a panel opens, for instance), write it inside µeffect.root -> …, which returns the function that stops it.',
+      storeDestroyed: 'This store was destroyed (destroy()): the write to \"{key}\" is kept, but it notifies no one anymore, no component or effect reruns. Create a new store if the data must live on.',
+      storeDestroyedRead: 'A store was destroyed (destroy()) while <{tag}> still reads it: this component keeps what it shows and is no longer told about its changes. Destroy the store once no displayed component reads it (in the last one\'s µdestroy, for instance).',
       // mjs_dom.ts
       domDefined: '{tag} already defined by another bundle: this definition is ignored',
       // mjs_fx_reflect.ts
@@ -777,24 +831,24 @@ export const RUNTIME_LABELS = {
       scrubContext: '*scrub: this <canvas> already carries a context other than 2d — the effect is not applied.',
       // mjs_ujs.ts
       ujsSubmitFailed: 'Submit failed (status {status}) — no complete fallback HTML page in the response.',
-      ujsSubmitNotHtml: 'Submit response not recognized as a complete HTML page (expected: a string containing "<html") — no content updated. To handle a non-HTML response yourself, set @noUJS on the <form>.',
+      ujsSubmitNotHtml: 'Submit response not recognized as a complete HTML page (expected: a string containing "<html") — no content updated. To handle a non-HTML response yourself, set :noUJS on the <form>.',
       ujsSubmitNoBody: 'HTML response to the submit received, but no usable <body> (current page or server response) — no content updated.',
       ujsMethodDialog: '_method=dialog makes no sense: dialog is a method/formmethod attribute, not an HTTP verb',
       ujsVerbUnknown: 'mjs-method="{verb}": unrecognized HTTP verb (get/delete/post/put/patch expected) — normal navigation.',
-      ujsConfirmRetryFailed: '@confirm: retry with a bare requestSubmit() ALSO failed, form not submitted — {e}',
-      ujsConfirmRetry: '@confirm: requestSubmit({tag}) failed after acceptance, falling back to a bare requestSubmit() — {reqErr}',
-      ujsNoAjax: 'ujs navigation: runtime module \'ajax\' missing (µ._mjs_ajaxRequest not found).',
+      ujsConfirmRetryFailed: ':confirm: retry with a bare requestSubmit() ALSO failed, form not submitted — {e}',
+      ujsConfirmRetry: ':confirm: requestSubmit({tag}) failed after acceptance, falling back to a bare requestSubmit() — {reqErr}',
+      ujsNoAjaxNav: 'server navigation without the ajax module: the browser loads the page. For MJS navigation, add "ujs", "ajax" and "modal" to the "runtime" list in mjs.config.json.',
       ujsHardNavOutside: 'navigation abandoned, url outside the origin and protocol not http/https: {dest}',
-      ujsCallbackMissing: '@callback="{nom}": no method \'{nom}\' found on {tag} or its ancestors — callback ignored.',
+      ujsCallbackMissing: ':callback="{nom}": no method \'{nom}\' found on {tag} or its ancestors — callback ignored.',
       ujsFlashNoModal: 'flash/error to display but µ.modal is missing (module \'modal\' not included in `runtime`) — falling back to console/alert.',
       ujsFlashUnknown: 'mjs-flash="{attr}": unrecognized value (popup/console/silent expected) — global policy used.',
       ujsTargetMissingReceived: 'navigation target \'{target}\' not found in the received page — <body> content replaced (on both sides).',
       ujsReplaceNoTarget: 'method \'replace\' without target: <body> is never replaced — content replaced instead.',
       ujsPermanentDupId: '[mjs-permanent] id \'{id}\' carried by SEVERAL elements — only one can cross the navigation, the others leave with the page you left. An id must be unique in the document.',
       ujsPermanentNoId: '[mjs-permanent] without an id ignored — pairing between two navigations requires a stable id on this element.',
-      ujsScriptSwapped: '<script> detected in the swapped content: the browser NEVER re-executes an injected <script> (DOM rule) — this code will not run. Move it into an MJS component (µmount), or set @noUJS on the links that lead to this page. Script: {sig}',
-      ujsMethodNoUjs: '@method="{method}" ignored — @noUJS makes navigation native, and the browser can only do a GET on a link. Remove one of the two.',
-      ujsMethodNative: '@method="{method}": link not followed — to another origin, with a Ctrl, Shift, Alt or Cmd key, on a middle click, with `target` or `download`, the browser would follow it itself, as a GET, without the verb. Only a plain click on a same-origin link, without `target` or `download`, sends the request.',
+      ujsScriptSwapped: '<script> detected in the swapped content: the browser NEVER re-executes an injected <script> (DOM rule) — this code will not run. Move it into an MJS component (µmount), or set :noUJS on the links that lead to this page. Script: {sig}',
+      ujsMethodNoUjs: ':method="{method}" ignored — :noUJS makes navigation native, and the browser can only do a GET on a link. Remove one of the two.',
+      ujsMethodNative: ':method="{method}": link not followed — to another origin, with a Ctrl, Shift, Alt or Cmd key, on a middle click, with `target` or `download`, the browser would follow it itself, as a GET, without the verb. Only a plain click on a same-origin link, without `target` or `download`, sends the request.',
       ujsUnknownCache: 'cache \'{raw}\' unknown in the navigation card — \'cache-first\' applied.',
       ujsUnknownMethod: 'method \'{raw}\' unknown in the navigation card — \'update\' applied.',
       ujsTargetMissing: 'navigation target \'{target}\' not found in the page — <body> content replaced.',
@@ -887,7 +941,6 @@ export const RUNTIME_LABELS = {
       // mjs_router.ts
       routerNoRouteLog: 'No route for \'{matchPath}\'.',
       routerNoRoute: 'No route matches \'{matchPath}\'. Declared routes: {routes} — declare a fallback route (\'/*\') to serve your own 404 page.',
-      routerViewCrash: 'CRASH: <@view {targetId}> not found in the DOM!',
       routerNoneDeclared: '(none)',
       routerLogRegister: 'Registering: <{tag}>',
       routerLogInit: 'Init <{tag}> with the Hash Path: \'{matchPath}\'',
@@ -933,7 +986,9 @@ export const RUNTIME_LABELS = {
       // src/core-modules/gauge.mjs
       coreGaugeStep: '<@@gauge>: the step "{n}" is not a positive number, the gauge moves by 1. Write a step greater than 0.',
       // src/core-modules/number.mjs
-      coreNumberDecimals: '<@@number>: decimals "{value}" is ignored — write a whole number from 0 to 100; without decimals, the value is written as is.',
+      coreNumberDecimals: '<@@number>: decimals "{value}" is ignored — write a whole number from 0 to 100; the value is written as without decimals.',
+      coreNumberPrecision: '<@@number>: precision "{value}" is ignored — write a whole number from 0 to 100, or precision alone for two decimals.',
+      coreNumberSeparator: '<@@number>: separator "{value}" is ignored — write "," or "."; without separator, the separator is the one of the page language.',
       // src/core-modules/number.mjs, knob.mjs, gauge.mjs
       coreRangeInverted: '<@@{tag}>: min "{min}" is greater than max "{max}", the value stays stuck on a bound. Write a min smaller than max.',
       // mjs_types.ts
@@ -941,6 +996,8 @@ export const RUNTIME_LABELS = {
       typesRefuses: '{p} refuses {v}{d}{at}',
       typesBrought: '{p}: {v} brought back to {to}{d}{at}',
       typesAnimated: '{p} receives an animated value: its bounds are set when creating it (µspring(value, stiffness, damping, min, max), µinterpolate(value, duration, min, max)) — remove {p} from the <vars>{at}',
+      // mjs_form.ts
+      formMasked: '{p}: "{k}" is a name of the form object (µform), which keeps it for itself — read this variable\'s field through fields: $form.fields.{k}{at}',
       // mjs_fx.ts
       fxBrought: '*{name} : {k} = {vu} brought back to {to} — allowed: {reg}{at}',
       fxRefused: '*{name} : {k} = {vu} refused, default value — allowed: {reg}{at}',
@@ -955,16 +1012,31 @@ export const RUNTIME_LABELS = {
       // mjs_clone.ts
       cloneNotComponent: 'µclone: {tag} is not an MJS component, or its definition has not loaded yet — there is no state to copy. To copy a plain element, write el.cloneNode(true).',
       cloneOption: 'µclone: unknown option "{opt}" — the only option is mirror: µclone el, mirror: true returns a live mirror, which shares the state of the original.',
+      // mjs_signals.ts
+      sigCycle: 'Reactive cycle: the derived value "{k}" reads itself, directly or through other derived values; this read returns undefined. Remove from its computation the read that leads back to it.',
+      sigLoop: 'Reactive loop detected on {owner}: its effects ran again more than 10,000 times in the same burst of microtasks. An effect probably writes a value it reads ($x = $x + 1 inside a µeffect?). Its effects are paused until the end of the burst to keep the page alive: check what each one writes.',
     },
     dev: {
+      // mjs_form_answers.ts
+      formIdTwice: 'two forms of this component carry the id "{id}": the framework treats them as a single form that shares its answers. Give them distinct ids, or no id.',
       // mjs_debug.ts
       propOneWay: '<{tag}> writes its prop "{prop}": this value comes from the parent; bind it with !{…} or send an event. The parent keeps its own value, it does not see this change.',
-      attachNotFn: '<{tag}>: the @attach on <{node}> (line {line}) returned a value of type {type}, not a function: it is ignored. Return a cleanup function, called when the element goes away, or nothing.',
+      propMutated: '<{tag}> modifies an object that <{parent}> passed to it through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
+      propMutatedBound: '<{by}>, bound to <{tag}>, modifies an object that <{parent}> passed to <{tag}> through its prop "{prop}": <{parent}> is not notified. See the section on modifying a received object in the props documentation (04-props.md).',
+      attachNotFn: '<{tag}>: the :attach on <{node}> (line {line}) returned a value of type {type}, not a function: it is ignored. Return a cleanup function, called when the element goes away, or nothing.',
+      forKeyTypes: '{for}: a list of <{tag}> receives the same key as two types, {a} and {b}: these are two different keys, its row is rebuilt instead of moved. Give every key of the list the same type: numbers everywhere, or strings everywhere. (cacheId: {id})',
+      forRowChanged: '<{tag}>: the row with key {key} of {list} changed without going through MJS: write µrefresh({list}) after this change. The list only rereads the rows whose object changes; an object modified outside MJS (plain variable, object kept before it was added) keeps its old value on screen.',
+      forRowChangedAt: '<{tag}>: the row {list}[{at}] changed without going through MJS: write µrefresh({list}) after this change. The list only rereads the rows whose object changes; an object modified outside MJS (plain variable, object kept before it was added) keeps its old value on screen.',
       // mjs_hotcss.ts
       hotcssLight: '_hotCss: replaceSync failed for the light sheet <{tag}>:',
       hotcssTag: '_hotCss: replaceSync failed for <{tag}>:',
       hotcssShared: '_hotCss: replaceSync failed for the shared sheet "{name}":',
       hotcssRoot: '_hotCss: replaceSync failed for mjs_root:',
+      // mjs_hotswap.ts
+      hotswapFailed: '<{tag}>: hot reload failed, the page reloads:',
+      hotswapImport: 'hot reload: the new file cannot be imported, the page reloads:',
+      hotswapField: '<{tag}>: the instance field “{champ}” changed since it was built (written, removed or added), the page reloads so as not to keep a wrong state',
+      hotswapCrash: '<{tag}>: the component crashed during the hot reload, the page reloads',
       // mjs_devinspect.ts
       inspectArmed: 'object inspector armed — µconsole(value), or from the panel (Ctrl+Shift+Space)',
       // mjs_devpanel.ts
@@ -1066,7 +1138,7 @@ export const RUNTIME_LABELS = {
 
 // les groupes que seul un fichier précis du runtime (ou un module cœur) lit : le manifeste ne pose
 // un groupe que si son lecteur part dans le build (cf. Bundler.runtimeLabelGroups)
-export const OPTIONAL_LABEL_GROUPS = ['modal', 'router', 'toast', 'ujs', 'core', 'fx']
+export const OPTIONAL_LABEL_GROUPS = ['modal', 'router', 'toast', 'ujs', 'core', 'fx', 'load']
 
 // groupe `core` : à quel module cœur (src/core-modules/<nom>.mjs) appartient chaque clé. Le manifeste ne pose que les
 // clés des modules que le build emporte (cf. coreLabelKeys) : une page qui n'emploie que <@@select> ne paie pas les
@@ -1140,8 +1212,13 @@ export function fxLabelKeys(effects: Iterable<string>): Set<string> {
 // reste aucune ; absent (faits inconnus), le groupe est gardé entier. `fxEffects` = les fichiers d'effet que le build
 // emporte (noms sans `mjs_fx_`) : même découpe du groupe `fx` (cf. fxLabelKeys). `coreDropped` = les parties des modules cœur que le
 // build a ôtées (cf. CORE_LABEL_PARTS) : leurs clés ne partent pas. Sans `groups`, ni `coreModules`, ni `coreDropped`, ni `fxEffects` ne jouent
-export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, coreModules?: ReadonlySet<string>, fxEffects?: ReadonlySet<string>, coreDropped?: ReadonlySet<string>) {
-  const garde = (t: any) => {
+// `files` = les fichiers du runtime que le build emporte : hors production, le groupe `err` reçoit les messages de ceux qui en ont à part
+// (cf. RUNTIME_FILE_MESSAGES) ; absent (faits inconnus), ceux de tous
+export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, coreModules?: ReadonlySet<string>, fxEffects?: ReadonlySet<string>, coreDropped?: ReadonlySet<string>, files?: ReadonlySet<string>) {
+  const garde = (t: any, lang: string) => {
+    // hors production, les messages des fichiers du runtime emportés qui en ont à part ; sans eux, la table telle quelle
+    const err = t.err && errFor(lang, files)
+    if (err && err !== t.err) t = { ...t, err }
     if (!groups) return t
     const reste: any = {}
     for (const k of Object.keys(t)) {
@@ -1155,15 +1232,54 @@ export function runtimeLabelsFor(prod: boolean, groups?: ReadonlySet<string>, co
     }
     return reste
   }
-  if (!prod) return { fr: garde(RUNTIME_LABELS.fr), en: garde(RUNTIME_LABELS.en) }
-  const sansMessages = (t: any) => { const { dev: _dev, err: _err, ...reste } = t; return garde(reste) }
-  return { fr: sansMessages(RUNTIME_LABELS.fr), en: sansMessages(RUNTIME_LABELS.en) }
+  if (!prod) return { fr: garde(RUNTIME_LABELS.fr, 'fr'), en: garde(RUNTIME_LABELS.en, 'en') }
+  const sansMessages = (t: any, lang: string) => { const { dev: _dev, err: _err, ...reste } = t; return garde(reste, lang) }
+  return { fr: sansMessages(RUNTIME_LABELS.fr, 'fr'), en: sansMessages(RUNTIME_LABELS.en, 'en') }
 }
 
 // les langues de la table, et le groupe `err` de l'une d'elles : le contenu du fichier de messages
 // que le build de production écrit pour cette langue
 export const RUNTIME_LANGS = Object.keys(RUNTIME_LABELS)
 
-export function runtimeMessagesFor(lang: string): Record<string, string> {
-  return (RUNTIME_LABELS as Record<string, any>)[lang].err
+export function runtimeMessagesFor(lang: string, files?: ReadonlySet<string>): Record<string, string> {
+  return errFor(lang, files)
+}
+
+// messages de la console d'un fichier du runtime joint au cœur seulement quand l'appli s'en sert (mjs_load.ts, avec µload), rangés à
+// part du groupe `err` : ils n'y entrent qu'avec leur fichier (manifeste de développement, fichiers de messages de production, cf.
+// errFor). Une appli qui ne s'en sert pas reçoit un manifeste et des fichiers de messages identiques, à l'octet, à ceux d'une appli
+// bâtie sans ce fichier. Une clé lue par un seul avertissement reste nommée dans WARNING_ONLY_MESSAGES (bundler/minify.ts), une clé
+// du développement seul dans DEV_ONLY_MESSAGES. Le texte qu'une appli affiche (l'erreur d'une réponse qui n'est pas du JSON) est un
+// libellé du groupe `load`, au manifeste de production comme de développement
+export const RUNTIME_FILE_MESSAGES: Record<string, Record<string, Record<string, string>>> = {
+  'mjs_load.ts': {
+    fr: {
+      loadArgs: 'µload : les options s\'écrivent en objet — écrivez µload(url, { refresh: {v} }). Valeur ignorée : la donnée n\'est relue que sur demande.',
+      loadOption: 'µload : option « {opt} » inconnue — la seule option est refresh.',
+      loadRefresh: 'µload : refresh « {v} » inconnu — écrivez false, un nombre de secondes, \'focus\' ou \'online\'. La donnée n\'est relue que sur demande.',
+      loadPlace: 'µload("{url}") appelé dans {lieu} de {tag} : ici, l\'appel n\'est pas suivi — ses requêtes dépassées ne sont pas annulées. Écrivez l\'appel dans une dérivée du script ($membres = µload(…), l\'adresse peut lire des $), puis lisez-la dans le gabarit ; pour une ligne de {for}, dans le script d\'un composant enfant.',
+      loadPlaceEffect: 'un µeffect',
+      loadPlaceHelper: 'une aide appelée par le gabarit',
+      loadPlaceFor: 'une ligne de {for}',
+      loadPlaceTemplate: 'le gabarit',
+    },
+    en: {
+      loadArgs: 'µload: options are written as an object — write µload(url, { refresh: {v} }). Value ignored: the data is only reloaded on request.',
+      loadOption: 'µload: unknown option "{opt}" — the only option is refresh.',
+      loadRefresh: 'µload: unknown refresh "{v}" — write false, a number of seconds, \'focus\' or \'online\'. The data is only reloaded on request.',
+      loadPlace: 'µload("{url}") called in {lieu} of {tag}: here the call is not followed — its outdated requests are not cancelled. Write the call in a derived value of the script ($members = µload(…), the address can read $), then read it in the template; for a {for} row, in the script of a child component.',
+      loadPlaceEffect: 'a µeffect',
+      loadPlaceHelper: 'a helper called by the template',
+      loadPlaceFor: 'a {for} row',
+      loadPlaceTemplate: 'the template',
+    },
+  },
+}
+
+// le groupe `err` d'une langue, avec les messages des fichiers du runtime que le build emporte (`files`) ; absent (faits inconnus),
+// avec ceux de tous. Sans fichier qui en ait, la table elle-même
+function errFor(lang: string, files?: ReadonlySet<string>): Record<string, string> {
+  const err  = (RUNTIME_LABELS as Record<string, any>)[lang].err
+  const plus = Object.keys(RUNTIME_FILE_MESSAGES).filter(f => !files || files.has(f)).map(f => RUNTIME_FILE_MESSAGES[f][lang] ?? {})
+  return plus.length > 0 ? Object.assign({}, err, ...plus) : err
 }

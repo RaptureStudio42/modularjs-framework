@@ -48,9 +48,9 @@ describe('mjs_body.ts — détaché du cœur, build RÉEL', function () {
     assert.equal(core.includes(MARK_BODY), false)
   })
 
-  it("composant avec <@body @class{$actif}=\"vif\"/> : PRÉSENT, et mjs_effect.ts AUSSI", async function () {
+  it("composant avec <@body :class{$actif}=\"vif\"/> : PRÉSENT, et mjs_effect.ts AUSSI", async function () {
     const { outDir } = await buildProject({}, {
-      'hop.mjs': ['<script lang="coffee">', '@actif = true', '</script>', '<@body @class{@actif}="vif"/>', '<p>x</p>'].join('\n'),
+      'hop.mjs': ['<script lang="coffee">', '@actif = true', '</script>', '<@body :class{@actif}="vif"/>', '<p>x</p>'].join('\n'),
     })
     const core = coreContent(outDir)
     assert.ok(core.includes(MARK_BODY), '<@body> doit être détecté')
@@ -59,7 +59,7 @@ describe('mjs_body.ts — détaché du cœur, build RÉEL', function () {
 
   it('composant avec <@html> (balise sœur) : PRÉSENT', async function () {
     const { outDir } = await buildProject({}, {
-      'hop.mjs': ['<@html @style.color={\'red\'}/>', '<p>x</p>'].join('\n'),
+      'hop.mjs': ['<@html :style.color={\'red\'}/>', '<p>x</p>'].join('\n'),
     })
     const core = coreContent(outDir)
     assert.ok(core.includes(MARK_BODY))

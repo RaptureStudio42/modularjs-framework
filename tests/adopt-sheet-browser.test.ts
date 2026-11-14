@@ -87,8 +87,9 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
       sortie       = outDir
       mkdirSync(srcDir, { recursive: true })
       for (const [n, source] of Object.entries(SOURCES)) writeFileSync(join(srcDir, n), source)
-      // production au niveau 'warn' : les avertissements vérifiés ici restent dans le code envoyé (le défaut 'error' retire ceux du framework)
-      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), ...(env === 'prod' ? { env: 'prod', js: 'bundle', logLevel: 'warn' } : {}) } as any)
+      // production au niveau 'log' : l'avertissement vérifié ici (balise sans ombre) est un message du développement seul, que la construction
+      // retire du code envoyé dès 'warn' ; il y reste, et l'absence d'avertissement des autres essais garde son sens
+      const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), ...(env === 'prod' ? { env: 'prod', js: 'bundle', logLevel: 'log' } : {}) } as any)
       const stats   = await bundler.compile()
       await bundler.close()
       assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
@@ -134,6 +135,9 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) for (const env of 
           // le fichier des messages de la langue, que le build de production écrit à côté du code
           const messages = env === 'prod' ? /^http:\/\/t\.test\/out\/(mjs_err-(?:fr|en)-[0-9a-z]+\.json)$/.exec(url) : null
           if (messages) return route.fulfill({ contentType: 'application/json', body: readFileSync(join(sortie, messages[1])) })
+          // et son chargeur, un module que le cœur importe au premier message écrit
+          const chargeur = env === 'prod' ? /^http:\/\/t\.test\/out\/(mjs_msg-[0-9a-z]+\.js)$/.exec(url) : null
+          if (chargeur) return route.fulfill({ contentType: 'text/javascript', body: readFileSync(join(sortie, chargeur[1])) })
           if (url !== 'http://t.test/') return route.fulfill({ status: 404, body: '' })
           return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html${lang ? ` lang="${lang}"` : ''}><head><meta charset="utf-8"></head><body><mjs-carte></mjs-carte><mjs-leger mjs-light></mjs-leger>${corps}${code}</body></html>` })
         })

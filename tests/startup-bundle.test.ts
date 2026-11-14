@@ -37,13 +37,13 @@ function fixture(prefix: string, render: RenderConfig, cfgExtra: Record<string, 
   const srcDir = join(root, 'src')
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, 'shared.module.civet'), 'export bump := (x) -> x + 1\n')
+  writeFileSync(join(srcDir, 'shared.module.civet.mjs'), 'export bump := (x) -> x + 1\n')
   writeFileSync(join(srcDir, 'card.mjs'), `<p class="card">${carteTexte}</p>\n`)
   writeFileSync(join(srcDir, 'badge.mjs'), '<b class="badge">neuf</b>\n')
   writeFileSync(join(srcDir, 'later.mjs'), '<p class="later">plus tard</p>\n')
   writeFileSync(join(srcDir, 'solo.mjs'), '<p class="solo">seul</p>\n')
   writeFileSync(join(srcDir, 'home.mjs'), [
-    '@import bump \'shared.module.civet\'',
+    '@import bump \'shared.module.civet.mjs\'',
     '',
     '<script>',
     '$open ?= false',
@@ -108,8 +108,8 @@ function fixtureLocales(prefix: string): Projet {
 }
 
 // deux langues dont la divergence vient d'un `{if}` SUR LA LANGUE : chaque fragment n'en rend qu'une
-// branche, mais les deux enfants sont des dépendances STATIQUES du gabarit — la fermeture les ramène
-// dans l'ensemble de démarrage des deux langues.
+// branche ; les deux enfants ne sont écrits que sous un `{if}` — la table du démarrage (`blocks.preload`,
+// défaut "idle") ne les ramène pas, chaque langue n'a que l'enfant qu'elle rend (l'autre part au repos).
 function fixtureLocalesIf(prefix: string): Projet {
   const root   = mjsTmp(prefix)
   const srcDir = join(root, 'src')
@@ -267,10 +267,10 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     const code     = readFileSync(pageFile, 'utf-8')
     const coeur    = readFileSync(join(p.outDir, readdirSync(p.outDir).find(f => /^mjs_core-/.test(f))!), 'utf-8')
 
-    // les 4 composants de l'ensemble y sont définis, une fois chacun — fichier MINIFIÉ, le nom sous
+    // les 3 composants de l'ensemble y sont définis, une fois chacun (l'enfant du `{if}` faux part seul, au repos) — fichier MINIFIÉ, le nom sous
     // lequel le cœur est importé y est raccourci : l'appel se reconnaît à `._def("mjs-…"`, pas à `µ`
     const definis = [...code.matchAll(/\._def\("(mjs-[a-z-]+)"/g)].map(m => m[1]).sort()
-    assert.deepEqual(definis, ['mjs-badge', 'mjs-card', 'mjs-home', 'mjs-later'], `définis : ${definis.join(', ')}`)
+    assert.deepEqual(definis, ['mjs-badge', 'mjs-card', 'mjs-home'], `définis : ${definis.join(', ')}`)
 
     // le cœur est importé par URL, son code n'est pas recopié : témoin propre au cœur (clé de
     // sessionStorage de la garde « bundle périmé » de l'Autoloader), absente de tout composant
@@ -293,7 +293,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     // `file` dans la MÊME forme que les valeurs de µ.paths (préfixe factorisé → basename seul)
     const json = fiche(texte)
     assert.equal(json.file, basename(pageFile))
-    assert.deepEqual(json.names, ['badge', 'card', 'home', 'later'])
+    assert.deepEqual(json.names, ['badge', 'card', 'home'])
     assert.deepEqual(startup.pageFiles, [`/out/${basename(pageFile)}`])
   })
 
@@ -310,9 +310,11 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     const src = readFileSync(join(p.outDir, 'bundle.js'), 'utf-8')
     const prologue = src.slice(0, src.indexOf('const µReady'))
     window.eval(stripEsm(prologue) + '\nwindow.__paths = µPaths;\nwindow.__prefix = µPathsPrefix;')
-    for (const nom of ['badge', 'card', 'home', 'later']) {
+    for (const nom of ['badge', 'card', 'home']) {
       assert.equal(window.__paths[nom], pageFile, `µ.paths['${nom}'] doit pointer le fichier de page`)
     }
+    // l'enfant du `{if}` faux, hors de l'ensemble de démarrage, garde son propre fichier
+    assert.match(window.__paths['later'], /^later-[0-9a-z]{5}\.js$/)
     assert.equal(window.__prefix, '/out/', 'le préfixe factorisé reste celui du manifeste')
     // le module, lui, garde son propre fichier
     assert.match(window.__paths['shared.module'], /^shared\.module-[0-9a-z]{5}\.js$/)
@@ -359,7 +361,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
       assert.deepEqual(erreurs, [], `erreurs de page : ${erreurs.join(' | ')}`)
       assert.deepEqual([...new Set(vus)], ['mjs-badge', 'mjs-card', 'mjs-home'], `balises définies et montées : ${vus.join(', ')}`)
       assert.ok(jsDemandes.includes(`/out/${pageFile}`), `le fichier de page doit être demandé (vues : ${jsDemandes.join(' ')})`)
-      const separes = jsDemandes.filter(u => /\/out\/(card|badge|home|later)-[0-9a-z]{5}\.js$/.test(u))
+      const separes = jsDemandes.filter(u => /\/out\/(card|badge|home)-[0-9a-z]{5}\.js$/.test(u))
       assert.deepEqual(separes, [], `aucun fichier séparé de composant ne doit être demandé, vus : ${separes.join(' ')}`)
     }
     finally {
@@ -403,7 +405,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     const p = fixture('startup-bundle-dev', renderBundle())
     const { report, journal } = await construire(p, 'dev')
     const texte = readFileSync(fragment(report, '/'), 'utf-8')
-    assert.equal(liens(texte).length, 5, `5 liens attendus, vus : ${liens(texte).join(' ')}`)
+    assert.equal(liens(texte).length, 4, `4 liens attendus, vus : ${liens(texte).join(' ')}`)
     assert.equal(texte.includes('__mjs_page'), false, 'aucune fiche de fichier de page en développement')
     assert.deepEqual(readdirSync(p.outDir).filter(f => /^mjs_page-/.test(f)), [])
     assert.ok(journal.some(l => /bundle|fichier de page/i.test(l)), `une ligne d'information attendue, journal : ${journal.join(' | ')}`)
@@ -466,7 +468,7 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     assert.deepEqual(en.names, ['anglais', 'badge', 'card', 'home'], `noms de la fiche anglaise : ${en.names.join(', ')}`)
   })
 
-  it('divergence par un {if} sur la langue : chaque fiche porte l\'ensemble de SA langue, fermé par les dépendances statiques', async () => {
+  it('divergence par un {if} sur la langue : chaque fiche porte l\'ensemble de SA langue, la branche qu\'elle rend', async () => {
     const p = fixtureLocalesIf('startup-bundle-locales-if')
     const { report } = await construire(p)
     const fragFr = report.generated.find(g => g.file.includes('/fr/'))!.file
@@ -475,11 +477,9 @@ describe('démarrage des pages prérendues — fichier de page', function () {
     assert.match(readFileSync(fragFr, 'utf-8'), /<mjs-francais/, 'la passe française rend la branche française')
     assert.equal(/<mjs-anglais/.test(readFileSync(fragFr, 'utf-8')), false, 'la branche anglaise n\'est pas rendue en français')
     assert.match(readFileSync(fragEn, 'utf-8'), /<mjs-anglais/, 'la passe anglaise rend la branche anglaise')
-    // les deux enfants sont des dépendances STATIQUES du gabarit : la fermeture les ramène des deux
-    // côtés — un composant déclaré dans une branche `{if}` sur la langue est déclaré dans les deux
-    const attendu = ['anglais', 'card', 'francais', 'home']
-    assert.deepEqual(fiche(readFileSync(fragFr, 'utf-8')).names, attendu, 'fiche française')
-    assert.deepEqual(fiche(readFileSync(fragEn, 'utf-8')).names, attendu, 'fiche anglaise')
+    // les deux enfants ne sont écrits que sous un `{if}` : chaque fiche n'a que celui que sa langue rend
+    assert.deepEqual(fiche(readFileSync(fragFr, 'utf-8')).names, ['card', 'francais', 'home'], 'fiche française')
+    assert.deepEqual(fiche(readFileSync(fragEn, 'utf-8')).names, ['anglais', 'card', 'home'], 'fiche anglaise')
     const fichiers = readdirSync(p.outDir).filter(f => /^mjs_page-/.test(f))
     assert.equal(fichiers.length, 1, `un seul fichier de page pour les deux langues, vus : ${fichiers.join(' ')}`)
     const definis = [...readFileSync(join(p.outDir, fichiers[0]), 'utf-8').matchAll(/\._def\("(mjs-[a-z-]+)"/g)].map(m => m[1]).sort()

@@ -42,7 +42,7 @@ describe('mjs_title.ts — appui tactile sur composant shadow : la bulle naît a
 <script>
 $x = 0
 </script>
-<button id="shadowbtn" @title="Info du composant">Bouton</button>
+<button id="shadowbtn" :title="Info du composant">Bouton</button>
 `)
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: ['title'] })
     const stats = await bundler.compile()

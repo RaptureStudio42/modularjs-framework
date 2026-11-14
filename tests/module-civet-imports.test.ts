@@ -45,8 +45,8 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     // urlPrefix = outDir (chemin ABSOLU) : le webPath émis par resolveMagicAssets
     // devient alors directement un chemin FILESYSTEM réel — permet d'`import()`
@@ -74,20 +74,20 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
   it("un composant .mjs `@import`e A qui `@import`e B : chaîne complète OK en SSR (non-régression du canal .mjs existant)", async function () {
     const src = mjsTmp('modimport-mjschain')
     mkdirSync(src, { recursive: true })
-    writeFileSync(join(src, 'core.module.civet'), `export double = (n) -> n * 2\n`)
-    writeFileSync(join(src, 'wrapper.module.civet'), `@import double 'core.module.civet'\n\nexport quad = (n) -> double(double(n))\n`)
-    writeFileSync(join(src, 'page.mjs'), `@import quad 'wrapper.module.civet'\n\n<p class="r">{quad(3)}</p>\n`)
+    writeFileSync(join(src, 'core.module.civet.mjs'), `export double = (n) -> n * 2\n`)
+    writeFileSync(join(src, 'wrapper.module.civet.mjs'), `@import double 'core.module.civet.mjs'\n\nexport quad = (n) -> double(double(n))\n`)
+    writeFileSync(join(src, 'page.mjs'), `@import quad 'wrapper.module.civet.mjs'\n\n<p class="r">{quad(3)}</p>\n`)
 
     const res = await renderToString({ sourceDir: src, tag: 'mjs-page' })
     assert.match(res.html, />12</, "quad(3) = double(double(3)) = 12 : chaîne .mjs → .civet → .civet résolue correctement en SSR")
   })
 
-  it("import natif `import {x} from './b.module.civet'` dans un module → erreur de compilation explicite orientant vers @import", async function () {
+  it("import natif `import {x} from './b.module.civet.mjs'` dans un module → erreur de compilation explicite orientant vers @import", async function () {
     const root = mjsTmp('modimport-rawimport')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `import { hi } from './b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `import { hi } from './b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()
@@ -103,8 +103,8 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     const root = mjsTmp('modimport-singleton')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import §§hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import §§hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()
@@ -123,8 +123,8 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     const root = mjsTmp('modimport-singleton-mu')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import µ$$hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import µ$$hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
     const stats = await bundler.compile()
@@ -140,8 +140,8 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     const root = mjsTmp('modimport-cycle')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import bThing 'b.module.civet'\n\nexport aThing = -> bThing()\n`)
-    writeFileSync(join(srcDir, 'b.module.civet'), `@import aThing 'a.module.civet'\n\nexport bThing = -> aThing()\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import bThing 'b.module.civet.mjs'\n\nexport aThing = -> bThing()\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `@import aThing 'a.module.civet.mjs'\n\nexport bThing = -> aThing()\n`)
 
     // Timeout court (défaut prod : 12000ms) — cf. bundler-compile-dedup-cycle.test.ts,
     // même filet de sécurité (2 fichiers TOUS DEUX top-level, chacun sa propre
@@ -167,8 +167,8 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B1'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B1'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
 
@@ -180,7 +180,7 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     assert.ok(aContent1.includes(basename(bPath1)), 'build 1 : A doit référencer le hash initial de B')
 
     // SEUL B change sur disque — A reste identique octet pour octet.
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B2'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B2'\n`)
 
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))
@@ -209,9 +209,9 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'c.module.civet'), `export leaf = -> 'C1'\n`)
-    writeFileSync(join(srcDir, 'b.module.civet'), `@import leaf 'c.module.civet'\n\nexport hi = -> leaf() + '-B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'c.module.civet.mjs'), `export leaf = -> 'C1'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `@import leaf 'c.module.civet.mjs'\n\nexport hi = -> leaf() + '-B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
 
@@ -221,7 +221,7 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     const bPath1 = bundler.manifest['b.module']
 
     // SEUL C change — B et A restent identiques octet pour octet.
-    writeFileSync(join(srcDir, 'c.module.civet'), `export leaf = -> 'C2'\n`)
+    writeFileSync(join(srcDir, 'c.module.civet.mjs'), `export leaf = -> 'C2'\n`)
 
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))
@@ -250,10 +250,10 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'd.module.civet'), `export leaf = -> 'D1'\n`)
-    writeFileSync(join(srcDir, 'c.module.civet'), `@import leaf 'd.module.civet'\n\nexport mid = -> leaf() + '-C'\n`)
-    writeFileSync(join(srcDir, 'b.module.civet'), `@import mid 'c.module.civet'\n\nexport hi = -> mid() + '-B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'd.module.civet.mjs'), `export leaf = -> 'D1'\n`)
+    writeFileSync(join(srcDir, 'c.module.civet.mjs'), `@import leaf 'd.module.civet.mjs'\n\nexport mid = -> leaf() + '-C'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `@import mid 'c.module.civet.mjs'\n\nexport hi = -> mid() + '-B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
 
@@ -262,7 +262,7 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     const aPath1 = bundler.manifest['a.module']
 
     // SEUL D change, tout en bas de la chaîne à 3 sauts de A.
-    writeFileSync(join(srcDir, 'd.module.civet'), `export leaf = -> 'D2'\n`)
+    writeFileSync(join(srcDir, 'd.module.civet.mjs'), `export leaf = -> 'D2'\n`)
 
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))
@@ -284,9 +284,9 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'b.module.civet'), `export leaf = -> 'B1'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import leaf 'b.module.civet'\n\nexport mid = -> leaf() + '-A'\n`)
-    writeFileSync(join(srcDir, 'page.mjs'), `@import mid 'a.module.civet'\n\n<p class="r">{mid()}</p>\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export leaf = -> 'B1'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import leaf 'b.module.civet.mjs'\n\nexport mid = -> leaf() + '-A'\n`)
+    writeFileSync(join(srcDir, 'page.mjs'), `@import mid 'a.module.civet.mjs'\n\n<p class="r">{mid()}</p>\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
 
@@ -297,7 +297,7 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     assert.ok(pagePath1, `manifest doit contenir 'page' : ${JSON.stringify(Object.keys(bundler.manifest))}`)
 
     // SEUL B change — A et page.mjs restent identiques octet pour octet.
-    writeFileSync(join(srcDir, 'b.module.civet'), `export leaf = -> 'B2'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export leaf = -> 'B2'\n`)
 
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))
@@ -321,9 +321,9 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     mkdirSync(srcDir, { recursive: true })
     outDirEsm(outDir)
 
-    writeFileSync(join(srcDir, 'b.module.civet'), `export hi = -> 'B'\n`)
-    writeFileSync(join(srcDir, 'a.module.civet'), `@import hi 'b.module.civet'\n\nexport greet = -> hi() + '-A'\n`)
-    writeFileSync(join(srcDir, 'c.module.civet'), `export unrelated = -> 'C1'\n`)
+    writeFileSync(join(srcDir, 'b.module.civet.mjs'), `export hi = -> 'B'\n`)
+    writeFileSync(join(srcDir, 'a.module.civet.mjs'), `@import hi 'b.module.civet.mjs'\n\nexport greet = -> hi() + '-A'\n`)
+    writeFileSync(join(srcDir, 'c.module.civet.mjs'), `export unrelated = -> 'C1'\n`)
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), urlPrefix: outDir })
 
@@ -337,7 +337,7 @@ describe('modules autonomes .module.civet — @import fonctionnel, import natif 
     await new Promise((r) => setTimeout(r, 20))
 
     // C n'a AUCUN rapport avec A (ni @import, ni asset partagé) — seul lui change.
-    writeFileSync(join(srcDir, 'c.module.civet'), `export unrelated = -> 'C2'\n`)
+    writeFileSync(join(srcDir, 'c.module.civet.mjs'), `export unrelated = -> 'C2'\n`)
 
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map(e => e.message).join('\n'))

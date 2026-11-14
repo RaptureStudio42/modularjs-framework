@@ -21,9 +21,9 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @class{v.n > 5 and $on}="actif" @style.color={v.n > 5 ? 'red' : 'blue'}>{v.n}</b>
+  <b class="ok" :class{v.n > 5 and $on}="actif" :style.color={v.n > 5 ? 'red' : 'blue'}>{v.n}</b>
 {end}
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // la promesse est rejetée avant le rendu serveur : le serveur écrit la branche `{error}`
   'aw-ssr-erreur.mjs': `<script>
@@ -36,9 +36,9 @@ const SOURCES: Record<string, string> = {
 {success v}
   <b class="ok">{v}</b>
 {error err}
-  <b class="ko" @class{err.message === 'non' and $on}="actif" @style.color={err.message === 'non' ? 'red' : 'blue'}>{err.message}</b>
+  <b class="ko" :class{err.message === 'non' and $on}="actif" :style.color={err.message === 'non' ? 'red' : 'blue'}>{err.message}</b>
 {end}
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // un `@attach` dont la fabrique lit la valeur de la branche et le thème : le serveur écrit la branche `{success}`, l'attache n'existe que dans le navigateur
   'aw-ssr-attache.mjs': `<script>
@@ -52,7 +52,7 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @attach={marque(v.label, $theme)}>{v.label}</b>
+  <b class="ok" :attach={marque(v.label, $theme)}>{v.label}</b>
 {error err}
   <b class="ko">{err.message}</b>
 {end}
@@ -72,7 +72,7 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @attach={marque($theme)}>{v.label}</b>
+  <b class="ok" :attach={marque($theme)}>{v.label}</b>
 {error err}
   <b class="ko">{err.message}</b>
 {end}
@@ -88,7 +88,7 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <div class="ce" contenteditable="true" @text=!{v.titre}></div>
+  <div class="ce" contenteditable="true" :text=!{v.titre}></div>
 {error err}
   <b class="ko">{err.message}</b>
 {end}

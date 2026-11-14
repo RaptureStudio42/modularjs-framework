@@ -125,8 +125,8 @@ describe('scanEffectImages — où les effets écrivent des chemins locaux', () 
   })
 
   it('une transition (@in, @out, @transition) : l\'effet suit le signe égal', () => {
-    assert.deepEqual(effets("<div @in=*ink(image: 'a.png', duration: 2s)></div>"), [['ink', 'image', 'a.png']])
-    assert.deepEqual(effets("<div @out.global=*ink(image: 'b.png')></div>"), [['ink', 'image', 'b.png']])
+    assert.deepEqual(effets("<div :in=*ink(image: 'a.png', duration: 2s)></div>"), [['ink', 'image', 'a.png']])
+    assert.deepEqual(effets("<div :out.global=*ink(image: 'b.png')></div>"), [['ink', 'image', 'b.png']])
   })
 
   it('un effet sur <@document>, une liste', () => {
@@ -177,7 +177,7 @@ describe('resolveEffectImages — la réécriture en µimage(\'…\')', () => {
   })
 
   it('une transition', () => {
-    assert.equal(resolveEffectImages("<div @in=*ink(image: 'm.png')></div>"), "<div @in=*ink(image: µimage('m.png'))></div>")
+    assert.equal(resolveEffectImages("<div :in=*ink(image: 'm.png')></div>"), "<div :in=*ink(image: µimage('m.png'))></div>")
   })
 
   it('deux réglages, deux balises : toutes les réécritures, dans le bon ordre', () => {

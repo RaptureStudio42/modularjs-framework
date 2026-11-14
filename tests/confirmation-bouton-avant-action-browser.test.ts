@@ -24,7 +24,7 @@ async function chromiumPresent(): Promise<boolean> {
 }
 
 const SOURCES: Record<string, string> = {
-  'suppr.mjs': '<script>\n$n = 3\n</script>\n<button class="b" @confirm="Vraiment ?" @click={$n--}>Supprimer</button>\n<p class="n">{$n}</p>\n'
+  'suppr.mjs': '<script>\n$n = 3\n</script>\n<button class="b" :confirm="Vraiment ?" @click={$n--}>Supprimer</button>\n<p class="n">{$n}</p>\n'
 }
 
 describe('@confirm sur un bouton (Chromium réel) — la question passe avant l\'action', function () {

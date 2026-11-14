@@ -79,7 +79,7 @@ class [[CLASS]] extends µ.Element {
     this._mjs_viewTransition = [[VIEWTRANSITION]];
     this._mjs_viewTransitionPriority = [[VIEWTRANSITION_PRIORITY]];
 
-    this._mjs_mount(() => __create_[[CLASS]]());[[AUTOLOADER_LINE]][[DYNAMIC_SLOTS_LINE]]
+    this._mjs_mount(() => __create_[[CLASS]]()[[KIDS_ARG]]);[[AUTOLOADER_LINE]][[DYNAMIC_SLOTS_LINE]]
 
     // Préchargement « eager » : scanne le shadow pour les liens à précharger dès
     // l'apparition (no-op si l'eager n'est pas actif — cf. µ._mjs_maybeScanEager).
@@ -106,7 +106,7 @@ class [[CLASS]] extends µ.Element {
       // _mjs_effectsAll   : liste de tous les effects (pour le mount initial)
       // _mjs_renderStruct : blocs structurels (if/for/await/key), exécutés à chaque tick
       _mjsThis._mjs_effectsByVar = [[EFFECTS_BY_VAR]];
-      _mjsThis._mjs_effectsAll   = [[EFFECTS_ALL]];
+      _mjsThis._mjs_effectsAll   = [[EFFECTS_ALL]];[[FINE_LINE]]
       // Liaisons two-way vers un composant ENFANT (\`<@x value=!{$y}>\`) :
       // posées ICI, SYNCHRONEMENT, avant que ce constructeur ne rende la main —
       // donc avant TOUT connectedCallback, quel que soit l'ordre réel (parent

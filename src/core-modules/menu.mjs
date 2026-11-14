@@ -48,22 +48,22 @@
 </script>
 
 {if µlayout is 'drawer'}
-  <div class="drawer" part="menu" @class{boolAttr($open)}="open" --mjs-menu-color={$color or '#379fff'} --mjs-menu-bg={$background or '#fff'}>
-    <button type="button" class="tab" part="toggle" aria-label={$labelText} aria-expanded={boolAttr($open)} @this=!{toggleRef} @click={toggle()}><span></span></button>
+  <div class="drawer" part="menu" :class{boolAttr($open)}="open" --mjs-menu-color={$color or '#379fff'} --mjs-menu-bg={$background or '#fff'}>
+    <button type="button" class="tab" part="toggle" aria-label={$labelText} aria-expanded={boolAttr($open)} :this=!{toggleRef} @click={toggle()}><span></span></button>
     <nav class="panel" part="panel">
-      <slot @this=!{slotRef} @slotchange={refresh()}></slot>
+      <slot :this=!{slotRef} @slotchange={refresh()}></slot>
     </nav>
   </div>
 {else}
-  <div class="radial" part="menu" @class{boolAttr($open)}="open" --mjs-menu-color={$color or '#fff'} --mjs-menu-bg={$background or '#222327'} --mjs-menu-radius={num($radius, 115) + 'px'}>
-    <button type="button" class="toggle" part="toggle" aria-label={$labelText} aria-expanded={boolAttr($open)} @this=!{toggleRef} @click={toggle()}></button>
+  <div class="radial" part="menu" :class{boolAttr($open)}="open" --mjs-menu-color={$color or '#fff'} --mjs-menu-bg={$background or '#222327'} --mjs-menu-radius={num($radius, 115) + 'px'}>
+    <button type="button" class="toggle" part="toggle" aria-label={$labelText} aria-expanded={boolAttr($open)} :this=!{toggleRef} @click={toggle()}></button>
     <nav class="ring" part="panel">
-      <slot @this=!{slotRef} @slotchange={refresh()}></slot>
+      <slot :this=!{slotRef} @slotchange={refresh()}></slot>
     </nav>
   </div>
 {end}
 
-<style @display="inline-block">
+<style :display="inline-block">
   .radial
     position: relative
     display: grid

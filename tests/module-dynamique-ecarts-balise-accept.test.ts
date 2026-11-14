@@ -2,8 +2,8 @@
 // Trois écarts relevés à la relecture de la refonte de `<@module EXPR …>`, plus petits que les défauts
 // de module-dynamique-await-liste-fuite-props.test.ts mais qui se trompaient en silence :
 //  1. Attributs globaux dynamiques (`title`, `hidden`, `slot`, `is`, `lang`, `layout`) : un composant
-//     écrit en dur les pose comme PROPS (`_set`), pas comme attributs ; `<@module>` doit faire pareil,
-//     au montage et quand la variable change.
+//     écrit en dur pose `title`, `hidden`, `slot` et `lang` en prop ET en attribut de sa balise, `is` et
+//     `layout` en prop seulement ; `<@module>` doit faire pareil, au montage et quand la variable change.
 //  2. Un nom qui est à la fois une balise HTML et un composant du projet (`section`) : la balise
 //     native reste atteignable ; le composant s'écrit par son nom complet (`mjs-section`).
 //  3. La liste `accept` compare le nom TAPÉ, pas la balise créée : `accept="tuto-ca"` et

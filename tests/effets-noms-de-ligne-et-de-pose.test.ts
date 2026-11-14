@@ -20,8 +20,8 @@ const SOURCES: Record<string, string> = {
   'nom-ligne-node':     '<script>\n$items = [{ n: 7 }]\n</script>\n{for node in $items}\n<span class="a" *tilt(max: node.n)>x</span>\n{end}\n',
   'nom-const-souligne': '<script>\n$items = [{ n: 7 }]\n</script>\n{for item in $items}\n{const _node = item}\n<span class="a" *tilt(max: _node.n)>x</span>\n{end}\n',
   'nom-const-node':     '<script>\n$items = [{ n: 7 }]\n</script>\n{for item in $items}\n{const node = item}\n<span class="a" *tilt(max: node.n)>x</span>\n{end}\n',
-  'nom-vie-souligne':   '<script>\n$items = [{ n: 7 }]\n</script>\n{for _node in $items}\n<p class="b" @in.global=*scramble(speed: _node.n)>x</p>\n{end}\n',
-  'nom-vie-node':       '<script>\n$items = [{ n: 7 }]\n</script>\n{for node in $items}\n<p class="b" @in.global=*scramble(speed: node.n)>x</p>\n{end}\n'
+  'nom-vie-souligne':   '<script>\n$items = [{ n: 7 }]\n</script>\n{for _node in $items}\n<p class="b" :in.global=*scramble(speed: _node.n)>x</p>\n{end}\n',
+  'nom-vie-node':       '<script>\n$items = [{ n: 7 }]\n</script>\n{for node in $items}\n<p class="b" :in.global=*scramble(speed: node.n)>x</p>\n{end}\n'
 }
 
 // les identifiants qu'un motif de déstructuration lie
@@ -61,7 +61,7 @@ describe('effets — le code émis pour poser un effet ne déclare aucun nom de 
   after(async () => { await terminateSharedWorkerPool() })
 
   it('une pose réglée par une variable, une pose réglée par la ligne et un effet de cycle de vie : ni `node` ni `_node` n\'est déclaré, la balise porte un nom réservé', async () => {
-    const source = '<script>\n$items = [{ n: 7 }]\n$t = 3\n</script>\n<div class="r" *tilt(max: $t)>x</div>\n{for l in $items}\n<span class="a" *tilt(max: l.n)>x</span>\n<p class="b" @in.global=*scramble(speed: l.n)>x</p>\n{end}\n'
+    const source = '<script>\n$items = [{ n: 7 }]\n$t = 3\n</script>\n<div class="r" *tilt(max: $t)>x</div>\n{for l in $items}\n<span class="a" *tilt(max: l.n)>x</span>\n<p class="b" :in.global=*scramble(speed: l.n)>x</p>\n{end}\n'
     const { declares, balises } = lire((await transpile(source, { moduleName: 'effets-noms-emis' })).output)
     assert.deepEqual([...declares].filter((nom) => nom === 'node' || nom === '_node'), [], 'ni `node` ni `_node` n\'est déclaré par le code émis')
     assert.ok(balises.length >= 4, `les poses sont dans le code émis : ${balises.join(', ')}`)

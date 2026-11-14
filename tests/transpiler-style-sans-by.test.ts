@@ -17,7 +17,7 @@ describe('transpiler — @style.X dans un {for} sans `by`', () => {
     const src = `<script lang="coffee">$selected = -1
 $rows = []
 </script>
-{for row in $rows}<div @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
+{for row in $rows}<div :style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}`
     const { output } = await transpile(src, { moduleName: 'fd_style_sans_by' })
     assert.match(output, /\['selected__style_color__\w+'\]\s*\?\?=\s*\{ idx: null, prev: void 0 \}/)
     assert.match(output, /const __f = \(_mjs_match\) => \{/)
@@ -40,7 +40,7 @@ describe('@style.X dans un {for} sans `by` : deux lignes de même clé suivent l
 $selected = -1
 $rows = [{ id: 1, label: 'a' }, { id: 2, label: 'b' }, { id: 1, label: 'c' }]
 </script>
-{for row in $rows}<div class="r" @style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}
+{for row in $rows}<div class="r" :style.color={row.id === $selected ? 'red' : 'black'}>{row.label}</div>{end}
 <button class="un" @click={$selected = 1}>1</button><button class="deux" @click={$selected = 2}>2</button><button class="ajout" @click={$rows = [...$rows, { id: 2, label: 'd' }]}>+</button>
 `
 

@@ -1,4 +1,4 @@
-// SSR — un `setInterval`/`setTimeout` posé par un `µeffect` PENDANT le rendu ne doit
+// SSR — une minuterie brute posée PENDANT le rendu (`setInterval` d'un `<script module>`) ne doit
 // PAS fuir après la fin de `renderToString()`. `window.close()` (API DOM standard, appelée par
 // renderToString.ts avant ce correctif) est un NO-OP pour toute Window happy-dom créée nue (`new
 // Window()`, jamais via `window.open()`) — le VRAI nettoyage vit sous `window.happyDOM.close()`.
@@ -32,7 +32,7 @@ function lancerFixture(srcDir: string): Promise<{ code: number | null, signal: N
   })
 }
 
-describe('SSR renderToString — un µeffect->setInterval ne fuit plus après la fin du rendu', function () {
+describe('SSR renderToString — une minuterie posée pendant le rendu ne fuit plus après la fin du rendu', function () {
   this.timeout(45000) //couvre la marge de sécurité 30s + battement spawn/assertions
 
   it('le process enfant se termine TOUT SEUL après le rendu (pas de timer Node fantôme qui le maintient en vie)', async function () {
@@ -40,7 +40,7 @@ describe('SSR renderToString — un µeffect->setInterval ne fuit plus après la
     const srcDir = join(root, 'src')
     const { code, signal, killedBySecurite } = await lancerFixture(srcDir)
     assert.equal(killedBySecurite, false,
-      "le process enfant a dû être tué par le délai de sécurité — un setInterval posé par le µeffect a survécu à renderToString() (window.close() natif est un no-op happy-dom)")
+      "le process enfant a dû être tué par le délai de sécurité — le setInterval posé par le <script module> pendant le rendu a survécu à renderToString() (window.close() natif est un no-op happy-dom)")
     assert.equal(signal, null, `le process ne doit PAS avoir reçu de signal — sortie naturelle attendue (signal reçu : ${signal})`)
     assert.equal(code, 0, `le process enfant doit sortir avec le code 0 (reçu : ${code})`)
   })

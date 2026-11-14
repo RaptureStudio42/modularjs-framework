@@ -248,8 +248,8 @@
 
   µawake ->
     bind()
-    setTimeout(bind, 0)
-    setTimeout(bind, 150)
+    µafter 0, bind
+    µafter 150, bind
     look()
 
   µsleep ->
@@ -260,14 +260,14 @@
     bound = null
 </script>
 
-<div class="bar" part="bar" role="toolbar" aria-orientation="horizontal" aria-label={$labelText} @this=!{barRef} @keydown={onKey(e)} @mousedown={e.preventDefault()} @pointerdown={press(e)}>
+<div class="bar" part="bar" role="toolbar" aria-orientation="horizontal" aria-label={$labelText} :this=!{barRef} @keydown={onKey(e)} @mousedown={e.preventDefault()} @pointerdown={press(e)}>
   {for it in $items by key}
     <!-- @@ tool-separator -->
     {if it.sep}
       <span class="sep" role="separator" aria-orientation="vertical"></span>
     {else}
     <!-- @@ -->
-      <button type="button" part={it.name == $down ? 'button down' : 'button'} class="btn" data-tool={it.name} tabindex={it.name == $tab ? 0 : -1} title={it.title} aria-label={it.label} aria-pressed={it.toggle ? pressed(it.name, $state) : null} aria-disabled={blocked(it.name, $state, $off)} @class{blocked(it.name, $state, $off)}="blocked" @click={fire(it.name)}>
+      <button type="button" part={it.name == $down ? 'button down' : 'button'} class="btn" data-tool={it.name} tabindex={it.name == $tab ? 0 : -1} title={it.title} aria-label={it.label} aria-pressed={it.toggle ? pressed(it.name, $state) : null} aria-disabled={blocked(it.name, $state, $off)} :class{blocked(it.name, $state, $off)}="blocked" @click={fire(it.name)}>
         <!-- @@ tool-icons -->
         {if it.icon}
           <span class="ico" aria-hidden="true">{{ it.icon }}</span>
@@ -286,7 +286,7 @@
 
 <@document @pointerup={release()} @pointercancel={release()}>
 
-<style @display="block">
+<style :display="block">
   :host
     font: inherit
 

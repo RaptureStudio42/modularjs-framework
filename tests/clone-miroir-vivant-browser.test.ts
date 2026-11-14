@@ -13,6 +13,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { SOURCES_MIROIR } from './helpers/composants-miroir.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // un composant léger en calcul, pour les mille miroirs
 const SOURCES = { ...SOURCES_MIROIR, 'pastille.mjs': ['<script>', '  $n = 0', '</script>', '<b class="n">{$n}</b>', ''].join('\n') }
@@ -82,7 +83,7 @@ describe('µclone mirror: true — le miroir vivant partage l\'état de l\'origi
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Array<'chromium' | 'firefox' | 'webkit'>) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -200,6 +201,6 @@ describe('µclone mirror: true — le miroir vivant partage l\'état de l\'origi
           }
         })
       }
-    })
+    }))
   }
 })

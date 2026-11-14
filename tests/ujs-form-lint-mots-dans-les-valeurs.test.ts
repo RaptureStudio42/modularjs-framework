@@ -13,14 +13,14 @@ describe('<form> sans action ni méthode : les valeurs entre guillemets ne compt
     ['title="… action …"',                  '<form title="voir action ici"></form>'],
     ['title="… action=…"',                  '<form title="voir action=x ici"></form>'],
     ['title entre guillemets simples',      '<form title=\'une action ici\'></form>'],
-    ['title="voir @method ici"',            '<form title="voir @method ici"></form>'],
-    ['title="mettre @noUJS ici"',           '<form title="mettre @noUJS ici"></form>'],
-    ['title="mettre @no-ujs ici"',          '<form title="mettre @no-ujs ici"></form>'],
+    ['title="voir :method ici"',            '<form title="voir :method ici"></form>'],
+    ['title="mettre :noUJS ici"',           '<form title="mettre :noUJS ici"></form>'],
+    ['title="mettre :no-ujs ici"',          '<form title="mettre :no-ujs ici"></form>'],
     ['title="forme compilée mjs-no-ujs"',   '<form title="la forme compilée mjs-no-ujs ici"></form>'],
     ['title="forme compilée mjs-method"',   '<form title="la forme compilée mjs-method ici"></form>'],
     ['data-aide="action=\'/x\'"',           '<form data-aide="écrire action=\'/x\' ici"></form>'],
-    ['un leurre et un autre attribut',      '<form class="a" title="ajoutez @method ici" id="f"></form>'],
-    ['un leurre sur plusieurs lignes',      '<form\n  title="voir\n  @noUJS ici"\n  class="a"></form>']
+    ['un leurre et un autre attribut',      '<form class="a" title="ajoutez :method ici" id="f"></form>'],
+    ['un leurre sur plusieurs lignes',      '<form\n  title="voir\n  :noUJS ici"\n  class="a"></form>']
   ]
   for (const [nom, html] of leurres) {
     it(`${nom} : le formulaire reste signalé`, () => {
@@ -35,11 +35,11 @@ describe('<form> sans action ni méthode : les valeurs entre guillemets ne compt
     ['action={url} (dynamique)',           '<form action={url}></form>'],
     ['action="{url}" (valeur mêlée)',      '<form action="{url}"></form>'],
     ['@action nu',                         '<form @action></form>'],
-    ['@method="post"',                     '<form @method="post"></form>'],
-    ['@method nu',                         '<form @method></form>'],
+    [':method="post"',                     '<form :method="post"></form>'],
+    [':method nu',                         '<form :method></form>'],
     ['mjs-method="post" (forme compilée)', '<form mjs-method="post"></form>'],
-    ['@noUJS',                             '<form @noUJS></form>'],
-    ['@no-ujs',                            '<form @no-ujs></form>'],
+    [':noUJS',                             '<form :noUJS></form>'],
+    [':no-ujs',                            '<form :no-ujs></form>'],
     ['mjs-no-ujs (forme compilée)',        '<form mjs-no-ujs></form>'],
     ['@submit.prevent={…}',                '<form @submit.prevent={envoyer()}></form>']
   ]
@@ -51,9 +51,9 @@ describe('<form> sans action ni méthode : les valeurs entre guillemets ne compt
 
   it('un leurre à côté de la vraie directive : la vraie directive compte', () => {
     assert.deepEqual(messages('<form title="voir action ici" action="/envoi"></form>'), [])
-    assert.deepEqual(messages('<form title="voir @method ici" @method="post"></form>'), [])
-    assert.deepEqual(messages('<form title="mettre @noUJS ici" @noUJS></form>'), [])
-    assert.deepEqual(messages('<form title="a" @no-ujs title2="@method"></form>'), [])
+    assert.deepEqual(messages('<form title="voir :method ici" :method="post"></form>'), [])
+    assert.deepEqual(messages('<form title="mettre :noUJS ici" :noUJS></form>'), [])
+    assert.deepEqual(messages('<form title="a" :no-ujs title2=":method"></form>'), [])
   })
 
   it('action="" reste une action absente, avec ou sans espaces autour du =', () => {
@@ -63,7 +63,7 @@ describe('<form> sans action ni méthode : les valeurs entre guillemets ne compt
   })
 
   it('le message cite la ligne du formulaire', () => {
-    const [m] = messages('<p>a</p>\n<form title="voir @method ici"></form>\n')
+    const [m] = messages('<p>a</p>\n<form title="voir :method ici"></form>\n')
     assert.match(m, /2/)
   })
 })

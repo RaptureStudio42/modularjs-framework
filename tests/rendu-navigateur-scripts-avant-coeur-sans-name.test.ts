@@ -2,7 +2,8 @@
 // Playwright les envoie en texte (le source de la fonction), seuls. Sous tsx (esbuild et son `keepNames`), une fonction NOMMÉE dans leur corps
 // devient `__name(function …, 'nom')`, un appel que la page ne connaît pas : le script s'arrêtait là (`__name is not defined`), et l'oubli du
 // texte d'une feuille retouchée (`insertRule`, `deleteRule`, `replace`) n'était jamais posé. Chaque fonction passée à `addInitScript`, compilée
-// comme tsx la compile, tourne seule dans un contexte vide et fait son travail.
+// comme tsx la compile, tourne seule dans un contexte vide et fait son travail. Une fonction importée (`noteLightPage`, renderToString.ts) se lit
+// dans le code compilé de son propre fichier.
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ import { transformSync } from 'esbuild'
 const ICI    = dirname(fileURLToPath(import.meta.url))
 const SOURCE = readFileSync(join(ICI, '../src/server/render-browser.ts'), 'utf-8')
 const NOMS   = [...SOURCE.matchAll(/addInitScript\((\w+)\)/g)].map((m) => m[1])
-const JS     = transformSync(SOURCE, { loader: 'ts', format: 'esm', keepNames: true }).code
+const JS     = [SOURCE, readFileSync(join(ICI, '../src/server/renderToString.ts'), 'utf-8')].map((s) => transformSync(s, { loader: 'ts', format: 'esm', keepNames: true }).code).join('\n')
 
 // le texte de `function nom(…) { … }` dans le code compilé (accolades comptées hors chaînes)
 function texte(nom: string): string {
@@ -45,17 +46,21 @@ class Feuille {
 class Element {
   attachShadow(init: any) { return init }
 }
+class Noeud {
+  lastChild: any = null
+  appendChild(n: any) { this.lastChild = n; return n }
+}
 
 // une page vide, sans `__name` : ce que Playwright fait du script, `(source)()`
 function jouer(nom: string) {
-  const bac: any = { window: { CSSStyleSheet: Feuille }, Element, Object }
+  const bac: any = { window: { CSSStyleSheet: Feuille }, Element, Object, Node: Noeud }
   vm.runInNewContext('(' + texte(nom) + ')()', bac)
   return bac
 }
 
 describe('rendu par navigateur — les scripts posés avant le cœur tournent seuls, même compilés par tsx', () => {
   it('ils sont bien trouvés', () => {
-    assert.deepEqual(NOMS.slice().sort(), ['mjsSsrForceOpenShadow', 'mjsSsrNoteSheetText'])
+    assert.deepEqual(NOMS.slice().sort(), ['mjsSsrForceOpenShadow', 'mjsSsrNoteSheetText', 'noteLightPage'])
   })
 
   for (const nom of NOMS) {
@@ -78,5 +83,18 @@ describe('rendu par navigateur — les scripts posés avant le cœur tournent se
   it('un Shadow DOM demandé fermé s\'ouvre', () => {
     const bac = jouer('mjsSsrForceOpenShadow')
     assert.equal(new bac.Element().attachShadow({ mode: 'closed' }).mode, 'open')
+  })
+
+  it('un composant bâti à plat retient le dernier nœud de son contenu glissé quand sa page arrive, une seule fois', () => {
+    const bac = jouer('noteLightPage')
+    const el: any = new bac.Node()
+    el._shadow = el
+    const glisse = { nodeType: 1 }
+    el.appendChild(glisse)
+    el.appendChild({ nodeType: 11 })
+    assert.equal(el.__mjsSsrLight, glisse, 'fin du contenu glissé retenue')
+    el.appendChild({ nodeType: 11 })
+    assert.equal(el.__mjsSsrLight, glisse, 'une seconde page ne la déplace pas')
+    assert.equal(bac.Node.prototype.appendChild.mjsSsrNote, true)
   })
 })

@@ -11,11 +11,12 @@
 
 import { readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
-import { resolveBundlerOpts, type MjsConfig, type RenderMode } from '../bundler/config.js'
+import { resolveBundlerOpts, type MjsConfig, type RenderMode, type RenderConfig } from '../bundler/config.js'
 import { createSSRRenderer, type SSRRenderer } from './renderToString.js'
-import { resolvePage } from './render-routes.js'
+import { resolvePage, pickStream, type ResolvedPage } from './render-routes.js'
 import { urlToFile } from './prerender.js'
 import { isServableFile } from './render-server.js'
+import { fontSizeFragmentHead } from './ssr-head.js'
 import { resolveEngine, createBrowserRenderer, type BrowserRenderer } from './render-browser.js'
 import type { RecordServerFn } from './journal.js'
 // render.forwardOrigin : logique de résolution + garde SSRF dans un module FEUILLE
@@ -83,8 +84,11 @@ export interface RenderHandler {
    *  page est résolue (peu importe le mode effectif), son résultat est à la fois fusionné dans
    *  les props du RENDU (mode `ssr` réel seulement — prerender/csr n'ont rien à rendre ici) et
    *  renvoyé dans `RenderResponse.resProps` pour la balise `__mjs_res` de l'appelant. Absent :
-   *  comportement HISTORIQUE inchangé (aucune prop de chargeur transmise au rendu). */
-  handle(pathname: string, headers?: Record<string, string | string[] | undefined>, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>): Promise<RenderResponse>
+   *  comportement HISTORIQUE inchangé (aucune prop de chargeur transmise au rendu). `onShell` : page
+   *  servie en flux (cf. `streamedPage`) — appelé une fois la page admise dans la file de rendu, AVANT
+   *  le chargeur et le rendu : l'appelant y envoie statut, en-têtes et coquille ; file pleine, jamais
+   *  appelé, la réponse est le 503 d'un bloc. Absent : comportement HISTORIQUE inchangé. */
+  handle(pathname: string, headers?: Record<string, string | string[] | undefined>, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>, onShell?: () => void): Promise<RenderResponse>
   /** Invalide le renderer SSR/navigateur mémoïsé (mode DÉVELOPPEMENT) : la PROCHAINE requête
    *  recompile depuis le disque au lieu de réutiliser l'ancien renderer, dont le code source a
    *  changé depuis sa création — sans appel, la mémoïsation (pensée pour la PRODUCTION, où le code
@@ -115,12 +119,17 @@ const DEFAULT_RENDER_CONCURRENCY = 4
 const DEFAULT_RENDER_MAX_QUEUE   = 32
 const RENDER_RETRY_AFTER_S       = 1
 
+// place gardée dans la file à une page servie en flux (cf. RenderGate.hold)
+interface RenderPlace { taken: boolean }
+
 // sémaphore borné : au plus `concurrency` exécutions EN MÊME TEMPS, au plus `maxQueue` EN ATTENTE
 // derrière — au-delà, `run()` rend `null` IMMÉDIATEMENT (jamais un rendu qui patiente
 // indéfiniment, jamais une file qui grossit sans borne).
 class RenderGate {
   private inFlight = 0
   private waiting: Array<{ resolve: () => void; aborted: boolean }> = []
+  // places gardées aux pages servies en flux, admises avant leur coquille et pas encore entrées dans `run` (chargeur en cours)
+  private held = 0
 
   constructor(private concurrency: number, private maxQueue: number) {
     // Clampe l'invariant ci-dessus : `new
@@ -134,10 +143,31 @@ class RenderGate {
     if (this.maxQueue < 0) this.maxQueue = 0
   }
 
-  async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T | null> {
+  // admission d'une page servie en flux, décidée AVANT sa coquille : même borne que `run`, toutes places comptées (rendus en cours,
+  // attente, places déjà gardées) ; `undefined` = file pleine, sinon une place gardée jusqu'à ce que `run` la prenne ou que
+  // `release` la rende
+  hold(): RenderPlace | undefined {
+    if (this.inFlight + this.waiting.length + this.held >= this.concurrency + this.maxQueue) return undefined
+    this.held++
+    return { taken: false }
+  }
+
+  // rend une place gardée que le rendu n'a pas prise (page servie sans rendu, échec avant lui) ; sans effet sinon
+  release(place?: RenderPlace): void {
+    if (!place || place.taken) return
+    place.taken = true
+    this.held--
+  }
+
+  async run<T>(fn: () => Promise<T>, signal?: AbortSignal, place?: RenderPlace): Promise<T | null> {
+    // place gardée (page servie en flux) : déjà comptée, elle entre même file pleine, jamais refusée après sa coquille ;
+    // sans elle, les places gardées aux autres comptent comme prises
+    const held = place !== undefined && !place.taken
+    this.release(place)
+    if (!held && this.held > 0 && this.inFlight + this.waiting.length + this.held >= this.concurrency + this.maxQueue) return null
     if (this.inFlight >= this.concurrency) {
       if (signal?.aborted) return null
-      if (this.waiting.length >= this.maxQueue) return null
+      if (!held && this.waiting.length >= this.maxQueue) return null
       // Requête EN FILE abandonnée par le client (socket
       // fermée, ou tout appelant « middleware » qui transmet son propre AbortSignal) : sans ce
       // filet, l'entrée restait dans `waiting` jusqu'à SON TOUR NATUREL — la file paraissait pleine
@@ -171,6 +201,32 @@ class RenderGate {
 }
 
 /**
+ * La page d'une requête — composant, mode (en-tête de forçage `render.header` compris, cf. `resolvePage`), params : celle que
+ * `handle` rend. Exportée pour l'appelant HTTP qui doit la connaître AVANT le rendu (page servie en flux, cf. `streamedPage`).
+ */
+export function requestPage(render: RenderConfig | undefined, pathname: string, headers: Record<string, string | string[] | undefined> = {}): ResolvedPage | null {
+  const raw      = headers[(render?.header || 'X-MJS-Render').toLowerCase()]
+  const override = Array.isArray(raw) ? raw[0] : raw
+  return resolvePage(pathname, render, override || null)
+}
+
+/**
+ * La page à servir EN FLUX (`route.stream` > `render.stream`, cf. `pickStream`), sinon `null`. L'appelant HTTP envoie alors
+ * statut 200, en-têtes et coquille d'une page réussie dès que `handle` l'admet dans la file de rendu (`onShell`), AVANT le chargeur
+ * et le rendu (`X-MJS-Mode` = le mode de cette page, le même que la réponse de `handle`), puis le reste quand `handle` rend la main.
+ * File pleine : `onShell` n'est pas appelé, la réponse est le 503 d'un bloc (`Retry-After`), sans coquille. GET seulement : un HEAD
+ * garde la réponse d'un bloc et sa longueur annoncée. Le statut part avec la coquille et ne peut plus changer : un rendu qui échoue
+ * ensuite (500, délai compris) garde ce 200, la suite reprend les octets de sa page d'erreur d'un bloc et la réponse se termine
+ * normalement — une connexion coupée à la place empêcherait Chromium et WebKit de lancer le bundle de la page reçue, ce qu'une page
+ * d'erreur d'un bloc fait. L'échec reste consigné (console, journal) comme pour une page d'un bloc.
+ */
+export function streamedPage(render: RenderConfig | undefined, method: string | undefined, pathname: string, headers: Record<string, string | string[] | undefined> = {}): ResolvedPage | null {
+  if (method !== 'GET') return null
+  const page = requestPage(render, pathname, headers)
+  return pickStream(render, page) ? page : null
+}
+
+/**
  * Construit le handler de rendu pour un projet. Le renderer SSR est créé
  * paresseusement (à la 1ʳᵉ requête SSR) pour ne rien coûter aux projets 100 %
  * prérendu/CSR, puis réutilisé (compile une seule fois).
@@ -183,6 +239,8 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
   // dans `handle` ci-dessous.
   const isProd = env === 'prod' || process.env.NODE_ENV === 'production'
   const outputDir = resolve(configDir, config.outputDir || 'dist')
+  // manifeste de la construction : le bloc :root des tailles du texte est écrit à côté (cf. readFontSizeBlock, ssr-head.ts)
+  const manifestPath = config.manifestPath ? resolve(configDir, config.manifestPath) : join(outputDir, 'bundle.js')
   const sourceDir = resolve(configDir, config.sourceDir || '.')
   const pagesDir = render?.outDir ? resolve(configDir, render.outDir) : join(dirname(outputDir), 'mjs_pages')
   // Prérendu multi-langue (`render.locales`, ≥ 2 entrées, cf. server/prerender.ts) : chaque page y
@@ -196,7 +254,6 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
   const prerenderLang = prerenderLocales
     ? (config.i18n?.default && prerenderLocales.includes(config.i18n.default) ? config.i18n.default : prerenderLocales[0])
     : null
-  const headerName = (render?.header || 'X-MJS-Render').toLowerCase()
   // Cf. commentaire détaillé
   // sur `SSRRendererOptions.bundlerOpts` (renderToString.ts) : la liste blanche d'options
   // écrite à la main perdait silencieusement toute clé qu'on avait oublié d'y inscrire
@@ -271,11 +328,31 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
     return browserRendererPromise
   }
 
-  async function handle(pathname: string, headers: Record<string, string | string[] | undefined> = {}, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>): Promise<RenderResponse> {
-    const raw = headers[headerName]
-    const override = Array.isArray(raw) ? raw[0] : raw
-    const page = resolvePage(pathname, render, override || null)
+  // fichier figé au build d'une page prérendue, sous-dossier de langue compris (cf. prerenderLang plus haut)
+  function prerenderFile(pathname: string): string {
+    return prerenderLang ? join(pagesDir, prerenderLang, urlToFile(pathname)) : join(pagesDir, urlToFile(pathname))
+  }
 
+  async function handle(pathname: string, headers: Record<string, string | string[] | undefined> = {}, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>, onShell?: () => void): Promise<RenderResponse> {
+    const page = requestPage(render, pathname, headers)
+    if (!onShell) return renderResponse(page, pathname, headers, signal, loadProps)
+    // page servie en flux : son entrée dans la file se décide AVANT la coquille, dont le statut 200 ne changera plus — file pleine,
+    // le 503 d'un bloc, sans coquille ni chargeur ; admise, elle garde sa place jusqu'à son rendu. Une page sans rendu (csr,
+    // prérendu servi depuis son fichier) n'en prend pas
+    let place: RenderPlace | undefined
+    if (page && page.mode !== 'csr' && !(page.mode === 'prerender' && isServableFile(prerenderFile(pathname), pagesDir, null, null, null))) {
+      place = renderGate.hold()
+      if (!place) return { kind: 'error', status: 503, body: 'Service Unavailable', component: page.component, mode: page.mode, retryAfter: RENDER_RETRY_AFTER_S }
+    }
+    try {
+      onShell()
+      return await renderResponse(page, pathname, headers, signal, loadProps, place)
+    } finally {
+      renderGate.release(place)
+    }
+  }
+
+  async function renderResponse(page: ResolvedPage | null, pathname: string, headers: Record<string, string | string[] | undefined>, signal?: AbortSignal, loadProps?: () => Promise<Record<string, unknown>>, place?: RenderPlace): Promise<RenderResponse> {
     // Props du chargeur `.server.mjs` — résolues UNE fois dès qu'une page existe (csr/prerender/
     // ssr, peu importe le mode) : l'appelant HTTP en a besoin dans tous les cas pour sa balise
     // `__mjs_res` (cf. RenderResponse.resProps) ; le RENDU lui-même ne les consomme que plus bas
@@ -294,7 +371,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
     // Prérendu : servir le fichier figé au build s'il existe. Sous-dossier de langue (cf.
     // prerenderLang plus haut) : MÊME emplacement que prerenderPages a réellement écrit.
     if (page.mode === 'prerender') {
-      const file = prerenderLang ? join(pagesDir, prerenderLang, urlToFile(pathname)) : join(pagesDir, urlToFile(pathname))
+      const file = prerenderFile(pathname)
       // (path traversal) — défense
       // en profondeur : le serveur autonome (`render-server.ts`) rejette déjà
       // les `..` en amont, mais un hôte middleware (Rails/Express) réutilisant
@@ -328,7 +405,7 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // plus haut, gratuits) : saturé ⇒ null immédiat, jamais un rendu qui patiente indéfiniment.
       const gated = await renderGate.run(async () => engine === 'browser'
         ? await (await getBrowserRenderer()).renderPage(page.component, { props: mergedProps, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded })
-        : await (await getRenderer()).renderToString(page.component, { props: mergedProps, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded }), signal)
+        : await (await getRenderer()).renderToString(page.component, { props: mergedProps, ssrMode, settleMs: page.settleMs, light: page.light, ...forwarded }), signal, place)
       if (gated === null) {
         return { kind: 'error', status: 503, body: 'Service Unavailable', component: page.component, mode: page.mode, retryAfter: RENDER_RETRY_AFTER_S }
       }
@@ -349,7 +426,8 @@ export async function createRenderHandler(config: MjsConfig, configDir: string, 
       // (toujours différé) quel que soit l'ordre relatif dans le document. Vide
       // en ssr:replace (RenderResult.hydrateScript === '' dans ce mode) → zéro
       // changement de body pour le mode par défaut (non-régression).
-      const body = (sharedScript ? sharedScript + '\n' : '') + html + (hydrateScript ? '\n' + hydrateScript : '')
+      // tailles du texte adaptées à l'écran : le corps porte le bloc :root de ses variables, un hôte qui le pose dans sa page n'a pas la tête du serveur
+      const body = fontSizeFragmentHead(config, outputDir, manifestPath) + (sharedScript ? sharedScript + '\n' : '') + html + (hydrateScript ? '\n' + hydrateScript : '')
       return { kind: 'ssr', status: 200, body, component: page.component, mode: page.mode, resProps }
     } catch (e: any) {
       // En prod, ne pas divulguer au

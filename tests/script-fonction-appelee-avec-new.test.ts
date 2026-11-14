@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 
-// le <script> compilé en silence (le coffee avertit qu'il est déprécié)
+// le <script> compilé en silence
 async function compile(lang: string, script: string): Promise<void> {
   const orig = console.warn
   console.warn = () => {}

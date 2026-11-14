@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -269,7 +270,7 @@ describe('*particles, *marquee, *pixels (navigateurs réels)', function () {
       it('*marquee sans « réduire les animations » : les deux copies du texte sont rendues, la piste défile', async function () {
         if (!present) { this.skip(); return }
         await essai('mjs-vb-page', 'defile', false, async (page) => {
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => { const v = await copies(page); return JSON.stringify([v.defile, v.haut]) === '[[true,true],[true,true]]' }, 'les deux copies des deux défilés', 300)
           const r = await copies(page)
           assert.deepEqual(r.defile, [true, true], `défilé horizontal : les deux copies ${JSON.stringify(r)}`)
           assert.deepEqual(r.haut, [true, true], `défilé vertical : les deux copies ${JSON.stringify(r)}`)

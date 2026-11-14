@@ -70,10 +70,10 @@ const HOTE = `<script>
 <div id="evenement"><@@select name="ev" other @other={@onAutre(e)}>${PAYS}</@@select></div>
 <div id="clavier"><@@select name="cl[]" multiple other value={['Zed', 'Yo']}>${PAYS}</@@select></div>
 <div id="clavier2"><@@select name="cl2" other>${PAYS}</@@select></div>
-<form id="f-donnees" @noUJS><@@select name="fd" other>${PAYS}</@@select></form>
-<form id="f-simple" @noUJS><@@select name="fs" other value="fr">${PAYS}</@@select></form>
-<form id="f-multi" @noUJS><@@select name="fm[]" multiple other value={['fr', 'Zed']}>${PAYS}</@@select></form>
-<form id="f-libre" @noUJS><@@select name="fl" other value="Zed">${PAYS}</@@select></form>
+<form id="f-donnees" :noUJS><@@select name="fd" other>${PAYS}</@@select></form>
+<form id="f-simple" :noUJS><@@select name="fs" other value="fr">${PAYS}</@@select></form>
+<form id="f-multi" :noUJS><@@select name="fm[]" multiple other value={['fr', 'Zed']}>${PAYS}</@@select></form>
+<form id="f-libre" :noUJS><@@select name="fl" other value="Zed">${PAYS}</@@select></form>
 <div id="a-defaut"><@@select name="a1" other>${PAYS}</@@select></div>
 <div id="a-42"><@@select name="a2" other="42">${PAYS}</@@select></div>
 <div id="a-nombre"><@@select name="a3" other={42}>${PAYS}</@@select></div>

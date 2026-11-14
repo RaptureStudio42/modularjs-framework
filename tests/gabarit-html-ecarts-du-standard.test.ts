@@ -32,7 +32,7 @@ function arbre(html: string): string {
   const { body } = generateCreateFnBody(html, { forceImperative: true })
   const fenetre = new Window()
   const doc     = fenetre.document
-  const µ = { _mjs_getTextNode: (s: string) => doc.createTextNode(s), _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
+  const µ = { _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
   const { fragment } = new Function('µ', 'document', body)(µ, doc)
   const forme = (n: any): string => n.nodeType === 1 ? n.localName + '[' + [...(n.localName === 'template' ? n.content.childNodes : n.childNodes)].map(forme).join(',') + ']' : (n.nodeType === 3 ? '#t' : '#c')
   const rendu = [...fragment.childNodes].map(forme).join(',')

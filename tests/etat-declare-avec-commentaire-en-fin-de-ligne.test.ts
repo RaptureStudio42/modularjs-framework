@@ -13,9 +13,12 @@ describe('état déclaré avec un commentaire en fin de ligne', function () {
     assert.match(out, /µ_state\.m \?= µ\.state\(1\); export \$m = µ_state\.m  \/\/ total/)
   })
 
+  // le gabarit ne lit pas `µ$n` : l'état universel ne se lit que dans le <script> (refusé dans le gabarit)
   it('<script> : se construit', async () => {
-    const { output } = await transpile('<p>{µ$n}</p>\n<script>\nµ$n = 0  # compteur\n</script>', { moduleName: 'etat-commentaire' })
-    assert.match(output, /compteur/)
+    const { output } = await transpile('<p>a</p>\n<script>\nµ$n = 0  # compteur\n</script>', { moduleName: 'etat-commentaire' })
+    // les commentaires sont retirés dès le début de la compilation : la déclaration reste, le commentaire part
+    assert.match(output, /µ\.state\(0\)/)
+    assert.doesNotMatch(output, /compteur/)
   })
 
   it('<script module> : export µ$ avec un commentaire se construit', async () => {

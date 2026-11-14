@@ -29,7 +29,7 @@ const SOURCES: Record<string, string> = {
   'app.page.mjs': '<routes target="app-view">\n  /       home-page\n  /about  about-page\n</routes>\n\n<nav>\n  <a id="r-home" href="#/">accueil</a>\n  <a id="r-about" href="#/about">à propos</a>\n</nav>\n<@view app-view>\n\n<style>\n  :host\n    display: block\n  nav\n    position: fixed\n    top: 0\n    right: 0\n    background: #fff\n    z-index: 9\n</style>\n',
   'home-page.mjs': '<h1>Accueil</h1>\n<p><a id="in-sect" href="#sect">vers la section</a></p>\n<div class="h"></div>\n<h2 id="sect">Section</h2>\n<div class="h"></div>\n<h2 id="insh">Dans l\'ombre</h2>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
   'about-page.mjs': '<h1>À propos</h1>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 2500px\n</style>\n',
-  'lent.page.mjs': '<script>\n  $montre = false\n  µmount =>\n    setTimeout (=> $montre = true), window.delai || 400\n</script>\n\n<h1>Lent</h1>\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardive">Tardive</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
+  'lent.page.mjs': '<script>\n  $montre = false\n  µmount =>\n    µafter window.delai || 400, => $montre = true\n</script>\n\n<h1>Lent</h1>\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardive">Tardive</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
   'hello.mjs': '<script>\n$count = 0\n</script>\n\n<button @click={$count++}>Clic {$count}</button>\n',
 }
 

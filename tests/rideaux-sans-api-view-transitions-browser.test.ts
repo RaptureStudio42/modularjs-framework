@@ -68,7 +68,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`rideaux 
     writeFileSync(join(srcDir, 'shell.page.mjs'), '<routes target="app-view">\n/a  vue-a\n/b  vue-b\n</routes>\n<@view app-view>\n')
     writeFileSync(join(srcDir, 'vue-a.mjs'), '<p class="va">VUE A</p>\n')
     writeFileSync(join(srcDir, 'vue-b.mjs'), '<p class="vb">VUE B</p>\n')
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), viewTransition: 'none' })
     const stats   = await bundler.compile()
     await bundler.close()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

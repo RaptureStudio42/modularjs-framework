@@ -45,12 +45,13 @@ function declarer(app: MjsServerApp): void {
 
 // espion posé sur le prototype de Game le temps d'un test : rend chaque appel visible, puis rétabli
 const originaux = { _onDisconnect: Game.prototype._onDisconnect, _createSeat: Game.prototype._createSeat }
-afterEach(() => {
-  Game.prototype._onDisconnect = originaux._onDisconnect
-  Game.prototype._createSeat   = originaux._createSeat
-})
 
 describe('MJS-Server — index inverse des connexions et des identités', () => {
+  afterEach(() => {
+    Game.prototype._onDisconnect = originaux._onDisconnect
+    Game.prototype._createSeat   = originaux._createSeat
+  })
+
   it('une déconnexion ne visite que les parties de la connexion, pas toutes les parties vivantes', async () => {
     const { transport, app } = await startApp()
     for (let i = 0; i < 20; i++) {

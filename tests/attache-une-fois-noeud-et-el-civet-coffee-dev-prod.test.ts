@@ -20,11 +20,11 @@ const source = (lang: string) => `<script${lang === 'coffee' ? ' lang="coffee"' 
     window.__poses.push(tag + ':' + node.localName + '.' + node.className)
     -> window.__nettoyages.push(tag)
 </script>
-<div class="racine-once" @attach.once={watch(_node, 'r1')}>{$tick}</div>
-<div class="racine-el-once" @attach.once={watch(el, 'r2')}>{$tick}</div>
-<div class="racine" @attach={watch(_node, 'r3')}></div>
-<div class="racine-el" @attach={watch(el, 'r4')}></div>
-<ul>{for p in $rows by key}<li class="ligne" @attach.once={watch(_node, 'f1-' + p.key)}>{p.key}{$tick}</li><li class="ligne-el" @attach.once={watch(el, 'f2-' + p.key)}>{p.key}{$tick}</li><li class="ligne-simple" @attach={watch(_node, 'f3-' + p.key)}>{p.key}</li>{end}</ul>
+<div class="racine-once" :attach.once={watch(_node, 'r1')}>{$tick}</div>
+<div class="racine-el-once" :attach.once={watch(el, 'r2')}>{$tick}</div>
+<div class="racine" :attach={watch(_node, 'r3')}></div>
+<div class="racine-el" :attach={watch(el, 'r4')}></div>
+<ul>{for p in $rows by key}<li class="ligne" :attach.once={watch(_node, 'f1-' + p.key)}>{p.key}{$tick}</li><li class="ligne-el" :attach.once={watch(el, 'f2-' + p.key)}>{p.key}{$tick}</li><li class="ligne-simple" :attach={watch(_node, 'f3-' + p.key)}>{p.key}</li>{end}</ul>
 `
 
 const UNE_FOIS = ['f1-a', 'f1-b', 'f2-a', 'f2-b', 'r1', 'r2']

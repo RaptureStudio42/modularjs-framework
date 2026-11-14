@@ -18,6 +18,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { LECTURES } from './helpers/lectures-images.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -203,7 +204,7 @@ describe('*velocity (navigateurs réels) — la balise réagit à la vitesse du 
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -738,6 +739,6 @@ describe('*velocity (navigateurs réels) — la balise réagit à la vitesse du 
           assert.equal(bilan.lectures, 0, `lectures de mise en page dans les images d'animation : ${JSON.stringify(bilan.vues)}`)
         })
       })
-    })
+    }))
   }
 })

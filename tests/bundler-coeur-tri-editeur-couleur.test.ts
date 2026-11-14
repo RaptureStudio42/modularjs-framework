@@ -166,7 +166,7 @@ describe('Bundler.coreToolShown(\'color\') — la palette d\'un éditeur décide
   })
 
   it('un script du projet qui nomme la balise de l\'éditeur peut lui donner colors : dans le doute, la règle des listes', () => {
-    const bundler = withRefs([editeur({})], { 'outil.civet': 'export ouvrir = -> document.querySelector(\'mjs-core-editor\')\n' })
+    const bundler = withRefs([editeur({})], { 'outil.civet.mjs': 'export ouvrir = -> document.querySelector(\'mjs-core-editor\')\n' })
     assert.equal(ask(bundler, 'color'), 'unknown')
   })
 })

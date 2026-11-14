@@ -833,7 +833,13 @@ function _mjsFxAppear(el, name, s, comp) {
     var busy  = false;
     // vue quand 15 % d'elle, ou 15 % de l'écran pour une balise plus haute que lui, est à l'écran
     // (µ._mjs_fxSeen) : tenue cachée, une très haute balise resterait sinon invisible
-    var io = new IntersectionObserver(function(entries) {
+    // <visible>
+    // `visible: 60%` règle cette part (µ._mjs_fxSight)
+    var io = µ._mjs_fxSight(function(entries) {
+    // </visible>
+    // <sans-visible>
+    // var io = new IntersectionObserver(function(entries) {
+    // </sans-visible>
       for (var i = 0; i < entries.length; i++) {
         if (entries[i].target !== el) continue;
         // `busy` : une balise tenue par l'opacité est jugée à sa place, jamais pendant qu'elle bouge. Son entrée part d'une découpe

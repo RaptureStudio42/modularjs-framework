@@ -12,7 +12,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
 const pause = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
-const PAGE  = '<script>\nroot = null\nnote = (quoi) -> (globalThis.__journal ||= []).push(quoi + \' \' + (if root then \'la\' else \'vide\'))\n@etat = -> if root then \'la\' else \'vide\'\nµmount ->\n  note(\'mount\')\n  -> note(\'nettoyage\')\nµsleep -> note(\'sleep\')\nµdestroy -> note(\'destroy\')\n</script>\n<div class="r" @this=!{root}>x</div>\n'
+const PAGE  = '<script>\nroot = null\nnote = (quoi) -> (globalThis.__journal ||= []).push(quoi + \' \' + (if root then \'la\' else \'vide\'))\n@etat = -> if root then \'la\' else \'vide\'\nµmount ->\n  note(\'mount\')\n  -> note(\'nettoyage\')\nµsleep -> note(\'sleep\')\nµdestroy -> note(\'destroy\')\n</script>\n<div class="r" :this=!{root}>x</div>\n'
 
 describe('@this=!{root} — lisible au sommeil et au nettoyage', function () {
   this.timeout(60000)

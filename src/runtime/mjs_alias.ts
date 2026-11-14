@@ -16,5 +16,10 @@
   // la silhouette posée dans la balise courte pendant que le code arrivait (mjs_fx_skeleton.ts) part
   // avant l'enregistrement, comme celle de la balise longue (µ._def)
   if (µ._mjs_skelOff) µ._mjs_skelOff(tag);
-  if (!customElements.get(tag) && (!µ.paths || Object.prototype.hasOwnProperty.call(µ.paths, key))) customElements.define(tag, class extends C {});
+  // balises courtes déjà dans la page : mises à niveau pendant l'enregistrement, comme celles de la balise longue (`µ._mjs_defining`, µ._def)
+  if (!customElements.get(tag) && (!µ.paths || Object.prototype.hasOwnProperty.call(µ.paths, key))) {
+    µ._mjs_defining = !µ.server;
+    customElements.define(tag, class extends C {});
+    µ._mjs_defining = 0;
+  }
 };

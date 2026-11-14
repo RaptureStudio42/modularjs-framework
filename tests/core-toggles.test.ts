@@ -379,7 +379,7 @@ describe('mjs-core-checkbox / mjs-core-switch — l\'événement change', functi
     $echo = [...$echo, qui + ':' + e.data + ':' + lie]
 </script>
 
-<form id="f" @noUJS>
+<form id="f" :noUJS>
   <@@checkbox id="cb" name="terms" checked=!{$accepted} @change={@note('cb', e, $accepted)}>Accepte</@@checkbox>
   <@@switch id="sw" name="alerts" checked=!{$alerts} @change={@note('sw', e, $alerts)}>Alertes</@@switch>
   <@@checkbox id="init" name="init" checked={true}>Départ coché</@@checkbox>

@@ -27,9 +27,9 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const t = $theme}
-  <b class="ok" @attach={marque(t)}>{v.label}</b>
+  <b class="ok" :attach={marque(t)}>{v.label}</b>
 {end}
-<u class="temoin" @attach={marque($theme)}>témoin</u>
+<u class="temoin" :attach={marque($theme)}>témoin</u>
 `,
   // liaison deux sens d'un champ de saisie : le champ montre la propriété du `{const}`, que la variable remplace
   'ac-valeur.mjs': `<script>
@@ -55,10 +55,10 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const eta = $etat}
-  <input class="ra" aria-label="a" type="radio" value="a" @group=!{eta.choix}>
-  <input class="rb" aria-label="b" type="radio" value="b" @group=!{eta.choix}>
+  <input class="ra" aria-label="a" type="radio" value="a" :group=!{eta.choix}>
+  <input class="rb" aria-label="b" type="radio" value="b" :group=!{eta.choix}>
 {end}
-<input class="temoin" aria-label="a" type="radio" value="a" @group=!{$etat.choix}>
+<input class="temoin" aria-label="a" type="radio" value="a" :group=!{$etat.choix}>
 `,
   // texte d'une balise éditable : il suit la propriété du `{const}`, que la variable remplace
   'ac-texte.mjs': `<script>
@@ -70,9 +70,9 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const c = $obj}
-  <div class="ok" contenteditable="true" @text=!{c.x}></div>
+  <div class="ok" contenteditable="true" :text=!{c.x}></div>
 {end}
-<div class="temoin" contenteditable="true" @text=!{$obj.x}></div>
+<div class="temoin" contenteditable="true" :text=!{$obj.x}></div>
 `,
   // HTML d'une balise éditable : même chose
   'ac-html.mjs': `<script>
@@ -84,9 +84,9 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const c = $obj}
-  <div class="ok" contenteditable="true" @html=!{c.h}></div>
+  <div class="ok" contenteditable="true" :html=!{c.h}></div>
 {end}
-<div class="temoin" contenteditable="true" @html=!{$obj.h}></div>
+<div class="temoin" contenteditable="true" :html=!{$obj.h}></div>
 `,
   // événement : il repart avec la valeur du `{const}` quand la variable est remplacée ; deux noms, un par balise, pour les compter séparément
   'ac-emit.mjs': `<script>
@@ -98,9 +98,9 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const c = $obj}
-  <b class="ok" @emit.ok={c.x}>ok</b>
+  <b class="ok" :emit.ok={c.x}>ok</b>
 {end}
-<u class="temoin" @emit.tem={$obj.x}>témoin</u>
+<u class="temoin" :emit.tem={$obj.x}>témoin</u>
 `,
   // module : sa prop (`x`) et son attribut natif (`data-v`) lisent le `{const}` ; l'enfant montre sa prop
   'c-ac-mod.mjs': `<script>

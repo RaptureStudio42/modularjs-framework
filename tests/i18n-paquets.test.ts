@@ -198,8 +198,8 @@ describe('plusieurs paquets par module — exécution', function () {
       assert.equal(lire(deux, 'p.a'), 'Autre résumé', 'ordre inversé : l\'autre gagne')
       assert.equal(lire(un, 'p.b'), 'Seulement en français', 'clé portée par le seul paquet panier')
       assert.equal(lire(deux, 'p.b'), 'Seulement en français', 'trouvée dans le second paquet quand le premier ne la porte pas')
-      assert.equal(lire(un, 'p.c'), prod ? '' : '⟦panier.inconnue⟧', 'absente de tous : le repère nomme le premier paquet')
-      assert.equal(lire(deux, 'p.c'), prod ? '' : '⟦ailleurs.inconnue⟧')
+      assert.equal(lire(un, 'p.c'), '⟦panier.inconnue⟧', 'absente de tous : le repère nomme le premier paquet, en production comme en développement')
+      assert.equal(lire(deux, 'p.c'), '⟦ailleurs.inconnue⟧')
       assert.equal(lire(un, 'p.d'), 'Fermer', 'chemin absolu : racine, jamais cherché dans les paquets')
     })
 

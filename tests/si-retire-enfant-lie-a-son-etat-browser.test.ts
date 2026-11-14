@@ -240,10 +240,10 @@ ${boutons()}
     journal('destroy ' + $dialog.id)
 </script>
 
-<div class="win" tabindex="-1" @attach={focusNode(_node)}>{$dialog.id}</div>
-<b class="obj" @attach={objet(_node)}>o</b>
-<i class="fab" @attach={fabrique}>f</i>
-<s class="garde" @attach={garde}>g</s>
+<div class="win" tabindex="-1" :attach={focusNode(_node)}>{$dialog.id}</div>
+<b class="obj" :attach={objet(_node)}>o</b>
+<i class="fab" :attach={fabrique}>f</i>
+<s class="garde" :attach={garde}>g</s>
 `,
 
   // sortie animée sur une enveloppe du parent, entrée et sortie dans l'enfant
@@ -256,7 +256,7 @@ ${boutons()}
 
 ${boutons()}
 {if $dialog}
-  <div class="wrap" @in=*fade(duration: 300ms) @out=*fade(duration: 300ms)><@c-sortie dialog={$dialog}></div>
+  <div class="wrap" :in=*fade(duration: 300ms) :out=*fade(duration: 300ms)><@c-sortie dialog={$dialog}></div>
 {end}
 `,
   'c-sortie.mjs': `<script>
@@ -264,7 +264,7 @@ ${boutons()}
 </script>
 
 {if $dialog}
-  <div class="win" @in=*fly(duration: 220ms) @out=*fade(duration: 300ms)>{$dialog.id}</div>
+  <div class="win" :in=*fly(duration: 220ms) :out=*fade(duration: 300ms)>{$dialog.id}</div>
 {end}
 `,
 
@@ -312,8 +312,8 @@ ${boutons()}
 <@window @keydown={@onKey(e)}>
 
 {if $dialog}
-<button type="button" class="backdrop" @transition=*fade(duration: 160ms) @click={@close()}>fond</button>
-<div class="win" role="dialog" tabindex="-1" @in=*fly(duration: 220ms) @out=*fade(duration: 130ms) @attach={focusNode(_node)}>
+<button type="button" class="backdrop" :transition=*fade(duration: 160ms) @click={@close()}>fond</button>
+<div class="win" role="dialog" tabindex="-1" :in=*fly(duration: 220ms) :out=*fade(duration: 130ms) :attach={focusNode(_node)}>
   <b>{@editing() ? 'modifier' : 'ajouter'} {$dialog.id}</b>
   <input aria-label="x" value={$x} @input={$typed = e.target.value}>
   <@c-champ value={$dialog.id}>

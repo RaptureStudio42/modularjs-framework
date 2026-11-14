@@ -4,7 +4,7 @@
 // attendue écrite à la main : un témoin faux arrête le cas aussitôt, c'est le test qui est à revoir.
 // La promesse est tenue par le test (`finir()`, `echouer()`), pour que la branche d'attente existe avant l'arrivée ; elle est remplacée, rejetée, retirée, et la
 // variable change à chaque étape : aucune erreur, aucun bandeau `mjs-fatal-error`, et le texte d'une branche qui n'est plus affichée ne déborde pas sur celui d'une autre
-// (le pool de nœuds texte réattribue les nœuds d'une branche détruite).
+// (chaque branche a ses propres nœuds texte : ceux d'une branche détruite ne passent à aucune autre).
 // Les trois modes (développement, production en fichiers séparés, production en un seul fichier) en navigateur réel, puis la reprise d'une page rendue par le serveur
 // (`markers`, `positional`, `diff`, `replace`) ; une interpolation qui ne lit que la valeur de la branche n'émet aucun effet (lecture du code émis).
 
@@ -141,8 +141,8 @@ ${PROMESSE('{ n: 10 }')}
   <b class="dans">{c.x}/{d}</b><b class="val">{v.n}</b>
 {end}
 `,
-  // l'attente lit $b, `{success v}` lit $a : après le règlement, le nœud texte de l'attente peut être réattribué à `{success}` par le pool de nœuds texte,
-  // et un changement de $b ne doit pas l'écraser
+  // l'attente lit $b, `{success v}` lit $a : après le règlement, `{success}` a ses propres nœuds texte, jamais celui de l'attente,
+  // et un changement de $b ne doit pas écraser son texte
   'tv-pool.mjs': `<script>
   $a = 'a1'
   $b = 'b1'
@@ -234,11 +234,11 @@ ${PROMESSE("{ n: 1 }")}
 </script>
 <u class="hors">{$ton}</u>
 {await $p}
-  <i class="att" @class{$ton is 'sombre'}="sombre" @attach={marque('att', $ton)} @emit.att={$ton}>attente</i>
+  <i class="att" :class{$ton is 'sombre'}="sombre" :attach={marque('att', $ton)} :emit.att={$ton}>attente</i>
 {success}
-  <b class="dans" @class{$ton is 'sombre'}="sombre" @attach={marque('dans', $ton)} @emit.dans={$ton}>ok</b>
+  <b class="dans" :class{$ton is 'sombre'}="sombre" :attach={marque('dans', $ton)} :emit.dans={$ton}>ok</b>
 {error}
-  <b class="dans" @class{$ton is 'sombre'}="sombre" @attach={marque('dans', $ton)} @emit.dans={$ton}>ko</b>
+  <b class="dans" :class{$ton is 'sombre'}="sombre" :attach={marque('dans', $ton)} :emit.dans={$ton}>ko</b>
 {end}
 `,
   // `null` et `undefined` ne s'écrivent pas dans un texte `{…}`, comme à la racine : une variable, la valeur de la branche, un `{const}` ; `0` et `false` s'écrivent
@@ -277,7 +277,7 @@ ${PROMESSE('{ n: 1 }')}
 {await $p}
   <i class="att">attente</i>
 {success v}
-  {if $mode is 'a'}<b class="a" @attach={marque('a', $ton)} @emit.vu={$ton}>A{v.n}</b>{else}<b class="b">B</b>{end}
+  {if $mode is 'a'}<b class="a" :attach={marque('a', $ton)} :emit.vu={$ton}>A{v.n}</b>{else}<b class="b">B</b>{end}
 {end}
 `
 }
@@ -508,7 +508,7 @@ for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-
     })
   })
 
-  it('le texte de l\'attente ne déborde pas sur celui de {success} quand le pool de nœuds texte réattribue ses nœuds', async function () {
+  it('le texte de l\'attente ne déborde pas sur celui de {success} : chaque branche garde ses propres nœuds texte', async function () {
     if (!present) { this.skip(); return }
     const B = 'mjs-tv-pool'
     await jouer(B, async (page, ecarts) => {

@@ -176,11 +176,12 @@ function _dpMajEclairer() {
   });
 }
 
-// les racines à observer : la page, et chaque composant monté (les nouveaux sont repris à chaque tour)
+// les racines à observer : la page, et chaque composant monté (les nouveaux sont repris à chaque tour) ; un léger, qui est sa propre
+// ombre, l'est avec l'arbre qui le porte, sa racine d'ombre native à part s'il en porte une
 function _dpMajSuivre() {
   var racines = [document.body];
   µ.instances.forEach(function(el) {
-    var r = el._shadow || el.shadowRoot;
+    var r = µ._mjs_shadowOf(el);
     if (r && el.isConnected) racines.push(r);
   });
   racines.forEach(function(r) {
@@ -313,10 +314,9 @@ function _dpApercu(v) {
 function _dpEtatKeys(el) {
   var etat = el._state || {};
   var derives = new Set(el._mjs_computedKeys || []);
-  // préfixe interne EXPLICITE (`_mjs_`), pas tout ce qui commence par `_` : `$_x` est un nom de
-  // var d'état valide (SIGIL_ID autorise `_` en 1re position, c'est même l'exemple du framework
-  // pour µread/µwrite) — un filtre sur le seul `_` la masquait à tort dans l'onglet État.
-  return Object.keys(etat).filter(function(k) { return !derives.has(k) && k.indexOf('_mjs_') !== 0; }).sort();
+  // l'état ne porte que les variables du composant, aucune clé interne : seuls les dérivés sont retirés. `$_x` est un nom de
+  // var d'état valide (SIGIL_ID autorise `_` en 1re position, c'est même l'exemple du framework pour µread/µwrite) : listé
+  return Object.keys(etat).filter(function(k) { return !derives.has(k); }).sort();
 }
 
 // texte de la règle d'une variable ou d'un store typé (bloc <vars>, présent hors production)
@@ -678,7 +678,7 @@ function _dpRender() {
     '<button data-action="refresh">' + µ._mjs_txt('dev.btnRefresh', null, 'rafraîchir') + '</button>' +
     '<button data-action="close">' + µ._mjs_txt('dev.btnClose', null, 'fermer') + '</button>' +
     '</div>' + (_dpMaj.on ? _dpMajReglages() : '') + '<div class="corps"><div class="arbre"></div><div class="detail"></div></div></div>';
-  _dpRoot.innerHTML = '<style>' + _DP_CSS + '</style>' + html;
+  _dpRoot.innerHTML = µ._mjs_th('<style>' + _DP_CSS + '</style>' + html);
 
   var arbre = _dpRoot.querySelector('.arbre');
   // en tête de l'arbre, les stores — seulement s'il y en a (clés CACHÉES exclues : µlang & co)
@@ -686,7 +686,7 @@ function _dpRender() {
   if (clesStore.length > 0) {
     var noeudStores = document.createElement('div');
     noeudStores.className = 'noeud';
-    noeudStores.innerHTML = '<span class="repli" aria-hidden="true"></span><button type="button" class="ligne ligne-stores" aria-selected="' + (_dpVue === 'stores' && !_dpObjet ? 'true' : 'false') + '"><span>stores ($$)</span><span class="rendus">·' + clesStore.length + '</span></button>';
+    noeudStores.innerHTML = µ._mjs_th('<span class="repli" aria-hidden="true"></span><button type="button" class="ligne ligne-stores" aria-selected="' + (_dpVue === 'stores' && !_dpObjet ? 'true' : 'false') + '"><span>stores ($$)</span><span class="rendus">·' + clesStore.length + '</span></button>');
     noeudStores.querySelector('.ligne').addEventListener('click', function() { _dpVue = 'stores'; _dpObjet = null; _dpRender(); });
     arbre.appendChild(noeudStores);
   }
@@ -695,7 +695,7 @@ function _dpRender() {
   if (nbEffets > 0) {
     var noeudEffets = document.createElement('div');
     noeudEffets.className = 'noeud';
-    noeudEffets.innerHTML = '<span class="repli" aria-hidden="true"></span><button type="button" class="ligne ligne-effets" aria-selected="' + (_dpVue === 'effets' && !_dpObjet ? 'true' : 'false') + '"><span>' + µ._mjs_txt('dev.rowEffects', null, 'effets (*)') + '</span><span class="rendus">·' + nbEffets + '</span></button>';
+    noeudEffets.innerHTML = µ._mjs_th('<span class="repli" aria-hidden="true"></span><button type="button" class="ligne ligne-effets" aria-selected="' + (_dpVue === 'effets' && !_dpObjet ? 'true' : 'false') + '"><span>' + µ._mjs_txt('dev.rowEffects', null, 'effets (*)') + '</span><span class="rendus">·' + nbEffets + '</span></button>');
     noeudEffets.querySelector('.ligne').addEventListener('click', function() { _dpVue = 'effets'; _dpObjet = null; _dpRender(); });
     arbre.appendChild(noeudEffets);
   }
@@ -713,11 +713,11 @@ function _dpRender() {
     var noeud = document.createElement('div');
     noeud.className = 'noeud';
     noeud.style.paddingLeft = (l.profondeur * 0.9) + 'rem';
-    noeud.innerHTML = (l.aEnfants
+    noeud.innerHTML = µ._mjs_th((l.aEnfants
         ? '<button type="button" class="repli" data-uid="' + uid + '" aria-expanded="' + (_dpArbreReplies.has(uid) ? 'false' : 'true') + '">' + (_dpArbreReplies.has(uid) ? '▸' : '▾') + '</button>'
         : '<span class="repli" aria-hidden="true"></span>') +
       '<button type="button" class="ligne" aria-selected="' + (l.el === _dpSelected && !_dpVue ? 'true' : 'false') + '"><span>' +
-      µ._esc(_dpName(l.el)) + '</span><span class="rendus">·' + (l.el._mjs_renderCount || 0) + '</span></button>';
+      µ._esc(_dpName(l.el)) + '</span><span class="rendus">·' + (l.el._mjs_renderCount || 0) + '</span></button>');
     var boutonRepli = noeud.querySelector('.repli[data-uid]');
     if (boutonRepli) {
       boutonRepli.addEventListener('click', function(e) {
@@ -870,14 +870,14 @@ function _dpOngletProps(el) {
 /** Le volet de droite : l'inspecteur d'objet (`µconsole valeur`), ou l'instance sélectionnée en onglets. */
 function _dpRenderDetail(hote) {
   if (_dpObjet) {
-    hote.innerHTML = '<button type="button" class="lien-retour" data-action="objet-fermer">← ' + µ._mjs_txt('dev.closeInspector', null, 'fermer l\'inspecteur d\'objet') + '</button><div class="onglet-corps"></div>';
+    hote.innerHTML = µ._mjs_th('<button type="button" class="lien-retour" data-action="objet-fermer">← ' + µ._mjs_txt('dev.closeInspector', null, 'fermer l\'inspecteur d\'objet') + '</button><div class="onglet-corps"></div>');
     hote.querySelector('[data-action="objet-fermer"]').addEventListener('click', function() { _dpObjet = null; _dpRender(); });
     µ._mjs_diRender(hote.querySelector('.onglet-corps'), _dpObjet.valeur, { ns: _dpObjet.ns, titre: _dpObjet.titre });
     return;
   }
   if (_dpVue === 'stores') {
     var cles = µ.store ? Object.keys(µ.store) : [];
-    hote.innerHTML = '<div class="di-entete">stores ($$) · ' + (cles.length > 1 ? µ._mjs_txt('dev.keysMany', { n: cles.length }, '{n} clés') : µ._mjs_txt('dev.keysOne', { n: cles.length }, '{n} clé')) + '</div><div class="onglet-corps"></div>';
+    hote.innerHTML = µ._mjs_th('<div class="di-entete">stores ($$) · ' + (cles.length > 1 ? µ._mjs_txt('dev.keysMany', { n: cles.length }, '{n} clés') : µ._mjs_txt('dev.keysOne', { n: cles.length }, '{n} clé')) + '</div><div class="onglet-corps"></div>');
     // copie PLATE des clés : lue par les accesseurs de `µ.store` (un store calculé arrive résolu),
     // les objets restent les références vivantes du store — l'écriture profonde les touche vraiment
     var vue = {};
@@ -894,23 +894,23 @@ function _dpRenderDetail(hote) {
   }
   if (_dpVue === 'effets') {
     var tous = _dpFxListe(null);
-    hote.innerHTML = '<div class="di-entete">effets (*) · ' + (tous.length > 1 ? µ._mjs_txt('dev.fxSetMany', { n: tous.length }, '{n} posés') : µ._mjs_txt('dev.fxSetOne', { n: tous.length }, '{n} posé')) + '</div><div class="onglet-corps"></div>';
+    hote.innerHTML = µ._mjs_th('<div class="di-entete">effets (*) · ' + (tous.length > 1 ? µ._mjs_txt('dev.fxSetMany', { n: tous.length }, '{n} posés') : µ._mjs_txt('dev.fxSetOne', { n: tous.length }, '{n} posé')) + '</div><div class="onglet-corps"></div>');
     var corpsFx = hote.querySelector('.onglet-corps');
-    corpsFx.innerHTML = tous.length ? _dpFxHtml(tous, true) : '<p class="vide">' + µ._mjs_txt('dev.noEffectPage', null, 'aucun effet dans la page') + '</p>';
+    corpsFx.innerHTML = µ._mjs_th(tous.length ? _dpFxHtml(tous, true) : '<p class="vide">' + µ._mjs_txt('dev.noEffectPage', null, 'aucun effet dans la page') + '</p>');
     _dpFxBrancher(corpsFx);
     return;
   }
   var el = _dpSelected;
   if (!el || !el.isConnected) {
-    hote.innerHTML = '<p class="aide">' + µ._mjs_txt('dev.pickComponent', null, 'Choisissez un composant à gauche.<br>Survolez une ligne pour le situer dans la page.') + '</p>';
+    hote.innerHTML = µ._mjs_th('<p class="aide">' + µ._mjs_txt('dev.pickComponent', null, 'Choisissez un composant à gauche.<br>Survolez une ligne pour le situer dans la page.') + '</p>');
     return;
   }
   var uid = _dpUid(el);
-  hote.innerHTML =
+  hote.innerHTML = µ._mjs_th(
     '<div class="di-entete">' + µ._esc(_dpName(el)) + ' · ' + ((el._mjs_renderCount || 0) > 1 ? µ._mjs_txt('dev.renderMany', { n: (el._mjs_renderCount || 0) }, '{n} rendus') : µ._mjs_txt('dev.renderOne', { n: (el._mjs_renderCount || 0) }, '{n} rendu')) + '</div>' +
     '<div class="onglets" role="tablist">' + _DP_ONGLETS().map(function(o) {
       return '<button type="button" class="onglet" role="tab" aria-selected="' + (o.id === _dpOnglet ? 'true' : 'false') + '" data-onglet="' + o.id + '">' + o.libelle + '</button>';
-    }).join('') + '</div><div class="onglet-corps"></div>';
+    }).join('') + '</div><div class="onglet-corps"></div>');
 
   hote.querySelectorAll('.onglet').forEach(function(b) {
     b.addEventListener('click', function() { _dpOnglet = b.getAttribute('data-onglet'); _dpRender(); });
@@ -923,20 +923,20 @@ function _dpRenderDetail(hote) {
       var d = deps[k] && deps[k].length ? '← ' + deps[k].map(function(x) { return '$' + x; }).join(', ') : '';
       return '<tr><td class="cle">$' + µ._esc(k) + '</td><td>' + µ._esc(_dpApercu(el._state[k])) + '</td><td class="deps">' + µ._esc(d) + '</td></tr>';
     }).join('');
-    corps.innerHTML = '<section><h2>' + µ._mjs_txt('dev.derivedTitle', null, 'Dérivés et leurs dépendances') + '</h2>' + (lignes ? '<table>' + lignes + '</table>' : '<p class="vide">' + µ._mjs_txt('dev.noDerived', null, 'aucun dérivé') + '</p>') + '</section>';
+    corps.innerHTML = µ._mjs_th('<section><h2>' + µ._mjs_txt('dev.derivedTitle', null, 'Dérivés et leurs dépendances') + '</h2>' + (lignes ? '<table>' + lignes + '</table>' : '<p class="vide">' + µ._mjs_txt('dev.noDerived', null, 'aucun dérivé') + '</p>') + '</section>');
   } else if (_dpOnglet === 'liaisons') {
     var lignesL = el._mjs_effectsByVar ? Object.keys(el._mjs_effectsByVar).sort().map(function(k) {
       return '<tr><td class="cle">$' + µ._esc(k) + '</td><td>' + (el._mjs_effectsByVar[k].length > 1 ? µ._mjs_txt('dev.bindingMany', { n: el._mjs_effectsByVar[k].length }, '{n} liaisons') : µ._mjs_txt('dev.bindingOne', { n: el._mjs_effectsByVar[k].length }, '{n} liaison')) + '</td></tr>';
     }).join('') : '';
-    corps.innerHTML = '<section><h2>' + µ._mjs_txt('dev.bindingsTitle', null, 'Ce que chaque variable met à jour') + '</h2>' + (lignesL ? '<table>' + lignesL + '</table>' : '<p class="vide">' + µ._mjs_txt('dev.noBinding', null, 'aucune liaison') + '</p>') + '</section>';
+    corps.innerHTML = µ._mjs_th('<section><h2>' + µ._mjs_txt('dev.bindingsTitle', null, 'Ce que chaque variable met à jour') + '</h2>' + (lignesL ? '<table>' + lignesL + '</table>' : '<p class="vide">' + µ._mjs_txt('dev.noBinding', null, 'aucune liaison') + '</p>') + '</section>');
   } else if (_dpOnglet === 'contexte') {
     // Deux moitiés, parce que ce sont deux questions différentes : « qu'est-ce que CE composant
     // met à disposition de sa descendance » (sa propre Map `_mjs_contexts`) et « qu'est-ce qu'il
     // REÇOIT, et de qui » (remontée `parentNode || host || getRootNode().host`, exactement le
     // chemin de `_mjs_getContext`, cf. mjs_element.ts). Sans la seconde, l'onglet reste vide sur
     // toute feuille de l'arbre — c'est-à-dire précisément là où on se demande d'où vient `§x`.
-    corps.innerHTML = '<section><h2>' + µ._mjs_txt('dev.ctxSet', null, 'Posés ici') + '</h2><div class="ctx-poses"></div></section>' +
-      '<section><h2>' + µ._mjs_txt('dev.ctxReceived', null, 'Reçus d\'un ancêtre') + '</h2><div class="ctx-recus"></div></section>';
+    corps.innerHTML = µ._mjs_th('<section><h2>' + µ._mjs_txt('dev.ctxSet', null, 'Posés ici') + '</h2><div class="ctx-poses"></div></section>' +
+      '<section><h2>' + µ._mjs_txt('dev.ctxReceived', null, 'Reçus d\'un ancêtre') + '</h2><div class="ctx-recus"></div></section>');
     µ._mjs_diRender(corps.querySelector('.ctx-poses'), el._mjs_contexts || {}, { ns: 'ctx#' + uid, videTexte: µ._mjs_txt('dev.noCtxSet', null, 'aucun contexte posé par ce composant') });
     var recus = {}, vus = {}, courant = el.parentNode || el.host || (el.getRootNode && el.getRootNode().host);
     while (courant) {
@@ -948,12 +948,12 @@ function _dpRenderDetail(hote) {
     }
     µ._mjs_diRender(corps.querySelector('.ctx-recus'), recus, { ns: 'ctxr#' + uid, videTexte: µ._mjs_txt('dev.noCtxReceived', null, 'aucun contexte reçu') });
   } else if (_dpOnglet === 'props') {
-    corps.innerHTML = _dpOngletProps(el);
+    corps.innerHTML = µ._mjs_th(_dpOngletProps(el));
   } else if (_dpOnglet === 'style') {
-    corps.innerHTML = _dpOngletStyle(el);
+    corps.innerHTML = µ._mjs_th(_dpOngletStyle(el));
   } else if (_dpOnglet === 'effets') {
     var siens = _dpFxListe(el);
-    corps.innerHTML = siens.length ? _dpFxHtml(siens, false) : '<p class="vide">' + µ._mjs_txt('dev.noEffectComp', null, 'aucun effet posé par ce composant') + '</p>';
+    corps.innerHTML = µ._mjs_th(siens.length ? _dpFxHtml(siens, false) : '<p class="vide">' + µ._mjs_txt('dev.noEffectComp', null, 'aucun effet posé par ce composant') + '</p>');
     _dpFxBrancher(corps);
   } else {
     var permis = new Set(_dpEtatKeys(el));
@@ -1204,12 +1204,13 @@ function _dpFxRetablir(ligne) {
 }
 
 // l'élément qui a le focus dans la page, en descendant dans les ombres : `document.activeElement` s'arrête à l'hôte d'un
-// composant (son ombre est fermée — `_shadow`, `shadowRoot` l'ignore), et c'est le bouton à l'intérieur qui doit le retrouver
+// composant (son ombre est fermée — `_shadow`, `shadowRoot` l'ignore ; un léger, qui est sa propre ombre : sa racine d'ombre
+// native), et c'est le bouton à l'intérieur qui doit le retrouver
 function _dpActiveDeep() {
   var a = document.activeElement;
   try {
     while (a) {
-      var r = a._shadow || a.shadowRoot;
+      var r = µ._mjs_shadowOf(a);
       if (!r || !r.activeElement) break;
       a = r.activeElement;
     }

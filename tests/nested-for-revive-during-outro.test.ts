@@ -31,7 +31,7 @@ toggle = -> $show = not $show
 </script>
 <div>
   {if $show}
-    <section @out=*fade>
+    <section :out=*fade>
       {for k in $kids}<li>{k}</li>{end}
     </section>
   {end}

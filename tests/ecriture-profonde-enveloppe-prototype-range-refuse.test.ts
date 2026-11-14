@@ -6,7 +6,9 @@
 // refuse d'écrire, de définir ou de supprimer une propriété dans un prototype : rien n'est écrit, aucune erreur, un
 // avertissement nomme le segment qui y mène (développement) ; `Object.defineProperty` lève sa TypeError, comme pour un
 // nom réservé. Une fonction rangée de même (`$$o['constructor']`, `Object`) n'a pas d'enveloppe : la lecture rend une
-// copie liée, rien n'atteint `Object`. Civet et CoffeeScript, développement et production. Un objet ordinaire, une liste,
+// copie liée, rien n'atteint `Object` ; une écriture que le compilateur écrit en appel de MJS (`+=`, `++`, `||=`, `&&=`, `??=`)
+// est refusée par l'aide, avec l'avertissement qui explique le piège (« $loc.p.polluK : $loc.p contient la fonction Object du
+// navigateur, … »). Civet et CoffeeScript, développement et production. Un objet ordinaire, une liste,
 // une Map, une Date, un objet sans prototype, un objet dont une donnée s'appelle `constructor` reçoivent toujours ces
 // écritures, et la vue suit
 
@@ -196,11 +198,12 @@ function tracer(window: any, c: any, f: () => any): { pollue: string[], erreur: 
 }
 
 // écart d'une trace à celle attendue : rien d'écrit, mêmes données, aucune erreur ; en développement, pour un prototype,
-// des avertissements qui nomment tous le segment `__proto__`, aucun pour une fonction (rien n'atteint l'enveloppe)
+// des avertissements qui nomment tous le segment `__proto__` ; pour une fonction, aucun (rien n'atteint l'enveloppe), sauf le refus
+// de l'aide d'une écriture compilée, qui explique le piège d'une fonction du navigateur
 function ecart(t: ReturnType<typeof tracer>, ref: ReturnType<typeof tracer>, cle: string, avis: string[], prod: boolean): string {
   if (t.pollue.length || t.donnees !== ref.donnees || t.erreur !== '') return JSON.stringify(t)
   if (prod) return ''
-  const bon = cle === 'constructor' ? avis.length === 0 : avis.length > 0 && avis.every((a) => a.includes('segment « __proto__ »'))
+  const bon = cle === 'constructor' ? avis.every((a) => / contient la fonction (Object|Array) du navigateur, sans doute amenée par une clé venue de l'extérieur /.test(a)) : avis.length > 0 && avis.every((a) => a.includes('segment « __proto__ »'))
   return bon ? '' : `avertissements ${JSON.stringify(avis)}`
 }
 

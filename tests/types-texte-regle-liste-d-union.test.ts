@@ -40,7 +40,7 @@ describe('texte d\'une règle : une liste dont l\'élément est une union', () =
   })
 
   it('un champ d\'objet qui porte une liste d\'union : les parenthèses y sont aussi', () => {
-    assert.equal(canon('{ a: Mix[] }'), '{ a: (int | string)[] }')
+    assert.equal(canon('\n  a  Mix[]'), '\n  a  (int | string)[]')
   })
 
   it('le texte affiché garde le nom de la règle nommée, sans parenthèses', () => {

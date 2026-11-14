@@ -13,7 +13,7 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const SRC = [
   '<vars>',
-  '  $$flux { id: int 0..100, tags: string[] }[]',
+  '  $$flux Element[]',
   '</vars>',
   '',
   '<script>',
@@ -39,22 +39,6 @@ const SRC = [
 
 let code = ''
 
-before(async function() {
-  this.timeout(120000)
-  const root   = mjsTmp('store-boucle-variable-regle')
-  const srcDir = join(root, 'src')
-  const outDir = join(root, 'out')
-  mkdirSync(srcDir, { recursive: true })
-  writeFileSync(join(srcDir, 'flux.mjs'), SRC)
-  const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), env: 'dev' } as any)
-  const stats   = await bundler.compile()
-  assert.deepEqual(stats.errors.map((e: any) => e.message), [])
-  await bundler.close()
-  const rang = (f: string) => f.startsWith('mjs_core') ? 0 : f.startsWith('mjs_') ? 1 : 2
-  const files = readdirSync(outDir).filter((f) => f.endsWith('.js')).sort((a, b) => rang(a) - rang(b))
-  code = files.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'), { bridgeCore: true })).join('\n')
-})
-
 after(async () => { await terminateSharedWorkerPool() })
 
 async function cliquer(bouton: string): Promise<{ messages: string[], id: any, essai: any }> {
@@ -77,6 +61,23 @@ async function cliquer(bouton: string): Promise<{ messages: string[], id: any, e
 
 describe('types — variable d’un {for} sur un store typé : l’élément de la liste, écriture sous la règle du champ', function() {
   this.timeout(60000)
+
+  before(async function() {
+    this.timeout(120000)
+    const root   = mjsTmp('store-boucle-variable-regle')
+    const srcDir = join(root, 'src')
+    const outDir = join(root, 'out')
+    mkdirSync(srcDir, { recursive: true })
+    writeFileSync(join(srcDir, 'flux.mjs'), SRC)
+    writeFileSync(join(srcDir, 'app.types.mjs'), '<types>\nElement\n  id  int 0..100\n  tags  string[]\n</types>\n')
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), env: 'dev' } as any)
+    const stats   = await bundler.compile()
+    assert.deepEqual(stats.errors.map((e: any) => e.message), [])
+    await bundler.close()
+    const rang = (f: string) => f.startsWith('mjs_core') ? 0 : f.startsWith('mjs_') ? 1 : 2
+    const files = readdirSync(outDir).filter((f) => f.endsWith('.js')).sort((a, b) => rang(a) - rang(b))
+    code = files.map((f) => stripEsm(readFileSync(join(outDir, f), 'utf-8'), { bridgeCore: true })).join('\n')
+  })
 
   it('f.id = zz est refusé : l’élément garde sa valeur d’avant, avec le message de l’écriture par le store', async () => {
     const r = await cliquer('ecrit')

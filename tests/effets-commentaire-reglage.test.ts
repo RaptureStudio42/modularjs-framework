@@ -68,10 +68,10 @@ const REFUSES: Array<[string, string, string, number, string]> = [
   ['dans un {for}', '<script>\n  $liste = [1, 2]\n</script>\n{for n in $liste}\n<div class="a" *tilt(\n  max: n, // la pente\n  scale: 1.1\n)>{n}</div>\n{end}\n', 'tilt', 6, '// la pente'],
   ['sur un composant, `<@card>`', '<p>un</p>\n<@card *tilt(\n  max: 12, // la pente\n  scale: 1.1\n)></@card>\n', 'tilt', 3, '// la pente'],
   ['sur un composant, `<mjs-card>`', '<p>un</p>\n<mjs-card *tilt(\n  max: 12, /* la pente */\n  scale: 1.1\n)></mjs-card>\n', 'tilt', 3, '/* la pente */'],
-  ['transition `@in`', '<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*fly(up, // le sens\n  duration: 2s)>x</p>{end}\n', 'fly', 4, '// le sens'],
-  ['transition `@out`', '<script>\n  $vu = true\n</script>\n{if $vu}<p @out=*fade(duration: 1s /* vite */)>x</p>{end}\n', 'fade', 4, '/* vite */'],
-  ['transition `@transition`', '<script>\n  $vu = true\n</script>\n{if $vu}\n<p @transition=*fly(up, // le sens\n  duration: 2s)>x</p>{end}\n', 'fly', 5, '// le sens'],
-  ['transition `@in.global`', '<script>\n  $vu = true\n</script>\n{if $vu}<p @in.global=*fly(up, /* le sens */ duration: 2s)>x</p>{end}\n', 'fly', 4, '/* le sens */']
+  ['transition `@in`', '<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*fly(up, // le sens\n  duration: 2s)>x</p>{end}\n', 'fly', 4, '// le sens'],
+  ['transition `@out`', '<script>\n  $vu = true\n</script>\n{if $vu}<p :out=*fade(duration: 1s /* vite */)>x</p>{end}\n', 'fade', 4, '/* vite */'],
+  ['transition `@transition`', '<script>\n  $vu = true\n</script>\n{if $vu}\n<p :transition=*fly(up, // le sens\n  duration: 2s)>x</p>{end}\n', 'fly', 5, '// le sens'],
+  ['transition `@in.global`', '<script>\n  $vu = true\n</script>\n{if $vu}<p :in.global=*fly(up, /* le sens */ duration: 2s)>x</p>{end}\n', 'fly', 4, '/* le sens */']
 ]
 
 describe('un commentaire dans les réglages d\'un effet arrête la construction', function () {
@@ -114,18 +114,16 @@ describe('un commentaire dans les réglages d\'un effet arrête la construction'
       assert.match(output, /"ripple"/)
     })
 
-    it('<@document> : une apostrophe dans le commentaire ouvre un texte (dit aussi) ; le commentaire est cité, pas une valeur de plus', async () => {
+    it('<@document> : une apostrophe dans le commentaire n\'ouvre aucun texte, comme sur une balise ; le commentaire est cité, pas une valeur de plus', async () => {
       const { data } = await transpile('<p>un</p>\n<@document *ripple(#f00, // l\'été\n  size: 60)></@document>\n', { moduleName: 'commentaire' })
-      assert.equal(data.macroErrors.length, 2, JSON.stringify(data.macroErrors))
-      assert.match(data.macroErrors[0], /jamais refermé/)
-      assert.equal(data.macroErrors[1], fr('ripple', 2, '// l\'été'))
+      assert.deepEqual(data.macroErrors, [fr('ripple', 2, '// l\'été')])
     })
 
     it('en anglais', async () => {
       setMessagesLang('en')
       try {
         assert.equal(await refus('<p>un</p>\n<div class="a" *tilt(\n  max: 12, // la pente\n  scale: 1.1\n)>x</div>\n'), `'commentaire': ${en('tilt', 3, '// la pente')}`)
-        assert.equal(await refus('<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*fly(up, /* le sens */ duration: 2s)>x</p>{end}\n'), `'commentaire': ${en('fly', 4, '/* le sens */')}`)
+        assert.equal(await refus('<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*fly(up, /* le sens */ duration: 2s)>x</p>{end}\n'), `'commentaire': ${en('fly', 4, '/* le sens */')}`)
         const { data } = await transpile('<p>un</p>\n<@document *ripple(#f00, // la couleur\n size: 60)></@document>\n', { moduleName: 'commentaire' })
         assert.deepEqual(data.macroErrors, [en('ripple', 2, '// la couleur')])
       }
@@ -141,7 +139,7 @@ describe('un commentaire dans les réglages d\'un effet arrête la construction'
 
     it('une transition de l\'appli réglée à la pose : `@in=*entree(…)` avec un commentaire', async () => {
       const defs = collectEffectDefs(['mes.effects.mjs'], () => '<effects>\n  *entree = *fly(up, distance: 30px)\n</effects>\n')
-      assert.equal(await refus('<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*entree(duration: 1s /* plus lent */)>x</p>{end}\n', defs), `'commentaire' : ${fr('entree', 4, '/* plus lent */')}`)
+      assert.equal(await refus('<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*entree(duration: 1s /* plus lent */)>x</p>{end}\n', defs), `'commentaire' : ${fr('entree', 4, '/* plus lent */')}`)
     })
   })
 
@@ -233,7 +231,7 @@ describe('un commentaire dans les réglages d\'un effet arrête la construction'
     })
 
     it('une transition, avec une adresse', async () => {
-      const code = await compiler('<script>\n  $vu = true\n</script>\n{if $vu}<p @in=*fly(up, duration: 2s)>x</p>{end}\n')
+      const code = await compiler('<script>\n  $vu = true\n</script>\n{if $vu}<p :in=*fly(up, duration: 2s)>x</p>{end}\n')
       assert.match(code, /"fly"/)
     })
 

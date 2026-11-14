@@ -43,12 +43,12 @@ function writeFixture(srcDir: string): void {
     '$show = true',
     '$obj = { _mjs_probe_a: \'a\' }',
     '</script>',
-    '{if $show}<p class="a" @transition=*fade>{$obj._mjs_probe_a}</p>{end}',
+    '{if $show}<p class="a" :transition=*fade>{$obj._mjs_probe_a}</p>{end}',
   ].join('\n'))
   // module .civet @import-é par un composant — passe aussi par la minification différée.
-  writeFileSync(join(srcDir, 'helper.civet'), 'export triple := (x) -> x * 3\n')
+  writeFileSync(join(srcDir, 'helper.civet.mjs'), 'export triple := (x) -> x * 3\n')
   writeFileSync(join(srcDir, 'comp-f.mjs'), [
-    '@import triple \'helper.civet\'',
+    '@import triple \'helper.civet.mjs\'',
     '<script>',
     '$obj = { _mjs_probe_f: triple(2) }',
     '</script>',

@@ -51,34 +51,34 @@ interface Scenario {
 const scenarios: Scenario[] = [
   {
     name: 'le module cite une image',
-    files: { 'util.civet': 'export logo = µasset(\'img/logo.png\')\n', 'a.mjs': host('@import logo \'util.civet\'', 'logo'), 'img/logo.png': withByte(1) },
+    files: { 'util.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n', 'a.mjs': host('@import logo \'util.civet.mjs\'', 'logo'), 'img/logo.png': withByte(1) },
     edit: ['img/logo.png', withByte(2)], module: 'util', importers: [{ file: 'a.mjs', stem: 'a', imports: 'util' }], tracked: ['img/logo.png'],
   },
   {
     name: 'le module cite un son (module .coffee)',
-    files: { 'vieux.coffee': 'export son = µasset(\'snd/ding.mp3\')\n', 'a.mjs': host('@import son \'vieux.coffee\'', 'son'), 'snd/ding.mp3': Buffer.from('ID3 son un') },
+    files: { 'vieux.coffee.mjs': 'export son = µasset(\'snd/ding.mp3\')\n', 'a.mjs': host('@import son \'vieux.coffee.mjs\'', 'son'), 'snd/ding.mp3': Buffer.from('ID3 son un') },
     edit: ['snd/ding.mp3', Buffer.from('ID3 son deux')], module: 'vieux', importers: [{ file: 'a.mjs', stem: 'a', imports: 'vieux' }], tracked: ['snd/ding.mp3'],
   },
   {
     name: 'le module cite un .js',
-    files: { 'util.civet': 'export lib = µasset(\'lib/main.js\')\n', 'a.mjs': host('@import lib \'util.civet\'', 'lib'), 'lib/main.js': 'export const d = 1\n' },
+    files: { 'util.civet.mjs': 'export lib = µasset(\'lib/main.js\')\n', 'a.mjs': host('@import lib \'util.civet.mjs\'', 'lib'), 'lib/main.js': 'export const d = 1\n' },
     edit: ['lib/main.js', 'export const d = 2\n'], module: 'util', importers: [{ file: 'a.mjs', stem: 'a', imports: 'util' }], tracked: ['lib/main.js'],
   },
   {
     name: 'le module cite un .js dont le voisin change',
-    files: { 'util.civet': 'export lib = µasset(\'lib/main.js\')\n', 'a.mjs': host('@import lib \'util.civet\'', 'lib'), 'lib/main.js': 'import { r } from \'./rng.js\'\nexport const d = r\n', 'lib/rng.js': 'export const r = 1\n' },
+    files: { 'util.civet.mjs': 'export lib = µasset(\'lib/main.js\')\n', 'a.mjs': host('@import lib \'util.civet.mjs\'', 'lib'), 'lib/main.js': 'import { r } from \'./rng.js\'\nexport const d = r\n', 'lib/rng.js': 'export const r = 1\n' },
     edit: ['lib/rng.js', 'export const r = 2\n'], module: 'util', importers: [{ file: 'a.mjs', stem: 'a', imports: 'util' }], tracked: ['lib/main.js', 'lib/rng.js'],
   },
   {
     name: 'une chaîne de deux modules : A importe B, B cite une image, le composant importe A',
     files: {
-      'b.module.civet': 'export logo = µasset(\'img/logo.png\')\n',
-      'a.module.civet': '@import logo \'b.module.civet\'\nexport l = logo\n',
-      'c.mjs': host('@import l \'a.module.civet\'', 'l'),
+      'b.module.civet.mjs': 'export logo = µasset(\'img/logo.png\')\n',
+      'a.module.civet.mjs': '@import logo \'b.module.civet.mjs\'\nexport l = logo\n',
+      'c.mjs': host('@import l \'a.module.civet.mjs\'', 'l'),
       'img/logo.png': withByte(1),
     },
     edit: ['img/logo.png', withByte(2)], module: 'b.module',
-    importers: [{ file: 'a.module.civet', stem: 'a.module', imports: 'b.module' }, { file: 'c.mjs', stem: 'c', imports: 'a.module' }], tracked: ['img/logo.png'],
+    importers: [{ file: 'a.module.civet.mjs', stem: 'a.module', imports: 'b.module' }, { file: 'c.mjs', stem: 'c', imports: 'a.module' }], tracked: ['img/logo.png'],
   },
 ]
 
@@ -135,8 +135,8 @@ describe('bundler — l\'importeur d\'un module de script suit les fichiers que 
 
   it('un voisin absent d\'un .js que cite le module n\'est dit qu\'au module, jamais à son importeur', async () => {
     const p       = project('importeur-module-voisin', {
-      'util.civet': 'export lib = µasset(\'lib/main.js\')\n',
-      'a.mjs': host('@import lib \'util.civet\'', 'lib'),
+      'util.civet.mjs': 'export lib = µasset(\'lib/main.js\')\n',
+      'a.mjs': host('@import lib \'util.civet.mjs\'', 'lib'),
       'lib/main.js': 'import { r } from \'./rgn.js\'\nexport const d = r\n',
       'lib/rng.js': 'export const r = 1\n',
     })
@@ -146,7 +146,7 @@ describe('bundler — l\'importeur d\'un module de script suit les fichiers que 
       assert.deepEqual(messages(stats.errors), [])
       const said = stats.warnings.filter(w => /rgn\.js/.test(w))
       assert.equal(said.length, 1, `un seul avertissement : ${JSON.stringify(stats.warnings)}`)
-      assert.ok(said[0].includes('util.civet'), `il nomme le module qui cite le .js : ${said[0]}`)
+      assert.ok(said[0].includes('util.civet.mjs'), `il nomme le module qui cite le .js : ${said[0]}`)
       assert.ok(!said[0].includes('a.mjs'), `jamais l'importeur, qui ne cite pas ce .js : ${said[0]}`)
     }
     finally {
@@ -156,14 +156,14 @@ describe('bundler — l\'importeur d\'un module de script suit les fichiers que 
 
   it('deux modules qui se citent l\'un l\'autre par `µasset` ne font pas boucler la fermeture, chacun entre dans la fermeture de l\'autre', async () => {
     const p       = project('importeur-module-cycle', {
-      'x.civet': 'export a = µasset(\'y.civet\')\n',
-      'y.civet': 'export b = µasset(\'x.civet\')\nexport c = µasset(\'img/logo.png\')\n',
+      'x.civet.mjs': 'export a = µasset(\'y.civet.mjs\')\n',
+      'y.civet.mjs': 'export b = µasset(\'x.civet.mjs\')\nexport c = µasset(\'img/logo.png\')\n',
       'img/logo.png': withByte(1),
     })
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest })
     try {
-      const closure = (bundler as any).collectTransitiveImportClosure([join(p.srcDir, 'x.civet')]) as string[]
-      assert.deepEqual(closure.map(f => f.slice(p.srcDir.length + 1)).sort(), ['img/logo.png', 'x.civet', 'y.civet'])
+      const closure = (bundler as any).collectTransitiveImportClosure([join(p.srcDir, 'x.civet.mjs')]) as string[]
+      assert.deepEqual(closure.map(f => f.slice(p.srcDir.length + 1)).sort(), ['img/logo.png', 'x.civet.mjs', 'y.civet.mjs'])
     }
     finally {
       await bundler.close()

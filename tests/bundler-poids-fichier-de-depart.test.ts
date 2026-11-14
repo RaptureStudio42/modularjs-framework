@@ -9,7 +9,11 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const MESUREE  = 52407 // octets mesurés, runtime core + js bundle + production
+// mesure reprise le 12/11/2026 : 53 504 → 55 105 o, le cœur porte désormais l'enveloppe des objets de l'état refaite (pièges communs à
+// toutes les enveloppes, liens d'un objet vers ses conteneurs et leur remontée, redite, copie d'un objet du navigateur rangé dans l'état),
+// les époques d'un objet tenu par deux composants et les props qu'un composant pas encore réveillé livre aux composants de sa racine : tout
+// part derrière un signal que l'appli allume, ou sert toute appli de ce genre
+const MESUREE  = 55105 // octets mesurés, runtime core + js bundle + production
 const PLAFOND  = Math.ceil(MESUREE * 1.02)
 
 const SOURCES: Record<string, string> = {

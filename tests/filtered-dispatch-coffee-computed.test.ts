@@ -35,7 +35,7 @@ $selected = items[$selectedIdx]
 
 <ul>
   {for item in items}
-    <li @class{$selected is item}="active">{item.label}</li>
+    <li :class{$selected is item}="active">{item.label}</li>
   {end}
 </ul>
 `

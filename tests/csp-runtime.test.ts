@@ -436,7 +436,8 @@ describe('csp runtime — mjs_element.ts (mode mjs-light)', function () {
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'csplight.mjs'), withVariant ? [COMPONENT, '<style name="bandeau">', '.t', '  color: blue', '</style>'].join('\n') : COMPONENT)
 
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // `csp: true` : le cœur ne porte la voie CSP des légers qu'avec ce réglage (`µ._csp`, posé ici à la main, l'est par le manifeste de l'appli)
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), csp: true })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
 
@@ -512,7 +513,8 @@ describe('csp runtime — mjs_element.ts (mode mjs-light)', function () {
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'csplightsab.mjs'), COMPONENT)
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // `csp: true` : le cœur ne porte la voie CSP des légers qu'avec ce réglage (`µ._csp`, posé ici à la main, l'est par le manifeste de l'appli)
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), csp: true })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0)
     const window: any = new Window({ url: 'http://localhost/' })

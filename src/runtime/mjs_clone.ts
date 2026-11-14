@@ -72,6 +72,14 @@ function _mjsCloneData(v, vu, neuf) {
   for (k in state) {
     d = Object.getOwnPropertyDescriptor(state, k);
     if (d && 'value' in d) put(k, d.value);
+    // <derivee-choix>
+    // `µderived` écrite dont le choix tient encore (sa fonction n'est plus celle d'origine, cf. mjs_element.ts) : la copie le
+    // reçoit, relu d'abord (une dépendance nommée changée depuis l'oublie)
+    else if (d && d.get && el._mjs_computeds && el._mjs_computeds[k] && el._mjs_computeds[k]._mjs_f) {
+      var c = el._mjs_computeds[k], v = state[k];
+      if (c.f !== c._mjs_f) put(k, v);
+    }
+    // </derivee-choix>
   }
   for (k in pend) put(k, pend[k]);
   // prop posée en propriété sur la balise : son montage la verse après le registre (connectedCallback), sauf la fonction d'une méthode
@@ -126,6 +134,11 @@ function _mjsTwinAdd(g, el) {
     el._mjs_computeds    = g.h._mjs_computeds;
     el._mjs_computedKeys = g.h._mjs_computedKeys;
   }
+  // <signaux>
+  // boîtes du graphe des signaux (mjs_signals.ts) : celles de la maison, que notent ses valeurs précises ; l'écriture d'une instance
+  // les fait avancer
+  if (g.h._mjs_sigBoxes !== false) el._mjs_sigBoxes = g.h._mjs_sigBoxes ||= {};
+  // </signaux>
   // valeurs typées (bloc <vars>, mjs_types.ts) : les objets contrôlés sont inscrits à un seul registre, celui du groupe
   if (el._mjs_types) el._mjs_treg = g.t ||= g.h._mjs_treg || new WeakMap();
 }
@@ -133,20 +146,41 @@ function _mjsTwinAdd(g, el) {
 // une écriture dans l'état commun, sous n'importe quelle instance : elle-même d'abord, puis chaque autre instance présente — ses dérivés, son
 // rendu, la liaison vers son parent ; la valeur d'avant est la même pour toutes. Les présentes sont recopiées avant la boucle : un rendu peut
 // en retirer une
-function _mjsTwinNotify(k, old) {
+// <redessin>
+function _mjsTwinNotify(k, old, rw) {
+// </redessin>
+// <sans-redessin>
+// function _mjsTwinNotify(k, old) {
+// </sans-redessin>
   var P = µ.Element.prototype, m = this._mjs_twins.m, i;
-  P._mjs_notifyMutation.call(this, k, old);
+  // <redessin>
+  P._mjs_notifyMutation.call(this, k, old, rw);
+  // </redessin>
+  // <sans-redessin>
+  // P._mjs_notifyMutation.call(this, k, old);
+  // </sans-redessin>
   if (m.length > 1 || (m.length === 1 && m[0] !== this)) {
     m = m.slice();
     for (i = 0; i < m.length; i++) {
-      if (m[i] !== this && m[i]._mjs_twinIn) P._mjs_notifyMutation.call(m[i], k, old);
+      // <redessin>
+      if (m[i] !== this && m[i]._mjs_twinIn) P._mjs_notifyMutation.call(m[i], k, old, rw);
+      // </redessin>
+      // <sans-redessin>
+      // if (m[i] !== this && m[i]._mjs_twinIn) P._mjs_notifyMutation.call(m[i], k, old);
+      // </sans-redessin>
     }
   }
 }
 
 // objet atteint par plusieurs variables (`$a = obj ; $b = obj`) : la maison sait lesquelles (cf. `_mjs_wrapDeep`), elle les prévient toutes
-function _mjsTwinAliased(o, k, old) {
-  return µ.Element.prototype._mjs_notifyMutationAliased.call(this._mjs_twins.h, o, k, old);
+// <redessin>
+function _mjsTwinAliased(o, k, old, rw) {
+  return µ.Element.prototype._mjs_notifyMutationAliased.call(this._mjs_twins.h, o, k, old, rw);
+// </redessin>
+// <sans-redessin>
+// function _mjsTwinAliased(o, k, old) {
+  // return µ.Element.prototype._mjs_notifyMutationAliased.call(this._mjs_twins.h, o, k, old);
+// </sans-redessin>
 }
 
 // un objet rangé dans l'état est enveloppé par la maison : une seule enveloppe par objet pour tout le groupe, et l'état ne retient pas
@@ -246,10 +280,22 @@ function _mjsMirror(el, bare) {
 µ._mjs_mirrorOf = _mjsMirror;
 
 // écriture d'un miroir : rien n'entre dans l'état commun pendant sa construction (son script) ni pendant sa connexion avant son entrée dans le
-// groupe — ses attributs, recopiés de l'original et relus en props, le remettraient à leur valeur de départ ; ensuite, comme toute instance
-function _mjsMirrorSet(k, v) {
+// <precision>
+// groupe — ses attributs, recopiés de l'original et relus en props, le remettraient à leur valeur de départ ; ensuite, comme toute instance,
+// avec le drapeau du code du composant (`code`)
+function _mjsMirrorSet(k, v, code) {
+// </precision>
+// <horloge>
+// // groupe — ses attributs, recopiés de l'original et relus en props, le remettraient à leur valeur de départ ; ensuite, comme toute instance
+// function _mjsMirrorSet(k, v) {
+// </horloge>
   if (this._mjs_twinNew || (this.isConnected && !this._mjs_twinIn)) return true;
-  return µ.Element.prototype._set.call(this, k, v);
+  // <precision>
+  return µ.Element.prototype._set.call(this, k, v, code);
+  // </precision>
+  // <horloge>
+  // return µ.Element.prototype._set.call(this, k, v);
+  // </horloge>
 }
 
 // dérivé déclaré par le script d'un miroir : son lecteur et sa fiche sont déjà ceux du groupe (cf. `_mjsTwinAdd`) ; une valeur que l'original

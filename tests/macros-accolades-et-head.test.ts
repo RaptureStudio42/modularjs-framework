@@ -12,7 +12,8 @@
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { processGlobalMacros, processIncludes, newIncludeAccumulator, findMacroTagEnd } from '../src/transpiler/macros.js'
+import { processGlobalMacros, processIncludes, newIncludeAccumulator } from '../src/transpiler/macros.js'
+import { findMacroTagEnd } from '../src/transpiler/macro-tag.js'
 import { transpile } from '../src/transpiler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -190,10 +191,10 @@ describe('macros — balise macro jamais refermée : erreur explicite au lieu du
     assert.equal(r.errors.length, 0, `attendu 0 erreur, reçu : ${JSON.stringify(r.errors)}`)
   })
 
-  it('(4) deux balises fautives distinctes → 2 erreurs distinctes, aucune duplication', () => {
+  it('(4) deux balises fautives : la lecture de l\'arbre s\'arrête à la première, signalée une fois', () => {
     const r = processGlobalMacros('<@window @click={f(<@window @foo={g(')
-    assert.equal(r.errors.length, 2, `attendu exactement 2 erreurs, reçu : ${JSON.stringify(r.errors)}`)
-    assert.notEqual(r.errors[0], r.errors[1])
+    assert.equal(r.errors.length, 1, `attendu exactement 1 erreur, reçu : ${JSON.stringify(r.errors)}`)
+    assert.match(r.errors[0], /<@window @click=\{f\(/)
   })
 })
 
@@ -218,10 +219,10 @@ describe('macros — <@head> non fermée comptée en double + extrait coupant un
     assert.equal(r.errors.length, 1, `attendu exactement 1 erreur, reçu : ${JSON.stringify(r.errors)}`)
   })
 
-  it('(4) deux <@head> fautives DISTINCTES (extraits différents) → 2 erreurs (pas 4 : le dédoublonnage ne fusionne que le texte IDENTIQUE)', () => {
+  it('(4) deux <@head> fautives : la lecture de l\'arbre s\'arrête à la première, signalée une fois (pas deux : les deux passes la dédoublonnent)', () => {
     const r = processGlobalMacros('<@head @click={f(<@head @foo={g(')
-    assert.equal(r.errors.length, 2, `attendu exactement 2 erreurs, reçu : ${JSON.stringify(r.errors)}`)
-    assert.notEqual(r.errors[0], r.errors[1])
+    assert.equal(r.errors.length, 1, `attendu exactement 1 erreur, reçu : ${JSON.stringify(r.errors)}`)
+    assert.match(r.errors[0], /<@head @click=\{f\(/)
   })
 
   it('(5) l\'extrait ne coupe jamais une paire de substituts UTF-16 : émoji entier dans le message, aucun substitut isolé', () => {

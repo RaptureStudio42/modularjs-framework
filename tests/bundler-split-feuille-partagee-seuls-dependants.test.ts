@@ -21,7 +21,7 @@ describe('css split : une feuille retouchée ne recompile que les composants qui
     writeFileSync(join(styles, 'a.scss'), '.a { color: red; }\n')
     writeFileSync(join(styles, 'b.scss'), '.b { color: blue; }\n')
     for (let i = 0; i < 10; i++) {
-      const css = i === 0 ? '<style @css="a">\n</style>\n' : i === 1 ? '<style @css="b">\n</style>\n' : ''
+      const css = i === 0 ? '<style :css="a">\n</style>\n' : i === 1 ? '<style :css="b">\n</style>\n' : ''
       writeFileSync(join(src, `c${i}.mjs`), `<script>\n  $x = ${i}\n</script>\n<p class="a b">{$x}</p>\n${css}`)
     }
     const options = (out: string) => ({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js'), stylesheetsDir: styles, css: 'split', urlPrefix: '/modularjs' })

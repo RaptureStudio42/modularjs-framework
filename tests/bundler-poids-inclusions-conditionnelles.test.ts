@@ -68,7 +68,7 @@ describe('cœur allégé — chaque fonction n\'entre au cœur que si l\'appli s
   })
 
   it('transitions écrites : la reprise d\'une sortie en cours est au cœur ({if}, {key}, {for})', async () => {
-    const { coeur } = await construire({ 'hote.mjs': '<script>\n$on = true\n$xs = [1, 2]\n</script>\n{if $on}<p @in=*fade @out=*fly(up)>x</p>{end}\n<ul>{for x in $xs}<li>{x}</li>{end}</ul>' })
+    const { coeur } = await construire({ 'hote.mjs': '<script>\n$on = true\n$xs = [1, 2]\n</script>\n{if $on}<p :in=*fade :out=*fly(up)>x</p>{end}\n<ul>{for x in $xs}<li>{x}</li>{end}</ul>' })
     assert.deepEqual(presents(coeur, REPRISE), [])
   })
 

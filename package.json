@@ -1,6 +1,6 @@
 {
   "name": "modularjs-framework",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "description": "ModularJS (MJS) — framework front compile-time : réactivité résolue à la compilation (sans Proxy au runtime), Custom Elements + Shadow DOM, syntaxe .mjs (Civet par défaut). Compilateur + runtime + CLI dev/HMR.",
   "license": "MIT",
   "author": "Matrix",
@@ -48,13 +48,17 @@
       "types": "./dist/types/mjs-server/index.d.ts",
       "import": "./dist/mjs-server.js"
     },
+    "./rules": {
+      "types": "./dist/types/rules/index.d.ts",
+      "import": "./dist/rules.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
     "mjs": "bin/mjs"
   },
   "scripts": {
-    "build:self": "rm -f dist/chunk-*.js && esbuild cli=src/cli.ts index=src/index.ts worker=src/bundler/worker.ts testing=src/testing/index.ts mjs-ws=src/mjs-ws/index.ts mjs-server=src/mjs-server/index.ts --bundle --splitting --platform=node --target=node20 --format=esm --packages=external --outdir=dist --chunk-names=chunk-[hash]",
+    "build:self": "rm -f dist/chunk-*.js && esbuild cli=src/cli.ts index=src/index.ts worker=src/bundler/worker.ts testing=src/testing/index.ts mjs-ws=src/mjs-ws/index.ts mjs-server=src/mjs-server/index.ts rules=src/rules/index.ts --bundle --splitting --platform=node --target=node20 --format=esm --packages=external --outdir=dist --chunk-names=chunk-[hash]",
     "build:types": "rm -rf dist/types && tsc -p tsconfig.types.json",
     "check:publish": "node --import tsx script/check-publish.ts",
     "typecheck": "tsc --noEmit",

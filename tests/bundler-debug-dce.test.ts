@@ -39,7 +39,7 @@ describe('minifyJs() — define MJS_DEBUG (option ciblée)', () => {
 // `env` n'est PAS une clé de mjs.config.json (l'environnement vient de la COMMANDE, jamais du
 // fichier — validateConfig le refuse) : passé ICI directement à l'API Bundler (`envOpt`),
 // comme `mjs build --prod`/`mjs build` le feraient en résolvant les drapeaux CLI.
-async function buildProject(envOpt: 'prod' | 'dev', files: Record<string, string>): Promise<{ outDir: string }> {
+async function buildProject(envOpt: 'prod' | 'dev', files: Record<string, string>, extra: Record<string, unknown> = {}): Promise<{ outDir: string }> {
   const root = mjsTmp('debug-dce')
   const srcDir = join(root, 'app/modularjs')
   const outDir = join(root, 'out')
@@ -51,7 +51,7 @@ async function buildProject(envOpt: 'prod' | 'dev', files: Record<string, string
   const found = findConfig(root)
   assert.ok(found, 'mjs.config.json doit être trouvé')
   const opts = resolveBundlerOpts(found!.config, found!.configDir)
-  const bundler = new Bundler({ ...opts, env: envOpt } as any)
+  const bundler = new Bundler({ ...opts, env: envOpt, ...extra } as any)
   const stats = await bundler.compile()
   assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
   return { outDir }
@@ -83,5 +83,29 @@ describe('bundleRuntime() — cœur RÉEL, MJS_DEBUG jamais visible, lectures .d
     const core = coreContent(outDir)
     assert.ok(core.includes('if (µ.debug)'), 'µ.debug doit être lisible en dev — bascule console µ.debug = true reste vivante')
     assert.equal(core.includes('MJS_DEBUG'), false, 'MJS_DEBUG ne doit jamais apparaître dans un cœur produit, même en dev')
+  })
+})
+
+// les accroches des avertissements du développement (blocs `// <developpement>` de mjs_element.ts : la marque des objets venus d'une prop,
+// la définition par `Object.defineProperty`), que seul mjs_debug.ts lit : un cœur de production, même non minifié (les noms restent
+// lisibles), n'en garde rien ; un cœur de développement les garde, avec mjs_debug.ts qui les sert
+describe('bundleRuntime() — accroches des avertissements du développement, retirées de la production', function () {
+  this.timeout(60000)
+  after(async () => { await terminateSharedWorkerPool() })
+
+  const ACCROCHES = ['// <developpement>', '_mjs_devLu', '_mjs_devCree', '_mjs_devDefini', '_mjs_dv']
+
+  it('cœur de PROD non minifié : aucune accroche', async () => {
+    const { outDir } = await buildProject('prod', { 'hop.mjs': '<p>x</p>\n' }, { minify: false })
+    const core = coreContent(outDir)
+    assert.ok(core.includes('_mjs_wrapDeep'), 'le cœur non minifié garde ses noms')
+    for (const a of ACCROCHES) assert.equal(core.includes(a), false, `« ${a} » ne doit pas rester en production`)
+  })
+
+  it('cœur de DEV : les accroches, et mjs_debug.ts qui les sert', async () => {
+    const { outDir } = await buildProject('dev', { 'hop.mjs': '<p>x</p>\n' })
+    const core = coreContent(outDir)
+    for (const a of ACCROCHES) assert.ok(core.includes(a), `« ${a} » attendu en développement`)
+    assert.ok(core.includes('µ._mjs_devLu = function'), 'mjs_debug.ts pose ce que les accroches appellent')
   })
 })

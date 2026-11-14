@@ -18,6 +18,7 @@ import { join, extname, normalize } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
+import { playTogether } from './helpers/engines-together.js'
 
 // les composants : `boite` (3 000 px) se peint au-dessus du contenu une fois défini, après le cœur ; `tard` ne peint sa
 // cible `#tardo`, dans son ombre, qu'après 1,5 s ; `app` porte les routes
@@ -26,7 +27,7 @@ const SOURCES: Record<string, string> = {
   'app.page.mjs': '<routes target="app-view">\n  /       home-page\n  /about  about-page\n</routes>\n\n<@view app-view>\n\n<style>\n  :host\n    display: block\n</style>\n',
   'home-page.mjs': '<h1>Accueil</h1>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
   'about-page.mjs': '<h1>À propos</h1>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 2500px\n</style>\n',
-  'tard.mjs': '<script>\n  $montre = false\n  µmount =>\n    setTimeout (=> $montre = true), 1500\n</script>\n\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardo">Tard</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
+  'tard.mjs': '<script>\n  $montre = false\n  µmount =>\n    µafter 1500, => $montre = true\n</script>\n\n<div class="h"></div>\n{if $montre}\n  <h2 id="tardo">Tard</h2>\n{end}\n<div class="h"></div>\n<div class="h"></div>\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
 }
 
 const PAGES: Record<string, string> = {
@@ -91,7 +92,7 @@ describe('mjs_ujs navigateur réel, vrai projet — la position suivie contre l\
   })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(`${nom}`, function () {
+    playTogether(describe(`${nom}`, function () {
       let browser: Browser | null = null
       let server: Server | null  = null
       let origin  = ''
@@ -290,6 +291,6 @@ describe('mjs_ujs navigateur réel, vrai projet — la position suivie contre l\
         }
         assert.deepEqual(vus, ['2048 y=1500', '2049 y=0'], 'AVANT : une adresse de 2 048 caractères repartait du haut')
       })
-    })
+    }))
   }
 })

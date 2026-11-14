@@ -34,19 +34,19 @@ describe('erreurs du lexeur situées', function () {
   for (const [nom, ligne, colonne] of FAUTES) {
     it(`${nom} : ligne 5, colonne ${colonne} du fichier`, async () => {
       const m = await message(['<script>', '$x = 0', '', 'if true', ligne, '</script>', '<p>x</p>'].join('\n'))
-      assert.match(m, new RegExp(`^'pos' : pos\\.script:5:${colonne} \\[ModularJS\\]`))
+      assert.match(m, new RegExp(`^'pos' : pos\\.mjs:5:${colonne} \\[ModularJS\\]`))
     })
   }
 
   it('une chaîne sur plusieurs lignes avant la faute ne décale pas la ligne', async () => {
     const m = await message(['<script>', '$t = """', '  a', '  b', '"""', 'µderived $d = 1, a', '</script>', '<p>x</p>'].join('\n'))
-    assert.match(m, /pos\.script:6:1 \[ModularJS\]/)
+    assert.match(m, /pos\.mjs:6:1 \[ModularJS\]/)
   })
 
   // la colonne se compte, comme pour Civet, sur le texte compilé : `y = …` au niveau du module y devient `y .= …`
   it('dans <script module>, la ligne du fichier', async () => {
     const m = await message(['<p>x</p>', '<script module>', 'a = 1', 'y = &$x', '</script>', '<script>', '$n = 0', '</script>'].join('\n'))
-    assert.match(m, /pos\.module:4:\d+ \[ModularJS\]/)
+    assert.match(m, /pos\.mjs:4:\d+ \[ModularJS\]/)
   })
 
   it('le lexeur appelé seul, sans fichier, garde le message seul', () => {

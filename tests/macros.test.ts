@@ -37,7 +37,7 @@ describe('processGlobalMacros', () => {
     const cases: Array<[string, string]> = [
       [`<@document @visibilitychange={@onVis} />`, `<@document @visibilitychange={@onVis}>`],
       [`<@body class="a b" />`, `<@body class="a b">`],
-      [`<@html @style.overflow={$open ? 'hidden' : ''} />`, `<@html @style.overflow={$open ? 'hidden' : ''}>`],
+      [`<@html :style.overflow={$open ? 'hidden' : ''} />`, `<@html :style.overflow={$open ? 'hidden' : ''}>`],
     ]
     for (const [selfClose, nue] of cases) {
       assert.deepEqual(processGlobalMacros(nue), processGlobalMacros(selfClose), `divergence pour ${nue}`)
@@ -263,8 +263,8 @@ describe('processGlobalMacros', () => {
       assert.equal(r.errors.length, 0)
     })
 
-    it('<@body @class{$open}="no-scroll" /> : classe conditionnelle réactive (µeffect)', () => {
-      const r = processGlobalMacros(`<@body @class{$open}="no-scroll" />`)
+    it('<@body :class{$open}="no-scroll" /> : classe conditionnelle réactive (µeffect)', () => {
+      const r = processGlobalMacros(`<@body :class{$open}="no-scroll" />`)
       assert.match(r.setup, /µeffect =>/)
       assert.match(r.setup, /µ\._glCl\(@, document\.body, 'no-scroll', !!\(\$open\)\)/)
       assert.match(r.teardown, /µ\._glCl\(@, document\.body, 'no-scroll', false\)/)
@@ -273,13 +273,13 @@ describe('processGlobalMacros', () => {
       assert.doesNotMatch(r.setup, /addEventListener\('class'/)
     })
 
-    it('<@body @class{fn({a: 1})}="x" /> : accolades imbriquées dans la condition correctement capturées', () => {
-      const r = processGlobalMacros(`<@body @class{fn({a: 1})}="x" />`)
+    it('<@body :class{fn({a: 1})}="x" /> : accolades imbriquées dans la condition correctement capturées', () => {
+      const r = processGlobalMacros(`<@body :class{fn({a: 1})}="x" />`)
       assert.match(r.setup, /µ\._glCl\(@, document\.body, 'x', !!\(fn\(\{a: 1\}\)\)\)/)
     })
 
-    it("<@body @style.overflow={…} /> : style réactif (µeffect)", () => {
-      const r = processGlobalMacros(`<@body @style.overflow={$open ? 'hidden' : ''} />`)
+    it("<@body :style.overflow={…} /> : style réactif (µeffect)", () => {
+      const r = processGlobalMacros(`<@body :style.overflow={$open ? 'hidden' : ''} />`)
       assert.match(r.setup, /µ\._glSt\(@, document\.body, 'overflow', \(\$open \? 'hidden' : ''\)\)/)
       assert.match(r.teardown, /µ\._glSt\(@, document\.body, 'overflow', null\)/)
     })
@@ -289,8 +289,8 @@ describe('processGlobalMacros', () => {
       assert.match(r.setup, /µ\._glSt\(@, document\.body, '--accent', \(\$c\)\)/)
     })
 
-    it('<@html @class{$dark}="dark" /> : cible document.documentElement', () => {
-      const r = processGlobalMacros(`<@html @class{$dark}="dark" />`)
+    it('<@html :class{$dark}="dark" /> : cible document.documentElement', () => {
+      const r = processGlobalMacros(`<@html :class{$dark}="dark" />`)
       assert.match(r.setup, /µ\._glCl\(@, document\.documentElement, 'dark', !!\(\$dark\)\)/)
     })
 
@@ -315,6 +315,7 @@ describe('processGlobalMacros', () => {
       const r = processGlobalMacros(`<@window class="x" />`)
       assert.ok(r.errors.length > 0, 'errors ne doit pas être vide')
       assert.match(r.errors.join(' | '), /non supportées sur cette cible/)
+      assert.ok(r.errors.join(' | ').includes('réservées à <@body>/<@html>'), r.errors.join(' | '))
     })
 
     it('<@body class="k" @click={@go} /> : classe statique ET écouteur cohabitent', () => {

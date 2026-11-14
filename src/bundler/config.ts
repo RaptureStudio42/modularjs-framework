@@ -18,6 +18,7 @@
 // veux selon ton hébergement (Rails, Express, nginx, hébergement statique).
 
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs'
+import { FONT_SIZE_KEYS } from '../transpiler/font-size.js'
 import { resolve, dirname, join, basename, sep, win32 } from 'node:path'
 import type { SupportedLang } from '../languages/index.js'
 import { setMessagesLang, t } from '../messages/index.js'
@@ -25,12 +26,15 @@ import { isBlockedForwardTarget } from '../server/forward-origin.js'
 import { parseTrustProxy } from '../trust-proxy-rules.js'
 import { FALLBACK_MODE, isBuildPrerenderable, normalizeMode, startupSlug } from '../server/render-routes.js'
 import { parsePlaceholder, PLACEHOLDER_CONFIG } from '../effects/placeholder.js'
-import { LINT_TYPES, resolveColorsEnabled, typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
+import { LINT_TYPES, LINT_ERROR_TYPES, resolveColorsEnabled, typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 
 /** Un groupe de `bundles` : liste de racines, ou objet `{ roots, except }` (composants laissés en fichiers séparés). */
 export type BundleGroupConfig = string[] | { roots: string[]; except?: string[] }
 
 export interface MjsConfig {
+  /** taille du texte adaptée à l'écran (cf. transpiler/font-size) : absent ou `true` = active (réglages par défaut), `false` =
+   *  coupée, objet = réglages (`base`, `breakpoint`, `factor`, `unit`), chacun facultatif */
+  responsiveFontSize?: boolean | { base?: number, breakpoint?: number, factor?: number, unit?: 'rem' | 'px' }
   sourceDir?: string
   outputDir?: string
   manifestPath?: string
@@ -44,7 +48,7 @@ export interface MjsConfig {
    * Sémantique require_once : un fichier déjà inclus n'est jamais ré-inclus.
    * Le code bundlé s'exécute dans un module ES avec `µ` importé du core.
    * Default (si absent) : 'app/modularjs/manifest.civet' s'il existe, sinon
-   * repli 'app/modularjs/manifest.coffee' (dépréciée) s'il existe, sinon
+   * repli 'app/modularjs/manifest.coffee' s'il existe, sinon
    * aucun manifeste externe (résolution faite par le Bundler, pas ici).
    */
   manifestExternal?: string
@@ -75,8 +79,8 @@ export interface MjsConfig {
    * PROGRESSIVEMENT `defaultScriptLang`. `languages.script` = même rôle que
    * `defaultScriptLang` (lang par défaut des `<script>` sans `lang=`) ;
    * `languages.template` = grammaire des interpolations `{…}` du template ET
-   * des handlers inline (`@click={…}`), défaut `'civet'`, `'js'` = repli
-   * comportement historique. PERSONNE ne consomme encore `template` ici — la
+   * des handlers inline (`@click={…}`) : `'civet'`, la seule (`'js'`, l'ancienne
+   * grammaire, est refusé). PERSONNE ne consomme encore `template` ici — la
    * valeur ne fait que circuler jusqu'au transpiler (briques handlers/
    * interpolations à venir). Rétrocompat : `defaultScriptLang`
    * reste accepté ; si les DEUX sont posées, `languages.script` prime — mais
@@ -170,7 +174,7 @@ export interface MjsConfig {
    * Transitions de page (View Transitions) : défaut global, surchargé par
    * @viewTransition module/vue (puis par le lien `mjs-vt`/`@pageTransition` niveau page).
    * CHAÎNE UNIQUEMENT — aucun booléen : `"none"` (ou absent) = désactivé
-   * (défaut) ; un nom de préréglage (cf. `VT_PRESET_NAMES`) implique activé.
+   * (défaut) ; un nom de préréglage (cf. `VT_PRESET_BASES`) implique activé.
    * Ce défaut global n'a PAS de priorité propre (toujours 1, cf.
    * `@viewTransition <nom> [priorité]` côté module/vue — mjs_router.ts,
    * `_mjs_vtWinner`) : la config n'est consultée QUE si ni la page de départ ni
@@ -208,7 +212,32 @@ export interface MjsConfig {
    * du navigateur, le code continue) ou `"error"` (une erreur qui arrête la fonction à l'écriture
    * fautive). En production, rien ne s'affiche : la valeur est ramenée ou refusée, c'est tout.
    */
-  types?: 'warn' | 'error'
+  types?: 'warn' | 'error' | 'throw'
+  /**
+   * Signal en production : l'adresse (`"/errors/types"`, un chemin du site ou une adresse https) où part chaque valeur refusée par
+   * une règle, une fois par page et par chemin (`navigator.sendBeacon`) — chemin, règle, composant, page et type de la valeur, jamais
+   * la valeur. Le code n'entre que dans l'appli qui la déclare.
+   */
+  typesReport?: string
+  /**
+   * Valeurs calculées (`$total = $a * $b`) : `"precise"` (défaut) = le compilateur prouve des valeurs précises, qui suivent leurs
+   * sources, sauf quand elles repassent à l'horloge (cf. docs/03-reactivite.md) ; `"clock"` = la règle de l'horloge, toute écriture
+   * du composant les périme et chacune se refait à sa prochaine lecture — le code produit et le cœur sont alors ceux de cette règle,
+   * à l'octet pour une construction neuve. Dans les deux cas, un changement fait hors de MJS se signale par `µrefresh($x)`.
+   */
+  derived?: 'clock' | 'precise'
+  /** Pages d'une table de routes : `"idle"` (défaut) chargées au repos après l'affichage, `"on"` toutes à l'ouverture, `"off"` chacune à sa première visite. */
+  routes?: { preload?: 'on' | 'idle' | 'off' }
+  /** Composants écrits seulement sous une branche fermable (un `{if}` et ses `{else}` ; ni `{for}` ni `{await}`) : `"off"` (défaut) demandés à
+   *  l'ouverture de leur branche, `"on"` préchargés au démarrage avec leur parent. */
+  blocks?: { preload?: 'idle' | 'on' | 'off' }
+  /**
+   * Objets de l'état (`$o = { … }`, `$l = […]`) : `true` (défaut) = enveloppés (Proxy), MJS voit aussi un changement fait hors de son
+   * code (fonction venue d'ailleurs, bibliothèque, variable sans `$` qui garde le même objet) ; `false` = rangés tels quels, sans
+   * enveloppe — les écritures que le compilateur voit (`$o.a = v`, `$l.push(x)`) redessinent de même, un changement fait hors de MJS
+   * se signale par `µrefresh($x)` (cf. docs/41-refresh.md), et le cœur ne porte plus l'enveloppe.
+   */
+  proxy?: boolean
   /**
    * Effets que MJS pose de lui-même. `theme` : une bascule de thème (`µtheme = 'dark'`) qui suit un
    * clic se propage en cercle depuis le point cliqué (`'circle'`, défaut) ou se fait d'un coup
@@ -249,6 +278,12 @@ export interface MjsConfig {
    * interne `minimalRuntime` (≡ `'core'`).
    */
   runtime?: RuntimeConfig
+  /**
+   * Part des collections de l'état (suivi des clés objets d'une `Map` ou d'un `Set`, enveloppe des `WeakMap` et des `WeakSet`) : `true`
+   * l'AJOUTE au cœur, pour une collection donnée par une bibliothèque chargée à part, sans toucher au repérage des autres modules (une
+   * liste `runtime` le remplacerait) ; absente ou `false` (défaut), elle n'entre que si le code du projet nomme une collection.
+   */
+  collections?: boolean
   /**
    * Mode d'émission des styles partagés (`stylesheetsDir`, référencés par `@css nom`
    * dans un composant). `'bundle'` (défaut) : un seul fichier, importé par le
@@ -508,11 +543,6 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * mutations PROFONDES d'un état) : DÉTECTÉ PAR SCAN des quatre appels littéraux que le suiveur de
  * chemins (`$o.x = v`, `$liste.push(v)`, `delete $o.x`) émet lui-même.
  *
- * `textpool` (`µ._mjs_getTextNode`/`µ._mjs_recycleTextLeaves`, mjs_textpool.ts —
- * pool de nœuds texte) : DÉTECTÉ PAR SCAN de `µ._mjs_getTextNode(`, émis par le seul mode IMPÉRATIF
- * du générateur. Servir et rendre vont ensemble : sans consommateur, remplir le pool ne ferait
- * que retenir des nœuds morts (l'appel du cœur à la libération est gardé).
- *
  * `esc` (`µ._esc`, mjs_esc.ts — échappement HTML) : DÉTECTÉ PAR SCAN de `µ._esc(`, émis pour
  * chaque interpolation d'un `<@head>` ou du repli d'un `<@failed>` (les deux partent en
  * innerHTML) ; joint D'OFFICE dans un build de développement non nu, où le panneau de
@@ -543,14 +573,42 @@ export const OPTIONAL_RUNTIME_MODULES = [
  * fichier d'un composant qui déclare `@formAssociated` (case, interrupteur, radio du cœur, ou un composant de l'application). Sans composant
  * déclaré, pas un octet.
  *
+ * `types_select` (`µ._mjs_tpick`, `µ._mjs_tshow`, mjs_types_select.ts — la liaison d'une `<@@select>` à une variable de règle, qui juge
+ * chaque choix comme une liste native) : DÉTECTÉ PAR SCAN des appels littéraux que le compilateur n'écrit que pour une telle liste ; entraîne
+ * `types` et ce qu'écrit et rend un champ lié à une variable de règle (mjs_types_bind.ts, que le garde `*guard` fait venir aussi quand l'appli
+ * a des types). Une appli dont les listes du cœur sont liées à des variables libres n'en paie pas un octet.
+ *
+ * `types_ajax` (`µ._mjs_tajax`, mjs_types_ajax.ts — la réponse d'un appel µajax contrôlée une fois, à son arrivée, par `type: Reward[]`) :
+ * DÉTECTÉ PAR SCAN de l'appel que le compilateur n'écrit que pour un tel `type:` ; entraîne `types`. Une appli qui n'en écrit aucun n'en
+ * paie pas un octet.
+ *
  * `clone` (`µ.clone`, mjs_clone.ts — la rune `µclone el` : une copie vivante d'un composant, qui monte avec une copie de son état) : DÉTECTÉ
  * PAR SCAN du mot `clone` écrit par le projet ; jamais appelé par le cœur, qui n'y gagne aucun octet (l'état copié passe par le registre des
  * props retenues jusqu'au montage, `µ._mjs_pending`).
+ *
+ * `load` (`µ.load`, mjs_load.ts — la rune `µload(url, { refresh })` : le magasin qui se charge seul) : DÉTECTÉ PAR SCAN de `µ.load` écrit
+ * par le projet ; emmène `ajax` (sa requête) quand la config n'écrit pas de clé `runtime`, et le build prévient quand une liste `runtime`
+ * l'oublie. Jamais appelé par le cœur : une appli sans µload n'en porte pas un octet.
+ *
+ * `rules` (`µ.rules`, mjs_rules.ts — la rune `µrules(@)` : les règles du bloc <vars> en schémas standard, `~standard`) : DÉTECTÉ PAR SCAN de
+ * `rules` lu sur l'objet du cœur (`µ.rules`, `mjs.rules`, `µ` échappé compris), dans le code seul ; entraîne `types` (le contrôle qu'il dit).
+ * Jamais appelé par le cœur : une appli qui n'écrit pas `µrules` n'a pas un octet de plus, même si elle lit un autre `rules` (`config.rules`,
+ * classe `.rules`) ou le mentionne dans un texte, une clé de traduction (`'mjs.rules.required'`) ou un commentaire.
+ *
+ * `form` (`µ.form`, mjs_form.ts — la rune `µform(@)` : l'objet formulaire d'un composant, tiré de ses règles <vars> : erreur, `touched`,
+ * `dirty` par champ, `valid`, `submitting`, `reset()`) : DÉTECTÉ PAR SCAN de `form` lu sur l'objet du cœur, comme `rules` ; entraîne `rules`,
+ * `types` et `state`. Jamais appelé par le cœur : une appli qui n'écrit pas `µform` n'a pas un octet de plus, même si elle lit le formulaire
+ * d'un champ (`input.form`) ; `<@@field>` ne lit l'objet (`µ._mjs_formErr`) que s'il est là.
+ * `collections` (la part des collections de l'état : clé objet d'une `Map` suivie, index des clés, enveloppe d'une `WeakMap` ou d'un `WeakSet` —
+ * pas un fichier : les blocs `<collections>` et `<faibles>` du cœur) : DÉTECTÉ PAR SCAN du nom d'une collection (`Map`, `Set`, `WeakMap`,
+ * `WeakSet`) dans le code d'une unité ou d'un fichier `.js` importé ; une collection donnée à l'état par un code que la construction ne lit pas
+ * (bibliothèque chargée à part) se demande par ce nom, dans une liste `runtime` complète : une liste remplace le repérage des modules optionnels.
  */
 export const DETECTED_CORE_MODULES = [
   'title', 'vt_presets', 'nav_progress', 'store', 'runes', 'interpolate',
   'head', 'body', 'dynamic', 'rare_runes', 'on', 'effect', 'every', 'ticker', 'failed',
-  'for', 'if', 'key', 'await', 'emit', 'lazy_css', 'page_cache', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'autoloader', 'hydrate', 'deep', 'textpool', 'esc', 'for_nested', 'alias', 'types', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone',
+  'for', 'if', 'key', 'await', 'emit', 'lazy_css', 'page_cache', 'context', 'lifecycle', 'layout_variant', 'destroy_hooks', 'theme', 'html', 'slots', 'autoloader', 'hydrate', 'deep', 'esc', 'for_nested', 'alias', 'types', 'types_select', 'types_ajax', 'state', 'inspect', 'play', 'refuse', 'slot_events', 'element_at', 'boundary', 'adopt_sheet', 'form_reset', 'form_associated', 'clone', 'wake', 'load', 'rules', 'form',
+  'collections',
   'fx',
   // un effet par fichier runtime (mjs_fx_<nom>.ts) — un test de bundler-features-scan réclame chaque effet du catalogue
   'fx_glitch', 'fx_neon', 'fx_tilt', 'fx_ripple', 'fx_gradient', 'fx_scramble', 'fx_stagger', 'fx_bounce', 'fx_outline', 'fx_underline', 'fx_highlight', 'fx_split', 'fx_rainbow', 'fx_count', 'fx_marquee', 'fx_extrude', 'fx_unveil', 'fx_skeleton', 'fx_pulse', 'fx_shake', 'fx_float', 'fx_spin', 'fx_lift', 'fx_zoom', 'fx_shine', 'fx_confetti', 'fx_particles', 'fx_noise',
@@ -642,9 +700,6 @@ export const VT_PRESET_BASES = [
 export const VT_DIRECTIONS = ['left', 'right', 'up', 'down'] as const
 
 export const VT_DIRECTIONAL_BASES = ['slide', 'volet', 'reveal', 'flip', 'cube', 'turn', 'swipe', 'bars'] as const
-
-/** Rétrocompat : l'ancien export listait les noms plats — il pointe désormais les bases. */
-export const VT_PRESET_NAMES = VT_PRESET_BASES
 
 /** Une valeur de préréglage est-elle valide ? (base seule, ou `base:direction` —
  *  représentation SYNTHÉTIQUE interne reconstruite après parsing, jamais une
@@ -987,6 +1042,10 @@ export interface LintConfig {
   /** Du code qui suit, dans le même bloc, un `return`, un `throw`, un `break` ou un `continue` :
    *  il ne s'exécute jamais (la production le retire sans le dire). Défaut `true` — `false` coupe. */
   unreachable?: boolean
+  /** dans un script, une chaîne `"…"` ou `'…'` écrite sur plusieurs lignes où un `#` (ou un `//`) ouvre un
+   *  commentaire : le reste de sa ligne quitte la chaîne sans erreur ; défaut `true` — `false` coupe,
+   *  `"error"` en fait une erreur de build */
+  multilineString?: boolean | 'error'
 }
 
 /** Niveaux de verbosité de la console, du plus bavard au plus muet. */
@@ -1262,7 +1321,7 @@ export interface ServeurConfig extends WsConfig {
  */
 export interface LanguagesConfig {
   script?: SupportedLang
-  template?: 'civet' | 'js'
+  template?: 'civet'
 }
 
 /**
@@ -1440,6 +1499,8 @@ export interface RenderRoute {
    *  fragment prérendu décrit alors le MÊME arbre que celui que le client rebâtit.
    *  Défaut `false` (racine à Shadow DOM déclaratif). */
   light?: boolean
+  /** Page servie EN FLUX par `mjs serve` / `mjs dev` : la coquille (`<head>` et ses feuilles) part avant le chargeur de données et le rendu, le corps suit quand il est prêt. Surcharge `render.stream` ; défaut appliqué au point de consommation (cf. `pickStream`). */
+  stream?: boolean
 }
 
 /**
@@ -1456,6 +1517,8 @@ export interface RenderConfig {
    *  `RenderStartupMode`), surchargeable par route. Défaut appliqué au point de
    *  consommation : 'preload'. */
   startup?: RenderStartupMode
+  /** Pages servies EN FLUX par défaut (cf. `RenderRoute.stream`), surchargeable par route. Défaut appliqué au point de consommation : non. */
+  stream?: boolean
   /** Header HTTP qui surcharge le mode par requête. Ex. 'X-MJS-Render'. */
   header?: string
   /** Dossier de sortie des pages prérendues. Défaut : `<outputDir>/../mjs_pages`. */
@@ -1527,9 +1590,27 @@ export const RENDER_MAX_BODY_MAX     = 104_857_600
 const KNOWN_KEYS = new Set([
   'sourceDir', 'outputDir', 'manifestPath', 'manifestExternal', 'urlPrefix',
   'defaultScriptLang', 'languages', 'minify', 'dev',
-  'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'runtime', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
-  'varPrefix', 'defaultTheme', 'image', 'csp', 'anchorHistory', 'sourceMap', 'prune', 'effects', 'bundles',
+  'stylesheetsDir', 'assetDirs', 'runtimeDir', 'sigil', 'contextAlias', 'render', 'preload', 'viewTransition', 'lint', 'logLevel', 'messages', 'types', 'typesReport', 'derived', 'routes', 'blocks', 'proxy', 'runtime', 'collections', 'css', 'js', 'ws', 'serveur', 'i18n', 'lang', 'journal',
+  'varPrefix', 'defaultTheme', 'image', 'csp', 'anchorHistory', 'sourceMap', 'prune', 'effects', 'bundles', 'responsiveFontSize',
 ])
+// plus petite valeur REFUSÉE de chaque réglage numérique de `responsiveFontSize` (la valeur doit la dépasser)
+const FONT_SIZE_MIN: Record<string, number> = { base: 0, breakpoint: 0, factor: 1 }
+
+// `responsiveFontSize` (taille du texte adaptée à l'écran, cf. transpiler/font-size) : true, false ou un objet de réglages
+function validateResponsiveFontSize(value: unknown): void {
+  if (value === undefined || typeof value === 'boolean') return
+  const shown = (v: unknown): string => typeof v === 'number' ? String(v) : JSON.stringify(v)
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(t('bundler.config.responsive-font-size-type', { valeur: shown(value) }))
+  for (const [k, v] of Object.entries(value)) {
+    if (!(FONT_SIZE_KEYS as readonly string[]).includes(k)) throw new Error(t('bundler.config.cle-inconnue', { cle: `responsiveFontSize.${k}`, valides: FONT_SIZE_KEYS.join(', ') }))
+    if (k === 'unit') {
+      if (v !== 'rem' && v !== 'px') throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'responsiveFontSize.unit', valeur: v, valides: 'rem, px' }))
+    }
+    else if (typeof v !== 'number' || !Number.isFinite(v) || v <= FONT_SIZE_MIN[k]) {
+      throw new Error(t('bundler.config.responsive-font-size-nombre', { cle: k, min: FONT_SIZE_MIN[k], valeur: shown(v) }))
+    }
+  }
+}
 const KNOWN_IMAGE_KEYS = new Set(['widths', 'formats', 'quality'])
 // la plus grande largeur d'image acceptée dans `image.widths`, en pixels
 const IMAGE_WIDTH_MAX = 10000
@@ -1542,7 +1623,7 @@ const VALID_SIGILS = new Set(['µ', 'mjs'])
 const VALID_CSS_MODES = new Set(['bundle', 'split', 'lazy'])
 const VALID_JS_MODES = new Set(['split', 'bundle'])
 const VALID_SOURCE_MAP_MODES = new Set(['never', 'dev', 'prod', 'always'])
-const KNOWN_RENDER_KEYS = new Set(['default', 'header', 'outDir', 'routes', 'locales', 'engine', 'browserPool', 'renderQueue', 'forwardOrigin', 'entry', 'allowedOrigins', 'target', 'method', 'cache', 'startup', 'maxBody'])
+const KNOWN_RENDER_KEYS = new Set(['default', 'header', 'outDir', 'routes', 'locales', 'engine', 'browserPool', 'renderQueue', 'forwardOrigin', 'entry', 'allowedOrigins', 'target', 'method', 'cache', 'startup', 'maxBody', 'stream'])
 const VALID_RENDER_MODES = new Set([
   'csr', 'prerender', 'ssr', 'ssr:replace', 'ssr:markers', 'ssr:positional', 'ssr:diff',
 ])
@@ -1551,9 +1632,11 @@ const VALID_RENDER_CACHE_POLICIES = new Set(['cache-first', 'revalidate', 'no-ca
 const KNOWN_RENDER_ENGINE_KEYS = new Set(['prerender', 'request'])
 const VALID_RENDER_ENGINES = new Set(['browser', 'happy-dom'])
 const VALID_STARTUP_MODES = new Set(['preload', 'bundle', 'none'])
+// modes de `blocks.preload` (cf. MjsConfig.blocks)
+const BLOCKS_PRELOAD_MODES: unknown[] = ['idle', 'on', 'off']
 const KNOWN_BROWSER_POOL_KEYS = new Set(['size', 'keepAlive', 'maxAgeMs', 'renderTimeoutMs'])
 const KNOWN_RENDER_QUEUE_KEYS = new Set(['concurrency', 'maxQueue'])
-const KNOWN_ROUTE_KEYS = new Set(['component', 'mode', 'settleMs', 'engine', 'startup', 'light'])
+const KNOWN_ROUTE_KEYS = new Set(['component', 'mode', 'settleMs', 'engine', 'startup', 'light', 'stream'])
 const KNOWN_PRELOAD_KEYS = new Set(['view', 'page'])
 const VALID_PRELOAD_MODES = new Set(['off', 'hover', 'on'])
 // dérivé de LINT_TYPES (src/diagnostics.ts) — source UNIQUE de la liste des types de lint,
@@ -1563,7 +1646,7 @@ const VALID_MESSAGES_MODES = new Set(['demand', 'idle'])
 const VALID_LOG_LEVELS = new Set<LogLevelName>(['log', 'warn', 'error', 'silent'])
 const KNOWN_LOG_LEVEL_KEYS = new Set(['dev', 'prod'])
 const KNOWN_LANGUAGES_KEYS = new Set(['script', 'template'])
-const VALID_TEMPLATE_LANGS = new Set(['civet', 'js'])
+const VALID_TEMPLATE_LANGS = new Set(['civet'])
 const KNOWN_I18N_KEYS = new Set(['default', 'placeholder', 'hash', 'persist', 'detect', 'urlParam', 'source', 'timeout'])
 const KNOWN_JOURNAL_KEYS = new Set(['server', 'client', 'viewer', 'maxEntries', 'maxBytes', 'maxDays', 'trustProxy'])
 const KNOWN_WS_KEYS = new Set(['entry', 'transport', 'port', 'host', 'codec', 'heartbeat', 'limits', 'token', 'bridge', 'resume', 'adapter', 'stats', 'sessionExclusive', 'verifyOrigin', 'ban'])
@@ -1724,6 +1807,7 @@ function validateConfig(config: any, path: string): void {
   if (config.sigil !== undefined && !VALID_SIGILS.has(config.sigil)) {
     throw new Error(t('bundler.config.sigil-invalide', { valeur: config.sigil, valides: Array.from(VALID_SIGILS).join(', ') }))
   }
+  validateResponsiveFontSize(config.responsiveFontSize)
   // la validation « stricte » ne
   // typait PAS la moitié des clés : `sourceDir: 42` explosait plus tard dans
   // `resolve()` avec une erreur Node brute sans nommer la clé, `urlPrefix: 42`
@@ -1915,8 +1999,33 @@ function validateConfig(config: any, path: string): void {
   if (config.messages !== undefined && !VALID_MESSAGES_MODES.has(config.messages)) {
     throw new Error(t('bundler.config.messages-invalide', { valeur: typeof config.messages === 'string' ? config.messages : JSON.stringify(config.messages), valides: Array.from(VALID_MESSAGES_MODES).join(', ') }))
   }
-  if (config.types !== undefined && config.types !== 'warn' && config.types !== 'error') {
+  if (config.types !== undefined && config.types !== 'warn' && config.types !== 'error' && config.types !== 'throw') {
     throw new Error(t('bundler.config.types-invalide', { valeur: JSON.stringify(config.types) }))
+  }
+  // un chemin du site (jamais `//hôte`) ou une adresse https, sans espace ni caractère qui sortirait du texte du manifeste
+  if (config.typesReport !== undefined && (typeof config.typesReport !== 'string' || !/^(?:\/(?!\/)|https:\/\/)[^\s<>"'\\]*$/.test(config.typesReport))) {
+    throw new Error(t('bundler.config.types-report-invalide', { valeur: JSON.stringify(config.typesReport) }))
+  }
+  if (config.derived !== undefined && config.derived !== 'clock' && config.derived !== 'precise') {
+    throw new Error(t('bundler.config.derived-invalide', { valeur: JSON.stringify(config.derived) }))
+  }
+  if (config.routes !== undefined) {
+    const r = config.routes
+    if (r === null || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).some((k) => k !== 'preload') || (r.preload !== undefined && r.preload !== 'on' && r.preload !== 'idle' && r.preload !== 'off')) {
+      throw new Error(t('bundler.config.routes-invalide', { valeur: JSON.stringify(r) }))
+    }
+  }
+  if (config.blocks !== undefined) {
+    const b = config.blocks
+    if (b === null || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'preload') || (b.preload !== undefined && !BLOCKS_PRELOAD_MODES.includes(b.preload))) {
+      throw new Error(t('bundler.config.blocks-invalide', { valeur: JSON.stringify(b) }))
+    }
+  }
+  if (config.collections !== undefined && typeof config.collections !== 'boolean') {
+    throw new Error(t('bundler.config.collections-invalide', { valeur: JSON.stringify(config.collections) }))
+  }
+  if (config.proxy !== undefined && typeof config.proxy !== 'boolean') {
+    throw new Error(t('bundler.config.proxy-invalide', { valeur: JSON.stringify(config.proxy) }))
   }
   if (config.effects !== undefined) {
     const e = config.effects
@@ -2181,12 +2290,14 @@ function validateLintConfig(lint: any, path: string): void {
       throw new Error(t('bundler.config.lint-max-state-vars-invalide', { valeur: JSON.stringify(lint.maxStateVars), type: typeof lint.maxStateVars }))
     }
   }
-  // seule clé qui accepte aussi "error" : l'avertissement devient une erreur de build
-  if (lint.emptyComponent !== undefined && typeof lint.emptyComponent !== 'boolean' && lint.emptyComponent !== 'error') {
-    throw new Error(t('bundler.config.lint-empty-component-invalide', { valeur: JSON.stringify(lint.emptyComponent) }))
+  // les clés qui acceptent aussi "error" : l'avertissement devient une erreur de build
+  for (const type of LINT_ERROR_TYPES) {
+    if (lint[type] !== undefined && typeof lint[type] !== 'boolean' && lint[type] !== 'error') {
+      throw new Error(t('bundler.config.lint-empty-component-invalide', { cle: type, valeur: JSON.stringify(lint[type]) }))
+    }
   }
   for (const type of LINT_TYPES) {
-    if (type === 'maxStateVars' || type === 'emptyComponent') continue  // validés ci-dessus
+    if (type === 'maxStateVars' || (LINT_ERROR_TYPES as readonly string[]).includes(type)) continue  // validés ci-dessus
     if (lint[type] !== undefined && typeof lint[type] !== 'boolean') {
       throw new Error(t('bundler.config.lint-type-invalide', { cle: type, valeur: JSON.stringify(lint[type]), type: typeof lint[type] }))
     }
@@ -2610,8 +2721,8 @@ function validateServeurAntiCheatConfig(antiCheat: any, path: string): void {
 /**
  * Valide le bloc `languages` (remplace
  * progressivement `defaultScriptLang`). `script` admet les mêmes valeurs que
- * `defaultScriptLang` (VALID_LANGS) ; `template` n'admet que `'civet'`/`'js'`
- * (grammaire des interpolations/handlers — Coffee/TS n'y ont jamais existé).
+ * `defaultScriptLang` (VALID_LANGS) ; `template` n'admet que `'civet'` (grammaire des
+ * interpolations/handlers) : `'js'`, l'ancienne grammaire, est refusé par un message qui dit quoi faire.
  */
 function validateLanguagesConfig(languages: any, path: string): void {
   if (typeof languages !== 'object' || languages === null || Array.isArray(languages)) {
@@ -2625,6 +2736,7 @@ function validateLanguagesConfig(languages: any, path: string): void {
   if (languages.script !== undefined && !VALID_LANGS.has(languages.script)) {
     throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'languages.script', valeur: languages.script, valides: Array.from(VALID_LANGS).join(', ') }))
   }
+  if (languages.template === 'js') throw new Error(t('bundler.config.template-js-retire', { cle: '[mjs.config.json] languages.template' }))
   if (languages.template !== undefined && !VALID_TEMPLATE_LANGS.has(languages.template)) {
     throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'languages.template', valeur: languages.template, valides: Array.from(VALID_TEMPLATE_LANGS).join(', ') }))
   }
@@ -2875,6 +2987,9 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
   if (render.startup !== undefined && !VALID_STARTUP_MODES.has(render.startup)) {
     throw new Error(t('bundler.config.valeur-invalide-simple', { cle: 'render.startup', valeur: render.startup, valides: Array.from(VALID_STARTUP_MODES).join(', ') }))
   }
+  if (render.stream !== undefined && typeof render.stream !== 'boolean') {
+    throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: 'render.stream', valeur: JSON.stringify(render.stream), type: typeof render.stream }))
+  }
   if (render.header !== undefined && typeof render.header !== 'string') {
     throw new Error(t('bundler.config.doit-etre-chaine-simple', { cle: 'render.header', chemin: path }))
   }
@@ -2941,6 +3056,9 @@ function validateRenderConfig(render: any, path: string, lint?: LintToggles): vo
       }
       if (route.light !== undefined && typeof route.light !== 'boolean') {
         throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `render.routes['${url}'].light`, valeur: JSON.stringify(route.light), type: typeof route.light }))
+      }
+      if (route.stream !== undefined && typeof route.stream !== 'boolean') {
+        throw new Error(t('bundler.config.doit-etre-booleen-simple', { cle: `render.routes['${url}'].stream`, valeur: JSON.stringify(route.stream), type: typeof route.stream }))
       }
       // `light` décrit comment le SERVEUR monte la racine : une route `csr` n'est jamais rendue
       // au serveur, la clé n'y change donc rien. Avertissement NON bloquant (la configuration
@@ -3159,9 +3277,8 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     // clé si posé (validateConfig garantit qu'elles sont alors ÉGALES si les
     // deux sont présentes, donc l'ordre de priorité ne change rien au résultat).
     defaultScriptLang: config.languages?.script ?? config.defaultScriptLang,
-    // `languages.template` : grammaire interpolations/handlers, ENCORE INUTILISÉE
-    // en aval (briques suivantes) — défaut 'civet' appliqué côté transpiler
-    // (point unique), jamais ici : `undefined` = "non configuré".
+    // `languages.template` : grammaire du gabarit, `'civet'` seule (`'js'` refusé à la
+    // lecture) — `undefined` = "non configuré".
     templateLang:     config.languages?.template,
     sigil:            config.sigil,
     contextAlias:     config.contextAlias,
@@ -3172,6 +3289,13 @@ export function resolveBundlerOpts(config: MjsConfig, configDir: string) {
     logLevel:         config.logLevel,
     messages:         config.messages,
     types:            config.types,
+    typesReport:      config.typesReport,
+    derivedMode:      config.derived,
+    routesPreload:    config.routes?.preload,
+    blocksPreload:    config.blocks?.preload,
+    proxy:            config.proxy,
+    responsiveFontSize: config.responsiveFontSize,
+    collections:      config.collections,
     effects:          config.effects,
     bundles:          config.bundles,
     maxStateVars:     config.lint?.maxStateVars,

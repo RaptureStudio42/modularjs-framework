@@ -13,9 +13,9 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const COMPOSANTS: Record<string, string> = {
-  'calme-vole': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" @in=*fly(up, distance: 200, duration: 2s) @out=*fade(300ms)>vole</p>{end}',
-  'calme-glisse': '<script>\n$vu = false\n</script>\n{if $vu}<p class="s" @transition=*slide(x, duration: 250ms)>glisse</p>{end}',
-  'calme-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n</script>\n{if $vu}<p class=\"m\" @in=*tourne(duration: 8s)>maison</p>{end}",
+  'calme-vole': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" :in=*fly(up, distance: 200, duration: 2s) :out=*fade(300ms)>vole</p>{end}',
+  'calme-glisse': '<script>\n$vu = false\n</script>\n{if $vu}<p class="s" :transition=*slide(x, duration: 250ms)>glisse</p>{end}',
+  'calme-maison': "<script>\nµanim.create 'tourne', css: (t) -> { transform: \"rotate(#{t * 90}deg)\" }\n$vu = false\n</script>\n{if $vu}<p class=\"m\" :in=*tourne(duration: 8s)>maison</p>{end}",
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {

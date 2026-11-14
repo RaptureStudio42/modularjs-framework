@@ -35,10 +35,11 @@ if (µ.Element) {
       if (rel && rel.getRootNode() !== root) rel = this._mjs_slotOf?.(rel);
     }
     while (t && t !== root) {
-      const ids = t._mjs_eo === this ? t._mjs_ids : void 0; // nos nœuds seuls, cf. `_mjs_bindEvents`
-      if (ids) {
+      const r = t._mjs_ev, d = r && r._mjs_reg; // nos balises seules, et leurs identifiants, cf. `_mjs_bindEvents`
+      if (d && d.o === this) {
+        const ids = d.ids;
         for (let i = 0, len = ids.length; i < len; i++) {
-          if (map[ids[i]] !== void 0) {
+          if (r[ids[i]] === t && map[ids[i]] !== void 0) {
             if (!rel || !µ._mjs_inside(t, rel)) hits.push(t, ids[i]);
             break;
           }
@@ -73,7 +74,8 @@ if (µ.Element) {
         Object.defineProperty(ev, 'target', { value: node, configurable: true });
         Object.defineProperty(ev, 'currentTarget', { value: node, configurable: true });
         // passage de ce gestionnaire, comme au routeur principal (mjs_element.ts) : rendu à sa fin même s'il lève ; la
-        // fonction de retrait d'un `µon` née pendant ce passage (mjs_on.ts), qu'il rend, n'est pas appelée
+        // fonction de retrait d'un `µon` (mjs_on.ts) ou la main d'arrêt d'une minuterie (mjs_every.ts) née pendant ce passage,
+        // qu'il rend, n'est pas appelée
         var __prev = µ._mjs_evPass, __pass = µ._mjs_evPass = {};
         try {
           const result = fn.call(this, ev, node);

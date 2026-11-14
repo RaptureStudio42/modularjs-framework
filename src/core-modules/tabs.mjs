@@ -110,17 +110,17 @@
       el.removeAttribute('aria-selected')
 </script>
 
-<div class="tabs" part="tabs" role="tablist" @this=!{boxRef} @attach={watch} @class{µlayout is 'curve'}="curve" @class{µlayout isnt 'curve'}="slide" --mjs-tabs-color={$color} --mjs-tabs-accent={$accent} --mjs-tabs-bg={$background} --mjs-tabs-gap={num($gap, 60) + 'px'}>
+<div class="tabs" part="tabs" role="tablist" :this=!{boxRef} :attach={watch} :class{µlayout is 'curve'}="curve" :class{µlayout isnt 'curve'}="slide" --mjs-tabs-color={$color} --mjs-tabs-accent={$accent} --mjs-tabs-bg={$background} --mjs-tabs-gap={num($gap, 60) + 'px'}>
   {if µlayout is 'curve'}
-    <span class="pill" part="indicator" @class{$ready}="ready" --mjs-tabs-top={$pillTop + 'px'} --mjs-tabs-h={$pillH + 'px'}></span>
+    <span class="pill" part="indicator" :class{$ready}="ready" --mjs-tabs-top={$pillTop + 'px'} --mjs-tabs-h={$pillH + 'px'}></span>
   {end}
-  <slot @this=!{slotRef}></slot>
+  <slot :this=!{slotRef}></slot>
   {if µlayout isnt 'curve'}
-    <span class="bar" part="indicator" @class{$ready}="ready" --mjs-tabs-left={$barLeft + 'px'} --mjs-tabs-width={$barWidth + 'px'}></span>
+    <span class="bar" part="indicator" :class{$ready}="ready" --mjs-tabs-left={$barLeft + 'px'} --mjs-tabs-width={$barWidth + 'px'}></span>
   {end}
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .tabs
     position: relative
     display: flex

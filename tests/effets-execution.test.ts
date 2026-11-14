@@ -12,7 +12,7 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const COMPOSANTS: Record<string, string> = {
   'fx-neon':   '<h1 class="t" *neon(#f0f, flicker: true)>Néon</h1>',
@@ -67,6 +67,7 @@ describe('effets — exécution', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string) {
     window.document.body.innerHTML = `<${tag}></${tag}>`
@@ -286,6 +287,7 @@ describe('effets — « réduire les animations » du système', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   it('plus aucun mouvement : ni grésillement, ni salve animée, ni inclinaison, ni onde, et une apparition laisse l\'élément à sa place', async () => {
     const root   = mjsTmp('effets-reduit')

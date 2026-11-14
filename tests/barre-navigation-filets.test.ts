@@ -14,9 +14,13 @@ const RUNTIME   = join(__dirname, '..', 'src', 'runtime')
 const lire      = (f: string) => readFileSync(join(RUNTIME, f), 'utf-8')
 
 // le routeur réel, la barre et l'autoloader dans une fenêtre happy-dom
+// le cœur d'une appli sans table de routes au repos : la construction en retire les blocs `<routes-repos>` (la page montée y est
+// demandée par le guetteur de l'ombre, que ce banc ne pose pas)
+const sansRepos = (src: string) => src.replace(/^[ \t]*\/\/ <routes-repos>\n[\s\S]*?^[ \t]*\/\/ <\/routes-repos>\n/gm, '')
+
 function charger(win: any) {
   const init = lire('mjs_init.ts').replace(/export\s*\{[^}]*\}/, '')
-  const src  = `${init}\n${lire('mjs_page_cache.ts')}\n${lire('mjs_nav_progress.ts')}\n${lire('mjs_router.ts')}\n${lire('mjs_autoloader.ts')}\nreturn µ;`
+  const src  = `${init}\n${lire('mjs_page_cache.ts')}\n${lire('mjs_nav_progress.ts')}\n${sansRepos(lire('mjs_router.ts'))}\n${sansRepos(lire('mjs_autoloader.ts'))}\nreturn µ;`
   return new Function('window', 'document', 'customElements', 'HTMLElement', 'CSSStyleSheet', 'CustomEvent', src)(win, win.document, win.customElements, win.HTMLElement, win.CSSStyleSheet, win.CustomEvent)
 }
 

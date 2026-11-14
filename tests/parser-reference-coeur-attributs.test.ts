@@ -79,7 +79,7 @@ describe('parser — attributs écrits sur une référence à un module cœur', 
     })
 
     it('un effet (`*fade`) et un attribut conditionnel (`@class{…}`) sont des noms comme les autres', () => {
-      const attrs = attrsOf('<@@select *fade(duration: 1s) @class{$on}="x" other></@@select>')
+      const attrs = attrsOf('<@@select *fade(duration: 1s) :class{$on}="x" other></@@select>')
       assert.ok(attrs)
       assert.ok(attrs.names.includes('*fade'))
       assert.ok(attrs.names.includes('other'))

@@ -24,7 +24,7 @@ $vu = false
 <div class="carte"><p class="h" *fly(on: hover, duration: $dh)>survol</p></div>
 <p class="n" *count(on: load, duration: 0, suffix: $u)>42</p>
 <p class="f" *filter>filtre</p>
-{if $vu}<p class="v" @in=*halo @out=*halo(size: 20px)>vie</p>{end}
+{if $vu}<p class="v" :in=*halo :out=*halo(size: 20px)>vie</p>{end}
 <button class="lent" @click={$d = '900ms'}>l</button>
 <button class="lent-survol" @click={$dh = '900ms'}>ls</button>
 <button class="pts" @click={$u = ' pts'}>p</button>

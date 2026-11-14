@@ -41,7 +41,7 @@ $items = ['a', 'b']
 </script>
 
 {for item in $items}
-  <div @transition=*slide>{item}</div>
+  <div :transition=*slide>{item}</div>
 {end}
 `)
     const bundler = new Bundler({

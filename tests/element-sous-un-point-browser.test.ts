@@ -23,7 +23,7 @@ async function chromiumPresent(): Promise<boolean> {
 
 const SOURCES: Record<string, string> = {
   'badge.mjs': '<span class="pastille">3</span>\n<style>\n.pastille\n  display: inline-block\n  width: 40px\n  height: 40px\n</style>\n',
-  'carte.mjs': '<div class="cadre"><@badge/></div>\n<@note @lightDom/>\n',
+  'carte.mjs': '<div class="cadre"><@badge/></div>\n<@note :lightDom/>\n',
   'note.mjs': '<em class="mot">note</em>\n'
 }
 

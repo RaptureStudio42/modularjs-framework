@@ -19,7 +19,7 @@ const PAGE = `<script>
   $tard = false
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   <label for="n5">Années</label><@@number id="n5" class="n5" label={$labN}></@@number>
   <label for="k5">Angle</label><@@knob id="k5" class="k5" label={$labK}></@@knob>
   <@@number class="n6" aria-labelledby="tard6"></@@number>
@@ -28,7 +28,7 @@ const PAGE = `<script>
   <label id="labp" for="ps">Pays</label><@@select id="ps" class="ps" aria-labelledby="labp"><@@option value="a">A</@@option></@@select>
 </form>
 
-<form class="fg" method="get" action="/envoi" @noUJS>
+<form class="fg" method="get" action="/envoi" :noUJS>
   <@@radio class="g1" name="g" value="1" checked>1</@@radio>
   <@@radio class="g2" name="g" value="2">2</@@radio>
   <@@radio class="g3" name="g" value="3">3</@@radio>

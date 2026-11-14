@@ -1,0 +1,19 @@
+# ModularJS (MJS) — version courte
+
+> Les pages de la documentation de ModularJS à lire avant d'écrire un premier composant, dans l'ordre. La documentation, en français, est celle de la version installée (`node_modules/modularjs-framework/docs/`) ; le sommaire complet est `llms.txt`.
+
+La syntaxe de MJS n'est celle d'aucun autre framework : ne la devinez pas. Après chaque modification, lancez `npx --no -- mjs check --json` et corrigez chaque erreur et chaque avertissement.
+
+## Lire d'abord
+
+- [Introduction](01-introduction.md): ce qu'est MJS, et pourquoi ne pas recopier la syntaxe d'un autre framework
+- [Anatomie d'un composant](02-composant.md): le fichier `.mjs` et ses blocs
+- [Réactivité](03-reactivite.md): `$x`, valeurs dérivées, `µeffect`
+- [Blocs logiques](05-blocs.md): `{if}`, `{for … by}`, `{key}`, `{await}`
+- [Événements](06-evenements.md): `@click` et ses modificateurs
+- [Pièges et bonnes pratiques](18-pieges.md): les erreurs les plus courantes
+- [Aide-mémoire](22-aide-memoire.md): toute la syntaxe en tableaux, pour retrouver une écriture
+
+## Ensuite
+
+- [Sommaire complet](llms.txt): toutes les pages de la documentation, une ligne chacune

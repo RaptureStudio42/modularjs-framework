@@ -69,7 +69,7 @@ const PROJET: Record<string, string> = {
   'fx-racine.mjs':     "<div class=\"a\" *behind('/photo.png', depth: 11)></div>",
   'fx-variable.mjs':   "<script>\n$img = 'photo.png'\n</script>\n<div class=\"a\" *behind($img, depth: 12)></div>",
   'fx-boucle.mjs':     "<script>\n$items = [{ src: 'photo.png' }]\n</script>\n{for item in $items}\n<div class=\"a\" *behind(item.src, depth: 13)></div>\n{end}",
-  'fx-transition.mjs': "<div class=\"a\" @in=*ink(image: 'photo.png', style: brush)>x</div>",
+  'fx-transition.mjs': "<div class=\"a\" :in=*ink(image: 'photo.png', style: brush)>x</div>",
   'fx-gradient.mjs':   "<h1 class=\"a\" *gradient('photo.png', size: 301)>M</h1>",
   'fx-hologram.mjs':   "<div class=\"a\" *hologram(image: 'photo.png', mask: 'img/photo.png', seed: 14)>x</div>",
   'fx-liste.mjs':      "<div class=\"a\" *scrub(images: ['photo.png', img/photo.png, 'data:image/png;base64,AAAA', 'https://exemple.test/p.png', '/photo.png', µasset('photo.png')], first: 15)></div>",

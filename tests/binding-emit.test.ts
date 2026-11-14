@@ -52,7 +52,7 @@ describe('binding @emit — réactif / .once', function () {
 <script lang="coffee">
 $count = 0
 </script>
-<div @emit.changed={$count}>{$count}</div>
+<div :emit.changed={$count}>{$count}</div>
 `
     const { coreCode, compCode } = await bundleComponent('efx', src)
     assert.match(compCode, /_mjs_emit\('changed', \$\.count\)/, 'code généré : appel _mjs_emit avec la bonne expr')
@@ -79,7 +79,7 @@ $count = 0
 <script lang="coffee">
 $count = 0
 </script>
-<div @emit.once.mounted={$count}>{$count}</div>
+<div :emit.once.mounted={$count}>{$count}</div>
 `
     const { coreCode, compCode } = await bundleComponent('eonce', src)
     assert.match(compCode, /_mjs_emit\('mounted', \$\.count\)/)
@@ -108,7 +108,7 @@ items = [{ id: 1, label: 'A' }, { id: 2, label: 'B' }]
 </script>
 <ul>
   {for item in items}
-    <li @emit.rowReady={item.label}>{item.label}</li>
+    <li :emit.rowReady={item.label}>{item.label}</li>
   {end}
 </ul>
 `
@@ -129,7 +129,7 @@ items = [{ id: 1, label: 'A' }, { id: 2, label: 'B' }]
   })
 
   it('forme malformée (@emit.a.b.c=) : erreur de compilation explicite', async () => {
-    const src = `<div @emit.a.b.c={1}></div>`
+    const src = `<div :emit.a.b.c={1}></div>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'emitbad' }),
       /forme d'émission non reconnue/,
@@ -137,7 +137,7 @@ items = [{ id: 1, label: 'A' }, { id: 2, label: 'B' }]
   })
 
   it('2 segments dont le 1er n\'est pas "once" (@emit.foo.bar=) : erreur de compilation explicite', async () => {
-    const src = `<div @emit.foo.bar={1}></div>`
+    const src = `<div :emit.foo.bar={1}></div>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'emitbad2' }),
       /forme d'émission non reconnue/,
@@ -145,7 +145,7 @@ items = [{ id: 1, label: 'A' }, { id: 2, label: 'B' }]
   })
 
   it('nom d\'événement vide (@emit.=) : erreur de compilation explicite', async () => {
-    const src = `<div @emit.={1}></div>`
+    const src = `<div :emit.={1}></div>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'emitbad3' }),
       /forme d'émission non reconnue/,
@@ -153,7 +153,7 @@ items = [{ id: 1, label: 'A' }, { id: 2, label: 'B' }]
   })
 
   it('nom d\'événement vide + once (@emit.once.=) : erreur de compilation explicite', async () => {
-    const src = `<div @emit.once.={1}></div>`
+    const src = `<div :emit.once.={1}></div>`
     await assert.rejects(
       () => transpile(src, { moduleName: 'emitbad4' }),
       /forme d'émission non reconnue/,

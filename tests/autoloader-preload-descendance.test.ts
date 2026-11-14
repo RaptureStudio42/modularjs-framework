@@ -21,9 +21,9 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const BASE: Record<string, string> = {
-  'partage.module.civet': 'export marque := \'valeur-du-module-partage\'\n',
+  'partage.module.civet.mjs': 'export marque := \'valeur-du-module-partage\'\n',
   'puce.mjs':             '<i class="puce">puce</i>\n',
-  'carte-a.mjs':          '@import marque \'partage.module.civet\'\n\n<p class="a" *glitch>{marque}</p>\n<mjs-puce></mjs-puce>\n',
+  'carte-a.mjs':          '@import marque \'partage.module.civet.mjs\'\n\n<p class="a" *glitch>{marque}</p>\n<mjs-puce></mjs-puce>\n',
   'carte-b.mjs':          '<p class="b">b</p>\n<mjs-puce></mjs-puce>\n',
   'onglet.mjs':           '<h2 class="o">onglet</h2>\n<mjs-carte-a></mjs-carte-a>\n<mjs-carte-b></mjs-carte-b>\n',
   'libre.mjs':            '<p class="l">libre</p>\n',
@@ -175,8 +175,8 @@ describe('µ.Autoloader.preload — le composant et toute sa descendance', funct
     'déstructuration': { 'appelant.mjs': '<script>\n@chauffer = ->\n  { preload } := µ.Autoloader\n  preload(\'onglet\')\n</script>\n<button class="s" @mouseover=@chauffer>survol</button>\n' },
     'appel optionnel': { 'appelant.mjs': '<script>\n@chauffer = -> µ.Autoloader.preload?(\'onglet\')\n</script>\n<button class="s" @mouseover=@chauffer>survol</button>\n' },
     'module .civet avec alias': {
-      'aide.module.civet': 'export chauffer := (nom) ->\n  A := µ.Autoloader\n  A.preload nom\n',
-      'appelant.mjs':      '@import chauffer \'aide.module.civet\'\n\n<button class="s" @mouseover={chauffer(\'onglet\')}>survol</button>\n',
+      'aide.module.civet.mjs': 'export chauffer := (nom) ->\n  A := µ.Autoloader\n  A.preload nom\n',
+      'appelant.mjs':      '@import chauffer \'aide.module.civet.mjs\'\n\n<button class="s" @mouseover={chauffer(\'onglet\')}>survol</button>\n',
     },
   }
 

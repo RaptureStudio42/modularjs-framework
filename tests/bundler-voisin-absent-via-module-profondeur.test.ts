@@ -10,8 +10,8 @@ import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const fichiers: Record<string, string> = {
-  'util.civet': 'export lib = µasset(\'lib/main.js\')\n',
-  'a.mjs'     : '@import lib \'util.civet\'\n<script>\n  go = -> lib\n</script>\n<p>a</p>\n',
+  'util.civet.mjs': 'export lib = µasset(\'lib/main.js\')\n',
+  'a.mjs'     : '@import lib \'util.civet.mjs\'\n<script>\n  go = -> lib\n</script>\n<p>a</p>\n',
   'lib/main.js': 'import { b } from \'./b.js\'\nexport const d = b\n',
   'lib/b.js'  : 'import { c } from \'./c-absent.js\'\nexport const b = c\n',
 }
@@ -34,7 +34,7 @@ describe('bundler — voisin absent d\'un voisin, atteint par un module', functi
       const stats = await bundler.compile()
       assert.deepEqual(stats.errors.map((e: any) => e.message), [])
       const dits = concernes(stats.warnings)
-      assert.ok(dits.some(w => /util\.civet/.test(w)), `le module doit être averti, reçu : ${JSON.stringify(stats.warnings)}`)
+      assert.ok(dits.some(w => /util\.civet\.mjs/.test(w)), `le module doit être averti, reçu : ${JSON.stringify(stats.warnings)}`)
       assert.ok(!dits.some(w => /a\.mjs/.test(w)), `l'importeur ne doit pas être averti, reçu : ${JSON.stringify(dits)}`)
     }
     finally {

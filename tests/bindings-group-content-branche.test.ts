@@ -117,7 +117,7 @@ const CONTEXTS = [
 // {await} / {key} dans {await}.
 // ============================================================================
 
-describe('<input type="radio" @group=!{$choix}> en branche non racine', function () {
+describe('<input type="radio" :group=!{$choix}> en branche non racine', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -125,7 +125,7 @@ describe('<input type="radio" @group=!{$choix}> en branche non racine', function
     it(`${label} — bonne radio cochée au montage, suit $choix muté, clic -> modèle`, async () => {
       const src = build(
         ["$choix = 'b'"],
-        '<input class="ra" type="radio" value="a" @group=!{$choix}><input class="rb" type="radio" value="b" @group=!{$choix}>',
+        '<input class="ra" type="radio" value="a" :group=!{$choix}><input class="rb" type="radio" value="b" :group=!{$choix}>',
         '<button class="seta" @click={$choix = \'a\'}>set a</button><b class="out">{$choix}</b>',
       )
       const fileBase = `d1g-${id}`
@@ -157,7 +157,7 @@ describe('<input type="radio" @group=!{$choix}> en branche non racine', function
 // EXISTANT du corpus, pas un `.push()` inline dans l'attribut, jamais vu).
 // ============================================================================
 
-describe('<input type="checkbox" @group=!{$liste}> (tableau) en {await} nu', function () {
+describe('<input type="checkbox" :group=!{$liste}> (tableau) en {await} nu', function () {
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
@@ -165,7 +165,7 @@ describe('<input type="checkbox" @group=!{$liste}> (tableau) en {await} nu', fun
     const src = [
       '<script>', "$p = Promise.resolve(1)", "$liste = ['b']", "addA = -> $liste.push('a')", '</script>',
       '{await $p}{success d}',
-      '<input class="ca" type="checkbox" value="a" @group=!{$liste}><input class="cb" type="checkbox" value="b" @group=!{$liste}>',
+      '<input class="ca" type="checkbox" value="a" :group=!{$liste}><input class="cb" type="checkbox" value="b" :group=!{$liste}>',
       '{end}',
       '<button class="addA" @click={addA}>add a</button><b class="out">{$liste.join(\',\')}</b>',
     ].join('\n')
@@ -201,7 +201,7 @@ describe('contenteditable @text=!{$t} en {await} nu', function () {
     const src = [
       '<script>', "$p = Promise.resolve(1)", "$t = 'salut'", '</script>',
       '{await $p}{success d}',
-      '<div class="ce" contenteditable @text=!{$t}></div>',
+      '<div class="ce" contenteditable :text=!{$t}></div>',
       '{end}',
       '<button class="setm" @click={$t = \'monde\'}>set</button><b class="out">{$t}</b>',
     ].join('\n')
@@ -233,7 +233,7 @@ describe('contenteditable @html=!{$h} en {await} nu', function () {
     const src = [
       '<script>', "$p = Promise.resolve(1)", "$h = '<b>salut</b>'", '</script>',
       '{await $p}{success d}',
-      '<div class="ce" contenteditable @html=!{$h}></div>',
+      '<div class="ce" contenteditable :html=!{$h}></div>',
       '{end}',
       '<button class="setm" @click={$h = \'<i>monde</i>\'}>set</button><pre class="out">{$h}</pre>',
     ].join('\n')
@@ -262,20 +262,20 @@ describe('non-régression rapide root/{for} (@group=!, @text=!/@html=!, hors bra
   this.timeout(40000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('root <input type="radio" @group=!{$choix}> inchangé', async () => {
+  it('root <input type="radio" :group=!{$choix}> inchangé', async () => {
     const src = [
       '<script>', "$choix = 'b'", '</script>',
-      '<input class="ra" type="radio" value="a" @group=!{$choix}><input class="rb" type="radio" value="b" @group=!{$choix}>',
+      '<input class="ra" type="radio" value="a" :group=!{$choix}><input class="rb" type="radio" value="b" :group=!{$choix}>',
     ].join('\n')
     const { el } = await mountFiles({ 'nr1.mjs': src }, 'mjs-nr1')
     await tick()
     assert.equal(el._shadow.querySelector('.rb').checked, true)
   })
 
-  it('{for} <input type="checkbox" @group=!{$choix}> (var externe partagée) inchangé', async () => {
+  it('{for} <input type="checkbox" :group=!{$choix}> (var externe partagée) inchangé', async () => {
     const src = [
       '<script>', "$choix = ['b']", "$opts = ['a', 'b']", '</script>',
-      '{for o in $opts}<input class="chk" type="checkbox" value={o} @group=!{$choix}>{end}',
+      '{for o in $opts}<input class="chk" type="checkbox" value={o} :group=!{$choix}>{end}',
     ].join('\n')
     const { el } = await mountFiles({ 'nr2.mjs': src }, 'mjs-nr2')
     await tick()
@@ -285,7 +285,7 @@ describe('non-régression rapide root/{for} (@group=!, @text=!/@html=!, hors bra
   })
 
   it('root contenteditable @text=!{$t} inchangé', async () => {
-    const src = ['<script>', "$t = 'salut'", '</script>', '<div class="ce" contenteditable @text=!{$t}></div>'].join('\n')
+    const src = ['<script>', "$t = 'salut'", '</script>', '<div class="ce" contenteditable :text=!{$t}></div>'].join('\n')
     const { el } = await mountFiles({ 'nr3.mjs': src }, 'mjs-nr3')
     await tick()
     assert.equal(el._shadow.querySelector('.ce').textContent, 'salut')
@@ -294,7 +294,7 @@ describe('non-régression rapide root/{for} (@group=!, @text=!/@html=!, hors bra
   it('{for} contenteditable @text=!{row.txt} inchangé', async () => {
     const src = [
       '<script>', "$rows = [{ txt: 'ok-for' }]", '</script>',
-      '{for row in $rows}<div class="ce" contenteditable @text=!{row.txt}></div>{end}',
+      '{for row in $rows}<div class="ce" contenteditable :text=!{row.txt}></div>{end}',
     ].join('\n')
     const { el } = await mountFiles({ 'nr4.mjs': src }, 'mjs-nr4')
     await tick()

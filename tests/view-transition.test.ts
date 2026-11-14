@@ -89,8 +89,8 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     // extractDirectives/preprocessHtml).
     writeFileSync(
       join(src, 'vt-demo.page.mjs'),  // <@view> exige le marqueur .page.mjs
-      `<style @viewTransition.none></style>\n\n<@view main @viewTransition.fade>\n<div @viewTransition.hero></div>\n` +
-      `<p><code>&lt;a @viewTransition="off"&gt;</code></p>\n`,
+      `<style :viewTransition.none></style>\n\n<@view main :viewTransition.fade>\n<div :viewTransition.hero></div>\n` +
+      `<p><code>&lt;a :viewTransition="off"&gt;</code></p>\n`,
     )
     const bundler = new Bundler({
       sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js'),
@@ -104,19 +104,19 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     const manifest = readFileSync(join(out, 'bundle.js'), 'utf-8')
     assert.match(manifest, /µ\.viewTransition = "fade";/, 'config → µ.viewTransition au manifeste')
     assert.match(comp, /_mjs_viewTransition = "none"/, 'directive racine module @viewTransition.none → _mjs_viewTransition')
-    assert.match(comp, /data-mjs-vt=['"]fade['"]/, 'attribut <@view @viewTransition.fade> → data-mjs-vt="fade" sur metamjs-view')
+    assert.match(comp, /data-mjs-vt=['"]fade['"]/, 'attribut <@view :viewTransition.fade> → data-mjs-vt="fade" sur metamjs-view')
     assert.match(comp, /view-transition-name/, 'raccourci @viewTransition.hero → @style.view-transition-name (setProperty)')
-    assert.match(comp, /&lt;a @viewTransition/, 'le <code> d\'exemple garde @viewTransition="off" littéral (pas de conversion ni d\'erreur, masquage)')
+    assert.match(comp, /&lt;a :viewTransition/, 'le <code> d\'exemple garde @viewTransition="off" littéral (pas de conversion ni d\'erreur, masquage)')
   })
 
-  it('directive de module avec un NOM de préréglage → _mjs_viewTransition="cube" ; <@view @viewTransition.zoom> → data-mjs-vt="zoom" ; config chaîne → µ.viewTransition="fade" (émis TEL QUEL, pas juste true)', async function () {
+  it('directive de module avec un NOM de préréglage → _mjs_viewTransition="cube" ; <@view :viewTransition.zoom> → data-mjs-vt="zoom" ; config chaîne → µ.viewTransition="fade" (émis TEL QUEL, pas juste true)', async function () {
     this.timeout(30000)
     const root = mjsTmp('vt-preset')
     const src = join(root, 'src'); mkdirSync(src)
     const out = join(root, 'out')
     writeFileSync(
       join(src, 'vt-preset-demo.page.mjs'),  // <@view> exige le marqueur .page.mjs
-      `<style @viewTransition.cube></style>\n\n<@view main @viewTransition.zoom>\n<div>contenu</div>\n`,
+      `<style :viewTransition.cube></style>\n\n<@view main :viewTransition.zoom>\n<div>contenu</div>\n`,
     )
     const bundler = new Bundler({
       sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js'),
@@ -130,17 +130,17 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     const manifest = readFileSync(join(out, 'bundle.js'), 'utf-8')
     assert.match(manifest, /µ\.viewTransition = "fade";/, 'config chaîne → µ.viewTransition émis tel quel (pas coercé en true)')
     assert.match(comp, /_mjs_viewTransition = "cube"/, 'directive racine module avec un NOM → _mjs_viewTransition porte le nom')
-    assert.match(comp, /data-mjs-vt=['"]zoom['"]/, 'attribut <@view @viewTransition.zoom> → data-mjs-vt="zoom" (pas juste "on")')
+    assert.match(comp, /data-mjs-vt=['"]zoom['"]/, 'attribut <@view :viewTransition.zoom> → data-mjs-vt="zoom" (pas juste "on")')
   })
 
-  it('priorité (option `priority:`, façon z-index) : @viewTransition.NOM={ priority: 5 } → _mjs_viewTransitionPriority ; <@view @viewTransition.nom={ priority: 3 }> → data-mjs-vt-p ; le canal NOM porte la chaîne VERBATIM (options comprises)', async function () {
+  it('priorité (option `priority:`, façon z-index) : @viewTransition.NOM={ priority: 5 } → _mjs_viewTransitionPriority ; <@view :viewTransition.nom={ priority: 3 }> → data-mjs-vt-p ; le canal NOM porte la chaîne VERBATIM (options comprises)', async function () {
     this.timeout(30000)
     const root = mjsTmp('vt-prio')
     const src = join(root, 'src'); mkdirSync(src)
     const out = join(root, 'out')
     writeFileSync(
       join(src, 'vt-prio-demo.page.mjs'),  // <@view> exige le marqueur .page.mjs
-      `<style @viewTransition.cube={ dir: up, priority: 5 }></style>\n\n<@view main @viewTransition.turn={ dir: right, priority: 3 }>\n<div>contenu</div>\n`,
+      `<style :viewTransition.cube={ dir: up, priority: 5 }></style>\n\n<@view main :viewTransition.turn={ dir: right, priority: 3 }>\n<div>contenu</div>\n`,
     )
     const bundler = new Bundler({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js') })
     await bundler.compile()
@@ -156,8 +156,8 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     // d'attributs statiques prendrait un `{` littéral pour une interpolation JS
     // (cf. escapeVtAttrValue, transpiler/index.ts) — décodé par le navigateur à
     // getAttribute(), µ._mjs_vtParse reçoit le texte réel au runtime.
-    assert.ok(comp.includes("data-mjs-vt='turn=&#123; dir: right, priority: 3 &#125;'"), '<@view @viewTransition.turn={ dir: right, priority: 3 }> → data-mjs-vt verbatim ÉCHAPPÉ (statique, pas d\'interpolation)')
-    assert.match(comp, /data-mjs-vt-p=['"]3['"]/, '<@view @viewTransition.turn={ dir: right, priority: 3 }> → data-mjs-vt-p="3" (canal séparé, INCHANGÉ)')
+    assert.ok(comp.includes("data-mjs-vt='turn=&#123; dir: right, priority: 3 &#125;'"), '<@view :viewTransition.turn={ dir: right, priority: 3 }> → data-mjs-vt verbatim ÉCHAPPÉ (statique, pas d\'interpolation)')
+    assert.match(comp, /data-mjs-vt-p=['"]3['"]/, '<@view :viewTransition.turn={ dir: right, priority: 3 }> → data-mjs-vt-p="3" (canal séparé, INCHANGÉ)')
 
     // Bout-en-bout : un VRAI DOM (happy-dom) décode les entités HTML au parsing —
     // getAttribute() doit rendre le texte RÉEL (µ._mjs_vtParse le reçoit tel quel).
@@ -175,7 +175,7 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     const out = join(root, 'out')
     writeFileSync(
       join(src, 'vt-prio-def.page.mjs'),  // <@view> exige le marqueur .page.mjs
-      `<style @viewTransition.fade></style>\n\n<@view main @viewTransition.turn={ direction: down }>\n<div>contenu</div>\n`,
+      `<style :viewTransition.fade></style>\n\n<@view main :viewTransition.turn={ direction: down }>\n<div>contenu</div>\n`,
     )
     const bundler = new Bundler({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js') })
     await bundler.compile()
@@ -184,19 +184,19 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     const files = readdirSync(out)
     const comp = readFileSync(join(out, files.find(f => /^vt-prio-def-/.test(f))!), 'utf-8')
     assert.match(comp, /_mjs_viewTransitionPriority = 1/, 'défaut 1 sans option priority')
-    assert.ok(comp.includes("data-mjs-vt='turn=&#123; direction: down &#125;'"), '<@view @viewTransition.turn={ direction: down }> → data-mjs-vt verbatim ÉCHAPPÉ (clé LONGUE direction)')
+    assert.ok(comp.includes("data-mjs-vt='turn=&#123; direction: down &#125;'"), '<@view :viewTransition.turn={ direction: down }> → data-mjs-vt verbatim ÉCHAPPÉ (clé LONGUE direction)')
     assert.doesNotMatch(comp, /data-mjs-vt-p=/, 'pas de data-mjs-vt-p émis sans priorité explicite sur la balise')
   })
 
-  it('<@view @viewTransition.fade={ dur: 300 }> → data-mjs-vt porte les options verbatim (clé COURTE dur, nombre nu) ; @style.view-transition-name={expr} intact sur balise ordinaire', async function () {
+  it('<@view :viewTransition.fade={ dur: 300 }> → data-mjs-vt porte les options verbatim (clé COURTE dur, nombre nu) ; @style.view-transition-name={expr} intact sur balise ordinaire', async function () {
     this.timeout(30000)
     const root = mjsTmp('vt-dyn')
     const src = join(root, 'src'); mkdirSync(src)
     const out = join(root, 'out')
     writeFileSync(
       join(src, 'vt-dyn-demo.page.mjs'),  // <@view> exige le marqueur .page.mjs
-      `<@view main @viewTransition.fade={ dur: 300 }>\n` +
-      `<img @style.view-transition-name={'p-' + 1}>\n` +
+      `<@view main :viewTransition.fade={ dur: 300 }>\n` +
+      `<img :style.view-transition-name={'p-' + 1}>\n` +
       `<div>contenu</div>\n`,
     )
     const bundler = new Bundler({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js') })
@@ -208,7 +208,7 @@ describe('viewTransition — compilation des 3 niveaux (syntaxe OBJET)', () => {
     // Verbatim ÉCHAPPÉ (cf. commentaire équivalent plus haut, test priorité) —
     // sans l'échappement, `dur: 300` casserait la compilation si pris pour une
     // interpolation (le pipeline générique d'attributs évalue tout `{...}` littéral).
-    assert.ok(comp.includes("data-mjs-vt='fade=&#123; dur: 300 &#125;'"), '<@view @viewTransition.fade={ dur: 300 }> → data-mjs-vt verbatim ÉCHAPPÉ (options comprises, clé courte)')
+    assert.ok(comp.includes("data-mjs-vt='fade=&#123; dur: 300 &#125;'"), '<@view :viewTransition.fade={ dur: 300 }> → data-mjs-vt verbatim ÉCHAPPÉ (options comprises, clé courte)')
     assert.doesNotMatch(comp, /data-mjs-vt-p=/, 'pas de priority dans les options → pas de data-mjs-vt-p')
     assert.match(comp, /view-transition-name/, '@style.view-transition-name={expr} sur balise ordinaire reste compilé (setProperty), inchangé')
   })
@@ -377,11 +377,11 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
     await assert.rejects(transpile('@viewTransition = "off"\n<div>x</div>', { moduleName: 'vt-off-3' }), /'off' n'existe pas/)
     await assert.rejects(transpile('@vt.off\n<div>x</div>', { moduleName: 'vt-off-4' }), /'off' n'existe pas/)
     await assert.rejects(
-      transpile('<@view main @viewTransition.off>', { moduleName: 'vt-off-5' }),
+      transpile('<@view main :viewTransition.off>', { moduleName: 'vt-off-5' }),
       /'off' n'existe pas/,
     )
     await assert.rejects(
-      transpile('<@view main @viewTransition="off">', { moduleName: 'vt-off-6' }),
+      transpile('<@view main :viewTransition="off">', { moduleName: 'vt-off-6' }),
       /'off' n'existe pas/,
     )
   })
@@ -391,41 +391,41 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
     await assert.rejects(transpile('@viewTransition.on\n<div>x</div>', { moduleName: 'vt-on-1' }), /'on' est implicite/)
     await assert.rejects(transpile('@viewTransition on\n<div>x</div>', { moduleName: 'vt-on-2' }), /'on' est implicite/)
     await assert.rejects(
-      transpile('<@view main @viewTransition.on>', { moduleName: 'vt-on-3' }),
+      transpile('<@view main :viewTransition.on>', { moduleName: 'vt-on-3' }),
       /'on' est implicite/,
     )
   })
 
   // ── 3. ancienne forme ESPACE (racine) ────────────────────────────────────
   it("erreur 3 — ancienne écriture '@viewTransition <nom> [priorité]' (racine, espace) → message de migration", async () => {
-    await assert.rejects(transpile('@viewTransition cube 5\n<div>x</div>', { moduleName: 'vt-legacy-1' }), /ancienne écriture '@viewTransition <nom> \[priorité\]'/)
+    await assert.rejects(transpile('@viewTransition cube 5\n<div>x</div>', { moduleName: 'vt-legacy-1' }), /ancienne écriture ':viewTransition <nom> \[priorité\]'/)
     await assert.rejects(transpile('@viewTransition zoom\n<div>x</div>', { moduleName: 'vt-legacy-2' }), /ancienne écriture/)
     await assert.rejects(transpile('@viewTransition = "zoom"\n<div>x</div>', { moduleName: 'vt-legacy-3' }), /ancienne écriture/)
   })
 
   // ── 4. ancienne forme VALEUR STATIQUE (<@view>/balise) ───────────────────
   it('erreur 4 — ancienne forme statique @viewTransition="nom" (balise ET <@view>) → message de migration', async () => {
-    await assert.rejects(transpile('<div @viewTransition="hero"></div>', { moduleName: 'vt-static-1' }), /@viewTransition="hero" remplacé/)
+    await assert.rejects(transpile('<div :viewTransition="hero"></div>', { moduleName: 'vt-static-1' }), /:viewTransition="hero" remplacé/)
     await assert.rejects(
-      transpile('<@view main @viewTransition="zoom">', { moduleName: 'vt-static-2' }),
+      transpile('<@view main :viewTransition="zoom">', { moduleName: 'vt-static-2' }),
       /remplacé/,
     )
     // sur une balise ordinaire, @style.view-transition-name reste la voie dynamique valide :
-    await assert.doesNotReject(transpile(`<img @style.view-transition-name={'p-' + 1}>`, { moduleName: 'vt-dynamic-ok' }))
+    await assert.doesNotReject(transpile(`<img :style.view-transition-name={'p-' + 1}>`, { moduleName: 'vt-dynamic-ok' }))
   })
 
   // ── 5. étiquette CALCULÉE et CONDITIONNELLE (balise ordinaire) — RETIRÉES ─
   it('erreur 5 — @viewTransition={expr} (étiquette calculée) → erreur, message oriente vers @style.view-transition-name={expr}', async () => {
     await assert.rejects(
-      transpile(`<img @viewTransition={'p-' + 1}>`, { moduleName: 'vt-calc-1' }),
-      /étiquette calculée retirée.*@style\.view-transition-name=\{'p-' \+ 1\}/s,
+      transpile(`<img :viewTransition={'p-' + 1}>`, { moduleName: 'vt-calc-1' }),
+      /étiquette calculée retirée.*:style\.view-transition-name=\{'p-' \+ 1\}/s,
     )
   })
 
   it('erreur 6 — @viewTransition{cond}="nom" (étiquette conditionnelle) → erreur, message oriente vers @style.view-transition-name{cond}="nom"', async () => {
     await assert.rejects(
-      transpile('<img @viewTransition{$featured}="hero">', { moduleName: 'vt-cond-1' }),
-      /étiquette conditionnelle retirée.*@style\.view-transition-name\{\$featured\}="hero"/s,
+      transpile('<img :viewTransition{$featured}="hero">', { moduleName: 'vt-cond-1' }),
+      /étiquette conditionnelle retirée.*:style\.view-transition-name\{\$featured\}="hero"/s,
     )
   })
 
@@ -433,12 +433,12 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   // (`@click ={f}`), la détection doit donc les tolérer aussi — sinon un simple espace
   // contourne l'erreur et retombe en écouteur d'événement fantôme « viewTransition »
   it('erreur 5 (bis) — `@viewTransition ={expr}` (espace avant le =) → même erreur, pas de contournement', async () => {
-    await assert.rejects(transpile(`<img @viewTransition ={'p-' + 1}>`, { moduleName: 'vt-calc-space' }), /étiquette calculée retirée/s)
-    await assert.rejects(transpile(`<img @viewTransition\t={'p-' + 1}>`, { moduleName: 'vt-calc-tab' }), /étiquette calculée retirée/s)
+    await assert.rejects(transpile(`<img :viewTransition ={'p-' + 1}>`, { moduleName: 'vt-calc-space' }), /étiquette calculée retirée/s)
+    await assert.rejects(transpile(`<img :viewTransition\t={'p-' + 1}>`, { moduleName: 'vt-calc-tab' }), /étiquette calculée retirée/s)
   })
 
   it('erreur 6 (bis) — `@viewTransition{cond} ="nom"` (espace avant le =) → même erreur, pas de contournement', async () => {
-    await assert.rejects(transpile('<img @viewTransition{$featured} ="hero">', { moduleName: 'vt-cond-space' }), /étiquette conditionnelle retirée/s)
+    await assert.rejects(transpile('<img :viewTransition{$featured} ="hero">', { moduleName: 'vt-cond-space' }), /étiquette conditionnelle retirée/s)
   })
 
   // ── 5. options malformées (clé inconnue/en double, direction invalide/non-directionnelle, duration/priority) ──
@@ -452,15 +452,15 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
 
   // ── 6. RETRAIT — suffixe `:direction` dans le nom ─────────────────────
   it("erreur 6 — suffixe ':direction' dans le nom (racine, <@view>, avec ou sans options) → \"la direction ne s'écrit plus dans le nom\"", async () => {
-    await assert.rejects(transpile('@viewTransition.cube:left\n<div>x</div>', { moduleName: 'vt-dir-1' }), /la direction ne s'écrit plus dans le nom — écrivez @viewTransition\.cube=\{ dir: left \}\./)
+    await assert.rejects(transpile('@viewTransition.cube:left\n<div>x</div>', { moduleName: 'vt-dir-1' }), /la direction ne s'écrit plus dans le nom — écrivez :viewTransition\.cube=\{ dir: left \}\./)
     await assert.rejects(transpile('@viewTransition.cube:left={ priority: 2 }\n<div>x</div>', { moduleName: 'vt-dir-2' }), /la direction ne s'écrit plus dans le nom/)
     await assert.rejects(
-      transpile('<@view main @viewTransition.cube:left>', { moduleName: 'vt-dir-3' }),
-      /la direction ne s'écrit plus dans le nom — écrivez @viewTransition\.cube=\{ dir: left \}\./,
+      transpile('<@view main :viewTransition.cube:left>', { moduleName: 'vt-dir-3' }),
+      /la direction ne s'écrit plus dans le nom — écrivez :viewTransition\.cube=\{ dir: left \}\./,
     )
     await assert.rejects(
-      transpile('<@view main @viewTransition.turn:right={ priority: 3 }>', { moduleName: 'vt-dir-4' }),
-      /la direction ne s'écrit plus dans le nom — écrivez @viewTransition\.cube=\{ dir: left \}\./,
+      transpile('<@view main :viewTransition.turn:right={ priority: 3 }>', { moduleName: 'vt-dir-4' }),
+      /la direction ne s'écrit plus dans le nom — écrivez :viewTransition\.cube=\{ dir: left \}\./,
     )
   })
 
@@ -470,25 +470,25 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   // pas le même pour les deux. Texte EXACT (égalité stricte sur .message), pas une simple regex.
   it("erreur 6 (ter) — texte EXACT des deux variantes : @viewTransition garde son exemple à point, @pageTransition reçoit le sien (chaîne)", async () => {
     await assert.rejects(transpile('@viewTransition.cube:left\n<div>x</div>', { moduleName: 'vt-dir-exact-1' }), (err: any) => {
-      assert.equal(err.message, "'vt-dir-exact-1' : [ModularJS] @viewTransition : la direction ne s'écrit plus dans le nom — écrivez @viewTransition.cube={ dir: left }.")   // préfixe du module
+      assert.equal(err.message, "'vt-dir-exact-1' : [ModularJS] :viewTransition : la direction ne s'écrit plus dans le nom — écrivez :viewTransition.cube={ dir: left }.")   // préfixe du module
       return true
     })
-    await assert.rejects(transpile('<a href="/x" @pageTransition="cube:left">Suivant</a>\n', { moduleName: 'pt-dir-exact-1' }), (err: any) => {
-      assert.equal(err.message, '\'pt-dir-exact-1\' : [ModularJS] @pageTransition : la direction ne s\'écrit plus dans le nom — écrivez @pageTransition="cube={ dir: left }".')   // préfixe du module
+    await assert.rejects(transpile('<a href="/x" :pageTransition="cube:left">Suivant</a>\n', { moduleName: 'pt-dir-exact-1' }), (err: any) => {
+      assert.equal(err.message, '\'pt-dir-exact-1\' : [ModularJS] :pageTransition : la direction ne s\'écrit plus dans le nom — écrivez :pageTransition="cube={ dir: left }".')   // préfixe du module
       return true
     })
   })
 
   it('erreur 5 (bis) — options sur <@view> propagent le même message que parseVtValue', async () => {
     await assert.rejects(
-      transpile('<@view main @viewTransition.cube={ duraction: 600 }>', { moduleName: 'vt-opt-view' }),
+      transpile('<@view main :viewTransition.cube={ duraction: 600 }>', { moduleName: 'vt-opt-view' }),
       /clé inconnue 'duraction'/,
     )
   })
 
   it('options `={...}` sur une balise ORDINAIRE (pas <@view>) → réservées aux niveaux de navigation', async () => {
     await assert.rejects(
-      transpile('<div @viewTransition.hero={ duration: 300 }></div>', { moduleName: 'vt-morph-opts' }),
+      transpile('<div :viewTransition.hero={ duration: 300 }></div>', { moduleName: 'vt-morph-opts' }),
       /options réservées aux niveaux de navigation/,
     )
   })
@@ -496,21 +496,21 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   // ── 7. RETRAIT — @viewTransition/@vt NU sur <@view> (« @view nue interdite ») ──
   it("erreur 7 — @viewTransition/@vt NU sur <@view> (sans nom) → \"n'a pas d'effet propre\", la RACINE de module garde la forme nue", async () => {
     await assert.rejects(
-      transpile('<@view main @viewTransition>', { moduleName: 'vt-view-bare-1' }),
-      /@viewTransition nu sur une <@view> n'a pas d'effet propre — précisez un nom \(@viewTransition\.fade\) ; la forme nue \(activer avec héritage\) n'existe qu'à la racine d'un module\./,
+      transpile('<@view main :viewTransition>', { moduleName: 'vt-view-bare-1' }),
+      /:viewTransition nu sur une <@view> n'a pas d'effet propre — précisez un nom \(:viewTransition\.fade\) ; la forme nue \(activer avec héritage\) n'existe qu'à la racine d'un module\./,
     )
     await assert.rejects(
-      transpile('<@view main @viewTransition>', { moduleName: 'vt-view-bare-2' }),
-      /@viewTransition nu sur une <@view> n'a pas d'effet propre — précisez un nom \(@viewTransition\.fade\)/,
+      transpile('<@view main :viewTransition>', { moduleName: 'vt-view-bare-2' }),
+      /:viewTransition nu sur une <@view> n'a pas d'effet propre — précisez un nom \(:viewTransition\.fade\)/,
     )
     // la RACINE de module, elle, garde la forme nue (activer avec héritage) — RELOGÉE en
     // attribut de <style> (plus une directive à la racine du fichier) :
-    await assert.doesNotReject(transpile('<style @viewTransition></style>\n<div>x</div>', { moduleName: 'vt-bare-ok' }))
-    await assert.doesNotReject(transpile('<style @viewTransition.none></style>\n<div>x</div>', { moduleName: 'vt-none-ok' }))
+    await assert.doesNotReject(transpile('<style :viewTransition></style>\n<div>x</div>', { moduleName: 'vt-bare-ok' }))
+    await assert.doesNotReject(transpile('<style :viewTransition.none></style>\n<div>x</div>', { moduleName: 'vt-none-ok' }))
     // et <@view> AVEC un nom reste valable :
-    await assert.doesNotReject(transpile('<@view main @viewTransition.fade>', { moduleName: 'vt-view-named-ok-1' }))
-    await assert.doesNotReject(transpile('<@view main @viewTransition.zoom>', { moduleName: 'vt-view-named-ok-2' }))
-    await assert.doesNotReject(transpile('<@view main @viewTransition.none>', { moduleName: 'vt-view-none-ok' }))
+    await assert.doesNotReject(transpile('<@view main :viewTransition.fade>', { moduleName: 'vt-view-named-ok-1' }))
+    await assert.doesNotReject(transpile('<@view main :viewTransition.zoom>', { moduleName: 'vt-view-named-ok-2' }))
+    await assert.doesNotReject(transpile('<@view main :viewTransition.none>', { moduleName: 'vt-view-none-ok' }))
   })
 
   // ── 8. DURCISSEMENT — les deux écritures que <style> AVALAIT ────
@@ -525,16 +525,16 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
   // préréglage maison posé dans `µ._vtPresets`, que le compilateur ne peut pas connaître. Les deux
   // refus qui restent portent sur la FORME, jamais sur un dictionnaire — cf. « erreur 8 (sexies) ».
   it("erreur 8 — suffixe ':direction' sur <style> → même message que <@view> (parité des positions)", async () => {
-    await assert.rejects(transpile('<style @viewTransition.cube:left></style>\n<p>x</p>', { moduleName: 'vt-style-dir-1' }), /la direction ne s'écrit plus dans le nom — écrivez @viewTransition\.cube=\{ dir: left \}\./)
-    await assert.rejects(transpile('<style @viewTransition.turn:right={ priority: 3 }></style>\n<p>x</p>', { moduleName: 'vt-style-dir-2' }), /la direction ne s'écrit plus dans le nom/)
+    await assert.rejects(transpile('<style :viewTransition.cube:left></style>\n<p>x</p>', { moduleName: 'vt-style-dir-1' }), /la direction ne s'écrit plus dans le nom — écrivez :viewTransition\.cube=\{ dir: left \}\./)
+    await assert.rejects(transpile('<style :viewTransition.turn:right={ priority: 3 }></style>\n<p>x</p>', { moduleName: 'vt-style-dir-2' }), /la direction ne s'écrit plus dans le nom/)
   })
 
   it('erreur 8 (bis) — @viewTransition={expr} sur <style> → étiquette calculée refusée, comme sur une balise', async () => {
-    await assert.rejects(transpile("<style @viewTransition={'p-' + 1}></style>\n<p>x</p>", { moduleName: 'vt-style-calc' }), /étiquette calculée retirée/)
+    await assert.rejects(transpile("<style :viewTransition={'p-' + 1}></style>\n<p>x</p>", { moduleName: 'vt-style-calc' }), /étiquette calculée retirée/)
   })
 
   it("erreur 8 (quater) — le filet : un @viewTransition présent mais hors grammaire ne part plus à la poubelle", async () => {
-    await assert.rejects(transpile('<style @viewTransition.cube:sideways></style>\n<p>x</p>', { moduleName: 'vt-style-net-1' }), /forme invalide/)
+    await assert.rejects(transpile('<style :viewTransition.cube:sideways></style>\n<p>x</p>', { moduleName: 'vt-style-net-1' }), /forme invalide/)
     // `@viewTransition-truc` n'est pas un `@viewTransition.<nom>` mais un attribut à part entière : c'est la garde des
     // attributs de section (`checkSectionAttrs`) qui le refuse, avant la grammaire VT — refus tout aussi net
     await assert.rejects(transpile('<style @viewTransition-truc></style>\n<p>x</p>', { moduleName: 'vt-style-net-2' }), /attribut inconnu/)
@@ -544,8 +544,8 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
     // La classe de caractères du nom de morph excluait le `:` : la regex entière échouait, et
     // l'attribut n'était donc NI traduit NI signalé — même silence que sur <style>. Un nom de morph
     // finit en `view-transition-name` CSS, un custom-ident où le `:` n'a pas cours.
-    await assert.rejects(transpile('<div @viewTransition.cube:left></div>', { moduleName: 'vt-morph-colon-1' }), /la direction ne s'écrit plus dans le nom/)
-    await assert.rejects(transpile('<a href="/x" @viewTransition.turn:right>y</a>', { moduleName: 'vt-morph-colon-2' }), /la direction ne s'écrit plus dans le nom/)
+    await assert.rejects(transpile('<div :viewTransition.cube:left></div>', { moduleName: 'vt-morph-colon-1' }), /la direction ne s'écrit plus dans le nom/)
+    await assert.rejects(transpile('<a href="/x" :viewTransition.turn:right>y</a>', { moduleName: 'vt-morph-colon-2' }), /la direction ne s'écrit plus dans le nom/)
   })
 
   it("erreur 8 (sexies) — le contrôle du NOM est RETIRÉ : un préréglage maison compile aux deux niveaux", async () => {
@@ -553,37 +553,37 @@ describe('viewTransition — rejets de compilation (migration : formes anciennes
     // compilateur, qui ne lit pas ce code-là, ne peut pas savoir que `diamant` existera. Le refuser
     // fermait la porte à un effet de marque — et la faute de frappe, elle, reste rattrapée par le
     // `µ.warn` de `µ._mjs_vtApplyPreset`, à l'endroit où l'on sait enfin ce que le dictionnaire contient.
-    await assert.doesNotReject(transpile('<style @viewTransition.diamant></style>\n<p>x</p>', { moduleName: 'vt-style-maison-1' }))
-    await assert.doesNotReject(transpile('<@view main @viewTransition.diamant>', { moduleName: 'vt-view-maison-1' }))
-    await assert.doesNotReject(transpile('<style @viewTransition.diamant={ priority: 3 }></style>\n<p>x</p>', { moduleName: 'vt-style-maison-2' }))
+    await assert.doesNotReject(transpile('<style :viewTransition.diamant></style>\n<p>x</p>', { moduleName: 'vt-style-maison-1' }))
+    await assert.doesNotReject(transpile('<@view main :viewTransition.diamant>', { moduleName: 'vt-view-maison-1' }))
+    await assert.doesNotReject(transpile('<style :viewTransition.diamant={ priority: 3 }></style>\n<p>x</p>', { moduleName: 'vt-style-maison-2' }))
   })
 
   it('non-régression du durcissement — les 13 bases, none, la forme nue et le MORPH LIBRE passent toujours', async () => {
     for (const base of ['fade', 'slide', 'zoom', 'zoom-out', 'volet', 'reveal', 'flip', 'cube', 'turn', 'iris', 'swipe', 'bars', 'blocks']) {
-      await assert.doesNotReject(transpile(`<style @viewTransition.${base}></style>\n<p>x</p>`, { moduleName: `vt-base-ok-${base}` }), `base ${base} refusée à tort`)
+      await assert.doesNotReject(transpile(`<style :viewTransition.${base}></style>\n<p>x</p>`, { moduleName: `vt-base-ok-${base}` }), `base ${base} refusée à tort`)
     }
-    await assert.doesNotReject(transpile('<style @viewTransition.none></style>\n<p>x</p>', { moduleName: 'vt-none-ok-2' }))
-    await assert.doesNotReject(transpile('<style @viewTransition></style>\n<p>x</p>', { moduleName: 'vt-bare-ok-2' }))
+    await assert.doesNotReject(transpile('<style :viewTransition.none></style>\n<p>x</p>', { moduleName: 'vt-none-ok-2' }))
+    await assert.doesNotReject(transpile('<style :viewTransition></style>\n<p>x</p>', { moduleName: 'vt-bare-ok-2' }))
     // ⚠ SUR UNE BALISE ORDINAIRE le nom n'est PAS un préréglage : c'est un nom de MORPH libre, qui
     // apparie deux éléments de part et d'autre d'une navigation. `pastille` et `hero` existent pour
     // de vrai dans les projets réels — les vérifier contre les 13 bases les casserait.
-    await assert.doesNotReject(transpile('<div @viewTransition.pastille></div>', { moduleName: 'vt-morph-ok-1' }))
-    await assert.doesNotReject(transpile('<span @viewTransition.hero></span>', { moduleName: 'vt-morph-ok-2' }))
+    await assert.doesNotReject(transpile('<div :viewTransition.pastille></div>', { moduleName: 'vt-morph-ok-1' }))
+    await assert.doesNotReject(transpile('<span :viewTransition.hero></span>', { moduleName: 'vt-morph-ok-2' }))
   })
 
   it('non-régression : @pageTransition="nom"/"off" sur un LIEN <a> (mécanisme page/UJS, DISTINCT) reste valide, aucune erreur', async () => {
-    await assert.doesNotReject(transpile('<a href="/x" @pageTransition="slide-left">Suivant</a>', { moduleName: 'vt-link-ok-1' }))
-    await assert.doesNotReject(transpile('<a href="/x" @pageTransition="off">Rester</a>', { moduleName: 'vt-link-ok-2' }))
+    await assert.doesNotReject(transpile('<a href="/x" :pageTransition="slide-left">Suivant</a>', { moduleName: 'vt-link-ok-1' }))
+    await assert.doesNotReject(transpile('<a href="/x" :pageTransition="off">Rester</a>', { moduleName: 'vt-link-ok-2' }))
   })
 
   it('@vt="…" sur un LIEN <a> est REFUSÉ — renommé @pageTransition', async () => {
     await assert.rejects(
       transpile('<a href="/x" @vt="zoom">Suivant</a>', { moduleName: 'vt-link-refuse-1' }),
-      /@vt ne s'écrit plus ainsi : c'est désormais @pageTransition\.\nRemplacez la ligne « @vt="zoom" » par : @pageTransition="zoom"/,
+      /@vt ne s'écrit plus ainsi : c'est désormais :pageTransition\.\nRemplacez la ligne « @vt="zoom" » par : :pageTransition="zoom"/,
     )
     await assert.rejects(
       transpile('<a href="/x" @vt="off">Rester</a>', { moduleName: 'vt-link-refuse-2' }),
-      /@vt ne s'écrit plus ainsi : c'est désormais @pageTransition/,
+      /@vt ne s'écrit plus ainsi : c'est désormais :pageTransition/,
     )
   })
 })
@@ -1253,33 +1253,33 @@ describe('viewTransition — résolution runtime du routeur (_mjs_vtResolve / _m
 // grammaire que `<@view @viewTransition.<nom>={…}>` (sections.ts,
 // extractStyleViewTransition). L'ancienne forme à guillemets `="…"` est REFUSÉE
 // elle aussi (n'a vécu qu'une nuit).
-describe('<style @viewTransition.<nom>={…}> — forme pointée, alias @vt et guillemets refusés', () => {
-  it('<style @viewTransition.cube={ dir: left }> → valeur et priorité extraites', async () => {
-    const r = extractSections('<style @viewTransition.cube={ dir: left }></style>\n<p>x</p>')
+describe('<style :viewTransition.<nom>={…}> — forme pointée, alias @vt et guillemets refusés', () => {
+  it('<style :viewTransition.cube={ dir: left }> → valeur et priorité extraites', async () => {
+    const r = extractSections('<style :viewTransition.cube={ dir: left }></style>\n<p>x</p>')
     assert.equal(r.style.moduleViewTransition, 'cube={ dir: left }')
   })
 
-  it('<style @viewTransition.zoom> → nom seul, sans options', async () => {
-    const r = extractSections('<style @viewTransition.zoom></style>\n<p>x</p>')
+  it('<style :viewTransition.zoom> → nom seul, sans options', async () => {
+    const r = extractSections('<style :viewTransition.zoom></style>\n<p>x</p>')
     assert.equal(r.style.moduleViewTransition, 'zoom')
   })
 
-  it('<style @viewTransition> nu → sentinel "on"', async () => {
-    const r = extractSections('<style @viewTransition></style>\n<p>x</p>')
+  it('<style :viewTransition> nu → sentinel "on"', async () => {
+    const r = extractSections('<style :viewTransition></style>\n<p>x</p>')
     assert.equal(r.style.moduleViewTransition, 'on')
   })
 
-  it('<style @viewTransition="cube={ dir: left }"> (forme à guillemets) → REFUSÉE', async () => {
+  it('<style :viewTransition="cube={ dir: left }"> (forme à guillemets) → REFUSÉE', async () => {
     await assert.rejects(
-      transpile('<style @viewTransition="cube={ dir: left }"></style>\n<p>x</p>', { moduleName: 'vt-style-quoted' }),
-      /@viewTransition="…" avec guillemets n'existe plus/,
+      transpile('<style :viewTransition="cube={ dir: left }"></style>\n<p>x</p>', { moduleName: 'vt-style-quoted' }),
+      /:viewTransition="…" avec guillemets n'existe plus/,
     )
   })
 
-  it('<style @vt.cube={…}> (alias) → REFUSÉ, message oriente vers @viewTransition', async () => {
+  it('<style :vt.cube={…}> (alias) → REFUSÉ, message oriente vers @viewTransition', async () => {
     await assert.rejects(
-      transpile('<style @vt.cube={ dir: left }></style>\n<p>x</p>', { moduleName: 'vt-style-alias' }),
-      /@vt n'est pas un alias sur <style>.*@viewTransition/,
+      transpile('<style :vt.cube={ dir: left }></style>\n<p>x</p>', { moduleName: 'vt-style-alias' }),
+      /:vt n'est pas un alias sur <style>.*:viewTransition/,
     )
   })
 })

@@ -10,7 +10,7 @@ $decoding = 'async'
 $fit      = 'cover'
 </script>
 
-<img src={$src} srcset={$srcset} sizes={$sizes} alt={$alt} width={$width} height={$height} loading={$loading} decoding={$decoding} @style.objectFit={$fit}>
+<img src={$src} srcset={$srcset} sizes={$sizes} alt={$alt} width={$width} height={$height} loading={$loading} decoding={$decoding} :style.objectFit={$fit}>
 
 <theme>
   $$img-radius: 0

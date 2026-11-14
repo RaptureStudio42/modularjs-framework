@@ -1,6 +1,6 @@
-// les `{if}` et les `{key}` d'une branche {await} sont construits même quand leurs ancres sont des nœuds texte rendus au pool par la branche d'avant, qui portaient encore le choix de leur
-// ancien bloc : l'attente porte un `{if}` et un `{key}` vrais sous des balises, la promesse arrive, et `{success}` pose cinq blocs `{if}` + `{key}` précédés de zéro à quatre textes — l'un
-// d'eux reçoit, quel que soit le rang où le pool sert ses nœuds, l'ancre qui garde le choix du bloc de l'attente. Les cinq blocs doivent tous être là.
+// les `{if}` et les `{key}` d'une branche {await} sont construits sur leurs propres ancres, neuves, même quand ceux de la branche d'avant
+// avaient posé leur choix sur les leurs : l'attente porte un `{if}` et un `{key}` vrais sous des balises, la promesse arrive, et `{success}`
+// pose cinq blocs `{if}` + `{key}` précédés de zéro à quatre textes. Les cinq blocs doivent tous être là.
 // Les trois modes (développement, production en fichiers séparés, production en un seul fichier) en navigateur réel, Chromium puis Firefox quand il est installé.
 
 import assert from 'node:assert/strict'
@@ -66,7 +66,7 @@ for (const moteur of ['chromium', 'firefox'] as const) for (const mode of ['dev-
     await terminateSharedWorkerPool()
   })
 
-  it('les cinq blocs {if} + {key} de {success} sont construits quand ceux de l\'attente ont laissé leurs ancres au pool', async function () {
+  it('les cinq blocs {if} + {key} de {success} sont construits après ceux de l\'attente, chacun sur ses ancres neuves', async function () {
     if (!present) { this.skip(); return }
     const o = await charger(browser, await cible(mode), BALISE)
     try {

@@ -15,7 +15,7 @@ const HOTE = [
   '  $b = 5',
   '  $chg = 0',
   '</script>',
-  '<form class="f" @noUJS>',
+  '<form class="f" :noUJS>',
   '  <@@number class="entier" name="entier" value=!{$e}></@@number>',
   '  <@@number class="demi" name="demi" step="0.5" big="5" value=!{$d}></@@number>',
   '  <@@number class="cinq" name="cinq" step="5" value=!{$p}></@@number>',

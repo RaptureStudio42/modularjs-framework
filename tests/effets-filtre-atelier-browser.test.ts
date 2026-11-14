@@ -13,6 +13,7 @@ import { deflateSync } from 'node:zlib'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { animationsFinies, attendreEtat, attendrePage } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -333,21 +334,23 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         assert.ok(repos.surv.diff < .8 && repos.survsvg.diff < .8, `au repos : l'original (${repos.surv.diff}, ${repos.survsvg.diff})`)
         const p = await pos('surv')
         await page.mouse.move(p.x, p.y)
+        // pause gardée : la lecture au tiers du fondu est le cas même du test
         await page.waitForTimeout(350)
         const milieu = await vu(page, 'mjs-fx-fa-page', ['surv'])
-        await page.waitForTimeout(1300)
+        await animationsFinies(page, 'mjs-fx-fa-page', '.surv', 1300)
         const fin = await vu(page, 'mjs-fx-fa-page', ['surv'])
         assert.ok(milieu.surv.diff > 1 && milieu.surv.diff < fin.surv.diff * .8, `fondu CSS : ${milieu.surv.diff.toFixed(1)} au tiers, ${fin.surv.diff.toFixed(1)} à la fin`)
         const q = await pos('survsvg')
         await page.mouse.move(q.x, q.y)
+        // pause gardée : la lecture au tiers, pour le relevé de la bascule
         await page.waitForTimeout(350)
         const svgMilieu = await vu(page, 'mjs-fx-fa-page', ['survsvg'])
-        await page.waitForTimeout(1300)
+        await attendreEtat(async () => (await vu(page, 'mjs-fx-fa-page', ['survsvg'])).survsvg.diff > 5, 'le filtre SVG paraît au survol', 1300)
         const svgFin = await vu(page, 'mjs-fx-fa-page', ['survsvg'])
         console.log(`    ℹ️  ${nom} : filtre SVG au survol — ${svgMilieu.survsvg.diff.toFixed(1)} au tiers, ${svgFin.survsvg.diff.toFixed(1)} à la fin`)
         assert.ok(svgFin.survsvg.diff > 5, 'le filtre SVG s\'applique au survol')
         await page.mouse.move(215, 3)
-        await page.waitForTimeout(1500)
+        await attendreEtat(async () => { const v = await vu(page, 'mjs-fx-fa-page', ['surv', 'survsvg']); return v.surv.diff < .8 && v.survsvg.diff < .8 }, 'les deux images reviennent à l\'original', 1500)
         const apres = await vu(page, 'mjs-fx-fa-page', ['surv', 'survsvg'])
         assert.ok(apres.surv.diff < .8 && apres.survsvg.diff < .8, `après le survol : l'original (${apres.surv.diff}, ${apres.survsvg.diff})`)
       })
@@ -366,7 +369,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         assert.equal(avant.valeur, 'brightness(1)')
         // pendant le changement, aucune image n'est vue invisible
         await page.evaluate(() => (document.querySelector('mjs-fx-fa-suite') as any)._shadow.querySelector('.t').click())
-        await page.waitForTimeout(80)
+        await attendrePage(page, () => { const sh = (document.querySelector('mjs-fx-fa-suite') as any)._shadow; return sh.querySelector('.v').style.getPropertyValue('--mjs-fx-filter-value') === 'brightness(0.4)' && sh.querySelector('feFuncR')?.getAttribute('tableValues') === '0 1' }, null, 'le filtre changé : brightness(0.4), levels: 2', 80)
         const apres = await page.evaluate(() => {
           const sh = (document.querySelector('mjs-fx-fa-suite') as any)._shadow
           return { meme: sh.querySelector('filter') === (window as any).__f, n: sh.querySelectorAll('svg').length, valeur: sh.querySelector('.v').style.getPropertyValue('--mjs-fx-filter-value'), niveaux: sh.querySelector('feFuncR').getAttribute('tableValues') }
@@ -386,7 +389,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         assert.equal(dedans, 1)
         await page.evaluate(() => (document.querySelector('mjs-fx-fa-retrait') as any)._shadow.querySelector('.t').click())
         await page.waitForFunction(() => !(document.querySelector('mjs-fx-fa-retrait') as any)._shadow.querySelector('.a'))
-        await page.waitForTimeout(100)
+        await attendrePage(page, () => (document.querySelector('mjs-fx-fa-retrait') as any)._shadow.querySelectorAll('svg,filter,[mjs-fx],[mjs-fx-on]').length === 0, null, 'le retrait ne laisse ni <svg>, ni filtre, ni marque', 100)
         const reste = await page.evaluate(() => {
           const sh = (document.querySelector('mjs-fx-fa-retrait') as any)._shadow
           return { svg: sh.querySelectorAll('svg').length, filtre: sh.querySelectorAll('filter').length, marques: sh.querySelectorAll('[mjs-fx],[mjs-fx-on]').length }
@@ -402,17 +405,27 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         const classes = [...STYLES.filter((s) => !['grain', 'bleach', 'ripple'].includes(s)).map((s) => 's-' + s), 'vigtop', 'pixels', 'vigfort']
         const avant = await pixels(page, 'mjs-fx-fa-page', classes)
         await page.evaluate(() => { const hote = document.querySelector('mjs-fx-fa-page') as HTMLElement; hote.style.display = 'block'; hote.style.padding = '131px 0 0 23px' })
-        await page.waitForTimeout(500)
-        const apres = await pixels(page, 'mjs-fx-fa-page', classes)
-        const bouge: string[] = []
-        for (const c of classes) {
-          const a = avant[c], b = apres[c]
-          let somme = 0
-          for (let i = 0; i < a.length; i++) if (i % 4 !== 3) somme += Math.abs(a[i] - b[i])
-          const moyen = somme / (a.length * .75)
-          if (moyen > 1) bouge.push(`${c.replace(/^s-/, '')} : ${moyen.toFixed(1)} niveaux d'écart entre les deux places`)
+        // les pixels relus à la nouvelle place jusqu'à l'égalité, dans les 500 ms de la pause d'origine ; au délai, l'assertion dit l'écart
+        let bouge: string[] = []
+        const ecarts = async () => {
+          const apres = await pixels(page, 'mjs-fx-fa-page', classes)
+          bouge = []
+          for (const c of classes) {
+            const a = avant[c], b = apres[c]
+            let somme = 0
+            for (let i = 0; i < a.length; i++) if (i % 4 !== 3) somme += Math.abs(a[i] - b[i])
+            const moyen = somme / (a.length * .75)
+            if (moyen > 1) bouge.push(`${c.replace(/^s-/, '')} : ${moyen.toFixed(1)} niveaux d'écart entre les deux places`)
+          }
+          return bouge.length === 0
         }
-        assert.deepEqual(bouge, [], 'un filtre SVG lu en coordonnées de page rend autre chose selon la place de la balise\n' + bouge.join('\n'))
+        try {
+          await attendreEtat(ecarts, 'les mêmes pixels à la nouvelle place', 500)
+        }
+        catch (e) {
+          assert.deepEqual(bouge, [], 'un filtre SVG lu en coordonnées de page rend autre chose selon la place de la balise\n' + bouge.join('\n'))
+          throw e
+        }
       })
     })
 

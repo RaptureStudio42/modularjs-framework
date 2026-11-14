@@ -42,8 +42,8 @@ describe('mjs.config.json — valeurs refusées à la lecture', () => {
 
     it('une extension de fichier source (.mjs, .civet, .coffee), où qu\'il soit : refusé', () => {
       refus({ manifestPath: 'public/bundle.mjs' }, /manifestPath.*\.mjs/)
-      refus({ manifestPath: 'app/assets/javascripts/application.coffee' }, /manifestPath.*\.coffee/)
-      refus({ manifestPath: 'vendor/manifeste.civet' }, /manifestPath.*\.civet/)
+      refus({ manifestPath: 'app/assets/javascripts/application.coffee.mjs' }, /manifestPath.*\.coffee/)
+      refus({ manifestPath: 'vendor/manifeste.civet.mjs' }, /manifestPath.*\.civet/)
     })
 
     it('le même fichier que `manifestExternal` : refusé', () => {

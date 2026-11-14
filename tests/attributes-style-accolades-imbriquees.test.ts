@@ -46,7 +46,7 @@ describe('@style.prop avec objet littéral imbriqué dans l\'expression', functi
   it('compile sans erreur et pose la valeur RÉELLE (pas de troncature au 1er `}`)', async () => {
     const src = [
       '<script>', '$w = 10', 'f = (o) -> o.k', '</script>',
-      '<div class="cible" @style.width="{f({k: $w})}px">x</div>',
+      '<div class="cible" :style.width="{f({k: $w})}px">x</div>',
     ].join('\n')
     const { el } = await mountFiles({ 'style-nested.mjs': src }, 'mjs-style-nested')
     await new Promise((r) => setTimeout(r, 30))
@@ -58,7 +58,7 @@ describe('@style.prop avec objet littéral imbriqué dans l\'expression', functi
   it('reste réactif : une mutation de la var utilisée dans l\'objet imbriqué met à jour le style', async () => {
     const src = [
       '<script>', '$w = 10', 'f = (o) -> o.k', '</script>',
-      '<div class="cible" @style.width="{f({k: $w})}px">x</div>',
+      '<div class="cible" :style.width="{f({k: $w})}px">x</div>',
       '<button class="mut" @click={$w = 25}>mut</button>',
     ].join('\n')
     const { el } = await mountFiles({ 'style-nested-reactive.mjs': src }, 'mjs-style-nested-reactive')

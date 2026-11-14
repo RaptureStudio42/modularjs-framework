@@ -85,7 +85,7 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
       '  $visible = true',
       "  µanim.create('toupie', { duration: 1000 })",
       '</script>',
-      '{if $visible}<div @in=*toupie(duration: 1000ms)>x</div>{end}',
+      '{if $visible}<div :in=*toupie(duration: 1000ms)>x</div>{end}',
     ].join('\n'))
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })
@@ -111,7 +111,7 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
       "  µanim.crossfade('todo', { duration: 600 })",
       '</script>',
       '{for todo in $items}',
-      '  <div @in=*todoReceive(key: todo.id) @out=*todoSend(key: todo.id)>x</div>',
+      '  <div :in=*todoReceive(key: todo.id) :out=*todoSend(key: todo.id)>x</div>',
       '{end}',
     ].join('\n'))
 
@@ -133,7 +133,7 @@ describe('bundler — animation inconnue (typo) : warning explicite + compteur w
       '<script lang="coffee">',
       '  $visible = true',
       '</script>',
-      '{if $visible}<div @in=*zzznope>x</div>{end}',
+      '{if $visible}<div :in=*zzznope>x</div>{end}',
     ].join('\n'))
 
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: join(root, 'out'), manifestPath: join(root, 'bundle.js') })

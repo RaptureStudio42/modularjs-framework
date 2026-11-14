@@ -34,6 +34,6 @@ describe('extractSections — `/*` et `url(` dans le HTML avant <theme>, <routes
   it('un `<theme>` cité dans un commentaire du style reste du style', () => {
     const s = extractSections('<style>\n/*\n<theme>\n*/\n.a\n  color: red\n</style>')
     assert.deepEqual(s.themes, [])
-    assert.equal(s.style.raw, '\n/*\n<theme>\n*/\n.a\n  color: red\n')
+    assert.equal(s.style.raw, '\n\n\n\n.a\n  color: red\n')
   })
 })

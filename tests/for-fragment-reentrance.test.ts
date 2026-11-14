@@ -34,7 +34,7 @@ const PORTEUR = [
   '</script>',
   '',
   '<em class="n">{$vus.length}</em><span class="jauge">{for v in $vus}<i>{v}</i>{end}</span>',
-  '<slot @this=!{slotRef}></slot>',
+  '<slot :this=!{slotRef}></slot>',
 ].join('\n')
 
 const HOTE = [

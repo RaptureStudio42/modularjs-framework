@@ -26,7 +26,7 @@ bar = null
   bar.className = 'on'
   bar.dataset.k = 'v'
 </script>
-<div class="bar" @this=!{bar}></div>
+<div class="bar" :this=!{bar}></div>
 `)
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'b.js') })
     const stats = await bundler.compile()

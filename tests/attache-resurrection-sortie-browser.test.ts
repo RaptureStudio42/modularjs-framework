@@ -31,8 +31,8 @@ const SOURCES: Record<string, string> = {
     log('attache ' + label)
     -> log('nettoyage ' + label)
 </script>
-{if $show}<div class="b" @out=*fade(duration: 2s) @attach={mark('bloc')}>b</div>{end}
-<ul>{for it in $items by it}<li class="l" @out=*fade(duration: 2s) @attach={mark('ligne')}>{it}</li>{end}</ul>
+{if $show}<div class="b" :out=*fade(duration: 2s) :attach={mark('bloc')}>b</div>{end}
+<ul>{for it in $items by it}<li class="l" :out=*fade(duration: 2s) :attach={mark('ligne')}>{it}</li>{end}</ul>
 `
 }
 

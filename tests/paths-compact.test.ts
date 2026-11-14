@@ -34,11 +34,14 @@ const PROFOND = [
 ].join('\n')
 
 // corps de la fonction de construction qui clone le template commençant par `debutHtml`,
-// de l'appel `µ._mjs_cloneTpl` jusqu'au `return` qui rend le fragment
+// de l'appel `µ._mjs_cloneTpl` (ou `µ._mjs_cloneEl`, ligne de liste à racine unique) jusqu'au `return` qui rend le fragment (dans le
+// rappel d'une ligne de liste, bâtie sans fonction : jusqu'à la pose de ses réfs, `__nodes = …`)
 function corpsDeConstruction(sortie: string, debutHtml: string): string {
-  const debut = sortie.indexOf('µ._mjs_cloneTpl("' + debutHtml)
+  const fragment = sortie.indexOf('µ._mjs_cloneTpl("' + debutHtml)
+  const debut    = fragment !== -1 ? fragment : sortie.indexOf('µ._mjs_cloneEl("' + debutHtml)
   assert.notEqual(debut, -1, 'template introuvable dans la sortie compilée : ' + debutHtml)
-  const fin = sortie.indexOf('return { fragment: _mjs_fr', debut)
+  const fins = ['return { fragment: _mjs_fr', '__nodes = _mjs_refs;', '__nodes = {};'].map((f) => sortie.indexOf(f, debut)).filter((i) => i !== -1)
+  const fin  = fins.length ? Math.min(...fins) : -1
   assert.notEqual(fin, -1, 'fin de fonction introuvable pour le template : ' + debutHtml)
   return sortie.slice(debut, fin)
 }

@@ -137,7 +137,7 @@ describe('bundler — runtime sans i18n dans une appli qui traduit', function ()
     })
 
     it("µt employé dans un module de script seulement : la construction échoue aussi", async () => {
-      const { errors } = await construire(['hydrate'], muette, true, { 'outil.module.civet': "export dire = -> µt('titre')\n" })
+      const { errors } = await construire(['hydrate'], muette, true, { 'outil.module.civet.mjs': "export dire = -> µt('titre')\n" })
       assert.ok(errors.some(m => /Ajoutez 'i18n'/.test(m)), errors.join('\n'))
     })
 

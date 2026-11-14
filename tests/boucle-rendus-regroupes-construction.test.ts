@@ -1,5 +1,5 @@
 // Construction : la file des boucles qui écrivent l'état (bloc balisé `<boucles>` du cœur, dans runtime/mjs_init.ts et dans
-// `_mjs_invalidate` de runtime/mjs_element.ts) n'entre au cœur que si le compilateur a enveloppé une boucle
+// `_mjs_invalidate` de runtime/mjs_element.ts, et ses champs hors garde du rechargement à chaud dans runtime/mjs_hotswap.ts) n'entre au cœur que si le compilateur a enveloppé une boucle
 // (generator/loop-batch.ts) dans une unité du build ; sans boucle enveloppée, le cœur n'en porte pas un octet.
 
 import assert from 'node:assert/strict'
@@ -48,6 +48,7 @@ describe('rendus d\'une boucle regroupés — la construction', function () {
     const sans = await coeur('sans', SANS)
     assert.equal(avec.includes('µ._mjs_lqF = function'), true, 'une boucle enveloppée : la file est dans le cœur')
     assert.equal(avec.includes('if (µ._mjs_lq && '), true, 'une boucle enveloppée : son entrée dans `_mjs_invalidate` aussi')
+    assert.equal(avec.includes('Object.assign(_mjsHotInternes, { _mjs_lqb: 1, _mjs_lqk: 1 })'), true, 'une boucle enveloppée : ses champs restent hors garde du rechargement à chaud')
     assert.equal(sans.includes('_mjs_lq'), false, 'aucune boucle enveloppée : rien de la file dans le cœur')
     assert.equal(sans.includes('<boucles>'), false, 'aucune boucle enveloppée : le bloc balisé est retiré')
   })

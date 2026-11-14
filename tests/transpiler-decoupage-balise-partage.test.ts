@@ -1,7 +1,8 @@
 // Le contrôle d'accessibilité et le contrôle « <form> sans action » découpent une balise ouverte de la même façon :
 // les accolades `{…}` d'un attribut sont sautées d'un bloc (chaînes, gabarits, littéraux regex et commentaires
-// compris), un `>` ou un guillemet qui s'y trouve ne ferme rien. Le découpage reste linéaire, et une accolade
-// jamais refermée n'efface pas les balises qui suivent.
+// compris), un `>` ou un guillemet qui s'y trouve ne ferme rien. Le gabarit est lu comme le compilateur le lit : un
+// gabarit qu'il refuse (accolade jamais refermée, apostrophe isolée) n'est contrôlé que jusqu'à la faute. Le
+// découpage reste linéaire.
 
 import assert from 'node:assert/strict'
 import { checkA11y } from '../src/transpiler/a11y.js'
@@ -52,8 +53,9 @@ describe('découpage partagé — accolades d\'attribut dans le lint a11y', () =
 })
 
 describe('découpage partagé — accolades dans le lint <form>', () => {
-  it('une « } » dans un commentaire « // » ne ferme pas l\'accolade', () => {
-    assert.equal(nb('<form data-x={ a // } >\n } action="/x"></form>'), 0)
+  // dans un gabarit Civet, `//` n'ouvre pas de commentaire : le compilateur ferme l'accolade à cette « } » (puis refuse `a //`)
+  it('une « } » après « // » ferme l\'accolade, comme pour le compilateur', () => {
+    assert.equal(nb('<form data-x={ a // } >\n } action="/x"></form>'), 1)
   })
 
   it('une « } » dans un littéral regex ne ferme pas l\'accolade', () => {
@@ -61,8 +63,9 @@ describe('découpage partagé — accolades dans le lint <form>', () => {
     assert.equal(nb('<form data-x={ /[}]/.test(x) } action="/x"></form>'), 0)
   })
 
-  it('une apostrophe isolée dans une accolade n\'avale pas les lignes suivantes', () => {
-    assert.equal(nb('<form data-x={ it\'s } action="/x">\n</form>\n<p>l\'a</p>\n<form></form>'), 1)
+  // la construction refuse ce gabarit : rien n'est deviné après l'apostrophe
+  it('une apostrophe isolée dans une accolade : rien n\'est deviné après elle', () => {
+    assert.equal(nb('<form data-x={ it\'s } action="/x">\n</form>\n<p>l\'a</p>\n<form></form>'), 0)
   })
 
   it('un « ${…} » avec gabarit imbriqué est sauté d\'un bloc', () => {
@@ -75,10 +78,11 @@ describe('découpage partagé — accolades dans le lint <form>', () => {
     assert.equal(nb('<form title="a @submit.prevent"></form>'), 1)
   })
 
-  it('une accolade jamais refermée n\'efface pas les formulaires suivants', () => {
-    assert.equal(nb('<form class={ a >\n</form>\n<form>\n</form>'), 2)
-    assert.equal(nb('<form data-x={ a\n<form>\n</form>'), 1)
-    assert.equal(nb('<form>\n</form>\n<form data-x={ a\n<form>\n</form>'), 2)
+  // la construction refuse ces gabarits : les formulaires d'avant l'accolade sont contrôlés, rien n'est deviné après
+  it('une accolade jamais refermée : seuls les formulaires d\'avant sont contrôlés', () => {
+    assert.equal(nb('<form class={ a >\n</form>\n<form>\n</form>'), 0)
+    assert.equal(nb('<form data-x={ a\n<form>\n</form>'), 0)
+    assert.equal(nb('<form>\n</form>\n<form data-x={ a\n<form>\n</form>'), 1)
   })
 })
 

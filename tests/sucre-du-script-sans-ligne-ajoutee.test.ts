@@ -39,13 +39,13 @@ describe('sucre du script — aucune ligne ajoutée, positions justes', function
   for (const [nom, corps] of cas) {
     it(`${nom} : l'erreur cite la ligne 5`, async () => {
       const message = await erreur(`<p>a</p>\n<script>\n${corps}\n$b = (2 ]\n</script>`)
-      assert.match(message, /sonde\.script:5:10\b/, message.slice(0, 200))
+      assert.match(message, /sonde\.mjs:5:9\b/, message.slice(0, 200))
     })
   }
 
   it('export µ$x dans <script module> : l\'erreur cite la ligne 4', async () => {
     const message = await erreur('<p>a</p>\n<script module>\nexport µ$total = 0\n$b = (2 ]\n</script>')
-    assert.match(message, /sonde\.module:4:\d+\b/, message.slice(0, 200))
+    assert.match(message, /sonde\.mjs:4:\d+\b/, message.slice(0, 200))
   })
 
   for (const [nom, corps] of [['variable affectée dans une branche', 'if true\n  y = 1'], ['état partagé µ$n', 'µ$n = 0\n']]) {

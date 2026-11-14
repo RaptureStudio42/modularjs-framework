@@ -206,12 +206,12 @@ describe('bundler — diff « css-only » (rechargement CSS à chaud)', function
   it('module .coffee co-changé dans le lot → null (filet central des émissions)', async () => {
     const p = makeProject('cssonly-module')
     writeFileSync(join(p.srcDir, 'comp.mjs'), COMP_V1)
-    writeFileSync(join(p.srcDir, 'util.coffee'), 'value = 1\n')
+    writeFileSync(join(p.srcDir, 'util.coffee.mjs'), 'value = 1\n')
     const b = makeBundler(p)
     await b.compile()
 
     writeFileSync(join(p.srcDir, 'comp.mjs'), COMP_V2_CSS)
-    writeFileSync(join(p.srcDir, 'util.coffee'), 'value = 2\n')
+    writeFileSync(join(p.srcDir, 'util.coffee.mjs'), 'value = 2\n')
     const stats = await b.compile()
     assert.equal(stats.errors.length, 0)
     assert.equal(stats.cssOnly, null, 'le module recompilé n\'est pas du CSS : reload complet obligatoire')

@@ -11,10 +11,10 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const FICHIERS: Record<string, string> = {
   // chaque évaluation du module compte : une instance unique ⇒ 1
-  'partage.module.civet':        "window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := 'partage'\nexport compteur := { n: 0 }\n",
-  'moteurs/bougie.module.civet': "@import marque 'partage.module.civet'\n@import compteur 'partage.module.civet'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n",
+  'partage.module.civet.mjs':        "window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := 'partage'\nexport compteur := { n: 0 }\n",
+  'moteurs/bougie.module.civet.mjs': "@import marque 'partage.module.civet.mjs'\n@import compteur 'partage.module.civet.mjs'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n",
   'hote.mjs': [
-    "@import compteur 'partage.module.civet'",
+    "@import compteur 'partage.module.civet.mjs'",
     '',
     '<script>',
     "  $dessin = 'rien'",
@@ -25,13 +25,13 @@ const FICHIERS: Record<string, string> = {
     '  @compter = -> compteur.n++',
     '',
     '  @charger = ->',
-    "    moteur = await µimport('moteurs/bougie.module.civet')",
+    "    moteur = await µimport('moteurs/bougie.module.civet.mjs')",
     '    $dessin = moteur.dessiner()',
     '    $nom    = moteur.default.nom',
     '    $lu     = String(moteur.lire())',
     '',
     '  @comparer = ->',
-    "    espace = await µimport('partage.module.civet')",
+    "    espace = await µimport('partage.module.civet.mjs')",
     '    $meme  = String(espace.compteur is compteur)',
     '</script>',
     '',

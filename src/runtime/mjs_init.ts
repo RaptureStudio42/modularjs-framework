@@ -46,9 +46,181 @@ if (µ.CSS == null) {
 // la règle vise aussi TOUT ce que la balise contient (` *`, et `:host([mjs-loading]) *` pour ce que son ombre porte déjà, le
 // gabarit d'un module gelé par l'attente de sa langue), sinon un descendant en `visibility:visible` (classe `visible` de
 // Tailwind, `.visible` de Bootstrap) reparaîtrait au milieu de la balise cachée
+// SANS TRANSITION (`transition:none`, même règle) tant que la balise porte `mjs-loading` : ce que le premier rendu change sous le
+// bouclier (classes, effets, état coché, une place mesurée par `µmount`) partirait sinon en transition, cachée, puis finirait
+// sous les yeux du visiteur, et `visibility` aussi a la sienne (`transition: visibility 0s .3s` retarderait l'apparition de 300
+// ms). `mjs-loading="out"` montre la balise en gardant la coupure, le temps du premier calcul de style de son apparition
+// (µ._mjs_unshield, ci-dessous) : la règle qui cache ne vise que la valeur vide, et ce que la balise contient garde alors sa
+// propre visibilité (un menu replié reste caché). La coupure suit aussi le contenu qu'un composant transmet par son propre
+// `<slot>` au composant qui le reçoit dans son ombre : il tient sa visibilité de ce dernier dans l'arbre aplati sans être son
+// descendant dans le DOM (`slot::slotted(*)`, en règle à part : un moteur qui la refuserait garde les autres). `mjs-appearing`
+// coupe les transitions de la balise seule (et de ses `::before`, `::after`), jusqu'au même premier calcul de style
+// DEUX FEUILLES, LES MÊMES RÈGLES : la page prend la sienne (µ._mjs_shieldDoc) sans les règles `:host(…)`, qui n'y visent jamais rien. Le moteur essaie
+// chaque règle ` *` sur chaque élément qu'il restyle : `[mjs-loading] *` est écartée d'emblée par le filtre des ancêtres (aucun ne porte l'attribut),
+// `:host([mjs-loading]) *` ne l'est par aucun filtre, et dans la page elle coûtait de 7 à 13 % du recalcul de style d'une liste de mille à dix mille
+// lignes (Chromium). Les ombres gardent la feuille entière (µ._mjs_shield) : ses règles `:host(…)` y cachent ce que l'ombre d'une balise qui attend
+// porte déjà, quel que soit le chemin qui pose ou retire l'attribut
+var _mjsShieldCss = '[mjs-loading=""],[mjs-loading=""] *{visibility:hidden!important}[mjs-loading],[mjs-loading] *,[mjs-appearing],[mjs-appearing]::before,[mjs-appearing]::after{transition:none!important}[mjs-loading] slot::slotted(*){transition:none!important}';
+
 µ._mjs_shield = new CSSStyleSheet();
 
-µ._mjs_shield.replaceSync('[mjs-loading],[mjs-loading] *,:host([mjs-loading]) *{visibility:hidden!important}');
+µ._mjs_shield.replaceSync(_mjsShieldCss + ':host([mjs-loading=""]) *{visibility:hidden!important}:host([mjs-loading]) *{transition:none!important}');
+
+µ._mjs_shieldDoc = new CSSStyleSheet();
+
+µ._mjs_shieldDoc.replaceSync(_mjsShieldCss);
+
+// les pseudo-éléments d'une ombre qui attend (sa feuille, ses textes, un ancêtre caché) : adoptée par elle seule le temps de
+// l'attente et du premier calcul de style de son apparition (règles ` *::before` hors de la page : ailleurs, aucun coût)
+µ._mjs_shieldWait = new CSSStyleSheet();
+
+µ._mjs_shieldWait.replaceSync(':host::before,:host::after,::before,::after{transition:none!important}::slotted(*)::before,::slotted(*)::after{transition:none!important}');
+
+µ._mjs_shieldWait._mjs_keep = true;
+
+// RETRAIT DU BOUCLIER — le chemin qui retire `mjs-loading` d'une balise (fin du premier rendu, `_dropLoading` de mjs_element.ts ; secours
+// de l'attente des textes, mjs_i18n.ts) ; la copie d'un `*marquee` recopie l'attribut de son original et le perd avec lui
+// (_mjsFxMarqueeAttrs, mjs_fx_marquee.ts). Un ancêtre encore caché par le bouclier dans l'arbre aplati (dans la page, l'hôte d'une
+// ombre, ou le composant qui reçoit par son `<slot>` la balise glissée dans un autre) : le retrait attend le sien (`again`, rangé
+// dans `_mjs_dropKids`), sinon ce que cette ombre change ensuite se jouerait en transition, cachée, puis à l'écran. Sinon la
+// balise se montre aussitôt, `done` suit, puis les composants qui l'attendaient se montrent à leur tour, dans la même tâche, donc
+// à la même image. Le contenu qui a pu être stylé avant (une attente qui a traversé des images, le contenu glissé dans la balise
+// quand une tâche est passée depuis l'arrivée du cœur, une ombre lue par un effet) sort en `mjs-loading="out"` : les balises d'une
+// même salve de microtâches font ensemble (`_mjsAppear`) le premier calcul de style de leur apparition, sous la coupure, par UNE
+// lecture de style calculé, jamais de mise en page, puis la coupure part, et `done` relit ce que ce retrait laisse au guetteur
+// d'attributs. Une ombre neuve, que rien n'a encore stylée, n'a aucune transition à couper : elle sort tout de suite ; celle d'un
+// composant à `µmount` fait avec la salve ce premier calcul de style, sans coupure, et une classe posée par `µmount` dans un
+// `requestAnimationFrame` part de l'état de son premier rendu : elle fait son fondu. La coupure gardée jusque-là coûtait une passe
+// de style de plus pour tout son contenu (4 ms pour 400 composants, Chromium) : ce que `µmount` change après avoir lu la mise en
+// page (`offsetWidth`) part en transition à l'apparition, pseudo-éléments compris, comme sur une balise déjà affichée. Ce qui
+// change ensuite se joue en transition, comme sur une balise qui vient de s'afficher. Aucune image n'est demandée : un onglet en
+// arrière-plan (images suspendues) ou un environnement sans `requestAnimationFrame` ne garde ni balise cachée ni transitions coupées
+var _mjsAppearQ = null;
+
+// une erreur levée par l'un (un attribut que son composant relit) ne retient ni les autres ni ceux qui attendent : elle est
+// signalée à part
+function _mjsUnshieldCall(f) {
+  if (!f) return;
+  try {
+    f();
+  } catch (e) {
+    queueMicrotask(function() { throw e; });
+  }
+}
+
+function _mjsUnshieldDone(el, done) {
+  var kids = el._mjs_dropKids, i;
+  el._mjs_dropKids = null;
+  _mjsUnshieldCall(done);
+  if (kids) for (i = 0; i < kids.length; i++) _mjsUnshieldCall(kids[i]);
+}
+
+// encore cachée par le bouclier (`mjs-loading` vide ; `out` : déjà montrée, elle sort) ; un élément, seul nœud que rend la remontée
+function _mjsHiding(n) {
+  return n.getAttribute('mjs-loading') === '';
+}
+
+// la lecture se fait sur une balise montrée encore branchée : elle vient de changer, le moteur calcule alors le style de tout le
+// document
+function _mjsAppear() {
+  var q = _mjsAppearQ, i, el, o;
+  _mjsAppearQ = null;
+  _mjsUnshieldCall(function() {
+    for (i = 0; i < q.length; i += 2) if (q[i].isConnected) return getComputedStyle(q[i]).visibility;
+  });
+  for (i = 0; i < q.length; i += 2) {
+    el = q[i];
+    el.removeAttribute('mjs-loading');
+    el.removeAttribute('mjs-appearing');
+    if (el._mjs_waited) {
+      el._mjs_waited = false;
+      o = el._shadow;
+      if (o && o.adoptedStyleSheets) o.adoptedStyleSheets = o.adoptedStyleSheets.filter(function(f) { return f !== µ._mjs_shieldWait; });
+    }
+    _mjsUnshieldCall(q[i + 1]);
+  }
+}
+
+// une tâche est passée depuis l'arrivée de ce cœur : la page a pu passer une image, ou un script lire sa mise en page, et styler
+// cachées les balises qui attendent leur code (règle 1), avec ce que la page glisse dans leur balise, même quand rien n'y est
+// encore peint. Dans la tâche qui définit les composants avec le cœur (un fichier unique, un script en ligne), rien n'a été caché
+// avant : rien n'est à couper (la lecture de style et le retrait coûtaient de 2,5 à 6 ms pour 400 balises), et ce que la feuille
+// d'une balise déjà affichée change sur elle à sa mise à niveau se joue en transition, comme sur toute balise affichée
+var _mjsLate = false;
+
+setTimeout(() => _mjsLate = true);
+
+// la balise seule, posée à sa mise à niveau (constructeur, mjs_element.ts) quand elle était dans la page avant sa définition et
+// qu'elle a pu y être stylée cachée. Une balise rendue par le serveur (`mjs-ssr`) est déjà peinte et sort dans la même tâche, rien
+// de caché ne s'est vu, et ses éléments repris (une liste de mille lignes) n'ont pas à être restylés deux fois
+µ._mjs_appearing = function(el) {
+  if (_mjsLate && !el.hasAttribute('mjs-ssr')) el.setAttribute('mjs-appearing', '');
+};
+
+// le retrait attend (sa feuille, ses textes, un ancêtre encore caché) : l'attente traverse des images, l'ombre est stylée
+// cachée, ses pseudo-éléments compris
+µ._mjs_waits = function(el) {
+  var o = el._shadow;
+  if (el._mjs_waited) return;
+  el._mjs_waited = true;
+  if (o && o !== el && o.adoptedStyleSheets) o.adoptedStyleSheets = [...o.adoptedStyleSheets, µ._mjs_shieldWait];
+};
+
+// l'ombre d'un composant, ou rien : sa racine d'ombre (fermée : `_shadow`, que `shadowRoot` ignore) ; un léger est sa propre ombre
+// (`_shadow`, la balise elle-même), son contenu est déjà dans l'arbre qui le porte : sa racine d'ombre native s'il en porte une, où
+// s'affichent ses enfants glissés. Commune aux parcours qui entrent dans un composant (le démarrage, µ.elementAt, *follow, *cursors,
+// *sticky, *pointer, le panneau de développement)
+µ._mjs_shadowOf = function(n) { return n._shadow !== n && n._shadow || n.shadowRoot; };
+
+// parent dans l'arbre aplati : la balise glissée dans un composant monte par le `<slot>` qui la reçoit, le premier de son nom
+// (ombres fermées : `assignedSlot` y vaut null, le slot se cherche dans `_shadow`). Un hôte léger (`mjs-light`, `_shadow` est la
+// balise elle-même) : ce qu'il contient est son propre arbre, la remontée passe par lui sans fouiller son contenu (fouillé une fois
+// par composant qui sort du bouclier, mille lignes rendaient le montage quadratique). Une ombre ouverte (la racine native d'un léger,
+// entre autres) : le slot que le navigateur donne à la balise, rien n'est fouillé ; une ombre fermée : le premier slot de son nom dans
+// l'ordre de l'arbre, cherché par le moteur et arrêté à lui (un slot vient avant son contenu de repli, jamais parcouru pour lui), sans
+// rien lire sur les balises d'avant
+// un <form> : chaque lecture faite sur lui (son parent, une donnée posée dessus) cherche d'abord un champ du même nom, liste que le
+// navigateur refait après la mise à niveau de chaque champ associé ; lu par chaque composant qui sort du bouclier, mille cases d'un
+// formulaire rendaient le montage quadratique. Jamais caché par le bouclier ni hôte d'une ombre, il est passé sans rien lire sur lui :
+// son parent se cherche depuis l'enfant, par le moteur (`closest`) ; un formulaire glissé dans un composant y prend le slot de l'enfant
+// rien n'est lu sur ce qui porte des propriétés nommées : un élément nommé de la page recouvre la propriété du même nom de `document`
+// (`<form name="host">`, `<img name="parentNode">`, un `<object id>`), un champ celle de son formulaire, et la remontée qui les lisait
+// tournait sans fin. Elle ne rend que des éléments (`parentElement`) ; en haut de son arbre, la racine se demande à l'enfant : une
+// racine d'ombre rend son hôte, le document, une racine détachée ou un formulaire sans parent arrêtent la remontée, sans rien lire sur eux
+function _mjsFlatParent(n) {
+  var p = n.parentElement, o;
+  if (p instanceof HTMLFormElement) p = n.closest(':not(form,:scope)');
+  if (!p) return (p = n.getRootNode()) instanceof ShadowRoot && p.host;
+  o = µ._mjs_shadowOf(p);
+  if (o && p.shadowRoot === o) return n.assignedSlot || p;
+  if (o) return o.querySelector(n.slot ? 'slot[name="' + CSS.escape(n.slot) + '"]' : 'slot:not([name]),slot[name=""]') || p;
+  return p;
+}
+
+// la remontée a sa borne (dix mille ancêtres) : une structure qui reboucle (un slot rangé sous la balise qu'il reçoit) montre la balise au
+// lieu de retenir la page
+µ._mjs_unshield = function(el, again, done) {
+  var n, s, c;
+  if (!_mjsHiding(el)) return _mjsUnshieldDone(el, done);
+  for (n = _mjsFlatParent(el), c = 1e4; n && c--; n = _mjsFlatParent(n)) {
+    if (_mjsHiding(n)) {
+      if (!µ.server) µ._mjs_waits(el);
+      (n._mjs_dropKids ??= []).push(again);
+      return;
+    }
+  }
+  s = !el.hasAttribute('mjs-ssr');
+  if (el._mjs_waited || (s && ((_mjsLate && el._shadow !== el && el.firstElementChild) || el._mjs_withFx))) el.setAttribute('mjs-loading', 'out');
+  else el.removeAttribute('mjs-loading');
+  if (el.hasAttribute('mjs-loading') || el.hasAttribute('mjs-appearing') || (s && el._mjs_hooks?.mount)) {
+    if (!_mjsAppearQ) {
+      _mjsAppearQ = [];
+      queueMicrotask(_mjsAppear);
+    }
+    _mjsAppearQ.push(el, done);
+  }
+  _mjsUnshieldDone(el, done);
+};
 
 // Feuille système : classes utilitaires utilisées par le runtime (overlays
 // d'erreur, fallback). Pas de style inline — tout passe par des classes pour
@@ -58,8 +230,8 @@ if (µ.CSS == null) {
 µ._mjs_systemSheet.replaceSync(`.mjs-fatal-error{color:var(--mjs-error-fg, red);font-weight:bold;padding:10px;border:2px solid var(--mjs-error-border, red)}
 .mjs-error{color:var(--mjs-error-fg, red)}`);
 
-// les deux feuilles rejoignent le document ensemble, le bouclier d'abord
-document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield, µ._mjs_systemSheet];
+// les deux feuilles rejoignent le document ensemble, le bouclier d'abord (celui de la page, sans `:host`)
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shieldDoc, µ._mjs_systemSheet];
 
 // Thème clair/sombre embarqué (`µ._mjs_themeSheet`/`µ._mjs_themeAppSheet`/`µ._themeAdopt`, 8 variables
 // --mjs-surface/fg/fg-muted/border/hover/selected/accent/shadow + thèmes d'application
@@ -71,11 +243,19 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_shield, �
 // Stub : `metamjs-view` est un tag interne émis par le compilateur pour
 // matérialiser la directive <@view>. Il contient un tiret → il est traité
 // comme custom element par le DOM, donc piégé en permanence par le shield
-// `:not(:defined)` s'il n'est pas enregistré. On le déclare en no-op.
+// `:not(:defined)` s'il n'est pas enregistré. On le déclare ; sans le routeur, il ne fait rien.
 // bloc `<vue>` : retiré du cœur par le bundler quand aucune unité du build n'écrit `<@view>` et que ni le routeur ni
 // les liens (ujs) n'en font partie
 // <vue>
-MetaViewStub = class MetaViewStub extends HTMLElement {};
+MetaViewStub = class MetaViewStub extends HTMLElement {
+  // <vue-routeur>
+  // le routeur suit la vue qui paraît ou sort de la page (un `{if}` qui s'ouvre ou se referme, mjs_router.ts) : bloc retiré
+  // du cœur sans le routeur (bundler/index.ts). Une balise déjà dans la page du serveur est mise à niveau dès sa déclaration,
+  // avant le routeur (plus bas dans le cœur) : rien alors, le routeur sert ces vues quand leur composant s'inscrit
+  connectedCallback() { µ.Router?._mjs_viewIn(this); }
+  disconnectedCallback() { µ.Router?._mjs_viewOut(this); }
+  // </vue-routeur>
+};
 
 if (!customElements.get('metamjs-view')) {
   customElements.define('metamjs-view', MetaViewStub);
@@ -165,6 +345,30 @@ Object.defineProperty(µ, 'activeComponent', {
 //   µ._mjs_interpolatorSet.has(obj)   → équivaut à obj._mjs_is_interpolator
 // ----------------------------------------------------------------------------
 µ._mjs_rawSet = new WeakSet();
+// <lignes-brutes>
+// listes marquées avec leurs lignes (`µraw(liste, true)`, mjs_rare_runes.ts) : une note par liste, aucune marque par ligne. La passe d'un `{for}`
+// (mjs_for.ts) y lit que chaque ligne de la liste se traite comme un objet µraw. Bloc gardé pour l'appli qui appelle µraw avec un second
+// argument (cf. RAW_ROWS, bundler/features.ts)
+µ._mjs_rawRows = new WeakSet();
+// </lignes-brutes>
+// <faibles>
+// enveloppe d'une `WeakMap` ou d'un `WeakSet` de l'état → la vraie collection, notée par ceux qui font cette enveloppe (variable `$` :
+// `_mjs_wrapDeep`, mjs_element.ts ; µ.state ; µ.Store) et lue par µraw (mjs_rare_runes.ts), qui ne lit ainsi rien sur l'objet reçu.
+// Bloc gardé pour l'appli qui nomme `WeakMap` ou `WeakSet`, ou dont la clé `runtime` demande `collections`
+µ._mjs_weakRaw = new WeakMap();
+// </faibles>
+// <developpement>
+// collection arrivée dans l'état d'une appli dont aucune unité, aucun fichier importé ne la nomme (une bibliothèque chargée à part la
+// donne) : le cœur est bâti sans la part qui la suit (blocs `<collections>`, `<faibles>`) et garde ses lignes d'avant ; dit une fois
+// par page, avec le remède. Appelé par les seules lignes `<sans-collections>` et `<sans-faibles>` (mjs_element.ts, mjs_state.ts,
+// mjs_store.ts) : jamais par un cœur qui porte cette part
+var _mjsCollTold   = 0;
+µ._mjs_collMissing = (o, c) => {
+  if (_mjsCollTold || !(c = o instanceof Map ? 'Map' : o instanceof Set ? 'Set' : o instanceof WeakMap ? 'WeakMap' : o instanceof WeakSet ? 'WeakSet' : '')) return;
+  _mjsCollTold = 1;
+  µ.warn(µ._mjs_msg('collNotNamed', { c: c }, 'Une collection `{c}` est arrivée dans l\'état, alors qu\'aucun fichier de ce projet ne nomme `{c}` : le cœur a été bâti sans la part qui suit les clés objets des collections. Elle y garde un comportement plus simple, sans erreur : la clé objet d\'une `Map` sort brute et `get` ne la retrouve que sous la forme rangée, une `WeakMap` ou un `WeakSet` reste sans enveloppe dans un composant. Si une bibliothèque chargée à part vous donne cette collection, demandez cette part par "collections": true dans mjs.config.json : elle s\'ajoute sans toucher au repérage des autres modules ; si vous écrivez déjà une liste "runtime", vous pouvez aussi y ajouter "collections". Cet avertissement n\'existe qu\'en développement, une fois par page.'));
+};
+// </developpement>
 
 µ._mjs_interpolatorSet = new WeakSet();
 
@@ -260,13 +464,18 @@ var _mjsLeaveAt  = 0;
 var _mjsLeaveVu  = 0;
 var _mjsHides    = 0;
 var _mjsHidden   = 0;
+var _mjsDlFrom   = 0;
 var _mjsInFlight = typeof navigator === 'object' && navigator !== null && navigator.vendor ? 1 : 0;
 var _mjsLeaving  = function() { _mjsLeaveAt = Date.now(); };
 if (typeof window !== 'undefined' && typeof addEventListener === 'function') {
   if (_mjsInFlight) { addEventListener('beforeunload', _mjsLeaving); }
   addEventListener('pagehide', function() { _mjsHides++; _mjsHidden = 1; });
   addEventListener('pageshow', function() { _mjsHidden = _mjsLeaveAt = 0; });
-  if (window.navigation && typeof window.navigation.addEventListener === 'function') { window.navigation.addEventListener('navigate', function(e) { if (!e.destination.sameDocument && !e.downloadRequest) { _mjsLeaving(); } }); }
+  // un téléchargement n'annonce aucun départ : `downloadRequest` vaut le nom proposé, chaîne vide comprise (attribut `download` sans valeur), et `null` pour une navigation ;
+  // Firefox annonce aussitôt le même téléchargement par un second `navigate`, `downloadRequest` nul, venu du même lien : le `navigate` qui suit un téléchargement
+  // depuis la même source n'annonce rien non plus (`_mjsDlFrom`). La visite d'un lien que la navigation de MJS remet à l'API (mjs_ujs.ts) part par `pushState` :
+  // une navigation du même document, qui n'annonce rien
+  if (typeof window.navigation?.addEventListener === 'function') { window.navigation.addEventListener('navigate', function(e) { var from = _mjsDlFrom; _mjsDlFrom = e.downloadRequest == null ? 0 : e.sourceElement; if (!e.destination.sameDocument && e.downloadRequest == null && from !== e.sourceElement) { _mjsLeaving(); } }); }
   if (typeof document === 'object' && document !== null && typeof document.addEventListener === 'function') {
     document.addEventListener('mjs:visit', function() { _mjsLeaveVu = _mjsLeaveAt; });
     document.addEventListener('mjs:load', function() { if (_mjsLeaveAt === _mjsLeaveVu) { _mjsLeaveAt = 0; } });
@@ -291,6 +500,8 @@ if (typeof window !== 'undefined' && typeof addEventListener === 'function') {
 };
 // </depart-de-page>
 
+// <attribut-filtre>
+// hors du cœur de production quand aucune unité ni aucun module du cœur ne s'en sert (bundler/index.ts)
 // Écriture d'attribut DÉFENSIVE pour les valeurs/clés DYNAMIQUES (binding
 // `attr={…}`, spread `{...obj}` dont les clés/valeurs peuvent venir d'un objet
 // non fiable réseau/API). Modèle ALLOW-LIST (l'ancienne denylist laissait passer
@@ -374,6 +585,7 @@ if (typeof window !== 'undefined' && typeof addEventListener === 'function') {
   }
   if (node.getAttribute(name) !== ('' + value)) { node.setAttribute(name, value); }
 };
+// </attribut-filtre>
 
 // `µ._mjs_isPageCached`/`µ._mjs_destroyEvictedTree` vivent désormais dans
 // src/runtime/mjs_page_cache.ts, avec le reste du cache de pages routeur/UJS.
@@ -549,6 +761,10 @@ if (typeof window !== 'undefined' && typeof addEventListener === 'function') {
 // erreur levée sans appel noté sort par µ.error. Toutes les entrées de la langue quittent la table,
 // résolues ou non, à l'arrivée comme à l'échec ; un échec ne relance rien avant 30 s. Sans `document` ni
 // `fetch` (prérendu, Node) : texte court, aucune inscription.
+// LE CHARGEUR (bloc `<msg-chargeur>` : table d'attente, téléchargement, rejeu) reste au cœur hors production ; le build de
+// production l'écrit dans son propre fichier, à empreinte (`µ._msgLoader`, cf. msgLoaderSource, bundler/index.ts), et pose à sa
+// place l'amorce du bloc `<sans-msg-chargeur>`, qui le demande dans les mêmes deux cas, juste avant le fichier de la langue
+// <msg-chargeur>
 // état par langue : absent = jamais demandé, Infinity = chargé, 1 = en cours, sinon date de l'échec
 var _mjsMsgLoads = {};
 var _mjsMsgWait  = new Map();
@@ -623,9 +839,17 @@ function _mjsMsgAsk(w) {
     _mjsMsgDone(w.l, 1, err);
   }, function() { _mjsMsgDone(w.l); });
 }
-// langue du fichier de messages à servir : la courante, sinon celle du projet, sinon en, sinon fr
-function _mjsMsgLang() {
-  return [µ._mjs_labelLang(), µ._runtimeLabelsLang, 'en', 'fr'].filter(function(l) { return Object.prototype.hasOwnProperty.call(µ._msgUrls, l); })[0];
+// langue du fichier de messages à servir : la courante (`pref` : celle de la page quand l'amorce a noté le texte), sinon
+// celle du projet, sinon en, sinon fr
+function _mjsMsgLang(pref) {
+  return [pref || µ._mjs_labelLang(), µ._runtimeLabelsLang, 'en', 'fr'].filter(function(l) { return Object.prototype.hasOwnProperty.call(µ._msgUrls, l); })[0];
+}
+// le fichier de la langue courante, demandé d'avance (réglage `messages: 'idle'`)
+function _mjsMsgEarly() {
+  try {
+    var lang = _mjsMsgLang();
+    if (lang) { _mjsMsgAsk({ l: lang, u: µ._msgUrls[lang] }); }
+  } catch { }
 }
 // <msg-idle>
 // réglage `messages: 'idle'` : le build ajoute `µ._msgIdle()` au manifeste, qui télécharge le fichier de
@@ -633,16 +857,112 @@ function _mjsMsgLang() {
 var _mjsMsgIdle = 0;
 µ._msgIdle = function() {
   if (_mjsMsgIdle++ || typeof document === 'undefined' || typeof fetch !== 'function') { return; }
-  var go = function() {
-    try {
-      var lang = _mjsMsgLang();
-      if (lang) { _mjsMsgAsk({ l: lang, u: µ._msgUrls[lang] }); }
-    } catch { }
-  };
-  var rest = function() { window.requestIdleCallback ? window.requestIdleCallback(go) : setTimeout(go, 200); };
+  var rest = function() { window.requestIdleCallback ? window.requestIdleCallback(_mjsMsgEarly) : setTimeout(_mjsMsgEarly, 200); };
   document.readyState === 'complete' ? rest() : window.addEventListener('load', rest);
 };
 // </msg-idle>
+// texte court d'un message dont le texte manque encore (clé + variables, `clé {}` sans variables), et son entrée dans la table
+// d'attente ; `pref` et `txt` : la langue de la page et le texte court notés par l'amorce du cœur de production (cf. _mjsMsgTake)
+function _mjsMsgShort(key, vars, msg, pref, txt) {
+  if (!txt) {
+    txt = String(key);
+    try { txt += ' ' + JSON.stringify(vars || {}); } catch { txt += ' {}'; }
+  }
+  try {
+    var lang = _mjsMsgLang(pref);
+    var at   = _mjsMsgLoads[lang];
+    if (lang && typeof document !== 'undefined' && typeof fetch === 'function' && !(Date.now() - at < 30000) && !_mjsMsgWait.has(txt)) {
+      if (_mjsMsgWait.size > 49) { _mjsMsgWait.delete(_mjsMsgWait.keys().next().value); }
+      _mjsMsgWait.set(txt, { k: key, v: vars, c: [], m: msg, l: lang, u: µ._msgUrls[lang] });
+      if (!_mjsMsgPend) {
+        window.addEventListener('error', _mjsMsgHear);
+        window.addEventListener('unhandledrejection', _mjsMsgHear);
+      }
+      _mjsMsgPend = 1;
+    }
+  } catch { }
+  return txt;
+}
+// le chargeur dans son propre fichier (production) : à son arrivée, l'amorce du cœur l'appelle avec ce qu'elle a noté avant
+// lui, rejoué ici dans l'ordre — [0, clé, variables, préfixe, langue, texte court] un texte en attente, [1, niveau, arguments]
+// un appel écrit, [2, événement] une erreur non attrapée, [3] le chargement d'avance — et reçoit ses entrées
+function _mjsMsgTake(q) {
+  var run = [_mjsMsgShort, _mjsMsgNote, _mjsMsgHear, _mjsMsgEarly];
+  q.forEach(function(e) { run[e[0]](...e.slice(1)); });
+  return { s: _mjsMsgShort, n: _mjsMsgNote, i: _mjsMsgEarly };
+}
+// </msg-chargeur>
+// <sans-msg-chargeur>
+// // AMORCE DU CHARGEUR (production) : le chargeur vit dans son propre fichier (`µ._msgLoader`), importé une fois, quand un
+// // texte court noté s'écrit (µ.log/warn/error au niveau courant) ou qu'une erreur non attrapée le porte — les deux cas où part
+// // le fichier de la langue, qu'il demande à son tour. D'ici là, l'amorce rend le même texte court et note dans l'ordre ce qu'il
+// // rejouera (cf. _mjsMsgTake) : textes en attente (les 50 derniers avant la demande, avec la langue de la page), appels écrits et
+// // erreurs qui en portent un (500 entrées au plus pendant l'import). Une fois là, il prend tout en main. Fichier introuvable
+// // (404, hors ligne) : les textes courts restent, rien ne tombe, rien n'est noté pendant 30 s, puis un nouvel essai, sous une adresse neuve
+// var _mjsMsgPend = 0;
+// var _mjsMsgQ    = [];
+// // le chargeur : absent, 1 pendant l'import, date d'un échec, puis ses entrées (s : texte court, n : appel écrit, i : d'avance)
+// var _mjsMsgL;
+// function _mjsMsgShort(key, vars, msg) {
+//   if (_mjsMsgL?.s) { return _mjsMsgL.s(key, vars, msg); }
+//   var txt = String(key);
+//   try { txt += ' ' + JSON.stringify(vars || {}); } catch { txt += ' {}'; }
+//   if (typeof document !== 'undefined' && typeof fetch === 'function' && !(Date.now() - _mjsMsgL < 30000) && _mjsMsgQ.length < 500 && !_mjsMsgQ.some(function(q) { return q[5] === txt; })) {
+//     if (_mjsMsgL !== 1 && _mjsMsgQ.length > 49) { _mjsMsgQ.shift(); }
+//     _mjsMsgQ.push([0, key, vars, msg, µ._mjs_labelLang(), txt]);
+//     if (!_mjsMsgPend) {
+//       window.addEventListener('error', _mjsMsgHear);
+//       window.addEventListener('unhandledrejection', _mjsMsgHear);
+//     }
+//     _mjsMsgPend = 1;
+//   }
+//   return txt;
+// }
+// function _mjsMsgNote(lvl, args) {
+//   _mjsMsgL?.n ? _mjsMsgL.n(lvl, args) : _mjsMsgSeen(args, [1, lvl, args]);
+// }
+// // le chargeur arrivé, ses propres écouteurs entendent les erreurs
+// function _mjsMsgHear(e) {
+//   if (!_mjsMsgL?.n) { _mjsMsgSeen([e.message || e.error?.message || e.reason?.message || e.reason], [2, e]); }
+// }
+// // un appel écrit ou une erreur qui porte un texte court noté : noté à son tour, le chargeur demandé
+// function _mjsMsgSeen(args, ev) {
+//   if (_mjsMsgQ.some(function(q) { return !q[0] && args.some(function(a) { return (a?.message || a)?.indexOf?.(q[5]) >= 0; }); })) {
+//     _mjsMsgGo();
+//     if (_mjsMsgQ.length < 500) { _mjsMsgQ.push(ev); }
+//   }
+// }
+// // un import() refusé le reste pour toute la page à la même adresse (table des modules du document) : le nouvel essai, 30 s
+// // après l'échec, part sous une adresse neuve, la date de cet échec en paramètre
+// function _mjsMsgGo() {
+//   var at = _mjsMsgL;
+//   if (at === 1 || Date.now() - at < 30000) { return; }
+//   _mjsMsgL = 1;
+//   import(µ._msgLoader + (at ? '?' + at : '')).then(function(m) {
+//     _mjsMsgL    = m.default(µ, _mjsMsgQ);
+//     _mjsMsgQ    = [];
+//     _mjsMsgPend = 1;
+//   }, function() {
+//     _mjsMsgQ = [];
+//     _mjsMsgL = Date.now();
+//   });
+// }
+// // <msg-idle>
+// var _mjsMsgIdle = 0;
+// µ._msgIdle = function() {
+//   if (_mjsMsgIdle++ || typeof document === 'undefined' || typeof fetch !== 'function') { return; }
+//   var go = function() {
+//     if (_mjsMsgL?.i) { _mjsMsgL.i(); }
+//     else {
+//       _mjsMsgQ.push([3]);
+//       _mjsMsgGo();
+//     }
+//   };
+//   var rest = function() { window.requestIdleCallback ? window.requestIdleCallback(go) : setTimeout(go, 200); };
+//   document.readyState === 'complete' ? rest() : window.addEventListener('load', rest);
+// };
+// // </msg-idle>
+// </sans-msg-chargeur>
 µ._mjs_txt = function(key, vars, fr, msg) {
   var txt = typeof fr === 'string' ? fr : String(key);
   try {
@@ -650,25 +970,7 @@ var _mjsMsgIdle = 0;
     var grp = dot < 0 ? 'err' : key.slice(0, dot);
     var t   = µ._mjs_label(grp, dot < 0 ? key : key.slice(dot + 1));
     if (typeof t === 'string') { txt = t; }
-    else if (grp === 'err' && µ._msgUrls) {
-      txt = String(key);
-      try { txt += ' ' + JSON.stringify(vars || {}); } catch { txt += ' {}'; }
-      try {
-        var urls = µ._msgUrls;
-        var lang = _mjsMsgLang();
-        var at   = _mjsMsgLoads[lang];
-        if (lang && typeof document !== 'undefined' && typeof fetch === 'function' && !(Date.now() - at < 30000) && !_mjsMsgWait.has(txt)) {
-          if (_mjsMsgWait.size > 49) { _mjsMsgWait.delete(_mjsMsgWait.keys().next().value); }
-          _mjsMsgWait.set(txt, { k: key, v: vars, c: [], m: msg, l: lang, u: urls[lang] });
-          if (!_mjsMsgPend) {
-            window.addEventListener('error', _mjsMsgHear);
-            window.addEventListener('unhandledrejection', _mjsMsgHear);
-          }
-          _mjsMsgPend = 1;
-        }
-      } catch { }
-      return txt;
-    }
+    else if (grp === 'err' && µ._msgUrls) { return _mjsMsgShort(key, vars, msg); }
     return txt.replace(/\{(\w+)\}/g, function(m, n) { return (vars && Object.prototype.hasOwnProperty.call(vars, n)) ? String(vars[n]) : m; });
   }
   catch { return txt; }
@@ -682,9 +984,18 @@ var _mjsMsgIdle = 0;
 // Le générateur transforme `$.x = y` en `µ._set(this, 'x', y)`. Cette fonction
 // délègue à `el._set` qui contient la logique d'assignation + invalidation.
 // Idem pour `µ._mjs_setComputed` (computed wrappers détectés par l'analyzer AST).
+// <precision>
+// `c` : 1 sans mention, une écriture du code du composant ; 0 pour l'écho d'une liaison `!{}` (generator/attributes), écrit par MJS
+// </precision>
 // ----------------------------------------------------------------------------
-µ._set = function(el, k, v) {
-  return el._set(k, v);
+// <precision>
+µ._set = function(el, k, v, c = 1) {
+  return el._set(k, v, c);
+// </precision>
+// <horloge>
+// µ._set = function(el, k, v) {
+  // return el._set(k, v);
+// </horloge>
 };
 
 // ----------------------------------------------------------------------------
@@ -702,6 +1013,8 @@ var _mjsMsgIdle = 0;
 // ----------------------------------------------------------------------------
 µ._mjs_pending = new WeakMap();
 
+// <props-en-attente>
+// hors du cœur de production quand aucune unité ni aucun module du cœur ne pose de prop sur un enfant pas encore mis à niveau (bundler/index.ts)
 // Clés déjà refusées par un élément tiers (élément → clés), pour ne pas répéter le même
 // avertissement à chaque re-rendu du parent.
 µ._mjs_ro = new WeakMap();
@@ -713,19 +1026,23 @@ var _mjsMsgIdle = 0;
   // élément TIERS : il porte SES noms, jamais ceux du framework — la prop reste une propriété
   // propre (une bibliothèque tierce la lit à sa mise à niveau), comportement d'avant le registre.
   // Liaison à deux sens (`attr`) : une balise que le manifeste dit étrangère au projet reçoit un ATTRIBUT,
-  // texte ou JSON pour un objet, comme toute balise qui n'est pas un composant. Sans manifeste, une balise
-  // définie mais pas encore mise à niveau (ligne de `{for}`) reste prise pour un élément tiers : sa
-  // propriété propre, TYPÉE, est reprise à la mise à niveau, un attribut la ferait relire en chaîne.
+  // texte ou JSON pour un objet, comme toute balise qui n'est pas un composant. Sans manifeste, un élément
+  // tiers garde sa propriété propre, TYPÉE : un attribut la ferait relire en chaîne.
   // Un composant DU PROJET va au registre : le manifeste (`µ.paths`, clé = nom sans le préfixe
   // `mjs-`) le reconnaît, qu'il soit déjà défini ou non — une ligne de `{for}` est peuplée avant
   // son insertion, donc avant la mise à niveau, même quand la balise est définie depuis
   // longtemps. Une balise `mjs-` absente du manifeste est un web component tiers (cas documenté,
   // docs/15). Clé CHERCHÉE EN PROPRE : `µ.paths` est un objet ordinaire, `µ.paths['constructor']`
   // répondait l'héritage d'Object — `<mjs-constructor>` passait pour un composant du projet.
-  // Sans manifeste (harnais, rendu serveur), repli : le préfixe, sauf balise déjà
-  // définie — un composant du projet, lui, n'arrive jamais ici une fois défini ET mis à niveau.
-  var n = el.localName || (el.tagName || '').toLowerCase();
-  var duProjet = n.slice(0, 4) === 'mjs-' && (µ.paths ? Object.prototype.hasOwnProperty.call(µ.paths, n.slice(4)) : !customElements.get(n));
+  // Sans manifeste (harnais, rendu serveur), repli : le préfixe, sauf balise déjà définie par une classe
+  // qui n'est pas celle d'un composant (`µ.Element`). Un composant défini mais pas encore mis à niveau
+  // arrive ici : ligne de `{for}` peuplée avant son insertion, enfant de la racine d'un parent qui lui
+  // livre ses props avant de le mettre dans la page (`_mjs_kb`, mjs_element.ts). Pris pour un élément
+  // tiers, il recevrait sa prop en propriété propre : une prop au nom d'un attribut natif (`title`, `id`,
+  // `hidden`) passerait par le setter du navigateur et poserait l'attribut sur la balise, que la prop
+  // déclarée garde pour elle (µ._mjs_spWc, mjs_element.ts)
+  var n        = el.localName || (el.tagName || '').toLowerCase(), ctor;
+  var duProjet = n.slice(0, 4) === 'mjs-' && (µ.paths ? Object.prototype.hasOwnProperty.call(µ.paths, n.slice(4)) : !(ctor = customElements.get(n)) || ctor.prototype instanceof µ.Element);
   if (!duProjet) {
     if (attr && µ.paths) {
       v = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -771,6 +1088,7 @@ var _mjsMsgIdle = 0;
   }
   m[k] = v;
 };
+// </props-en-attente>
 
 // Path-tracking compile-time avec auto-Proxy fallback.
 
@@ -784,6 +1102,13 @@ var _mjsMsgIdle = 0;
 // _mjs_wrapDeep). Permet à µ._mjs_deepSet/µ._mjs_deepCall de naviguer et muter SANS repasser
 // par le set trap — qui notifierait une 2e fois, en plus de la notif explicite.
 µ._mjs_RAW = Symbol('mjs_raw');
+// <familles>
+// clé Symbol par laquelle l'enveloppe d'un objet de `µ.state` ou de `µ.Store` rend sa fiche : une variable du composant qui la reçoit
+// (`$courant = st.rows[1]`) la note, et son écriture prévient l'état (cf. _mjsFil, mjs_element.ts) ; l'enveloppe d'un composant ne répond
+// pas. `µ._mjs_fil` : vrai dès qu'une variable a noté une fiche, avant lui une écriture ne paie qu'un test
+µ._mjs_FICHE = Symbol('mjs_fiche');
+µ._mjs_fil   = false;
+// </familles>
 
 // RECONNAISSANCE DES ENVELOPPES (mort de la boucle two-way inter-
 // composants). `µ._mjs_toRaw` déballe une chaîne de Proxy réactifs (le SIEN comme
@@ -813,6 +1138,25 @@ var _mjsMsgIdle = 0;
   return Object.isFrozen(v) ? Object.freeze(c) : c;
 };
 
+// fonction du navigateur (`Object`, `Array`, `Map`…) : son code est natif. Une clé venue de l'extérieur (`?id=constructor`, un
+// formulaire, des données reçues) la range dans l'état ou le magasin (`$serie = $$series[cle]`), et `$serie.values = v` remplacerait
+// `Object.values` pour toute la page : l'écriture est refusée, avec le message de ce piège (mjs_deep.ts, mjs_store_globals.ts) ; lue par
+// une enveloppe, elle est rendue en copie liée SANS lien, ni elle ni son `prototype` ne s'atteignent par la copie (mjs_element.ts,
+// mjs_store.ts). Une fonction liée (`f.bind(…)`) a aussi un code natif, mais l'appli la fabrique : elle reçoit l'écriture, comme toute
+// fonction de l'appli. Le seul contrôle, commun au cœur, aux aides profondes et au magasin ; `f` est une fonction : chaque
+// appelant le vérifie avant (typeof, ou _mjsStoreNatif du magasin pour une valeur quelconque) ; la page des visionneuses, qui joint
+// mjs_deep.ts hors du cœur, déclare ce contrôle par la portée de son entrée (VIEWER_RUNTIME, server/viewer-page.ts)
+var _mjsNatif = (f) =>
+  // <enveloppe-aides>
+  // relais d'une fonction de l'appli lue par une enveloppe (µ._mjs_fnRelay) : son code paraît natif, mais il écrit dans la fonction de l'appli
+  !f[µ._mjs_RAW] &&
+  // </enveloppe-aides>
+  /\[native code\]\s*\}$/.test(Function.prototype.toString.call(f)) && !/^bound /.test(f.name);
+
+// bloc `<enveloppe-aides>` : les aides de lecture des enveloppes (propriété figée, méthode d'une collection, fonction du navigateur, relais
+// d'une fonction de l'appli) ; avec le réglage
+// `proxy: false`, le bundler les retire du cœur qui ne les nomme plus (µ.state et µ.Store, qui s'en servent, les gardent)
+// <enveloppe-aides>
 // propriété FIGÉE de `o` : propre, ni modifiable ni configurable — la règle des Proxy exige que la lire par une
 // enveloppe rende SA valeur (une enveloppe ou une méthode liée fait lever le moteur). Appelée seulement quand la valeur
 // lue est un objet ou une fonction : une primitive ne paie rien. Un objet ouvert aux ajouts, le cas courant, ne paie
@@ -824,24 +1168,171 @@ var _mjsMsgIdle = 0;
 // une valeur lue. Liste : `indexOf`, `lastIndexOf`, `includes` cherchent l'élément déballé dans la liste brute —
 // l'objet poussé se retrouve, tenu brut ou par son enveloppe ; une liste rangée dans un objet, qui tient ses éléments
 // par leur enveloppe, ne les y retrouve pas. Le reste lit par l'enveloppe (`find`, `findIndex`… : un appel du
-// prédicat par élément, tel que l'état le rend). Map / Set : ce qui en sort (`get`, `forEach`, `values`, `entries`,
-// `for…of`) est enveloppé, les clés d'une Map restent brutes ; `has` retrouve aussi ce qu'on tient par son enveloppe
+// prédicat par élément, tel que l'état le rend). Map / Set : ce qui en sort (`get`, `forEach`, `keys`, `values`, `entries`,
+// `for…of`) est enveloppé, la clé objet d'une Map comme la valeur : rangée sous la clé de la variable, une autre variable qui
+// l'écrit prévient ; `get` et `has` retrouvent l'entrée sous toutes ses formes, enveloppée ou brute (cf. µ._mjs_keyIn), ceux d'une
+// WeakMap, d'un WeakSet aussi. La clé d'une Map, l'élément d'un Set rangés sous l'enveloppe d'une AUTRE famille (composant parent,
+// µ.state, µ.Store : collection faite là, puis donnée) sortent tels quels, la forme que tient la collection, et le calcul d'une valeur
+// précise qui les lit doute (µ._mjs_douteCle, mjs_element.ts) : une écriture faite par cette autre famille ne le préviendrait pas
+// ce suivi des clés (blocs `<collections>` d'ici, de mjs_element.ts, mjs_deep.ts, mjs_state.ts, mjs_store.ts et mjs_store_globals.ts) n'entre
+// au cœur que pour l'appli qui nomme `Map`, `Set`, `WeakMap` ou `WeakSet`, ou dont la clé `runtime` demande `collections` (bundler/index.ts) ;
+// sans lui, les lignes `<sans-collections>` reprennent leur texte : Map / Set, ce qui en sort est enveloppé, la clé d'une Map reste brute,
+// `has` retrouve aussi ce qu'on tient par son enveloppe — les lignes d'avant ce suivi ; µ.state et µ.Store y gardent seulement l'enveloppe
+// d'une `WeakMap` ou d'un `WeakSet`, qui y levaient sans elle
 µ._mjs_readFn = (o, k, f, p, w) => {
   if (Array.isArray(o)) {
     return /^(lastI|i)ndexOf$|^includes$/.test(String(k)) ? (x, ...r) => f.call(o, µ._mjs_toRaw(x), ...r) : f.bind(p);
   }
-  if (o instanceof Map || o instanceof Set) {
-    // itérateur qui ré-enveloppe : valeurs, ou entrées [clé, valeur] (clé d'une Map brute)
-    const s = o instanceof Set, it = (n) => function* () { for (const x of f.call(o)) yield n ? [s ? w(x[0]) : x[0], w(x[1])] : w(x); };
-    return k === 'get' ? (x) => w(f.call(o, x))
-      : k === 'has' ? (x) => f.call(o, x) || f.call(o, µ._mjs_toRaw(x))
-      : k === 'forEach' ? (t, h) => f.call(o, (v, x) => t.call(h, w(v), s ? w(x) : x, p))
-      : k === 'values' || (s && (k === 'keys' || k === Symbol.iterator)) ? it(0)
+  // <collections>
+  if (o instanceof Map || o instanceof Set || o instanceof WeakMap || o instanceof WeakSet) {
+    // ce qui sort, enveloppé ; une valeur simple (chaîne, nombre) sort telle quelle, sans passer par `w`. Itérateur qui ré-enveloppe :
+    // valeurs ou clés, ou entrées [clé, valeur]
+    const s = o instanceof Set, e = (x) => (typeof x === 'object' ? x : typeof x === 'function') ? w(x) : x, c = (x, y) => (y = e(x)) !== x && x[µ._mjs_RAW] ? (µ._mjs_douteCle?.(), x) : y, v = s ? c : e, it = (n) => function* () { for (const x of f.call(o)) yield n === 1 ? [c(x[0]), v(x[1])] : n ? c(x) : v(x); };
+    // `get` lit d'abord la forme donnée : une entrée trouvée ne coûte rien de plus ; la forme brute, l'index ensuite (µ._mjs_keyAlt)
+    return k === 'get' ? (x, y) => {
+      // <developpement>
+      // collection qui tient l'objet sous ses deux formes : l'avertissement de µ._mjs_keyIn
+      µ._mjs_keyIn(o, x);
+      // </developpement>
+      return e((y = f.call(o, x)) !== void 0 || (x = µ._mjs_keyAlt(o, x)) === void 0 ? y : f.call(o, x));
+    }
+      : k === 'has' ? (x) => f.call(o, x) || µ._mjs_keyAlt(o, x) !== void 0
+      : k === 'forEach' ? (t, h) => f.call(o, (y, x) => t.call(h, v(y), c(x), p))
+      : k === 'values' || (s && k === Symbol.iterator) ? it(0)
+      : k === 'keys' ? it(2)
       : k === 'entries' || k === Symbol.iterator ? it(1)
       : f.bind(o);
   }
+  // </collections>
+  // <sans-collections>
+  // if (o instanceof Map || o instanceof Set) {
+  //   // sans la part des collections : itérateur qui ré-enveloppe les valeurs, ou les entrées [clé, valeur] (clé d'une Map brute)
+  //   const s = o instanceof Set, it = (n) => function* () { for (const x of f.call(o)) yield n ? [s ? w(x[0]) : x[0], w(x[1])] : w(x); };
+  //   return k === 'get' ? (x) => w(f.call(o, x))
+  //     : k === 'has' ? (x) => f.call(o, x) || f.call(o, µ._mjs_toRaw(x))
+  //     : k === 'forEach' ? (t, h) => f.call(o, (v, x) => t.call(h, w(v), s ? w(x) : x, p))
+  //     : k === 'values' || (s && (k === 'keys' || k === Symbol.iterator)) ? it(0)
+  //     : k === 'entries' || k === Symbol.iterator ? it(1)
+  //     : f.bind(o);
+  // }
+  // </sans-collections>
   return f.bind(o);
 };
+// <collections>
+// clé `x` donnée à `get`, `set`, `add` ou `delete` d'une collection `o` de l'état (Map, Set, WeakMap, WeakSet) : celle qu'elle range
+// pour cet objet — `x` si elle le tient tel quel, sinon sa forme brute ou la clé enveloppée que retrouve son index (µ._mjs_keyAlt) ;
+// la brute s'il n'y est sous aucune forme, que `set` et `add` rangent : une seule entrée par objet. Une valeur simple, une fonction :
+// telles quelles
+// <developpement>
+const _mjsBothForms = new WeakSet();  // Map ou Set déjà signalé : il tient un objet sous ses deux formes
+// </developpement>
+µ._mjs_keyIn = (o, x, r) => {
+  if (x === null || typeof x !== 'object') return x;
+  if (!o.has(x)) return µ._mjs_keyAlt(o, x) ?? µ._mjs_toRaw(x);
+  // <developpement>
+  // la collection tient aussi la forme brute (faite hors de MJS) : deux entrées pour un objet, qu'un parcours rend sous la même
+  // enveloppe ; dit une fois par collection
+  if ((r = µ._mjs_toRaw(x)) !== x && o.has(r) && !_mjsBothForms.has(o)) {
+    _mjsBothForms.add(o);
+    µ.warn(µ._mjs_msg('mapKeyBothForms', {}, 'Une `Map` ou un `Set` de l\'état tient le même objet sous ses deux formes, brut et sous son enveloppe : `get`, `set`, `add` et `delete` prennent l\'entrée de l\'enveloppe, et un parcours rend cet objet deux fois. Gardez une seule forme par objet : quand la collection ne le tient pas encore, MJS range la forme brute. Cet avertissement n\'existe qu\'en développement.'));
+  }
+  // </developpement>
+  return x;
+};
+// objet `x` qu'une collection `o` de l'état ne tient pas tel quel : sa forme brute si elle la tient, sinon la clé rangée sous une
+// enveloppe (`new Map([[$rows[0], 1]])`, `new Set($s)`, `new Map($m)` faits dans un composant, un magasin ou une rune) que retrouve
+// l'INDEX PARESSEUX de la collection (brute → clé rangée), fait au premier objet qu'elle ne tient sous aucune de ces deux formes, en un
+// seul parcours ; rien sinon. La collection reste celle qu'on a rangée, jamais copiée ni parcourue à l'affectation : la même pour
+// toutes les variables, composants et magasins qui la tiennent. Celle qui ne tient aucune clé enveloppée (WeakMap, WeakSet compris,
+// qu'on ne parcourt pas) est notée `false` : un raté n'y coûte ensuite qu'une lecture du carnet. Les écritures de MJS rangent la forme
+// brute, trouvée sans l'index ; celles qui retirent une entrée (`delete`) ou vident la collection (`clear`) font oublier à l'index
+// l'entrée retirée, ou tout (µ._mjs_keyDrop) : il ne retient rien de ce que la collection ne tient plus ; `µrefresh` oublie tous les
+// index (changement fait hors de MJS, cf. µ._mjs_refresh, mjs_element.ts). L'index lui-même est une `WeakMap` (brute → clé rangée) : une
+// entrée retirée hors de MJS, sans `µrefresh` (`clear` sur la collection gardée sans `$`), n'y retient pas son objet non plus
+µ._mjs_keyIdx = new WeakMap();
+µ._mjs_keyAlt = (o, x, r, i, k) => {
+  if (x === null || typeof x !== 'object') return;
+  if ((r = µ._mjs_toRaw(x)) !== x && o.has(r)) return r;
+  if ((i = µ._mjs_keyIdx.get(o)) === void 0) {
+    i = false;
+    if (o instanceof Map || o instanceof Set) for (k of o.keys()) if (k !== (x = µ._mjs_toRaw(k))) (i ||= new WeakMap()).set(x, k);
+    µ._mjs_keyIdx.set(o, i);
+  }
+  if (i && (k = i.get(r)) !== void 0) {
+    if (o.has(k)) return k;
+    i.delete(r);
+  }
+};
+// écriture de MJS qui vide une collection `o` de l'état (`clear`, `c` vrai) ou en retire la clé rangée `k` (`delete`) : son index oublie
+// tout, ou l'entrée qui menait à `k` — une clé que la collection tient encore sous une autre forme garde la sienne
+µ._mjs_keyDrop = (o, c, k, i) => {
+  if (c) µ._mjs_keyIdx.delete(o);
+  else if ((i = µ._mjs_keyIdx.get(o)) && i.get(c = µ._mjs_toRaw(k)) === k) i.delete(c);
+};
+// </collections>
+// relais d'une fonction de l'appli lue par une enveloppe (état d'un composant, µ.Store) : `f` la fonction, `p` l'enveloppe de l'objet
+// qui la range, `n` prévient après une écriture. Appelé seul ou passé en rappel (`g := $outil.double; g()`, `l.map($outil.double)`), il
+// appelle `f` avec `p` pour `this`, comme une méthode liée ; `new` construit `f`. Un champ se lit dans `f`, et s'y écrit, s'y supprime
+// ou s'y définit par toute variable qui tient le relais (`f := $outil.format; f.appels = 10`) : `n` prévient, l'écran suit, comme pour
+// un objet gardé par une variable. Noms réservés refusés et prototype fixe, comme par l'enveloppe d'un objet. Son prototype, par
+// `__proto__` comme par `Object.getPrototypeOf`, est la fonction même, comme pour la copie liée d'avant : jamais `Function.prototype`,
+// qu'une clé venue de l'extérieur (`$outil.format[cle]`, `cle` valant `'__proto__'`) atteindrait sinon d'un seul pas, ni la classe
+// mère d'une classe. Lu ou écrit par une classe qui en hérite (`class B extends $outil.A`, puis `B.x`, `B.x = 1`), il garde le
+// sens de JavaScript : l'accesseur reçoit `B` pour `this`, l'écriture se pose sur `B`
+// fonction du navigateur `f` rangée dans l'objet brut `o` de l'état (`$o.attendre = setTimeout`, `$o.slice = [].slice`), lue par une
+// enveloppe (composant, µ.Store) : sa copie, une par fonction (`_mjsNatCopies`), la même à chaque lecture, qui appelle `f` avec le
+// `this` qu'elle reçoit, comme JavaScript — un appel seul n'en donne aucun, `call`, `apply` et `bind` le leur. Une fonction propre à la
+// fenêtre (`setTimeout`, `fetch`, `requestAnimationFrame` : `hasOwnProperty`, hérité d'`Object.prototype`, n'en est pas), appelée comme
+// méthode d'un objet qui la range (`$o.attendre(f, 10)`, l'enveloppe ou l'objet brut pour `this`), reçoit le `this` d'un appel seul, là
+// où JavaScript lèverait ; les objets qui la rangent sont notés (`h`), au plus une comparaison par appel pour toute autre fonction.
+// `new` construit `f`, `instanceof` la reconnaît ; la copie n'a pas de prototype à elle (une classe n'en hérite pas), ce qu'on y écrit
+// reste sur elle : ni `f` ni son `prototype` ne s'atteignent par elle
+const _mjsNatCopies = new WeakMap();
+µ._mjs_natCopy = (f, o) => {
+  let e = _mjsNatCopies.get(f);
+  if (e === void 0) {
+    const h = globalThis[f.name] === f && Object.prototype.hasOwnProperty.call(globalThis, f.name) ? new WeakSet() : null;
+    const c = function(...a) {
+      return new.target ? Reflect.construct(f, a, new.target === c ? f : new.target) : f.apply(h !== null && this != null && h.has(µ._mjs_toRaw(this)) ? void 0 : this, a);
+    };
+    c.prototype = void 0;
+    Object.defineProperties(c, { [Symbol.hasInstance]: { value: (x) => x instanceof f }, name: { value: f.name }, length: { value: f.length } });
+    _mjsNatCopies.set(f, e = [c, h]);
+  }
+  if (e[1] !== null) e[1].add(o);
+  return e[0];
+};
+µ._mjs_fnRelay = (f, p, n) => {
+  const r = new Proxy(f, {
+    get: (t, k, c) => k === µ._mjs_RAW || k === '__proto__' ? t : Reflect.get(t, k, c === r ? t : c),
+    getPrototypeOf: (t) => Object.isExtensible(t) ? t : Object.getPrototypeOf(t),
+    apply: (t, _, a) => Reflect.apply(t, p, a),
+    construct: (t, a, c) => Reflect.construct(t, a, c === r ? t : c),
+    set(t, k, v, c) {
+      if (c !== r) return Reflect.set(t, k, v, c);
+      if (µ._mjs_safeKey(k) && t[k] !== (v = µ._mjs_rawIn(v))) {
+        t[k] = v;
+        n();
+      }
+      return true;
+    },
+    deleteProperty(t, k) {
+      if (µ._mjs_safeKey(k) && k in t) {
+        delete t[k];
+        n();
+      }
+      return true;
+    },
+    defineProperty(t, k, d) {
+      if (!µ._mjs_safeKey(k) || !Reflect.defineProperty(t, k, d)) return false;
+      n();
+      return true;
+    },
+    setPrototypeOf: () => false
+  });
+  return r;
+};
+// </enveloppe-aides>
 
 // Époque de mutation PAR OBJET BRUT (WeakMap globale, O(1), zéro comparaison
 // de contenu). Sert à distinguer un ÉCHO pur (le pair renvoie l'objet qu'on
@@ -854,8 +1345,47 @@ var _mjsMsgIdle = 0;
 µ._mjs_bumpEpoch = function(raw) {
   const e = (µ._mjs_epochs.get(raw) || 0) + 1;
   µ._mjs_epochs.set(raw, e);
+  // <fin>
+  µ._mjs_extW++;
+  // </fin>
   return e;
 };
+// <fin>
+// lignes propres (mise à jour fine, mjs_for.ts) : écritures d'objets faites par MJS, toutes origines — magasin, µ.state, enveloppe d'un
+// composant, objet partagé (`µ._mjs_bumpEpoch`), écriture profonde compilée (mjs_deep.ts). Un composant ne voit pas ce qu'un autre
+// écrit dans un objet qu'il montre aussi : une liste reste propre tant que les seules écritures faites depuis sa passe sont les siennes
+µ._mjs_extW = 0;
+// une liste aux lignes propres est passée dans la page (`_mjs_propre`, mjs_for.ts) : seul lecteur des comptes d'une écriture profonde
+// compilée (`_mjsFineCompte`, mjs_deep.ts), qui ne se tiennent qu'à partir d'elle. Jamais baissé
+µ._mjs_fineL = 0;
+// </fin>
+// <carnet>
+// carnet des objets gardés (tenu par les composants, cf. _mjsCarnetPose, mjs_element.ts) : objet brut → composants dans la page qui le
+// tiennent dans une variable `$`. Posé ici, avec les époques, avant tout fichier qui écrit l'état dès le chargement du cœur (`µ.url` du
+// routeur, magasin, état de module) : leurs écritures le lisent quel que soit l'ordre des fichiers, et un objet que personne ne tient
+// n'y coûte qu'une lecture
+var _mjsCarnet = µ._mjs_carnet = new WeakMap();
+// objet `x` écrit, ou traversé par l'écriture : son époque avance une fois, et chaque variable qui le tient encore est prévenue comme si
+// son composant l'avait écrit — l'objet que le parent lui repose ensuite est un écho. Une entrée périmée (variable qui a pris un autre
+// objet sans passer par `_set`) ne redessine rien. Coût par composant qui tient l'objet : une lecture de `_mjs_rootsByTarget`, puis par
+// variable qui l'a atteint un déballage et une comparaison
+µ._mjs_carnetVoit = function(x) {
+  var s = _mjsCarnet.get(x), e, el, rs, b, k;
+  if (s === void 0 || s.size === 0) return;
+  µ._mjs_epochs.set(x, e = (µ._mjs_epochs.get(x) || 0) + 1);
+  for (el of s) {
+    rs = el._mjs_rootsByTarget && el._mjs_rootsByTarget.get(x);
+    if (rs === void 0) continue;
+    b = el._mjs_bindEpochs || (el._mjs_bindEpochs = {});
+    // les clés de sa fiche (cf. `_mjs_wrapDeep`, mjs_element.ts)
+    for (k of rs.s || [rs.r]) {
+      if (b[k] === e || µ._mjs_toRaw(el._state[k]) !== x) continue;
+      b[k] = e;
+      el._mjs_notifyMutation(k, el._state[k]);
+    }
+  }
+};
+// </carnet>
 
 // Helper snapshot shallow par type (Array/Map/Set/plain object) — clone juste
 // le top-level container pour permettre l'affichage du `From` dans µ.inspect.
@@ -868,9 +1398,17 @@ var _mjsMsgIdle = 0;
   return v;
 };
 
-µ._mjs_setComputed = function(el, k, fn) {
-  return el._mjs_setComputed(k, fn);
+// <derivees>
+// <precision>
+µ._mjs_setComputed = function(el, k, fn, src) {
+  return el._mjs_setComputed(k, fn, src);
+// </precision>
+// <horloge>
+// µ._mjs_setComputed = function(el, k, fn) {
+  // return el._mjs_setComputed(k, fn);
+// </horloge>
 };
+// </derivees>
 
 // ----------------------------------------------------------------------------
 // computeLISIndices — Longest Increasing Subsequence (algo standard, O(n log n)).
@@ -948,6 +1486,22 @@ var _mjsMsgIdle = 0;
 // et bascule en microtask (comportement V1).
 µ._mjs_inEffect = false;
 
+// <fin>
+// mise à jour fine (mjs_deep.ts) : les liaisons d'un champ écrit, jouées comme celles de la variable sur la voie directe d'une écriture
+// (`_mjs_invalidate`, mjs_element.ts)
+µ._mjs_fineRun = function(el, fns) {
+  var i;
+  µ._mjs_inEffect = true;
+  try {
+    for (i = 0; i < fns.length; i++) fns[i].call(el);
+  } catch (e) {
+    el._mjs_catchError(e);
+  } finally {
+    µ._mjs_inEffect = false;
+  }
+};
+// </fin>
+
 // <boucles>
 // Rendus d'une boucle regroupés (generator/loop-batch.ts) : le compilateur enveloppe une boucle qui écrit l'état,
 // `µ._mjs_lq++; try { … } finally { --µ._mjs_lq || µ._mjs_lqF() }`. Tant qu'une boucle tourne, une écriture qui
@@ -968,11 +1522,34 @@ var _mjsMsgIdle = 0;
     el._mjs_lqk = null;
     try {
       ks.forEach(function(k) { el._mjs_invalidate(k); });
+      // <fin>
+      // puis les liaisons des champs écrits pendant la boucle (mise à jour fine, mjs_deep.ts), une fois chacune ; un rendu demandé
+      // entre-temps les emmène à son heure, avec leur variable entière, comme sur le chemin ordinaire. Le champ ne naît qu'avec elle
+      // (`µ._mjs_lqFine`) : rien n'est écrit sur un composant qui ne l'a pas, dont la forme reste celle que sa boucle optimisée a vue
+      // (un champ neuf à la sortie de la première boucle désoptimise la suivante, qui fabrique alors à chaque écriture le tableau du chemin)
+      var fs = el._mjs_lqf;
+      if (fs) el._mjs_lqf = null;
+      if (fs && el._mjs_render_scheduled) new Set(fs.values()).forEach(function(k) { el._mjs_invalidate(k); });
+      else if (fs && !el._mjs_has_crashed) µ._mjs_fineRun(el, Array.from(fs.keys()));
+      // </fin>
     } catch (e) {
       queueMicrotask(function() { throw e; });
     }
   }
 };
+// <fin>
+// mise à jour fine dans une boucle qui écrit l'état (mjs_deep.ts) : les liaisons du champ écrit (`fns`, de la variable `k`) attendent
+// la sortie, une fois chacune ; le composant entre dans la file comme pour un nom noté
+µ._mjs_lqFine = function(el, fns, k) {
+  var s = el._mjs_lqf, i;
+  if (!el._mjs_lqk) {
+    el._mjs_lqk = new Set();
+    µ._mjs_lqq.push(el);
+  }
+  if (!s) s = el._mjs_lqf = new Map();
+  for (i = 0; i < fns.length; i++) s.set(fns[i], k);
+};
+// </fin>
 // </boucles>
 
 // Helper template+cloneNode pour les `__create_X()` sans interpolations.
@@ -992,28 +1569,54 @@ var _mjsMsgIdle = 0;
 // limitée aux tags NON ambigus (pas `a`/`title`/`script`/`style`, communs aux 2).
 µ._mjs_svgTagRe = /^\s*<(?:circle|ellipse|line|path|polygon|polyline|rect|g|text|tspan|textPath|use|defs|symbol|marker|linearGradient|radialGradient|stop|clipPath|mask|pattern|image|foreignObject|filter|fe[A-Z][a-zA-Z]*|view|switch)\b/;
 
-µ._mjs_cloneTpl = function(html) {
-  if (µ._mjs_tplCache == null) {
-    µ._mjs_tplCache = new Map();
+// HTML que MJS fabrique lui-même (gabarits compilés, morceaux du cœur) → valeur de confiance de la politique Trusted Types
+// `mjs`, créée au premier appel là où le navigateur connaît Trusted Types ; ailleurs, la chaîne telle quelle. Une page qui
+// refuse de la créer (sa liste `trusted-types …` sans `mjs`, `'none'`, ou une politique `mjs` déjà posée) reçoit la chaîne, comme
+// sans Trusted Types : l'aide devient l'identité, la création n'est plus retentée, et un seul avertissement dit d'ajouter `mjs` ;
+// la page qui n'exige pas Trusted Types se monte, celle qui les exige (`require-trusted-types-for`) fait passer ces chaînes par
+// sa politique `default`, qui peut les modifier, ou garde le refus du navigateur.
+// Jamais pour le HTML d'auteur (`{{…}}`, `@html`, `html` d'une modale) : lui passe par la politique de la page, ou il est refusé.
+// `tt` : jamais passé par l'appelant, l'usine du navigateur relue à chaque appel (absente côté serveur). `_mjsTplCache` : le contenu
+// des gabarits lus par `_mjsTpl` ci-dessous, par HTML littéral (une seule déclaration pour les deux : quelques octets de moins)
+var _mjsPolitiqueTT, _mjsTplCache = new Map();
+µ._mjs_th = (html, tt = window.trustedTypes) => {
+  try {
+    return tt ? (_mjsPolitiqueTT ||= tt.createPolicy('mjs', { createHTML: (s) => s })).createHTML(html) : html;
   }
-  var tpl = µ._mjs_tplCache.get(html);
+  catch (e) {
+    µ.warn(µ._mjs_msg('ttPolicy', null, 'la page refuse de créer la politique Trusted Types « mjs » du framework : son en-tête Content-Security-Policy liste ses politiques (trusted-types …) sans « mjs », ou une politique « mjs » existe déjà. Le framework écrit alors son HTML en simple chaîne : la page s\'affiche tant qu\'elle n\'exige pas Trusted Types ; sous require-trusted-types-for \'script\', ce HTML passe par la politique « default » de la page, qui peut le modifier ; sans elle, le navigateur le refuse et aucun composant ne se monte. Ajoutez « mjs » à la liste trusted-types de l\'en-tête (avec \'allow-duplicates\' si deux scripts de la page créent cette politique).'), e);
+    µ._mjs_th = (s) => s;
+    return html;
+  }
+};
+
+function _mjsTpl(html) {
+  var tpl = _mjsTplCache.get(html), svg;
   if (!tpl) {
     tpl = document.createElement('template');
-    if (µ._mjs_svgTagRe.test(html)) {
-      // Parse dans un <svg> jetable pour namespacer les enfants, puis transplante
-      // les nœuds SVG (namespace préservé par appendChild) dans le content du
-      // template cache. cloneNode(true) conservera le namespace à chaque clone.
-      var wrap = document.createElement('template');
-      wrap.innerHTML = '<svg>' + html + '</svg>';
-      var svg = wrap.content.firstChild, child;
-      if (svg) { while ((child = svg.firstChild)) { tpl.content.appendChild(child); } }
-    } else {
-      tpl.innerHTML = html;
-    }
-    µ._mjs_tplCache.set(html, tpl);
+    // tags SVG seuls : parsés dans un <svg> jetable pour namespacer les enfants, puis remontés à la racine du content (le
+    // déplacement garde le namespace, cloneNode(true) aussi)
+    svg = µ._mjs_svgTagRe.test(html);
+    tpl.innerHTML = µ._mjs_th(svg ? '<svg>' + html + '</svg>' : html);
+    if (svg) tpl.content.replaceChildren(...tpl.content.firstChild.childNodes);
+    _mjsTplCache.set(html, tpl = tpl.content);
   }
-  return tpl.content.cloneNode(true);
-};
+  return tpl;
+}
+// copie d'un gabarit compilé : son fragment entier, ou, pour une ligne de liste à racine unique, cet élément seul (le compilateur
+// choisit, cf. generateCloneFnBody). Une liste clone le même gabarit ligne après ligne : son élément est gardé d'un appel au suivant
+// (`_mjsLastEl`, celui du HTML `_mjsLastHtml`), sans le relire dans la table ni dans son fragment. Bloc gardé pour l'appli dont une ligne
+// se copie ainsi (`<copie-de-ligne>`, cf. ROW_CLONE, bundler/features.ts) : sans lui, la copie relit son gabarit à chaque appel
+// <copie-de-ligne>
+var _mjsLastHtml, _mjsLastEl;
+// </copie-de-ligne>
+µ._mjs_cloneTpl = (html) => _mjsTpl(html).cloneNode(true);
+// <copie-de-ligne>
+µ._mjs_cloneEl  = (html) => (html === _mjsLastHtml ? _mjsLastEl : _mjsLastEl = _mjsTpl(_mjsLastHtml = html).firstChild).cloneNode(true);
+// </copie-de-ligne>
+// <sans-copie-de-ligne>
+// µ._mjs_cloneEl  = (html) => _mjsTpl(html).firstChild.cloneNode(true);
+// </sans-copie-de-ligne>
 
 // ----------------------------------------------------------------------------
 // Alias ASCII `mu` — portabilité claviers non-français.

@@ -1,9 +1,12 @@
 // transpiler/sections — extraction des sections <script module>, <script>, <style>, HTML.
 // Port de la section "extraction" de la V1 Ruby, transpiler.rb.
 
+import { SIGN, SIGN_RE, STYLE_WORDS } from '../parser/mjs-words.js'
 import type { SupportedLang } from '../languages/index.js'
 import { dedent } from '../generator/state.js'
-import { maskInertSameLength, maskHtmlComments } from '../mask.js'
+import { maskInertSameLength, maskHtmlComments, createMaskTable, readHtmlComment } from '../mask.js'
+import { COMMENTAIRE_MJS_GARDE, scanDoubleQuoteAt, scanInertAt, longStringWatch, lostPlaces, type LostInString, type LostPlace } from '../lexer/index.js'
+import { LINE_CARRIER_OPEN } from '../parser/index.js'
 import { t } from '../messages/index.js'
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { findMacroTagEnd, asciiLower } from './macro-tag.js'
@@ -21,15 +24,15 @@ export interface ScriptSection {
 export interface StyleSection {
   raw: string
   lang: 'css' | 'sass' | 'scss'
-  /** Noms des CSS partagés (`<style @css="base typo">`, relogé racine → attribut). */
+  /** Noms des CSS partagés (`<style :css="base typo">`, relogé racine → attribut). */
   sharedCssNames: string[]
-  /** Override du `:host{display:X}` (`<style @display="inline-block">`). */
+  /** Override du `:host{display:X}` (`<style :display="inline-block">`). */
   moduleDisplay: string
-  /** Transitions de page par défaut du module (`<style @viewTransition.<nom>={…}>`) —
+  /** Transitions de page par défaut du module (`<style :viewTransition.<nom>={…}>`) —
    *  chaîne VERBATIM (`<nom>` ou `<nom>={ direction: …, duration: …, priority: … }`),
    *  relue au runtime par µ._mjs_vtParse (mjs_vt_presets.ts) ; null si absente. */
   moduleViewTransition: string | null
-  /** Priorité (façon z-index) de `@viewTransition`/`@vt` — cf. directives.ts
+  /** Priorité (façon z-index) de `:viewTransition`/`@vt` — cf. directives.ts
    *  (ancien porteur du champ), EXTRAITE de l'option `priority:`. Défaut 1. */
   moduleViewTransitionPriority: number
 }
@@ -60,6 +63,8 @@ export interface RoutesSection {
   raw: string
   target: string
   entries: [string, string][]
+  /** ligne du bloc dans la source (1 = première) */
+  line?: number
 }
 
 /** Un bloc `<vars>` du composant (types et valeurs permises de ses variables, props et stores),
@@ -99,6 +104,9 @@ export interface SectionsResult {
    * (jamais rempli, toujours `[]`) car d'autres maillons de la chaîne le lisent
    * encore (`TranspileData.sectionWarnings`, `IncludeAccumulator.warnings`). */
   warnings: string[]
+  /** chaque chaîne `"…"` ou `'…'` d'un script écrite sur plusieurs lignes où le retrait des commentaires a pris un commentaire
+   * (longStringWatch, lexer) : sa place dans le texte lu, pour l'avertissement `lint.multilineString` */
+  lostInStrings: LostPlace[]
 }
 
 const DEFAULT_SCRIPT_LANG: SupportedLang = 'civet'
@@ -128,8 +136,8 @@ function extractAttrValue(attrs: string, nom: string): string | null {
   return m ? m[2] : null
 }
 
-// noms d'attributs d'une balise de section, base avant le 1er `.` (`@viewTransition.zoom` → `@viewTransition`)
-const SECTION_ATTR_RE = /(@?[a-zA-Z][a-zA-Z0-9:_.-]*)(?:[ \t]*=[ \t]*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]+))?/g
+// noms d'attributs d'une balise de section, base avant le 1er `.` (`:viewTransition.zoom` → `:viewTransition`)
+const SECTION_ATTR_RE = /([@:]?[a-zA-Z][a-zA-Z0-9:_.-]*)(?:[ \t]*=[ \t]*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]+))?/g
 
 // attribut inconnu sur <style>/<script>/<theme>/<routes> = ERREUR : ces balises n'atteignent jamais le DOM, rien d'autre que la liste attendue n'y a de sens — suggestion à ≤2 lettres quand il y en a une
 function checkSectionAttrs(tag: string, attrs: string, allowed: string[]): void {
@@ -143,8 +151,8 @@ function checkSectionAttrs(tag: string, attrs: string, allowed: string[]): void 
   }
 }
 
-// extractStyleViewTransition — repère `@viewTransition` sur `<style …>` et rend son RESTE BRUT,
-// tel quel : c'est l'APPELANT qui juge, exactement comme le fait déjà `<@view @viewTransition…>`
+// extractStyleViewTransition — repère `:viewTransition` sur `<style …>` et rend son RESTE BRUT,
+// tel quel : c'est l'APPELANT qui juge, exactement comme le fait déjà `<@view :viewTransition…>`
 // (transpiler/index.ts, même grammaire). `rest: undefined` = forme NUE, sentinel 'on' posé par
 // l'appelant. `aliasVt` = écrit `@vt` — ALIAS RETIRÉ sur `<style>` (reste vivant à la racine du
 // fichier pour le message, directives.ts, et sur `<a @vt="…">`, mécanisme UJS distinct).
@@ -156,19 +164,19 @@ function checkSectionAttrs(tag: string, attrs: string, allowed: string[]): void 
 // `:` et `_` EXPRÈS (pour que la forme fautive ARRIVE jusqu'au juge, qui la refuse avec le message
 // dédié), et le second filet rattrape tout ce qui échapperait encore à la grammaire.
 function extractStyleViewTransition(attrs: string): { rest: string | undefined, aliasVt: boolean, label: string, malformed: boolean } | null {
-  const m = attrs.match(/@(viewTransition|vt)(\.[a-zA-Z][a-zA-Z0-9:_-]*(?:[ \t]*=[ \t]*\{[^}]*\})?|=(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]*))?(?=[ \t]|$)/)
-  if (m) return { rest: m[2], aliasVt: m[1] === 'vt', label: `@${m[1]}`, malformed: false }
-  const brut = attrs.match(/@(viewTransition|vt)\b([^\s>]*)/)
+  const m = attrs.match(new RegExp(SIGN_RE + String.raw`(viewTransition|vt)(\.[a-zA-Z][a-zA-Z0-9:_-]*(?:[ \t]*=[ \t]*\{[^}]*\})?|=(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s>]*))?(?=[ \t]|$)`))
+  if (m) return { rest: m[2], aliasVt: m[1] === 'vt', label: `${SIGN}${m[1]}`, malformed: false }
+  const brut = attrs.match(new RegExp(SIGN_RE + String.raw`(viewTransition|vt)\b([^\s>]*)`))
   if (!brut) return null
-  return { rest: brut[2], aliasVt: brut[1] === 'vt', label: `@${brut[1]}`, malformed: true }
+  return { rest: brut[2], aliasVt: brut[1] === 'vt', label: `${SIGN}${brut[1]}`, malformed: true }
 }
 
-// findRelocatedStyleAttrToken — un des attributs `@css`/`@display`/`@viewTransition`/`@vt`
+// findRelocatedStyleAttrToken — un des attributs `:css`/`:display`/`:viewTransition`/`@vt`
 // posé sur ce `<style>` (peu importe valué ou nu) — sert à interdire ces attributs
 // sur un `<style name="…">` (variant/layout).
 function findRelocatedStyleAttrToken(attrs: string): string | null {
-  const m = attrs.match(/@(css|display|viewTransition|vt)\b/)
-  return m ? `@${m[1]}` : null
+  const m = attrs.match(new RegExp(SIGN_RE + String.raw`(css|display|viewTransition|vt)\b`))
+  return m ? `${SIGN}${m[1]}` : null
 }
 
 // nom de variante : minuscules/chiffres/tirets — il finit en sélecteur d'attribut
@@ -600,28 +608,368 @@ export function findStyleMatches(scan: string, scriptMatches: RegExpMatchArray[]
 // identique à l'ancienne regex qui ne matchait pas dans ces deux cas (la
 // balise jamais refermée sera signalée par `macro-balise-non-fermee`, plus
 // tard, quand macros.ts la retraite sous sa forme écouteur/contenu).
-function maskHeadFailedBlocks(src: string, masks: string[]): string {
+// lecture de gauche à droite, sur le texte sans commentaires (retirerCommentaires, plus bas) : la première ouverture
+// rencontrée décide ; un <script> en tête de ligne est sauté jusqu'à sa fin de findScriptMatches (premier `</script>` hors
+// des littéraux), un <style> ou un bloc <theme>, <routes>, <vars>, <types>, <effects> en tête de ligne jusqu'à sa
+// fermeture : un `<@head>` / `<@failed>` cité dans une chaîne du script, du module ou dans le texte d'un style reste du
+// texte, sans jeton dans le code ; un bloc jamais refermé n'est pas sauté (comme les regex des sections) ; dans un vrai
+// bloc, la première fermeture écrite, comme avant (une interpolation `{"</@head>"}` le ferme là, refus bruyant plus loin) ;
+// chaque recherche garde sa dernière réponse (temps linéaire)
+function maskHeadFailedBlocks(src: string, stash: (block: string, at: number) => string): string {
   const lower = asciiLower(src)
-  let out = ''
-  let pos = 0
+  if (!lower.includes('<@head') && !lower.includes('<@failed')) return src
+  const ouverture = /^[ \t]*<(script|style|(?:theme|routes|vars|types|effects)(?=[\s>]))/gm
+  const derniere  = { head: lower.lastIndexOf('</@head>'), failed: lower.lastIndexOf('</@failed>') }
+  let civet: string | null = null
+  let bloc: RegExpExecArray | null = null
+  let blocsLus = false
+  let tete     = -2
+  let echec    = -2
+  let out      = ''
+  let copie    = 0
+  let pos      = 0
   for (;;) {
-    const headIdx = lower.indexOf('<@head', pos)
-    const failedIdx = lower.indexOf('<@failed', pos)
-    const idx = headIdx === -1 ? failedIdx : (failedIdx === -1 ? headIdx : Math.min(headIdx, failedIdx))
-    if (idx === -1) { out += src.slice(pos); return out }
-    const name = idx === headIdx ? 'head' : 'failed'
-    const nameEnd = idx + `<@${name}`.length
+    if (tete !== -1 && tete < pos) tete = lower.indexOf('<@head', pos)
+    if (echec !== -1 && echec < pos) echec = lower.indexOf('<@failed', pos)
+    const idx = tete === -1 ? echec : (echec === -1 ? tete : Math.min(tete, echec))
+    if (idx === -1) break
+    if (!blocsLus && (bloc === null || bloc.index < pos)) {
+      ouverture.lastIndex = pos
+      bloc     = ouverture.exec(src)
+      blocsLus = bloc === null
+    }
+    if (bloc !== null && bloc.index < idx) {
+      const nom = bloc[1]
+      const at  = bloc.index + bloc[0].length - nom.length - 1
+      let fin   = -1
+      if (nom === 'script') {
+        civet ??= maskScriptsCivet(src, false)
+        fin = civet.indexOf('</script>', at)
+      }
+      else fin = src.indexOf(`</${nom}>`, at)
+      pos = fin === -1 ? at + nom.length + 1 : fin + nom.length + 3
+      continue
+    }
+    const name     = idx === tete ? 'head' : 'failed'
+    const nameEnd  = idx + `<@${name}`.length
     const boundary = src[nameEnd]
-    if (boundary !== undefined && /[\w-]/.test(boundary)) { out += src.slice(pos, idx + 1); pos = idx + 1; continue }
-    const tagEnd = findMacroTagEnd(src, nameEnd)
-    if (tagEnd === -1) { out += src.slice(pos, idx + 1); pos = idx + 1; continue }
-    const closeIdx = lower.indexOf(`</@${name}>`, tagEnd + 1)
-    if (closeIdx === -1) { out += src.slice(pos, idx + 1); pos = idx + 1; continue }
+    const tagEnd   = boundary !== undefined && /[\w-]/.test(boundary) ? -1 : findMacroTagEnd(src, nameEnd)
+    const closeIdx = tagEnd === -1 || tagEnd + 1 > derniere[name] ? -1 : lower.indexOf(`</@${name}>`, tagEnd + 1)
+    if (closeIdx === -1) {
+      pos = idx + 1
+      continue
+    }
     const wholeEnd = closeIdx + `</@${name}>`.length
-    masks.push(src.slice(idx, wholeEnd))
-    out += src.slice(pos, idx) + `\x00MJSHF${masks.length - 1}\x00`
-    pos = wholeEnd
+    out  += src.slice(copie, idx) + stash(src.slice(idx, wholeEnd), idx)
+    copie = pos = wholeEnd
   }
+  return copie === 0 ? src : out + src.slice(copie)
+}
+
+// ----------------------------------------------------------------------------
+// retirerCommentaires — PREMIER geste de la lecture d'un composant (extractSections, plus bas) : tous les commentaires de
+// l'auteur retirés, avant les sections, les masques, les macros et le gabarit, qui lisent un texte plus court où aucun
+// commentaire n'ouvre plus une section, une macro ou une chaîne. Lecture de gauche à droite, comme le navigateur :
+// - gabarit : commentaire HTML (bornes du navigateur, readHtmlComment), jamais dans une balise (valeur d'attribut), une
+//   interpolation `{…}`, le texte d'un <textarea> ou d'un <title> ;
+// - <script> du composant (en tête de ligne, hors <@head> / <@failed>), par le lexeur (scanInertAt, scanDoubleQuoteAt) :
+//   Civet `#…`, `###…###`, `//…`, `/*…*/` (`#nom` est un symbole, `///…///` une regex) ; Coffee `#…`, `###…###` (`//` y
+//   est la division entière, `///…///` une regex) ; JS et TS `//…`, `/*…*/` (`#x` est un champ privé) ;
+// - <style> du composant : `/*…*/`, et `//…` en SASS / SCSS (lecteurLitteraux : chaînes et `url(…)` gardées).
+// Un commentaire part avec son texte, ses sauts de ligne restent (lignes des erreurs et des tables de correspondance) ;
+// dans le gabarit, ils restent dans un porteur de lignes (LINE_CARRIER_OPEN) que la sortie ignore (un saut nu y serait une
+// espace) ; un `/*…*/` qui soudait deux mots laisse une espace. Seule exception, le commentaire MJS `//!` jusqu'à la fin
+// de la ligne : rien n'y est lu, il sort dans le code produit (tel quel dans un script Civet, JS ou TS, en `###! … ###` en
+// Coffee, en `/*! … */` dans un style), sauf si COMMENTAIRE_MJS_GARDE est faux ; dans le gabarit, `//!` est du texte.
+// Laissés tels quels : un `<!--` jamais refermé ; les scripts et styles d'un <@head> / <@failed> ; les blocs <types>,
+// <vars>, <effects>, <theme>, <routes> ; un commentaire dans une interpolation `#{…}` / `${…}` ; colonnes : celles qui
+// suivent un commentaire posé en milieu de ligne reculent de sa longueur.
+// À longueur égale (`sameLength`, pour les bornes des sections lues par le lecteur du fichier, bornesDesSections plus bas) : même
+// lecture, chaque commentaire blanchi au lieu d'être retiré, sauts de ligne gardés ; un commentaire HTML de plusieurs lignes garde
+// ses délimiteurs, comme le porteur de lignes qui le remplace ; un `//!` d'un script Coffee ou d'un style est blanchi lui aussi
+// `lost` (extractSections) : les chaînes d'un script écrites sur plusieurs lignes où un commentaire est pris — relevées, la lecture
+// reste la même (scriptSansCommentaires)
+// ----------------------------------------------------------------------------
+type LangueCommentaires = 'civet' | 'coffee' | 'js'
+
+const MOT_RE      = /[\w$µ]/
+const BRUT_RE     = /^(?:script|style|textarea|title)$/
+const BLOC_MJS_RE = /^(?:types|vars|effects|theme|routes)$/
+const OUVRANTE_RE = /<(\/?)(@?[a-zA-Z][\w-]*)/y
+
+// langue des commentaires d'un script : Coffee, JS (TS compris) ou Civet (défaut)
+function langueDeScript(lang: string): LangueCommentaires {
+  if (/coffee/.test(lang)) return 'coffee'
+  return /^(?:js|ts|javascript|typescript|jsx|tsx)$/.test(lang) ? 'js' : 'civet'
+}
+
+// ce qui remplace le commentaire [a, b) de `src` : ses seuls sauts de ligne, une espace s'il soudait deux mots ; à longueur égale
+// (`sameLength`), le commentaire blanchi
+function blancDe(src: string, a: number, b: number, sameLength = false): string {
+  if (sameLength) return src.slice(a, b).replace(/[^\n]/g, ' ')
+  const sauts = src.slice(a, b).replace(/[^\n]/g, '')
+  return sauts === '' && MOT_RE.test(src[a - 1] ?? '') && MOT_RE.test(src[b] ?? '') ? ' ' : sauts
+}
+
+// fin de la ligne de `i` : position de son saut, ou fin du texte
+function finDeLigne(src: string, i: number): number {
+  const e = src.indexOf('\n', i)
+  return e === -1 ? src.length : e
+}
+
+// script du composant ouvert jusqu'à `de` : [texte sans ses commentaires, `</script>` compris ; position qui le suit],
+// null s'il n'est jamais refermé ; fin au premier `</script>` hors des littéraux, comme findScriptMatches ; à longueur égale
+// (`sameLength`), chaque commentaire blanchi ; `lost` : les chaînes de Civet ou de CoffeeScript écrites sur plusieurs lignes où un
+// commentaire est pris, relevées par un témoin qui suit la lecture sans la changer (longStringWatch, lexer) — `slash` : la dernière
+// barre `/` lue comme du code
+function scriptSansCommentaires(src: string, de: number, langue: LangueCommentaires, sameLength: boolean, lost?: LostInString[]): [string, number] | null {
+  const watch = lost !== undefined && langue !== 'js' ? longStringWatch(src) : null
+  let slash   = -1
+  let out     = ''
+  let cur     = de
+  let i       = de
+  while (i < src.length) {
+    const c = src[i]
+    let fin = -1
+    let par = ''
+    if (c === '<' && src.startsWith('</script>', i)) {
+      if (watch !== null) lost!.push(...watch.lost)
+      return [out + src.slice(cur, i + 9), i + 9]
+    }
+    if (c === '#' && langue !== 'js') {
+      if (src.startsWith('###', i)) {
+        const e = src.indexOf('###', i + 3)
+        fin = e === -1 ? finDeLigne(src, i) : e + 3
+      }
+      else if (langue === 'coffee' || !/[a-zA-Z_]/.test(src[i + 1] ?? '')) fin = finDeLigne(src, i)
+    }
+    else if (c === '/' && src[i + 1] === '/') {
+      if (src[i + 2] === '!') {
+        fin = finDeLigne(src, i)
+        if (COMMENTAIRE_MJS_GARDE) {
+          if (langue !== 'coffee') {
+            watch?.skipped(i, fin)
+            i = fin
+            continue
+          }
+          par = `###!${src.slice(i + 3, fin).replace(/###/g, '# # #')} ###`
+        }
+      }
+      else if (langue === 'coffee' || (langue === 'civet' && src.startsWith('///', i))) {
+        const e = src.startsWith('///', i) ? src.indexOf('///', i + 3) : -1
+        if (e === -1) slash = i
+        else watch?.skipped(i, e + 3)
+        i = e === -1 ? i + 2 : e + 3
+        continue
+      }
+      else fin = finDeLigne(src, i)
+    }
+    else if (c === '/' && src[i + 1] === '*' && langue !== 'coffee') {
+      const e = src.indexOf('*/', i + 2)
+      if (e !== -1) fin = e + 2
+    }
+    else if (c === '"' || c === '\'' || c === '`' || c === '/') {
+      const e = c === '"' && langue !== 'js' && !src.startsWith('"""', i) ? scanDoubleQuoteAt(src, i) : scanInertAt(src, i, langue === 'civet' || langue === 'coffee')
+      if (e > i) {
+        watch?.skipped(i, e)
+        i = e
+        continue
+      }
+      if (c === '"' || c === '\'') watch?.lone(i, slash)
+    }
+    if (fin === -1) {
+      if (c === '/') slash = i
+      i++
+      continue
+    }
+    watch?.cut(i, fin)
+    out += src.slice(cur, i) + (sameLength ? blancDe(src, i, fin, true) : par || blancDe(src, i, fin))
+    cur  = i = fin
+  }
+  return null
+}
+
+// style du composant ouvert jusqu'à `de` : [texte sans ses commentaires, `</style>` compris ; position qui le suit], null
+// s'il n'est jamais refermé ; fin au premier `</style>` hors des littéraux CSS, comme maskStylesCss ; à longueur égale
+// (`sameLength`), chaque commentaire blanchi
+function styleSansCommentaires(src: string, de: number, sass: boolean, sameLength: boolean): [string, number] | null {
+  const litteral = lecteurLitteraux(src)
+  let fin = src.indexOf('</style>', de)
+  let l   = litteral(de)
+  let out = ''
+  let cur = de
+  while (fin !== -1 && l !== null && l[0] < fin) {
+    const [a, b] = l
+    if (b > fin) {
+      fin = src.indexOf('</style>', fin + 1)
+      continue
+    }
+    const mjs = src.startsWith('//!', a)
+    if (src.startsWith('/*', a) || (src.startsWith('//', a) && (sass || mjs))) {
+      out += src.slice(cur, a) + (sameLength ? blancDe(src, a, b, true) : mjs && COMMENTAIRE_MJS_GARDE ? `/*!${src.slice(a + 3, b).replace(/\*\//g, '* /')} */` : blancDe(src, a, b))
+      cur  = b
+    }
+    l = litteral(b)
+  }
+  return fin === -1 ? null : [out + src.slice(cur, fin + 8), fin + 8]
+}
+
+// fins des accolades du gabarit lues depuis celle ouverte en `i`, chaînes sautées par le lexeur : pour chaque `{` vue hors des
+// chaînes, la position qui suit sa `}`, -1 sans fin. Une seule lecture pour une accolade jamais refermée et toutes celles qu'elle
+// contient : chacune relisait le reste du texte (coût quadratique sur un gabarit en cours de frappe)
+function finsAccolades(src: string, i: number, fins: Map<number, number>): void {
+  const pile: number[] = []
+  for (let j = i; j < src.length; j++) {
+    const c = src[j]
+    if (c === '"' || c === '\'' || c === '`') {
+      const e = scanInertAt(src, j)
+      if (e > j) j = e - 1
+    }
+    else if (c === '{') pile.push(j)
+    else if (c === '}' && pile.length > 0) {
+      fins.set(pile.pop()!, j + 1)
+      if (pile.length === 0) return
+    }
+  }
+  for (const p of pile) fins.set(p, -1)
+}
+
+export function retirerCommentaires(src: string, langueScript: string, langueStyle: string, sameLength = false, lost?: LostInString[]): string {
+  if (!src.includes('<!--') && !src.includes('#') && !src.includes('//') && !src.includes('/*')) return src
+  const lower = asciiLower(src)
+  const signe = /[<{]/g
+  const fins  = new Map<number, number>()
+  let tete    = ''
+  let out     = ''
+  let cur     = 0
+  let i       = 0
+  while (i < src.length) {
+    signe.lastIndex = i
+    const s = signe.exec(src)
+    if (s === null) break
+    i = s.index
+    if (src[i] === '{') {
+      if (!fins.has(i)) finsAccolades(src, i, fins)
+      const e = fins.get(i)!
+      i = e === -1 ? i + 1 : e
+      continue
+    }
+    if (src.startsWith('<!--', i)) {
+      const lu = readHtmlComment(src, i)
+      if (lu === null) {
+        i += 4
+        continue
+      }
+      const sauts = src.slice(i, lu.end).replace(/[^\n]/g, '')
+      if (sameLength) out += src.slice(cur, i) + (sauts === '' ? blancDe(src, i, lu.end, true) : `<!--${blancDe(src, i + 4, lu.end - 3, true)}-->`)
+      else out += src.slice(cur, i) + (sauts === '' ? '' : `${LINE_CARRIER_OPEN}${sauts}-->`)
+      cur  = i = lu.end
+      continue
+    }
+    OUVRANTE_RE.lastIndex = i
+    const b = OUVRANTE_RE.exec(src)
+    if (b === null) {
+      i++
+      continue
+    }
+    const nom = b[2].toLowerCase()
+    if (b[1] === '/') {
+      if (nom === '@' + tete) tete = ''
+      i += b[0].length
+      continue
+    }
+    const finBalise = findMacroTagEnd(src, i + b[0].length)
+    if (finBalise === -1) {
+      i += b[0].length
+      continue
+    }
+    if (nom === '@head' || nom === '@failed') {
+      tete ||= nom.slice(1)
+      i = finBalise + 1
+      continue
+    }
+    const enTete = /^[ \t]*$/.test(src.slice(src.lastIndexOf('\n', i - 1) + 1, i))
+    if (enTete && tete === '' && (nom === 'script' || nom === 'style')) {
+      const lang = extractLang(src.slice(i + b[0].length, finBalise))
+      const lu   = nom === 'script' ? scriptSansCommentaires(src, finBalise + 1, langueDeScript(lang ?? langueScript), sameLength, lost) : styleSansCommentaires(src, finBalise + 1, /^s[ac]ss$/.test(lang ?? langueStyle), sameLength)
+      if (lu !== null) {
+        out += src.slice(cur, finBalise + 1) + lu[0]
+        cur  = i = lu[1]
+        continue
+      }
+    }
+    if (BRUT_RE.test(nom) || (enTete && BLOC_MJS_RE.test(nom))) {
+      const e = lower.indexOf(`</${nom}`, finBalise + 1)
+      i = e === -1 ? finBalise + 1 : e
+      continue
+    }
+    i = finBalise + 1
+  }
+  return cur === 0 ? src : out + src.slice(cur)
+}
+
+// les sections d'un texte (extractSections : commentaires retirés, blocs <@head> / <@failed> masqués ; bornesDesSections : la même
+// vue à longueur égale) : <script module> et <script> sur la vue Civet, <style> sur la vue CSS, puis <theme>, <routes>, <vars>,
+// <types> et <effects>, chaque recherche sur la vue de la précédente, ses plages déjà trouvées neutralisées. La seule recherche des
+// sections : le compilateur et le lecteur du fichier (src/reader) referment une section au même endroit
+interface SectionsTrouvees {
+  moduleScripts: RegExpMatchArray[]
+  scripts:       RegExpMatchArray[]
+  styles:        RegExpMatchArray[]
+  themes:        RegExpMatchArray[]
+  routes:        RegExpMatchArray[]
+  vars:          RegExpMatchArray[]
+  types:         RegExpMatchArray[]
+  effects:       RegExpMatchArray[]
+}
+
+function trouverSections(scan: string): SectionsTrouvees {
+  const { moduleScripts, scripts } = findScriptMatches(scan)
+  const { matches: styles, maskedView } = findStyleMatches(scan, [...moduleScripts, ...scripts])
+  const sans = (vue: string, trouvees: RegExpMatchArray[]): string => {
+    for (const m of trouvees) vue = blankRange(vue, m.indices![0][0], m.indices![0][1])
+    return vue
+  }
+  const vueThemes  = sans(maskedView, styles)
+  const themes     = [...vueThemes.matchAll(/^[ \t]*<theme\b([^>]*)>([\s\S]*?)<\/theme>/gmd)]
+  const vueRoutes  = sans(vueThemes, themes)
+  const routes     = [...vueRoutes.matchAll(/^[ \t]*<routes\b([^>]*)>([\s\S]*?)<\/routes>/gmd)]
+  const vueVars    = sans(vueRoutes, routes)
+  const vars       = [...vueVars.matchAll(/^[ \t]*<vars\b([^>]*)>([\s\S]*?)<\/vars>/gmd)]
+  const vueTypes   = sans(vueVars, vars)
+  const types      = [...vueTypes.matchAll(/^[ \t]*<types\b([^>]*)>([\s\S]*?)<\/types>/gmd)]
+  const effects    = [...sans(vueTypes, types).matchAll(/^[ \t]*<effects\b([^>]*)>([\s\S]*?)<\/effects>/gmd)]
+  return { moduleScripts, scripts, styles, themes, routes, vars, types, effects }
+}
+
+// une section que le compilateur lit dans un fichier : `debut` sur son `<`, `corps` [début, fin) de son contenu, `fin` après sa
+// fermante
+export interface BorneDeSection {
+  debut: number
+  corps: { debut: number, fin: number }
+  fin:   number
+}
+
+// les sections d'un composant ou d'un partiel aux positions du texte donné, telles que extractSections les lit (trouverSections), et
+// les blocs <@head> / <@failed> qu'il masque avant, [début, fin) : le lecteur du fichier (src/reader) referme une section au même
+// endroit que le compilateur. Le texte est lu à longueur égale : chaque commentaire blanchi où retirerCommentaires le retire (ceux
+// d'un script selon sa langue, `scriptLang` pour un <script> sans `lang`, celle que reçoit extractSections), chaque bloc <@head> /
+// <@failed> blanchi où maskHeadFailedBlocks le masque, son dernier caractère gardé (comme le jeton qui le remplace, rien ne commence
+// une ligne juste après lui)
+export function bornesDesSections(content: string, scriptLang: string = DEFAULT_SCRIPT_LANG): { sections: BorneDeSection[], blocs: Array<[number, number]> } {
+  const blocs: Array<[number, number]> = []
+  const texte = retirerCommentaires(content.charCodeAt(0) === 0xfeff ? ' ' + content.slice(1) : content, scriptLang, DEFAULT_STYLE_LANG, true)
+  const vue   = maskHeadFailedBlocks(texte, (block, at) => {
+    blocs.push([at, at + block.length])
+    return block.slice(0, -1).replace(/[^\n]/g, ' ') + block.slice(-1)
+  })
+  const t = trouverSections(vue)
+  const sections = [...t.moduleScripts.map(m => [m, 3] as const), ...[t.scripts, t.styles, t.themes, t.routes, t.vars, t.types, t.effects].flatMap(l => l.map(m => [m, 2] as const))].map(([m, corps]) => ({
+    debut: m.indices![0][0] + /^[ \t]*/.exec(m[0])![0].length,
+    corps: { debut: m.indices![corps][0], fin: m.indices![corps][1] },
+    fin:   m.indices![0][1],
+  }))
+  return { sections: sections.sort((a, b) => a.debut - b.debut), blocs }
 }
 
 // ----------------------------------------------------------------------------
@@ -658,10 +1006,24 @@ export function extractSections(content: string, opts: {
   // (voir bandeau de `maskHeadFailedBlocks` ci-dessus) : l'ancienne regex
   // `[^>]*` s'arrêtait au premier `>` textuel, y compris niché dans une
   // accolade d'attribut.
-  const macroMasks: string[] = []
-  const scan = maskHeadFailedBlocks(content, macroMasks)
-  const restoreMacros = (s: string): string =>
-    macroMasks.length ? s.replace(/\x00MJSHF(\d+)\x00/g, (_m, i) => macroMasks[Number(i)]) : s
+  // jetons à sceau, remise au point fixe (createMaskTable) : un NUL écrit par l'auteur reste tel quel
+  // premier geste : tous les commentaires de l'auteur retirés (retirerCommentaires, plus haut), lignes gardées
+  const lost    = [] as LostInString[]
+  const written = content
+  content = retirerCommentaires(content, defaultScriptLang, defaultStyleLang, false, lost)
+  const macroMasks = createMaskTable(content, 'MJSHF')
+  // chaque bloc masqué : la place de son jeton dans `scan` et les sauts de ligne qu'il remplace (un jeton tient sur une ligne) ;
+  // lineInFile : la ligne du fichier d'une position de `scan`, ces sauts comptés (après un <@head> ou un <@failed> de plusieurs
+  // lignes, une section et ses fautes étaient citées trop haut)
+  const folds = [] as Array<[number, number]>
+  let shift   = 0
+  const scan  = maskHeadFailedBlocks(content, (block, at) => {
+    const token = macroMasks.stash(block)
+    folds.push([at - shift, countNewlines(block)])
+    shift += block.length - token.length
+    return token
+  })
+  const lineInFile = (offset: number): number => folds.reduce((n, [at, lines]) => (at < offset ? n + lines : n), lineOfOffset(scan, offset))
 
   // littéraux/commentaires Civet (chaînes, heredocs, `#…`/`###…###`/`//…`/`/*…*/`) puis
   // commentaires HTML (`<!-- … -->`) → espaces même-longueur, findScriptMatches (plus haut).
@@ -677,7 +1039,7 @@ export function extractSections(content: string, opts: {
   // ne doit pas être classé « module ». Group 1 non-gourmand pour ne pas avaler
   // un `module` situé plus loin. Recherche sur la vue Civet masquée (offsets alignés
   // sur `scan`), relecture du texte réel via `m.indices` (drapeau `d`).
-  const { moduleScripts: allModuleScripts, scripts: allScripts } = findScriptMatches(scan)
+  const { moduleScripts: allModuleScripts, scripts: allScripts, styles: allStyles, themes: allThemes, routes: allRoutesBlocks, vars: allVars, types: allTypes, effects: allEffects } = trouverSections(scan)
   const moduleMatch = allModuleScripts[0]
   const moduleSection: ScriptSection = { raw: '', lang: defaultScriptLang, startLine: 1 }
   if (moduleMatch) {
@@ -687,7 +1049,7 @@ export function extractSections(content: string, opts: {
     const explicitLang = extractLang(attrs) as SupportedLang | null
     moduleSection.raw = dedent(scan.slice(...idx[3]))
     moduleSection.lang = explicitLang ?? defaultScriptLang
-    moduleSection.startLine = lineOfOffset(scan, idx[3][0])
+    moduleSection.startLine = lineInFile(idx[3][0])
   }
   if (allModuleScripts.length > 1) {
     throw new Error(t('transpiler.script-module-double', { n: allModuleScripts.length, nAutres: allModuleScripts.length - 1 }))
@@ -703,7 +1065,7 @@ export function extractSections(content: string, opts: {
     const explicitLang = extractLang(scan.slice(...idx[1])) as SupportedLang | null
     script.raw = dedent(scan.slice(...idx[2]))
     script.lang = explicitLang ?? defaultScriptLang
-    script.startLine = lineOfOffset(scan, idx[2][0])
+    script.startLine = lineInFile(idx[2][0])
   }
   if (allScripts.length > 1) {
     throw new Error(t('transpiler.script-double', { n: allScripts.length, nAutres: allScripts.length - 1 }))
@@ -722,16 +1084,13 @@ export function extractSections(content: string, opts: {
   // 3. <style> — le bloc SANS nom est le style de base du composant (embarqué) ; chaque
   // `<style name="bandeau">` est un VARIANT, sorti dans son propre fichier et chargé
   // seulement quand elle sert. Un seul bloc sans nom, un seul par nom.
-  const styleResult = findStyleMatches(scan, [...allModuleScripts, ...allScripts])
-  const allStyles    = styleResult.matches
-  const maskedStyle  = styleResult.maskedView
   const style: StyleSection = { raw: '', lang: defaultStyleLang, sharedCssNames: [], moduleDisplay: 'block', moduleViewTransition: null, moduleViewTransitionPriority: 1 }
   const layouts: LayoutSection[] = []
   let styleVus = 0
   for (const m of allStyles) {
     const idx = m.indices!
     const attrs = scan.slice(...idx[1])
-    checkSectionAttrs('style', attrs, ['lang', 'name', '@css', '@display', '@viewTransition', '@vt'])
+    checkSectionAttrs('style', attrs, ['lang', 'name', ...STYLE_WORDS.map((w) => SIGN + w)])
     const nom = extractAttr(attrs, 'name')
     const lang = (extractLang(attrs) as 'css' | 'sass' | 'scss') ?? defaultStyleLang
     const raw = dedent(scan.slice(...idx[2]))
@@ -741,14 +1100,14 @@ export function extractSections(content: string, opts: {
       style.lang = lang
       style.raw  = raw
 
-      // @css/@display/@viewTransition — RELOGÉS : attributs
+      // :css/:display/:viewTransition — RELOGÉS : attributs
       // du `<style>` de base, plus des directives racine (cf. directives.ts).
-      // `@viewTransition` sans alias `@vt` ici (RETIRÉ, cf. extractStyleViewTransition).
-      const cssAttr = extractAttrValue(attrs, '@css')
+      // `:viewTransition` sans alias `@vt` ici (RETIRÉ, cf. extractStyleViewTransition).
+      const cssAttr = extractAttrValue(attrs, SIGN_RE + 'css')
       if (cssAttr !== null) {
         style.sharedCssNames = cssAttr.split(/[ \t]+/).map(s => s.trim()).filter(s => s.length > 0)
       }
-      const displayAttr = extractAttrValue(attrs, '@display')
+      const displayAttr = extractAttrValue(attrs, SIGN_RE + 'display')
       if (displayAttr !== null) style.moduleDisplay = displayAttr
       const vt = extractStyleViewTransition(attrs)
       if (vt) {
@@ -807,12 +1166,6 @@ export function extractSections(content: string, opts: {
   // plages du <style> déjà trouvé neutralisées : un `<theme>` cité DANS le style (ou
   // dans un script) ne doit pas être pris pour une section. Contrairement à <style>,
   // PLUSIEURS blocs sont permis — un seul sans nom, un seul par nom.
-  let maskedTheme = maskedStyle
-  for (const m of allStyles) {
-    const [start, end] = m.indices![0]
-    maskedTheme = blankRange(maskedTheme, start, end)
-  }
-  const allThemes = [...maskedTheme.matchAll(/^[ \t]*<theme\b([^>]*)>([\s\S]*?)<\/theme>/gmd)]
   const themes: ThemeSection[] = []
   for (const m of allThemes) {
     const idx = m.indices!
@@ -830,14 +1183,8 @@ export function extractSections(content: string, opts: {
 
   // 3-ter. <routes target="…"> — bloc racine, RÉPÉTABLE (un par outlet), table de routes
   // FIXES. Même masquage que <theme> plus les plages des <theme> déjà trouvés neutralisées.
-  let maskedRoutes = maskedTheme
-  for (const m of allThemes) {
-    const [start, end] = m.indices![0]
-    maskedRoutes = blankRange(maskedRoutes, start, end)
-  }
   // (les commentaires HTML sont masqués une seule fois, en amont de `maskedStyle` — ce masquage
   // vivait ici, il couvre désormais <style>, <style name>, <theme> ET <routes>)
-  const allRoutesBlocks = [...maskedRoutes.matchAll(/^[ \t]*<routes\b([^>]*)>([\s\S]*?)<\/routes>/gmd)]
   const routes: RoutesSection[] = []
   for (const m of allRoutesBlocks) {
     const idx = m.indices!
@@ -847,36 +1194,19 @@ export function extractSections(content: string, opts: {
     if (target === '') throw new Error(t('transpiler.routes-target-manquant'))
     if (routes.some(r => r.target === target)) throw new Error(t('transpiler.routes-target-double', { target }))
     const raw = dedent(scan.slice(...idx[2]))
-    routes.push({ raw, target, entries: parseRoutesLines(raw, target) })
+    routes.push({ raw, target, entries: parseRoutesLines(raw, target), line: lineInFile(idx[0][0]) })
   }
 
   // 3-quinquies. <vars> (composant) et <types> (fichier *.types.mjs) — des lignes de règles, même
   // masquage que <routes> plus les plages des <routes> déjà trouvés neutralisées. Aucun attribut ;
   // un seul <vars>, toujours AVANT le <script> : la règle d'une variable se lit avant le code qui
   // l'écrit.
-  let maskedVars = maskedRoutes
-  for (const m of allRoutesBlocks) {
-    const [start, end] = m.indices![0]
-    maskedVars = blankRange(maskedVars, start, end)
-  }
-  const allVars = [...maskedVars.matchAll(/^[ \t]*<vars\b([^>]*)>([\s\S]*?)<\/vars>/gmd)]
-  for (const m of allVars) {
-    const [start, end] = m.indices![0]
-    maskedVars = blankRange(maskedVars, start, end)
-  }
-  const allTypes = [...maskedVars.matchAll(/^[ \t]*<types\b([^>]*)>([\s\S]*?)<\/types>/gmd)]
   // <effects> (fichier *.effects.mjs) : les effets de l'appli, lus par effects/project.ts
-  let maskedEffects = maskedVars
-  for (const m of allTypes) {
-    const [start, end] = m.indices![0]
-    maskedEffects = blankRange(maskedEffects, start, end)
-  }
-  const allEffects = [...maskedEffects.matchAll(/^[ \t]*<effects\b([^>]*)>([\s\S]*?)<\/effects>/gmd)]
   if (allVars.length > 1) throw new Error(t('transpiler.vars-double', { n: allVars.length }))
   const typesSection = (m: RegExpMatchArray, tag: string): TypesSection => {
     const idx = m.indices!
     if (scan.slice(...idx[1]).trim() !== '') throw new Error(t('transpiler.section-sans-attribut', { tag, attributs: scan.slice(...idx[1]).trim() }))
-    return { raw: dedent(scan.slice(...idx[2])), startLine: lineOfOffset(scan, idx[2][0]) }
+    return { raw: dedent(scan.slice(...idx[2])), startLine: lineInFile(idx[2][0]) }
   }
   const vars  = allVars.length > 0 ? typesSection(allVars[0], 'vars') : null
   const types = allTypes.map(m => typesSection(m, 'types'))
@@ -884,7 +1214,7 @@ export function extractSections(content: string, opts: {
   if (allVars.length > 0) {
     const debutVars   = allVars[0].indices![0][0]
     const premierCode = [...allModuleScripts, ...allScripts].map(m => m.indices![0][0]).filter(o => o < debutVars)
-    if (premierCode.length > 0) throw new Error(t('transpiler.vars-apres-script', { ligne: lineOfOffset(scan, debutVars) }))
+    if (premierCode.length > 0) throw new Error(t('transpiler.vars-apres-script', { ligne: lineInFile(debutVars) }))
   }
 
   // 4. HTML : tout sauf les <script>/<style>/<theme>/<routes> déjà repérés (au plus
@@ -895,8 +1225,8 @@ export function extractSections(content: string, opts: {
   // toutes les lignes qui le suivent : le parseur et le générateur (`node.line`/`currentLine`
   // posés sur CE `html`) citent alors un numéro FAUX pour toute erreur après un <script>/
   // <style>/<theme>/<routes> (`{await}` en ligne 6 du .mjs cité « ligne 2 »). Remplacé par un
-  // commentaire HTML inerte de MÊME hauteur (mêmes `\n` que le bloc retiré) : `parseComment`
-  // (parser/index.ts) ne produit NI texte NI nœud pour un commentaire — zéro trace dans l'AST,
+  // commentaire HTML inerte de MÊME hauteur (mêmes `\n` que le bloc retiré) : la lecture du gabarit
+  // (lireParLArbre, parser/index.ts) ne produit NI texte NI nœud pour un commentaire — zéro trace dans l'AST,
   // dans `surgicalHtml` ou dans la sortie compilée, seuls les OFFSETS DE LIGNE du reste du
   // gabarit restent justes.
   // SEUIL `> 0` retour à la ligne, volontaire : un bloc qui tient sur UNE SEULE ligne (aucun
@@ -973,11 +1303,11 @@ export function extractSections(content: string, opts: {
     throw new Error(t('transpiler.balise-orpheline-html', { balise: orphanTag[0] }))
   }
 
-  const htmlRestored = restoreMacros(html)
+  const htmlRestored = macroMasks.restore(html)
   // ce que le `.trim()` mange en tête donne la ligne de départ du HTML (les blocs retirés, eux,
   // gardent leur hauteur)
   const htmlStartLine = lineOfOffset(htmlRestored, htmlRestored.length - htmlRestored.trimStart().length)
   html = htmlRestored.trim()
 
-  return { module: moduleSection, script, style, layouts, themes, routes, vars, types, effects, html, htmlStartLine, warnings }
+  return { module: moduleSection, script, style, layouts, themes, routes, vars, types, effects, html, htmlStartLine, warnings, lostInStrings: lostPlaces(written, lost) }
 }

@@ -74,7 +74,7 @@ describe('handlers — les variables ordinaires du <script>', function () {
   })
 
   // une ligne pure d'un {for} de racine (elle ne lit que son élément et son indice) les relit sur l'entrée de la ligne
-  // (`el._mjs_row._mjs_en`) ; le squelette en tête du handler les déclare toujours pour lui seul
+  // (`el._mjs_ev._mjs_en`) ; le squelette en tête du handler les déclare toujours pour lui seul
   it('la variable de boucle reste LOCALE, même si le <script> porte un homonyme', async function () {
     const batch = await batchInline("<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}\n  <button @click={console.log(item)}>x</button>\n{end}\n")
     assert.match(batch, /let item = _mjs_ra_0\._mjs_it\b/, 'le squelette DOIT garder sa propre déclaration')
@@ -194,31 +194,4 @@ describe('handlers — les variables ordinaires du <script>', function () {
     })
   })
 
-  // ─── le repli historique `templateLang: "js"` (handlers compilés en Coffee) ──
-  // Coffee auto-déclare NATIVEMENT et n'a pas de `predeclared` : il pose un `var n;` en tête
-  // du handler. On le laisse compiler, puis on retire la déclaration de trop sur l'AST de sa
-  // sortie — même résultat que Civet, par l'autre bout.
-  describe('le chemin Coffee (templateLang: "js")', function () {
-    const batchCoffee = async (src: string): Promise<string> => {
-      const { output } = await transpile(src, { moduleName: 'card', templateLang: 'js' })
-      const debut = output.indexOf('_mjs_inline = [')
-      return output.slice(debut, output.indexOf('\n]', debut))
-    }
-
-    it('une écriture nue vise la var du <script>', async function () {
-      const batch = await batchCoffee("<script>\n  n = 'a'\n</script>\n<button @click={n = 'b'}>x</button>\n")
-      assert.match(batch, /return n = 'b'/)
-      assert.doesNotMatch(batch, /var n[,;]/, "AVANT : `var n;` local — écriture perdue, sans un mot")
-    })
-
-    it('une locale de travail garde son `var`', async function () {
-      const batch = await batchCoffee('<button @click={tmp = 3; console.log(tmp)}>x</button>\n')
-      assert.match(batch, /var tmp/)
-    })
-
-    it('la variable de boucle garde le sien', async function () {
-      const batch = await batchCoffee("<script>\n  item = 'du script'\n  $list = [1, 2]\n</script>\n{for item in $list}\n  <button @click={console.log(item)}>x</button>\n{end}\n")
-      assert.match(batch, /var [^;]*\bitem\b/)
-    })
-  })
 })

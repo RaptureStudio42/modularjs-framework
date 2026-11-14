@@ -31,8 +31,8 @@ describe('temps internes __v/__s — pas de collision TDZ', () => {
     const r = await transpile('{for __v in $items}<span>{__v}</span>{end}', { moduleName: 't', defaultScriptLang: 'js' })
     assert.ok(!/\bconst __v = __v\b/.test(r.output), 'texte interpolé : pas de collision')
   })
-  it('{for __v in $items}<div @class{on}={__v}> ne collisionne pas', async () => {
-    const r = await transpile('{for __v in $items}<div @class{on}={__v}>x</div>{end}', { moduleName: 't', defaultScriptLang: 'js' })
+  it('{for __v in $items}<div :class{on}={__v}> ne collisionne pas', async () => {
+    const r = await transpile('{for __v in $items}<div :class{on}={__v}>x</div>{end}', { moduleName: 't', defaultScriptLang: 'js' })
     assert.ok(!/\bconst __v = !!\(__v\)/.test(r.output), '@class : pas de collision')
   })
 })

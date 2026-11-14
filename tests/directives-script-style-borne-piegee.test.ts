@@ -61,7 +61,7 @@ describe('scriptInertMask — un </script> littéral AVANT la vraie fermeture ne
       '<SCRIPT>',
       '  $doc = "</SCRIPT>"',
       '  docText := `',
-      "  @import Faux 'dehors.civet'",
+      "  @import Faux 'dehors.civet.mjs'",
       '  `',
       '</SCRIPT>',
       '<p>{$doc}{docText}</p>',
@@ -77,18 +77,18 @@ describe('scriptInertMask — un </script> littéral AVANT la vraie fermeture ne
       '<script module>',
       '  $doc = "</script>"',
       '  docText := `',
-      "  @import Faux 'dehors.civet'",
+      "  @import Faux 'dehors.civet.mjs'",
       '  `',
       '</script>',
       '<script>',
-      "  @import Vrai 'dedans.civet'",
+      "  @import Vrai 'dedans.civet.mjs'",
       '</script>',
       '<p>{$doc}{docText}</p>',
       '',
     ].join('\n')
     const { pendingAutoImports } = extractDirectives(src)
     assert.equal(pendingAutoImports.length, 1, `pendingAutoImports : ${JSON.stringify(pendingAutoImports)}`)
-    assert.match(pendingAutoImports[0], /dedans\.civet/)
+    assert.match(pendingAutoImports[0], /dedans\.civet\.mjs/)
   })
 })
 
@@ -211,7 +211,7 @@ describe('<script MODULE> (casse dépareillée) : les directives racine qui suiv
   })
 
   it('<script MODULE> puis <script> avec un @import écrit en code : l\'import est vu', () => {
-    const src = ['<script MODULE>', '  export $$x = 1', '</script>', '<script>', "  @import Vrai 'dedans.civet'", '</script>', '<p>x</p>', ''].join('\n')
+    const src = ['<script MODULE>', '  export $$x = 1', '</script>', '<script>', "  @import Vrai 'dedans.civet.mjs'", '</script>', '<p>x</p>', ''].join('\n')
     assert.equal(extractDirectives(src).pendingAutoImports.length, 1)
   })
 })

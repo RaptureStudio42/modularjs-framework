@@ -13,7 +13,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
-const OMBRE = `<form id="f" @noUJS>
+const OMBRE = `<form id="f" :noUJS>
   <@@checkbox id="c" name="c" checked>Case</@@checkbox>
   <@@switch id="s" name="s" checked>Interrupteur</@@switch>
   <@@number id="n" name="n" value={3}></@@number>

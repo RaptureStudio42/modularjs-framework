@@ -19,6 +19,13 @@ import { findConfig, resolveBundlerOpts, OPTIONAL_RUNTIME_MODULES } from '../src
 
 const fichier = (m: string) => m === 'vault' ? 'mjs_store_globals.ts' : 'mjs_' + m + '.ts'
 
+// le texte des blocs balisés `// <nom>` … `// </nom>` de mjs_ujs.ts, lignes de balise exclues, dans l'ordre
+const UJS_SRC = readFileSync(join(import.meta.dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
+function blocsDuSource(nom: string): string[] {
+  const re = new RegExp('^[ \\t]*// <' + nom + '>\\n([\\s\\S]*?)^[ \\t]*// </' + nom + '>\\n', 'gm')
+  return [...UJS_SRC.matchAll(re)].map(m => m[1])
+}
+
 // construit un petit projet, compile, puis rend la sélection tirée du relevé réel (celle que bundleRuntime a prise)
 async function selection(composants: Record<string, string>, config: Record<string, unknown> = {}, avant?: (racine: string) => void, env: 'dev' | 'prod' = 'dev'): Promise<{ modules: string[]; infos: string[]; files: string[]; coreOnly: boolean; coeur: string | null }> {
   const racine = mjsTmp('runtime-repere')
@@ -55,7 +62,7 @@ function listeProposee(infos: string[]): string[] | null {
 // tous les modules optionnels, comme `"runtime": "all"` sans traduction configurée
 const TOUS = OPTIONAL_RUNTIME_MODULES.filter(m => m !== 'i18n')
 
-const SANS_RIEN = `<script>\n$ville = ''\n@chercher = -> $ville = ''\n</script>\n<form class="f" @submit.prevent={chercher()} @noUJS><input value=!{$ville}><button>ok</button></form>\n<p><a href="https://exemple.org/x" target="_blank" rel="noopener">source</a></p>`
+const SANS_RIEN = `<script>\n$ville = ''\n@chercher = -> $ville = ''\n</script>\n<form class="f" @submit.prevent={chercher()} :noUJS><input value=!{$ville}><button>ok</button></form>\n<p><a href="https://exemple.org/x" target="_blank" rel="noopener">source</a></p>`
 
 describe('bundler — sans clé `runtime`, seuls les modules optionnels repérés partent au cœur', function () {
   this.timeout(60000)
@@ -74,10 +81,10 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
     assert.deepEqual(modules, ['ajax', 'router', 'modal', 'ujs'])
   })
 
-  it("une vue `<@view>` garde router, et avec lui ujs (l'adresse `#/…` changée passe par son écouteur), ajax et modal", async () => {
+  it("une vue `<@view>` garde router, et avec lui ujs (l'adresse `#/…` changée passe par son écouteur) ; ni ajax ni modal sans navigation vers le serveur", async () => {
     const app = ['<script>', '  @routes =', "    'main':", "      '/':      'home-page'", "      '/about': 'about-page'", '</script>', '', '<@view main>'].join('\n')
     const { modules } = await selection({ 'app.page': app, 'home-page': '<h1>Accueil</h1>', 'about-page': '<h1>A propos</h1>' })
-    assert.deepEqual(modules, ['ajax', 'router', 'modal', 'ujs'], 'AVANT : router seul, `location.hash = \'#/about\'` ne changeait plus la vue')
+    assert.deepEqual(modules, ['router', 'ujs'], 'AVANT : router seul, `location.hash = \'#/about\'` ne changeait plus la vue ; puis ajax et modal suivaient ujs sans servir')
   })
 
   it('un formulaire ordinaire garde ujs, router, ajax et modal', async () => {
@@ -158,7 +165,7 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
   })
 
   it("un module emmené par un autre compte comme gardé : avec `@transition` seul, easing n'est pas dit laissé de côté", async () => {
-    const code = `<script>\n  $vu = true\n</script>\n\n{if $vu}\n  <p @transition=*fade>bonjour</p>\n{end}`
+    const code = `<script>\n  $vu = true\n</script>\n\n{if $vu}\n  <p :transition=*fade>bonjour</p>\n{end}`
     const { modules, infos } = await selection({ 'essai-app': code })
     assert.deepEqual(modules, ['easing'], 'le moteur des transitions vit dans easing')
     const ligne = infos.find(l => l.includes('"runtime": "all"'))
@@ -182,7 +189,7 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
   // un accès que le repérage ne sait pas résoudre ne dit pas quel module sert : par prudence, tous restent, et l'information dit où
   for (const [cas, lignes, ligne] of [
     ['un indice calculé `µ[nom].fire`', ['<script>', '  ouvrir := ->', "    nom := 'mo' + 'dal'", "    µ[nom].fire { title: 'x' }", '</script>', '<button @click={ouvrir()}>a</button>'], 4],
-    ['une déstructuration `{ ajax } := µ`', ['<script>', '  ouvrir := ->', '    { ajax } := µ', "    ajax '/x'", '</script>', '<button @click={ouvrir()}>a</button>'], 3],
+    ['une déstructuration `{ modal } := µ`', ['<script>', '  ouvrir := ->', '    { modal } := µ', "    modal.fire { title: 'x' }", '</script>', '<button @click={ouvrir()}>a</button>'], 3],
     ['`µ` passé à une fonction', ['<script>', '  brancher := (m) -> m.modal.fire { title: \'x\' }', '', '  ouvrir := -> brancher µ', '</script>', '<button @click={ouvrir()}>a</button>'], 4]
   ] as Array<[string, string[], number]>) {
     it(`${cas} : tous les modules optionnels sont gardés, et l'information dit où et comment l'éviter`, async () => {
@@ -197,11 +204,11 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
   }
 
   it("un accès que le repérage ne sait pas résoudre dans un module `.civet` : nommé à sa ligne du fichier", async () => {
-    const composant = "@import go 'outil.module.civet'\n<script>\n  lancer := -> go()\n</script>\n<button @click={lancer()}>a</button>"
+    const composant = "@import go 'outil.module.civet.mjs'\n<script>\n  lancer := -> go()\n</script>\n<button @click={lancer()}>a</button>"
     const module    = "export go = ->\n  { modal } := µ\n  modal.fire { title: 'x' }\n"
-    const { modules, infos } = await selection({ 'outil-app': composant }, {}, (racine) => writeFileSync(join(racine, 'src', 'outil.module.civet'), module))
+    const { modules, infos } = await selection({ 'outil-app': composant }, {}, (racine) => writeFileSync(join(racine, 'src', 'outil.module.civet.mjs'), module))
     assert.deepEqual(modules, TOUS)
-    assert.ok(infos.some(l => l.includes('src/outil.module.civet:2')), 'information attendue : ' + infos.join(' | '))
+    assert.ok(infos.some(l => l.includes('src/outil.module.civet.mjs:2')), 'information attendue : ' + infos.join(' | '))
   })
 
   it("un accès que le repérage ne sait pas résoudre dans un fichier du manifeste externe : nommé à sa ligne du fichier", async () => {
@@ -227,21 +234,16 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
     assert.deepEqual(modules, ['ajax', 'schema'], 'AVANT : ajax seul, l\'appel levait ajaxBinNoSchemaModule')
   })
 
-  // `µ.ajax` lu en entier (rangé dans une variable, décomposé, passé à une fonction) ne dit pas quelle méthode sert : `binary`, qui décode
-  // la réponse avec le codec de schema, peut en être une — schema est gardé avec ajax, et l'information dit où et comment l'éviter
+  // `µ.ajax` pris comme valeur (rangé dans une variable, décomposé, passé à une fonction) : µajax s'appelle directement, la
+  // construction s'arrête et montre l'appel direct à écrire (aucun module gardé par prudence)
   for (const [cas, lignes, ligne] of [
     ['`a := µ.ajax` puis `a.binary(…)`', ['<script>', '  charger := ->', '    a := µ.ajax', "    a.binary '/coups', { schema: 'coup' }", '</script>', '<button @click={charger()}>a</button>'], 3],
     ['une déstructuration `{ binary } := µ.ajax`', ['<script>', '  charger := ->', '    { binary } := µ.ajax', "    binary '/coups', { schema: 'coup' }", '</script>', '<button @click={charger()}>a</button>'], 3],
     ['`µ.ajax` passé à une fonction', ['<script>', "  lire := (a) -> a.binary '/coups', { schema: 'coup' }", '', '  charger := -> lire µ.ajax', '</script>', '<button @click={charger()}>a</button>'], 4]
   ] as Array<[string, string[], number]>) {
-    it(`${cas} : schema est gardé avec ajax, et l'information dit où et comment l'éviter`, async () => {
-      const { modules, infos } = await selection({ 'coups-app': lignes.join('\n') })
-      assert.deepEqual(modules, ['ajax', 'schema'], 'AVANT : ajax seul, l\'appel levait ajaxBinNoSchemaModule')
-      const info = infos.find(l => l.includes('src/coups-app.mjs:' + ligne))
-      assert.ok(info, 'information attendue, avec le fichier et la ligne : ' + infos.join(' | '))
-      assert.match(info!, /schema/)
-      assert.match(info!, /µ\.ajax\.get/, 'comment l\'éviter : écrire la méthode après le point')
-      assert.deepEqual(listeProposee(infos), ['ajax', 'schema'], 'la liste prête à coller garde schema')
+    it(`${cas} : la construction s'arrête et montre l'appel direct`, async () => {
+      void ligne
+      await assert.rejects(selection({ 'coups-app': lignes.join('\n') }), /µajax s'appelle directement/)
     })
   }
 
@@ -295,18 +297,37 @@ describe('bundler — sans clé `runtime`, seuls les modules optionnels repéré
     })
   }
 
-  // appli à vues serveur et appli en JavaScript réduites : la liste proposée, collée, rend le même cœur, à l'octet
-  for (const [cas, composants, config, avant] of [
-    ['appli à vues serveur réduite : aucun usage dans les composants', { 'meteo-app': SANS_RIEN }, {}, (racine: string) => mkdirSync(join(racine, 'app', 'views'), { recursive: true })],
-    ['appli en JavaScript réduite : un lien interne', { 'menu-app': `<script>\nconst titre = 'menu'\n</script>\n${LIEN}` }, { defaultScriptLang: 'js' }, undefined]
-  ] as Array<[string, Record<string, string>, Record<string, unknown>, ((racine: string) => void) | undefined]>) {
-    it(`${cas} : la liste proposée, collée, rend le même cœur à l'octet`, async () => {
-      const defaut = await selection(composants, config, avant, 'prod')
-      const liste  = listeProposee(defaut.infos)
-      assert.ok(liste, 'liste attendue : ' + defaut.infos.join(' | '))
-      const collee = await selection(composants, { ...config, runtime: liste }, avant, 'prod')
+  // appli à vues serveur et appli en JavaScript réduites : la liste proposée nomme ujs, qui garde le bloc du préchargement des liens
+  // (`<precharge-on>`, mjs_ujs.ts) ; collée, elle rend à l'octet le cœur détecté sur le même projet quand il écrit `:preload="on"`, et
+  // sur un projet qui ne l'écrit pas, ce même cœur : le détecté plus ce seul bloc
+  const PRECHARGE = '<nav><a href="/produits" :preload="on">produits</a></nav>'
+  for (const [cas, composants, avecPrecharge, config, avant] of [
+    ['appli à vues serveur réduite : aucun usage dans les composants', { 'meteo-app': SANS_RIEN }, { 'meteo-app': SANS_RIEN + '\n' + PRECHARGE }, {}, (racine: string) => mkdirSync(join(racine, 'app', 'views'), { recursive: true })],
+    ['appli en JavaScript réduite : un lien interne', { 'menu-app': `<script>\nconst titre = 'menu'\n</script>\n${LIEN}` }, { 'menu-app': `<script>\nconst titre = 'menu'\n</script>\n${PRECHARGE}` }, { defaultScriptLang: 'js' }, undefined]
+  ] as Array<[string, Record<string, string>, Record<string, string>, Record<string, unknown>, ((racine: string) => void) | undefined]>) {
+    it(`${cas} : la liste proposée, collée, rend le même cœur, plus le bloc du préchargement que la liste garde avec \`ujs\``, async () => {
+      const avec      = await selection(avecPrecharge, config, avant, 'prod')
+      const listeAvec = listeProposee(avec.infos)
+      assert.ok(listeAvec, 'liste attendue : ' + avec.infos.join(' | '))
+      const avecCollee = await selection(avecPrecharge, { ...config, runtime: listeAvec }, avant, 'prod')
+      assert.ok(avec.coeur !== null && avecCollee.coeur !== null, 'cœur écrit attendu')
+      assert.ok(avecCollee.coeur === avec.coeur, 'projet qui écrit le préchargement : même cœur à l\'octet')
+      // projet qui ne l'écrit pas, bâti sans minification (les noms courts dépendent du code des composants) : le cœur collé, privé du
+      // texte des blocs `<precharge-on>` et rendu aux lignes `<sans-precharge-on>`, est le cœur détecté à l'octet
+      const sansMin = { ...config, minify: false }
+      const defaut  = await selection(composants, sansMin, avant, 'prod')
+      const liste   = listeProposee(defaut.infos)
+      assert.deepEqual(liste, listeAvec, 'même liste proposée')
+      const collee = await selection(composants, { ...sansMin, runtime: liste }, avant, 'prod')
       assert.ok(defaut.coeur !== null && collee.coeur !== null, 'cœur écrit attendu')
-      assert.ok(collee.coeur === defaut.coeur, 'même cœur à l\'octet')
+      assert.ok(collee.coeur.includes('const _mjsEagerFlush') && !defaut.coeur.includes('const _mjsEagerFlush'), 'le bloc du préchargement, dans le cœur collé seulement')
+      let prive = collee.coeur
+      const [bloc1, bloc2] = blocsDuSource('precharge-on')
+      const [sans]         = blocsDuSource('sans-precharge-on').map(t => t.replace(/^(\s*)\/\/ /gm, '$1'))
+      assert.equal(prive.split(bloc1).length, 2, 'premier bloc du préchargement attendu une fois')
+      assert.equal(prive.split(bloc2).length, 2, 'second bloc du préchargement attendu une fois')
+      prive = prive.replace(bloc1, () => '').replace(bloc2, () => sans)
+      assert.ok(prive === defaut.coeur, 'projet qui ne l\'écrit pas : même cœur, plus le seul bloc du préchargement')
     })
   }
 

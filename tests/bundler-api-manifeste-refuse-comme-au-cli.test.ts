@@ -43,7 +43,7 @@ describe('bundler — par l\'API, les mêmes refus du manifeste qu\'au CLI', fun
 
   it('manifeste en .civet : refusé, le fichier de l\'auteur reste intact', async () => {
     const p = projet('api-manifeste-extension')
-    const manifeste = join(p.root, 'app.civet')
+    const manifeste = join(p.root, 'app.civet.mjs')
     writeFileSync(manifeste, 'AUTEUR\n')
     const erreurs = await construire({ sourceDir: p.src, outputDir: p.out, manifestPath: manifeste })
     assert.equal(erreurs.length, 1, JSON.stringify(erreurs))

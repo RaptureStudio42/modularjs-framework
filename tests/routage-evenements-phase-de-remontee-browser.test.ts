@@ -30,7 +30,7 @@ const SOURCES: Record<string, string> = {
   'rb-enfant.mjs': `<script>\n${NOTE}\n</script>\n<button class="dedans" @click.stop={note('enfant-stop')}>s</button>\n<button class="libre" @click={note('enfant')}>l</button>\n`,
   'rb-parent.mjs': `<script>\n${NOTE}\n</script>\n<@rb-enfant @click={note('parent')}/>\n`,
   'rb-leger.mjs': `<script>\n${NOTE}\n</script>\n<button class="lb" @click={note('leger')}>l</button>\n<button class="ls" @click.stop={note('leger-stop')}>s</button>\n`,
-  'rb-hote.mjs': `<script>\n${NOTE}\n</script>\n<@rb-leger @lightDom @click={note('hote')}/>\n`,
+  'rb-hote.mjs': `<script>\n${NOTE}\n</script>\n<@rb-leger :lightDom @click={note('hote')}/>\n`,
   'rb-cadre.mjs': `<script>\n${NOTE}\n</script>\n<div class="cadre" @click={note('cadre')}><@slot/></div>\n`,
   'rb-page.mjs': `<script>\n${NOTE}\n</script>\n<@rb-cadre><button class="gl" @click={note('glisse')}>g</button><h3 class="titre">t</h3><button class="glp" @click.propagate={note('glisse-propage')}>p</button></@rb-cadre>\n`,
 }

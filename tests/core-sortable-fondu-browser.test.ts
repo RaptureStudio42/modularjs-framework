@@ -61,7 +61,7 @@ const STYLE = `<style>
     line-height: 38px
 </style>`
 
-const ligne = (en = '', reglage = '') => `<div class="ligne" data-id={et.id} @transition=*crossfade(key: et.id${reglage})${en}><span class="t">{et.titre}</span></div>`
+const ligne = (en = '', reglage = '') => `<div class="ligne" data-id={et.id} :transition=*crossfade(key: et.id${reglage})${en}><span class="t">{et.titre}</span></div>`
 
 const A3 = '[{ id: 1, titre: \'A1\' }, { id: 2, titre: \'A2\' }, { id: 3, titre: \'A3\' }]'
 const B2 = '[{ id: 4, titre: \'B1\' }, { id: 5, titre: \'B2\' }]'
@@ -105,7 +105,7 @@ ${STYLE}
 
 const SOURCES_GROUPES: Record<string, string> = {
   'fa-page.mjs': deuxListes(''),
-  'ff-page.mjs': deuxListes(' @flip=200'),
+  'ff-page.mjs': deuxListes(' :flip=200'),
   'fd-page.mjs': deuxListes('', ', duration: 1500ms'),
   'fc-page.mjs': `<script>
   $a = ${liste(1, 12, 'A')}
@@ -131,7 +131,7 @@ const SOURCES_GROUPES: Record<string, string> = {
 <p class="sorts">{$sorts}</p>
 ${STYLE}
 `,
-  'fo-page.mjs': deuxListes('', '').replace(/@transition=\*crossfade\(key: et\.id\)/g, '@out=*fade'),
+  'fo-page.mjs': deuxListes('', '').replace(/:transition=\*crossfade\(key: et\.id\)/g, ':out=*fade'),
   'fn-page.mjs': `<script>
   $menu = ${MENU}
   $sorts = 0
@@ -144,7 +144,7 @@ ${STYLE}
         <h3 class="titre">{d.nom}</h3>
         <@@sortable class="lignes" data-id={d.id} value=!{d.lignes} group="menu" @sort.propagate={$sorts++}>
           {for l in d.lignes by id}
-            <div class="ligne" data-id={l.id} @transition=*crossfade(key: l.id)><span class="t">{l.nom}</span></div>
+            <div class="ligne" data-id={l.id} :transition=*crossfade(key: l.id)><span class="t">{l.nom}</span></div>
           {end}
         </@@sortable>
       </section>

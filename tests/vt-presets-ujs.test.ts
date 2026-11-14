@@ -505,7 +505,7 @@ function makeClickHandler() {
   return new Function('e', 'µ', 'window', 'document', 'DOMParser', 'FormData', extractClickBody())
 }
 function makePopstateHandler() {
-  return new Function('e', 'µ', 'window', 'document', extractPopstateBody())
+  return new Function('e', 'µ', 'window', 'document', 'DOMParser', extractPopstateBody())
 }
 // Bloc des helpers de zone de navigation (µ._mjs_navMountZone → µ._mjs_navRequest,
 // contigus, cf. leur bandeau commun) : les 3 points de swap (click/popstate/
@@ -577,6 +577,7 @@ function makeIntegrationMu(doc: any, vtGate: boolean, win?: any) {
   const µ: any = {
     realTarget: (e: any) => e.target,
     warn() {}, error() {}, log() {},
+    _mjs_th: (html: string) => html,
     _mjs_navSeq: 0,
     _mjs_lastUjsPath: '/',
     Router: { _mjs_vtEnabled: () => vtGate, navigate() {} },
@@ -670,6 +671,7 @@ describe('mjs_ujs — swap du contenant de navigation réellement enveloppé (in
     µ._mjs_ajaxGet = (_url: string, success: any) => { capturedSuccess = success }
     const pushStateCalls: any[] = []
     const win: any = { location: { pathname: '/', search: '', hash: '', origin: 'http://x' }, history: { pushState: (...a: any[]) => pushStateCalls.push(a) }, scrollTo() {} }
+    installMountCascade(µ, doc, win) // la visite commune (aides de la navigation) défile dans la fenêtre du clic
     // `_swapClickNet` (dans le callback enveloppé) appelle µ._mjs_finalPathFor (résolution
     // de redirection serveur) — utilitaire RÉEL extrait, pas réimplémenté à la main.
     new Function('µ', 'window', extractFinalPathForStatement())(µ, win)
@@ -699,6 +701,7 @@ describe('mjs_ujs — swap du contenant de navigation réellement enveloppé (in
     let capturedSuccess: any
     µ._mjs_ajaxGet = (_url: string, success: any) => { capturedSuccess = success }
     const win: any = { location: { pathname: '/', search: '', hash: '', origin: 'http://x' }, history: { pushState() {} }, scrollTo() {} }
+    installMountCascade(µ, doc, win) // la visite commune (aides de la navigation) défile dans la fenêtre du clic
     new Function('µ', 'window', extractFinalPathForStatement())(µ, win)
     const link = makeLink({}, { pathname: '/produit/42', href: 'http://x/produit/42' })
 
@@ -776,8 +779,8 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     const out = join(root, 'out')
     writeFileSync(
       join(src, 'vt-link-demo.mjs'),
-      `<a href="/x" @pageTransition="slide-left">Suivant</a>\n<a href="/y" @pageTransition="off">Rester</a>\n` +
-      `<p><code>&lt;a @pageTransition="zoom"&gt;</code></p>\n`,
+      `<a href="/x" :pageTransition="slide-left">Suivant</a>\n<a href="/y" :pageTransition="off">Rester</a>\n` +
+      `<p><code>&lt;a :pageTransition="zoom"&gt;</code></p>\n`,
     )
     const bundler = new Bundler({ sourceDir: src, outputDir: out, manifestPath: join(out, 'bundle.js') })
     await bundler.compile()
@@ -787,7 +790,7 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     const comp = readFileSync(join(out, files.find(f => /^vt-link-demo-/.test(f))!), 'utf-8')
     assert.match(comp, /mjs-vt=['"]slide-left['"]/, '@pageTransition="slide-left" → mjs-vt="slide-left"')
     assert.match(comp, /mjs-vt=['"]off['"]/, '@pageTransition="off" → mjs-vt="off"')
-    assert.match(comp, /&lt;a @pageTransition/, 'le <code> d\'exemple garde @pageTransition littéral (pas de conversion, masquage)')
+    assert.match(comp, /&lt;a :pageTransition/, 'le <code> d\'exemple garde @pageTransition littéral (pas de conversion, masquage)')
   })
 
   it('@vt="…" sur un <a> est REFUSÉ à la compilation — orientation vers @pageTransition', async function () {
@@ -803,26 +806,26 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
     assert.equal(stats.errors.length, 1, 'attendait exactement 1 erreur de compilation')
     assert.match(
       stats.errors[0].message,
-      /@vt ne s'écrit plus ainsi : c'est désormais @pageTransition\.\nRemplacez la ligne « @vt="zoom" » par : @pageTransition="zoom"/,
+      /@vt ne s'écrit plus ainsi : c'est désormais :pageTransition\.\nRemplacez la ligne « @vt="zoom" » par : :pageTransition="zoom"/,
     )
   })
 
   it('@pageTransition="cube={ dir: left }" (guillemets doubles) → mjs-vt porte la chaîne verbatim, accolades échappées en entités', async () => {
-    const { output } = await transpile('<a href="/x" @pageTransition="cube={ dir: left }">Suivant</a>\n', { moduleName: 'pt-obj-dq' })
+    const { output } = await transpile('<a href="/x" :pageTransition="cube={ dir: left }">Suivant</a>\n', { moduleName: 'pt-obj-dq' })
     assert.match(output, /mjs-vt=['"]cube=&#123; dir: left &#125;['"]/)
   })
 
   it('@pageTransition=\'cube={ dir: left }\' (guillemets simples) → même résultat', async () => {
-    const { output } = await transpile(`<a href="/x" @pageTransition='cube={ dir: left }'>Suivant</a>\n`, { moduleName: 'pt-obj-sq' })
+    const { output } = await transpile(`<a href="/x" :pageTransition='cube={ dir: left }'>Suivant</a>\n`, { moduleName: 'pt-obj-sq' })
     assert.match(output, /mjs-vt=['"]cube=&#123; dir: left &#125;['"]/)
   })
 
   it('"fade", "on" et "off" restent inchangés (non-régression du nom simple et des mots réservés)', async () => {
-    const fade = await transpile('<a href="/x" @pageTransition="fade">Suivant</a>\n', { moduleName: 'pt-fade' })
+    const fade = await transpile('<a href="/x" :pageTransition="fade">Suivant</a>\n', { moduleName: 'pt-fade' })
     assert.match(fade.output, /mjs-vt=['"]fade['"]/)
-    const on = await transpile('<a href="/x" @pageTransition="on">Suivant</a>\n', { moduleName: 'pt-on' })
+    const on = await transpile('<a href="/x" :pageTransition="on">Suivant</a>\n', { moduleName: 'pt-on' })
     assert.match(on.output, /mjs-vt=['"]on['"]/)
-    const off = await transpile('<a href="/x" @pageTransition="off">Suivant</a>\n', { moduleName: 'pt-off' })
+    const off = await transpile('<a href="/x" :pageTransition="off">Suivant</a>\n', { moduleName: 'pt-off' })
     assert.match(off.output, /mjs-vt=['"]off['"]/)
   })
 
@@ -832,44 +835,44 @@ describe('compilateur — @pageTransition (lien) → mjs-vt', function () {
   // (signe égal, guillemets) — l'exemple proposé doit donc être PROPRE à cette position.
   it('@pageTransition="cube:left" (suffixe :direction) → ERREUR, exemple PROPRE à @pageTransition (chaîne, pas le point des 4 autres positions)', async () => {
     await assert.rejects(
-      transpile('<a href="/x" @pageTransition="cube:left">Suivant</a>\n', { moduleName: 'pt-dir-1' }),
-      /la direction ne s'écrit plus dans le nom — écrivez @pageTransition="cube=\{ dir: left \}"\./,
+      transpile('<a href="/x" :pageTransition="cube:left">Suivant</a>\n', { moduleName: 'pt-dir-1' }),
+      /la direction ne s'écrit plus dans le nom — écrivez :pageTransition="cube=\{ dir: left \}"\./,
     )
   })
 
   it('@pageTransition="cube={ dir: gauche }" et "cube={ duree: 600 }" → erreur de parsing citant l\'attribut', async () => {
     await assert.rejects(
-      transpile('<a href="/x" @pageTransition="cube={ dir: gauche }">Suivant</a>\n', { moduleName: 'pt-parse-1' }),
-      /@pageTransition="cube=\{ dir: gauche \}" : direction invalide 'gauche'/,
+      transpile('<a href="/x" :pageTransition="cube={ dir: gauche }">Suivant</a>\n', { moduleName: 'pt-parse-1' }),
+      /:pageTransition="cube=\{ dir: gauche \}" : direction invalide 'gauche'/,
     )
     await assert.rejects(
-      transpile('<a href="/x" @pageTransition="cube={ duree: 600 }">Suivant</a>\n', { moduleName: 'pt-parse-2' }),
-      /@pageTransition="cube=\{ duree: 600 \}" : clé inconnue 'duree'/,
+      transpile('<a href="/x" :pageTransition="cube={ duree: 600 }">Suivant</a>\n', { moduleName: 'pt-parse-2' }),
+      /:pageTransition="cube=\{ duree: 600 \}" : clé inconnue 'duree'/,
     )
   })
 
   it('@pageTransition="cube={ priority: 3 }" → REFUSÉ (décision : priority sans effet niveau lien, cascade à 2 niveaux)', async () => {
     await assert.rejects(
-      transpile('<a href="/x" @pageTransition="cube={ priority: 3 }">Suivant</a>\n', { moduleName: 'pt-priority' }),
-      /@pageTransition="cube=\{ priority: 3 \}" : 'priority'\/'p' n'a pas d'effet sur un lien/,
+      transpile('<a href="/x" :pageTransition="cube={ priority: 3 }">Suivant</a>\n', { moduleName: 'pt-priority' }),
+      /:pageTransition="cube=\{ priority: 3 \}" : 'priority'\/'p' n'a pas d'effet sur un lien/,
     )
   })
 
   it('@pageTransition="cube:sideways" (mot après `:` non reconnu) → forme invalide (le filet, parité avec <@view>/<style>)', async () => {
     await assert.rejects(
-      transpile('<a href="/x" @pageTransition="cube:sideways">Suivant</a>\n', { moduleName: 'pt-invalid' }),
+      transpile('<a href="/x" :pageTransition="cube:sideways">Suivant</a>\n', { moduleName: 'pt-invalid' }),
       /forme invalide/,
     )
   })
 
   it('@pageTransition="cube={ dir: left }" dans un <pre><code> d\'exemple reste littéral (masquage)', async () => {
-    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;a @pageTransition="cube={ dir: left }"&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'pt-mask' })
+    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;a :pageTransition="cube={ dir: left }"&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'pt-mask' })
     assert.doesNotMatch(output, /mjs-vt=/, 'un @pageTransition affiché comme démo de code dans <pre>/<code> ne doit pas être réécrit comme une VRAIE directive')
-    assert.match(output, /@pageTransition/, 'le texte de démo reste affiché tel quel')
+    assert.match(output, /:pageTransition/, 'le texte de démo reste affiché tel quel')
   })
 
   it('bout en bout — le mjs-vt compilé (forme objet) est lu tel quel par µ._mjs_vtResolvePage/µ._mjs_vtParse, sans avertissement', async () => {
-    const { output } = await transpile('<a href="/x" @pageTransition="cube={ dir: left }">Suivant</a>\n', { moduleName: 'pt-e2e' })
+    const { output } = await transpile('<a href="/x" :pageTransition="cube={ dir: left }">Suivant</a>\n', { moduleName: 'pt-e2e' })
     const m = output.match(/mjs-vt=['"]([^'"]*)['"]/)
     assert.ok(m, 'mjs-vt présent dans la sortie compilée')
     const decoded = m![1].replace(/&quot;/g, '"').replace(/&#123;/g, '{').replace(/&#125;/g, '}')

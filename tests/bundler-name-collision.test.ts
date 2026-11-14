@@ -70,8 +70,8 @@ describe('bundler — collision de basename', function () {
     // de l'autre (ou leurs fichiers s'écrasaient) et le .mjs qui @import-e le perdant se retrouvait
     // avec un import 404 silencieux. Chaque module porte maintenant son dossier devant son nom quand
     // un autre module a le même (cf. tests/modules-homonymes.test.ts pour le navigateur).
-    writeFileSync(join(sub1, 'helper.module.civet'), 'export hi = -> "A"')
-    writeFileSync(join(sub2, 'helper.module.civet'), 'export hi = -> "B"')
+    writeFileSync(join(sub1, 'helper.module.civet.mjs'), 'export hi = -> "A"')
+    writeFileSync(join(sub2, 'helper.module.civet.mjs'), 'export hi = -> "B"')
 
     const bundler = new Bundler({
       sourceDir: srcDir,

@@ -161,7 +161,7 @@ const image = (effet: string) => {
 
 const rang = (i: number) => String(i).padStart(3, '0')
 // un effet de transition sans déclencheur (`on`) se pose après `@transition=`, comme dans une appli
-const pose = (a: Livre) => EFFECTS[a.effet].transition && !/(^|, )on:/.test(a.args) ? '@transition=' : ''
+const pose = (a: Livre) => EFFECTS[a.effet].transition && !/(^|, )on:/.test(a.args) ? ':transition=' : ''
 const avec = (a: Livre, ...plus: string[]) => `<div class="a" ${pose(a)}*${a.effet}.${a.nom}${plus.some(Boolean) ? `(${plus.filter(Boolean).join(', ')})` : ''}>x</div>\n`
 const sans = (a: Livre, ...plus: string[]) => `<div class="a" ${pose(a)}*${a.effet}(${[a.args, ...plus].filter(Boolean).join(', ')})>x</div>\n`
 

@@ -100,10 +100,11 @@ describe('effet de l\'appli : la table des valeurs par défaut est sans prototyp
     const images: any[] = []
     µ._mjs_fxCalm    = () => false
     µ._mjs_fxMs      = (_v: unknown, d: number) => d
-    µ._mjs_animate   = (_n: unknown, frames: any[]) => { images.push(...frames); return { finished: Promise.resolve() } }
+    µ._mjs_animate   = (_n: unknown, frames: any[]) => { images.push(...frames); return { finished: Promise.resolve(), cancel() {} } }
     µ._mjs_fxCustom('halo', JSON.parse(JSON.stringify(DEF)))
     await µ._mjs_fxDefs.halo.life(Object.create(null)).intro({ animate() {} })
     assert.equal(images.length, 1)
-    assert.deepEqual({ ...images[0] }, { boxShadow: '0 0 4px ', outlineColor: 'red', color: '#0ff', borderColor: '' })
+    // l'image de l'entrée est placée au début de l'animation (`offset: 0`) : la balise part de l'état caché
+    assert.deepEqual({ ...images[0] }, { boxShadow: '0 0 4px ', outlineColor: 'red', color: '#0ff', borderColor: '', offset: 0 })
   })
 })

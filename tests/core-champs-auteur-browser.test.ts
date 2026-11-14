@@ -24,7 +24,7 @@ const HOTE = `<script>
   $r = 'a'
 </script>
 
-<form class="f-auteur" method="get" action="/envoi" @noUJS>
+<form class="f-auteur" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked={true}><input type="hidden" name="cb" value="a-cb">case</@@checkbox>
   <@@switch class="sw" name="sw" checked={true}><input type="hidden" name="sw" value="a-sw">interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x" checked><input type="hidden" name="g" value="a-g">x</@@radio>

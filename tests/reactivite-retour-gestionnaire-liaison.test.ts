@@ -20,8 +20,8 @@ const LIAISONS = `<script>
 </script>
 <input aria-label="n" type="number" value=!{$n}>
 <input aria-label="ok" type="checkbox" checked=!{$ok}>
-<input aria-label="a" type="radio" value="a" @group=!{$g}>
-<div contenteditable @text=!{$t}></div>
+<input aria-label="a" type="radio" value="a" :group=!{$g}>
+<div contenteditable :text=!{$t}></div>
 <details open=!{$o}><summary>s</summary>x</details>
 <audio currentTime=!{$s}></audio>
 `
@@ -41,7 +41,7 @@ describe('retour implicite d\'un gestionnaire en ligne — forme directe', funct
     assert.match(out, ENVELOPPE)
   })
 
-  for (const templateLang of ['civet', 'js'] as const) {
+  for (const templateLang of ['civet'] as const) {
     it(`gabarit ${templateLang} : aucune liaison compilée n'enveloppe son écriture`, async () => {
       const { output } = await transpile(LIAISONS, { moduleName: 'liaisons', templateLang } as any)
       assert.doesNotMatch(output, ENVELOPPE)

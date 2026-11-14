@@ -76,9 +76,11 @@ const compte = (page: any, c: string, sel: string) => lire(page, `return g('${c}
 const noms = (page: any, c: string) => lire(page, `return [...g('${c}').querySelectorAll('li.part .name')].map((n) => n.textContent)`)
 const cases = (page: any, c: string) => lire(page, `return [...g('${c}').querySelectorAll('rect.cell')].map((r) => { const cs = getComputedStyle(r); return { niveau: Number(/level-(\\d)/.exec(r.getAttribute('class'))[1]), fill: cs.fill, alpha: Number(cs.fillOpacity), teinte: r.style.getPropertyValue('--mjs-chart-tone').trim() } })`)
 
+// le menu des formes, ancré à son bouton, se ferme tant que ce bouton n'est pas à l'écran : la page porte 19 graphiques, celui
+// qu'on ouvre y est amené d'abord (menu, choisir)
 // le menu des formes de `c` ouvert, l'état de chaque forme (grisée ou non), puis le menu refermé
 async function menu(page: any, c: string): Promise<Record<string, boolean>> {
-  await lire(page, `g('${c}').querySelector('button.pick').click()`)
+  await lire(page, `const b = g('${c}').querySelector('button.pick'); b.scrollIntoView({ block: 'center' }); b.click()`)
   await page.waitForFunction((k: string) => (document.querySelector('mjs-gv-page') as any)._shadow.querySelector('mjs-core-chart.' + k)._shadow.querySelectorAll('.menu .item').length === 10, c)
   const etat = await lire(page, `return Object.fromEntries([...g('${c}').querySelectorAll('.menu .item')].map((i) => [i.querySelector('.glyph').getAttribute('class').replace('glyph glyph-', ''), i.getAttribute('aria-disabled') === 'true']))`)
   await lire(page, `g('${c}').querySelector('button.pick').click()`)
@@ -88,7 +90,7 @@ async function menu(page: any, c: string): Promise<Record<string, boolean>> {
 
 // une forme choisie dans le menu de `c`, comme le ferait l'utilisateur
 async function choisir(page: any, c: string, forme: string): Promise<void> {
-  await lire(page, `g('${c}').querySelector('button.pick').click()`)
+  await lire(page, `const b = g('${c}').querySelector('button.pick'); b.scrollIntoView({ block: 'center' }); b.click()`)
   await page.waitForFunction((k: string) => (document.querySelector('mjs-gv-page') as any)._shadow.querySelector('mjs-core-chart.' + k)._shadow.querySelectorAll('.menu .item').length === 10, c)
   await lire(page, `g('${c}').querySelector('.menu .item .glyph-${forme}').closest('.item').click()`)
   await page.waitForFunction(([k, f]: string[]) => (document.querySelector('mjs-gv-page') as any)._shadow.querySelector('mjs-core-chart.' + k)._shadow.querySelector('button.pick .glyph-' + f), [c, forme])

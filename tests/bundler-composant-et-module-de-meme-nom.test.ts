@@ -34,20 +34,20 @@ describe('bundler — un composant et un module du même nom', function () {
   this.timeout(120000)
   after(async () => { await terminateSharedWorkerPool() })
 
-  it('cart.mjs et cart.civet dans le même dossier : erreur de construction qui nomme les deux fichiers', async () => {
-    const { erreurs } = await construire('meme-nom-composant-module', { 'cart.civet': MODULE, 'cart.mjs': hote('cart.civet') })
-    const nommee = erreurs.filter(m => m.includes('cart.mjs') && m.includes('cart.civet'))
+  it('cart.mjs et cart.civet.mjs dans le même dossier : erreur de construction qui nomme les deux fichiers', async () => {
+    const { erreurs } = await construire('meme-nom-composant-module', { 'cart.civet.mjs': MODULE, 'cart.mjs': hote('cart.civet.mjs') })
+    const nommee = erreurs.filter(m => m.includes('cart.mjs') && m.includes('cart.civet.mjs'))
     assert.equal(nommee.length, 1, 'une erreur qui nomme les deux fichiers : ' + JSON.stringify(erreurs))
     assert.match(nommee[0], /<mjs-cart>/, nommee[0])
   })
 
   it('le module dans un sous-dossier garde le même nom publié : même erreur', async () => {
-    const { erreurs } = await construire('meme-nom-composant-module-dossier', { 'logique/cart.civet': MODULE, 'cart.mjs': hote('logique/cart.civet') })
-    assert.equal(erreurs.filter(m => m.includes('cart.mjs') && m.includes(join('logique', 'cart.civet'))).length, 1, JSON.stringify(erreurs))
+    const { erreurs } = await construire('meme-nom-composant-module-dossier', { 'logique/cart.civet.mjs': MODULE, 'cart.mjs': hote('logique/cart.civet.mjs') })
+    assert.equal(erreurs.filter(m => m.includes('cart.mjs') && m.includes(join('logique', 'cart.civet.mjs'))).length, 1, JSON.stringify(erreurs))
   })
 
   it('témoin : le module renommé, les deux sont écrits et le composant définit sa balise', async () => {
-    const { out, erreurs } = await construire('meme-nom-composant-module-temoin', { 'cart-logique.civet': MODULE, 'cart.mjs': hote('cart-logique.civet') })
+    const { out, erreurs } = await construire('meme-nom-composant-module-temoin', { 'cart-logique.civet.mjs': MODULE, 'cart.mjs': hote('cart-logique.civet.mjs') })
     assert.deepEqual(erreurs, [])
     const js = existsSync(out) ? readdirSync(out).filter(f => f.endsWith('.js')) : []
     const composant = js.filter(f => /^cart-[0-9a-z]{5}\.js$/.test(f))

@@ -12,9 +12,9 @@ import { mjsTmp } from './helpers/tmp.js'
 const MODULE_A = "window.__ev = (window.__ev ?? 0) + 1\nexport qa := -> 'valeur-de-a'\n"
 const MODULE_B = "window.__ev = (window.__ev ?? 0) + 1\nexport qb := -> 'valeur-de-b'\n"
 
-const HOTE_IMPORT = ["@import qa 'a/outil.module.civet'", "@import qb 'b/outil.module.civet'", '', '<script>', "  $r = 'rien'", '  @go = -> $r = qa() + qb()', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
-const HOTE_TOUT   = ["@import qa 'a/outil.module.civet'", "@import qb 'b/outil.module.civet'", '', '<script>', "  $r = 'rien'", '  @go = ->', "    ma = await µimport('a/outil.module.civet')", "    mb = await µimport('b/outil.module.civet')", '    $r = qa() + qb() + ma.qa() + mb.qb() + String(ma.qa is qa) + String(mb.qb is qb)', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
-const HOTE_MU     = ['<script>', "  $r = 'rien'", '  @go = ->', "    ma = await µimport('a/outil.module.civet')", "    mb = await µimport('b/outil.module.civet')", '    $r = ma.qa() + mb.qb()', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
+const HOTE_IMPORT = ["@import qa 'a/outil.module.civet.mjs'", "@import qb 'b/outil.module.civet.mjs'", '', '<script>', "  $r = 'rien'", '  @go = -> $r = qa() + qb()', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
+const HOTE_TOUT   = ["@import qa 'a/outil.module.civet.mjs'", "@import qb 'b/outil.module.civet.mjs'", '', '<script>', "  $r = 'rien'", '  @go = ->', "    ma = await µimport('a/outil.module.civet.mjs')", "    mb = await µimport('b/outil.module.civet.mjs')", '    $r = qa() + qb() + ma.qa() + mb.qb() + String(ma.qa is qa) + String(mb.qb is qb)', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
+const HOTE_MU     = ['<script>', "  $r = 'rien'", '  @go = ->', "    ma = await µimport('a/outil.module.civet.mjs')", "    mb = await µimport('b/outil.module.civet.mjs')", '    $r = ma.qa() + mb.qb()', '</script>', '', '<button class="go" @click=@go>go</button>', '<p class="r">{$r}</p>', ''].join('\n')
 
 interface Projet { root: string, srcDir: string, outDir: string }
 
@@ -59,7 +59,7 @@ describe('modules de même nom dans deux dossiers — le code de chacun est gard
   })
 
   for (const mode of MODES) it(`@import des deux modules, ${mode.nom} : chaque code est publié une fois, dans son propre fichier, sans avertissement de collision`, async () => {
-    const p = projet('hom-import', { 'hote.mjs': HOTE_IMPORT, 'a/outil.module.civet': MODULE_A, 'b/outil.module.civet': MODULE_B })
+    const p = projet('hom-import', { 'hote.mjs': HOTE_IMPORT, 'a/outil.module.civet.mjs': MODULE_A, 'b/outil.module.civet.mjs': MODULE_B })
     const { errors, warnings } = await construire(p, optionsDe(mode))
     assert.deepEqual(errors, [])
     assert.doesNotMatch(warnings.join('\n'), /Collision de basename/, 'deux modules de dossiers différents ne se disputent plus un nom')
@@ -71,7 +71,7 @@ describe('modules de même nom dans deux dossiers — le code de chacun est gard
   })
 
   for (const mode of MODES) it(`µimport des deux modules, ${mode.nom} : chaque module a son fichier, le code de chacun n'est que dans le sien`, async () => {
-    const p = projet('hom-mu', { 'hote.mjs': HOTE_MU, 'a/outil.module.civet': MODULE_A, 'b/outil.module.civet': MODULE_B })
+    const p = projet('hom-mu', { 'hote.mjs': HOTE_MU, 'a/outil.module.civet.mjs': MODULE_A, 'b/outil.module.civet.mjs': MODULE_B })
     const { errors } = await construire(p, optionsDe(mode))
     assert.deepEqual(errors, [])
     const a = portant(p, 'valeur-de-a')
@@ -85,7 +85,7 @@ describe('modules de même nom dans deux dossiers — le code de chacun est gard
   })
 
   it('les noms ne dépendent ni de l\'ordre de compilation ni de l\'instance : deux constructions donnent les mêmes fichiers', async () => {
-    const fichiers = { 'hote.mjs': HOTE_TOUT, 'a/outil.module.civet': MODULE_A, 'b/outil.module.civet': MODULE_B, 'outil.module.civet': "export racine := -> 'valeur-racine'\n" }
+    const fichiers = { 'hote.mjs': HOTE_TOUT, 'a/outil.module.civet.mjs': MODULE_A, 'b/outil.module.civet.mjs': MODULE_B, 'outil.module.civet.mjs': "export racine := -> 'valeur-racine'\n" }
     const p = projet('hom-stable', fichiers)
     assert.deepEqual((await construire(p, { js: 'split' })).errors, [])
     const premier = jsPublies(p)
@@ -96,8 +96,8 @@ describe('modules de même nom dans deux dossiers — le code de chacun est gard
   })
 
   it('un module .civet et un module .coffee de même nom dans le même dossier gardent chacun leur code', async () => {
-    const hote = ["@import ca 'lib/outil.civet'", "@import cb 'lib/outil.coffee'", '', '<script>', "  $r = 'rien'", '  @go = -> $r = ca() + cb()', '</script>', '<p>{$r}</p>', ''].join('\n')
-    const p = projet('hom-ext', { 'hote.mjs': hote, 'lib/outil.civet': "export ca := -> 'valeur-civet'\n", 'lib/outil.coffee': "export cb = -> 'valeur-coffee'\n" })
+    const hote = ["@import ca 'lib/outil.civet.mjs'", "@import cb 'lib/outil.coffee.mjs'", '', '<script>', "  $r = 'rien'", '  @go = -> $r = ca() + cb()', '</script>', '<p>{$r}</p>', ''].join('\n')
+    const p = projet('hom-ext', { 'hote.mjs': hote, 'lib/outil.civet.mjs': "export ca := -> 'valeur-civet'\n", 'lib/outil.coffee.mjs': "export cb = -> 'valeur-coffee'\n" })
     const { errors } = await construire(p, { js: 'split' })
     assert.deepEqual(errors, [])
     assert.equal(portant(p, 'valeur-civet').length, 1)
@@ -127,7 +127,7 @@ describe('modules de même nom dans deux dossiers — Chromium réel', function 
 
   for (const mode of MODES) it(`${mode.nom} : chaque import rend le code de son module (@import et µimport), évalué une fois`, async function () {
     if (!present) { this.skip(); return }
-    const p = projet('hom-nav', { 'hote.mjs': HOTE_TOUT, 'a/outil.module.civet': MODULE_A, 'b/outil.module.civet': MODULE_B })
+    const p = projet('hom-nav', { 'hote.mjs': HOTE_TOUT, 'a/outil.module.civet.mjs': MODULE_A, 'b/outil.module.civet.mjs': MODULE_B })
     const { errors } = await construire(p, optionsDe(mode))
     assert.deepEqual(errors, [])
     const erreurs: string[] = []

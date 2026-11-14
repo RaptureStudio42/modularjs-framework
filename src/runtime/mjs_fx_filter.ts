@@ -592,7 +592,7 @@ function _mjsFxPlan(el, s, box) {
 // shadow root)
 function _mjsFxHolder(el, id) {
   var svg = µ._mjs_fxSvgDefs(el);
-  svg.innerHTML = '<filter id="' + id + '" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1"></filter>';
+  svg.innerHTML = µ._mjs_th('<filter id="' + id + '" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1"></filter>');
   var f = svg.firstChild;
   return { svg: svg, filter: f };
 }
@@ -858,7 +858,8 @@ function _mjsFxSpot(el, cur) {
         if (s.position === 'absolute') return false;
         if (_mjsFxSpotHolds(s)) continue;
         if (!open(c)) return false;
-        var r = c._shadow || c.shadowRoot;
+        // un léger est sa propre ombre : son contenu vient d'être lu
+        var r = µ._mjs_shadowOf(c);
         if (r && !open(r)) return false;
       }
       return true;
@@ -972,7 +973,7 @@ function _mjsFxSpot(el, cur) {
     if (!drift) {
       var id  = 'mjs-fx-filter-' + (++_mjsFxFilN);
       var svg = µ._mjs_fxSvgDefs(el);
-      svg.innerHTML = '<filter id="' + id + '" color-interpolation-filters="sRGB" x="-1" y="-1" width="3" height="3"><feOffset/></filter>';
+      svg.innerHTML = µ._mjs_th('<filter id="' + id + '" color-interpolation-filters="sRGB" x="-1" y="-1" width="3" height="3"><feOffset/></filter>');
       drift = { svg: svg, off: svg.firstChild.firstChild };
       el.style.setProperty('--mjs-fx-filter-drift', 'url(#' + id + ')');
       µ._mjs_dom.setAttribute(el, 'mjs-fx-filter-drift', '');
@@ -1488,7 +1489,7 @@ function _mjsFxSpot(el, cur) {
         if (!holder) holder = _mjsFxHolder(el, id);
         // jamais retiré : WebKit ne relit pas un attribut retiré (la balise y disparaissait en passant de fractions à des px), le défaut est posé en toutes lettres
         holder.filter.setAttribute('primitiveUnits', plan.units || 'userSpaceOnUse');
-        holder.filter.innerHTML = plan.prims;
+        holder.filter.innerHTML = µ._mjs_th(plan.prims);
       }
       el.style.setProperty('--mjs-fx-filter-value', [plan.pre, plan.prims ? 'url(#' + id + ')' : '', plan.post].filter(Boolean).join(' ') || 'opacity(1)');
       if (!plan.prims && holder) {

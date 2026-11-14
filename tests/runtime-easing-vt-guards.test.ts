@@ -42,13 +42,15 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { poserMessages } from './helpers/messages-stub.js'
+import { lireRuntime, lireBloc } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const easingSrc = readFileSync(join(__dirname, '../src/runtime/mjs_easing.ts'), 'utf8')
 const vtSrc     = readFileSync(join(__dirname, '../src/runtime/mjs_vt_presets.ts'), 'utf8')
-const storeSrc  = readFileSync(join(__dirname, '../src/runtime/mjs_store.ts'), 'utf8')
-const elemSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_element.ts'), 'utf8')
-const initSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf8')
+const storeSrc  = lireRuntime(join(__dirname, '../src/runtime/mjs_store.ts'))
+const elemSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_element.ts'))
+const murSrc    = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'mur')
+const initSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
 
 const stripEsm = (s: string) => s
   .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
@@ -280,6 +282,8 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
   µ._mjs_toRaw = function(o: any) { while (o != null && typeof o === 'object' && o[µ._mjs_RAW]) o = o[µ._mjs_RAW]; return o }
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }
+  // le vrai mur des prototypes (µ._mjs_mur, bloc <mur> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
+  new Function('µ', murSrc)(µ)
   new Function('µ', storeSrc)(µ)
   return { µ, warnCalls }
 }

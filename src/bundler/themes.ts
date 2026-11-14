@@ -20,6 +20,7 @@ import { basename } from 'node:path'
 import { extractSections } from '../transpiler/sections.js'
 import { compileCss } from '../transpiler/css.js'
 import { rewriteStyleVars, wrapThemeBlock, type ThemeVar } from '../transpiler/style-vars.js'
+import { rewriteFontSizes, type FontSizeSettings } from '../transpiler/font-size.js'
 import { t } from '../messages/index.js'
 
 export interface CompiledTheme {
@@ -27,11 +28,15 @@ export interface CompiledTheme {
   css:      string
   vars:     ThemeVar[]
   read:     string[]
+  /** tailles du texte rendues adaptables (cf. transpiler/font-size) : le build pose leurs variables sur :root */
+  sizes?:   string[]
 }
 
 export interface ThemeCompileOpts {
-  varPrefix?:    string
-  defaultTheme?: string
+  varPrefix?:          string
+  defaultTheme?:       string
+  /** taille du texte adaptée à l'écran (cf. transpiler/font-size) ; absent = coupée */
+  responsiveFontSize?: FontSizeSettings
 }
 
 /** `app/modularjs/themes/sombre.theme.mjs` → `sombre` */
@@ -69,10 +74,12 @@ export function compileThemeFile(source: string, filePath: string, opts: ThemeCo
   const cibles = [`:where([data-mjs-theme='${name}'])`, `:where([theme='${name}'])`]
   if (name === defaultTheme) cibles.unshift(':where(:root)')
 
-  const rw  = rewriteStyleVars(bloc.raw, { prefix: varPrefix })
-  const css = compileCss(wrapThemeBlock(cibles.join(','), rw.code, bloc.lang), bloc.lang)
+  const rw    = rewriteStyleVars(bloc.raw, { prefix: varPrefix })
+  const css   = compileCss(wrapThemeBlock(cibles.join(','), rw.code, bloc.lang), bloc.lang)
+  // taille du texte en px rendue adaptable à l'écran, comme dans un <style> (cf. transpiler/font-size) : ses valeurs vont au bloc :root
+  const fluid = opts.responsiveFontSize ? rewriteFontSizes(css, opts.responsiveFontSize) : { css, sizes: [] }
 
-  return { name, css, vars: rw.declared.map(d => ({ name: d.name, variant: '', line: d.line, doc: d.doc })), read: rw.read }
+  return { name, css: fluid.css, vars: rw.declared.map(d => ({ name: d.name, variant: '', line: d.line, doc: d.doc })), read: rw.read, sizes: fluid.sizes }
 }
 
 /** Rend le CSS agrégé de TOUS les thèmes de document, dans un ordre stable. */

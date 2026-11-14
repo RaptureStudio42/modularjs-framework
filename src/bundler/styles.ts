@@ -1,13 +1,66 @@
 // feuilles de style du Bundler : partagées (stylesheetsDir, `µ.CSS`), découpées (`css: 'split'`) et à la demande (`css: 'lazy'`)
 // fonctions sorties de la classe Bundler, qui garde ses méthodes (mêmes noms, mêmes signatures) et leur passe l'instance : un membre
 // privé de la classe s'y lit `bundler['nom']`, et tout appel de méthode passe par l'instance, comme avant la découpe
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { compileCss } from '../transpiler/css.js'
+import { FONT_SIZE_SHEET, fontSizeRootCss, rewriteFontSizes } from '../transpiler/font-size.js'
 import { cssTrapWarnings } from '../transpiler/index.js'
 import { t } from '../messages/index.js'
 import { minifyJs } from './minify.js'
+import { MARQUE_SORTIE, refusFichierAuteur } from './outputs.js'
 import type { Bundler } from './index.js'
+
+// feuille racine : adoptée par le document, son handle gardé pour µ._hotCss (dev, replaceSync en place) ; un bloc de
+// mjs_styles.js en mode 'bundle', son propre fichier mjs_style_root en 'split' et 'lazy'
+function rootSheetJs(css: string): string {
+  return `{\n` +
+         `  const _root = new CSSStyleSheet();\n` +
+         `  _root.replaceSync(${JSON.stringify(css)});\n` +
+         `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
+         `  µ._mjs_rootStyleSheet = _root;\n` +
+         `}\n`
+}
+
+// 'split' et 'lazy' : la feuille racine dans son propre fichier, toujours importé par le manifeste ; rend le CSS adopté
+async function writeRootSheet(bundler: Bundler, css: string): Promise<string> {
+  const js       = `import { µ } from '${bundler.coreHashedPath}';\n` + rootSheetJs(css)
+  const minified = await minifyJs(js, { force: bundler.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: bundler.mangleCache, logLevel: bundler['prodLogLevel'](), dev: !bundler['isProd']() })
+  bundler.splitRootHashedPath = bundler.writeHashed('mjs_style_root', '.js', minified.code)
+  return css
+}
+
+// taille du texte adaptée à l'écran (cf. transpiler/font-size) : chaque feuille passe une fois AVANT la boucle des feuilles, pour
+// que la feuille racine reçoive le bloc :root de toutes les tailles (composants, feuilles nommées, elle-même) ; une feuille en
+// faute est redite par la boucle, qui la recompile. Vide si la conversion est coupée ou sans taille au-dessus du seuil
+async function fontSizeBlock(bundler: Bundler, files: string[]): Promise<string> {
+  const settings = bundler['fontSizeSettings']
+  if (!settings) return ''
+  for (const file of files) {
+    const path = join(bundler.stylesheetsDir, file)
+    try {
+      bundler['assertRealUnder'](path, bundler.stylesheetsDir)
+      await bundler['compileSharedSheet'](path, readFileSync(path, 'utf-8').replace(/\x00/g, ''), file.match(/\.(sass|scss|css)$/)![1] as 'sass' | 'scss' | 'css')
+    }
+    catch { /* redite par la boucle des feuilles */ }
+  }
+  const bloc = fontSizeRootCss(bundler['pendingFontSizes'], settings)
+  writeFontSizeSheet(bundler, bloc)
+  return bloc
+}
+
+// rendu serveur : le bloc dans son fichier à côté du manifeste (cf. FONT_SIZE_SHEET), repris par la tête que pose le serveur.
+// Récrit seulement s'il change ; aucun fichier tant qu'aucune taille n'est convertie. Construction dans le dossier des sources :
+// la marque en première ligne, et un fichier de l'auteur au même nom n'est jamais remplacé (cf. refusFichierAuteur)
+function writeFontSizeSheet(bundler: Bundler, bloc: string): void {
+  const target  = join(dirname(bundler.manifestPath), FONT_SIZE_SHEET)
+  const content = (bundler['ecritDansSources']() ? `${MARQUE_SORTIE}\n` : '') + bloc
+  if (existsSync(target) ? readFileSync(target, 'utf-8') === content : bloc === '') return
+  const refus   = refusFichierAuteur(bundler, target, 'feuille')
+  if (refus !== null) throw refus
+  mkdirSync(dirname(target), { recursive: true })
+  bundler['writeFileAtomicAlways'](target, content)
+}
 
 // bundleSharedStyles() : compile les .sass/.scss/.css de stylesheetsDir et
 // les expose via `µ.CSS[name] = sheet`. Le runtime les consomme à la demande
@@ -23,12 +76,6 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   // ou se vide doit aussi pouvoir disqualifier un lot en cours).
   const newSharedCss = new Map<string, string>()
   let newRootCss: string | undefined
-  if (!existsSync(bundler.stylesheetsDir)) {
-    bundler.manifest['__styles'] = ''
-    bundler['trackSharedCssDiff'](newSharedCss, newRootCss)
-    return { count: 0, warnings: [] }
-  }
-
   // `readdirSync` NE GARANTIT AUCUN
   // ORDRE (dépend du filesystem/OS, peut différer entre deux machines ou
   // deux builds du même repo). Sans tri : (1) l'ORDRE DE CASCADE CSS entre
@@ -40,11 +87,13 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
   // builds reproductibles. Même correctif déjà en place pour les
   // animations (`compileUsedAnimations`, tri explicite du Set avant
   // concaténation, cf. son propre commentaire) — mimé ici.
-  const files = readdirSync(bundler.stylesheetsDir)
-    .filter(f => /\.(sass|scss|css)$/.test(f))
-    .sort()
+  // dossier absent ou vide : les tailles du texte des composants font encore une feuille racine (cf. fontSizeBlock)
+  const files = existsSync(bundler.stylesheetsDir)
+    ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
+    : []
+  const bloc = await fontSizeBlock(bundler, files)
 
-  if (files.length === 0) {
+  if (files.length === 0 && bloc === '') {
     bundler.manifest['__styles'] = ''
     bundler['trackSharedCssDiff'](newSharedCss, newRootCss)
     return { count: 0, warnings: [] }
@@ -96,16 +145,9 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
 
     // mjs_root.{sass,scss} → adopté globalement
     if (baseName === 'mjs_root') {
-      js += `{\n` +
-            `  const _root = new CSSStyleSheet();\n` +
-            `  _root.replaceSync(${JSON.stringify(css)});\n` +
-            `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-            // handle sinon perdu (scope de bloc) : nécessaire à
-            // µ._hotCss (dev) pour un replaceSync ultérieur en place.
-            `  µ._mjs_rootStyleSheet = _root;\n` +
-            `}\n`
+      js += rootSheetJs(css + bloc)
       rootCount++
-      newRootCss = css
+      newRootCss = css + bloc
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       const safeVar = baseName.replace(/[^a-zA-Z0-9]/g, '_')
@@ -124,6 +166,13 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
       sharedCount++
       newSharedCss.set(baseName, css)
     }
+  }
+
+  // aucune feuille racine (fichier absent, vide ou en faute) : le bloc des tailles du texte en fait une, en fin de fichier
+  if (bloc !== '' && newRootCss === undefined) {
+    js += rootSheetJs(bloc)
+    rootCount++
+    newRootCss = bloc
   }
 
   if (rootCount + sharedCount === 0) {
@@ -172,11 +221,17 @@ export async function bundleSharedStyles(bundler: Bundler): Promise<{ count: num
 
 export async function compileSharedSheet(bundler: Bundler, path: string, src: string, ext: 'sass' | 'scss' | 'css'): Promise<string> {
   const resolved = await bundler['resolveCssAssets'](src)
-  const memo     = bundler['sharedSheetMemo'].get(path)
-  if (memo !== undefined && memo.ext === ext && memo.src === resolved) return memo.css
-  const css = compileCss(resolved, ext)
-  bundler['sharedSheetMemo'].set(path, { ext, src: resolved, css })
-  return css
+  let memo       = bundler['sharedSheetMemo'].get(path)
+  if (memo === undefined || memo.ext !== ext || memo.src !== resolved) {
+    // taille du texte en px rendue adaptable à l'écran (cf. transpiler/font-size) ; ses valeurs vont au bloc :root de la feuille racine
+    const settings = bundler['fontSizeSettings']
+    const compiled = compileCss(resolved, ext)
+    const fluid    = settings ? rewriteFontSizes(compiled, settings) : { css: compiled, sizes: [] }
+    memo = { ext, src: resolved, css: fluid.css, sizes: fluid.sizes }
+    bundler['sharedSheetMemo'].set(path, memo)
+  }
+  for (const v of memo.sizes) bundler['pendingFontSizes'].add(v)
+  return memo.css
 }
 
 // --------------------------------------------------------------------------
@@ -235,11 +290,11 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
   bundler.splitRootHashedPath = undefined
   bundler['lastSharedCss'] = new Map()
   bundler['lastRootCss'] = undefined
-  if (!existsSync(bundler.stylesheetsDir)) return { warnings: [] }
-  const files = readdirSync(bundler.stylesheetsDir)
-    .filter(f => /\.(sass|scss|css)$/.test(f))
-    .sort()
-  if (files.length === 0) return { warnings: [] }
+  const files = existsSync(bundler.stylesheetsDir)
+    ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
+    : []
+  const bloc = await fontSizeBlock(bundler, files)
+  if (files.length === 0 && bloc === '') return { warnings: [] }
   const cssErrors: string[] = []
   const cssWarnings: string[] = []
   // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
@@ -265,16 +320,7 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
       // mjs_root : toujours eager (adopté sur le document, aucun composant ne le
       // déclare) — son propre fichier, importé par le manifeste dans TOUS les modes
       // qui splittent (jamais en mode 'bundle', où il reste dans mjs_styles.js).
-      const js = `import { µ } from '${bundler.coreHashedPath}';\n` +
-                 `{\n` +
-                 `  const _root = new CSSStyleSheet();\n` +
-                 `  _root.replaceSync(${JSON.stringify(css)});\n` +
-                 `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-                 `  µ._mjs_rootStyleSheet = _root;\n` +
-                 `}\n`
-      const minified = await minifyJs(js, { force: bundler.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: bundler.mangleCache, logLevel: bundler['prodLogLevel'](), dev: !bundler['isProd']() })
-      bundler.splitRootHashedPath = bundler.writeHashed('mjs_style_root', '.js', minified.code)
-      newRootCss = css
+      newRootCss = await writeRootSheet(bundler, css + bloc)
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       // safeVar sert AUSSI de base de nom de fichier ici (contrairement à
@@ -303,6 +349,7 @@ export async function emitSplitStyles(bundler: Bundler): Promise<{ warnings: str
       newSharedCss.set(baseName, css)
     }
   }
+  if (bloc !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, bloc)
   // baseline seulement : en 'split' et 'lazy', le suivi « css seul » de trackSharedCssDiff ne s'applique pas
   bundler['lastSharedCss'] = newSharedCss
   bundler['lastRootCss'] = newRootCss
@@ -373,9 +420,9 @@ export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: stri
   bundler.splitRootHashedPath = undefined
   bundler['lastSharedCss'] = new Map()
   bundler['lastRootCss'] = undefined
-  if (!existsSync(bundler.stylesheetsDir)) return { warnings: [] }
-  const files = readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort()
-  if (files.length === 0) return { warnings: [] }
+  const files = existsSync(bundler.stylesheetsDir) ? readdirSync(bundler.stylesheetsDir).filter(f => /\.(sass|scss|css)$/.test(f)).sort() : []
+  const bloc  = await fontSizeBlock(bundler, files)
+  if (files.length === 0 && bloc === '') return { warnings: [] }
   const cssErrors: string[]   = []
   const cssWarnings: string[] = []
   // CSS de chaque feuille : le registre des variables (computeVarRegistry) les lit, comme en mode 'bundle'
@@ -398,16 +445,7 @@ export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: stri
     }
     if (css.trim() === '') continue
     if (baseName === 'mjs_root') {
-      const js = `import { µ } from '${bundler.coreHashedPath}';\n` +
-                 `{\n` +
-                 `  const _root = new CSSStyleSheet();\n` +
-                 `  _root.replaceSync(${JSON.stringify(css)});\n` +
-                 `  document.adoptedStyleSheets = [...document.adoptedStyleSheets, _root];\n` +
-                 `  µ._mjs_rootStyleSheet = _root;\n` +
-                 `}\n`
-      const minified = await minifyJs(js, { force: bundler.shouldMinify(), filename: 'mjs_style_root.js', mangleCache: bundler.mangleCache, logLevel: bundler['prodLogLevel'](), dev: !bundler['isProd']() })
-      bundler.splitRootHashedPath = bundler.writeHashed('mjs_style_root', '.js', minified.code)
-      newRootCss = css
+      newRootCss = await writeRootSheet(bundler, css + bloc)
     } else {
       for (const w of cssTrapWarnings(css, bundler.lint)) cssWarnings.push(`[bundler] ${file} : ${w}`)
       // même normalisation de nom qu'en 'split' : un nom de feuille avec espace ou
@@ -424,6 +462,7 @@ export async function emitLazyStyles(bundler: Bundler): Promise<{ warnings: stri
       newSharedCss.set(baseName, css)
     }
   }
+  if (bloc !== '' && newRootCss === undefined) newRootCss = await writeRootSheet(bundler, bloc)
   // baseline seulement, comme en 'split'
   bundler['lastSharedCss'] = newSharedCss
   bundler['lastRootCss'] = newRootCss

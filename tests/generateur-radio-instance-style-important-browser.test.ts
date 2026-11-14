@@ -13,14 +13,14 @@ const SOURCES: Record<string, string> = {
     '<script>',
     '$c = "a"',
     '</script>',
-    '<input class="ra" type="radio" value="a" @group=!{$c} aria-label="a"><input class="rb" type="radio" value="b" @group=!{$c} aria-label="b">',
+    '<input class="ra" type="radio" value="a" :group=!{$c} aria-label="a"><input class="rb" type="radio" value="b" :group=!{$c} aria-label="b">',
   ].join('\n'),
-  'r-deux': '<p class="pret">p</p><mjs-r-radio class="i1" @lightDom></mjs-r-radio><mjs-r-radio class="i2" @lightDom></mjs-r-radio>\n',
+  'r-deux': '<p class="pret">p</p><mjs-r-radio class="i1" :lightDom></mjs-r-radio><mjs-r-radio class="i2" :lightDom></mjs-r-radio>\n',
   'r-imp': [
     '<script>',
     '$c = "red"',
     '</script>',
-    '<p class="a" @style.color="blue !important">a</p><p class="b" @style.color="{$c} !important">b</p><p class="c" @style.color={$c + " !important"}>c</p><p class="d" @style.color{$c}="green !important">d</p>',
+    '<p class="a" :style.color="blue !important">a</p><p class="b" :style.color="{$c} !important">b</p><p class="c" :style.color={$c + " !important"}>c</p><p class="d" :style.color{$c}="green !important">d</p>',
   ].join('\n'),
 }
 

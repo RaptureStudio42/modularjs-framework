@@ -16,6 +16,9 @@ import { mjsTmp } from './helpers/tmp.js'
 import { deuxImages, poseDeuxImages } from './helpers/images-navigateur.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
+import { isDeepStrictEqual } from 'node:util'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -265,7 +268,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -454,7 +457,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           await page.mouse.down()
           await page.mouse.move(b.x + 3, b.y, { steps: 3 })
           await page.mouse.up()
-          await page.waitForTimeout(80)
+          await attendreEtat(async () => (await lire()) === '1', `attendu : lire() = ${'1'}`, 80)
           assert.equal(await lire(), '1', 'un clic avec 3 px de glissement est un clic')
           const tenu = await page.evaluate(() => (window as any).__h('clic').hasAttribute('mjs-fx-marquee-held'))
           assert.equal(tenu, false)
@@ -464,12 +467,13 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           await page.mouse.move(b2.x - 40, b2.y, { steps: 6 })
           await page.waitForTimeout(150)
           await page.mouse.up()
+          // vérification négative : le geste ne doit pas cliquer l'enfant
           await page.waitForTimeout(80)
           assert.equal(await lire(), '1', 'un geste de 40 px ne clique pas l\'enfant')
           // et le clic d'après, sans geste, passe de nouveau
           const b3 = await centre(page, 'clic', '#bouton')
           await page.mouse.click(b3.x, b3.y)
-          await page.waitForTimeout(80)
+          await attendreEtat(async () => (await lire()) === '2', `attendu : lire() = ${'2'}`, 80)
           assert.equal(await lire(), '2')
         })
       })
@@ -552,10 +556,10 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           await page.mouse.move(c.x, c.y)
           await page.mouse.down()
           await page.mouse.move(c.x - 60, c.y, { steps: 6 })
-          await page.waitForTimeout(100)
+          await attendreEtat(async () => (await etat()) === 'paused', `attendu : etat() = ${'paused'}`, 100)
           assert.equal(await etat(), 'paused', 'la dérive se tait pendant que la main tient la piste')
           await page.mouse.up()
-          await page.waitForTimeout(100)
+          await attendreEtat(async () => (await etat()) === 'running', `attendu : etat() = ${'running'}`, 100)
           assert.equal(await etat(), 'running', 'elle reprend son allure')
         })
       })
@@ -602,6 +606,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           const pendant = await page.evaluate(() => (window as any).__tr('hcol').y)
           assert.equal(pendant, avant, 'hors écran, la piste ne bouge pas')
           const raf = await page.evaluate(() => (window as any).__raf)
+          // vérification négative : aucun rendez-vous ne doit être demandé
           await page.waitForTimeout(300)
           assert.equal(await page.evaluate(() => (window as any).__raf), raf, 'et aucun rendez-vous n\'est demandé')
           await page.evaluate(() => (window as any).__h('hscene').scrollIntoView())
@@ -624,7 +629,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           const etat = async () => { await deuxImages(page); return page.evaluate(() => { const h = (window as any).__h('hlogos'); return { away: h.hasAttribute('mjs-fx-marquee-away'), jeu: (window as any).__run('hlogos').getAnimations()[0].playState } }) }
           assert.deepEqual(await etat(), { away: true, jeu: 'paused' })
           await page.evaluate(() => (window as any).__h('hlogos').scrollIntoView())
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => isDeepStrictEqual(await etat(), { away: false, jeu: 'running' }), `attendu : etat()`, 300)
           assert.deepEqual(await etat(), { away: false, jeu: 'running' })
         })
       })
@@ -667,15 +672,15 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           assert.equal(await jeu('survol'), 0, 'au repos : rien')
           const s = await centre(page, 'survol')
           await page.mouse.move(s.x, s.y)
-          await page.waitForTimeout(150)
+          await attendreEtat(async () => (await jeu('survol')) === 1, `attendu : jeu('survol') = ${1}`, 150)
           assert.equal(await jeu('survol'), 1, 'au survol : la dérive')
           await page.mouse.move(790, 5)
-          await page.waitForTimeout(150)
+          await attendreEtat(async () => (await jeu('survol')) === 0, `attendu : jeu('survol') = ${0}`, 150)
           assert.equal(await jeu('survol'), 0, 'le pointeur parti : rien')
           const p = await centre(page, 'pause')
           assert.equal(await page.evaluate(() => (window as any).__run('pause').getAnimations()[0].playState), 'running')
           await page.mouse.move(p.x, p.y)
-          await page.waitForTimeout(150)
+          await attendreEtat(async () => (await page.evaluate(() => (window as any).__run('pause').getAnimations()[0].playState)) === 'paused', 'le survol arrête la dérive', 150)
           assert.equal(await page.evaluate(() => (window as any).__run('pause').getAnimations()[0].playState), 'paused', 'le survol arrête la dérive')
         })
       })
@@ -712,7 +717,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           assert.equal(t1, t0, 'aucun élan')
           // le défilement
           await page.evaluate(() => { (window as any).__h('scene').scrollTop = 400 })
-          await page.waitForTimeout(150)
+          await attendreEtat(async () => (await page.evaluate(() => (window as any).__tr('c1').y)) < -100, 'le défilement entraîne la piste', 150)
           assert.ok((await page.evaluate(() => (window as any).__tr('c1').y)) < -100, 'le défilement entraîne la piste')
         })
       })
@@ -862,14 +867,14 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           assert.deepEqual(a, { tour: 3 * 100 + 2 * 20 + 20, copies: 2 })
           // un enfant grandit : le tour est relu (aucun nœud n'a bougé, c'est l'observateur de taille)
           await page.evaluate(() => { (window as any).__h('simple').querySelector('.logo').style.width = '200px' })
-          await page.waitForTimeout(200)
+          await attendreEtat(async () => isDeepStrictEqual(await lire(), { tour: 200 + 100 + 100 + 2 * 20 + 20, copies: 1 }), `attendu : lire()`, 200)
           assert.deepEqual(await lire(), { tour: 200 + 100 + 100 + 2 * 20 + 20, copies: 1 })
           // la balise grandit : il faut plus de copies pour la couvrir
           await page.evaluate(() => { (window as any).__h('simple').style.width = '1300px' })
-          await page.waitForTimeout(200)
+          await attendreEtat(async () => isDeepStrictEqual(await lire(), { tour: 460, copies: 3 }), `attendu : lire()`, 200)
           assert.deepEqual(await lire(), { tour: 460, copies: 3 })
           await page.evaluate(() => { (window as any).__h('simple').style.width = '300px' })
-          await page.waitForTimeout(200)
+          await attendreEtat(async () => isDeepStrictEqual(await lire(), { tour: 460, copies: 1 }), `attendu : lire()`, 200)
           assert.deepEqual(await lire(), { tour: 460, copies: 1 })
         })
       })
@@ -958,6 +963,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           // le calque d'avant : celui-là même reste (seul son contenu se refait), il n'est pas défait puis reposé
           await page.evaluate(() => { const w: any = window; w.__calque = w.__h('texte').querySelector(':scope > [mjs-fx-layer="text"]') })
           await page.evaluate(() => (window as any).__h('texte').insertAdjacentHTML('beforeend', ' et <b>du gras</b>'))
+          // vérification négative : le texte doit garder son calque
           await page.waitForTimeout(300)
           assert.deepEqual(await etat('texte'), { type: null, run: false, calque: true }, 'le texte garde son calque')
           assert.ok(await page.evaluate(() => { const w: any = window; return w.__calque.isConnected && w.__calque === w.__h('texte').querySelector(':scope > [mjs-fx-layer="text"]') }), 'le même calque : il n\'est ni défait ni reposé')
@@ -965,10 +971,10 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           assert.equal(t, 'Salut et du gras', 'le calque suit le texte')
           // des éléments seuls dans la piste, un texte nu qui arrive : le texte reprend le calque
           await page.evaluate(() => (window as any).__h('remplir').click())
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => isDeepStrictEqual(await etat('bascule'), { type: 'kids', run: true, calque: false }), `attendu : etat('bascule')`, 300)
           assert.deepEqual(await etat('bascule'), { type: 'kids', run: true, calque: false })
           await page.evaluate(() => (window as any).__run('bascule').appendChild(document.createTextNode('du texte')))
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => isDeepStrictEqual(await etat('bascule'), { type: null, run: false, calque: true }), `attendu : etat('bascule')`, 300)
           assert.deepEqual(await etat('bascule'), { type: null, run: false, calque: true }, 'du texte nu parmi les éléments : un texte')
         })
       })
@@ -977,6 +983,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
         if (!present) { this.skip(); return }
         await essai(false, async (page) => {
           await page.evaluate(() => (window as any).__run('simple').appendChild(document.createComment('note')))
+          // vérification négative : la piste ne doit pas changer
           await page.waitForTimeout(300)
           assert.deepEqual(await etatPiste(page, 'simple'), { type: 'kids', run: true, calque: false }, 'un commentaire parmi les éléments : la piste reste')
           const recopies = await page.evaluate(() => ((window as any).__copies('simple') as any[]).filter((x: any) => Array.from(x.childNodes).some((n: any) => n.nodeType === 8)).length)
@@ -994,7 +1001,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           const l = await copies('rempli')
           assert.ok(l.length >= 1 && l.every((n: number) => n === 3), `les enfants qui arrivent sont recopiés : ${l}`)
           await page.evaluate(() => (window as any).__h('vider2').click())
-          await page.waitForTimeout(400)
+          await attendreEtat(async () => isDeepStrictEqual(await copies('rempli'), []), `attendu : copies('rempli')`, 400)
           assert.deepEqual(await copies('rempli'), [], 'la liste vidée : les copies repartent')
         })
       })
@@ -1040,13 +1047,14 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           const clics = () => page.evaluate(() => (window as any).__clics)
           const c     = await centre(page, 'logos')
           await page.mouse.click(c.x, c.y)
-          await page.waitForTimeout(80)
+          await attendreEtat(async () => (await clics()) === 1, `attendu : clics() = ${1}`, 80)
           assert.equal(await clics(), 1, 'un clic sans geste arrive jusqu\'à la fenêtre')
           await tire(page, c.x, c.y, -60, 0, 6)
+          // vérification négative : le clic qui suit un geste ne doit pas passer
           await page.waitForTimeout(80)
           assert.equal(await clics(), 1, 'le clic qui suit un geste est avalé')
           await page.mouse.click(c.x, c.y)
-          await page.waitForTimeout(80)
+          await attendreEtat(async () => (await clics()) === 2, `attendu : clics() = ${2}`, 80)
           assert.equal(await clics(), 2, 'et le clic d\'après, sans geste, passe de nouveau')
         })
       })
@@ -1226,7 +1234,7 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
           await page.mouse.move(c.x, c.y)
           await page.mouse.down()
           await page.mouse.move(c.x - 120, c.y + 40, { steps: 8 })
-          await page.waitForTimeout(100)
+          await attendreEtat(async () => (await page.evaluate(() => (window as any).__run('nappe').style.willChange)) === 'translate', 'pendant le geste : will-change posé', 100)
           assert.equal(await page.evaluate(() => (window as any).__run('nappe').style.willChange), 'translate', 'pendant le geste : will-change posé')
           assert.ok(await compte() >= 1, 'pendant le geste : la piste est un calque (la sonde voit ce qu\'elle doit voir)')
           await page.mouse.up()
@@ -1253,6 +1261,6 @@ describe('*marquee : enfants, main, défilement, nappe (navigateurs réels)', fu
         await page.close()
         assert.deepEqual(erreurs, [])
       })
-    })
+    }))
   }
 })

@@ -90,8 +90,8 @@
     @syncValidity()
 </script>
 
-<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled">
-  <input type="checkbox" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} @this=!{native} @change={@onChange(e)}>
+<label class="wrap" part="wrap" :class{on($disabled) or $formDisabled}="disabled">
+  <input type="checkbox" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} :this=!{native} @change={@onChange(e)}>
   <span class="box" part="box" aria-hidden="true">
     <svg class="tick" viewBox="0 0 16 16" fill="none">
       <path d="M3 8.5L6.5 12L13 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>

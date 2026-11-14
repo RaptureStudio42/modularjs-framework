@@ -129,7 +129,7 @@ describe('sections d\'un fichier d\'effet — les signaux des poses compilées',
   })
 
   it('une transition sur le cycle de vie, un nombre négatif, un effet donné en réglage', async () => {
-    const vie = await signaux('<script>\n$v = true\n</script>\n{if $v}<p @in=*fly(up, rotate: -30)>x</p>{end}')
+    const vie = await signaux('<script>\n$v = true\n</script>\n{if $v}<p :in=*fly(up, rotate: -30)>x</p>{end}')
     assert.deepEqual(de(vie, 'fly'), ['fly_direction:up', 'fly_rotate:-30'])
     const imbrique = await signaux('<div *delta(fx: *fade(on: hover))>x</div>')
     assert.ok(imbrique.has(fxSignal('fade', 'on', 'hover')))

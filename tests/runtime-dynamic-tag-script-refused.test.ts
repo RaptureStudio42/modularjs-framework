@@ -19,6 +19,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { poserMessages } from './helpers/messages-stub.js'
+import { lireRuntime, lireBloc } from './helpers/runtime-projete.js'
+import { lireDynamique } from './helpers/runtime-dynamique.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // _updDynEl/_updModule vivent désormais dans mjs_dynamic.ts (DÉTACHÉ de mjs_runes.ts,
@@ -26,8 +28,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // ordre que bundleRuntime() (mjs_runes.ts précède mjs_dynamic.ts en production, sans
 // dépendance d'ordre réelle entre elles ici).
 const runesSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_runes.ts'), 'utf8')
-const dynamicSrc = readFileSync(join(__dirname, '../src/runtime/mjs_dynamic.ts'), 'utf8')
-const storeSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_store.ts'), 'utf8')
+const dynamicSrc = lireDynamique(join(__dirname, '../src/runtime/mjs_dynamic.ts'), join(__dirname, '../src/runtime/mjs_element.ts'))
+const storeSrc   = lireRuntime(join(__dirname, '../src/runtime/mjs_store.ts'))
+const murSrc     = lireBloc(join(__dirname, '../src/runtime/mjs_element.ts'), 'mur')
 const schemaSrc  = readFileSync(join(__dirname, '../src/runtime/mjs_schema.ts'), 'utf8')
 
 // ============================================================================
@@ -144,6 +147,8 @@ function makeStore(): { µ: any; warnCalls: any[][] } {
   µ._mjs_rawIn = (v: any) => Array.isArray(v = µ._mjs_toRaw(v)) && v.some((e: any) => e !== µ._mjs_toRaw(e)) ? v.map(µ._mjs_toRaw) : v
   µ._mjs_bumpEpoch = function(raw: any) { const e = (µ._mjs_epochs.get(raw) || 0) + 1; µ._mjs_epochs.set(raw, e); return e }
   µ._mjs_safeKey = function(k: any) { return k !== '__proto__' && k !== 'constructor' && k !== 'prototype' }
+  // le vrai mur des prototypes (µ._mjs_mur, bloc <mur> de mjs_element.ts), que le magasin pose sur l'enveloppe d'un prototype rangé
+  new Function('µ', murSrc)(µ)
   new Function('µ', storeSrc)(µ)
   return { µ, warnCalls }
 }

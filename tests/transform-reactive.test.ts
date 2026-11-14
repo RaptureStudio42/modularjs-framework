@@ -38,12 +38,12 @@ describe('transformReactiveWrites', () => {
 
   it('UpdateExpression $.x++ (post) preserve l\'ancienne valeur, convertie en nombre', () => {
     const out = transformReactiveWrites(`const old = $.count++;`)
-    assert.match(out, /\(_v\) => \(µ\._set\(_mjsThis, 'count', \(\+_v\) \+ 1\), \+_v\)/)
+    assert.match(out, /\(_mjs_n, _mjs_v = _mjs_n\+\+\) => \(µ\._set\(_mjsThis, 'count', _mjs_n\), _mjs_v\)/)
   })
 
   it('UpdateExpression ++$.x (pre) retourne nouvelle valeur, convertie en nombre', () => {
     const out = transformReactiveWrites(`const fresh = ++$.count;`)
-    assert.match(out, /\(µ\._set\(_mjsThis, 'count', \(\+\$\.count\) \+ 1\), \$\.count\)/)
+    assert.match(out, /\(µ\._set\(_mjsThis, 'count', \(\(_mjs_n\) => \+\+_mjs_n\)\(\$\.count\)\), \$\.count\)/)
   })
 
   // ASI — en position STATEMENT, la valeur de retour du `--` est
@@ -52,15 +52,15 @@ describe('transformReactiveWrites', () => {
   // `(` était lue comme un APPEL de la ligne précédente). La forme fidèle
   // reste testée juste au-dessus, là où la valeur est réellement consommée.
   // Détail complet : tests/reactive-increment-asi.test.ts
-  it('--$.count en STATEMENT : forme directe, aucune parenthèse ouvrante, conversion numérique', () => {
+  it('--$.count en STATEMENT : un bloc, aucune parenthèse ouvrante, conversion de JavaScript', () => {
     const out = transformReactiveWrites(`$.count--;`)
-    assert.match(out, /µ\._set\(_mjsThis, 'count', \(\+\$\.count\) - 1\)/)
+    assert.match(out, /\{let _mjs_n;\(_mjs_n = \$\.count, µ\._set\(_mjsThis, 'count', --_mjs_n\)\);\}/)
     assert.ok(!out.trimStart().startsWith('('), out)
   })
 
   it('--$.count avec valeur CONSOMMÉE : forme fidèle (ancienne valeur, convertie en nombre)', () => {
     const out = transformReactiveWrites(`const old = $.count--;`)
-    assert.match(out, /\(_v\) => \(µ\._set\(_mjsThis, 'count', \(\+_v\) - 1\), \+_v\)/)
+    assert.match(out, /\(_mjs_n, _mjs_v = _mjs_n--\) => \(µ\._set\(_mjsThis, 'count', _mjs_n\), _mjs_v\)/)
   })
 
   it('computed wrap `{ _mjs_c: true, f: ... }` devient _mjs_setComputed', () => {

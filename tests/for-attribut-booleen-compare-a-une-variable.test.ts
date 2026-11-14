@@ -2,7 +2,7 @@
 // règle de l'attribut hors boucle : présent quand la comparaison est vraie, absent quand elle est fausse. Le compilateur écrivait le TEXTE
 // « true » ou « false » dans l'attribut ; or la seule présence d'un attribut booléen l'active : toutes les lignes s'allumaient (toutes les cases
 // cochées, tous les boutons désactivés, la liste sur sa DERNIÈRE option…). Les sept attributs `selected`, `checked`, `disabled`, `hidden`,
-// `readonly`, `required` et `open`, écrits `attr={…}` ou `@attr={…}`, dans une ligne de {for}, dans un {for} imbriqué et sous un {if} de ligne ;
+// `readonly`, `required` et `open`, écrits `attr={…}` ou `:attr={…}`, dans une ligne de {for}, dans un {for} imbriqué et sous un {if} de ligne ;
 // deux écritures de contrôle (comparaison à une valeur écrite, appartenance à une liste) qui prenaient déjà le bon chemin. La page est lue dans
 // un navigateur réel : rendue par le client seul (au départ, puis quand le choix change), par le serveur happy-dom et par le serveur navigateur.
 
@@ -15,15 +15,15 @@ import { createSSRRenderer } from '../src/server/renderToString.js'
 import { createBrowserRenderer } from '../src/server/render-browser.js'
 
 const ATTRIBUTS  = ['selected', 'checked', 'disabled', 'hidden', 'readonly', 'required', 'open']
-const FORMES     = ['egal', 'arobase', 'libre', 'liste']
+const FORMES     = ['egal', 'mot', 'libre', 'liste']
 const ENVELOPPES = ['pour', 'imbrique', 'si']
 
 // le choix de départ est « b », puis « c » (« e » dans la boucle imbriquée) quand on clique ; chaque ligne porte l'une des valeurs de la liste
-const EXPRESSION: Record<string, string> = { egal: 'x is $choix', arobase: 'x is $choix', libre: "x is 'b'", liste: '$choisis.includes(x)' }
+const EXPRESSION: Record<string, string> = { egal: 'x is $choix', mot: 'x is $choix', libre: "x is 'b'", liste: '$choisis.includes(x)' }
 
 // l'élément qui porte l'attribut, sa classe dit l'attribut et l'écriture
 function element(attribut: string, forme: string): string {
-  const ecrit  = forme === 'arobase' ? `@${attribut}={${EXPRESSION[forme]}}` : `${attribut}={${EXPRESSION[forme]}}`
+  const ecrit  = forme === 'mot' ? `:${attribut}={${EXPRESSION[forme]}}` : `${attribut}={${EXPRESSION[forme]}}`
   const classe = `k-${attribut}-${forme}`
   switch (attribut) {
     case 'selected': return `<option class="${classe}" value={x} ${ecrit}>{x}</option>`

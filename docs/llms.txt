@@ -1,0 +1,63 @@
+# ModularJS (MJS)
+
+> ModularJS (MJS) est un framework front compilé : chaque composant `.mjs` (un script en Civet par défaut, un gabarit HTML, un style en SASS) devient un élément personnalisé à Shadow DOM, et la réactivité se résout à la compilation, sans Proxy à l'exécution. Cette documentation, en français, est celle de la version installée : elle vit dans `node_modules/modularjs-framework/docs/`.
+
+La syntaxe de MJS n'est celle d'aucun autre framework : lisez les pages de « Démarrer » avant d'écrire un composant, puis l'aide-mémoire pour retrouver une écriture. Après chaque modification, `npx --no -- mjs check --json` rend les erreurs et les avertissements du projet en JSON ; `npx --no -- mjs mcp` est un serveur MCP qui cherche dans cette documentation et compile un composant. Version courte de ce sommaire : `llms-small.txt`.
+
+## Démarrer
+
+- [Introduction](01-introduction.md): ce qu'est MJS (compilation, éléments personnalisés, Shadow DOM) et pourquoi ne pas recopier la syntaxe d'un autre framework
+- [Anatomie d'un composant](02-composant.md): le fichier `.mjs` et ses blocs — `<script>`, gabarit, `<theme>`, `<style>` ; les trois signes d'une balise (`@` événement, `*` effet, `:` mot de MJS)
+- [Aide-mémoire](22-aide-memoire.md): toute la syntaxe en tableaux — symboles, casse `µ`, runes, crochets, balises `<@…>`, blocs
+- [Pièges et bonnes pratiques](18-pieges.md): réactivité statique, mutation imbriquée, les erreurs les plus courantes
+- [Travailler avec une IA](40-travailler-avec-une-ia.md): ce sommaire, le bloc MJS de `AGENTS.md`, `mjs check --json`, le serveur MCP `mjs mcp`
+- [Glossaire](glossaire.md): le vocabulaire figé du framework, en français et en anglais
+
+## Langage
+
+- [Réactivité](03-reactivite.md): `$x`, valeurs dérivées, `µeffect`
+- [µrefresh](41-refresh.md): signaler un changement fait hors de MJS — scène avant / après, ce que vérifie le développement, ce que la production ne vérifie plus, formes refusées, mauvais usages
+- [Props et attributs](04-props.md): passage du parent à l'enfant, valeurs par défaut
+- [Blocs logiques](05-blocs.md): `{if}`, `{for … by}`, `{key}`, `{await}`
+- [Événements](06-evenements.md): `@click`, modificateurs, délégation
+- [Bindings two-way](07-bindings.md): `value=!`, `:group`, conversions, `:html`, dimensions
+- [Classes et styles](08-class.md): `:class{$cond}="classe"`, `:style.<prop>`, `--var={}`
+- [Directives DOM](09-directives-dom.md): `:attach`, `:this`
+- [Transitions et animations](10-transitions.md): `:in=*fly(…)`, `:out=*fade`, `:transition=*slide`, `:flip`, `µspring`
+- [État brut](11-etat-brut.md): `µraw`
+- [Snippets et composants paramétrés](12-snippets.md): des morceaux de gabarit réutilisables, des composants qui en reçoivent
+- [Contexte](13-contexte.md): `§`, `§§`
+- [Stores](14-stores.md): `µ$$`, `µStore`
+- [Éléments spéciaux](15-elements-speciaux.md): `<@window>`, `<@head>`, `<@element>`, `<@failed>`
+- [Cycle de vie](16-cycle-de-vie.md): `µmount`, `µdestroy`, `µawake`, `µsleep`, `µurlChange`, `µevery`
+- [Types et valeurs permises](37-types.md): le bloc `<vars>` — plages, valeurs permises, listes, objets, règles nommées des fichiers `*.types.mjs`
+- [Thèmes, variables et modèles](31-themes.md): la variable de thème `$$nom`, les thèmes nommés et de document, les modèles d'un composant (`layout=`), `µtheme`
+- [Effets](38-effets.md): 117 effets en un mot sur une balise (`*neon`, `*glitch`, `*count`…), leurs réglages, leurs variables de thème
+
+## Application
+
+- [Router (client)](17-router.md): `@routes`, le bloc `<routes target="…">`, la zone `<@view>`, les paramètres `:id`
+- [Navigation (µ.ajax et UJS)](21-navigation.md): liens et formulaires interceptés, zone de montage, `:noUJS`, `µ.pageCache`, `µnav`, préchargement au survol
+- [SSR (rendu serveur)](19-ssr.md): `renderToString`, prérendu, `render.routes`, props et `§§` sérialisés, journal d'erreurs `/__mjs/errors`
+- [i18n](29-i18n.md): `µt('clé')`, `@i18n`, un fichier par langue, `µlang`, interpolation et pluriels
+- [Modules cœur et personnalisation](30-modules-coeur.md): `<@@select>`, `<@@field>`, `<@@tabs>`… et leurs trois leviers de personnalisation
+- [Graphiques](39-graphiques.md): `<@@chart>`, dix formes, données en lignes ou en séries, statistiques
+- [Images](35-images.md): `µimage` et `<@@img>`, dimensions et variantes de largeur au build
+- [Application installable](36-application-installable.md): `mjs-precache.json`, la recette du service worker, `µonline`
+- [Ligne de commande et configuration](32-cli-et-configuration.md): les commandes `mjs`, leurs drapeaux et codes de sortie, toutes les clés de `mjs.config.json`
+- [Tester son application](33-tester-son-application.md): `createHarness` et `mount` — monter un composant dans un DOM simulé, agir, lire
+- [Déboguer une application](34-deboguer.md): le panneau d'inspection, `µconsole`, le journal d'erreurs
+
+## Temps réel et serveur
+
+- [Temps réel (µsocket)](20-temps-reel.md): état réactif partagé, `send` et `on`, `request`, `stream`, présence et salons, protocole `µ:`
+- [MJS-WS, le serveur compagnon](23-mjs-ws.md): `mjs ws`, salons, flux, pont HTTP signé, jetons JWT, adaptateur Redis, état du serveur
+- [MJS-Server, la salle de partie](24-mjs-server.md): `app.game`, sièges, tours, vue par joueur, appariement, client `sock.game`
+- [Protocole MJS-WS](25-protocole-mjs-ws.md): toutes les trames `µ:`, le format binaire µschema, de quoi écrire un client dans un autre langage
+- [Chat](26-chat.md): `chatPackage`, salons à historique, modération, indicateur de frappe, client `sock.chat`
+- [Comptes et identités](27-accounts.md): `accountsPackage`, création et connexion, jetons, rôles, client `sock.account`
+- [Lobby](28-lobby.md): `lobbyPackage`, présence riche, invitations, annonces de tables, client `sock.lobby`
+
+## Optional
+
+- [Sommaire de la documentation](README.md): le sommaire pour les lecteurs humains, une ligne détaillée par page

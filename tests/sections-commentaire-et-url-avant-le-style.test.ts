@@ -18,7 +18,7 @@ describe('extractSections — `/*` et `url(` dans le HTML avant le style', () =>
 
   it('`/*` avant le style, refermé par un commentaire du style', () => {
     const s = extractSections('<p>/* note</p>\n<style>\n/* titre */\n.a\n  color: red\n</style>')
-    assert.equal(s.style.raw, '\n/* titre */\n.a\n  color: red\n')
+    assert.equal(s.style.raw, '\n\n.a\n  color: red\n')
   })
 
   it('`url(` avant le style, refermé après lui', () => {
@@ -40,8 +40,8 @@ describe('extractSections — `/*` et `url(` dans le HTML avant le style', () =>
 
   it('`/*` dans un commentaire du script, puis un style qui commence par un commentaire', () => {
     const s = extractSections('<script>\n  # motif /* ici\n  x = 1\n</script>\n<style>\n/* titre */\n.a\n  color: red\n</style>')
-    assert.equal(s.script.raw, '\n# motif /* ici\nx = 1\n')
-    assert.equal(s.style.raw, '\n/* titre */\n.a\n  color: red\n')
+    assert.equal(s.script.raw, '\n\nx = 1\n')
+    assert.equal(s.style.raw, '\n\n.a\n  color: red\n')
   })
 
   it('transpile() : le composant compile, avec son CSS', async () => {
@@ -51,7 +51,7 @@ describe('extractSections — `/*` et `url(` dans le HTML avant le style', () =>
 
   it('témoin : `url(//…)` et commentaire dans le style, style inchangé', () => {
     const s = extractSections('<p>texte</p>\n<style>\n/* c */\n.a\n  background: url(//x.png)\n</style>')
-    assert.equal(s.style.raw, '\n/* c */\n.a\n  background: url(//x.png)\n')
+    assert.equal(s.style.raw, '\n\n.a\n  background: url(//x.png)\n')
   })
 
   it('témoin : un style mis en commentaire HTML reste inerte', () => {

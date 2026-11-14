@@ -13,7 +13,7 @@ const position    = async (src: string): Promise<string> => {
     await transpile(src, { moduleName: 'module-situe' })
     return 'construit'
   }
-  catch (e: any) { return /module-situe\.module:(\d+:\d+)/.exec(e.message)?.[1] ?? e.message }
+  catch (e: any) { return /module-situe\.mjs:(\d+:\d+)/.exec(e.message)?.[1] ?? e.message }
 }
 
 describe('<script module> avec @import : erreurs et carte situées', () => {

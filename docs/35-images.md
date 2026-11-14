@@ -22,6 +22,7 @@ Un `src` écrit en dur (chaîne entre guillemets, chemin relatif à `sourceDir` 
 - **Fichier introuvable = build en échec**, en nommant la balise et le chemin — même contrat que `µimage` et `µasset`.
 - **L'image est suivie comme dépendance** : la modifier recompile le composant.
 - **Un `widths` calculé** (`widths={$w}`), ou un `src`/`widths` écrit **deux fois** sur la même balise, fait échouer le build : ces deux formes ne se résolvent pas au build, et rien ne disparaît en silence.
+- **Dans le repli d'un `<@failed>`**, la balise s'écrit et s'affiche comme partout ailleurs. **Dans un `<@head>`**, elle arrête la construction : l'en-tête du document ne s'affiche jamais, écrivez-la dans le gabarit.
 
 `µimage` garde sa place quand une résolution sert à plusieurs endroits (une vignette et son agrandissement), quand on affiche ses valeurs (`{photo.width} × {photo.height}`, le `srcset` produit), ou sur un `<img>` natif.
 
@@ -66,6 +67,7 @@ Même patron que le moteur de rendu `browser` (Playwright, cf. [19 · SSR](19-ss
 - **Le SVG n'est jamais redimensionné** : une seule ressource, `srcset` reste vide — un vectoriel s'adapte tout seul à n'importe quelle taille d'affichage.
 - **`src` reste toujours l'image d'origine**, même quand des variantes existent : c'est le repli d'un navigateur qui ne comprendrait pas `srcset`.
 - **Une image donnée en réglage d'un effet** (`*blend`, `*gradient`, `*scratch`, `*peel`, `*ink`) s'écrit par son chemin, tel quel (`*gradient(image: 'photo.jpg')`) : le build la traite comme un `µimage('photo.jpg')`, sans rien de plus à écrire. Elle prend la plus petite variante qui couvre la largeur de la balise (× la densité de l'écran), sinon l'image d'origine (cf. « Quelle image charge un effet », plus bas).
+- **Un chemin écrit en dur** : `µimage` et `<@@img>` ne lisent pas de nom calculé. Pour un fichier choisi à l'exécution (son, icône, habillage), `µasset "images/#{x}.svg"` emporte la table des fichiers du motif (cf. [15 · Éléments spéciaux](15-elements-speciaux.md)).
 - **Une image introuvable fait ÉCHOUER le build**, en nommant le fichier fautif — même contrat qu'un `µasset` absent : jamais un chemin cassé qui part en production.
 - **L'image est suivie comme dépendance** : la modifier (même en gardant le même nom de fichier) invalide et recompile tout composant qui l'utilise, exactement comme un `.civet` importé.
 
@@ -142,7 +144,7 @@ Forme longue, appuyée sur un `µimage('chemin')` déjà résolu :
 | `width` / `height` | `null` | dimensions natives, réservent l'espace avant chargement |
 | `loading` | `'lazy'` | attribut natif `loading` |
 | `decoding` | `'async'` | attribut natif `decoding` |
-| `fit` | `'cover'` | posé en `object-fit` via `@style.objectFit` |
+| `fit` | `'cover'` | posé en `object-fit` via `:style.objectFit` |
 
 Compile en `<img>` nu avec ces mêmes attributs. Une variable de thème, `$$img-radius` (défaut `0`), arrondit les coins ; le style embarqué pose `max-width: 100%` / `height: auto` — l'image reste fluide sans rien écrire côté appelant.
 

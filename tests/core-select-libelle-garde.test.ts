@@ -30,7 +30,7 @@ const HOTE = `<script>
     $ancien = if e.data == 'x' then [{ id: 'x1', nom: 'Xi' }] else ${TOUS}
 </script>
 
-<form id="formulaire" @noUJS>
+<form id="formulaire" :noUJS>
   <div id="simple">
     <@@select name="simple" search match="async" @search={@cherche(e)}>
       {for t in $simple by id}

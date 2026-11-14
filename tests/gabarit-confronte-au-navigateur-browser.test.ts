@@ -112,8 +112,10 @@ const VERIFIER = String.raw`(function (lot, teteSrc) {
       var ok = !!n && (nature === 'text' ? n.nodeType === 8 && n.data === '$' + id : nature === 'textslot' ? n.nodeType === 3 && n.data === ' ' && n.parentNode.childNodes.length === 1 : n.nodeType === 1 && n.hasAttribute(c.marques[id]))
       if (!ok) fautes.push(id + ' [' + c.chemins[id] + '] mène à ' + (!n ? 'rien' : n.nodeType === 1 ? '<' + n.localName + '>' : n.nodeType === 8 ? 'un commentaire' : 'un texte'))
     }
-    var µ = new Proxy({ _mjs_getTextNode: function () { return document.createComment('M') }, _mjs_updAttrNode: function (el, k, v) { el.setAttribute(k, String(v)) } }, { get: function (o, k) { return (k in o) ? o[k] : function () {} } })
-    var imperatif = formes(new Function('µ', 'document', c.corps)(µ, document).fragment.childNodes)
+    // les repères texte du mode impératif (nœuds texte vides) rendus visibles : un commentaire « M » à leur place
+    var doc = new Proxy(document, { get: function (o, k) { return k === 'createTextNode' ? function (t) { return t === '' ? document.createComment('M') : document.createTextNode(t) } : typeof o[k] === 'function' ? o[k].bind(o) : o[k] } })
+    var µ = new Proxy({ _mjs_updAttrNode: function (el, k, v) { el.setAttribute(k, String(v)) } }, { get: function (o, k) { return (k in o) ? o[k] : function () {} } })
+    var imperatif = formes(new Function('µ', 'document', c.corps)(µ, doc).fragment.childNodes)
     var ref = c.ns === 'http://www.w3.org/2000/svg' ? sortir(lire('<svg>' + c.reference + '</svg>')) : c.ns ? sortir(lire('<math>' + c.reference + '</math>')) : lire(c.reference)
     return { nom: c.nom, fautes: fautes, imperatif: imperatif, navigateur: formes(ref.childNodes) }
   })

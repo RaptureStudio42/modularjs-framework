@@ -15,7 +15,7 @@ import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
-import { RUNTIME_LABELS } from '../src/runtime-labels.js'
+import { RUNTIME_LABELS, runtimeMessagesFor } from '../src/runtime-labels.js'
 import * as minify from '../src/bundler/minify.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
@@ -73,7 +73,8 @@ describe('messages du développement seul — la liste de la construction suit l
   })
 
   it('chaque clé existe en français et en anglais, aucune n\'est un texte de trace, aucune n\'est en double', () => {
-    for (const lang of ['fr', 'en'] as const) assert.deepEqual(DEV_ONLY_MESSAGES.filter((k: string) => typeof (RUNTIME_LABELS[lang].err as Record<string, string>)[k] !== 'string'), [], lang)
+    // la table des messages et ceux d'un fichier du runtime joint à la demande (µload), rangés à part du groupe err
+    for (const lang of ['fr', 'en'] as const) assert.deepEqual(DEV_ONLY_MESSAGES.filter((k: string) => typeof runtimeMessagesFor(lang)[k] !== 'string'), [], lang)
     assert.deepEqual(DEV_ONLY_MESSAGES.filter((k: string) => TRACE_READ_MESSAGES.includes(k)), [])
     assert.equal(new Set(DEV_ONLY_MESSAGES).size, DEV_ONLY_MESSAGES.length)
   })
@@ -196,6 +197,6 @@ describe('messages du développement seul — construction réelle (µevery au c
   it('développement : chaque appel reste, avec son texte de secours', () => {
     const { coeur } = built['dev']
     assert.deepEqual([...DEVELOPPEMENT, ...PRODUCTION].filter(k => !coeur.includes(k)), [])
-    assert.ok(coeur.includes('µevery doit être appelé'), 'le texte du message est dans le cœur de développement')
+    assert.ok(coeur.includes('suit un composant : appelé hors de tout composant'), 'le texte du message est dans le cœur de développement')
   })
 })

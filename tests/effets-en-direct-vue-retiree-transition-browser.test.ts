@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 const EFFETS: Record<string, string> = {
   follow:  '<div class="z" *follow><p>a</p></div>\n',
@@ -63,7 +64,7 @@ describe('un effet en direct dans une vue retirée sous une View Transition rée
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
       before(async function () {
         const playwright = await import('playwright')
@@ -188,6 +189,6 @@ describe('un effet en direct dans une vue retirée sous une View Transition rée
           assert.ok(apres.j.some((x: string) => x.startsWith('join ') && x.endsWith('#/b')), `rejoint le salon de b : ${JSON.stringify(apres.j)}`)
         })
       }
-    })
+    }))
   }
 })

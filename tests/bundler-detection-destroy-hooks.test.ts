@@ -57,7 +57,7 @@ describe('mjs_destroy_hooks.ts — détaché du cœur, build RÉEL', function ()
   // COMPILÉ (qui, lui, ne ment jamais). Corrigé avec la forme documentée `@transition=*fade`.
   it('@transition=*fade (forme nommée SANS paramètres) seul : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @transition=*fade>x</p>{end}'].join('\n'),
+      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p :transition=*fade>x</p>{end}'].join('\n'),
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })
@@ -66,28 +66,28 @@ describe('mjs_destroy_hooks.ts — détaché du cœur, build RÉEL', function ()
   // `@in`/`@out` seuls.
   it('@in=*fade / @out=*fade seuls : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p @in=*fade @out=*fade>x</p>{end}'].join('\n'),
+      'hop.mjs': ['<script>', '$show = true', '</script>', '{if $show}<p :in=*fade :out=*fade>x</p>{end}'].join('\n'),
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })
 
   it('@attach seul : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': '<p @attach={(node) => { }}>x</p>\n',
+      'hop.mjs': '<p :attach={(node) => { }}>x</p>\n',
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })
 
   it('@this=!{ref} (auto-déclaré) seul : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': '<p @this=!{ref}>x</p>\n',
+      'hop.mjs': '<p :this=!{ref}>x</p>\n',
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })
 
   it('@flip seul (dans un {for}) : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>', '$items = [1, 2, 3]', '</script>', '{for x in $items}<p @flip>{x}</p>{end}'].join('\n'),
+      'hop.mjs': ['<script>', '$items = [1, 2, 3]', '</script>', '{for x in $items}<p :flip>{x}</p>{end}'].join('\n'),
     })
     assert.ok(coreContent(outDir).includes(MARK_DESTROY_HOOKS))
   })

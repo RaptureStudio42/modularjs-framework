@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Moteur = 'chromium' | 'firefox' | 'webkit'
 
@@ -168,7 +169,7 @@ function construit(prod = false): Promise<string> {
 type Trace = { texte: string, largeur: number, droite: number, boite: number, suite: number | null }
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-  describe(`*count : un nombre qui perd des chiffres garde la place de l'ancien jusqu'à la fin du décompte (${nom} réel)`, function () {
+  playTogether(describe(`*count : un nombre qui perd des chiffres garde la place de l'ancien jusqu'à la fin du décompte (${nom} réel)`, function () {
     this.timeout(120000)
     let present = false
     let script  = ''
@@ -411,5 +412,5 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
         assert.deepEqual({ marques: reste.marques, style: reste.style }, { marques: [], style: '' }, 'la balise retirée n\'a gardé ni marque ni style en ligne')
       })
     })
-  })
+  }))
 }

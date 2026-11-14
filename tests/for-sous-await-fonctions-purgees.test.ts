@@ -32,9 +32,9 @@ changer = ->
 {await $promesse}
 {success d}
 {for x in $valeurs}
-<p data-k="classe" @class{x is $choix}="on">x</p>
+<p data-k="classe" :class{x is $choix}="on">x</p>
 <input data-k="case" type="checkbox" aria-label="case" checked={x is $choix}>
-<p data-k="style" @style.color={x is $choix ? 'red' : ''}>x</p>
+<p data-k="style" :style.color={x is $choix ? 'red' : ''}>x</p>
 {end}
 {error err}
 <p data-k="erreur">erreur</p>

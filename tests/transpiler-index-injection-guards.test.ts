@@ -119,27 +119,27 @@ describe("this['routes'] = … contourne detectRoutesReassignment/detectRouterAw
 
 describe('@no-ujs="valeur" avale une valeur en silence', function () {
   it('@no-ujs="Vraiment ?" est refusé', async () => {
-    await assert.rejects(transpile('<button @no-ujs="Vraiment ?">X</button>', { moduleName: 'nu1' }), /@no-ujs/)
+    await assert.rejects(transpile('<button :no-ujs="Vraiment ?">X</button>', { moduleName: 'nu1' }), /:no-ujs/)
   })
 
   it('@noUJS="x" est refusé (casse alternative)', async () => {
-    await assert.rejects(transpile('<button @noUJS="x">X</button>', { moduleName: 'nu2' }), /@no-ujs/)
+    await assert.rejects(transpile('<button :noUJS="x">X</button>', { moduleName: 'nu2' }), /:no-ujs/)
   })
 
   it('@no-ujs nu (sans valeur) reste accepté, pose mjs-no-ujs', async () => {
-    const { output } = await transpile('<button @no-ujs>X</button>', { moduleName: 'nu3' })
+    const { output } = await transpile('<button :no-ujs>X</button>', { moduleName: 'nu3' })
     assert.match(output, /mjs-no-ujs/)
   })
 
   it('@noUJS nu (sans valeur) reste accepté, pose mjs-no-ujs', async () => {
-    const { output } = await transpile('<button @noUJS>X</button>', { moduleName: 'nu4' })
+    const { output } = await transpile('<button :noUJS>X</button>', { moduleName: 'nu4' })
     assert.match(output, /mjs-no-ujs/)
   })
 })
 
 describe('erreurs de preprocessHtml/analyzer sans nom de module', function () {
   it('une erreur de preprocessHtml est préfixée du nom du module quand il est fourni', async () => {
-    await assert.rejects(transpile('<button @confirm={ text: 3 }>y</button>', { moduleName: 'mon-composant-important' }), /mon-composant-important/)
+    await assert.rejects(transpile('<button :confirm={ text: 3 }>y</button>', { moduleName: 'mon-composant-important' }), /mon-composant-important/)
   })
 
   it('une erreur qui contient déjà moduleName (ex. garde .page.mjs) n\'est pas préfixée deux fois', async () => {
@@ -159,7 +159,7 @@ describe('erreurs de preprocessHtml/analyzer sans nom de module', function () {
 
   it('sans moduleName, le message reste inchangé (aucun préfixe)', async () => {
     try {
-      await transpile('<button @confirm={ text: 3 }>y</button>')
+      await transpile('<button :confirm={ text: 3 }>y</button>')
       assert.fail('devait lever une erreur')
     }
     catch (e: any) {
@@ -170,32 +170,32 @@ describe('erreurs de preprocessHtml/analyzer sans nom de module', function () {
 
 describe('directive refusée DANS un commentaire HTML', function () {
   it('@permanent="nom" (forme refusée) écrit dans un commentaire ne fait pas échouer la compilation', async () => {
-    const { output } = await transpile('<!-- exemple : <a @permanent="nom">l</a> --><p>contenu</p>', { moduleName: 'com1' })
+    const { output } = await transpile('<!-- exemple : <a :permanent="nom">l</a> --><p>contenu</p>', { moduleName: 'com1' })
     assert.match(output, /contenu/)
   })
 
   it('la même forme refusée HORS commentaire continue de lever (non-régression)', async () => {
-    await assert.rejects(transpile('<a @permanent="nom">l</a>', { moduleName: 'com2' }), /@permanent/)
+    await assert.rejects(transpile('<a :permanent="nom">l</a>', { moduleName: 'com2' }), /:permanent/)
   })
 })
 
 describe('directive dupliquée sur une même balise', function () {
   it('@confirm posé deux fois sur le même bouton → erreur', async () => {
-    await assert.rejects(transpile('<button @confirm="A" @confirm="B">X</button>', { moduleName: 'dup1' }), /@confirm/)
+    await assert.rejects(transpile('<button :confirm="A" :confirm="B">X</button>', { moduleName: 'dup1' }), /:confirm/)
   })
 
   it('@title posé deux fois sur le même bouton → erreur', async () => {
-    await assert.rejects(transpile('<button @title="A" @title="B">X</button>', { moduleName: 'dup2' }), /@title/)
+    await assert.rejects(transpile('<button :title="A" :title="B">X</button>', { moduleName: 'dup2' }), /:title/)
   })
 
   it('deux directives DIFFÉRENTES sur la même balise → OK, aucune erreur', async () => {
-    const { output } = await transpile('<button @confirm="A" @title="B">X</button>', { moduleName: 'dup3' })
+    const { output } = await transpile('<button :confirm="A" :title="B">X</button>', { moduleName: 'dup3' })
     assert.match(output, /mjs-confirm/)
     assert.match(output, /mjs-title/)
   })
 
   it('la même directive sur DEUX balises différentes → OK, aucune erreur', async () => {
-    const { output } = await transpile('<button @confirm="A">X</button><button @confirm="B">Y</button>', { moduleName: 'dup4' })
+    const { output } = await transpile('<button :confirm="A">X</button><button :confirm="B">Y</button>', { moduleName: 'dup4' })
     assert.match(output, /mjs-confirm='A'/)
     assert.match(output, /mjs-confirm='B'/)
   })
@@ -249,7 +249,7 @@ describe('ligne d\'erreur Civet décalée', function () {
       assert.fail('devait lever une erreur de syntaxe')
     }
     catch (e: any) {
-      assert.match(e.message, /lignerreur\.script:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
+      assert.match(e.message, /lignerreur\.mjs:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
     }
   })
 
@@ -260,7 +260,7 @@ describe('ligne d\'erreur Civet décalée', function () {
       assert.fail('devait lever une erreur de syntaxe')
     }
     catch (e: any) {
-      assert.match(e.message, /lignerreur2\.script:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
+      assert.match(e.message, /lignerreur2\.mjs:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
     }
   })
 })
@@ -288,7 +288,7 @@ describe("this[`routes`] (gabarit sans expression) contourne encore detectRouter
 describe("wrapModuleError : moduleName court, faux négatif par sous-chaîne (ex. 'a')", function () {
   it("moduleName='a' (piège : 'a' est une lettre de presque tout message) : le message est désormais préfixé", async () => {
     try {
-      await transpile('<button @confirm={ text: 3 }>y</button>', { moduleName: 'a' })
+      await transpile('<button :confirm={ text: 3 }>y</button>', { moduleName: 'a' })
       assert.fail('devait lever une erreur')
     }
     catch (e: any) {
@@ -300,7 +300,7 @@ describe("wrapModuleError : moduleName court, faux négatif par sous-chaîne (ex
     this.timeout(8000)
     const root = mjsTmp('wrapmodule-b5-2')
     const file = join(root, 'a.mjs')
-    writeFileSync(file, '<button @confirm={ text: 3 }>y</button>')
+    writeFileSync(file, '<button :confirm={ text: 3 }>y</button>')
     try {
       await transpileFile(file)
       assert.fail('devait lever une erreur')
@@ -315,13 +315,13 @@ describe("wrapModuleError : moduleName court, faux négatif par sous-chaîne (ex
 
 describe('<!-- littéral dans une valeur d\'attribut avale le HTML jusqu\'au prochain --> réel', function () {
   it('<div title="<!--">…</div> suivi d\'une directive légitime : @confirm survit à la compilation', async () => {
-    const src = '<div title="<!--">Hi</div><a @confirm="A">GO</a><!-- end --><p>fin</p>'
+    const src = '<div title="<!--">Hi</div><a :confirm="A">GO</a><!-- end --><p>fin</p>'
     const { output } = await transpile(src, { moduleName: 'trapcommentb5' })
     assert.match(output, /mjs-confirm='A'/, `la directive @confirm="A" doit survivre : ${output}`)
   })
 
   it('non-régression : un VRAI commentaire contenant @permanent="x" reste masqué', async () => {
-    const src = '<!-- exemple : <a @permanent="x">l</a> --><p>contenu</p>'
+    const src = '<!-- exemple : <a :permanent="x">l</a> --><p>contenu</p>'
     const { output } = await transpile(src, { moduleName: 'comb53' })
     assert.match(output, /contenu/)
   })
@@ -329,17 +329,17 @@ describe('<!-- littéral dans une valeur d\'attribut avale le HTML jusqu\'au pro
 
 describe('directive dupliquée masquée par un > dans la valeur d\'un AUTRE attribut de la même balise', function () {
   it('> caché dans data-x=">" ENTRE deux @confirm de la même balise → transpiler.directive-dupliquee', async () => {
-    await assert.rejects(transpile('<a @confirm="A" data-x=">" @confirm="B">x</a>', { moduleName: 'gtbetweenb5' }), /@confirm/)
+    await assert.rejects(transpile('<a :confirm="A" data-x=">" :confirm="B">x</a>', { moduleName: 'gtbetweenb5' }), /:confirm/)
   })
 
   it('non-régression : la même directive sur deux balises différentes → OK', async () => {
-    const { output } = await transpile('<a @confirm="A">x</a><a @confirm="B">y</a>', { moduleName: 'diffb5' })
+    const { output } = await transpile('<a :confirm="A">x</a><a :confirm="B">y</a>', { moduleName: 'diffb5' })
     assert.match(output, /mjs-confirm='A'/)
     assert.match(output, /mjs-confirm='B'/)
   })
 
   it('> caché dans title AVANT un unique @confirm (pas de doublon) → OK', async () => {
-    const { output } = await transpile('<a title=">" @confirm="A">x</a>', { moduleName: 'gtattrb5' })
+    const { output } = await transpile('<a title=">" :confirm="A">x</a>', { moduleName: 'gtattrb5' })
     assert.match(output, /mjs-confirm='A'/)
   })
 })
@@ -372,8 +372,8 @@ describe('remapAdapterErrorLine ne couvre pas <script module> (seul <script> com
       assert.fail('devait lever une erreur de syntaxe')
     }
     catch (e: any) {
-      assert.doesNotMatch(e.message, /modlignerreurb5\.module:2:/, `ne doit PAS citer la ligne relative au module seul (2), décalée : ${e.message}`)
-      assert.match(e.message, /modlignerreurb5\.module:5:/, `la ligne réelle (5) doit apparaître dans : ${e.message}`)
+      assert.doesNotMatch(e.message, /modlignerreurb5\.mjs:2:/, `ne doit PAS citer la ligne relative au module seul (2), décalée : ${e.message}`)
+      assert.match(e.message, /modlignerreurb5\.mjs:5:/, `la ligne réelle (5) doit apparaître dans : ${e.message}`)
     }
   })
 
@@ -384,7 +384,7 @@ describe('remapAdapterErrorLine ne couvre pas <script module> (seul <script> com
       assert.fail('devait lever une erreur de syntaxe')
     }
     catch (e: any) {
-      assert.match(e.message, /temoinb5\.script:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
+      assert.match(e.message, /temoinb5\.mjs:4:/, `la ligne réelle (4) doit apparaître dans : ${e.message}`)
     }
   })
 })

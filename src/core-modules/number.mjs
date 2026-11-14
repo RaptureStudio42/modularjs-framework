@@ -4,10 +4,18 @@
   $value        = ''
   $min          = null
   $max          = null
-  # sans `step` écrit, le pas vaut 1 ; avec `decimals`, la plus petite unité de ses décimales (voir $by)
+  # sans `step` écrit, le pas vaut 1 ; avec `decimals` ou `precision`, la plus petite unité de leurs décimales (voir $by)
   $step         = null
-  # `decimals` : un nombre FIXE de décimales montrées, au format de la langue de la page (« 64,30 » en français, « 64.30 » en anglais)
+  # `decimals` : un nombre FIXE de décimales montrées (« 64,30 ») ; `precision` : au plus ce nombre de décimales, sans zéro final (« 9,9 »),
+  # deux quand il est écrit seul ; `decimals` écrit, `precision` ne compte pas
   $decimals     = null
+  $precision    = null
+  # le séparateur décimal montré : celui de la langue de la page (« 64,3 » en français, « 64.3 » en anglais), sauf « , » ou « . » écrits ici
+  $separator    = null
+  # `zero` : un champ vidé vaut 0, ramené dans les bornes (`min` s'il est plus grand, `max` s'il est plus petit), et l'écrit à la sortie ;
+  # `strict` : une frappe ou un collage qui donnerait plus de décimales que le champ n'en tient, ou qui allongerait le texte au-delà de 15 caractères, est refusé
+  $zero         = false
+  $strict       = false
   $name         = ''
   $label        = null
   $placeholder  = ''
@@ -62,27 +70,50 @@
     s   = s.slice(0, cut + 1) + s.slice(cut + 1).replace(SEPARATORS, '') if cut >= 0
     toNum(s)
 
-  # un nombre que JavaScript écrirait en notation exponentielle (0.0000001 : « 1e-7 ») s'écrit en clair, le champ ne garde ni « e » ni signe au milieu
+  # un nombre que JavaScript écrirait en notation exponentielle (0.0000001 : « 1e-7 » ; 1e21 : « 1e+21 ») s'écrit en clair, le champ ne garde
+  # ni « e » ni signe au milieu
   show = (v)->
     n = toNum(v)
     return '' if n is null
     text = String(n)
-    if text.includes('e') then n.toFixed(decimalsOf(n)) else text
+    if text.includes('e') then plain(n, decimalsOf(n)) else text
 
-  # ce que le champ montre : avec `decimals`, toutes les décimales en vigueur, au séparateur de la langue de la page ; sans, la valeur en
-  # clair, comme la variable liée et le formulaire la reçoivent
-  view = (v, fixed, digits, mark)->
+  # un nombre en clair à `digits` décimales : toFixed, sauf à partir de 1e21, où toFixed passe lui aussi en notation exponentielle ; un tel
+  # nombre est entier : ses chiffres, puis les zéros des décimales
+  plain = (n, digits)-> if Math.abs(n) < 1e21 then n.toFixed(digits) else BigInt(n).toString() + (if digits > 0 then '.' + '0'.repeat(digits) else '')
+
+  # l'arrondi au plus proche, la moitié loin de zéro, sur l'écriture décimale du nombre : « 1,005 » donne 1,01 comme « 1,125 » donne 1,13
+  # (toFixed arrondit la valeur binaire, où 1,005 vaut un rien de moins) ; un nombre qui tient dans ces décimales reste tel quel
+  roundTo = (n, digits)->
+    return n if decimalsOf(n) <= digits
+    parts = String(Math.abs(n)).split('e')
+    Math.sign(n) * Number(Math.round(Number(parts[0] + 'e' + (Number(parts[1] ?? 0) + digits))) + 'e-' + digits)
+
+  # ce que le champ montre, au séparateur en vigueur : avec `decimals`, toutes les décimales en vigueur ; avec `precision`, la valeur arrondie
+  # à ces décimales, sans zéro final ; sans l'un ni l'autre, la valeur en clair (la variable liée et le formulaire reçoivent le nombre, au point)
+  view = (v, fixed, prec, digits, mark)->
     n = toNum(v)
-    if n is null or fixed is null then show(v) else n.toFixed(digits).replace('.', mark)
+    return show(v).replace('.', mark) if n is null or (fixed is null and prec is null)
+    (if fixed is null then show(roundTo(n, digits)) else plain(roundTo(n, digits), digits)).replace('.', mark)
+
+  # le séparateur que le navigateur écrit pour la langue `tag`, rien quand il la refuse
+  markFor = (tag)->
+    try
+      if (1.5).toLocaleString(tag).includes(',') then ',' else '.'
+    catch
+      null
 
   # le séparateur décimal de la langue de la page, virgule ou point, tel que le navigateur l'écrit pour elle (« 1,5 » en français, « 1.5 » en
-  # anglais) ; un nom de langue qu'il refuse, ou aucune langue, donne la virgule du français, comme les libellés (lire µlang rend le dérivé
-  # réactif à la bascule)
+  # anglais) ; la langue est celle qui choisit les libellés, lue dans le même ordre (`µlang`, celle du module i18n, `<html lang>`, celle de la
+  # construction), mais entière : sa région compte (« 1.5 » en `de-CH` et en `es-MX`) ; un nom de langue que le navigateur refuse se lit par
+  # son premier sous-tag (« en- » : l'anglais), comme les libellés ; refusé lui aussi, ou sans langue, c'est la virgule du français (lire µlang
+  # rend le dérivé réactif à la bascule)
   markOf = (lang)->
-    try
-      if (1.5).toLocaleString(µ._mjs_labelLang() or 'fr').includes(',') then ',' else '.'
-    catch
-      ','
+    tag = (µ._mjs_storeRaw and µ._mjs_storeRaw.__mjsLang) or (typeof µ._mjs_i18nEffectiveLang is 'function' and µ._mjs_i18nEffectiveLang()) or (typeof document isnt 'undefined' and document.documentElement and document.documentElement.lang) or µ._runtimeLabelsLang or 'fr'
+    markFor(tag) ?? markFor(String(tag).split('-')[0]) ?? ','
+
+  # `separator` : « , » ou « . » ; une autre valeur est une faute, le séparateur reste celui de la langue et la console le dit (cf. le µeffect des fautes)
+  markIn = (v)-> if placesIn(v) is ',' or placesIn(v) is '.' then placesIn(v) else null
 
   # la frappe gardée : des chiffres, un signe en tête si la borne basse le permet, et les séparateurs, virgule ou point : un seul sous un pas
   # décimal, comme un champ nombre natif, tous sous un pas entier (ceux des milliers, « 1,000,000 ») — retiré, le séparateur faisait de
@@ -102,34 +133,40 @@
   placesIn   = (v)-> if v? and v isnt false then String(v).trim() else ''
   placesBad  = (v)-> placesIn(v) isnt '' and not (/^\d+$/.test(placesIn(v)) and Number(placesIn(v)) <= 100)
   placesOf   = (v)-> if placesIn(v) is '' or placesBad(v) then null else Number(placesIn(v))
+  # `precision` suit la même règle, mais écrit seul (vide, ou `precision={true}`) il vaut deux ; absent, `false` ou « false », il n'y en a pas
+  precBad    = (v)-> boolAttr(v) and v isnt true and placesBad(v)
+  precOf     = (v)-> if not boolAttr(v) then null else (if v is true or placesIn(v) is '' then 2 else placesOf(v))
   # les décimales d'un pas, notation exponentielle comprise (« 1e-7 » en a 7) ; toFixed n'en accepte pas plus de 100
   decimalsOf = (n)->
     parts = String(n).split('e')
     Math.min(100, Math.max(0, (parts[0].split('.')[1] or '').length - Number(parts[1] ?? 0)))
   strideOf   = (reps)-> if reps < 18 then 1 else (if reps < 40 then 5 else 10)
 
-  # avec `decimals` et sans `step` utilisable, le pas est la plus petite unité des décimales (0,01 pour deux) : une valeur tapée reste dans
-  # le pas, que le formulaire valide comme un champ nombre natif ; les décimales en vigueur sont celles du pas et du grand pas, et avec
-  # `decimals`, ce nombre, sauf si le pas, le grand pas ou une borne en ont davantage : la valeur montrée est toujours celle que tient le champ
+  # avec `decimals` ou `precision` et sans `step` utilisable, le pas est la plus petite unité des décimales (0,01 pour deux) : une valeur tapée
+  # reste dans le pas, que le formulaire valide comme un champ nombre natif ; les décimales en vigueur sont celles du pas et du grand pas, et
+  # avec `decimals` ou `precision`, ce nombre, sauf si le pas, le grand pas ou une borne en ont davantage : la valeur montrée est toujours
+  # celle que tient le champ
   $lo       = toNum($min)
   $hi       = toNum($max)
   $fixed    = placesOf($decimals)
-  $by       = if $fixed is null or (toNum($step) ?? 0) > 0 then stepOf($step) else Number('1e-' + $fixed)
+  $prec     = if $fixed is null then precOf($precision) else null
+  $places   = $fixed ?? $prec
+  $by       = if $places is null or (toNum($step) ?? 0) > 0 then stepOf($step) else Number('1e-' + $places)
   $wide     = boolAttr($big)
   $bigBy    = stepOf(if toNum($big) is null then 10 else $big)
-  $digits   = Math.max(decimalsOf($by), decimalsOf($bigBy), (if $fixed is null then 0 else Math.max($fixed, decimalsOf($lo ?? 0), decimalsOf($hi ?? 0))))
+  $digits   = Math.max(decimalsOf($by), decimalsOf($bigBy), (if $places is null then 0 else Math.max($places, decimalsOf($lo ?? 0), decimalsOf($hi ?? 0))))
   $keypad   = if $digits > 0 then 'decimal' else 'numeric'
-  $mark     = markOf(µlang)
+  $mark     = markIn($separator) ?? markOf(µlang)
   $cur      = toNum($value)
 
   $labelText = $label ?? tr('numberLabel', µlang)
   $lessText  = $lessLabel ?? tr('numberLess', µlang)
   $moreText  = $moreLabel ?? tr('numberMore', µlang)
-  $bigLess   = if $bigLessLabel then $bigLessLabel else tr('numberBigLess', µlang, show($bigBy))
-  $bigMore   = if $bigMoreLabel then $bigMoreLabel else tr('numberBigMore', µlang, show($bigBy))
+  $bigLess   = if $bigLessLabel then $bigLessLabel else tr('numberBigLess', µlang, show($bigBy).replace('.', $mark))
+  $bigMore   = if $bigMoreLabel then $bigMoreLabel else tr('numberBigMore', µlang, show($bigBy).replace('.', $mark))
 
   $nullable = ($placeholder or '') isnt ''
-  $shown    = if $draft is null then view($value, $fixed, $digits, $mark) else $draft
+  $shown    = if $draft is null then view($value, $fixed, $prec, $digits, $mark) else $draft
   # désactivé par lui-même ou par un `<fieldset disabled>` autour de lui (`$formDisabled`, posé par le socle du cœur, qui ôte `disabled="false"`)
   $off      = boolAttr($disabled) or $formDisabled
   $ro       = boolAttr($readonly)
@@ -141,7 +178,13 @@
     n = Math.max($lo, n) if $lo isnt null
     n
 
-  round = (n)-> Number(n.toFixed($digits))
+  round = (n)-> roundTo(n, $digits)
+
+  # la frappe porte-t-elle plus de décimales que le champ n'en tient ? Sa valeur lue en décide, pas son texte : un zéro final (« 12,500 ») ou
+  # un groupe de milliers (« 1,000 » sous un pas entier) passent
+  over = (text)->
+    n = read(text)
+    n isnt null and round(n) isnt n
 
   setValue = (v)->
     n = toNum(v)
@@ -159,7 +202,7 @@
     µemit('change', now) if moved
 
   stop = ->
-    clearTimeout(holdTimer) if holdTimer
+    holdTimer?.()
     holdTimer = null
 
   finish = ->
@@ -188,8 +231,8 @@
     tick = ->
       reps++
       return finish() unless nudge(dir, strideOf(reps), size)
-      holdTimer = setTimeout(tick, Math.max(35, 150 - reps * 6))
-    holdTimer = setTimeout(tick, FIRST_WAIT)
+      holdTimer = µafter Math.max(35, 150 - reps * 6), tick
+    holdTimer = µafter FIRST_WAIT, tick
 
   # au clavier (Entrée, Espace sur un bouton) : un clic sans appui
   activate = (dir, e, wide)->
@@ -205,14 +248,24 @@
     return if $off
     field = e.target
     raw   = clean(field.value, $lo is null or $lo < 0, $digits is 0)
+    # `strict` : la frappe ou le collage de trop est refusé en entier, comme au-delà d'un `maxlength` ; le champ reprend son texte d'avant
+    # et le curseur sa place. La saisie n'a alors pas de `maxlength`, qui couperait un collage avant cette vérification : un texte de plus
+    # de 15 caractères, plus long que celui d'avant, est refusé de même (sans `strict`, le navigateur le coupe à 15)
+    if boolAttr($strict) and (over(raw) or (raw.length > 15 and raw.length > $shown.length))
+      at = field.selectionStart - field.value.length + $shown.length
+      field.value = $shown
+      field.setSelectionRange(at, at) if at >= 0
+      return
     field.value = raw if field.value isnt raw
     touch()
     $draft = raw
     n = read(raw)
     # le champ montre la frappe ; la variable liée, le formulaire et aria-valuenow ne reçoivent que la valeur bornée et arrondie aux décimales du pas,
-    # celle que la sortie du champ y écrira (999 sous max="10" partait tel quel jusqu'à la sortie)
+    # celle que la sortie du champ y écrira (999 sous max="10" partait tel quel jusqu'à la sortie) ; vidé, il vaut 0 avec `zero`, rien avec un `placeholder`
     if n isnt null
       setValue(clamp(round(n)))
+    else if raw is '' and boolAttr($zero)
+      setValue(clamp(0))
     else if raw is '' and $nullable
       setValue('')
 
@@ -273,7 +326,10 @@
 
   # obligatoire (`required`), bornes et pas : le formulaire voit la validité d'un `<input type="number">` aux mêmes règles, posé hors de la
   # page (le manque, la valeur hors des bornes ou hors du pas, avec le message du navigateur) ; sans `min`, le pas part de la valeur de
-  # départ, comme celui d'un champ natif part de son attribut `value` ; désactivé ou en lecture seule, il ne compte plus, comme un champ nombre natif
+  # départ, comme celui d'un champ natif part de son attribut `value` ; désactivé ou en lecture seule, il ne compte plus, comme un champ nombre natif ;
+  # avec `decimals` ou `precision`, le pas validé est l'unité des décimales en vigueur (`step` ne règle que les boutons et les flèches :
+  # sous `step="1" decimals="2"`, 7,50 est valide), comptée depuis 0 ou le `min`, sur la valeur que le champ montre, arrondie à ces
+  # décimales : une valeur de départ qui en a davantage (7.505 sous `decimals="2"`) ne décale pas le pas
   probe = null
   first = undefined
 
@@ -283,6 +339,8 @@
     $lo
     $hi
     $by
+    $places
+    $digits
     $off
     $ro
     return unless @internals
@@ -292,14 +350,21 @@
     probe.required     = boolAttr($required)
     probe.min          = show($lo)
     probe.max          = show($hi)
-    probe.step         = show($by)
-    probe.defaultValue = first ?? show($value)
-    probe.value        = show($value)
+    probe.step         = if $places is null then show($by) else show(Number('1e-' + $digits))
+    probe.defaultValue = if $places is null then first ?? show($value) else ''
+    probe.value        = if $places is null or toNum($value) is null then show($value) else show(round(toNum($value)))
     µ._mjs_formNative @, inputRef, (if $off or $ro then null else probe)
 
-  # une précision fautive est ignorée (aucune décimale fixe) : une erreur le dit au montage, puis à chaque changement qui la laisse fautive
+  # une précision fautive est ignorée (aucune décimale fixe) : une erreur le dit au montage, puis à chaque changement qui la laisse fautive ;
+  # de même pour `precision` et pour `separator`
   µeffect ->
-    µ.error(µ._mjs_msg('coreNumberDecimals', { value: placesIn($decimals) }, '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; sans decimals, la valeur s\'écrit telle quelle.')) if placesBad($decimals)
+    µ.error(µ._mjs_msg('coreNumberDecimals', { value: placesIn($decimals) }, '<@@number> : decimals « {value} » est ignoré — écrivez un nombre entier de 0 à 100 ; la valeur s\'écrit comme sans decimals.')) if placesBad($decimals)
+
+  µeffect ->
+    µ.error(µ._mjs_msg('coreNumberPrecision', { value: placesIn($precision) }, '<@@number> : precision « {value} » est ignoré — écrivez un nombre entier de 0 à 100, ou precision seul pour deux décimales.')) if precBad($precision)
+
+  µeffect ->
+    µ.error(µ._mjs_msg('coreNumberSeparator', { value: placesIn($separator) }, '<@@number> : separator « {value} » est ignoré — écrivez « , » ou « . » ; sans separator, le séparateur est celui de la langue de la page.')) if placesIn($separator) isnt '' and markIn($separator) is null
 
   # un min plus grand que le max bloque la valeur sur le min : un avertissement le dit au montage, puis à chaque changement de bornes qui les laisse inversées
   µeffect ->
@@ -332,19 +397,19 @@
     window.removeEventListener('blur', release)
 </script>
 
-<div class="field" part="field" role="group" aria-label={$labelText} @class{$off}="off" @class{$wide}="wide">
+<div class="field" part="field" role="group" aria-label={$labelText} :class{$off}="off" :class{$wide}="wide">
   {if $wide}
     <button type="button" class="step less big" part="button" tabindex="-1" aria-label={$bigLess} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e, true)} @click={activate(-1, e, true)}>−−</button>
   {end}
   <button type="button" class="step less" part="button" tabindex="-1" aria-label={$lessText} disabled={($off or $ro or $atMin) ? true : null} @pointerdown={press(-1, e)} @click={activate(-1, e)}>−</button>
-  <input class="input" part="input" type="text" role="spinbutton" inputmode={$keypad} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" maxlength="15" aria-label={$labelText} aria-valuemin={$lo} aria-valuemax={$hi} aria-valuenow={$cur} aria-required={boolAttr($required) ? 'true' : null} placeholder={$placeholder} value={$shown} readonly={$ro ? true : null} disabled={$off ? true : null} @this=!{inputRef} @input={typed(e)} @keydown={key(e)} @keyup={keyEnd(e)} @blur={settle()}>
+  <input class="input" part="input" type="text" role="spinbutton" inputmode={$keypad} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" maxlength={boolAttr($strict) ? null : 15} aria-label={$labelText} aria-valuemin={$lo} aria-valuemax={$hi} aria-valuenow={$cur} aria-required={boolAttr($required) ? 'true' : null} placeholder={$placeholder} value={$shown} readonly={$ro ? true : null} disabled={$off ? true : null} :this=!{inputRef} @input={typed(e)} @keydown={key(e)} @keyup={keyEnd(e)} @blur={settle()}>
   <button type="button" class="step more" part="button" tabindex="-1" aria-label={$moreText} disabled={($off or $ro or $atMax) ? true : null} @pointerdown={press(1, e)} @click={activate(1, e)}>+</button>
   {if $wide}
     <button type="button" class="step more big" part="button" tabindex="-1" aria-label={$bigMore} disabled={($off or $ro or $atMax) ? true : null} @pointerdown={press(1, e, true)} @click={activate(1, e, true)}>++</button>
   {end}
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .field
     display: flex
     align-items: stretch

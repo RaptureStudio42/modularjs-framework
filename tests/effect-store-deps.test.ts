@@ -110,8 +110,11 @@ describe('µeffect — une clé du store lue devient une dépendance, jamais cel
     })
 
     it('`$$compte++` : "compte" exclue', () => {
-      const out = annotateEffectDeps('µ.effect(function() { if ($.r) { return ((_v) => (µ._storeSet("compte", (+_v) + 1), +_v))(µ.store.compte) } })')
+      const out = annotateEffectDeps('µ.effect(function() { if ($.r) { return ((_mjs_n, _mjs_v = _mjs_n++) => (µ._storeSet("compte", _mjs_n), _mjs_v))(µ.store.compte) } })')
       assert.deepEqual(depsOf(out), [ 'r' ])
+      // en instruction seule : un bloc déclare la variable, la valeur écrite part de la clé relue juste avant
+      const bloc = annotateEffectDeps('µ.effect(function() { if ($.r) { {let _mjs_n;(_mjs_n = µ.store.compte, µ._storeSet("compte", ++_mjs_n));} } })')
+      assert.deepEqual(depsOf(bloc), [ 'r' ])
     })
 
     it('écritures profondes et suppression (`$$reglages.theme = …`, `$$liste.push(…)`, `delete $$vieux`) : aucune dépendance', () => {

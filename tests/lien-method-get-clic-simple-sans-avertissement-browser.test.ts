@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 type Forme = 'modale' | 'synchrone' | null
@@ -33,20 +34,20 @@ const QUESTION = 'QUESTION: '
 // référence de sa famille
 const LIENS = [
   '<a class="aucun" href="/article/3">aucun</a>',
-  '<a class="get" href="/article/3" @method="get">get</a>',
-  '<a class="get_maj" href="/article/3" @method="GET">GET</a>',
-  '<a class="inconnu" href="/article/3" @method="purge">purge</a>',
-  '<a class="aucun_question" href="/article/3" @confirm="Ouvrir ?">aucun ?</a>',
-  '<a class="get_question" href="/article/3" @method="get" @confirm="Ouvrir ?">get ?</a>',
-  '<a class="natif_aucun" href="/article/3" @noUJS>natif</a>',
-  '<a class="natif_get" href="/article/3" @noUJS @method="get">natif get</a>',
-  '<a class="natif_get_maj" href="/article/3" @noUJS @method="GET">natif GET</a>',
-  '<a class="natif_delete" href="/article/3" @noUJS @method="delete">natif delete</a>',
-  '<a class="natif_aucun_question" href="/article/3" @noUJS @confirm="Ouvrir ?">natif ?</a>',
-  '<a class="natif_get_question" href="/article/3" @noUJS @method="get" @confirm="Ouvrir ?">natif get ?</a>'
+  '<a class="get" href="/article/3" :method="get">get</a>',
+  '<a class="get_maj" href="/article/3" :method="GET">GET</a>',
+  '<a class="inconnu" href="/article/3" :method="purge">purge</a>',
+  '<a class="aucun_question" href="/article/3" :confirm="Ouvrir ?">aucun ?</a>',
+  '<a class="get_question" href="/article/3" :method="get" :confirm="Ouvrir ?">get ?</a>',
+  '<a class="natif_aucun" href="/article/3" :noUJS>natif</a>',
+  '<a class="natif_get" href="/article/3" :noUJS :method="get">natif get</a>',
+  '<a class="natif_get_maj" href="/article/3" :noUJS :method="GET">natif GET</a>',
+  '<a class="natif_delete" href="/article/3" :noUJS :method="delete">natif delete</a>',
+  '<a class="natif_aucun_question" href="/article/3" :noUJS :confirm="Ouvrir ?">natif ?</a>',
+  '<a class="natif_get_question" href="/article/3" :noUJS :method="get" :confirm="Ouvrir ?">natif get ?</a>'
 ].map((lien) => '<p>' + lien + '</p>').join('\n')
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @method="get" sous un clic simple : un lien ordinaire, sans avertissement (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(`lien @method="get" sous un clic simple : un lien ordinaire, sans avertissement (${nom} réel)`, function () {
   this.timeout(180000)
   let present = false
   let navigateur: any
@@ -164,7 +165,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
     const ou = ombre ? 'composant en ombre fermée' : 'composant léger'
 
     for (const [classe, ecrit] of [['get', 'get'], ['get_maj', 'GET']]) {
-      it(`${ou}, clic simple sur <a @method="${ecrit}"> : suivi comme un lien ordinaire, sans avertissement`, async function () {
+      it(`${ou}, clic simple sur <a :method="${ecrit}"> : suivi comme un lien ordinaire, sans avertissement`, async function () {
         if (!present) { this.skip(); return }
         const o = await ordinaire('aucun', ombre, null)
         const s = await clic(classe, ombre, null)
@@ -173,7 +174,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
     }
 
-    it(`${ou}, clic simple sur <a @method="purge"> : navigation normale, un avertissement qui cite les verbes acceptés, get compris`, async function () {
+    it(`${ou}, clic simple sur <a :method="purge"> : navigation normale, un avertissement qui cite les verbes acceptés, get compris`, async function () {
       if (!present) { this.skip(); return }
       const o = await ordinaire('aucun', ombre, null)
       const s = await clic('inconnu', ombre, null)
@@ -185,7 +186,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
 
     for (const forme of ['modale', 'synchrone'] as const) {
       const sous = forme === 'modale' ? 'modale maison (clic rejoué après « oui »)' : 'confirmation synchrone'
-      it(`${sous}, ${ou}, clic simple sur <a @method="get" @confirm> : la question et la suite du lien ordinaire, sans avertissement`, async function () {
+      it(`${sous}, ${ou}, clic simple sur <a :method="get" :confirm> : la question et la suite du lien ordinaire, sans avertissement`, async function () {
         if (!present) { this.skip(); return }
         const o = await ordinaire('aucun_question', ombre, forme)
         const s = await clic('get_question', ombre, forme)
@@ -196,7 +197,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
     }
 
     for (const [classe, ecrit] of [['natif_get', 'get'], ['natif_get_maj', 'GET']]) {
-      it(`${ou}, clic simple sur <a @noUJS @method="${ecrit}"> : la navigation native, en GET, rien de perdu, sans avertissement`, async function () {
+      it(`${ou}, clic simple sur <a :noUJS :method="${ecrit}"> : la navigation native, en GET, rien de perdu, sans avertissement`, async function () {
         if (!present) { this.skip(); return }
         const o = await ordinaire('natif_aucun', ombre, null)
         const s = await clic(classe, ombre, null)
@@ -206,18 +207,18 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
     }
 
-    it(`${ou}, clic simple sur <a @noUJS @method="delete"> : la navigation native, un avertissement (verbe perdu)`, async function () {
+    it(`${ou}, clic simple sur <a :noUJS :method="delete"> : la navigation native, un avertissement (verbe perdu)`, async function () {
       if (!present) { this.skip(); return }
       const o = await ordinaire('natif_aucun', ombre, null)
       const s = await clic('natif_delete', ombre, null)
       commeOrdinaire(s, o)
       assert.equal(s.avertis.length, 1, 'un avertissement de développement ' + JSON.stringify(s.avertis))
-      assert.ok(s.avertis[0].includes('@method="delete" ignoré — @noUJS'), s.avertis[0])
+      assert.ok(s.avertis[0].includes(':method="delete" ignoré — :noUJS'), s.avertis[0])
     })
 
     for (const forme of ['modale', 'synchrone'] as const) {
       const sous = forme === 'modale' ? 'modale maison (clic rejoué après « oui »)' : 'confirmation synchrone'
-      it(`${sous}, ${ou}, clic simple sur <a @noUJS @method="get" @confirm> : la question puis la navigation native, sans avertissement`, async function () {
+      it(`${sous}, ${ou}, clic simple sur <a :noUJS :method="get" :confirm> : la question puis la navigation native, sans avertissement`, async function () {
         if (!present) { this.skip(); return }
         const o = await ordinaire('natif_aucun_question', ombre, forme)
         const s = await clic('natif_get_question', ombre, forme)
@@ -227,4 +228,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
     }
   }
-})
+}))

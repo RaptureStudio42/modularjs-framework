@@ -6,7 +6,8 @@
 // buildSsrHead() construit le contenu d'un unique <style data-mjs-ssr-head>, concaténant dans
 // l'ordre : (a) les variables de thème clair/sombre du FRAMEWORK (copie littérale, cf. FRAMEWORK_THEME_CSS
 // ci-dessous), (b) le thème d'APPLICATION par défaut (lu dans le manifeste), (c) mjs_root (feuille
-// globale de l'app, stylesheetsDir). Une section « absente » (pas encore de build, pas de
+// globale de l'app, stylesheetsDir ; taille du texte convertie comme dans la feuille racine bâtie), (d) le bloc :root des
+// tailles du texte de l'appli, écrit par la construction à côté du manifeste (cf. transpiler/font-size). Une section « absente » (pas encore de build, pas de
 // mjs_root…) est simplement OMISE — seule une vraie PANNE (manifeste corrompu, SASS cassé, JSON
 // invalide) fait tomber le résultat ENTIER à '' (cf. buildSsrHead : jamais d'exception qui
 // remonterait jusqu'au 500, une page sans thème inliné reste une page qui marche).
@@ -17,10 +18,12 @@
 // tout premier paint SSR — seulement lui, seulement le temps de ce paint.
 
 import { readFileSync, existsSync, statSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { MjsConfig } from '../bundler/config.js'
 import { compileCss } from '../transpiler/css.js'
+import { FONT_SIZE_SHEET, fontSizeSettings, rewriteFontSizes, type FontSizeSettings } from '../transpiler/font-size.js'
+import { MARQUE_SORTIE } from '../bundler/outputs.js'
 import { deriveUrlPrefix } from '../bundler/index.js'
 import { t } from '../messages/index.js'
 
@@ -147,6 +150,7 @@ function extractJsonAfter(src: string, suffix: string): unknown {
 const THEME_CACHE_KEY_SEP = String.fromCharCode(1)
 const themeCssCache = new Map<string, { mtimeMs: number, css: string }>()
 const rootCssCache  = new Map<string, { mtimeMs: number, css: string }>()
+const fontSizeCache = new Map<string, { mtimeMs: number, css: string }>()
 
 // une seule fois pour la durée du process, pas par requête — repli volontairement
 // simple : si la panne change de nature après ce 1er signalement, elle ne sera pas re-journalisée
@@ -188,18 +192,39 @@ function readAppThemeCss(manifestPath: string | null, defaultThemeName: string):
 // gagne (un projet réel n'en a qu'un seul). Fichier absent = section normalement omise, jamais une
 // panne ; une erreur de compilation SASS, elle, remonte au call-site (compileCss ne l'avale plus,
 // cf. son propre commentaire).
-function readMjsRootCss(stylesheetsDir: string): string {
+function readMjsRootCss(stylesheetsDir: string, settings: FontSizeSettings | undefined): string {
   for (const ext of ['sass', 'scss', 'css'] as const) {
     const path = join(stylesheetsDir, `mjs_root.${ext}`)
     if (!existsSync(path)) continue
-    const mtimeMs = statSync(path).mtimeMs
-    const cached = rootCssCache.get(path)
+    const mtimeMs  = statSync(path).mtimeMs
+    // les réglages de la taille du texte dans la clé : la même source rend un autre CSS
+    const cacheKey = path + THEME_CACHE_KEY_SEP + JSON.stringify(settings ?? false)
+    const cached   = rootCssCache.get(cacheKey)
     if (cached && cached.mtimeMs === mtimeMs) return cached.css
-    const css = compileCss(readFileSync(path, 'utf-8'), ext)
-    rootCssCache.set(path, { mtimeMs, css })
+    const compiled = compileCss(readFileSync(path, 'utf-8'), ext)
+    // taille du texte adaptée à l'écran : la conversion de la feuille racine bâtie, avec les réglages de la configuration
+    const css      = settings ? rewriteFontSizes(compiled, settings).css : compiled
+    rootCssCache.set(cacheKey, { mtimeMs, css })
     return css
   }
   return ''
+}
+
+// bloc :root des tailles du texte de l'appli (composants, feuilles, mjs_root, thèmes), écrit par la construction à côté du
+// manifeste (cf. FONT_SIZE_SHEET, transpiler/font-size) : le même que reçoit la feuille racine bâtie. Fichier absent (pas encore
+// de build, aucune taille convertie) = section omise
+function readFontSizeBlock(manifestPath: string | null): string {
+  if (!manifestPath) return ''
+  const path = join(dirname(manifestPath), FONT_SIZE_SHEET)
+  if (!existsSync(path)) return ''
+  const mtimeMs = statSync(path).mtimeMs
+  const cached  = fontSizeCache.get(path)
+  if (cached && cached.mtimeMs === mtimeMs) return cached.css
+  const text    = readFileSync(path, 'utf-8')
+  // construction dans le dossier des sources : la marque en première ligne (cf. bundler/outputs.ts), hors du CSS
+  const css     = text.startsWith(`${MARQUE_SORTIE}\n`) ? text.slice(MARQUE_SORTIE.length + 1) : text
+  fontSizeCache.set(path, { mtimeMs, css })
+  return css
 }
 
 // GRAVE — une variable de thème (`$$x`, cf. bundler/themes.ts) est une DONNÉE que
@@ -220,8 +245,23 @@ function escapeHtmlSensitiveSequences(css: string): string {
     .replace(/-->/g, '--\\>')
 }
 
+/** bloc :root des tailles du texte pour un fragment prérendu ou un corps rendu par requête qu'un hôte pose dans SA page, sans la tête du serveur : le `<style>`
+ *  (en mode `csp`, le `<link>`) écrit en tête du fragment ; '' quand la conversion est coupée ou qu'aucune taille n'est convertie */
+export function fontSizeFragmentHead(config: MjsConfig, outputDir: string, manifestPath: string | null): string {
+  try {
+    if (!fontSizeSettings(config.responsiveFontSize)) return ''
+    const css = readFontSizeBlock(manifestPath)
+    if (css === '') return ''
+    if (config.csp === true) return `<link rel="stylesheet" href="${writeHashedAsset(outputDir, config.urlPrefix ?? deriveUrlPrefix(outputDir), 'mjs_ssr_head', '.css', css)}">\n`
+    return `<style data-mjs-font-sizes>${escapeHtmlSensitiveSequences(css)}</style>\n`
+  } catch (e: any) {
+    logHeadExtraFailureOnce(e)
+    return ''
+  }
+}
+
 /** Contenu du `<head>` thématisé SSR : `<style data-mjs-ssr-head>` (framework + thème d'app +
- *  mjs_root), ou '' si rien à inliner. NE JETTE JAMAIS : toute panne (manifeste corrompu, SASS
+ *  mjs_root + tailles du texte), ou '' si rien à inliner. NE JETTE JAMAIS : toute panne (manifeste corrompu, SASS
  *  cassé, JSON invalide) est rattrapée et rend '' pour l'ENSEMBLE — une page sans thème inliné
  *  reste une page qui marche, une exception ici serait un 500 pour un simple problème de couleurs.
  *  Le CSS inliné est échappé (`escapeHtmlSensitiveSequences`) contre toute rupture du `<style>` par
@@ -231,10 +271,13 @@ function escapeHtmlSensitiveSequences(css: string): string {
 export function buildSsrHead(config: MjsConfig, configDir: string, manifestPath: string | null): string {
   try {
     const stylesheetsDir = resolve(configDir, config.stylesheetsDir || 'app/modularjs/styles')
+    // taille du texte adaptée à l'écran (clé `responsiveFontSize`) : undefined = coupée, la tête d'avant
+    const fontSizes      = fontSizeSettings(config.responsiveFontSize)
     const parts = [
       FRAMEWORK_THEME_CSS,
       readAppThemeCss(manifestPath, config.defaultTheme || 'light'),
-      readMjsRootCss(stylesheetsDir),
+      readMjsRootCss(stylesheetsDir, fontSizes),
+      fontSizes ? readFontSizeBlock(manifestPath) : '',
     ].filter(css => css !== '')
     // (mode `csp`) — un `<style>` en ligne est BLOQUÉ par `style-src` sans 'unsafe-inline'
     // (vérifié en navigateur) : le même CSS sort en fichier hashé, référencé par un

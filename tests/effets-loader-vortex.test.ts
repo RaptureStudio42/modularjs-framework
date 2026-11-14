@@ -144,11 +144,10 @@ describe('*loader(vortex) — le dessin dans un composant', function () {
     assert.ok(css.includes('[mjs-fx-loader-style="vortex"]{--mjs-fx-loader-c:var(--mjs-loader-color,#25e2bc);--mjs-fx-loader-t:var(--mjs-loader-speed,4s)}'), 'couleur et cycle du style')
     assert.ok(css.includes('animation:mjs-fx-loader-vortex var(--mjs-fx-loader-t) linear calc(var(--mjs-fx-loader-t) * -.05 * var(--i)) infinite'), 'un vingtième de cycle d\'écart par point')
     assert.ok(css.includes('transform-origin:-35px 15px'), 'le point tourne autour du centre du dessin')
-    // l'animation est mise en pause, pas supprimée, sous « réduire les animations »
-    assert.ok(css.includes('@media (prefers-reduced-motion:reduce){[mjs-fx-layer="loader"] [mjs-fx-p]{animation-play-state:paused}'))
-    // et par une règle aussi précise que celle de son `animation:` (sans quoi elle ne gagnerait pas), pour le point et ses deux disques, la dernière du CSS
+    // l'animation est mise en pause, pas supprimée, sous « réduire les animations », pour le point et ses deux disques : en
+    // `!important`, sans quoi la règle de son `animation:`, plus précise, gagnerait ; la dernière du CSS
     const calme = css.slice(css.indexOf('@media (prefers-reduced-motion:reduce)'))
-    assert.ok(calme.endsWith('[mjs-fx-layer="loader"][mjs-fx-loader-style="vortex"] [mjs-fx-p="dot"]{animation-play-state:paused}[mjs-fx-layer="loader"][mjs-fx-loader-style="vortex"] [mjs-fx-p="dot"]::before,[mjs-fx-layer="loader"][mjs-fx-loader-style="vortex"] [mjs-fx-p="dot"]::after{animation-play-state:paused}}'), calme.slice(-260))
+    assert.equal(calme, '@media (prefers-reduced-motion:reduce){[mjs-fx-layer="loader"] [mjs-fx-p],[mjs-fx-layer="loader"] [mjs-fx-p]::before,[mjs-fx-layer="loader"] [mjs-fx-p]::after,[mjs-fx-layer="loader"] svg,[mjs-fx-layer="loader"] circle{animation-play-state:paused!important}}')
   })
 
   it('les douze styles d\'avant : mêmes balises, même taille d\'origine', async () => {

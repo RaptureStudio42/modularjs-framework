@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict'
 import * as HappyDOM from 'happy-dom'
-import { guardStyleValues } from '../src/server/renderToString.js'
+import { guardStyleValues, noteLightPage } from '../src/server/renderToString.js'
 import { releverPrototypes, ecartsPrototypes, type Releve } from './helpers/prototypes-etat.js'
 import './curseurs-trousse-par-variable.test.js'
 import './effets-compteur-gabarit.test.js'
@@ -19,9 +19,13 @@ let avant: Releve
 
 // crochet racine : tourne avant le premier groupe du run, donc avant toute retouche d'un prototype
 // la garde de style du rendu serveur est posée d'abord : le renderer la pose exprès, une fois par processus, sur la classe que partagent
-// toutes les fenêtres (une valeur refusée par le navigateur ne change rien) ; elle fait partie de l'état de départ, ce n'est pas la fuite d'un test
+// toutes les fenêtres (une valeur refusée par le navigateur ne change rien) ; elle fait partie de l'état de départ, ce n'est pas la fuite d'un test.
+// De même la note de la page d'un composant bâti à plat (`noteLightPage`), posée par le renderer une fois sur le prototype qui porte `appendChild`
 before(() => {
   guardStyleValues(HappyDOM.CSSStyleDeclaration)
+  let porteur: any = HappyDOM.HTMLElement.prototype
+  while (porteur && !Object.prototype.hasOwnProperty.call(porteur, 'appendChild')) porteur = Object.getPrototypeOf(porteur)
+  noteLightPage(porteur)
   avant = releverPrototypes()
 })
 

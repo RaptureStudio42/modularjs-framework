@@ -81,7 +81,7 @@ async function isChromiumAvailable(): Promise<boolean> {
 // `léger` pilote la présence de `@lightDom` sur les 3 tags imbriqués — seule
 // différence entre le cas bogué et la variante témoin (mode ombre).
 function sources(prefix: string, leger: boolean) {
-  const lightDom = leger ? ' @lightDom' : ''
+  const lightDom = leger ? ' :lightDom' : ''
   const parent = [
     '<script>',
     '$p ?= null',
@@ -255,7 +255,7 @@ describe('runtime (Chromium réel) — @lightDom re-rendu dans {await} : remonta
       'go = -> $n = $n + 1; $p = Promise.resolve(\'v\'+ $n)',
       '</script>', '',
       '{await $p}', '{success r}',
-      `<@${prefix}-leaf @lightDom val={r}>`,
+      `<@${prefix}-leaf :lightDom val={r}>`,
       `</@${prefix}-leaf>`,
       `<@${prefix}-leaf val={r}>`,
       `</@${prefix}-leaf>`,

@@ -10,9 +10,10 @@
 // points en développement seulement : ils lisent des noms internes que la production raccourcit).
 
 import assert from 'node:assert/strict'
-import { RUNTIME_LABELS, CORE_LABEL_MODULES } from '../src/runtime-labels.js'
+import { RUNTIME_LABELS, CORE_LABEL_MODULES, CORE_LABEL_PARTS } from '../src/runtime-labels.js'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { MOTEURS, lancer, construire, type Moteur, type Page } from './helpers/graine-page.js'
+import { attendreEtat, attendrePage } from './helpers/attente-page.js'
 
 const HOME = `<script>
   basculer = -> µlang = 'en'
@@ -25,7 +26,7 @@ const HOME = `<script>
 <button class="en" @click={basculer()}>EN</button>
 <@@code class="code"><pre>x = 1</pre></@@code>
 <@@number class="number" value="3" big></@@number>
-<@@gauge class="gauge" value="40" @this=!{jauge}></@@gauge>
+<@@gauge class="gauge" value="40" :this=!{jauge}></@@gauge>
 <@@progress class="progress" value="40"></@@progress>
 <@@knob class="knob" value="40"></@@knob>
 <@@select class="select"><@@option value="1">Un</@@option></@@select>
@@ -35,7 +36,7 @@ const HOME = `<script>
 <@@editor class="editor"></@@editor>
 <@@clock class="clock"></@@clock>
 <@@chart class="chart" rows={[]}></@@chart>
-<div class="boite" @this=!{boite}></div>
+<div class="boite" :this=!{boite}></div>
 `
 
 // cinq nombres, projet sans aucune surcharge `mjs.core.*`
@@ -66,11 +67,15 @@ const CALCUL = `<script>
 <p>calcul</p>
 `
 
+// la palette de l'éditeur (couleur du texte) n'existe que sous `colors=`, que cette page n'écrit pas : ses clés ne sont pas cherchées
+// (« Red » se lirait dans « Redo »)
+const PALETTE = CORE_LABEL_PARTS['editor.colors']
+
 // les modules de la page et les clés qu'ils montrent ; l'éditeur porte aussi celles de sa barre d'outils, le miroir celles de la jauge
 const MODULES: Record<string, string[]> = {
   code: CORE_LABEL_MODULES.code, number: CORE_LABEL_MODULES.number, gauge: CORE_LABEL_MODULES.gauge, progress: CORE_LABEL_MODULES.progress,
   knob: CORE_LABEL_MODULES.knob, select: CORE_LABEL_MODULES.select, carousel: CORE_LABEL_MODULES.carousel, menu: CORE_LABEL_MODULES.menu,
-  color: CORE_LABEL_MODULES.color, editor: [...CORE_LABEL_MODULES.editor, ...CORE_LABEL_MODULES.toolbar], clock: CORE_LABEL_MODULES.clock,
+  color: CORE_LABEL_MODULES.color, editor: [...CORE_LABEL_MODULES.editor.filter((k) => !PALETTE.includes(k)), ...CORE_LABEL_MODULES.toolbar], clock: CORE_LABEL_MODULES.clock,
   chart: CORE_LABEL_MODULES.chart, miroir: CORE_LABEL_MODULES.gauge
 }
 
@@ -155,26 +160,34 @@ describe('libellés du cœur : la surcharge du projet arrivée après le dessin 
           pages.home.poser({ racineEn: 1500 })
           const { ctx, p, erreurs } = await ouvrir(m, pages.home)
           try {
-            await p.waitForTimeout(900)
+            await attendrePage(p, () => !!(document.querySelector('mjs-home') as any)?._shadow?.querySelector('button.en'), null, 'le bouton « en » de la page est là', 900)
             await p.evaluate(() => { (document.querySelector('mjs-home') as any)._shadow.querySelector('button.en').click() })
+            // pause gardée : la lecture pendant que le fichier anglais est en route (il arrive 1,5 s après sa demande), le cas même du test
             await p.waitForTimeout(500)
             const avant = await p.evaluate(LIRE) as Record<string, string[]>
-            await p.waitForTimeout(2200)
-            const apres = await p.evaluate(LIRE) as Record<string, string[]>
-            assert.deepEqual(erreurs, [], `erreurs : ${erreurs.join(' | ')}`)
-            const fautes: string[] = []
-            for (const [mod, cles] of Object.entries(MODULES)) {
-              const a = avant[mod], b = apres[mod]
-              if (!a || !b) { fautes.push(`${mod} : module absent`); continue }
-              const contient = (vus: string[], t: string) => !!t && vus.some((v) => v.includes(t))
-              const anglais  = cles.filter((k) => contient(a, montre(k)))
-              if (!anglais.length) { fautes.push(`${mod} : aucun libellé anglais du framework avant l'arrivée du fichier`); continue }
-              for (const k of anglais) {
-                if (!contient(b, SURCHARGE[k])) fautes.push(`${mod} · ${k} : la surcharge ne paraît pas`)
-                if (contient(b, montre(k))) fautes.push(`${mod} · ${k} : « ${montre(k)} » reste`)
+            // le fichier arrive, puis chaque module se redessine : la page relue jusqu'à ce que chaque surcharge paraisse, dans les
+            // 2,2 s de la pause d'origine ; au délai, l'assertion dit les fautes
+            let fautes: string[] = []
+            const relire = async () => {
+              const apres = await p.evaluate(LIRE) as Record<string, string[]>
+              fautes = []
+              for (const [mod, cles] of Object.entries(MODULES)) {
+                const a = avant[mod], b = apres[mod]
+                if (!a || !b) { fautes.push(`${mod} : module absent`); continue }
+                const contient = (vus: string[], t: string) => !!t && vus.some((v) => v.includes(t))
+                const anglais  = cles.filter((k) => contient(a, montre(k)))
+                if (!anglais.length) { fautes.push(`${mod} : aucun libellé anglais du framework avant l'arrivée du fichier`); continue }
+                for (const k of anglais) {
+                  if (!contient(b, SURCHARGE[k])) fautes.push(`${mod} · ${k} : la surcharge ne paraît pas`)
+                  if (contient(b, montre(k))) fautes.push(`${mod} · ${k} : « ${montre(k)} » reste`)
+                }
               }
+              return fautes.length === 0
             }
+            const vu = await attendreEtat(relire, 'chaque surcharge paraît', 2200).catch((e: Error) => e)
+            assert.deepEqual(erreurs, [], `erreurs : ${erreurs.join(' | ')}`)
             assert.deepEqual(fautes, [])
+            if (vu instanceof Error) throw vu
           } finally {
             await ctx.close()
           }
@@ -188,7 +201,7 @@ describe('libellés du cœur : la surcharge du projet arrivée après le dessin 
             // compte les redessins complets demandés aux modules du cœur, à partir d'ici
             const compte = () => p.evaluate(() => (window as any).__complets)
             try {
-              await p.waitForTimeout(900)
+              await attendrePage(p, () => !!(document.querySelector('mjs-home') as any)?._shadow?.querySelector('.n0'), null, 'la page est montée', 900)
               await p.evaluate(() => {
                 const w = window as any
                 let proto = Object.getPrototypeOf(document.querySelector('mjs-home'))
@@ -201,6 +214,7 @@ describe('libellés du cœur : la surcharge du projet arrivée après le dessin 
                 }
                 w.__basculer()
               })
+              // pauses gardées : les redessins de la bascule elle-même passent avant le compte, puis vérification négative (aucun redessin complet à l'arrivée du fichier)
               await p.waitForTimeout(600)
               const avant = await compte()
               await p.waitForTimeout(2400)
@@ -221,7 +235,7 @@ describe('libellés du cœur : la surcharge du projet arrivée après le dessin 
             const { ctx, p, erreurs } = await ouvrir(m, pages.calcul)
             const repere = () => p.evaluate(() => String((window as any).__mu._mjs_computing))
             try {
-              await p.waitForTimeout(600)
+              await attendrePage(p, () => typeof (window as any).__calcul?.lire === 'function' && !!(window as any).__mu, null, 'la page de calcul est montée', 600)
               assert.equal(await p.evaluate(() => (window as any).__calcul.lire()), 1)
               assert.equal(await repere(), 'undefined', 'au repos, après un dérivé lu')
               await p.evaluate(() => (window as any).__calcul.poser(1))

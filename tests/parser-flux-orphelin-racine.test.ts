@@ -1,5 +1,5 @@
 // Un {end} ou {else} EN TROP à la racine (sans {if}/{for}/{await}/{key} ouvrant) était
-// silencieusement absorbé par parseFlow, qui remonte le statut 'end'/'else' à parse() — lequel
+// silencieusement absorbé : la lecture remontait le statut 'end'/'else' à parse() — lequel
 // ne vérifiait que 'close_tag' (garde jumelle, posée pour une fermante HTML orpheline, jamais
 // étendue à ces jetons). Le contenu suivant le jeton en trop disparaissait du composant SANS
 // aucune erreur, build vert compris.

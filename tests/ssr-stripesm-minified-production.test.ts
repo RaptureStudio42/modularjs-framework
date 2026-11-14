@@ -61,8 +61,8 @@ describe("SSR — stripEsm/ssrScopeFile survivent à un bundle MINIFIÉ (rendu e
     const root = mjsTmp('ssr-prod')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'tint.module.civet'), `export tint := -> 'ROUGE'\n`)
-    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet'\n\n<p class="r">{tint()}</p>\n`)
+    writeFileSync(join(srcDir, 'tint.module.civet.mjs'), `export tint := -> 'ROUGE'\n`)
+    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet.mjs'\n\n<p class="r">{tint()}</p>\n`)
 
     const res = await renderToString({ sourceDir: srcDir, tag: 'mjs-page', env: 'prod' })
 
@@ -94,8 +94,8 @@ msg = "Erreur : impossible d'importer ce module distant"
     const root = mjsTmp('ssr-dev')
     const srcDir = join(root, 'src')
     mkdirSync(srcDir, { recursive: true })
-    writeFileSync(join(srcDir, 'tint.module.civet'), `export tint := -> 'BLEU'\n`)
-    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet'\n\n<p class="r">{tint()}</p>\n`)
+    writeFileSync(join(srcDir, 'tint.module.civet.mjs'), `export tint := -> 'BLEU'\n`)
+    writeFileSync(join(srcDir, 'page.mjs'), `@import tint 'tint.module.civet.mjs'\n\n<p class="r">{tint()}</p>\n`)
 
     const res = await renderToString({ sourceDir: srcDir, tag: 'mjs-page' })
     assert.match(res.html, /BLEU/)

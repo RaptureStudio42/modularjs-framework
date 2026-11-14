@@ -223,7 +223,7 @@ describe('Coffee : le message d\'erreur garde sa position', function () {
   })
 
   it('script coffee valide compile toujours (comportement inchangé)', async () => {
-    const res = await getAdapter('coffee').compileToJs('$a = 1', { fileName: 'ok.coffee' })
+    const res = await getAdapter('coffee').compileToJs('$a = 1', { fileName: 'ok.coffee.mjs' })
     assert.ok(res.code.length > 0, 'un script valide doit toujours produire du JS')
   })
 })

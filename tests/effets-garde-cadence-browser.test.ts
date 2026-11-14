@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
+import { attendreEtat } from './helpers/attente-page.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
@@ -180,7 +181,7 @@ describe('la garde de cadence (navigateurs réels) — rien au repos, un vrai ge
           }
           const pendant = await demandes(page)
           assert.ok(pendant > avant, 'le geste lance la mesure')
-          await page.waitForTimeout(1500)
+          await attendreEtat(async () => await attente(page) === 0, 'la mesure se tait', 1500)
           assert.equal(await attente(page), 0, 'la mesure s\'est tue')
           const fini = await demandes(page)
           await page.waitForTimeout(1000)

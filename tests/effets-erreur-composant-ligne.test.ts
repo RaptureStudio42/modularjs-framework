@@ -1,7 +1,7 @@
 // Une faute d'effet dans un composant (`<p *titre>` qui n'existe pas, `*scramble(on: bogus)`) nomme sa ligne
 // dans le fichier, comme les fautes des fichiers d'effets : le message cite la ligne de la balise fautive (le
 // générateur la lit sur la balise, même quand le même effet s'écrit à plusieurs endroits). Rien de plus quand
-// l'effet ne s'écrit pas dans le fichier lui-même (un partiel inclus) : jamais une ligne devinée.
+// l'effet écrit dans un partiel inclus : sa ligne dans ce partiel, avec son fichier ; jamais une ligne devinée.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -47,9 +47,9 @@ describe('une faute d\'effet dans un composant cite la ligne', function () {
     assert.doesNotMatch(m, /lignes/)
   })
 
-  it('un effet qui ne s\'écrit pas dans le fichier : le message reste tel quel, sans ligne', async () => {
+  it('un effet écrit dans un partiel : sa ligne dans le partiel, avec son fichier, jamais une ligne du composant', async () => {
     const [m] = await erreurs('effet-ligne-partiel', { 'carte.mjs': '<@include bloc>\n', '_bloc.mjs': '<p *titre>x</p>\n' })
-    assert.match(m, /\*titre : effet inconnu/)
-    assert.doesNotMatch(m, /\(lignes? \d/)
+    assert.match(m, /\*titre \(ligne 1 de _bloc\.mjs\) : effet inconnu/)
+    assert.doesNotMatch(m, /\(lignes? \d+\)/)
   })
 })

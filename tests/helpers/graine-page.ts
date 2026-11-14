@@ -67,10 +67,19 @@ export interface Options {
   html?: (page: string) => string
   // textes racine en plus : du YAML ajouté au français, des clés ajoutées à l'anglais (les surcharges `mjs.<groupe>.<clé>` des libellés du framework)
   racine?: { fr?: string, en?: Record<string, unknown> }
+  // fragments de section en plus ou à la place des siens (français en YAML, anglais en objet, `null` : la section n'a pas de fragment anglais) :
+  // une clé que l'anglais n'a pas, par exemple
+  sections?: Record<string, [string, Record<string, string> | null]>
+  // prérendu multi-langue (`render.locales`) : la page servie est celle de `langue`
+  locales?: string[]
+  langue?: string
+  // une troisième langue, l'allemand : ses textes racine et ses fragments de section
+  de?: { racine: Record<string, unknown>, sections: Record<string, Record<string, string>> }
 }
 
 // les règles réseau : `racineEn` et `racineFr` retardent le fichier de langue anglais et le français (ms), `echecRacineEn` et `echecRacineFr` le font répondre 404,
-// `retards` retarde les fragments anglais d'une section (ms), `echecs` les sections dont le fragment anglais répond 404, `pendus` celles dont il ne répond jamais
+// `retards` retarde les fragments anglais d'une section (ms), `echecs` les sections dont le fragment anglais répond 404, `pendus` celles dont il ne répond jamais,
+// `retardFr` retarde tout fragment français (ms), `echecFr` le fait répondre 404
 export interface Reseau {
   racineEn?: number
   racineFr?: number
@@ -79,12 +88,16 @@ export interface Reseau {
   retards?: Record<string, number>
   echecs?: string[]
   pendus?: string[]
+  retardFr?: number
+  echecFr?: boolean
 }
 
 export interface Page {
   base: string
   poser: (reseau: Reseau) => void
   fermer: () => Promise<void>
+  // les chemins demandés au serveur depuis le dernier `poser`
+  requetes: string[]
 }
 
 export async function construire(o: Options): Promise<Page> {
@@ -95,14 +108,19 @@ export async function construire(o: Options): Promise<Page> {
   mkdirSync(join(srcDir, 'i18n', 'en'), { recursive: true })
   writeFileSync(join(srcDir, 'i18n', 'fr.yml'), FR_RACINE + (o.racine?.fr ?? ''))
   writeFileSync(join(srcDir, 'i18n', 'en.json'), JSON.stringify({ ...EN_RACINE, ...(o.racine?.en ?? {}) }))
-  for (const [section, [fr, en]] of Object.entries(SECTIONS)) {
+  for (const [section, [fr, en]] of Object.entries({ ...SECTIONS, ...(o.sections ?? {}) })) {
     writeFileSync(join(srcDir, 'i18n', 'fr', section + '.yml'), fr)
-    writeFileSync(join(srcDir, 'i18n', 'en', section + '.json'), JSON.stringify(en))
+    if (en) writeFileSync(join(srcDir, 'i18n', 'en', section + '.json'), JSON.stringify(en))
+  }
+  if (o.de) {
+    writeFileSync(join(srcDir, 'i18n', 'de.json'), JSON.stringify(o.de.racine))
+    mkdirSync(join(srcDir, 'i18n', 'de'), { recursive: true })
+    for (const [section, textes] of Object.entries(o.de.sections)) writeFileSync(join(srcDir, 'i18n', 'de', section + '.json'), JSON.stringify(textes))
   }
   for (const [fichier, source] of Object.entries(o.composants)) writeFileSync(join(srcDir, fichier + '.mjs'), source)
   const i18n: Record<string, unknown> = { default: 'fr', urlParam: true, ...(o.placeholder ? { placeholder: o.placeholder } : {}), ...(o.i18n ?? {}) }
   const sansPrerendu = o.hydrate || o.sansRendu || o.api
-  const render       = sansPrerendu ? {} : { render: { default: 'prerender', engine: { prerender: 'happy-dom' }, startup: 'bundle', routes: { '/': { component: 'mjs-home' } } } }
+  const render       = sansPrerendu ? {} : { render: { default: 'prerender', engine: { prerender: 'happy-dom' }, startup: 'bundle', routes: { '/': { component: 'mjs-home' } }, ...(o.locales ? { locales: o.locales } : {}) } }
   const config       = { sourceDir: 'src', outputDir: 'out', manifestPath: 'out/bundle.js', urlPrefix: '/out', i18n, ...render }
   writeFileSync(join(root, 'mjs.config.json'), JSON.stringify(config, null, 2))
 
@@ -114,7 +132,7 @@ export async function construire(o: Options): Promise<Page> {
     const stats    = await client.compile()
     await client.close()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))
-    const rendu = await renderer.renderPage('mjs-home', { settleMs: 5000, ssrMode: 'markers' })
+    const rendu = await renderer.renderPage('mjs-home', { settleMs: 5000, ssrMode: 'markers', ...(o.store ? { store: o.store } : {}) })
     await renderer.close()
     sortie = join(root, 'client')
     page   = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><script type="module" src="/client/bundle.js"></script></head><body>${rendu.hydrateScript}${rendu.sharedScript}${rendu.html}</body></html>`
@@ -150,7 +168,7 @@ export async function construire(o: Options): Promise<Page> {
     const rapport = await prerenderPages(trouve.config, trouve.configDir, () => {}, { env })
     await emitStartup(bundler, trouve.config.render, rapport, { prod: env === 'prod', log: () => {} })
     await bundler.close()
-    const corps = readFileSync(rapport.generated.find(g => g.url === '/')!.file, 'utf-8')
+    const corps = readFileSync(rapport.generated.find(g => g.url === '/' && (!o.langue || g.file.includes('/' + o.langue + '/')))!.file, 'utf-8')
     page = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><script type="module" src="/out/bundle.js"></script></head><body>${corps}</body></html>`
   }
   if (o.html) page = o.html(page)
@@ -163,12 +181,15 @@ export async function construire(o: Options): Promise<Page> {
 
   let reseau: Reseau = {}
   const pendues = new Set<ServerResponse>()
+  const requetes: string[] = []
   const poser = (r: Reseau) => {
+    requetes.length = 0
     for (const section of [...Object.keys(r.retards ?? {}), ...(r.echecs ?? []), ...(r.pendus ?? [])]) assert.ok(sectionsEn[section], 'section anglaise inconnue du fichier de langue : ' + section)
     reseau = r
   }
   const server: Server = createServer((req, res) => {
     const chemin = decodeURIComponent((req.url ?? '/').split('?')[0])
+    requetes.push(chemin)
     if (chemin === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(page)
@@ -180,9 +201,10 @@ export async function construire(o: Options): Promise<Page> {
     const section  = fragment ? sectionDe[fragment[1]] : undefined
     if (section && reseau.echecs?.includes(section)) { res.writeHead(404); res.end(); return }
     if (section && reseau.pendus?.includes(section)) { pendues.add(res); return }
+    if (reseau.echecFr && /\/i18n\/fr\/[^/]+\.json$/.test(chemin)) { res.writeHead(404); res.end(); return }
     const racine = /\/mjs_i18n-(fr|en)-[^/]*\.js$/.exec(chemin)
     if (racine && (racine[1] === 'en' ? reseau.echecRacineEn : reseau.echecRacineFr)) { res.writeHead(404); res.end(); return }
-    const retard = section ? reseau.retards?.[section] : (racine ? (racine[1] === 'en' ? reseau.racineEn : reseau.racineFr) : undefined)
+    const retard = section ? reseau.retards?.[section] : (racine ? (racine[1] === 'en' ? reseau.racineEn : reseau.racineFr) : (/\/i18n\/fr\/[^/]+\.json$/.test(chemin) ? reseau.retardFr : undefined))
     const envoyer = () => {
       res.writeHead(200, { 'content-type': extname(fichier) === '.js' ? 'text/javascript; charset=utf-8' : 'application/json' })
       res.end(readFileSync(fichier))
@@ -196,7 +218,7 @@ export async function construire(o: Options): Promise<Page> {
     server.close(() => resolve())
     server.closeAllConnections()
   })
-  return { base: `http://127.0.0.1:${(server.address() as any).port}`, poser, fermer }
+  return { base: `http://127.0.0.1:${(server.address() as any).port}`, poser, fermer, requetes }
 }
 
 // une sonde : le chemin des hôtes (préfixe `light:` : un enfant du DOM léger de l'hôte précédent), puis le sélecteur du texte

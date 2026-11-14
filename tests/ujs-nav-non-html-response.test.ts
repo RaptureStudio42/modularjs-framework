@@ -73,6 +73,7 @@ describe('mjs_ujs — clic cross-page : réponse non-HTML (204, vide, texte, JSO
     const hardNavCalls: any[] = []
     let capturedCb: any
     const µ: any = {
+      _mjs_th: (h: string) => h,
       realTarget: (e: any) => e.target, _mjs_navSeq: 0, _mjs_lastUjsPath: '/',
       pageCache: { has: () => false, get: () => null, set() {}, delete() {} }, _mjs_saveScroll() {},
       _mjs_ajaxGet: (_u: string, cb: any) => { capturedCb = cb },
@@ -179,6 +180,7 @@ describe('mjs_ujs — popstate : réponse non-HTML (204, vide, texte) jamais ins
     const doc: any = { body: zone }
     let capturedSuccess: any
     const µ: any = {
+      _mjs_th: (h: string) => h,
       _mjs_lastUjsPath: '/a', _mjs_navSeq: 0,
       pageCache: { has: () => false, get: () => null, set() {}, delete() {} },
       _mjs_saveScroll() {}, _mjs_restoreScroll() {},

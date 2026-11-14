@@ -13,11 +13,8 @@ describe('<@document *effet(…)> : les parenthèses des réglages', () => {
     assert.ok(output.includes('"ripple", {"color":")"}'), output.slice(output.indexOf('"ripple"') - 40, output.indexOf('"ripple"') + 60))
   })
 
-  it('une parenthèse jamais refermée : signalée, rien de mangé', async () => {
-    const { data } = await transpile('<@document *ripple(color: red>\n<p>x</p>\n', { moduleName: 'doc-parenthese-ouverte' })
-    assert.equal(data.macroErrors.length, 1)
-    assert.match(data.macroErrors[0], /\*ripple/)
-    assert.match(data.macroErrors[0], /\)/)
+  it('une parenthèse jamais refermée : la balise jamais refermée arrête la construction, rien de mangé en silence', async () => {
+    await assert.rejects(transpile('<@document *ripple(color: red>\n<p>x</p>\n', { moduleName: 'doc-parenthese-ouverte' }), /\*ripple sur <@document> \(ligne 1\) : la parenthèse de ses réglages n'est jamais refermée — ajoutez le \) de fin/)
   })
 
   it('les réglages ordinaires ne changent pas', async () => {

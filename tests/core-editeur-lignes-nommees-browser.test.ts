@@ -59,7 +59,7 @@ const COMPLETE: Page = {
     window.__etat = -> { texte: $texte, ancien: $ancien, debut: $debut, coches: $coches, cfixe: $cfixe }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="a1" name="modele" value=!{$texte}></@@editor>
   <@@editor class="a2" name="ancien" value=!{$ancien}></@@editor>
   <@@editor class="a3" name="debut" value=!{$debut}></@@editor>
@@ -85,7 +85,7 @@ const REPONDRE: Page = {
     window.__etat = -> { texte: $texte, coches: $coches }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="a1" name="modele" toolbar="bold italic" value=!{$texte}></@@editor>
   <@@editor class="r1" name="reps[]" answer value={$texte} checked=!{$coches}></@@editor>
 </form>
@@ -104,7 +104,7 @@ const SAISIE: Page = {
     window.__etat = -> { texte: $texte }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="a1" name="modele" value=!{$texte}></@@editor>
 </form>
 `,

@@ -30,7 +30,7 @@ const SOURCES: Record<string, string> = {
 <button class="b2">b2</button>
 <@@sortable class="l3" value=!{$x}>
   {for l in $x by id}
-    <div class="ligne" data-id={l.id} @class{l.id is 'x'}="cachee">{l.id}</div>
+    <div class="ligne" data-id={l.id} :class{l.id is 'x'}="cachee">{l.id}</div>
   {end}
 </@@sortable>
 <button class="b3">b3</button>

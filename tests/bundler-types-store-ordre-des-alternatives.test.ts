@@ -11,7 +11,9 @@ import { join } from 'node:path'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
-const component = (rule: string) => `<vars>\n  $$x  ${rule}\n</vars>\n<p>{$$x}</p>\n`
+// une règle d'objet s'écrit en retrait sous le nom du store, un champ par ligne
+const component = (rule: string) => `<vars>\n  $$x${rule.startsWith('\n') ? '' : '  '}${rule}\n</vars>\n<p>{$$x}</p>\n`
+const objet     = (...champs: string[]) => champs.map((c) => '\n    ' + c).join('')
 
 async function errorsOf(prefix: string, a: string, b: string): Promise<string[]> {
   const root   = mjsTmp(prefix)
@@ -42,12 +44,12 @@ describe('stores typés — l\'ordre des alternatives d\'un choix compte, celui 
   }
 
   it('un choix dans un objet : le même ordre ne compte pas moins', async () => {
-    assert.equal(conflicts(await errorsOf('store-ordre-objet', '{ a: int | string, b: bool }', '{ a: string | int, b: bool }')).length, 1)
+    assert.equal(conflicts(await errorsOf('store-ordre-objet', objet('a  int | string', 'b  bool'), objet('a  string | int', 'b  bool'))).length, 1)
   })
 
   it('une liste de valeurs littérales dans un autre ordre, et les champs d\'un objet dans un autre ordre : la même règle', async () => {
     assert.deepEqual(await errorsOf('store-valeurs', '\'a\' | \'b\' | \'c\'', '\'c\' | \'a\' | \'b\''), [])
-    assert.deepEqual(await errorsOf('store-champs', '{ a: int, b: bool }', '{ b: bool, a: int }'), [])
+    assert.deepEqual(await errorsOf('store-champs', objet('a  int', 'b  bool'), objet('b  bool', 'a  int')), [])
     assert.deepEqual(await errorsOf('store-identique', 'int | string', 'int | string'), [])
   })
 

@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { Window } from 'happy-dom'
 import { extractPaths, generateCreateFnBody } from '../src/generator/paths.js'
 import { extractDirectives } from '../src/transpiler/directives.js'
+import { gabaritNommeRoutes, vuesDuGabarit } from '../src/transpiler/build-checks.js'
 import * as masque from '../src/mask.js'
 import { monterHote } from './helpers/coeur-monter.js'
 
@@ -18,7 +19,7 @@ function arbre(html: string): string {
   const { body } = generateCreateFnBody(html, { forceImperative: true })
   const fenetre = new Window()
   const doc     = fenetre.document
-  const µ = { _mjs_getTextNode: (s: string) => doc.createTextNode(s), _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
+  const µ = { _mjs_updAttrNode: (el: any, k: string, v: any) => el.setAttribute(k, String(v)) }
   const { fragment } = new Function('µ', 'document', body)(µ, doc)
   const forme = (n: any): string => n.nodeType === 1 ? n.localName + '[' + [...n.childNodes].map(forme).join(',') + ']' : (n.nodeType === 3 ? '#t' : '#c')
   const rendu = [...fragment.childNodes].map(forme).join(',')
@@ -80,6 +81,19 @@ describe('gabarit — un commentaire se referme là où le navigateur le referme
     assert.equal(extractDirectives('<!-->\n@preload hover\n<!-- fin -->\n<p>ok</p>\n').modulePreload, 'hover')
     // contre-cas : dans un vrai commentaire, elle reste inerte
     assert.equal(extractDirectives('<!--\n@preload hover\n-->\n<p>ok</p>\n').modulePreload, null)
+  })
+
+  it('contrôles de la construction : un `routes` écrit après un commentaire vide compte, comme le navigateur l\'affiche', () => {
+    assert.equal(gabaritNommeRoutes('<!--><p>{routes}</p><!-- fin -->'), true)
+    // contre-cas : dans un vrai commentaire, il ne compte pas
+    assert.equal(gabaritNommeRoutes('<!-- <p>{routes}</p> -->'), false)
+  })
+
+  it('contrôles de la construction : une vue écrite après un commentaire vide compte, comme le navigateur l\'affiche', () => {
+    assert.deepEqual(vuesDuGabarit('<!--><@view liste></@view><!-- fin -->'), ['liste'])
+    assert.deepEqual(vuesDuGabarit('<!---><@view liste></@view><!-- fin -->'), ['liste'])
+    // contre-cas : dans un vrai commentaire, elle ne compte pas
+    assert.deepEqual(vuesDuGabarit('<!-- <@view liste></@view> --><@view fiche></@view>'), ['fiche'])
   })
 
   it('aucune passe du compilateur ne cherche plus le `-->` suivant à la main', () => {

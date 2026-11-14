@@ -24,6 +24,13 @@
 //   - Un pool mort (plus aucun worker, plus de remplaçant) n'est jamais recréé (cf. ensureWorkerPool, bundler/index.ts) : avec
 //     un repli, il fait lui-même chaque tâche suivante, sans relancer un seul fil, et une ligne le dit une fois pour toute la
 //     suite. Borne nette : un worker cassé dès son démarrage fait lancer la taille du pool et autant de remplaçants, une fois.
+//   - Les deux sorties d'un worker (stdout, stderr) passent par le pool, qui les écrit sur celles du processus dans l'ordre
+//     d'arrivée, sans jamais les retenir. Un worker écrit par messages, à son rythme : la réponse d'une tâche peut arriver
+//     AVANT les lignes qu'elle a fait écrire. `flush()` (`flushWorkerOutput()` pour tous les pools en vie) rend la main
+//     quand elles sont toutes passées : la CLI l'attend avant d'écrire le bilan des avertissements.
+//   - Ce vidage attend un temps borné, le délai des tâches : un worker en vie qui, ses tâches rendues, ne lit plus ses messages
+//     est perdu à ce délai (arrêté, remplacé, une ligne le dit), et la suite s'écrit avec ce qui est arrivé. La marque d'un vidage
+//     ne passe jamais aux sorties du processus, même arrivée après sa clôture.
 //
 // Détection mode dev/prod : le worker script peut être .ts (dev via tsx)
 // ou .js (prod compilé). `resolveWorkerScript` cherche les deux et passe
@@ -97,6 +104,27 @@ function taskName(msg: any): string {
   return String(msg?.moduleName ?? msg?.type ?? '?')
 }
 
+// marque d'un vidage (cf. WorkerPool.flush) : le worker l'écrit sur ses deux sorties, le pool l'y voit passer et ne l'écrit pas —
+// un caractère nul de part et d'autre, que ne porte aucune ligne du compilateur
+function flushMark(id: number): string {
+  return `\0mjs-flush-${id}\0`
+}
+
+// toute marque de vidage, celle d'un vidage déjà clos comprise (cf. takeMarks)
+const FLUSH_MARK_RE = /\0mjs-flush-(\d+)\0/g
+
+interface PendingFlush {
+  worker: Worker
+  /** sorties dont la marque est encore attendue */
+  waiting: Set<'stdout' | 'stderr'>
+  resolve: () => void
+  /** minuteur du délai du vidage, retiré à sa clôture (cf. armFlushTimer) */
+  timer: unknown
+}
+
+// les pools en vie, de leur création à terminate() (cf. flushWorkerOutput)
+const livePools = new Set<WorkerPool>()
+
 export class WorkerPool {
   private workers: Worker[] = []
   private idle: Worker[] = []
@@ -114,6 +142,8 @@ export class WorkerPool {
   private lossesInARow = 0
   // la ligne du repli direct (pool mort) est déjà écrite : une seule pour toute la suite
   private directSaid = false
+  // vidages en cours (cf. flush), par identifiant
+  private flushes = new Map<number, PendingFlush>()
 
   constructor(size: number, spec: WorkerSpec, opts: WorkerPoolOpts = {}) {
     this.size      = size
@@ -123,13 +153,20 @@ export class WorkerPool {
     this.log       = opts.log ?? (line => console.warn(line))
     this.timers    = opts.timers ?? { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: handle => clearTimeout(handle as NodeJS.Timeout) }
     for (let i = 0; i < size; i++) this.spawn()
+    livePools.add(this)
   }
 
   // un worker de plus, branché et libre : à la création du pool, puis en remplaçant d'un worker perdu
   private spawn(): void {
     const w = new Worker(this.spec.workerPath, {
       workerData: this.spec.workerData,
+      // ses deux sorties passent par le pool (cf. forward), jamais par le renvoi automatique de Node : le pool sait ainsi quand tout
+      // ce qu'un worker a écrit est passé
+      stdout: true,
+      stderr: true
     })
+    this.forward(w, 'stdout')
+    this.forward(w, 'stderr')
     w.on('message', (response: any) => this.handleResponse(w, response))
     w.on('error', (err: Error) => this.loseWorker(w, err))
     // Un thread peut SORTIR sans émettre 'error' (process.exit, OOM) : sans
@@ -160,6 +197,75 @@ export class WorkerPool {
    *  suivantes (cf. submit) ; sans repli, il les rejette. */
   isDead(): boolean {
     return this.workers.length === 0
+  }
+
+  // sortie d'un worker : passée à celle du processus telle quelle, dans l'ordre d'arrivée et sans attendre que celle-ci se vide (une
+  // ligne retenue ici passerait après ce que le processus écrit ensuite) ; la marque d'un vidage en est retirée (cf. flush) — un
+  // morceau sans caractère nul n'en porte aucune
+  private forward(w: Worker, name: 'stdout' | 'stderr'): void {
+    w[name].on('data', (chunk: Buffer | string) => {
+      const data = typeof chunk === 'string' ? Buffer.from(chunk, 'utf-8') : chunk
+      const rest = data.includes(0) ? this.takeMarks(w, name, data) : data
+      if (rest.length > 0) process[name].write(rest)
+    })
+  }
+
+  // retire de `chunk` toute marque de vidage : celle d'un vidage que `w` attend sur cette sortie (ses deux marques vues, il est
+  // clos), comme celle d'un vidage déjà clos (délai écoulé, worker perdu, pool terminé), arrivée après coup — jamais une marque sur
+  // les sorties du processus. Lu en latin1, un octet par caractère : le reste du morceau repart à l'identique
+  private takeMarks(w: Worker, name: 'stdout' | 'stderr', chunk: Buffer): Buffer {
+    const text = chunk.toString('latin1')
+    const rest = text.replace(FLUSH_MARK_RE, (_mark, id: string) => {
+      const f = this.flushes.get(Number(id))
+      if (f && f.worker === w && f.waiting.delete(name) && f.waiting.size === 0) this.endFlush(Number(id))
+      return ''
+    })
+    return rest.length === text.length ? chunk : Buffer.from(rest, 'latin1')
+  }
+
+  private endFlush(id: number): void {
+    const f = this.flushes.get(id)
+    if (!f) return
+    this.flushes.delete(id)
+    this.timers.clearTimeout(f.timer)
+    f.resolve()
+  }
+
+  /** Rend la main quand tout ce que les workers en vie ont écrit jusqu'ici sur leurs deux sorties est passé à celles du
+   *  processus : chacun reçoit une marque à écrire sur ses deux sorties, que le pool voit passer après tout ce qui la précède
+   *  (et n'écrit pas). Un worker retiré (perdu, sorti, pool terminé), ou qui répond sans connaître ce message, clôt son vidage ;
+   *  celui qui, en vie, n'écrit pas sa marque est attendu le délai des tâches, pas plus (cf. armFlushTimer). */
+  flush(): Promise<void> {
+    if (this.terminated) return Promise.resolve()
+    return Promise.all(this.workers.map(w => new Promise<void>(resolve => {
+      const id                  = this.nextId++
+      const entry: PendingFlush = { worker: w, waiting: new Set<'stdout' | 'stderr'>(['stdout', 'stderr']), resolve, timer: undefined }
+      entry.timer               = this.armFlushTimer(id, entry)
+      this.flushes.set(id, entry)
+      w.postMessage({ type: 'flush', id, mark: flushMark(id) })
+    }))).then(() => undefined)
+  }
+
+  // délai du vidage `id` : celui des tâches (`timeoutMs`), pas un de plus à régler. Le worker en vie qui, dans ce temps, n'a pas
+  // écrit sa marque ne lit plus ses messages : une ligne le dit, il est perdu comme celui qui ne commence pas sa tâche (loseWorker :
+  // retrait, remplaçant — son vidage est clos, la suite s'écrit avec ce qui est arrivé) puis `terminate()` forcé. Même tour de
+  // boucle qu'armTimer avant de décider : une marque arrivée pendant que ce thread était occupé passe d'abord. Un worker qui a une
+  // tâche en vol travaille, il n'est pas muet : le délai de sa tâche le juge, celui du vidage repart
+  private armFlushTimer(id: number, entry: PendingFlush): unknown {
+    const handle = this.timers.setTimeout(() => {
+      setImmediate(() => {
+        if (this.flushes.get(id) !== entry || entry.timer !== handle) return
+        if ([...this.inFlight.values()].some(p => p.worker === entry.worker)) {
+          entry.timer = this.armFlushTimer(id, entry)
+          return
+        }
+        const line = t('bundler.worker-pool.vidage-timeout', { ms: this.timeoutMs })
+        this.log(line)
+        this.loseWorker(entry.worker, new Error(line))
+        void entry.worker.terminate().catch(() => {})
+      })
+    }, this.timeoutMs)
+    return handle
   }
 
   /** Soumet un message au prochain worker libre. Retourne le résultat. */
@@ -217,6 +323,11 @@ export class WorkerPool {
   }
 
   private handleResponse(w: Worker, response: any): void {
+    // réponse à un vidage : celle d'un worker qui ne connaît pas ce message et n'écrira pas la marque — le vidage est clos
+    if (this.flushes.has(response.id)) {
+      this.endFlush(response.id)
+      return
+    }
     const pending = this.inFlight.get(response.id)
     // réponse orpheline, ou venue d'un worker déjà perdu dont la tâche est repartie ailleurs sous le même id : ignorée
     if (!pending || pending.worker !== w) return
@@ -311,6 +422,8 @@ export class WorkerPool {
     if (wi !== -1) this.workers.splice(wi, 1)
     const ii = this.idle.indexOf(w)
     if (ii !== -1) this.idle.splice(ii, 1)
+    // ses vidages en attente : clos ; sa marque, si elle arrive encore, est retirée sans être écrite (cf. takeMarks)
+    for (const [id, f] of this.flushes) if (f.worker === w) this.endFlush(id)
   }
 
   private redispatchQueue(): void {
@@ -337,10 +450,19 @@ export class WorkerPool {
       p.reject(new Error(t('bundler.worker-pool.terminate-inflight')))
     }
     this.inFlight.clear()
+    // vidages en attente : clos ; une marque encore en route est retirée sans être écrite (cf. takeMarks)
+    for (const id of [...this.flushes.keys()]) this.endFlush(id)
+    livePools.delete(this)
     await Promise.all(this.workers.map(w => w.terminate()))
     this.workers = []
     this.idle = []
   }
+}
+
+/** Rend la main quand les sorties des workers de tous les pools en vie sont passées à celles du processus (cf.
+ *  WorkerPool.flush) : à attendre avant d'écrire ce qui doit suivre leurs lignes. Sans pool, tout de suite. */
+export async function flushWorkerOutput(): Promise<void> {
+  await Promise.all([...livePools].map(p => p.flush()))
 }
 
 /**

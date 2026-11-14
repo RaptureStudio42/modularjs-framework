@@ -43,7 +43,8 @@ describe('µt : le dictionnaire est sans prototype à tous les niveaux', functio
         const µ = monter(dev)
         await µ.i18n._ensure('fr', 'panier')
         const noms = ['panier.constructor.name', 'panier.toString.name', 'panier.ligne.constructor.name']
-        assert.deepEqual(noms.map((k) => µ.t(k)), noms.map(absente))
+        // la section est arrivée : une clé qu'elle ne porte pas est absente pour de bon, son nom se montre aussi en production
+        assert.deepEqual(noms.map((k) => µ.t(k)), noms.map((k) => '⟦' + k + '⟧'))
         assert.deepEqual([µ.t('panier.resume'), µ.t('panier.ligne.total')], ['Votre panier', 'Total'], 'témoins')
       })
 

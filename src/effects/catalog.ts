@@ -13,6 +13,7 @@ import { parseRule, ruleText, type RuleAst, type Lit } from '../transpiler/var-t
 import { levenshtein } from '../bundler/config.js'
 import { isResolvableSrc } from '../transpiler/img-tag.js'
 import { aliasExample, setDeclaredAliases, MJS_ALIASES } from './aliases-mjs.js'
+import { wordHint, written } from '../parser/mjs-words.js'
 
 export interface EffectSetting {
   rule: string
@@ -129,6 +130,7 @@ function customSpec(p: ProjectEffect): EffectSpec {
   settings.duration = time(anime ? '1s' : '400ms')
   settings.delay    = time('0s')
   settings.easing   = easing('ease')
+  settings.visible  = visible()
   return { family: 'custom', custom: true, main: p.params?.[0]?.[0] ?? 'on', settings }
 }
 
@@ -192,6 +194,10 @@ const fxOf   = (dflt: string, pull = false): EffectSetting => ({ rule: 'effect',
 // haut de la balise passe la première, il est fini à la seconde ; sans elle, du bas de l'écran
 // (le haut de la balise y entre) au milieu (son milieu y arrive)
 const zone   = (): EffectSetting => ({ rule: 'zone' })
+// … la part de la balise qui doit être à l'écran pour que `on: view` la déclenche, de 1 % à 100 %, en valeur fixe (`visible: 100%`) ;
+// sans elle, le seuil de toujours (transitions 15 %, effets qui se jouent ou à état 20 %, effets qui bouclent 10 %). Posée sur tout
+// effet dont `on` connaît view (cf. la boucle qui suit EFFECTS) ; le moteur la reçoit en nombre, de 1 à 100 (cf. µ._mjs_fxSight)
+const visible = (): EffectSetting => ({ rule: 'visible' })
 // … une image : son adresse, `µasset('…')`, ou `µimage('…')` (la variante la mieux taillée pour la
 // balise est choisie à la pose, cf. µ._mjs_fxImage) ; le chemin d'un fichier local (`'photo.jpg'`, `photo.jpg`) est
 // résolu au build comme `µimage('photo.jpg')` (cf. localImages). `plain` : l'effet ne lit que l'adresse, jamais les
@@ -225,6 +231,7 @@ const CARD_ZONES   = 'inset(10% 8% 53% 8%), polygon(8% 16%, 92% 16%, 92% 47%), c
 const OLD_ZONE_RE  = /^-?\d+(?:\.\d+)?(?: -?\d+(?:\.\d+)?){3}$/
 const oldZone      = (value: string): string | undefined => OLD_ZONE_RE.test(value) ? 'inset(' + value.split(' ').join('% ') + '%)' : undefined
 const ZONE_RE      = /^(?:-?\d*\.?\d+%|top|center|bottom) (?:-?\d*\.?\d+%|top|center|bottom)$/
+const VISIBLE_RE   = /^\d*\.?\d+%$/
 const ORIGIN_WORDS = ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right']
 const POINT_RE     = /^-?\d+(?:\.\d+)?% -?\d+(?:\.\d+)?%$/
 
@@ -364,6 +371,8 @@ export const EFFECTS: Record<string, EffectSpec> = {
 // le catalogue et ses listes de réglages n'ont pas de prototype
 Object.setPrototypeOf(EFFECTS, null)
 for (const fx of Object.values(EFFECTS)) Object.setPrototypeOf(fx.settings, null)
+// `visible` (la part de `on: view`) : sur tout effet, toute transition dont `on` connaît view, après ses autres réglages
+for (const fx of Object.values(EFFECTS)) if (/'view'/.test(fx.settings.on?.rule ?? '')) fx.settings.visible = visible()
 
 export type EffectValue = string | number | boolean | string[] | EffectRef | EffectImage
 
@@ -443,6 +452,7 @@ function ruleDisplay(rule: string): string {
   if (rule === 'length') return t('effets.regle-longueur')
   if (rule === 'range') return t('effets.regle-plage')
   if (rule === 'zone') return t('effets.regle-zone')
+  if (rule === 'visible') return t('effets.regle-visible')
   if (rule === 'card-zone') return CARD_ZONES
   if (rule === 'key') return t('effets.regle-cle')
   if (rule === 'css') return t('effets.regle-css')
@@ -601,6 +611,7 @@ function specOf(rule: string, css = false): unknown[] {
   if (rule === 'css' || rule === 'card-zone') return ['s', shown]
   if (rule === 'image') return ['x', shown]
   if (rule === 'socket') return ['v', '', shown]
+  if (rule === 'visible') return ['f', 1, 100, shown]
   const r = ruleOf(rule)
   switch (r.k) {
     case 'int':
@@ -646,6 +657,8 @@ export function fxRanges(names: string[]): Record<string, Record<string, unknown
     if (!fx || !playsOnce(fx)) continue
     const plages: Record<string, unknown[]> = out[n] = {}
     for (const [k, st] of Object.entries(fx.settings)) {
+      // `visible` règle `on: view` : un effet nommé par une variable se joue à sa pose (`on: load`), elle n'y a pas de plage
+      if (st.rule === 'visible') continue
       const sp = specOf(st.rule, st.css)
       const bornes = sp[0] === 'i' || sp[0] === 'f' ? sp[1] !== null || sp[2] !== null : (sp[0] === 's' || sp[0] === 'p') && sp.length > 3
       if (bornes) plages[k] = sp
@@ -677,6 +690,7 @@ function effectValue(name: string, key: string, value: string): EffectValue {
   const r    = parseEffect(sub, m[2] ?? '')
   const real = r.base ?? sub
   if (Object.keys(r.dynamic).length > 0) throw new Error(t('effets.fx-variable', { nom: name, reglage: key, effet: sub }))
+  if ('visible' in r.fixed) throw new Error(t('effets.fx-visible', { nom: name, reglage: key, effet: sub }))
   const spec = effectSpec(real)!
   if (!playsOnce(spec) || real === name) throw new Error(t('effets.fx-une-fois', { nom: name, reglage: key, effet: sub }))
   checkPlacement(real, r, 'span', false)
@@ -874,6 +888,7 @@ function checkValue(name: string, key: string, rule: string, raw: string, free =
   else if (rule === 'length') ok = /^-?\d*\.?\d+$/.test(value) ? Number(value) : LENGTH_RE.test(value) ? value : undefined
   else if (rule === 'range') ok = RANGE_RE.test(value) ? value : undefined
   else if (rule === 'zone') ok = ZONE_RE.test(value) && value.split(' ')[0] !== value.split(' ')[1] ? value : undefined
+  else if (rule === 'visible') ok = VISIBLE_RE.test(value) && Number(value.slice(0, -1)) >= 1 && Number(value.slice(0, -1)) <= 100 ? Number(value.slice(0, -1)) : undefined
   else if (rule === 'card-zone') ok = CARD_ZONE_RE.test(value) ? value : undefined
   else if (rule === 'key') ok = /^-?\d+(?:\.\d+)?$/.test(value) ? Number(value) : value !== '' ? value : undefined
   else if (rule === 'css') ok = value !== '' && !/[;{}]/.test(value) && closedCss(value) ? value : undefined
@@ -917,6 +932,14 @@ export function defaultSock(name: string, written: string, settings: ParsedEffec
 function checkNeed(name: string, out: ParsedEffect, written = name): void {
   const need = EFFECTS[name]?.need
   if (need && !(need in out.fixed) && !(need in out.dynamic)) throw new Error(t('effets.manque', { nom: written, reglage: need }))
+}
+
+// `visible` ne sert qu'à `on: view`, écrit ou par défaut ; `on` tenu par une variable peut valoir view, il passe. `written` : le nom écrit,
+// quand c'est un alias (le message le nomme)
+function checkVisible(name: string, settings: ParsedEffect, written = name): void {
+  if (!('visible' in settings.fixed) || 'on' in settings.dynamic) return
+  const on = 'on' in settings.fixed ? settings.fixed.on : effectSpec(name)?.settings.on?.dflt
+  if (on !== 'view') throw new Error(t('effets.visible-sans-vue', { nom: written, on: on === undefined ? '' : String(on) }))
 }
 
 /** le message d'un effet que ni la bibliothèque ni l'appli ne connaissent (`*fadee`, `*fadee.lent`), sinon rien : dit avant toute autre faute de la
@@ -1170,6 +1193,9 @@ export function parseEffect(name: string, raw: string, scope: string[] = [], par
     }
     const hint  = dist <= 2 ? t('effets.suggestion', { nom: best }) : ''
     const liste = names.filter(n => !n.includes('.')).map(n => '*' + n).join(', ')
+    // un mot de MJS écrit avec l'étoile d'un effet (`*size`, `*lightDom`) : le message donne son écriture
+    const mot   = wordHint(name)
+    if (mot) throw new Error(t('effets.mot-de-mjs', { nom: name, juste: mot }))
     if (REMOVED_EFFECTS.has(name)) throw new Error(t('effets.retire', { nom: name, liste }))
     const fondu = replacedEffectError(name, raw, false)
     if (fondu) throw new Error(fondu)
@@ -1206,6 +1232,8 @@ export function parseEffect(name: string, raw: string, scope: string[] = [], par
       out.spec[key]    = ['v', value, ruleDisplay('socket')]
       continue
     }
+    // la part de `on: view` s'écrit en clair : tenue par une variable, le message de la forme permise
+    if (setting.rule === 'visible' && (VAR_RE.test(value) || isScoped(value, scope))) throw new Error(t('effets.valeur', { nom: name, reglage: key, valeur: value, regle: ruleDisplay(setting.rule) }))
     if (VAR_RE.test(value) || isScoped(value, scope)) {
       out.dynamic[key] = value
       out.spec[key]    = specOf(setting.rule, setting.css)
@@ -1251,6 +1279,7 @@ export function checkPlacement(name: string, settings: ParsedEffect, tag: string
   const free = Object.keys(spec.settings).some(k => spec.settings[k].textless !== undefined && settings.fixed[k] === spec.settings[k].textless)
   if (spec.text && !free && (NO_CONTENT.has(lower) || lower.includes('-'))) throw new Error(t('effets.texte', { nom: written, balise: tagDisplay(lower) }))
   if (spec.field && !FIELDS.has(lower)) throw new Error(t('effets.champ', { nom: written, balise: tagDisplay(lower) }))
+  checkVisible(name, settings, written)
   const on   = (k: string) => settings.fixed[k] === true || k in settings.dynamic
   const key  = Object.keys(spec.settings).find(k => spec.settings[k].inside && on(k))
   const quoi = spec.inside ? `*${written}` : key ? `*${written}(${key}: true)` : ''
@@ -1271,20 +1300,20 @@ function writtenKeys(raw: string, spec: EffectSpec): Set<string> {
 
 /** la directive d'une transition (`in`, `out`, `transition`) peut-elle porter cet effet ? Une
  * transition, oui ; un autre effet, s'il sait se jouer une fois (son `on` connaît `load`) ; le
- * déclencheur est la directive elle-même : `on`, `once`, `range`, `zone` n'y ont pas de sens. `raw` : les réglages
+ * déclencheur est la directive elle-même : `on`, `once`, `range`, `zone`, `visible` n'y ont pas de sens. `raw` : les réglages
  * écrits à la pose — un déclencheur que l'alias porte (`*fly.spin_in` est `on: view`), sans que l'auteur l'ait écrit,
  * a son message : il n'y a rien à retirer, c'est l'alias qui ne convient pas après la directive */
 export function checkLife(name: string, settings: ParsedEffect, directive: string, raw = ''): void {
   const spec  = effectSpec(name)!
   const alias = projectEffect(name)?.fixed
-  for (const k of ['on', 'once', 'range', 'zone']) {
+  for (const k of ['on', 'once', 'range', 'zone', 'visible']) {
     if (!(k in settings.fixed || k in settings.dynamic)) continue
-    if (alias && k in alias && !writtenKeys(raw, spec).has(k)) throw new Error(t('transitions.declencheur-alias', { nom: name, reglage: k, valeur: String(alias[k]), directive: '@' + directive }))
-    throw new Error(t('transitions.declencheur', { nom: name, reglage: k, directive: '@' + directive }))
+    if (alias && k in alias && !writtenKeys(raw, spec).has(k)) throw new Error(t('transitions.declencheur-alias', { nom: name, reglage: k, valeur: String(alias[k]), directive: written(directive) }))
+    throw new Error(t('transitions.declencheur', { nom: name, reglage: k, directive: written(directive) }))
   }
   if (spec.transition || spec.custom) return
   const on = spec.settings.on
-  if (!on || !/'load'/.test(on.rule)) throw new Error(t('transitions.continu', { nom: name, directive: '@' + directive }))
+  if (!on || !/'load'/.test(on.rule)) throw new Error(t('transitions.continu', { nom: name, directive: written(directive) }))
 }
 
 /** le nom le plus proche d'un effet du catalogue, et sa distance — deux lettres interverties comptent

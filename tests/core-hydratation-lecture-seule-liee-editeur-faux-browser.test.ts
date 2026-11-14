@@ -41,7 +41,7 @@ const PAGE = `<script>
 ${Object.entries(VALEURS).map(([k, v]) => `  $${k} = ${v}`).join('\n')}
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
 ${MODULES.map((m) => Object.keys(VALEURS).map((k) => `  <@@${m} class="${m}-${k}" name="${m}-${k}" value="1"${m === 'knob' || m === 'gauge' ? '' : ' required'} readonly={$${k}}>x</@@${m}>`).join('\n')).join('\n')}
 ${EDITEURS.map(([c, a]) => `  <@@editor class="${c}" name="${c}" toolbar="none" ${a}></@@editor>`).join('\n')}
   <@@checkbox class="ecrit-null" name="ecrit-null" value="1" required readonly="null">x</@@checkbox>

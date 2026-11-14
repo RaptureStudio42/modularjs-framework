@@ -21,17 +21,17 @@ function makeJournal(opts: Parameters<typeof createJournal>[0]): ReturnType<type
   return j
 }
 
-afterEach(() => {
-  // close() (jamais flush() seul) : flush() solde l'ecriture mais LAISSE le journal dans le hook
-  // 'exit', qui rejouerait un differe posterieur et recreerait le dossier — c'est exactement le
-  // scenario prouve par tests/journal-close.test.ts
-  for (const j of journals) { try { j.close() } catch { /* best-effort */ } }
-  journals.length = 0
-})
-
 after(() => sweepRegistered())
 
 describe('journal — magasin NDJSON (src/server/journal.ts)', () => {
+  afterEach(() => {
+    // close() (jamais flush() seul) : flush() solde l'ecriture mais LAISSE le journal dans le hook
+    // 'exit', qui rejouerait un differe posterieur et recreerait le dossier — c'est exactement le
+    // scenario prouve par tests/journal-close.test.ts
+    for (const j of journals) { try { j.close() } catch { /* best-effort */ } }
+    journals.length = 0
+  })
+
   it('groupement par signature : occurrences répétées → n++, dernier mis à jour, premier inchangé', () => {
     const dir = mjsTmp('journal-group')
     const j = makeJournal({ dir })

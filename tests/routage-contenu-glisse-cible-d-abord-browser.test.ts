@@ -21,7 +21,7 @@ const SOURCES: Record<string, string> = {
   'tst-rcg-p4.mjs': `<script>\n${NOTE}\n</script>\n<@tst-rcg-nu><@tst-rcg-btn @click={note('auteur-sur-btn')}/></@tst-rcg-nu>\n`,
   'tst-rcg-p5.mjs': `<script>\n${NOTE}\n</script>\n<@tst-rcg-nu><@tst-rcg-btn @click.stop={note('auteur-stop-sur-btn')}/></@tst-rcg-nu>\n`,
   'tst-rcg-champ.mjs': '<label class="champ"><span>T</span><@slot/></label>\n',
-  'tst-rcg-form.mjs': "<script>\n$glisse = ''\nmasque = (el) ->\n  el.addEventListener('input', -> el.value = el.value.toUpperCase())\n  -> null\n</script>\n<@tst-rcg-champ><input class=\"g\" value=!{$glisse} @attach={masque}></@tst-rcg-champ>\n",
+  'tst-rcg-form.mjs': "<script>\n$glisse = ''\nmasque = (el) ->\n  el.addEventListener('input', -> el.value = el.value.toUpperCase())\n  -> null\n</script>\n<@tst-rcg-champ><input class=\"g\" value=!{$glisse} :attach={masque}></@tst-rcg-champ>\n",
 }
 
 const CORPS = ['p2', 'p3', 'p4', 'p5', 'form'].map((p) => `<mjs-tst-rcg-${p}></mjs-tst-rcg-${p}>`).join('')

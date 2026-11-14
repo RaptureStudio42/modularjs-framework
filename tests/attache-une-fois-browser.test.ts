@@ -32,7 +32,7 @@ const SOURCE = (modificateur: string) => `<script>
       log('retrait ' + key)
 </script>
 
-{for p in $cartes by key}<div class="carte" @attach${modificateur}={suivre(p.key)}>{p.key} {$light}</div>{end}
+{for p in $cartes by key}<div class="carte" :attach${modificateur}={suivre(p.key)}>{p.key} {$light}</div>{end}
 `
 
 async function construire(prefixe: string, modificateur: string): Promise<string> {

@@ -6,27 +6,33 @@
 //   - Le client (script injecté) écoute et :
 //      * reload module entier si .js bundle ou .mjs
 //      * patch le shadow CSS si .css (zéro flicker)
+//      * redessine les instances d'un composant modifié en gardant leur état (µ._hotSwap)
 //      * fallback location.reload() en dernier recours
 //
 // Le diff est fait côté bundler (CompileStats.cssOnly) —
 // un changement 100 % CSS passe par 'css-update' (hot-swap µ._hotCss, sans
-// reload), tout le reste garde le reload complet.
+// reload) ; des composants seuls, nature inchangée, passent par 'hot-update' (CompileStats.hot :
+// µ._hotSwap importe leurs nouveaux fichiers et redessine leurs instances en gardant leur état) ;
+// tout le reste garde le reload complet.
 
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { networkInterfaces, hostname } from 'node:os'
-import type { CssOnlyPayload } from '../bundler/index.js'
+import type { CssOnlyPayload, HotPayload } from '../bundler/index.js'
 import { t } from '../messages/index.js'
 // lecture de l'en-tête Host commune avec la garde du pont MJS WS (mjs-ws/bridge.ts)
 import { hostHeaderName as hostnameOf } from '../host-header.js'
 
 export interface HMRMessage {
-  type: 'reload' | 'css-update' | 'connected' | 'error' | 'theme-vars'
+  type: 'reload' | 'css-update' | 'hot-update' | 'connected' | 'error' | 'error-cleared' | 'theme-vars'
   modules?: string[]
   message?: string
   /** Charge d'un `css-update` : CSS frais par composant/feuille
    * (cf. CssOnlyPayload, bundler). Consommée côté page par `µ._hotCss`. */
   css?: CssOnlyPayload
+  /** Charge d'un `hot-update` : balise → adresse du nouveau fichier du composant (cf. HotPayload, bundler). Consommée côté page par
+   * `µ._hotSwap`. */
+  hot?: HotPayload
   /** Charge d'un `theme-vars` (atelier /__mjs/theme) : custom properties PRÉFIXÉES
    * (`--mjs-accent`) → valeur. Le préfixe est appliqué par l'émetteur, qui seul
    * connaît `varPrefix` — le client pose les clés telles quelles. Valeur vide
@@ -250,6 +256,13 @@ export class HMRServer {
       }
       this.clients.add(ws)
       this.send(ws, { type: 'connected' })
+      // réponse de la page à un échange à chaud (client ci-dessous) : fait, ou page rechargée — seul ce message est lu
+      ws.on('message', (data) => {
+        let msg: any = null
+        try { msg = JSON.parse(String(data).slice(0, 200)) }
+        catch { return }
+        if (msg?.type === 'hot-result') this.onHotResult?.(msg.ok === true)
+      })
       ws.on('close', () => this.clients.delete(ws))
       ws.on('error', () => this.clients.delete(ws))
     })
@@ -266,8 +279,23 @@ export class HMRServer {
     this.broadcast({ type: 'css-update', css })
   }
 
+  // Rechargement à chaud des composants : un recompile où seuls des composants déjà connus changent, sans changer de nature
+  // (cf. bundler `CompileStats.hot`) diffuse l'adresse de leurs nouveaux fichiers ; la page les importe et redessine leurs
+  // instances en gardant leur état (µ._hotSwap), ou se recharge en entier si l'échange n'est pas sûr.
+  /** réponse d'une page à un `hot-update` : `true` = instances redessinées, état gardé ; `false` = page rechargée en entier */
+  onHotResult: ((ok: boolean) => void) | null = null
+
+  notifyHotUpdate(hot: HotPayload): void {
+    this.broadcast({ type: 'hot-update', hot })
+  }
+
   notifyError(message: string): void {
     this.broadcast({ type: 'error', message })
+  }
+
+  // erreur annulée sans autre changement (le texte revenu à celui d'avant) : la page garde sa version, seul l'affichage de l'erreur part
+  notifyErrorCleared(): void {
+    this.broadcast({ type: 'error-cleared' })
   }
 
   // Aperçu de thème en direct (atelier /__mjs/theme) : l'atelier POSTe une
@@ -320,8 +348,13 @@ export class HMRServer {
 //                     (sans reload ni perte d'état ; repli
 //                     location.reload() si le swap n'est pas sûr) + force
 //                     re-fetch des <link rel=stylesheet>
+//   - 'hot-update'  → µ._hotSwap importe les nouveaux fichiers des composants et redessine
+//                     leurs instances en gardant leur état (repli location.reload() si
+//                     l'échange n'est pas sûr, ou si µ._hotSwap est absent) ; la page
+//                     répond {type:'hot-result', ok} (onHotResult : ce que dit le terminal)
 //   - 'error'       → affiche un overlay plein écran avec le message
 //   - 'reload' suivant un error → cache l'overlay
+//   - 'error-cleared' → cache l'overlay, sans recharger (erreur annulée, rien d'autre à recevoir)
 // ----------------------------------------------------------------------------
 export const hmrClientSnippet = (wsUrl: string) => `
 (() => {
@@ -449,8 +482,30 @@ export const hmrClientSnippet = (wsUrl: string) => `
             link.href = u.toString()
           }
         }
+        if (msg.type === 'hot-update')  {
+          hideError()
+          // Rechargement à chaud des composants (µ._hotSwap, mjs_hotswap.ts — dev seulement, ABSENT d'un
+          // bundle de production) : promesse de \`false\` = échange PAS sûr → reload complet ; même
+          // repli si la fonction manque ou si elle lève, au moindre doute.
+          // >>> extrait-test hmr-hotswap-fallback
+          let echange = null
+          try {
+            echange = window.µ && typeof window.µ._hotSwap === 'function' ? window.µ._hotSwap.call(window.µ, msg.hot || {}) : null
+          } catch {}
+          // la page dit au terminal ce qu'elle a fait : il n'annonce « état gardé » que pour un échange fait ; avant de se recharger,
+          // elle laisse partir sa réponse (un dixième de seconde au plus)
+          const repond = (ok) => {
+            try { ws.send(JSON.stringify({ type: 'hot-result', ok })) } catch {}
+            let essais     = 5
+            const recharge = () => (typeof ws === 'object' && ws.readyState === 1 && ws.bufferedAmount > 0 && essais-- > 0) ? setTimeout(recharge, 20) : location.reload()
+            if (!ok) recharge()
+          }
+          Promise.resolve(echange).then((ok) => repond(ok === true), () => repond(false))
+          // <<< extrait-test hmr-hotswap-fallback
+        }
         if (msg.type === 'theme-vars')  { applyThemeVars(msg.themeVars) }
         if (msg.type === 'error')       { showError(msg.message || ${JSON.stringify(t('server.hmr-aucun-message'))}) }
+        if (msg.type === 'error-cleared') { hideError() }
       } catch {}
     })
     ws.addEventListener('close', () => {

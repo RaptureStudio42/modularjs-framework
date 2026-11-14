@@ -85,6 +85,12 @@
   # l'écart entre le curseur et la bulle, entre le menu des formes et le bord de l'écran, en px
   GAP = 10
 
+  # le menu des formes ancré : le navigateur le pose contre son bouton et l'y garde au défilement (cf. `seat`) ; sans l'ancrage CSS, le
+  # placement par le script (cf. `menuAt`, `unseat`) ; un nom d'ancre par graphique. Le test de fonction demande tout ce que le style
+  # emploie : Chrome 125 à 128 connaît `anchor-name` sans `position-area` (alors `inset-area`)
+  ANCHORED = typeof CSS isnt 'undefined' and typeof CSS.supports is 'function' and CSS.supports('(anchor-name: --a) and (position-area: top) and (position-try-fallbacks: flip-block)') # @@ toolbar
+  seq      = 0 # @@ toolbar
+
   # un radar lisible : 24 axes au plus, ceux des 24 dernières lignes ; jusqu'à 8 axes, chaque branche porte son nom, au-delà les quatre pôles
   # seulement (cf. `polesOf`)
   RADAR_MAX   = 24
@@ -108,8 +114,22 @@
   zonesSeen = {}
 
   tr   = (key, lang)-> µ._mjs_label('core', key) ?? ''
-  # la langue de l'écran, celle des libellés du cœur (la langue choisie par la page, sinon celle du document) : nombres, dates et périodes s'y écrivent
-  langOf = (l)-> (if typeof µ._mjs_labelLang is 'function' then µ._mjs_labelLang() else l) or l or undefined
+
+  # une langue telle qu'Intl l'écrit (`de-CH`), rien quand il la refuse (« en- », « en-US » suivi d'une espace)
+  tagOf = (t)->
+    try
+      return Intl.getCanonicalLocales(t)[0]
+    catch e
+      return undefined
+
+  # la langue de l'écran, celle des libellés du cœur, lue dans le même ordre (`µlang`, celle du module i18n, `<html lang>`, celle de la
+  # construction), mais entière : sa région compte, comme pour le navigateur (« 1.5 » en `de-CH`, quand l'allemand écrit « 1,5 ») ; nombres,
+  # dates et périodes s'y écrivent. Une langue qu'Intl refuse se lit par son premier sous-tag (« en- » : l'anglais), jamais telle quelle, qui
+  # ferait tomber le graphique ; refusé lui aussi, ou sans langue, c'est celle du navigateur
+  langOf = (l)->
+    tag = (µ._mjs_storeRaw and µ._mjs_storeRaw.__mjsLang) or (typeof µ._mjs_i18nEffectiveLang is 'function' and µ._mjs_i18nEffectiveLang()) or (typeof document isnt 'undefined' and document.documentElement and document.documentElement.lang) or µ._runtimeLabelsLang or l
+    if tag then tagOf(tag) or tagOf(String(tag).split('-')[0]) else undefined
+
   has  = (table, k)-> Object.prototype.hasOwnProperty.call(table, k)
   flag = (v)-> v? and v isnt false and String(v).toLowerCase() isnt 'false'
   pct  = (f)-> Math.round(f * 1e6) / 1e4
@@ -947,6 +967,8 @@
   pickRef  = null # @@ toolbar
   btnRef   = null # @@ toolbar
   menuRef  = null # @@ toolbar
+  sight    = null # @@ toolbar
+  anchor   = "--mjs-chart-menu-#{seq++}" # @@ toolbar
   picks    = {}
   held     = 0 # @@ toolbar
 
@@ -1143,50 +1165,83 @@
 
   # le menu des formes s'ouvre sous son bouton, au-dessus quand la place manque en bas, décalé pour ne jamais sortir de l'écran. Dans la
   # couche du dessus (`popover`) quand le navigateur la connaît : un ancêtre qui coupe (`overflow: hidden`) ne le rogne plus ; posé alors sur
-  # l'écran (`top`), il suit son bouton quand la page défile (cf. `unseat`). Une fois mesuré, la forme choisie (flèche du haut : la
+  # l'écran (`top`), il suit son bouton quand la page défile : ancré (`tied`), par le navigateur, sinon par le script (cf. `menuAt`,
+  # `unseat`). Une fois mesuré, la forme choisie (flèche du haut : la
   # dernière) prend le focus. La place du bouton se lit sur son conteneur (`.picker`, à sa taille) : le bouton appuyé rétrécit le temps
   # de l'appui (`scale(.96)`), un menu ouvert à la souris se calait sur ce bouton rétréci
   openMenu = (last)->
     $menu = { x: 0, y: 0, up: false, max: null, top: false, ready: false }
+    # inscrit le temps qu'il est ouvert : une modale qui s'ouvre (µ.modal) le referme, il passerait devant elle ; le focus revient au
+    # bouton, que la modale rendra à sa fermeture
+    (µ._mjs_menus = µ._mjs_menus or new Set()).add(leave)
     queueMicrotask(-> if menuRef then seat(last) else requestAnimationFrame(-> seat(last)))
 
   seat = (last)->
     return unless $menu and menuRef and pickRef
-    top = typeof menuRef.showPopover is 'function'
+    top  = typeof menuRef.showPopover is 'function'
+    tied = top and ANCHORED and not shiftedOf(pickRef)
+    pickRef.style.setProperty('--mjs-chart-anchor', anchor) if tied
     try
       menuRef.showPopover() if top and not menuRef.matches(':popover-open')
     catch e
-      top = false
+      top  = false
+      tied = false
     k     = zoomOf(menuRef)
     box   = pickRef.getBoundingClientRect()
     below = window.innerHeight - box.bottom - GAP
     above = box.top - GAP
     up    = menuRef.scrollHeight * k > below and above > below
-    $menu = Object.assign(menuAt(box, up, top), { up: up, max: Math.max(96, Math.floor((if up then above else below) / k)), top: top, ready: true })
+    max   = Math.max(96, Math.floor((if up then above else below) / k))
+    $menu = Object.assign((if tied then { x: 0, y: 0 } else menuAt(box, up, top)), { up: up, max: max, top: top, tied: tied, ready: true })
+    # dans la couche du dessus, ancré ou placé par le script, le bouton caché par le conteneur qui défile ferme le menu, comme quand il sort
+    # de l'écran, dès l'ouverture comprise (Firefox et Safari laisseraient flotter le menu ancré hors du conteneur, le script poserait le sien
+    # contre un bouton caché)
     if top
       window.addEventListener('scroll', unseat, true)
-      window.addEventListener('resize', unseat)
+      window.addEventListener('resize', unseat) unless tied
+      sight?.disconnect()
+      sight = new IntersectionObserver((list)-> shut(true) unless list[list.length - 1].isIntersecting)
+      sight.observe(pickRef)
+    # le focus entre dans le menu sans rien faire défiler : le menu est déjà dans l'écran, et WebKit, refermé aussitôt (son bouton caché),
+    # ferait défiler le conteneur jusqu'au bouton qui reprend le focus
     items = Array.from(menuRef.querySelectorAll('[role="menuitemradio"]'))
-    (if last then items[items.length - 1] else items.find((n)-> n.getAttribute('aria-checked') is 'true') ?? items[0])?.focus()
+    (if last then items[items.length - 1] else items.find((n)-> n.getAttribute('aria-checked') is 'true') ?? items[0])?.focus({ preventScroll: true })
 
-  # la place du menu, décalé pour ne pas sortir de l'écran : sous son bouton ou au-dessus (`up`) ; posé sur l'écran (`top`), dans les
+  # une boîte autour du graphique, ombres traversées, qui fausse l'ancre : en `position: fixed` (une fenêtre modale, un en-tête fixe),
+  # WebKit y décale l'ancre de la longueur du défilement de la page ; déplacée par une transformation autre que l'identité (`transform`,
+  # `translate`, `rotate`, `scale`), Firefox pose le menu comme si elle n'existait pas — le menu est alors placé par le script
+  shiftedOf = (n)->
+    while n
+      s = getComputedStyle(n)
+      return true if s.position is 'fixed' or s.transform isnt 'none' and not new DOMMatrix(s.transform).isIdentity or /[1-9]/.test(s.translate + s.rotate) or not /^(none|1( 1)*)$/.test(s.scale)
+      n = n.parentElement or n.getRootNode().host
+    false
+
+  # repli sans ancrage : la place du menu, décalé pour ne pas sortir de l'écran : sous son bouton ou au-dessus (`up`) ; posé sur l'écran (`top`), dans les
   # coordonnées de la fenêtre. Mesurée à l'écran, puis divisée par le zoom du menu (cf. `zoomOf`)
   menuAt = (box, up, top)->
     k = zoomOf(menuRef)
     x = Math.max(GAP - box.left, Math.min(0, document.documentElement.clientWidth - GAP - menuRef.offsetWidth * k - box.left))
     { x: Math.round((if top then box.left + x else x) / k), y: (if top then Math.round((if up then document.documentElement.clientHeight - box.top else box.bottom) / k + 4) else 0) }
 
-  # posé sur l'écran, le menu suit son bouton quand la page ou un ancêtre défile, et quand la fenêtre change de taille ; il se ferme quand
-  # le bouton sort de l'écran, et le focus revient au bouton
+  # posé sur l'écran, le menu se ferme quand son bouton sort de l'écran, et le focus revient au bouton ; ancré, le navigateur le garde contre
+  # son bouton, sinon (repli) il le suit ici quand la page ou un ancêtre défile, et quand la fenêtre change de taille
   unseat = ->
     return unless $menu?.top and menuRef and pickRef
     box = pickRef.getBoundingClientRect()
     return shut(true) if box.bottom < 0 or box.top > window.innerHeight
-    $menu = Object.assign({}, $menu, menuAt(box, $menu.up, true))
+    $menu = Object.assign({}, $menu, menuAt(box, $menu.up, true)) unless $menu.tied
+
+  # refermé par une modale qui s'ouvre ou par son Échap : vrai, le menu était ouvert, la modale reste ouverte à cet Échap
+  leave = ->
+    shut(true)
+    true
 
   shut = (back)->
     return unless $menu
     $menu = null
+    µ._mjs_menus?.delete(leave)
+    sight?.disconnect()
     window.removeEventListener('scroll', unseat, true)
     window.removeEventListener('resize', unseat)
     btnRef?.focus({ preventScroll: true }) if back
@@ -1240,31 +1295,31 @@
     shut(false) # @@ toolbar
 </script>
 
-<div class="chart" part="chart" @this=!{chartRef} @class{flag($pickable)}="pickable" @class{$data.empty}="void">
+<div class="chart" part="chart" :this=!{chartRef} :class{flag($pickable)}="pickable" :class{$data.empty}="void">
   <!-- @@ toolbar -->
   {if $data.bar}
     <div class="tools" part="tools" role="group" aria-label={$draw.texts.tools}>
-      {if $data.tools.legend}<div class="kit" role="group" aria-label={$draw.texts.legend}>{for s in $data.legend by key}<button type="button" class="pill series tone-{s.hue}" @class{not s.on}="dim" --mjs-chart-tone={s.custom} aria-pressed={s.on ? 'true' : 'false'} @click={swap(s.key)}><i class="swatch"></i>{s.name}</button>{end}</div>{end}
+      {if $data.tools.legend}<div class="kit" role="group" aria-label={$draw.texts.legend}>{for s in $data.legend by key}<button type="button" class="pill series tone-{s.hue}" :class{not s.on}="dim" --mjs-chart-tone={s.custom} aria-pressed={s.on ? 'true' : 'false'} @click={swap(s.key)}><i class="swatch"></i>{s.name}</button>{end}</div>{end}
       {if $data.tools.shapes}
-        <div class="kit picker" @this=!{pickRef}>
-          <button type="button" class="pill pick" aria-haspopup="menu" aria-expanded={$menu ? 'true' : 'false'} aria-label={$draw.texts.shapeOf.replace('{shape}', $draw.texts.forms[$data.form])} @this=!{btnRef} @pointerdown={hold(e)} @click={toggleMenu(e)} @keydown={pickKey(e)}><svg class="glyph glyph-{$data.form}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d={FORMS[$data.form].d}/></svg>{$draw.texts.forms[$data.form]}<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 6l4 4 4-4"/></svg></button>
-          {if $menu}<div class="menu" part="menu" role="menu" popover="manual" aria-label={$draw.texts.shape} @this=!{menuRef} @class{$menu.up}="up" @class{$menu.top}="top" @class{not $menu.ready}="wait" --mjs-chart-menu-x={$menu.x} --mjs-chart-menu-y={$menu.y} --mjs-chart-menu-max={$menu.max} @keydown={menuKey(e)} @pointerdown={hold(e)} @mousedown={e.preventDefault()}>{for f in $data.forms by name}<button type="button" class="item" role="menuitemradio" tabindex="-1" aria-checked={f.name is $data.form ? 'true' : 'false'} aria-disabled={f.off ? 'true' : null} @click={choose(f, e)}><svg class="glyph glyph-{f.name}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d={f.d}/></svg>{$draw.texts.forms[f.name]}</button>{end}</div>{end}
+        <div class="kit picker" :this=!{pickRef}>
+          <button type="button" class="pill pick" aria-haspopup="menu" aria-expanded={$menu ? 'true' : 'false'} aria-label={$draw.texts.shapeOf.replace('{shape}', $draw.texts.forms[$data.form])} :this=!{btnRef} @pointerdown={hold(e)} @click={toggleMenu(e)} @keydown={pickKey(e)}><svg class="glyph glyph-{$data.form}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d={FORMS[$data.form].d}/></svg>{$draw.texts.forms[$data.form]}<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 6l4 4 4-4"/></svg></button>
+          {if $menu}<div class="menu" part="menu" role="menu" popover="manual" aria-label={$draw.texts.shape} :this=!{menuRef} :class{$menu.up}="up" :class{$menu.top}="top" :class{$menu.tied}="anchored" :class{not $menu.ready}="wait" --mjs-chart-menu-x={$menu.x} --mjs-chart-menu-y={$menu.y} --mjs-chart-menu-max={$menu.max} @keydown={menuKey(e)} @pointerdown={hold(e)} @mousedown={e.preventDefault()}>{for f in $data.forms by name}<button type="button" class="item" role="menuitemradio" tabindex="-1" aria-checked={f.name is $data.form ? 'true' : 'false'} aria-disabled={f.off ? 'true' : null} @click={choose(f, e)}><svg class="glyph glyph-{f.name}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d={f.d}/></svg>{$draw.texts.forms[f.name]}</button>{end}</div>{end}
         </div>
       {end}
-      {if $data.tools.stats}<div class="kit" role="group" aria-label={$draw.texts.stats}>{for m in $data.checks by name}<label class="pill" @class{m.on}="on" @class{m.off}="off"><input type="checkbox" class="box" checked={m.on} disabled={m.off} @change={toggleStat(m.name)}><svg class="sample" viewBox="0 0 26 8" aria-hidden="true" focusable="false"><path class="stat stat-{m.name}" d="M 1 4 L 18 4"/>{if m.name is 'trend'}<circle class="ghost" cx="22" cy="4" r="3"/>{end}</svg>{$draw.texts.marks[m.name]}</label>{end}</div>{end}
-      {if $data.paces.length}<div class="kit" role="radiogroup" aria-label={$draw.texts.step}>{for p in $data.paces by name}<label class="pill" @class{p.on}="on" @class{p.off}="off"><input type="radio" class="box" name="step" value={p.name} checked={p.on} disabled={p.off} @change={pace(p.name)}>{$draw.texts.paces[p.name]}</label>{end}</div>{end}
+      {if $data.tools.stats}<div class="kit" role="group" aria-label={$draw.texts.stats}>{for m in $data.checks by name}<label class="pill" :class{m.on}="on" :class{m.off}="off"><input type="checkbox" class="box" checked={m.on} disabled={m.off} @change={toggleStat(m.name)}><svg class="sample" viewBox="0 0 26 8" aria-hidden="true" focusable="false"><path class="stat stat-{m.name}" d="M 1 4 L 18 4"/>{if m.name is 'trend'}<circle class="ghost" cx="22" cy="4" r="3"/>{end}</svg>{$draw.texts.marks[m.name]}</label>{end}</div>{end}
+      {if $data.paces.length}<div class="kit" role="radiogroup" aria-label={$draw.texts.step}>{for p in $data.paces by name}<label class="pill" :class{p.on}="on" :class{p.off}="off"><input type="radio" class="box" name="step" value={p.name} checked={p.on} disabled={p.off} @change={pace(p.name)}>{$draw.texts.paces[p.name]}</label>{end}</div>{end}
     </div>
   {end}
   <!-- @@ -->
   {if $data.family is 'axes'}
-    <div class="frame" part="frame" @class{$draw.twin}="twin" --mjs-chart-gutter={gutterOf($draw.yLabels, $input.width, measure)} --mjs-chart-gutter-right={rightGutterOf($draw.yRight, $input.width, measure)}>
-      <div class="plot" part="plot" @this=!{plotRef}>
-        <svg class="svg" aria-hidden="true" focusable="false" @this=!{svgRef}>
+    <div class="frame" part="frame" :class{$draw.twin}="twin" --mjs-chart-gutter={gutterOf($draw.yLabels, $input.width, measure)} --mjs-chart-gutter-right={rightGutterOf($draw.yRight, $input.width, measure)}>
+      <div class="plot" part="plot" :this=!{plotRef}>
+        <svg class="svg" aria-hidden="true" focusable="false" :this=!{svgRef}>
           <svg class="draw" viewBox="0 0 1000 300" preserveAspectRatio="none" width="100%" height="100%">
             {for t in $draw.ticks by v}<line class="grid" x1="0" x2="1000" y1={t.y * 3} y2={t.y * 3}/>{end}
             {if $data.form is 'area'}{for l in $draw.paths by key}<path class="area tone-{l.hue}" --mjs-chart-tone={l.custom} d={l.area}/>{end}{end}
             {if $data.form is 'line' or $data.form is 'area'}{for l in $draw.paths by key}<path class="line tone-{l.hue}" --mjs-chart-tone={l.custom} d={l.d}/>{end}{end}
-            {for b in $draw.bars by id}<rect class="bar tone-{b.hue}" @class{$hover is b.i}="on" --mjs-chart-tone={b.custom} x={b.x} y={b.y} width={b.w} height={b.h}/>{end}
+            {for b in $draw.bars by id}<rect class="bar tone-{b.hue}" :class{$hover is b.i}="on" --mjs-chart-tone={b.custom} x={b.x} y={b.y} width={b.w} height={b.h}/>{end}
             {for s in $draw.stats by id}<path class="stat stat-{s.name} tone-{s.hue}" --mjs-chart-tone={s.custom} d={s.d}/>{end}
             {for t in $draw.trends by key}<path class="trend stat-trend tone-{t.hue}" --mjs-chart-tone={t.custom} d={t.d}/>{end}
           </svg>
@@ -1279,12 +1334,12 @@
           {end}
         </svg>
         {if $data.empty}<p class="empty" part="empty">{$draw.texts.empty}</p>{end}
-        <div class="hit" part="hit" @this=!{hitRef} tabindex={(flag($pickable) or $data.reads) ? 0 : null} role={(flag($pickable) or $data.reads) ? 'group' : null} aria-label={$data.reads ? $draw.texts.browse : (flag($pickable) ? $draw.texts.hint : null)} @pointermove={onMove(e)} @pointerdown={onDown(e)} @pointerout={onOut(e)} @click={onClick(e)} @keydown={onKey(e)} @blur={onBlur()}></div>
+        <div class="hit" part="hit" :this=!{hitRef} tabindex={(flag($pickable) or $data.reads) ? 0 : null} role={(flag($pickable) or $data.reads) ? 'group' : null} aria-label={$data.reads ? $draw.texts.browse : (flag($pickable) ? $draw.texts.hint : null)} @pointermove={onMove(e)} @pointerdown={onDown(e)} @pointerout={onOut(e)} @click={onClick(e)} @keydown={onKey(e)} @blur={onBlur()}></div>
         {if $tip}
-          <div class="tip" part="tip" aria-hidden="true" data-side={$spot.side} @class{not $spot.ready}="wait" --mjs-chart-tip-x={$spot.x} @this=!{tipRef}>
+          <div class="tip" part="tip" aria-hidden="true" data-side={$spot.side} :class{not $spot.ready}="wait" --mjs-chart-tip-x={$spot.x} :this=!{tipRef}>
             <b>{$tip.title}</b>
             {if $tip.grouped}<em class="grouped">{$tip.grouped}</em>{end}
-            {for r in $tip.rows by key}<span class="row tone-{r.hue}" @class{r.word}="word" @class{r.total}="total" --mjs-chart-tone={r.custom}><i class="swatch"></i>{r.name} <strong>{r.text}</strong></span>{end}
+            {for r in $tip.rows by key}<span class="row tone-{r.hue}" :class{r.word}="word" :class{r.total}="total" --mjs-chart-tone={r.custom}><i class="swatch"></i>{r.name} <strong>{r.text}</strong></span>{end}
           </div>
         {end}
       </div>
@@ -1294,22 +1349,22 @@
       <div class="ring" part="ring" tabindex={$data.empty ? null : 0} role={$data.empty ? null : 'group'} aria-label={$data.empty ? null : $draw.texts.browse} @keydown={onKey(e)} @blur={onBlur()}>
         <svg class="disc" viewBox="0 0 100 100" aria-hidden="true" focusable="false" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>
           <circle class="track" cx="50" cy="50" r="38.5"/>
-          {for s in $draw.slices by key}<path class="slice tone-{s.hue}" @class{s.pale}="pale" @class{s.others}="others" @class{$hover is s.i}="on" --mjs-chart-tone={s.custom} data-i={s.i} d={s.d}/>{end}
+          {for s in $draw.slices by key}<path class="slice tone-{s.hue}" :class{s.pale}="pale" :class{s.others}="others" :class{$hover is s.i}="on" --mjs-chart-tone={s.custom} data-i={s.i} d={s.d}/>{end}
         </svg>
         {if $data.empty and not $data.model.none}<p class="empty" part="empty">{$draw.texts.empty}</p>{end}
         {if not $data.empty}<p class="center" part="center">{if $tip}<b>{$tip.amount}</b><small>{$tip.share}</small><small class="name">{$tip.title}</small>{else}<b>{$draw.total}</b><small>{$draw.texts.total}</small>{end}</p>{end}
       </div>
       {if $data.model.none}<p class="note" part="note">{$draw.texts.none}</p>{end}
-      {if not $data.empty}<ul class="legend" part="legend" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>{for s in $draw.slices by key}<li class="part tone-{s.hue}" @class{s.pale}="pale" @class{s.others}="others" @class{$hover is s.i}="on" --mjs-chart-tone={s.custom} data-i={s.i}><i class="swatch"></i><span class="name">{s.label}</span> <strong>{s.amount}</strong> <small>{s.share}</small></li>{end}</ul>{end}
+      {if not $data.empty}<ul class="legend" part="legend" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>{for s in $draw.slices by key}<li class="part tone-{s.hue}" :class{s.pale}="pale" :class{s.others}="others" :class{$hover is s.i}="on" --mjs-chart-tone={s.custom} data-i={s.i}><i class="swatch"></i><span class="name">{s.label}</span> <strong>{s.amount}</strong> <small>{s.share}</small></li>{end}</ul>{end}
     </div>
   {elsif $data.empty}
     <div class="blank" part="blank"><p class="empty" part="empty">{$draw.texts.empty}</p></div>
   {elsif $data.family is 'heat'}
     <div class="heat" part="heat" tabindex="0" role="group" aria-label={flag($pickable) ? $draw.texts.choose : $draw.texts.browse} @keydown={onKey(e)} @blur={onBlur()}>
       <div class="names" aria-hidden="true">{for n in $draw.names by k}<span class="name">{n.text}</span>{end}</div>
-      <div class="field" part="plot" @this=!{plotRef}>
-        <svg class="cells" viewBox={$draw.view} preserveAspectRatio="none" width="100%" height={$draw.high} aria-hidden="true" focusable="false" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>{for c in $draw.cells by i}<rect class="cell tone-{c.hue} level-{c.level}" @class{$hover is c.i}="on" --mjs-chart-tone={c.custom} data-i={c.i} x={c.x} y={c.y} width="0.9" height="0.86"/>{end}</svg>
-        <svg class="svg" aria-hidden="true" focusable="false" @this=!{svgRef}>{for l in xLabelsOf($data, $input.width, measure, $draw.texts.lang) by i}<text class="xlabel" x="{l.x}%" y="100%" dy="1.45em" text-anchor={l.anchor}>{l.text}</text>{end}</svg>
+      <div class="field" part="plot" :this=!{plotRef}>
+        <svg class="cells" viewBox={$draw.view} preserveAspectRatio="none" width="100%" height={$draw.high} aria-hidden="true" focusable="false" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>{for c in $draw.cells by i}<rect class="cell tone-{c.hue} level-{c.level}" :class{$hover is c.i}="on" --mjs-chart-tone={c.custom} data-i={c.i} x={c.x} y={c.y} width="0.9" height="0.86"/>{end}</svg>
+        <svg class="svg" aria-hidden="true" focusable="false" :this=!{svgRef}>{for l in xLabelsOf($data, $input.width, measure, $draw.texts.lang) by i}<text class="xlabel" x="{l.x}%" y="100%" dy="1.45em" text-anchor={l.anchor}>{l.text}</text>{end}</svg>
       </div>
     </div>
   {elsif $data.family is 'radar'}
@@ -1319,12 +1374,12 @@
         <div class="face">
           <svg class="web" viewBox="0 0 100 100" width="300" height="300" aria-hidden="true" focusable="false" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>
             {for r in $draw.mesh by value}<polygon class="mesh" points={r.points}/>{end}
-            {for a in $draw.axes by i}<line class="spoke" @class{$hover is a.i}="on" x1="50" y1="50" x2={a.x} y2={a.y}/>{end}
+            {for a in $draw.axes by i}<line class="spoke" :class{$hover is a.i}="on" x1="50" y1="50" x2={a.x} y2={a.y}/>{end}
             {for s in $draw.shapes by key}<polygon class="shape tone-{s.hue}" --mjs-chart-tone={s.custom} points={s.points}/>{end}
-            {for v in $draw.vertices by id}<circle class="vertex tone-{v.hue}" @class{$hover is v.i}="on" --mjs-chart-tone={v.custom} cx={v.x} cy={v.y} r="1.6"/>{end}
+            {for v in $draw.vertices by id}<circle class="vertex tone-{v.hue}" :class{$hover is v.i}="on" --mjs-chart-tone={v.custom} cx={v.x} cy={v.y} r="1.6"/>{end}
             {for a in $draw.axes by i}<path class="wedge" data-i={a.i} d={a.wedge}/>{end}
           </svg>
-          <svg class="poles" aria-hidden="true" focusable="false">{for a in $draw.poles by i}<text class="pole" @class{$hover is a.i}="on" x="{a.x}%" y="{a.y}%" text-anchor={a.anchor}>{a.text}</text>{end}</svg>
+          <svg class="poles" aria-hidden="true" focusable="false">{for a in $draw.poles by i}<text class="pole" :class{$hover is a.i}="on" x="{a.x}%" y="{a.y}%" text-anchor={a.anchor}>{a.text}</text>{end}</svg>
         </div>
         <div class="side" aria-hidden="true">{for a in $draw.sides by i}<span>{a.text}</span>{end}</div>
       </div>
@@ -1334,14 +1389,14 @@
       <svg class="days" viewBox={$draw.view} width={$draw.wide} height={$draw.high} aria-hidden="true" focusable="false" @pointerover={over(e)} @pointerdown={press(e)} @pointerout={onOut(e)} @click={press(e)}>
         {for h in $draw.heads by col}<text class="head" x={h.x} y="11" text-anchor={h.anchor}>{h.text}</text>{end}
         {for d in $draw.days by row}<text class="day" x={d.x} y={d.y}>{d.text}</text>{end}
-        {for c in $draw.cells by i}<rect class="cell tone-{$draw.tone.hue} level-{c.level}" @class{$hover is c.i}="on" --mjs-chart-tone={c.custom} data-i={c.i} x={c.x} y={c.y} width={$draw.w} height={$draw.h} rx="2"/>{end}
+        {for c in $draw.cells by i}<rect class="cell tone-{$draw.tone.hue} level-{c.level}" :class{$hover is c.i}="on" --mjs-chart-tone={c.custom} data-i={c.i} x={c.x} y={c.y} width={$draw.w} height={$draw.h} rx="2"/>{end}
       </svg>
     </div>
   {end}
   {if $tip and $data.family isnt 'axes' and $data.family isnt 'pie'}
-    <div class="tip" part="tip" aria-hidden="true" data-side={$spot.side} @class{not $spot.ready}="wait" --mjs-chart-tip-x={$spot.x} @this=!{tipRef}>
+    <div class="tip" part="tip" aria-hidden="true" data-side={$spot.side} :class{not $spot.ready}="wait" --mjs-chart-tip-x={$spot.x} :this=!{tipRef}>
       <b>{$tip.title}</b>
-      {for r in $tip.rows by key}<span class="row tone-{r.hue}" @class{r.hue is 0 and not r.custom}="plain" --mjs-chart-tone={r.custom}><i class="swatch"></i>{r.name} <strong>{r.text}</strong></span>{end}
+      {for r in $tip.rows by key}<span class="row tone-{r.hue}" :class{r.hue is 0 and not r.custom}="plain" --mjs-chart-tone={r.custom}><i class="swatch"></i>{r.name} <strong>{r.text}</strong></span>{end}
     </div>
   {end}
   {if $draw.ramp and not $data.empty}
@@ -1362,7 +1417,7 @@
 </div>
 <@window @pointerdown={away(e)} @click={away(e)}>
 
-<style @display="block">
+<style :display="block">
   // les couleurs se règlent par le thème : les six teintes ($$chart-1 à $$chart-6), la grille ($$chart-grid), les axes ($$chart-axis), les
   // textes ($$chart-text), la bulle ($$chart-tip-bg, $$chart-tip-fg, $$chart-tip-border, son titre $$chart-tip-title), le trait de chaque
   // statistique ($$chart-stat-mean, $$chart-stat-median, $$chart-stat-q1, $$chart-stat-q3, $$chart-stat-trend), la case vide ($$chart-empty)
@@ -1380,7 +1435,7 @@
   // la gouttière des graduations à gauche (à la mesure de la plus longue, cf. `gutterOf`), la place des étiquettes de l'axe x dessous :
   // réservées dès le premier rendu ; à droite, la gouttière des graduations de l'axe de droite, quand une série le prend (cf. `rightGutterOf`)
   .frame
-    padding: 8px calc(var(--mjs-chart-gutter-right, 0) * 1px) 24px calc(var(--mjs-chart-gutter, 48) * 1px)
+    padding: 8px calc(var(--mjs-chart-gutter-right, 0) * 1px) calc(var(--mjs-chart-font, 11px) * 24 / 11) calc(var(--mjs-chart-gutter, 48) * 1px)
 
   .plot
     position: relative
@@ -1398,7 +1453,7 @@
     width: 100%
     height: 100%
     overflow: visible
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
     font-variant-numeric: tabular-nums
 
   .draw
@@ -1565,7 +1620,7 @@
     background: var(--mjs-chart-tip-bg, var(--mjs-surface, Canvas))
     color: var(--mjs-chart-tip-fg, var(--mjs-fg, CanvasText))
     box-shadow: 0 8px 24px var(--mjs-shadow, rgba(0, 0, 0, .18))
-    font-size: 12px
+    font-size: calc(var(--mjs-chart-font, 11px) * 12 / 11)
     line-height: 1.35
     pointer-events: none
     transition: opacity .12s ease
@@ -1578,7 +1633,7 @@
       font-weight: 600
 
     .grouped
-      font-size: 11px
+      font-size: var(--mjs-chart-font, 11px)
       font-style: normal
       opacity: .7
 
@@ -1628,14 +1683,14 @@
     justify-content: center
     margin: 0
     color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-    font-size: 13px
+    font-size: calc(var(--mjs-chart-font, 11px) * 13 / 11)
     opacity: .75
     pointer-events: none
 
   .note, .keys
     margin: 0
     color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
     opacity: .85
 
   .keys
@@ -1661,7 +1716,7 @@
     align-items: center
     gap: 6px 14px
     color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-    font-size: 12px
+    font-size: calc(var(--mjs-chart-font, 11px) * 12 / 11)
 
   .kit
     display: flex
@@ -1737,8 +1792,10 @@
     opacity: 0
     pointer-events: none
 
+  // l'ancre du menu ancré (cf. `seat`)
   .picker
     position: relative
+    anchor-name: var(--mjs-chart-anchor)
 
   .glyph
     flex: none
@@ -1813,6 +1870,19 @@
         top: auto
         bottom: calc(var(--mjs-chart-menu-y, 0) * 1px)
 
+      // ancré : posé par le navigateur sous la boîte de son bouton (au-dessus avec `.up`), depuis son bord gauche, et retourné quand le
+      // défilement lui ôte sa place ; contre le bord droit de la fenêtre, il glisse vers l'intérieur et en reste à 10 px (cf. GAP)
+      &.anchored
+        inset: auto
+        margin-block: 4px
+        margin-inline: 0 10px
+        position-anchor: var(--mjs-chart-anchor)
+        position-area: block-end span-inline-end
+        position-try-fallbacks: flip-block
+
+        &.up
+          position-area: block-start span-inline-end
+
     &.wait
       opacity: 0
 
@@ -1826,7 +1896,7 @@
     background: none
     color: inherit
     font: inherit
-    font-size: 13px
+    font-size: calc(var(--mjs-chart-font, 11px) * 13 / 11)
     text-align: left
     white-space: nowrap
     cursor: pointer
@@ -1919,13 +1989,13 @@
     pointer-events: none
 
     b
-      font-size: 17px
+      font-size: calc(var(--mjs-chart-font, 11px) * 17 / 11)
       font-weight: 600
       font-variant-numeric: tabular-nums
 
     small
       color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-      font-size: 11px
+      font-size: var(--mjs-chart-font, 11px)
 
     .name
       max-width: 100%
@@ -1950,7 +2020,7 @@
     gap: 8px
     padding: 3px 8px
     border-radius: 6px
-    font-size: 12.5px
+    font-size: calc(var(--mjs-chart-font, 11px) * 12.5 / 11)
     transition: background-color .15s ease
 
     &.on
@@ -1974,7 +2044,7 @@
     small
       min-width: 44px
       color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-      font-size: 11px
+      font-size: var(--mjs-chart-font, 11px)
       font-variant-numeric: tabular-nums
       text-align: right
       white-space: nowrap
@@ -2038,7 +2108,7 @@
     grid-auto-rows: 1fr
     min-width: 0
     color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
 
   .name
     align-self: center
@@ -2076,7 +2146,7 @@
     height: 0
     overflow: hidden
     visibility: hidden
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
     font-weight: 600
     white-space: nowrap
 
@@ -2094,7 +2164,7 @@
     height: 100%
     overflow: visible
     pointer-events: none
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
 
   // le calendrier se resserre sur un écran étroit, dessin et textes ensemble ; la toile du radar suit sa colonne
   .web, .days
@@ -2150,7 +2220,7 @@
     max-width: 100%
 
   .days
-    font-size: 10px
+    font-size: calc(var(--mjs-chart-font, 11px) * 10 / 11)
 
   .day
     text-anchor: end
@@ -2163,7 +2233,7 @@
     gap: 4px 14px
     margin: 0
     color: var(--mjs-chart-text, var(--mjs-fg-muted, currentColor))
-    font-size: 11px
+    font-size: var(--mjs-chart-font, 11px)
 
     .key
       gap: 3px

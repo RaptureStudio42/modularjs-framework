@@ -113,8 +113,11 @@ $label = "vide"
     // La promesse résout à 100 ms — au-delà de l'ancien délai fixe (50 ms).
     // L'attente fiable doit patienter jusqu'à la résolution et rendre 'CHARGE'.
     writeFileSync(join(srcDir, 'async-box.mjs'), `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
-$p = new Promise((resolve) -> setTimeout((-> resolve("CHARGE")), 100))
+$p = plusTard "CHARGE", 100
 </script>
 {await $p}<span class="pending">chargement</span>{success val}<span class="done">{val}</span>{error err}<span class="err">erreur</span>{end}
 `)

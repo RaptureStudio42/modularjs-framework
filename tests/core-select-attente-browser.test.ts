@@ -17,7 +17,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 const PAYS = '<@@option value="fr">France</@@option><@@option value="de">Allemagne</@@option><@@option value="us">États-Unis</@@option>'
 const LAIT = '<@@option value="lait">Lait</@@option><@@option value="oeuf">Oeuf</@@option><@@option value="noix">Noix</@@option>'
 
-const HOTE = `<form id="f" @noUJS><@@select class="reset" name="r">${PAYS}</@@select></form>
+const HOTE = `<form id="f" :noUJS><@@select class="reset" name="r">${PAYS}</@@select></form>
 <div class="zone">
   <@@select class="vide" name="a">${PAYS}</@@select>
   <@@select class="choisi" name="b" value="fr">${PAYS}</@@select>

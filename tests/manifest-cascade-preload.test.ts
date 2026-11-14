@@ -27,13 +27,13 @@ function makeProject(): { srcDir: string; outDir: string; manifestPath: string }
   mkdirSync(srcDir, { recursive: true })
   writeFileSync(join(srcDir, 'a.mjs'), '<@b></@b>\n')
   writeFileSync(join(srcDir, 'b.mjs'), [
-    "@import M 'm.module.civet'",
+    "@import M 'm.module.civet.mjs'",
     '<script>val = M</script>',
     '<@c></@c>',
   ].join('\n'))
   writeFileSync(join(srcDir, 'c.mjs'), '<p>c</p>\n')
   writeFileSync(join(srcDir, 'd.mjs'), '<p>jamais placé dans la page</p>\n')
-  writeFileSync(join(srcDir, 'm.module.civet'), 'export M = 1\n')
+  writeFileSync(join(srcDir, 'm.module.civet.mjs'), 'export M = 1\n')
   return { srcDir, outDir, manifestPath: join(root, 'bundle.js') }
 }
 

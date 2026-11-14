@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { resolve, join, extname } from 'node:path'
 import { normalizeUrlPrefix, type MjsConfig } from '../bundler/config.js'
 import { HMRServer, hmrClientSnippet, isTrustedDevOrigin, hasTrustedBrowserOrigin, createDevHostCheck, hostForUrl, hostNameForMessage, createDevOriginCheck } from './hmr.js'
-import { shell, isRealPathWithin, isBuildFingerprinted, MIME, readCappedBody, serveBundleNeighbor, isBrowserResource, isServableFile, isProjectRootFileServable } from './render-server.js'
+import { shell, shellHead, shellTail, isRealPathWithin, isBuildFingerprinted, MIME, readCappedBody, serveBundleNeighbor, isBrowserResource, isServableFile, isProjectRootFileServable } from './render-server.js'
 import { buildSsrHead } from './ssr-head.js'
 import { rewriteThemeValue } from './theme-write.js'
 import { readBuildVersion } from './build-version.js'
@@ -23,6 +23,7 @@ import { getViewerScript, isViewerAllowed, setViewerPageHeaders, isSecureRequest
 import type { Journal, RecordServerFn } from './journal.js'
 import { isPlainObject } from './serve-entry.js'
 import type { RenderHandler, RenderResponse } from './render-request.js'
+import { streamedPage } from './render-request.js'
 import type { ServeEntry } from './serve-entry.js'
 import { handleMutatingRequest, MUTATING_METHODS, navExtras } from './action-pipeline.js'
 import { TokenBucket, pruneIdleBuckets } from './token-bucket.js'
@@ -36,6 +37,9 @@ import { createAddressResolver, type MjsWsAddressResolver } from '../mjs-ws/trus
 // `pathPrefix`) : fonctionne quelle que soit la configuration réelle du projet
 // (manifestPath externe, urlPrefix custom…), cf. renderFallback ci-dessous.
 const RENDER_BUNDLE_PATH = '/__mjs/bundle.js'
+// client de rechargement de `mjs dev` (hmr actif), posé en fin de toute page HTML que ce serveur envoie : page de la racine du projet
+// (serveStatic) comme page de render.routes (serveRenderFallback), quel que soit son mode — `mjs serve` passe par render-server.ts, jamais par ici
+const HMR_CLIENT_TAG = '<script src="/__mjs_hmr/client.js"></script>'
 
 // Crible des variables de thème éditables en direct (POST /__mjs/theme/edit) — LISTE BLANCHE
 // de FORMES, pas seulement de caractères. Le nom suit VAR_ID_RE du transpiler (tirets internes
@@ -929,22 +933,40 @@ export class StaticServer {
       const abortOnClose = new AbortController()
       const onReqClose = () => abortOnClose.abort()
       req.on('close', onReqClose)
+      // Même <head> thématisé que `mjs serve` (render-server.ts:shell, 5e paramètre) :
+      // sans lui, `mjs dev` (le chemin quotidien de render.routes en dev) gardait le flash que cette
+      // correction supprime. config/configDir absents (cf. constructeur) ⇒ '' ; buildSsrHead
+      // elle-même ne jette jamais non plus (cf. son propre commentaire) — page servie dans tous les cas.
+      const headExtra = (): string => (this.config && this.configDir) ? buildSsrHead(this.config, this.configDir, this.manifestPath) : ''
+      // en-têtes de la page HTML : posés après le rendu, ou AVANT lui pour une page servie en flux (statut 200, mode de la page)
+      const pageHeaders = (status: number, mode: string | undefined, retryAfter?: number): void => {
+        res.statusCode = status
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.setHeader('X-MJS-Mode', mode || 'csr')
+        // Retombée du plafond de concurrence SSR (render-request.ts, RenderGate) :
+        // status 503 seulement, avec le délai suggéré posé par le handler.
+        if (status === 503 && retryAfter) res.setHeader('Retry-After', String(retryAfter))
+      }
+      // page servie en flux (`stream`, même règle que `mjs serve`) : statut, en-têtes et coquille partent dès son entrée dans la file
+      // de rendu, avant le chargeur et le rendu (`onShell`) ; file pleine, le 503 d'un bloc
+      const enFlux  = streamedPage(this.config?.render, req.method, pathname, req.headers as any)
+      let coquille  = false
+      const onShell = enFlux ? (): void => {
+        coquille = true
+        pageHeaders(200, enFlux.mode)
+        res.write(shellHead(this.defaultLang, headExtra()))
+      } : undefined
       let r: RenderResponse
       try {
         // `loadProps` : même chargeur (this.entry.propsFor) que la balise __mjs_res plus bas —
         // transmis ICI pour que le RENDU SSR lui-même affiche déjà la donnée chargée (cf.
         // RenderResponse.resProps, réutilisé plus bas SANS rappeler propsFor une 2e fois).
         const loadProps = this.entry ? () => this.entry!.propsFor(pathname, req) : undefined
-        r = await this.renderHandle!(pathname, req.headers as any, abortOnClose.signal, loadProps)
+        r = await this.renderHandle!(pathname, req.headers as any, abortOnClose.signal, loadProps, onShell)
       } finally {
         req.off('close', onReqClose)
       }
-      res.statusCode = r.status
-      res.setHeader('Content-Type', 'text/html; charset=utf-8')
-      res.setHeader('X-MJS-Mode', r.mode || 'csr')
-      // Retombée du plafond de concurrence SSR (render-request.ts, RenderGate) :
-      // status 503 seulement, avec le délai suggéré posé par le handler.
-      if (r.status === 503 && r.retryAfter) res.setHeader('Retry-After', String(r.retryAfter))
+      if (!coquille) pageHeaders(r.status, r.mode, r.retryAfter)
       // Props du chargeur serve.server.mjs injectées AU 1er chargement HTML — DÉJÀ résolues par
       // `this.renderHandle` ci-dessus (`loadProps`, même chargeur entry.propsFor, appelé UNE seule
       // fois pour cette requête ; la fusion dans le rendu SSR lui-même vit dans render-request.ts) :
@@ -955,16 +977,18 @@ export class StaticServer {
       const body = r.kind === 'csr'
         ? (r.component ? '<' + r.component + '></' + r.component + '>' : '<!-- mjs: csr -->')
         : r.body
-      // Même <head> thématisé que `mjs serve` (render-server.ts:shell, 5e paramètre) :
-      // sans lui, `mjs dev` (le chemin quotidien de render.routes en dev) gardait le flash que cette
-      // correction supprime. config/configDir absents (cf. constructeur) ⇒ '' ; buildSsrHead
-      // elle-même ne jette jamais non plus (cf. son propre commentaire) — page servie dans tous les cas.
-      const headExtra = (this.config && this.configDir) ? buildSsrHead(this.config, this.configDir, this.manifestPath) : ''
-      res.end(shell((resTag ? resTag + '\n' : '') + body, RENDER_BUNDLE_PATH, this.defaultLang, '', headExtra))
+      const contenu = (resTag ? resTag + '\n' : '') + body
+      // page en flux : le reste part derrière la coquille, page d'erreur comprise (statut 200 déjà parti, cf. streamedPage)
+      const client = this.hmrEnabled ? HMR_CLIENT_TAG + '\n' : ''
+      if (coquille) res.end(contenu + shellTail(RENDER_BUNDLE_PATH, client))
+      else res.end(shell(contenu, RENDER_BUNDLE_PATH, this.defaultLang, client, headExtra()))
     } catch (e: any) {
       // (point de capture dev, cf. recordServerError) — auparavant, l'échec était avalé
       // en SILENCE TOTAL, comme le catch global de render-server.ts.
       this.recordServerError(e, pathname)
+      // coquille d'une page en flux déjà partie (seul chemin qui écrit sans terminer) : plus aucune réponse d'erreur possible,
+      // connexion coupée
+      if (res.headersSent && !res.writableEnded) { res.destroy(); return }
       res.statusCode = 500
       res.end('Internal Server Error')
     }
@@ -1037,7 +1061,7 @@ export class StaticServer {
     // l'ajout MANUEL du même tag dans la page de l'utilisateur).
     if (ext === '.html' && this.hmrEnabled) {
       const html = body.toString('utf-8')
-      const tag = '<script src="/__mjs_hmr/client.js"></script>'
+      const tag = HMR_CLIENT_TAG
       res.end(/<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + '\n</body>') : html + '\n' + tag + '\n')
       return
     }

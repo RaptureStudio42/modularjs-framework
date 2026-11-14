@@ -45,7 +45,7 @@ const FX_FILES = ['mjs_fx.ts', ...FX_TOOL_FILES, ...FX_KEYS.map(k => 'mjs_' + k 
 // = ce que rend `resolveRuntimeFiles()` pour `'core'` SANS argument (CORE_HARD + les modules
 // DÉTECTÉS gardés par défaut, faits inconnus — TOUS sauf mjs_vt_presets.ts, qui ne dépend
 // jamais des faits, seulement de router/ujs).
-// mjs_deep.ts/mjs_textpool.ts/mjs_esc.ts (familles de fonctions détachées de mjs_init.ts),
+// mjs_deep.ts/mjs_esc.ts (familles de fonctions détachées de mjs_init.ts),
 // mjs_for_nested.ts (`{for}` dans une liste ou dans une branche {await}, détaché de mjs_for.ts) et
 // mjs_alias.ts (alias COURT d'une balise, détaché de mjs_dom.ts) suivent la MÊME doctrine que les
 // autres détectés : gardés quand les faits sont inconnus.
@@ -56,7 +56,7 @@ const CORE_HARD = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_autoloader.ts', 'mjs_elemen
 // (used===undefined). mjs_page_cache.ts N'Y FIGURE PAS : signal 100% `selected`
 // (router/ujs/modal), toujours VIDE en 'core' (aucun optionnel classique sélectionné) — il ne
 // répond jamais à `used`, contrairement aux autres.
-const CORE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_textpool.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_ticker.ts', 'mjs_interpolate.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_types.ts', ...FX_FILES, 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts']
+const CORE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_ticker.ts', 'mjs_interpolate.ts', 'mjs_signals.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_types.ts', 'mjs_types_bind.ts', 'mjs_types_select.ts', 'mjs_types_ajax.ts', 'mjs_rules.ts', 'mjs_form.ts', ...FX_FILES, 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_load.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_wake.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts']
 // CORE_HARD + mjs_title.ts SEUL (used = new Set(['title']), rien d'autre détecté) —
 // sert la distinction faits CONNUS mais partiels, cf. tests plus bas.
 const CORE_HARD_TITLE = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_theme.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_title.ts']
@@ -76,7 +76,7 @@ const CORE_TITLE_STORE_INTERP = ['mjs_init.ts', 'mjs_dom.ts', 'mjs_theme.ts', 'm
 // bandeau dans resolveRuntimeFiles), et les Bundler de ce fichier sont tous en dev.
 // mjs_deep.ts, mjs_if.ts, mjs_for_nested.ts et mjs_destroy_hooks.ts n'y figurent pas non plus, pour la même raison : hors
 // production, l'atelier de thème (compilé à la volée, il partage le cœur) les appelle.
-const SCAN_ONLY_SANS_FORCE = ['mjs_alias.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_html.ts', 'mjs_textpool.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_on.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_failed.ts', 'mjs_key.ts', 'mjs_await.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_layout_variant.ts', 'mjs_types.ts', ...FX_FILES]
+const SCAN_ONLY_SANS_FORCE = ['mjs_load.ts', 'mjs_alias.ts', 'mjs_wake.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_on.ts', 'mjs_effect.ts', 'mjs_signals.ts', 'mjs_every.ts', 'mjs_failed.ts', 'mjs_key.ts', 'mjs_await.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_layout_variant.ts', 'mjs_types.ts', 'mjs_types_bind.ts', 'mjs_types_select.ts', 'mjs_types_ajax.ts', 'mjs_rules.ts', 'mjs_form.ts', 'mjs_form_answers.ts', ...FX_FILES]
 // mjs_journal.ts (module optionnel 'journal') à sa position CANONICAL (après mjs_i18n.ts) ;
 // les modules détachés depuis à la position historique de mjs_runes.ts (dont ils viennent) +
 // mjs_ticker.ts tôt (avant ses consommateurs) + mjs_on.ts/mjs_failed.ts après mjs_element.ts +
@@ -90,10 +90,10 @@ const SCAN_ONLY_SANS_FORCE = ['mjs_alias.ts', 'mjs_form_reset.ts', 'mjs_form_ass
 // l'un, un mode d'hydratation dans `render` pour l'autre), jamais atteints par
 // `runtime`/`allOptional()` — hors du périmètre de FULL par construction (cf. le test anti-oubli).
 const FULL = [
-  'mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_textpool.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_page_cache.ts', 'mjs_ticker.ts', 'mjs_vt_presets.ts', 'mjs_nav_progress.ts', 'mjs_easing.ts', 'mjs_interpolate.ts', 'mjs_spring.ts', 'mjs_smooth.ts',
-  'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_store_globals.ts', 'mjs_types.ts', ...FX_FILES, 'mjs_i18n.ts', 'mjs_journal.ts', 'mjs_ajax.ts', 'mjs_socket.ts', 'mjs_schema.ts', 'mjs_optimistic.ts', 'mjs_game.ts', 'mjs_chat.ts', 'mjs_accounts.ts', 'mjs_lobby.ts',
+  'mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_page_cache.ts', 'mjs_ticker.ts', 'mjs_vt_presets.ts', 'mjs_nav_progress.ts', 'mjs_easing.ts', 'mjs_interpolate.ts', 'mjs_spring.ts', 'mjs_smooth.ts',
+  'mjs_signals.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_store_globals.ts', 'mjs_types.ts', 'mjs_types_bind.ts', 'mjs_types_select.ts', 'mjs_types_ajax.ts', 'mjs_rules.ts', 'mjs_form.ts', ...FX_FILES, 'mjs_i18n.ts', 'mjs_journal.ts', 'mjs_ajax.ts', 'mjs_socket.ts', 'mjs_schema.ts', 'mjs_optimistic.ts', 'mjs_game.ts', 'mjs_chat.ts', 'mjs_accounts.ts', 'mjs_lobby.ts',
   'mjs_interp.ts', 'mjs_predict.ts', 'mjs_det.ts', 'mjs_lockstep.ts', 'mjs_router.ts',
-  'mjs_modal.ts', 'mjs_ujs.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts',
+  'mjs_modal.ts', 'mjs_ujs.ts', 'mjs_form_answers.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_load.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_wake.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts',
   'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts', 'mjs_flip.ts',
 ]
 
@@ -157,7 +157,7 @@ describe('bundler — sélection des modules runtime (param `runtime`)', () => {
   it("cœur + un optionnel : ['router'] inséré à sa position canonique", () => {
     const b = new Bundler({ runtime: ['router'] })
     const { files, coreOnly } = b.resolveRuntimeFiles()
-    assert.deepEqual(files, ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_textpool.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_page_cache.ts', 'mjs_ticker.ts', 'mjs_vt_presets.ts', 'mjs_nav_progress.ts', 'mjs_interpolate.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_types.ts', ...FX_FILES, 'mjs_router.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts'])
+    assert.deepEqual(files, ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_page_cache.ts', 'mjs_ticker.ts', 'mjs_vt_presets.ts', 'mjs_nav_progress.ts', 'mjs_interpolate.ts', 'mjs_signals.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_types.ts', 'mjs_types_bind.ts', 'mjs_types_select.ts', 'mjs_types_ajax.ts', 'mjs_rules.ts', 'mjs_form.ts', ...FX_FILES, 'mjs_router.ts', 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_load.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_wake.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts'])
     assert.equal(coreOnly, false)
   })
 
@@ -165,7 +165,7 @@ describe('bundler — sélection des modules runtime (param `runtime`)', () => {
     const b = new Bundler({ runtime: ['vault'] })
     const { files, coreOnly } = b.resolveRuntimeFiles()
     // mjs_vt_presets.ts ABSENT : 'vault' ne sélectionne ni 'router' ni 'ujs'.
-    assert.deepEqual(files, ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_textpool.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_ticker.ts', 'mjs_interpolate.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_store_globals.ts', 'mjs_types.ts', ...FX_FILES, 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts'])
+    assert.deepEqual(files, ['mjs_init.ts', 'mjs_dom.ts', 'mjs_alias.ts', 'mjs_deep.ts', 'mjs_esc.ts', 'mjs_theme.ts', 'mjs_ticker.ts', 'mjs_interpolate.ts', 'mjs_signals.ts', 'mjs_store.ts', 'mjs_runes.ts', 'mjs_state.ts', 'mjs_rare_runes.ts', 'mjs_inspect.ts', 'mjs_play.ts', 'mjs_refuse.ts', 'mjs_head.ts', 'mjs_body.ts', 'mjs_dynamic.ts', 'mjs_effect.ts', 'mjs_every.ts', 'mjs_store_globals.ts', 'mjs_types.ts', 'mjs_types_bind.ts', 'mjs_types_select.ts', 'mjs_types_ajax.ts', 'mjs_rules.ts', 'mjs_form.ts', ...FX_FILES, 'mjs_autoloader.ts', 'mjs_element.ts', 'mjs_load.ts', 'mjs_html.ts', 'mjs_slots.ts', 'mjs_slot_events.ts', 'mjs_boundary.ts', 'mjs_element_at.ts', 'mjs_adopt_sheet.ts', 'mjs_clone.ts', 'mjs_title.ts', 'mjs_wake.ts', 'mjs_on.ts', 'mjs_emit.ts', 'mjs_context.ts', 'mjs_lifecycle.ts', 'mjs_form_reset.ts', 'mjs_form_associated.ts', 'mjs_chart.ts', 'mjs_layout_variant.ts', 'mjs_destroy_hooks.ts', 'mjs_failed.ts', 'mjs_if.ts', 'mjs_key.ts', 'mjs_for.ts', 'mjs_for_nested.ts', 'mjs_await.ts'])
     assert.equal(coreOnly, false)
   })
 
@@ -341,6 +341,7 @@ describe('bundler — sélection des modules runtime (param `runtime`)', () => {
     inAll.add('mjs_devinspect.ts')  // idem, juste après lui (inspecteur d'objets générique)
     inAll.add('mjs_devpanel.ts')    // idem, en dernier (le panneau s'appuie sur les deux)
     inAll.add('mjs_hotcss.ts')      // idem, dev-only (rechargement CSS à chaud), même splice
+    inAll.add('mjs_hotswap.ts')     // idem, dev-only (rechargement à chaud des composants), même splice
     inAll.add('mjs_lazy_css.ts')    // signal de CONFIG PURE (`css: 'lazy'`), jamais `runtime`/'all'
     inAll.add('mjs_hydrate.ts')     // idem : signal de CONFIG PURE (mode d'hydratation dans `render`)
     const realModules = readdirSync(b.runtimeDir).filter(f => /^mjs_.*\.ts$/.test(f))

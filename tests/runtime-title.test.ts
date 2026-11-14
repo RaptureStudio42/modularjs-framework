@@ -446,7 +446,7 @@ describe('runtime @title — mode Popover (patché AVANT chargement du cœur) : 
 <script>
 $x = 0
 </script>
-<button id="shadowbtn" @title="Info du composant">Bouton</button>
+<button id="shadowbtn" :title="Info du composant">Bouton</button>
 `
     const { coreCode, compCode } = await buildCore({ name: 'titledemo', src: COMPONENT })
     window = new Window({ url: 'http://localhost/' })
@@ -511,7 +511,7 @@ $html = '<b>v1</b>'
 </script>
 
 <button id="togglebtn" @click={$html = '<i>v2</i>'}>toggle</button>
-<span id="reactspan" title="titre natif" @title={{ $html }}>Survole-moi</span>
+<span id="reactspan" title="titre natif" :title={{ $html }}>Survole-moi</span>
 `
     const { coreCode, compCode } = await buildCore({ name: 'titlehtml', src: COMPONENT })
     window = new Window({ url: 'http://localhost/' })

@@ -81,9 +81,11 @@ describe('cœur minifié d\'un projet sans aucune brique jointe à l\'usage', fu
     assert.equal(core.includes('_mjs_updHtml'), false)
   })
 
+  // la recherche du slot par défaut des slots indexés est ce sélecteur seul ; la remontée du cœur par les slots (bouclier, `_mjsFlatParent`)
+  // cherche `slot:not([name]),slot[name=""]`, qui n'en est pas
   it('slots indexés absents : ni _mjs_injectSlots, ni recherche du slot par défaut', function () {
     assert.equal(core.includes('_mjs_injectSlots'), false)
-    assert.equal(core.includes('slot:not([name])'), false)
+    assert.equal(/["']slot:not\(\[name\]\)["']/.test(core), false)
   })
 
   // seul l'appel gardé `µ._mjs_lazyCssWait && µ._mjs_lazyCssWait(…)` reste dans _mjs_applyLayout

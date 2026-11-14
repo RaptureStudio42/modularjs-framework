@@ -13,7 +13,7 @@ import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
 import * as walk from 'acorn-walk'
-import { RUNTIME_LABELS } from '../src/runtime-labels.js'
+import { runtimeMessagesFor } from '../src/runtime-labels.js'
 import { WARNING_ONLY_MESSAGES, TRACE_ONLY_MESSAGES, TRACE_READ_MESSAGES, DEV_ONLY_MESSAGES, messagesWithoutTraces } from '../src/bundler/minify.js'
 
 const SRC         = join(dirname(fileURLToPath(import.meta.url)), '../src')
@@ -89,16 +89,17 @@ describe('messages lus par les seuls avertissements du runtime — la liste de l
     assert.deepEqual(WARNING_ONLY_MESSAGES.filter(k => TRACE_READ_MESSAGES.includes(k)), [])
   })
 
+  // la table des messages : le groupe `err`, avec les messages des fichiers du runtime joints à la demande (µload)
   it('chaque clé de la liste existe dans la table des messages, en français et en anglais', () => {
     for (const lang of ['fr', 'en'] as const) {
-      const table = RUNTIME_LABELS[lang].err as Record<string, string>
+      const table = runtimeMessagesFor(lang)
       assert.deepEqual(WARNING_ONLY_MESSAGES.filter(k => typeof table[k] !== 'string'), [], lang)
     }
   })
 })
 
 describe('messages des avertissements — l\'aide de la construction', () => {
-  const table = RUNTIME_LABELS.fr.err as Record<string, string>
+  const table = runtimeMessagesFor('fr')
 
   it('messagesWithoutTraces aux niveaux \'error\' et \'silent\' : ôte aussi les textes des seuls avertissements, rien d\'autre', () => {
     const avant = Object.keys(table).length

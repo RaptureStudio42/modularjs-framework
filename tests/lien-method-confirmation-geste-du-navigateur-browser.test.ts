@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 type Forme = 'modale' | 'synchrone'
@@ -28,13 +29,13 @@ async function navigateurPresent(nom: Navigateur): Promise<boolean> {
 
 const ORIGINE = 'http://mjs.test'
 const LIENS = [
-  '<a class="simple" href="/article/3" @method="delete" @confirm="Supprimer ?">Supprimer</a>',
-  '<a class="onglet" href="/article/3" target="_blank" @method="delete" @confirm="Supprimer ?">Supprimer (onglet)</a>',
-  '<a class="fichier" href="/article/3" download @method="delete" @confirm="Supprimer ?">Supprimer (fichier)</a>',
-  '<a class="ailleurs" href="http://autre.test/article/3" @method="delete" @confirm="Supprimer ?">Supprimer ailleurs</a>'
+  '<a class="simple" href="/article/3" :method="delete" :confirm="Supprimer ?">Supprimer</a>',
+  '<a class="onglet" href="/article/3" target="_blank" :method="delete" :confirm="Supprimer ?">Supprimer (onglet)</a>',
+  '<a class="fichier" href="/article/3" download :method="delete" :confirm="Supprimer ?">Supprimer (fichier)</a>',
+  '<a class="ailleurs" href="http://autre.test/article/3" :method="delete" :confirm="Supprimer ?">Supprimer ailleurs</a>'
 ].join('\n')
 
-for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @method @confirm suivi par le navigateur : ni question ni requête (${nom} réel)`, function () {
+for (const nom of ['chromium', 'firefox', 'webkit'] as const) playTogether(describe(`lien @method @confirm suivi par le navigateur : ni question ni requête (${nom} réel)`, function () {
   this.timeout(180000)
   let present = false
   let navigateur: any
@@ -88,7 +89,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
       const page = await contexte.newPage()
       page.on('download', () => { sortie.fichiers++ })
-      page.on('console', (m: any) => { if (m.type() === 'warning' && m.text().includes('@method="delete"')) sortie.avertis.push(m.text()) })
+      page.on('console', (m: any) => { if (m.type() === 'warning' && m.text().includes(':method="delete"')) sortie.avertis.push(m.text()) })
       await page.goto(ORIGINE + '/')
       await page.waitForFunction(() => { const o: any = document.querySelector('mjs-ombre'); return !!document.querySelector('mjs-hote a.simple') && !!(o && o._shadow && o._shadow.querySelector('a.simple')) })
       const pret = await page.evaluate((f: Forme) => {
@@ -128,7 +129,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
   const rien = (s: any) => {
     const vu = { questions: s.questions, ouvertes: s.ouvertes, fichiers: s.fichiers, requetes: s.requetes, url: s.url, meme: s.meme, avertis: s.avertis.length }
     assert.deepEqual(vu, { questions: [], ouvertes: 0, fichiers: 0, requetes: [], url: ORIGINE + '/', meme: true, avertis: 1 }, 'ni question, ni onglet ou fenêtre, ni téléchargement, ni requête ; la page reste où elle est ; un avertissement de développement')
-    assert.match(s.avertis[0], /@method="delete" : lien non suivi/)
+    assert.match(s.avertis[0], /:method="delete" : lien non suivi/)
   }
 
   for (const forme of ['modale', 'synchrone'] as const) {
@@ -136,7 +137,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
     for (const ombre of [false, true]) {
       const ou = ombre ? 'composant en ombre fermée' : 'composant léger'
       for (const [libelle, opts] of [['Ctrl+clic', { modifiers: ['Control'] }], ['Maj+clic', { modifiers: ['Shift'] }], ['Alt+clic', { modifiers: ['Alt'] }], ['Cmd+clic', { modifiers: ['Meta'] }], ['clic du milieu', { button: 'middle' }]] as const) {
-        it(`${sous}, ${ou}, ${libelle} sur <a @method @confirm> : ni question ni requête, la console dit pourquoi`, async function () {
+        it(`${sous}, ${ou}, ${libelle} sur <a :method :confirm> : ni question ni requête, la console dit pourquoi`, async function () {
           if (!present) { this.skip(); return }
           rien(await geste(forme, 'simple', opts as any, ombre))
         })
@@ -149,7 +150,7 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
         })
       }
 
-      it(`${sous}, ${ou}, clic simple sur <a @method @confirm> : la question, puis la requête DELETE après « oui »`, async function () {
+      it(`${sous}, ${ou}, clic simple sur <a :method :confirm> : la question, puis la requête DELETE après « oui »`, async function () {
         if (!present) { this.skip(); return }
         const s = await geste(forme, 'simple', {}, ombre)
         assert.deepEqual(s.questions, ['Supprimer ?'])
@@ -161,4 +162,4 @@ for (const nom of ['chromium', 'firefox', 'webkit'] as const) describe(`lien @me
       })
     }
   }
-})
+}))

@@ -71,7 +71,9 @@ describe('clic sur un contenu projeté par slot (Chromium réel) — seul son pr
       // le cas n'a de sens que si les deux boutons partagent un identifiant de routage
       const memeId = await page.evaluate(() => {
         const carte: any = (document.querySelector('mjs-page') as any)._shadow.querySelector('mjs-carte')
-        return JSON.stringify(carte.querySelector('.projete')._mjs_ids) === JSON.stringify(carte._shadow.querySelector('.autre')._mjs_ids)
+        // les identifiants de routage d'une balise : ceux de la table de son bloc (`_mjs_ev`) qui la désignent
+        const ids = (n: any) => JSON.stringify(n._mjs_ev ? n._mjs_ev._mjs_reg.ids.filter((id: string) => n._mjs_ev[id] === n) : undefined)
+        return ids(carte.querySelector('.projete')) === ids(carte._shadow.querySelector('.autre'))
       })
       assert.equal(memeId, true, 'précondition : le bouton projeté et le bouton `autre` portent le même identifiant de routage')
 

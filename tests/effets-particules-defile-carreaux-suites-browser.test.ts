@@ -10,6 +10,8 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -139,7 +141,7 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -351,13 +353,13 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
           assert.ok(premiere > 20, `la première copie est peinte : ${premiere} pixels sombres`)
           assert.equal(seconde, 0, `rien n'est peint à droite de la première copie : ${seconde} pixels sombres`)
           await page.mouse.move(300, 15)
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'repos')) === '[true,true]', 'copies vues [true, true]', 250)
           const survol = await vues(page, 'repos')
           assert.deepEqual(survol, [true, true], `au survol, le défilé a ses deux copies : ${JSON.stringify(survol)}`)
           const peinte = await encre(page, 'repos', z.a + 6, z.largeur)
           assert.ok(peinte > 20, `au survol, la seconde copie se peint : ${peinte} pixels sombres`)
           await page.mouse.move(700, 500)
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'repos')) === '[true,false]', 'copies vues [true, false]', 250)
           const parti = await vues(page, 'repos')
           assert.deepEqual(parti, [true, false], `le pointeur parti, une seule copie : ${JSON.stringify(parti)}`)
         })
@@ -372,7 +374,7 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
           const repos = await vues(page, 'haut')
           assert.deepEqual(repos, [true, false], `au repos, une seule copie se voit : ${JSON.stringify(repos)}`)
           await page.mouse.move(300, 120)
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'haut')) === '[true,true]', 'copies vues [true, true]', 250)
           const survol = await vues(page, 'haut')
           assert.deepEqual(survol, [true, true], `au survol, le défilé a ses deux copies : ${JSON.stringify(survol)}`)
         })
@@ -387,10 +389,10 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
           const repos = await vues(page, 'clic')
           assert.deepEqual(repos, [true, false], `au repos, une seule copie se voit : ${JSON.stringify(repos)}`)
           await page.mouse.click(300, 45)
-          await page.waitForTimeout(250)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'clic')) === '[true,true]', 'copies vues [true, true]', 250)
           const tour = await vues(page, 'clic')
           assert.deepEqual(tour, [true, true], `pendant le tour, le défilé a ses deux copies : ${JSON.stringify(tour)}`)
-          await page.waitForTimeout(1500)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'clic')) === '[true,false]', 'copies vues [true, false]', 1500)
           const fini = await vues(page, 'clic')
           assert.deepEqual(fini, [true, false], `le tour fini, une seule copie : ${JSON.stringify(fini)}`)
         })
@@ -404,11 +406,11 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
           const hors = await vues(page, 'vue')
           assert.deepEqual(hors, [true, false], `hors de l'écran, au repos : une seule copie se voit : ${JSON.stringify(hors)}`)
           await page.evaluate(() => window.scrollTo(0, 1500))
-          await page.waitForTimeout(500)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'vue')) === '[true,true]', 'copies vues [true, true]', 500)
           const dedans = await vues(page, 'vue')
           assert.deepEqual(dedans, [true, true], `dans la vue, le défilé a ses deux copies : ${JSON.stringify(dedans)}`)
           await page.evaluate(() => window.scrollTo(0, 0))
-          await page.waitForTimeout(500)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'vue')) === '[true,false]', 'copies vues [true, false]', 500)
           const parti = await vues(page, 'vue')
           assert.deepEqual(parti, [true, false], `repartie, une seule copie : ${JSON.stringify(parti)}`)
         })
@@ -418,7 +420,7 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
         if (!present) { this.skip(); return }
         await essai('mjs-vs-defile', 'repos', false, async (page) => {
           await defiles(page)
-          await page.waitForTimeout(300)
+          await attendreEtat(async () => JSON.stringify(await vues(page, 'toujours')) === '[true,true]', 'copies vues [true, true]', 300)
           const r = await vues(page, 'toujours')
           assert.deepEqual(r, [true, true], `le défilé a ses deux copies : ${JSON.stringify(r)}`)
         })
@@ -517,6 +519,6 @@ describe('*particles(aura), *marquee, *pixels : suites (navigateurs réels)', fu
           assert.ok(r.final, `les carreaux sont pleins d'emblée : ${JSON.stringify(r)}`)
         })
       })
-    })
+    }))
   }
 })

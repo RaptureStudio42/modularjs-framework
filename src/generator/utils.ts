@@ -1,31 +1,15 @@
 // utils — helpers cleanJs/cleanJsExpr, parseMixedString utilisés par le walker.
 //
-// `cleanJs(expr)` transforme une expression d'interpolation `{...}` ou de
-// directive `@x={...}` en JS valide via une suite de regex — moteur HISTORIQUE
-// « symboles + grammaire », utilisé tel quel en `templateLang: 'js'` (repli)
-// et pour tous les sites FRAGMENT (têtes de {for}, corps de handlers déjà
-// batchés en Civet/Coffee par transpiler/index.ts, callbacks @transition,
-// heuristiques de détection filtered).
+// `cleanJs(expr)` : un FRAGMENT du gabarit (corps de gestionnaire, liaison `!{…}`, attache, valeur d'un `{const}` relue par un
+// gestionnaire, rappel de transition), rendu sans être compilé ici : du JavaScript lu par acorn (fragmentParLArbre), sinon le
+// dialecte lu par l'arbre de Civet (gestionnaireDuDialecte) ; le code d'un gestionnaire est compilé plus loin, avec les autres
+// (transpiler/index.ts).
 //
-// `cleanJsExpr(expr, externalVars, templateLang, moduleName)` — brique
-// finale : pour les sites qui
-// manipulent une VRAIE expression autonome (interpolation texte, valeur
-// d'attribut, condition {if}/{elsif}/@class{}/@style{}/@flip{}, itérable
-// {for}, expression {key}/{const}/{await}), le traitement est SCINDÉ en deux
-// passes :
-//   (a) SYMBOLES — exactement les mêmes regex que `cleanJs` ($x/@x/§x/µXxx/
-//       µread…), TOUJOURS appliquées quel que soit templateLang : leur sortie
-//       est du Civet valide PAR CONSTRUCTION (`$.x`, `this.x`,
-//       `µ.url.params.id`… — `µ` vérifié accepté comme identifiant Civet par
-//       sonde directe, cf. tests/template-civet.test.ts).
-//   (b) GRAMMAIRE — si `templateLang === 'js'`, les mêmes regex Coffee/Civet
-//       que `cleanJs` (`->`, not/and/or, is/isnt, unless), INCHANGÉES ; si
-//       'civet' (défaut), compilation Civet SYNCHRONE de l'expression
-//       complète (`compile(src, {js: true, sync: true})`) — Civet comprend
-//       nativement `->`/not/and/or/is/isnt/unless (grammaire idiomatique
-//       complète, sonde directe) sans repasser par nos regex. Mémoïsée (Map
-//       module-level, clé = sortie de la passe symboles) : les mêmes
-//       expressions reviennent des centaines de fois sur un projet.
+// `cleanJsExpr(expr, externalVars, moduleName)` — pour les sites qui manipulent une VRAIE expression autonome (interpolation
+// texte, valeur d'attribut, condition {if}/{elsif}/@class{}/@style{}/@flip{}, itérable {for}, expression {key}/{const}/{await}) :
+// l'expression est lue par l'arbre (expressionDuGabarit) et compilée par Civet en SYNCHRONE (`compile(src, {js: true, sync:
+// true})`), qui comprend nativement `->`/not/and/or/is/isnt/unless. Mémoïsée (Map module-level) : les mêmes expressions
+// reviennent des centaines de fois sur un projet.
 //
 // Pourquoi `compile({sync:true})` et pas le duo `parse()`+`generate()` déjà
 // écarté (« bug d'état partagé global » —
@@ -42,13 +26,17 @@
 // en SYNCHRONE (des centaines de fois depuis des callbacks de `.replace()`),
 // aucun point d'`await` possible dans leur pile d'appel.
 
-import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_PASCAL_BODY, MU_SHORT_BODY, MU_LANG_BODY, MU_LANG_OUT, MU_THEME_BODY, MU_THEME_OUT, MU_LAYOUT_BODY, MU_LAYOUT_WRITE_BODY, MU_LAYOUT_PREFIX_WRITE_BODY, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, MU_UNIVERSAL_BODY, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_RUNE_STORE_BODY, MU_MINMAX_RETIRE_BODY, cheminInspectPlat, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, scanRegexLiteral } from '../sigils.js'
+import { RAW_ACCESS_BODY, RAW_ACCESS_PAREN_BODY, RAW_ACCESS_MALFORME_BODY, rawAccessFormeError, MU_REFRESH_PAREN_BODY, MU_REFRESH_BODY, MU_REFRESH_RESTE_BODY, MU_REFRESH_NUE_BODY, MU_REFRESH_OUT, MU_REFRESH_STORE_OUT, refreshFormeError, refreshNueError, RAW_WRITE_BODY, RAW_WRITE_PAREN_BODY, RAW_WRITE_PAREN_OUT_OPEN, RAW_WRITE_OLD_FORME_BODY, RAW_WRITE_OLD_FORME_PAREN_BODY, rawWriteAncienneFormeError, BARE_SECTION_BODY, bareSectionError, RAW_ACCESS_OUT, RAW_ACCESS_STORE_OUT, RAW_WRITE_OUT, RAW_WRITE_STORE_OUT, MU_LAYOUT_WRITE_BODY, MU_LAYOUT_PREFIX_WRITE_BODY, MU_HOOKS_BODY, MU_DERIVED_BODY, MU_EVERY_BODY, minuterieDuComposant, MU_INSPECT_ARG_BODY, MU_INSPECT_ARG_OUT, MU_RUNE_STORE_BODY, MU_MINMAX_RETIRE_BODY, cheminInspectPlat, vaultRemovedError, importedSingletonError, rewriteMuImport, rewriteMuToggle, ouvreUneRegex, regexEnArgument, scanRegexLiteral } from '../sigils.js'
 import { skipQuotedSpan } from '../quoted-span.js'
-import { maskInertSameLength, finValeurContexte, ecritureContexte, incrementContexteRe, rewriteIncrement, convertCoffeeInterpolations } from '../lexer/index.js'
+import { maskInertSameLength, inertRanges, finValeurContexte, ecritureContexte, incrementContexteRe, rewriteIncrement, convertCoffeeInterpolations, codeDesInterpolations } from '../lexer/index.js'
 import { createRequire } from 'node:module'
 import * as acorn from 'acorn'
 import { t } from '../messages/index.js'
+import { minuteriesBrutes } from '../transpiler/minuteries.js'
+import { parametreLuAutrement, ErreurParametreLuAutrement } from '../languages/civet-parametres.js'
 import { entiteNommee } from './entites-html.js'
+import { compteursCode } from '../reader/code.js'
+import { DIRECTIVE_GESTIONNAIRE, GESTIONNAIRE_ILLISIBLE, REFUS_DU_GESTIONNAIRE, RUNES_A_FORME, compteursExpressions, deguiserExpression, enveloppe, expressionParLArbre, fragmentDuDialecte, fragmentParLArbre, lettreReserveeEcrite, refuserDeclaration, signesRepris } from '../reader/expression.js'
 
 // regex globales des runes µ — bâties UNE fois sur les corps partagés
 // (sigils.ts, source unique lexer↔cleanJs) ; seule la GARDE (lookbehind)
@@ -61,29 +49,30 @@ const RE_RAW_WRITE_PAREN_G = new RegExp(`(?<![\\w.])${RAW_WRITE_PAREN_BODY}`, 'g
 const RE_RAW_WRITE_OLD_FORME_G = new RegExp(`(?<![\\w.])${RAW_WRITE_OLD_FORME_BODY}`, 'g')
 const RE_RAW_WRITE_OLD_FORME_PAREN_G = new RegExp(`(?<![\\w.])${RAW_WRITE_OLD_FORME_PAREN_BODY}`, 'g')
 const RE_BARE_SECTION_G = new RegExp(`(?<![\\w.§])${BARE_SECTION_BODY}`, 'g')
-const RE_MU_PASCAL_G  = new RegExp(`(?<![\\w.µ])${MU_PASCAL_BODY}`, 'g')
-const RE_MU_SHORT_G   = new RegExp(`(?<![\\w.µ])${MU_SHORT_BODY}`, 'g')
-const RE_MU_LANG_G    = new RegExp(`(?<![\\w.µ])${MU_LANG_BODY}`, 'g')
-const RE_MU_THEME_G   = new RegExp(`(?<![\\w.µ])${MU_THEME_BODY}`, 'g')
-const RE_MU_LAYOUT_G  = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_BODY}`, 'g')
 const RE_MU_LAYOUT_WRITE_G = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_WRITE_BODY}`, 'g')
 const RE_MU_LAYOUT_PREFIX_WRITE_G = new RegExp(`(?<![\\w.µ])${MU_LAYOUT_PREFIX_WRITE_BODY}`, 'g')
 const RE_MU_HOOKS_G   = new RegExp(`(?<![\\w.µ])${MU_HOOKS_BODY}`, 'g')
+const RE_MU_HOOKS     = new RegExp(`(?<![\\w.µ])${MU_HOOKS_BODY}`)
 const RE_MU_DERIVED_G = new RegExp(`(?<![\\w.µ])${MU_DERIVED_BODY}`, 'g')
 const RE_MU_EVERY_G   = new RegExp(`(?<![\\w.µ])${MU_EVERY_BODY}`, 'g')
-// sucre universel µfoo → µ.foo (runes hors liste blanche MU_SHORT_BODY — µraw/µsnap/
-// µplay/µinspect, mjs_rare_runes.ts) : même garde de tête que les RE_MU_*_G
-// ci-dessus, corps PARTAGÉ avec le script (transpiler/index.ts, MU_UNIVERSAL_RE).
-const RE_MU_UNIVERSAL_G     = new RegExp(`(?<![\\w.µ])${MU_UNIVERSAL_BODY}`, 'g')
 // remodelage d'arguments de µ.inspect — même corps que le script (aucune garde de tête
 // supplémentaire : il cible la forme DÉJÀ pointée `µ.inspect`, avec ses propres gardes internes).
 const RE_MU_INSPECT_ARG_G   = new RegExp(MU_INSPECT_ARG_BODY, 'g')
+const RE_MU_REFRESH_PAREN_G = new RegExp(`(?<![\\w.])${MU_REFRESH_PAREN_BODY}`, 'g')
+const RE_MU_REFRESH_G       = new RegExp(`(?<![\\w.])${MU_REFRESH_BODY}`, 'g')
+const RE_MU_REFRESH_RESTE_G = new RegExp(`(?<![\\w.])${MU_REFRESH_RESTE_BODY}`, 'g')
+const RE_MU_REFRESH_NUE     = new RegExp(`(?<![\\w.])${MU_REFRESH_NUE_BODY}`)
+// `µrefresh` permis dans le code d'un gestionnaire d'événement seulement (cf. cleanJsGestionnaire) : ailleurs dans le gabarit, c'est le
+// rendu qui l'évalue, et le redessin qu'il demande relancerait ce rendu — une boucle de rendu
+let refreshPermis = false
 
 // Applique `fn` uniquement aux segments de CODE (hors littéraux '…', "…", `…`).
 // Les regex de sucre ne doivent JAMAIS réécrire le contenu des chaînes :
 // avant, `'this is fine'` devenait `'this === fine'` et `' and yet '`
 // → `' && yet '` (corruption silencieuse de tout texte anglais).
-function mapCodeSegments(src: string, fn: (code: string) => string): string {
+// `dialecte` : code Civet, où une regex se passe aussi sans parenthèses (`s.replace /"/g, 'R'`, regexEnArgument) — lue comme une
+// division, son guillemet ouvrait une fausse chaîne, qui cachait la suite aux réécritures et la rendait à Civet coupée en deux
+function mapCodeSegments(src: string, fn: (code: string) => string, dialecte = false): string {
   let res = ''
   let i = 0
   const n = src.length
@@ -127,7 +116,7 @@ function mapCodeSegments(src: string, fn: (code: string) => string): string {
             inner += c
             k++
           }
-          res += '${' + mapCodeSegments(inner, fn) + '}'
+          res += '${' + mapCodeSegments(inner, fn, dialecte) + '}'
           j = k + 1
         } else {
           res += src[j]
@@ -137,7 +126,7 @@ function mapCodeSegments(src: string, fn: (code: string) => string): string {
       if (j < n) res += '`'
       i = j + 1
       codeStart = i
-    } else if (ch === '/' && src[i + 1] !== '/' && src[i + 1] !== '*' && ouvreUneRegex(src.slice(0, i))) {
+    } else if (ch === '/' && src[i + 1] !== '/' && src[i + 1] !== '*' && (ouvreUneRegex(src.slice(0, i)) || (dialecte && regexEnArgument(src, i)))) {
       // littéral regex `/…/` : ZONE INERTE comme une chaîne — sans ce garde-fou, `/§/` levait la
       // garde « § nu » et `/µTotal/` sortait réécrit `/µ.Total/` EN PLEIN MILIEU du littéral.
       // `src[i + 1] !== '/'/'*'` écarte D'ABORD un commentaire (`//`/`/*`, jamais
@@ -201,7 +190,7 @@ function rewriteMasked(raw: string, re: RegExp, build: (name: string, op: string
 // littérale (échec Civet explicite en aval). Le masquage neutralise chaînes/gabarits/
 // commentaires ; les offsets restant alignés, le RHS relu dans `raw` reste verbatim
 // (chaîne comprise) — le RHS reste brut, ses sigils sont convertis ensuite par
-// `applySymbolRegex`/la passe grammaire.
+// la lecture par l'arbre et la passe grammaire.
 // `\s*` n'est PAS repris devant le groupe RHS (contrairement à l'ancien scan sur `raw`
 // nu) : gourmand, il mangerait tout un RHS masqué en espaces (une chaîne littérale) avant
 // même que `(.+?)` ne démarre — le groupe ne capturait plus que son DERNIER caractère
@@ -232,11 +221,9 @@ function incrementsContexte(raw: string, marque: string, appel: string, lecture:
   return out + raw.slice(cursor)
 }
 
-// Passe GRAMMAIRE — idiomes Coffee/Civet historiques, traduits par regex.
-// Chemin `templateLang: 'js'` (repli) UNIQUEMENT : en 'civet', cette
-// traduction est déléguée à une VRAIE compilation Civet (cf.
-// compileGrammarViaCivet plus bas), qui comprend nativement ces mêmes
-// idiomes sans repasser par ces regex.
+// Passe GRAMMAIRE — idiomes Coffee/Civet (`->`, not/and/or, is/isnt), traduits par regex : sur un gestionnaire du dialecte après sa
+// lecture par l'arbre (gestionnaireDuDialecte), et pour le test de forme formeDeJavaScript ; une expression est compilée par Civet
+// (compileGrammarViaCivet), qui comprend nativement ces mêmes idiomes
 function applyGrammarRegex(seg: string): string {
   let res = seg
 
@@ -288,19 +275,180 @@ function applyGrammarRegex(seg: string): string {
 // Sur l'expression ENTIÈRE, vue masquée (chaînes et commentaires en espaces de même longueur), avant le
 // découpage par chaînes : fait segment par segment, un préfixe ou une condition qui contient une chaîne
 // (`$msg = 'oui' unless $bloque`, `alert('x') unless $ok`) n'était vu qu'en partie — `'oui'($.bloque)`
-// au clic, ou un échec de Civet sans rapport. Préfixe et condition sont relus dans le texte réel
-function rewriteUnless(raw: string): string {
-  const m = /^([\s\S]*?)(?<![\w.$])unless\s+(.+)$/d.exec(maskInertSameLength(raw))
-  if (!m) return raw
-  const pre  = raw.slice(...m.indices![1]).trim()
-  const cond = raw.slice(...m.indices![2])
-  return pre ? `(!(${cond}) && (${pre}))` : `!(${cond})`
+// au clic, ou un échec de Civet sans rapport. Préfixe et condition sont relus dans le texte réel ; la condition commence au premier
+// signe écrit après `unless` : une regex ou une chaîne en tête (`unless /a/.test($s)`), blanchie dans la vue masquée, en fait partie
+// (sans elle, `(.test($s))` devenait pour Civet une flèche jamais appelée, sans erreur).
+// Le préfixe et la condition s'arrêtent aux `;` de premier niveau, comme `unless` en Civet et en CoffeeScript : dans
+// `t := $o; t.c = 3 unless t.c`, seule `t.c = 3` dépend de la condition (l'enveloppe de toute la liste était refusée par Civet,
+// lue en suite d'expressions par CoffeeScript) ; dans `$x = 1 unless $v; $y = 2`, `$y = 2` suit, sans condition. De même aux fins de
+// ligne d'un corps de plusieurs lignes (cf. finitUneInstruction) : `$a = 1` suivi à la ligne de `$b = 2 unless $c` exécute toujours
+// `$a = 1` (tout le corps passait sous la condition, ou Civet le compilait en gestionnaire vide). Un préfixe qui est une instruction
+// (`return`, `break`, `continue`, `throw`) ne s'enveloppe pas : `(!(c) && (return))` est refusé par Civet et par CoffeeScript, qui
+// lisent tous deux `return unless c` tel qu'écrit. Le `unless` réécrit : celui dont la condition va jusqu'à la fin du corps, ou celui
+// qu'un `;` de sa ligne suit derrière un préfixe, sur toute ligne — Civet compile `x unless c; y` en JavaScript invalide
+// (`x((!c?():void 0)); y`) ; un `unless` d'une ligne d'avant sans `;`, Civet et CoffeeScript le lisent bien. `script` : le corps d'un
+// gestionnaire versé au script que Civet compile (cf. unlessSuivisDUnPointVirgule), seuls ces `;` comptent et aucune ligne n'est ajoutée
+function rewriteUnless(raw: string, retraitDeTete = '', script = false): string {
+  const vu      = maskInertSameLength(raw)
+  const valeurs = vueDesValeurs(raw)
+  for (const u of vu.matchAll(/(?<![\w.$])unless\s+/g)) {
+    const finPre    = u.index
+    const debutCond = finPre + 'unless'.length + /^\s*/.exec(raw.slice(finPre + 'unless'.length))![0].length
+    const avant     = finsDInstruction(valeurs, 0, finPre, true)
+    // `unless` dans une parenthèse ouverte (`f(a unless b)`) : rien n'est coupé
+    const debut     = avant.profondeur === 0 ? debutDeLInstruction(valeurs, avant.points, finPre) : -1
+    const fin       = avant.profondeur === 0 ? finsDInstruction(valeurs, debutCond, raw.length).points[0] ?? raw.length : raw.length
+    const debutPre  = avant.profondeur === 0 ? flecheDeLaLigne(valeurs, debut + 1, finPre) : 0
+    const pre       = raw.slice(debutPre, finPre).trim()
+    const tete      = raw.slice(0, debutPre) + /^\s*/.exec(raw.slice(debutPre, finPre))![0]
+    if ((script || !/^unless\s+.+$/.test(vu.slice(finPre))) && (fin === raw.length || valeurs.slice(debutCond, fin).includes('\n') || pre === '')) continue
+    // une regex en tête de la condition passe entre crochets : Civet lit `(/a/.test(s))` comme la section d'opérateur `(/ a / …)`, une
+    // flèche, et de même `(/a/i)` entre parenthèses (`a => a/a/i`) ; `[/a/i][0]` se lit pareil en Civet et en CoffeeScript (la fin de la
+    // regex : le premier signe que la vue masquée garde après elle)
+    const regex     = raw[debutCond] === '/' ? (/\S/.exec(vu.slice(debutCond, fin))?.index ?? fin - debutCond) : 0
+    const cond      = regex > 0 ? `[${raw.slice(debutCond, debutCond + regex).trimEnd()}][0]${raw.slice(debutCond + regex, fin)}` : raw.slice(debutCond, fin)
+    if (INSTRUCTION_DE_SAUT_RE.test(pre.slice(pre.lastIndexOf('\n') + 1).trim())) {
+      // Civet lit `return unless c; y` comme `return (…); y` : la suite passe à la ligne, au retrait de la ligne de l'instruction ; dans le
+      // corps d'une flèche écrite sur sa ligne, ce corps passe en bloc, un cran plus loin, la suite avec lui. Au script, sur la même
+      // ligne : `if (!(c)) { return }; y` — `unless c then return 0; y` ne rendait plus `y`, dernière valeur d'une flèche (`$l.filter (z) ->
+      // return false unless z > 1; z < 3` gardait `[]`)
+      if (fin === raw.length) return raw
+      if (script) return tete + `if (!(${cond.trim()})) { ${pre} }` + rewriteUnless(raw.slice(fin), '', true)
+      const fleche  = debutPre > debut + 1
+      const retrait = retraitDeLigne(raw, tete.length, retraitDeTete) + (fleche ? '  ' : '')
+      return (fleche ? tete.trimEnd() + '\n' + retrait + raw.slice(tete.length, fin).trim() : raw.slice(0, fin).trimEnd()) + '\n' + retrait + rewriteUnless(raw.slice(fin + 1).trimStart(), retrait)
+    }
+    return tete + (pre ? `(!(${cond}) && (${pre}))` : `!(${cond})`) + (fin < raw.length ? rewriteUnless(raw.slice(fin), retraitDeLigne(raw, fin, retraitDeTete), script) : '')
+  }
+  return raw
 }
 
-// Passe SYMBOLES — sucre MJS ($x/@x/§x/µXxx/µread…), TOUJOURS appliquée quel
-// que soit templateLang : sa sortie est du Civet valide par construction
-// (accès `.`, `this.x`, `µ.foo` — de simples identifiants/membres, cf.
-// header). C'est le chemin GRAMMAIRE qui bifurque, jamais celui-ci.
+// le corps d'un gestionnaire de <@window>, <@document> ou <@body>, versé au script que Civet compile : ses `x unless c; y`, que Civet
+// compile en JavaScript invalide (« parse error » à la construction), sont réécrits sans changer de ligne (cf. rewriteUnless)
+export function unlessSuivisDUnPointVirgule(corps: string): string {
+  return rewriteUnless(corps, '', true)
+}
+
+// le début du corps de la dernière flèche (`->`, `=>`) écrite sur la ligne de `fin`, entre `debut` et `fin`, hors de toute parenthèse,
+// crochet ou accolade ouverts depuis `debut` ; `debut` sans flèche. `unless` ne prend que ce corps, comme en Civet et en CoffeeScript :
+// dans `$l.forEach (z) -> $d += z unless z == 2`, tout l'appel passait sous la condition, qui lisait `z` hors de la flèche. Une virgule à
+// son niveau finit ce corps (`$l.reduce (s, z) -> s + z, 0`, l'argument suivant de l'appel), un `else` aussi quand aucun `then` du corps
+// ne l'ouvre (`if $v then -> 1 else 2`) : `unless` prend alors toute l'instruction, comme Civet
+function flecheDeLaLigne(valeurs: string, debut: number, fin: number): number {
+  const ligne = valeurs.lastIndexOf('\n', fin - 1) + 1
+  let corps   = debut
+  let n       = 0
+  let alors   = 0
+  for (let k = debut; k < fin; k++) {
+    const c = valeurs[k]
+    if (c === '(' || c === '[' || c === '{') n++
+    else if (c === ')' || c === ']' || c === '}') n--
+    else if (n !== 0 || k < ligne) continue
+    else if ((c === '-' || c === '=') && valeurs[k + 1] === '>' && valeurs[k - 1] !== '-' && valeurs[k - 1] !== '=') {
+      corps = k + 2
+      alors = 0
+    }
+    else if (corps === debut) continue
+    else if (c === ',') corps = debut
+    else if (/[\w$]/.test(valeurs[k - 1]) || !/^(?:then|else)(?![\w$])/.test(valeurs.slice(k, k + 5))) continue
+    else if (c === 't') alors++
+    else if (alors-- === 0) corps = debut
+  }
+  return corps
+}
+
+// le dernier des `points` (cf. finsDInstruction) où commence l'instruction qui finit en `fin` : le premier signe qui le suit est sur une
+// ligne qu'aucune ligne de code d'après, jusqu'à `fin`, ne dépasse vers la gauche ; un point dans un bloc qu'une ligne moins en retrait
+// continue (le corps du rappel de `.map (z) ->`, puis `.length unless c`) ne coupe pas, toute la chaîne est l'instruction ; -1 sans point
+function debutDeLInstruction(valeurs: string, points: number[], fin: number): number {
+  for (let i = points.length - 1; i >= 0; i--) {
+    const debut   = points[i] + 1 + /^\s*/.exec(valeurs.slice(points[i] + 1, fin))![0].length
+    const retrait = /^[ \t]*/.exec(valeurs.slice(valeurs.lastIndexOf('\n', debut - 1) + 1))![0].length
+    if (valeurs.slice(debut, fin).split('\n').slice(1).every((l) => l.trim() === '' || /^[ \t]*/.exec(l)![0].length >= retrait)) return points[i]
+  }
+  return -1
+}
+
+// une instruction qui quitte le gestionnaire ou la boucle : jamais une expression
+const INSTRUCTION_DE_SAUT_RE = /^(?:return|break|continue|throw)(?![\w$])/
+
+// le retrait de la ligne qui porte l'indice `i` de `raw` ; `tete` pour sa première ligne, quand `raw` est la suite d'une ligne (`; …`)
+function retraitDeLigne(raw: string, i: number, tete: string): string {
+  const d = raw.lastIndexOf('\n', i - 1)
+  return d < 0 ? tete : /^[ \t]*/.exec(raw.slice(d + 1))![0]
+}
+
+// les fins d'instruction hors de toute parenthèse, crochet ou accolade ouverts entre `debut` et `fin` (cf. vueDesValeurs) : les `;`, et
+// avec `lignes` les sauts de ligne qui finissent une instruction (cf. finitUneInstruction) ; et la profondeur atteinte à `fin`
+function finsDInstruction(valeurs: string, debut: number, fin: number, lignes = false): { points: number[]; profondeur: number } {
+  const points: number[] = []
+  let n = 0
+  for (let k = debut; k < fin; k++) {
+    const c = valeurs[k]
+    if (c === '(' || c === '[' || c === '{') n++
+    else if (c === ')' || c === ']' || c === '}') n--
+    else if (n === 0 && (c === ';' || (lignes && c === '\n' && finitUneInstruction(valeurs, k)))) points.push(k)
+  }
+  return { points, profondeur: n }
+}
+
+// le code de `raw` à même longueur, pour lire où finit une instruction : un commentaire en espaces (sauts de ligne gardés), une chaîne,
+// une regex ou un gabarit en `0` (une valeur), sauts de ligne compris — seuls les sauts de ligne du code et des commentaires restent
+function vueDesValeurs(raw: string): string {
+  let vue = ''
+  let at  = 0
+  for (const [debut, fin] of inertRanges(raw)) {
+    const jeton = raw.slice(debut, fin)
+    vue += raw.slice(at, debut) + (/^(?:#|\/[/*])/.test(jeton) ? jeton.replace(/[^\n]/g, ' ') : '0'.repeat(jeton.length))
+    at   = fin
+  }
+  return vue + raw.slice(at)
+}
+
+// une ligne qui attend la suite : elle s'arrête sur un opérateur, une virgule ou un mot qui en attend une (jamais `x++`, une flèche, `a?`)
+const LIGNE_OUVERTE_RE = /(?:(?<![+-])[+-]|[*/%=<&|^~,\\:]|(?<![-=])>|(?<![\w$])(?:and|or|not|is|isnt|in|of|instanceof|new|typeof|delete|void|await|yield|throw|extends))$/
+// une ligne qui continue la précédente : un accès (`.length`, `?.x`, `::x`), une virgule, un opérateur binaire, la suite d'un `if`, d'un
+// `try` ou d'un `switch` (`else`, `catch`, `when`…), une clé d'objet (l'appel sans parenthèses `e.push` puis `  id: 1`)
+const LIGNE_SUITE_RE = /^(?:[.,*/%&|^=<>?:+-]|!=|(?:and|or|is|isnt|instanceof|in|of|then|else|catch|finally|when)(?![\w$])|[\w$]+[ \t]*:(?![:=]))/
+// une ligne qui ouvre un bloc : les lignes en retrait qui la suivent sont son corps
+const OUVRE_UN_BLOC_RE = /^(?:if|unless|for|while|until|loop|switch|try|catch|finally|else|when|do|class)(?![\w$])|(?:[-=]>|(?<![\w$])(?:then|else|do|try|finally))$/
+
+// le saut de ligne en `k` (cf. vueDesValeurs) finit l'instruction de la ligne de code d'avant : elle n'attend pas de suite, et la ligne
+// de code d'après ne la continue pas ; une ligne vide ou de commentaire ne compte pas
+function finitUneInstruction(valeurs: string, k: number): boolean {
+  const avant = valeurs.slice(0, k).trimEnd()
+  const apres = valeurs.slice(k + 1).trimStart()
+  return avant !== '' && apres !== '' && !LIGNE_OUVERTE_RE.test(avant) && !LIGNE_SUITE_RE.test(apres)
+}
+
+// le corps d'un gestionnaire, d'un rappel de transition ou d'une balise globale dont la première ligne est collée à `{` (`@click={$a = 1`,
+// la suite en retrait) : cette ligne n'a pas de retrait à elle, les lignes qui la suivent sont ramenées au sien (leur retrait mesuré sur
+// leurs lignes de code, comme pour le script d'un partiel) quand elle finit une instruction — Civet lisait la ligne d'après comme
+// l'argument de la première (`1(…)`), CoffeeScript la refusait. Une première ligne qui ouvre un bloc (`if $c`, `f = ->`) a pour corps
+// la première ligne de code d'après et celles de son retrait ; une ligne moins en retrait qu'elle est au niveau de la première (`if $c`,
+// `$a = 1` en retrait, puis `$b = 2` moins loin : hors du bloc), comme quand l'accolade est seule — Civet en faisait l'argument du bloc
+// (`$l.forEach(…)(…)`) ou un second gestionnaire, sans erreur. Une première ligne qui attend la suite (`a +`), une ligne d'après qui la
+// continue (`.length`, `id: 1`), un bloc dont le corps garde un seul retrait : rien ne change ; une ligne commencée dans une chaîne
+// garde son texte
+export function aligneSurLaPremiereLigne(corps: string): string {
+  const k = corps.indexOf('\n')
+  if (k < 0 || corps.slice(0, k).trim() === '') return corps
+  const valeurs = vueDesValeurs(corps)
+  // une première ligne qui finit son bloc sur elle-même (`if $c then $a = 1`, `while $n < 3 then $n++`) n'en ouvre pas, sauf si elle finit sur ce
+  // qui en ouvre un (`… else`, une flèche) : la ligne d'après en était l'argument (`1(…)`) ou restait sous la condition, sans erreur
+  const bloc    = OUVRE_UN_BLOC_RE.test(valeurs.slice(0, k).trim()) && (!/(?<![\w$])then[ \t]+\S/.test(valeurs.slice(0, k)) || /(?:[-=]>|(?<![\w$])(?:else|do|try|finally))$/.test(valeurs.slice(0, k).trim()))
+  if (valeurs[k] !== '\n' || finsDInstruction(valeurs, 0, k).profondeur !== 0 || (!bloc && !finitUneInstruction(valeurs, k))) return corps
+  // les lignes d'après, et le retrait de celles de code (ni commencées dans une chaîne ou un gabarit, ni de commentaire)
+  const lignes = corps.slice(k + 1).split('\n')
+  const debuts = [k + 1]
+  for (const l of lignes.slice(0, -1)) debuts.push(debuts[debuts.length - 1] + l.length + 1)
+  const codes  = lignes.map((l) => l.search(/\S/)).filter((q, i) => q >= 0 && valeurs[debuts[i] - 1] === '\n' && valeurs[debuts[i] + q] !== ' ')
+  if (bloc && !(Math.min(...codes) < codes[0])) return corps
+  const pas    = codes.length > 0 ? Math.min(...codes) - corps.search(/\S/) : 0
+  if (pas <= 0) return corps
+  return corps.slice(0, k + 1) + lignes.map((l, i) => valeurs[debuts[i] - 1] === '\n' ? l.slice(Math.min(pas, l.search(/\S|$/))) : l).join('\n')
+}
+
 // sansCommentaires — texte JETABLE (jamais émis) pour les GARDES qui REFUSENT une
 // forme. mapCodeSegments masque les chaînes, pas les commentaires : un `µevery` ou un
 // `µread(` simplement CITÉ dans un `//…` faisait échouer le build (les commentaires
@@ -323,7 +471,7 @@ function sansCommentaires(code: string): string {
   for (let i = 0; i < lignes.length; i++) {
     const nu = lignes[i].trimStart()
     if (nu.startsWith('//')) { out.push(''); continue }
-    if (nu.startsWith('#') && !nu.startsWith('#{')) { out.push(''); continue }   // commentaire Coffee (handlers en templateLang js), jamais `#{…}` d'interpolation
+    if (nu.startsWith('#') && !nu.startsWith('#{')) { out.push(''); continue }   // commentaire `#` d'un gestionnaire, jamais `#{…}` d'interpolation
     if (nu.startsWith('/*')) {
       // On cherche la FERMETURE avant d'effacer quoi que ce soit. Un drapeau « on est
       // dans un bloc » qui reste collé faute de `*/` effacerait tout le reste du segment
@@ -374,7 +522,7 @@ function cheminReel(chemin: string | undefined): string | undefined {
 // reecritOuRejetteRuneChemin — µinspect(...) : un chemin/appel/indexation dont la
 // clé est une chaîne littérale (`$x['a']`, `$x.foo('a')`) échappe encore à
 // inspectArgHorsCommentaire plus haut : celui-ci tourne PAR SEGMENT
-// (mapCodeSegments a déjà isolé la chaîne comme littéral INERTE avant d'appeler applySymbolRegex),
+// (mapCodeSegments a déjà isolé la chaîne comme littéral INERTE avant d'appeler la passe des runes),
 // coupant l'appel en morceaux disjoints (`µinspect($x[` / `'a'` / `])`) — aucun des deux ne
 // correspond plus au corps ENTIER de MU_INSPECT_ARG_BODY (sigils.ts,
 // gabarit LISTE BLANCHE argTermineOuChemin) : une forme INVALIDE ressortirait intacte, une forme
@@ -391,7 +539,7 @@ function cheminReel(chemin: string | undefined): string | undefined {
 // texte reconstruit segment par segment (identique à `raw` sauf aux positions réécrites) ; lève à
 // la PREMIÈRE forme invalide
 // rencontrée (l'exception interrompt tout le reste, aucun risque de double message avec
-// applySymbolRegex/inspectArgHorsCommentaire plus loin — ceux-ci ne revoient plus jamais un
+// runesAForme/inspectArgHorsCommentaire plus loin — ceux-ci ne revoient plus jamais un
 // µinspect(...) à chemin, déjà tranché ici).
 export function reecritOuRejetteRuneChemin(raw: string): string {
   const masque = maskInertSameLength(raw)
@@ -433,13 +581,64 @@ function cheminApresNom(raw: string, masque: string, finNom: number, cheminIdx: 
   return entre.includes('`') ? entre.trim() : ''
 }
 
-function applySymbolRegex(seg: string, externalVars: string[]): string {
-  let res = seg
+// `µpending` et `µsignal` d'un bloc `{await}` (cf. compileAwait) : vrais noms de la fonction de la branche et de la lecture de l'expression
+// seulement pendant que le générateur compile ce bloc ; ailleurs ils restent des runes ordinaires (`µ.pending`, `µ.signal`)
+export const runesAwait = { pending: false, signal: false }
+const RE_MU_PENDING_G = /(?<![\w.µ$])µpending(?![\w$µ])/g
+const RE_MU_PENDING   = /(?<![\w.µ$])µpending(?![\w$µ])/
+// commentaires d'un morceau de code, ses chaînes déjà retirées (mapCodeSegments), lus de gauche à droite ; un commentaire non refermé court
+// jusqu'au bout du morceau. Expression : `//` et `/* */` ; gestionnaire en grammaire civet : aussi `#` et `### ###`, que le lot des
+// gestionnaires change en commentaires (applyCivetDialectSugar), sauf `#nom`
+const COMMENTAIRES_EXPRESSION   = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g
+const COMMENTAIRES_GESTIONNAIRE = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|###[\s\S]*?(?:###|$)|#(?![a-zA-Z_!])[^\n]*/g
 
-  // `@@` AVANT `@name` : sinon le 2e `@` de `@@x` était capturé par la
-  // règle `@name` (son lookbehind « pas un mot » est satisfait par `@`)
-  // → sortie `@this.x` au lieu de `_mjsThis.x`.
-  res = res.replace(/(?<!\w|(?<!\.)\.)@@/g, '_mjsThis.')
+// `µpending` écrit dans le code de `code`, là où les runes sont lues : hors des chaînes, le dedans d'un `${…}` et d'un `#{…}` compris
+// (cleanJsExpr convertit ces interpolations d'abord) ; un texte cité dans une chaîne ne compte pas, ni un commentaire. Dans une
+// expression Civet, `#` est du code (`this.length`). `gestionnaire` : le code d'un gestionnaire d'événement, que compile le lot des
+// gestionnaires
+export function litMuPending(code: string | null | undefined, gestionnaire = false): boolean {
+  if (!code || !code.includes('µpending')) return false
+  const commentaires = gestionnaire ? COMMENTAIRES_GESTIONNAIRE : COMMENTAIRES_EXPRESSION
+  let lu = false
+  mapCodeSegments(convertCoffeeInterpolations(code, undefined, true), (seg) => {
+    if (RE_MU_PENDING.test(seg.replace(commentaires, ' '))) lu = true
+    return seg
+  })
+  return lu
+}
+
+// `µpending` lu dans l'interpolation d'une chaîne double d'un gestionnaire (`"état #{µpending}"`), que Coffee interpole et que le lot Civet
+// des gestionnaires convertit : le nom de la valeur de la branche, comme dans le code — cleanJs ne lit pas les chaînes. Le texte, une
+// chaîne simple et une chaîne citée dans l'interpolation restent tels quels
+export function pendingDesChaines(code: string): string {
+  if (!runesAwait.pending || !code.includes('µpending')) return code
+  const remplace = (interpolation: string): string => codeDesInterpolations(mapCodeSegments(interpolation, (seg) => seg.replace(RE_MU_PENDING_G, '_mjs_pnd')), remplace)
+  return codeDesInterpolations(code, remplace)
+}
+
+// le code d'un gestionnaire d'événement passé par cleanJs : `µpending` n'y prend le nom de la valeur de la branche que si le gestionnaire
+// le lit hors de ses commentaires (cf. litMuPending), et jusque dans l'interpolation d'une chaîne double (pendingDesChaines) ;
+// `µrefresh` y est permis (refreshPermis). Une regex s'y passe aussi sans parenthèses (`$v.replace /"/g, 'R'`, regexEnArgument) :
+// lue comme une division, son guillemet ouvrait une fausse chaîne qui cachait la suite (`$k = $k + 1`) aux réécritures
+export function cleanJsGestionnaire(code: string, externalVars: string[], moduleName?: string, ecrit?: string): string {
+  const pendingBranche = runesAwait.pending
+  const refreshAvant   = refreshPermis
+  runesAwait.pending &&= litMuPending(code, true)
+  refreshPermis        = true
+  try {
+    // µevery / µafter d'un gestionnaire : le composant passe en tête de l'appel (sigils.ts), chaînes laissées intactes
+    return cleanJs(pendingDesChaines(mapCodeSegments(code, minuterieDuComposant, true)), externalVars, true, moduleName, ecrit)
+  }
+  finally {
+    runesAwait.pending = pendingBranche
+    refreshPermis      = refreshAvant
+  }
+}
+
+// les runes à forme d'un segment de code (refus des runes du script, `µread`, `µrefresh`, `µwrite` et leurs fautes de forme),
+// avant les raccourcis : `µread $x` doit y rester entier
+function runesAForme(seg: string, externalVars: string[]): string {
+  let res = seg
 
   // `µread $x`/`µwrite $x` (et statisation $$ : `µread $$x`/`µwrite $$x` →
   // accès BRUT au store, groupe 1 = '$') — DOIT passer ICI, AVANT la règle
@@ -452,9 +651,9 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   // Parenthèses OPTIONNELLES : `µread($x)` puis `µread $x` — parité lexer
   // (règle 3.5) PAR CONSTRUCTION, corps partagés sigils.ts. Ce qui survit aux deux
   // est une faute de forme, refusée bruyamment plutôt que laissée littérale.
-  // µevery : timer POSÉ AU SETUP (file de montage du composant) — hors d'un <script>,
-  // elle n'a personne à qui s'accrocher, et finirait en ReferenceError muet. Garde-fou
-  // explicite comme µderived, mais testé HORS COMMENTAIRES (cf. sansCommentaires).
+  // µevery / µafter dans une interpolation {…} : recalculée à chaque rendu, elle poserait une minuterie par rendu. Ceux
+  // d'un gestionnaire sont déjà réécrits ici (cleanJsGestionnaire) : ce qui reste est refusé, testé HORS COMMENTAIRES
+  // (cf. sansCommentaires), comme µderived.
   RE_MU_EVERY_G.lastIndex = 0
   if (RE_MU_EVERY_G.test(sansCommentaires(res))) throw new Error(t('generator.every-hors-script'))
 
@@ -476,6 +675,20 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
   const rawAccessOut = (_m: string, dollar: string, name: string) =>
     (dollar ? RAW_ACCESS_STORE_OUT : RAW_ACCESS_OUT) + name
   res = res.replace(RE_RAW_ACCESS_PAREN_G, rawAccessOut).replace(RE_RAW_ACCESS_G, rawAccessOut)
+  // µrefresh($x) / µrefresh $x → µ._mjs_refresh(_mjsThis, 'x'), µrefresh($$x) → µ._mjs_storeRefresh("x") (sigils.ts), AVANT les
+  // règles `$x → $.x` et `$$x → µ.store.x` (un singleton importé écrit `$$X` y est refusé de même), dans un gestionnaire
+  // d'événement seulement (refreshPermis) ; ce qui reste est refusé
+  RE_MU_REFRESH_RESTE_G.lastIndex = 0
+  if (!refreshPermis && RE_MU_REFRESH_RESTE_G.test(sansCommentaires(res))) throw new Error(t('generator.refresh-hors-gestionnaire'))
+  const refreshOut = (_m: string, dollar: string, nom: string) => {
+    if (dollar && externalVars.includes(`$${nom}`)) throw importedSingletonError(nom)
+    return dollar ? MU_REFRESH_STORE_OUT(nom) : MU_REFRESH_OUT(nom)
+  }
+  res = res.replace(RE_MU_REFRESH_PAREN_G, refreshOut).replace(RE_MU_REFRESH_G, refreshOut)
+  const nue = RE_MU_REFRESH_NUE.exec(sansCommentaires(res))
+  if (nue) throw refreshNueError(nue[1] + nue[2])
+  RE_MU_REFRESH_RESTE_G.lastIndex = 0
+  if (RE_MU_REFRESH_RESTE_G.test(sansCommentaires(res))) throw refreshFormeError()
 
   // µwrite $x, v / µwrite($x, v) — corps arrêtés à la virgule (sigils.ts, RAW_WRITE_BODY) :
   // `v` n'est jamais capturé, il continue tel quel dans `res`. Forme parenthésée : une
@@ -495,193 +708,88 @@ function applySymbolRegex(seg: string, externalVars: string[]): string {
 
   RE_RAW_ACCESS_MALFORME_G.lastIndex = 0
   if (RE_RAW_ACCESS_MALFORME_G.test(sansCommentaires(res))) throw rawAccessFormeError()
-
-  // &$x / $$x / §§x / @x
-  // &$x → µ.vault.x (store GLOBAL réactif, zéro import) — DOIT passer AVANT
-  // la règle $x, sinon le `$` de `&$x` serait capturé (→ `&$.x`).
-  res = res
-    .replace(/(?<![\w.])&\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) => { throw vaultRemovedError(name) })
-    // &xxx → µ.url.params.xxx : PARAM DE ROUTE, lecture réactive. Même
-    // désambiguïsation que le lexer (cf. lexer/index.ts §3.1c), en regex :
-    //   • lookbehind : `&` PAS précédé d'un opérande (mot/`)`/`]`/guillemet/
-    //     backtick), ni d'un autre `&` (→ `&&`), ni d'un `.` (member-access) ;
-    //   • lookahead `(?![\w;])` : identifiant MAXIMAL et PAS une entité HTML
-    //     (`&amp;` finit par `;` → non-match, sans backtracking).
-    .replace(/(?<![\w)\]"'\x60&.])&([a-zA-Z_]\w*)(?![\w;])/g,
-      (_m: string, name: string) => `µ.url.params.${name}`)
-    // µ$$X : le singleton lu dans le code d'une interpolation de chaîne (`{"#{µ$$X.y}"}`) — hors chaîne, la pré-passe
-    // 0-bis du transpileur l'a déjà réécrit en `$X`. Même verdict qu'elle, et que le lexer (règle 3.2-pré) : un nom
-    // importé se lit `$X`, tout autre est refusé ; sans cette règle, celle du `$$X` juste en dessous refusait le singleton
-    .replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, name: string) => {
-      if (externalVars.includes(`$${name}`)) return `$${name}`
-      throw new Error(t('transpiler.singleton-sans-import', { nom: name }))
-    })
-    .replace(/(?<!\w|(?<!\.)\.)\$\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) => {
-      // Un singleton importé (`$X` ∈ externalVars, via `@import µ$$X`) se
-      // consomme en `µ$$X`, pas en `$$X` (= store GLOBAL, autre espace).
-      if (externalVars.includes(`$${name}`)) throw importedSingletonError(name)
-      return `µ.store.${name}`
-    })
-    // §§X : TOUJOURS le contexte RÉACTIF de sous-arbre (plus aucune résolution
-    // vers un singleton importé, cf. applyContextSetters) — setter `§§foo = expr`
-    // → `_mjs_setRCtx`, getter `§§foo` → `_mjs_getRCtx` (remonte l'arbre + abonne).
-    // §§ getter (le setter `§§x = …` est traité en pré-passe, cf. applyContextSetters)
-    .replace(/(?<![\w§]|(?<!\.)\.)§§([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m: string, name: string) =>
-      `this._mjs_getRCtx('${name}')`)
-    .replace(/(?<![\w@]|(?<!\.)\.)@([a-zA-Z_][a-zA-Z0-9_$]*)/g, 'this.$1')
-    // µXxx (PascalCase) → µ.Xxx et µurl/µonline/µvisible/µready/µserver + les
-    // fabriques temps réel µsocket/µsmooth → µ.* : formes courtes des objets
-    // framework, mêmes règles que le lexer (§3.8b/3.8c) PAR CONSTRUCTION
-    // (corps sigils.ts). La forme déjà pointée (`µ.Router`, `µ.url`) ne
-    // matche pas : il faut une lettre collée à `µ`.
-    .replace(RE_MU_PASCAL_G, 'µ.$1')
-    .replace(RE_MU_SHORT_G, 'µ.$1')
-    // µlang → µ.store.__mjsLang (langue courante, clé store cachée) — même
-    // sucre que le lexer (§3.8d), corps partagé sigils.ts.
-    .replace(RE_MU_LANG_G, MU_LANG_OUT)
-    // µtheme → µ.store.__mjsTheme — même sucre que le lexer (§3.8e), CALQUE de µlang.
-    .replace(RE_MU_THEME_G, MU_THEME_OUT)
-    // µlayout → la prop `layout` (« default » sans rien) : `$layout` devient `$.layout` plus bas
-    .replace(RE_MU_LAYOUT_G, "($layout || 'default')")
-    // sucre universel µfoo → µ.foo — runes minuscules HORS liste blanche ci-dessus
-    // (µraw/µsnap/µplay/µinspect, mjs_rare_runes.ts) : AVANT ce filet, elles
-    // ressortaient littérales dans le JS final (`µraw is not defined` au premier
-    // rendu, repro `weatherData={µraw(result)}` en branche `{success result}`).
-    // MÊME garde que le script (transpiler/index.ts, MU_UNIVERSAL_RE, corps partagé
-    // sigils.ts) : un `µfoo` INCONNU (ni ci-dessus, ni sur `µ` au runtime) est pointé
-    // quand même — échoue en `µ.foo is not a function` à l'EXÉCUTION, jamais à la
-    // compilation, comportement IDENTIQUE aux deux moteurs (parité assumée, pas une
-    // validation nouvelle). `µasset`/`µimage` DEVIENNENT AUSSI `µ.asset`/`µ.image` ici
-    // (aucune exclusion pour eux, exactement comme dans le script) — sans danger : leur
-    // RÉSOLUTION reste un mécanisme séparé (bundler, preResolveAssets/resolveMagicAssets)
-    // dont les regex (ASSET_RE, ASSET_CALL_RE, IMAGE_CALL_RE) acceptent déjà LES DEUX
-    // formes, pointée ou non (vérifié empiriquement). Un composant qui les MENTIONNE dans
-    // une chaîne ou un commentaire reste hors de portée, comme pour PASCAL/SHORT ci-dessus
-    // (`mapCodeSegments` a déjà isolé les chaînes).
-    .replace(RE_MU_UNIVERSAL_G, 'µ.$1')
-    // µ.inspect($x) → µ.inspect('x') : remodelage d'arguments identique au script
-    // (transpiler/index.ts), sans quoi le préfixe pointé ci-dessus suffirait à éviter
-    // le ReferenceError mais appellerait le runtime avec un typage difforme (clé manquante).
-    .replace(RE_MU_INSPECT_ARG_G, inspectArgHorsCommentaire)
-
-  // $x → $.x sauf si ∈ externalVars (singleton importé : garde `$x`, sa forme
-  // compilée). La FAUTE de consommation `$x` au lieu de `µ$$x` est détectée en
-  // amont par le lint singleton (sur le code SOURCE du dev), pas ici — cette
-  // passe tourne aussi sur du code déjà transformé (double-passe analyzer).
-  // `µread $x` / `µwrite $x` (et `$$x`) déjà consommés tout en tête de cette
-  // fonction — cf. commentaire là-bas pour le pourquoi de l'ordre.
-
-  // Snapshot `$xxx =: expr` → `$.xxx = µ.snap(expr)` (parité lexer §3.7,
-  // incohérence — le lexer gère `=:` dans <script>,
-  // cleanJs (interpolations `{...}`/`@x={...}`) l'ignorait, laissant un
-  // `=:` littéral dans le JS final → SyntaxError). Contrairement au lexer
-  // (dont la sortie repasse par Civet, qui accepte l'appel Coffee « nu »
-  // `µ.snap expr`), la sortie de cleanJs est du JS FINAL non re-compilé :
-  // parenthèses explicites obligatoires ici. Portée : toute l'expression
-  // jusqu'à `;`/fin de ligne/fin de segment (même convention que le
-  // pré-passe §x=/§§x= plus haut) — DOIT précéder la règle générique
-  // `$x → $.x` juste en dessous, et tourne après le bloc $$/§§ ci-dessus
-  // (garantit qu'un `$` restant ici est bien SIMPLE, jamais la queue d'un
-  // `$$xxx` déjà consommé).
-  res = res.replace(/(?<![\w$]|(?<!\.)\.)\$([a-zA-Z0-9_]+)[ \t]*=:[ \t]*(.+?)(?=\n|;|$)/g,
-    (_m, name, valueExpr) => {
-      const varName = `$${name}`
-      const prefix = externalVars.includes(varName) ? varName : `$.${name}`
-      return `${prefix} = µ.snap(${valueExpr})`
-    })
-
-  // Garde-fou JUMEAU de la règle 3.8-pré du lexer (src/lexer/index.ts) — même
-  // collision `$xxx := expr`, ici côté GÉNÉRATEUR : une expression de template
-  // (handler `@click={…}`, tête de {for}, callback @transition — les sites
-  // FRAGMENT qui passent par `cleanJs`, PAS `tokenize()`) n'est JAMAIS vue par
-  // le lexer. Sans ce garde-fou, la règle `$x → $.x` juste en dessous
-  // réécrirait silencieusement en `$.x := expr` — que Civet compile SANS
-  // broncher en `const $.x = expr` (cible non-identifiant d'un `const` : JS
-  // invalide, mais Civet ne valide pas cette contrainte EN POSITION
-  // STATEMENT, seul cas où `:=` est syntaxiquement permis) — filé TEL QUEL
-  // dans le bundle, aucun throw (découvert via transpileFile sur `@click={$x
-  // := 2}` : `const $.x = 2;return $.x` dans le handler compilé).
-  // Portée identique à 3.8-pré : seulement si CE `$xxx` serait RÉELLEMENT
-  // réécrit par la règle juste en dessous (donc pas pour un $xxx ∈
-  // externalVars — singleton importé, identifiant Civet ordinaire, `:=` y
-  // reste valide, aucun risque). Les sites EXPRESSION (interpolation {…},
-  // valeur d'attribut — cleanJsExpr/compileGrammarViaCivet, expression
-  // TOUJOURS enveloppée de parenthèses) n'ont même pas besoin de ce filet :
-  // Civet y rejette déjà nativement `:=` (déclaration, pas une expression) —
-  // ce garde-fou y transforme juste ce rejet générique en message pédagogique.
-  res = res.replace(/(?<!\w|(?<!\.)\.)\$([a-zA-Z_][a-zA-Z0-9_$]*)[ \t]*:=/g,
-    (m: string, name: string, offset: number, full: string) => {
-      const varName = `$${name}`
-      if (externalVars.includes(varName)) return m
-      const preview = full.slice(offset + m.length).match(/^[ \t]*([^\n;]*)/)?.[1]?.trim() || '...'
-      throw new Error(t('lexer.symbole-declare-civet', { varName, preview }))
-    })
-
-  // précédé d'un point, c'est une propriété (`obj.$x`) ; de deux, une plage ou une
-  // décomposition (`[1..$n]`, `[...$items]`) : la variable
-  // précédé d'un `$`, c'est la fin d'un `$$x` resté tel quel (propriété `obj.$$x`, laissée par la règle `$$` juste au-dessus) : pas un `$x`
-  res = res.replace(/(?<![\w$]|(?<!\.)\.)\$([a-zA-Z_][a-zA-Z0-9_$]*)/g, (_m, name) => {
-    const varName = `$${name}`
-    return externalVars.includes(varName) ? varName : `$.${name}`
-  })
-
-  // § getContext (le setter `§x = …` est traité en pré-passe, cf. applyContextSetters)
-  res = res.replace(
-    /(?<![\w§]|(?<!\.)\.)§([a-zA-Z_]\w*)/g,
-    (_m, name) => `this._mjs_getContext('${name}')`
-  )
-
-  // §/§§ NU (non suivi d'un nom) : survécu à applyContextSetters ET aux deux réécritures
-  // ci-dessus (aucune ne consomme un §/§§ sans identifiant collé derrière) — refus explicite
-  // plutôt qu'un caractère qui atteint Civet tel quel (message cryptique). Testé HORS
-  // COMMENTAIRES (cf. sansCommentaires, même garde que RE_RAW_ACCESS_MALFORME_G plus haut) :
-  // mapCodeSegments a déjà isolé les chaînes en amont, `res` ne peut donc plus en contenir.
-  RE_BARE_SECTION_G.lastIndex = 0
-  const bareSection = RE_BARE_SECTION_G.exec(sansCommentaires(res))
-  if (bareSection) throw bareSectionError(bareSection[0])
-
   return res
 }
 
-// cleanJs : sucre MJS + idiomes Coffee/Civet courants → JS standard
-//   - Runes : $$ / §§ / @ / @@ / § / $
-//   - Coffee/Civet : not / and / or / is / isnt / unless / -> (thin arrow)
-//
-// Moteur HISTORIQUE inchangé (regex bout en bout) — utilisé pour le repli
-// `templateLang: 'js'` ET pour tous les sites FRAGMENT (cf. header). Pour les
-// sites EXPRESSION en `templateLang: 'civet'` (défaut), voir `cleanJsExpr`.
-export function cleanJs(expr: string | null | undefined, externalVars: string[] = []): string {
-  // µtoggle(…) EN TÊTE (à l'inverse de µimport, passe finale) : la rune rend une
-  // AFFECTATION en syntaxe MJS (`$x = (…)`) — ce sont les passes qui suivent qui
-  // la transforment en setter réactif. Sa place est donc avant elles, pas après.
-  const raw = rewriteMuToggle((expr ?? '').toString().trim(), 'interpolation {…}/handler')
-  const pre = reecritOuRejetteRuneChemin(applyContextSetters(raw, externalVars))
-  const out = mapCodeSegments(rewriteUnless(pre), (seg) => applySymbolRegex(applyGrammarRegex(seg), externalVars))
-  // µimport('chemin.js') / mjsimport('chemin.js') → µ._mjs_import(µasset('chemin.js'))
-  // passe FINALE, sur `out` COMPLET : `mapCodeSegments` isole déjà les
-  // chaînes littérales AVANT d'appeler `applySymbolRegex` par segment — or
-  // l'argument de µimport EST une chaîne littérale, invisible à un `.replace()`
-  // niché DANS ce découpage. rewriteMuImport masque elle-même chaînes/
-  // commentaires — source unique sigils.ts, partagée avec
-  // le moteur script (applyMjsSugarToScript, transpiler/index.ts).
-  return rewriteMuImport(out, 'interpolation {…}/handler')
+// cleanJs : un fragment du gabarit (corps de gestionnaire, liaison `!{…}`, attache, valeur d'un `{const}` relue par un gestionnaire,
+// rappel de transition) : du JavaScript, lu par acorn, ses raccourcis réécrits sur son arbre (fragmentParLArbre) ; sinon du dialecte
+// (Civet : `@x`, `->`, `not`, `is`, appel sans parenthèses, rune à forme), lu par l'arbre de Civet (gestionnaireDuDialecte). Une
+// expression autonome passe par `cleanJsExpr`. `dialecte` : le code d'un gestionnaire, que compile le lot des gestionnaires (une barre
+// après un nom et une espace y ouvre une regex passée en argument, cf. fragmentParLArbre) ; `moduleName` : le composant, cité par un
+// refus ; `ecrit` : le gestionnaire tel qu'écrit dans le fichier, retrait compris, quand c'est lui que l'on compile : une vraie faute
+// de syntaxe y est dite et située
+export function cleanJs(expr: string | null | undefined, externalVars: string[] = [], dialecte = false, moduleName?: string, ecrit?: string): string {
+  const texte    = (expr ?? '').toString().trim()
+  const parArbre = fragmentParLArbre(texte, externalVars, runesAwait, dialecte)
+  if (parArbre !== null) return parArbre
+  return gestionnaireDuDialecte(texte, externalVars, moduleName, ecrit)
 }
 
-// Symboles SEULS (sans grammaire) — sortie civet-valide, grammaire Coffee/
-// Civet (not/and/or/is/isnt/unless/->) laissée INTACTE pour que la vraie
-// compilation Civet la traite ensuite (compileGrammarViaCivet) — `isnt` n'est
-// PAS compris nativement par Civet (miscompile silencieux en `a(isnt(b))`),
-// il y est normalisé en `is not` avant compilation, cf. compileGrammarViaCivet.
-function cleanJsSymbolsOnly(expr: string | null | undefined, externalVars: string[]): string {
-  // µtoggle(…) en tête — même raison qu'au-dessus (cleanJs)
-  const raw = rewriteMuToggle((expr ?? '').toString().trim(), 'interpolation {…}/handler')
+// les runes à forme d'une expression (`µtoggle`, `µinspect` et son chemin, `µread`, `µwrite`, `µrefresh`, refus des runes du
+// script, hooks de cycle de vie compris), réécrites dans le texte écrit par les passes de l'ancienne lecture (cleanJs), dans le même ordre : leur forme dépend du
+// texte qui les suit (`µread $x + 1` lit `$x` seul), pas de l'arbre ; l'arbre lit ensuite le reste (`µimport`, passe finale,
+// est réécrit après lui) ; `apres` : passe de chaque segment de code, après ses runes (refus des signes d'un gestionnaire)
+function runesAFormeEcrites(expr: string, externalVars: string[], apres: (seg: string) => string = (seg) => seg): string {
+  const raw = rewriteMuToggle(expr, 'interpolation {…}/handler')
   const pre = reecritOuRejetteRuneChemin(applyContextSetters(raw, externalVars))
-  const out = mapCodeSegments(pre, (seg) => applySymbolRegex(seg, externalVars))
-  // µimport(...) — même passe finale que cleanJs ci-dessus, AVANT la
-  // compilation Civet de la grammaire (compileGrammarViaCivet, appelant) :
-  // `µ._mjs_import(µasset('x.js'))` est un simple appel de fonction, JS/Civet
-  // valide par construction, aucune grammaire spéciale à y attendre.
-  return rewriteMuImport(out, 'interpolation {…}/handler')
+  return mapCodeSegments(pre, (seg) => apres(runesAForme(seg, externalVars).replace(RE_MU_INSPECT_ARG_G, inspectArgHorsCommentaire)), true)
+}
+
+// un fragment du dialecte qu'acorn ne lit pas, gestionnaire ou autre (Civet, CoffeeScript : `@x`, `->`, `not`, appel sans parenthèses, commentaire `#`,
+// regex étendue, rune à forme, raccourci), lu par l'arbre de bout en bout, dans l'ordre de l'ancienne lecture : (a) ses refus d'abord
+// (rune en clé, lettre réservée écrite, puis segment de code après segment de code : runes à forme, puis signes, refusDesSignes) ;
+// (b) runes à forme et écritures de contexte réécrites dans le texte écrit, `unless` comme l'ancienne lecture ; (c) ses noms lus par
+// Civet et sa carte (fragmentDuDialecte), la grammaire `->`, `not`, `is` ensuite, qui ne touche à aucun nom, µimport en dernier ; un
+// nom que le gabarit ne lit pas est refusé à la place du gestionnaire (refusSitue) ; (d) un texte que Civet ne lit pas est une vraie
+// faute, dite sur le texte écrit (fauteDuGestionnaire) et levée avec le texte rendu (`texteRendu`) : le générateur garde l'une et
+// l'autre, le transpileur la dit après les refus qui la précèdent (nom seul). Sans texte écrit (code que la construction fabrique,
+// rappel de transition), le texte est rendu tel quel : sa compilation dit la faute, à la place de l'attribut
+function gestionnaireDuDialecte(texte: string, externalVars: string[], moduleName: string | undefined, ecrit: string | undefined): string {
+  const code  = maskInertSameLength(texte)
+  const refus = RUNE_EN_CLE_RE.test(code) ? t('reader.expression-rune-en-cle') : lettreReserveeEcrite(texte) ? t('reader.expression-lettre-reservee-ecrite') : null
+  if (refus !== null) throw refusSitue(refus, texte, moduleName)
+  // µlayout écrit (`µlayout ?= v`, `µlayout++`, `++µlayout`), lu dans le code seul : son refus précis passe avant les runes à forme et
+  // l'arbre, qui n'y verrait qu'une écriture de contexte
+  if (code.search(RE_MU_LAYOUT_WRITE_G) >= 0 || code.search(RE_MU_LAYOUT_PREFIX_WRITE_G) >= 0) throw new Error(t('lexer.mu-layout-ecrit'))
+  const signes  = (seg: string): string => refusDesSignes(seg, externalVars)
+  const runes   = RUNES_A_FORME.test(texte) || RE_MU_HOOKS.test(texte) || texte.includes('§') ? runesAFormeEcrites(texte, externalVars, signes) : null
+  if (runes === null) mapCodeSegments(texte, signes, true)
+  const lisible = rewriteUnless(runes ?? texte)
+  let lu: string | null
+  try {
+    lu = fragmentDuDialecte(lisible, externalVars, runesAwait)
+  }
+  catch (err: any) {
+    // `µ$x`, l'état universel, n'est lu que dans le <script> : refusé comme dans une expression, à la place du gestionnaire
+    if (err?.etatUniversel === undefined) throw err
+    throw Object.assign(new Error(t('reader.expression-etat-universel', { nom: err.etatUniversel, place: placeDuRefus(moduleName) })), { expressionEcrite: texte, expressionCompilee: `(${texte})` })
+  }
+  if (lu !== null) return rewriteMuImport(mapCodeSegments(lu, applyGrammarRegex, true), 'interpolation {…}/handler', true)
+  const raison = REFUS_DU_GESTIONNAIRE.get(compteursExpressions.derniere)
+  if (raison !== undefined) throw refusSitue(t(raison), texte, moduleName)
+  const faute = ecrit !== undefined && compteursExpressions.derniere === GESTIONNAIRE_ILLISIBLE ? fauteDuGestionnaire(texte, moduleName, ecrit) : null
+  if (faute !== null) throw Object.assign(faute, { texteRendu: lisible })
+  return lisible
+}
+
+// les refus de signes de l'ancienne lecture sur un segment de code d'un gestionnaire, dans son ordre et
+// sans rien réécrire : `&$x` (coffre retiré), `µ$$X` sans import, `$$X` d'un singleton importé, `$x := v`, `§` ou `§§` sans nom
+function refusDesSignes(seg: string, externalVars: string[]): string {
+  const coffre = /(?<![\w.])&\$([a-zA-Z_][a-zA-Z0-9_$]*)/.exec(seg)
+  if (coffre) throw vaultRemovedError(coffre[1])
+  // un `µ$$X` importé se lit `$X`, qui n'est plus un `$$X`
+  const lu = seg.replace(/µ\$\$([a-zA-Z0-9_]+)/g, (_m: string, nom: string) => {
+    if (externalVars.includes(`$${nom}`)) return `$${nom}`
+    throw new Error(t('transpiler.singleton-sans-import', { nom }))
+  })
+  for (const m of lu.matchAll(/(?<!\w|(?<!\.)\.)\$\$([a-zA-Z_][a-zA-Z0-9_$]*)/g)) {
+    if (externalVars.includes(`$${m[1]}`)) throw importedSingletonError(m[1])
+  }
+  refuserDeclaration(lu, externalVars)
+  RE_BARE_SECTION_G.lastIndex = 0
+  const seul = RE_BARE_SECTION_G.exec(sansCommentaires(lu))
+  if (seul) throw bareSectionError(seul[0])
+  return seg
 }
 
 // ============================================================================
@@ -692,10 +800,9 @@ function cleanJsSymbolsOnly(expr: string | null | undefined, externalVars: strin
 // module ESM) — `cleanJs`/`cleanJsExpr` sont appelés en profondeur dans des
 // callbacks `.replace()` synchrones (compile.ts, attributes/index.ts) : un
 // `await import()` est IMPOSSIBLE à ces call-sites. Chargement PARESSEUX (au
-// premier appel civet réel) pour ne rien coûter aux projets `templateLang:
-// 'js'` exclusif.
+// premier appel civet réel).
 let _civetCompile: ((src: string, opts: Record<string, unknown>) => string) | null = null
-function getCivetCompile(): (src: string, opts: Record<string, unknown>) => string {
+export function getCivetCompile(): (src: string, opts: Record<string, unknown>) => string {
   if (!_civetCompile) {
     const req = createRequire(import.meta.url)
     _civetCompile = req('@danielx/civet').compile
@@ -769,12 +876,7 @@ function compileGrammarViaCivet(symbolsCleaned: string, rawExprForError: string,
   const trimmed = symbolsCleaned.trim()
   if (trimmed === '') return trimmed
 
-  // `isnt` (Coffee) → `is not` : Civet ne le connaît pas — il parse `a isnt b` en
-  // appel `a(isnt(b))`, miscompile silencieux. même
-  // remède que la Pass 2b des <script> (transpiler/index.ts:866), hors chaînes/
-  // commentaires (mapCodeSegments), regex prudente calquée sur applyGrammarRegex
-  // (`.isnt` propriété intact)
-  const normalized = mapCodeSegments(trimmed, (seg) => seg.replace(/(?<![\w.\$])\bisnt\b(?!\s*[:)\]},;])/g, 'is not'))
+  const normalized = isntNormalise(trimmed)
 
   const cached = civetExprCache.get(normalized)
   if (cached !== undefined) return cached
@@ -786,45 +888,147 @@ function compileGrammarViaCivet(symbolsCleaned: string, rawExprForError: string,
     // Civet NE fait PAS cette conversion (vérifié par sonde directe :
     // `compile('($.n == 1)', {js:true, sync:true})` renvoie `==` inchangé
     // sans ce flag) — c'est un choix d'harmonisation ASSUMÉ ici, pas un
-    // comportement natif Civet. Le repli `templateLang: 'js'` (cleanJs/
-    // applyGrammarRegex) NE touche PAS `==` : il reste lâche, aucune
-    // régression du repli. Attesté par tests/template-civet.test.ts.
-    compiled = getCivetCompile()(`(${normalized})`, {
-      js: true,
-      sync: true,
-      filename: moduleName ? `${moduleName}.expr` : 'mjs-expr',
-      parseOptions: { coffeeEq: true },
-    })
+    // comportement natif Civet. Attesté par tests/template-civet.test.ts.
+    compiled = civetDeLExpression(normalized, moduleName)
     _civetCompileMisses += 1
   } catch (err: any) {
-    // Erreur orientante — calque le try/catch des handlers inline
-    // (transpiler/index.ts:1538+, zone déjà livrée hors-périmètre de cette
-    // brique) : même indice ternaire collé (`a?b:c`), même filler non-blanc.
-    const civetMsg = err?.message ?? String(err)
-    const codeOnly = trimmed.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
-    const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly)
-      ? t('generator.hint-ternaire-colle')
-      : ''
-    const moduleHint = moduleName ? t('generator.hint-dans-module', { moduleName }) : ''
-    throw new Error(t('generator.interpolation-echec-civet', { moduleHint, rawExprForError, civetMsg, gluedTernaryHint }))
+    throw erreurDeCivet(err, trimmed, normalized, rawExprForError, moduleName)
   }
 
-  // Retire le `;`/saut de ligne final éventuel PUIS la parenthèse enveloppante
-  // qu'on vient d'ajouter — sortie = expression JS nue, drop-in de cleanJs.
-  const out    = compiled.replace(/;\s*$/, '').trim()
-  const result = /^var [A-Za-z_$][\w$]* = /.test(out) ? withCivetHelpers(out) : stripOuterParens(out)
+  const result = finirExpressionCivet(compiled, rawExprForError, moduleName)
   civetExprCache.set(normalized, result)
   return result
 }
 
-// une aide de Civet (`[1..200]` → `var range = …`, `a %% b` → `var modulo = …`) est déclarée AVANT
-// l'expression : elles partent ensemble, dans une fléchée appelée sur place (`this` inchangé)
-function withCivetHelpers(out: string): string {
-  const body = (acorn.parse(out, { ecmaVersion: 'latest', sourceType: 'script', allowAwaitOutsideFunction: true }) as any).body
+// `isnt` (Coffee) → `is not` : Civet ne le connaît pas — il parse `a isnt b` en
+// appel `a(isnt(b))`, miscompile silencieux. même
+// remède que la Pass 2b des <script> (transpiler/index.ts:866), hors chaînes/
+// commentaires (mapCodeSegments), regex prudente calquée sur applyGrammarRegex
+// (`.isnt` propriété intact)
+function isntNormalise(texte: string): string {
+  return mapCodeSegments(texte, (seg) => seg.replace(/(?<![\w.\$])\bisnt\b(?!\s*[:)\]},;])/g, 'is not'), true)
+}
+
+// DRIFT SÉMANTIQUE ASSUMÉ — `coffeeEq: true` fait compiler `==`/`!=` en `===`/`!==`,
+// comme la convention stricte des `<script>` Civet du projet (cf. compileGrammarViaCivet)
+function civetDeLExpression(normalized: string, moduleName: string | undefined): string {
+  return getCivetCompile()(enveloppe(normalized), {
+    js: true,
+    sync: true,
+    filename: moduleName ? `${moduleName}.expr` : 'mjs-expr',
+    parseOptions: { coffeeEq: true },
+  })
+}
+
+// Erreur orientante — calque le try/catch des handlers inline
+// (transpiler/index.ts:1538+, zone déjà livrée hors-périmètre de cette
+// brique) : même indice ternaire collé (`a?b:c`), même filler non-blanc.
+function erreurDeCivet(err: any, trimmed: string, normalized: string, rawExprForError: string, moduleName: string | undefined): Error {
+  const civetMsg = err?.message ?? String(err)
+  const codeOnly = trimmed.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
+  const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly)
+    ? t('generator.hint-ternaire-colle')
+    : ''
+  const moduleHint = moduleName ? t('generator.hint-dans-module', { moduleName }) : ''
+  // le texte écrit et celui donné à Civet : le transpileur ramène la position de Civet au fichier où l'expression est écrite
+  return Object.assign(new Error(t('generator.interpolation-echec-civet', { moduleHint, rawExprForError, civetMsg, gluedTernaryHint })), { expressionEcrite: rawExprForError, expressionCompilee: enveloppe(normalized) })
+}
+
+// une expression que l'arbre ne lit pas : illisible, le message de Civet sur le texte écrit (sa ligne, sa colonne), ses signes
+// déguisés le temps de la compilation (Civet ne lit pas `§`, même longueur) ; lisible, un refus de construction avec la raison
+// de l'arbre, plutôt qu'une sortie fausse
+function expressionNonLue(texte: string, rawExprForError: string, moduleName: string | undefined): Error {
+  const normalized = isntNormalise(texte)
+  try {
+    civetDeLExpression(isntNormalise(deguiserExpression(texte)), moduleName)
+  }
+  catch (err: any) {
+    return erreurDeCivet({ message: signesRepris(String(err?.message ?? err)) }, texte, normalized, rawExprForError, moduleName)
+  }
+  return refusSitue(compteursExpressions.derniere, rawExprForError, moduleName)
+}
+
+// refus d'une expression lisible, situé comme une faute de Civet : le repère `module.expr:1:2` (début de l'expression, après la
+// parenthèse ouvrante) devient le fichier, la ligne et la colonne où elle est écrite (situerExpression, transpileur)
+function refusSitue(raison: string, rawExprForError: string, moduleName: string | undefined): Error {
+  const moduleHint = moduleName ? t('generator.hint-dans-module', { moduleName }) : ''
+  return Object.assign(new Error(t('generator.expression-non-lue', { moduleHint, rawExprForError, raison, place: placeDuRefus(moduleName) })), { expressionEcrite: rawExprForError, expressionCompilee: `(${rawExprForError})` })
+}
+
+function placeDuRefus(moduleName: string | undefined): string {
+  return moduleName ? `${moduleName}.expr:1:2 — ` : ''
+}
+
+// une vraie faute de syntaxe dans un gestionnaire du dialecte (`$x = not`) : l'erreur de Civet sur le texte écrit, lu dans la
+// grammaire du lot des gestionnaires, ses signes déguisés le temps de la compilation (même longueur), située comme celle d'une
+// expression (fichier, ligne, colonne : situerExpression, transpileur, sur le texte `ecrit` dans le fichier, retrait compris) avec le
+// nom du composant ; null quand Civet lit ce texte
+function fauteDuGestionnaire(texte: string, moduleName: string | undefined, ecrit: string): Error | null {
+  const nom = moduleName ? `${moduleName}.expr` : 'mjs-expr'
+  try {
+    getCivetCompile()(DIRECTIVE_GESTIONNAIRE + deguiserExpression(texte), { js: true, sync: true, filename: nom })
+    return null
+  }
+  catch (err: any) {
+    // la directive occupe la ligne 1 ; sur la première ligne écrite, la colonne compte la parenthèse que situerExpression suppose devant
+    const position = new RegExp(`${nom.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+):(\\d+)`)
+    const civetMsg = signesRepris(String(err?.message ?? err)).replace(position, (_m: string, l: string, c: string) => `${nom}:${Number(l) - 1}:${Number(l) === 2 ? Number(c) + 1 : Number(c)}`)
+    const codeOnly = texte.replace(MASK_STRINGS_AND_COMMENTS_RE, (m: string) => 'x'.repeat(m.length))
+    const gluedTernaryHint = /\?[^\s?.:]/.test(codeOnly) ? t('generator.hint-ternaire-colle') : ''
+    return Object.assign(new Error(t('transpiler.handler-inline-echec-civet', { moduleName: moduleName ?? '', lineHint: '', civetMsg, gluedTernaryHint })), { expressionEcrite: ecrit, expressionCompilee: `(${texte})` })
+  }
+}
+
+// la sortie de Civet d'une expression, lue par l'arbre, rendue au générateur
+function finirExpressionCivet(compiled: string, rawExprForError: string, moduleName: string | undefined): string {
+  // paramètre que Civet lit autrement (`{$l.map((x, readonly) -> x)}`) : même refus que dans le <script> ; la ligne du
+  // fichier est cherchée par le transpileur, au texte écrit de l'expression (avecLigneDuGabarit)
+  const fautif = parametreLuAutrement(compiled, () => null)
+  if (fautif) {
+    const erreur      = new ErreurParametreLuAutrement(fautif, moduleName ? `${moduleName}.mjs` : 'mjs-expr', compiled, null, null)
+    erreur.expression = rawExprForError
+    throw erreur
+  }
+
+  // Retire le `;`/saut de ligne final éventuel PUIS la parenthèse enveloppante
+  // qu'on vient d'ajouter — sortie = expression JS nue, drop-in de cleanJs.
+  const out = compiled.replace(/;\s*$/, '').trim()
+  return out.includes(';') && !estUneExpression(out) ? fonctionAppeleeSurPlace(out) : stripOuterParens(out)
+}
+
+// Civet déclare devant l'expression ce qu'elle emprunte : une aide (`[1..200]` → `var range = …`, `a %% b` → `var modulo = …`),
+// une variable (`0 < $x < 5` → `let ref;`), la boucle d'une compréhension écrite seule (`(e for e of $l)` → `const results=[];for …`).
+// Ces instructions et l'expression partent ensemble dans une fléchée appelée sur place, qui rend la valeur (`this` inchangé) ;
+// avec un `await` hors des fonctions écrites, la fléchée est async, attendue à la place de l'expression
+function fonctionAppeleeSurPlace(out: string): string {
+  let body: any[]
+  try {
+    body = (acorn.parse(out, { ecmaVersion: 'latest', sourceType: 'script', allowAwaitOutsideFunction: true }) as any).body
+  }
+  catch {
+    return stripOuterParens(out)
+  }
   const last = body[body.length - 1]
-  if (!last || last.type !== 'ExpressionStatement') return stripOuterParens(out)
-  const expr = stripOuterParens(out.slice(last.expression.start, last.expression.end))
-  return `(() => { ${out.slice(0, last.start).trim()} return (${expr}); })()`
+  // une seule instruction (ou des `;` seuls devant elle) : la sortie reste telle quelle
+  if (last?.type !== 'ExpressionStatement' || body.slice(0, -1).every((s: any) => s.type === 'EmptyStatement')) return stripOuterParens(out)
+  const expr  = stripOuterParens(out.slice(last.expression.start, last.expression.end))
+  const corps = `{ ${out.slice(0, last.start).trim()} return (${expr}); }`
+  return attendAuPremierNiveau(out) ? `(await (async () => ${corps})())` : `(() => ${corps})()`
+}
+
+// un `await` (ou `for await`) au premier niveau du code, hors des fonctions qu'il écrit (rappel d'un gestionnaire, instructions
+// d'une expression)
+export function attendAuPremierNiveau(js: string): boolean {
+  if (!/\bawait\b/.test(js)) return false
+  let arbre: any
+  try {
+    arbre = acorn.parse(js, { ecmaVersion: 'latest', sourceType: 'module', allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true })
+  }
+  catch {
+    return false
+  }
+  const visite = (n: any): boolean => !/Function/.test(n.type) && (n.type === 'AwaitExpression' || (n.type === 'ForOfStatement' && n.await) || Object.values(n).some((v: any) => (Array.isArray(v) ? v : [v]).some((c: any) => c && typeof c.type === 'string' && visite(c))))
+  return visite(arbre)
 }
 
 // conversion Coffee `"…#{X}…"` → gabarit : une seule fonction, dans le lexeur (partagée avec la Pass 3 du <script>).
@@ -884,20 +1088,178 @@ export function corpsDeFlecheEnBloc(js: string): string {
 }
 
 // cleanJsExpr : variante « site EXPRESSION » de cleanJs — cf. header pour la
-// cartographie complète EXPR vs FRAGMENT. `templateLang`/`moduleName` sont
-// transmis par l'appelant depuis `state`/`env.compiler` (CompilerState).
+// cartographie complète EXPR vs FRAGMENT. `moduleName` est transmis par
+// l'appelant depuis `state`/`env.compiler` (CompilerState).
 export function cleanJsExpr(
   expr: string | null | undefined,
   externalVars: string[] = [],
-  templateLang: 'civet' | 'js' = 'civet',
   moduleName?: string
 ): string {
-  if (templateLang === 'js') return cleanJs(expr, externalVars)
   const raw = (expr ?? '').toString().trim()
   if (raw === '') return raw
-  const interpolated = convertCoffeeInterpolations(raw)
-  const symbolsCleaned = cleanJsSymbolsOnly(interpolated, externalVars)
-  return compileGrammarViaCivet(symbolsCleaned, raw, moduleName)
+  const interpolated = convertCoffeeInterpolations(raw, undefined, true)
+  const js           = expressionDuGabarit(interpolated, raw, externalVars, moduleName)
+  refuserMinuterieDuGabarit(js)
+  return js
+}
+
+// un texte du gabarit passé par le lexeur (`$x` écrit `$.x`) a-t-il la forme d'un JavaScript, sa grammaire du dialecte réécrite
+// (`is`, `not`, `and`, `or`, `->`, `unless`) et les signes de MJS (`@x`, `§x`, `@@x`, `&id`) pris pour des lettres d'un nom ? Un test
+// de forme seul, sans Civet, qui lit presque tout (`pill p_{$x}` y devient un appel, dont l'effet se perd)
+export function formeDeJavaScript(tokenise: string): boolean {
+  const texte = deguiserExpression(mapCodeSegments(rewriteUnless(tokenise), applyGrammarRegex)).replace(/@/g, 'µ')
+  try {
+    acorn.parse(texte, { ecmaVersion: 'latest', sourceType: 'module' })
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+function estUneExpression(js: string): boolean {
+  try {
+    acorn.parse(`(${js}\n)`, { ecmaVersion: 'latest', sourceType: 'module' })
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+// le JavaScript d'un texte du gabarit, pour l'analyse de ses dépendances (generator/state.ts) : `tokenise`, le texte passé par le
+// lexeur, quand il est du JavaScript (acorn le lit, raccourcis réécrits sur son arbre) ; sinon le code que chacun de ses `morceaux`,
+// tels qu'écrits, émet (cleanJsExpr), en éléments d'un tableau : ses lectures sont celles du code exécuté, par construction. Un code
+// émis qui n'est pas une expression (`let ref;` d'une comparaison chaînée, boucle d'une compréhension) se lit dans un bloc devant le
+// tableau ; l'état que `µ.inspect` lit par son nom y est écrit `$.x`, à la place de l'appel. null quand un morceau ne se compile pas
+export function jsDesDependances(tokenise: string, morceaux: string[], externalVars: string[], moduleName?: string): string | null {
+  return fragmentParLArbre(tokenise.trim(), externalVars, runesAwait) ?? codeEmisDesDependances(morceaux, externalVars, moduleName)
+}
+
+// le code que des expressions écrites émettent, en éléments d'un tableau à analyser (cf. jsDesDependances) ; null quand l'une ne se
+// compile pas
+export function codeEmisDesDependances(morceaux: string[], externalVars: string[], moduleName?: string): string | null {
+  const blocs: string[]    = []
+  const elements: string[] = []
+  try {
+    for (const morceau of morceaux) {
+      const emis   = cleanJsExpr(morceau, externalVars, moduleName)
+      // `µinspect` (rune de la console) lit l'état par son nom : il ne fait pas de dépendance, comme avant
+      const js     = emis
+      if (estUneExpression(js)) elements.push(js)
+      else blocs.push(`{ ${js}\n}`)
+    }
+  }
+  catch {
+    return null
+  }
+  return `${blocs.join('\n')}${blocs.length > 0 ? '\n' : ''}[${elements.join(', ')}]`
+}
+
+// le JavaScript d'une condition du gabarit (`@class{$x is item}`), où chercher un motif filtré (attributes/index.ts) : du JavaScript,
+// lu par acorn ; sinon le code qu'elle émet (cleanJsExpr) ; null quand elle ne se compile pas (pas de motif filtré, la liaison
+// ordinaire la compile et dit sa faute)
+export function jsDeLaCondition(texte: string, externalVars: string[], moduleName?: string): string | null {
+  const parArbre = fragmentParLArbre(texte.trim(), externalVars, runesAwait)
+  if (parArbre !== null) return parArbre.trim()
+  try {
+    return cleanJsExpr(texte, externalVars, moduleName).trim()
+  }
+  catch {
+    return null
+  }
+}
+
+const RUNE_EN_CLE_RE = /(?:^|[{,])\s*µ[\w$]+\s*:(?!:)/
+
+// une expression lue par l'arbre (reader/expression.ts : une compilation Civet du texte écrit, raccourcis réécrits sur
+// l'arbre ESTree) ; ses compilations Civet sont comptées avec les autres (_civetExprCacheMisses). Le texte que l'arbre a
+// réécrit à la place des noms (`reecrit` : comparaison chaînée, nom en clé ou en paramètre, rune à forme, faute de Civet)
+// est compilé comme celui de l'ancienne lecture, même sortie, même message ; une expression qu'il ne lit pas est refusée
+function expressionDuGabarit(interpolated: string, raw: string, externalVars: string[], moduleName: string | undefined): string {
+  // une rune en clé d'objet (`{µread: 1}`) : la passe des runes la réécrirait en appel, Civet n'en dirait qu'une faute obscure
+  if (RUNE_EN_CLE_RE.test(maskInertSameLength(interpolated))) throw refusSitue(t('reader.expression-rune-en-cle'), raw, moduleName)
+  const avant = compteursCode.compilations
+  const runes = RUNES_A_FORME.test(interpolated) || RE_MU_HOOKS.test(interpolated) ? runesAFormeEcrites(interpolated.trim(), externalVars) : null
+  let lu: ReturnType<typeof expressionParLArbre>
+  try {
+    lu = expressionParLArbre(runes ?? interpolated.trim(), externalVars, runesAwait, runes !== null)
+  }
+  catch (err: any) {
+    if (err?.etatUniversel === undefined) throw err
+    throw Object.assign(new Error(t('reader.expression-etat-universel', { nom: err.etatUniversel, place: placeDuRefus(moduleName) })), { expressionEcrite: raw, expressionCompilee: `(${raw})` })
+  }
+  _civetCompileMisses += compteursCode.compilations - avant
+  if (typeof lu === 'string') return finirExpressionCivet(lu, raw, moduleName)
+  if (lu !== null) return compileGrammarViaCivet(runes === null ? lu.reecrit : rewriteMuImport(lu.reecrit, 'interpolation {…}/handler', true), raw, moduleName)
+  throw expressionNonLue(interpolated.trim(), raw, moduleName)
+}
+
+// noms que le composant déclare hors de l'accolade (racine du <script>, <script module>, `@import`), posés par le
+// transpileur le temps de compiler son gabarit : une accolade qui appelle le `setTimeout` du composant n'appelle pas la
+// minuterie globale
+let nomsDuComposant: string[] = []
+
+// noms que le gabarit met en portée à l'endroit compilé (variable et index des `{for}` englobants, valeur d'une branche
+// `{success}` / `{error}`, `{const}` du bloc), posés par le parcours du gabarit (walk, generator/compile.ts) :
+// `{for top in $l}` puis `{top.setTimeout()}` lit la variable de la boucle, pas l'objet global ; hors du bloc, le nom
+// redevient global
+let locauxDuGabarit: Set<string> | null = null
+
+/** pose les noms du gabarit en portée du nœud parcouru ; rend ceux d'avant, reposés en sortant du nœud */
+export function poserLocauxDuGabarit(noms: Set<string> | null): Set<string> | null {
+  const avant     = locauxDuGabarit
+  locauxDuGabarit = noms
+  return avant
+}
+
+export function avecNomsDuComposant<T>(noms: string[], construire: () => T): T {
+  const avant     = nomsDuComposant
+  nomsDuComposant = noms
+  try {
+    return construire()
+  }
+  finally {
+    nomsDuComposant = avant
+  }
+}
+
+// setTimeout / setInterval dans une accolade du gabarit (interpolation, attribut lié, condition, `@attach`) : recalculée
+// à chaque rendu ou rejouée à chaque pose de la balise, elle poserait une minuterie à chaque passage, que rien n'arrête —
+// refusée comme dans le <script>, par la même lecture (transpiler/minuteries.ts), avec les noms du composant et ceux que
+// le gabarit met en portée. Relue seulement si son texte nomme l'une des deux, ou lit un membre par une chaîne ET nomme
+// l'objet global ou le document qui y mène (`window['set' + 'Timeout']`, `document['default' + 'View']['set' + 'Timeout']`, le
+// `ownerDocument` d'un nœud : seules formes qui l'assemblent, `defaultView` n'y est jamais écrit d'un tenant) : `{$t['cle']}`,
+// courant, n'est pas relue ; illisible par acorn (aucune des trois formes), refusée dès que son texte, chaînes ôtées, nomme l'une
+// des deux
+const MINUTERIE_RE     = /set(?:Timeout|Interval)/
+const MEMBRE_CHAINE_RE = /\[[^\]]*['"`]/
+const OBJET_GLOBAL_RE  = /\b(?:window|globalThis|self|top|parent|frames|defaultView|document|ownerDocument)\b/
+export function refuserMinuterieDuGabarit(js: string): void {
+  if (!MINUTERIE_RE.test(js) && !(MEMBRE_CHAINE_RE.test(js) && OBJET_GLOBAL_RE.test(js))) return
+  const corps = js.replace(/;\s*$/, '')
+  let ast: any = null
+  for (const source of [js, '(' + corps + '\n)', '[' + corps + '\n]']) {
+    try { ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' }); break }
+    catch { ast = null }
+  }
+  const libres = locauxDuGabarit ? [...nomsDuComposant, ...locauxDuGabarit] : nomsDuComposant
+  const nom    = ast ? minuteriesBrutes(ast, libres)[0]?.nom : js.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''").match(/\bset(?:Timeout|Interval)\b/)?.[0]
+  if (nom) throw new Error(t('generator.minuterie-gabarit', { nom }))
+}
+
+// setTimeout / setInterval dans un rappel de transition (`@introend={…}`, sa fonction entière), avec les noms du composant et ceux que
+// le gabarit met en portée : le nom de la première, refusée comme dans un gestionnaire (cf. fonctionDeRappel) ; null sans minuterie
+export function minuterieDuRappel(fonction: string, locaux: Iterable<string>): string | null {
+  if (!MINUTERIE_RE.test(fonction) && !(MEMBRE_CHAINE_RE.test(fonction) && OBJET_GLOBAL_RE.test(fonction))) return null
+  let ast: any
+  try {
+    ast = acorn.parse(fonction, { ecmaVersion: 'latest', sourceType: 'module' })
+  }
+  catch {
+    return null
+  }
+  return minuteriesBrutes(ast, [...nomsDuComposant, ...locaux])[0]?.nom ?? null
 }
 
 // parse_mixed_string : transforme un raw_val (chaîne avec {expr} interpolés)
@@ -906,7 +1268,6 @@ export function cleanJsExpr(
 export function parseMixedString(
   rawVal: string,
   externalVars: string[] = [],
-  templateLang: 'civet' | 'js' = 'civet',
   moduleName?: string
 ): string {
   // Cas pur : si tout est dans des braces équilibrées { ... } sans rien autour.
@@ -935,7 +1296,7 @@ export function parseMixedString(
         break
       }
     }
-    if (isPure) return cleanJsExpr(rawVal.slice(1, -1), externalVars, templateLang, moduleName)
+    if (isPure) return cleanJsExpr(rawVal.slice(1, -1), externalVars, moduleName)
   }
 
   // Application du bouclier sur les chaînes mixtes.
@@ -957,7 +1318,7 @@ export function parseMixedString(
       const [vu, store, name] = m
       const varName = `$${name}`
       sortie += fixe(texte.slice(debut, m.index))
-      if (store) sortie += `\${${cleanJsExpr(`$$${store}`, externalVars, templateLang, moduleName)}}`
+      if (store) sortie += `\${${cleanJsExpr(`$$${store}`, externalVars, moduleName)}}`
       else sortie += externalVars.includes(varName) ? `\${${varName}}` : `\${$.${name}}`
       debut = m.index! + vu.length
     }
@@ -1009,7 +1370,7 @@ export function parseMixedString(
         i += 1
       }
 
-      jsEval += `\${${cleanJsExpr(expr, externalVars, templateLang, moduleName)}}`
+      jsEval += `\${${cleanJsExpr(expr, externalVars, moduleName)}}`
     } else {
       texte += rawVal[i]
       i += 1

@@ -58,6 +58,9 @@ function coreSelect(outDir: string): string {
 /** une ligne de repère qui sort : jamais */
 const leaks = (code: string): string[] => code.split('\n').filter((l) => /(?:^|\s)(?:#|\/\/|<!--) @@(?:\s|$)/.test(l) && !/^\s*(?:#|\/\/) /.test(l))
 
+/** les noms réduits ramenés à une lettre : ils prennent une ou deux lettres selon les autres fichiers de l'appli */
+const uneLettre = (code: string): string => code.replace(/(?<![\w$])[A-Za-z_$][\w$]?(?![\w$])/g, 'x')
+
 const manque  = (code: string, noms: string[]) => noms.filter((n) => !code.includes(n))
 const present = (code: string, noms: string[]) => noms.filter((n) => code.includes(n))
 
@@ -149,8 +152,15 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
         assert.deepEqual(manque(code, AUTRE_MINIFIE), [])
         assert.deepEqual(leaks(code), [])
         reference ||= code
-        // les noms réduits (une lettre) changent d'un build à l'autre : la taille, elle, ne bouge pas
-        assert.ok(Math.abs(code.length - reference.length) <= 40, `${code.length} octets, ${reference.length} pour un \`other\` écrit nu`)
+        if (files['liste.mjs']?.includes('{...$p}')) {
+          // l'étalement peut aussi porter la liste liée à une variable de règle : cette partie reste, en plus de « Autre »
+          // elle redemande sa valeur à l'hôte de la liste quand ses options changent (la lecture de `typed` puis `getRootNode().host`, minifié ou non) ;
+          // la lecture s'écrit `$.typed`, ou `$[(…), 'typed']` dans un composant qui a un reffet (elle se note pour le graphe des signaux)
+          assert.match(code, /(?:\.typed|,\s*["']typed["']\)?\])(?:&&|\) \{)[^;]*?getRootNode\(\)\.host/, 'la partie de la liste liée à une variable de règle reste aussi')
+          assert.ok(uneLettre(code).length >= uneLettre(reference).length - 40, `${code.length} octets (${uneLettre(code).length} noms ramenés à une lettre), ${reference.length} (${uneLettre(reference).length}) pour un \`other\` écrit nu`)
+        }
+        // les noms réduits changent d'un build à l'autre, et prennent une ou deux lettres selon les autres fichiers de l'appli : mesurée noms ramenés à une lettre, la taille, elle, ne bouge pas
+        else assert.ok(Math.abs(uneLettre(code).length - uneLettre(reference).length) <= 40, `${code.length} octets (${uneLettre(code).length} noms ramenés à une lettre), ${reference.length} (${uneLettre(reference).length}) pour un \`other\` écrit nu`)
       })
     }
   })
@@ -275,8 +285,9 @@ describe('construction — la partie « Autre » de <@@select> suit ce que les p
         const files = readdirSync(app.outDir)
         const mine  = files.filter((f) => /^ma-liste-.*\.js$/.test(f)).map((f) => readFileSync(join(app.outDir, f), 'utf-8')).join('\n')
         assert.deepEqual(manque(mine, ['select-other-edit', 'select-other-ok', 'with-other']), [], `${mode} : la copie garde « Autre »`)
-        // le script de la copie nomme la balise du module (ses textes citent <@@select>) : dans le doute, le module cœur de la même appli garde « Autre »
-        assert.deepEqual(manque(coreSelect(app.outDir), ['select-other-edit', 'select-other-ok', 'with-other']), [], `${mode} : le module cœur garde « Autre », dans le doute`)
+        // le script de la copie ne cite la balise du module (<mjs-core-select>) que dans ses commentaires, qui ne comptent pas : aucune page n'écrit
+        // `other` sur une liste du cœur, le module cœur de la même appli n'emporte pas « Autre »
+        assert.deepEqual(present(coreSelect(app.outDir), ['select-other-edit', 'select-other-ok', 'with-other']), [], `${mode} : le module cœur n'emporte pas « Autre »`)
         assert.doesNotThrow(() => transformSync(mine, { format: 'esm' }), `${mode} : le code de la copie se lit`)
       }
     })

@@ -9,7 +9,7 @@ import { makeMu, regle, composant, appeler, refuser } from './helpers/types-runt
 
 const MODES = ['warn', 'error'] as const
 
-const LIGNES = '{ id: int }[]'
+const LIGNES = 'Id[]'
 
 function todos(mode: 'warn' | 'error', n = 3) {
   const µ  = makeMu(mode)
@@ -96,7 +96,7 @@ describe('types — une liste remplacée : l’élément gardé par l’appli se
 })
 
 describe('types — des listes imbriquées : la racine remplacée marque chaque position du chemin', () => {
-  const BOARD = '{ rows: { cells: { v: int }[] }[] }'
+  const BOARD = 'Plateau'
 
   function tableau(mode: 'warn' | 'error') {
     const µ  = makeMu(mode)

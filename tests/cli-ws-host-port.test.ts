@@ -32,7 +32,7 @@ function randomPort(): number { return 56500 + Math.floor(Math.random() * 2000) 
 // une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
 // sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
 const capturesEnCours: Array<() => void> = []
-afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+function restoreCaptures(): void { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() }
 
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
@@ -108,6 +108,8 @@ describe('cli/ws — buildRunPlan : host, cliHost (--host) prime sur ws.host', (
 describe("cli/ws — runWsCommand : host: '127.0.0.1'", function () {
   this.timeout(10000)
 
+  afterEach(restoreCaptures)
+
   it("un serveur lancé avec host: '127.0.0.1' accepte le loopback, refuse une IP LAN de la même machine (si dispo), et la bannière l'affiche", async () => {
     const root = freshDir('ws-host')
     writeFileSync(join(root, 'ws.mjs'), `export default {\n  setup(app) {\n    app.serve('ping', () => 'pong')\n  },\n}\n`)
@@ -147,6 +149,8 @@ describe("cli/ws — runWsCommand : host: '127.0.0.1'", function () {
 // ============================================================================================
 
 describe('cli/ws — bannière : hôte effectif toujours affiché, même par défaut', () => {
+  afterEach(restoreCaptures)
+
   it("aucun host (ni --host ni ws.host) → bannière affiche 127.0.0.1, PAS 'toutes les interfaces'", async () => {
     const root = freshDir('ws-banner-default')
     writeFileSync(join(root, 'ws.mjs'), `export default {\n  setup(app) {},\n}\n`)

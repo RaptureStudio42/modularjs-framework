@@ -10,7 +10,7 @@
 //     (aller puis retour), une valeur vide puis le retour au même composant, une valeur vide puis un
 //     autre composant
 //   × l'opération : ajout en tête, au milieu, en queue ; retrait ; inversion ; tri ; remplacement de
-//     toute la liste ; vidage puis recréation (la réserve de lignes).
+//     toute la liste ; vidage puis recréation.
 // À chaque étape, le DOM est comparé à un modèle : nombre de nœuds, ordre, composant et titre de
 // chaque ligne, visible ou masquée, et état interne (un compteur) gardé quand la ligne n'a pas changé
 // de composant — sans erreur interceptée.
@@ -124,7 +124,7 @@ describe('<@module> dans un {for} : matrice des opérations de liste', function 
       for(const [avantNom, avant] of Object.entries(AVANTS)) {
         for(const [opNom, op] of Object.entries(OPS)) {
           it(`${avantNom} puis ${opNom}`, async () => {
-            // remise à zéro : vidage (la réserve de lignes se remplit), liste de départ
+            // remise à zéro : vidage, liste de départ
             let insts = await etape('vidage', [], new Map())
             assert.equal(h._shadow.querySelectorAll('mjs-cc, mjs-cd, [mjs-mod]').length, 0, 'plus aucune ligne après vidage')
             let courante: Ligne[] = BASE
@@ -145,7 +145,7 @@ describe('<@module> dans un {for} : matrice des opérations de liste', function 
         }
       }
 
-      it('vidage puis recréation de la même liste, après un changement de composant : la réserve de lignes ne rend pas un nœud mort', async () => {
+      it('vidage puis recréation de la même liste, après un changement de composant : aucun nœud mort ne revient', async () => {
         let insts = await etape('vidage', [], new Map())
         let l: Ligne[] = BASE
         insts = await etape('départ', l, insts)

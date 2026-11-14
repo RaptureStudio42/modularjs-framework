@@ -30,20 +30,20 @@ function makeProject(prefix: string): { root: string; srcDir: string; stylesDir:
 // fixture partagée : parent → 2 enfants (balises littérales), un module `@import`-é, une
 // animation `@transition=*fade`, une feuille partagée `@css theme` — cf. § 5.1 de la conception.
 function writeFixture(p: ReturnType<typeof makeProject>, cfgExtra: Record<string, unknown> = {}): void {
-  writeFileSync(join(p.srcDir, 'util.civet'), 'export triple := (x) -> x * 3\n')
+  writeFileSync(join(p.srcDir, 'util.civet.mjs'), 'export triple := (x) -> x * 3\n')
   writeFileSync(join(p.stylesDir, 'theme.sass'), '.parent\n  color: red\n')
   writeFileSync(join(p.srcDir, 'child-a.mjs'), '<p class="child-a">A</p>\n')
   writeFileSync(join(p.srcDir, 'child-b.mjs'), '<p class="child-b">B</p>\n')
   writeFileSync(join(p.srcDir, 'app-parent.mjs'), [
-    '@import triple \'util.civet\'',
+    '@import triple \'util.civet.mjs\'',
     '',
-    '<style @css="theme"></style>',
+    '<style :css="theme"></style>',
     '<script>',
     '$show ?= true',
     '</script>',
     '',
     '<p class="triple">{triple(2)}</p>',
-    '{if $show}<p class="fade" @transition=*fade>fondu</p>{end}',
+    '{if $show}<p class="fade" :transition=*fade>fondu</p>{end}',
     '<mjs-child-a></mjs-child-a>',
     '<mjs-child-b></mjs-child-b>'
   ].join('\n'))

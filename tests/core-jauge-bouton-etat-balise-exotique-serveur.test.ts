@@ -18,7 +18,7 @@ const HOTE_ETATS = `<script>
   $objet = { a: 1 }
 </script>
 
-<form @noUJS>
+<form :noUJS>
   <@@gauge class="go" name="a1" value={$objet}></@@gauge>
   <@@gauge class="gf" name="a2" value={false}></@@gauge>
   <@@gauge class="gv" name="a3" value={''}></@@gauge>

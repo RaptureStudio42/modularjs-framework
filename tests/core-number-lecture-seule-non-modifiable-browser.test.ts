@@ -12,7 +12,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { assembler } from './helpers/editeur-riche.js'
 
-const PAGE = `<form class="f" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f" method="get" action="/envoi" :noUJS>
   <@@number class="nR" name="nR" value="5" min="0" max="10" label="Quantité lue" less-label="Moins lu" more-label="Plus lu" readonly></@@number>
   <@@number class="nG" name="nG" value="5" big readonly></@@number>
   <@@number class="nW" name="nW" value="5" min="0" max="10" label="Quantité libre" readonly="FALSE"></@@number>

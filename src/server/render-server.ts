@@ -10,7 +10,7 @@ import { readFileSync, existsSync, statSync, realpathSync, openSync, readSync, c
 import { createHash } from 'node:crypto'
 import { join, resolve, relative, isAbsolute, extname, sep, dirname, basename } from 'node:path'
 import type { MjsConfig } from '../bundler/config.js'
-import { createRenderHandler, type RenderHandler, type RenderResponse } from './render-request.js'
+import { createRenderHandler, streamedPage, type RenderHandler, type RenderResponse } from './render-request.js'
 import { resolvePage } from './render-routes.js'
 import { createServeEntry, isPlainObject } from './serve-entry.js'
 import { escapeJsonForScript } from './renderToString.js'
@@ -160,7 +160,8 @@ export function isBrowserResource(segments: string[]): boolean {
   if (noms.some(s => s === '' || s.startsWith('.') || s.includes(':') || s.includes('~') || PRIVATE_DIRS.has(s))) return false
   if (noms.length > 1 && ROOT_PRIVATE_DIRS.has(noms[0])) return false
   const nom = noms[noms.length - 1]
-  if (PRIVATE_FILES.has(nom) || /^tsconfig\..*\.json$/.test(nom) || /\.server\.[^.]+$/.test(nom)) return false
+  // un module MJS (`outil.civet.mjs`…) est une source, comme un `.civet` : jamais servi
+  if (PRIVATE_FILES.has(nom) || /^tsconfig\..*\.json$/.test(nom) || /\.server\.[^.]+$/.test(nom) || /\.(?:civet|coffee|js)\.mjs$/.test(nom)) return false
   const ext = extname(nom)
   // à la racine même : aucun JSON (`secrets.json`, `credentials.json`…), aucune entrée serveur ; un JSON que la page charge vit dans un dossier
   if (noms.length === 1 && (ext === '.json' || ROOT_SERVER_FILES.has(nom))) return false
@@ -331,9 +332,19 @@ export function isProjectRootFileServable(fichier: string, projectRoot: string, 
  *  ssr-head.ts (thème inliné, anti-flash SSR) ; chaîne vide = sortie
  *  BYTE-identique à avant pour tous les appelants existants. */
 export function shell(body: string, bundleUrl: string, lang: string = 'fr', extraScript: string = '', headExtra: string = ''): string {
+  return shellHead(lang, headExtra) + body + shellTail(bundleUrl, extraScript)
+}
+
+/** Début de `shell`, ouverture du corps comprise : ce qu'une page servie en flux envoie avant le chargeur de données et le rendu */
+export function shellHead(lang: string, headExtra: string = ''): string {
   return '<!doctype html>\n<html lang="' + lang + '">\n' +
     '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + headExtra + '</head>\n' +
-    '<body>\n' + body + '\n<script type="module" src="' + bundleUrl + '"></script>\n' + extraScript + '</body>\n</html>\n'
+    '<body>\n'
+}
+
+/** Fin de `shell` après le corps : script du bundle, `extraScript`, fermeture du document */
+export function shellTail(bundleUrl: string, extraScript: string = ''): string {
+  return '\n<script type="module" src="' + bundleUrl + '"></script>\n' + extraScript + '</body>\n</html>\n'
 }
 
 // `readBuildVersion` (+ son cache par mtime) vivait ICI, avant d'être DÉPLACÉE dans
@@ -681,33 +692,47 @@ export async function startRenderServer(
       const abortOnClose = new AbortController()
       const onReqClose = () => abortOnClose.abort()
       req.on('close', onReqClose)
+      // en-têtes de la page HTML : posés après le rendu, ou AVANT lui pour une page servie en flux (statut 200, mode de la page)
+      const pageHeaders = (status: number, mode: string | undefined, retryAfter?: number): void => {
+        res.statusCode = status
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.setHeader('X-MJS-Mode', mode || 'csr')
+        res.setHeader('Vary', 'X-MJS-Nav')
+        // Même en-tête que `mjs dev` (server/index.ts) : status 503 seulement, avec le
+        // délai suggéré posé par le handler (RenderGate, render-request.ts) — manquait ICI jusque-là.
+        if (status === 503 && retryAfter) res.setHeader('Retry-After', String(retryAfter))
+        // même en-tête que les 2 branches JSON : sans lui, un client qui navigue en mode
+        // HTML ne peut jamais détecter un nouveau build (cf. readBuildVersion plus haut).
+        const version = readBuildVersion(manifestPath)
+        if (version) res.setHeader('X-MJS-Version', version)
+        // NEUF — même règle que la fiche JSON (navExtras) : la page qui ARRIVE en HTML la porte
+        // aussi, posée SEULEMENT si configurée (Vary INCHANGÉ : la variation dépend de la requête
+        // X-MJS-Nav, pas de ces en-têtes fixes issus de la config).
+        const extras = navExtras(config.render)
+        if (extras.target) res.setHeader('X-MJS-Target', extras.target)
+        if (extras.method) res.setHeader('X-MJS-Method', extras.method)
+        if (extras.cache) res.setHeader('X-MJS-Cache', extras.cache)
+      }
+      const lang    = config.i18n?.default || 'fr'
+      // page servie en flux (`stream`) : statut, en-têtes et coquille partent dès son entrée dans la file de rendu, avant le chargeur
+      // de données et le rendu (`onShell`, cf. RenderHandler.handle) ; file pleine, le 503 d'un bloc
+      const enFlux  = streamedPage(config.render, req.method, pathname, req.headers as any)
+      let coquille  = false
+      const onShell = enFlux ? (): void => {
+        coquille = true
+        pageHeaders(200, enFlux.mode)
+        res.write(shellHead(lang, buildSsrHead(config, configDir, manifestPath)))
+      } : undefined
       let r: RenderResponse
       try {
         // `loadProps` : même chargeur (entry.propsFor) que la balise __mjs_res plus bas — transmis
         // ICI pour que le RENDU SSR lui-même affiche déjà la donnée chargée (cf. RenderResponse.
         // resProps, réutilisé plus bas SANS rappeler propsFor une 2e fois pour la même requête).
-        r = await handler.handle(pathname, req.headers as any, abortOnClose.signal, () => entry.propsFor(pathname, req))
+        r = await handler.handle(pathname, req.headers as any, abortOnClose.signal, () => entry.propsFor(pathname, req), onShell)
       } finally {
         req.off('close', onReqClose)
       }
-      res.statusCode = r.status
-      res.setHeader('Content-Type', 'text/html; charset=utf-8')
-      res.setHeader('X-MJS-Mode', r.mode || 'csr')
-      res.setHeader('Vary', 'X-MJS-Nav')
-      // Même en-tête que `mjs dev` (server/index.ts) : status 503 seulement, avec le
-      // délai suggéré posé par le handler (RenderGate, render-request.ts) — manquait ICI jusque-là.
-      if (r.status === 503 && r.retryAfter) res.setHeader('Retry-After', String(r.retryAfter))
-      // même en-tête que les 2 branches JSON : sans lui, un client qui navigue en mode
-      // HTML ne peut jamais détecter un nouveau build (cf. readBuildVersion plus haut).
-      const version = readBuildVersion(manifestPath)
-      if (version) res.setHeader('X-MJS-Version', version)
-      // NEUF — même règle que la fiche JSON (navExtras) : la page qui ARRIVE en HTML la porte
-      // aussi, posée SEULEMENT si configurée (Vary INCHANGÉ : la variation dépend de la requête
-      // X-MJS-Nav, pas de ces en-têtes fixes issus de la config).
-      const extras = navExtras(config.render)
-      if (extras.target) res.setHeader('X-MJS-Target', extras.target)
-      if (extras.method) res.setHeader('X-MJS-Method', extras.method)
-      if (extras.cache) res.setHeader('X-MJS-Cache', extras.cache)
+      if (!coquille) pageHeaders(r.status, r.mode, r.retryAfter)
       // µres plein dès le 1er chargement HTML : DÉJÀ résolu par `handler.handle` ci-dessus
       // (`loadProps`, même chargeur entry.propsFor, appelé UNE seule fois pour cette requête — la
       // fusion dans le rendu SSR lui-même vit dans render-request.ts) — jamais de 500 pour un
@@ -718,11 +743,17 @@ export async function startRenderServer(
       const body = r.kind === 'csr'
         ? (r.component ? '<' + r.component + '></' + r.component + '>' : '<!-- mjs: csr -->')
         : r.body
-      res.end(shell((resTag ? resTag + '\n' : '') + body, '/__mjs/bundle.js', config.i18n?.default || 'fr', '', buildSsrHead(config, configDir, manifestPath)))
+      const contenu = (resTag ? resTag + '\n' : '') + body
+      // page en flux : le reste part derrière la coquille, page d'erreur comprise (statut 200 déjà parti, cf. streamedPage)
+      if (coquille) res.end(contenu + shellTail('/__mjs/bundle.js'))
+      else res.end(shell(contenu, '/__mjs/bundle.js', lang, '', buildSsrHead(config, configDir, manifestPath)))
     } catch (e: any) {
       console.error(t('server.erreur-imprevue', { url: req.url || '/', erreur: e && e.message ? e.message : String(e) }))
       // (point 1 de capture — dernier filet, quelle qu'en soit la cause).
       recordServer({ message: e && e.message ? e.message : String(e), pile: e && e.stack, url: req.url || '/' })
+      // coquille d'une page en flux déjà partie (seul chemin qui écrit sans terminer) : plus aucune réponse d'erreur possible,
+      // connexion coupée
+      if (res.headersSent && !res.writableEnded) { res.destroy(); return }
       res.statusCode = 500
       res.end('Internal Server Error')
     }

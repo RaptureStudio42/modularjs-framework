@@ -56,7 +56,7 @@ ${SCRIPT_CLE}
 </script>
 <div class="lignes">
   {for it in $liste by id}
-    <p class="l" @style.color={it.id === $sel ? it.couleur : ''} @style.outline-color={it.code === $code ? it.couleur : ''}><b class="id">{it.id}</b></p>
+    <p class="l" :style.color={it.id === $sel ? it.couleur : ''} :style.outline-color={it.code === $code ? it.couleur : ''}><b class="id">{it.id}</b></p>
   {end}
 </div>
 ${PRET}
@@ -71,12 +71,12 @@ ${SCRIPT_CLE}
 </script>
 <div class="lignes">
   {for it in $liste by id}
-    <p class="l" @class{it.id === $sel}="actif" @class{it.code === $code}="code"><b class="id">{it.id}</b></p>
+    <p class="l" :class{it.id === $sel}="actif" :class{it.code === $code}="code"><b class="id">{it.id}</b></p>
   {end}
 </div>
 <div class="noms">
   {for t in $noms}
-    <a class="n" @class{t === $nom}="on"><b class="id">{t}</b></a>
+    <a class="n" :class{t === $nom}="on"><b class="id">{t}</b></a>
   {end}
 </div>
 ${PRET}
@@ -99,7 +99,7 @@ ${PRET}
 </div>
 <div class="noms">
   {for t in $noms}
-    <p class="p" data-x={t === $nom ? 'oui' : ''} @style.color={t === $nom ? 'red' : ''}><b class="id">{t}</b></p>
+    <p class="p" data-x={t === $nom ? 'oui' : ''} :style.color={t === $nom ? 'red' : ''}><b class="id">{t}</b></p>
   {end}
 </div>
 ${PRET}
@@ -151,8 +151,8 @@ ${PRET}
   @choisir = (n)-> $sel = n
 </script>
 <div class="a">{for it in $liste by id}<i data-h={it.id === $sel ? it.h : ''}></i>{end}</div>
-<div class="s">{for it in $liste by id}<i @style.color={it.id === $sel ? 'red' : ''}></i>{end}</div>
-<div class="c">{for it in $liste by id}<i @class{it.id === $sel}="actif"></i>{end}</div>
+<div class="s">{for it in $liste by id}<i :style.color={it.id === $sel ? 'red' : ''}></i>{end}</div>
+<div class="c">{for it in $liste by id}<i :class{it.id === $sel}="actif"></i>{end}</div>
 ${PRET}
 `
 }
@@ -555,7 +555,7 @@ describe('dispatch filtré d\'une ligne de {for} : le code émis ne grossit que 
   // refaite à chaque passe) ; `lache` : la ligne lâche l'entrée de son ancienne clé
   const forme = async (gabarit: string) => {
     const sortie = await emis(gabarit)
-    return { filtree: /_mjs_filterFns/.test(sortie), garde: /if \(__f0 === void 0 \|\| __idx\.get\(__k\) !== __f0\)/.test(sortie), lache: /_mjs_pk/.test(sortie) }
+    return { filtree: /__nodes\._mjs_ff\b|_mjs_filterFns/.test(sortie), garde: /if \(__f0 === void 0 \|\| __idx\.get\(__k\) !== __f0\)/.test(sortie), lache: /_mjs_pk/.test(sortie) }
   }
 
   type Attendu = { garde?: boolean, lache: boolean }
@@ -574,10 +574,10 @@ describe('dispatch filtré d\'une ligne de {for} : le code émis ne grossit que 
 
   it('@class : la ligne lâche son ancienne clé seulement si le champ filtré n\'est pas la clé du by (ou sans by)', async () => {
     await verifierFormes({
-      'filtre sur la clé du by':      ['{for it in $liste by id}<p @class{it.id === $sel}="a">{it.id}</p>{end}', { lache: false }],
-      'filtre sur un autre champ':    ['{for it in $liste by id}<p @class{it.code === $sel}="a">{it.id}</p>{end}', { lache: true }],
-      'boucle sans by':               ['{for it in $liste}<p @class{it.id === $sel}="a">{it.id}</p>{end}', { lache: true }],
-      'valeurs simples sans by':      ['{for t in $noms}<p @class{t === $nom}="a">{t}</p>{end}', { lache: true }]
+      'filtre sur la clé du by':      ['{for it in $liste by id}<p :class{it.id === $sel}="a">{it.id}</p>{end}', { lache: false }],
+      'filtre sur un autre champ':    ['{for it in $liste by id}<p :class{it.code === $sel}="a">{it.id}</p>{end}', { lache: true }],
+      'boucle sans by':               ['{for it in $liste}<p :class{it.id === $sel}="a">{it.id}</p>{end}', { lache: true }],
+      'valeurs simples sans by':      ['{for t in $noms}<p :class{t === $nom}="a">{t}</p>{end}', { lache: true }]
     })
   })
 
@@ -602,20 +602,20 @@ describe('dispatch filtré d\'une ligne de {for} : le code émis ne grossit que 
 
   it('@style : mêmes règles que l\'attribut', async () => {
     await verifierFormes({
-      'by, valeur constante':                       ['{for it in $liste by id}<p @style.color={it.id === $sel ? \'red\' : \'\'}>{it.id}</p>{end}', { garde: true, lache: false }],
-      'by, valeur = un autre champ':                ['{for it in $liste by id}<p @style.color={it.id === $sel ? it.couleur : \'\'}>{it.id}</p>{end}', { garde: false, lache: false }],
-      'autre champ, valeur constante':              ['{for it in $liste by id}<p @style.color={it.code === $sel ? \'red\' : \'\'}>{it.id}</p>{end}', { garde: true, lache: true }],
-      'autre champ, valeur = un autre champ':       ['{for it in $liste by id}<p @style.color={it.code === $sel ? it.couleur : \'\'}>{it.id}</p>{end}', { garde: false, lache: true }]
+      'by, valeur constante':                       ['{for it in $liste by id}<p :style.color={it.id === $sel ? \'red\' : \'\'}>{it.id}</p>{end}', { garde: true, lache: false }],
+      'by, valeur = un autre champ':                ['{for it in $liste by id}<p :style.color={it.id === $sel ? it.couleur : \'\'}>{it.id}</p>{end}', { garde: false, lache: false }],
+      'autre champ, valeur constante':              ['{for it in $liste by id}<p :style.color={it.code === $sel ? \'red\' : \'\'}>{it.id}</p>{end}', { garde: true, lache: true }],
+      'autre champ, valeur = un autre champ':       ['{for it in $liste by id}<p :style.color={it.code === $sel ? it.couleur : \'\'}>{it.id}</p>{end}', { garde: false, lache: true }]
     })
   })
 
-  it('filtre sur la clé du by : le code émis est celui d\'avant, à l\'octet (classe, attribut, style)', async () => {
-    const classe   = await emis('{for it in $liste by id}<p @class{it.id === $sel}="a">{it.id}</p>{end}')
+  it('filtre sur la clé du by : le code émis est le plus court, clé et fonction en champs directs sur la ligne (classe, attribut, style)', async () => {
+    const classe   = await emis('{for it in $liste by id}<p :class{it.id === $sel}="a">{it.id}</p>{end}')
     const attribut = await emis('{for it in $liste by id}<p data-k={it.id === $sel ? \'oui\' : \'\'}>{it.id}</p>{end}')
-    const style    = await emis('{for it in $liste by id}<p @style.color={it.id === $sel ? \'red\' : \'\'}>{it.id}</p>{end}')
-    const queue    = String.raw`\(_mjsThis\._mjs_filtIdxKeys \?\?= new Set\(\)\)\.add\('[^']+'\); \(__nodes\._mjs_filterKeys \?\?= \{\}\)\['[^']+'\] = __k; \} \}`
-    const corps    = String.raw`const __fns = \(__nodes\._mjs_filterFns \?\?= \{\}\); const __f0 = __fns\['[^']+'\]; if \(__f0 === void 0 \|\| __idx\.get\(__k\) !== __f0\) \{ const __f = \(_mjs_match\) => \{ let _mjs_node = _mjs_n\w+; if \(_mjs_match\) \{ [^;]+; \} else \{ [^;]+; \} \}; __idx\.set\(__k, __f\); __fns\['[^']+'\] = __f; \} `
-    assert.match(classe, new RegExp(String.raw`const __fns = \(__nodes\._mjs_filterFns \?\?= \{\}\); if \(__fns\['[^']+'\] === void 0 \|\| __idx\.get\(__k\) !== _mjs_n\w+\) \{ __idx\.set\(__k, _mjs_n\w+\); __fns\['[^']+'\] = _mjs_n\w+; \} ` + queue), 'classe')
+    const style    = await emis('{for it in $liste by id}<p :style.color={it.id === $sel ? \'red\' : \'\'}>{it.id}</p>{end}')
+    const queue    = String.raw`__nodes\._mjs_fk = __k; \} \}`
+    const corps    = String.raw`const __f0 = __nodes\._mjs_ff; if \(__f0 === void 0 \|\| __idx\.get\(__k\) !== __f0\) \{ const __f = \(_mjs_match\) => \{ let _mjs_node = _mjs_n\w+; if \(_mjs_match\) \{ [^;]+; \} else \{ [^;]+; \} \}; __idx\.set\(__k, __f\); __nodes\._mjs_ff = __f; \} `
+    assert.match(classe, new RegExp(String.raw`if \(__nodes\._mjs_ff === void 0 \|\| __idx\.get\(__k\) !== _mjs_n\w+\) \{ __idx\.set\(__k, _mjs_n\w+\); __nodes\._mjs_ff = _mjs_n\w+; \} ` + queue), 'classe')
     assert.match(attribut, new RegExp(corps + queue), 'attribut')
     assert.match(style, new RegExp(corps + queue), 'style')
   })

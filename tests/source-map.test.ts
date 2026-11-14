@@ -35,7 +35,7 @@ describe('transpiler/source-map', () => {
     ].join('\n')
     const sections = extractSections(mjs)
     assert.equal(sections.script.lang, 'civet')
-    const { code, map } = await civetAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.civet' })
+    const { code, map } = await civetAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.civet.mjs' })
     assert.ok(map, 'civet ne remonte aucune carte')
     const shifted = shiftSourceMapLines(map!, sections.script.startLine - 1)
     const genPos = lineColOf(code, 'boom')
@@ -56,7 +56,7 @@ describe('transpiler/source-map', () => {
     ].join('\n')
     const sections = extractSections(mjs)
     assert.equal(sections.script.lang, 'coffee')
-    const { code, map } = await coffeeAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.coffee' })
+    const { code, map } = await coffeeAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.coffee.mjs' })
     assert.ok(map, 'coffee ne remonte aucune carte')
     const shifted = shiftSourceMapLines(map!, sections.script.startLine - 1)
     const genPos = lineColOf(code, 'boom = a + b')
@@ -109,7 +109,7 @@ describe('transpiler/source-map', () => {
       '</script>',
     ].join('\n')
     const sections = extractSections(mjs)
-    const { code, map } = await civetAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.civet' })
+    const { code, map } = await civetAdapter.compileToJs(sections.script.raw, { fileName: 'fixture.civet.mjs' })
     assert.ok(map)
     const wrongOffset = sections.script.startLine - 1 + 1  // offset volontairement FAUX
     const shifted = shiftSourceMapLines(map!, wrongOffset)

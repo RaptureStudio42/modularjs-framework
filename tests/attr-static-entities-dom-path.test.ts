@@ -44,7 +44,7 @@ $p = Promise.resolve(1)
 <p>...</p>
 {success x}
 <b id="case-a" title="a &amp; b &#123;x&#125; &quot;q&quot;" data-y={x}>t</b>
-<button id="case-c" @confirm={ text: 'Supprimer ?', ok: 'Oui', cancel: 'Non' } data-y={x}>x</button>
+<button id="case-c" :confirm={ text: 'Supprimer ?', ok: 'Oui', cancel: 'Non' } data-y={x}>x</button>
 <b id="case-d" title="a & b" data-y={x}>t</b>
 {error err2}
 <p>err</p>

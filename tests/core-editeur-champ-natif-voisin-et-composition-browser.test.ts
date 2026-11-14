@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs'
 import { terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { construire, type Build, type Construction } from './helpers/editeur-riche.js'
 
-const PAGE = `<form class="f" @noUJS>
+const PAGE = `<form class="f" :noUJS>
   <label>Titre <input class="titre" name="titre"></label>
   <@@editor class="ea" name="a" value="<p>Alpha</p>" toolbar="none"></@@editor>
   <@@editor class="eb" name="b" value="<p>Beta</p>" toolbar="none"></@@editor>

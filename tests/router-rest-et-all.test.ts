@@ -90,16 +90,17 @@ describe('routeur — joker * : &rest (chaîne) et &all (tableau)', function () 
       const outDir = join(root, 'out')
       mkdirSync(srcDir, { recursive: true })
 
-      // route auto-référencée (pas de `<@view>` déclarée ici → aucune injection,
-      // aucun risque de montage récursif) : seul le fait d'être « router-aware »
+      // la route sert une page vide dans la vue `main` (une route dont la vue n'existe nulle part est refusée à la construction ;
+      // servir le composant lui-même dans sa propre vue le monterait sans fin) : seul le fait d'être « router-aware »
       // (présence de `@routes`) compte pour peupler µ.url.params.
       // @routes exige le marqueur .page.mjs sur son hôte ; l'identité
       // du composant (tag mjs-route-rest-all, préfixe du fichier haché) survit au stripping.
+      writeFileSync(join(srcDir, 'page-docs.mjs'), '<p class="docs">docs</p>\n')
       writeFileSync(join(srcDir, 'route-rest-all.page.mjs'), `
 <script lang="coffee">
 @routes =
   'main':
-    '/docs/*': 'route-rest-all'
+    '/docs/*': 'page-docs'
 </script>
 <p class="rest">{&rest}</p>
 <ul class="all">
@@ -107,6 +108,7 @@ describe('routeur — joker * : &rest (chaîne) et &all (tableau)', function () 
 <li class="seg">{seg}</li>
 {end}
 </ul>
+<@view main>
 `)
 
       const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })

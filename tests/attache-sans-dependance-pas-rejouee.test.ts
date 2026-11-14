@@ -62,7 +62,7 @@ const HOUSE = `<script>
     -> log('nettoyage')
 </script>
 
-<div class="house" @class{&room}="in-room" @attach={keep(_node)}>
+<div class="house" :class{&room}="in-room" :attach={keep(_node)}>
   {if &room}<a class="back" href="#/house">retour</a>{end}
   <h1>{&room or 'hall'}</h1>
 </div>
@@ -75,7 +75,7 @@ const PARAM = `<script>
     -> log('nettoyage ' + room)
 </script>
 
-<div class="tracked" @attach={track(&room or 'hall')}>{&room or 'hall'}</div>
+<div class="tracked" :attach={track(&room or 'hall')}>{&room or 'hall'}</div>
 `
 
 const ELSEWHERE = `<p class="other">ailleurs</p>
@@ -95,11 +95,11 @@ const LOCAL = `<script>
     -> log('nettoyage bulle ' + text)
 </script>
 
-<div class="root" @attach={mark('racine')}>{$n}</div>
-{if $show}<div class="branch" @attach={mark('branche')}>{$n}</div>{end}
-<ul>{for it in $items by id}<li @attach={mark('ligne')}>{it.id} {$n}</li>{end}</ul>
-<p class="tip" @attach={tip($msg)}>{$n}</p>
-{key $n}<i class="keyed" @attach={mark('cle')}></i>{end}
+<div class="root" :attach={mark('racine')}>{$n}</div>
+{if $show}<div class="branch" :attach={mark('branche')}>{$n}</div>{end}
+<ul>{for it in $items by id}<li :attach={mark('ligne')}>{it.id} {$n}</li>{end}</ul>
+<p class="tip" :attach={tip($msg)}>{$n}</p>
+{key $n}<i class="keyed" :attach={mark('cle')}></i>{end}
 `
 
 describe('@attach sans dépendance : une pose par balise, pas de rejeu à chaque rendu', function () {

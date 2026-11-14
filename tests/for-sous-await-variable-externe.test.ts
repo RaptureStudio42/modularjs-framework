@@ -47,7 +47,7 @@ const PAGE = `<script>
 </script>
 
 <div class="host">
-{await $p}{success d}{for x in d.items by id}<i class="x" data-t={d.title + $q} title="{x.name}-{$q}" @class{$q is 5}="cinq">{d.title}-{x.name}-{$q}</i>{end}{end}
+{await $p}{success d}{for x in d.items by id}<i class="x" data-t={d.title + $q} title="{x.name}-{$q}" :class{$q is 5}="cinq">{d.title}-{x.name}-{$q}</i>{end}{end}
 </div>
 `
 

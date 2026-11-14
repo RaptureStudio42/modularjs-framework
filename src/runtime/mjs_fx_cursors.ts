@@ -222,7 +222,7 @@ function _mjsCursorsReach(el) {
   };
   var nodeAt = function(path) {
     var n = zone;
-    for (var i = 0; n && i < path.length; i++) n = path[i] === -1 ? n._shadow || n.shadowRoot : n.childNodes[path[i]];
+    for (var i = 0; n && i < path.length; i++) n = path[i] === -1 ? µ._mjs_shadowOf(n) : n.childNodes[path[i]];
     return n || null;
   };
   // la balise la plus profonde sous un point, jusque dans les composants (µ.elementAt)
@@ -266,7 +266,7 @@ function _mjsCursorsReach(el) {
   // la balise active, jusque dans les composants
   var active = function() {
     var a = document.activeElement;
-    for (var sh = a && (a._shadow || a.shadowRoot); sh && sh.activeElement; sh = a._shadow || a.shadowRoot) a = sh.activeElement;
+    for (var sh = a && µ._mjs_shadowOf(a); sh && sh.activeElement; sh = µ._mjs_shadowOf(a)) a = sh.activeElement;
     return a;
   };
   var onFocus = function() {
@@ -297,7 +297,7 @@ function _mjsCursorsReach(el) {
       for (var i = 0; i < 2; i++) {
         var c  = ends[i][0];
         var h  = c.nodeType === 1 || c.nodeType === 11 ? c.childNodes[ends[i][1] + ends[i][2]] : null;
-        var sh = h && (h._shadow || h.shadowRoot);
+        var sh = h && µ._mjs_shadowOf(h);
         if (sh && roots.indexOf(sh) < 0) {
           roots.push(sh);
           plus = true;
@@ -413,7 +413,7 @@ function _mjsCursorsReach(el) {
       d.wrap.style.setProperty('--c', colorOf(id));
       d.wrap.style.setProperty('--c2', colorOf(id, 0.25));
       d.cur.setAttribute('mjs-fx-cursor', '');
-      d.cur.innerHTML = '<svg viewBox="0 0 18 18"><path d="M2 1.5l6 15 2.4-6.1 6.1-2.4z" fill="currentColor" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg><b></b>';
+      d.cur.innerHTML = µ._mjs_th('<svg viewBox="0 0 18 18"><path d="M2 1.5l6 15 2.4-6.1 6.1-2.4z" fill="currentColor" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg><b></b>');
       d.wrap.appendChild(d.cur);
       layer.appendChild(d.wrap);
     }

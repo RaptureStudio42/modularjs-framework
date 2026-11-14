@@ -9,7 +9,7 @@
   num      = (v, d)-> if v? and v !== '' and isFinite(Number(v)) then Number(v) else d
 </script>
 
-<div class="scene" part="scene" @class{boolAttr($hue)}="hue" --mjs-cube-size={num($size, 200) + 'px'} --mjs-cube-height={num($height, 50) + 'px'} --mjs-cube-color={$color} --mjs-cube-speed={num($speed, 4) + 's'}>
+<div class="scene" part="scene" :class{boolAttr($hue)}="hue" --mjs-cube-size={num($size, 200) + 'px'} --mjs-cube-height={num($height, 50) + 'px'} --mjs-cube-color={$color} --mjs-cube-speed={num($speed, 4) + 's'}>
   <div class="cube">
     <div class="top">
       <span class="icon" part="icon"><slot></slot></span>
@@ -23,7 +23,7 @@
   </div>
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .scene
     display: grid
     place-items: center

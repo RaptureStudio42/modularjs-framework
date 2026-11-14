@@ -70,7 +70,7 @@ ${STYLE}
 </script>
 <@@sortable class="liste" value=!{$etapes} @sort={keep(e)}>
   {for et in $etapes by id}
-    <div class="ligne" data-id={et.id} @out=*fade(duration: 1500ms)><span class="t">{et.titre}</span> <button class="bt" @click={retire(et.id)}>x</button></div>
+    <div class="ligne" data-id={et.id} :out=*fade(duration: 1500ms)><span class="t">{et.titre}</span> <button class="bt" @click={retire(et.id)}>x</button></div>
   {end}
 </@@sortable>
 <p class="ordre">{ids($etapes)}</p>

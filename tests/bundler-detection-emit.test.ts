@@ -57,7 +57,7 @@ describe('mjs_emit.ts — détaché du cœur, build RÉEL', function () {
 
   it('directive @emit.NOM= seule : PRÉSENT', async function () {
     const { outDir } = await buildProject({ runtime: [] }, {
-      'hop.mjs': ['<script>$n = 1</script>', '<p @emit.saved={$n}>x</p>'].join('\n'),
+      'hop.mjs': ['<script>$n = 1</script>', '<p :emit.saved={$n}>x</p>'].join('\n'),
     })
     const core = coreContent(outDir)
     assert.ok(core.includes(MARK_EMIT), '@emit.saved doit embarquer mjs_emit.ts')

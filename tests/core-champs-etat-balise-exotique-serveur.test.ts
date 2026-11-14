@@ -16,7 +16,7 @@ const HOTE_ETATS = `<script>
   $objet = { a: 1 }
 </script>
 
-<form @noUJS>
+<form :noUJS>
   <@@number class="no" name="a1" value={$objet}></@@number>
   <@@number class="nf" name="a2" value={false}></@@number>
   <@@number class="nv" name="a3" value={''}></@@number>
@@ -40,7 +40,7 @@ const HOTE_EXOTIQUE = `<script>
   $gros = Array.from({ length: 300 }, (_, i) => ({ id: i, label: 'option numéro ' + i }))
 </script>
 
-<form @noUJS>
+<form :noUJS>
   <@@select class="mc" name="m1" multiple value={$liste}><@@option value="a">A</@@option></@@select>
   <@@select class="mb" name="m2" multiple value={$grands}><@@option value="a">A</@@option></@@select>
   <@@select class="mg" name="m3" multiple value={$gros}><@@option value="a">A</@@option></@@select>

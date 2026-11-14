@@ -28,7 +28,7 @@ describe('generator/paths.ts — détection mjs-light ignore le texte des attrib
   })
 
   it('non-régression — un vrai @lightDom force toujours le mode léger, même à côté du même piège', async () => {
-    const output = await compileSuccessBranch('@lightDom title="Astuce : mjs-light desactive le shadow DOM"')
+    const output = await compileSuccessBranch(':lightDom title="Astuce : mjs-light desactive le shadow DOM"')
     assert.match(output, /µ\._mjs_lightNext = "mjs-card"/)
   })
 })

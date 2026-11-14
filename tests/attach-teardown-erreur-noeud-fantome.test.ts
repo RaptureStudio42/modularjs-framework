@@ -21,6 +21,7 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -33,7 +34,7 @@ const stripEsm = (s: string) => s
 
 describe('mjs_destroy_hooks.ts — un teardown qui lève ne bloque plus le retrait du nœud (unitaire)', function () {
   it('_mjs_destroyWithHooks : le teardown lève, le nœud est retiré quand même, aucun rejet, l\'erreur part par µ.error', async () => {
-    const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf-8')
+    const initSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
       .replace(/export\s*\{[^}]*\}/, '')
     const destroyHooksSrc = readFileSync(join(__dirname, '../src/runtime/mjs_destroy_hooks.ts'), 'utf-8')
 
@@ -118,8 +119,8 @@ setupB = (_node) ->
 <button class="toggle" @click={$show = not $show}>toggle</button>
 {if $show}
   <div class="wrapper">
-    <canvas class="a" @attach={setupA}></canvas>
-    <canvas class="b" @attach={setupB}></canvas>
+    <canvas class="a" :attach={setupA}></canvas>
+    <canvas class="b" :attach={setupB}></canvas>
   </div>
 {else}
   <p class="else-branch">gone</p>
@@ -165,7 +166,7 @@ setupA = (_node) ->
 
 <button class="toggle" @click={$k = 2}>toggle</button>
 {key $k}
-  <div class="wrapper"><canvas class="a" @attach={setupA}></canvas></div>
+  <div class="wrapper"><canvas class="a" :attach={setupA}></canvas></div>
 {end}
 `
     const rejections: any[] = []

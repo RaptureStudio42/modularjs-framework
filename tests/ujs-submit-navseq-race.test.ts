@@ -106,6 +106,7 @@ describe('mjs_ujs — submit ajax : jeton _mjs_navSeq anti-course', function () 
       history: { pushState: (_s: any, _t: any, url: string) => pushStateCalls.push(url) },
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       log() {}, warn() {}, error() {},
       realTarget: (e: any) => e.target,
       _mjs_navSeq: 0,
@@ -157,6 +158,7 @@ describe('mjs_ujs — submit ajax : jeton _mjs_navSeq anti-course', function () 
       history: { pushState: (_s: any, _t: any, url: string) => pushStateCalls.push(url) },
     }
     const µ: any = {
+      _mjs_th: (html: string) => html,
       log() {}, warn() {}, error() {},
       realTarget: (e: any) => e.target,
       _mjs_navSeq: 0,

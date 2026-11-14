@@ -29,11 +29,11 @@
       el.style.removeProperty('--mjs-deck-i')
 </script>
 
-<div class="deck" part="deck" @class{µlayout is 'spread'}="spread" @class{µlayout isnt 'spread'}="fan" --mjs-deck-w={num($width, 240) + 'px'} --mjs-deck-h={num($height, 320) + 'px'} --mjs-deck-gap={$gapPx} --mjs-deck-angle={num($angle, 5) + 'deg'} --mjs-deck-color={$color}>
-  <slot @this=!{slotRef}></slot>
+<div class="deck" part="deck" :class{µlayout is 'spread'}="spread" :class{µlayout isnt 'spread'}="fan" --mjs-deck-w={num($width, 240) + 'px'} --mjs-deck-h={num($height, 320) + 'px'} --mjs-deck-gap={$gapPx} --mjs-deck-angle={num($angle, 5) + 'deg'} --mjs-deck-color={$color}>
+  <slot :this=!{slotRef}></slot>
 </div>
 
-<style @display="block">
+<style :display="block">
   // contexte d'empilement propre : les cartes du fond (z-index négatif, layout spread) passaient sous le
   // fond d'une section ou d'une carte qui contient le paquet
   .deck

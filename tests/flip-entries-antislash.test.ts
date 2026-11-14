@@ -40,13 +40,13 @@ describe('@flip — découpage des champs : échappement dans les chaînes', fun
   }
 
   it("antislash DOUBLÉ en fin de chaîne : la chaîne se referme, les champs suivants survivent", async () => {
-    const r = await compileComp(liste("@flip={easing: 'a\\\\', duration: 300}"))
+    const r = await compileComp(liste(":flip={easing: 'a\\\\', duration: 300}"))
     assert.deepEqual(r.errors, [], 'la chaîne doit se refermer sur son guillemet, pas avaler la suite')
     assert.match(r.code!, /setAttribute\("mjs-flip", "300"\)/, 'le champ APRÈS la chaîne piégée reste lu')
   })
 
   it("apostrophe ÉCHAPPÉE : la chaîne continue, la virgule interne ne sépare rien", async () => {
-    const r = await compileComp(liste("@flip={easing: 'a\\', b', duration: 300}"))
+    const r = await compileComp(liste(":flip={easing: 'a\\', b', duration: 300}"))
     assert.deepEqual(r.errors, [])
     assert.match(r.code!, /setAttribute\("mjs-flip", "300"\)/)
   })

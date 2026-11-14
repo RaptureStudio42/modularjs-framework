@@ -43,13 +43,13 @@ const AVEC = [
   ...TITRES.map((c, i) => `<p class="${c}" *titre${i === 1 ? '(speed: 20)' : ''}>${TEXTES[i]}</p>`),
   ...VERRES.map((c, i) => `<img class="${c}" src="${PIXEL}" alt="" *verre${i === 1 ? '(blur: 9)' : ''}>`),
   ...NETS.map((c) => `<img class="${c}" src="${PIXEL}" alt="" *filter.net>`),
-  ...ENTREES.map((c) => `<p class="${c}" @in=*fade.lent(duration: 3s)>GHI</p>`)
+  ...ENTREES.map((c) => `<p class="${c}" :in=*fade.lent(duration: 3s)>GHI</p>`)
 ].join('\n')
 const SANS = [
   ...TITRES.map((c, i) => `<p class="${c}" *scramble(${i === 1 ? 20 : 311}, on: load)>${TEXTES[i]}</p>`),
   ...VERRES.map((c, i) => `<img class="${c}" src="${PIXEL}" alt="" *filter(none, blur: ${i === 1 ? 9 : 6}, spot: 240, soft: 100)>`),
   ...NETS.map((c) => `<img class="${c}" src="${PIXEL}" alt="" *filter(sepia, amount: 0.5)>`),
-  ...ENTREES.map((c) => `<p class="${c}" @in=*fade(duration: 3s)>GHI</p>`)
+  ...ENTREES.map((c) => `<p class="${c}" :in=*fade(duration: 3s)>GHI</p>`)
 ].join('\n')
 
 for (const nom of ['chromium', 'firefox', 'webkit'] as const) {

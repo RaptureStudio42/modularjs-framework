@@ -68,6 +68,7 @@ describe("mjs_ujs — popstate (cache miss réseau) : le contenant swappé doit 
 
     let capturedSuccess: any
     const µ: any = {
+      _mjs_th: (html: string) => html,
       _mjs_lastUjsPath: '/a', _mjs_navSeq: 0,
       pageCache: { has: () => false, get: () => null, set() {} },
       _mjs_saveScroll() {}, _mjs_restoreScroll() {},

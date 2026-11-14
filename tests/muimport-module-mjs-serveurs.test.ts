@@ -13,15 +13,15 @@ import { fileURLToPath } from 'node:url'
 import { mjsTmp } from './helpers/tmp.js'
 
 const PARTAGE = "window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := 'partage'\nexport compteur := { n: 0 }\n"
-const BOUGIE  = "@import marque 'partage.module.civet'\n@import compteur 'partage.module.civet'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
-const HOTE    = ["@import compteur 'partage.module.civet'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
-const HOTE_SANS = ["@import compteur 'partage.module.civet'", '', '<script>', '  $dessin = \'rien\'', '  @charger = -> $dessin = \'ok\'', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
+const BOUGIE  = "@import marque 'partage.module.civet.mjs'\n@import compteur 'partage.module.civet.mjs'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
+const HOTE    = ["@import compteur 'partage.module.civet.mjs'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet.mjs')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
+const HOTE_SANS = ["@import compteur 'partage.module.civet.mjs'", '', '<script>', '  $dessin = \'rien\'', '  @charger = -> $dessin = \'ok\'', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
 
 const racine = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 function projet(nom: string, js: 'split' | 'bundle', lazy: boolean): string {
   const root = mjsTmp(nom)
-  const fichiers: Record<string, string> = { 'src/hote.mjs': lazy ? HOTE : HOTE_SANS, 'src/moteurs/bougie.module.civet': BOUGIE, 'src/partage.module.civet': PARTAGE }
+  const fichiers: Record<string, string> = { 'src/hote.mjs': lazy ? HOTE : HOTE_SANS, 'src/moteurs/bougie.module.civet.mjs': BOUGIE, 'src/partage.module.civet.mjs': PARTAGE }
   for (const [chemin, contenu] of Object.entries(fichiers)) {
     mkdirSync(dirname(join(root, chemin)), { recursive: true })
     writeFileSync(join(root, chemin), contenu)

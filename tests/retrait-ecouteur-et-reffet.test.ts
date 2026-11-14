@@ -12,7 +12,8 @@
 // ou par le code de l'appli, elle retire ; une fabrique rendue (`@click={fabrique(2)}`, `@mouseenter={fabrique(3)}`)
 // est toujours appelée. Écrit en dernier dans un reffet (`µeffect -> µon 'scroll', f`), `µon` rend son nettoyage : les
 // écouteurs ne s'empilent plus d'un passage à l'autre. L'exemple de la doc (`arreter := µeffect …`, `pause`) compile
-// sans avertissement, ne repose son intervalle qu'au changement de `$delai`, jamais à chaque tour, et la pause l'arrête.
+// sans avertissement, ne repose son `µevery` qu'au changement de `$delai`, jamais à chaque tour, coupe l'ancien par son
+// nettoyage (sa main d'arrêt), et la pause l'arrête.
 
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -432,14 +433,15 @@ describe('µon et µeffect rendent une fonction qui les retire', function () {
     assert.deepEqual(vus, [])
   })
 
-  it('l\'exemple de la doc : l\'intervalle est posé une fois, pas à chaque tour ; il l\'est de nouveau quand `$delai` change, et la pause l\'arrête', async () => {
+  it('l\'exemple de la doc : l\'intervalle de `µevery` est posé une fois, pas à chaque tour ; il l\'est de nouveau quand `$delai` change, l\'ancien coupé par le nettoyage, et la pause l\'arrête', async () => {
     assert.ok(EXEMPLE_DOC, 'exemple trouvé dans docs/03-reactivite.md')
-    const w     = app.window
-    const avant = w.setInterval
-    let poses   = 0
-    let tours   = 0
-    // même code, tour raccourci à 20 ms et compté
-    w.setInterval = (f: any, _d: number, ...r: any[]) => { poses++; return avant.call(w, (...a: any[]) => { tours++; return f(...a) }, 20, ...r) }
+    const w       = app.window
+    const avant   = w.setInterval
+    const parPose = [] as number[]
+    let poses     = 0
+    let tours     = 0
+    // `µevery` pose sa répétition par le setInterval de la page : même code, tour raccourci à 20 ms, compté par pose
+    w.setInterval = (f: any, _d: number, ...r: any[]) => { const k = poses++; parPose[k] = 0; return avant.call(w, (...a: any[]) => { tours++; parPose[k]++; return f(...a) }, 20, ...r) }
     try {
       const c = await app.mount('doc-pause')
       try {
@@ -451,6 +453,10 @@ describe('µon et µeffect rendent une fonction qui les retire', function () {
         assert.equal(poses, 1, 'intervalle posé une fois, malgré les rendus')
         await c.set({ delai: 500 })
         assert.equal(poses, 2, 'posé de nouveau quand $delai change')
+        const ancien = parPose[0]
+        await pause(80)
+        assert.equal(parPose[0], ancien, 'l\'ancien intervalle est coupé : la main d\'arrêt du µevery est le nettoyage du reffet')
+        assert.ok(parPose[1] >= 2, `le nouvel intervalle tourne (${parPose[1]} tours)`)
         await c.click('button')
         const t = tours
         await pause(80)

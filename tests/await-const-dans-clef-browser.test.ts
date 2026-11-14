@@ -26,10 +26,10 @@ const SOURCES: Record<string, string> = {
 {success v}
   {key $k}
     {const d = $obj}
-    <b class="ok" data-x={d.x} @class{d.x === 'b'}="change">{d.x}</b>
+    <b class="ok" data-x={d.x} :class{d.x === 'b'}="change">{d.x}</b>
   {end}
 {end}
-<b class="temoin" data-x={$obj.x} @class{$obj.x === 'b'}="change">{$obj.x}</b>
+<b class="temoin" data-x={$obj.x} :class{$obj.x === 'b'}="change">{$obj.x}</b>
 `,
   // texte d'une balise éditable, en liaison deux sens : il montre la propriété du `{const}`, que la variable remplace
   'ck-texte.mjs': `<script>
@@ -43,10 +43,10 @@ const SOURCES: Record<string, string> = {
 {success v}
   {key $k}
     {const d = $obj}
-    <div class="ok" contenteditable="true" @text=!{d.x}></div>
+    <div class="ok" contenteditable="true" :text=!{d.x}></div>
   {end}
 {end}
-<div class="temoin" contenteditable="true" @text=!{$obj.x}></div>
+<div class="temoin" contenteditable="true" :text=!{$obj.x}></div>
 `,
   // des blocs l'un dans l'autre (`{key}`, `{if}`, `{key}`), un `{const}` à chaque niveau : chacun lit celui du dessus, à la création comme dans les effets de classe
   'ck-imbrique.mjs': `<script>
@@ -64,10 +64,10 @@ const SOURCES: Record<string, string> = {
     <b class="n0">{d.x}</b>
     {if $on}
       {const mi = d.x + '!'}
-      <b class="n1" data-mi={mi} @class{mi === 'b!'}="change">{d.x}{mi}</b>
+      <b class="n1" data-mi={mi} :class{mi === 'b!'}="change">{d.x}{mi}</b>
       {key $on}
         {const bas = mi + '?'}
-        <b class="n2" data-bas={bas} @class{bas === 'b!?'}="change">{d.x}{mi}{bas}</b>
+        <b class="n2" data-bas={bas} :class{bas === 'b!?'}="change">{d.x}{mi}{bas}</b>
       {end}
     {end}
   {end}
@@ -83,7 +83,7 @@ const SOURCES: Record<string, string> = {
 {for r in $rows by id}
   {key r.k}
     {const d = r.o}
-    <b class="ok" data-x={d.x} @class{d.x === 'e'}="recree">{d.x}</b>
+    <b class="ok" data-x={d.x} :class{d.x === 'e'}="recree">{d.x}</b>
   {end}
 {end}
 <u class="temoin">témoin</u>

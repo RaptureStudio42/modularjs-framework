@@ -22,11 +22,14 @@ JavaScript et le souligne en erreurs de la première à la dernière ligne.
   et modules cœur `<@@select>` (même couleur de balise), attributs ;
 - les directives d'attribut `@click={…}`, les liaisons `value=!{…}` ;
 - les effets `*neon`, `*tilt(15, glare: true)` : l'effet, chacun de ses réglages ; les transitions
-  `@in=*fly(up)`, `@out=*fade`, `@transition.global=*slide` ;
+  `:in=*fly(up)`, `:out=*fade`, `:transition.global=*slide` ;
 - le bloc `<effects>` d'un fichier `*.effects.mjs` : `*titre = *scramble(20)`, `*halo(size: 12px) =`
   puis ses déclarations CSS, `$size`, `@keyframes` et ses étapes ;
 - les directives de premier niveau `@import`, `@css`, `@persist`, `@routes` ;
-- les blocs de gabarit `{if}`, `{elsif}`, `{else}`, `{end}`, `{for … in …}`, `{await}`, et le bloc
+- les blocs de gabarit `{if}`, `{elsif}`, `{else}`, `{end}`, `{for … in … by …}`, `{await}`, `{success}`,
+  `{error}`, `{key}`, `{const}`, `{snippet}`, chaque mot à sa place seulement (le mot qui ouvre le bloc ;
+  `in` et `by` dans l'en-tête d'un `{for}`) : un nom ordinaire écrit pareil reste une expression (`key` dans
+  `{for g in $groups by key}`, `{key}`, `{g.key}`, `{elsif $r.error}`) ; et le bloc
   court d'un modèle `{? timer}`, `{? chrono, minuteur}` (le `?` et les noms des modèles) ;
 - les symboles : `$x` (état local), `$$x` (global et variables de thème), `§x` et `§§x`
   (contexte), `µx` (runes du framework), `@x` et `@@x` (l'instance).
@@ -209,9 +212,9 @@ texte d'une balise n'est pas un effet. Le rouge ne couvre que ce que le compilat
 `*neon=…` (les réglages vont entre parenthèses) et une valeur calculée `{…}` entre les parenthèses.
 Un effet inconnu ou une valeur hors de sa règle ne se voient qu'au build, qui dit quoi écrire.
 
-Une transition, `@in=*fly(up, distance: 60)`, `@out=*fade`, `@transition.global=*slide(x)` : la
+Une transition, `:in=*fly(up, distance: 60)`, `:out=*fade`, `:transition.global=*slide(x)` : la
 directive (et ses modificateurs `.global`, `.shared`) prend la couleur d'un attribut, l'effet celle
-d'un effet posé. En rouge, `@in.fly` — le nom de l'effet après un point, que le build refuse.
+d'un effet posé. En rouge, `:in.fly` — le nom de l'effet après un point, que le build refuse.
 
 Le squelette d'une attente, `{await $profil *skeleton(radius: 8)}`, a la couleur d'un effet posé ; ailleurs dans une
 expression `{…}`, une étoile reste une multiplication.
@@ -237,7 +240,7 @@ Le banc `tests/vscode-grammar-effets.test.ts` tokenise ces formes avec le vrai m
 Pendant la frappe, l'extension propose :
 
 - après `*` : les 117 effets, avec leur famille et ce qu'ils font (`*ne` → `neon`, `*fly` après
-  `@in=`), puis les effets de votre appli (`*titre`, `*halo`) ;
+  `:in=`), puis les effets de votre appli (`*titre`, `*halo`) ;
 - après `*effet.` : ses alias — ceux que ModularJS livre, avec ce qu'on voit (`*filter.` →
   `frosted_glass`, `gray_spot`…), et ceux de votre appli (`*filter.net`) ; un alias de votre appli
   remplace celui de ModularJS qui porte le même nom, comme au build ;
@@ -290,12 +293,19 @@ compilateur sans reflet dans la grammaire est un piège muet. Trois trous combl�
 | `$$or: gold` dans un `<theme>` ou un `<style>` | variable de **thème** → `--mjs-or` | `keyword.control.directive.store.modularjs` + `variable.other.readwrite.store.modularjs`, comme dans un `<script>` — avant, la grammaire SASS la peignait comme une variable `$sass` ordinaire, qui n'est pas la même chose |
 | `<style name="Compact">`, `<theme name="Gold">` | **échoue** : `THEME_NAME_RE = /^[a-z][a-z0-9-]*$/` | `invalid.illegal.theme-name.modularjs` sur la valeur, la balise et le reste inchangés |
 | `<@include "./x.html">` | la cible ne matche pas `INCLUDE_RE` : le tag reste **brut dans le DOM**, sans un mot | `invalid.illegal.include-cible.modularjs` ; une cible bien formée passe en `string.unquoted.include.modularjs` |
-| `<style @css="…">`, `<theme @x>` | attribut de bloc | le `@` entre enfin dans le jeton (`punctuation.definition.symbol.modularjs`), comme sur `<@x @click={…}>` |
+| `<style :css="…">`, `<style :display="…">` | mot de MJS d'un bloc | le `:` en `punctuation.definition.directive.modularjs` et le mot en `entity.other.attribute-name.directive.modularjs`, comme `:class` sur une balise ; l'ancienne écriture `<style @css="…">` est peinte en rouge (`invalid.illegal.attribute.old-word.modularjs`) |
 
 Deux écarts sont **assumés** et ne seront pas comblés : un doublon de chemin dans une table est un
-état d'ensemble qu'une grammaire lisant ligne par ligne ne peut pas voir, et `@viewTransition` guillemeté
+état d'ensemble qu'une grammaire lisant ligne par ligne ne peut pas voir, et `:viewTransition` guillemeté
 sur un `<style name="…">` demande de croiser deux attributs de la même balise — hors de portée d'un
 motif TextMate.
+
+## L'icône des fichiers MJS
+
+Le langage ModularJS a son icône, la lettre µ, dessinée pour les thèmes clairs et pour les thèmes
+sombres. VS Code la montre dans l'explorateur et sur les onglets des fichiers `.mjs` quand le thème
+d'icônes actif ne leur en donne pas déjà une ; un thème qui leur en donne une (par leur
+extension `.mjs`, par exemple celle de JavaScript) garde la sienne.
 
 ## Installation
 

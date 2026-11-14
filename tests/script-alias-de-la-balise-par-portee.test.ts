@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { transpile } from '../src/transpiler/index.js'
 
-// les avertissements `[lint.naming]` d'une compilation qui doit passer (le coffee avertit qu'il est déprécié)
+// les avertissements `[lint.naming]` d'une compilation qui doit passer
 async function compile(lang: string, script: string): Promise<string[]> {
   const orig = console.warn
   const vus: string[] = []

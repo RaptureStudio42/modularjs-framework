@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -202,7 +203,7 @@ describe('*physics (navigateurs réels) — chute, saisie, ressort, fil, retrait
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -1302,6 +1303,6 @@ describe('*physics (navigateurs réels) — chute, saisie, ressort, fil, retrait
           assert.deepEqual(r, { attente: 1, apres: 0 }, 'images d\'animation en attente : celle de la remise en page avant le retrait, aucune après')
         })
       })
-    })
+    }))
   }
 })

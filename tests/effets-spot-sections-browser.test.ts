@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
 
 type Navigateur = 'chromium' | 'firefox' | 'webkit'
 
@@ -411,8 +412,9 @@ describe('*spotlight en production — chaque pose construite avec le seul code 
       writeFileSync(join(srcDir, 't-' + i + '.mjs'), pose.source)
       // un seul fichier (le manifeste) : les noms réduits des morceaux ne se heurtent pas
       const manifeste = join(outDir, 'bundle.js')
-      // production au niveau 'warn' : l'avertissement vérifié plus bas reste dans le code envoyé (le défaut 'error' retire ceux du framework)
-      const bundler   = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste, js: 'bundle', env: 'prod', logLevel: 'warn' } as any)
+      // production au niveau 'log' : l'avertissement vérifié plus bas est un message du développement seul, que la construction retire du
+      // code envoyé dès 'warn' ; il y reste, et l'absence d'avertissement des autres poses garde son sens
+      const bundler   = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: manifeste, js: 'bundle', env: 'prod', logLevel: 'log' } as any)
       const stats     = await bundler.compile()
       await bundler.close()
       assert.deepEqual(stats.errors.map((e: any) => e.message), [], pose.nom)
@@ -423,7 +425,7 @@ describe('*spotlight en production — chaque pose construite avec le seul code 
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of (process.env.NAVIGATEUR ? [process.env.NAVIGATEUR] : ['chromium', 'firefox', 'webkit']) as Navigateur[]) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let browser: any
 
       before(async function () {
@@ -488,6 +490,6 @@ describe('*spotlight en production — chaque pose construite avec le seul code 
           }
         })
       })
-    })
+    }))
   }
 })

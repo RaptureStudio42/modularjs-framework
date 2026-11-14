@@ -31,9 +31,9 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @class{$on}="actif" @style.color={$c}>{v}</b>
+  <b class="ok" :class{$on}="actif" :style.color={$c}>{v}</b>
 {end}
-<u class="temoin" @class{$on}="actif" @style.color={$c}>témoin</u>
+<u class="temoin" :class{$on}="actif" :style.color={$c}>témoin</u>
 `,
   // les autres écritures du style : propriété composée, `--variable`, forme conditionnelle, valeur fixe, `!important`
   'aw-formes.mjs': `<script>
@@ -48,9 +48,9 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" --teinte={$c} @style.border-color={$c} @style.width{$on}="10px" @style.height="20px" @style.margin-top={$on ? '4px !important' : '8px'}>{v}</b>
+  <b class="ok" --teinte={$c} :style.border-color={$c} :style.width{$on}="10px" :style.height="20px" :style.margin-top={$on ? '4px !important' : '8px'}>{v}</b>
 {end}
-<u class="temoin" --teinte={$c} @style.border-color={$c} @style.width{$on}="10px" @style.height="20px" @style.margin-top={$on ? '4px !important' : '8px'}>témoin</u>
+<u class="temoin" --teinte={$c} :style.border-color={$c} :style.width{$on}="10px" :style.height="20px" :style.margin-top={$on ? '4px !important' : '8px'}>témoin</u>
 `,
   // un `{if}` et un `{key}` placés dans `{success}` : ils prennent le contexte de la branche qui les enveloppe
   'aw-imbrique.mjs': `<script>
@@ -66,13 +66,13 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {if v}
-    <b class="dans-si" @class{$on}="actif" @style.color={$c}>{v}</b>
+    <b class="dans-si" :class{$on}="actif" :style.color={$c}>{v}</b>
   {end}
   {key v}
-    <b class="dans-key" @class{$on}="actif" @style.color={$c}>{v}</b>
+    <b class="dans-key" :class{$on}="actif" :style.color={$c}>{v}</b>
   {end}
 {end}
-<u class="temoin" @class{$on}="actif" @style.color={$c}>témoin</u>
+<u class="temoin" :class{$on}="actif" :style.color={$c}>témoin</u>
 `,
   // la promesse est remplacée : la branche `{success}` est refaite, la classe doit suivre les nouveaux nœuds et non les anciens
   'aw-relance.mjs': `<script>
@@ -86,9 +86,9 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @class{$on}="actif">{v}</b>
+  <b class="ok" :class{$on}="actif">{v}</b>
 {end}
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // la branche d'attente : la promesse n'est jamais réglée
   'aw-attente.mjs': `<script>
@@ -100,11 +100,11 @@ const SOURCES: Record<string, string> = {
   @teinter = (x) -> $c = x
 </script>
 {await $p}
-  <i class="att" @class{$on}="actif" @style.color={$c}>attente</i>
+  <i class="att" :class{$on}="actif" :style.color={$c}>attente</i>
 {success v}
   <b class="ok">{v}</b>
 {end}
-<u class="temoin" @class{$on}="actif" @style.color={$c}>témoin</u>
+<u class="temoin" :class{$on}="actif" :style.color={$c}>témoin</u>
 `,
   // la branche `{error}` : la promesse est rejetée par `finir()`
   'aw-erreur.mjs': `<script>
@@ -121,9 +121,9 @@ const SOURCES: Record<string, string> = {
 {success v}
   <b class="ok">{v}</b>
 {error err}
-  <b class="ko" @class{$on}="actif" @style.color={$c}>{err.message}</b>
+  <b class="ko" :class{$on}="actif" :style.color={$c}>{err.message}</b>
 {end}
-<u class="temoin" @class{$on}="actif" @style.color={$c}>témoin</u>
+<u class="temoin" :class{$on}="actif" :style.color={$c}>témoin</u>
 `,
   // les lignes d'un `{for}` de `{success}` et celles du même `{for}` à la racine
   'aw-lignes.mjs': `<script>
@@ -141,13 +141,13 @@ const SOURCES: Record<string, string> = {
 {success v}
   <ul class="dans">
     {for it in $liste by id}
-      <li class="l" @class{$on}="actif" @style.color={$c}>{it.t}</li>
+      <li class="l" :class{$on}="actif" :style.color={$c}>{it.t}</li>
     {end}
   </ul>
 {end}
 <ul class="hors">
   {for it in $liste by id}
-    <li class="l" @class{$on}="actif" @style.color={$c}>{it.t}</li>
+    <li class="l" :class{$on}="actif" :style.color={$c}>{it.t}</li>
   {end}
 </ul>
 `,
@@ -164,9 +164,9 @@ const SOURCES: Record<string, string> = {
   <i class="att">attente</i>
 {success v}
   {const gros = v.n > 5}
-  <b class="ok" @class{gros and $on}="actif" @style.color={v.couleur}>{v.n}</b>
+  <b class="ok" :class{gros and $on}="actif" :style.color={v.couleur}>{v.n}</b>
 {end}
-<u class="temoin" @class{$val.n > 5 and $on}="actif" @style.color={$val.couleur}>témoin</u>
+<u class="temoin" :class{$val.n > 5 and $on}="actif" :style.color={$val.couleur}>témoin</u>
 `,
   // le même `{for}` dans `{success}` et à la racine, `@flip` sur chaque ligne (cinq secondes : l'animation est encore en cours à la lecture) ;
   // chaque ligne affiche la taille de la liste : c'est la variable du dehors qu'elle lit qui refait la liste de `{success}` quand `$liste` change
@@ -182,13 +182,13 @@ const SOURCES: Record<string, string> = {
 {success v}
   <ul class="dans">
     {for it in $liste by id}
-      <li @flip=5000 data-k="{it.id}">{it.id} sur {$liste.length}</li>
+      <li :flip=5000 data-k="{it.id}">{it.id} sur {$liste.length}</li>
     {end}
   </ul>
 {end}
 <ul class="hors">
   {for it in $liste by id}
-    <li @flip=5000 data-k="{it.id}">{it.id} sur {$liste.length}</li>
+    <li :flip=5000 data-k="{it.id}">{it.id} sur {$liste.length}</li>
   {end}
 </ul>
 <style>
@@ -216,9 +216,9 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @class{v.n > 5 and $on}="actif">{v.n}</b>
+  <b class="ok" :class{v.n > 5 and $on}="actif">{v.n}</b>
 {end}
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // `{success}` et `{error}` lisent chacune leur valeur et une variable : la promesse passe de l'une à l'autre
   'aw-perime-erreur.mjs': `<script>
@@ -233,11 +233,11 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @class{v.n > 5 and $on}="actif">{v.n}</b>
+  <b class="ok" :class{v.n > 5 and $on}="actif">{v.n}</b>
 {error err}
-  <b class="ko" @class{err.message === 'non' and $on}="actif">{err.message}</b>
+  <b class="ko" :class{err.message === 'non' and $on}="actif">{err.message}</b>
 {end}
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // une liaison à deux sens sur une propriété de la valeur de `{success}` : même effet de la racine, même garde
   'aw-champ.mjs': `<script>
@@ -268,10 +268,10 @@ const SOURCES: Record<string, string> = {
 {success v}
   <svg class="icone" id="dessin" viewBox="0 0 10 10" width="20" height="20"><circle class="rond" cx="5" cy="5" r="4"></circle><use href="#a"></use></svg>
   <math class="formule"><mi>x</mi></math>
-  <b class="ok" @class{$on}="actif">{v}</b>
+  <b class="ok" :class{$on}="actif">{v}</b>
 {end}
 <svg class="icone" id="hors" viewBox="0 0 10 10" width="20" height="20"><circle class="rond" cx="5" cy="5" r="4"></circle><use href="#a"></use></svg>
-<u class="temoin" @class{$on}="actif">témoin</u>
+<u class="temoin" :class{$on}="actif">témoin</u>
 `,
   // un `<svg>` à `class` fixe dans une branche qui contient un `{if}`, un `{for}` ou une interpolation, sans aucun `@class`
   'aw-svg-si.mjs': `<script>
@@ -332,9 +332,9 @@ const SOURCES: Record<string, string> = {
 {success v}
   {const deux = $n * 2}
   {const total = deux + v.k}
-  <b class="ok" @class{total > 8}="actif" @style.color={total > 8 ? 'red' : 'blue'}>{total}</b>
+  <b class="ok" :class{total > 8}="actif" :style.color={total > 8 ? 'red' : 'blue'}>{total}</b>
 {end}
-<u class="temoin" @class{$n * 2 + 3 > 8}="actif" @style.color={$n * 2 + 3 > 8 ? 'red' : 'blue'}>témoin</u>
+<u class="temoin" :class{$n * 2 + 3 > 8}="actif" :style.color={$n * 2 + 3 > 8 ? 'red' : 'blue'}>témoin</u>
 `,
   // un `@attach` dont la fabrique lit la valeur de chaque branche et le thème : la fabrique est rappelée quand le thème change, seulement dans la branche
   // affichée ; chaque pose écrit `data-marque` (texte/thème), son retrait l'efface ; le témoin refait la même pose à la racine
@@ -353,11 +353,11 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @attach={marque(v.label, $theme)}>{v.label}</b>
+  <b class="ok" :attach={marque(v.label, $theme)}>{v.label}</b>
 {error err}
-  <b class="ko" @attach={marque(err.message, $theme)}>{err.message}</b>
+  <b class="ko" :attach={marque(err.message, $theme)}>{err.message}</b>
 {end}
-<u class="temoin" @attach={marque('T', $theme)}>témoin</u>
+<u class="temoin" :attach={marque('T', $theme)}>témoin</u>
 `,
   // `@text=!{v.titre}` et `@html=!{v.corps}` sur des balises de `{success}` : elles reçoivent le texte et le html de la valeur de la branche ; la valeur
   // n'existe plus quand la promesse est remplacée ou rejetée ; le témoin lie la même donnée hors de `{await}`
@@ -372,12 +372,12 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <div class="ce" contenteditable="true" @text=!{v.titre}></div>
-  <div class="rich" contenteditable="true" @html=!{v.corps}></div>
+  <div class="ce" contenteditable="true" :text=!{v.titre}></div>
+  <div class="rich" contenteditable="true" :html=!{v.corps}></div>
 {error err}
   <b class="ko">{err.message}</b>
 {end}
-<u class="temoin" contenteditable="true" @text=!{$val.titre}></u>
+<u class="temoin" contenteditable="true" :text=!{$val.titre}></u>
 `,
   // des liaisons de branche qui ne lisent PAS la valeur de la branche (`@attach={marque($theme)}`, `@emit.ok={$theme}`, `@text=!{$val.titre}`, `@html=!{$val.corps}`) : au repos tant que
   // la branche n'est pas affichée, reprises avec la valeur du moment quand elle revient ; chaque appel de la fabrique est noté avec l'état de la balise (`connecte` ou `detache`),
@@ -400,13 +400,13 @@ const SOURCES: Record<string, string> = {
 {await $p}
   <i class="att">attente</i>
 {success v}
-  <b class="ok" @attach={marque($theme)} @emit.ok={$theme}>ok</b>
-  <div class="ce" contenteditable="true" @text=!{$val.titre}></div>
-  <div class="rich" contenteditable="true" @html=!{$val.corps}></div>
+  <b class="ok" :attach={marque($theme)} :emit.ok={$theme}>ok</b>
+  <div class="ce" contenteditable="true" :text=!{$val.titre}></div>
+  <div class="rich" contenteditable="true" :html=!{$val.corps}></div>
 {error err}
-  <b class="ko" @attach={marque($theme)}>ko</b>
+  <b class="ko" :attach={marque($theme)}>ko</b>
 {end}
-<u class="temoin" @attach={marque($theme)} @emit.tem={$theme}>témoin</u>
+<u class="temoin" :attach={marque($theme)} :emit.tem={$theme}>témoin</u>
 `
 }
 const BALISES = Object.keys(SOURCES).map((f) => 'mjs-' + f.replace('.mjs', ''))

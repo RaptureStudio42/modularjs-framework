@@ -27,7 +27,7 @@ const FRUITS = [F('abricot', 'Abricot'), F('banane', 'Banane'), F('bleuet', 'Ble
 const VILLES = [F('nantes', 'Nantes'), F('nj', 'New Jersey'), F('ny', 'New York'), F('nice', 'Nice')].join('')
 const LONGUE = Array.from({ length: 30 }, (_, i) => F('o' + (i + 1), 'Option ' + String(i + 1).padStart(2, '0'))).join('')
 
-const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f-oblig" method="get" action="/envoi" :noUJS>
   <@@select class="s" name="s" required>${FRUITS}</@@select>
   <@@select class="m" name="m" multiple required>${FRUITS}</@@select>
   <@@select class="v" name="v" required value="">${F('', 'Choisir un fruit')}${FRUITS}</@@select>
@@ -35,17 +35,17 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <button type="reset" class="rz">remise à zéro</button>
 </form>
 
-<form class="f-depart" method="get" action="/envoi" @noUJS>
+<form class="f-depart" method="get" action="/envoi" :noUJS>
   <@@select class="s" name="s" required value="banane">${FRUITS}</@@select>
   <@@select class="m" name="m" multiple required value={['cerise', 'figue']}>${FRUITS}</@@select>
 </form>
 
-<form class="f-etiquette" method="get" action="/envoi" @noUJS>
+<form class="f-etiquette" method="get" action="/envoi" :noUJS>
   <@@select class="s" id="e-s" name="s">${FRUITS}</@@select>
   <label class="l-s" for="e-s">étiquette de la liste</label>
 </form>
 
-<form class="f-fieldset" method="get" action="/envoi" @noUJS>
+<form class="f-fieldset" method="get" action="/envoi" :noUJS>
   <fieldset class="fs" disabled>
     <@@select class="s" name="s" required>${FRUITS}</@@select>
     <@@select class="b" name="b" value="banane">${FRUITS}</@@select>
@@ -54,7 +54,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <@@select class="faux" name="faux" disabled="false" value="figue">${FRUITS}</@@select>
 </form>
 
-<form class="f-clavier" method="get" action="/envoi" @noUJS>
+<form class="f-clavier" method="get" action="/envoi" :noUJS>
   <@@select class="fermee" name="fermee">${FRUITS}</@@select>
   <@@select class="ouverte" name="ouverte" value="abricot">${FRUITS}</@@select>
   <@@select class="multi" name="multi" multiple>${FRUITS}</@@select>

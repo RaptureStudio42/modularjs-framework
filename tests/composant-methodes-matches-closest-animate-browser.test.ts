@@ -47,7 +47,7 @@ const SOURCES: Record<string, string> = {
     '<script>',
     '$montre = true',
     '</script>',
-    '{if $montre}<@fiche class="fiche" @out=*fade(duration: 60ms)></@fiche>{end}',
+    '{if $montre}<@fiche class="fiche" :out=*fade(duration: 60ms)></@fiche>{end}',
     '<input class="auto" autofocus aria-label="auto">'
   ].join('\n') + '\n'
 }
@@ -68,7 +68,8 @@ describe('composant qui déclare @matches, @closest, @animate : ModularJS prend 
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     for (const [nom, source] of Object.entries(SOURCES)) writeFileSync(join(srcDir, nom), source)
-    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
+    // ces composants n'ont ni lien ni formulaire, la navigation qu'interroge le test (focus d'après navigation, clic) se demande (`runtime: 'all'`)
+    const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js'), runtime: 'all' })
     const stats   = await bundler.compile()
     await bundler.close()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

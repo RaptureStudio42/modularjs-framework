@@ -23,14 +23,14 @@ const PAGE = `<script>
     $lus   = [...$lus, { voie, qui: e.target.className.split(' ')[0], type: e.type, data: e.data, champs }]
 </script>
 
-<form class="balise" @noUJS>
+<form class="balise" :noUJS>
   <@@select class="simple" name="pays" value="fr" @change={@lire('balise', e)}>${PAYS}</@@select>
   <@@select class="multi" name="langues[]" multiple @change={@lire('balise', e)}>${LAIT}</@@select>
   <@@select class="libre" name="libre" other @change={@lire('balise', e)} @other={@lire('balise', e)}>${PAYS}</@@select>
   <@@select class="libres" name="mots[]" multiple other @change={@lire('balise', e)} @other={@lire('balise', e)}>${LAIT}</@@select>
 </form>
 
-<form class="form" @noUJS @change={@lire('form', e)} @other={@lire('form', e)}>
+<form class="form" :noUJS @change={@lire('form', e)} @other={@lire('form', e)}>
   <@@select class="simple" name="pays" value="fr">${PAYS}</@@select>
   <@@select class="multi" name="langues[]" multiple>${LAIT}</@@select>
   <@@select class="libre" name="libre" other>${PAYS}</@@select>

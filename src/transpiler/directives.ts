@@ -3,7 +3,8 @@
 
 import { parseVtValue, suggestKey } from '../bundler/config.js'
 import { t } from '../messages/index.js'
-import { maskNonCode, maskHtmlComments } from '../mask.js'
+import { SIGN } from '../parser/mjs-words.js'
+import { maskNonCode, maskHtmlComments, findBlocks } from '../mask.js'
 import { findScriptMatches, findStyleMatches } from './sections.js'
 import { parsePlaceholder, PLACEHOLDER_DIRECTIVE } from '../effects/placeholder.js'
 import type { EffectValue } from '../effects/catalog.js'
@@ -29,6 +30,8 @@ export interface DirectivesResult {
   persistSessionVars: PersistEntry[]
   /** Imports auto-injectés en haut du module. */
   pendingAutoImports: string[]
+  /** Directive `@import` de chaque import de `pendingAutoImports`, au même rang : sa ligne dans le fichier et son texte. */
+  directivesDesImports: { ligne: number; texte: string }[]
   /** Vars `$xxx` importées (à exclure du store local). */
   externalReactives: Set<string>
   /** Section i18n du module (`@i18n 'panier'`) — préfixe les clés `µt(...)`
@@ -48,7 +51,159 @@ export interface DirectivesResult {
   moduleI18nPlaceholderFx: Record<string, EffectValue> | null
 }
 
-export function extractDirectives(content: string): DirectivesResult {
+// ----- lecture des directives @import, PARTAGÉE -----
+// La SEULE lecture de la directive dans src/ : le compilateur (extractDirectives, plus bas) et ses contrôles
+// (transpiler/lint.ts : singletons, noms en `$`), ses passes sur le texte (alias du symbole, réécriture `µ$$x`), le suivi
+// des dépendances du bundler (extractImportMatches), la compilation des modules et les entrées serveur
+// (cli/server-entry.ts) passent tous par readImportDirectives : mêmes formes, mêmes endroits. Formes : noms nus
+// (`@import a b 'x'`), entre accolades (`@import { a b } 'x'`), export par défaut (`@import default A 'x'`), aucun nom
+// (`@import 'x'`, pour son seul effet). Une directive tient sur UNE ligne : écrite sur plusieurs, elle est lue pour être
+// refusée (`multiligne`), jamais suivie à moitié. Elle vaut à la racine du fichier, dans le code d'un <script> et dans le
+// code d'un module ; dans un <style>, un <pre>, un <code>, un commentaire HTML, une chaîne ou un commentaire de <script>
+// ou de module, et dans le texte d'un élément du gabarit (entre sa balise ouvrante et sa fermante : `<p>`,
+// `<doc-code>`…), une ligne `@import …` reste du texte, quelle que soit sa forme. `µ` et `§` comptent parmi les
+// caractères d'un nom : un singleton réactif importé (`@import µ$$x 'x'`) est suivi comme dépendance, le compilateur le
+// laisse à son propre chemin
+export const IMPORT_DIRECTIVE_RE = /^[ \t]*@import\s+(?:(?:(default)\s+)?(\{[a-zA-Z0-9_$,\sµ§]*\}|[a-zA-Z0-9_$,\sµ§]+?)\s+)?(['"])(.*?)\3[ \t]*$/gm
+
+export interface ImportDirective {
+  /** début de la directive dans le texte lu, et son texte exact (plusieurs lignes si `multiligne`) */
+  index: number
+  texte: string
+  isDefault: boolean
+  /** noms tels qu'écrits, accolades comprises (`{ a b }`) ; vide pour un import sans nom */
+  noms: string
+  accolades: boolean
+  cible: string
+  multiligne: boolean
+}
+
+const ELEMENTS_VIDES = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+
+// bornes d'une correspondance, qu'elle porte ses `indices` ou non
+const borneDe = (m: RegExpMatchArray): [number, number] => (m.indices ? [m.indices[0][0], m.indices[0][1]] : [m.index!, m.index! + m[0].length])
+
+// blanchit des zones d'un texte, sauts de ligne gardés (mêmes positions, mêmes numéros de ligne)
+function blankZones(text: string, zones: [number, number][]): string {
+  if (zones.length === 0) return text
+  const chars = text.split('')
+  for (const [debut, fin] of zones) {
+    for (let i = debut; i < fin; i++) if (chars[i] !== '\n') chars[i] = ' '
+  }
+  return chars.join('')
+}
+
+// zones d'un composant pour la lecture des @import : `vue` (même longueur que le texte), identique là où une directive
+// vaut, blanchie ailleurs ; `horsCode`, le texte où seuls <script>, <style>, commentaires HTML, <pre> et <code> sont
+// blanchis ; `elements`, le texte de chaque élément refermé du gabarit, avec son nom
+function importZones(text: string): { vue: string, horsCode: string, elements: { debut: number, fin: number, nom: string }[] } {
+  const { moduleScripts, scripts: simples } = findScriptMatches(text, true)
+  const scripts = [...moduleScripts, ...simples].sort((a, b) => borneDe(a)[0] - borneDe(b)[0])
+  const inertes = findStyleMatches(text, scripts, true).matches.map(borneDe)
+  // hors <script> et <style> : commentaires HTML, <pre>, <code>, puis le texte des éléments du gabarit
+  let horsCode  = blankZones(text, [...inertes, ...scripts.map(borneDe)])
+  for (const kind of ['<!--', 'pre', 'code']) {
+    const zones = findBlocks(horsCode, [kind]).map((b): [number, number] => [b.start, b.end])
+    inertes.push(...zones)
+    horsCode = blankZones(horsCode, zones)
+  }
+  // un élément ne compte que refermé dans le fichier : une balise seule (`Array<string>` d'un module, `{a<b}`) ne crée
+  // aucune zone
+  const elements: { debut: number, fin: number, nom: string }[] = []
+  const ouverts: { nom: string, fin: number }[]                 = []
+  for (const m of horsCode.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*>/g)) {
+    const nom = m[2].toLowerCase()
+    if (m[1] === '') {
+      if (!ELEMENTS_VIDES.has(nom) && !m[0].endsWith('/>')) ouverts.push({ nom, fin: m.index! + m[0].length })
+      continue
+    }
+    const k = ouverts.map(o => o.nom).lastIndexOf(nom)
+    if (k === -1) continue
+    elements.push({ debut: ouverts[k].fin, fin: m.index!, nom })
+    ouverts.length = k
+  }
+  // dans un <script>, le code reste actif ; ses chaînes, gabarits, commentaires et regex sont blanchis
+  let vue = blankZones(text, [...inertes, ...elements.map(e => [e.debut, e.fin] as [number, number])])
+  for (const m of scripts) {
+    const [debut, fin] = borneDe(m)
+    const ouverture    = text.indexOf('>', debut) + 1
+    const fermeture    = fin - '</script>'.length
+    const langue       = text.slice(debut, ouverture).match(/lang[ \t]*=[ \t]*['"]([^'"]+)['"]/)
+    vue = vue.slice(0, ouverture) + maskNonCode(text.slice(ouverture, fermeture), langue ? langue[1] : 'civet') + vue.slice(fermeture)
+  }
+  return { vue, horsCode, elements }
+}
+
+// dernière vue calculée : un même texte est lu par les contrôles du compilateur, puis par ses passes
+let derniereVue: { text: string, langueModule: string, vue: string } | null = null
+
+// vue d'un fichier pour la lecture des @import : même longueur que le texte, identique là où une directive vaut, blanchie
+// ailleurs. Un module (`langueModule` : 'civet', 'coffee') n'a que du code : ses chaînes et commentaires sont blanchis
+// comme ceux d'un <script>
+export function importActiveView(text: string, langueModule = ''): string {
+  if (derniereVue !== null && derniereVue.langueModule === langueModule && derniereVue.text === text) return derniereVue.vue
+  const vue   = langueModule ? maskNonCode(text, langueModule) : importZones(text).vue
+  derniereVue = { text, langueModule, vue }
+  return vue
+}
+
+// directives @import d'un texte, dans l'ordre des lignes ; `actif` (même longueur) dit où une directive vaut — par
+// défaut la vue d'un composant ; un module passe la sienne (importActiveView(texte, langue)), une entrée serveur aussi
+// (chaînes et commentaires masqués)
+export function readImportDirectives(text: string, actif?: string): ImportDirective[] {
+  const lignes = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
+  if (lignes.length === 0) return []
+  const vue                           = actif ?? importActiveView(text)
+  const directives: ImportDirective[] = []
+  for (const m of lignes) {
+    const at = m.index! + m[0].indexOf('@')
+    if (vue[at] !== text[at]) continue
+    const noms = (m[2] ?? '').trim()
+    directives.push({ index: m.index!, texte: m[0], isDefault: m[1] !== undefined, noms, accolades: noms.startsWith('{'), cible: m[4], multiligne: m[0].trim().includes('\n') })
+  }
+  return directives
+}
+
+// directives lisibles écrites dans le texte d'un élément du gabarit, hors <pre>, <code> et <doc-code> (on y montre du
+// code) : affichées telles quelles, signalées par un avertissement ; position de leur `@` dans le texte
+export function importsInElementText(text: string): number[] {
+  const lignes = [...text.matchAll(IMPORT_DIRECTIVE_RE)]
+  if (lignes.length === 0) return []
+  const { vue, horsCode, elements } = importZones(text)
+  const dans                        = (at: number, e: { debut: number, fin: number }) => e.debut <= at && at < e.fin
+  const codeMontre                  = elements.filter(e => e.nom === 'doc-code')
+  return lignes.map(m => m.index! + m[0].indexOf('@')).filter(at => vue[at] !== text[at] && horsCode[at] === text[at] && elements.some(e => dans(at, e)) && !codeMontre.some(e => dans(at, e)))
+}
+
+// noms d'une directive, accolades ôtées ; mêmes refus et mêmes messages partout : plusieurs lignes, virgule, `default`
+// suivi d'accolades, cible vide ou douteuse
+export function importNames(d: ImportDirective): string[] {
+  if (d.multiligne) throw new Error(t('transpiler.import-une-ligne', { ligne: d.texte.trim().replace(/\s+/g, ' '), cible: d.cible }))
+  const noms = d.noms.replace(/^\{|\}$/g, '')
+  if (noms.includes(',')) throw new Error(t('transpiler.import-virgule-interdite', { rawVars: d.noms.replace(/\s+/g, ' '), targetPath: d.cible }))
+  // accolades vides après `default` : ni un nom ni un import d'effet, le message donne les deux écritures valides
+  if (d.isDefault && d.accolades && noms.trim() === '') throw new Error(t('transpiler.import-default-accolades-vides', { noms: d.noms.replace(/\s+/g, ' '), cible: d.cible }))
+  if (d.isDefault && d.accolades) throw new Error(t('transpiler.import-default-accolades', { noms: d.noms.replace(/\s+/g, ' '), nom: noms.trim().split(/\s+/)[0], cible: d.cible }))
+  if (d.cible === '' || /['"\\\n\0`]|#\{|\$\{/.test(d.cible)) throw new Error(t('transpiler.import-cible-invalide', { cible: d.cible }))
+  const liste = noms.split(/\s+/).filter(s => s.length > 0)
+  // `default` ne nomme qu'un export, des accolades vides n'en nomment aucun : jamais un nom ignoré ni un import d'effet déguisé
+  if (d.isDefault && liste.length > 1) throw new Error(t('transpiler.import-default-un-nom', { noms: liste.join(' '), nom: liste[0], cible: d.cible }))
+  if (d.accolades && liste.length === 0) throw new Error(t('transpiler.import-accolades-vides', { cible: d.cible }))
+  return liste
+}
+
+// nom en `$x` d'une directive (jamais `µ$$x`) : refusé partout, un singleton s'importe et se consomme par `µ$$x`
+export function importDollarName(d: ImportDirective): string | null {
+  return d.noms.match(/(?<![µ$])\$[a-zA-Z_]\w*/)?.[0] ?? null
+}
+
+// clause `import` native d'une directive : sans nom, pour son seul effet (exécuté une fois, comme tout module ES)
+export function importClause(d: ImportDirective, noms: string[], from: string): string {
+  if (noms.length === 0) return `import ${from}`
+  return d.isDefault ? `import ${noms[0]} from ${from}` : `import { ${noms.join(', ')} } from ${from}`
+}
+
+export function extractDirectives(content: string, langueModule = ''): DirectivesResult {
   let modulePreload: string | null = null
   let moduleFormAssociated = false
   let moduleFormAssociatedTwice = false
@@ -59,6 +214,7 @@ export function extractDirectives(content: string): DirectivesResult {
   const persistLocalVars: PersistEntry[] = []
   const persistSessionVars: PersistEntry[] = []
   const pendingAutoImports: string[] = []
+  const directivesDesImports: { ligne: number; texte: string }[] = []
   const externalReactives = new Set<string>()
 
   // Les directives racines (`@css`, `@display`, `@persist`, `@import`) peuvent
@@ -77,6 +233,16 @@ export function extractDirectives(content: string): DirectivesResult {
   const mask = (m: string) => {
     masks.push(m)
     return `\x00MASK${nonce}_${masks.length - 1}\x00`
+  }
+  // ligne du fichier où tombe la position `at` du texte courant : un bloc masqué, jeton sur une seule ligne, rend les siennes
+  const ligneDuFichier = (text: string, at: number): number => {
+    const jeton = new RegExp(`\\x00MASK${nonce}_(\\d+)\\x00`, 'g')
+    let avant   = text.slice(0, at)
+    for (let tour = 0; tour <= masks.length && jeton.test(avant); tour++) {
+      jeton.lastIndex = 0
+      avant           = avant.replace(jeton, (_, i) => masks[+i])
+    }
+    return avant.split('\n').length
   }
   // les COMMENTAIRES HTML rejoignent <pre>/<code> dans ce masquage.
   // Trou de fond (présent sur @viewTransition, mais commun à TOUTES les
@@ -226,9 +392,7 @@ export function extractDirectives(content: string): DirectivesResult {
     const view = maskInterpolationContent(blankScriptStyleRanges(text))
     let out    = ''
     let cursor = 0
-    for (const m of view.matchAll(/<!--(?:-?>|[\s\S]*?--!?>)/g)) {
-      const start = m.index!
-      const end   = start + m[0].length
+    for (const { start, end } of findBlocks(view, ['<!--'])) {
       out += text.slice(cursor, start) + mask(text.slice(start, end))
       cursor = end
     }
@@ -297,14 +461,14 @@ export function extractDirectives(content: string): DirectivesResult {
   // cf. sections.ts). La forme racine est une ERREUR DE COMPILATION explicite.
   cleaned = activeDirective(cleaned, /^[ \t]*@css[ \t]+([a-zA-Z0-9_ \t-]+?)[ \t]*$/gm, (_m, names) => {
     const clean = (names as string).trim()
-    throw new Error(t('transpiler.css-racine-interdite', { ligne: `@css ${clean}`, remplacement: `<style @css="${clean}">` }))
+    throw new Error(t('transpiler.css-racine-interdite', { ligne: `@css ${clean}`, remplacement: `<style :css="${clean}">` }))
   })
 
   // ----- @display ----- RELOGÉ : attribut du `<style>` de
   // base (`<style @display="inline-block">`, cf. sections.ts). Forme racine =
   // erreur de compilation explicite.
   cleaned = activeDirective(cleaned, /^[ \t]*@display[ \t]+([a-zA-Z-]+)[ \t]*$/gm, (_m, val) => {
-    throw new Error(t('transpiler.display-racine-interdite', { ligne: `@display ${val}`, remplacement: `<style @display="${val}">` }))
+    throw new Error(t('transpiler.display-racine-interdite', { ligne: `@display ${val}`, remplacement: `<style :display="${val}">` }))
   })
 
   // ----- @i18n ----- (sections i18n du module, la première préfixe les clés `µt(...)` relatives)
@@ -408,15 +572,17 @@ export function extractDirectives(content: string): DirectivesResult {
     cleaned,
     /^[ \t]*@(viewTransition|vt)\b(.*)$/gm,
     (_m: string, directive: string, restRaw: string) => {
-      const label = `@${directive}`
+      // `label` : le nom dans le message, `:viewTransition` (l'alias `@vt` se cite tel qu'écrit) ; `ecrit` : la ligne telle qu'écrite
+      const ecrit = `@${directive}`
+      const label = directive === 'vt' ? ecrit : SIGN + directive
       // `@vt` n'est plus un alias sur `<style>` : le remplacement propose TOUJOURS
       // le nom long, sinon le lecteur corrige et retombe aussitot sur une 2e erreur.
-      const cible = '@viewTransition'
+      const cible = SIGN + 'viewTransition'
       const rest  = restRaw.replace(/[ \t]+$/, '')
 
       // Forme nue : rien après la directive (à l'espace près) → attribut nu.
       if (rest.trim() === '') {
-        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: label, remplacement: `<style ${cible}>` }))
+        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: ecrit, remplacement: `<style ${cible}>` }))
       }
 
       // Forme à POINT (canonique) : `.<nom>[:dir][={ ... }]`.
@@ -443,7 +609,7 @@ export function extractDirectives(content: string): DirectivesResult {
         if (!parsed.ok) {
           throw new Error(t('transpiler.vt-nom-erreur-parsing', { label, nameAndDir, erreur: (parsed as { ok: false; error: string }).error }))
         }
-        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: `${label}.${verbatim}`, remplacement: `<style ${cible}.${verbatim}>` }))
+        throw new Error(t('transpiler.viewtransition-racine-interdite', { label, ligne: `${ecrit}.${verbatim}`, remplacement: `<style ${cible}.${verbatim}>` }))
       }
 
       // Ancienne écriture (espace, ou `=`/`= "nom"` sans point) — détecte
@@ -524,31 +690,22 @@ export function extractDirectives(content: string): DirectivesResult {
   // littéral jamais résolu par Node), et une charge à effet de bord
   // (`#{globalThis.__PWNED__=1337}`) ne rejetait que par accident (ParseError Civet illisible,
   // jamais ce message).
-  cleaned = activeDirective(
-    cleaned,
-    /^[ \t]*@import\s+(?:(default)\s+)?([a-zA-Z0-9_$,\s]+?)\s+(['"])(.*?)\3[ \t]*$/gm,
-    (_m, isDefault, rawVars, _quote, targetPath) => {
-      if ((rawVars as string).includes(',')) {
-        throw new Error(t('transpiler.import-virgule-interdite', { rawVars: (rawVars as string).trim(), targetPath }))
-      }
-      if (targetPath === '' || /['"\\\n\0`]|#\{|\$\{/.test(targetPath as string)) {
-        throw new Error(t('transpiler.import-cible-invalide', { cible: targetPath }))
-      }
-      const cleanVars: string[] = rawVars.split(/[ \t]+/).map((s: string) => s.trim()).filter((s: string) => s.length > 0)
-      for (const v of cleanVars) {
-        if (v.startsWith('$')) externalReactives.add(v)
-      }
-
-      const isUrl = /^https?:\/\//.test(targetPath)
-      const fromClause = isUrl ? `'${targetPath}'` : `"µasset('${targetPath}')"`
-      const importClause = isDefault
-        ? `import ${cleanVars[0]} from ${fromClause}`
-        : `import { ${cleanVars.join(', ')} } from ${fromClause}`
-
-      pendingAutoImports.push(importClause)
-      return ''
+  // lecture partagée (readImportDirectives, plus haut), dans l'ordre des lignes : les imports posés en tête gardent
+  // l'ordre d'exécution écrit (un fichier qui pose des prototypes avant celui qui s'en sert). Un nom en µ ou § (singleton
+  // réactif `@import µ$$x`) suit son propre chemin (transpiler/index.ts) : sa ligne reste telle quelle ici. Un module
+  // (`langueModule`) se lit dans sa langue : une ligne de ses commentaires ou de ses chaînes reste du texte
+  const imports = readImportDirectives(cleaned, langueModule ? importActiveView(cleaned, langueModule) : undefined).filter(d => !/[µ§]/.test(d.noms))
+  for (const d of imports) {
+    const noms  = importNames(d)
+    const isUrl = /^https?:\/\//.test(d.cible)
+    for (const v of noms) {
+      if (v.startsWith('$')) externalReactives.add(v)
     }
-  )
+    pendingAutoImports.push(importClause(d, noms, isUrl ? `'${d.cible}'` : `"µasset('${d.cible}')"`))
+    // la faute d'un nom de la directive est citée à sa ligne du fichier, pas à celle de l'import posé en tête du module
+    directivesDesImports.push({ ligne: ligneDuFichier(cleaned, d.index), texte: d.texte })
+  }
+  for (const d of [...imports].reverse()) cleaned = cleaned.slice(0, d.index) + cleaned.slice(d.index + d.texte.length)
 
   // directive racine mal écrite (`@improt`, `@persit`) = ERREUR — la garde exige
   // la FORME de la directive (cible entre guillemets / variable `$`), pas seulement un mot proche : une ligne
@@ -594,6 +751,7 @@ export function extractDirectives(content: string): DirectivesResult {
     persistLocalVars,
     persistSessionVars,
     pendingAutoImports,
+    directivesDesImports,
     externalReactives,
     moduleI18nSection,
     moduleI18nExtraSections,

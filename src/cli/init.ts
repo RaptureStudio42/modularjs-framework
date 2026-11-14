@@ -6,6 +6,7 @@
 //   - app/modularjs/styles/ (styles partagés)
 //   - app/modularjs/hello.mjs (composant exemple)
 //   - app/modularjs/examples/ (dossier d'exemples : hello-world.mjs + son README)
+//   - AGENTS.md (le bloc MJS pour les assistants d'IA, cf. agents-md.ts — ajouté en fin d'un AGENTS.md déjà là)
 //
 // Universel : aucune dépendance à Rails/Sprockets ou autre framework. Le
 // outputDir `public/modularjs/` est servi tel quel par n'importe quel serveur
@@ -16,6 +17,7 @@
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { t } from '../messages/index.js'
+import { syncAgentsMd } from './agents-md.js'
 
 const DEFAULT_CONFIG = `{
   "sourceDir": "app/modularjs",
@@ -161,13 +163,13 @@ côté du \`<style>\`), et un fichier \`*.theme.mjs\` déclare un thème pour to
 ## Le style ne s'écrit jamais dans le HTML
 
 Pas d'attribut \`style="…"\`, même calculé : tout passe par un sélecteur du bloc \`<style>\`.
-Pour du style qui dépend de l'état, on écrit \`@style.prop={expr}\`, une variable
+Pour du style qui dépend de l'état, on écrit \`:style.prop={expr}\`, une variable
 \`--maVar={expr}\` lue par \`var(--maVar)\`, ou une classe qu'on bascule.
 
 ## Lancer l'exemple
 
 \`\`\`
-npx mjs dev
+npx --no -- mjs dev
 \`\`\`
 
 puis, dans votre page : \`<mjs-hello-world></mjs-hello-world>\`.
@@ -231,6 +233,9 @@ export function runInit(root: string): void {
     }
   }
 
+  // AGENTS.md : créé avec le bloc MJS, ou le bloc ajouté (mis à jour) dans celui qui est déjà là, sans toucher au reste
+  if (syncAgentsMd(root, { create: true }) === 'created') created++
+
   console.log(``)
   console.log(t('cli.init.resume', { cree: created, ignores: skipped }))
   console.log(``)
@@ -238,10 +243,15 @@ export function runInit(root: string): void {
   // `./bin/mjs` n'existe QUE dans le
   // dépôt source de ModularJS lui-même : un projet consommateur installe le
   // package (bin `mjs` exposé via package.json → node_modules/.bin/mjs) et
-  // l'invoque via `npx mjs`, jamais un chemin relatif littéral `./bin/mjs`
+  // l'invoque via `npx --no -- mjs`, jamais un chemin relatif littéral `./bin/mjs`
   // qui n'existe nulle part dans le projet scaffoldé (README officiel :
-  // `npx mjs build`/`npx mjs dev`).
-  console.log(`  npx mjs dev`)
+  // `npx --no -- mjs build`/`npx --no -- mjs dev`). `--no` : hors d'un projet où le
+  // paquet est installé, npx n'installe pas à sa place un paquet nommé « mjs » qui
+  // n'est pas ModularJS ; `--` : les options écrites après restent à `mjs`
+  // l'installation d'abord : tant que le paquet n'est pas installé dans le projet, `npx --no -- mjs dev` répond par le refus de npm
+  // (« npx canceled due to missing packages… »). Aucun commentaire en bout de ligne : zsh le prendrait pour des arguments
+  console.log(`  npm install modularjs-framework`)
+  console.log(`  npx --no -- mjs dev`)
   console.log(`  → http://127.0.0.1:3939`)
   console.log(``)
   console.log(t('cli.init.hmr-html'))

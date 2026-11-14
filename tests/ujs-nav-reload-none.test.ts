@@ -122,7 +122,7 @@ function makeClickEvent(link: any) {
   }
 }
 function baseMu(overrides: any = {}) {
-  return Object.assign({ warn() {}, error() {}, log() {} }, overrides)
+  return Object.assign({ warn() {}, error() {}, log() {}, _mjs_th: (h: string) => h }, overrides)
 }
 class FakeFormData {
   private map = new Map<string, any>()

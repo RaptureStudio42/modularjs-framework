@@ -107,9 +107,9 @@
     + '@keyframes mjs-fx-loader-vortex{0%{transform:rotate(0deg) scale(3);opacity:0}50%{opacity:1}100%{transform:rotate(360deg) scale(.5);opacity:0}}'
     + '@keyframes mjs-fx-loader-vortex-soft{0%{opacity:1}50%,100%{opacity:0}}'
     + '@keyframes mjs-fx-loader-vortex-sharp{0%{opacity:0}50%,100%{opacity:1}}'
-    // « réduire les animations » : le loader se fige (il reste visible, il dit toujours « ça charge ») ; le point de
-    // vortex et ses deux disques ont leur propre règle, aussi précise que leur animation, sans quoi leur `animation:` l'emporterait
-    + '@media (prefers-reduced-motion:reduce){' + L + ' [mjs-fx-p]{animation-play-state:paused}' + L + ' [mjs-fx-p]::before{animation-play-state:paused}' + L + ' [mjs-fx-p]::after{animation-play-state:paused}' + L + ' svg{animation-play-state:paused}' + L + ' circle{animation-play-state:paused}' + P('vortex', 'dot') + '{animation-play-state:paused}' + P('vortex', 'dot') + '::before,' + P('vortex', 'dot') + '::after{animation-play-state:paused}}';
+    // « réduire les animations » : le loader se fige (il reste visible, il dit toujours « ça charge ») ; `!important` : les
+    // règles d'animation des styles sont plus précises, et leur raccourci `animation:` remet `animation-play-state` à `running`
+    + '@media (prefers-reduced-motion:reduce){' + L + ' [mjs-fx-p],' + L + ' [mjs-fx-p]::before,' + L + ' [mjs-fx-p]::after,' + L + ' svg,' + L + ' circle{animation-play-state:paused!important}}';
 
   // taille d'origine de chaque style (px), et son dessin
   var NATIVE = { steps: 320, plus: 450, neon: 200, dots: 300, trio: 240, '3d': 300, bloom: 620, spiral: 460, galaxy: 460, cross: 640, vortex: 400 };

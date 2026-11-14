@@ -16,8 +16,8 @@ import { setMessagesLang } from '../src/messages/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const PARTAGE = "window.__evaluations = (window.__evaluations ?? 0) + 1\nexport marque := 'partage'\nexport compteur := { n: 0 }\n"
-const BOUGIE  = "@import marque 'partage.module.civet'\n@import compteur 'partage.module.civet'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
-const HOTE    = ["@import compteur 'partage.module.civet'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
+const BOUGIE  = "@import marque 'partage.module.civet.mjs'\n@import compteur 'partage.module.civet.mjs'\n\nexport dessiner = -> \"flamme #{marque}\"\nexport lire = -> compteur.n\nexport default { nom: 'bougie' }\n"
+const HOTE    = ["@import compteur 'partage.module.civet.mjs'", '', '<script>', '  $dessin = \'rien\'', '  @charger = ->', "    moteur = await µimport('moteurs/bougie.module.civet.mjs')", '    $dessin = moteur.dessiner()', '  @compter = -> compteur.n++', '</script>', '', '<button class="charger" @click=@charger>charger</button>', '<p class="d">{$dessin}</p>', ''].join('\n')
 
 interface Projet { srcDir: string, outDir: string, manifest: string }
 interface Options { env?: 'prod', js?: 'split' | 'bundle', dedupWaitTimeoutMs?: number }
@@ -59,7 +59,7 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('µimport(.civet) : le module est publié dans son fichier à empreinte, le composant ne le charge que par import dynamique', async () => {
-    const p = projet('imm-split-dev', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const p = projet('imm-split-dev', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
     const [bougie] = publies(p.outDir, 'bougie.module')
@@ -73,8 +73,8 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('µimport(.coffee) : même publication, même chargement dynamique', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/outil.module.coffee')", '    m', '</script>', '<p>x</p>', ''].join('\n')
-    const p = projet('imm-coffee', { 'hote.mjs': hote, 'lib/outil.module.coffee': "export saluer = (nom) -> \"salut #{nom}\"\nexport default { nom: 'outil' }\n" })
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/outil.module.coffee.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const p = projet('imm-coffee', { 'hote.mjs': hote, 'lib/outil.module.coffee.mjs': "export saluer = (nom) -> \"salut #{nom}\"\nexport default { nom: 'outil' }\n" })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
     const [outil] = publies(p.outDir, 'outil.module')
@@ -87,15 +87,15 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   it('l\'alias mjsimport, la forme sans parenthèses, un gestionnaire inline et un <script module> visent le même fichier', async () => {
     const hote = [
       '<script module>',
-      "export charger = -> mjsimport('lib/a.module.civet')",
+      "export charger = -> mjsimport('lib/a.module.civet.mjs')",
       '</script>',
       '<script>',
-      "  go = -> µimport 'lib/a.module.civet'",
+      "  go = -> µimport 'lib/a.module.civet.mjs'",
       '</script>',
-      "<button @click={ µimport('lib/a.module.civet').then((m) => m) }>go</button>",
+      "<button @click={ µimport('lib/a.module.civet.mjs').then((m) => m) }>go</button>",
       '',
     ].join('\n')
-    const p = projet('imm-formes', { 'hote.mjs': hote, 'lib/a.module.civet': 'export a := 1\n' })
+    const p = projet('imm-formes', { 'hote.mjs': hote, 'lib/a.module.civet.mjs': 'export a := 1\n' })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
     const [a] = publies(p.outDir, 'a.module')
@@ -106,7 +106,7 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('production (minifiée) : le fichier du module est cité par le composant, jamais en import statique', async () => {
-    const p = projet('imm-split-prod', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const p = projet('imm-split-prod', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p, { env: 'prod' })
     assert.deepEqual(errors, [])
     const [bougie] = publies(p.outDir, 'bougie.module')
@@ -117,12 +117,12 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('les @import du module suivent, à toute profondeur : chaque maillon est publié et chaque import mène à un fichier présent', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
     const p = projet('imm-profondeur', {
       'hote.mjs':          hote,
-      'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b() + 'a'\n",
-      'lib/b.module.civet': "@import c 'lib/c.module.civet'\nexport b := -> c() + 'b'\n",
-      'lib/c.module.civet': "export c := -> 'c'\n",
+      'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b() + 'a'\n",
+      'lib/b.module.civet.mjs': "@import c 'lib/c.module.civet.mjs'\nexport b := -> c() + 'b'\n",
+      'lib/c.module.civet.mjs': "export c := -> 'c'\n",
     })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
@@ -136,11 +136,11 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('un module qui µimporte un autre module : le second est publié et cité par le premier en import dynamique', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
     const p = projet('imm-module-vers-module', {
       'hote.mjs':           hote,
-      'lib/a.module.civet': "export suite := -> µimport('lib/b.module.civet')\n",
-      'lib/b.module.civet': "export b := 'b'\n",
+      'lib/a.module.civet.mjs': "export suite := -> µimport('lib/b.module.civet.mjs')\n",
+      'lib/b.module.civet.mjs': "export b := 'b'\n",
     })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
@@ -153,8 +153,8 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('un module @import-é par un composant ET µimport-é ailleurs : un seul fichier publié, visé des deux côtés', async () => {
-    const autre = ['@import marque \'partage.module.civet\'', '<script>', '  go = ->', "    m = await µimport('partage.module.civet')", '    m', '</script>', '<p>{marque}</p>', ''].join('\n')
-    const p = projet('imm-instance-unique', { 'hote.mjs': HOTE, 'autre.mjs': autre, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const autre = ['@import marque \'partage.module.civet.mjs\'', '<script>', '  go = ->', "    m = await µimport('partage.module.civet.mjs')", '    m', '</script>', '<p>{marque}</p>', ''].join('\n')
+    const p = projet('imm-instance-unique', { 'hote.mjs': HOTE, 'autre.mjs': autre, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p)
     assert.deepEqual(errors, [])
     const partages = publies(p.outDir, 'partage.module')
@@ -187,35 +187,35 @@ describe('µimport d\'un module MJS — fichiers séparés (js: split)', functio
   })
 
   it('un cycle entre modules reste refusé avec le message du cycle d\'@import, qu\'il passe par µimport ou par @import', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
     const statique = projet('imm-cycle-import', {
       'hote.mjs':           hote,
-      'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b\n",
-      'lib/b.module.civet': "@import a 'lib/a.module.civet'\nexport b := -> a\n",
+      'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b\n",
+      'lib/b.module.civet.mjs': "@import a 'lib/a.module.civet.mjs'\nexport b := -> a\n",
     })
     const { errors: e1 } = await construire(statique, { dedupWaitTimeoutMs: 300 })
     assert.ok(e1.some(m => /Cycle @import\/µasset détecté/.test(m)), `cycle attendu, reçu : ${JSON.stringify(e1)}`)
     const paresseux = projet('imm-cycle-muimport', {
       'hote.mjs':           hote,
-      'lib/a.module.civet': "export a := -> µimport('lib/b.module.civet')\n",
-      'lib/b.module.civet': "export b := -> µimport('lib/a.module.civet')\n",
+      'lib/a.module.civet.mjs': "export a := -> µimport('lib/b.module.civet.mjs')\n",
+      'lib/b.module.civet.mjs': "export b := -> µimport('lib/a.module.civet.mjs')\n",
     })
     const { errors: e2 } = await construire(paresseux, { dedupWaitTimeoutMs: 300 })
     assert.ok(e2.some(m => /Cycle @import\/µasset détecté/.test(m)), `cycle attendu, reçu : ${JSON.stringify(e2)}`)
   })
 
   it('une fermeture qui change : le module d\'un maillon profond modifié renomme le fichier chargé, l\'hôte suit (même instance, deux builds)', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
     const p = projet('imm-invalidation', {
       'hote.mjs':           hote,
-      'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b() + 'a'\n",
-      'lib/b.module.civet': "export b := -> 'v1'\n",
+      'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b() + 'a'\n",
+      'lib/b.module.civet.mjs': "export b := -> 'v1'\n",
     })
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, urlPrefix: '/out' } as any)
     try {
       assert.deepEqual((await bundler.compile()).errors.map((e: any) => e.message), [])
       const avant = publies(p.outDir, 'a.module')[0]
-      writeFileSync(join(p.srcDir, 'lib/b.module.civet'), "export b := -> 'v2'\n")
+      writeFileSync(join(p.srcDir, 'lib/b.module.civet.mjs'), "export b := -> 'v2'\n")
       assert.deepEqual((await bundler.compile()).errors.map((e: any) => e.message), [])
       const apres = publies(p.outDir, 'a.module')
       assert.equal(apres.length, 1, `une seule version de a.module : ${apres.join(', ')}`)
@@ -238,7 +238,7 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
   })
 
   for (const env of [undefined, 'prod'] as const) it(`${env === 'prod' ? 'production' : 'développement'} : le module sort dans son propre fichier, le fichier unique ne porte pas son code`, async () => {
-    const p = projet('imm-bundle-' + (env ?? 'dev'), { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const p = projet('imm-bundle-' + (env ?? 'dev'), { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p, { js: 'bundle', ...(env ? { env } : {}) })
     assert.deepEqual(errors, [])
     const fichiers = readdirSync(p.outDir)
@@ -251,7 +251,7 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
   })
 
   it('un module @import-é par un composant ET µimport-é : une seule instance, le fichier du module repart du code partagé', async () => {
-    const p = projet('imm-bundle-instance', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const p = projet('imm-bundle-instance', { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p, { js: 'bundle', env: 'prod' })
     assert.deepEqual(errors, [])
     const tout = readdirSync(p.outDir).filter(f => f.endsWith('.js')).map(f => readFileSync(join(p.outDir, f), 'utf8'))
@@ -261,15 +261,15 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
   it('l\'alias mjsimport, la forme sans parenthèses, un gestionnaire inline et un <script module> sortent le même module dans le même fichier', async () => {
     const hote = [
       '<script module>',
-      "export charger = -> mjsimport('lib/a.module.civet')",
+      "export charger = -> mjsimport('lib/a.module.civet.mjs')",
       '</script>',
       '<script>',
-      "  go = -> µimport 'lib/a.module.civet'",
+      "  go = -> µimport 'lib/a.module.civet.mjs'",
       '</script>',
-      "<button @click={ µimport('lib/a.module.civet').then((m) => m) }>go</button>",
+      "<button @click={ µimport('lib/a.module.civet.mjs').then((m) => m) }>go</button>",
       '',
     ].join('\n')
-    const p = projet('imm-bundle-formes', { 'hote.mjs': hote, 'lib/a.module.civet': "export a := 'unique-a'\n" })
+    const p = projet('imm-bundle-formes', { 'hote.mjs': hote, 'lib/a.module.civet.mjs': "export a := 'unique-a'\n" })
     const { errors } = await construire(p, { js: 'bundle' })
     assert.deepEqual(errors, [])
     const fichiers = readdirSync(p.outDir).filter(f => /^a-[a-f0-9]{8}\.js$/.test(f))
@@ -282,8 +282,8 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
   })
 
   it('reconstruction (même instance, comme mjs dev) : le module modifié change de fichier, l\'ancien part, l\'entrée suit', async () => {
-    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
-    const p = projet('imm-bundle-incremental', { 'hote.mjs': hote, 'lib/a.module.civet': "export a := 'version-1'\n" })
+    const hote = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+    const p = projet('imm-bundle-incremental', { 'hote.mjs': hote, 'lib/a.module.civet.mjs': "export a := 'version-1'\n" })
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, urlPrefix: '/out', js: 'bundle' } as any)
     const fichiersA = (): string[] => readdirSync(p.outDir).filter(f => /^a-[a-f0-9]{8}\.js$/.test(f))
     const cartesA   = (): string[] => readdirSync(p.outDir).filter(f => /^a-[a-f0-9]{8}\.js\.map$/.test(f))
@@ -293,7 +293,7 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
       assert.equal(avant.length, 1, `un fichier au premier tour : ${readdirSync(p.outDir).join(', ')}`)
       assert.deepEqual((await bundler.compile()).errors.map((e: any) => e.message), [])
       assert.deepEqual(fichiersA(), avant, 'rien ne change entre deux tours identiques (unités resservies par le cache)')
-      writeFileSync(join(p.srcDir, 'lib/a.module.civet'), "export a := 'version-2'\n")
+      writeFileSync(join(p.srcDir, 'lib/a.module.civet.mjs'), "export a := 'version-2'\n")
       assert.deepEqual((await bundler.compile()).errors.map((e: any) => e.message), [])
       const apres = fichiersA()
       assert.equal(apres.length, 1, `une seule version du module : ${apres.join(', ')}`)
@@ -337,11 +337,12 @@ describe('µimport d\'un module MJS — fichier unique (js: bundle)', function (
     assert.equal(/dessin-moteur\d+/.test(readFileSync(p.manifest, 'utf8')), false, 'aucun moteur dans le fichier unique')
   })
 
-  it('un fichier unique sans µimport de module garde un fichier unique', async () => {
-    const p = projet('imm-bundle-sans', { 'hote.mjs': '<p>x</p>\n', 'partage.module.civet': PARTAGE })
+  it('un fichier unique sans µimport de module garde un fichier unique (à côté, en production, le seul chargeur des messages de la console)', async () => {
+    const p = projet('imm-bundle-sans', { 'hote.mjs': '<p>x</p>\n', 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p, { js: 'bundle', env: 'prod' })
     assert.deepEqual(errors, [])
-    assert.deepEqual(readdirSync(p.outDir).filter(f => f.endsWith('.js')), ['bundle.js'])
+    const js = readdirSync(p.outDir).filter(f => f.endsWith('.js')).sort()
+    assert.deepEqual(js.map(f => f.replace(/^mjs_msg-[0-9a-z]{5}\.js$/, 'mjs_msg-<empreinte>.js')), ['bundle.js', 'mjs_msg-<empreinte>.js'], `le fichier unique et le chargeur des messages, téléchargé au premier message : ${js.join(', ')}`)
   })
 })
 
@@ -353,7 +354,7 @@ describe('µimport d\'un module MJS — application installable', function () {
   })
 
   for (const js of ['split', 'bundle'] as const) it(`${js === 'split' ? 'fichiers séparés' : 'fichier unique'} : le fichier du module figure au précache, pour que l'application chargée hors ligne le trouve`, async () => {
-    const p = projet('imm-precache-' + js, { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })
+    const p = projet('imm-precache-' + js, { 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })
     const { errors } = await construire(p, { js, env: 'prod' })
     assert.deepEqual(errors, [])
     const fichier = readdirSync(p.outDir).find(f => /^bougie(?:\.module)?-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f))
@@ -372,7 +373,7 @@ describe('µimport d\'un module MJS — mjs build --prod avec rendu serveur', fu
   // demande y suit les règles de n'importe quel module, et le dossier de sortie du build garde son mode
   for (const js of ['split', 'bundle'] as const) it(`${js === 'split' ? 'fichiers séparés' : 'fichier unique'} : le build passe, le rendu serveur monte l'hôte, le module est publié`, () => {
     const root = mjsTmp('imm-cli-' + js)
-    for (const [chemin, contenu] of Object.entries({ 'hote.mjs': HOTE, 'moteurs/bougie.module.civet': BOUGIE, 'partage.module.civet': PARTAGE })) {
+    for (const [chemin, contenu] of Object.entries({ 'hote.mjs': HOTE, 'moteurs/bougie.module.civet.mjs': BOUGIE, 'partage.module.civet.mjs': PARTAGE })) {
       mkdirSync(dirname(join(root, 'src', chemin)), { recursive: true })
       writeFileSync(join(root, 'src', chemin), contenu)
     }
@@ -428,9 +429,9 @@ describe('µimport — cibles refusées au build', function () {
     const calcule = projet('imm-refus-calcule', { 'hote.mjs': ['<script>', '  go = (nom) -> µimport(nom)', '</script>', '<p>x</p>', ''].join('\n') })
     const { errors: e1 } = await construire(calcule)
     assert.ok(e1.some(m => /µimport exige un chemin littéral/.test(m)), `refus attendu, reçu : ${JSON.stringify(e1)}`)
-    const absent = projet('imm-refus-absent', { 'hote.mjs': hote('lib/inconnu.module.civet') })
+    const absent = projet('imm-refus-absent', { 'hote.mjs': hote('lib/inconnu.module.civet.mjs') })
     const { errors: e2 } = await construire(absent)
-    assert.ok(e2.length > 0 && e2.some(m => /inconnu\.module\.civet/.test(m)), `build en échec attendu, reçu : ${JSON.stringify(e2)}`)
+    assert.ok(e2.length > 0 && e2.some(m => /inconnu\.module\.civet\.mjs/.test(m)), `build en échec attendu, reçu : ${JSON.stringify(e2)}`)
     assert.equal(existsSync(join(absent.outDir, 'inconnu.module.js')), false)
   })
 })

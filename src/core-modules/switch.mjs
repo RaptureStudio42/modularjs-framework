@@ -88,8 +88,8 @@
     @syncValidity()
 </script>
 
-<label class="wrap" part="wrap" @class{on($disabled) or $formDisabled}="disabled" @class{µlayout is 'triangle'}="triangle" @class{µlayout is 'glow'}="glow">
-  <input type="checkbox" role="switch" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} @this=!{native} @change={@onChange(e)}>
+<label class="wrap" part="wrap" :class{on($disabled) or $formDisabled}="disabled" :class{µlayout is 'triangle'}="triangle" :class{µlayout is 'glow'}="glow">
+  <input type="checkbox" role="switch" class="native" name="{$name}" value="{$value}" checked={$checked} disabled={on($disabled) or $formDisabled} required={on($required)} :this=!{native} @change={@onChange(e)}>
   <span class="pill" part="pill" aria-hidden="true">
     {if µlayout is 'triangle'}
       <span class="tri-on">{$on}</span>

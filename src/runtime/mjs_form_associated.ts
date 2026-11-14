@@ -36,7 +36,12 @@
   // aussitôt en prop, et le réécrire la relancerait sans fin). Posé aussi au rendu serveur : la page servie porte l'attribut que le navigateur
   // écrit, et la reprise le garde. La prop `label` posée, changée ou ôtée après le montage refait le nom du champ de l'ombre : elle passe
   // devant ses étiquettes, comme un `aria-label` sur un champ natif
-  P._set = function(k, v) {
+  // <precision>
+  P._set = function(k, v, code) {
+  // </precision>
+  // <horloge>
+  // P._set = function(k, v) {
+  // </horloge>
     var r;
     if (k === 'readonly' && this.localName.indexOf('mjs-core-') === 0 && !(this._mjs_var_bits && k in this._mjs_var_bits)) {
       // la valeur que la lecture des attributs tire de l'attribut lui-même, quand c'est son texte, ne l'ôte pas : `readonly="null"` reste porté,
@@ -48,7 +53,12 @@
       else if (!this.hasAttribute(k)) this.setAttribute(k, '');
       return true;
     }
-    r = set.call(this, k, v);
+    // <precision>
+    r = set.call(this, k, v, code);
+    // </precision>
+    // <horloge>
+    // r = set.call(this, k, v);
+    // </horloge>
     if (k === 'label' && this._mjs_n) _mjsFormName(this);
     return r;
   };
@@ -170,6 +180,9 @@ function _mjsFormPut(el) {
 µ._mjs_formLabel = function(el, input, focus) {
   var inner = null;
   if (!input || !('internals' in el)) return;
+  // Reference Target, là où le navigateur l'offre : une `<label for>`, un `aria-labelledby` ou un `aria-describedby` de la page qui
+  // visent la balise atteignent le champ de l'ombre ; ailleurs, rien
+  if (el._shadow !== el && 'referenceTarget' in el._shadow) el._shadow.referenceTarget = input.id || (input.id = 'mjs-field');
   if (el._shadow !== el) el._shadow.addEventListener('click', function(e) { inner = e; });
   el.addEventListener('click', function(e) {
     if (e !== inner && e.target === el) input[focus ? 'focus' : 'click']();

@@ -28,7 +28,7 @@ describe('checkUjsForm — contrôles unitaires (fonction pure)', () => {
     assert.equal(msgs.length, 1)
     assert.match(msgs[0], /ma-page:2\b/)
     assert.match(msgs[0], /action/)
-    assert.match(msgs[0], /@method/)
+    assert.match(msgs[0], /:method/)
   })
 
   it('(b) <form action="/x"> : silence', () => {
@@ -43,8 +43,8 @@ describe('checkUjsForm — contrôles unitaires (fonction pure)', () => {
     assert.equal(checkUjsForm('<form action = ""></form>', 'mod').length, 1)
   })
 
-  it('(c) <form @method="post"> : silence', () => {
-    assert.deepEqual(checkUjsForm('<form @method="post"></form>', 'mod'), [])
+  it('(c) <form :method="post"> : silence', () => {
+    assert.deepEqual(checkUjsForm('<form :method="post"></form>', 'mod'), [])
   })
 
   it('<form mjs-method="post"> (forme déjà compilée, si la doc montre le HTML de sortie) : silence', () => {
@@ -55,8 +55,8 @@ describe('checkUjsForm — contrôles unitaires (fonction pure)', () => {
     assert.equal(checkUjsForm('<form method="post"></form>', 'mod').length, 1)
   })
 
-  it('(d) <form @noUJS> : silence', () => {
-    assert.deepEqual(checkUjsForm('<form @noUJS></form>', 'mod'), [])
+  it('(d) <form :noUJS> : silence', () => {
+    assert.deepEqual(checkUjsForm('<form :noUJS></form>', 'mod'), [])
   })
 
   it('(e) <form @submit.prevent={f()}> : silence — le gestionnaire joue avant l\'envoi et le retient', () => {
@@ -101,17 +101,17 @@ describe('transpiler — câblage lint.ujsForm', function () {
 
   it('défaut ON — sans AUCUNE clé lint, un <form> fautif déclenche l\'alerte', async () => {
     const w = await warningsFor('<form></form>', 'defaut-on')
-    assert.ok(w.some(m => m.includes('@noUJS')), `avertissements capturés : ${JSON.stringify(w)}`)
+    assert.ok(w.some(m => m.includes(':noUJS')), `avertissements capturés : ${JSON.stringify(w)}`)
   })
 
   it('@noUJS posé dans la SOURCE : silence après compilation (la directive est déjà réécrite en mjs-no-ujs quand le lint tourne)', async () => {
-    const w = await warningsFor('<form @noUJS @submit={f()}></form>', 'noujs-source')
-    assert.equal(w.filter(m => m.includes('@noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
+    const w = await warningsFor('<form :noUJS @submit={f()}></form>', 'noujs-source')
+    assert.equal(w.filter(m => m.includes(':noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
   })
 
   it('@submit.prevent posé dans la SOURCE : silence après compilation', async () => {
     const w = await warningsFor('<script>\n$n = 0\n</script>\n<form @submit.prevent={$n++}><button>ok</button></form>', 'prevent-source')
-    assert.equal(w.filter(m => m.includes('@noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
+    assert.equal(w.filter(m => m.includes(':noUJS')).length, 0, `aucun avertissement attendu : ${JSON.stringify(w)}`)
   })
 
   it('(g) lint.ujsForm: false coupe tout, même gabarit fautif (aucun avertissement)', async () => {

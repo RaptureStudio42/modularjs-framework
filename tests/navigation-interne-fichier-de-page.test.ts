@@ -134,13 +134,13 @@ describe('navigation interne — branchement aux sites d\'échange de page', () 
   const lignes = UJS_SRC.split('\n')
   const appelsTete = lignes.map((l, i) => ({ l, i })).filter(({ l }) => l.includes('µ._mjs_navApplyHead(doc);'))
 
-  it('les 4 sites qui installent un document reçu (rafraîchissement de fond, retour arrière, clic, soumission) appliquent la fiche juste avant la tête', () => {
-    assert.equal(appelsTete.length, 4, 'quatre sites d\'échange HTML')
+  it('les 2 sites qui installent un document reçu (l\'échange commun du clic, du retour arrière et de la soumission ; le rafraîchissement de fond) appliquent la fiche juste avant la tête', () => {
+    assert.equal(appelsTete.length, 2, 'deux sites d\'échange HTML')
     for (const { i } of appelsTete) {
       // la fiche dans les trois lignes qui précèdent la tête : la reprise du jeton préchargé peut s'intercaler
       assert.ok(lignes.slice(Math.max(0, i - 3), i + 1).some((l) => l.includes('µ._mjs_navPageFile(doc);')), `ligne ${i + 1} : la fiche doit être appliquée avant la tête`)
     }
-    assert.equal(lignes.filter(l => l.includes('µ._mjs_navPageFile(doc);')).length, 4, 'ni oubli ni appel en trop')
+    assert.equal(lignes.filter(l => l.includes('µ._mjs_navPageFile(doc);')).length, 2, 'ni oubli ni appel en trop')
   })
 
   it('à chaque site la fiche est appliquée AVANT l\'installation du contenu (l\'Autoloader voit alors les nouveaux chemins)', () => {

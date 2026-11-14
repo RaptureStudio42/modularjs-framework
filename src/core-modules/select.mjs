@@ -1,13 +1,37 @@
 @formAssociated
 
 <script module>
-  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à l'attribut `other` : la construction les ôte quand aucune liste de l'appli ne l'écrit, en développement comme en production, au serveur comme au navigateur ; la copie dans un projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
+  # les repères `@@` (script `# @@`, gabarit `<!-- @@ -->`, style `// @@`) cernent ce qui ne sert qu'à l'attribut `other`, ou à `typed` (que le compilateur écrit sur une liste liée à une variable de règle) : la construction les ôte quand aucune liste de l'appli ne l'écrit, en développement comme en production, au serveur comme au navigateur ; la copie dans un projet garde tout (les repères y sont des commentaires), ils ne partent jamais dans le code envoyé
   # `other` : le morceau propre à `other` ; `!other` : l'autre forme des lignes qui existent avec et sans `other`, écrite en commentaire et remise en code quand `other` part ; `dev other` : l'avertissement du développement, écrit en commentaire et réveillé quand `other` part
   # `reprise` : le morceau qui écrit le choix de la liste dans sa balise quand le serveur la rend, ôté en production quand l'application ne reprend aucune page rendue par le serveur
   nextId = 0
   # @@ dev other
   # told = false # @@ !other
   # @@
+  # la couche du dessus (`popover`) ; le panneau ancré : le navigateur le pose contre son bouton, dans la couche du dessus (cf. lift) ; sans l'ancrage CSS, le placement par le script, dans le flux de la balise (cf. fitPanel). Dans une boîte fixe ou transformée, le script le place dans la couche du dessus (cf. pin). Le test de fonction demande tout ce que le style emploie : Chrome 125 à 128 connaît `anchor-name` sans `position-area` (alors `inset-area`)
+  layer   = typeof HTMLElement isnt 'undefined' and typeof HTMLElement.prototype.showPopover is 'function'
+  anchors = layer and typeof CSS isnt 'undefined' and typeof CSS.supports is 'function' and CSS.supports('(anchor-name: --a) and (position-area: top) and (position-try-fallbacks: flip-block)')
+
+  # un menu placé par le script dans la couche du dessus (popover ouvert, `position: fixed`), là où l'ancrage CSS se trompe ou manque : tant qu'il est ouvert, il suit son bouton à chaque image (`requestAnimationFrame`), que le bouton bouge par un défilement, un redimensionnement, un contenu ajouté au-dessus, une boîte déplacée ou animée ; une seule lecture de la place du bouton par image, écrite quand elle change : les bords du bouton dans la fenêtre (`--mjs-pin-left`, `--mjs-pin-top`, `--mjs-pin-right`, `--mjs-pin-bottom`), en pixels CSS du menu (divisés par le zoom CSS que le menu partage avec son bouton : le produit des `zoom` du bouton et de ses ancêtres, lu une fois ; jamais une mesure à l'écran, que fausserait une transformation : la boîte qui s'anime, une animation que la page pose sur le menu), puis `moved` ; le menu prend le sens d'écriture calculé de son bouton (`dir`) et sa feuille choisit le côté. Rend la fonction qui l'arrête
+  pin = (menu, button, moved)->
+    menu.dir = getComputedStyle(button).direction
+    k        = 1
+    n        = button
+    while n
+      k *= parseFloat(getComputedStyle(n).zoom) or 1
+      n  = n.parentElement or n.getRootNode().host
+    last  = ''
+    frame = 0
+    step  = ->
+      box = button.getBoundingClientRect()
+      now = "#{box.left} #{box.top} #{box.right} #{box.bottom}"
+      if now isnt last
+        last = now
+        menu.style.setProperty("--mjs-pin-#{side}", "#{box[side] / k}px") for side in ['left', 'top', 'right', 'bottom']
+        moved?()
+      frame = requestAnimationFrame(step)
+    step()
+    -> cancelAnimationFrame(frame)
 </script>
 
 <script>
@@ -28,6 +52,8 @@
   $panelUp     = false
   $panelMax    = '280px'
   $panelLeft   = null
+  $tied        = false
+  $pinned      = false
 
   $comboLabel   = null
   $comboInvalid = null
@@ -103,9 +129,18 @@
     test = matchers[match] or matchers.contains
     options.filter (o)-> test(o.norm ?? normalize(o.label), q)
 
+  # liée à une variable typée (le compilateur pose alors `typed` sur la balise), un nombre vaut l'option de son texte exact, sinon la première option de texte qui l'écrit autrement (`02` pour 2, `2.50` pour 2.5), comme dans une liste native, dont les options sont du texte : `value={false}` ou `value={null}` ne vaut jamais 0 ; liée à une variable libre, la liste compare le texte
+  # l'option d'un nombre se cherche une fois par liste d'options : isSelected la demande pour chaque option, la chercher chaque fois parcourait toutes les options pour chacune d'elles (un million de comparaisons pour un choix parmi 1 000 options)
+  keyCache = [null, null]
+  keyOf = (x)->
+    return x unless $typed and typeof x is 'number'
+    keyCache = [$optionsData, new Map()] unless keyCache[0] is $optionsData
+    keyCache[1].set(x, ($optionsData.find((o)-> String(o.value) == String(x)) ?? $optionsData.find((o)-> typeof o.value is 'string' and o.value.trim() and +o.value == x))?.value) unless keyCache[1].has(x)
+    keyCache[1].get(x) ?? x
+
   # une valeur vide ne choisit rien : null == null cochait toutes les options sans valeur ; la forme texte garde « 18 » et 18 pour la même valeur, mais distingue 0, '' et false que == confondait (le bouton disait « Zéro » après le choix de « Vide »)
   isSelected = (v, value, multiple)->
-    if multiOf(multiple) then Array.isArray(value) and value.includes(v) else value != null and String(value) == String(v)
+    if multiOf(multiple) then Array.isArray(value) and value.map(keyOf).includes(v) else value != null and String(keyOf(value)) == String(v)
 
   # `match="async"` : la page remplace les options pendant la recherche, l'option choisie peut n'y plus être ; le choix garde alors le libellé et l'icône sous lesquels on l'a vue la dernière fois (une valeur jamais vue n'en a pas)
   # seules les valeurs CHOISIES y sont retenues (une liste servie par un serveur ne s'y accumule pas) ; sans `match="async"` rien n'y entre
@@ -217,17 +252,17 @@
     cut  = if s.endsWith(']') then s.length - 1 else s.length
     s.slice(0, cut) + '_other' + s.slice(cut) + tail
 
-  # les champs cachés voulus, [nom, valeur] : les options choisies sous le nom du sélecteur, les réponses libres sous ce nom suivi de `_other` ; une valeur qu'aucune option ne porte (le bouton dit alors « Choisir… ») ne part pas, comme avec un <select> natif ; tant qu'aucune option n'est lue (rendu du serveur, options pas encore arrivées), la valeur part telle quelle et le champ écrit par le serveur reste
+  # les champs cachés voulus, [nom, valeur] : les options choisies sous le nom du sélecteur, les réponses libres sous ce nom suivi de `_other` ; un nombre d'une liste liée à une variable typée part sous le texte de son option (`02` pour 2), avec ou sans `other` ; une valeur qu'aucune option ne porte (le bouton dit alors « Choisir… ») ne part pas, comme avec un <select> natif ; tant qu'aucune option n'est lue (rendu du serveur, options pas encore arrivées), la valeur part telle quelle et le champ écrit par le serveur reste
   fieldsOf = (name, value, multiple, options, max, match)->
     free  = freeOf(value, multiple, options, max)
     known = selectedOf(value, multiple, options, match)
-    all   = if multiOf(multiple) then (if Array.isArray(value) then value else []) else (if value? then [value] else [])
+    all   = (if multiOf(multiple) then (if Array.isArray(value) then value else []) else (if value? then [value] else [])).map(keyOf)
     all.filter((v)-> not free.includes(v) and (not options.length or known.some((o)-> String(o.value) == String(v)))).map((v)-> [name, String(v)]).concat(free.map((v)-> [otherName(name), String(v)]))
   # @@
   # @@ !other
   # fieldsOf = (name, value, multiple, options, match)->
   #   known = selectedOf(value, multiple, options, match)
-  #   all   = if multiOf(multiple) then (if Array.isArray(value) then value else []) else (if value? then [value] else [])
+  #   all   = (if multiOf(multiple) then (if Array.isArray(value) then value else []) else (if value? then [value] else [])).map(keyOf)
   #   all.filter((v)-> not options.length or known.some((o)-> String(o.value) == String(v))).map((v)-> [name, String(v)])
   # @@
 
@@ -292,6 +327,10 @@
     fresh        = els.map (el)-> optionData(el, seen)
     keepChosen($value, $multiple, $match, fresh.concat($optionsData))
     $optionsData = fresh
+    # @@ typed
+    # liée à une variable de règle (`typed`), une liste `multiple` montre de nouveau la valeur de sa variable parmi ses nouvelles options, chacune une fois, dans leur ordre, comme une liste native qui reçoit ses options après sa valeur (µ._mjs_topts, mjs_types_select.ts)
+    µ._mjs_topts?(slotRef.getRootNode().host) if $typed
+    # @@
     keepActive() if $open
     # une option peut être modifiée EN PLACE (liste {for} réactive, même clé, même noeud
     # <mjs-core-option> réutilisé) sans jamais déclencher slotchange → on observe le sous-arbre
@@ -321,9 +360,31 @@
     queueMicrotask fitPanel
     queueMicrotask(fitOther) if $otherMax # @@ other
 
-  # le panneau, jamais moins large que la balise, s'élargit pour ses libellés et ne sort jamais de la fenêtre : il part du bord gauche de la balise s'il tient, sinon son bord droit suit celui de la balise, puis la fenêtre le borne
+  # ancré ou placé par le script : le panneau passe dans la couche du dessus dès qu'il paraît (`:attach`, avant que le champ de recherche prenne le focus et que `sticky` le mesure), où aucun ancêtre qui coupe (`overflow: hidden`, un bloc qui défile) ne le rogne ; ancré, le navigateur le pose contre son bouton, l'y garde au défilement et le retourne quand la place manque (cf. style) ; dans une boîte fixe ou transformée, le script le place et l'y garde (cf. pin). Le bouton porte l'ancre de sa liste, un nom par liste
+  lift = (panel)->
+    return unless $tied or $pinned
+    wrapperRef.style.setProperty('--mjs-select-anchor', "--#{uid}") if $tied
+    panel.showPopover()
+    stop = if $pinned then pin(panel, buttonRef, updatePlacement) else null
+    # le bouton caché par le conteneur qui défile, ou sorti de l'écran : le panneau se ferme (Firefox et Safari le laisseraient flotter hors du conteneur), cf. leave
+    seen = new IntersectionObserver (list)-> leave() unless list[list.length - 1].isIntersecting
+    seen.observe(buttonRef)
+    return ->
+      seen.disconnect()
+      stop?()
+
+  # une boîte autour de la liste, ombres traversées, qui fausse l'ancre : en `position: fixed` (une fenêtre modale, un en-tête fixe), WebKit y décale l'ancre de la longueur du défilement de la page ; déplacée par une transformation autre que l'identité (`transform`, `translate`, `rotate`, `scale`), Firefox pose le panneau comme si elle n'existait pas — le panneau est alors placé par le script, dans la couche du dessus (cf. pin)
+  shiftedOf = (n)->
+    while n
+      s = getComputedStyle(n)
+      return true if s.position is 'fixed' or s.transform isnt 'none' and not new DOMMatrix(s.transform).isIdentity or /[1-9]/.test(s.translate + s.rotate) or not /^(none|1( 1)*)$/.test(s.scale)
+      n = n.parentElement or n.getRootNode().host
+    false
+
+  # repli sans ancrage, et panneau placé par le script (cf. pin) : le panneau, jamais moins large que la balise, s'élargit pour ses libellés et ne sort jamais de la fenêtre : il part du bord gauche de la balise s'il tient, sinon son bord droit suit celui de la balise, puis la fenêtre le borne (écrit de droite à gauche, il suit le bord droit de la balise, cf. style)
   # sa largeur ne dépend pas de sa place : il est posé d'abord sur le bord droit de la balise (rien ne dépasse à droite avant la mesure : WebKit garde le débordement d'une première pose et en fait un défilement horizontal de la page)
   fitPanel = ->
+    return if $tied
     panel = wrapperRef?.querySelector('.select-panel')
     return unless panel and buttonRef
     box  = buttonRef.getBoundingClientRect()
@@ -445,12 +506,25 @@
     $activeIndex = $optionsData.length if $given # @@ other
     # posé d'abord sur le bord droit de la balise, puis à sa place mesurée (cf. fitPanel)
     $panelLeft = null
+    $pinned    = layer and shiftedOf(wrapperRef)
+    $tied      = anchors and not $pinned
     $open      = true
+    # inscrite le temps qu'elle est ouverte : une modale qui s'ouvre (µ.modal) la referme, elle passerait devant elle ; l'Échap d'une modale la referme d'abord (cf. leave)
+    (µ._mjs_menus = µ._mjs_menus or new Set()).add(leave)
     updatePlacement()
     queueMicrotask -> reveal($activeIndex)
 
+  # la liste refermée par une modale qui s'ouvre ou par son Échap, ou son bouton caché par le conteneur qui défile ou sorti de l'écran : le focus qu'elle portait revient au bouton, sans rien faire défiler (la modale le rendra à sa fermeture) ; vrai, la liste était ouverte : la modale reste ouverte à cet Échap
+  leave = ->
+    panel = wrapperRef?.querySelector('.select-panel')
+    back  = panel?.contains(panel.getRootNode().activeElement)
+    closePanel()
+    buttonRef?.focus({ preventScroll: true }) if back
+    true
+
   closePanel = ->
     was = $open
+    µ._mjs_menus?.delete(leave)
     # la recherche qui portait du texte se vide : la page remet sa liste
     if $open and $query
       $query = ''
@@ -479,9 +553,9 @@
     next   = v
     if $multi
       next = if Array.isArray($value) then Array.from($value) else []
-      idx  = next.indexOf(v)
+      idx  = next.findIndex((x)-> keyOf(x) is v)
       if idx == -1 then next.push(v) else next.splice(idx, 1)
-    changed = $multi or $value !== v
+    changed = $multi or keyOf($value) !== v
     $value  = next
     unless $multi
       closePanel()
@@ -804,33 +878,35 @@
     hostObserver?.disconnect()
     labelObserver?.disconnect()
     watched = []
+    # détruite ouverte (la modale qui se ferme l'emporte) : hors du registre des menus ouverts
+    µ._mjs_menus?.delete(leave)
 </script>
 
 <!-- @@ other -->
-<div class="select" @class{$otherMax}="with-other" @class{stickyOf($sticky, $multiple)}="sticky" @this=!{wrapperRef} @keydown={onKeydown(e)}>
+<div class="select" :class{$otherMax}="with-other" :class{stickyOf($sticky, $multiple)}="sticky" :this=!{wrapperRef} @keydown={onKeydown(e)}>
 <!-- @@ -->
 <!-- @@ !other -->
-<!-- <div class="select" @class{stickyOf($sticky, $multiple)}="sticky" @this=!{wrapperRef} @keydown={onKeydown(e)}> -->
+<!-- <div class="select" :class{stickyOf($sticky, $multiple)}="sticky" :this=!{wrapperRef} @keydown={onKeydown(e)}> -->
 <!-- @@ -->
-  <span class="select-sizer" aria-hidden="true"><span>{$placeholderText}</span>{for opt in widestOf($optionsData)}<span @class{opt.group}="select-sizer-group">{if $multi}<i class="select-check"></i>{end}{if opt.icon?.src}<i class="select-icon select-img"></i>{elsif opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}<!-- @@ other -->{if $otherMax}<span>{if $multi}<i class="select-check"></i>{end}{$otherTexts.label}</span>{end}<!-- @@ --></span>
-  <button type="button" part="button" class="select-btn" @this=!{buttonRef} role="combobox" aria-haspopup="listbox" aria-expanded={$open} aria-controls={panelId} aria-activedescendant={searchOnOf($search) ? undefined : $activeDescendant} aria-label={$comboLabel} aria-invalid={$comboInvalid} aria-required={offOf($required) ? 'true' : null} disabled={lockedOf($disabled, $formDisabled) ? true : null} @click={onButtonClick()}>
+  <span class="select-sizer" aria-hidden="true"><span>{$placeholderText}</span>{for opt in widestOf($optionsData)}<span :class{opt.group}="select-sizer-group">{if $multi}<i class="select-check"></i>{end}{if opt.icon?.src}<i class="select-icon select-img"></i>{elsif opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}<!-- @@ other -->{if $otherMax}<span>{if $multi}<i class="select-check"></i>{end}{$otherTexts.label}</span>{end}<!-- @@ --></span>
+  <button type="button" part="button" class="select-btn" :this=!{buttonRef} role="combobox" aria-haspopup="listbox" aria-expanded={$open} aria-controls={panelId} aria-activedescendant={searchOnOf($search) ? undefined : $activeDescendant} aria-label={$comboLabel} aria-invalid={$comboInvalid} aria-required={offOf($required) ? 'true' : null} disabled={lockedOf($disabled, $formDisabled) ? true : null} @click={onButtonClick()}>
     {if $currentIcon?.src}<img class="select-icon select-img" src={$currentIcon.src} alt="">{elsif $currentIcon}<span class="select-icon">{$currentIcon}</span>{end}
-    <span class="select-label" @class{waitingOf($value, $multiple, $choices, $match)}="placeholder">{$currentLabel}</span>
+    <span class="select-label" :class{waitingOf($value, $multiple, $choices, $match)}="placeholder">{$currentLabel}</span>
   </button>
   {if $open}
-    <div class="select-panel" part="panel" @class{$panelUp}="up" --mjs-select-panel-max={$panelMax} --mjs-select-panel-left={$panelLeft}>
+    <div class="select-panel" part="panel" popover={$tied or $pinned ? 'manual' : null} :class{$tied}="anchored" :class{$pinned}="pinned" :class{$panelUp}="up" --mjs-select-panel-max={$panelMax} --mjs-select-panel-left={$panelLeft} :attach={lift}>
       {if searchOnOf($search)}
-        <input type="text" part="search" class="select-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={panelId} aria-activedescendant={$activeDescendant} aria-label={$searchText} placeholder={$searchText} value={$query} @this=!{searchInputRef} @input={onSearchInput()} @compositionstart={composing = true} @compositionend={onCompositionEnd()}>
+        <input type="text" part="search" class="select-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={panelId} aria-activedescendant={$activeDescendant} aria-label={$searchText} placeholder={$searchText} value={$query} :this=!{searchInputRef} @input={onSearchInput()} @compositionstart={composing = true} @compositionend={onCompositionEnd()}>
       {end}
       <div class="select-list" id={panelId} role="listbox" aria-multiselectable={$multi}>
         {if $filtered.length == 0}
           <div class="select-empty">{$emptyText}</div>
         {else}
           {for sec in sectionsOf($filtered) by key}
-            <div class="select-section" @class{sec.grouped}="select-group" role={sec.grouped ? 'group' : 'none'} aria-label={sec.label}>
+            <div class="select-section" :class{sec.grouped}="select-group" role={sec.grouped ? 'group' : 'none'} aria-label={sec.label}>
               {if sec.grouped and sec.label}<div class="select-group-label" aria-hidden="true">{sec.label}</div>{end}
               {for it in sec.items by i}
-                <div class="select-option" part="option" role="option" id={optionId(it.i)} @class{it.i == $activeIndex}="active" @class{isSelected(it.value, $value, $multiple)}="selected" aria-selected={isSelected(it.value, $value, $multiple)} @click={toggleValue(it.value)} @mouseenter={hover(e, it.i)} @mousemove={hover(e, it.i)}>
+                <div class="select-option" part="option" role="option" id={optionId(it.i)} :class{it.i == $activeIndex}="active" :class{isSelected(it.value, $value, $multiple)}="selected" aria-selected={isSelected(it.value, $value, $multiple)} @click={toggleValue(it.value)} @mouseenter={hover(e, it.i)} @mousemove={hover(e, it.i)}>
                   {if $multi}<span class="select-check">{if isSelected(it.value, $value, $multiple)}{$iconChecked}{else}{$iconUnchecked}{end}</span>{end}
                   {if it.o.icon?.src}<img class="select-icon select-img" src={it.o.icon.src} alt="">{elsif it.o.icon}<span class="select-icon">{it.o.icon}</span>{end}
                   <span class="select-option-label">{it.o.label}</span>
@@ -841,19 +917,19 @@
         {end}
         <!-- @@ other -->
         {if $otherMax and not $otherEditing}
-          <div class="select-option select-other" part="option other" role="option" id={optionId($filtered.length)} @class{$filtered.length == $activeIndex}="active" @class{$given}="selected" aria-selected={$given != null} @click={openOther()} @mouseenter={hover(e, $filtered.length)} @mousemove={hover(e, $filtered.length)}>
+          <div class="select-option select-other" part="option other" role="option" id={optionId($filtered.length)} :class{$filtered.length == $activeIndex}="active" :class{$given}="selected" aria-selected={$given != null} @click={openOther()} @mouseenter={hover(e, $filtered.length)} @mousemove={hover(e, $filtered.length)}>
             {if $multi}<span class="select-check"></span>{end}
             <span class="select-option-label">{otherRowOf($otherTexts, $given)}</span>
           </div>
         {end}
         <!-- @@ -->
       </div>
-      <span class="select-sizer select-panel-sizer" aria-hidden="true">{for opt in widestOf($optionsData)}<span @class{opt.group}="select-sizer-group">{if $multi}<i class="select-check"></i>{end}{if opt.icon?.src}<i class="select-icon select-img"></i>{elsif opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}<!-- @@ other -->{if $otherMax}<span>{if $multi}<i class="select-check"></i>{end}{$otherTexts.label}</span>{end}<!-- @@ --></span>
+      <span class="select-sizer select-panel-sizer" aria-hidden="true">{for opt in widestOf($optionsData)}<span :class{opt.group}="select-sizer-group">{if $multi}<i class="select-check"></i>{end}{if opt.icon?.src}<i class="select-icon select-img"></i>{elsif opt.icon}<i class="select-icon">{opt.icon}</i>{end}{opt.label}</span>{end}<!-- @@ other -->{if $otherMax}<span>{if $multi}<i class="select-check"></i>{end}{$otherTexts.label}</span>{end}<!-- @@ --></span>
       <!-- @@ other -->
       {if $otherMax and $otherEditing}
         <div class="select-other-edit">
           <div class="select-other-line">
-            <input type="text" part="other-input" class="select-other-input" maxlength={$otherMax} aria-label={$otherTexts.placeholder} aria-describedby={otherHintId} placeholder={$otherTexts.placeholder} value=!{$otherText} @this=!{otherInputRef}>
+            <input type="text" part="other-input" class="select-other-input" maxlength={$otherMax} aria-label={$otherTexts.placeholder} aria-describedby={otherHintId} placeholder={$otherTexts.placeholder} value=!{$otherText} :this=!{otherInputRef}>
             <button type="button" class="select-other-ok" aria-label={$otherTexts.ok} @click={submitOther()}>✔</button>
           </div>
           <div class="select-other-meta">
@@ -870,9 +946,9 @@
 <@document @click={onDocumentClick(e)}>
 <@window @resize={updatePlacement() if $open}>
 
-<slot @this=!{slotRef}></slot>
+<slot :this=!{slotRef}></slot>
 
-<style @display="inline-block">
+<style :display="inline-block">
   // jamais plus large que sa boîte : une boîte plus étroite que la plus longue étiquette coupe celle du bouton (points de suspension)
   :host
     position: relative
@@ -889,7 +965,9 @@
     &.reflow
       display: block
 
+  // l'ancre du panneau ancré (cf. lift)
   .select-btn
+    anchor-name: var(--mjs-select-anchor)
     display: flex
     align-items: center
     gap: 8px
@@ -970,6 +1048,38 @@
     &.up
       top: auto
       bottom: calc(100% + 4px)
+
+    // ancré (cf. lift) : la feuille native de [popover] remise (inset: 0, margin: auto, padding) ; sous son bouton (au-dessus avec `.up`), depuis son bord gauche, jamais moins large que lui ; quand la place manque à droite, son bord droit suit celui du bouton, et le défilement qui lui ôte sa place le retourne ; la fenêtre le borne
+    &.anchored
+      position: fixed
+      inset: auto
+      min-width: anchor-size(width)
+      margin: 4px 0
+      padding: 0
+      position-anchor: var(--mjs-select-anchor)
+      position-area: block-end span-inline-end
+      position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline
+
+      &.up
+        position-area: block-start span-inline-end
+
+    // placé par le script dans la couche du dessus (cf. pin) : la feuille native de [popover] remise ; sous son bouton (au-dessus avec `.up`), jamais moins large que lui ; un seul bord posé, celui du début de la ligne dans le sens de son bouton (`dir`, cf. pin), comme dans la balise : son bord gauche suit celui du bouton, décalé comme dans la balise (cf. fitPanel), écrit de droite à gauche son bord droit ; avec les deux bords posés, la fenêtre trancherait selon le sens de la page, faux dans un bloc écrit dans l'autre sens
+    &.pinned
+      position: fixed
+      inset: auto
+      top: var(--mjs-pin-bottom)
+      left: calc(var(--mjs-pin-left) + var(--mjs-select-panel-left, 0px))
+      min-width: calc(var(--mjs-pin-right) - var(--mjs-pin-left))
+      margin: 4px 0
+      padding: 0
+
+      &.up
+        top: auto
+        bottom: calc(100% - var(--mjs-pin-top))
+
+      &[dir=rtl]
+        left: auto
+        right: calc(100% - var(--mjs-pin-right))
 
   // la largeur du panneau : celle de ses plus longs libellés, la même pendant qu'on filtre ; le champ de recherche n'y compte pas
   .select-panel-sizer

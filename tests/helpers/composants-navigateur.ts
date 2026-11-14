@@ -9,6 +9,10 @@ import { Bundler, terminateSharedWorkerPool } from '../../src/bundler/index.js'
 import { createSSRRenderer } from '../../src/server/renderToString.js'
 import { createBrowserRenderer } from '../../src/server/render-browser.js'
 
+// les trois moteurs de Playwright ; le client et les photos s'ouvrent dans l'un d'eux
+export const MOTEURS = ['chromium', 'firefox', 'webkit'] as const
+export type Moteur = typeof MOTEURS[number]
+
 export interface Composants {
   // le HTML écrit par chaque serveur, par nom de composant (`mjs-<nom>`)
   serveur: { happy: Record<string, string>, navigateur: Record<string, string> }
@@ -19,10 +23,11 @@ export interface Composants {
   fermer: () => Promise<void>
 }
 
-// `sources` : nom du composant sans extension → son code ; null quand le navigateur n'est pas installé (le test se saute)
-export async function monterComposants(sources: Record<string, string>): Promise<Composants | null> {
+// `sources` : nom du composant sans extension → son code ; `moteur` : le navigateur du client et des photos (Chromium par défaut) ;
+// null quand ce navigateur n'est pas installé (le test se saute)
+export async function monterComposants(sources: Record<string, string>, moteur: Moteur = 'chromium'): Promise<Composants | null> {
   const playwright = await import('playwright')
-  if (!existsSync(playwright.chromium.executablePath())) return null
+  if (!existsSync(playwright[moteur].executablePath())) return null
   const root = mjsTmp('composants-navigateur')
   const src  = join(root, 'src')
   mkdirSync(src, { recursive: true })
@@ -42,7 +47,7 @@ export async function monterComposants(sources: Record<string, string>): Promise
   const navigateurServeur: Record<string, string> = {}
   const rendeurNavigateur = await createBrowserRenderer({ sourceDir: 'src', outputDir: 'out-navigateur' }, { configDir: root })
   try { for (const nom of Object.keys(sources)) navigateurServeur[nom] = (await rendeurNavigateur.renderPage(`mjs-${nom}`, {})).html } finally { await rendeurNavigateur.close() }
-  const navigateur = await playwright.chromium.launch()
+  const navigateur = await playwright[moteur].launch()
   return {
     serveur: { happy, navigateur: navigateurServeur },
     async client(nom: string, attente: string) {

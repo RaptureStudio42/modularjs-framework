@@ -12,19 +12,19 @@ import { mjsTmp } from './helpers/tmp.js'
 
 const racine = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-const HOTE_IMPORT = ["@import a 'lib/a.module.civet'", '<script>', '  go = -> a()', '</script>', '<p>x</p>', ''].join('\n')
-const HOTE_MU     = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet')", '    m', '</script>', '<p>x</p>', ''].join('\n')
+const HOTE_IMPORT = ["@import a 'lib/a.module.civet.mjs'", '<script>', '  go = -> a()', '</script>', '<p>x</p>', ''].join('\n')
+const HOTE_MU     = ['<script>', '  go = ->', "    m = await µimport('lib/a.module.civet.mjs')", '    m', '</script>', '<p>x</p>', ''].join('\n')
 
 const CAS: { nom: string, js: 'split' | 'bundle', lang?: 'en', fichiers: Record<string, string> }[] = [
-  { nom: '@import mutuel, fichiers séparés', js: 'split', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b\n", 'lib/b.module.civet': "@import a 'lib/a.module.civet'\nexport b := -> a\n" } },
-  { nom: '@import mutuel, fichier unique', js: 'bundle', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b\n", 'lib/b.module.civet': "@import a 'lib/a.module.civet'\nexport b := -> a\n" } },
-  { nom: 'µimport mutuel, fichiers séparés', js: 'split', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet': "export a := -> µimport('lib/b.module.civet')\n", 'lib/b.module.civet': "export b := -> µimport('lib/a.module.civet')\n" } },
-  { nom: 'µimport mutuel, fichier unique', js: 'bundle', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet': "export a := -> µimport('lib/b.module.civet')\n", 'lib/b.module.civet': "export b := -> µimport('lib/a.module.civet')\n" } },
-  { nom: '@import mutuel, fichier unique, en anglais', js: 'bundle', lang: 'en', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet': "@import b 'lib/b.module.civet'\nexport a := -> b\n", 'lib/b.module.civet': "@import a 'lib/a.module.civet'\nexport b := -> a\n" } },
-  { nom: 'µimport mutuel, fichiers séparés, en anglais', js: 'split', lang: 'en', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet': "export a := -> µimport('lib/b.module.civet')\n", 'lib/b.module.civet': "export b := -> µimport('lib/a.module.civet')\n" } },
+  { nom: '@import mutuel, fichiers séparés', js: 'split', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b\n", 'lib/b.module.civet.mjs': "@import a 'lib/a.module.civet.mjs'\nexport b := -> a\n" } },
+  { nom: '@import mutuel, fichier unique', js: 'bundle', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b\n", 'lib/b.module.civet.mjs': "@import a 'lib/a.module.civet.mjs'\nexport b := -> a\n" } },
+  { nom: 'µimport mutuel, fichiers séparés', js: 'split', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet.mjs': "export a := -> µimport('lib/b.module.civet.mjs')\n", 'lib/b.module.civet.mjs': "export b := -> µimport('lib/a.module.civet.mjs')\n" } },
+  { nom: 'µimport mutuel, fichier unique', js: 'bundle', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet.mjs': "export a := -> µimport('lib/b.module.civet.mjs')\n", 'lib/b.module.civet.mjs': "export b := -> µimport('lib/a.module.civet.mjs')\n" } },
+  { nom: '@import mutuel, fichier unique, en anglais', js: 'bundle', lang: 'en', fichiers: { 'hote.mjs': HOTE_IMPORT, 'lib/a.module.civet.mjs': "@import b 'lib/b.module.civet.mjs'\nexport a := -> b\n", 'lib/b.module.civet.mjs': "@import a 'lib/a.module.civet.mjs'\nexport b := -> a\n" } },
+  { nom: 'µimport mutuel, fichiers séparés, en anglais', js: 'split', lang: 'en', fichiers: { 'hote.mjs': HOTE_MU, 'lib/a.module.civet.mjs': "export a := -> µimport('lib/b.module.civet.mjs')\n", 'lib/b.module.civet.mjs': "export b := -> µimport('lib/a.module.civet.mjs')\n" } },
 ]
 
-const BOUCLE = 'lib/a.module.civet → lib/b.module.civet → lib/a.module.civet'
+const BOUCLE = 'lib/a.module.civet.mjs → lib/b.module.civet.mjs → lib/a.module.civet.mjs'
 
 describe('mjs build — un cycle entre deux modules arrête la construction', function () {
   this.timeout(240000)

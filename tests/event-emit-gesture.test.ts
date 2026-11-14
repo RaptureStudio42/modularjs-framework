@@ -180,10 +180,10 @@ describe('macros globales — un modificateur y est refusé, plus ignoré', func
   // `="…"` avançait jusqu'au guillemet FERMANT ; absent, elle avalait toute la fin de la balise,
   // donc un vrai `@evt.suffixe` situé plus loin échappait au scan : la garde redevenait muette,
   // exactement le silence qu'elle existe pour supprimer.
-  it('guillemet NON FERMÉ ailleurs sur la balise : la violation qui suit est toujours vue', async () => {
+  it('guillemet NON FERMÉ ailleurs sur la balise : la balise jamais refermée arrête la construction', async () => {
     const errs = await buildOne('<@window data-x="non ferme @resize.emit.sized={window.innerWidth}>\n<p>x</p>\n')
-    assert.ok(errs.length >= 1, 'un guillemet oublié ne doit pas rendre la garde aveugle')
-    assert.match(errs.map((e: any) => e.message).join('\n'), /macro globale/)
+    assert.ok(errs.length >= 1, 'un guillemet oublié ne passe jamais en silence')
+    assert.match(errs.map((e: any) => e.message).join('\n'), /<@window>/)
   })
 
   it('le vrai piège reste refusé même à côté d\'un corps qui contient un `@prop.x`', async () => {

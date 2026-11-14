@@ -1,0 +1,12 @@
+{
+  "name": "ModularJS (module JavaScript)",
+  "scopeName": "source.modularjs.module.js",
+  "patterns": [
+    {
+      "include": "text.html.modularjs#modular-vars"
+    },
+    {
+      "include": "source.js"
+    }
+  ]
+}

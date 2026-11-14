@@ -42,7 +42,7 @@ describe('bundler — clé css', function () {
   })
 
   it("défaut (`css` absent) produit la MÊME sortie que `css: 'bundle'` explicite — mécanisme historique intact", async function () {
-    const source = ['<style @css="partagee"></style>', '<div>x</div>'].join('\n')
+    const source = ['<style :css="partagee"></style>', '<div>x</div>'].join('\n')
 
     const p1 = makeProject('css-default')
     writeFileSync(join(p1.stylesDir, 'partagee.sass'), '.p\n  color: red\n')
@@ -80,8 +80,8 @@ describe('bundler — clé css', function () {
     const p = makeProject('split-collision')
     writeFileSync(join(p.stylesDir, 'dark-theme.sass'), '.x\n  color: red\n')
     writeFileSync(join(p.stylesDir, 'dark_theme.sass'), '.x\n  color: red\n')
-    writeFileSync(join(p.srcDir, 'comp-a.mjs'), '<style @css="dark-theme"></style>\n\n<div class="x">a</div>')
-    writeFileSync(join(p.srcDir, 'comp-b.mjs'), '<style @css="dark_theme"></style>\n\n<div class="x">b</div>')
+    writeFileSync(join(p.srcDir, 'comp-a.mjs'), '<style :css="dark-theme"></style>\n\n<div class="x">a</div>')
+    writeFileSync(join(p.srcDir, 'comp-b.mjs'), '<style :css="dark_theme"></style>\n\n<div class="x">b</div>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'split' })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -124,7 +124,7 @@ describe('bundler — clé css', function () {
     writeFileSync(join(p.stylesDir, 'alpha.sass'), '.alpha\n  color: red\n')
     writeFileSync(join(p.stylesDir, 'beta.sass'), '.beta\n  color: blue\n')
     writeFileSync(join(p.stylesDir, 'gamma.sass'), '.gamma\n  color: green\n')
-    writeFileSync(join(p.srcDir, 'comp.mjs'), ['<style @css="alpha beta"></style>', '<div>x</div>'].join('\n'))
+    writeFileSync(join(p.srcDir, 'comp.mjs'), ['<style :css="alpha beta"></style>', '<div>x</div>'].join('\n'))
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'split' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -146,7 +146,7 @@ describe('bundler — clé css', function () {
     writeFileSync(join(p.stylesDir, 'alpha.sass'), '.alpha\n  color: red\n')
     writeFileSync(join(p.stylesDir, 'beta.sass'), '.beta\n  color: blue\n')
     writeFileSync(join(p.stylesDir, 'gamma.sass'), '.gamma\n  color: green\n')
-    writeFileSync(join(p.srcDir, 'comp.mjs'), ['<style @css="alpha beta"></style>', '<div>x</div>'].join('\n'))
+    writeFileSync(join(p.srcDir, 'comp.mjs'), ['<style :css="alpha beta"></style>', '<div>x</div>'].join('\n'))
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'split' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))
@@ -171,7 +171,7 @@ describe('bundler — clé css', function () {
     const p = makeProject('css-split-view-filet')
     writeFileSync(join(p.stylesDir, 'beta.sass'), '.beta\n  color: blue\n')
     // comp-b déclare beta via @css — SANS le 2e filet, elle ne serait donc PAS eager.
-    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style @css="beta"></style>', '<div>b</div>'].join('\n'))
+    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style :css="beta"></style>', '<div>b</div>'].join('\n'))
     // page-y ne charge JAMAIS comp-b — elle réclame beta UNIQUEMENT via <@view css="…">.
     writeFileSync(join(p.srcDir, 'page-y.page.mjs'), ['<div>', '  <@view app-content css="beta">', '</div>'].join('\n'))
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'split' })
@@ -205,7 +205,7 @@ describe('bundler — clé css', function () {
     // beta est déclarée ailleurs (comp-b) — sans le filet <@view>, elle resterait cachée.
     // gamma n'est déclarée par personne — sert à vérifier que les DEUX noms du même
     // attribut sont bien extraits, pas seulement le premier.
-    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style @css="beta"></style>', '<div>b</div>'].join('\n'))
+    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style :css="beta"></style>', '<div>b</div>'].join('\n'))
     writeFileSync(join(p.srcDir, 'page-y.page.mjs'), ['<div>', '  <@view app-content css="beta gamma">', '</div>'].join('\n'))
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'split' })
     const stats = await bundler.compile()
@@ -223,7 +223,7 @@ describe('bundler — clé css', function () {
   it("mode 'bundle' (défaut) : un `<@view css=\"…\">` n'a AUCUN effet — sortie inchangée, aucun scan (coût nul hors split)", async function () {
     const p = makeProject('css-bundle-view-noop')
     writeFileSync(join(p.stylesDir, 'beta.sass'), '.beta\n  color: blue\n')
-    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style @css="beta"></style>', '<div>b</div>'].join('\n'))
+    writeFileSync(join(p.srcDir, 'comp-b.mjs'), ['<style :css="beta"></style>', '<div>b</div>'].join('\n'))
     writeFileSync(join(p.srcDir, 'page-y.page.mjs'), ['<div>', '  <@view app-content css="beta">', '</div>'].join('\n'))
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir })
     const stats = await bundler.compile()
@@ -258,7 +258,7 @@ describe('bundler — clé css', function () {
   it("`css: 'lazy'` compile (le mode n'est plus refusé) et n'écrit AUCUN module JS de feuille", async function () {
     const p = makeProject('css-lazy')
     writeFileSync(join(p.stylesDir, 'theme.sass'), '.card\n  color: teal\n')
-    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style @css="theme"></style>\n\n<div class="card">x</div>')
+    writeFileSync(join(p.srcDir, 'comp.mjs'), '<style :css="theme"></style>\n\n<div class="card">x</div>')
     const bundler = new Bundler({ sourceDir: p.srcDir, outputDir: p.outDir, manifestPath: p.manifest, stylesheetsDir: p.stylesDir, css: 'lazy' })
     const stats = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map(e => e.message).join('\n'))

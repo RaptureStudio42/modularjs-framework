@@ -125,9 +125,9 @@ describe('bundler — autoDeclareTopLevelBareAssignments : réaffectation d\'un 
   for (const { nom, lignes, identifiant } of cas) {
     it(`${nom} — refus à la compilation, jamais un TypeError silencieux au chargement`, async function () {
       const civetSrc = lignes.join('\n')
-      const { code } = await getAdapter('civet').compileToJs(civetSrc, { fileName: 'cas.civet', bare: true })
+      const { code } = await getAdapter('civet').compileToJs(civetSrc, { fileName: 'cas.civet.mjs', bare: true })
       assert.throws(
-        () => autoDeclareTopLevelBareAssignments(code, 'cas.civet'),
+        () => autoDeclareTopLevelBareAssignments(code, 'cas.civet.mjs'),
         (err: unknown) => {
           assert.ok(err instanceof Error, 'doit lever une vraie Error')
           assert.match(err.message, new RegExp(`'${identifiant}'`), 'nomme l\'identifiant fautif')

@@ -26,7 +26,7 @@ const HOTE = `<script>
   $coches = [0, 2]
 </script>
 
-<form class="f" method="get" action="/envoi" @noUJS>
+<form class="f" method="get" action="/envoi" :noUJS>
   <@@editor class="e" name="contrat" value=!{$texte}></@@editor>
   <@@editor class="r" name="reps[]" answer value={$modele} checked=!{$coches}></@@editor>
   <button type="reset" class="rz">remise à zéro</button>

@@ -5,7 +5,7 @@
 // dépréciation) :
 //   1. Résolution du DÉFAUT de `manifestExternal` (non configuré explicitement) :
 //      'app/modularjs/manifest.civet' s'il existe, sinon repli
-//      'app/modularjs/manifest.coffee' (dépréciée), sinon aucun manifeste.
+//      'app/modularjs/manifest.coffee', sinon aucun manifeste.
 //      Un `manifestExternal` explicite reste toujours respecté tel quel.
 //   2. Avertissement de dépréciation à la compilation d'une VRAIE source
 //      .coffee — une fois par fichier/processus, jamais sur le marqueur
@@ -50,7 +50,7 @@ function readExternalBundle(outDir: string, hashedUrl: string): string {
   return readFileSync(join(outDir, basename(hashedUrl)), 'utf-8')
 }
 
-describe('manifeste externe — défaut Civet-first / repli Coffee déprécié', function () {
+describe('manifeste externe — défaut Civet-first / repli Coffee', function () {
   this.timeout(30000)
 
   after(async () => {
@@ -84,7 +84,7 @@ describe('manifeste externe — défaut Civet-first / repli Coffee déprécié',
     }
   })
 
-  it('(b) SEULEMENT manifest.coffee (aucun .civet) → repli conservé + avertissement de dépréciation émis', async () => {
+  it('(b) SEULEMENT manifest.coffee (aucun .civet) → repli conservé , sans avertissement émis', async () => {
     const { root, srcDir, outDir } = mkProject()
     mkdirSync(join(srcDir, 'lib'), { recursive: true })
     writeFileSync(join(srcDir, 'manifest.coffee'), `#= require ./lib/a\n`)
@@ -115,8 +115,7 @@ describe('manifeste externe — défaut Civet-first / repli Coffee déprécié',
         // « a.coffee ») peut atterrir avant celui qui nous intéresse dans
         // `warned` — un .find() sur le seul texte « dépréciée » était donc
         // fragile (premier match = parfois le mauvais fichier).
-        const depWarning = warned.find(w => w.includes('CoffeeScript dépréciée') && /a\.coffee/.test(w))
-        assert.ok(depWarning, `avertissement de dépréciation citant a.coffee attendu. warnings captés : ${JSON.stringify(warned)}`)
+        assert.ok(!warned.some(w => w.includes('CoffeeScript')), `CoffeeScript reste pris en charge : aucun avertissement attendu. warnings captés : ${JSON.stringify(warned)}`)
       } finally {
         await bundler.close()
       }
@@ -176,10 +175,10 @@ describe('manifeste externe — défaut Civet-first / repli Coffee déprécié',
   })
 })
 
-describe('coffeeAdapter — avertissement de dépréciation (une fois par fichier/processus)', function () {
+describe('coffeeAdapter — CoffeeScript pris en charge, sans avertissement', function () {
   this.timeout(30000)
 
-  it('(e) un composant <script lang="coffee"> compilé deux fois n\'avertit qu\'une seule fois', async () => {
+  it('(e) un composant <script lang="coffee"> compilé deux fois n\'avertit pas : CoffeeScript reste pris en charge', async () => {
     const src = `<script lang="coffee">\n$count = 0\n</script>\n<p>{$count}</p>\n`
     const warned: string[] = []
     const origWarn = console.warn
@@ -190,9 +189,8 @@ describe('coffeeAdapter — avertissement de dépréciation (une fois par fichie
     } finally {
       console.warn = origWarn
     }
-    const depWarnings = warned.filter(w => w.includes('CoffeeScript dépréciée'))
-    assert.equal(depWarnings.length, 1, `un seul avertissement attendu (dédup par fichier/processus), reçu : ${JSON.stringify(depWarnings)}`)
-    assert.match(depWarnings[0], /mcd-coffee-warn-once\.script/)
+    const depWarnings = warned.filter(w => w.includes('CoffeeScript'))
+    assert.equal(depWarnings.length, 0, `CoffeeScript reste pris en charge : aucun avertissement attendu, reçu : ${JSON.stringify(depWarnings)}`)
   })
 
   // Cas supplémentaire — garde-fou pour un

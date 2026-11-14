@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
 import { assertAbsent } from './helpers/dom-assert.js'
 import { poserMessages } from './helpers/messages-stub.js'
+import { poserPage } from './helpers/page-globale.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER = join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts')
@@ -27,13 +28,13 @@ const routerSrc = readFileSync(ROUTER, 'utf-8')
 const pageCacheSrc = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_page_cache.ts'), 'utf-8')
 
 describe('routeur — aucune route ne matche : erreur visible', function () {
-  const g: any = globalThis
   let win: any
+  let rendrePage: () => void
   before(() => {
-    win = new Window({ url: 'http://localhost/' })
-    g.window ??= win
-    g.document ??= win.document
+    win        = new Window({ url: 'http://localhost/' })
+    rendrePage = poserPage({ window: win, document: win.document }, true)
   })
+  after(() => rendrePage())
 
   // Monte un µ neuf + un composant routé, et renvoie de quoi observer.
   const scene = (routes: any, config?: any) => {

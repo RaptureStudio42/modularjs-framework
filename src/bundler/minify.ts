@@ -18,7 +18,8 @@
 import { transform } from 'esbuild'
 import * as acorn from 'acorn'
 import { t } from '../messages/index.js'
-import { maskInertSameLength } from '../lexer/index.js'
+import { COMMENTAIRE_MJS_GARDE, maskInertSameLength } from '../lexer/index.js'
+import { unescapeMu } from '../transpiler/mu-escapes.js'
 import type { LogLevelName } from './config.js'
 
 export interface MinifyResult {
@@ -230,32 +231,37 @@ export const TRACE_ONLY_MESSAGES: readonly string[] = [
  *  une clé lue aussi par une erreur, une trace, un module cœur ou tout autre code reste (tests/runtime-messages-des-avertissements.test.ts) */
 export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'adoptSheetNoShadow',
-  'ajaxBinVersionDiff', 'ajaxCrossOrigin',
+  'ajaxBinVersionDiff', 'ajaxCrossOrigin', 'ajaxOldName', 'ajaxUnseen',
   'animCreateOverride',
   'autoloaderStale',
   'backlightNone',
   'behindEdge', 'behindImage',
   'blendCsp', 'blendFilter', 'blendImage', 'blendNoSrc',
   'chromaticFilter',
+  'collNotNamed',
   'crossfadeFallbackFailed',
   'dynAccept', 'dynInstance', 'dynNotListed', 'dynRefused',
   'effectInit',
-  'elCycle', 'elHydrate', 'elHydrateMismatch', 'elLoop', 'elOrphanInherited', 'elOrphanLocal', 'elProto', 'elStructLoop', 'elTeardown',
-  'everyError', 'everyHash', 'everyIgnored', 'everyInit', 'everyOptType', 'everySyntax', 'everyTimes', 'everyUnknownOpt', 'everyWhileAsync',
+  'storeDestroyed', 'storeDestroyedRead',
+  'derAccesseur', 'derPrecise', 'elCycle', 'elHydrate', 'elHydrateMismatch', 'elLoop', 'elOrphanInherited', 'elOrphanLocal', 'elProto', 'elStructLoop', 'elTeardown',
+  'everyError', 'everyHash', 'everyId', 'everyIgnored', 'everyInit', 'everyOptType', 'everySyntax', 'everyTimes', 'everyUnknownOpt', 'everyUnseen', 'everyUnseenId', 'everyWhileAsync',
   'fluidColor', 'fluidNoContext', 'fluidTextComponent',
   'focusHost',
   'forDupKeys',
+  'formMasked',
   'fxBrought', 'fxEveryRefused', 'fxRefused',
   'gradientImage',
   'hoverIgnored', 'hoverOf', 'hoverOfAlone',
   'i18nMissing', 'i18nNoData', 'i18nSecours',
-  'initPath', 'initReadOnly',
+  'initFn', 'initFnCtor', 'initPath', 'initReadOnly',
   'interpNonFinite',
   'layoutFile',
   'lazyCss',
   'lifeHook', 'lifeOnDestroy', 'lifeRun',
   'liquidFilter',
+  'loadArgs', 'loadOption', 'loadPlace', 'loadPlaceEffect', 'loadPlaceFor', 'loadPlaceHelper', 'loadPlaceTemplate', 'loadRefresh',
   'lruEvictError',
+  'mapKeyBothForms',
   'modalNotifyFlow', 'modalNotifyPos', 'modalSoundPath', 'modalSoundUnknown', 'modalUnknownIcon', 'modalUnknownInput',
   'optimisticBadStore',
   'pathStays',
@@ -263,10 +269,13 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'pileOverflow',
   'pixelateFilter',
   'reflectNone',
+  'refreshCalcul',
+  'refreshRendu',
   'routerHistoryRefused', 'routerSlashRefused',
   'runesCycle', 'runesInspectInit',
   'schemaUnknownIdReceived',
   'scratchBadMany', 'scratchBadOne', 'scratchColors', 'scratchIgnMany', 'scratchIgnNone', 'scratchIgnOne', 'scratchImage',
+  'sigCycle', 'sigLoop',
   'smoothNonFinite',
   'sockBinaryNoSchema', 'sockDuplicateAuth', 'sockOptionInvalid', 'sockQueueDenied', 'sockQueueFull', 'sockSendDropped',
   'spotlightWhere',
@@ -274,8 +283,9 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
   'storeGCycle', 'storeGKey', 'storeGResKey', 'storeGResTag', 'storeGTheme', 'storeGWatch', 'storeKey', 'storeProto',
   'transitionNone',
   'travelNone',
+  'ttPolicy',
   'txBezierRange', 'txCssSharedThrew', 'txCssThrew', 'txEasingUnknown', 'txSetupThrew', 'txTickThrew',
-  'ujsCallbackMissing', 'ujsConfirmNoModal', 'ujsConfirmRetry', 'ujsConfirmRetryFailed', 'ujsConfirmValue', 'ujsFlashNoModal', 'ujsFlashUnknown', 'ujsHardNavOutside', 'ujsHardNavProtocol', 'ujsMethodNative', 'ujsMethodNoUjs', 'ujsPermanentDupId', 'ujsPermanentNoId', 'ujsReplaceNoTarget', 'ujsScriptSwapped', 'ujsSubmitFailed', 'ujsSubmitNoBody', 'ujsSubmitNotHtml', 'ujsTargetMissing', 'ujsTargetMissingReceived', 'ujsUnknownCache', 'ujsUnknownMethod', 'ujsVerbUnknown',
+  'ujsCallbackMissing', 'ujsConfirmNoModal', 'ujsConfirmRetry', 'ujsConfirmRetryFailed', 'ujsConfirmValue', 'ujsFlashNoModal', 'ujsFlashUnknown', 'ujsHardNavOutside', 'ujsHardNavProtocol', 'ujsMethodNative', 'ujsMethodNoUjs', 'ujsNoAjaxNav', 'ujsPermanentDupId', 'ujsPermanentNoId', 'ujsReplaceNoTarget', 'ujsScriptSwapped', 'ujsSubmitFailed', 'ujsSubmitNoBody', 'ujsSubmitNotHtml', 'ujsTargetMissing', 'ujsTargetMissingReceived', 'ujsUnknownCache', 'ujsUnknownMethod', 'ujsVerbUnknown',
   'vtBadDir', 'vtBadDur', 'vtBadPrio', 'vtDirName', 'vtDupKey', 'vtLevitation', 'vtLevitationIn', 'vtMalformed', 'vtOptMalformed', 'vtUnknownKey', 'vtUnknownPreset',
 ]
 
@@ -289,14 +299,19 @@ export const WARNING_ONLY_MESSAGES: readonly string[] = [
  *  Une clé lue hors d'un tel appel, ou nommée ailleurs, ne peut pas y être (tests/bundler-messages-du-developpement-en-production.test.ts) */
 export const DEV_ONLY_MESSAGES: readonly string[] = [
   'adoptSheetNoShadow',
+  'ajaxOldName', 'ajaxUnseen',
   'blendFilter', 'chromaticFilter', 'liquidFilter', 'pixelateFilter',
+  'collNotNamed',
   'dynAccept',
   'effectInit',
+  'storeDestroyed', 'storeDestroyedRead',
   'everyHash', 'everyInit', 'everyUnknownOpt', 'everyWhileAsync',
   'fluidTextComponent',
   'fxBrought', 'fxEveryRefused', 'fxRefused',
   'hoverIgnored', 'hoverOfAlone',
   'i18nMissing', 'i18nSecours',
+  'loadPlace', 'loadPlaceEffect', 'loadPlaceFor', 'loadPlaceHelper', 'loadPlaceTemplate',
+  'mapKeyBothForms',
   'modalNotifyFlow', 'modalNotifyPos', 'modalSoundUnknown', 'modalUnknownInput',
   'optimisticBadStore',
   'pileOverflow',
@@ -1047,9 +1062,10 @@ export async function minifyJs(
   // débogage exporté par un module) matchait pareil et disparaissait en silence du texte affiché.
   //
   // En développement (`dev`), rien n'est cherché : la ligne reste, comme sans minification.
+  // la vue lit aussi `µ` échappé (`\u00B5`, écrit à la main ou par un outil) : remis en clair à longueur égale, cf. unescapeMu
   const dev          = opts.dev === true
   const debugLineRe  = /^[ \t;]*µ\.debug\s*=\s*[^;\n]+;?[ \t]*$/gm
-  const maskedSource = dev ? '' : maskInertSameLength(source)
+  const maskedSource = dev ? '' : unescapeMu(maskInertSameLength(source), true)
   let cleaned = ''
   let cursor  = 0
   let dm: RegExpExecArray | null
@@ -1130,7 +1146,8 @@ export async function minifyJs(
       mangleProps: useMangleCache ? /^_mjs_/ : undefined,
       mangleCache: useMangleCache ? opts.mangleCache : undefined,
       keepNames: false,
-      legalComments: 'none',
+      // seul commentaire encore là : le `//!` MJS (les autres sont retirés à la lecture du composant), gardé selon le réglage
+      legalComments: COMMENTAIRE_MJS_GARDE ? 'inline' : 'none',
     })
 
     // Merge les nouvelles entrées du cache (esbuild en ajoute) dans l'objet

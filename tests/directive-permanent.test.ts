@@ -21,23 +21,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const UJS_SRC = readFileSync(join(__dirname, '..', 'src', 'runtime', 'mjs_ujs.ts'), 'utf-8')
 
 describe('preprocessHtml — directive @permanent → mjs-permanent', () => {
-  it('<div @permanent id="lecteur"> → mjs-permanent posé, id intact', async () => {
-    const { output } = await transpile('<div @permanent id="lecteur">Lecteur</div>', { moduleName: 'perm1' })
+  it('<div :permanent id="lecteur"> → mjs-permanent posé, id intact', async () => {
+    const { output } = await transpile('<div :permanent id="lecteur">Lecteur</div>', { moduleName: 'perm1' })
     assert.match(output, /mjs-permanent/, 'attribut mjs-permanent absent de la sortie compilée')
     assert.match(output, /id=['"]lecteur['"]/, "l'id doit rester intact")
   })
 
   it('casse insensible : @Permanent et @PERMANENT sont aussi réécrits (même politique que @no-ujs)', async () => {
-    const r1 = await transpile('<div @Permanent id="a">x</div>', { moduleName: 'perm2' })
-    const r2 = await transpile('<div @PERMANENT id="b">x</div>', { moduleName: 'perm3' })
+    const r1 = await transpile('<div :Permanent id="a">x</div>', { moduleName: 'perm2' })
+    const r2 = await transpile('<div :PERMANENT id="b">x</div>', { moduleName: 'perm3' })
     assert.match(r1.output, /mjs-permanent/)
     assert.match(r2.output, /mjs-permanent/)
   })
 
   it("un @permanent affiché comme EXEMPLE dans un <pre>/<code> n'est PAS réécrit (masquage)", async () => {
-    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;audio @permanent id="radio"&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'perm4' })
+    const { output } = await transpile('<p>Exemple :</p>\n<pre><code>&lt;audio :permanent id="radio"&gt;</code></pre>\n<div>x</div>\n', { moduleName: 'perm4' })
     assert.doesNotMatch(output, /mjs-permanent/, 'un @permanent affiché comme démo de code ne doit pas être réécrit comme une VRAIE directive')
-    assert.match(output, /@permanent/, 'le texte de démo reste affiché tel quel')
+    assert.match(output, /:permanent/, 'le texte de démo reste affiché tel quel')
   })
 
   it('@permanentx (nom différent, PAS un @permanent) → non touché, aucune conversion', async () => {
@@ -53,14 +53,14 @@ describe('preprocessHtml — directive @permanent → mjs-permanent', () => {
 
   it('@permanent="nom" (avec valeur, guillemets doubles) → ERREUR de compile explicite, message renvoie vers id', async () => {
     await assert.rejects(
-      () => transpile('<div @permanent="nom" id="radio">x</div>', { moduleName: 'perm7' }),
-      /@permanent="nom".*ne prend jamais de valeur.*id/s,
+      () => transpile('<div :permanent="nom" id="radio">x</div>', { moduleName: 'perm7' }),
+      /:permanent="nom".*ne prend jamais de valeur.*id/s,
     )
   })
 
   it("@permanent='nom' (avec valeur, guillemets simples) → même ERREUR", async () => {
     await assert.rejects(
-      () => transpile(`<div @permanent='nom' id="radio">x</div>`, { moduleName: 'perm8' }),
+      () => transpile(`<div :permanent='nom' id="radio">x</div>`, { moduleName: 'perm8' }),
       /ne prend jamais de valeur/,
     )
   })
@@ -68,7 +68,7 @@ describe('preprocessHtml — directive @permanent → mjs-permanent', () => {
 
 describe('directive @permanent — bout en bout : compilé puis transplanté par le runtime', function () {
   it('un élément compilé avec @permanent (id intact) est retrouvé et transplanté par µ._mjs_navTransplantPermanents', async function () {
-    const { output } = await transpile('<div @permanent id="radio">Lecteur</div>', { moduleName: 'permrt' })
+    const { output } = await transpile('<div :permanent id="radio">Lecteur</div>', { moduleName: 'permrt' })
     const m = output.match(/_mjs_cloneTpl\("([^"]*)"\)/)
     assert.ok(m, '_mjs_cloneTpl introuvable dans la sortie compilée')
     const html = m![1]

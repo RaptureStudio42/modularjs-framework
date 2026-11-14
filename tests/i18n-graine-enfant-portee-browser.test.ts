@@ -205,7 +205,7 @@ const MID      = '<b class="m">m</b>\n<mjs-leaf></mjs-leaf>\n'
 const LEAF     = '@i18n \'fiche\'\n<i class="l">{µt(\'nom\')} {µt(\'/enfant\')}</i>\n'
 
 // l'enfant arrive après `ms` (avant le démarrage s'il est court) ; `lit` : le parent lit la section de l'enfant, qui entre dans la graine
-const enfantTardif = (ms: number, lit: boolean) => '@i18n \'accueil\'\n<script>\n  $late = false\n  setTimeout((-> $late = true), ' + ms + ') unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')}' + (lit ? ' {µt(\'/fiche.nom\')}' : '') + '</h1>\n{if $late}<mjs-kid-section></mjs-kid-section>{end}\n'
+const enfantTardif = (ms: number, lit: boolean) => '@i18n \'accueil\'\n<script>\n  $late = false\n  µafter(' + ms + ', -> $late = true) unless µserver\n</script>\n<h1 class="t">{µt(\'salut\')}' + (lit ? ' {µt(\'/fiche.nom\')}' : '') + '</h1>\n{if $late}<mjs-kid-section></mjs-kid-section>{end}\n'
 
 // l'hôte rendu, un enfant de section, et un module sans `@i18n` que le serveur ne rend pas (jamais créé : `$jamais`) : `fiche` est lue par le serveur, pas `extra`
 const HOME_EXTRA = '@i18n \'accueil\'\n<script>\n  $jamais = false\n</script>\n<h1 class="t">{µt(\'salut\')}</h1>\n<mjs-kid-section></mjs-kid-section>\n{if $jamais}<mjs-extra></mjs-extra>{end}\n'

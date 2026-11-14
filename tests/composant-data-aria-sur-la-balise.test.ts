@@ -37,7 +37,7 @@ const HOTE = [
   '<@carte class="nua" aria-hidden></@carte>',
   '<@carte class="arl" aria-label={$lab}></@carte>',
   '<@carte class="arb" aria-pressed={$on}></@carte>',
-  '<@carte class="leg" @lightDom data-cle={$cle}></@carte>',
+  '<@carte class="leg" :lightDom data-cle={$cle}></@carte>',
   '<@@checkbox class="coeur" name="a" data-cle={$cle}>ok</@@checkbox>',
   '{for n in $liste}<@carte class="bou" data-n={n} data-cle={$cle}></@carte>{end}',
   "<button class=\"go\" @click={$cle = 'def'; $$s = 'st2'; $lab = null; $on = false}>go</button>",

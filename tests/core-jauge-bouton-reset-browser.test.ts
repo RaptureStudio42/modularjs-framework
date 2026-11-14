@@ -24,7 +24,7 @@ const PAGE = `<script>
   $log = ''
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@gauge class="g" name="g" value="4" @change={$log = $log + '[g' + e.data + ']'}></@@gauge>
   <@@gauge class="gl" name="gl" value=!{$g} @change={$log = $log + '[gl' + e.data + ']'}></@@gauge>
   <@@gauge class="g0" name="g0" @change={$log = $log + '[g0' + e.data + ']'}></@@gauge>
@@ -36,7 +36,7 @@ const PAGE = `<script>
   <@@knob class="ke" name="ke" value={35} @change={$log = $log + '[ke' + e.data + ']'}></@@knob>
   <button type="reset" class="rz">Remise à zéro</button>
 </form>
-<form class="f2" @noUJS>
+<form class="f2" :noUJS>
   <button type="reset" class="rz2">Remise à zéro</button>
 </form>
 <div class="hors"><@@gauge class="gh" name="gh" value="2"></@@gauge><@@knob class="kh" name="kh" value="40"></@@knob></div>

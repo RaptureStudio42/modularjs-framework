@@ -28,17 +28,17 @@ describe('@attach : `el`, second nom de la balise', function () {
   after(async () => { await terminateSharedWorkerPool() })
 
   const posees: Array<[string, string]> = [
-    ['à la racine',                  `<canvas @attach={dessiner(el, 'r')}></canvas>`],
-    ['à la racine, .once',           `<canvas @attach.once={dessiner(el, 'r')}></canvas>`],
-    ['dans une ligne de {for}',      `{for p in $plays by key}<canvas @attach={dessiner(el, p.key)}></canvas>{end}`],
-    ['dans une ligne de {for}, .once', `{for p in $plays by key}<canvas @attach.once={dessiner(el, p.key)}></canvas>{end}`],
-    ['dans {success}',               `{await $p}<i>attente</i>{success v}<canvas @attach={dessiner(el, v.n)}></canvas>{end}`],
-    ['dans {success}, .once',        `{await $p}<i>attente</i>{success v}<canvas @attach.once={dessiner(el, v.n)}></canvas>{end}`],
-    ['dans {success}, lisant aussi une variable', `{await $p}<i>attente</i>{success v}<canvas @attach={dessiner(el, $plays)}></canvas>{end}`],
-    ['dans l\'attente',              `{await $p}<canvas @attach.once={dessiner(el, 'a')}></canvas>{success v}<b>{v.n}</b>{end}`],
-    ['dans {error}',                 `{await $p}<i>attente</i>{success v}<b>{v.n}</b>{error err}<canvas @attach.once={dessiner(el, err.message)}></canvas>{end}`],
-    ['avec `_node` dans la même expression', `<canvas @attach={dessiner(el, _node)}></canvas>`],
-    ['avec un `el` propriété à côté', `{for p in $plays by key}<canvas @attach={dessiner(el, p.el)}></canvas>{end}`]
+    ['à la racine',                  `<canvas :attach={dessiner(el, 'r')}></canvas>`],
+    ['à la racine, .once',           `<canvas :attach.once={dessiner(el, 'r')}></canvas>`],
+    ['dans une ligne de {for}',      `{for p in $plays by key}<canvas :attach={dessiner(el, p.key)}></canvas>{end}`],
+    ['dans une ligne de {for}, .once', `{for p in $plays by key}<canvas :attach.once={dessiner(el, p.key)}></canvas>{end}`],
+    ['dans {success}',               `{await $p}<i>attente</i>{success v}<canvas :attach={dessiner(el, v.n)}></canvas>{end}`],
+    ['dans {success}, .once',        `{await $p}<i>attente</i>{success v}<canvas :attach.once={dessiner(el, v.n)}></canvas>{end}`],
+    ['dans {success}, lisant aussi une variable', `{await $p}<i>attente</i>{success v}<canvas :attach={dessiner(el, $plays)}></canvas>{end}`],
+    ['dans l\'attente',              `{await $p}<canvas :attach.once={dessiner(el, 'a')}></canvas>{success v}<b>{v.n}</b>{end}`],
+    ['dans {error}',                 `{await $p}<i>attente</i>{success v}<b>{v.n}</b>{error err}<canvas :attach.once={dessiner(el, err.message)}></canvas>{end}`],
+    ['avec `_node` dans la même expression', `<canvas :attach={dessiner(el, _node)}></canvas>`],
+    ['avec un `el` propriété à côté', `{for p in $plays by key}<canvas :attach={dessiner(el, p.el)}></canvas>{end}`]
   ]
   for (const [nom, corps] of posees) {
     it(`${nom} : mode direct, la balise est posée sous le nom \`el\``, async () => {
@@ -46,24 +46,24 @@ describe('@attach : `el`, second nom de la balise', function () {
       assert.ok(js.includes('(mode direct)'), 'mode direct')
       assert.ok(!js.includes('(mode factory)'), 'pas de mode fabrique')
       assert.ok(js.includes(POSE), `la balise est posée : ${POSE}`)
-      assert.ok(js.includes('const _mjs_clean = dessiner(el,'), 'l\'expression est la valeur du nettoyage, comme avec `_node`')
+      assert.ok(js.includes('_mjs_clean = dessiner(el,'), 'l\'expression est la valeur du nettoyage, comme avec `_node`')
     })
   }
 
   const gardees: Array<[string, string, string?]> = [
-    ['paramètre d\'une fonction en ligne',   `<canvas @attach={(el) -> el.dataset.d = 'x'}></canvas>`],
-    ['paramètre d\'une fonction, .once',     `<canvas @attach.once={(el) -> el.dataset.d = 'x'}></canvas>`],
-    ['paramètre d\'une fonction, dans une ligne de {for}', `{for p in $plays by key}<canvas @attach={(el) -> el.dataset.d = p.key}></canvas>{end}`],
-    ['chaîne',                               `<canvas @attach={marque('el')}></canvas>`],
-    ['propriété',                            `{for p in $plays by key}<canvas @attach={marque(p.el)}></canvas>{end}`],
-    ['fabrique',                             `<canvas @attach={marque('x')}></canvas>`],
-    ['le script déclare une variable `el`',  `<canvas @attach={marque(el)}></canvas>`, `<script>\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
-    ['le script déclare `el`, .once',        `<canvas @attach.once={marque(el)}></canvas>`, `<script>\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
-    ['le script déclare `el`, ligne de {for}', `{for p in $plays by key}<canvas @attach={marque(el)}></canvas>{end}`, `<script>\n  $plays = [{ key: 'a' }]\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
-    ['le script déclare `el`, branche {success}', `{await $p}<i>attente</i>{success v}<canvas @attach={marque(el)}></canvas>{end}`, `<script>\n  $p = Promise.resolve(1)\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
-    ['le script déclare une fonction `el`',  `<canvas @attach={marque(el(1))}></canvas>`, `<script>\n  el = (x) -> { nom: 'f' + x }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
-    ['le script déclare `el` en JavaScript', `<canvas @attach={marque(el)}></canvas>`, `<script lang="js">\n  var el = { nom: 'mien' }\n  const marque = (v) => (n) => { n.dataset.d = v.nom }\n</script>`],
-    ['la balise est liée à `el` par @this',  `<canvas @this=!{el} @attach={marque(el)}></canvas>`, `<script>\n  marque = (v) -> (n) -> n.dataset.d = String(v)\n</script>`]
+    ['paramètre d\'une fonction en ligne',   `<canvas :attach={(el) -> el.dataset.d = 'x'}></canvas>`],
+    ['paramètre d\'une fonction, .once',     `<canvas :attach.once={(el) -> el.dataset.d = 'x'}></canvas>`],
+    ['paramètre d\'une fonction, dans une ligne de {for}', `{for p in $plays by key}<canvas :attach={(el) -> el.dataset.d = p.key}></canvas>{end}`],
+    ['chaîne',                               `<canvas :attach={marque('el')}></canvas>`],
+    ['propriété',                            `{for p in $plays by key}<canvas :attach={marque(p.el)}></canvas>{end}`],
+    ['fabrique',                             `<canvas :attach={marque('x')}></canvas>`],
+    ['le script déclare une variable `el`',  `<canvas :attach={marque(el)}></canvas>`, `<script>\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
+    ['le script déclare `el`, .once',        `<canvas :attach.once={marque(el)}></canvas>`, `<script>\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
+    ['le script déclare `el`, ligne de {for}', `{for p in $plays by key}<canvas :attach={marque(el)}></canvas>{end}`, `<script>\n  $plays = [{ key: 'a' }]\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
+    ['le script déclare `el`, branche {success}', `{await $p}<i>attente</i>{success v}<canvas :attach={marque(el)}></canvas>{end}`, `<script>\n  $p = Promise.resolve(1)\n  el = { nom: 'mien' }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
+    ['le script déclare une fonction `el`',  `<canvas :attach={marque(el(1))}></canvas>`, `<script>\n  el = (x) -> { nom: 'f' + x }\n  marque = (v) -> (n) -> n.dataset.d = v.nom\n</script>`],
+    ['le script déclare `el` en JavaScript', `<canvas :attach={marque(el)}></canvas>`, `<script lang="js">\n  var el = { nom: 'mien' }\n  const marque = (v) => (n) => { n.dataset.d = v.nom }\n</script>`],
+    ['la balise est liée à `el` par @this',  `<canvas :this=!{el} :attach={marque(el)}></canvas>`, `<script>\n  marque = (v) -> (n) -> n.dataset.d = String(v)\n</script>`]
   ]
   for (const [nom, corps, script] of gardees) {
     it(`${nom} : mode fabrique, aucun \`el\` n'est posé`, async () => {

@@ -149,8 +149,11 @@ $status = 'avant montage'
     // La promesse résout à 300ms — laisse une marge nette entre un settleMs COURT
     // (50ms, insuffisant) et un settleMs LARGE (1500ms, largement suffisant).
     writeFileSync(join(root, 'src', 'delayed.mjs'), `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
-$p = new Promise((resolve) -> setTimeout((-> resolve("CHARGE")), 300))
+$p = plusTard "CHARGE", 300
 </script>
 {await $p}<span class="pending">chargement</span>{success val}<span class="done">{val}</span>{error err}<span class="err">erreur</span>{end}
 `)

@@ -46,7 +46,7 @@ Pour une table qui ne dépend d'aucun calcul (pas de boucle sur un sommaire, pas
 - Le chemin accepte exactement ce que `@routes` accepte : segments littéraux, `:param`, `(:param)` et `(littéral)` optionnels (à n'importe quelle position), `*` catch-all (en fin de route uniquement).
 - Le bloc est **répétable** — un bloc par `<@view>` à alimenter, chacun avec son propre `target`.
 
-Le bloc compile en `this.routes = { '<target>': { '<chemin>': '<composant>', … } }`, posé **avant** le code du `<script>` : le composant devient router-aware, et le préchargement compile-time des composants de route s'applique comme avec `@routes`.
+Le bloc compile en `this.routes = { '<target>': { '<chemin>': '<composant>', … } }`, posé **avant** le code du `<script>` : le composant devient router-aware, et ses pages se chargent comme celles d'une table `@routes` (voir « Chargement des pages »).
 
 Le `<script>` peut **compléter** la table posée par le bloc :
 
@@ -76,6 +76,8 @@ Comme l'écrasement est invisible à la lecture, la compilation émet un **avert
 <@view app-view>
 ```
 
+Une vue peut porter un contenu, écrit entre `<@view nom>` et `</@view>` : il s'affiche tant que le routeur n'y a pas posé la page de la route, sous un `{if}` comme ailleurs ; une vue qu'aucune route ne sert se vide.
+
 La navigation se fait par des **liens à hash** : `<a href="#/about">`. Le routeur les intercepte (le `#` ne déclenche aucun rechargement serveur) et procède à l'échange de vue. Seul un fragment qui commence par `/` est une route : une ancre ordinaire (`/docs#installation`) dans l'adresse d'une page routée reste une ancre — la vue de la route `/` reste affichée.
 
 <details>
@@ -86,6 +88,24 @@ Un lien classique `<a href="/about">` demande au navigateur d'aller chercher une
 MJS écoute ce signal : sur `#/about`, il regarde votre `@routes`, trouve `about-page`, et **remplace** le contenu du `<@view>` par ce composant. Tout se passe dans la page déjà chargée, instantanément.
 
 </details>
+
+### Une vue sous un `{if}`
+
+Une `<@view>` peut vivre dans un bloc `{if}`, dans sa première branche comme dans son `{else}` :
+
+```html
+{if $user}
+  <@view root>
+{else}
+  <@login-form>
+{end}
+```
+
+Le premier affichage attend la vue : dès qu'elle paraît, le routeur y montre la page de l'adresse en cours. Quand le `{if}` la cache, rien ne casse : l'adresse reste la route en cours, et les liens, l'avant et l'arrière continuent de la changer. La page affichée est gardée, comme à une navigation : quand la vue revient, la page revient avec elle, avec son état et sans second montage (`µmount` ne rejoue pas) ; si l'adresse a changé entre-temps, c'est la page de la nouvelle adresse qui paraît. Même règle pour une vue glissée dans le `<slot>` d'un composant de mise en page qui porte les routes, et pour chacune des vues d'un composant qui en a plusieurs.
+
+Une vue que cache un bloc n'est pas une faute : ni la construction ni la console n'en disent rien. Une route dont la cible n'a aucune vue dans l'appli, elle, arrête la construction, en développement comme en production : un bloc `<routes target="main">`, ou une table `@routes` qui nomme `main` en toutes lettres (`@routes = 'main': …`, `@routes['main'][chemin] = …`, même quand le chemin se calcule), sans aucune `<@view main>` dans les sources — ni dans le composant, ni dans le contenu qu'il reçoit, ni dans un partiel inclus. Le message nomme la forme, le fichier, la ligne et la vue à écrire. Seul ce que le compilateur lit compte : une vue écrite dans un commentaire HTML ou dans une chaîne du script n'en est pas une, un bloc `<routes>` mis en commentaire non plus. Une vue au nom calculé (`@routes[nom] = …`) ne se lit pas : elle n'est pas contrôlée. Le contrôle porte sur toute l'appli : deux composants routés vers `main`, dont un seul écrit `<@view main>`, passent, puisque la vue existe ailleurs.
+
+Au rendu serveur (`ssr:markers`, `ssr:positional`) comme au prérendu, une vue sous un `{if}` vrai sort avec la page de l'adresse ; sous un `{if}` faux, elle n'est pas dans le HTML. À la reprise de la page, le navigateur rebâtit le contenu du `{if}`, comme celui de tout bloc, mais la page que le serveur a écrite dans la vue n'est pas refaite : en `ssr:markers` et en `ssr:positional`, la vue neuve la reprend telle quelle, avec ses nœuds, montée une seule fois. Le prérendu rebâtit la vue de la page, ici comme pour une vue hors de tout bloc.
 
 ## Layouts — vues imbriquées
 
@@ -201,7 +221,29 @@ La bonne façon de servir *votre* 404 est une **route de repli**, qui rend ce ca
 
 Le vidage d'**une seule** zone reste silencieux : une page à plusieurs `<@view>` aux tables indépendantes a le droit de n'en remplir qu'une (une barre latérale routée sur les seules pages qui la méritent). Seul le cas « rien nulle part » déclenche l'erreur. Réglage : `µ.config.routeNotFound` — `'error'` *(défaut)*, `'warn'` (console seule) ou `'silent'`.
 
-## Préchargement des liens — `@preload`
+**Un lien mort se voit dès la construction.** Dans un projet dont la table de routes se connaît à la construction — un bloc `<routes>`, ou des chemins que le `<script>` écrit en toutes lettres (`@routes['app-view']['/extra'] = 'extra-page'`, `@routes = 'main': '/': 'home-page'`) —, un lien écrit en dur (`<a href="#/profil">`, sans `{…}`) qu'aucune route ne prend — paramètres, segments facultatifs et joker sous un chemin (`/docs/*`) compris, requête et barre finale retirées comme le fait le routeur — est signalé par `mjs build` et `mjs check`, avec le fichier, la ligne et la route voisine qui existe : un avertissement, jamais une erreur, de type `routeUnknown` ([32 · CLI](32-cli-et-configuration.md)). Le lien est comparé à toutes les tables du projet, tables imbriquées comprises. Une route de repli — un joker que rien ne précède, ou seulement des segments facultatifs (`/*`, `/(:lang)/*`) — prend tout chemin pour afficher la page introuvable, ou une mise en page dont la vue reste vide : un lien qu'elle seule prend est signalé aussi. Seuls comptent les liens des éléments `<a>` du gabarit, tels que le compilateur les lit (`href` écrit en dur, sans entité, sans `{…}` ni étalement `{...obj}`, sans gestionnaire `@click` qui pourrait retenir le clic) : un texte, une chaîne du script, un commentaire ou une zone de saisie (`<textarea>`, autofermée ou non) n'en contiennent pas ; un lien vers une autre page (`/doc#/…`) n'est pas lu. Dans le doute, le contrôle se tait pour tout le projet : dès qu'un script, un module ou le code d'un gabarit nomme `routes` autrement que par une table écrite en toutes lettres sur `@` (`@@routes`, `self.routes`, la table lue, passée à une fonction ou tirée de `@`, un chemin ou une vue calculés, `Object.assign @, routes: …`, le mot `routes` dans une chaîne ou un texte), dès qu'il laisse le composant à un autre code (`ajoute(@)`, `window.appli = @`, `@[nom]`, `{@}` ou `` {`${@}`} `` dans le gabarit ; le texte d'une chaîne ou d'un commentaire d'une accolade n'est pas du code : `{'@'}` écrit une arobase et laisse le contrôle, une arobase écrite après `//` aussi, et le code de la ligne suivante reste du code ; une expression régulière n'ouvre ni chaîne ni commentaire, `{s.replace(/'/g, '’') + f(@)}` passe bien le composant à `f`, et une arobase écrite dans l'expression régulière elle-même compte ; une forme que le contrôle ne lit pas à coup sûr comme le compilateur — une barre qui peut aussi bien diviser qu'ouvrir une expression régulière (`{a /b/ c}`, qui se lit `a(/b/(c))`, une barre après `return`, `typeof`, `<`, `!`, `?` ou `&`), une chaîne écrite sur plusieurs lignes, trois guillemets (`'''`, `"""`) qui en contiennent un autre, un `//` suivi sur sa ligne d'une accolade fermante, d'un retour chariot seul, de U+2028 ou de U+2029, que JavaScript lit comme une fin de ligne — fait lire toute la suite du gabarit comme du code, et la moindre arobase y fait taire le contrôle), dès qu'un module importé nomme `routes`, et quand la construction échoue. Les modules du cœur (`<@@select>`, `<@@radio>`, `<@@sortable>`…) ne remplissent jamais la table : ils ne font pas taire le contrôle. Le contrôle ne lit que le projet : une table qu'un script de la page remplit hors du projet ne se voit pas, coupez alors `lint.routeUnknown`.
+
+## Chargement des pages
+
+Les pages d'une table de routes (bloc `<routes>` ou `@routes`) ne se chargent pas toutes à l'ouverture de l'appli : la première s'affiche, puis les autres sont préchargées au repos, une à la fois : leur fichier est téléchargé sans être exécuté, et c'est leur visite qui l'exécute, sans le redemander au réseau. La file attend l'événement `load` de la fenêtre, puis la fin de ce qui est en route — le code des composants et les données que MJS demande (`µload`, `µajax`, la navigation par les liens) —, puis un temps de repos du navigateur ; 10 secondes après `load`, elle n'attend plus aucune demande en vol, même partie plus tard : une demande qui ne finit pas ne la retient pas au-delà. Si votre code remplace `fetch` par une fonction qui lève une erreur au lieu de rendre une promesse, la file attend ces 10 secondes. Une page déjà chargée par une visite ou par le survol d'un lien est sautée ; une page qui importe un module (`@import`) ou porte un effet n'est pas préchargée : elle se charge à sa visite. Le réglage `"routes": { "preload": … }` de `mjs.config.json` choisit :
+
+| Valeur | Chargement des pages |
+|---|---|
+| `"idle"` (défaut) | au repos, après l'affichage et l'arrivée de ses données, une à la fois, sans être exécutées avant leur visite |
+| `"on"` | toutes à l'ouverture, dès que le composant qui porte la table est monté |
+| `"off"` | chacune à sa première visite |
+
+```json
+{ "routes": { "preload": "on" } }
+```
+
+Une page dont le chargement au repos échoue ne dit rien et ne recharge jamais la page du navigateur : sa première visite la redemande, et une erreur éventuelle est dite à ce moment-là ; après une visite ratée, rien n'est redemandé au repos tant que vous restez sur la page ; la visite suivante la redemande. Un layout qui porte sa propre table ajoute ses pages à la file quand il est monté. La file laisse d'abord arriver la page affichée, son code et ses données : elle ne leur prend pas le réseau. Pendant le prérendu d'une page par le serveur, ces chargements ne partent pas : la page est prise sans eux.
+
+Une page visitée avant son tour se charge aussitôt, et l'ancienne page reste à l'écran jusqu'à ce que la suivante soit prête, 1,5 s au plus : la navigation se fait ensuite en entier, transition de vue comprise, de l'ancienne page à la nouvelle. Au-delà de 1,5 s, la navigation se fait sans attendre davantage et la vue reste vide le temps du chargement. Pendant l'attente, rien ne change pour l'ancienne page : `µ.url` (et donc `&id` et les autres paramètres) garde la route qu'elle affiche, et ses crochets `urlChange` ne sont pas encore appelés. La barre d'adresse, elle, montre déjà la nouvelle adresse (après un clic sur un lien, `µ.Router.to()`, un retour ou une avance du navigateur) : un retour du navigateur pendant l'attente revient à la page affichée. Une navigation demandée pendant l'attente l'emporte : la page attendue n'est jamais montée. Une navigation demandée pendant qu'une autre appelle ses crochets `urlChange` (une garde qui renvoie vers la page de connexion) se fait aussitôt, sans attente. Une page qui porte elle-même une table de routes (un layout) est attendue, mais les pages de sa table, connues seulement quand elle est montée, ne le sont pas : si l'une d'elles n'est pas encore chargée, elle s'affiche à son arrivée, dans une vue vide jusque-là. Sous `"on"` aussi : les pages y partent toutes à l'ouverture, une page visitée avant l'arrivée de son code est attendue de même.
+
+Après une coupure du réseau pendant le chargement d'une page, la visite suivante de cette page la redemande et l'affiche une fois le réseau revenu, sans recharger la page du navigateur, sous les trois réglages ; un nouveau clic sur le lien de la page ratée vaut une visite, sans entrée d'historique en plus ; une page dont le code échoue encore dit son erreur à chaque visite. Une visite ratée fait deux demandes : la page, puis le contrôle d'une construction périmée. Trois cas ne reviennent qu'après un rechargement de la page du navigateur : un composant chargé à la demande hors d'une table de routes, dans une appli qui n'a aucune table ; un fichier partagé par plusieurs pages (le cœur, un morceau commun) dont le chargement a été coupé ; un fichier importé par la page — un module partagé, le fichier d'un effet — dont le chargement a été coupé après celui de la page.
+
+## Préchargement des liens — `:preload`
 
 Un lien routé (`<a href="#/produit/42">`) peut précharger sa destination **avant** le clic : le clic devient instantané (le module — ou la page — est déjà là). Le réglage se fait en cascade sur **3 niveaux**, du plus large au plus précis, sur **deux axes** indépendants :
 
@@ -212,11 +254,13 @@ Un lien routé (`<a href="#/produit/42">`) peut précharger sa destination **ava
 |---|---|---|
 | Config | `mjs.config.json`, clé `preload` | `{ "view": "hover", "page": "off" }` (ou raccourci chaîne, ex. `"hover"` ≡ `{view:"hover", page:"off"}`) |
 | Module | racine du composant routeur | `@preload hover` (ou `@preload = "on"`, `@preload="off"`) |
-| Lien | sur le `<a>` | `<a href="#/produit/42" @preload="on">` |
+| Lien | sur le `<a>` | `<a href="#/produit/42" :preload="on">` |
 
-Trois modes : **`off`** (jamais), **`hover`** (au survol du lien), **`on`** (dès l'apparition du lien dans le DOM, sans attendre le survol). Défauts : `view: "hover"`, `page: "off"`.
+Trois modes : **`off`** (jamais), **`hover`** (au survol du lien, qu'il soit dans la page ou dans l'ombre d'un composant, là dès le premier rendu ou posé plus tard), **`on`** (sans attendre le survol : les liens présents au premier rendu de leur composant, qu'ils soient écrits hors de tout bloc, dans une ligne de `{for}`, dans une branche de `{if}` ou dans le gabarit d'un composant léger ; un lien posé plus tard — branche qui s'ouvre, ligne ajoutée — n'est pas préchargé à son apparition). Défauts : `view: "hover"`, `page: "off"`.
 
-`@preload` prend toujours une valeur (`hover`, `on` ou `off`) : écrit seul, vide (`@preload=""`) ou à `"true"`, il est refusé à la construction, sur un lien comme sur toute autre balise.
+`:preload` prend toujours une valeur (`hover`, `on` ou `off`) : écrit seul, vide (`:preload=""`) ou à `"true"`, il est refusé à la construction, sur un lien comme sur toute autre balise.
+
+La recherche des liens `on` à l'image qui suit le premier rendu n'entre dans le cœur de production que si un fichier du projet écrit `:preload` ; sans elle, seuls les liens `on` écrits hors de tout bloc, dans un composant qui a son ombre, sont cherchés, à la construction du composant. Un lien `on` que la construction ne lit pas — HTML reçu du serveur et posé par `:html`, attribut posé par `dataset` — n'est alors pas cherché quand il paraît dans l'ombre d'un composant, dans un bloc comme hors de tout bloc ; le survol, lui, le précharge, dans l'ombre d'un composant comme dans la page. Pour qu'il le soit dès le premier rendu, demandez `"runtime": "all"`, ou ajoutez `ujs` à votre liste `runtime` si vous en écrivez une : elle doit alors nommer aussi `router`, `ajax` et les autres modules dont votre appli se sert — `"runtime": ["ujs"]` écrit seul supprime tout préchargement de page.
 
 ```json
 { "preload": "hover" }
@@ -229,7 +273,7 @@ Trois modes : **`off`** (jamais), **`hover`** (au survol du lien), **`on`** (dè
 ```
 
 ```html
-<a href="#/produit/42" @preload="on">Produit vedette</a>
+<a href="#/produit/42" :preload="on">Produit vedette</a>
 ```
 
 > 🔗 La couche de préchargement HTML (`page`) partage son moteur avec la navigation UJS (interception de liens, zone de montage, cache de pages) — détails au chapitre [Navigation (UJS)](21-navigation.md).
@@ -260,36 +304,40 @@ Une route neuve — lien `#/…` suivi, `µRouter.to`, `µRouter.navigate` — p
 
 `µurlChange (path, params)->` est appelé à **chaque** changement d'URL, sur tout composant *router-aware*. Cas d'usage : mettre à jour un fil d'Ariane, activer un lien de nav, ajuster le titre de page, déclencher un événement d'analytics.
 
+Une garde `µurlChange` joue après l'arrivée du code de la page, 1,5 s au plus.
+
 > 🔗 La signature, l'ordre d'exécution et le piège de la forme **sans `=`** (`µurlChange (path, params)->`, jamais `= ->`) sont détaillés au chapitre [Cycle de vie](16-cycle-de-vie.md).
 
 > 📌 **Portée de cette doc** : il s'agit du routage **client** (sous-vues d'une page). Le routage **serveur** (Rails — `routes.rb`, contrôleurs, params de route côté backend, modes de rendu SSR) relève de la doc full-stack séparée.
 
-## Transitions de page — `@viewTransition`
+## Transitions de page — `:viewTransition`
 
-Quand le routeur client permute une vue (`<@view>`), `@viewTransition` enveloppe la permutation dans `document.startViewTransition` : le navigateur photographie l'**avant** et l'**après**, puis anime le passage — un fondu croisé par défaut, zéro CSS à écrire.
+Quand le routeur client permute une vue (`<@view>`), `:viewTransition` enveloppe la permutation dans `document.startViewTransition` : le navigateur photographie l'**avant** et l'**après**, puis anime le passage — un fondu croisé par défaut, zéro CSS à écrire.
 
-> 🔗 À ne pas confondre avec `@transition=*effet` ([Transitions & animations](10-transitions.md)) : cette directive anime l'entrée/sortie d'un **élément** au gré d'un `{if}`/`{for}`/`{key}`. `@viewTransition` opère un cran au-dessus, au niveau de la **page** entière — c'est la permutation de vue elle-même qui est animée, pas un nœud isolé.
+> 🔗 À ne pas confondre avec `:transition=*effet` ([Transitions & animations](10-transitions.md)) : cette directive anime l'entrée/sortie d'un **élément** au gré d'un `{if}`/`{for}`/`{key}`. `:viewTransition` opère un cran au-dessus, au niveau de la **page** entière — c'est la permutation de vue elle-même qui est animée, pas un nœud isolé.
 
 ### Les niveaux de réglage
 
-Le réglage se fait en cascade — le plus précis l'emporte. Aux niveaux **composant routeur** et **page routée**, `@viewTransition` est un attribut du `<style>` de base (celui sans `name=`), pas une directive de racine — sa valeur suit une syntaxe **objet** `{ clé: valeur }` — une mini-grammaire **texte** (pas du JS évalué) :
+Le réglage se fait en cascade — le plus précis l'emporte. Aux niveaux **composant routeur** et **page routée**, `:viewTransition` est un attribut du `<style>` de base (celui sans `name=`), pas une directive de racine — sa valeur suit une syntaxe **objet** `{ clé: valeur }` — une mini-grammaire **texte** (pas du JS évalué) :
 
 ```
-<style @viewTransition[.<nom>[={ direction: …, duration: …, priority: … }]]>
+<style :viewTransition[.<nom>[={ direction: …, duration: …, priority: … }]]>
 ```
 
 | Niveau | Où | Forme |
 |---|---|---|
 | Config | `mjs.config.json` | `"viewTransition": "fade"` ou `"viewTransition": "cube={ direction: left, duration: 600, priority: 2 }"` *(**chaîne** uniquement, aucun booléen — `"none"` = désactivé, défaut)* |
-| Composant routeur | attribut du `<style>` de base, dans le composant qui déclare `@routes` | `<style @viewTransition>` (nue = activer avec héritage) ou `<style @viewTransition.none>` — **seul niveau** où la forme nue existe |
-| Balise | sur une `<@view>` | `<@view main @viewTransition.fade>` ou `<@view main @viewTransition.none>` — un **nom** est obligatoire ici, la forme nue n'a pas d'effet propre sur une `<@view>` (erreur de compilation, cf. encadré ci-dessous) |
-| **Page routée elle-même** | attribut du `<style>` de base, dans le composant **injecté** dans la vue (`galerie-page.mjs`, `photo-page.mjs`…) | `<style @viewTransition.<nom>={ priority: … }>` — le niveau le **plus spécifique**, cf. *Priorité départ/arrivée* ci-dessous |
+| Composant routeur | attribut du `<style>` de base, dans le composant qui déclare `@routes` | `<style :viewTransition>` (nue = activer avec héritage) ou `<style :viewTransition.none>` — **seul niveau** où la forme nue existe |
+| Balise | sur une `<@view>` | `<@view main :viewTransition.fade>` ou `<@view main :viewTransition.none>` — un **nom** est obligatoire ici, la forme nue n'a pas d'effet propre sur une `<@view>` (erreur de compilation, cf. encadré ci-dessous) |
+| **Page routée elle-même** | attribut du `<style>` de base, dans le composant **injecté** dans la vue (`galerie-page.mjs`, `photo-page.mjs`…) | `<style :viewTransition.<nom>={ priority: … }>` — le niveau le **plus spécifique**, cf. *Priorité départ/arrivée* ci-dessous |
 
 Dès qu'**au moins une vue concernée** résout « on », **toute** la permutation de la navigation est enveloppée : `startViewTransition` est une API globale au document — une seule transition par navigation, jamais une par vue.
 
-> ⚠️ **`on`/`off` n'existent plus en toutes lettres.** La forme **nue** (`@viewTransition` sans valeur) active avec héritage — **exclusivement en attribut du `<style>` de base d'un module** ; `="none"` coupe à tous les niveaux, y compris la config. Écrire `@viewTransition.off`, `@viewTransition.on`, la forme à guillemets (`@viewTransition="cube"`), ou la forme **nue sur une `<@view>`** (`<@view main @viewTransition>`, sans nom — sans effet propre, réservée au `<style>` de base) sont des **erreurs de compilation** qui pointent vers la syntaxe actuelle (migration automatiquement orientée par le message).
+> ⚠️ **`on`/`off` n'existent plus en toutes lettres.** La forme **nue** (`:viewTransition` sans valeur) active avec héritage — **exclusivement en attribut du `<style>` de base d'un module** ; `="none"` coupe à tous les niveaux, y compris la config. Écrire `:viewTransition.off`, `:viewTransition.on`, la forme à guillemets (`:viewTransition="cube"`), ou la forme **nue sur une `<@view>`** (`<@view main :viewTransition>`, sans nom — sans effet propre, réservée au `<style>` de base) sont des **erreurs de compilation** qui pointent vers la syntaxe actuelle (migration automatiquement orientée par le message).
 
 > 💡 Le réglage de config est aussi exposé au runtime : `µ.viewTransition` (chaîne, modifiable à chaud — `µ.viewTransition = "fade"`, ou `"none"` pour couper).
+>
+> Sans clé `runtime`, les rideaux n'entrent au cœur que si une transition est écrite (`:viewTransition`, `:vt`, le réglage `viewTransition`, `µ.viewTransition = …` dans le code d'un composant) ou que le projet navigue vers le serveur ; une liste `runtime` écrite les garde. `µ.viewTransition` réglé par un script de la page, hors composant, n'est pas vu : ajoutez `vt_presets` à la liste `runtime`.
 
 Deux façons équivalentes d'activer les transitions pour tout un routeur — au choix, sans les cumuler :
 
@@ -310,7 +358,7 @@ Deux façons équivalentes d'activer les transitions pour tout un routeur — au
 <nav><a href="#/">Galerie</a> <a href="#/photo">Photo</a></nav>
 <@view main>
 
-<style @viewTransition>
+<style :viewTransition>
 </style>
 ```
 
@@ -321,15 +369,15 @@ Naviguer entre « Galerie » et « Photo » joue désormais un fondu croisé aut
 Un nom de préréglage accepte un bloc d'options `={ … }`, en paires `clé: valeur` séparées par des virgules (guillemets facultatifs autour des valeurs). Chaque clé a une forme **courte**, mixable librement avec la forme longue — jamais les **deux** pour la **même** option (erreur « clé en double ») :
 
 ```html
-<style @viewTransition.cube={ direction: left, duration: 600, priority: 2 }>
+<style :viewTransition.cube={ direction: left, duration: 600, priority: 2 }>
 </style>
 ```
 ```html
-<style @viewTransition.cube={ dir: left, dur: 600, p: 2 }>      <!-- équivalent, clés courtes -->
+<style :viewTransition.cube={ dir: left, dur: 600, p: 2 }>      <!-- équivalent, clés courtes -->
 </style>
 ```
 ```html
-<style @viewTransition.cube={ dir: left, duration: 600, p: 2 }> <!-- mixe toléré -->
+<style :viewTransition.cube={ dir: left, duration: 600, p: 2 }> <!-- mixe toléré -->
 </style>
 ```
 
@@ -339,7 +387,7 @@ Un nom de préréglage accepte un bloc d'options `={ … }`, en paires `clé: va
 | `duration` | `dur` | un **nombre nu**, en millisecondes (comme `setTimeout` — aucune unité) | **remplace** la durée par défaut du préréglage — un facteur (`duration demandée ÷ durée par défaut de la base`) met à l'échelle **proportionnellement** chaque jeton temporel du CSS généré (durées ET délais de cascade `bars`/`blocks`) ; pour les rideaux, les minuteries internes (couverture/révélation) suivent le même facteur |
 | `priority` | `p` | entier ≥ 0 | façon `z-index`, défaut `1` — cf. *Priorité départ/arrivée* ci-dessous ; à égalité, la page de **départ** gagne |
 
-> ⚠️ **Aucun raccourci `nom:direction`.** La direction s'écrit **uniquement** via la clé d'option — `@viewTransition.cube:left` est une **erreur de compilation** (« la direction ne s'écrit plus dans le nom »), aux quatre positions où la directive s'écrit, nom de morph compris : écrivez `@viewTransition.cube={ dir: left }`.
+> ⚠️ **Aucun raccourci `nom:direction`.** La direction s'écrit **uniquement** via la clé d'option — `:viewTransition.cube:left` est une **erreur de compilation** (« la direction ne s'écrit plus dans le nom »), aux quatre positions où la directive s'écrit, nom de morph compris : écrivez `:viewTransition.cube={ dir: left }`.
 >
 > ⚠️ **Le NOM du préréglage n'est vérifié à aucun niveau** — ni sur `<style>`, ni sur `<@view>`, ni sur une balise. `µ._vtPresets` est un dictionnaire que l'appli peut garnir à son démarrage (`µ._vtPresets.diamant = '…'`), et un nom qui n'existe pas encore au build existera peut-être au runtime : le refuser fermerait la porte à un préréglage maison. Un nom qu'on ne retrouve pas à l'animation donne un `µ.warn` de console et aucune transition. Toute clé `direction`/`dir`, `duration`/`dur`, `priority`/`p` — ou la même option posée deux fois (forme courte **et** longue) — est aussi une erreur (avec suggestion de proximité sur une faute de frappe, ex. `duraction` → « vouliez-vous dire 'duration'/'dur' ? »).
 
@@ -349,12 +397,12 @@ Une navigation change **deux** pages à la fois : celle qu'on **quitte** (dépar
 
 ```html
 <!-- galerie-page.mjs -->
-<style @viewTransition.zoom>
+<style :viewTransition.zoom>
 </style>
 ```
 ```html
 <!-- photo-page.mjs -->
-<style @viewTransition.turn={ dir: left }>
+<style :viewTransition.turn={ dir: left }>
 </style>
 ```
 
@@ -364,7 +412,7 @@ Naviguer de la galerie vers la photo : lequel des deux noms joue, `zoom` ou `tur
 2. L'option **`priority`** (ou sa forme courte **`p`**), façon `z-index` (défaut `1`), donne une **priorité** — la plus grosse l'emporte, **quel que soit le côté** qui la porte :
 
 ```html
-<style @viewTransition.turn={ dir: left, priority: 5 }>   <!-- cette page impose SA transition, même en tant qu'arrivée -->
+<style :viewTransition.turn={ dir: left, priority: 5 }>   <!-- cette page impose SA transition, même en tant qu'arrivée -->
 </style>
 ```
 
@@ -374,20 +422,20 @@ Naviguer de la galerie vers la photo : lequel des deux noms joue, `zoom` ou `tur
 | `zoom` (priorité 1) | `turn={ dir: left, priority: 5 }` | **`turn`** — l'arrivée impose sa priorité plus grande |
 | `zoom={ priority: 9 }` | `turn={ dir: left, priority: 5 }` | **`zoom`** — le départ reste prioritaire, même explicitement |
 
-La priorité se pose sur **n'importe quel niveau** de la cascade (`@viewTransition.<nom>={ priority: N }` en attribut du `<style>` de base d'une page, ou `<@view main @viewTransition.<nom>={ priority: N }>` côté outlet) — le niveau le plus spécifique de chaque côté (départ / arrivée) est résolu indépendamment avant comparaison.
+La priorité se pose sur **n'importe quel niveau** de la cascade (`:viewTransition.<nom>={ priority: N }` en attribut du `<style>` de base d'une page, ou `<@view main :viewTransition.<nom>={ priority: N }>` côté outlet) — le niveau le plus spécifique de chaque côté (départ / arrivée) est résolu indépendamment avant comparaison.
 
-> 💡 Ce départage n'existe **que** côté routeur (`<@view>`/pages). `@pageTransition` sur un `<a>` (section suivante, permutations **hors routeur**) reste une cascade à 2 niveaux simple (lien > config) : la page de destination n'étant pas forcément une page MJS déjà chargée, sa préférence n'est pas connaissable avant le clic.
+> 💡 Ce départage n'existe **que** côté routeur (`<@view>`/pages). `:pageTransition` sur un `<a>` (section suivante, permutations **hors routeur**) reste une cascade à 2 niveaux simple (lien > config) : la page de destination n'étant pas forcément une page MJS déjà chargée, sa préférence n'est pas connaissable avant le clic.
 
 ### Élément partagé — un nom de transition sur une balise
 
-Sur une balise **ordinaire** (pas une `<@view>`), `@viewTransition.nom` donne un **nom de transition** à l'élément — un raccourci compilé vers `@style.view-transition-name=…`. `nom` n'est ici **pas** limité à la bibliothèque de préréglages (n'importe quel identifiant `[a-zA-Z][a-zA-Z0-9_-]*`) et n'accepte **pas** de bloc d'options `={ … }` — `direction`/`duration`/`priority` n'ont de sens qu'aux niveaux de **navigation** (config, module, `<@view>`), pas sur un simple nom de morph. Deux éléments portant le **même nom** de part et d'autre d'une navigation sont automatiquement appariés : le navigateur les *morphe* l'un vers l'autre.
+Sur une balise **ordinaire** (pas une `<@view>`), `:viewTransition.nom` donne un **nom de transition** à l'élément — un raccourci compilé vers `:style.view-transition-name=…`. `nom` n'est ici **pas** limité à la bibliothèque de préréglages (n'importe quel identifiant `[a-zA-Z][a-zA-Z0-9_-]*`) et n'accepte **pas** de bloc d'options `={ … }` — `direction`/`duration`/`priority` n'ont de sens qu'aux niveaux de **navigation** (config, module, `<@view>`), pas sur un simple nom de morph. Deux éléments portant le **même nom** de part et d'autre d'une navigation sont automatiquement appariés : le navigateur les *morphe* l'un vers l'autre.
 
 ```html
-<img src="…" @viewTransition.hero>   <!-- galerie-page.mjs — la vignette -->
-<img src="…" @viewTransition.hero>   <!-- photo-page.mjs — l'image pleine page -->
+<img src="…" :viewTransition.hero>   <!-- galerie-page.mjs — la vignette -->
+<img src="…" :viewTransition.hero>   <!-- photo-page.mjs — l'image pleine page -->
 ```
 
-Naviguer de la galerie vers la photo anime la vignette qui grossit jusqu'à occuper toute la vue. `@viewTransition.nom` ne prend qu'une étiquette **fixe**. Pour une **liste** — une photo par produit, et la page de chaque produit —, l'effet `*shared` donne à chaque balise le nom de sa clé :
+Naviguer de la galerie vers la photo anime la vignette qui grossit jusqu'à occuper toute la vue. `:viewTransition.nom` ne prend qu'une étiquette **fixe**. Pour une **liste** — une photo par produit, et la page de chaque produit —, l'effet `*shared` donne à chaque balise le nom de sa clé :
 
 ```html
 {for p in $produits by id}<img src={p.photo} *shared(p.id)>{end}   <!-- liste-page.mjs -->
@@ -395,22 +443,22 @@ Naviguer de la galerie vers la photo anime la vignette qui grossit jusqu'à occu
 <h1 *shared($produit.id, group: titre)>{$produit.nom}</h1>           <!-- un 2ᵉ élément de la même fiche -->
 ```
 
-Vous cliquez sur un produit : sa vignette glisse et grandit jusqu'à sa place dans la page du produit, le reste fond. La clé est un nombre ou un mot, fixe ou variable ; `group` sépare deux éléments de la même fiche (la photo, le titre). Le morph a lieu pendant une transition de page : `@viewTransition` doit être actif pour cette navigation (cf. plus haut). Détails : [38 · Effets](38-effets.md).
+Vous cliquez sur un produit : sa vignette glisse et grandit jusqu'à sa place dans la page du produit, le reste fond. La clé est un nombre ou un mot, fixe ou variable ; `group` sépare deux éléments de la même fiche (la photo, le titre). Le morph a lieu pendant une transition de page : `:viewTransition` doit être actif pour cette navigation (cf. plus haut). Détails : [38 · Effets](38-effets.md).
 
-Pour un nom **conditionnel**, ou un nom écrit à la main, l'attribut de style natif `@style.view-transition-name` reste possible :
+Pour un nom **conditionnel**, ou un nom écrit à la main, l'attribut de style natif `:style.view-transition-name` reste possible :
 
 ```html
-<img src={item.thumb} @style.view-transition-name={'p-' + item.id}>       <!-- nom calculé, un par item d'un {for} -->
-<img src={item.thumb} @style.view-transition-name{$featured}="hero">      <!-- nom posé seulement si $featured -->
+<img src={item.thumb} :style.view-transition-name={'p-' + item.id}>       <!-- nom calculé, un par item d'un {for} -->
+<img src={item.thumb} :style.view-transition-name{$featured}="hero">      <!-- nom posé seulement si $featured -->
 ```
 
-> ⚠️ Sur une balise ordinaire, l'étiquette se pose **après le point** : `@viewTransition.hero`. La forme à guillemets `@viewTransition="hero"`, la forme calculée `@viewTransition={expr}` et la forme conditionnelle `@viewTransition{cond}="nom"` sont refusées à la compilation — passez par `@style.view-transition-name` pour un nom calculé ou conditionnel.
+> ⚠️ Sur une balise ordinaire, l'étiquette se pose **après le point** : `:viewTransition.hero`. La forme à guillemets `:viewTransition="hero"`, la forme calculée `:viewTransition={expr}` et la forme conditionnelle `:viewTransition{cond}="nom"` sont refusées à la compilation — passez par `:style.view-transition-name` pour un nom calculé ou conditionnel.
 
 > ⚙️ **Sous le capot — couche de lévitation.** Le navigateur ignore un `view-transition-name` posé **dans un shadow tree** (transition document, noms *tree-scoped*) — or tout composant MJS vit en shadow. Le moteur lève donc automatiquement chaque élément nommé dans une couche `#mjs-vt-hoist` au-dessus du `body` (DOM lumière) le temps des deux captures : fantôme visuellement identique (clone + styles calculés recopiés), original masqué, nettoyage à `ready`. Fidèle pour du contenu concret (images, blocs, texte) ; un **sous-composant MJS imbriqué** dans l'élément nommé n'est pas répliqué (shadow fermé, non clonable) : le fantôme montre à sa place une boîte vide du même style, sans le monter une seconde fois — de même pour un cadre, une vidéo ou un son, jamais rechargés ; un élément intégré personnalisé (`<button is="…">`) est recopié comme un élément ordinaire de la même balise, son contenu visible, sans être monté — nommez l'élément de contenu, pas un composant entier.
 
 ### Bibliothèque de préréglages
 
-Au-delà de la forme **nue** `@viewTransition` (fondu natif — réservée à l'attribut du `<style>` de base d'un module, cf. encadré plus haut), chaque niveau accepte une **chaîne** : `none` (coupé) ou un nom de **base**. Les 8 bases **directionnelles** (`slide`, `volet`, `reveal`, `flip`, `cube`, `turn`, `swipe`, `bars`) déclinent la **même animation** selon `left`/`right`/`up`/`down`, réglée par l'option `direction`/`dir` — `cube={ dir: up }`, `turn={ dir: right }`, `bars={ dir: left }`… Sans direction précisée, chaque base a son défaut (cf. tableau *Valeurs par défaut* ci-dessous).
+Au-delà de la forme **nue** `:viewTransition` (fondu natif — réservée à l'attribut du `<style>` de base d'un module, cf. encadré plus haut), chaque niveau accepte une **chaîne** : `none` (coupé) ou un nom de **base**. Les 8 bases **directionnelles** (`slide`, `volet`, `reveal`, `flip`, `cube`, `turn`, `swipe`, `bars`) déclinent la **même animation** selon `left`/`right`/`up`/`down`, réglée par l'option `direction`/`dir` — `cube={ dir: up }`, `turn={ dir: right }`, `bars={ dir: left }`… Sans direction précisée, chaque base a son défaut (cf. tableau *Valeurs par défaut* ci-dessous).
 
 | Base | Effet | Directions |
 |---|---|---|
@@ -434,7 +482,7 @@ Au-delà de la forme **nue** `@viewTransition` (fondu natif — réservée à l'
 ```
 
 ```html
-<@view main @viewTransition.zoom>
+<@view main :viewTransition.zoom>
 ```
 
 Un nom **hors de cette liste** est rejeté à la validation de `mjs.config.json` (config statique) ; posé dynamiquement au runtime (`µ.viewTransition = 'n-importe-quoi'`), c'est tolérant : no-op + avertissement, jamais un crash. Le mécanisme reste **ouvert** : pendant la transition, le runtime pose `html[data-mjs-vt="nom"]` pour chaque préréglage **natif** (`fade`, `slide`, `zoom`, `zoom-out`, `volet`, `reveal`, `flip`, `cube`, `turn`) et pour un **nom inconnu** de la bibliothèque — le cas où le hook devient utile, puisque MJS n'injecte alors aucun CSS pour vous : un projet peut définir ses propres règles `html[data-mjs-vt="mon-nom"] { ::view-transition-old(root){…} }` dans sa feuille globale, MJS pose l'attribut, votre CSS prend le relais. L'attribut est retiré dès la fin de la transition. Les quatre **rideaux** (`iris`, `swipe`, `bars`, `blocks`) ne passent jamais par l'API View Transitions et ne posent JAMAIS cet attribut : leur habillage vient des classes de leur propre calque (`#mjs-vt-curtain`/`.mjs-vtc-*`).
@@ -443,12 +491,12 @@ Un nom **hors de cette liste** est rejeté à la validation de `mjs.config.json`
 
 #### Recréer un effet « grille de tuiles » (façon écran de combat)
 
-Certains effets spectaculaires (l'écran de combat d'un jeu, par exemple) reposent sur **plusieurs fragments indépendants** qui s'animent séparément (une grille de tuiles qui rétrécissent, un rideau qui se découpe…) — un seul pseudo-élément racine ne peut pas faire ça seul. Pas besoin d'un moteur générique : le primitif **élément partagé** (`@viewTransition.nom`, section précédente) suffit à recréer la recette, appliqué à une grille plutôt qu'à un seul élément :
+Certains effets spectaculaires (l'écran de combat d'un jeu, par exemple) reposent sur **plusieurs fragments indépendants** qui s'animent séparément (une grille de tuiles qui rétrécissent, un rideau qui se découpe…) — un seul pseudo-élément racine ne peut pas faire ça seul. Pas besoin d'un moteur générique : le primitif **élément partagé** (`:viewTransition.nom`, section précédente) suffit à recréer la recette, appliqué à une grille plutôt qu'à un seul élément :
 
 ```html
 <!-- galerie-page.mjs -->
 {for tile in $tiles}
-  <div class="tuile" @style.view-transition-name={'tuile-' + tile.id} @style.animation-delay={tile.id * 20 + 'ms'}></div>
+  <div class="tuile" :style.view-transition-name={'tuile-' + tile.id} :style.animation-delay={tile.id * 20 + 'ms'}></div>
 {end}
 ```
 
@@ -456,7 +504,7 @@ Chaque tuile porte un nom **unique et apparié** des deux côtés de la navigati
 
 ### Valeurs par défaut
 
-Tout ce que `@viewTransition` applique **sans que vous précisiez rien** :
+Tout ce que `:viewTransition` applique **sans que vous précisiez rien** :
 
 | Réglage | Valeur par défaut | Détail |
 |---|---|---|
@@ -487,28 +535,28 @@ Tout ce que `@viewTransition` applique **sans que vous précisiez rien** :
 
 ### Accessibilité
 
-`@viewTransition` vérifie deux choses **avant** de jamais démarrer une transition, à tous les niveaux (routeur `<@view>` **et** transitions de page `@pageTransition` sur un lien, cf. section suivante) :
+`:viewTransition` vérifie deux choses **avant** de jamais démarrer une transition, à tous les niveaux (routeur `<@view>` **et** transitions de page `:pageTransition` sur un lien, cf. section suivante) :
 
-- **`prefers-reduced-motion: reduce`** — dès que l'utilisateur (système ou navigateur) demande de réduire les animations, MJS **n'enveloppe jamais** la permutation dans `startViewTransition` et **ne joue aucun rideau** : le changement de vue/page se fait directement, comme si `@viewTransition` était absent (une seule garde d'environnement, `_mjs_vtEnabled`, partagée par les deux niveaux). Aucune configuration à faire — c'est automatique et prioritaire sur tout réglage `@viewTransition` actif.
+- **`prefers-reduced-motion: reduce`** — dès que l'utilisateur (système ou navigateur) demande de réduire les animations, MJS **n'enveloppe jamais** la permutation dans `startViewTransition` et **ne joue aucun rideau** : le changement de vue/page se fait directement, comme si `:viewTransition` était absent (une seule garde d'environnement, `_mjs_vtEnabled`, partagée par les deux niveaux). Aucune configuration à faire — c'est automatique et prioritaire sur tout réglage `:viewTransition` actif.
 - **Dégradé gracieux** — sur un navigateur qui n'implémente pas `document.startViewTransition` (API récente), les **rideaux** (`iris`, `swipe`, `bars`, `blocks`), du DOM ordinaire, jouent quand même ; les préréglages qui reposent sur l'API (fondu natif, `fade`, `slide`, `cube`…) font une permutation directe, silencieuse, **sans erreur ni avertissement**. Le site reste 100 % fonctionnel, juste sans cette animation.
 
 Dans les deux cas, aucun code à écrire : ces deux gardes sont vérifiées automatiquement à chaque navigation, quel que soit le préréglage demandé.
 
-### Transitions de page (hors routeur) — `@pageTransition` sur un lien
+### Transitions de page (hors routeur) — `:pageTransition` sur un lien
 
-Les préréglages s'appliquent aussi aux **permutations de page** pilotées par la couche [Navigation (UJS)](21-navigation.md) — un lien classique qui déclenche un remplacement de la zone de montage, pas une vue du routeur `#/…`. Cascade dédiée, résolue par lien : attribut `@pageTransition` (converti en `mjs-vt`) sur le `<a>` cliqué, sinon repli sur la config globale `µ.viewTransition` — pas de niveau composant/vue ici (une transition de page n'a pas de « vue routée »).
-
-```html
-<a href="/produits/42" @pageTransition="zoom">Voir le produit</a>
-```
-
-`@pageTransition` accepte aussi un nom **seul**, `on`, `off`, ou la même syntaxe **objet** que les autres niveaux (`nom={ direction: …, duration: … }`, clés longues ou courtes, guillemets facultatifs autour des valeurs — cf. *Options* ci-dessus) :
+Les préréglages s'appliquent aussi aux **permutations de page** pilotées par la couche [Navigation (UJS)](21-navigation.md) — un lien classique qui déclenche un remplacement de la zone de montage, pas une vue du routeur `#/…`. Cascade dédiée, résolue par lien : attribut `:pageTransition` (converti en `mjs-vt`) sur le `<a>` cliqué, sinon repli sur la config globale `µ.viewTransition` — pas de niveau composant/vue ici (une transition de page n'a pas de « vue routée »).
 
 ```html
-<a href="/produits/42" @pageTransition="cube={ dir: left }">Voir le produit</a>
+<a href="/produits/42" :pageTransition="zoom">Voir le produit</a>
 ```
 
-> ⚠️ Comme aux autres positions, **aucun raccourci `nom:direction`** — `@pageTransition="cube:left"` est une erreur de compilation, la direction se pose uniquement via la clé d'option. **`priority` n'a pas cours ici** : la cascade d'un lien n'a que deux niveaux (lien, config), rien à départager — seuls le routeur et la page routée connaissent un arbitrage départ/arrivée (cf. *Priorité départ/arrivée* ci-dessus). Poser `priority`/`p` sur `@pageTransition` est donc une erreur de compilation plutôt qu'une option silencieusement sans effet.
+`:pageTransition` accepte aussi un nom **seul**, `on`, `off`, ou la même syntaxe **objet** que les autres niveaux (`nom={ direction: …, duration: … }`, clés longues ou courtes, guillemets facultatifs autour des valeurs — cf. *Options* ci-dessus) :
+
+```html
+<a href="/produits/42" :pageTransition="cube={ dir: left }">Voir le produit</a>
+```
+
+> ⚠️ Comme aux autres positions, **aucun raccourci `nom:direction`** — `:pageTransition="cube:left"` est une erreur de compilation, la direction se pose uniquement via la clé d'option. **`priority` n'a pas cours ici** : la cascade d'un lien n'a que deux niveaux (lien, config), rien à départager — seuls le routeur et la page routée connaissent un arbitrage départ/arrivée (cf. *Priorité départ/arrivée* ci-dessus). Poser `priority`/`p` sur `:pageTransition` est donc une erreur de compilation plutôt qu'une option silencieusement sans effet.
 
 ### Personnaliser l'animation (CSS)
 
@@ -538,7 +586,7 @@ Le navigateur expose la transition via des **pseudo-éléments standards**, anim
 - **Dégradé gracieux** : navigateur sans `startViewTransition` → les rideaux jouent quand même ; un préréglage natif fait une permutation directe, sans erreur.
 - **Accessibilité** : `prefers-reduced-motion: reduce` → MJS n'enveloppe pas, permutation directe.
 - **Même composant, autre paramètre** (`/posts/42` → `/posts/77`) : ce n'est pas une permutation de vue (le composant se met à jour via `µurl`) → pas de transition de page. Une `<@view>` qui résout encore le même module ne participe pas non plus au choix de la transition (une autre vue de la page qui change, elle, joue la sienne).
-- **Jamais côté serveur** : le SSR ignore `@viewTransition`, c'est un mécanisme purement client.
+- **Jamais côté serveur** : le SSR ignore `:viewTransition`, c'est un mécanisme purement client.
 
 ---
 

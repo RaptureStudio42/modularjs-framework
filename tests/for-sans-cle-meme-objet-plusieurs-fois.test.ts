@@ -142,7 +142,7 @@ describe('{for} sans clé — le même objet plusieurs fois', function () {
       assert.deepEqual(textes(r), [['1', '1'], ['1', '2', '1'], ['1', 'a', '2', '1'], ['1', '2', 'a', '1'], ['a', '1', '1', '2']])
     })
 
-    it(`${nom} : vidage puis recréation (réserve de lignes)`, async function () {
+    it(`${nom} : vidage puis recréation`, async function () {
       const r = await jouer(source(LIGNE, { raw }), ['return [o.d, o.x, o.d]', 'return []', 'return [o.d, o.x, o.d]', 'return [o.b, o.b]'])
       assert.deepEqual(textes(r), [['1', '2', '1'], [], ['1', '2', '1'], ['b', 'b']])
     })

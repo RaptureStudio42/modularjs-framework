@@ -15,7 +15,7 @@ import { transpile } from '../src/transpiler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 import { assertAbsent } from './helpers/dom-assert.js'
-import { mesurer } from './helpers/mesure-balise.js'
+import { mesurer, rendreMesures } from './helpers/mesure-balise.js'
 
 const COMPOSANTS: Record<string, string> = {
   'fx-spot-voile':        '<div class="a" *spotlight(where: veil, on: always)>x</div>',
@@ -78,6 +78,7 @@ describe('effets — *spotlight(where: veil)', function () {
     window?.close?.()
     await terminateSharedWorkerPool()
   })
+  afterEach(rendreMesures)
 
   async function monter(tag: string, sel = '.a') {
     window.document.body.innerHTML = `<${tag}></${tag}>`

@@ -19,7 +19,7 @@ const PAGE = `<script>
   $lecture = true
 </script>
 
-<form class="f1" method="get" action="/envoi" @noUJS>
+<form class="f1" method="get" action="/envoi" :noUJS>
   <@@checkbox class="c" name="c" required>c</@@checkbox>
   <@@switch class="w" name="w" required>w</@@switch>
   <@@radio class="r" name="r" value="1" required>r</@@radio>
@@ -30,12 +30,12 @@ const PAGE = `<script>
   <input type="number" class="xn" required aria-label="xn">
 </form>
 
-<form class="f2" method="get" action="/envoi" @noUJS>
+<form class="f2" method="get" action="/envoi" :noUJS>
   <@@knob class="k" name="k" disabled={$verrou ? true : null}></@@knob>
   <@@gauge class="g" name="g" disabled={$verrou ? true : null}></@@gauge>
 </form>
 
-<form class="f3" method="get" action="/envoi" @noUJS>
+<form class="f3" method="get" action="/envoi" :noUJS>
   <@@checkbox class="lc" name="lc" required readonly={$lecture}>c</@@checkbox>
   <@@switch class="lw" name="lw" required readonly={$lecture}>w</@@switch>
   <@@radio class="lr" name="lr" value="1" required readonly={$lecture}>r</@@radio>

@@ -170,10 +170,12 @@ export function buildEffects() {
   return out;
 }
 
-// la règle d'un réglage d'effet CSS de l'appli dans la langue `lang`, comme le catalogue l'affiche : une durée, une valeur CSS, ses mots
+// la règle d'un réglage d'effet CSS de l'appli dans la langue `lang`, comme le catalogue l'affiche : une durée, une valeur CSS, la part de
+// `on: view` (`visible`), ses mots
 function customRule(rule, lang) {
   if (rule === 'time') return inLang(lang, () => t('effets.regle-duree'));
   if (rule === 'css') return inLang(lang, () => t('effets.regle-css'));
+  if (rule === 'visible') return inLang(lang, () => t('effets.regle-visible'));
   const words = wordsOfRule(rule);
   if (!words) throw new Error('vscode-effects : règle d\'effet CSS inattendue — ' + rule);
   return words.join(', ');
@@ -182,7 +184,7 @@ function customRule(rule, lang) {
 function customSetting(st) {
   const fr = customRule(st.rule, 'fr');
   const en = customRule(st.rule, 'en');
-  return { rule: fr, ...en !== fr && { rule_en: en }, default: st.dflt === undefined ? null : shown(st.dflt), values: st.rule === 'time' || st.rule === 'css' ? null : wordsOfRule(st.rule) };
+  return { rule: fr, ...en !== fr && { rule_en: en }, default: st.dflt === undefined ? null : shown(st.dflt), values: st.rule === 'time' || st.rule === 'css' || st.rule === 'visible' ? null : wordsOfRule(st.rule) };
 }
 
 /** les réglages que tout effet CSS d'une appli reçoit (`*halo(color: #0ff) =` puis son CSS) : la règle d'un réglage qu'il déclare

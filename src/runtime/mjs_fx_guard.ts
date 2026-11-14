@@ -78,12 +78,41 @@ function _mjsFxGuardSure(el, cs) {
     // la pause après la dernière frappe : la sienne, celle de la config, sinon une seconde
     var conf  = µ._fxConf && µ._fxConf.guard;
     var pause = µ._mjs_fxMs(s.delay, conf && typeof conf === 'object' ? µ._mjs_fxMs(conf.delay, 1000) : 1000);
-    var raw  = function() { return el.type === 'checkbox' ? el.checked : el.value; };
+    // la règle d'une liste à choix multiples liée à une variable de règle de liste (`string[]`, `int 0..20[] | null`), sinon null : ses
+    // choix sont alors la valeur que la liaison écrit (son `value` ne rend que le premier) ; sous une autre règle, elle se lit comme
+    // avant et la variable refuse la liste que la liaison écrit, avec son message de développement
+    var many = function() {
+      var r = el.type === 'select-multiple' && ruleOf();
+      return r && µ._mjs_tlist && µ._mjs_tlist(r) ? r : null;
+    };
+    // la valeur que la liaison écrit : les choix d'une telle liste (aucun choix : null quand sa règle l'accepte), l'état coché d'une case,
+    // null pour l'option vide d'une liste simple dont la règle refuse le texte vide mais accepte null (µ._mjs_traw, mjs_types_bind.ts, que la liaison d'une liste du cœur emploie aussi)
+    var raw  = function() {
+      var r = many();
+      if (r) return µ._mjs_traw(r, Array.from(el.selectedOptions, function(o) { return o.value; }));
+      if (el.type === 'checkbox') return el.checked;
+      r = el.type === 'select-one' && ruleOf();
+      return r ? µ._mjs_traw(r, el.value) : el.value;
+    };
     // la dernière bonne valeur, gardée et rendue : l'état coché d'une case à cocher, pas sa valeur
     var keep = function() { good = raw(); };
+    // une valeur posée dans le champ : une liste (null : aucun choix) choisit les options d'une telle liste, un nombre l'option d'une
+    // liste simple liée à une variable typée, comme la liaison les choisit, par µ._mjs_tsel (mjs_types.ts : une option `01` porte 1)
+    var write = function(v) {
+      if (el.type === 'checkbox') el.checked = v;
+      else if (many()) µ._mjs_tsel(el, v || []);
+      else if (el.type === 'select-one' && ruleOf()) µ._mjs_tsel(el, v == null ? '' : v);
+      else el.value = v == null ? '' : v;
+    };
+    // la dernière bonne valeur rendue au champ (µ._mjs_tback, mjs_types_bind.ts, que la liaison d'une liste du cœur emploie aussi) : le texte accepté en dernier, tel qu'il était tapé (`007`), tant qu'il donne encore la
+    // valeur de la variable typée qu'il écrit ; sinon celle de la variable, qui ne reçoit que des valeurs permises — écrite par votre
+    // code après la pose du champ (`$t = 'zz'`), ou une liste, dont les options arrivent parfois ensuite ; sans elle (case à cocher,
+    // champ sans variable typée), la dernière bonne valeur lue dans le champ
     var back = function() {
-      if (el.type === 'checkbox') el.checked = good;
-      else el.value = good;
+      var r = el.type !== 'checkbox' && ruleOf();
+      var v = r ? (b.slice(0, 2) === '$$' ? µ._mjs_storeRaw[b.slice(2)] : comp._state[b.slice(1)]) : void 0;
+      if (v !== void 0) write(many() ? v : µ._mjs_tback(r, good, v, typed(good)));
+      else if (good !== null) write(good);
     };
     // la valeur que la liaison écrirait : un nombre pour un champ nombre
     var typed = function(v) { return /^(number|range)$/.test(el.type) && v !== '' ? Number(v) : v; };
@@ -301,11 +330,14 @@ function _mjsFxGuardSure(el, cs) {
     var refuse = function(x, fix) {
       if (fix) {
         if (x.s === 2) {
-          // ramenée : la borne dans le champ, et dans la variable (la liaison l'écrit)
-          el.value = String(x.v);
-          µ._mjs_dom.dispatchEvent(el, new Event('input', { bubbles: true, composed: true }));
+          // ramenée : la borne dans le champ, et dans la variable (la liaison l'écrit) — sauf une liste à choix multiples qui sort encore
+          // de la règle une fois posée (sans option de la borne, deux choix ramenés à la même), ou une liste simple sans option de la
+          // borne (elle se lirait vide) : elle revient à sa variable, comme refusée
+          write(x.v);
+          if (many() ? check().s !== 0 : el.type === 'select-one' && el.selectedIndex < 0) back();
+          else µ._mjs_dom.dispatchEvent(el, new Event('input', { bubbles: true, composed: true }));
         }
-        else if (good !== null) back();
+        else back();
       }
       if (s.silent === true) return;
       // la bulle se place sur le champ au repos, avant qu'il ne tremble

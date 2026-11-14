@@ -140,11 +140,20 @@ describe('µeffect — une clé du store qu\'il écrit le relance quand un autre
       assert.deepEqual(depsOf(annotateEffectDeps('µ.effect(function() { if (µ.store.v > 1) { return µ._storeSet("w", 1) } })')), [ '$$v' ])
     })
 
+    it('écrite d\'une valeur `++i`, `i++`, `--i` venue d\'ailleurs (pas de la clé) : la clé reste une dépendance, marquée `!`', () => {
+      for (const v of ['++i', 'i++', '--i']) {
+        assert.deepEqual(depsOf(annotateEffectDeps(`µ.effect(function() { if (!µ.store.v) { µ._storeSet("v", ${v}) } })`)), [ '$$v!' ], v)
+        assert.deepEqual(depsOf(annotateEffectDeps(`µ.effect(function() { if (µ.store.v) { µ._mjs_storeDeepSet("v", ["c"], ${v}) } })`)), [ '$$v!' ], v)
+      }
+      // témoin : `$$v++` en instruction seule, la valeur part de la clé — elle cumule, hors des dépendances
+      assert.deepEqual(depsOf(annotateEffectDeps('µ.effect(function() { if ($.r) { {let _mjs_n;(_mjs_n = µ.store.v, µ._storeSet("v", ++_mjs_n));} } })')), [ 'r' ])
+    })
+
     it('écriture qui CUMULE (`+=`, `++`, bascule, `Math.min($$v…)`, champ cumulé, `push`) : la clé reste hors des dépendances', () => {
       const formes = [
         'µ._storeSet("v", µ.store.v + (1))',
-        'µ._storeSet("v", (+µ.store.v) + 1)',
-        '((_v) => (µ._storeSet("v", (+_v) + 1), +_v))(µ.store.v)',
+        'µ._storeSet("v", ((_mjs_n) => ++_mjs_n)(µ.store.v))',
+        '((_mjs_n, _mjs_v = _mjs_n++) => (µ._storeSet("v", _mjs_n), _mjs_v))(µ.store.v)',
         'µ._storeSet("v", !µ.store.v)',
         'µ._storeSet("v", Math.min(µ.store.v, 10))',
         'µ._mjs_storeDeepSet("v", ["c"], µ.store.v.c + (1))',

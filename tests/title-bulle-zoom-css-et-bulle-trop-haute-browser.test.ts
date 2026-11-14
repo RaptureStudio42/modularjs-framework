@@ -32,13 +32,13 @@ const TEXTES: Record<string, string> = {
   '.immense': IMMENSE
 }
 
-const SOURCE = `<button class="centre" type="button" @title={ text: '${TEXTES['.centre']}', delay: 0 }>C</button>
-<button class="droite" type="button" @title={ text: '${TEXTES['.droite']}', delay: 0 }>D</button>
-<button class="long-haut" type="button" @title={ text: '${LONG}', delay: 0 }>H</button>
-<button class="long-bas" type="button" @title={ text: '${LONG}', delay: 0 }>B</button>
-<button class="long-prefere-bas" type="button" @title={ text: '${LONG}', delay: 0, side: 'bottom' }>P</button>
-<button class="long-prefere-bas-en-bas" type="button" @title={ text: '${LONG}', delay: 0, side: 'bottom' }>Q</button>
-<button class="immense" type="button" @title={ text: '${IMMENSE}', delay: 0 }>I</button>
+const SOURCE = `<button class="centre" type="button" :title={ text: '${TEXTES['.centre']}', delay: 0 }>C</button>
+<button class="droite" type="button" :title={ text: '${TEXTES['.droite']}', delay: 0 }>D</button>
+<button class="long-haut" type="button" :title={ text: '${LONG}', delay: 0 }>H</button>
+<button class="long-bas" type="button" :title={ text: '${LONG}', delay: 0 }>B</button>
+<button class="long-prefere-bas" type="button" :title={ text: '${LONG}', delay: 0, side: 'bottom' }>P</button>
+<button class="long-prefere-bas-en-bas" type="button" :title={ text: '${LONG}', delay: 0, side: 'bottom' }>Q</button>
+<button class="immense" type="button" :title={ text: '${IMMENSE}', delay: 0 }>I</button>
 
 <style>
   :host

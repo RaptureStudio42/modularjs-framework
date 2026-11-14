@@ -108,8 +108,11 @@ describe('textes des traces du routeur — fichiers de messages et manifeste, bu
       // l'appli ne se sert pas du socket : le cœur ne l'a pas, le texte de sa trace ne part pas au manifeste
       assert.deepEqual(cles(b.table[lang].err ?? {}), [...ROUTEUR, UJS, RUNES].sort(), `manifeste ${lang} : les textes des traces, et eux seuls`)
       for (const k of [...ROUTEUR, UJS, RUNES]) assert.equal(b.table[lang].err?.[k], (RUNTIME_LABELS[lang].err as any)[k], `${lang} ${k}`)
-      // le reste de la table est celui d'un build sans ces textes
-      assert.ok(b.table[lang].modal && b.table[lang].router && b.table[lang].toast && b.table[lang].ujs)
+      // le reste de la table est celui d'un build sans ces textes : une table ne part que si son lecteur est dans le build — le routeur et
+      // ujs y sont ; la modale non (l'appli ne s'en sert pas et ne navigue pas vers le serveur) : ses tables modal et toast ne partent pas
+      assert.ok(b.table[lang].router && b.table[lang].ujs)
+      assert.equal(b.table[lang].modal, undefined)
+      assert.equal(b.table[lang].toast, undefined)
     }
   })
 

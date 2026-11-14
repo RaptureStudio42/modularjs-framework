@@ -33,6 +33,14 @@ if (!parentPort) {
 }
 
 parentPort.on('message', async (msg: TranspileMsg) => {
+  // vidage (cf. WorkerPool.flush) : une marque sur chacune des deux sorties de ce fil — elle y suit tout ce qu'il a déjà écrit, et le
+  // pool, qui la voit passer, sait que ces lignes sont arrivées
+  if ((msg as { type: string }).type === 'flush') {
+    const { mark } = msg as unknown as { mark: string }
+    process.stdout.write(mark)
+    process.stderr.write(mark)
+    return
+  }
   if (msg.type !== 'transpile') {
     parentPort!.postMessage({
       id: msg.id,

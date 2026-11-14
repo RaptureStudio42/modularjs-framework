@@ -18,6 +18,8 @@ import { spawnSync } from 'node:child_process'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { playTogether } from './helpers/engines-together.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox' | 'webkit'): Promise<boolean> {
   try {
@@ -174,7 +176,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
   after(async () => { await terminateSharedWorkerPool() })
 
   for (const nom of ['chromium', 'firefox', 'webkit'] as const) {
-    describe(nom, function () {
+    playTogether(describe(nom, function () {
       let present = false
       let browser: any = null
 
@@ -240,6 +242,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           const proche = (a: number, b: number, quoi: string) => assert.ok(Math.abs(a - b) < 0.05, `${quoi} : ${a} au lieu de ${b}`)
           const seuil = Math.round((await etat(page, sel)).top) + 300
           await pageA(page, seuil - 3)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page, sel)).on, null, 'à 3 px du seuil : pas figée')
           const avant = await lire()
@@ -273,6 +276,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           assert.equal(e.pos, 'static')
           assert.equal(e.sieges, 0)
           await pageA(page, 499)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           e = await etat(page)
           assert.equal(e.on, null, 'à 499 px : pas encore figée')
@@ -307,6 +311,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         if (!present) return this.skip()
         await avec('mjs-sticky-zero', async (page) => {
           await pageA(page, 190)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null, 'à 190 px : elle n\'a pas touché le haut')
           await pageA(page, 215)
@@ -333,6 +338,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         await avec('mjs-sticky-boite', async (page) => {
           const scene = () => page.evaluate(() => { const r = (window as any).__trouve('.scene').getBoundingClientRect(); return { top: r.top, bottom: r.bottom } })
           await boiteA(page, 250)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null, 'à 250 px : pas figée')
           await boiteA(page, 420)
@@ -361,6 +367,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         if (!present) return this.skip()
         await avec('mjs-sticky-marge', async (page) => {
           await boiteA(page, 318)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null, 'à 318 px : pas figée (seuil 324)')
           await boiteA(page, 332)
@@ -373,6 +380,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         if (!present) return this.skip()
         await avec('mjs-sticky-encapsulee', async (page) => {
           await boiteA(page, 150)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null)
           await boiteA(page, 420)
@@ -489,11 +497,13 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           assert.equal(await rafs(page), 0, 'aucune image en attente au repos')
           await pageA(page, 700)
           await figee(page, true)
+          // vérification négative : aucun écouteur ni image ne doit naître pendant ce temps
           await attendre(300)
           assert.equal(await defiles(page), base, 'figée sans hide : toujours aucun écouteur de défilement')
           assert.equal(await rafs(page), 0, 'aucune image en attente')
           await pageA(page, 100)
           await figee(page, false)
+          // vérification négative : aucun écouteur ne doit naître pendant ce temps
           await attendre(300)
           assert.equal(await defiles(page), base)
         })
@@ -507,7 +517,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           assert.equal(await rafs(page), 0, 'une fois le défilement fini, aucune image en attente')
           await pageA(page, 0)
           await figee(page, false)
-          await attendre(300)
+          await attendreEtat(async () => (await defiles(page)) === base, 'rendue à sa place : plus d\'écouteur', 300)
           assert.equal(await defiles(page), base, 'rendue à sa place : plus d\'écouteur')
         })
       })
@@ -562,6 +572,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await page.evaluate(() => { (window as any).__trouve('.bandeau').style.height = '400px' })
           await attendre(300)
           await pageA(page, 300)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null, 'à 300 px : le bandeau fait 400, la barre n\'a pas touché le haut')
           await pageA(page, 420)
@@ -576,6 +587,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await page.evaluate(() => { (window as any).__trouve('.barre').style.height = '100px' })
           await attendre(300)
           await pageA(page, 480)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page)).on, null, 'à 480 px : pas encore')
           await pageA(page, 520)
@@ -589,6 +601,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         if (!present) return this.skip()
         await avec('mjs-sticky-hote', async (page) => {
           await pageA(page, 250)
+          // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
           await attendre(300)
           assert.equal((await etat(page, 'mjs-sticky-corps')).on, null, 'à 250 px : pas figé')
           await pageA(page, 400)
@@ -615,6 +628,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await page.evaluate(() => (window as any).__trouve('.lien').focus())
           await pas(640)
           await pas(700)
+          // vérification négative : la barre ne doit pas se cacher pendant ce temps
           await attendre(400)
           assert.equal((await etat(page)).cache, null, 'le focus est dans la barre : elle reste visible en descendant')
           await page.evaluate(() => (document.activeElement as any)?.blur?.())
@@ -667,6 +681,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
         await avec('mjs-sticky-cachee', async (page) => {
           for (const y of [0, 450, 900]) {
             await pageA(page, y)
+            // vérification négative : elle ne doit pas se figer pendant ce temps, aucun évènement ne le dit
             await attendre(300)
             const e = await page.evaluate(() => { const b = (window as any).__trouve('.entete'); return { on: b.getAttribute('mjs-fx-on'), pin: b.hasAttribute('mjs-fx-sticky-pin'), sieges: b.parentNode.querySelectorAll('[mjs-fx-seat]').length } })
             assert.deepEqual(e, { on: null, pin: false, sieges: 0 }, `à ${y} px : rien n'est figé`)
@@ -726,6 +741,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
             if (!retient) assert.equal(f.visible, false, 'et il ne s\'y montre pas : c\'est un clic de souris')
             await pas(640)
             await pas(700)
+            // vérification négative : la barre ne doit pas se cacher pendant ce temps
             await attendre(400)
             if (retient) {
               assert.equal((await etat(page)).cache, null, 'le champ a le focus : la barre reste visible en descendant')
@@ -750,6 +766,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await figee(page, true)
           await pas(640)
           await pas(700)
+          // vérification négative : la barre ne doit pas se cacher pendant ce temps
           await attendre(400)
           assert.equal((await etat(page)).cache, null, 'le focus clavier est dans la barre : elle reste visible en descendant')
           await page.evaluate(() => (window as any).__trouve('.lien').blur())
@@ -774,7 +791,7 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           await pageA(page, 600)
           await figee(page, true)
           await page.evaluate(() => (window as any).__trouve('.cible').scrollIntoView())
-          await attendre(200)
+          await attendreEtat(async () => { const c = await cible(); return c.haut >= c.basBarre - 0.5 && (await reserve(page)) === '64px' }, 'l\'ancre sous la barre, la hauteur de la barre réservée', 200)
           const c = await cible()
           assert.ok(c.haut >= c.basBarre - 0.5, `l'ancre arrive sous la barre, pas derrière elle (${c.haut} / ${c.basBarre})`)
           assert.equal(await reserve(page), '64px', 'figée et visible : la page réserve la hauteur de la barre')
@@ -880,10 +897,12 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           assert.equal(await reserve(page), '64px')
           await regle('top', 20)
           assert.equal(await jusqua(() => reserve(page), (v: string) => v === '84px'), '84px', 'top à 20 : la hauteur de la barre plus 20')
+          // vérification négative : la page ne doit pas être recalée
           await attendre(250)
           assert.equal(await pos(page), 600, 'la page est restée où elle était')
           await regle('top', 0)
           assert.equal(await jusqua(() => reserve(page), (v: string) => v === '64px'), '64px', 'top à 0 : la réserve diminue')
+          // vérification négative : la page ne doit pas être recalée
           await attendre(250)
           assert.equal(await pos(page), 600, 'une réserve qui diminue ne recale pas la page non plus')
         })
@@ -1212,6 +1231,6 @@ describe('*sticky (navigateurs réels) — seuil, tenant-lieu, boîte qui défil
           assert.equal(await redim(page), base, 'le retrait de l\'effet pendant qu\'elle est figée le retire aussi')
         })
       })
-    })
+    }))
   }
 })

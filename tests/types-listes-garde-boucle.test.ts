@@ -16,7 +16,7 @@ const PLAFOND = 1000
 // un conteneur qui pointe vers lui-même : `$x.self = $x`
 function autoBoucle(mode?: 'warn' | 'error') {
   const µ      = makeMu(mode)
-  const el     = composant({ x: '{ nom: string, self: { nom: string } }' })
+  const el     = composant({ x: 'nom  string\nself\n  nom  string' })
   const x: any = { nom: 'a', self: { nom: 'b' } }
   µ._mjs_tset(el, 'x', x)
   const reg = el._mjs_treg
@@ -28,7 +28,7 @@ function autoBoucle(mode?: 'warn' | 'error') {
 // un arbre dont l'enfant pointe vers sa racine, et dont une liste d'amis (hors de la boucle) porte un conteneur
 function queueDansLaBoucle(mode?: 'warn' | 'error') {
   const µ           = makeMu(mode)
-  const el          = composant({ arbre: '{ nom: string, enf: { nom: string, parent: { nom: string }, amis: { nom: string }[] }[] }' })
+  const el          = composant({ arbre: 'nom  string\nenf  Enfant[]' })
   const racine: any = { nom: 'r', enf: [] }
   µ._mjs_tset(el, 'arbre', racine)
   const reg         = el._mjs_treg
@@ -91,7 +91,7 @@ describe('types — une chaîne de liens très profonde (sans boucle) : le plafo
   // racine comme `child` de la nouvelle, la chaîne des liens grandit d'un conteneur à chaque tour
   function chaine(n: number, mode: 'warn' | 'error' = 'warn') {
     const µ       = makeMu(mode)
-    const el      = composant({ s: '{ nom: string, child: { nom: string } }' })
+    const el      = composant({ s: 'nom  string\nchild\n  nom  string' })
     let cur: any  = { nom: 'n0', child: { nom: 'feuille' } }
     const feuille = cur.child
     µ._mjs_tset(el, 's', cur)

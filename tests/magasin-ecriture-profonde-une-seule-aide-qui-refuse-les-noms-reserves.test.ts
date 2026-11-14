@@ -154,8 +154,9 @@ describe('magasin $$ : une écriture profonde, une seule aide, qui refuse les no
       try {
         const ecarts: string[] = []
         // `attendu` : ce qui est écrit, relevé sous le nom écrit (`cle`) ; `seg` : le segment refusé que nomme
-        // l'avertissement (développement), aucun avertissement sans lui
-        const jouer = (cas: string, f: () => any, cle: string, attendu: string[], seg?: string) => {
+        // l'avertissement (développement), aucun avertissement sans lui ; `texte` : une fonction du navigateur rangée
+        // (`Object`) est refusée par l'avertissement qui explique le piège de la clé, sans nommer de segment
+        const jouer = (cas: string, f: () => any, cle: string, attendu: string[], seg?: string, texte?: string) => {
           avis.length = 0
           try {
             f()
@@ -165,7 +166,7 @@ describe('magasin $$ : une écriture profonde, une seule aide, qui refuse les no
           }
           const p = pollution(window, cle)
           if (p.join(' ; ') !== attendu.join(' ; ')) ecarts.push(`${cas} : écrit ${p.join(' ; ') || 'rien'} au lieu de ${attendu.join(' ; ') || 'rien'}`)
-          const avisAttendu = seg ? avis.length === 1 && avis[0].includes(`segment « ${seg} »`) : avis.length === 0
+          const avisAttendu = texte ? avis.length === 1 && avis[0].includes(texte) : seg ? avis.length === 1 && avis[0].includes(`segment « ${seg} »`) : avis.length === 0
           if (mode === 'dev' && !avisAttendu) ecarts.push(`${cas} : avertissements ${JSON.stringify(avis)}`)
         }
         jouer('clé calculée', () => civet.ecritCle('__proto__', 1), 'b', [], '__proto__')
@@ -178,7 +179,7 @@ describe('magasin $$ : une écriture profonde, une seule aide, qui refuse les no
         civet.range('__proto__')
         jouer('prototype rangé, chemin aux clés écrites dans le code', () => civet.ecritRange('x'), 'polluK', [], '__proto__')
         civet.range('constructor')
-        jouer('Object rangé, chemin aux clés écrites dans le code', () => civet.ecritRange('x'), 'polluK', [], 'constructor')
+        jouer('Object rangé, chemin aux clés écrites dans le code', () => civet.ecritRange('x'), 'polluK', [], undefined, 'contient la fonction Object du navigateur')
         assert.deepEqual(ecarts, [])
         await pause()
         assert.equal(etat(), '0 0', 'rien d\'autre n\'est écrit')

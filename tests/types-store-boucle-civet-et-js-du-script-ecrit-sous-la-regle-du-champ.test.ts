@@ -12,7 +12,7 @@ import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
 
 const CIVET = `<vars>
-  $$fluxa { id: int 0..100 }[]
+  $$fluxa Element[]
 </vars>
 
 <script>
@@ -36,7 +36,7 @@ $$fluxa = [{ id: 0 }, { id: 1 }]
 `
 
 const JS = `<vars>
-  $$fluxc { id: int 0..100 }[]
+  $$fluxc Element[]
 </vars>
 
 <script lang="js">
@@ -51,7 +51,7 @@ $$fluxc = [{ id: 0 }, { id: 1 }]
 `
 
 const COFFEE = `<vars>
-  $$fluxb { id: int 0..100 }[]
+  $$fluxb Element[]
 </vars>
 
 <script lang="coffee">
@@ -82,6 +82,7 @@ async function construire(prefixe: string, prod: boolean): Promise<string> {
   const outDir = join(root, 'out')
   mkdirSync(srcDir, { recursive: true })
   writeFileSync(join(srcDir, 'typ-boucle-civet.mjs'), CIVET)
+  writeFileSync(join(srcDir, 'app.types.mjs'), '<types>\nElement\n  id  int 0..100\n</types>\n')
   writeFileSync(join(srcDir, 'typ-boucle-js.mjs'), JS)
   writeFileSync(join(srcDir, 'typ-boucle-coffee.mjs'), COFFEE)
   const opts: any = prod ? { sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), urlPrefix: '/out', env: 'prod', js: 'bundle' } : { sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') }

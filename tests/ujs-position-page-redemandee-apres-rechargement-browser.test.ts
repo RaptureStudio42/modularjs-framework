@@ -20,7 +20,7 @@ import { mjsTmp } from './helpers/tmp.js'
 
 // `boite`, placée au-dessus du contenu, n'y peint ses 3 000 px que 400 ms après son montage (contenu reçu plus tard)
 const SOURCES: Record<string, string> = {
-  'boite.mjs': '<script>\n  $montre = false\n  µmount =>\n    setTimeout (=> $montre = true), 400\n</script>\n\n<p>boîte</p>\n{if $montre}\n  <div class="h"></div>\n  <div class="h"></div>\n{end}\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
+  'boite.mjs': '<script>\n  $montre = false\n  µmount =>\n    µafter 400, => $montre = true\n</script>\n\n<p>boîte</p>\n{if $montre}\n  <div class="h"></div>\n  <div class="h"></div>\n{end}\n\n<style>\n  :host\n    display: block\n  .h\n    height: 1500px\n</style>\n',
 }
 
 const NAV = (prefixe: string) => '<nav style="position:fixed;top:0;right:0;background:#fff;z-index:9;font-size:10px"><a id="la" href="#a">a</a> <a id="lb" href="#b">b</a> <a id="lp2" href="' + prefixe + '/p2">p2</a></nav>'

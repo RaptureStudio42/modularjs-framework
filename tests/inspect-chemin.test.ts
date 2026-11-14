@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { cleanJs } from '../src/generator/utils.js'
 import { applyMjsSugarToScript, transpile } from '../src/transpiler/index.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 describe('µinspect($x.chemin) — compilation', () => {
   it('chemin à deux segments : µinspect($x.a.b) → µ.inspect(\'x\', \'a.b\')', () => {
@@ -60,9 +61,9 @@ describe('µ.inspect(clé, chemin) — exécution (filtre From/To par chemin)', 
     // chargé en sandbox (pas de vrai DOM/happy-dom nécessaire, µ.inspect ne touche jamais le
     // DOM) — mjs_deep.ts pour simuler les mutations profondes ($obj.a = v, $obj.a.b = v)
     // compilées par le path-tracker.
-    const initJs = readFileSync(resolvePath('src/runtime/mjs_init.ts'), 'utf-8')
-    const deepJs = readFileSync(resolvePath('src/runtime/mjs_deep.ts'), 'utf-8')
-    const elemJs = readFileSync(resolvePath('src/runtime/mjs_element.ts'), 'utf-8')
+    const initJs = lireRuntime(resolvePath('src/runtime/mjs_init.ts'))
+    const deepJs = lireRuntime(resolvePath('src/runtime/mjs_deep.ts'))
+    const elemJs = lireRuntime(resolvePath('src/runtime/mjs_element.ts'))
     const runesJs = readFileSync(resolvePath('src/runtime/mjs_runes.ts'), 'utf-8')
     const inspectJs = readFileSync(resolvePath('src/runtime/mjs_inspect.ts'), 'utf-8')
     const setup = `

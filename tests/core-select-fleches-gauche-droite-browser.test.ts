@@ -36,7 +36,7 @@ const hote = (avecAutre: boolean) => `<script>
     $lus   = [...$lus, { qui: e.target.className.split(' ')[0], type: e.type, data: e.data, champs }]
 </script>
 
-<form class="f" @noUJS @change={@lire(e)} @other={@lire(e)}>
+<form class="f" :noUJS @change={@lire(e)} @other={@lire(e)}>
   <@@select class="simple" name="pays" value="de">${PAYS}</@@select>
   <@@select class="lie" name="lie" value=!{$lie}>${PAYS}</@@select>
   <@@select class="vide" name="vide">${PAYS}</@@select>

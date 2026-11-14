@@ -19,7 +19,8 @@
 //     littéral `_mjs_baseCss` — le hit par l'ancien texte doit retrouver LA
 //     feuille mutée, pas en recréer une périmée) ; la NOUVELLE clé est ajoutée ;
 //   - mode `mjs-light` : remplacement du textContent des <style data-mjs-css>
-//     du head + réindexation du Set de dédup (µ._mjs_lightStyleInjected) ;
+//     du head + réindexation du Set de dédup (µ._mjs_lightStyleInjected) ; un léger posé
+//     dans l'ombre d'un autre composant y pose son <style> : ceux des ombres sont remplacés aussi ;
 //   - feuilles partagées µ.CSS[name] et mjs_root (µ._mjs_rootStyleSheet, handle
 //     posé par mjs_styles.js) : replaceSync pareil.
 // Retourne `false` dès qu'UN remplacement n'est pas SÛR (classe jamais chargée
@@ -27,8 +28,22 @@
 // entre tags qui divergent, replaceSync manquant/en échec…) : le snippet HMR
 // retombe alors sur un location.reload() complet — au moindre doute, reload.
 // Jamais sollicité en prod (seul le snippet HMR de `mjs dev` l'appelle).
+// le document, puis l'ombre de chaque composant de la page, ombres dans les ombres comprises : là où un léger pose son <style>
+// (`_shadow` : l'ombre d'un composant, lui-même pour un léger ; `shadowRoot` : celle d'une balise qui n'est pas des nôtres)
+var _mjsHotRoots = function() {
+  var roots = [document];
+  for (var r = 0; r < roots.length; r++) {
+    var all = roots[r].querySelectorAll('*');
+    for (var a = 0; a < all.length; a++) {
+      var shadow = all[a]._shadow && all[a]._shadow !== all[a] ? all[a]._shadow : all[a].shadowRoot;
+      if (shadow && shadow.querySelectorAll) roots.push(shadow);
+    }
+  }
+  return roots;
+};
 µ._hotCss = function(payload) {
   var applied = true;
+  var roots = null;
   if (!payload || typeof payload !== 'object') return applied;
   var byTag = µ._mjs_componentStyleByTag;
   var textCache = µ._mjs_componentStyleCache;
@@ -50,14 +65,20 @@
     // mode light : <style data-mjs-css="tag"> dans le head → textContent réécrit (:host → balise)
     // + maj du Set sur ce texte réécrit — c'est CE texte-là qui est réellement posé
     var lightCss = µ._lightHostCss(css, tag);
-    var lightEls = document.querySelectorAll('style[data-mjs-css="' + tag + '"]');
-    for (var li = 0; li < lightEls.length; li++) {
-      var el = lightEls[li];
-      if (µ._mjs_lightStyleInjected) {
-        µ._mjs_lightStyleInjected.delete(el.textContent);
-        µ._mjs_lightStyleInjected.add(lightCss);
+    // le document d'abord, puis les ombres (cherchées une fois par appel) ; le Set ne compte que les styles du document : une
+    // ombre reconnaît le sien à sa présence, et un texte noté sans <style> dans le document priverait de style le prochain
+    // léger posé hors de toute ombre
+    roots = roots || _mjsHotRoots();
+    for (var ri = 0; ri < roots.length; ri++) {
+      var lightEls = roots[ri].querySelectorAll('style[data-mjs-css="' + tag + '"]');
+      for (var li = 0; li < lightEls.length; li++) {
+        var el = lightEls[li];
+        if (ri === 0 && µ._mjs_lightStyleInjected) {
+          µ._mjs_lightStyleInjected.delete(el.textContent);
+          µ._mjs_lightStyleInjected.add(lightCss);
+        }
+        el.textContent = lightCss;
       }
-      el.textContent = lightCss;
     }
     // feuilles CONSTRUCTIBLES d'un léger sous CSP (document ou shadow de
     // l'ancêtre, µ._mjs_lightSheetsByTag) : aucun <style> ne les porte, la boucle ci-dessus ne les

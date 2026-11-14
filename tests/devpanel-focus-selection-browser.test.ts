@@ -10,6 +10,7 @@
 
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 'node:fs'
+import { attendrePage } from './helpers/attente-page.js'
 import { join } from 'node:path'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
@@ -79,7 +80,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           })
           await page.goto('http://localhost/', { waitUntil: 'load' })
           await page.waitForFunction(() => !!(document.querySelector('mjs-dpb-page') as any)?._shadow?.querySelector('.l'))
-          await page.waitForTimeout(150)
+          await attendrePage(page, () => typeof (window as any).µ?.console === 'function', null, 'le script de la page a fini : µ.console est là', 150)
           await fn(page)
         }
         finally {
@@ -105,6 +106,11 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
         return a.tagName + (a.className && typeof a.className === 'string' ? '.' + a.className : '') + (a.id ? '#' + a.id : '') + (a.getAttribute('data-maj') ? '[data-maj=' + a.getAttribute('data-maj') + ']' : '') + (a.getAttribute('data-cle') ? '[data-cle=' + a.getAttribute('data-cle') + ']' : '')
       })
       const panneauPresent = (page: any) => page.evaluate(() => !!document.querySelector('[data-mjs-devpanel]'))
+      // le contrôle `sel` du panneau retenu dans `window.__vieux`, puis l'attente de son remplaçant redessiné, qui a le focus ; chaque attente
+      // est bornée par la pause qu'elle remplace
+      const retenir          = (page: any, sel: string) => page.evaluate((s: string) => { (window as any).__vieux = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(s) }, sel)
+      const attendreRedessin = (page: any, sel: string, quoi: string, delai: number) => attendrePage(page, (s: string) => { const r = (document.querySelector('[data-mjs-devpanel]') as any)?.shadowRoot; const c = r?.querySelector(s); return !!c && c !== (window as any).__vieux && r.activeElement === c }, sel, quoi + ' : le contrôle redessiné a le focus', delai)
+      const ferme            = (page: any, quoi: string, delai: number) => attendrePage(page, () => !document.querySelector('[data-mjs-devpanel]'), null, quoi + ' : le panneau est fermé', delai)
 
       it('un réglage de l\'éclair changé au clavier (flèche sur un menu) : le panneau est redessiné, le focus est sur le menu redessiné', async function () {
         if (!present) { this.skip(); return }
@@ -115,7 +121,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'); (window as any).__vieux = s; (window as any).__valeur = s.value })
           await page.focus('[data-maj="style"]')
           await page.keyboard.press('ArrowDown')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
           const r = await page.evaluate(() => { const s = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'); return { valeur: s.value, avant: (window as any).__valeur, redessine: s !== (window as any).__vieux } })
           assert.notEqual(r.valeur, r.avant, 'la flèche a changé le réglage')
           assert.equal(r.redessine, true, 'le panneau a été redessiné')
@@ -130,10 +136,11 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await cliquer(page, '[data-action="maj"]')
           await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'))
           await page.focus('[data-maj="style"]')
+          await retenir(page, '[data-maj="style"]')
           await page.keyboard.press('ArrowDown')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
           await page.keyboard.press('Escape')
-          await page.waitForTimeout(300)
+          await ferme(page, 'Échap', 300)
           assert.equal(await panneauPresent(page), false, 'Échap venue du panneau le ferme')
         })
       })
@@ -145,10 +152,11 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await cliquer(page, '[data-action="maj"]')
           await page.waitForFunction(() => !!(document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]'))
           await page.focus('[data-maj="style"]')
+          await retenir(page, '[data-maj="style"]')
           await page.keyboard.press('ArrowDown')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, '[data-maj="style"]', 'après la flèche', 100)
           await page.evaluate(() => { (window as any).__vieux = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]') })
-          await page.waitForTimeout(1500)
+          await attendreRedessin(page, '[data-maj="style"]', 'au battement suivant', 1500)
           const redessine = await page.evaluate(() => (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-maj="style"]') !== (window as any).__vieux)
           assert.equal(redessine, true, 'le battement a redessiné le panneau')
           assert.equal(await actif(page), 'SELECT[data-maj=style]', 'le focus a suivi le menu redessiné')
@@ -166,16 +174,18 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           assert.ok(lift >= 0 && neon >= 0, 'les deux effets sont dans l\'onglet')
           // un menu : la flèche bas
           await page.focus(`.fx[data-fx="${lift}"] [data-cle="on"]`)
+          await retenir(page, `.fx[data-fx="${lift}"] [data-cle="on"]`)
           await page.keyboard.press('ArrowDown')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, `.fx[data-fx="${lift}"] [data-cle="on"]`, 'menu, après la flèche', 100)
           assert.equal(await actif(page), 'SELECT[data-cle=on]', 'menu : le focus est revenu au contrôle')
           // un nombre : une valeur, puis Entrée
           await page.fill(`.fx[data-fx="${neon}"] [data-cle="size"]`, '3')
+          await retenir(page, `.fx[data-fx="${neon}"] [data-cle="size"]`)
           await page.keyboard.press('Enter')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, `.fx[data-fx="${neon}"] [data-cle="size"]`, 'nombre, après Entrée', 100)
           assert.equal(await actif(page), 'INPUT[data-cle=size]', 'nombre : le focus est revenu au contrôle')
           await page.keyboard.press('Escape')
-          await page.waitForTimeout(300)
+          await ferme(page, 'Échap', 300)
           assert.equal(await panneauPresent(page), false, 'Échap venue du panneau le ferme')
         })
       })
@@ -188,11 +198,13 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           const neon = await page.evaluate(() => Array.from((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelectorAll('.fx')).findIndex((b: any) => b.querySelector('.fx-nom').textContent === '*neon'))
           const champ = `.fx[data-fx="${neon}"] [data-cle="size"]`
           await page.fill(champ, '3')
+          await retenir(page, champ)
           await page.keyboard.press('Enter')
-          await page.waitForTimeout(100)
+          await attendreRedessin(page, champ, 'après Entrée', 100)
           assert.equal(await actif(page), 'INPUT[data-cle=size]', 'le focus est revenu au champ')
           await page.keyboard.type('1')
           await page.evaluate((sel: string) => { (window as any).__champ = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(sel) }, champ)
+          // pause gardée : vérification négative, deux battements de 700 ms au moins passent sans réécrire le champ (aucun évènement ne le dit)
           await page.waitForTimeout(1500)
           const r = await page.evaluate((sel: string) => { const c = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector(sel); return { memeChamp: c === (window as any).__champ, valeur: c.value } }, champ)
           assert.equal(r.memeChamp, true, 'le champ en cours de frappe n\'a pas été réécrit')
@@ -211,7 +223,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await page.waitForFunction(() => !!document.querySelector('[data-mjs-devpanel]'))
           assert.equal(await page.evaluate(() => !!(document.activeElement as any)?.hasAttribute('data-mjs-devpanel')), true, 'le focus est entré dans le panneau')
           await page.keyboard.press('Escape')
-          await page.waitForTimeout(200)
+          await attendrePage(page, () => !document.querySelector('[data-mjs-devpanel]') && document.activeElement?.id === 'avant', null, 'Échap : panneau fermé, focus rendu au bouton de la page', 200)
           assert.equal(await panneauPresent(page), false)
           assert.equal(await actif(page), 'BUTTON#avant', 'le bouton de la page')
           // un bouton dans l'ombre (fermée) d'un composant
@@ -221,7 +233,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await page.waitForFunction(() => !!document.querySelector('[data-mjs-devpanel]'))
           assert.equal(await page.evaluate(() => !!(document.activeElement as any)?.hasAttribute('data-mjs-devpanel')), true, 'le focus est entré dans le panneau')
           await page.keyboard.press('Escape')
-          await page.waitForTimeout(200)
+          await attendrePage(page, () => !document.querySelector('[data-mjs-devpanel]') && !!(document.querySelector('mjs-dpb-page') as any)?._shadow?.activeElement?.classList.contains('b'), null, 'Échap : panneau fermé, focus rendu au bouton dans l\'ombre du composant', 200)
           assert.equal(await panneauPresent(page), false)
           assert.equal(await actif(page), 'BUTTON.b', 'le bouton dans l\'ombre du composant')
         })
@@ -237,13 +249,13 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await page.waitForFunction(() => /Ctrl\+C/.test((document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('[data-action="fx-copier"]').textContent))
           const ligne = await page.evaluate(() => { const c = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('.fx-code'); (window as any).__code = c; return c.textContent })
           assert.equal(await page.evaluate(() => String(window.getSelection())), ligne, 'la ligne est sélectionnée')
-          // plus que les 700 ms du battement, plus que les 1,6 s de la remise à zéro du bouton
+          // pause gardée, vérification négative : plus que les 700 ms du battement, plus que les 1,6 s de la remise à zéro du bouton
           await page.waitForTimeout(2500)
           assert.equal(await page.evaluate(() => String(window.getSelection())), ligne, 'la sélection tient')
           assert.equal(await page.evaluate(() => (window as any).__code.isConnected), true, 'le panneau n\'a pas été réécrit sous la sélection')
           // la sélection retirée : le battement reprend
           await page.evaluate(() => { window.getSelection()!.removeAllRanges() })
-          await page.waitForTimeout(1000)
+          await attendrePage(page, () => !(window as any).__code.isConnected, null, 'sans sélection, le battement redessine le panneau', 1000)
           assert.equal(await page.evaluate(() => (window as any).__code.isConnected), false, 'sans sélection, le panneau est de nouveau redessiné')
         })
       })
@@ -256,6 +268,7 @@ describe('mjs_devpanel — focus et sélection, dans de vrais navigateurs', func
           await page.mouse.click(pos.x, pos.y, { clickCount: 3 })
           await page.evaluate(() => { (window as any).__code = (document.querySelector('[data-mjs-devpanel]') as any).shadowRoot.querySelector('.fx-code') })
           assert.ok((await page.evaluate(() => String(window.getSelection()))).includes(pos.ligne), 'la ligne est sélectionnée')
+          // pause gardée : vérification négative, deux battements de 700 ms au moins passent sans effacer la sélection
           await page.waitForTimeout(2000)
           assert.ok((await page.evaluate(() => String(window.getSelection()))).includes(pos.ligne), 'la sélection tient')
           assert.equal(await page.evaluate(() => (window as any).__code.isConnected), true, 'le panneau n\'a pas été réécrit sous la sélection')

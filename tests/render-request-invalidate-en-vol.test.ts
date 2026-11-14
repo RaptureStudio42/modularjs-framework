@@ -43,8 +43,9 @@ function projectAvecDelai(prefix: string, delaiMs: number): string {
   const root = mjsTmp(prefix)
   mkdirSync(join(root, 'src'), { recursive: true })
   writeFileSync(join(root, 'src', 'produit.mjs'),
+    '<script module lang="coffee">\nplusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))\n</script>\n' +
     '<script lang="coffee">\n' +
-    `$p = new Promise (resolve) -> setTimeout((-> resolve('V1')), ${delaiMs})\n` +
+    `$p = plusTard 'V1', ${delaiMs}\n` +
     '</script>\n' +
     '<div class="wrap">\n{await $p}\n  <p class="pending">chargement…</p>\n{success val}\n  <p class="ok">{val}</p>\n{end}\n</div>\n')
   return root

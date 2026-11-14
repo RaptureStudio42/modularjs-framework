@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Window } from 'happy-dom'
+import { poserPage } from './helpers/page-globale.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROUTER = join(__dirname, '..', 'src', 'runtime', 'mjs_router.ts')
@@ -95,13 +96,13 @@ describe('routeur — match EXACT des routes', function () {
   })
 
   describe('_mjs_injectViewsForComponent — intégration', function () {
-    const g: any = globalThis
     let win: any
+    let rendrePage: () => void
     before(() => {
-      win = new Window({ url: 'http://localhost/' })
-      g.window ??= win
-      g.document ??= win.document
+      win        = new Window({ url: 'http://localhost/' })
+      rendrePage = poserPage({ window: win, document: win.document }, true)
     })
+    after(() => rendrePage())
 
     const monter = (µ: any, routes: any) => {
       const viewNode: any = win.document.createElement('metamjs-view')

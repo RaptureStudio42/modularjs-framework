@@ -62,8 +62,8 @@ describe('µ._mjs_navWarnNoUjsMethod (source réelle) — @noUJS + @method avert
     µ._mjs_navWarnNoUjsMethod(fakeEl({ 'mjs-no-ujs': '', 'mjs-method': 'delete' }))
 
     assert.equal(warns.length, 1)
-    assert.match(warns[0], /@method="delete" ignoré/)
-    assert.match(warns[0], /@noUJS/)
+    assert.match(warns[0], /:method="delete" ignoré/)
+    assert.match(warns[0], /:noUJS/)
     assert.match(warns[0], /GET/)
   })
 
@@ -85,7 +85,7 @@ describe('µ._mjs_navWarnNoUjsMethod (source réelle) — @noUJS + @method avert
     µ._mjs_navWarnNoUjsMethod(fakeEl({ 'mjs-no-ujs': '', 'mjs-method': 'patch' }))
 
     assert.equal(warns.length, 2)
-    assert.match(warns[1], /@method="patch" ignoré/)
+    assert.match(warns[1], /:method="patch" ignoré/)
   })
 
   it('sans mjs-method, élément nul, ou sans getAttribute : silence total', function () {

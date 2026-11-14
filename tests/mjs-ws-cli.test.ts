@@ -79,7 +79,7 @@ async function rawRequestClient(transport: MemoryTransport, url: string) {
 // une console capturée revient toujours, même quand l'essai échoue avant son `restore()` (un lancement qui lève, une assertion) :
 // sinon elle reste muette pour tous les essais suivants du process, ceux des autres fichiers compris
 const capturesEnCours: Array<() => void> = []
-afterEach(() => { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() })
+function restoreCaptures(): void { while (capturesEnCours.length) (capturesEnCours.pop() as () => void)() }
 
 function patchConsole(): { lines: string[]; restore: () => void } {
   const lines: string[] = []
@@ -429,6 +429,8 @@ describe('cli/ws — buildRunPlan (priorités port/host/heartbeat/limits)', () =
 describe("cli/ws — runWsCommand : chargement d'entry (VRAI client µ.socket, MemoryTransport injecté)", function () {
   this.timeout(10000)
 
+  afterEach(restoreCaptures)
+
   it("setup(app) est appelé AVANT listen(), et un serve() déclaré dans setup() répond au vrai client", async () => {
     const root = freshDir('ws-load')
     writeFileSync(join(root, 'ws.mjs'), `export default {\n  setup(app) {\n    app.serve('ping', () => 'pong')\n  },\n}\n`)
@@ -483,6 +485,8 @@ describe("cli/ws — runWsCommand : chargement d'entry (VRAI client µ.socket, M
 describe('cli/ws — bannière : ligne jeton', function () {
   this.timeout(10000)
 
+  afterEach(restoreCaptures)
+
   it("ws.token configuré dans l'entry → ligne 'jeton : balayage Xs (marge Ys)' avec les valeurs EFFECTIVES", async () => {
     const root = freshDir('ws-banner-token')
     writeFileSync(join(root, 'ws.mjs'), `export default {\n  token: { sweep: 20000, slack: 8000 },\n  setup(app) {\n    app.serve('ping', () => 'pong')\n  },\n}\n`)
@@ -514,6 +518,8 @@ describe('cli/ws — bannière : ligne jeton', function () {
 
 describe('cli/ws — rechargement à chaud (fs.watch réel, fixture réécrite sur disque)', function () {
   this.timeout(10000)
+
+  afterEach(restoreCaptures)
 
   it('nouvelle version de la fixture → nouveau comportement actif (nouvelle connexion)', async () => {
     const root = freshDir('ws-reload-ok')
@@ -611,6 +617,8 @@ describe('cli/ws — rechargement à chaud (fs.watch réel, fixture réécrite s
 describe('cli/ws — entry en Civet (ws.civet compilé à la volée via @danielx/civet)', function () {
   this.timeout(10000)
 
+  afterEach(restoreCaptures)
+
   // syntaxe Civet RÉELLE demandée : fonctions en `->`, hash SANS accolades
   const CIVET_PING = `export default
   setup: (app) ->
@@ -705,6 +713,8 @@ describe('cli/ws — entry en Civet (ws.civet compilé à la volée via @danielx
 
 describe('cli/ws — entry en .server.mjs (dialecte Civet des composants, cli/server-entry.ts)', function () {
   this.timeout(10000)
+
+  afterEach(restoreCaptures)
 
   it("résolution PAR DÉFAUT : 'ws.server.mjs' trouvé (prime sur ws.js/ws.civet)", () => {
     const root = freshDir('ws-server-default')
@@ -893,8 +903,8 @@ describe("cli/ws — grammaire @import d'une entry serveur (cli/server-entry.ts)
   it("@import d'un fichier .civet relatif (dialecte appliqué, interpolation #{}) → utilisable dans setup(app)", async () => {
     const root = freshDir('ws-server-import-civet')
     mkdirSync(join(root, 'lib'), { recursive: true })
-    writeFileSync(join(root, 'lib', 'greet.civet'), `export greet := (n) -> "salut #{n}"\n`)
-    writeFileSync(join(root, 'ws.server.mjs'), `@import greet './lib/greet.civet'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
+    writeFileSync(join(root, 'lib', 'greet.civet.mjs'), `export greet := (n) -> "salut #{n}"\n`)
+    writeFileSync(join(root, 'ws.server.mjs'), `@import greet './lib/greet.civet.mjs'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
     const transport = new MemoryTransport()
     const handle = await runWsCommand({ root }, undefined, { transport, watch: false })
     try {
@@ -985,11 +995,11 @@ describe("cli/ws — grammaire @import d'une entry serveur (cli/server-entry.ts)
     }
   })
 
-  it("@import d'un '.civet' SANS préfixe './' ('lib/greet.civet', forme composant, présent sous root) → compilé comme un fichier de projet", async () => {
+  it("@import d'un '.civet' SANS préfixe './' ('lib/greet.civet.mjs', forme composant, présent sous root) → compilé comme un fichier de projet", async () => {
     const root = freshDir('ws-server-import-civet-no-dotslash')
     mkdirSync(join(root, 'lib'), { recursive: true })
-    writeFileSync(join(root, 'lib', 'greet.civet'), `export greet := (n) -> "salut #{n}"\n`)
-    writeFileSync(join(root, 'ws.server.mjs'), `@import greet 'lib/greet.civet'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
+    writeFileSync(join(root, 'lib', 'greet.civet.mjs'), `export greet := (n) -> "salut #{n}"\n`)
+    writeFileSync(join(root, 'ws.server.mjs'), `@import greet 'lib/greet.civet.mjs'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
     const transport = new MemoryTransport()
     const handle = await runWsCommand({ root }, undefined, { transport, watch: false })
     try {
@@ -1101,8 +1111,8 @@ describe("cli/ws — grammaire @import d'une entry serveur (cli/server-entry.ts)
   it("un faux `@import x 'y'` DANS un bloc `###` (commentaire) n'est ni appliqué ni signalé — seul le vrai @import posé après le bloc compte", async () => {
     const root = freshDir('ws-server-fake-import-in-comment')
     mkdirSync(join(root, 'lib'), { recursive: true })
-    writeFileSync(join(root, 'lib', 'greet.civet'), `export greet := (n) -> "salut #{n}"\n`)
-    writeFileSync(join(root, 'ws.server.mjs'), `###\nfaux commentaire avec @import x 'y' dedans, jamais un vrai import\n###\n@import greet './lib/greet.civet'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
+    writeFileSync(join(root, 'lib', 'greet.civet.mjs'), `export greet := (n) -> "salut #{n}"\n`)
+    writeFileSync(join(root, 'ws.server.mjs'), `###\nfaux commentaire avec @import x 'y' dedans, jamais un vrai import\n###\n@import greet './lib/greet.civet.mjs'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', (p) -> greet(p.name)\n`)
     const transport = new MemoryTransport()
     const handle = await runWsCommand({ root }, undefined, { transport, watch: false })
     try {
@@ -1116,11 +1126,11 @@ describe("cli/ws — grammaire @import d'une entry serveur (cli/server-entry.ts)
     }
   })
 
-  it("cycle d'import (a.civet @import b.civet @import a.civet) → runWsCommand rejette avec un message explicite", async () => {
+  it("cycle d'import (a.civet.mjs @import b.civet.mjs @import a.civet.mjs) → runWsCommand rejette avec un message explicite", async () => {
     const root = freshDir('ws-server-import-cycle')
-    writeFileSync(join(root, 'ws.server.mjs'), `@import a './a.civet'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', -> 'pong'\n`)
-    writeFileSync(join(root, 'a.civet'), `@import b './b.civet'\n\nexport a := 1\n`)
-    writeFileSync(join(root, 'b.civet'), `@import a './a.civet'\n\nexport b := 2\n`)
+    writeFileSync(join(root, 'ws.server.mjs'), `@import a './a.civet.mjs'\n\nexport default\n  setup: (app) ->\n    app.serve 'ping', -> 'pong'\n`)
+    writeFileSync(join(root, 'a.civet.mjs'), `@import b './b.civet.mjs'\n\nexport a := 1\n`)
+    writeFileSync(join(root, 'b.civet.mjs'), `@import a './a.civet.mjs'\n\nexport b := 2\n`)
     const transport = new MemoryTransport()
     await assert.rejects(
       runWsCommand({ root }, undefined, { transport, watch: false }),

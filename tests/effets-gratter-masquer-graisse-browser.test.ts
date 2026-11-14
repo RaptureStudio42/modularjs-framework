@@ -13,6 +13,7 @@ import { deflateSync } from 'node:zlib'
 import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
+import { attendreEtat } from './helpers/attente-page.js'
 
 async function navigateurPresent(nom: 'chromium' | 'firefox'): Promise<boolean> {
   try {
@@ -437,7 +438,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         assert.ok(cache.tab === '-1' || cache.inert, `le lien est mis hors de la tabulation : ${JSON.stringify(cache)}`)
         await page.evaluate(() => (document.querySelector('mjs-gmp-masque-lignes') as any)._shadow.querySelector('.l').focus())
         await page.keyboard.press('Enter')
-        await page.waitForTimeout(250)
+        await attendreEtat(async () => JSON.stringify(await lien()) === JSON.stringify({ tab: null, inert: false }), 'le lien rendu comme il était', 250)
         const revele = await lien()
         assert.deepEqual(revele, { tab: null, inert: false }, 'le lien est rendu comme il était')
       } finally {
@@ -483,7 +484,7 @@ for (const nom of ['chromium', 'firefox'] as const) {
         assert.equal(await page.evaluate(() => (window as any).__vus), 1, 'mjs:reveal remonte jusqu\'au shadow')
         await capture(page, 'masque-2-revele')
         await clique(page, '.x')
-        await page.waitForTimeout(200)
+        await attendreEtat(async () => (await etat('.x')).cache === true, 'le second clic recache', 200)
         assert.equal((await etat('.x')).cache, true, 'again : un second clic recache')
         // le clavier : Tab arrive sur le texte caché, Entrée le révèle
         await page.evaluate(() => (document.querySelector('mjs-gmp-masque') as any)._shadow.querySelector('.x').focus())

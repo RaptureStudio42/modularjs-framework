@@ -47,7 +47,9 @@ describe('messages chargés d\'avance — réglage `messages`', () => {
     const { demandes, repos } = assistant()
     await attendre()
     assert.equal(demandes.length, 0)
-    assert.equal(repos.length, 0)
+    // les minuteries de démarrage du cœur jouées, toujours rien
+    await auRepos(repos)
+    assert.equal(demandes.length, 0)
   })
 
   it('avec le déclencheur : rien avant le repos, puis un téléchargement et un seul, dans la langue courante', async () => {

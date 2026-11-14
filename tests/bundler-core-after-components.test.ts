@@ -174,8 +174,8 @@ describe('compile() : le cœur se décide APRÈS les composants (code compilé, 
   // dépendance module → composant, à travers un changement du cœur EN PLUS
   it('module @import-é par un composant : changer le module réémet le composant ; changer ENSUITE le cœur réémet module ET composant', async function () {
     const { root, srcDir, outDir, manifestPath } = makeProject('module-then-core')
-    writeFileSync(join(srcDir, 'util.civet'), 'export triple := (x) -> x * 3\n')
-    writeFileSync(join(srcDir, 'a.mjs'), ['@import triple \'util.civet\'', '<p>{triple(2)}</p>'].join('\n'))
+    writeFileSync(join(srcDir, 'util.civet.mjs'), 'export triple := (x) -> x * 3\n')
+    writeFileSync(join(srcDir, 'a.mjs'), ['@import triple \'util.civet.mjs\'', '<p>{triple(2)}</p>'].join('\n'))
     writeFileSync(join(srcDir, 'b.mjs'), '<p>b</p>\n')
     // runtime: [] — même remarque que le test précédent (isole la détection de 'for' de
     // mjs_flip.ts, sélectionné par défaut).
@@ -189,7 +189,7 @@ describe('compile() : le cœur se décide APRÈS les composants (code compilé, 
     const util1 = readdirSync(outDir).find((f) => /^util-/.test(f))!
 
     // seul le module change
-    writeFileSync(join(srcDir, 'util.civet'), 'export triple = (x) -> x * 30\n')
+    writeFileSync(join(srcDir, 'util.civet.mjs'), 'export triple = (x) -> x * 30\n')
     const stats2 = await bundler.compile()
     assert.equal(stats2.errors.length, 0, stats2.errors.map((e: any) => e.message).join('\n'))
     const util2 = readdirSync(outDir).find((f) => /^util-/.test(f))!
@@ -232,7 +232,7 @@ describe('compile() : le cœur se décide APRÈS les composants (code compilé, 
     mkdirSync(srcDir, { recursive: true })
     mkdirSync(stylesDir, { recursive: true })
     writeFileSync(join(stylesDir, 'theme.sass'), '.p\n  color: red\n')
-    writeFileSync(join(srcDir, 'hop.mjs'), ['<style @css="theme"></style>', '<div>x</div>'].join('\n'))
+    writeFileSync(join(srcDir, 'hop.mjs'), ['<style :css="theme"></style>', '<div>x</div>'].join('\n'))
     writeFileSync(join(root, 'mjs.config.json'), JSON.stringify({
       sourceDir: 'app/modularjs', outputDir: 'out', manifestPath: 'bundle.js', stylesheetsDir: 'styles', css: 'split',
     }))

@@ -32,7 +32,7 @@ const RESEAU = [
   '<script>',
   'charger = ->',
   '  window.__appelsR = (window.__appelsR or 0) + 1',
-  '  new Promise (r) -> setTimeout((-> r(window.__appelsR)), 5)',
+  '  µafter(5).then(-> window.__appelsR)',
   '</script>',
   '<div class="w">{await charger()}<i class="att">attente</i>{success d}<p class="ok">{d}</p>{end}</div>',
 ].join('\n')

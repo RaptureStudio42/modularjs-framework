@@ -7,7 +7,7 @@
 µ._mjs_fxSvgDefs = function(el) {
   var root = el.getRootNode ? µ._mjs_dom.getRootNode(el) : document;
   var tpl  = document.createElement('template');
-  tpl.innerHTML = '<svg aria-hidden="true" width="0" height="0"></svg>';
+  tpl.innerHTML = µ._mjs_th('<svg aria-hidden="true" width="0" height="0"></svg>');
   var svg = (root.nodeType === 11 ? root : document.body).appendChild(tpl.content.firstChild);
   svg.style.position = 'absolute';
   return svg;

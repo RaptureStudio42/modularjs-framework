@@ -25,7 +25,7 @@ const IMAGE = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 
 const SOURCE = [
   '<script>', '$vu = true', '</script>',
   '<div *iris(on: load)>a</div>', '<div *blocks(on: load)>b</div>', '<div *pixelate(on: load)>c</div>', '<div *ink(on: load)>d</div>', '<div *fade(on: load)>e</div>',
-  '{if $vu}<p @transition=*crossfade(key: 1)>x</p>{end}',
+  '{if $vu}<p :transition=*crossfade(key: 1)>x</p>{end}',
   `<div><img src="${IMAGE}" alt="" *backlight(legend: true)></div>`, ''
 ].join('\n')
 

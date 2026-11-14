@@ -39,12 +39,12 @@ describe('bundler — animation détectée dans un module .civet autonome (@impo
     // écrire `µ.anim` ni `@transition`/`@in`/`@out` lui-même. Isole précisément
     // le chemin corrigé (sinon l'AUTRE détection, déjà en place côté .mjs,
     // suffirait à faire passer le test même sans le fix).
-    writeFileSync(join(srcDir, 'setup.civet'), [
+    writeFileSync(join(srcDir, 'setup.civet.mjs'), [
       'export setupCrossfade = ->',
       "  µanim.crossfade 'todo', { duration: 600 }",
     ].join('\n'))
     writeFileSync(join(srcDir, 'comp.mjs'), [
-      "@import setupCrossfade 'setup.civet'",
+      "@import setupCrossfade 'setup.civet.mjs'",
       '',
       '<script>',
       '  setupCrossfade()',

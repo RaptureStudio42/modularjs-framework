@@ -13,7 +13,7 @@ import { localizeViewerSource } from '../src/server/viewer-page.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
-import { scanCompiledFeatures } from '../src/bundler/features.js'
+import { scanCompiledFeatures, DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE } from '../src/bundler/features.js'
 import { transpile } from '../src/transpiler/index.js'
 import { mjsTmp } from './helpers/tmp.js'
 
@@ -22,6 +22,18 @@ const ATELIER = join(ICI, '..', 'src', 'server', 'theme-viewer.mjs')
 
 // définitions telles qu'écrites dans le module (rien n'est minifié dans ces builds)
 const MARQUE_DEEP = 'µ._mjs_deepSet = function'
+
+// blocs du cœur découpés par repères (pas des fichiers du runtime) : jugés sur le texte du cœur, plus bas ; un build de développement
+// qui n'est pas un cœur nu les garde tous (bundler/index.ts), qu'un composant de l'application s'en serve ou non
+const BLOCS = [DERIVED_VALUES, ATTR_UPDATE, ATTR_SELECT, PROPS_PENDING, ATTR_FILTER, ROOT_TEXT, SIG_FREE, ROW_CLONE]
+
+// définitions des aides d'écriture d'attribut et de texte que l'atelier compilé appelle
+const MARQUE_ATTR  = 'µ._mjs_updAttrNode = function'
+const MARQUE_TEXTE = /\b_mjs_updText\([^)]*\)\s*\{/
+
+// définition du gestionnaire de `<@window>` hors du calcul en cours, que l'atelier appelle : sans graphe des signaux (`||=`, mjs_element.ts)
+// ou avec (mjs_signals.ts)
+const MARQUE_LIBRE = /\._mjs_sigFree (?:\|\|)?= /
 
 // l'application sans mutation profonde, sans liste, sans {if} ni crochet de vie
 const NU    = { 'hop.mjs': '<script>\n$t = \'ok\'\n</script>\n<p>{$t}</p>\n' }
@@ -64,10 +76,36 @@ describe('l\'atelier de thème et le cœur de l\'application', function () {
       const appeles    = [...scanCompiledFeatures(output)].sort()
       assert.ok(appeles.length >= 5, `garde muette : l'atelier appelle plusieurs fonctions du cœur (${appeles.join(', ')})`)
       const fichiers = fichiersDuCoeur(cfg)
-      const manque   = appeles.filter((f) => !fichiers.includes('mjs_' + f + '.ts'))
+      const manque   = appeles.filter((f) => !BLOCS.includes(f) && !fichiers.includes('mjs_' + f + '.ts'))
       assert.deepEqual(manque, [], `l'atelier appelle ces fonctions que le cœur de développement n'embarque pas : ${manque.join(', ')}`)
     })
   }
+
+  it('développement : une application sans valeur dérivée garde pourtant leur machinerie, que l\'atelier emploie', async () => {
+    assert.ok((await construire({}, NU)).includes('_mjs_setComputed('), 'le cœur de développement porte la machinerie des valeurs dérivées')
+  })
+
+  it('développement : une application nue garde les aides d\'écriture d\'attribut et de texte que l\'atelier appelle', async () => {
+    const coeur = await construire({}, NU)
+    assert.ok(coeur.includes(MARQUE_ATTR), 'le cœur de développement porte la mise à jour d\'un attribut calculé')
+    assert.ok(MARQUE_TEXTE.test(coeur), 'le cœur de développement porte la mise à jour d\'un texte de la racine')
+  })
+
+  for (const [titre, cfg] of [['par défaut', {}], ['avec une liste `runtime` explicite', { runtime: ['ajax'] }]] as const) {
+    it(`développement, ${titre} : une application nue sans graphe des signaux garde le gestionnaire de \`<@window>\` que l'atelier appelle`, async () => {
+      const coeur = await construire(cfg, NU)
+      assert.ok(!coeur.includes('_mjs_sigWrite'), 'garde muette : le cœur de cette application n\'a pas le graphe des signaux')
+      assert.ok(MARQUE_LIBRE.test(coeur), 'le cœur de développement porte le gestionnaire de `<@window>` hors du calcul en cours')
+    })
+  }
+
+  it('production : une application nue ne porte pas le gestionnaire de `<@window>` (le test de sa présence ne se tait pas)', async () => {
+    assert.equal(MARQUE_LIBRE.test(await construire({ env: 'prod', minify: false }, NU)), false)
+  })
+
+  it('production : une application nue ne porte pas la mise à jour d\'un attribut calculé (le test de sa présence ne se tait pas)', async () => {
+    assert.equal((await construire({ env: 'prod', minify: false }, NU)).includes(MARQUE_ATTR), false)
+  })
 
   it('production : le cœur ne prend rien de l\'atelier', async () => {
     assert.equal((await construire({ env: 'prod', minify: false }, NU)).includes(MARQUE_DEEP), false)

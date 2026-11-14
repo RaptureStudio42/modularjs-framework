@@ -376,7 +376,7 @@ hChange = -> $h = '<i>H</i>'
   <button class="on" @click={onChange()}>o</button>
   <button class="c" @click={cChange()}>c</button>
   <button class="h" @click={hChange()}>h</button>
-  <ul>{for n in $liste by id}<li class="r" title={$x} data-v="{n.nom}-{$x}" @class{$on}="actif" @style.color={$c} disabled={$on}>{$x}{{$h}}</li>{end}</ul>
+  <ul>{for n in $liste by id}<li class="r" title={$x} data-v="{n.nom}-{$x}" :class{$on}="actif" :style.color={$c} disabled={$on}>{$x}{{$h}}</li>{end}</ul>
 </div>
 `
       const win = await monter({ 'fr-formes.mjs': source })
@@ -579,7 +579,7 @@ basculer = -> $mode = not $mode
   <button class="retrait" @click={retirer()}>r</button>
   <button class="mode" @click={basculer()}>m</button>
   {if $mode}<p class="m">oui</p>{end}
-  <ul>{for n in $liste by id}<li @out=*fade(duration: 80ms)>{n.nom}</li>{end}</ul>
+  <ul>{for n in $liste by id}<li :out=*fade(duration: 80ms)>{n.nom}</li>{end}</ul>
 </div>
 `
       const win = await monter({ 'fr-sortie.mjs': source })

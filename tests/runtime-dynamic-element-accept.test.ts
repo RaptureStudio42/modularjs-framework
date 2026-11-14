@@ -33,23 +33,25 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
 import { poserMessages } from './helpers/messages-stub.js'
+import { lireRuntime } from './helpers/runtime-projete.js'
+import { lireDynamique } from './helpers/runtime-dynamique.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // _updDynEl/_updModule vivent désormais dans mjs_dynamic.ts (DÉTACHÉ de mjs_runes.ts, cf.
 // bundler/index.ts scanRuntimeFeatures) — concaténé juste après, même esprit que bundleRuntime().
 const runesSrc   = readFileSync(join(__dirname, '../src/runtime/mjs_runes.ts'), 'utf8')
-const dynamicSrc = readFileSync(join(__dirname, '../src/runtime/mjs_dynamic.ts'), 'utf8')
+const dynamicSrc = lireDynamique(join(__dirname, '../src/runtime/mjs_dynamic.ts'), join(__dirname, '../src/runtime/mjs_element.ts'))
 const easingSrc  = readFileSync(join(__dirname, '../src/runtime/mjs_easing.ts'), 'utf8')
-const elemSrc    = readFileSync(join(__dirname, '../src/runtime/mjs_element.ts'), 'utf8')
-const initSrc    = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf8')
+const elemSrc    = lireRuntime(join(__dirname, '../src/runtime/mjs_element.ts'))
+const initSrc    = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
 
 // Beaucoup de `it()` dans ce fichier (pool × accept, matrice de steps) instancient chacun leur
 // propre `Window` happy-dom — sans fermeture, la mémoire s'accumule sur tout le fichier jusqu'à
 // épuiser le tas (OOM constaté à l'exécution). Convention déjà en usage ailleurs
 // (tests/core-field.test.ts, tests/core-toggles.test.ts) : `window.close?.()`, ici centralisé
-// dans un seul `afterEach` plutôt que répété dans chaque test.
+// dans `closeWindows`, posé en `afterEach` par chaque groupe qui ouvre des fenêtres, plutôt que répété dans chaque test.
 const __windows: any[] = []
-afterEach(() => { __windows.splice(0).forEach((w) => { try { w.close?.() } catch (_e) { /* ignore */ } }) })
+function closeWindows(): void { __windows.splice(0).forEach((w) => { try { w.close?.() } catch (_e) { /* ignore */ } }) }
 
 // ============================================================================
 // mjs_dynamic.ts µ._updDynEl / µ._updModule : pool de balises refusées + `accept`
@@ -79,6 +81,8 @@ function makeShadow(document: any, html: string): any {
 const POOL = ['script', 'iframe', 'object', 'embed', 'base', 'link', 'meta', 'style']
 
 describe('<@element>/<@module> : pool de balises refusées élargi (mjs_runes.ts)', () => {
+  afterEach(closeWindows)
+
   describe('µ._updDynEl (<@element $tag>)', () => {
     POOL.forEach((tagName) => {
       it(`'${tagName}' sans accept : aucun élément créé, 1 warn citant la balise`, () => {
@@ -469,6 +473,8 @@ describe('<@element>/<@module> : pool de balises refusées élargi (mjs_runes.ts
 // ============================================================================
 
 describe('<@element>/<@module> : display:none hérité au swap (mjs_runes.ts)', () => {
+  afterEach(closeWindows)
+
   describe('µ._updDynEl', () => {
     it("masqué (null) puis basculé vers 'p' : <p> créé sans display:none", () => {
       const { µ, document } = makeRunes()
@@ -540,6 +546,8 @@ describe('<@element>/<@module> : display:none hérité au swap (mjs_runes.ts)', 
 // ============================================================================
 
 describe('<@element>/<@module> : tag/Comp non trimmé (mjs_runes.ts)', () => {
+  afterEach(closeWindows)
+
   it("µ._updDynEl(' p ') : <p> créé ; second appel identique : aucun nouveau nœud (même référence)", () => {
     const { µ, document } = makeRunes()
     const shadow = makeShadow(document, '<div mjs-el="0">x</div>')
@@ -587,6 +595,8 @@ describe('<@element>/<@module> : tag/Comp non trimmé (mjs_runes.ts)', () => {
 // ============================================================================
 
 describe('<@element>/<@module> : display d\'auteur écrasé par le masquage, même sans masquage (mjs_runes.ts)', () => {
+  afterEach(closeWindows)
+
   describe('µ._updDynEl', () => {
     it("(a) placeholder style=\"display:flex\" + tag 'p', JAMAIS masqué : <p> porte display:flex intact", () => {
       const { µ, document } = makeRunes()
@@ -685,6 +695,8 @@ describe('<@element>/<@module> : display d\'auteur écrasé par le masquage, mê
 // ============================================================================
 
 describe('<@element>/<@module> : tag/Comp épuré vide, blancs seuls (mjs_runes.ts)', () => {
+  afterEach(closeWindows)
+
   it("µ._updDynEl(comp, '0', '   ') : masqué comme falsy, AUCUN nœud créé, AUCUNE exception", () => {
     const { µ, document, warnCalls } = makeRunes()
     const shadow = makeShadow(document, '<div mjs-el="0">x</div>')
@@ -722,6 +734,8 @@ function makeEasing(): { µ: any; window: any; document: any; warnCalls: any[][]
 }
 
 describe('µ.easing.resolve : chaîne inconnue avertit en mode debug (repli cubicOut inchangé)', () => {
+  afterEach(closeWindows)
+
   it("'bounceOut' (faute de frappe) + µ.debug = true : 1 warn, repli cubicOut", () => {
     const { µ, warnCalls } = makeEasing()
     µ.debug = true
@@ -773,6 +787,8 @@ const STEPS_CASES: Array<{ steps: any; label: string; expectedLen: number }> = [
 ]
 
 describe('steps non fini/non numérique : keyframes VIDES corrigées', () => {
+  afterEach(closeWindows)
+
   describe('mode css (_mjs_runTransition, l.823)', () => {
     STEPS_CASES.forEach(({ steps, label, expectedLen }) => {
       it(`steps: ${label} → ${expectedLen} keyframes, offsets 0 et 1 exacts`, async () => {

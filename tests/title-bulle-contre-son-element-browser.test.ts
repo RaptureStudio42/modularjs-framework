@@ -21,12 +21,12 @@ const SOURCE = `<script>
   $note = 4
 </script>
 
-<button class="icone" type="button" @title="4/5 · Plutôt bien">★ {$note}</button>
-<button class="haut" type="button" @title="Trop près du haut, en dessous">H</button>
-<button class="bas" type="button" @title={ text: 'Trop près du bas, au-dessus', side: 'bottom' }>B</button>
-<button class="gauche" type="button" @title="Contre le bord gauche, la bulle glisse vers le centre sans sortir de la fenêtre">G</button>
-<button class="droite" type="button" @title="Contre le bord droit, la bulle glisse vers le centre sans sortir de la fenêtre">D</button>
-<button class="court" type="button" @title="C">C</button>
+<button class="icone" type="button" :title="4/5 · Plutôt bien">★ {$note}</button>
+<button class="haut" type="button" :title="Trop près du haut, en dessous">H</button>
+<button class="bas" type="button" :title={ text: 'Trop près du bas, au-dessus', side: 'bottom' }>B</button>
+<button class="gauche" type="button" :title="Contre le bord gauche, la bulle glisse vers le centre sans sortir de la fenêtre">G</button>
+<button class="droite" type="button" :title="Contre le bord droit, la bulle glisse vers le centre sans sortir de la fenêtre">D</button>
+<button class="court" type="button" :title="C">C</button>
 
 <style>
   :host

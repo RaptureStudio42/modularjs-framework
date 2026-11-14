@@ -25,7 +25,7 @@ import { mjsTmp } from './helpers/tmp.js'
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const RACINE = [
-  '<style @css="une deux">',
+  '<style :css="une deux">',
   ':host',
   '  display: block',
   '  color: crimson',
@@ -36,7 +36,7 @@ const RACINE = [
   '',
   '<h1 class="t">{$titre}</h1>',
   '<@carte></@carte>',
-  '<@vignette @lightDom></@vignette>',
+  '<@vignette :lightDom></@vignette>',
 ].join('\n') + '\n'
 
 const CARTE = [
@@ -128,7 +128,7 @@ describe('csp: true × prérendu — aucune feuille en ligne dans le fragment', 
     assert.ok(!/<style[\s>]/.test(fragment), `aucun <style> en ligne attendu, obtenu :\n${fragment}`)
     // le cœur de ce projet embarque le thème : chaque racine d'ombre porte aussi sa feuille (liée), écartée du décompte
     const href = feuilles(fragment).filter(h => !/partagee-theme/.test(h))
-    // la racine déclare `@css="une deux"` : ses deux feuilles partagées partent elles aussi en `<link>`,
+    // la racine déclare `:css="une deux"` : ses deux feuilles partagées partent elles aussi en `<link>`,
     // avant sa feuille propre ; la vignette légère n'en adopte pas
     assert.equal(href.length, 5, `deux feuilles partagées + une feuille par composant rendu (racine + carte à ombre + vignette légère), obtenues : ${href.join(', ')}`)
     assert.ok(/partagee-une/.test(href[0]) && /partagee-deux/.test(href[1]), `les feuilles partagées viennent d'abord, dans l'ordre déclaré, obtenues : ${href.join(', ')}`)
@@ -156,7 +156,7 @@ describe('csp: true × prérendu — aucune feuille en ligne dans le fragment', 
     assert.ok(unite, `l'unité de la feuille partagée doit exister après le premier build, dist : ${readdirSync(dist).join(', ')}`)
     // la feuille partagée disparaît du projet : son unité compilée n'appartient plus à aucun build
     unlinkSync(join(root, 'styles', 'deux.sass'))
-    writeFileSync(join(root, 'src', 'app-home.mjs'), RACINE.replace('@css="une deux"', '@css="une"'))
+    writeFileSync(join(root, 'src', 'app-home.mjs'), RACINE.replace(':css="une deux"', ':css="une"'))
     build(root)
     const apres = readdirSync(dist)
     assert.ok(!apres.includes(unite!), `l'unité orpheline ${unite} doit être purgée, dist : ${apres.join(', ')}`)

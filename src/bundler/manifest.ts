@@ -115,7 +115,11 @@ export function manifestBodyLines(bundler: Bundler, pathsLine: string): string[]
     // `types`, 'warn' par défaut) — RIEN émis en production (le runtime s'y tait), ni pour un
     // projet sans <vars> ni effet (le moteur des effets s'en sert pour un réglage tenu par une
     // variable, `*neon(size: $s)`). Nom SANS `_mjs_` : le manifeste n'est pas raccourci avec le cœur.
-    !bundler['isProd']() && (bundler['pendingFeatures'].has('types') || bundler['pendingFeatures'].has('fx')) ? `µ._typesMode = ${JSON.stringify(bundler.typesMode ?? 'warn')};` : '',
+    !bundler['isProd']() && (bundler['pendingFeatures'].has('types') || bundler['pendingFeatures'].has('fx')) ? `µ._typesMode = ${JSON.stringify(bundler.typesMode === 'error' ? 'error' : 'warn')};` : '',
+    // mode dur (`"types": "throw"`) : une valeur refusée lève une µTypeError, en développement comme en production ; signal
+    // (`typesReport`) : en production, l'adresse où part chaque valeur refusée — rien pour une appli sans types
+    bundler.typesMode === 'throw' && ['types', 'types_ajax', 'types_hard'].some(k => bundler['pendingFeatures'].has(k)) ? 'µ._typesThrow = 1;' : '',
+    bundler['isProd']() && bundler.typesReport !== undefined && ['types', 'types_ajax', 'types_hard'].some(k => bundler['pendingFeatures'].has(k)) ? `µ._typesReport = ${JSON.stringify(bundler.typesReport)};` : '',
     // Effets que MJS pose de lui-même (clé `effects` : thème en cercle, effets économes) — rien
     // quand la clé n'est pas écrite : le runtime prend ses défauts. Nom SANS `_mjs_`, comme au-dessus.
     bundler.effectsConf && Object.keys(bundler.effectsConf).length > 0 ? `µ._fxConf = ${JSON.stringify(bundler.effectsConf)};` : '',
@@ -145,6 +149,21 @@ export function pathsCompaction(bundler: Bundler): { prefix: string; compact: bo
 // --------------------------------------------------------------------------
 // writeManifest() : écrit l'entrypoint `bundle_modular.js`
 // --------------------------------------------------------------------------
+// startDepsTable — la table des dépendances que suit le préchargement du démarrage (bloc `µWalkDeps` de writeManifest), selon
+// `blocks.preload` : `'on'`, `null`, le préchargement suit µDeps entière, branches fermables comprises (manifeste inchangé
+// à l'octet) ; `'idle'` (défaut) et `'off'`, µDeps sans les dépendances que chaque composant n'écrit que sous une branche fermable, un `{if}` et ses `{else}` (`branchDeps`, cf.
+// buildManifestDeps), `null` aussi quand il n'y en a aucune. Sous `'idle'`, les fichiers que cette table laisse partent au repos (`µIdle`, ci-dessous).
+// Même table pour le prérendu (startupSet, bundler/startup.ts)
+export function startDepsTable(deps: Record<string, string[]>, branchDeps: Record<string, string[]>, mode: 'idle' | 'on' | 'off'): Record<string, string[]> | null {
+  if (mode === 'on' || Object.keys(branchDeps).length === 0) return null
+  const out: Record<string, string[]> = {}
+  for (const [name, list] of Object.entries(deps)) {
+    const kept = list.filter(d => !(branchDeps[name] ?? []).includes(d))
+    if (kept.length > 0) out[name] = kept
+  }
+  return out
+}
+
 export function writeManifest(bundler: Bundler): void {
   const animsPath = bundler.manifest['__animations']
   const stylesPath = bundler.manifest['__styles']
@@ -246,6 +265,15 @@ export function writeManifest(bundler: Bundler): void {
     // la fiche ne peut désigner qu'un fichier de page du site : jamais une adresse à schéma ni `//hôte`
     `if (_mjs_page && typeof _mjs_page.file === 'string' && /^(?!\\/\\/)[\\w.\\/-]*mjs_page-[\\w.-]+\\.js$/.test(_mjs_page.file) && Array.isArray(_mjs_page.names)) { _mjs_page.names.forEach((n) => { µPaths[n] = _mjs_page.file; }); }`,
   ].join('\n')
+  // table que suit le préchargement du démarrage, selon `blocks.preload` (cf. startDepsTable) : `null` = µDeps elle-même
+  const startTable = startDepsTable(manifestDeps, bundler.manifestBranchDeps, bundler.blocksPreload)
+  const startDeps  = startTable ? 'µDepsStart' : 'µDeps'
+  // sous "idle" : ce que la table du démarrage laisse (µDeps entière moins µDepsStart, à partir des balises de la page), rangé dans
+  // `µIdle` (adresse, balise), une entrée par adresse jamais préchargée ; une clé propre seulement, comme la marche du démarrage. Un
+  // module, un fichier d'effet (`.` ou `mjs_` dans la clé), ou un composant qui en importe un, n'y entre pas : il part à l'ouverture de
+  // sa branche. Un préchargement coupé par le réseau laisserait l'échec du module dans la table des modules du navigateur (Firefox
+  // précharge aussi les imports d'un `modulepreload`), et l'adresse neuve ne repointe que le fichier du composant
+  const idle       = startTable !== null && bundler.blocksPreload === 'idle'
   const preloadBlock = [
     `if (typeof document !== 'undefined') {`,
     `  const µHrefs = new Set([${eagerHrefsLiteral}]);`,
@@ -263,7 +291,7 @@ export function writeManifest(bundler: Bundler): void {
       `    if (path) µHrefs.add(µPathsPrefix + path);`,
     ]),
     // les dépendances propres d'une balise : une balise inconnue n'en a aucune, jamais une valeur héritée d'un prototype pollué
-    `    (Object.prototype.hasOwnProperty.call(µDeps, name) ? µDeps[name] : []).forEach(µWalkDeps);`,
+    `    (Object.prototype.hasOwnProperty.call(${startDeps}, name) ? ${startDeps}[name] : []).forEach(µWalkDeps);`,
     `  };`,
     // même sélecteur/même critère que µ.Autoloader.observe (mjs_autoloader.ts) : les
     // tags CUSTOM ELEMENT `mjs-*` déjà présents dans le document (HTML statique ou
@@ -278,6 +306,17 @@ export function writeManifest(bundler: Bundler): void {
     `    link.href = href;`,
     `    document.head.appendChild(link);`,
     `  });`,
+    ...(idle ? [
+      `  const µOwn = (t, k) => Object.prototype.hasOwnProperty.call(t, k);`,
+      `  const µRest = (name) => (µOwn(µDeps, name) ? µDeps[name] : []).forEach((dep) => {`,
+      `    if (µSeen.has(dep)) return;`,
+      `    µSeen.add(dep);`,
+      encodedPaths ? `    const href = µPath(dep);` : `    const href = µOwn(µPaths, dep) && µPaths[dep] ? µPathsPrefix + µPaths[dep] : '';`,
+      `    if (href && !µHrefs.has(href) && !/[.]|^mjs_/.test(dep) && !(µOwn(µDeps, dep) ? µDeps[dep] : []).some((d) => /[.]|^mjs_/.test(d))) { µHrefs.add(href); µIdle.push([href, 'mjs-' + dep.toLowerCase()]); }`,
+      `    µRest(dep);`,
+      `  });`,
+      `  Array.from(µSeen).forEach(µRest);`,
+    ] : []),
     `}`,
   ].join('\n')
   // `µ.Autoloader.preload(nom)` : charge d'avance, sans l'exécuter, le fichier d'un composant et ceux de toute
@@ -348,11 +387,35 @@ export function writeManifest(bundler: Bundler): void {
     // le cœur lit les chemins par µ.pathOf : même décodeur que le manifeste (table encodée)
     encodedPaths ? `µ.pathOf = µPath;` : '',
     // les dépendances directes, lues par l'Autoloader : les fichiers d'effets d'un composant partent
-    // en même temps que lui (cf. µ._mjs_fxPrefetch, mjs_fx.ts)
-    bundler.fxChunkPaths.size > 0 ? `µ.deps = µDeps;` : '',
+    // en même temps que lui (cf. µ._mjs_fxPrefetch, mjs_fx.ts) ; lues aussi par la file des pages d'une table de routes, qui laisse
+    // à leur visite celles qui importent un module ou portent un effet (µ._mjs_routesIdle, mjs_router.ts), quand il y en a
+    bundler.fxChunkPaths.size > 0 || (bundler['routesIdle'] && Object.values(manifestDeps).some(l => l.some(d => /[.]|^mjs_/.test(d)))) ? `µ.deps = µDeps;` : '',
     externalImport,
     bundler['preloadCalled'] ? `if (µ.Autoloader) { µ.Autoloader.preload = µPreload; }` : '',
     `if (µ.Autoloader) { µ.Autoloader.observe(document.body); }`,
+    // sous "idle" : les fichiers de `µIdle` partent un à la fois, chacun après l'attente commune des files du repos (µ._idle de
+    // mjs_autoloader.ts, la même que pour les pages d'une table de routes : après l'événement load, plus rien en vol — code ni données —,
+    // puis un repos ; plafond de 10 s) ; préchargés sans être exécutés : rien ne s'affiche ni ne se définit, la branche qui s'ouvre
+    // importe le fichier sans le redemander, même pendant son vol.
+    // Sautée : une balise déjà définie. Un échec ne dit rien et ne recharge rien ; le navigateur garde l'échec à cette adresse (Chromium,
+    // Firefox, WebKit : l'import qui suit échoue sans rien demander) : le fichier est repointé, pour toutes ses clés, sur une adresse neuve
+    // (`?mjs-retry=1`), que la branche qui s'ouvre demande. Rien sur le serveur ni dans le navigateur de prérendu
+    ...(idle ? [
+      `if (µIdle.length && µ._idle && !µ._isServer && µ.server !== true) {`,
+      `  const µNext = () => {`,
+      `    let e;`,
+      `    while ((e = µIdle.shift()) && customElements.get(e[1]));`,
+      `    if (!e) return;`,
+      `    const link = document.createElement('link');`,
+      `    link.rel = 'modulepreload';`,
+      `    link.href = e[0];`,
+      `    link.onload = () => µ._idle(µNext);`,
+      `    link.onerror = () => { Object.keys(µPaths).forEach((k) => { if (${encodedPaths ? 'µPath(k)' : 'µPathsPrefix + µPaths[k]'} === e[0]) µPaths[k] = e[0].slice(µPathsPrefix.length) + '?mjs-retry=1'; }); µ._idle(µNext); };`,
+      `    document.head.appendChild(link);`,
+      `  };`,
+      `  µ._idle(µNext);`,
+      `}`,
+    ] : []),
   ].filter(l => l.length > 0)
   // Utilisait `NODE_ENV` directement
   // (2e définition de "prod", divergente de `isProd()`/`shouldEmitSourceMap()`
@@ -403,6 +466,8 @@ export function writeManifest(bundler: Bundler): void {
     // une clé propre seulement : un nom posé par un prototype pollué est inconnu, jamais une adresse importée
     ...(encodedPaths ? [`const µPath = (n) => { const v = Object.prototype.hasOwnProperty.call(µPaths, n) ? µPaths[n] : null; return typeof v === 'string' ? µPathsPrefix + (v.includes('.') ? v : v.slice(0, -5) + n + '-' + v.slice(-5) + '.js') : ''; };`] : []),
     `const µDeps = ${JSON.stringify(manifestDeps)};`,
+    ...(startTable ? [`const µDepsStart = ${JSON.stringify(startTable)};`] : []),
+    ...(idle ? [`const µIdle = [];`] : []),
     pageBlock,
     preloadBlock,
     ...(preloadFn ? [preloadFn] : []),
@@ -515,7 +580,7 @@ export function bundleLazyOnlyModules(bundler: Bundler): Set<string> {
     }
     return vus
   }
-  const estModule = (stem: string): boolean => /\.(?:civet|coffee)$/.test(bundler['pendingUnits'].get(stem)?.file ?? '')
+  const estModule = (stem: string): boolean => /\.(?:civet|coffee)(?:\.mjs)?$/.test(bundler['pendingUnits'].get(stem)?.file ?? '')
   const candidats = new Set([...fermeture(bundler['bundleLazyStems'])].filter(s => !bundler['bundleLazyStems'].has(s) && estModule(s)))
   const atteints  = fermeture([...bundler['bundleVirtualSources'].keys()].filter(s => !bundler['bundleLazyStems'].has(s) && !candidats.has(s)))
   for (const s of candidats) if (!atteints.has(s)) reserves.add(s)

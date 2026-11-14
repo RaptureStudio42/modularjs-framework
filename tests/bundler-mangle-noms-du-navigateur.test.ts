@@ -101,7 +101,7 @@ describe('production — noms courts des propriétés internes et noms que le na
 
   it('un projet construit sans cache : aucune propriété interne ne prend un nom du navigateur, et ces noms sont réservés dans le cache écrit', async function () {
     const p = projet('mangle-navigateur')
-    writeFileSync(join(p.srcDir, 'vue.mjs'), `<script>\n$vu = true\n</script>\n{if $vu}\n  <img src="${IMAGE}" alt="" @out=*fade>\n{end}\n`)
+    writeFileSync(join(p.srcDir, 'vue.mjs'), `<script>\n$vu = true\n</script>\n{if $vu}\n  <img src="${IMAGE}" alt="" :out=*fade>\n{end}\n`)
     await construire(p)
     const cache = lireCache(p)
     assert.deepEqual(collisions(cache, PLATFORM_NAMES), [], 'aucune propriété interne ne doit prendre un nom que le navigateur porte')
@@ -112,7 +112,7 @@ describe('production — noms courts des propriétés internes et noms que le na
     const p = projet('mangle-navigateur-herite')
     mkdirSync(p.outDir, { recursive: true })
     writeFileSync(join(p.outDir, '.mangle-cache.json'), JSON.stringify({ _mjs_outro: 'x' }))
-    writeFileSync(join(p.srcDir, 'vue.mjs'), `<script>\n$vu = true\n</script>\n<button @click={$vu = false}>cacher</button>\n{if $vu}\n  <img src="${IMAGE}" alt="" @out=*fade(duration: 40ms)>\n{end}\n`)
+    writeFileSync(join(p.srcDir, 'vue.mjs'), `<script>\n$vu = true\n</script>\n<button @click={$vu = false}>cacher</button>\n{if $vu}\n  <img src="${IMAGE}" alt="" :out=*fade(duration: 40ms)>\n{end}\n`)
     await construire(p)
     const cache = lireCache(p)
     assert.deepEqual(collisions(cache, ['x']), [], 'la correspondance héritée doit être retirée du cache')

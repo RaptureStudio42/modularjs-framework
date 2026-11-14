@@ -17,7 +17,7 @@ const HOST = `<script>
   $h = 'b'
 </script>
 
-<form @noUJS>
+<form :noUJS>
   <@@checkbox class="cb1" name="a" checked={true}>a</@@checkbox>
   <@@checkbox class="cb0" name="b" checked={false}>b</@@checkbox>
   <@@switch class="sw1" name="c" checked={true}>c</@@switch>

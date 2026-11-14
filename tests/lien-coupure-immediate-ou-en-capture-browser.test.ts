@@ -37,7 +37,7 @@ const SOURCES: Record<string, string> = {
     '<a class="lk" href="/page-b"><span class="in">lien</span></a>',
     '<a class="nu" href="/page-b">texte nu</a>',
     '<div class="boite"><a class="lk2" href="/page-b">autre</a></div>',
-    '<a class="conf" href="/page-b" @confirm="Aller ?"><span class="in2">confirmé</span></a>'
+    '<a class="conf" href="/page-b" :confirm="Aller ?"><span class="in2">confirmé</span></a>'
   ].join('\n') + '\n'
 }
 

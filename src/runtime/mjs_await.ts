@@ -27,6 +27,29 @@ function _mjsAwaitPending(pendingFn) {
   };
 }
 
+// <attente-signal>
+// `µsignal` (blocs balisés `<attente-signal>`, retirés du cœur par le bundler quand aucune unité de la construction ne le lit) : la
+// lecture de l'expression du bloc `id` qui le lit (sa fonction attend un paramètre) reçoit le signal d'un AbortController neuf, et celui
+// de la lecture précédente du bloc est annulé — une requête dépassée s'arrête au lieu d'être seulement ignorée. Le composant qui quitte
+// la page annule ses lectures en vol (`_mjs_attachments`, appelées puis vidées au départ, mjs_element.ts) ; une lecture arrivée retire
+// son contrôleur (_mjsAwaitFin), il ne reste que ceux des lectures en vol
+function _mjsAwaitLire(comp, id, get) {
+  var ctrls = comp._mjs_awaitCtrls ??= new Map();
+  ctrls.get(id)?.abort();
+  var ctrl = new AbortController();
+  ctrls.set(id, ctrl);
+  (comp._mjs_attachments ??= new Set()).add(comp._mjs_awaitStop ??= function() {
+    comp._mjs_awaitCtrls.forEach(function(c) { c.abort(); });
+  });
+  return get(ctrl.signal);
+}
+
+// la lecture `ctrl` est arrivée : son contrôleur n'a plus rien à annuler
+function _mjsAwaitFin(comp, id, ctrl) {
+  if (ctrl && comp._mjs_awaitCtrls.get(id) === ctrl) comp._mjs_awaitCtrls.delete(id);
+}
+
+// </attente-signal>
 if (µ.Element) {
   // jumeau await de `_mjs_mjsPurgeNestedListCaches`.
   // `_mjs_awaitMap`/`_mjs_awaitStates`/`_mjs_awaitLastRender` (indexées par id de bloc
@@ -53,6 +76,14 @@ if (µ.Element) {
         m.delete(id);
         if (this._mjs_awaitStates) this._mjs_awaitStates.delete(id);
         if (this._mjs_awaitLastRender) this._mjs_awaitLastRender.delete(id);
+        // <attente-signal>
+        // le bloc quitte la page : sa lecture en vol est annulée, comme celles d'un composant qui part
+        const c = this._mjs_awaitCtrls?.get(id);
+        if (c) {
+          c.abort();
+          this._mjs_awaitCtrls.delete(id);
+        }
+        // </attente-signal>
       }
     }
   };
@@ -62,6 +93,14 @@ if (µ.Element) {
   // `get` lit l'expression du bloc ; `vars` : les variables qu'elle cite (absent : aucune)
   µ.Element.prototype._mjs_updAwait = function(id, get, pendingFn, successFn, errorFn, vars) {
     var childMode, e, i, n, nodes, promise, s, state, t;
+    // <attente-gardee>
+    // `{await.keep}` (7e argument, posé par le compilateur ; blocs balisés `<attente-gardee>`, retirés du cœur quand aucune unité de la
+    // construction n'en écrit) : pendant une relecture, la branche {success} affichée reste avec sa valeur, puis se met à jour sur place
+    var garde, servi, keep = arguments[6];
+    // </attente-gardee>
+    // <attente-signal>
+    var coupee, ctrl;
+    // </attente-signal>
     s = this._mjs_nodes['s-' + id];
     e = this._mjs_nodes['e-' + id];
     if (!(s && e)) {
@@ -78,7 +117,34 @@ if (µ.Element) {
     // rendait une promesse neuve à chaque rendu, et sa résolution, qui rend, en relançait une autre, sans fin. Une
     // expression qui lit un contexte `§§` ou un état partagé (`µ.state`) cite aussi `_u`, écrit quand l'un de ceux que
     // le composant lit change (µ._mjs_notifyUniversalChange, mjs_runes.ts)
+    // <attente-signal>
+    // l'expression qui lit `µsignal` reçoit le signal d'une lecture neuve (cf. _mjsAwaitLire). La lecture qu'un départ de la page a coupée
+    // est refaite au retour du composant : sa promesse est oubliée le temps de relire l'expression, et remise si elle ne rend rien (le
+    // contenu part alors, comme pour toute valeur vide)
+    if (get.length) get = _mjsAwaitLire.bind(null, this, id, get);
+    if (this._mjs_awaitCtrls?.get(id)?.signal.aborted) {
+      coupee = this._mjs_awaitMap.get(id);
+      this._mjs_awaitMap.delete(id);
+    }
+    // </attente-signal>
     promise = this._mjs_awaitMap.has(id) && !vars?.some((v) => this._mjs_chgd?.has(v)) ? this._mjs_awaitMap.get(id) : get();
+    // <attente-signal>
+    if (coupee && !promise) this._mjs_awaitMap.set(id, coupee);
+    ctrl = this._mjs_awaitCtrls?.get(id);
+    // </attente-signal>
+    // <attente-gardee>
+    // reprise d'une page servie (mjs_hydrate.ts) : ce que le serveur a rendu du bloc part à sa première lecture, comme le contenu des
+    // autres blocs ; sous `{await.keep}`, il reste à l'écran jusqu'à l'arrivée de cette lecture, que la branche du navigateur remplace
+    if (s._mjs_srv === 2) {
+      s._mjs_srv = 0;
+      servi = keep && !!promise;
+      if (!servi) {
+        while (s.nextSibling !== e) {
+          s.parentNode.removeChild(s.nextSibling);
+        }
+      }
+    }
+    // </attente-gardee>
     if (!promise) {
       if (this._mjs_awaitMap.get(id)) {
         this._mjs_awaitStates.delete(id);
@@ -104,6 +170,10 @@ if (µ.Element) {
       return;
     }
     if (this._mjs_awaitMap.get(id) !== promise) {
+      // <attente-gardee>
+      // relecture sous la branche {success} affichée : la branche reste, son état garde sa valeur pour elle
+      garde = keep && this._mjs_awaitLastRender.get(id) === 'success' && this._mjs_awaitStates.get(id);
+      // </attente-gardee>
       this._mjs_awaitMap.set(id, promise);
       state = {
         status: 'pending',
@@ -111,9 +181,31 @@ if (µ.Element) {
         error: null,
         unhandled: false
       };
+      // <attente-gardee>
+      state = garde || state;
+      // </attente-gardee>
+      // <attente-en-cours>
+      // `µpending` (blocs balisés `<attente-en-cours>`, retirés du cœur quand aucune unité de la construction ne le lit) : vrai tant que
+      // la lecture est en vol
+      state.pending = true;
+      // </attente-en-cours>
       this._mjs_awaitStates.set(id, state);
       this._mjs_awaitLastRender.set(id, 'pending');
+      // <attente-gardee>
+      // ce qui est à l'écran reste, l'attente n'est pas rendue : la branche {success} d'une relecture gardée (`µpending` passe à vrai),
+      // le contenu servi d'une page reprise
+      if (garde) {
+        this._mjs_awaitLastRender.set(id, 'success');
+        // <attente-en-cours>
+        this._mjs_invalidate('~' + id + 'p');
+        // </attente-en-cours>
+      }
+      if (!garde && !servi) {
+      // </attente-gardee>
       this._mjs_updIf(id, _mjsAwaitPending(pendingFn) || null);
+      // <attente-gardee>
+      }
+      // </attente-gardee>
       // `Promise.resolve` : une valeur qui n'est pas une promesse (donnée déjà là, en cache) est le résultat, comme
       // pour `await` en JavaScript — la branche {success} l'affiche à la microtâche suivante, avant tout affichage à
       // l'écran (`.then` appelé sur un nombre faisait tomber le composant). Une promesse reste elle-même
@@ -121,13 +213,41 @@ if (µ.Element) {
         if (this._mjs_awaitMap.get(id) !== promise) {
           return;
         }
+        // <attente-signal>
+        _mjsAwaitFin(this, id, ctrl);
+        // </attente-signal>
+        // <attente-en-cours>
+        state.pending = false;
+        // </attente-en-cours>
         state.status = 'success';
         state.data = data;
+        // <attente-gardee>
+        // relecture gardée : la branche se met à jour sur place — ses liaisons qui lisent la valeur suivent `~<id>`, `µpending` `~<id>p`
+        if (garde && this._mjs_awaitLastRender.get(id) === 'success') {
+          this._mjs_invalidate('~' + id);
+          // <attente-en-cours>
+          this._mjs_invalidate('~' + id + 'p');
+          // </attente-en-cours>
+          return;
+        }
+        // </attente-gardee>
         return this._mjs_invalidate('_awaits_');
       }, (error) => {
+        // <attente-signal>
+        // le rejet d'une lecture annulée (lecture dépassée, composant parti de la page) n'ouvre jamais {error}
+        if (ctrl?.signal.aborted) {
+          return;
+        }
+        // </attente-signal>
         if (this._mjs_awaitMap.get(id) !== promise) {
           return;
         }
+        // <attente-signal>
+        _mjsAwaitFin(this, id, ctrl);
+        // </attente-signal>
+        // <attente-en-cours>
+        state.pending = false;
+        // </attente-en-cours>
         state.status = 'error';
         state.error = error;
         // rejet consommé par une branche {error} ? le SSR (renderToString.ts) n'avertit que si non
@@ -163,4 +283,16 @@ if (µ.Element) {
       }
     }
   };
+  // <attente-gardee>
+  // marque de `{await.keep}` dans ce cœur : un composant construit pour le développement la cherche et dit l'option qui manque (cf. compileAwait)
+  µ._mjs_awaitHasKeep = 1;
+  // </attente-gardee>
+  // <attente-en-cours>
+  // marque de `µpending`, de même
+  µ._mjs_awaitHasPending = 1;
+  // </attente-en-cours>
+  // <attente-signal>
+  // marque de `µsignal`, de même
+  µ._mjs_awaitHasSignal = 1;
+  // </attente-signal>
 }

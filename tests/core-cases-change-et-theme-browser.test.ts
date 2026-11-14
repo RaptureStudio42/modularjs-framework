@@ -66,7 +66,7 @@ const HOTE = `<script>
     $r = 'y'
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <div class="z-change">
     <@@checkbox class="cb" name="cb" checked=!{$a} @change={@noter('cb', e, $a)}>case</@@checkbox>
     <@@switch class="sw" name="sw" checked=!{$b} @change={@noter('sw', e, $b)}>interrupteur</@@switch>
@@ -80,7 +80,7 @@ const HOTE = `<script>
 <button type="button" class="page" @click={@bascule()}>la page change l'état</button>
 <p class="journal">{$journal.join(',')}</p>
 
-<form class="fd-balise" @noUJS>
+<form class="fd-balise" :noUJS>
   <@@checkbox class="cb" name="cb" @change={@lire('balise', e)}>case</@@checkbox>
   <@@checkbox class="cb-coche" name="cc" checked={true} @change={@lire('balise', e)}>cochée</@@checkbox>
   <@@switch class="sw" name="sw" @change={@lire('balise', e)}>interrupteur</@@switch>
@@ -90,7 +90,7 @@ const HOTE = `<script>
   <button type="reset" class="rz">remise à zéro</button>
 </form>
 
-<form class="fd-form" @noUJS @change={@lire('form', e)}>
+<form class="fd-form" :noUJS @change={@lire('form', e)}>
   <@@checkbox class="cb" name="cb">case</@@checkbox>
   <@@checkbox class="cb-coche" name="cc" checked={true}>cochée</@@checkbox>
   <@@switch class="sw" name="sw">interrupteur</@@switch>
@@ -100,7 +100,7 @@ const HOTE = `<script>
   <button type="reset" class="rz">remise à zéro</button>
 </form>
 
-<form class="fd-propage" @noUJS @change={@lire('form', e)}>
+<form class="fd-propage" :noUJS @change={@lire('form', e)}>
   <@@checkbox class="cb" name="cb" @change={@lire('balise', e)}>son gestionnaire</@@checkbox>
   <@@checkbox class="cb2" name="cb2" @change.propagate={@lire('balise-propage', e)}>.propagate</@@checkbox>
 </form>

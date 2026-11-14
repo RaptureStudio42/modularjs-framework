@@ -92,9 +92,9 @@ describe('détection au build — le code émis par le compilateur trouve son mo
     win.close?.()
   })
 
-  it('<@body @class{…}> sans aucune rune : la classe est posée au montage et retirée au départ', async function () {
+  it('<@body :class{…}> sans aucune rune : la classe est posée au montage et retirée au départ', async function () {
     const { win, document } = await loadProject('smoke-body', {
-      'modale.mjs': ['<script lang="coffee">', '$open = true', '</script>', '<@body @class{$open}="no-scroll">', '<p>x</p>'].join('\n'),
+      'modale.mjs': ['<script lang="coffee">', '$open = true', '</script>', '<@body :class{$open}="no-scroll">', '<p>x</p>'].join('\n'),
     })
     document.body.innerHTML = '<mjs-modale></mjs-modale>'
     const el: any = document.body.firstElementChild

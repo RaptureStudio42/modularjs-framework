@@ -33,20 +33,20 @@ describe('types : lignes et textes des messages', () => {
 
   it('une règle inconnue dans une règle d\'objet sur plusieurs lignes : citée à sa ligne', async () => {
     await assert.rejects(
-      transpile('<!-- l1 -->\n<vars>\n  $o {\n    a: int,\n    b: flot\n  }\n</vars>\n<p>{$o}</p>\n', { moduleName: 'types-objet-ligne' }),
+      transpile('<!-- l1 -->\n<vars>\n  $o\n    a  int\n    b  flot\n</vars>\n<p>{$o}</p>\n', { moduleName: 'types-objet-ligne' }),
       (err: any) => /ligne 5/.test(err.message) && /flot/.test(err.message)
     )
   })
 
   it('une faute de grammaire dans une règle d\'objet sur plusieurs lignes : citée à sa ligne', async () => {
     await assert.rejects(
-      transpile('<vars>\n  $o {\n    a: int,\n    b: int 5..1\n  }\n</vars>\n<p>{$o}</p>\n', { moduleName: 'types-objet-grammaire' }),
+      transpile('<vars>\n  $o\n    a  int\n    b  int 5..1\n</vars>\n<p>{$o}</p>\n', { moduleName: 'types-objet-grammaire' }),
       (err: any) => /ligne 4/.test(err.message) && /5\.\.1/.test(err.message)
     )
   })
 
   it('le texte affiché garde les interdits écrits à l\'usage d\'une règle nommée', () => {
-    const regles = table('$v Percent ! 50\n$o { v: Percent ! 50 }\n')
+    const regles = table('$v Percent ! 50\n$o\n  v  Percent ! 50\n')
     assert.equal(regles.v.d, 'Percent ! 50')
     assert.equal(regles.o.f.v.d, 'Percent ! 50')
   })
@@ -59,7 +59,7 @@ describe('types : lignes et textes des messages', () => {
   it('deux règles de store qui ne diffèrent que par l\'ordre : la même règle', () => {
     const texte = (raw: string) => compileVars({ raw, startLine: 1 }, DEFS, false).storeTypes.x
     assert.equal(texte("$$x 'a' | 'b'"), texte("$$x 'b' | 'a'"))
-    assert.equal(texte('$$x { a: int, b: string }'), texte('$$x { b: string, a: int }'))
+    assert.equal(texte('$$x\n  a  int\n  b  string'), texte('$$x\n  b  string\n  a  int'))
     assert.equal(texte("$$x string ! 'a' | 'b'"), texte("$$x string ! 'b' | 'a'"))
     assert.notEqual(texte("$$x 'a' | 'b'"), texte("$$x 'a' | 'c'"))
   })

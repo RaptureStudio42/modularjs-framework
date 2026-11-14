@@ -37,6 +37,12 @@
         "ease-out",
         "ease-in-out"
       ]
+    },
+    "visible": {
+      "rule": "de 1 % à 100 % de la balise, en valeur fixe (100%, 60%)",
+      "rule_en": "1% to 100% of the tag, as a fixed value (100%, 60%)",
+      "default": null,
+      "values": null
     }
   },
   "animated": {
@@ -75,6 +81,12 @@
         "ease-out",
         "ease-in-out"
       ]
+    },
+    "visible": {
+      "rule": "de 1 % à 100 % de la balise, en valeur fixe (100%, 60%)",
+      "rule_en": "1% to 100% of the tag, as a fixed value (100%, 60%)",
+      "default": null,
+      "values": null
     }
   }
 }

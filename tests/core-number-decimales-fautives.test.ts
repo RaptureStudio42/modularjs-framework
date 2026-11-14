@@ -1,6 +1,6 @@
 // module cœur number (<@@number>) : `decimals` attend un entier de 0 à 100, écrit en chiffres (« 2 ») ou en nombre (`decimals={2}`), comme
 // <@@chart decimals> attend le sien. Une autre valeur (« abc », « -1 », « 2,5 », « 2.5 », « 101 ») est une faute : elle est ignorée (aucune
-// décimale fixe, la valeur s'écrit telle quelle) et la console le dit (µ.error), au montage puis à chaque changement qui la laisse fautive ;
+// décimale fixe, la valeur s'écrit en clair, au séparateur de la langue de la page) et la console le dit (µ.error), au montage puis à chaque changement qui la laisse fautive ;
 // vide ou absente, il n'y a pas de décimales fixes, sans un mot
 
 import assert from 'node:assert/strict'
@@ -37,7 +37,7 @@ describe('mjs-core-number — `decimals` fautif : ignoré, et la console le dit,
     const { window, hote, erreurs } = await monterHote(HOTE, 'number-decimales-fautives')
     assert.deepEqual(dites(erreurs).sort(), ['-1', '101', '2,5', '2.5', 'abc', 'x'], erreurs.join('\n'))
     for (const e of erreurs.filter((l) => /<@@number> : decimals/.test(l))) assert.match(e, /écrivez un nombre entier de 0 à 100/)
-    for (const c of ['abc', 'moins', 'virgule', 'point', 'trop', 'vide', 'lie']) assert.equal(champ(hote, '.' + c).value, '64.3', `${c} : aucune décimale fixe`)
+    for (const c of ['abc', 'moins', 'virgule', 'point', 'trop', 'vide', 'lie']) assert.equal(champ(hote, '.' + c).value, '64,3', `${c} : aucune décimale fixe`)
     assert.equal(champ(hote, '.deux').value, '64,30', 'decimals="2" garde ses deux décimales')
     assert.equal(champ(hote, '.nombre').value, '64,30', 'decimals={2} aussi')
     window.close()
@@ -53,7 +53,7 @@ describe('mjs-core-number — `decimals` fautif : ignoré, et la console le dit,
     hote._shadow.querySelector('.bz').click()
     await pause(60)
     assert.deepEqual(dites(window.eval('globalThis.__erreurs')).slice(avant), ['-2'])
-    assert.equal(champ(hote, '.lie').value, '64.3')
+    assert.equal(champ(hote, '.lie').value, '64,3')
     window.close()
   })
 })

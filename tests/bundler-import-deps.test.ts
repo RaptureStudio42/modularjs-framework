@@ -28,12 +28,12 @@ describe('bundler — invalidation des .mjs qui @import un module .civet', funct
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
 
-    const civetPath = join(srcDir, 'helper.civet')
+    const civetPath = join(srcDir, 'helper.civet.mjs')
     const mjsPath = join(srcDir, 'app.mjs')
 
     writeFileSync(civetPath, 'export hello = -> "v1"')
     writeFileSync(mjsPath, [
-      "@import hello 'helper.civet'",
+      "@import hello 'helper.civet.mjs'",
       '<script>val = hello()</script>',
       '<p>{val}</p>',
     ].join('\n'))
@@ -137,11 +137,11 @@ describe('bundler — invalidation des .mjs qui @import un module .civet', funct
 
     const vendorPath = join(srcDir, 'vendor', 'lib.js')
     writeFileSync(vendorPath, 'export const v = 1\n')
-    writeFileSync(join(srcDir, 'helper.module.civet'), [
+    writeFileSync(join(srcDir, 'helper.module.civet.mjs'), [
       "export loadLib = -> await µimport('vendor/lib.js')",
     ].join('\n'))
     writeFileSync(join(srcDir, 'app.mjs'), [
-      "@import loadLib 'helper.module.civet'",
+      "@import loadLib 'helper.module.civet.mjs'",
       '<script>val = 1</script>',
       '<p>{val}</p>',
     ].join('\n'))

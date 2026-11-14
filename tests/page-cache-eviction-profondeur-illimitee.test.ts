@@ -14,11 +14,12 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Window } from 'happy-dom'
+import { lireRuntime } from './helpers/runtime-projete.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function loadPageCache(win: any) {
-  const initSrc = readFileSync(join(__dirname, '../src/runtime/mjs_init.ts'), 'utf-8')
+  const initSrc = lireRuntime(join(__dirname, '../src/runtime/mjs_init.ts'))
     .replace(/export\s*\{[^}]*\}/, '')
   const pageCacheSrc = readFileSync(join(__dirname, '../src/runtime/mjs_page_cache.ts'), 'utf-8')
   const sandbox = `

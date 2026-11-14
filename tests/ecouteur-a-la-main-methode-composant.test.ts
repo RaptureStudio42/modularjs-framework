@@ -24,7 +24,7 @@ const SOURCE = [
   '  bouton.addEventListener \'focus\', -> @classList.add(\'vu\')',
   '  bouton.addEventListener \'mjs-lire\', -> window.__lu = [@nodeName, @compte]',
   '</script>',
-  '<button class="b" @this=!{bouton}>{$n}</button>',
+  '<button class="b" :this=!{bouton}>{$n}</button>',
 ].join('\n')
 
 async function attendre(cond: () => boolean, ms = 3000) {

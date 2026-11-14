@@ -73,7 +73,7 @@
   wheelTimer = null
   push = (k)->
     $pushed = k
-    setTimeout((-> $pushed = ''), 150)
+    µafter 150, -> $pushed = ''
 
   onWheel = (e)->
     return if $off or not boolAttr($wheel)
@@ -84,8 +84,8 @@
     acc += delta
     return if Math.abs(acc) < 50
     touch()
-    clearTimeout(wheelTimer) if wheelTimer
-    wheelTimer = setTimeout(commit, WHEEL_REST)
+    wheelTimer?.()
+    wheelTimer = µafter WHEEL_REST, commit
     if acc < 0
       plus()
       push('plus')
@@ -161,28 +161,28 @@
     µ._mjs_formReset @, ->
       start = num($value, 0)
       ->
-        clearTimeout(wheelTimer)
+        wheelTimer?.()
         before = undefined
         $value = start
         return
     µ._mjs_formLabel @, spinRef, true
 
   µdestroy ->
-    clearTimeout(wheelTimer) if wheelTimer
+    wheelTimer?.()
 </script>
 
-<div class="box" part="box" @this=!{boxRef} @class{$off}="off" --mjs-gauge-color={$color} --mjs-gauge-warn={$warnColor} --mjs-gauge-fill={($ratio * 100) + '%'}>
-  <div class="spinner" role="spinbutton" tabindex="0" aria-label={$labelText} @this=!{spinRef} aria-valuenow={$n} aria-valuemin={num($min, 0)} aria-valuemax={num($max, 10)} aria-disabled={$off ? 'true' : null} @keydown={onKey(e)} @keyup={onKeyEnd(e)} @blur={commit()}>
+<div class="box" part="box" :this=!{boxRef} :class{$off}="off" --mjs-gauge-color={$color} --mjs-gauge-warn={$warnColor} --mjs-gauge-fill={($ratio * 100) + '%'}>
+  <div class="spinner" role="spinbutton" tabindex="0" aria-label={$labelText} :this=!{spinRef} aria-valuenow={$n} aria-valuemin={num($min, 0)} aria-valuemax={num($max, 10)} aria-disabled={$off ? 'true' : null} @keydown={onKey(e)} @keyup={onKeyEnd(e)} @blur={commit()}>
     <output part="value">{$n}</output>
     <div class="progress" part="meter">
-      <span class="meter" @class{$hot}="hot"></span>
+      <span class="meter" :class{$hot}="hot"></span>
     </div>
-    <button type="button" class="btn" part="button" aria-label="+" disabled={$off ? true : null} @class{$pushed is 'plus'}="pushed" @click={bump(1)}>+</button>
-    <button type="button" class="btn" part="button" aria-label="-" disabled={$off ? true : null} @class{$pushed is 'minus'}="pushed" @click={bump(-1)}>-</button>
+    <button type="button" class="btn" part="button" aria-label="+" disabled={$off ? true : null} :class{$pushed is 'plus'}="pushed" @click={bump(1)}>+</button>
+    <button type="button" class="btn" part="button" aria-label="-" disabled={$off ? true : null} :class{$pushed is 'minus'}="pushed" @click={bump(-1)}>-</button>
   </div>
 </div>
 
-<style @display="inline-block">
+<style :display="inline-block">
   .box
     display: flex
     justify-content: center

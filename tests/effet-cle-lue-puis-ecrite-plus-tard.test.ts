@@ -1,6 +1,6 @@
 // Un `µeffect` qui lit une clé du store pendant son passage et ne l'écrit que plus tard (minuterie, promesse, code qui
 // suit un `await`) repart quand la clé change : le message qui s'efface tout seul
-// (`if $$toast then setTimeout (-> $$toast = null), 50`) disparaît de nouveau.
+// (`if $$toast then µafter 50, -> $$toast = null`) disparaît de nouveau.
 //
 // Défaut : une clé écrite après coup sortait de la liste des dépendances, même lue pendant le passage. L'effet passait
 // au montage, puis plus jamais : le message posé par un bouton restait affiché pour toujours, sans erreur.
@@ -33,7 +33,7 @@ const TOAST = [
   'µeffect ->',
   '  globalThis.__passages = (globalThis.__passages ?? 0) + 1',
   '  if $$toast',
-  '    setTimeout (-> $$toast = null), 50',
+  '    µafter 50, -> $$toast = null',
   '</script>',
   '<p class="p">{$$toast}</p>',
   '<button class="go" @click={-> $$toast = \'enregistré\'}>go</button>',
@@ -68,8 +68,8 @@ describe('µeffect — une clé lue pendant le passage, écrite plus tard, reste
   after(async () => { await terminateSharedWorkerPool() })
 
   describe('liste des dépendances', () => {
-    it('écrite dans une minuterie (`if $$toast then setTimeout (-> $$toast = null), 50`)', async () => {
-      assert.deepEqual(await deps('µeffect ->\n  if $$toast\n    setTimeout (-> $$toast = null), 50'), [ '$$toast' ])
+    it('écrite dans une minuterie (`if $$toast then µafter 50, -> $$toast = null`)', async () => {
+      assert.deepEqual(await deps('µeffect ->\n  if $$toast\n    µafter 50, -> $$toast = null'), [ '$$toast' ])
     })
 
     it('écrite dans une promesse (`Promise.resolve().then -> $$sale = false`)', async () => {
@@ -82,13 +82,13 @@ describe('µeffect — une clé lue pendant le passage, écrite plus tard, reste
     })
 
     it('avec une variable locale lue à côté : les deux', async () => {
-      assert.deepEqual(await deps('$x = 1\nµeffect ->\n  if $$toast and $x\n    setTimeout (-> $$toast = null), 50'), [ '$$toast', 'x' ])
+      assert.deepEqual(await deps('$x = 1\nµeffect ->\n  if $$toast and $x\n    µafter 50, -> $$toast = null'), [ '$$toast', 'x' ])
     })
 
     it('témoins : lue seulement dans le code différé, ou écrite en cumulant pendant le passage, la marque \'!\' seule', async () => {
-      assert.deepEqual(await deps('µeffect ->\n  setInterval (-> $$tick = $$tick + 1), 1000'), [ '!' ])
+      assert.deepEqual(await deps('µeffect ->\n  µevery 1000, -> $$tick = $$tick + 1'), [ '!' ])
       assert.deepEqual(await deps('µeffect ->\n  $$k = $$k + 1'), [ '!' ])
-      assert.deepEqual(await deps('µeffect ->\n  $$vus += 1\n  setTimeout (-> $$vus = 0), 50'), [ '!' ])
+      assert.deepEqual(await deps('µeffect ->\n  $$vus += 1\n  µafter 50, -> $$vus = 0'), [ '!' ])
       assert.deepEqual(await deps('µeffect ->\n  $$n = $$n + 1\n  await Promise.resolve()'), [ '!' ])
       assert.deepEqual(await deps('µeffect ->\n  await Promise.resolve()\n  $$m = $$m + 1'), [ '!' ])
     })

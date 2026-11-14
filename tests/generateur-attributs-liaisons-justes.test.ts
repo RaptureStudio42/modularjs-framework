@@ -50,7 +50,7 @@ const VIVANTS: Record<string, string> = {
     '$rows = [{id: 1}, {id: 2}]',
     '$sel = 1',
     '</script>',
-    '{for r in $rows by id}<li class="r{r.id}" @style.color={r.id === $sel ? \'red\' : null}>{r.id}</li>{end}',
+    '{for r in $rows by id}<li class="r{r.id}" :style.color={r.id === $sel ? \'red\' : null}>{r.id}</li>{end}',
     '<button class="go" @click={$sel = 2}>go</button>',
   ].join('\n'),
   'g-fils': [
@@ -77,8 +77,8 @@ const VIVANTS: Record<string, string> = {
     '__mjsCast = "auteur-cast"',
     '</script>',
     '<input class="n" type="text" value.number=!{$n} aria-label="n">',
-    '<input class="ra" type="radio" value="a" @group=!{$c} aria-label="a"><input class="rb" type="radio" value="b" @group=!{$c} aria-label="b">',
-    '<input class="ca" type="checkbox" value="a" @group=!{$cs} aria-label="ca">',
+    '<input class="ra" type="radio" value="a" :group=!{$c} aria-label="a"><input class="rb" type="radio" value="b" :group=!{$c} aria-label="b">',
+    '<input class="ca" type="checkbox" value="a" :group=!{$cs} aria-label="ca">',
     '{for x in $xs by id}{const nom = x.id + "!"}<button class="x{x.id}" @click={window.__clic = [x.id, nom]}>x</button>{end}',
     '{await $p}<i>attente</i>{success d}<button class="aw" @click={window.__aw = d.n}>a</button>{end}',
     '<mjs-g-fils class="fils" valeur.number=!{$m}></mjs-g-fils>',
@@ -89,7 +89,7 @@ const VIVANTS: Record<string, string> = {
     '$a = true',
     '$b = false',
     '</script>',
-    '<p class="p" @class{$a}="on" @class{$b}="on">p</p>',
+    '<p class="p" :class{$a}="on" :class{$b}="on">p</p>',
     '<button class="ta" @click={$a = not $a}>a</button><button class="tb" @click={$b = not $b}>b</button>',
   ].join('\n'),
   'g-objet': [
@@ -223,7 +223,7 @@ describe('générateur — formes qui se construisent', function () {
   it('@in=*knockout : le message dit l\'effet qui le remplace', async () => {
     let message = ''
     try {
-      const app = await harnais('generateur-transition-remplacee', { 'g-ko': '<p @in=*knockout>k</p>\n' })
+      const app = await harnais('generateur-transition-remplacee', { 'g-ko': '<p :in=*knockout>k</p>\n' })
       await app.destroy()
     }
     catch (e: any) {

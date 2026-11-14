@@ -259,8 +259,8 @@ describe('docs/02-composant.md — raccourci d\'attribut nu retiré, commentaire
 })
 
 describe('attribut dupliqué sur une balise = erreur générique au parseur (filet)', () => {
-  it('<a @confirm="A" data-x=">" @confirm="B">x</a> via transpile() → erreur (dupliqué)', async () => {
-    await assert.rejects(transpile('<a @confirm="A" data-x=">" @confirm="B">x</a>', { moduleName: 'a3-1-confirm-dup' }), /dupliqu/)
+  it('<a :confirm="A" data-x=">" :confirm="B">x</a> via transpile() → erreur (dupliqué)', async () => {
+    await assert.rejects(transpile('<a :confirm="A" data-x=">" :confirm="B">x</a>', { moduleName: 'a3-1-confirm-dup' }), /dupliqu/)
   })
 
   it('<div title="a" title="b"> → erreur parser.attribut-duplique, nomme l\'attribut, la balise et la ligne', () => {
@@ -270,22 +270,22 @@ describe('attribut dupliqué sur une balise = erreur générique au parseur (fil
     assert.throws(() => parse('<div title="a" title="b">x</div>'), /ligne 1/)
   })
 
-  it('<div class="a" @class{$x}="b"> → OK, `class` et `@class{$x}` sont deux noms différents', () => {
-    const root = parse('<div class="a" @class{$.x}="b">c</div>')
+  it('<div class="a" :class{$x}="b"> → OK, `class` et `@class{$x}` sont deux noms différents', () => {
+    const root = parse('<div class="a" :class{$.x}="b">c</div>')
     assert.equal(root.children[0].attrs.length, 2)
   })
 
-  it('<a @confirm="A">x</a><a @confirm="B">y</a> → OK, deux balises distinctes', () => {
-    assert.doesNotThrow(() => parse('<a @confirm="A">x</a><a @confirm="B">y</a>'))
+  it('<a :confirm="A">x</a><a :confirm="B">y</a> → OK, deux balises distinctes', () => {
+    assert.doesNotThrow(() => parse('<a :confirm="A">x</a><a :confirm="B">y</a>'))
   })
 
   it('@class{a}="x" @class{b}="y" sur la même balise → OK, deux conditions ne collisionnent jamais', () => {
-    const root = parse('<div @class{a}="x" @class{b}="y">c</div>')
+    const root = parse('<div :class{a}="x" :class{b}="y">c</div>')
     assert.equal(root.children[0].attrs.length, 2)
   })
 
   it('@style.color={…} @style.width={…} sur la même balise → OK, deux propriétés différentes', () => {
-    const root = parse('<div @style.color={1} @style.width={2}>c</div>')
+    const root = parse('<div :style.color={1} :style.width={2}>c</div>')
     assert.equal(root.children[0].attrs.length, 2)
   })
 
@@ -294,7 +294,7 @@ describe('attribut dupliqué sur une balise = erreur générique au parseur (fil
   })
 
   it('@Title="a" @title="b" → OK, la casse distingue les noms (traitée ailleurs)', () => {
-    assert.doesNotThrow(() => parse('<div @Title="a" @title="b">c</div>'))
+    assert.doesNotThrow(() => parse('<div @Title="a" :title="b">c</div>'))
   })
 })
 

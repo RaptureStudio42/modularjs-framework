@@ -18,8 +18,11 @@ after(async () => { await terminateSharedWorkerPool() })
 // « inFlight » assez longtemps pour que la 2e (envoyée en même temps) trouve la porte fermée —
 // avec maxQueue:0, aucune marge d'attente, la course serait sinon flaky sur un rendu trop rapide.
 const LENT_SRC = `
+<script module lang="coffee">
+plusTard = (valeur, ms) -> new Promise((tenir) -> setTimeout((-> tenir(valeur)), ms))
+</script>
 <script lang="coffee">
-$p = new Promise (resolve) -> setTimeout((-> resolve('fini')), 300)
+$p = plusTard 'fini', 300
 </script>
 <div class="wrap">
 {await $p}

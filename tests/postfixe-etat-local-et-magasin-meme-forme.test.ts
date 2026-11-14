@@ -15,7 +15,7 @@ describe('postfixe lu : une seule forme pour l\'état local et le magasin', func
   it('l\'état local s\'écrit comme le magasin', async () => {
     const r = await transpile(SOURCE, { moduleName: 'postfixe' })
     assert.doesNotMatch(r.output, /\(\(_v => \(/)
-    assert.match(r.output, /\(\(_v\) => \(µ\._set\(_mjsThis, 'x', \(\+_v\) \+ 1\), \+_v\)\)\(\$\.x\)/)
+    assert.match(r.output, /\(\(_mjs_n, _mjs_v = _mjs_n\+\+\) => \(µ\._set\(_mjsThis, 'x', _mjs_n\), _mjs_v\)\)\(\$\.x\)/)
   })
 
   it('même sens au clic : l\'ancienne valeur, convertie en nombre', async () => {

@@ -15,7 +15,7 @@ import { makeMu, composant, appeler } from './helpers/types-runtime.js'
 describe('types — unshift refusé ou ramené : la liste revient exactement à son état d’avant', () => {
   function messages(mode: 'warn' | 'error') {
     const µ  = makeMu(mode)
-    const el = composant({ messages: '{ id: int, t: string }[]' })
+    const el = composant({ messages: 'Message[]' })
     const a  = { id: 0, t: 'a' }
     const b  = { id: 1, t: 'b' }
     const l  = [a, b]
@@ -100,7 +100,7 @@ describe('types — splice : l’indice de départ se lit comme le fait la liste
 // rapide des méthodes, il ne recopie ni ne revérifie la liste entière à chaque élément reçu
 const FLUX = [
   '<vars>',
-  '  $$flux  { id: int, t: string }[]',
+  '  $$flux  Message[]',
   '</vars>',
   '',
   '<script>',
@@ -131,6 +131,7 @@ describe('types — une liste de store typé garde la voie rapide des méthodes'
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'flux.mjs'), FLUX)
+  writeFileSync(join(srcDir, 'app.types.mjs'), '<types>\nMessage\n  id  int\n  t  string\n</types>\n')
     const bundler = new Bundler({ sourceDir: srcDir, outputDir: outDir, manifestPath: join(root, 'bundle.js') })
     const stats   = await bundler.compile()
     assert.equal(stats.errors.length, 0, stats.errors.map((e: any) => e.message).join('\n'))

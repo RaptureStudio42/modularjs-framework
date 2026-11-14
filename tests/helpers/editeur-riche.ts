@@ -55,7 +55,7 @@ export const HOTE = `<script>
     window.__etat = -> { modele: $modele, coches: $coches }
 </script>
 
-<form class="f" @noUJS>
+<form class="f" :noUJS>
   <@@editor class="e1" name="contrat" value=!{$contrat} @input={@noter(e)} @change={@noter(e)}></@@editor>
   <@@editor class="e2" name="liste" value=!{$liste} toolbar="bold italic check ul link undo redo"></@@editor>
   <@@toolbar class="tb3" for="e3"></@@toolbar>
@@ -74,7 +74,7 @@ export const HOTE = `<script>
 <pre class="o6">{$brut}</pre>
 <pre class="ev">{$evts.join(',')}</pre>
 
-<form class="fa" @noUJS>
+<form class="fa" :noUJS>
   <@@toolbar class="tb7" for="e7"></@@toolbar>
   <@@editor id="e7" class="e7" name="reps[]" answer value={$modele} checked=!{$coches} @change={@noterReps(e)} @input={@noterReps(e)}></@@editor>
   <@@editor class="e8" name="lecture[]" answer readonly value={$modele} checked={[0, 2]}></@@editor>
@@ -146,13 +146,15 @@ const construits: Record<string, Promise<Construction>> = {}
 
 // la construction de l'hôte dans ce mode, une seule fois par page (`cle`) : en développement le script concaténé (le cœur, les libellés du
 // manifeste, les modules, l'hôte), en production les morceaux du build lus en mémoire ; `source` remplace l'hôte commun par une page à part
-export function construire(build: Build, source: string = HOTE, cle = 'editeur'): Promise<Construction> {
+// (`morceaux` faux : une page sans module cœur, aucun morceau à part attendu)
+export function construire(build: Build, source: string = HOTE, cle = 'editeur', voisins: Record<string, string> = {}, morceaux = true): Promise<Construction> {
   construits[cle + '-' + build] ??= (async () => {
     const root   = mjsTmp(cle + '-' + build)
     const srcDir = join(root, 'src')
     const outDir = join(root, 'out')
     mkdirSync(srcDir, { recursive: true })
     writeFileSync(join(srcDir, 'hote.mjs'), source)
+    for (const [nom, texte] of Object.entries(voisins)) writeFileSync(join(srcDir, nom), texte)   // ses voisins (un .js importé)
     const manifeste = join(root, 'bundle.js')
     const options: any = build === 'prod'
       ? { sourceDir: srcDir, outputDir: outDir, manifestPath: join(outDir, 'bundle.js'), js: 'split', env: 'prod' }
@@ -164,7 +166,7 @@ export function construire(build: Build, source: string = HOTE, cle = 'editeur')
     const fichiers = new Map<string, Buffer>()
     if (build === 'prod') {
       for (const f of readdirSync(outDir)) if (/\.(js|json)$/.test(f)) fichiers.set(f, readFileSync(join(outDir, f)))
-      assert.ok(fichiers.has('bundle.js') && [...fichiers.keys()].some((f) => /^core-editor-/.test(f)), 'le build de production sépare un morceau par module')
+      assert.ok(fichiers.has('bundle.js') && (!morceaux || [...fichiers.keys()].some((f) => /^core-editor-/.test(f))), 'le build de production sépare un morceau par module')
       return { build, script: '', fichiers }
     }
     return { build, script: assembler(outDir, manifeste), fichiers }
@@ -175,7 +177,7 @@ export function construire(build: Build, source: string = HOTE, cle = 'editeur')
 export type Session = { page: any, ctx: any, browser: any, logs: string[], fermer: () => Promise<void> }
 
 // une page à part : sa source, sa clé de construction, l'expression vraie quand elle est prête et ses aides (sinon l'hôte commun)
-export type Page = { source: string, cle: string, attente: string, aides: string }
+export type Page = { source: string, cle: string, attente: string, aides: string, fichiers?: Record<string, string>, morceaux?: boolean }
 
 // la page de l'hôte ouverte dans ce moteur, les aides posées, la console écoutée ; `null` quand le moteur n'est pas installé. Une étape
 // qui échoue après le lancement (la page, son attente, ses aides) ferme le navigateur avant que l'erreur remonte : la session n'est
@@ -183,7 +185,7 @@ export type Page = { source: string, cle: string, attente: string, aides: string
 export async function ouvrir(nom: Moteur, build: Build, autre?: Page): Promise<Session | null> {
   const playwright: any = await import('playwright')
   if (!existsSync(playwright[nom].executablePath())) return null
-  const fait    = await construire(build, autre?.source, autre?.cle)
+  const fait    = await construire(build, autre?.source, autre?.cle, autre?.fichiers, autre?.morceaux)
   const browser = await playwright[nom].launch({ headless: true })
   try {
     return await preparer(browser, build, fait, autre)

@@ -36,30 +36,6 @@ const ONIG_WASM = require.resolve('vscode-oniguruma/release/onig.wasm')
 
 let tokenise: (src: string) => { txt: string, scopes: string[] }[]
 
-before(async () => {
-  await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
-  const registry = new vsctm.Registry({
-    onigLib: Promise.resolve({
-      createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
-      createOnigString:  (s: string)   => new oniguruma.OnigString(s),
-    }),
-    loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
-      ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
-      : null,
-  })
-  const grammar = await registry.loadGrammar('text.html.modularjs')
-  assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
-  tokenise = (src) => {
-    let state = vsctm.INITIAL
-    return src.split('\n').flatMap((ligne) => {
-      const r = grammar.tokenizeLine(ligne, state)
-      state = r.ruleStack
-      return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
-        ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
-    })
-  }
-})
-
 // LES QUATRE POSITIONS où la directive peut s'écrire — c'est la liste qui donne son sens au « refusé
 // PARTOUT » de la solidité. `<a>` y est parce que `@vt` y avait une vie propre (renommé
 // `@pageTransition`) : l'oublier laisserait passer une couleur rouge sur une écriture licite.
@@ -87,40 +63,64 @@ async function positionsRefusees(attr: string, etiquette: string): Promise<strin
 // LE CORPUS — une écriture par forme, telle qu'elle se tape dans un vrai composant.
 // ---------------------------------------------------------------------------
 const VALIDES = [
-  '@viewTransition',                    // nue — active la transition avec héritage (<style>)
-  '@viewTransition.fade',               // préréglage seul
-  '@viewTransition.none',               // sentinel « coupe »
-  '@viewTransition.cube={ dir: left }', // préréglage + options
-  '@viewTransition.hero',               // nom de MORPH libre sur une balise ordinaire
-  '@viewTransition.diamant',            // préréglage MAISON (µ._vtPresets), inconnu du compilateur
+  ':viewTransition',                    // nue — active la transition avec héritage (<style>)
+  ':viewTransition.fade',               // préréglage seul
+  ':viewTransition.none',               // sentinel « coupe »
+  ':viewTransition.cube={ dir: left }', // préréglage + options
+  ':viewTransition.hero',               // nom de MORPH libre sur une balise ordinaire
+  ':viewTransition.diamant',            // préréglage MAISON (µ._vtPresets), inconnu du compilateur
 ]
 
 const ROUGES_ATTENDUS = [
-  '@viewTransition="cube"',
-  "@viewTransition='cube'",
-  '@viewTransition={maRoute}',
-  '@viewTransition{$featured}="hero"',
-  '@vt="cube"',
-  '@vt{$featured}="hero"',
-  '@viewTransition.cube:left',
-  '@viewTransition.turn:right={ p: 3 }',
+  ':viewTransition="cube"',
+  ":viewTransition='cube'",
+  ':viewTransition={maRoute}',
+  ':viewTransition{$featured}="hero"',
+  ':vt="cube"',
+  ':vt{$featured}="hero"',
+  ':viewTransition.cube:left',
+  ':viewTransition.turn:right={ p: 3 }',
 ]
 
 // Refusé aux quatre positions, et pourtant MUET — assumé : la grammaire ne relit pas la
 // mini-grammaire des options (`parseVtValue`), et ne saura donc jamais dire d'un `duraction:`
 // qu'il est fautif. Peindre au jugé serait pire que se taire.
 const TOLERE_MUET = [
-  '@viewTransition.cube={ duraction: 600 }',   // clé d'option inconnue
-  '@viewTransition.cube={ priority: -1 }',     // priorité négative
+  ':viewTransition.cube={ duraction: 600 }',   // clé d'option inconnue
+  ':viewTransition.cube={ priority: -1 }',     // priorité négative
 ]
 
 // Refusé SEULEMENT à certaines positions — hors contrat, la grammaire n'a pas le contexte de balise.
 const HORS_CONTRAT = [
-  '@vt.fade',                    // alias retiré sur <style> uniquement
+  ':vt.fade',                    // alias retiré sur <style> uniquement
 ]
 
 describe('parité grammaire ↔ compilateur — @viewTransition', function () {
   this.timeout(120000)
+
+  before(async () => {
+    await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
+    const registry = new vsctm.Registry({
+      onigLib: Promise.resolve({
+        createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
+        createOnigString:  (s: string)   => new oniguruma.OnigString(s),
+      }),
+      loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
+        ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
+        : null,
+    })
+    const grammar = await registry.loadGrammar('text.html.modularjs')
+    assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
+    tokenise = (src) => {
+      let state = vsctm.INITIAL
+      return src.split('\n').flatMap((ligne) => {
+        const r = grammar.tokenizeLine(ligne, state)
+        state = r.ruleStack
+        return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
+          ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
+      })
+    }
+  })
 
   it('A. SOLIDITÉ — tout ce qui est peint en rouge est refusé aux QUATRE positions', async () => {
     for (const attr of ROUGES_ATTENDUS) {
@@ -164,7 +164,7 @@ describe('parité grammaire ↔ compilateur — @viewTransition', function () {
   })
 
   it('C bis. la forme FAUTIVE n\'est plus peinte plus vive que la juste', () => {
-    const fautive = scopesDe('<style @viewTransition="cube"></style>', 'viewTransition')
+    const fautive = scopesDe('<style :viewTransition="cube"></style>', 'viewTransition')
     assert.ok(!fautive.includes('entity.other.attribute-name.event.modularjs'), '@viewTransition="cube" garde le scope des gestionnaires d\'événement')
   })
 })

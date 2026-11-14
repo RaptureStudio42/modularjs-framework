@@ -161,7 +161,20 @@ describe('<routes> — compilation (transpiler/index.ts)', function () {
     assert.match(output, /_mjs_is_router_aware = true/)
   })
 
-  it('préchargement compile-time : µ.Autoloader?.load?.(\'mjs-<composant>\') émis pour chaque route', async () => {
+  it('préchargement sous "on" : µ.Autoloader?.load?.(\'mjs-<composant>\') émis pour chaque route', async () => {
+    const src = [
+      '<routes target="doc-content">',
+      '  /          home-page',
+      '  /guide     guide-page',
+      '</routes>',
+      '<p>ok</p>',
+    ].join('\n')
+    const { output } = await transpile(src, { moduleName: 'routes-preload', routesPreload: 'on' } as any)
+    assert.match(output, /µ\.Autoloader\?\.load\?\.\('mjs-home-page'\)/)
+    assert.match(output, /µ\.Autoloader\?\.load\?\.\('mjs-guide-page'\)/)
+  })
+
+  it('chargement au repos (défaut) : la liste des pages confiée au routeur', async () => {
     const src = [
       '<routes target="doc-content">',
       '  /          home-page',
@@ -170,8 +183,8 @@ describe('<routes> — compilation (transpiler/index.ts)', function () {
       '<p>ok</p>',
     ].join('\n')
     const { output } = await transpile(src, { moduleName: 'routes-preload' })
-    assert.match(output, /µ\.Autoloader\?\.load\?\.\('mjs-home-page'\)/)
-    assert.match(output, /µ\.Autoloader\?\.load\?\.\('mjs-guide-page'\)/)
+    assert.ok(output.includes('µ._mjs_routesIdle?.(["home-page","guide-page"]);'))
+    assert.doesNotMatch(output, /µ\.Autoloader\?\.load\?\./)
   })
 
   it('le script peut COMPLÉTER la table posée par le bloc (mutation, pas réassignation)', async () => {

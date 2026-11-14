@@ -15,6 +15,8 @@
 // un second cœur chargé en double. Cache MÉMOIRE PAR VISIONNEUSE (pas de fichier écrit,
 // `Map<fileName, …>`) : recompilé seulement si le core de l'app change (nouveau build) — ouvrir
 // l'atelier des variables de thème n'invalide jamais le cache du journal, et réciproquement.
+// cœur minifié (production, ou `minify: true`) : ses membres internes y portent un nom court (`_mjs_mount` → `H`),
+// la page est minifiée à son tour avec la table de noms de la construction (cf. coreShortNames)
 
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +24,8 @@ import { basename, dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { transpile } from '../transpiler/index.js'
+import { minifyJs } from '../bundler/minify.js'
+import { projeterBlocs } from '../bundler/index.js'
 import { writeHashedAsset } from './ssr-head.js'
 import { t, getMessagesLang, type MsgKey } from '../messages/index.js'
 import { resolveTrustProxy } from '../mjs-ws/trust-proxy.js'
@@ -57,19 +61,27 @@ function locateRuntimeDir(): string {
   return candidates[0]
 }
 
-// ce que les visionneuses appellent dans le cœur et qu'un cœur nu (`runtime: 'core'`) n'embarque pas : le fichier du runtime et le
-// membre qu'il pose (sur `µ` ou sur `µ.Element.prototype`), cherché dans le texte du cœur pour savoir s'il manque, puis dans la
-// page pour ne jamais le poser deux fois. Dans l'ordre du cœur. La liste suit le code compilé des visionneuses
-// (tests/viewer-page-coeur-nu.test.ts le garde) ; rien n'entre dans le cœur de l'application, seule la page de la visionneuse s'alourdit
-export const VIEWER_RUNTIME = [
-  { file: 'mjs_deep.ts',          member: '_mjs_deepSet',          on: 'µ' },
+// ce que les visionneuses appellent dans le cœur et qu'un cœur nu (`runtime: 'core'`) n'embarque pas, ou qu'une construction de
+// production retire d'un cœur où aucune unité ne s'en sert (les aides d'écriture d'attribut, que la page du journal appelle), ou qu'un cœur nu ou une construction de production retire dans ce cas (le gestionnaire de `<@window>` de l'atelier de thème : sa version sans graphe des signaux, car un cœur de développement qui a le graphe garde la sienne, mjs_signals.ts, un cœur de développement complet garde celle-ci, et l'atelier est fermé en production) : le fichier
+// du runtime, ou seulement son bloc balisé (`block` : `// <nom>` … `// </nom>`, au niveau du module) et les noms de la portée du cœur
+// que ce bloc ou ce fichier lit (`scope`, déclarés par la page d'après leur déclaration dans le fichier : sa ligne, ou ses lignes jusqu'à
+// celle qui finit par `;` ; `fichier:nom` pour un nom déclaré dans un autre fichier du runtime), et le membre posé (sur `µ` ou sur
+// `µ.Element.prototype`), cherché dans le texte du cœur pour savoir s'il manque, puis dans la page pour ne jamais le poser deux fois.
+// Dans l'ordre du cœur. La liste suit le code compilé des visionneuses (tests/viewer-page-coeur-nu.test.ts le garde) ; rien n'entre
+// dans le cœur de l'application, seule la page de la visionneuse s'alourdit
+interface ViewerRuntimeEntry { file: string, member: string, on: 'µ' | 'µ.Element.prototype', block?: string, scope?: readonly string[] }
+export const VIEWER_RUNTIME: readonly ViewerRuntimeEntry[] = [
+  { file: 'mjs_init.ts',          member: '_mjs_safeAttr',         on: 'µ', block: 'attribut-filtre' },
+  { file: 'mjs_element.ts',       member: '_mjs_sigFree',          on: 'µ', block: 'libre-sans-signaux' },
+  { file: 'mjs_element.ts',       member: '_mjs_selVal',           on: 'µ', block: 'attribut-select' },
+  { file: 'mjs_element.ts',       member: '_mjs_updAttrNode',      on: 'µ', block: 'attribut-maj', scope: ['MJS_BOOLEAN_PROPS', '_mjs_clsBases', '_mjs_spCk'] },
+  { file: 'mjs_deep.ts',          member: '_mjs_deepSet',          on: 'µ', scope: ['mjs_init.ts:_mjsNatif'] },
   { file: 'mjs_lifecycle.ts',     member: '_mjs_hook',             on: 'µ.Element.prototype' },
   { file: 'mjs_destroy_hooks.ts', member: '_mjs_destroyWithHooks', on: 'µ.Element.prototype' },
   { file: 'mjs_if.ts',            member: '_mjs_updIf',            on: 'µ.Element.prototype' },
   { file: 'mjs_for.ts',           member: '_mjs_updFor',           on: 'µ.Element.prototype' },
   { file: 'mjs_for_nested.ts',    member: '_mjs_updList',          on: 'µ.Element.prototype' },
-] as const
-type ViewerRuntimeEntry = typeof VIEWER_RUNTIME[number]
+]
 
 // texte du cœur que la page charge : le fichier du cœur (fichiers séparés), cherché dans le dossier de sortie que le serveur donne
 // (à défaut, à côté du manifeste), ou le manifeste lui-même (fichier unique, cœur fusionné dedans) ; null si le fichier est
@@ -80,25 +92,83 @@ function readCoreText(manifestPath: string, manifestSrc: string, corePath: strin
   return existsSync(file) ? readFileSync(file, 'utf-8') : null
 }
 
-// les fichiers que le cœur n'a pas : un membre posé par `.membre = function` (ou `async function`) dans le texte du cœur y est
-function missingViewerRuntime(coreText: string | null): ViewerRuntimeEntry[] {
+// table des noms courts du cœur chargé : un cœur minifié n'écrit plus ses membres internes en toutes lettres, la construction a
+// laissé leur table dans son dossier de sortie (`.mangle-cache.json`, cf. Bundler.saveMangleCache). null quand le cœur garde ses
+// noms longs (construction non minifiée, même si la table d'une construction précédente traîne dans le dossier), quand il est
+// introuvable, ou sans table lisible qui raccourcit `_mjs_mount` : la page reste alors telle que compilée. Noms longs = `_mjs_mount`
+// défini ou appelé (`_mjs_mount(`) : un cœur de développement minifié l'écrit encore en toutes lettres dans une chaîne, la liste des
+// champs internes que le rechargement à chaud laisse de côté (mjs_hotswap.ts), sans plus porter ce nom
+function coreShortNames(coreText: string | null, dir: string): Record<string, string | false> | null {
+  if (coreText === null || /\b_mjs_mount\s*\(/.test(coreText)) return null
+  const file = join(dir, '.mangle-cache.json')
+  if (!existsSync(file)) return null
+  try {
+    const noms = JSON.parse(readFileSync(file, 'utf-8'))
+    return noms !== null && typeof noms === 'object' && !Array.isArray(noms) && typeof noms._mjs_mount === 'string' ? noms : null
+  } catch {
+    return null
+  }
+}
+
+// les fichiers que le cœur n'a pas : un membre posé par `.membre = function` ou `.membre ||= function` (ou `async function`, ou une fonction fléchée) dans le
+// texte du cœur y est, sous son nom court quand le cœur est minifié ; un membre absent de la table n'est pas dans le cœur
+function missingViewerRuntime(coreText: string | null, noms: Record<string, string | false> | null): ViewerRuntimeEntry[] {
   if (coreText === null) return [...VIEWER_RUNTIME]
-  return VIEWER_RUNTIME.filter(e => !new RegExp('\\.' + e.member + '\\s*=\\s*(?:async\\s+)?function').test(coreText))
+  return VIEWER_RUNTIME.filter(e => {
+    const nom = noms === null ? e.member : noms[e.member]
+    return typeof nom !== 'string' || !new RegExp('\\.' + nom.replace(/[$]/g, '\\$') + '\\s*(?:\\|\\|)?=\\s*(?:async\\s+)?(?:function|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)').test(coreText)
+  })
 }
 
 const CORE_IMPORT_LINE_RE = /^import \{ µ \} from [^\n]*\n/
 
-// joint ces fichiers juste après l'import du cœur, chacun derrière son test de présence : la page les pose avant d'avoir
-// le moindre élément, et un cœur qui a déjà le membre n'est jamais redéfini. Sans l'import en tête, erreur plutôt que rien joint
-export function withViewerRuntime(js: string, files: ViewerRuntimeEntry[]): string {
+// les noms de la PORTÉE du cœur (déclarés au niveau de son module, jamais posés sur `µ`) qu'un fichier joint lit : hors de cette
+// portée, la page les déclare elle-même. `MJS_RESOLVED_DESTROY` (mjs_element.ts) est la promesse résolue que rend une destruction
+// sans crochet ; `mjs_if.ts` la compare au retour de `_mjs_destroyNodeAndChildren` pour s'épargner un `.catch`. Celle de la page
+// n'est jamais celle du cœur : chaque destruction de la page reçoit son `.catch`, sans effet sur une promesse déjà résolue
+// (tests/viewer-page-coeur-nu.test.ts relève les noms que lisent les fichiers joints)
+export const VIEWER_CORE_SCOPE = 'var MJS_RESOLVED_DESTROY = Promise.resolve();'
+
+// les blocs balisés que la page joint sous leur autre forme (`// <sans-nom>`, cf. projeterBlocs) : la note des listes marquées avec leurs
+// lignes (`<lignes-brutes>`, `µraw(liste, true)`), qu'aucune visionneuse n'écrit et qu'une construction de production retire d'un cœur où
+// aucune unité ne s'en sert ; telle quelle, la passe d'un `{for}` jointe lirait `µ._mjs_rawRows`, absent de ce cœur, et la page planterait
+const VIEWER_BLOCKS_OFF: Record<string, boolean> = { 'lignes-brutes': false }
+
+// joint ces fichiers (ou leur bloc) juste après l'import du cœur, chacun derrière son test de présence, précédés des noms de la
+// portée du cœur qu'ils lisent, et les blocs de VIEWER_BLOCKS_OFF sous leur autre forme : la page les pose avant d'avoir le moindre
+// élément, et un cœur qui a déjà le membre n'est jamais redéfini. Sans l'import en tête, ou sans le bloc ou la ligne d'un nom dans
+// son fichier, erreur plutôt que rien joint
+export function withViewerRuntime(js: string, files: readonly ViewerRuntimeEntry[]): string {
   if (!CORE_IMPORT_LINE_RE.test(js)) throw new Error(t('server.viewer-import-coeur-introuvable'))
   const dir     = locateRuntimeDir()
+  const lus     = new Map<string, string>()
+  const lire    = (file: string): string => {
+    const deja = lus.get(file)
+    if (deja !== undefined) return deja
+    const path = join(dir, file)
+    if (!existsSync(path)) throw new Error(t('server.viewer-runtime-introuvable', { fichier: file, dossier: dir }))
+    const texte = readFileSync(path, 'utf-8')
+    lus.set(file, texte)
+    return texte
+  }
+  const extrait = (file: string, motif: RegExp, morceau: string): string => {
+    const m = lire(file).match(motif)
+    if (!m) throw new Error(t('server.viewer-runtime-morceau-introuvable', { morceau, fichier: file, dossier: dir }))
+    return m[0]
+  }
+  // un nom de la portée du cœur, déclaré une fois par la page avec la valeur que sa déclaration lui donne dans le fichier (une ou plusieurs lignes, jusqu'au `;` final)
+  const portee  = new Map<string, string>()
+  for (const e of files) {
+    for (const ecrit of e.scope ?? []) {
+      const [fichier, nom] = ecrit.includes(':') ? ecrit.split(':') : [e.file, ecrit]
+      if (!portee.has(nom)) portee.set(nom, 'var ' + extrait(fichier, new RegExp('^(?:var )?' + nom + ' = (?:[^\\n]*\\n)*?[^\\n]*;$', 'm'), nom).replace(/^var /, ''))
+    }
+  }
   const runtime = files.map(e => {
-    const path = join(dir, e.file)
-    if (!existsSync(path)) throw new Error(t('server.viewer-runtime-introuvable', { fichier: e.file, dossier: dir }))
-    return 'if (!' + e.on + '.' + e.member + ') {\n' + readFileSync(path, 'utf-8') + '\n}'
+    const code = e.block === undefined ? lire(e.file) : extrait(e.file, new RegExp('^// <' + e.block + '>\\n[\\s\\S]*?^// </' + e.block + '>$', 'm'), '<' + e.block + '>')
+    return 'if (!' + e.on + '.' + e.member + ') {\n' + projeterBlocs(code, VIEWER_BLOCKS_OFF) + '\n}'
   }).join('\n')
-  return js.replace(CORE_IMPORT_LINE_RE, imp => imp + runtime + '\n')
+  return js.replace(CORE_IMPORT_LINE_RE, imp => imp + [VIEWER_CORE_SCOPE, ...portee.values()].join('\n') + '\n' + runtime + '\n')
 }
 
 const CORE_IMPORT_RE = /const µCore = '([^']+)';/
@@ -139,7 +209,7 @@ export const THEME_VIEWER: ViewerSpec = { fileName: 'theme-viewer.mjs', moduleNa
 // cache MÉMOIRE PAR VISIONNEUSE (clé `spec.fileName`) : ouvrir l'atelier /__mjs/theme n'invalide
 // jamais le cache du journal, et réciproquement — sinon chaque aller-retour entre les deux
 // visionneuses recompilait l'autre à chaque fois.
-const cache = new Map<string, { corePath: string, csp: boolean, kit: string, lang: string, js: string }>()
+const cache = new Map<string, { corePath: string, csp: boolean, kit: string, noms: string, lang: string, js: string }>()
 
 // textes des visionneuses : `⟪cle⟫` dans leur source désigne `viewer.<cle>` du catalogue, dans la langue des messages —
 // littéral de chaîne dans le script, texte échappé dans le gabarit ; `⟪#langue⟫` donne la langue elle-même (règle du pluriel)
@@ -185,16 +255,24 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
     throw new Error(t('server.journal-viewer-core-introuvable'))
   }
   const csp = CSP_FLAG_RE.test(manifestSrc)
-  // ce que le cœur chargé n'a pas (cœur nu) : la page l'apporte ; la clé du cache le suit, le cœur pouvant changer sous le même chemin
-  const missing = missingViewerRuntime(readCoreText(manifestPath, manifestSrc, corePath, m !== null, outputDir))
-  const kit     = missing.map(e => e.member).join(',')
-  const cached  = cache.get(spec.fileName)
-  const lang    = getMessagesLang()
-  if (cached && cached.corePath === corePath && cached.csp === csp && cached.kit === kit && cached.lang === lang) return cached.js
+  // ce que le cœur chargé n'a pas (cœur nu) : la page l'apporte ; la clé du cache le suit, le cœur pouvant changer sous le même
+  // chemin, et la table des noms courts aussi
+  const coreText = readCoreText(manifestPath, manifestSrc, corePath, m !== null, outputDir)
+  const noms     = coreShortNames(coreText, outputDir ?? dirname(manifestPath))
+  const missing  = missingViewerRuntime(coreText, noms)
+  const kit      = missing.map(e => e.member).join(',')
+  const table    = noms === null ? '' : JSON.stringify(noms)
+  const cached   = cache.get(spec.fileName)
+  const lang     = getMessagesLang()
+  if (cached && cached.corePath === corePath && cached.csp === csp && cached.kit === kit && cached.noms === table && cached.lang === lang) return cached.js
   const source = localizeViewerSource(readFileSync(locateViewerSource(spec.fileName), 'utf-8'))
   const { output } = await transpile(source, { moduleName: spec.moduleName })
   const withCore = output.replace("µ.asset('mjs_core.js')", JSON.stringify(corePath))
-  let js = escapeScriptClose(missing.length > 0 ? withViewerRuntime(withCore, missing) : withCore)
+  const page     = missing.length > 0 ? withViewerRuntime(withCore, missing) : withCore
+  // cœur minifié : la page, fichiers joints compris, prend les noms courts de sa construction — sur une copie de la table, ses
+  // noms à elle n'entrent jamais dans la construction — et ne fait que minifier (`dev`) : rien n'est retiré de son code
+  const short    = noms === null ? page : (await minifyJs(page, { force: true, dev: true, mangleCache: { ...noms }, filename: 'mjs_viewer_' + spec.moduleName + '.js' })).code
+  let js         = escapeScriptClose(short)
   if (csp) {
     // (mode `csp`) — `<script type="module">` en ligne BLOQUÉ par `script-src` sans
     // 'unsafe-inline' (vérifié en navigateur). Sort en fichier servi : même trailer
@@ -211,7 +289,7 @@ export async function getViewerScript(manifestPath: string | null, spec: ViewerS
     const url = writeHashedAsset(outputDir, urlPrefix, 'mjs_viewer_' + spec.moduleName, '.js', full)
     js = CSP_URL_MARKER + url
   }
-  cache.set(spec.fileName, { corePath, csp, kit, lang, js })
+  cache.set(spec.fileName, { corePath, csp, kit, noms: table, lang, js })
   return js
 }
 

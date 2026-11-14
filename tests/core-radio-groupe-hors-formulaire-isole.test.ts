@@ -22,7 +22,7 @@ const stripEsm = (s: string) => s
 // hors de tout <form> — exactement le scénario où le repli `getRootNode() ?? document` était
 // trop large.
 const HOST = [
-  '<form id="avecform" @noUJS>',
+  '<form id="avecform" :noUJS>',
   '  <@@radio name="opt" value="a">A</@@radio>',
   '</form>',
   '<div id="sansform">',

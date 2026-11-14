@@ -11,7 +11,7 @@
 };
 if (µ.Element) {
   µ.Element.prototype._mjs_on = function(eventName, selectorOrHandler, handlerOrNone) {
-    var comp = this, handler, off, root, selector, wrapper;
+    var comp = this, handler, off, root, selector, wrapper, livrer;
     if (typeof selectorOrHandler === 'function') {
       handler = selectorOrHandler;
       selector = null;
@@ -19,7 +19,7 @@ if (µ.Element) {
       selector = selectorOrHandler;
       handler = handlerOrNone;
     }
-    wrapper = (e) => {
+    livrer = (e) => {
       var delegatedTarget, realTarget;
       if (!selector) {
         return handler.call(this, e);
@@ -46,6 +46,19 @@ if (µ.Element) {
             try { delete e.currentTarget; } catch { /* read-only */ }
           }
         }
+      }
+    };
+    // un écouteur ne lit pour aucun calcul en cours, comme un gestionnaire du gabarit (mjs_element.ts) : déclenché pendant le passage
+    // d'un reffet (`el.click()`), ses lectures sont les siennes, jamais celles du reffet (sinon un écouteur qui cumule le relançait sans
+    // fin) ; sans le graphe des signaux, `µ._mjs_sigCur` n'existe pas et rien ne change
+    wrapper = (e) => {
+      var sig = µ._mjs_sigCur;
+      if (!sig) return livrer(e);
+      µ._mjs_sigCur = null;
+      try {
+        return livrer(e);
+      } finally {
+        µ._mjs_sigCur = sig;
       }
     };
     root = this._shadow || this;

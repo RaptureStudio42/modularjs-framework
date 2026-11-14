@@ -184,11 +184,11 @@ $nbEdits = Object.keys($edits).length
     <div class="controles">
       <input class="recherche" type="text" aria-label="⟪theme.recherche-label⟫" placeholder="⟪theme.recherche-placeholder⟫" value=!{$query}>
       <div class="filtres">
-        <button @class{$kind == 'all'}="actif" @click={$kind = 'all'}>⟪theme.filtre-tous⟫</button>
-        <button @class{$kind == 'theme'}="actif" @click={$kind = 'theme'}>⟪theme.filtre-themes⟫</button>
-        <button @class{$kind == 'module'}="actif" @click={$kind = 'module'}>⟪theme.filtre-modules⟫</button>
-        <button @class{$kind == 'stylesheet'}="actif" @click={$kind = 'stylesheet'}>⟪theme.filtre-feuilles⟫</button>
-        <button @class{$kind == 'framework'}="actif" @click={$kind = 'framework'}>⟪theme.filtre-framework⟫</button>
+        <button :class{$kind == 'all'}="actif" @click={$kind = 'all'}>⟪theme.filtre-tous⟫</button>
+        <button :class{$kind == 'theme'}="actif" @click={$kind = 'theme'}>⟪theme.filtre-themes⟫</button>
+        <button :class{$kind == 'module'}="actif" @click={$kind = 'module'}>⟪theme.filtre-modules⟫</button>
+        <button :class{$kind == 'stylesheet'}="actif" @click={$kind = 'stylesheet'}>⟪theme.filtre-feuilles⟫</button>
+        <button :class{$kind == 'framework'}="actif" @click={$kind = 'framework'}>⟪theme.filtre-framework⟫</button>
       </div>
     </div>
 
@@ -219,7 +219,7 @@ $nbEdits = Object.keys($edits).length
                     {if hex}
                       <input class="pastille vive" type="color" aria-label="⟪theme.couleur-de⟫ {l.name}" value={hex} @click.stop={} @input.stop={modifier(l, e.target.value)} @change.stop={valider(l)}>
                     {else}
-                      {if looksLikeColor(courante)}<span class="pastille" @style.background={courante}></span>{end}
+                      {if looksLikeColor(courante)}<span class="pastille" :style.background={courante}></span>{end}
                     {end}
                     <span class="nom">{l.name}</span>
                     <span class="valeur">{courante}</span>
@@ -228,7 +228,7 @@ $nbEdits = Object.keys($edits).length
                       <button class="retablir" aria-label="⟪theme.retablir-nom⟫ {l.name}" @click.stop={retablir(l)}>⟪theme.retablir⟫</button>
                     {end}
                     {if $etats[l.cle]}
-                      <span class="ecriture" @class{$etats[l.cle].ok == false}="rate">{$etats[l.cle].texte}</span>
+                      <span class="ecriture" :class{$etats[l.cle].ok == false}="rate">{$etats[l.cle].texte}</span>
                     {end}
                     <span class="emplacement">{if l.decl.read}⟪theme.par-defaut⟫{elsif l.decl.line > 0}⟪theme.ligne⟫ {l.decl.line}{else}⟪theme.ligne-inconnue⟫{end}</span>
                     {if l.autres.length > 0 and not l.decl.read}

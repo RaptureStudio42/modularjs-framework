@@ -50,10 +50,10 @@ export poseEntier = (n) ->
   $$droits = Object.assign({}, $$droits, { compte: { n: n, liste: [] } })
 `
 
-const LECTEUR = `@import poseImbrique 'quota-store.civet'
-@import poseEntier 'quota-store.civet'
-@import incremente 'quota-store.civet'
-@import ajoute 'quota-store.civet'
+const LECTEUR = `@import poseImbrique 'quota-store.civet.mjs'
+@import poseEntier 'quota-store.civet.mjs'
+@import incremente 'quota-store.civet.mjs'
+@import ajoute 'quota-store.civet.mjs'
 
 <script>
   $$droits = { compte: { n: 0, liste: [] } }
@@ -77,7 +77,7 @@ describe('store $$ : écriture imbriquée depuis un module Civet importé', func
 
   for (const [mode, valeur] of [['mjs', 3], ['civet', 5], ['entier', 7]] as const) {
     it(`écriture « ${mode} » : le lecteur du store est prévenu`, async () => {
-      const window = await monter('store-imbrique-' + mode, { 'quota-store.civet': QUOTAS, 'lecteur-droits.mjs': LECTEUR })
+      const window = await monter('store-imbrique-' + mode, { 'quota-store.civet.mjs': QUOTAS, 'lecteur-droits.mjs': LECTEUR })
       try {
         window.document.body.innerHTML = '<mjs-lecteur-droits></mjs-lecteur-droits>'
         const c = window.document.querySelector('mjs-lecteur-droits')
@@ -94,7 +94,7 @@ describe('store $$ : écriture imbriquée depuis un module Civet importé', func
   }
 
   it('opérateur composé et méthode mutative d\'un module Civet préviennent aussi le lecteur', async () => {
-    const window = await monter('store-imbrique-composes', { 'quota-store.civet': QUOTAS, 'lecteur-droits.mjs': LECTEUR })
+    const window = await monter('store-imbrique-composes', { 'quota-store.civet.mjs': QUOTAS, 'lecteur-droits.mjs': LECTEUR })
     try {
       window.document.body.innerHTML = '<mjs-lecteur-droits></mjs-lecteur-droits>'
       const c = window.document.querySelector('mjs-lecteur-droits')

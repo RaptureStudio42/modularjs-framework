@@ -34,7 +34,7 @@ const NOMS = ['a', 'b']
 async function partie(mode: 'warn' | 'error', graine: number, ops: number, r: Reglages, compte: Compte, exemples: Record<string, string>) {
   const rnd = prng(graine)
   const µ   = makeMu(mode)
-  const el  = r.cible === 'store' ? null : composant({ a: '{ id: int }[]', b: '{ id: int }[]' })
+  const el  = r.cible === 'store' ? null : composant({ a: 'Id[]', b: 'Id[]' })
   const reg = () => (r.cible === 'store' ? µ._mjs_storeTreg : el._mjs_treg)
   let nid = 0
   const pool: any[] = []
@@ -43,7 +43,7 @@ async function partie(mode: 'warn' | 'error', graine: number, ops: number, r: Re
   if (r.cible === 'store') {
     µ._mjs_storeRaw.a = cur.a
     µ._mjs_storeRaw.b = cur.b
-    µ._mjs_storeTypes({ a: regle('{ id: int }[]'), b: regle('{ id: int }[]') })
+    µ._mjs_storeTypes({ a: regle('Id[]'), b: regle('Id[]') })
   }
   else {
     µ._mjs_tset(el, 'a', cur.a)

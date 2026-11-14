@@ -35,9 +35,9 @@ const esc = (v: unknown): string => {
 const injecte = (bloc: string, donnee: string = HOSTILE): { html: string; balises: string[]; attributs: string[]; evil: number } => {
   const r = processGlobalMacros(bloc)
   assert.equal(r.errors.length, 0, `forme légitime attendue, refus reçu : ${JSON.stringify(r.errors)}`)
-  const expr = r.setup.match(/µ\._setHead\(@, ([\s\S]*)\)$/)?.[1] ?? r.setup.match(/_mjs_d\.innerHTML = ([\s\S]*?)\n/)?.[1]
+  const expr = r.setup.match(/µ\._setHead\(@, ([\s\S]*?)(?:, true)?\)$/)?.[1] ?? r.setup.match(/_mjs_d\.innerHTML = ([\s\S]*?)\n/)?.[1]
   assert.ok(expr, `expression d'injection introuvable dans : ${r.setup}`)
-  const html = new Function('µ', '$x', '$slug', '$h', `return (${expr})`)({ _esc: esc }, donnee, donnee, donnee) as string
+  const html = new Function('µ', '$x', '$slug', '$h', `return (${expr})`)({ _esc: esc, _mjs_th: (h: string) => h }, donnee, donnee, donnee) as string
   const window = new Window()
   const hote = window.document.createElement('div')
   hote.innerHTML = html
@@ -288,7 +288,7 @@ describe('<@head>/<@failed> — interpolation dans une valeur DÉJÀ quotée : j
   it('texte `a={{$h}}` : HTML brut honoré (le `=` qui précède ne change rien)', () => {
     const r = processGlobalMacros('<@head><title>a={{$h}}</title></@head>')
     assert.equal(r.errors.length, 0, JSON.stringify(r.errors))
-    assert.equal(r.setup, '\nµeffect =>\n  µ._setHead(@, \'<title>a=\' + String($h) + \'</title>\')')
+    assert.equal(r.setup, '\nµeffect =>\n  µ._setHead(@, \'<title>a=\' + String($h) + \'</title>\', true)')
   })
 
   it('`content={$x}` (valeur nue réduite à l\'interpolation) : toujours mise entre guillemets par le compilateur', () => {
@@ -461,7 +461,7 @@ describe('<@head>/<@failed> — écritures légitimes : 0 erreur, sortie inchang
     ['content={{$x}} auto-quoté', '<@head><meta name="d" content={{$x}}></@head>',
       '\nµeffect =>\n  µ._setHead(@, \'<meta name="d" content="\' + µ._esc($x) + \'">\')'],
     ['texte : {$x} échappé, {{$h}} brut', '<@head><title>{$x} — {{$h}}</title></@head>',
-      '\nµeffect =>\n  µ._setHead(@, \'<title>\' + µ._esc($x) + \' — \' + String($h) + \'</title>\')'],
+      '\nµeffect =>\n  µ._setHead(@, \'<title>\' + µ._esc($x) + \' — \' + String($h) + \'</title>\', true)'],
     ['commentaire HTML', '<@head><!-- {$x} --><meta name="d" content="ok"></@head>',
       '\nµeffect =>\n  µ._setHead(@, \'<!-- \' + µ._esc($x) + \' --><meta name="d" content="ok">\')'],
     ['<style> et ses accolades', '<@head><style>@font-face { font-family: \'a\' }</style></@head>',
@@ -493,7 +493,7 @@ describe('<@head>/<@failed> — écritures légitimes : 0 erreur, sortie inchang
   it('<@failed> texte interpolé + valeur nue sans interpolation : 0 erreur, sortie inchangée', () => {
     const r = processGlobalMacros('<@failed err><span title=l\'erreur>{err.message}</span></@failed>')
     assert.equal(r.errors.length, 0, `attendu 0 erreur, reçu : ${JSON.stringify(r.errors)}`)
-    assert.match(r.setup, /_mjs_d\.innerHTML = '<span title=l\\'erreur>' \+ µ\._esc\(err\.message\) \+ '<\/span>'/)
+    assert.match(r.setup, /_mjs_d\.innerHTML = µ\._mjs_th\('<span title=l\\'erreur>' \+ µ\._esc\(err\.message\) \+ '<\/span>'\)/)
   })
 })
 

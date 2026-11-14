@@ -17,7 +17,7 @@ import { mjsTmp } from './helpers/tmp.js'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 
-const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
+const PAGE = `<form class="f-oblig" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" required>case</@@checkbox>
   <@@switch class="sw" name="sw" required>interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x">x</@@radio>
@@ -27,13 +27,13 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <button type="reset" class="rz">remise à zéro</button>
 </form>
 
-<form class="f-groupe" method="get" action="/envoi" @noUJS>
+<form class="f-groupe" method="get" action="/envoi" :noUJS>
   <@@radio class="r1" name="t" value="a">a</@@radio>
   <@@radio class="r2" name="t" value="b" required>b</@@radio>
   <@@radio class="r3" name="t" value="c">c</@@radio>
 </form>
 
-<form class="f-libre" method="get" action="/envoi" @noUJS>
+<form class="f-libre" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" name="cb" checked={true}>case</@@checkbox>
   <@@switch class="sw" name="sw">interrupteur</@@switch>
   <@@radio class="r1" name="g" value="x">x</@@radio>
@@ -41,7 +41,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-etiquette" method="get" action="/envoi" @noUJS>
+<form class="f-etiquette" method="get" action="/envoi" :noUJS>
   <@@checkbox class="cb" id="e-cb" name="cb">case</@@checkbox>
   <@@switch class="sw" id="e-sw" name="sw">interrupteur</@@switch>
   <@@radio class="r1" id="e-r1" name="g" value="x">x</@@radio>
@@ -52,7 +52,7 @@ const PAGE = `<form class="f-oblig" method="get" action="/envoi" @noUJS>
   <label class="l-r2" for="e-r2">étiquette de y</label>
 </form>
 
-<form class="f-fieldset" method="get" action="/envoi" @noUJS>
+<form class="f-fieldset" method="get" action="/envoi" :noUJS>
   <fieldset class="fs" disabled>
     <@@checkbox class="cb" name="cb" required>case</@@checkbox>
     <@@switch class="sw" name="sw" required>interrupteur</@@switch>
@@ -407,7 +407,7 @@ const ACCORD = `@formAssociated
 <button type="button" class="b" disabled={$formDisabled} @click={@basculer()}>{$oui}</button>
 `
 
-const HOTE_APPLI = `<form class="f-appli" method="get" action="/envoi" @noUJS>
+const HOTE_APPLI = `<form class="f-appli" method="get" action="/envoi" :noUJS>
   <fieldset class="fs">
     <@accord class="ac" id="ac" name="accord"></@accord>
   </fieldset>

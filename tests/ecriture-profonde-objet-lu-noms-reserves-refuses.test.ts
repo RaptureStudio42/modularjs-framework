@@ -3,7 +3,7 @@
 // expression (`$$prefs[r.section][r.champ] = v`), variable ou alias qui garde un objet du magasin, objet fait d'une
 // expression (`($$o[k] || {})[k2] = v`), prototype rangé par une lecture (`$$o.p = $$o[k]`, puis `$$o.p.x = v`). Une clé
 // qui vaut `__proto__` y mène au prototype, `constructor` à la fonction `Object` : l'aide d'écriture refuse d'écrire dans
-// un prototype ou dans une fonction — rien n'est écrit, aucune erreur, un avertissement nomme le segment qui y mène
+// un prototype ou dans une fonction — rien n'est écrit, aucune erreur, un avertissement nomme le segment qui y mène (pour une fonction du navigateur, il explique le piège)
 // (développement). `prototype` y rend `undefined`, comme en JavaScript : `?.` s'arrête, une autre forme lève sa
 // TypeError, rien n'est écrit. Civet et CoffeeScript, développement et production. L'enveloppe d'un chemin de l'état
 // (`µ._mjs_makeDeepProxy`) refuse les mêmes noms. Une clé permise, un objet sans prototype, un objet dont une donnée
@@ -16,6 +16,10 @@ import { Window } from 'happy-dom'
 import { Bundler, terminateSharedWorkerPool } from '../src/bundler/index.js'
 import { stripEsm } from '../src/server/renderToString.js'
 import { mjsTmp } from './helpers/tmp.js'
+
+// avertissement qui nomme le segment refusé : pour `constructor`, le nom réservé écrit dans le chemin, ou la fonction du navigateur
+// qu'il range (`Object`, `Array`), dont l'avertissement explique le piège
+const nomme = (a: string, seg: string) => a.includes(`segment « ${seg} »`) || seg === 'constructor' && / contient la fonction (Object|Array) du navigateur, sans doute amenée par une clé venue de l'extérieur /.test(a)
 
 const CIVET = `<script>
   $$o = { a: { b: 0 }, l: [], d: JSON.parse('{"constructor":1,"prototype":2}'), n: Object.create(null), m: new Map() }
@@ -160,7 +164,7 @@ function ecart(t: ReturnType<typeof tracer>, ref: ReturnType<typeof tracer>, seg
   if (t.pollue.length || t.donnees !== ref.donnees) return JSON.stringify(t)
   if (vide ? !/^(|TypeError: .*)$/.test(t.erreur) : t.erreur !== '') return JSON.stringify(t)
   if (prod) return ''
-  const bon = vide ? avis.length === 0 : avis.length === 1 && avis[0].includes(`segment « ${seg} »`)
+  const bon = vide ? avis.length === 0 : avis.length === 1 && nomme(avis[0], seg)
   return bon ? '' : `avertissements ${JSON.stringify(avis)}`
 }
 
@@ -289,7 +293,7 @@ describe('écriture du magasin $$ par un objet lu : prototype et fonction refus�
             if (rendu != null) rendu.polluK = 1
           })
           if (rendu !== undefined || t.pollue.length || t.erreur || t.donnees !== intact.donnees) ecarts.push(`${chemin}.${cle} : ${typeof rendu} ${JSON.stringify(t)}`)
-          if (!(m.avis.length === 1 && m.avis[0].includes(`segment « ${seg} »`))) ecarts.push(`${chemin}.${cle} : avertissements ${JSON.stringify(m.avis)}`)
+          if (!(m.avis.length === 1 && nomme(m.avis[0], seg))) ecarts.push(`${chemin}.${cle} : avertissements ${JSON.stringify(m.avis)}`)
         }
       }
       assert.deepEqual(ecarts, [])

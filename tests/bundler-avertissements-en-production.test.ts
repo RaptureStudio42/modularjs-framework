@@ -22,7 +22,7 @@ const AVERTISSEMENT = 'appli : avertissement du programmeur'
 const ERREUR        = 'appli : erreur du programmeur'
 
 const SOURCES: Record<string, string> = {
-  'app.page.mjs': ['<script>', '  avertir = ->', `    µ.warn '${AVERTISSEMENT}'`, `    µ.error '${ERREUR}'`, '</script>', '', '<button @click=avertir>Avertir</button>', '<div @in=*bars>barres</div>'].join('\n'),
+  'app.page.mjs': ['<script>', '  avertir = ->', `    µ.warn '${AVERTISSEMENT}'`, `    µ.error '${ERREUR}'`, '</script>', '', '<button @click=avertir>Avertir</button>', '<div :in=*bars>barres</div>'].join('\n'),
 }
 
 // textes que seuls des avertissements du runtime lisent (dont celui de l'avis de développement sur $$mjs-fx-every)

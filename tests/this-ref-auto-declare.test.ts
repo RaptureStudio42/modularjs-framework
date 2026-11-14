@@ -17,7 +17,7 @@ describe('refs @this nues — auto-déclaration `let nom`', function () {
     context = canvas.getContext('2d')
     -> null
 </script>
-<canvas @this=!{canvas}></canvas>`,
+<canvas :this=!{canvas}></canvas>`,
       { moduleName: 'auto_decl', baseDir: '/tmp' },
     )
     assert.match(output, /let canvas\b/, 'canvas doit être auto-déclaré')
@@ -31,7 +31,7 @@ describe('refs @this nues — auto-déclaration `let nom`', function () {
     context = canvas.getContext('2d')
     -> null
 </script>
-<canvas @this=!{canvas}></canvas>`,
+<canvas :this=!{canvas}></canvas>`,
       { moduleName: 'no_double', baseDir: '/tmp' },
     )
     const n = (output.match(/let canvas\b/g) ?? []).length
@@ -46,7 +46,7 @@ describe('refs @this nues — auto-déclaration `let nom`', function () {
     ctx = canvas.getContext('2d')
     -> null
 </script>
-<canvas @this=!{canvas}></canvas>`,
+<canvas :this=!{canvas}></canvas>`,
       { moduleName: 'rhs_only', baseDir: '/tmp' },
     )
     assert.match(output, /let canvas\b/, 'canvas lu à droite d\'un = doit quand même être auto-déclaré')
@@ -57,7 +57,7 @@ describe('refs @this nues — auto-déclaration `let nom`', function () {
       `<script>
   µeffect -> $ref?.focus()
 </script>
-<input @this=!{$ref} />`,
+<input :this=!{$ref} />`,
       { moduleName: 'reactive_ref', baseDir: '/tmp' },
     )
     assert.doesNotMatch(output, /let \$ref\b/, 'une ref réactive ne doit pas être déclarée en var nue')

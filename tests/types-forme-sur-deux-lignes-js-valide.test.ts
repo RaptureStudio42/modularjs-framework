@@ -18,7 +18,6 @@ function regexDe(v: unknown): RegExp | null {
 
 describe('<vars> — forme regex avec un antislash en fin de ligne', () => {
   for (const [nom, raw, texte] of [
-    ['retour à la ligne', '$x { a: string /a\\\nb/ }', 'a\nb'],
     ['retour chariot', '$x string /a\\\rb/', 'a\rb'],
     ['témoin sur une ligne', '$x string /^a+$/', 'aaa'],
   ]) {

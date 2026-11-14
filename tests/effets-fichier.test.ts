@@ -30,7 +30,7 @@ const EFFETS = [
 const COMPOSANTS: Record<string, string> = {
   'fx-alias': '<p class="a" *titre>ABC</p>\n<p class="b" *titre(on: load)>DEF</p>\n<p class="c" *titre-lent>GHI</p>',
   'fx-css': '<button class="h" *halo(#f0f, on: hover)>H</button>\n<span class="bt" *battement>♥</span>',
-  'fx-vie': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" @in=*entree @out=*halo(size: 20px)>V</p>{end}',
+  'fx-vie': '<script>\n$vu = false\n</script>\n{if $vu}<p class="v" :in=*entree :out=*halo(size: 20px)>V</p>{end}',
 }
 
 async function attendre(cond: () => boolean, ms = 3000) {

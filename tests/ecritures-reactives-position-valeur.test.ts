@@ -55,8 +55,8 @@ describe('écritures réactives — position, valeur rendue et forme du code pro
       ].join('\n'), {}, { cpt: 0, o: { n: 0 } }, { trace })
       assert.deepEqual(lignesOuvrantParParenthese(out), [], out)
       assert.deepEqual(trace, ['a', 'b', 'c', 'd', 'e'])
-      assert.match(out, /µ\._storeSet\("cpt", \(\+µ\.store\.cpt\) \+ 1\)/)
-      assert.match(out, /µ\._mjs_storeDeepSet\("o", \["n"\], \(\+µ\.store\.o\.n\) \+ 1\)/)
+      assert.match(out, /\(_mjs_n = µ\.store\.cpt, µ\._storeSet\("cpt", \+\+_mjs_n\)\)/)
+      assert.match(out, /\(_mjs_n = µ\.store\.o\.n, µ\._mjs_storeDeepSet\("o", \["n"\], \+\+_mjs_n\)\)/)
     })
 
     it('valeur lue en tête d\'instruction (`$x++ || f()`) : point-virgule protecteur', () => {
@@ -207,7 +207,7 @@ describe('écritures réactives — position, valeur rendue et forme du code pro
     it('clé sans effet de bord : forme courte inchangée', () => {
       const out = compiler(`_mjsThis.essai = function() {\n  $.vu = 1\n  $[k] += 1\n  $[k]++\n}`)
       assert.match(out, /^\s*µ\._set\(_mjsThis, k, \$\[k\] \+ \(1\)\)$/m)
-      assert.match(out, /^\s*µ\._set\(_mjsThis, k, \(\+\$\[k\]\) \+ 1\)$/m)
+      assert.match(out, /^\s*\{let _mjs_n;\(_mjs_n = \$\[k\], µ\._set\(_mjsThis, k, \+\+_mjs_n\)\)\}$/m)
     })
   })
 

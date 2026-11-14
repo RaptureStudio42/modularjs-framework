@@ -4,7 +4,7 @@
 //   le jeton qu'elle a pris à l'arrivée (seules les requêtes encore en cours comptent) ; une signature fausse le garde, et
 //   compte en plus au seau des échecs, plus strict
 // - un secret du pont de 4 caractères passait sans un mot : un secret de moins de 32 caractères passe toujours, avec un
-//   avertissement unique (même règle que le secret des jetons)
+//   avertissement pour chaque serveur qui l'emploie (même longueur conseillée que le secret des jetons)
 import assert from 'node:assert/strict'
 import { createHmac, randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -86,7 +86,7 @@ describe('MJS-WS — pont universel : le seau général ne compte que les requê
     }
   })
 
-  it('secret de moins de 32 caractères : accepté, un seul avertissement pour le processus ; secret long : aucun', () => {
+  it('secret de moins de 32 caractères : accepté, un avertissement pour chaque serveur qui l\'emploie ; secret long : aucun', () => {
     const module = pathToFileURL(join(ROOT, 'src/mjs-ws/bridge.ts')).href
     const code   = [
       `const { resolveBridgeOptions } = await import(${JSON.stringify(module)})`,
@@ -101,8 +101,11 @@ describe('MJS-WS — pont universel : le seau général ne compte que les requê
     assert.equal(run.status, 0, run.stderr)
     const out = JSON.parse(run.stdout)
     assert.equal(out.secret, 'abcd')
-    assert.equal(out.avertissements.length, 1, JSON.stringify(out.avertissements))
-    assert.match(out.avertissements[0], /32/)
-    assert.doesNotMatch(out.avertissements[0], /abcd/, 'le secret lui-même ne paraît jamais dans le message')
+    // un avertissement par secret court, à chaque serveur qui l'emploie : `abcd`, puis `court-aussi` et le secret des webhooks `encore-court` ; le secret long, aucun
+    assert.equal(out.avertissements.length, 3, JSON.stringify(out.avertissements))
+    for (const avertissement of out.avertissements) {
+      assert.match(avertissement, /32/)
+      assert.doesNotMatch(avertissement, /abcd|court-aussi|encore-court/, 'le secret lui-même ne paraît jamais dans le message')
+    }
   })
 })

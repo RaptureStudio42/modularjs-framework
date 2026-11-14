@@ -33,7 +33,7 @@ const OBJET = [
 // témoin : une vraie promesse, résolue bien après la première image
 const PROMESSE = [
   '<script>',
-  '$p = new Promise (r) -> setTimeout((-> r(7)), 200)',
+  '$p = µafter(200).then(-> 7)',
   '</script>',
   '<div class="w">{await $p}<i class="att">attente</i>{success d}<p class="ok">{d}</p>{end}</div>',
 ].join('\n')

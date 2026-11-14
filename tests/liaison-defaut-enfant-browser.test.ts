@@ -24,7 +24,7 @@ const SOURCES: Record<string, string> = {
   // ce que l'enfant écrit APRÈS son montage : un geste, son µmount, une minuterie
   'c-geste.mjs':     `<script>\n  ${SHOW}\n</script>\n<button class="g" @click={$x = [9, 8, 7]}>g</button>\n<p class="vu">{show($x)}</p>\n`,
   'c-montage.mjs':   enfant('  µmount -> $x = 42\n'),
-  'c-minuterie.mjs': enfant('  µmount -> setTimeout((-> $x = { k: 2 }), 30)\n'),
+  'c-minuterie.mjs': enfant('  µmount -> µafter(30, -> $x = { k: 2 })\n'),
   // la prop liée n'a besoin d'aucune déclaration : le parent initialise sa variable, l'enfant ne fait qu'y écrire
   'c-clavier.mjs':   `<script>\n  select = (digit)-> $x += digit\n  ${SHOW}\n</script>\n<button class="b1" @click={select(1)}>1</button><button class="b2" @click={select(2)}>2</button>\n<p class="vu">{show($x)}</p>\n`
 }

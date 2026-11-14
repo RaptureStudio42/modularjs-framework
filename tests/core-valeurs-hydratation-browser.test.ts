@@ -24,7 +24,7 @@ const HOTE = `<script>
   $k = 30
 </script>
 
-<form class="f-fixe" method="get" action="/envoi" @noUJS>
+<form class="f-fixe" method="get" action="/envoi" :noUJS>
   <@@number class="n" name="n" value="3"></@@number>
   <@@gauge class="g" name="gg" value="4"></@@gauge>
   <@@knob class="k" name="k" value="30"></@@knob>
@@ -32,7 +32,7 @@ const HOTE = `<script>
   <button type="submit" class="go">envoyer</button>
 </form>
 
-<form class="f-lie" method="get" action="/envoi" @noUJS>
+<form class="f-lie" method="get" action="/envoi" :noUJS>
   <@@number class="n" name="n" value=!{$n}></@@number>
   <@@gauge class="g" name="gg" value=!{$g}></@@gauge>
   <@@knob class="k" name="k" value=!{$k}></@@knob>

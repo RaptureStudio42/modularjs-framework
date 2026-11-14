@@ -2,6 +2,7 @@
 // fichier de l'auteur, purge des anciennes empreintes et des orphelins
 // fonctions sorties de la classe Bundler, qui garde ses méthodes (mêmes noms, mêmes signatures) et leur passe l'instance : un membre
 // privé de la classe s'y lit `bundler['nom']`, et tout appel de méthode passe par l'instance, comme avant la découpe
+import { createHash } from 'node:crypto'
 import { existsSync, writeFileSync, renameSync, unlinkSync, readdirSync, readFileSync, mkdirSync, statSync, realpathSync } from 'node:fs'
 import { dirname, basename, join, extname } from 'node:path'
 import { t } from '../messages/index.js'
@@ -24,6 +25,10 @@ const SHORT_HASHED_RE = /-[0-9a-z]{5}\.[a-z0-9]+(?:\.map)?$/
 const isHashedOutputName = (name: string): boolean => HASHED_OUTPUT_RE.test(name) || SHORT_HASHED_RE.test(name)
 /** nom d'un fichier voisin du manifeste (un `.js` ou sa carte) : un nom simple, jamais un chemin ni un nom caché */
 const BUNDLE_NEIGHBOR_RE = /^[^/\\\0.][^/\\\0]*\.js(?:\.map)?$/
+// empreinte d'une feuille de variante écrite par le build (cf. layoutStylesNoted) : une feuille au contenu changé n'est plus la sienne
+export const empreinteFeuille = (contenu: string | Buffer): string => createHash('sha256').update(contenu).digest('hex')
+// nom d'une feuille de variante au registre (`<module>.<nom>.css`, cf. layoutStylesNoted) : un nom simple, jamais un chemin ni un fichier caché
+const LAYOUT_STYLE_RE = /^[^/\\\0.][^/\\\0]*\.css$/
 
 /**
  * Les fichiers que des builds ont écrits à côté de `manifestPath` quand le fichier unique est coupé en morceaux (module chargé
@@ -212,6 +217,8 @@ export function currentOutputDirListing(bundler: Bundler): string[] {
 // échec ne publie rien et laisse les feuilles du dernier build réussi
 // construction qui écrit dans le dossier des sources : la feuille porte la marque, et un fichier de l'auteur du même nom n'est
 // jamais réécrit (cf. refusFichierAuteur ; refusé dès la tête de compile() quand la recherche des variantes l'a trouvé)
+// la feuille écrite est notée au registre des sorties (clé `layoutStyles`, cf. layoutStylesNoted) : la purge la retire quand sa
+// variante quitte les sources ; une feuille déposée à la main n'y est jamais notée
 export function writeLayoutCss(bundler: Bundler, target: string, content: string): void {
   const refus = bundler['refusFichierAuteur'](target, 'feuille')
   if (refus) {
@@ -219,8 +226,11 @@ export function writeLayoutCss(bundler: Bundler, target: string, content: string
     return
   }
   const texte = bundler['ecritDansSources']() ? `${MARQUE_SORTIE}\n${content}` : content
-  if (bundler.keepFailedComponents) bundler['writeIfChanged'](target, texte)
-  else bundler['pendingLayoutWrites'].push({ target, content: texte })
+  if (bundler.keepFailedComponents) {
+    bundler['writeIfChanged'](target, texte)
+    bundler['layoutStylesWritten'].set(basename(target), empreinteFeuille(texte))
+  }
+  else bundler['pendingLayoutWrites'].push({ target, content: texte, layout: true })
 }
 
 // fragment de traduction à nom clair (`i18n/<langue>/<section>.json`) et registre des variables de thème : même règle que la
@@ -387,6 +397,34 @@ export function readRegistryFiles(bundler: Bundler): string[] {
   }
 }
 
+/** `layoutStyles` du registre : les feuilles `<module>.<nom>.css` que des builds ont écrites pour un `<style name>` (cf. writeLayoutCss),
+ *  nom → empreinte du contenu écrit, noms simples seulement ; seulement celles dont le contenu sur le disque est encore celui que le build
+ *  a écrit (marque des sorties comprise) — une feuille de l'auteur mise à leur place n'en est plus une (vide si registre absent ou illisible) */
+export function layoutStylesNoted(bundler: Bundler): Map<string, string> {
+  let prev: any
+  try {
+    prev = JSON.parse(readFileSync(bundler['outputsRegistryPath'](), 'utf-8'))
+  }
+  catch {
+    return new Map()
+  }
+  const notees = new Map<string, string>()
+  const liste  = prev?.layoutStyles
+  if (liste === null || typeof liste !== 'object' || Array.isArray(liste)) return notees
+  for (const [nom, empreinte] of Object.entries(liste)) {
+    if (typeof empreinte !== 'string' || !LAYOUT_STYLE_RE.test(nom)) continue
+    let contenu: Buffer
+    try {
+      contenu = readFileSync(join(bundler.outputDir, nom))
+    }
+    catch {
+      continue
+    }
+    if (empreinteFeuille(contenu) === empreinte) notees.set(nom, empreinte)
+  }
+  return notees
+}
+
 // ecritDansSources() : le dossier de sortie ou le manifeste sont dans le dossier des sources. Les sorties à nom fixe y côtoient
 // les fichiers de l'auteur : elles portent la marque des fichiers produits, et seul un fichier qui la porte est remplacé
 // (cf. sortieDuBuild). Hors de ce cas, aucune marque
@@ -493,13 +531,17 @@ export function refusI18nSurPlace(bundler: Bundler): Error | null {
 
 /** Forme écrite de `.mjs-outputs.json` : `extensions` toujours, `i18nFragments` (langue → noms) seulement s'il y en a. */
 export function serializeOutputsRegistry(bundler: Bundler, known: Set<string>, fragments: Map<string, Set<string>>, files: Set<string> = new Set(), chunks: Set<string> = new Set()): string {
-  const body: { extensions: string[], i18nFragments?: Record<string, string[]>, files?: string[], chunks?: string[], ssrStyles?: string[] } = { extensions: [...known].sort() }
+  const body: { extensions: string[], i18nFragments?: Record<string, string[]>, files?: string[], chunks?: string[], ssrStyles?: string[], layoutStyles?: Record<string, string> } = { extensions: [...known].sort() }
   if (files.size > 0) body.files = [...files].sort()
   // fichiers écrits à côté du manifeste quand le fichier unique est coupé en morceaux : la seule liste de ceux que le build peut retirer ou que les serveurs servent
   if (chunks.size > 0) body.chunks = [...chunks].sort()
   // feuilles partagées que le rendu serveur a écrites (cf. server/sorties-rendu.ts) : gardées d'un build au suivant, celles qui n'existent plus sortent de la liste
   const rendu = feuillesConsignees(dirname(bundler.manifestPath)).filter(f => existsSync(join(bundler.outputDir, f)))
   if (rendu.length > 0) body.ssrStyles = rendu
+  // feuilles `<module>.<nom>.css` écrites pour un `<style name>` (cf. writeLayoutCss) : celles d'avant qui existent encore + celles de ce build — les seules que la purge retire, quand leur variante a quitté les sources (cf. pruneLayoutStyles)
+  const variantes = new Map([...layoutStylesNoted(bundler), ...bundler['layoutStylesWritten']])
+  const gardees   = [...variantes.keys()].filter(f => existsSync(join(bundler.outputDir, f))).sort()
+  if (gardees.length > 0) body.layoutStyles = Object.fromEntries(gardees.map(f => [f, variantes.get(f)!]))
   const langs = [...fragments.keys()].filter(l => fragments.get(l)!.size > 0).sort()
   if (langs.length > 0) {
     body.i18nFragments = {}
@@ -546,12 +588,32 @@ export function pruneI18nFragments(bundler: Bundler, knownExt: Set<string>, purg
   return { removed, failed }
 }
 
+// pruneLayoutStyles() : retire du dossier de sortie les feuilles `<module>.<nom>.css` que le registre dit écrites par un build pour un
+// `<style name>` (cf. layoutStylesNoted) et que CE build n'a pas réécrites : leur variante a quitté les sources. Restée sur place, une
+// telle feuille passerait pour une feuille déposée à la main, et le cœur garderait le module des variantes (cf. collectUsedFeatures).
+// Une feuille déposée à la main n'est jamais notée, donc jamais retirée. L'appelant réécrit ensuite le registre, qui ne cite plus que
+// les feuilles restées
+function pruneLayoutStyles(bundler: Bundler, removed: string[], failed: string[]): void {
+  for (const nom of layoutStylesNoted(bundler).keys()) {
+    const fichier = join(bundler.outputDir, nom)
+    if (bundler['layoutStylesWritten'].has(nom) || !existsSync(fichier)) continue
+    try {
+      unlinkSync(fichier)
+      removed.push(nom)
+    }
+    catch {
+      failed.push(nom)
+    }
+  }
+}
+
 // --------------------------------------------------------------------------
 // pruneBundleChunks() : la purge du mode 'bundle'. Le cœur est dans le fichier unique : `mjs_core-….js` n'existe pas, la garde
 // `no-core` de pruneOrphans() ne dit rien ici. Les seuls candidats sont les fichiers que le registre dit écrits à côté du
 // manifeste par un build (clé `chunks`) et que CE build n'a pas réécrits — un module retiré ou renommé laisse les siens d'un
 // processus à l'autre —, jamais un fichier reconnu à la forme de son nom : un fichier d'auteur nommé `chunk-deadbeef.js`, posé à
 // côté du manifeste (dans le dossier de sortie ou ailleurs), n'y figure pas. Un registre présent mais illisible bloque tout.
+// Hors ces fichiers, seules partent les feuilles des variantes retirées des sources, comme dans les autres modes (cf. pruneLayoutStyles).
 // --------------------------------------------------------------------------
 export function pruneBundleChunks(bundler: Bundler): { removed: string[], failed: string[], skipped?: 'registry-unreadable' } {
   const dossier = dirname(bundler.manifestPath)
@@ -564,6 +626,7 @@ export function pruneBundleChunks(bundler: Bundler): { removed: string[], failed
   }
   const removed: string[] = []
   const failed: string[]  = []
+  pruneLayoutStyles(bundler, removed, failed)
   const manifeste = basename(bundler.manifestPath)
   for (const nom of bundleNeighborFiles(bundler.manifestPath)) {
     if (bundler['bundleChunkFiles'].has(nom) || nom.replace(/\.map$/, '') === manifeste) continue // écrit ce tour-ci, ou le manifeste lui-même
@@ -595,10 +658,12 @@ export function pruneBundleChunks(bundler: Bundler): { removed: string[], failed
 //
 // Dans `i18n/<langue>/`, seuls partent les fragments que le registre dit écrits par un build et que ce build
 // n'a pas réécrits (cf. pruneI18nFragments) : jamais un fichier de l'utilisateur, jamais d'après la forme du nom.
+// Une feuille `<module>.<nom>.css` que le registre dit écrite pour un `<style name>` et que ce build n'a pas réécrite part aussi : sa
+// variante a quitté les sources (cf. pruneLayoutStyles).
 //
 // JAMAIS touché : un SOUS-DOSSIER (i18n/, mjs_pages/… — readdirSync filtré à `isFile()`) ; un
 // DOTFILE (`.mangle-cache.json`, `.mjs-theme-vars.json`) ; un nom STABLE qui ne matche pas la
-// famille hachée (le manifeste, un CSS de layout `<module>.<layout>.css`, `mjs-precache.json`) ;
+// famille hachée (le manifeste, un CSS de layout `<module>.<layout>.css` déposé à la main, `mjs-precache.json`) ;
 // tout fichier ÉTRANGER au build ; ni sur un compile qui a resservi son cache. LE MANIFESTE, PAR
 // SON NOM, même s'il matche la famille hachée par collision de config
 // (`manifestPath`/`--manifest` en `<base>-<empreinte>.<ext>`) : `writeManifest()` écrit hors de
@@ -638,7 +703,8 @@ export function pruneOrphans(bundler: Bundler): { removed: string[], failed: str
   if (bundler['emittedThisCompile'].size === 0) return { removed: [], failed: [], skipped: 'empty' } // rien à comparer
   if (![...bundler['emittedThisCompile']].some(f => /^mjs_core-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f))) return { removed: [], failed: [], skipped: 'no-core' } // ensemble non fiable
   if (!existsSync(bundler.outputDir)) return { removed: [], failed: [], skipped: 'no-dir' }
-  if (bundler['cacheHitsThisCompile'] > 0) return { removed: [], failed: [], skipped: 'cache' } // assets annexes non réinjectés par le(s) cache hit(s)
+  // assets annexes non réinjectés par le(s) cache hit(s) ; ceux d'une unité reprise du cache sur disque le sont (cf. restoreOwned)
+  if (bundler['cacheHitsThisCompile'] > 0 && bundler['diskCacheDir'] === '') return { removed: [], failed: [], skipped: 'cache' }
 
   // Extensions que CE bundler sait produire (cf. writeOutputsRegistry) :
   // garde-fou EN PLUS de emittedThisCompile, pas à sa place — un fichier qui matche
@@ -692,6 +758,7 @@ export function pruneOrphans(bundler: Bundler): { removed: string[], failed: str
     if (!consigne || !isHashedOutputName(name)) continue // jamais un nom STABLE (bundle.js, mjs-precache.json, CSS de layout…)
     if (SERVER_WRITTEN_RE.test(name) && !feuillesRenduInutiles.has(name)) continue // jamais un asset écrit par le rendu serveur (cf. SERVER_WRITTEN_RE), sauf une feuille partagée que le registre dit écrite par un prérendu précédent et que celui-ci n'a pas réécrite
     if (bundler['emittedThisCompile'].has(name)) continue // émis ce tour-ci
+    if (bundler['diskCacheDir'] !== '' && bundler['cachedAssetNames'].has(name)) continue // publié par une unité reprise du cache sur disque
     if (name.endsWith('.map') && bundler['emittedThisCompile'].has(name.slice(0, -4))) continue // .map d'un .js émis ce tour-ci
     if (!knownExt.has(hashedOutputExt(name))) continue // Extension jamais produite par CE bundler : jamais un candidat
     if (name.endsWith('.json') && !name.startsWith('mjs_err-')) continue // en JSON, ce bundler n'écrit que les fichiers de messages : tout autre nom est au projet
@@ -703,6 +770,8 @@ export function pruneOrphans(bundler: Bundler): { removed: string[], failed: str
       failed.push(name)
     }
   }
+  // feuilles des variantes retirées des sources : avant la réécriture du registre par pruneI18nFragments, qui ne les cite plus
+  pruneLayoutStyles(bundler, removed, failed)
   if (existsSync(registryPath)) {
     const fragments = bundler['pruneI18nFragments'](knownExt, purgesCourtes)
     removed.push(...fragments.removed)

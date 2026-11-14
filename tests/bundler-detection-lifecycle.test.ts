@@ -101,8 +101,8 @@ describe('mjs_lifecycle.ts — détaché du cœur, build RÉEL', function () {
   for (const [tag, source] of [
     ['<@window @keydown>', ['<script>', 'onkeydown = (event)->', '  null', '</script>', '<@window @keydown={onkeydown}>', '<p>x</p>']],
     ['<@document @click>', ['<script>', 'onclick = (event)->', '  null', '</script>', '<@document @click={onclick}>', '<p>x</p>']],
-    ['<@body @class{…}>', ['<script>', '$open = true', '</script>', '<@body @class{$open}="no-scroll">', '<p>x</p>']],
-    ['<@html @class{…}>', ['<script>', '$dark = true', '</script>', '<@html @class{$dark}="dark">', '<p>x</p>']],
+    ['<@body :class{…}>', ['<script>', '$open = true', '</script>', '<@body :class{$open}="no-scroll">', '<p>x</p>']],
+    ['<@html :class{…}>', ['<script>', '$dark = true', '</script>', '<@html :class{$dark}="dark">', '<p>x</p>']],
     ['<@head> avec contenu', ['<@head>', '  <meta name="x" content="y">', '</@head>', '<p>x</p>']],
   ] as [string, string[]][]) {
     it(`${tag} sans aucune rune : PRÉSENT — le code émis s'attache par @_mjs_hook`, async function () {

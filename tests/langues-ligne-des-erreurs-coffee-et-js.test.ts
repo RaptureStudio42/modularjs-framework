@@ -25,7 +25,7 @@ describe('langues — ligne des erreurs de syntaxe du script', () => {
   for (const [lang, src] of Object.entries(cas)) {
     it(`${lang} : la faute est citée ligne 6 du fichier`, async () => {
       const message = await erreur(src, 'lignes' + lang)
-      assert.match(message, /\.script:6:\d+/, message)
+      assert.match(message, /\.mjs:6:\d+/, message)
     })
   }
 

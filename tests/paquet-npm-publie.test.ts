@@ -1,6 +1,6 @@
 // Paquet npm publié : construction de dist/ et contenu livré.
-// dist/ se construit en une seule passe esbuild (`npm run build:self`) : les six entrées (cli, index, worker, testing, mjs-ws,
-// mjs-server) partagent leurs modules communs par des morceaux, chaque module livré une fois. Construites séparément, quatre
+// dist/ se construit en une seule passe esbuild (`npm run build:self`) : les sept entrées (cli, index, worker, testing, mjs-ws,
+// mjs-server, rules) partagent leurs modules communs par des morceaux, chaque module livré une fois. Construites séparément, quatre
 // d'entre elles portaient chacune une copie complète du compilateur. Les morceaux se posent dans dist/ même, à côté des
 // entrées : le code y retrouve ses fichiers par des chemins relatifs à son propre fichier (../package.json, le worker.js
 // voisin, ../src/runtime/).
@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 
 const RACINE  = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PKG     = JSON.parse(readFileSync(join(RACINE, 'package.json'), 'utf8'))
-const ENTREES = { 'cli.js': 'src/cli.ts', 'index.js': 'src/index.ts', 'worker.js': 'src/bundler/worker.ts', 'testing.js': 'src/testing/index.ts', 'mjs-ws.js': 'src/mjs-ws/index.ts', 'mjs-server.js': 'src/mjs-server/index.ts' }
+const ENTREES = { 'cli.js': 'src/cli.ts', 'index.js': 'src/index.ts', 'worker.js': 'src/bundler/worker.ts', 'testing.js': 'src/testing/index.ts', 'mjs-ws.js': 'src/mjs-ws/index.ts', 'mjs-server.js': 'src/mjs-server/index.ts', 'rules.js': 'src/rules/index.ts' }
 
 // fichiers d'un dossier, chemins relatifs à la racine du paquet
 function fichiers(dossier: string): string[] {
@@ -54,7 +54,7 @@ describe('paquet npm publié : dist/ en une passe esbuild, contenu livré', func
   before(() => { tmp = mkdtempSync(join(tmpdir(), 'mjs-paquet-')) })
   after(() => { if (tmp) rmSync(tmp, { recursive: true, force: true }) })
 
-  it('build:self : une seule passe esbuild, six entrées, aucun module source dans deux fichiers, morceaux à plat dans dist/', () => {
+  it('build:self : une seule passe esbuild, sept entrées, aucun module source dans deux fichiers, morceaux à plat dans dist/', () => {
     const passes = PKG.scripts['build:self'].split('&&').map((s: string) => s.trim()).filter((s: string) => s.startsWith('esbuild '))
     assert.equal(passes.length, 1, 'passes esbuild : ' + passes.length)
     const sortie = join(tmp, 'dist')
@@ -68,7 +68,7 @@ describe('paquet npm publié : dist/ en une passe esbuild, contenu livré', func
     for (const [fichier, o] of Object.entries<any>(meta.outputs)) {
       const nom = basename(fichier)
       assert.equal(dirname(join(RACINE, fichier)), sortie, 'sortie hors de dist/ : ' + fichier)
-      // hors des six entrées, que des morceaux (code partagé, ou cible d'un import() dynamique)
+      // hors des sept entrées, que des morceaux (code partagé, ou cible d'un import() dynamique)
       if (nom in ENTREES) entrees[nom] = o.entryPoint
       else assert.match(nom, /^chunk-[A-Z0-9]+\.js$/, 'sortie qui n\'est ni une entrée ni un morceau')
       for (const [module, i] of Object.entries<any>(o.inputs)) {
@@ -102,7 +102,7 @@ describe('paquet npm publié : dist/ en une passe esbuild, contenu livré', func
       assert.match(cible.types, /^\.\/dist\/types\/.+\.d\.ts$/, chemin)
       cibles.push(cible.types)
     }
-    assert.equal(cibles.length, 5)
+    assert.equal(cibles.length, 6)
     const sortie = join(tmp, 'types')
     const r = spawnSync(process.execPath, [join(RACINE, 'node_modules/typescript/bin/tsc'), '-p', 'tsconfig.types.json', '--outDir', sortie], { cwd: RACINE, encoding: 'utf8' })
     assert.equal(r.status, 0, r.stdout + r.stderr)
@@ -115,7 +115,7 @@ describe('paquet npm publié : dist/ en une passe esbuild, contenu livré', func
     assert.equal(version.status, 0, version.stderr)
     assert.ok(version.stdout.includes(PKG.version), version.stdout)
     // worker.js refuse de se charger hors d'un fil de travail : ses morceaux sont lus par chargees() ci-dessous
-    for (const nom of ['index.js', 'testing.js', 'mjs-ws.js', 'mjs-server.js']) {
+    for (const nom of ['index.js', 'testing.js', 'mjs-ws.js', 'mjs-server.js', 'rules.js']) {
       const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(join(RACINE, 'dist', nom))})`], { cwd: tmp, encoding: 'utf8' })
       assert.equal(r.status, 0, nom + ' : ' + r.stderr)
     }

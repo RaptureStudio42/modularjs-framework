@@ -37,9 +37,13 @@
 // composant gagne toujours, même avec une classe nue). Variables `--mjs-title-*` pour les
 // couleurs/formes (CSS pur, pas de clé JS pour celles-ci) ; `--mjs-title-dur` seule est
 // alimentée par la config (setProperty sur la bulle — canal variable, zéro style inline pour la
-// durée). Le positionnement (top/left, calculé depuis getBoundingClientRect, et max-height d'une
-// bulle plus haute que la fenêtre) reste, lui, posé en style direct — donnée purement géométrique
-// et jetable, même famille que le FLIP (mjs_easing.ts).
+// durée). Placement : par l'ancrage CSS quand le navigateur le connaît (l'élément porte l'ancre
+// `mjs-title-anchor` le temps de l'affichage ; le navigateur pose la bulle, la centre, la garde
+// dans la fenêtre et la suit au défilement ; le script ne choisit que le côté, cf.
+// __titleAnchorFit, et place lui-même une bulle qui n'a la place d'aucun côté). Sans ancrage,
+// repli : top/left calculés depuis getBoundingClientRect
+// (__titlePosition), posés en style direct comme le max-height d'une bulle plus haute que la
+// fenêtre — donnée purement géométrique et jetable, même famille que le FLIP (mjs_easing.ts).
 
 // test d'inclusion insensible à une méthode `contains` du composant (cf. mjs_element.ts)
 µ._mjs_inside = µ._mjs_inside || function(a, b) {
@@ -54,11 +58,16 @@
 µ._mjs_titleSheet = new CSSStyleSheet();
 
 // inset et margin remis : la feuille native de [popover] pose inset:0 et margin:auto, qui tirent la bulle vers le centre de la fenêtre
+// ancrée (`mjs-title-anchored`) : au-dessus ou en dessous de l'élément qui porte l'ancre, centrée ; ses marges de 8 px à l'écran font
+// l'écart avec l'élément et la gardent à 8 px des bords gauche et droit de la fenêtre, où le navigateur la fait glisser
 // overflow:auto comme cette feuille native : sans Popover aussi, une bulle à hauteur bornée rogne son texte
 µ._mjs_titleSheet.replaceSync(`:where(.mjs-title){position:fixed;inset:auto;margin:0;z-index:2147483647;max-width:280px;overflow:auto;pointer-events:none;opacity:0;padding:var(--mjs-title-pad, 6px 10px);border-radius:var(--mjs-title-radius, 6px);border:1px solid var(--mjs-border, rgba(255,255,255,.25));background:var(--mjs-title-bg, #1c2333);color:var(--mjs-title-fg, #f4f4f5);box-shadow:var(--mjs-title-shadow, 0 4px 14px rgba(0,0,0,.35));font:13px/1.4 system-ui,sans-serif;transition:opacity var(--mjs-title-dur, 150ms) ease,transform var(--mjs-title-dur, 150ms) ease}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="top"]){transform:translateY(var(--mjs-title-offset, 4px))}
 :where(.mjs-title[data-mjs-title-transition="slide"][data-mjs-title-side="bottom"]){transform:translateY(calc(var(--mjs-title-offset, 4px)*-1))}
-:where(.mjs-title.mjs-title-visible){opacity:1;transform:translateY(0)}`);
+:where(.mjs-title.mjs-title-visible){opacity:1;transform:translateY(0)}
+:where([mjs-title-anchor]){anchor-name:--mjs-title}
+:where(.mjs-title.mjs-title-anchored){position-anchor:--mjs-title;position-area:top;margin:0 var(--mjs-title-gap, 8px) var(--mjs-title-gap, 8px)}
+:where(.mjs-title.mjs-title-anchored[data-mjs-title-side="bottom"]){position-area:bottom;margin:var(--mjs-title-gap, 8px) var(--mjs-title-gap, 8px) 0}`);
 
 // reste dans un composant qui repose ses feuilles (cf. _mjs_applyLayout)
 µ._mjs_titleSheet._mjs_keep = true;
@@ -69,6 +78,9 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, µ._mjs_titleShee
 // test) → repli : bulle UNIQUE dans document.body, position fixed (jamais dans un shadow — sans
 // top-layer, un ancêtre overflow/z-index pourrait la rogner).
 var __titlePopoverOk = typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.showPopover === 'function';
+// ancrage CSS, avec la couche du dessus seulement — sans lui, placement par le script (__titlePosition) ; le test demande tout ce que la
+// feuille emploie : Chrome 125 à 128 connaît `anchor-name` sans `position-area` (alors `inset-area`)
+var __titleAnchorOk  = __titlePopoverOk && typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('(anchor-name: --a) and (position-area: top)');
 
 // État module (une seule bulle visible à la fois, philosophie standard des tooltips délégués).
 var __titleAttachedRoots  = new WeakSet(); // racines déjà écoutées
@@ -80,6 +92,7 @@ var __titleCurrent        = null; // élément dont la bulle est actuellement af
 var __titleCurrentBubble  = null;
 var __titleObserver       = null; // instancié plus bas, une fois __titleHide défini
 var __titleDetachObserver = null; // détecte le RETRAIT DOM de la cible pendant l'affichage
+var __titleSeen           = null; // ancrée : ferme la bulle quand son élément disparaît (cf. __titleDoShow)
 
 // substitution title natif ↔ bulle MJS : la bulle SE SUBSTITUE au `title` natif, jamais les
 // deux à la fois — cf. __titleSuppressNative/__titleRestoreNative, appelées depuis __titleDoShow/
@@ -172,7 +185,57 @@ function __titleBubbleFor(host) {
   return b;
 }
 
-// Positionnement : au-dessus par défaut, bascule en dessous (ou l'inverse) si la place
+// une boîte qui fausse l'ancre, l'élément compris, ombres traversées : en `position: fixed`, WebKit y décale l'ancre de la longueur du
+// défilement de la page ; déplacée par une transformation autre que l'identité (`transform`, `translate`, `rotate`, `scale`), Firefox
+// pose la bulle comme si elle n'existait pas
+function __titleShifted(n) {
+  for (; n; n = n.parentElement || n.getRootNode().host) {
+    var s = getComputedStyle(n);
+    if (s.position === 'fixed' || s.transform !== 'none' && !new DOMMatrix(s.transform).isIdentity || /[1-9]/.test(s.translate + s.rotate) || !/^(none|1( 1)*)$/.test(s.scale)) { return true; }
+  }
+  return false;
+}
+
+// l'élément prend l'ancre de la bulle : refusé quand il n'a pas de boîte CSS (intérieur d'un SVG, `display: contents`), quand il est
+// dans une boîte fixe ou transformée (cf. __titleShifted), quand le style de la page remplace son `anchor-name` ou quand il n'est pas
+// dans l'arbre de la bulle — placement par le script alors
+function __titleAnchor(el, bubble) {
+  if (!__titleAnchorOk || el.getRootNode() !== bubble.getRootNode() || (typeof SVGElement === 'function' && el instanceof SVGElement && el.ownerSVGElement) || __titleShifted(el)) { return false; }
+  el.setAttribute('mjs-title-anchor', '');
+  var cs = getComputedStyle(el);
+  if (cs.display !== 'contents' && cs.getPropertyValue('anchor-name').indexOf('--mjs-title') !== -1) { return true; }
+  el.removeAttribute('mjs-title-anchor');
+  return false;
+}
+
+// ancrée, la bulle est posée par le navigateur ; le script choisit seulement le côté (cf. µ._mjs_titleResolveSide), règle ses marges à
+// 8 px d'écran (`--mjs-title-gap`) et borne la hauteur d'une bulle plus haute que la fenêtre (à la fenêtre moins deux écarts, le surplus
+// rogné) — à travers le zoom CSS de la bulle, lu sur l'écran en la décalant de 1 000 px (`translate`, sans effet sur sa place)
+function __titleAnchorFit(bubble, trigger, side) {
+  var gap   = 8;
+  var vh    = window.innerHeight;
+  bubble.style.top       = '';
+  bubble.style.left      = '';
+  bubble.style.maxHeight = '';
+  var brect = bubble.getBoundingClientRect();
+  bubble.style.translate = '0 1000px';
+  var zoom  = (bubble.getBoundingClientRect().top - brect.top) / 1000 || 1;
+  bubble.style.translate = '';
+  bubble.style.setProperty('--mjs-title-gap', gap / zoom + 'px');
+  var rect  = trigger.getBoundingClientRect();
+  brect     = bubble.getBoundingClientRect();
+  if (brect.height > vh - 2 * gap) {
+    bubble.style.maxHeight = parseFloat(getComputedStyle(bubble).height) - (brect.height - vh + 2 * gap) / zoom + 'px';
+    brect = bubble.getBoundingClientRect();
+  }
+  var eff = µ._mjs_titleResolveSide(side, rect, brect.height, gap, vh);
+  bubble.setAttribute('data-mjs-title-side', eff);
+  // sans la place de son côté, le navigateur la ferait glisser contre le haut ou le bas de la fenêtre (Firefox y oublie ses marges) : le
+  // script la place alors, ramenée à 8 px du bord
+  return (eff === 'top' ? rect.top : vh - rect.bottom) >= brect.height + gap;
+}
+
+// Repli sans ancrage — positionnement : au-dessus par défaut, bascule en dessous (ou l'inverse) si la place
 // manque — cf. µ._mjs_titleResolveSide, seule la lecture des rects est faite ici.
 // bulle déjà ouverte (cf. __titleDoShow) et ramenée au bord gauche avant la mesure : à son ancienne
 // place, la largeur restante pourrait la plier ; contre un bord, glissée vers l'intérieur
@@ -284,12 +347,29 @@ function __titleDoShow(el, root, cfg) {
   if (content.html) { bubble.innerHTML = content.value; } else { bubble.textContent = content.value; }
   bubble.setAttribute('data-mjs-title-transition', cfg.transition);
   bubble.style.setProperty('--mjs-title-dur', cfg.dur + 'ms');
+  var anchored = __titleAnchor(el, bubble);
+  bubble.classList.toggle('mjs-title-anchored', anchored);
   // ouverte AVANT la mesure : un popover fermé est en display:none (0 × 0) ; elle reste à opacity 0
   // jusqu'à mjs-title-visible, posée plus bas dans la même tâche — aucune image au mauvais endroit
   if (__titlePopoverOk && typeof bubble.showPopover === 'function') {
     try { bubble.showPopover(); } catch { /* déjà ouverte : sans conséquence */ }
   }
-  __titlePosition(bubble, el, cfg.side);
+  if (!anchored || !__titleAnchorFit(bubble, el, cfg.side)) {
+    bubble.classList.remove('mjs-title-anchored');
+    el.removeAttribute('mjs-title-anchor');
+    __titlePosition(bubble, el, cfg.side);
+  }
+  // dans la couche du dessus, ancrée ou placée par le script, elle se ferme quand son élément est caché par le conteneur qui défile, ou sort
+  // de l'écran (Firefox et Safari laisseraient flotter la bulle ancrée hors du conteneur, le script poserait la sienne contre un élément
+  // caché) ; un élément sans boîte CSS (`display: contents`) ne se suit pas : l'observateur le dirait caché
+  if (__titleSeen) { __titleSeen.disconnect(); }
+  if (__titlePopoverOk && el.getClientRects().length) {
+    __titleSeen = __titleSeen || new IntersectionObserver(function(list) {
+      var last = list[list.length - 1];
+      if (!last.isIntersecting && last.target === __titleCurrent) { __titleHide(); }
+    });
+    __titleSeen.observe(el);
+  }
   if (__titleObserver) {
     __titleObserver.disconnect();
     __titleObserver.observe(el, { attributes: true, attributeFilter: ['mjs-title', 'mjs-title-html', 'title'] });
@@ -320,6 +400,7 @@ function __titleHide() {
   var bubble = __titleCurrentBubble;
   if (__titleObserver) { __titleObserver.disconnect(); }
   if (__titleDetachObserver) { __titleDetachObserver.disconnect(); }
+  if (__titleSeen) { __titleSeen.disconnect(); }
   if (bubble) {
     bubble.classList.remove('mjs-title-visible');
     if (__titlePopoverOk && typeof bubble.hidePopover === 'function') {
@@ -327,6 +408,7 @@ function __titleHide() {
     }
     __titleUndescribe(el, bubble.id);
   }
+  el.removeAttribute('mjs-title-anchor');
   __titleRestoreNative(el); // substitution : title natif restitué à l'identique
   __titleCurrent       = null;
   __titleCurrentBubble = null;
@@ -487,6 +569,13 @@ function __titleOnContextMenu(e) {
   if (el && __titleTouchShown && __titleCurrent === el) { e.preventDefault(); }
 }
 
+// une modale qui s'ouvre (µ.modal) ferme la bulle, et celle qui attend son délai : dans la couche du dessus, elle passerait devant
+// la modale (cf. µ._mjs_menus, les menus de MJS ouverts)
+(µ._mjs_menus = µ._mjs_menus || new Set()).add(function() {
+  __titleClearPending();
+  __titleHide();
+});
+
 // Attache par racine, gardée par mjs_element.ts (`typeof µ._mjs_titleAttach === 'function'`) au
 // même endroit que le pont UJS. Idempotent : une racine déjà vue ressort AVANT tout addEventListener.
 µ._mjs_titleAttach = function(root) {
@@ -505,7 +594,9 @@ function __titleOnContextMenu(e) {
 
 // Boot : `document` couvre le light DOM + les balises hors composant. Escape ferme la bulle
 // visible ; scroll/resize la ferment aussi (choix délibéré, plus simple et plus sûr qu'un
-// repositionnement en direct).
+// repositionnement en direct). Le défilement d'un conteneur posé dans une ombre n'arrive pas à la
+// fenêtre (`scroll` ne traverse pas la frontière) : la bulle reste ouverte, contre son élément
+// quand elle est ancrée.
 µ._mjs_titleAttach(document);
 
 document.addEventListener('keydown', function(e) {

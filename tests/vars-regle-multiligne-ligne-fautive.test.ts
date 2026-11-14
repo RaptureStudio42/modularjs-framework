@@ -45,8 +45,10 @@ describe('règle d\'objet sur plusieurs lignes : la ligne de la faute', () => {
     assert.throws(() => parseTypesBlock('Point {\n  x: int,\n  y: int ;\n}\n', 20), /<types>, ligne 22 :/)
   })
 
+  // la règle d'objet s'écrit en retrait (les accolades sont refusées avant l'analyse) : la faute d'un champ cite sa ligne
   it('les fautes d\'analyse citaient déjà la bonne ligne : elles la gardent', () => {
-    assert.throws(() => compileVars({ raw: '$o {\n  a: int,\n  b: bool 1..2\n}\n', startLine: 10 }, {}, true), /<vars>, ligne 12 :/)
-    assert.throws(() => compileVars({ raw: '$o {\n  a: int,\n  b: int,\n  a: int\n}\n', startLine: 10 }, {}, true), /<vars>, ligne 13 :/)
+    assert.throws(() => compileVars({ raw: '$o\n  a  int\n  b  bool 1..2\n', startLine: 10 }, {}, true), /<vars>, ligne 12 :/)
+    assert.throws(() => compileVars({ raw: '$o\n  a  int\n  b  int\n  a  int\n', startLine: 10 }, {}, true), /<vars>, ligne 13 :/)
+    assert.throws(() => compileVars({ raw: '$o\n  a  int\n  b\n    c  bool 1..2\n', startLine: 10 }, {}, true), /<vars>, ligne 13 :/)
   })
 })

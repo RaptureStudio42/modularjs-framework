@@ -78,6 +78,13 @@ describe('regroupement des rendus — appels de liste hors de toute boucle (la p
     assert.equal(enveloppes(passe(`o.then((x) => { ${W} })`)), 0)
   })
 
+  it('une fonction de MJS nommée comme une méthode de liste (`µ.every`, minuterie) n\'est pas un appel de liste', () => {
+    assert.equal(enveloppes(passe(`µ.every(1000, () => { ${W} })`)), 0)
+    assert.equal(enveloppes(passe(`const t = µ.every(1000, () => { ${W} })\nreturn t`)), 0)
+    // la méthode d'une liste du même nom reste enveloppée
+    assert.equal(enveloppes(passe(`l.every((x) => { ${W}; return true })`)), 1)
+  })
+
   it('le code produit : écritures faites appel en cours, une vidange à la sortie, valeur et `this` rendus, compteur rendu', () => {
     let e = executer(`l.forEach((x) => { ${W} })\nreturn 'fin'`, [1, 2, 3])
     assert.deepEqual([e.r, e.µ.profondeurs, e.µ.vidanges, e.µ._mjs_lq], ['fin', [1, 1, 1], 1, 0], e.out)

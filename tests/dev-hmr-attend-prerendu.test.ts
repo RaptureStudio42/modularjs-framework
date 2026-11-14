@@ -129,7 +129,7 @@ describe("cli.ts — 'mjs dev' : le rechargement HMR attend la fin du prérendu"
         const timer = setTimeout(() => { ws.off('message', surMessage); reject(new Error(`message HMR de rang ${rang} jamais reçu à temps. dev :\n${dev.stdout()}`)) }, delaiMs)
         function surMessage(data: WebSocket.RawData): void {
           const msg = JSON.parse(data.toString())
-          if (msg.type !== 'reload' && msg.type !== 'css-update') return
+          if (msg.type !== 'reload' && msg.type !== 'css-update' && msg.type !== 'hot-update') return
           recus++
           if (recus !== rang) return
           clearTimeout(timer)

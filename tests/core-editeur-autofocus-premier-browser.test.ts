@@ -12,7 +12,7 @@ const SOURCE = `<script>
 
   µmount ->
     window.__ouvrir = -> $deux = true
-    window.__plusTard = -> setTimeout((-> $tard = true), 30)
+    window.__plusTard = -> µafter(30, -> $tard = true)
 </script>
 
 <button type="button" class="avant">avant</button>

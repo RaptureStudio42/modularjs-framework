@@ -30,9 +30,10 @@ import * as walk from 'acorn-walk'
 import MagicString from 'magic-string'
 import { t } from '../messages/index.js'
 import { maskInertSameLength } from '../lexer/index.js'
-import { maskHtmlComments } from '../mask.js'
+import { maskHtmlComments, replaceBlocks } from '../mask.js'
 import { typedLine, printDiagnostic, type LintToggles } from '../diagnostics.js'
 import { derivesAuxLecturesConnues, type DeriveCandidat, type Recepteur } from './derived-reads.js'
+import { deriveesPrecises, variablesDouteuses } from './derived-classes.js'
 
 export interface AnalyzeSnippetResult {
   deps: string[]
@@ -51,6 +52,8 @@ export interface AnalyzerOutput {
   // valeurs dérivées qui appellent une fonction : ce qui les lit garde ses dépendances connues, jamais `*`
   // (cf. Analyzer.resolveSnippetDeps)
   appels?: string[]
+  // valeurs dérivées trouvées, avec le nœud de leur expression (classement de `mjs check --derived`, cf. derived-classes.ts)
+  candidats?: DeriveCandidat[]
   modifiedCode: string
 }
 
@@ -127,7 +130,7 @@ export function analyzeSnippetOrNull(jsCode: string, cle = false): string[] | nu
       collectStoreMemberDep(node, ancestors, deps)
     },
     // `@fmt()` dans un snippet de template compile en `this.fmt()`
-    // (generator/utils.ts, applySymbolRegex — couvre aussi `_mjsThis.fmt()`,
+    // (reader/expression.ts, lecture par l'arbre — couvre aussi `_mjsThis.fmt()`,
     // forme de `@@fmt()`, par robustesse). Marqueur '@fmt' résolu PLUS TARD
     // par resolveSnippetDeps (classe Analyzer, via this.methodReads) — jamais
     // émis tel quel : aucune var '@fmt' n'existe côté runtime.
@@ -265,6 +268,12 @@ function scanReactiveReads(node: any): { deps: Set<string>; readsReactiveSource:
       // (câble le recompute du derived sur l'écriture de la clé store, en
       // miroir du câblage des `$.y` locaux) ; `µ.store` référencé BRUT
       // (énumération) → '$$*'. Les deux marquent aussi readsReactiveSource.
+      // la donnée d'un magasin chargé (`µload(url).data?.n`, `.pending`, `.error`) : une valeur qui la lit se recalcule à chaque arrivée
+      // d'une réponse (runtime/mjs_load.ts) ; le magasin lui-même (`$me = µload(url)`), rangé tel quel, et tout autre membre
+      // (`µload(url).refresh()`, qui relancerait une requête à chaque calcul) restent une variable
+      const o = c.object
+      const membre = c.computed ? (c.property.type === 'Literal' ? c.property.value : null) : c.property.name
+      if (o.type === 'CallExpression' && o.callee.type === 'MemberExpression' && !o.callee.computed && o.callee.object.type === 'Identifier' && o.callee.object.name === 'µ' && o.callee.property.type === 'Identifier' && o.callee.property.name === 'load' && (membre === 'data' || membre === 'pending' || membre === 'error')) readsReactiveSource = true
       const before = deps.size
       collectStoreMemberDep(c, ancestors, deps)
       if (deps.size > before) readsReactiveSource = true
@@ -396,8 +405,9 @@ function detectUnparenthesizedDerivedIf(ast: any, ms: MagicString, dependencies:
   }
 }
 
-// fin d'une enveloppe de valeur dérivée, posée une fois toutes les valeurs dérivées connues : `_mjs_s` marque celles
-// dont toutes les lectures sont connues (cf. derived-reads.ts), dans l'ordre où elles ont été trouvées
+// fin d'une enveloppe de valeur dérivée, posée une fois toutes les valeurs dérivées connues : `_mjs_s` marque celles dont toutes les lectures
+// sont connues (cf. derived-reads.ts) ou, avec l'option `derived: "precise"`, porte les sources de celles que le compilateur prouve précises
+// (cf. deriveesPrecises, derived-classes.ts), dans l'ordre où elles ont été trouvées
 interface Fermeture { nom: string; pos: number; simple: string; marquee: string }
 
 // ============================================================================
@@ -460,7 +470,7 @@ function resolveMethodReadsPointFixe(methods: Record<string, string[]>, diag: { 
 // `preAst` : l'AST de `jsCode` déjà analysé ; absent ou `null` (analyse échouée en amont), le texte est relu — et l'erreur
 // d'analyse levée comme avant
 // `moduleVars` : noms du premier niveau du `<script module>` ; `externalVars` : variables externes (`$nom`)
-export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean; moduleVars?: string[]; externalVars?: string[] } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
+export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnabled?: boolean; moduleVars?: string[]; externalVars?: string[]; brut?: boolean; precise?: boolean } = {}, preAst?: acorn.Node | null): AnalyzerOutput {
   const stateVariables = new Set<string>()
   // Object.create(null) sur TOUS les dicts de ce
   // fichier indexés par un nom UTILISATEUR (méthode/état/computed) : un `{}` ordinaire
@@ -632,7 +642,9 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
             // un derived dont le RHS contient `await` doit être une flèche
             // ASYNC, sinon `() => (await …)` est une SyntaxError.
             ms.appendLeft(effectiveRight.start, hasAwait ? '{ _mjs_c: true, f: async () => (' : '{ _mjs_c: true, f: () => (')
-            candidats.push({ nom: varName, noeud: effectiveRight, force: isForceDepsMarker && node.right.arguments.length >= 2 })
+            const force   = isForceDepsMarker && node.right.arguments.length >= 2
+            const nommees = force ? node.right.arguments.slice(1).map((a: any) => a.type === 'MemberExpression' && !a.computed && a.object.type === 'Identifier' && a.object.name === '$' && a.property.type === 'Identifier' ? a.property.name : '') : []
+            candidats.push({ nom: varName, noeud: effectiveRight, force, ...(force && !nommees.includes('') ? { nommees } : {}) })
             fermetures.push({ nom: varName, pos: effectiveRight.end, simple: ') }', marquee: '), _mjs_s: 1 }' })
           }
         }
@@ -759,7 +771,10 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
   // lectures connues en sommeil (`LECTURES_CONNUES`, derived-reads.ts) : aucune valeur marquée, aucun receveur enveloppé
   const recepteurs = new Map<string, Recepteur[]>()
   const connues = derivesAuxLecturesConnues(ast, candidats, dependencies, diag.moduleVars ?? [], diag.externalVars ?? [], recepteurs)
-  for (const f of fermetures) ms.appendRight(f.pos, connues.has(f.nom) ? f.marquee : f.simple)
+  // option `derived: "precise"` : les valeurs précises (deriveesPrecises, derived-classes.ts) portent leurs sources sur l'enveloppe, que le
+  // runtime compare ; sans elle, la règle de l'horloge
+  const precises = diag.precise === true ? deriveesPrecises(candidats, diag.externalVars ?? [], variablesDouteuses(ast, diag.brut === true)).sources : null
+  for (const f of fermetures) ms.appendRight(f.pos, precises === null ? (connues.has(f.nom) ? f.marquee : f.simple) : precises.has(f.nom) ? f.marquee.replace('_mjs_s: 1', '_mjs_s: ' + JSON.stringify(precises.get(f.nom))) : f.simple)
   // receveur d'une méthode ordinaire, ou itérable d'un parcours (`Symbol.iterator`), d'une valeur connue : vérifié à chaque
   // calcul (`_mjs_rcv`, runtime/mjs_element.ts) — la méthode ou l'itérateur d'un objet de l'utilisateur peut lire l'état par
   // une fermeture, la valeur passe alors à « toute écriture la périme »
@@ -791,6 +806,7 @@ export function analyze(jsCode: string, diag: { lint?: LintToggles; colorsEnable
     methods: methodsRaw,
     toute: Array.from(toute),
     appels: Array.from(appels),
+    candidats,
     modifiedCode,
   }
 }
@@ -812,6 +828,8 @@ export class Analyzer {
   /** Valeurs dérivées qui appellent une fonction (cf. AnalyzerOutput.appels) : une expression du gabarit qui en lit une
    * ne reçoit jamais `*` (resolveSnippetDeps) */
   computedAppel: Set<string> = new Set()
+  // valeurs dérivées du script, avec le nœud de leur expression (cf. AnalyzerOutput.candidats)
+  derivedCandidates: DeriveCandidat[] = []
   /** Registre de présence des vars (valeur 1 par var). Pas un bitmask, juste
    * un objet permettant aux stores universels de tester `_mjs_var_bits[k] !== undefined`.
    * Pour rétro-compat avec mjs_store.ts et mjs_runes.ts.
@@ -845,6 +863,10 @@ export class Analyzer {
   private cyclesSignales = new Set<string>()
   private externalVars: string[] = []
   private moduleVars: string[] = []
+  // le composant écrit l'état sans MJS : aucune valeur précise (cf. ECRITURE_BRUTE, derived-classes.ts)
+  brut: boolean
+  // option `derived: "precise"` : les valeurs que le compilateur prouve précises portent leurs sources (cf. analyze)
+  precise: boolean
   // miroirs Set des `includes` chauds (`stateVars`/`externalVars` testés
   // en boucles snippets×deps). Les arrays publics restent la façade ; ces Set
   // sont reconstruits à CHAQUE mutation de stateVars (analyzeAndBuild + autoDeclare).
@@ -869,9 +891,11 @@ export class Analyzer {
 
   // `preAst` : l'AST du script déjà analysé par le transpileur (partagé, jamais modifié ici)
   // `moduleVars` : noms du premier niveau du `<script module>` (leurs fonctions ne voient pas l'état de l'instance)
-  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null, moduleVars: string[] = []) {
+  constructor(jsScriptCode: string, externalVars: string[] = [], lint?: LintToggles, colorsEnabled = false, preAst?: acorn.Node | null, moduleVars: string[] = [], brut = false, precise = false) {
     this.externalVars = externalVars
     this.moduleVars = moduleVars
+    this.brut = brut
+    this.precise = precise
     this.externalVarsSet = new Set(externalVars)
     this.lint = lint
     this.colorsEnabled = colorsEnabled
@@ -882,7 +906,7 @@ export class Analyzer {
   // Analyse principale + registre de présence des vars
   // ------------------------------------------------------------------------
   private analyzeAndBuild(jsScriptCode: string, preAst?: acorn.Node | null): void {
-    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled, moduleVars: this.moduleVars, externalVars: this.externalVars }, preAst)
+    const out = analyze(jsScriptCode, { lint: this.lint, colorsEnabled: this.colorsEnabled, moduleVars: this.moduleVars, externalVars: this.externalVars, brut: this.brut, precise: this.precise }, preAst)
     this.modifiedCode = out.modifiedCode
 
     this.stateVars = out.state.filter(v => !this.externalVarsSet.has(`$${v}`))
@@ -896,6 +920,7 @@ export class Analyzer {
     }
     this.computedToute = new Set((out.toute ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
     this.computedAppel = new Set((out.appels ?? []).filter(k => !this.externalVarsSet.has(`$${k}`)))
+    this.derivedCandidates = out.candidats ?? []
 
     // méthodes du composant : filtre externalVars (même partition
     // que computedDeps ci-dessus), PUIS point-fixe (méthode qui en appelle une
@@ -1032,9 +1057,9 @@ export class Analyzer {
       }
       return out + blank(s.slice(texte))
     }
-    const withoutPreCode = htmlRaw
-      .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, blank)
-      .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, blank)
+    // `<pre>` puis `<code>`, aux bornes de leurs regex, d'ouverture en ouverture (replaceBlocks) : un `<pre x` sans `>` ou un
+    // `<pre>` sans fermante ne fait pas relire la fin du texte depuis chacun
+    const withoutPreCode = replaceBlocks(replaceBlocks(htmlRaw, ['pre'], blank), ['code'], blank)
     const withoutComments = blankHorsBalises(maskHtmlComments(withoutPreCode))
     // nom ENTIER, lettres accentuées comprises : `$prénom` déclarait aussi une variable fantôme `pr` (une première
     // lettre accentuée, `$âge`, est refusée à la construction, cf. refuseEtatAccentue dans sigils.ts)

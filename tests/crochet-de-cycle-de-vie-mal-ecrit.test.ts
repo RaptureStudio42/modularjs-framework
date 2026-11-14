@@ -23,7 +23,7 @@ describe('crochet de cycle de vie mal écrit', function () {
 
   it('`µmounted ->` est refusé à sa ligne et propose `µmount`', async () => {
     const message = await refus('µmounted ->')
-    assert.match(message, /crochet\.script:3:1 /)
+    assert.match(message, /crochet\.mjs:3:1 /)
     assert.match(message, /« µmounted »/)
     assert.match(message, /« µmount »/)
   })

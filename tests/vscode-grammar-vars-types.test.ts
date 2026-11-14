@@ -25,30 +25,6 @@ const ONIG_WASM = require.resolve('vscode-oniguruma/release/onig.wasm')
 type Jeton = { txt: string, scopes: string[] }
 let tokenise: (src: string) => Jeton[][]
 
-before(async () => {
-  await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
-  const registry = new vsctm.Registry({
-    onigLib: Promise.resolve({
-      createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
-      createOnigString:  (s: string)   => new oniguruma.OnigString(s),
-    }),
-    loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
-      ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
-      : null,
-  })
-  const grammar = await registry.loadGrammar('text.html.modularjs')
-  assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
-  tokenise = (src) => {
-    let state = vsctm.INITIAL
-    return src.split('\n').map((ligne) => {
-      const r = grammar.tokenizeLine(ligne, state)
-      state = r.ruleStack
-      return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
-        ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
-    })
-  }
-})
-
 const COMPOSANT = [
   '<vars>',                                                         // 0
   '  # le son',                                                     // 1
@@ -93,6 +69,30 @@ function couvert(lignes: Jeton[][], n: number, scope: string): string {
 }
 
 describe('extension VS Code — blocs <vars> et <types>', () => {
+  before(async () => {
+    await oniguruma.loadWASM(readFileSync(ONIG_WASM).buffer)
+    const registry = new vsctm.Registry({
+      onigLib: Promise.resolve({
+        createOnigScanner: (s: string[]) => new oniguruma.OnigScanner(s),
+        createOnigString:  (s: string)   => new oniguruma.OnigString(s),
+      }),
+      loadGrammar: async (scope: string) => scope === 'text.html.modularjs'
+        ? vsctm.parseRawGrammar(readFileSync(GRAMMAIRE, 'utf-8'), 'modularjs.tmLanguage.json')
+        : null,
+    })
+    const grammar = await registry.loadGrammar('text.html.modularjs')
+    assert.ok(grammar, 'grammaire text.html.modularjs introuvable')
+    tokenise = (src) => {
+      let state = vsctm.INITIAL
+      return src.split('\n').map((ligne) => {
+        const r = grammar.tokenizeLine(ligne, state)
+        state = r.ruleStack
+        return r.tokens.map((t: { startIndex: number, endIndex: number, scopes: string[] }) =>
+          ({ txt: ligne.slice(t.startIndex, t.endIndex), scopes: t.scopes }))
+      })
+    }
+  })
+
   it('les balises et le corps du bloc <vars>', () => {
     const l = tokenise(COMPOSANT)
     assert.ok(scopes(l, 0, 'vars').includes('entity.name.tag.vars.html'))

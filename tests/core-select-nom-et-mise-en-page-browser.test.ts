@@ -129,11 +129,12 @@ describe('<@@select> — nom accessible, retrait des groupes, image d\'icône (C
     if (!present) { this.skip(); return }
     await page.evaluate(`document.querySelector('mjs-hote')._shadow.querySelector('#s-groupes')._shadow.querySelector('.select-btn').click()`)
     await page.waitForTimeout(200)
+    // la jauge de largeur est celle du bouton : le panneau ouvert porte la sienne (`.select-panel-sizer`), hors de cette mesure
     const m = await page.evaluate(`(() => {
       const sh = document.querySelector('mjs-hote')._shadow.querySelector('#s-groupes')._shadow
       const cs = (el) => getComputedStyle(el)
       const opts  = [...sh.querySelectorAll('.select-option')]
-      const sizer = [...sh.querySelectorAll('.select-sizer > span')]
+      const sizer = [...sh.querySelectorAll('.select-sizer:not(.select-panel-sizer) > span')]
       const imgB  = sh.querySelector('.select-btn img.select-img')
       const imgL  = opts[0].querySelector('img.select-img')
       return {

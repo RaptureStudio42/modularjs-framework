@@ -27,7 +27,8 @@ const COMPOSANTS: Record<string, string> = {
   'mpp-cfg': '<p class="c">{$$cfg ? $$cfg.quantite : \'-\'}</p>',
   'mpp-type': [
     '<vars>',
-    '$$autre { quantite: int 1..99 }',
+    '$$autre',
+    '  quantite  int 1..99',
     '</vars>',
     '<p>t</p>',
   ].join('\n'),

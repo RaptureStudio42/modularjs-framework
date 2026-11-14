@@ -57,12 +57,10 @@ export interface SSRRendererOptions {
   /** Langage de script par défaut des composants (défaut : bundler). */
   defaultScriptLang?: 'civet' | 'coffee' | 'ts' | 'js'
   /**
-   * Grammaire des interpolations `{…}` du template ET des handlers inline —
-   * transmise telle quelle au `Bundler`
-   * interne (défaut `'civet'` appliqué côté transpiler). ENCORE INUTILISÉE :
-   * la valeur circule jusqu'ici, rien ne la consomme pour l'instant.
+   * Grammaire du gabarit — transmise telle quelle au `Bundler` interne : `'civet'`, la seule
+   * (défaut) ; `'js'`, l'ancienne grammaire, est refusée par le compilateur.
    */
-  templateLang?: 'civet' | 'js'
+  templateLang?: 'civet'
   /** `createSSRRenderer` ne transmettait NI `sigil`, NI `contextAlias`, NI
    * `stylesheetsDir` au `Bundler` qu'il construit : un projet configuré en
    * sigil `'mjs'`, ou avec `contextAlias: true`, ou avec des styles partagés
@@ -101,6 +99,8 @@ export interface SSRRendererOptions {
    *  RECOMPILE — dans le vrai dossier de sortie quand l'appelant lui en donne un : sans
    *  cette clé, il repasserait le build de l'appelant en développement. */
   env?: 'dev' | 'prod'
+  /** `mjs build --cache` (prérendu) : la compilation de ce renderer est servie par le cache sur disque de la construction */
+  cache?: boolean
   /** BUG D'INTÉGRATION — MANQUANT avant ce correctif : sans cette
    *  transmission, un projet avec `i18n/` + `mjs.config.json` → `i18n` ne
    *  voyait JAMAIS `µ._i18nData` dans le bundle SSR (le `Bundler` interne ne
@@ -701,7 +701,8 @@ export async function settleRender(el: any, maxMs: number): Promise<boolean> {
     await new Promise(r => setTimeout(r, step))
     elapsed += step
     const core: any = ssrCoreOf(el)
-    const busy = (el && core && core._ssrInfo && core._ssrInfo(el).renderScheduled) || hasPendingAwait(el)
+    // une requête de µload en vol (runtime/mjs_load.ts, `µ._ssrLoad(1)` : leurs adresses) retient le rendu comme un {await}
+    const busy = (el && core && core._ssrInfo && core._ssrInfo(el).renderScheduled) || hasPendingAwait(el) || (core && typeof core._ssrLoad === 'function' && core._ssrLoad(1).length > 0)
     if (busy) {
       stable = 0
     } else if (++stable >= 2) {
@@ -817,6 +818,50 @@ function markSsrTree(node: any): void {
   if (node.children) { for (const child of Array.from(node.children) as any[]) markSsrTree(child) }
 }
 
+// Retient, quand un composant bâti à plat (sans ombre propre, `_shadow === el`) reçoit sa page (premier fragment accroché à l'élément,
+// connectedCallback, runtime/mjs_element.ts), le dernier nœud du contenu que la page lui a glissé, `null` sans contenu : la frontière que
+// relit `lightPageFirst`. Posée sur le prototype qui porte `appendChild` (happy-dom), ou celui du navigateur de rendu (`context.addInitScript`,
+// sans argument), une fois par prototype
+export function noteLightPage(proto?: any): void {
+  const p: any = proto || (globalThis as any).Node.prototype
+  if (p.appendChild.mjsSsrNote) return
+  const append: any = p.appendChild
+  p.appendChild = function (this: any, n: any) {
+    if (n && n.nodeType === 11 && this._shadow === this && !('__mjsSsrLight' in this)) this.__mjsSsrLight = this.lastChild
+    return append.call(this, n)
+  }
+  p.appendChild.mjsSsrNote = true
+}
+
+// Composant léger bâti à plat : sa page suit le contenu que la page lui glisse. Léger par sa seule classe (`static mjsLight = true`,
+// accesseur ou héritage), rien ne le dit léger dans la page : il reçoit `mjs-light`, que le client lit à la reprise, même quand sa classe
+// n'y est pas encore définie. En `markers` (`marquer`), sa page passe devant ce contenu, séparée de lui par le repère `<!--mjs-l-->` (fin du
+// contenu notée par `noteLightPage`) : le client ne jette que ce qui le précède, le contenu glissé garde ses nœuds. `tous` : le moteur
+// navigateur bâtit aussi à plat un `@lightDom`, qui reçoit le même repère ; ici (happy-dom), un `@lightDom` a sa propre ombre et son repère
+// vient d'`etiqueterReprise`. La racine et sa balise restent à `RenderOptions.light`. Partagée TELLE QUELLE avec le moteur navigateur (sa
+// source est injectée dans la page) : aucune dépendance hors de ce corps
+export function lightPageFirst(root: any, marquer: boolean, tous: boolean): void {
+  function walk(node: any): void {
+    const kids: any[] = [...(node._shadow && node._shadow !== node ? Array.from(node._shadow.children) : []), ...Array.from(node.children || [])]
+    for (const el of kids) {
+      if (el._shadow === el && el.localName !== root.localName) {
+        let classe = false
+        // un accesseur qui échoue ne rend pas léger, comme au constructeur du runtime
+        try { classe = el.constructor.mjsLight === true } catch { classe = false }
+        if (classe && !el.hasAttribute('mjs-light')) el.setAttribute('mjs-light', '')
+        const fin: any = el.__mjsSsrLight
+        if (marquer && (classe || tous) && fin && fin.parentNode === el) {
+          const mark: any = el.ownerDocument.createComment('mjs-l')
+          el.insertBefore(mark, el.firstChild)
+          while (fin.nextSibling) el.insertBefore(fin.nextSibling, mark)
+        }
+      }
+      walk(el)
+    }
+  }
+  walk(root)
+}
+
 // Champs de formulaire : un champ lié à une variable (`value={$x}`, `checked={$ok}`) en reçoit l'état par sa PROPRIÉTÉ, que la
 // sérialisation du HTML (`outerHTML`, `getHTML()`) n'écrit pas — elle ne lit que les ATTRIBUTS. La page sortait avec `value=""` : les
 // curseurs au milieu de leur course, puis sautant à leur place au démarrage. `reflectFieldState` recopie l'état courant d'UN élément
@@ -917,6 +962,9 @@ function etiqueterReprise(node: any, doc: any): void {
     const core: any = ssrCoreOf(node)
     if (core && typeof core._ssrRows === 'function') core._ssrRows(node)
   }
+  // composant `@lightDom` : construit ici avec sa propre ombre, il s'écrit à plat, sa page d'abord, puis le contenu que la page lui a glissé ;
+  // le repère `<!--mjs-l-->` les sépare, le client ne jette que ce qui le précède et garde le contenu glissé (runtime/mjs_element.ts)
+  if (propre && node.firstChild && node.hasAttribute && node.hasAttribute('mjs-light')) node.insertBefore(doc.createComment('mjs-l'), node.firstChild)
   if (propre) { for (const child of Array.from(node._shadow.children) as any[]) etiqueterReprise(child, doc) }
   if (node.children) { for (const child of Array.from(node.children) as any[]) etiqueterReprise(child, doc) }
 }
@@ -1159,7 +1207,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   // seulement quand elles sont RENSEIGNÉES : les laisser telles quelles écraserait la
   // valeur résolue par un `undefined` (un appelant qui passe `bundlerOpts` ne renseigne
   // pas les clés héritées). D'où le filtrage avant le dernier spread.
-  const explicites: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env }
+  const explicites: Record<string, unknown> = { defaultScriptLang: opts.defaultScriptLang, templateLang: opts.templateLang, sigil: opts.sigil, contextAlias: opts.contextAlias, stylesheetsDir: opts.stylesheetsDir, css: opts.css, csp: opts.csp, maxStateVars: opts.maxStateVars, a11y: opts.a11y, lint: opts.lint, colorsEnabled: opts.colorsEnabled, i18n: opts.i18n, env: opts.env, cache: opts.cache }
   for (const k of Object.keys(explicites)) if (explicites[k] === undefined) delete explicites[k]
 
   const bundler = new Bundler({
@@ -1182,6 +1230,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     // dans manifestPath, plus de mjs_core-*.js séparé) casserait — quel que soit le réglage du
     // projet rendu.
     js: 'split',
+    // construction d'un moteur de rendu : les morceaux du runtime qui ne servent qu'au rendu serveur restent (cf. Bundler.rendersOnServer)
+    serverRender: true,
     // Préfixe public du VRAI build imposé quand la compilation est détournée : les URLs d'assets
     // du HTML rendu (images `µasset`, feuilles `csp`, liens) désignent ce que sert le back, jamais
     // le dossier de travail. `undefined` hors détournement : le Bundler dérive comme avant.
@@ -1271,6 +1321,16 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
   const files = jsFiles.filter(f =>
     f !== coreFile && f !== 'bundle.js' && !/^mjs_(?:page|group)-[^/]*-(?:[0-9a-z]{5}|[a-f0-9]{8})\.js$/.test(f) &&
     ((/^mjs_/.test(f) && emisCeTour.has(f)) || emittedBasenames.has(f)))
+  // un module .js importé (`@import { chart } 'vendor/chart.js'`) est COPIÉ tel quel, sans entrée au manifeste : admis
+  // quand un fichier admis l'importe, de proche en proche — jamais un .js d'un build antérieur que plus rien n'importe
+  const sources = new Map<string, string>()
+  const lire    = (f: string): string => sources.get(f) ?? sources.set(f, readFileSync(join(outputDir, f), 'utf-8')).get(f)!
+  for (let i = 0; i < files.length; i++) {
+    for (const m of lire(files[i]).matchAll(/\b(?:from|import)\s*["']([^"']+\.js)["']/g)) {
+      const cible = m[1].split('/').pop() || ''
+      if (!/^mjs_/.test(cible) && cible !== 'bundle.js' && jsFiles.includes(cible) && !files.includes(cible)) files.push(cible)
+    }
+  }
   const idByFile = new Map(files.map(f => [f, fileToId(f)]))
   // Résout une URL d'import (`/assets/.../x-hash.js`) vers l'id du fichier cible ;
   // null pour le core (µ global) ou tout externe → l'import est retiré.
@@ -1278,7 +1338,7 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
     idByFile.get(url.split('/').pop() || '') ?? null
   const scoped = files.map((f) => {
     const id = idByFile.get(f)!
-    const { code, deps } = ssrScopeFile(readFileSync(join(outputDir, f), 'utf-8'), id, resolve)
+    const { code, deps } = ssrScopeFile(lire(f), id, resolve)
     return { f, id, code, deps }
   })
   const depsById = new Map(scoped.map(s => [s.id, s.deps]))
@@ -1421,6 +1481,10 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       },
     })
     const document = window.document
+    // fin du contenu glissé de chaque composant bâti à plat, notée à l'arrivée de sa page (cf. `noteLightPage`)
+    let appendOwner: any = window.HTMLElement.prototype
+    while (appendOwner && !Object.prototype.hasOwnProperty.call(appendOwner, 'appendChild')) appendOwner = Object.getPrototypeOf(appendOwner)
+    noteLightPage(appendOwner)
     // Cookies de la requête entrante → document.cookie AVANT tout eval/fetch de
     // l'app : SONDE empirique (happy-dom 20.9, cf. RenderOptions.forwardedCookie) —
     //   1. une SEULE assignation brute multi-paires ('a=1; b=2') ne retient QUE la
@@ -1677,8 +1741,10 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // (accès direct par nom, insensible à l'énumérabilité). Le canal reste
       // le MÊME (#__mjs_store) ; côté client, mjs_store_globals.ts la
       // re-déclare CACHÉE avant de la réhydrater (cf. son propre commentaire).
+      // les données que µload a lues pendant le rendu (runtime/mjs_load.ts, `µ._ssrLoad()` : adresse → donnée) voyagent dans la même
+      // balise, sous la clé `__mjsLoad` : le client les reprend sans requête, et ne les range pas dans le magasin `$$`
       const sharedScript = serializeGlobal(
-        '(µ.store && µ.store.__mjsLang !== undefined ? Object.assign({}, µ.store, { __mjsLang: µ.store.__mjsLang }) : µ.store)',
+        '(function(s) { var l = typeof µ._ssrLoad === \'function\' ? µ._ssrLoad() : null; return l ? Object.assign({}, s, { __mjsLoad: l }) : s })(µ.store && µ.store.__mjsLang !== undefined ? Object.assign({}, µ.store, { __mjsLang: µ.store.__mjsLang }) : µ.store)',
         '__mjs_store',
       ) + i18nScript
 
@@ -1698,6 +1764,8 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       if (_mode && !light) {
         // 'markers' : marqueurs persistants sur les nœuds réactifs. 'positional' /
         // 'diff' : aucun marqueur (HTML propre), l'alignement se fait côté client.
+        // composant léger par sa seule classe : `mjs-light` sur sa balise, et, en 'markers', sa page devant le contenu glissé (cf. `lightPageFirst`)
+        lightPageFirst(el, _mode === 'a', false)
         if (_mode === 'a') etiqueterReprise(el, window.document)
         // (mode `csp`) — un `<script>` en ligne est bloqué par `script-src` sans
         // 'unsafe-inline' : le flag voyage alors par un ATTRIBUT du nœud racine (relu par
@@ -1724,7 +1792,10 @@ export async function createSSRRenderer(opts: SSRRendererOptions): Promise<SSRRe
       // settleMs : le HTML sérialisé peut être incomplet (état transitoire figé).
       // On l'annonce plutôt que de laisser une divergence SSR/client silencieuse.
       if (!settled) {
-        warnings.push(t('server.ssr-non-stabilise', { tag, settleMs }))
+        // une requête de µload encore en vol (runtime/mjs_load.ts, `µ._ssrLoad(1)` : ses adresses) : l'avertissement la nomme
+        const core: any       = ssrCoreOf(el)
+        const enVol: string[] = core && typeof core._ssrLoad === 'function' ? core._ssrLoad(1) : []
+        warnings.push(enVol.length ? t('server.ssr-load-non-stabilise', { tag, settleMs, adresses: enVol.join(', ') }) : t('server.ssr-non-stabilise', { tag, settleMs }))
       }
       // Garde-fou — un `{await}` rejeté SANS branche `{error}` pour le
       // consommer (mjs_element.ts, `_mjs_updAwait` : `targetFn` reste `null` faute de `errorFn`) retombe

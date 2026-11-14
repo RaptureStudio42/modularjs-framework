@@ -33,14 +33,14 @@ const SOURCES: Record<string, string> = {
     '<script>',
     '$s = 0',
     '</script>',
-    '<form class="f" @submit.prevent={$s++}><input class="champ" name="q"><button class="sb" type="submit" @confirm="Envoyer ?">ok</button></form>',
+    '<form class="f" @submit.prevent={$s++}><input class="champ" name="q"><button class="sb" type="submit" :confirm="Envoyer ?">ok</button></form>',
     '<p class="s">{$s}</p>'
   ].join('\n') + '\n',
   'envoi-champ.mjs': [
     '<script>',
     '$s = 0',
     '</script>',
-    '<form class="f" @confirm="Envoyer ?" @submit.prevent={$s++}><input class="champ" name="q"></form>',
+    '<form class="f" :confirm="Envoyer ?" @submit.prevent={$s++}><input class="champ" name="q"></form>',
     '<p class="s">{$s}</p>'
   ].join('\n') + '\n',
   'envoi-inerte.mjs': [
@@ -48,14 +48,14 @@ const SOURCES: Record<string, string> = {
     '$s = 0',
     '$v = 0',
     '</script>',
-    '<form class="f" @submit.prevent={$s++}><button class="sb" type="submit" @confirm="Envoyer ?" @click.prevent={$v++}>ok</button></form>',
+    '<form class="f" @submit.prevent={$s++}><button class="sb" type="submit" :confirm="Envoyer ?" @click.prevent={$v++}>ok</button></form>',
     '<p class="s">{$s}</p>'
   ].join('\n') + '\n',
   'envoi-form.mjs': [
     '<script>',
     '$s = 0',
     '</script>',
-    '<form class="f" @confirm="Envoyer ?" @submit.prevent={$s++}><button class="sb" type="submit">ok</button></form>',
+    '<form class="f" :confirm="Envoyer ?" @submit.prevent={$s++}><button class="sb" type="submit">ok</button></form>',
     '<p class="s">{$s}</p>'
   ].join('\n') + '\n'
 }

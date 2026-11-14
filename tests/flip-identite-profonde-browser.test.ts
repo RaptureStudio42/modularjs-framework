@@ -53,8 +53,8 @@ const TROIS     = [groupe3('A', sous('s1', 1, 2), sous('s2', 1)), groupe3('B', s
 // le même nom d'élément à deux niveaux : la ligne intérieure ne voit plus la ligne extérieure
 const MEME_NOM = GROUPES
 
-// deux éléments de même clé `by` (`1` et `'1'` : la réconciliation compare les clés en chaîne) : le moteur ne rend que le premier de chaque clé
-const DOUBLES = [ligne('a', { cid: 1 }), ligne('b', { cid: '1' }), ligne('c', { cid: 2 }), ligne('d', { cid: 3 })]
+// deux éléments de même clé `by` (`1` deux fois, un nombre comme la réconciliation le range) : le moteur ne rend que le premier de chaque clé
+const DOUBLES = [ligne('a', { cid: 1 }), ligne('b', { cid: 1 }), ligne('c', { cid: 2 }), ligne('d', { cid: 3 })]
 // les mêmes, dans un objet : la collection d'une liste peut être un objet
 const OBJET   = { p: DOUBLES[0], q: DOUBLES[1], r: DOUBLES[2], s: DOUBLES[3] }
 
@@ -70,20 +70,20 @@ const maj = (n: string) => n[0].toUpperCase() + n.slice(1)
 // les listes : nom, données de départ, gabarit ; chacune sur ses données, une liste ne lit que les siennes
 type Liste = { nom: string, donnees: any, gabarit: string }
 const LISTES: Liste[] = [
-  { nom: 'profondes', donnees: BASE, gabarit: '<div class="profondes">\n  {for it in $profondes by cid}\n    <section><h4 @flip=5000 data-k="{it.t}-h">{it.t}-h</h4><p @flip=5000 data-k="{it.t}-p">{it.t}-p</p></section>\n  {end}\n</div>' },
-  { nom: 'racineProfonde', donnees: BASE, gabarit: '<ul class="racineProfonde">\n  {for it in $racineProfonde by cid}\n    <li @flip=5000 data-k="{it.t}">{it.t} <span @flip=5000 data-k="{it.t}-s">{it.t}-s</span></li>\n  {end}\n</ul>' },
-  { nom: 'profondesIf', donnees: BASE, gabarit: '<div class="profondesIf">\n  {for it in $profondesIf by cid}\n    <section>{if it.on}<h4 @flip=5000 data-k="{it.t}-h">{it.t} on</h4>{else}<h4 @flip=5000 data-k="{it.t}-h">{it.t} off</h4>{end}<p @flip=5000 data-k="{it.t}-p">{it.t}-p</p></section>\n  {end}\n</div>' },
-  { nom: 'imbriqueeSans', donnees: GROUPES, gabarit: '<div class="imbriqueeSans">\n  {for g in $imbriqueeSans by gid}\n    <div class="grp">{for it in g.items by cid}<p @flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</div>\n  {end}\n</div>' },
-  { nom: 'imbriqueeAvec', donnees: GROUPES, gabarit: '<div class="imbriqueeAvec">\n  {for g in $imbriqueeAvec by gid}\n    <div class="grp" @flip=5000 data-k="G{g.gid}">{for it in g.items by cid}<p @flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</div>\n  {end}\n</div>' },
-  { nom: 'imbriqueeDansIf', donnees: GROUPES_IF, gabarit: '<div class="imbriqueeDansIf">\n  {for g in $imbriqueeDansIf by gid}\n    <div class="grp">{if g.on}<section>{for it in g.items by cid}<p @flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</section>{end}</div>\n  {end}\n</div>' },
-  { nom: 'troisNiveaux', donnees: TROIS, gabarit: '<div class="troisNiveaux">\n  {for g in $troisNiveaux by gid}\n    <div class="grp">{for s in g.subs by sid}<div class="sous">{for it in s.items by cid}<p @flip=5000 data-k="{g.gid}/{s.sid}/{it.cid}">{g.gid}/{s.sid}/{it.cid}</p>{end}</div>{end}</div>\n  {end}\n</div>' },
-  { nom: 'memeNom', donnees: MEME_NOM, gabarit: '<div class="memeNom">\n  {for x in $memeNom by gid}\n    <div class="grp">{for x in x.items by cid}<p @flip=5000 data-k="{x.t}">{x.t}</p>{end}</div>\n  {end}\n</div>' },
-  { nom: 'doubles', donnees: DOUBLES, gabarit: '<ul class="doubles">\n  {for it in $doubles by cid}\n    <li @flip=5000 data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
-  { nom: 'objet', donnees: OBJET, gabarit: '<ul class="objet">\n  {for k, it in $objet by cid}\n    <li @flip=5000 data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
-  { nom: 'vides', donnees: VIDES, gabarit: '<ul class="vides">\n  {for it in $vides by cid}\n    <li @flip=5000 mjs-key="{it.k}" data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
-  { nom: 'videsProfonds', donnees: VIDES, gabarit: '<div class="videsProfonds">\n  {for it in $videsProfonds by cid}\n    <section><h4 @flip=5000 mjs-key="{it.k}" data-k="{it.t}">{it.t}</h4></section>\n  {end}\n</div>' },
-  { nom: 'explicite', donnees: BASE, gabarit: '<ul class="explicite">\n  {for it in $explicite by cid}\n    <li @flip=5000 mjs-key="{it.cid}" data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
-  { nom: 'valeurs', donnees: VALEURS, gabarit: '<ul class="valeurs">\n  {for v in $valeurs}\n    <li @flip=5000 data-k="{v}">{v}</li>\n  {end}\n</ul>' },
+  { nom: 'profondes', donnees: BASE, gabarit: '<div class="profondes">\n  {for it in $profondes by cid}\n    <section><h4 :flip=5000 data-k="{it.t}-h">{it.t}-h</h4><p :flip=5000 data-k="{it.t}-p">{it.t}-p</p></section>\n  {end}\n</div>' },
+  { nom: 'racineProfonde', donnees: BASE, gabarit: '<ul class="racineProfonde">\n  {for it in $racineProfonde by cid}\n    <li :flip=5000 data-k="{it.t}">{it.t} <span :flip=5000 data-k="{it.t}-s">{it.t}-s</span></li>\n  {end}\n</ul>' },
+  { nom: 'profondesIf', donnees: BASE, gabarit: '<div class="profondesIf">\n  {for it in $profondesIf by cid}\n    <section>{if it.on}<h4 :flip=5000 data-k="{it.t}-h">{it.t} on</h4>{else}<h4 :flip=5000 data-k="{it.t}-h">{it.t} off</h4>{end}<p :flip=5000 data-k="{it.t}-p">{it.t}-p</p></section>\n  {end}\n</div>' },
+  { nom: 'imbriqueeSans', donnees: GROUPES, gabarit: '<div class="imbriqueeSans">\n  {for g in $imbriqueeSans by gid}\n    <div class="grp">{for it in g.items by cid}<p :flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</div>\n  {end}\n</div>' },
+  { nom: 'imbriqueeAvec', donnees: GROUPES, gabarit: '<div class="imbriqueeAvec">\n  {for g in $imbriqueeAvec by gid}\n    <div class="grp" :flip=5000 data-k="G{g.gid}">{for it in g.items by cid}<p :flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</div>\n  {end}\n</div>' },
+  { nom: 'imbriqueeDansIf', donnees: GROUPES_IF, gabarit: '<div class="imbriqueeDansIf">\n  {for g in $imbriqueeDansIf by gid}\n    <div class="grp">{if g.on}<section>{for it in g.items by cid}<p :flip=5000 data-k="{g.gid}/{it.cid}">{g.gid}/{it.cid}</p>{end}</section>{end}</div>\n  {end}\n</div>' },
+  { nom: 'troisNiveaux', donnees: TROIS, gabarit: '<div class="troisNiveaux">\n  {for g in $troisNiveaux by gid}\n    <div class="grp">{for s in g.subs by sid}<div class="sous">{for it in s.items by cid}<p :flip=5000 data-k="{g.gid}/{s.sid}/{it.cid}">{g.gid}/{s.sid}/{it.cid}</p>{end}</div>{end}</div>\n  {end}\n</div>' },
+  { nom: 'memeNom', donnees: MEME_NOM, gabarit: '<div class="memeNom">\n  {for x in $memeNom by gid}\n    <div class="grp">{for x in x.items by cid}<p :flip=5000 data-k="{x.t}">{x.t}</p>{end}</div>\n  {end}\n</div>' },
+  { nom: 'doubles', donnees: DOUBLES, gabarit: '<ul class="doubles">\n  {for it in $doubles by cid}\n    <li :flip=5000 data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
+  { nom: 'objet', donnees: OBJET, gabarit: '<ul class="objet">\n  {for k, it in $objet by cid}\n    <li :flip=5000 data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
+  { nom: 'vides', donnees: VIDES, gabarit: '<ul class="vides">\n  {for it in $vides by cid}\n    <li :flip=5000 mjs-key="{it.k}" data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
+  { nom: 'videsProfonds', donnees: VIDES, gabarit: '<div class="videsProfonds">\n  {for it in $videsProfonds by cid}\n    <section><h4 :flip=5000 mjs-key="{it.k}" data-k="{it.t}">{it.t}</h4></section>\n  {end}\n</div>' },
+  { nom: 'explicite', donnees: BASE, gabarit: '<ul class="explicite">\n  {for it in $explicite by cid}\n    <li :flip=5000 mjs-key="{it.cid}" data-k="{it.t}">{it.t}</li>\n  {end}\n</ul>' },
+  { nom: 'valeurs', donnees: VALEURS, gabarit: '<ul class="valeurs">\n  {for v in $valeurs}\n    <li :flip=5000 data-k="{v}">{v}</li>\n  {end}\n</ul>' },
 ]
 const NOMS = LISTES.map((l) => l.nom)
 
